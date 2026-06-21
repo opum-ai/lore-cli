@@ -44,3 +44,25 @@ run a newer Bun locally. To move the blessed value:
    (`packageManager` **and** `engines.bun`).
 2. Run `bun install`, `bun run typecheck`, and `bun test`.
 3. Update this note with the new value and the reason for the bump.
+
+## Local environment: working copies on an external volume
+
+If your clone lives on an **external/secondary volume** (e.g. macOS `/Volumes/...`),
+two Bun operations break **silently** across the device boundary — they produce a
+broken artifact instead of an error. CI runs on a single filesystem, so neither
+reproduces there.
+
+- **`bun install --linker=isolated`** fails locally with a cross-device
+  `clonefile`/`EXDEV` error (the isolated linker clones from the global cache). Use a
+  plain **`bun install`** on an external volume; CI uses `--linker=isolated` and passes.
+- **`bun build --compile`** emits a **0-byte binary** (even when `--outfile` targets
+  internal disk) — no error is surfaced, but the cause is the same external volume
+  (very likely the same cross-device clone path). The empty file runs as a no-op:
+  exit `0`, no output — so `./dist/lore --version` *looks* like a broken CLI but is
+  purely the volume. The CI compile-smoke (LORE-8) asserts the binary's actual
+  output, so a genuinely broken compile is caught there.
+
+**Rule of thumb:** before chasing any "compiled binary prints nothing / misbehaves"
+bug, recompile the *same source* on internal disk (copy `src/` + `package.json` to
+`/tmp/...` and `bun build --compile` there). If it works on `/tmp` but not on the
+external volume, it's the filesystem, not the code.
