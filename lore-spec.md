@@ -7,6 +7,28 @@ okf_version: "0.1"
 
 # `lore` — Specification v0.2 (TypeScript / Bun)
 
+> ⚠️ **SUPERSEDED FRAMING — read before this spec.** This is the v0.2 product
+> spec and remains the narrative origin, but two of its framings have been
+> superseded by locked decisions and are corrected in
+> [docs/specs/lore-design.md](docs/specs/lore-design.md):
+>
+> - **Backlog adapter is JSON-only, not `--plain`.** Every reference below to a
+>   `--plain` text-parsing Backlog adapter (the §3 "via the CLI" adapter, the
+>   `backlog … --plain` / `Bun.spawn` notes, `backlog task list --plain`) is
+>   superseded: the adapter invokes `backlog … --json` and parses the
+>   `{schemaVersion, kind, data}` envelope, with **no `--plain` fallback**. See
+>   [ADR-0002 — Backlog.md integration: JSON-only via `--json`](docs/adr/0002-backlog-integration-json-only.md).
+>   (lore's own *output* layer still has a `--plain` mode; that is unrelated to
+>   how it reads Backlog.)
+> - **CLI-first; MCP deferred, not "CLI + MCP".** The title, intro, and §6 present
+>   lore as "both a CLI and an MCP server". That is superseded: the **CLI is the
+>   primary surface** and the **MCP server is secondary, deferred to v2** (built
+>   on a reusable core so the future MCP tool calls the same functions). See
+>   [ADR-0004 — CLI-first; MCP deferred](docs/adr/0004-cli-first-skill-bridge-mcp-deferred.md).
+>
+> Where this document and the locked ADRs disagree, the ADRs and
+> [lore-design.md](docs/specs/lore-design.md) win.
+
 A thin tool that makes repo-resident documentation a first-class, agent-readable
 **OKF bundle**, tightly coupled to **Backlog.md** tasks, exposed as **both a CLI
 and an MCP server**, with a **one-way** publish adapter to Confluence. The repo

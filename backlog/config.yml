@@ -1,3 +1,8 @@
+# lore coexistence contract (ADR-0012): lore is the sole committer of backlog/.
+# auto_commit, check_active_branches, and remote_operations MUST stay false for
+# deterministic, offline, current-branch-only reads. `lore check` reports any of
+# these flipped to true as config drift (exit 6). This repo dogfoods lore, so it
+# follows its own contract. See docs/adr/0012-backlog-coexistence-git-ownership.md.
 project_name: "lore"
 default_status: "To Do"
 statuses: ["To Do", "In Progress", "Done"]
@@ -6,10 +11,10 @@ date_format: yyyy-mm-dd
 max_column_width: 20
 auto_open_browser: true
 default_port: 6420
-remote_operations: true
+remote_operations: false
 auto_commit: false
 filesystem_only: false
 bypass_git_hooks: false
-check_active_branches: true
+check_active_branches: false
 active_branch_days: 30
 task_prefix: "LORE"
