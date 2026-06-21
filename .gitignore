@@ -30,6 +30,18 @@ docs/.obsidian/cache
 .env.*
 !.env.example
 
+# Claude Code session-continuity runtime artifacts (handover/recovery loop).
+# The skill (.claude/skills/), hooks (.claude/hooks/), and committed settings
+# (.claude/settings.json) ARE tracked; these per-session files are NOT.
+# Consumed handovers in archive/handovers/ ARE tracked for history.
+.claude/handovers/
+.checkpoint
+.claude/session-errors.jsonl
+.claude/error-history.jsonl
+.claude/settings.local.json
+.claude/sessions/
+.claude/.session-id
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db
