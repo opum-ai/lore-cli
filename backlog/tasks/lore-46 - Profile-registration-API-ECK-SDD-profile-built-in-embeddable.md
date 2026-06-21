@@ -1,19 +1,16 @@
 ---
 id: LORE-46
-title: >-
-  Profile registration API + built-in story profile (consumer profiles
-  embeddable, not bundled)
+title: 'Declarative .lore profile: per-project type vocabulary, schemas & templates'
 status: To Do
 assignee: []
 created_date: '2026-06-21 20:16'
-updated_date: '2026-06-21 20:23'
+updated_date: '2026-06-21 21:44'
 labels:
   - eck-alignment
   - core
   - schema
 milestone: m-2
 dependencies:
-  - LORE-45
   - LORE-15
 documentation:
   - docs/adr/0006-schema-types-templates.md
@@ -24,15 +21,15 @@ ordinal: 46000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Implement the ADR-0006 profile-registration mechanism agreed in the ECK<->Lore alignment (D1) as a GENERAL, consumer-agnostic extension point. lore works fully standalone: it ships ONLY its own default story-convention profile (Epic/Story/Spec/ADR/Runbook/Reference) in the binary and package — no consumer-specific content, no ECK dependency. Expose a code-level registerProfile({type, zodSchema, template}) API so ANY consumer can extend the OKF type vocabulary while Zod stays the single source of truth (profiles are CODE, not declarative JSON; .lore/schemas/*.json stay EMITTED outputs). ECK is the first-class example consumer: it ships ITS OWN 17 Title-Case SDD types as a Zod module and registers them via the embed/library path (LORE-45) — that profile lives in ECK, not lore. Runtime registration is the library/embed path only; the sealed compiled binary (ADR-0001) bundles only lore's built-in profile, no runtime external-module import. Shared type union for the integration = ECK SDD types + lore Epic/Story/Runbook (the latter Lore-only; an ECK 'feature' is a Story instance). Extends LORE-15 (registry seam in schema.ts); feeds LORE-19 (tiered validation) + LORE-20 (schema export iterates the registry).
+Make lore's OKF type system PROFILE-DRIVEN via a declarative per-project profile (.lore/profile.toml or .lore/profile.json), per the ECK<->Lore alignment (D1, declarative-only resolution). The profile is the authoring SOURCE OF TRUTH for: the type vocabulary, per-type frontmatter fields (types/enums/required-vs-optional), required body sections, and template refs. lore builds its runtime validators and editor JSON-Schemas FROM the profile at load, so there is still ONE source of truth, inverted from ADR-0006's Zod-in-code (now: declarative profile -> generated validators). lore ships a default story-convention profile (Epic/Story/Spec/ADR/Runbook/Reference); ANY project (e.g. an ECK-managed repo) configures its own types by dropping in a profile file -- NO code, NO library embedding, fully usable with the STANDALONE binary (it reads the profile as DATA). This supersedes the earlier code-registration/embeddable-module idea: there is NO code escape hatch -- the declarative profile language is the boundary (covers vocabulary, fields, enums, required sections, templates, simple constraints; arbitrary cross-field/custom refinements are out of scope). The format is an ergonomic lore-specific schema, NOT hand-authored raw JSON Schema (which ADR-0006 rejected). lore bundles NO consumer-specific profile; ECK ships its profile as config in its own repo. Extends LORE-15 (schema.ts builds validators from the profile); feeds LORE-19 (tiered validation) + LORE-20 (schema export iterates the profile).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 ADR-0006 amended ('Profiles & registration' subsection): registration API; profiles=code; .lore/schemas stay emitted; the locked union recorded; invariants preserved (warn-not-error unknowns, ISO-string timestamps, byte-stable round-trip, strict-known/lenient-unknown tiers, z.toJSONSchema emission)
-- [ ] #2 registerProfile() seam replaces the hardcoded type table in schema.ts; story-convention profile registered by default
-- [ ] #3 registration is collision-checked (duplicate type = error) and order-independent on emitted schema bytes (ADR-0014 determinism)
-- [ ] #4 lore's standalone binary and package bundle ONLY lore's own default (story-convention) profile — no consumer-specific content; lore is fully usable with zero ECK (or any consumer) dependency
-- [ ] #5 consumer profiles (e.g. ECK's 17 SDD types) register via the embed/library path (LORE-45) as a Zod module OWNED BY THE CONSUMER — never compiled into lore
-- [ ] #6 registration API is consumer-agnostic; LORE-20 schema export and LORE-19 validation iterate the registry (built-in story profile + any registered profiles)
+- [ ] #1 ADR-0006 amended: the declarative .lore/profile is the source of truth for type vocabulary + per-type schema; lore generates runtime validators + editor JSON-Schemas from it (supersedes 'Zod-in-code is THE single source of truth' for the type/profile layer). Invariants preserved: warn-not-error on unknown types, ISO-string timestamps, byte-stable round-trip, strict-known/lenient-unknown tiers, JSON-Schema editor emission
+- [ ] #2 Profile format defined (toml/json): type vocabulary; per-type required/optional fields with types (string, string[], ISO-date, enum, number, boolean) + simple constraints; required body sections; template ref. Ergonomic lore format, NOT raw JSON Schema
+- [ ] #3 lore ships the default story-convention profile built-in (Epic/Story/Spec/ADR/Runbook/Reference); fully usable with zero config
+- [ ] #4 A project configures custom types by adding .lore/profile.* — read by the STANDALONE binary as DATA; no code, no library/embedding required; lore bundles NO consumer-specific profile (ECK ships its profile in its own repo)
+- [ ] #5 NO code-registration / escape hatch: the declarative language is the boundary; document the expressiveness limit (no arbitrary cross-field/custom refinements)
+- [ ] #6 LORE-15 builds validators from the active profile; LORE-19/LORE-20 iterate it; profile loading is deterministic (sorted, order-independent emitted bytes — ADR-0014)
 <!-- AC:END -->

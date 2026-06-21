@@ -1,18 +1,19 @@
 ---
 id: LORE-45
-title: 'Typed library build: emit .d.ts + subpath exports for programmatic consumers'
+title: '[Deferred] Typed importable library build (.d.ts + subpath exports)'
 status: To Do
 assignee: []
 created_date: '2026-06-21 20:15'
+updated_date: '2026-06-21 21:44'
 labels:
   - eck-alignment
   - packaging
-milestone: m-1
+milestone: m-9
 dependencies:
   - LORE-9
 documentation:
   - docs/adr/0001-runtime-build-distribution.md
-priority: high
+priority: low
 ordinal: 45000
 ---
 
@@ -30,3 +31,9 @@ Extend ADR-0001 to publish a SECONDARY typed library artifact alongside the bina
 - [ ] #4 NO writable /backlog subpath: any exported Backlog surface is read-only/pure over the --json envelope; lore stays sole committer of backlog/ (ADR-0012)
 - [ ] #5 library surface is an additive-only versioned contract, version-locked to the binary under one SemVer line; no business logic reachable only via import (ADR-0004 CLI-primacy)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+DEFERRED per ECK-alignment follow-up (D2). lore stays a STANDALONE CLI: ECK and other consumers integrate via the CLI + --json contract (D3/D4/D5) plus the declarative .lore/profile (LORE-46). With the type profile now config (not a code module ECK registers via import), there is no concrete need for an importable library, so this and the ADR-0001 library-artifact amendment are parked. Revisit ONLY if a real in-process import need appears — then via a fresh ADR-0001 extension. lore's locked distribution stays binary-first CLI (ADR-0001) + reusable internal core (ADR-0004).
+<!-- SECTION:NOTES:END -->
