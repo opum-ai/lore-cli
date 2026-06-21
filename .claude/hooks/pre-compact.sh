@@ -24,11 +24,11 @@ mkdir -p "$HANDOVER_DIR"
   # Include checkpoint (which now contains progress state) if it exists
   if [ -f "$CHECKPOINT_FILE" ]; then
     # Extract progress summary first
-    TASK=$(jq -r '.task // empty' "$CHECKPOINT_FILE")
+    TASK=$(jq -r '.task // empty' "$CHECKPOINT_FILE" 2>/dev/null)
     if [ -n "$TASK" ]; then
       echo "## Progress State"
       echo ""
-      PHASE=$(jq -r '.phase // "unknown"' "$CHECKPOINT_FILE")
+      PHASE=$(jq -r '.phase // "unknown"' "$CHECKPOINT_FILE" 2>/dev/null)
       echo "- **Task**: $TASK"
       echo "- **Phase**: $PHASE"
       DONE=$(jq -r '.done // [] | .[]' "$CHECKPOINT_FILE" 2>/dev/null)
@@ -47,14 +47,16 @@ mkdir -p "$HANDOVER_DIR"
     echo "## Checkpoint"
     echo ""
     echo '```json'
-    jq '.' "$CHECKPOINT_FILE"
+    jq '.' "$CHECKPOINT_FILE" 2>/dev/null
     echo '```'
     echo ""
   fi
 
-  # Include recent audit log entries (last 20)
+  # Include recent session-boundary markers (last 20). The audit log holds
+  # session-start markers (context-recovery.sh); lore wires no per-tool audit
+  # hook, so this is a timeline of sessions, not individual tool calls.
   if [ -f "$AUDIT_LOG" ]; then
-    echo "## Recent Tool Calls (last 20)"
+    echo "## Recent Session Markers (last 20)"
     echo ""
     echo '```'
     tail -20 "$AUDIT_LOG"
@@ -74,11 +76,10 @@ mkdir -p "$HANDOVER_DIR"
   fi
 } > "$HANDOVER_FILE"
 
-# Rotate auto-generated handover dumps only (keep last 5).
-# Kind-aware (ECK #56 R1): timestamp-named files (HANDOVER-<date>T<time>Z.md)
-# are disposable auto-dumps; any other HANDOVER-*.md name is a hand-written
-# brief and must never be rotated. This hook is the only rotation site (R2) —
-# the retrospective skill no longer rotates.
+# Rotate auto-generated handover dumps only (keep last 5). Kind-aware:
+# timestamp-named files (HANDOVER-<date>T<time>Z.md) are disposable auto-dumps;
+# any other HANDOVER-*.md is a hand-written brief and must never be rotated.
+# This hook is the sole rotation site.
 ls -t "$HANDOVER_DIR"/HANDOVER-????-??-??T??????Z.md 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null
 
 # Output summary so agent sees it post-compaction

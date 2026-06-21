@@ -14,6 +14,10 @@ if [ "$IS_INTERRUPT" = "true" ]; then
 fi
 
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // "unknown"')
+# NOTE: error text and the tool_input summary may contain file contents or
+# command arguments. They are truncated and written only to gitignored,
+# machine-local files (.claude/session-errors.jsonl, .claude/error-history.jsonl,
+# and PreCompact handover snapshots under .claude/handovers/).
 ERROR=$(echo "$INPUT" | jq -r '.error // "unknown"' | head -c 500)
 INPUT_SUMMARY=$(echo "$INPUT" | jq -c '.tool_input // {}' | head -c 300)
 

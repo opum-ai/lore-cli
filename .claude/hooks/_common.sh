@@ -1,30 +1,21 @@
 #!/bin/bash
-# _common.sh — shared prelude sourced by all ECK hooks that use jq.
+# _common.sh — shared prelude sourced by lore's session-continuity hooks
+# (context-recovery, pre-compact, checkpoint-save, error-detect).
 # Not a hook itself; not registered in settings.json.
 #
-# Provides:
-#   - jq presence check that exits 2 if missing (loud fail, not silent approve)
-#   - _sha256: portable SHA-256 hex (sha256sum on Linux/Git Bash, shasum on macOS)
-#   - _normalize_path: convert backslashes to forward slashes for cross-platform
-#     pattern matching on Claude Code's tool_input.file_path
-#
-# See issues: #36 (jq silent failure), #37 (shasum portability), #38 (path bypass).
+# Provides, for every hook that sources it:
+#   - a jq presence check (warns on stderr but stays NON-BLOCKING: none of
+#     lore's hooks are gates, so a missing jq must never fail a tool call)
+#   - a CLAUDE_PROJECT_DIR guard (every hook is a safe no-op without it)
 
 if ! command -v jq >/dev/null 2>&1; then
-  echo "ECK hook error: jq not found on PATH." >&2
-  echo "All ECK hooks require jq to parse Claude Code input." >&2
-  echo "Install: 'winget install jqlang.jq' on Windows, 'brew install jq' on macOS, or https://jqlang.github.io/jq/" >&2
-  exit 2
+  echo "lore hook warning: jq not found on PATH — session-continuity hooks are inert." >&2
+  echo "Install: 'brew install jq' on macOS, 'winget install jqlang.jq' on Windows, or https://jqlang.github.io/jq/" >&2
+  exit 0
 fi
 
-_sha256() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum | head -c 8
-  else
-    shasum -a 256 | head -c 8
-  fi
-}
-
-_normalize_path() {
-  printf '%s' "$1" | tr '\\' '/'
-}
+# All hooks read/write under the project dir; without it there is nothing safe
+# to do, so no-op rather than touching the filesystem root.
+if [ -z "$CLAUDE_PROJECT_DIR" ]; then
+  exit 0
+fi

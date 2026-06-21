@@ -13,8 +13,8 @@ if [ -f "$CHECKPOINT_FILE" ]; then
   echo "---"
 
   # Display progress fields if present
-  TASK=$(jq -r '.task // empty' "$CHECKPOINT_FILE")
-  PHASE=$(jq -r '.phase // empty' "$CHECKPOINT_FILE")
+  TASK=$(jq -r '.task // empty' "$CHECKPOINT_FILE" 2>/dev/null)
+  PHASE=$(jq -r '.phase // empty' "$CHECKPOINT_FILE" 2>/dev/null)
   DONE=$(jq -r '.done // [] | if length > 0 then .[] else empty end' "$CHECKPOINT_FILE" 2>/dev/null)
   NEXT=$(jq -r '.next // [] | if length > 0 then .[] else empty end' "$CHECKPOINT_FILE" 2>/dev/null)
 
@@ -33,7 +33,7 @@ if [ -f "$CHECKPOINT_FILE" ]; then
   fi
 
   # Display full checkpoint
-  jq '.' "$CHECKPOINT_FILE"
+  jq '.' "$CHECKPOINT_FILE" 2>/dev/null
   echo "---"
   echo "Review the above state and resume where you left off."
 
@@ -66,31 +66,21 @@ if [ -d "$HANDOVER_DIR" ]; then
   fi
 fi
 
-# Check for unprocessed session errors from prior session
+# Surface unprocessed tool failures from prior session(s). lore has no
+# /retrospective skill — point at lore's actual systems of record instead:
+# capture any recurring failure as a Backlog note or an auto-memory entry.
 ERRORS_FILE="$CLAUDE_PROJECT_DIR/.claude/session-errors.jsonl"
 if [ -f "$ERRORS_FILE" ] && [ -s "$ERRORS_FILE" ]; then
   ERROR_COUNT=$(wc -l < "$ERRORS_FILE" | tr -d ' ')
   echo ""
-  echo "UNPROCESSED ERRORS: $ERROR_COUNT tool failures from prior session(s)"
-  echo "Run /retrospective to analyze and capture learnings."
+  echo "UNPROCESSED ERRORS: $ERROR_COUNT tool failure(s) from prior session(s)."
+  echo "Review .claude/error-history.jsonl; capture any recurring fix as a Backlog note or auto-memory."
 
-  # H3: Archive session errors to history and clear for new session
-  if [ -d "$(dirname "$CLAUDE_PROJECT_DIR/.claude/error-history.jsonl")" ]; then
+  # Archive errors to a rolling history (gitignored) and clear for the new session.
+  if [ -d "$CLAUDE_PROJECT_DIR/.claude" ]; then
     cat "$ERRORS_FILE" >> "$CLAUDE_PROJECT_DIR/.claude/error-history.jsonl"
   fi
   : > "$ERRORS_FILE"
-fi
-
-# Display recent error catalog entries as reminders
-MEMORY_DIR="${CLAUDE_MEMORY_DIR:-$HOME/.claude/memory}"
-ERROR_CATALOG="$MEMORY_DIR/error-catalog.md"
-if [ -f "$ERROR_CATALOG" ]; then
-  # Count actual entries (### headings after "## Entries" line, excluding code blocks)
-  ENTRY_COUNT=$(sed -n '/^## Entries/,$ p' "$ERROR_CATALOG" | grep -c "^### " 2>/dev/null || echo "0")
-  if [ "$ENTRY_COUNT" -gt 0 ]; then
-    echo ""
-    echo "ERROR CATALOG: $ENTRY_COUNT known patterns. Review memory/error-catalog.md for avoidance."
-  fi
 fi
 
 # Add session boundary marker to audit log
