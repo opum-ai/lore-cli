@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Bun + TypeScript toolchain scaffold (LORE-6): `package.json` (`@salient-data/lore`,
+  bin `lore`), strict `tsconfig.json`, Bun pinned to `1.2.23` (`.bun-version` +
+  `packageManager`/`engines`) with rationale and bump procedure in `DEVELOPMENT.md`,
+  and a stub `lore` CLI (`src/cli.ts`).
 - Project bootstrap: repository, MIT license, `.gitignore`/`.editorconfig`, community files.
 - Product specification (`lore-spec.md`) and the OKF documentation bundle under `docs/`
   (architecture, tech stack, design, ADRs, runbooks, references).
