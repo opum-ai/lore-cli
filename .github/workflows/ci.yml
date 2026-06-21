@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  # Unfiltered so PRs to dev (and stacked feature-branch PRs) all get CI.
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: "lint · typecheck · test (${{ matrix.os }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # Single source of truth for the Bun pin (lore pins 1.2.23; see ADR-0001 / DEVELOPMENT.md).
+          bun-version-file: .bun-version
+      - uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+      - run: bun install --frozen-lockfile --linker=isolated
+      - run: bun run lint
+      - run: bun run typecheck
+      - name: Test
+        shell: bash
+        run: |
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            # Windows runners hit FS/resource pressure under default parallelism (AC#2).
+            bun test --isolate --max-concurrency=4 --timeout=30000
+          else
+            # Isolate test files so suites that mutate global process state can't bleed.
+            bun test --isolate --timeout=10000
+          fi
+
+  build:
+    name: compile smoke (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+      - run: bun install --frozen-lockfile --linker=isolated
+      # Lightweight buildability smoke. The release-grade -baseline per-platform
+      # matrix and npm dual-artifact packaging are LORE-9.
+      - name: Compile and smoke-test the binary
+        run: |
+          bun build --compile src/cli.ts --outfile dist/lore
+          ./dist/lore --version

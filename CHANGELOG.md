@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- CI (LORE-8): GitHub Actions workflow running `lint`, `typecheck`, and
+  `bun test --isolate` across Ubuntu/macOS/Windows (Windows tuned with
+  `--max-concurrency=4` for stability), plus a Linux compile smoke. The Bun
+  version is sourced from `.bun-version` (single source of truth).
 - Dev tooling (LORE-7): Biome for lint + format (honoring `.editorconfig`) and the
   `bun test` harness with coverage (`bunfig.toml`, text + lcov reporters). Scripts:
   `format`, `lint`, `lint:fix`, `test`, `test:coverage`. (Biome was chosen over the
