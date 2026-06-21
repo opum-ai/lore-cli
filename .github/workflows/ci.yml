@@ -59,6 +59,20 @@ jobs:
       # Lightweight buildability smoke. The release-grade -baseline per-platform
       # matrix and npm dual-artifact packaging are LORE-9.
       - name: Compile and smoke-test the binary
+        shell: bash
         run: |
           bun build --compile src/cli.ts --outfile dist/lore
-          ./dist/lore --version
+          # Assert the binary WORKS, not merely that it exits 0. A broken compile
+          # (e.g. the 0-byte binary `bun build --compile` silently emits on some
+          # filesystems) exits 0 with empty output, so an exit-code-only smoke is blind.
+          version="$(./dist/lore --version)"
+          expected="$(bun -e 'console.log(require("./package.json").version)')"
+          echo "lore --version => '${version}' (package.json: '${expected}')"
+          if [ -z "${version}" ]; then
+            echo "::error::lore --version produced no output (broken binary)"; exit 1
+          fi
+          if [ "${version}" != "${expected}" ]; then
+            echo "::error::version mismatch: binary='${version}' package.json='${expected}'"; exit 1
+          fi
+          # --help exercises the other output path; assert it emits the banner too.
+          ./dist/lore --help | grep -q "OKF-native documentation CLI"

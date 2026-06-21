@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-06-21 07:17'
+updated_date: '2026-06-21 16:12'
 labels:
   - ci
 milestone: m-1
@@ -41,6 +41,8 @@ CI matrix uses bun test --isolate, --linker=isolated, and Windows --max-concurre
 
 <!-- SECTION:NOTES:BEGIN -->
 CI verified green on a live run (PR #3): ubuntu/macos/windows check jobs + ubuntu compile smoke all pass (AC#1 triggers + AC#2 Windows stable). First run failed only on Windows lint due to CRLF checkout (runner core.autocrlf=true) vs .editorconfig/Biome LF; fixed by adding .gitattributes (* text=auto eol=lf) — re-run green incl. Windows (43s). The --linker=isolated install path was validated locally with a same-device cache (the local external-volume/home-cache split triggers EXDEV clonefile, which does not exist on single-filesystem CI runners).
+
+Hardened the compile smoke (review follow-up): it now asserts the binary's actual output (non-empty + --version matches package.json + --help emits the banner), not just exit code 0. An exit-code-only smoke is blind to a broken/0-byte compile that still exits 0 (observed locally when bun build --compile runs on an external/EXDEV volume; CI's normal filesystem is unaffected).
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
