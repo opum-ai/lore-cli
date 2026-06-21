@@ -7,9 +7,7 @@
  * `core/` library, and the full command surface (init, new, validate, sync,
  * check, …) arrive in M1. See lore-spec.md and docs/index.md.
  */
-import pkg from "../package.json";
-
-const VERSION: string = pkg.version;
+import { VERSION } from "./meta";
 
 const USAGE = `lore ${VERSION} — OKF-native documentation CLI
 

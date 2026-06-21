@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Dev tooling (LORE-7): Biome for lint + format (honoring `.editorconfig`) and the
+  `bun test` harness with coverage (`bunfig.toml`, text + lcov reporters). Scripts:
+  `format`, `lint`, `lint:fix`, `test`, `test:coverage`. (Biome was chosen over the
+  task's original ESLint+Prettier to satisfy the *thin* and *match Backlog.md* rules.)
 - Bun + TypeScript toolchain scaffold (LORE-6): `package.json` (`@salient-data/lore`,
   bin `lore`), strict `tsconfig.json`, Bun pinned to `1.2.23` (`.bun-version` +
   `packageManager`/`engines`) with rationale and bump procedure in `DEVELOPMENT.md`,
