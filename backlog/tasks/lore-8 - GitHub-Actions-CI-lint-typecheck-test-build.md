@@ -1,11 +1,11 @@
 ---
 id: LORE-8
 title: 'GitHub Actions CI: lint, typecheck, test, build'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-06-21 07:11'
+updated_date: '2026-06-21 07:17'
 labels:
   - ci
 milestone: m-1
@@ -23,8 +23,8 @@ CI matrix uses bun test --isolate, --linker=isolated, and Windows --max-concurre
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 CI runs on PRs to dev and pushes
-- [ ] #2 Windows job is stable
+- [x] #1 CI runs on PRs to dev and pushes
+- [x] #2 Windows job is stable
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -36,3 +36,15 @@ CI matrix uses bun test --isolate, --linker=isolated, and Windows --max-concurre
 4. build job (ubuntu): compile smoke — bun build --compile src/cli.ts -> dist/lore, run --version. (Release-grade -baseline per-platform matrix + npm dual-artifact = LORE-9.)
 5. Pre-validate by running the exact CI command sequence locally before push; verify CI actually runs on the PR via gh pr checks.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+CI verified green on a live run (PR #3): ubuntu/macos/windows check jobs + ubuntu compile smoke all pass (AC#1 triggers + AC#2 Windows stable). First run failed only on Windows lint due to CRLF checkout (runner core.autocrlf=true) vs .editorconfig/Biome LF; fixed by adding .gitattributes (* text=auto eol=lf) — re-run green incl. Windows (43s). The --linker=isolated install path was validated locally with a same-device cache (the local external-volume/home-cache split triggers EXDEV clonefile, which does not exist on single-filesystem CI runners).
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added .github/workflows/ci.yml: lint + typecheck + bun test --isolate across ubuntu/macos/windows (Windows tuned --max-concurrency=4 --timeout=30000) plus an ubuntu compile smoke; Bun pinned via bun-version-file: .bun-version (1.2.23). Triggers on push to dev/main and on all PRs. Added .gitattributes to force LF so the Windows lint gate is stable. Verified by a live green CI run — all 4 jobs pass.
+<!-- SECTION:FINAL_SUMMARY:END -->
