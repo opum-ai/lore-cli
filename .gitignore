@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# lore CLI state (config.toml and sync-state.json ARE committed; cache is not)
+.lore/cache/
+
+# Backlog.md transient lockfiles
+backlog/.locks/
+
+# Rendered-docs build output (configs are committed; build artifacts are not)
+site/
+website/build/
+.docusaurus/
+
+# Obsidian per-user vault state (commit docs/.obsidian/app.json only)
+docs/.obsidian/workspace*.json
+docs/.obsidian/cache
+
+# Secrets / env
+.env
+.env.*
+!.env.example
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.log
