@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-06-21 06:42'
+updated_date: '2026-06-21 16:55'
 labels:
   - tooling
 milestone: m-1
@@ -26,8 +26,10 @@ package.json (type module, bin lore, name @salient-data/lore), strict tsconfig, 
 <!-- AC:BEGIN -->
 - [x] #1 bunx . runs the lore stub CLI
 - [x] #2 Bun version pinned with a documented rationale
-- [ ] #3 Bun version pinned to 1.2.23 with a documented rationale
+- [x] #3 Bun version pinned to 1.2.23 with a documented rationale
 <!-- AC:END -->
+
+
 
 ## Implementation Plan
 
