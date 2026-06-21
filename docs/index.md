@@ -126,6 +126,9 @@ Operational procedures for working on and with lore.
 - [Agent onboarding](runbooks/agent-onboarding.md) — how a coding agent (e.g.
   Claude Code) discovers and uses lore: the generated `SKILL.md`, the CLAUDE.md
   nudge, and `lore instructions`.
+- [Developer kickoff](runbooks/dev-kickoff.md) — the handover for starting lore
+  implementation in a fresh session: orientation, constraints, entry points, and
+  the working agreement.
 
 ---
 
