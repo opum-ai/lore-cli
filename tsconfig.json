@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    // Environment & language level — Bun runs .ts directly; tsc is type-check only.
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleDetection": "force",
+
+    // Bundler-mode resolution (matches Bun's loader and the Backlog.md recipe).
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+
+    // Strictness — the deterministic core depends on this being airtight.
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    // Bun runtime globals (Bun.spawn, Bun.file, process, …).
+    "types": ["bun"]
+  },
+  "include": ["src/**/*.ts", "*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

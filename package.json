@@ -1,0 +1,33 @@
+{
+  "name": "@salient-data/lore",
+  "version": "0.0.0",
+  "description": "Thin, OKF-native documentation CLI that couples repo-resident docs to Backlog.md and serves them to agents and humans.",
+  "type": "module",
+  "module": "src/cli.ts",
+  "bin": {
+    "lore": "src/cli.ts"
+  },
+  "license": "MIT",
+  "author": "Jeremy Newhouse",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jeremy-newhouse/lore.git"
+  },
+  "packageManager": "bun@1.2.23",
+  "engines": {
+    "bun": ">=1.2.23"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "lore": "bun run src/cli.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.23",
+    "typescript": "^5"
+  }
+}
