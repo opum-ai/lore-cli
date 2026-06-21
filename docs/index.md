@@ -1,0 +1,135 @@
+---
+# yaml-language-server: $schema=../.lore/schemas/reference.schema.json
+type: Reference
+title: lore documentation
+description: >-
+  Root index for the lore documentation bundle — a thin, OKF-native
+  documentation CLI (Bun + TypeScript) that couples repo-resident docs to
+  Backlog.md and serves them to agents and humans. This is the
+  progressive-disclosure entry point into the bundle's references, design,
+  decisions, and runbooks.
+tags: [lore, okf, documentation, cli, backlog, index]
+summary: >-
+  The OKF root index and reading hub for lore's documentation bundle: start
+  here, then follow links into architecture, references, ADRs, and runbooks.
+okf_version: "0.1"
+timestamp: 2026-06-21T00:00:00Z
+---
+
+# lore documentation
+
+**lore** is a thin, OKF-native documentation CLI — Bun + TypeScript, distributed
+on npm as `@salient-data/lore` (bin `lore`). It makes repo-resident markdown a
+first-class, agent-readable [Open Knowledge Format](reference/okf-conformance.md)
+bundle, couples that bundle to [Backlog.md](runbooks/backlog-json-patch.md)
+tasks, and serves it to both humans and coding agents through a deterministic,
+non-interactive CLI. The repository is the single source of truth.
+
+lore is deliberately **thin** and **zero-config**: it does not reimplement
+Backlog.md, Confluence, or the documentation consumers (MkDocs, Docusaurus,
+Obsidian). Its core is deterministic with **no LLM dependency** — every command
+is reproducible, idempotent, CI- and agent-safe (non-interactive by default,
+stable exit codes, machine-readable `--json`). The agent bridge is a generated
+`.claude/skills/lore/SKILL.md` plus `lore instructions`; an MCP server is a
+secondary, deferred transport over the same core.
+
+This file is the OKF bundle's reserved **root `index.md`** — the only file in the
+bundle that carries `okf_version`. It doubles as the Obsidian hub, the
+MkDocs/Docusaurus landing page, and the file lore's own index generator will
+later manage. Below is a progressive-disclosure map of the bundle: skim the
+sections, then follow a link.
+
+> **New here?** Read the [lore design spec](specs/lore-design.md) for the whole
+> picture in one document, or jump to
+> [agent onboarding](runbooks/agent-onboarding.md) to wire lore into a coding
+> agent.
+
+## Architecture & design
+
+How lore is built and how its pieces fit together.
+
+- [lore design spec](specs/lore-design.md) — the end-to-end design: command
+  surface, core data flow, the Backlog.md coupling, and how the OKF bundle is
+  produced and kept coherent.
+- [Architecture](reference/architecture.md) — the deterministic-core /
+  thin-transport shape: `core/` library, the CLI as primary transport, the
+  Backlog and Confluence adapters, and `.lore/` state.
+- [Tech stack](reference/tech-stack.md) — Bun (pinned), TypeScript,
+  Commander.js, gray-matter, unified/remark, and Zod, plus the
+  `bun build --compile` + dual-artifact npm distribution.
+
+## References
+
+Stable, factual concepts: contracts, schemas, and conformance facts that other
+docs and tools rely on.
+
+- [CLI surface](reference/cli-surface.md) — every `lore` command, its flags,
+  and what it does (`init`, `new`, `link`, `sync`, `check`, `validate`,
+  `query`, `context`, `graph`, `replace`, `rename`, `supersede`, `scaffold`,
+  `instructions`).
+- [CLI contract](reference/cli-contract.md) — the additive-only output and
+  behavior contract: `--json` / `--plain` / pretty precedence, the
+  `{schemaVersion, kind, data}` envelope, semantic exit codes, the JSON error
+  envelope, and `NO_COLOR`.
+- [Backlog JSON schema](reference/backlog-json-schema.md) — the canonical
+  `{schemaVersion, kind, data}` envelopes lore parses from Backlog.md's
+  `--json` output for `task list`, `task view`, and `search`.
+- [Backlog CLI contract](reference/backlog-cli-contract.md) — exactly how lore
+  drives Backlog.md: the `--json` capability probe and min version, reading via
+  list/view/search, writing via `task create`/`edit`, the `doc:<conceptId>`
+  back-reference label, and the coexistence rules (lore is the sole committer of
+  `backlog/`).
+- [Consumer compatibility](reference/consumer-compatibility.md) — how the
+  bundle renders across GitHub, Obsidian, MkDocs, and Docusaurus, and what lore
+  guarantees (and does not) across renderers.
+- [Portable Markdown](reference/portable-markdown.md) — the cross-link rule
+  (relative, URL-encoded, `.md`-suffixed, no leading slash, no wikilinks) and
+  the portability lint that enforces it.
+- [OKF conformance](reference/okf-conformance.md) — how lore conforms to OKF
+  v0.1, lore's "story convention" producer profile, and the deliberate
+  override of OKF §5's `/`-absolute link recommendation.
+- [MCP tools](reference/mcp-tools.md) — the **deferred (v2)** MCP server design:
+  the tools and resources it will expose over the same core functions.
+
+## ADRs
+
+The significant, hard-to-reverse decisions behind lore — context, choice, and
+consequences. See the [ADR log](adr/index.md) for the full, ordered index.
+
+- [ADR log](adr/index.md) — index of all architecture decision records and the
+  ADR process (immutable once Accepted; supersede via a new ADR).
+- [0001 — Runtime, build & distribution](adr/0001-runtime-build-distribution.md)
+- [0002 — Backlog.md integration: JSON-only via `--json`](adr/0002-backlog-integration-json-only.md)
+- [0003 — OKF as the documentation substrate](adr/0003-okf-substrate.md)
+- [0004 — CLI-first; reusable Core; SKILL.md bridge; MCP deferred](adr/0004-cli-first-skill-bridge-mcp-deferred.md)
+- [0005 — CLI contract: output modes, exit codes, error envelope](adr/0005-cli-contract.md)
+- [0006 — Schema, types & templates: Zod as source of truth](adr/0006-schema-types-templates.md)
+- [0007 — Validation & coherence checking](adr/0007-validation-and-coherence.md)
+- [0008 — Managed task block via remark/mdast AST](adr/0008-managed-block-remark-ast.md)
+- [0009 — Story ↔ Task coupling & status reconciliation](adr/0009-story-task-coupling-reconciliation.md)
+- [0010 — Multi-consumer docs layer & link convention](adr/0010-multi-consumer-docs-layer.md)
+- [0011 — Frontmatter serialization & diff stability](adr/0011-frontmatter-serialization-stability.md)
+- [0012 — Backlog operational coexistence & git ownership](adr/0012-backlog-coexistence-git-ownership.md)
+- [0013 — `.lore/` state directory](adr/0013-lore-state-directory.md)
+- [0014 — Core lore has no LLM dependency](adr/0014-core-has-no-llm-dependency.md)
+- [0015 — Lightweight retrieval: full-text + graph context, no vectors](adr/0015-lightweight-retrieval-no-vectors.md)
+- [0016 — Confluence publish: one-way, Cloud/ADF, deferred](adr/0016-confluence-one-way-publish-deferred.md)
+
+## Runbooks
+
+Operational procedures for working on and with lore.
+
+- [Backlog.md `--json` patch](runbooks/backlog-json-patch.md) — how to fork
+  MrLesk/Backlog.md, add the minimal `--json` flag to `task list`/`view`/
+  `search`, consume the fork as a locally-compiled git dependency, and upstream
+  the change (milestone BJP).
+- [Agent onboarding](runbooks/agent-onboarding.md) — how a coding agent (e.g.
+  Claude Code) discovers and uses lore: the generated `SKILL.md`, the CLAUDE.md
+  nudge, and `lore instructions`.
+
+---
+
+*This bundle is a valid OKF v0.1 bundle on its own — `cat`-readable,
+GitHub-renderable, and consumable with or without lore installed. Cross-links
+are relative, URL-encoded, and `.md`-suffixed so they resolve identically on
+GitHub, in Obsidian, and under MkDocs/Docusaurus.*

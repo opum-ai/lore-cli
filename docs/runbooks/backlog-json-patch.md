@@ -1,0 +1,344 @@
+---
+# yaml-language-server: $schema=../../.lore/schemas/Runbook.schema.json
+type: Runbook
+title: "Backlog.md --json patch runbook (fork, patch, build, upstream)"
+description: Step-by-step procedure to add a --json flag to Backlog.md v1.47.1 by forking MrLesk/Backlog.md to jeremy-newhouse/Backlog.md, adding a shared task-json serializer and json-before-plain branches to task list/view/search, building a local compiled binary for lore's git dependency, and opening a minimal upstream PR — the BJP milestone that unblocks lore.
+tags: [backlog, json, fork, patch, runbook, upstream, bjp]
+summary: How to fork and patch Backlog.md to add the --json flag lore depends on, build it locally as lore's git dependency, and upstream a minimal PR.
+timestamp: 2026-06-21T00:00:00Z
+---
+
+# Backlog.md `--json` patch runbook
+
+This runbook is the **BJP milestone** — the first thing built in the
+[lore build order](../specs/lore-design.md). Everything else (M0–M5) is blocked
+on it, because `lore` reads Backlog.md **JSON-only** and stock Backlog.md
+**v1.47.1 has no `--json` flag**. We add one.
+
+The output of this runbook is twofold:
+
+1. A **forked, `--json`-capable Backlog.md** (`jeremy-newhouse/Backlog.md`)
+   that `lore` consumes as a locally-compiled **git dependency** during the
+   interim.
+2. A **minimal upstream PR** to `MrLesk/Backlog.md` so the flag eventually ships
+   in a stock release, after which `lore` migrates to the published package and
+   bumps its minimum-version probe.
+
+The shape of the JSON this patch must emit is **not** invented here — it is
+specified, field by field, in
+[the Backlog.md `--json` schema](../reference/backlog-json-schema.md). The
+operational rules `lore` enforces against that output (capability probe,
+min-version, fail-loud) live in the
+[Backlog.md CLI contract](../reference/backlog-cli-contract.md). This runbook is
+the **producer side**: how to make Backlog.md emit that contract.
+
+> **Scope discipline.** The patch is intentionally tiny: `--json` on **three
+> read commands** (`task list`, `task view` (+ the bare `task <id>` shortcut),
+> and `search`), fed by **one shared serializer**, ordered **json-before-plain**.
+> No `board`, no `overview` (those have no plain path and would be net-new
+> logic). No MCP `structuredContent` (deferred to a follow-up PR). No `--plain`
+> changes. Keeping the diff small is what makes the upstream PR mergeable.
+
+---
+
+## 0. Why this design (the one-paragraph rationale)
+
+Backlog.md's CLI already has the structured object in hand one line before it
+prints. At every `--plain` site the action calls
+`console.log(formatTaskPlainText(task))` (or an inline summary builder), and the
+icon/blessed transforms live **inside** the formatter — so `task.status` is the
+clean, icon-free value *before* formatting. Adding `--json` is therefore a
+**serialize-before-format injection**, not a deeper change: declare a per-command
+`--json` option, and add an early `if (json) { emit(serialize(obj)); return; }`
+branch **before** the plain branch. This is the exact pattern `--plain` already
+established (detection chokepoint at `cli.ts:425-429`), which is why the change
+is low-risk and the PR is reviewable. Line numbers below are spot-verified
+against `MrLesk/Backlog.md` at **v1.47.1**; treat them as anchors, not promises —
+re-grep after rebasing.
+
+---
+
+## 1. Fork and open the tracking task
+
+Backlog.md's own contribution process **requires** a backlog task behind every
+PR (enforced socially via the PR template, not CI), with acceptance criteria, a
+plan, and a Testing section. We honor it.
+
+```bash
+# 1a. Fork on GitHub (web UI or gh), then clone the fork.
+gh repo fork MrLesk/Backlog.md --clone --remote
+#   → adds 'origin' = jeremy-newhouse/Backlog.md, 'upstream' = MrLesk/Backlog.md
+
+cd Backlog.md
+git checkout -b tasks/back-XXX-json-output   # rename once you have the real ID
+
+# 1b. Pin a known-good toolchain. DEVELOPMENT.md pins Bun 1.2.23; CI runs 1.3.11.
+#     Build with a Bun version compatible across both to avoid compile surprises.
+bun --version
+bun install
+
+# 1c. Create the tracking task IN THE BACKLOG.MD REPO (it dogfoods itself).
+backlog task create "Add --json output to read commands" \
+  --ac "task list/view/search accept --json and print one {schemaVersion,kind,data} envelope" \
+  --ac "json wins over auto-plain in non-TTY pipes" \
+  --ac "shared serializer omits/normalizes lastModified and omits rawContent by default"
+#   → capture the printed 'Created task back-XXX' ID; use it in the branch name,
+#     commit titles ('BACK-XXX - …'), and the PR title.
+```
+
+There is **no CLA, no DCO, no conventional-commits requirement** — just lint +
+tests green and a referenced task.
+
+---
+
+## 2. Add the shared serializer (`src/formatters/task-json.ts`)
+
+Create **one** new module that both `task list`/`view`/`search` (and, later, the
+MCP layer) feed through. It is a **curated subset**, not `JSON.stringify(task)`,
+because the raw `Task` carries serialization hazards and internal leaks. Place it
+beside the existing `src/formatters/task-plain-text.ts`.
+
+Mandatory fixups (verified against `src/types/index.ts`):
+
+| Hazard | Source field | Fixup in the serializer |
+|---|---|---|
+| `Date` breaks date-format consistency | `Task.lastModified?: Date` (types/index.ts:72) | **Omit by default**, or normalize to the `"YYYY-MM-DD"` string form used elsewhere. Never emit a bare ISO `T…Z` next to `"YYYY-MM-DD"` dates. |
+| Internal-content leak / payload bloat | `rawContent` | **Omit by default**; opt-in behind `--json-raw` only if asked. It duplicates the parsed sections and can desync. |
+| Field-name mismatch | the in-memory field is `task.assignee` (singular, `string[]`, types/index.ts:43) | Read `task.assignee`; emit it as `assignees` in the output shape. |
+| AC/DoD source names | `acceptanceCriteriaItems` / `definitionOfDoneItems` (types/index.ts:60,62) | Map to output keys `acceptanceCriteria` / `definitionOfDone`; each item is `{index, text, checked}`. |
+| Non-durable AC/DoD identity | `index` is **positional** and renumbers on add/remove (structured-sections.ts:962-968) | Keep the field but **document it as non-durable**. (The schema reference says the same; `lore` must not anchor to it.) |
+| ID-vs-filename casing | display `TASK-123` vs file `task-123.md` | Expose **both** `id` and `filePath` — never let consumers reconstruct the filename. |
+| `filePath` may be absent / absolute | `undefined` on freshly-created tasks; absolute on disk-loaded ones | Tolerate `filePath: undefined`; prefer also emitting a project-relative `filePathRelative`. |
+| Enrichment parity | `parentTaskTitle` / `subtaskSummaries` only set on the `view` (`getTaskWithSubtasks`) path | Mark them **optional**; on the list path emit `null`/omit rather than running `attachSubtaskSummaries` per row. |
+
+Two serializers are needed, not one:
+
+- `serializeTask(task)` — the **full** view shape (`kind: "task"`).
+- `serializeTaskSummary(task)` — the **list/search** subset (`id`, `title`,
+  `status`, `priority`, `ordinal`, `assignees`, `labels`, `milestone`,
+  `parentTaskId`, `filePath`). `task list` and `search` build summary strings
+  **inline** (cli.ts:2167-2205 / 1912-1944) and do **not** call
+  `formatTaskPlainText`, so a single full serializer will not cover them.
+
+`search` additionally needs a small wrapper over **three** item shapes
+(`task` | `document` | `decision`) with a `score`, dropping Fuse's `matches`
+(typed `unknown`, an unstable internal). See the
+[searchResult shape](../reference/backlog-json-schema.md) for the exact keys.
+
+All three commands wrap their payload in the canonical envelope
+`{ "schemaVersion": "1", "kind": …, "data": … }` — defined once and reused.
+
+---
+
+## 3. Wire `--json` into the CLI (json-before-plain)
+
+Backlog.md uses **default-strict Commander** with **no global option** and never
+calls `program.opts()` — so `--json` must be declared **per command**, kept in
+sync with its branch, or it is a hard parse error on that command. Mirror the
+existing `--plain` machinery exactly.
+
+### 3a. Detection chokepoint (`src/cli.ts:425-429`)
+
+Add a `--json` sibling to the existing `plainFlagInArgv` / `isPlainRequested`:
+
+```ts
+const jsonFlagInArgv = process.argv.includes("--json");
+function isJsonRequested(options?: { json?: boolean }) {
+  return Boolean(options?.json || jsonFlagInArgv);
+}
+function emitJson(data: unknown) {
+  console.log(JSON.stringify(data));   // one object, stdout only
+}
+```
+
+`--json` must also force **non-interactive + no color**, the same way the
+`--plain` argv flag does, so TTY auto-detection never launches the blessed UI
+instead of printing JSON.
+
+### 3b. Per-command option + branch (verified injection points)
+
+For each command: add `.option("--json", "output as JSON")` at the builder, and
+put the JSON early-return **before** the `usePlainOutput = isPlainRequested(...)
+|| shouldAutoPlain` block. **This ordering is the single most important
+correctness detail** — placed after, a piped `--json` (non-TTY) would still emit
+plain text because `shouldAutoPlain` is true.
+
+| Command | `.option` site | JSON branch goes **before** | Envelope `kind` | Serializer |
+|---|---|---|---|---|
+| `task list` | cli.ts:2049 | branch at ~2109 (before the 2167-2205 summary loop) | `taskList` | `serializeTaskSummary[]` |
+| `task view` | cli.ts:2751 | branch at ~2767 | `task` | `serializeTask` |
+| `task <id>` (bare shortcut) | cli.ts:2903 | branch at ~2934 | `task` | `serializeTask` |
+| `search` | cli.ts:1743 | branch at ~1807 (before `printSearchResults`) | `searchResult` | search wrapper |
+
+Note the auto-plain interaction applies specifically to the auto-plain commands
+(list / view / `task <id>` / search). The full set of `isPlainRequested(options)
+|| shouldAutoPlain` sites to respect ordering at: cli.ts 1807, 2109, 2767, 2934.
+
+### 3c. What you do **not** touch
+
+- **Shell completions: zero edits.** Completion scripts are dynamic — they shell
+  to `backlog completion __complete`, which reads Commander's live options via
+  `getOptionFlags` (completions/helper.ts:150-170). A boolean flag needs no
+  value-completion. This is a real win.
+- **`--plain` paths: unchanged.** `--json` is purely additive; existing plain
+  output and its tests must stay byte-identical.
+- **`board` / `overview`: out of scope.** No plain path; `overview.ts:37` prints
+  a perf line that would corrupt JSON. Net-new logic, not a mirror — excluded.
+- **MCP `structuredContent`: deferred** to a follow-up PR (keeps the diff small
+  and avoids `build.test.ts` / MCP-integration churn).
+
+---
+
+## 4. Tests (`src/test/cli-json-output.test.ts`)
+
+Mirror the existing subprocess+substring style of `cli-plain-output.test.ts`
+(no snapshots): spawn the CLI, capture stdout, `JSON.parse`, assert on fields.
+
+Minimum coverage:
+
+```bash
+# Representative cases the test file must cover:
+bun src/cli.ts task list --json     # → JSON.parse → kind === "taskList", data is array
+bun src/cli.ts task view back-1 --json   # → kind === "task", status has NO icon
+bun src/cli.ts search "foo" --json  # → kind === "searchResult", items typed
+```
+
+Assertions to make explicit:
+
+- `JSON.parse(stdout)` succeeds and yields `{ schemaVersion, kind, data }`.
+- `data.status` (or each row's) is the **raw** status — no icon glyph.
+- `rawContent` is **absent** by default; no bare-ISO `lastModified` leaks in.
+- **The non-TTY / pipe case (mandatory):** run `--json` with stdout **not** a
+  TTY and assert the output is still parseable JSON — i.e. `--json` **beats**
+  `shouldAutoPlain`. This is the regression guard for the §3b ordering bug.
+
+Existing `--plain` tests must remain green (additive change). Run the full suite:
+
+```bash
+bun run lint   # Biome: tabs, double quotes, 120 width; husky auto-fixes on commit
+bun test       # all green, including the new file
+```
+
+---
+
+## 5. Docs inside the fork (help-schema + CLI-INSTRUCTIONS)
+
+So the flag is discoverable and the maintainer's tooling stays consistent:
+
+- Add `--json` to each touched command's `addHelpSchema` block (the
+  `optional` / `output` / `examples` text near each command, e.g. cli.ts:2743+).
+- Update `CLI-INSTRUCTIONS.md` to mention `--json` alongside `--plain` for the
+  three read commands, including the one-envelope-per-command contract.
+
+These are part of the diff, not afterthoughts — Backlog.md's PR culture expects
+help text and instructions to track the flag.
+
+---
+
+## 6. Build the local binary (lore's interim git dependency)
+
+`lore` itself ships via `bun build --compile`, and its adapter shells out to a
+`backlog` binary — so consuming the fork as a **git dependency that lore compiles
+locally** is near-zero marginal cost and the single source of truth during the
+interim. (Rejected alternatives: a 6-target per-platform npm publish is too heavy
+pre-merge; a vendored prebuilt binary goes stale and is platform-locked.)
+
+```bash
+# In the fork checkout, on the tasks/back-XXX-json-output branch:
+bun run build          # or the repo's compile script; produces the CLI binary
+bun build --compile ./src/cli.ts --outfile dist/backlog   # if compiling directly
+
+# Smoke-test the patched flag and the json-beats-pipe behavior:
+./dist/backlog --version
+./dist/backlog task list --json | head -c 400        # must be one JSON object
+./dist/backlog task view back-1 --json | grep -c '"status"'   # icon-free status
+```
+
+On the `lore` side, pin the fork branch and compile it during `lore` setup:
+
+```jsonc
+// lore package.json (interim)
+"dependencies": {
+  "backlog.md": "github:jeremy-newhouse/Backlog.md#tasks/back-XXX-json-output"
+}
+```
+
+`lore`'s **capability probe** then gates the JSON path: it runs
+`backlog --version` plus a dry `backlog task list --json`, asserts the version is
+at-or-above its floor and that one parseable envelope comes back, and **fails
+loud** otherwise. There is **no `--plain` text-parser fallback** in `lore` — that
+is a deliberate rejection recorded in
+[ADR-0002](../adr/0002-backlog-integration-json-only.md). The probe either finds
+a `--json`-capable binary or stops; it never silently mis-parses. Probe and
+min-version mechanics are specified in the
+[Backlog.md CLI contract](../reference/backlog-cli-contract.md).
+
+---
+
+## 7. Open the minimal upstream PR
+
+```bash
+git push -u origin tasks/back-XXX-json-output
+gh pr create \
+  --repo MrLesk/Backlog.md \
+  --base main \
+  --title "BACK-XXX - Add --json output to read commands" \
+  --body-file -   # fill the PR template: task link, AC, plan, Testing section
+```
+
+PR contents (and nothing more):
+
+- The shared `src/formatters/task-json.ts` serializer(s) + the envelope wrapper.
+- `--json` option + json-before-plain branch on `task list`, `task view`,
+  `task <id>`, and `search`.
+- `src/test/cli-json-output.test.ts` **including the non-TTY pipe case**.
+- `addHelpSchema` + `CLI-INSTRUCTIONS.md` updates.
+- The referenced backlog task (AC + plan + Testing) — the template requires it.
+
+PR etiquette: open the **task first**, reference it in the PR, and explicitly
+offer the **MCP `structuredContent` follow-up** as stated roadmap (same
+serializer, separate diff) so reviewers see the small scope is deliberate.
+
+---
+
+## 8. Migrate to upstream on release (and bump the floor)
+
+Once `--json` ships in a stock Backlog.md release:
+
+1. Flip `lore`'s dependency from the fork git-dep to the published package
+   (`"backlog.md": "^<first-version-with-json>"`).
+2. **Bump the capability probe's minimum version** to that release, so the floor
+   now points at a stock binary rather than the fork branch.
+3. Keep the canonical schema reference
+   ([backlog-json-schema.md](../reference/backlog-json-schema.md)) as the
+   contract of record; the upstream output must match it (the patch was designed
+   to produce exactly that shape).
+4. Until then, **rebase the fork branch on upstream periodically** — Backlog.md
+   is an active repo. Re-grep the cited line numbers after each rebase; they are
+   anchors, not guarantees.
+
+---
+
+## Appendix — quick reference
+
+**Files changed in the fork (lore-scope only):**
+
+- `src/formatters/task-json.ts` — **new**, shared serializer(s) + envelope.
+- `src/cli.ts` — `jsonFlagInArgv` / `isJsonRequested` / `emitJson` at 425-429;
+  `.option("--json")` + json-before-plain branch on the four sites in §3b;
+  `addHelpSchema` text.
+- `src/test/cli-json-output.test.ts` — **new**, with the mandatory pipe case.
+- `CLI-INSTRUCTIONS.md` — `--json` documentation.
+
+**Effort (honest):** Phase A (this PR — serializer + `task list`/`view`/`<id>` +
+`search`, tests incl. pipe case) is ~**4-5 h**. The deferred MCP
+`structuredContent` follow-up is a further ~4-8 h marginal off the same
+serializer.
+
+**Related contracts:**
+
+- Data shape: [Backlog.md `--json` schema](../reference/backlog-json-schema.md)
+- Operational rules: [Backlog.md CLI contract](../reference/backlog-cli-contract.md)
+- Decision: [ADR-0002 — Backlog.md integration, JSON-only](../adr/0002-backlog-integration-json-only.md)
+- Where this sits in the plan: [lore design spec](../specs/lore-design.md)
+- Agent setup after BJP: [agent onboarding runbook](agent-onboarding.md)
