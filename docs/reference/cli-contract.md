@@ -245,7 +245,7 @@ unrelated condition.
 | `3` | not_found | A referenced thing does not exist: concept id, task id, file path, link target. |
 | `4` | denied | The operation is refused: e.g. an edit targeting a lore-managed region, or a guarded destructive op without the required confirmation. |
 | `5` | conflict | Already-exists / write-race: id collision on `new`, supersede target already superseded, concurrent-write conflict. |
-| `6` | validation_or_drift | A gate failed: `lore validate` non-conformance, or `lore check` drift / broken-link / heading-anchor / portability failure. |
+| `6` | `validation` / `drift` | A gate failed: `lore validate` non-conformance (`validation`), or `lore check` drift / broken-link / heading-anchor / portability failure (`drift`). Two distinct `error_type` strings sharing exit `6` (§5.3). |
 
 **Code `1` is intentionally NOT used for any expected, classifiable
 condition.** It is reserved to mean "unexpected / uncaught" — a crash or bug.

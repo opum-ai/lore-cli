@@ -103,6 +103,22 @@ describe("toErrorEnvelope", () => {
     expect("hint" in envelope).toBe(false);
     expect("input" in envelope).toBe(false);
   });
+
+  test("omits an empty-string hint", () => {
+    const envelope = toErrorEnvelope(new LoreError("usage", "bad flag", ""));
+    expect("hint" in envelope).toBe(false);
+  });
+
+  test("omits a null or primitive input (§5.2 types input as an object)", () => {
+    expect("input" in toErrorEnvelope(new LoreError("not_found", "missing", undefined, null))).toBe(false);
+    expect("input" in toErrorEnvelope(new LoreError("not_found", "missing", undefined, "raw-id"))).toBe(false);
+    expect("input" in toErrorEnvelope(new LoreError("not_found", "missing", undefined, 0))).toBe(false);
+  });
+
+  test("still echoes an array input (arrays are objects)", () => {
+    const envelope = toErrorEnvelope(new LoreError("conflict", "dupes", undefined, ["a", "b"]));
+    expect(envelope.input).toEqual(["a", "b"]);
+  });
 });
 
 describe("formatErrorText", () => {
@@ -329,6 +345,43 @@ describe("reportError", () => {
     const parsed = JSON.parse(stderr.text());
     expect(parsed.error_type).toBe("uncaught");
     expect(typeof parsed.message).toBe("string");
+  });
+
+  test("a thrown non-Error object surfaces its detail, not [object Object]", () => {
+    const stderr = capture();
+    reportError({ code: "ENOENT", path: "/x", message: "file missing" }, { json: true, stderr });
+    const parsed = JSON.parse(stderr.text());
+    expect(parsed.error_type).toBe("uncaught");
+    // Prefers the object's own message field over String() => "[object Object]".
+    expect(parsed.message).toBe("file missing");
+  });
+
+  test("a thrown non-Error object without a message is JSON-projected, not [object Object]", () => {
+    const stderr = capture();
+    reportError({ code: "EACCES", path: "/x" }, { json: true, stderr });
+    const parsed = JSON.parse(stderr.text());
+    expect(parsed.error_type).toBe("uncaught");
+    expect(parsed.message).not.toBe("[object Object]");
+    expect(parsed.message).toContain("EACCES");
+  });
+
+  test("--json safe path honors a custom toJSON on input (fast/safe paths agree)", () => {
+    // A BigInt sibling forces the safe-serialization path; the value with a
+    // custom toJSON must still serialize via its toJSON, not its raw fields.
+    const widget = { secret: "raw-internal", toJSON: () => ({ shown: "ok" }) };
+    const stderr = capture();
+    reportError(new LoreError("validation", "bad", undefined, { widget, n: 9n }), { json: true, stderr });
+    const parsed = JSON.parse(stderr.text());
+    expect(parsed.input.widget).toEqual({ shown: "ok" });
+    expect(parsed.input.n).toBe("9");
+  });
+
+  test("--json safe path honors Date.toJSON (ISO string, not {})", () => {
+    const when = new Date("2026-06-22T00:00:00.000Z");
+    const stderr = capture();
+    reportError(new LoreError("conflict", "stamp", undefined, { when, n: 1n }), { json: true, stderr });
+    const parsed = JSON.parse(stderr.text());
+    expect(parsed.input.when).toBe("2026-06-22T00:00:00.000Z");
   });
 });
 

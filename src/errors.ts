@@ -99,16 +99,22 @@ interface UncaughtEnvelope {
 }
 
 /**
- * Project a {@link LoreError} onto its `--json` error envelope. `hint` and
- * `input` are omitted when absent, keeping the emitted object minimal; the field
- * order matches the contract example.
+ * Project a {@link LoreError} onto its `--json` error envelope. `hint` is omitted
+ * when absent or empty; `input` is included only when it is a non-null object
+ * (cli-contract §5.2 types it as an object), so a `null`/primitive `input` is
+ * dropped rather than emitted as noise. Field order matches the contract example.
  */
 export function toErrorEnvelope(err: LoreError): ErrorEnvelope {
   const envelope: ErrorEnvelope = { error_type: err.type, message: err.message };
-  if (err.hint !== undefined) {
+  // A hint counts as present only when it is a non-empty string; an empty hint
+  // would emit a meaningless `"hint": ""` (and a dangling `hint:` line in text).
+  if (err.hint) {
     envelope.hint = err.hint;
   }
-  if (err.input !== undefined) {
+  // §5.2 documents `input` as an object. Echo a non-null object (or array) only;
+  // a `null` or primitive would emit `input: null` / `input: "..."`, which a
+  // consumer that reads `envelope.input.<field>` cannot tolerate.
+  if (typeof err.input === "object" && err.input !== null) {
     envelope.input = err.input;
   }
   return envelope;
@@ -134,6 +140,16 @@ function paint(label: string, sequence: string, color: boolean): string {
 }
 
 /**
+ * The single authoritative `error: <message>` head for text-mode diagnostics
+ * (cli-contract §5.4). Both {@link formatErrorText} (classifiable errors) and
+ * {@link reportError}'s uncaught branch render through this, so the two never
+ * drift in prefix/color/spacing.
+ */
+function errorHead(message: string, color: boolean): string {
+  return `${paint("error:", RED, color)} ${message}`;
+}
+
+/**
  * Render a {@link LoreError} as a human diagnostic for stderr: a single
  * `error: <message>` line plus, when present, a `hint: <hint>` line
  * (cli-contract §5.4). Color is applied only when `opts.color` is true; the
@@ -141,8 +157,8 @@ function paint(label: string, sequence: string, color: boolean): string {
  */
 export function formatErrorText(err: LoreError, opts: { color?: boolean } = {}): string {
   const color = opts.color ?? false;
-  const head = `${paint("error:", RED, color)} ${err.message}`;
-  if (err.hint === undefined) {
+  const head = errorHead(err.message, color);
+  if (!err.hint) {
     return head;
   }
   return `${head}\n${paint("hint:", DIM, color)} ${err.hint}`;
@@ -157,8 +173,12 @@ export interface Writer {
  * Project an arbitrary value onto a JSON-safe shape — primitives, arrays, and
  * plain objects only — that {@link JSON.stringify} can encode without throwing.
  * This is the degraded path {@link safeStringify} takes when a raw stringify
- * fails. It tolerates exactly the things `JSON.stringify` chokes on:
+ * fails. It mirrors `JSON.stringify`'s own semantics, then tolerates exactly the
+ * things it chokes on:
  *
+ * - A custom `toJSON` is honored (a `Date` → its ISO string, a class → its
+ *   `toJSON` shape), so this fallback agrees with the fast path and respects a
+ *   `toJSON` written to hide fields.
  * - `BigInt` → its decimal string.
  * - Reference cycles → `"[Circular]"`, detected against the **ancestor chain**
  *   (not "seen anywhere"), so a shared but acyclic node — a diamond — still
@@ -168,9 +188,10 @@ export interface Writer {
  *
  * `function`/`undefined`/`symbol` are dropped just as `JSON.stringify` drops
  * them. Plain-string fields are returned verbatim, which is why an envelope's
- * `error_type`/`message`/`hint` always survive this path.
+ * `error_type`/`message`/`hint` always survive this path. `ancestors` is the
+ * set of objects on the current path (O(1) membership; cleared on unwind).
  */
-function toJsonSafe(value: unknown, ancestors: object[]): unknown {
+function toJsonSafe(value: unknown, ancestors: Set<object>): unknown {
   if (value === null) {
     return null;
   }
@@ -183,11 +204,27 @@ function toJsonSafe(value: unknown, ancestors: object[]): unknown {
     // dropped by JSON.stringify, so returning undefined mirrors its semantics.
     return kind === "string" || kind === "number" || kind === "boolean" ? value : undefined;
   }
-  if (ancestors.includes(value as object)) {
+  if (ancestors.has(value as object)) {
     return "[Circular]";
   }
-  ancestors.push(value as object);
+  ancestors.add(value as object);
   try {
+    // Honor a custom `toJSON` exactly as JSON.stringify would (before the array
+    // check, as it does). Reading or invoking it may throw — isolate that.
+    let replacement: unknown;
+    let replaced = false;
+    try {
+      const toJson = (value as { toJSON?: unknown }).toJSON;
+      if (typeof toJson === "function") {
+        replacement = (toJson as () => unknown).call(value);
+        replaced = true;
+      }
+    } catch {
+      return "[Unserializable]";
+    }
+    if (replaced) {
+      return toJsonSafe(replacement, ancestors);
+    }
     if (Array.isArray(value)) {
       return (value as unknown[]).map((item) => {
         try {
@@ -211,7 +248,7 @@ function toJsonSafe(value: unknown, ancestors: object[]): unknown {
     }
     return out;
   } finally {
-    ancestors.pop();
+    ancestors.delete(value as object);
   }
 }
 
@@ -224,14 +261,46 @@ function toJsonSafe(value: unknown, ancestors: object[]): unknown {
  * throws do we re-encode through {@link toJsonSafe}, which degrades the offending
  * fields while leaving the envelope's classifiable string fields
  * (`error_type`/`message`/`hint`) intact. Callers pass an object envelope, whose
- * own keys are enumerable, so `toJsonSafe` cannot throw and the result is always
- * a string.
+ * own keys are enumerable, so the walk cannot throw and the result is a string;
+ * the inner guard is an absolute last resort for a hostile top-level value.
  */
 function safeStringify(value: unknown): string {
   try {
     return JSON.stringify(value);
   } catch {
-    return JSON.stringify(toJsonSafe(value, []));
+    try {
+      return JSON.stringify(toJsonSafe(value, new Set()));
+    } catch {
+      return JSON.stringify("[unserializable]");
+    }
+  }
+}
+
+/**
+ * Best-effort single-string message for a non-{@link LoreError} thrown value
+ * (the uncaught path). A real `Error` yields its `message` (or its `toString`
+ * when the message is empty); a thrown POJO that carries its own diagnostics —
+ * e.g. an `{ code, path, message }` rejection — yields its `message` field or,
+ * failing that, a JSON projection, rather than the useless `"[object Object]"`
+ * that `String()` would produce. All coercion is guarded: deriving the message
+ * must never become a second throw on the crash-reporting path (a thrown value
+ * may carry a hostile `toString`/`Symbol.toPrimitive`).
+ */
+function deriveMessage(err: unknown): string {
+  try {
+    if (err instanceof Error) {
+      return typeof err.message === "string" && err.message !== "" ? err.message : String(err);
+    }
+    if (typeof err === "string") {
+      return err;
+    }
+    if (typeof err === "object" && err !== null) {
+      const own = (err as { message?: unknown }).message;
+      return typeof own === "string" && own !== "" ? own : safeStringify(err);
+    }
+    return String(err);
+  } catch {
+    return "[unstringifiable error]";
   }
 }
 
@@ -264,22 +333,12 @@ export function reportError(err: unknown, opts: { json: boolean; color?: boolean
     return EXIT_CODES[err.type];
   }
 
-  // Deriving the message can itself throw — a non-Error thrown value may carry a
-  // hostile toString / Symbol.toPrimitive. This path reports a crash; it must
-  // not become one. Coerce defensively and guarantee a string (cli-contract
-  // §5.2 requires `message: string`).
-  let message: string;
-  try {
-    const raw = err instanceof Error ? (err.message ?? err) : err;
-    message = typeof raw === "string" ? raw : String(raw);
-  } catch {
-    message = "[unstringifiable error]";
-  }
+  const message = deriveMessage(err);
   if (opts.json) {
     const envelope: UncaughtEnvelope = { error_type: "uncaught", message };
     stderr.write(`${safeStringify(envelope)}\n`);
   } else {
-    stderr.write(`${paint("error:", RED, opts.color ?? false)} ${message}\n`);
+    stderr.write(`${errorHead(message, opts.color ?? false)}\n`);
   }
   return EXIT_UNCAUGHT;
 }

@@ -20,8 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that tolerates a circular, `BigInt`-bearing, or throwing-`toJSON`/getter
   `LoreError.input` (true cycles → `[Circular]`, `BigInt` → decimal string, shared
   acyclic refs preserved, an individual unserializable field → `[Unserializable]`)
-  while `error_type`/`message`/`hint` always survive; the uncaught branch also
-  guards message derivation against a hostile `toString`/`Symbol.toPrimitive`.
+  while `error_type`/`message`/`hint` always survive; the safe path honors a
+  custom `toJSON` (a `Date` → its ISO string), so it agrees with the fast path
+  and respects a `toJSON` written to hide fields. The uncaught branch guards
+  message derivation against a hostile `toString`/`Symbol.toPrimitive` and
+  surfaces a thrown non-Error object's detail (its `message`, else a JSON
+  projection) instead of `"[object Object]"`. The envelope omits an empty `hint`
+  and only echoes a non-null object `input` (cli-contract §5.2).
   `WarningCollector.flush` is documented as non-draining, and `EXIT_CODES` is
   frozen.
 - CI (LORE-8): GitHub Actions workflow running `lint`, `typecheck`, and
