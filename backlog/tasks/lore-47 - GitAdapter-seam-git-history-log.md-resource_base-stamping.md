@@ -4,6 +4,7 @@ title: 'GitAdapter seam: git-history log.md + resource_base stamping'
 status: To Do
 assignee: []
 created_date: '2026-06-21 20:16'
+updated_date: '2026-06-22 02:06'
 labels:
   - eck-alignment
   - core
@@ -25,7 +26,7 @@ Add the third injectable deterministic seam (GitAdapter) and the resource_base c
 <!-- AC:BEGIN -->
 - [ ] #1 ADR-0014 sec 8 amended to name the GitAdapter as the third injectable seam (faked in tests; git = local deterministic computation, not network/model)
 - [ ] #2 ADR-0007 amended: log.md is a sync-time materialized artifact excluded from 'lore check' drift-compare; index.md + managed blocks stay gated as today
-- [ ] #3 ADR-0013 amended: optional resource_base config key (empty default => omitted)
-- [ ] #4 log.md git-history-derived, per-folder, directory-sorted, byte-stable over a pinned range; tested against a fixed fake-history fixture (not real history) and excluded from byte-equality goldens
-- [ ] #5 'lore new' stamps 'resource' only when resource_base is set; value = resource_base + concept path with documented normalization; omitted when empty
+- [ ] #3 log.md git-history-derived, per-folder, directory-sorted, byte-stable over a pinned range; tested against a fixed fake-history fixture (not real history) and excluded from byte-equality goldens
+- [ ] #4 'lore new' stamps 'resource' only when resource_base is set; value = resource_base + concept path with documented normalization; omitted when empty
+- [ ] #5 ADR-0013 amended: resource_base is a key in .lore/profile.toml [profile] (NOT config.toml — reconciles with LORE-46); empty default => resource omitted. Introduces .lore/profile.toml as a 2nd committed TOML (config=operational knobs; profile=type/schema source)
 <!-- AC:END -->
