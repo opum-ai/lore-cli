@@ -203,6 +203,133 @@ describe("reportError", () => {
     expect(stderr.lines()).toHaveLength(1);
     expect(JSON.parse(stderr.text())).toEqual({ error_type: "usage", message: "too big", input: { n: "42" } });
   });
+
+  test("--json survives a throwing toJSON on input: classifiable fields still survive", () => {
+    const hostile = {
+      toJSON(): never {
+        throw new Error("toJSON boom");
+      },
+    };
+    const stderr = capture();
+    let code = -1;
+    expect(() => {
+      code = reportError(new LoreError("validation", "bad frontmatter", "fix it", hostile), { json: true, stderr });
+    }).not.toThrow();
+    expect(code).toBe(6);
+    expect(stderr.lines()).toHaveLength(1);
+    const parsed = JSON.parse(stderr.text());
+    // The whole point: error_type/message/hint must NOT be lost on the error path.
+    expect(parsed.error_type).toBe("validation");
+    expect(parsed.message).toBe("bad frontmatter");
+    expect(parsed.hint).toBe("fix it");
+  });
+
+  test("--json isolates a throwing getter to its own field as [Unserializable]", () => {
+    const input = {
+      ok: "value",
+      get bad(): string {
+        throw new Error("getter boom");
+      },
+    };
+    const stderr = capture();
+    let code = -1;
+    expect(() => {
+      code = reportError(new LoreError("not_found", "missing", undefined, input), { json: true, stderr });
+    }).not.toThrow();
+    expect(code).toBe(3);
+    const parsed = JSON.parse(stderr.text());
+    expect(parsed.error_type).toBe("not_found");
+    expect(parsed.input.ok).toBe("value");
+    expect(parsed.input.bad).toBe("[Unserializable]");
+  });
+
+  test("--json preserves shared acyclic (diamond) references instead of mislabeling [Circular]", () => {
+    const shared = { x: 1 };
+    // The BigInt forces the safe-serialization path; `shared` is referenced twice
+    // but is NOT a cycle — both copies must survive in full.
+    const input: Record<string, unknown> = { left: shared, right: shared, n: 7n };
+    const stderr = capture();
+    reportError(new LoreError("usage", "dup", undefined, input), { json: true, stderr });
+    const parsed = JSON.parse(stderr.text());
+    expect(parsed.input.left).toEqual({ x: 1 });
+    expect(parsed.input.right).toEqual({ x: 1 });
+    expect(parsed.input.n).toBe("7");
+  });
+
+  test("--json breaks only true cycles while keeping shared siblings", () => {
+    const leaf = { id: "leaf" };
+    const input: Record<string, unknown> = { a: leaf, b: leaf };
+    input.self = input; // a genuine back-edge
+    const stderr = capture();
+    reportError(new LoreError("validation", "cyc", undefined, input), { json: true, stderr });
+    const parsed = JSON.parse(stderr.text());
+    expect(parsed.input.a).toEqual({ id: "leaf" });
+    expect(parsed.input.b).toEqual({ id: "leaf" });
+    expect(parsed.input.self).toBe("[Circular]");
+  });
+
+  test("--json combines circular and BigInt in one input", () => {
+    const input: Record<string, unknown> = { n: 5n };
+    input.self = input;
+    const stderr = capture();
+    reportError(new LoreError("validation", "both", undefined, input), { json: true, stderr });
+    const parsed = JSON.parse(stderr.text());
+    expect(parsed.input.n).toBe("5");
+    expect(parsed.input.self).toBe("[Circular]");
+  });
+
+  test("--json keeps the envelope on one line when message/input contain newlines", () => {
+    const stderr = capture();
+    reportError(new LoreError("usage", "line1\nline2", undefined, { note: "a\nb" }), { json: true, stderr });
+    expect(stderr.lines()).toHaveLength(1);
+    const parsed = JSON.parse(stderr.text());
+    expect(parsed.message).toBe("line1\nline2");
+    expect(parsed.input.note).toBe("a\nb");
+  });
+
+  test("a non-LoreError with a hostile toString is reported as uncaught without throwing (json)", () => {
+    const hostile = {
+      toString(): never {
+        throw new Error("toString boom");
+      },
+    };
+    const stderr = capture();
+    let code = -1;
+    expect(() => {
+      code = reportError(hostile, { json: true, stderr });
+    }).not.toThrow();
+    expect(code).toBe(EXIT_UNCAUGHT);
+    expect(stderr.lines()).toHaveLength(1);
+    const parsed = JSON.parse(stderr.text());
+    expect(parsed.error_type).toBe("uncaught");
+    expect(typeof parsed.message).toBe("string");
+  });
+
+  test("a non-LoreError with a hostile Symbol.toPrimitive is reported as uncaught without throwing (text)", () => {
+    const hostile = {
+      [Symbol.toPrimitive](): never {
+        throw new Error("toPrimitive boom");
+      },
+    };
+    const stderr = capture();
+    let code = -1;
+    expect(() => {
+      code = reportError(hostile, { json: false, stderr });
+    }).not.toThrow();
+    expect(code).toBe(EXIT_UNCAUGHT);
+    expect(stderr.text()).toContain("error:");
+  });
+
+  test("an uncaught Error with a non-string message is coerced to a string in the envelope", () => {
+    const weird = new Error("x");
+    // Error.message is typed string but can be anything at runtime.
+    (weird as { message: unknown }).message = { structured: true };
+    const stderr = capture();
+    reportError(weird, { json: true, stderr });
+    const parsed = JSON.parse(stderr.text());
+    expect(parsed.error_type).toBe("uncaught");
+    expect(typeof parsed.message).toBe("string");
+  });
 });
 
 describe("WarningCollector", () => {
@@ -250,5 +377,43 @@ describe("WarningCollector", () => {
     const stderr = capture();
     expect(new WarningCollector().flush({ stderr })).toBe(0);
     expect(stderr.text()).toBe("");
+  });
+
+  test("flush is non-draining: a second flush re-emits and count/list are unchanged", () => {
+    const warnings = new WarningCollector();
+    warnings.add("first");
+    warnings.add("second");
+    const a = capture();
+    expect(warnings.flush({ stderr: a })).toBe(2);
+    expect(a.lines()).toEqual(["warning: first", "warning: second"]);
+    const b = capture();
+    expect(warnings.flush({ stderr: b })).toBe(2);
+    expect(b.lines()).toEqual(["warning: first", "warning: second"]);
+    expect(warnings.count).toBe(2);
+    expect(warnings.list()).toEqual(["first", "second"]);
+  });
+});
+
+describe("stdout discipline", () => {
+  test("reportError and flush never write to process.stdout", () => {
+    const writes: string[] = [];
+    const original = process.stdout.write.bind(process.stdout);
+    // biome-ignore lint/suspicious/noExplicitAny: spying on the stream signature
+    process.stdout.write = ((chunk: any) => {
+      writes.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      const stderr = capture();
+      reportError(new LoreError("not_found", "missing", "do x", { id: "a" }), { json: true, stderr });
+      reportError(new Error("boom"), { json: true, stderr });
+      reportError("plain", { json: false, stderr });
+      const warnings = new WarningCollector();
+      warnings.add("w");
+      warnings.flush({ stderr });
+    } finally {
+      process.stdout.write = original;
+    }
+    expect(writes).toEqual([]);
   });
 });

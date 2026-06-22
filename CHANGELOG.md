@@ -15,11 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on stderr, and a warnings-not-errors `WarningCollector` (advisory warnings go
   to stderr and never change the exit code by themselves). Mode/color are caller
   inputs — the module resolves no TTY/`NO_COLOR` and never writes stdout
-  (cli-contract §4–§5 / ADR-0005). The CLI wires this in at M1. The `--json`
-  error path serializes through a `safeStringify` fallback, so a circular or
-  otherwise non-serializable `LoreError.input` still emits one parseable envelope
-  (cycles → `[Circular]`, `BigInt` → string) instead of throwing while reporting
-  a failure; `WarningCollector.flush` is documented as non-draining.
+  (cli-contract §4–§5 / ADR-0005). The CLI wires this in at M1. The error path is
+  crash-safe: the `--json` envelope serializes through a `safeStringify` fallback
+  that tolerates a circular, `BigInt`-bearing, or throwing-`toJSON`/getter
+  `LoreError.input` (true cycles → `[Circular]`, `BigInt` → decimal string, shared
+  acyclic refs preserved, an individual unserializable field → `[Unserializable]`)
+  while `error_type`/`message`/`hint` always survive; the uncaught branch also
+  guards message derivation against a hostile `toString`/`Symbol.toPrimitive`.
+  `WarningCollector.flush` is documented as non-draining, and `EXIT_CODES` is
+  frozen.
 - CI (LORE-8): GitHub Actions workflow running `lint`, `typecheck`, and
   `bun test --isolate` across Ubuntu/macOS/Windows (Windows tuned with
   `--max-concurrency=4` for stability), plus a Linux compile smoke. The Bun

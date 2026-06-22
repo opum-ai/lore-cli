@@ -42,14 +42,14 @@ export const EXIT_UNCAUGHT = 1;
  * Centralized so no command invents its own mapping. Changing any entry is a
  * breaking contract change.
  */
-export const EXIT_CODES: Readonly<Record<ErrorType, number>> = {
+export const EXIT_CODES: Readonly<Record<ErrorType, number>> = Object.freeze({
   usage: 2,
   not_found: 3,
   denied: 4,
   conflict: 5,
   validation: 6,
   drift: 6,
-};
+});
 
 /**
  * A typed, classifiable failure. Core functions `throw` these instead of
@@ -83,6 +83,19 @@ export interface ErrorEnvelope {
   message: string;
   hint?: string;
   input?: unknown;
+}
+
+/**
+ * The exit-`1` envelope for an uncaught failure (cli-contract §5.1) — the
+ * catch-all emitted when a non-{@link LoreError} value reaches
+ * {@link reportError}. `uncaught` is the only `error_type` outside the §5.3
+ * table and carries no `hint`/`input`. Typed separately from
+ * {@link ErrorEnvelope} (whose `error_type` is a classifiable {@link ErrorType})
+ * so the catch-all shape is pinned to the contract at compile time.
+ */
+interface UncaughtEnvelope {
+  error_type: "uncaught";
+  message: string;
 }
 
 /**
@@ -141,36 +154,84 @@ export interface Writer {
 }
 
 /**
- * `JSON.stringify` that never throws. A {@link LoreError.input} is `unknown`, so
- * a caller can hand us a value that is **circular** or carries a `BigInt` — and
- * the error path is the last place we can afford a *second* throw (it would mask
- * the original failure with a crash). On the first throw we re-encode with a
- * replacer that breaks cycles (`[Circular]`) and coerces `BigInt` to its decimal
- * string, preserving every serializable field — `error_type`/`message`/`hint`
- * always survive, since they are plain strings. A final fallback stringifies the
- * value's tag, so the result is always one parseable JSON string.
+ * Project an arbitrary value onto a JSON-safe shape — primitives, arrays, and
+ * plain objects only — that {@link JSON.stringify} can encode without throwing.
+ * This is the degraded path {@link safeStringify} takes when a raw stringify
+ * fails. It tolerates exactly the things `JSON.stringify` chokes on:
+ *
+ * - `BigInt` → its decimal string.
+ * - Reference cycles → `"[Circular]"`, detected against the **ancestor chain**
+ *   (not "seen anywhere"), so a shared but acyclic node — a diamond — still
+ *   serializes in full instead of being mislabeled circular.
+ * - A throwing `toJSON`/getter on a single field → `"[Unserializable]"` for that
+ *   field alone; the surrounding object is unaffected.
+ *
+ * `function`/`undefined`/`symbol` are dropped just as `JSON.stringify` drops
+ * them. Plain-string fields are returned verbatim, which is why an envelope's
+ * `error_type`/`message`/`hint` always survive this path.
+ */
+function toJsonSafe(value: unknown, ancestors: object[]): unknown {
+  if (value === null) {
+    return null;
+  }
+  const kind = typeof value;
+  if (kind === "bigint") {
+    return (value as bigint).toString();
+  }
+  if (kind !== "object") {
+    // string | number | boolean survive; function | undefined | symbol are
+    // dropped by JSON.stringify, so returning undefined mirrors its semantics.
+    return kind === "string" || kind === "number" || kind === "boolean" ? value : undefined;
+  }
+  if (ancestors.includes(value as object)) {
+    return "[Circular]";
+  }
+  ancestors.push(value as object);
+  try {
+    if (Array.isArray(value)) {
+      return (value as unknown[]).map((item) => {
+        try {
+          return toJsonSafe(item, ancestors);
+        } catch {
+          return "[Unserializable]";
+        }
+      });
+    }
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>)) {
+      try {
+        // Reading the property may itself throw (a getter); keep it isolated.
+        const projected = toJsonSafe((value as Record<string, unknown>)[key], ancestors);
+        if (projected !== undefined) {
+          out[key] = projected;
+        }
+      } catch {
+        out[key] = "[Unserializable]";
+      }
+    }
+    return out;
+  } finally {
+    ancestors.pop();
+  }
+}
+
+/**
+ * `JSON.stringify` that never throws and always yields one parseable JSON value.
+ * A {@link LoreError.input} is `unknown`, so a caller can hand us a value that is
+ * **circular**, carries a `BigInt`, or has a throwing `toJSON`/getter — and the
+ * error path is the last place we can afford a *second* throw (it would mask the
+ * original failure with a crash). The fast path is a plain encode; only when it
+ * throws do we re-encode through {@link toJsonSafe}, which degrades the offending
+ * fields while leaving the envelope's classifiable string fields
+ * (`error_type`/`message`/`hint`) intact. Callers pass an object envelope, whose
+ * own keys are enumerable, so `toJsonSafe` cannot throw and the result is always
+ * a string.
  */
 function safeStringify(value: unknown): string {
   try {
     return JSON.stringify(value);
   } catch {
-    try {
-      const seen = new WeakSet<object>();
-      return JSON.stringify(value, (_key, val) => {
-        if (typeof val === "bigint") {
-          return val.toString();
-        }
-        if (typeof val === "object" && val !== null) {
-          if (seen.has(val)) {
-            return "[Circular]";
-          }
-          seen.add(val);
-        }
-        return val;
-      });
-    } catch {
-      return JSON.stringify(String(value));
-    }
+    return JSON.stringify(toJsonSafe(value, []));
   }
 }
 
@@ -203,9 +264,20 @@ export function reportError(err: unknown, opts: { json: boolean; color?: boolean
     return EXIT_CODES[err.type];
   }
 
-  const message = err instanceof Error ? err.message : String(err);
+  // Deriving the message can itself throw — a non-Error thrown value may carry a
+  // hostile toString / Symbol.toPrimitive. This path reports a crash; it must
+  // not become one. Coerce defensively and guarantee a string (cli-contract
+  // §5.2 requires `message: string`).
+  let message: string;
+  try {
+    const raw = err instanceof Error ? (err.message ?? err) : err;
+    message = typeof raw === "string" ? raw : String(raw);
+  } catch {
+    message = "[unstringifiable error]";
+  }
   if (opts.json) {
-    stderr.write(`${safeStringify({ error_type: "uncaught", message })}\n`);
+    const envelope: UncaughtEnvelope = { error_type: "uncaught", message };
+    stderr.write(`${safeStringify(envelope)}\n`);
   } else {
     stderr.write(`${paint("error:", RED, opts.color ?? false)} ${message}\n`);
   }
