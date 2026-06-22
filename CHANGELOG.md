@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Shared error model (LORE-11): `src/errors.ts` — the `LoreError` taxonomy and
+  centralized semantic exit-code mapping (`0` ok, `2` usage, `3` not-found,
+  `4` denied, `5` conflict, `6` validation/drift; `1` reserved for uncaught
+  bugs), the `--json` `{error_type,message,hint,input}` error envelope rendered
+  on stderr, and a warnings-not-errors `WarningCollector` (advisory warnings go
+  to stderr and never change the exit code by themselves). Mode/color are caller
+  inputs — the module resolves no TTY/`NO_COLOR` and never writes stdout
+  (cli-contract §4–§5 / ADR-0005). The CLI wires this in at M1.
 - CI (LORE-8): GitHub Actions workflow running `lint`, `typecheck`, and
   `bun test --isolate` across Ubuntu/macOS/Windows (Windows tuned with
   `--max-concurrency=4` for stability), plus a Linux compile smoke. The Bun
