@@ -253,6 +253,13 @@ An agent should treat exit `1` as *report this*, not *handle this*. This lets a
 caller distinguish "lore told me my input was wrong" (2/3/4/5/6) from "lore
 itself broke" (1).
 
+Even an uncaught failure stays on-contract. In `--json` mode it is reported as a
+minimal error envelope on stderr — `{ "error_type": "uncaught", "message":
+<string> }`, with no `hint`/`input` — so a crash still yields exactly one
+parseable diagnostic line and an empty stdout. `uncaught` is the **only**
+`error_type` outside the §5.3 table: it is the catch-all for any non-`LoreError`
+throw and never collides with a classifiable category.
+
 This taxonomy lets shell- and CI-level branching stay free of JSON parsing:
 
 ```sh

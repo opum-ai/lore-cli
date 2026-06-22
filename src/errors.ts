@@ -141,6 +141,40 @@ export interface Writer {
 }
 
 /**
+ * `JSON.stringify` that never throws. A {@link LoreError.input} is `unknown`, so
+ * a caller can hand us a value that is **circular** or carries a `BigInt` — and
+ * the error path is the last place we can afford a *second* throw (it would mask
+ * the original failure with a crash). On the first throw we re-encode with a
+ * replacer that breaks cycles (`[Circular]`) and coerces `BigInt` to its decimal
+ * string, preserving every serializable field — `error_type`/`message`/`hint`
+ * always survive, since they are plain strings. A final fallback stringifies the
+ * value's tag, so the result is always one parseable JSON string.
+ */
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    try {
+      const seen = new WeakSet<object>();
+      return JSON.stringify(value, (_key, val) => {
+        if (typeof val === "bigint") {
+          return val.toString();
+        }
+        if (typeof val === "object" && val !== null) {
+          if (seen.has(val)) {
+            return "[Circular]";
+          }
+          seen.add(val);
+        }
+        return val;
+      });
+    } catch {
+      return JSON.stringify(String(value));
+    }
+  }
+}
+
+/**
  * Report a failure on stderr and return its exit code — the one seam every
  * command's catch block uses.
  *
@@ -153,13 +187,16 @@ export interface Writer {
  *   clean stderr.
  *
  * stdout is never touched, preserving the "stdout parses or stays silent"
- * invariant. Mode/color are inputs, not resolved here.
+ * invariant. Mode/color are inputs, not resolved here. JSON serialization goes
+ * through {@link safeStringify}, so a circular or otherwise non-serializable
+ * `input` still yields one parseable envelope instead of throwing on the very
+ * path meant to report a failure.
  */
 export function reportError(err: unknown, opts: { json: boolean; color?: boolean; stderr?: Writer }): number {
   const stderr = opts.stderr ?? process.stderr;
   if (err instanceof LoreError) {
     if (opts.json) {
-      stderr.write(`${JSON.stringify(toErrorEnvelope(err))}\n`);
+      stderr.write(`${safeStringify(toErrorEnvelope(err))}\n`);
     } else {
       stderr.write(`${formatErrorText(err, { color: opts.color })}\n`);
     }
@@ -168,7 +205,7 @@ export function reportError(err: unknown, opts: { json: boolean; color?: boolean
 
   const message = err instanceof Error ? err.message : String(err);
   if (opts.json) {
-    stderr.write(`${JSON.stringify({ error_type: "uncaught", message })}\n`);
+    stderr.write(`${safeStringify({ error_type: "uncaught", message })}\n`);
   } else {
     stderr.write(`${paint("error:", RED, opts.color ?? false)} ${message}\n`);
   }
@@ -208,6 +245,11 @@ export class WarningCollector {
   /**
    * Write each collected warning to stderr as `warning: <message>` and return
    * the number flushed. Color is applied only when `opts.color` is true.
+   *
+   * This is **non-draining**: it does not clear the collected warnings, so a
+   * second `flush` re-emits them and {@link list}/{@link count} stay valid
+   * afterward. Gate commands flush exactly once; report a count from
+   * {@link count} rather than relying on `flush` to reset.
    */
   flush(opts: { color?: boolean; stderr?: Writer } = {}): number {
     const stderr = opts.stderr ?? process.stderr;

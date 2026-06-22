@@ -173,6 +173,36 @@ describe("reportError", () => {
       expect(reportError(new LoreError(type, "x"), { json: true, stderr })).toBe(EXIT_CODES[type]);
     }
   });
+
+  test("--json survives a circular input: never throws, one parseable line, cycle broken", () => {
+    const circular: Record<string, unknown> = { id: "a" };
+    circular.self = circular;
+    const stderr = capture();
+    let code = -1;
+    expect(() => {
+      code = reportError(new LoreError("validation", "bad frontmatter", "fix it", circular), { json: true, stderr });
+    }).not.toThrow();
+    expect(code).toBe(6);
+    expect(stderr.lines()).toHaveLength(1);
+    const parsed = JSON.parse(stderr.text());
+    // The classifiable fields always survive; only the cycle is broken.
+    expect(parsed.error_type).toBe("validation");
+    expect(parsed.message).toBe("bad frontmatter");
+    expect(parsed.hint).toBe("fix it");
+    expect(parsed.input.id).toBe("a");
+    expect(parsed.input.self).toBe("[Circular]");
+  });
+
+  test("--json survives a BigInt in input: never throws, BigInt coerced to string", () => {
+    const stderr = capture();
+    let code = -1;
+    expect(() => {
+      code = reportError(new LoreError("usage", "too big", undefined, { n: 42n }), { json: true, stderr });
+    }).not.toThrow();
+    expect(code).toBe(2);
+    expect(stderr.lines()).toHaveLength(1);
+    expect(JSON.parse(stderr.text())).toEqual({ error_type: "usage", message: "too big", input: { n: "42" } });
+  });
 });
 
 describe("WarningCollector", () => {
