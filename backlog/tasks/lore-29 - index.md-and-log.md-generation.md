@@ -4,12 +4,12 @@ title: index.md and log.md generation
 status: To Do
 assignee: []
 created_date: '2026-06-21 06:26'
-updated_date: '2026-06-21 06:28'
+updated_date: '2026-06-21 20:16'
 labels:
   - core
 milestone: m-4
 dependencies:
-  - LORE-28
+  - LORE-47
 documentation:
   - docs/reference/okf-conformance.md
 priority: medium
