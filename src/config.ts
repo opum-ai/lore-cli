@@ -27,7 +27,7 @@
  * contract identical to the rest of lore.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { LoreError } from "./errors";
 
@@ -53,7 +53,11 @@ export type ConfluenceFormat = (typeof CONFLUENCE_FORMATS)[number];
 export interface ReconcileConfig {
   /** The roll-up policy: all-tasks-Done → done, any In Progress → in-progress, else todo. */
   mode: ReconcileMode;
-  /** Per-repo status-name overrides (a Backlog status string → the lore status to roll it up as). */
+  /**
+   * Per-repo status overrides: a Backlog status name → a rollup status string.
+   * Values are carried through verbatim (validated only as strings here);
+   * reconcile.ts (LORE-23) owns the rollup-status vocabulary and its semantics.
+   */
   overrides: Readonly<Record<string, string>>;
 }
 
@@ -112,7 +116,7 @@ export function loadConfig(options: LoadConfigOptions = {}): LoreConfig {
 }
 
 /** The zero-config defaults — what `loadConfig` returns when no `config.toml` exists. */
-function defaultConfig(): LoreConfig {
+export function defaultConfig(): LoreConfig {
   return {
     reconcile: { mode: "task-rollup", overrides: {} },
     validate: { externalLinks: false, promotePortability: false },
@@ -122,42 +126,50 @@ function defaultConfig(): LoreConfig {
 
 /** Read → parse → validate the file at `path`, or return defaults when it is absent. */
 function parseConfigFile(path: string): LoreConfig {
-  if (!existsSync(path)) {
+  const raw = readConfigText(path);
+  if (raw === undefined) {
     return defaultConfig();
   }
-  return validateConfig(parseToml(readConfigText(path)));
+  return validateConfig(parseToml(raw));
 }
 
-/** Read the config file as UTF-8, mapping an unreadable-but-present file to a validation error. */
-function readConfigText(path: string): string {
+/**
+ * Read the config file as UTF-8. One read is the sole source of truth for
+ * absent-vs-unreadable: `ENOENT` → `undefined` (the zero-config case — no
+ * separate `existsSync`, so no time-of-check/time-of-use window), while any
+ * other failure (a directory at the path, a permissions error, …) is surfaced
+ * with its OS reason instead of a blanket "check file permissions".
+ */
+function readConfigText(path: string): string | undefined {
   try {
     return readFileSync(path, "utf8");
-  } catch {
-    return fail(`${CONFIG_REL_PATH} could not be read`, `check file permissions on ${CONFIG_REL_PATH}`, {
-      path: CONFIG_REL_PATH,
-    });
+  } catch (cause) {
+    if (isErrnoCode(cause, "ENOENT")) {
+      return undefined;
+    }
+    return fail(
+      `${CONFIG_REL_PATH} could not be read: ${describeCause(cause)}`,
+      `ensure ${CONFIG_REL_PATH} is a readable file`,
+      { path: CONFIG_REL_PATH },
+    );
   }
 }
 
-/** Parse TOML via Bun's native parser, mapping a syntax error to a validation error. */
-function parseToml(raw: string): unknown {
+/** Parse TOML via Bun's native parser, surfacing the parser's own message on failure. */
+function parseToml(raw: string): Record<string, unknown> {
   try {
-    return Bun.TOML.parse(raw);
-  } catch {
-    return fail(`${CONFIG_REL_PATH} is not valid TOML`, `fix the TOML syntax in ${CONFIG_REL_PATH}`, {
-      path: CONFIG_REL_PATH,
-    });
+    return Bun.TOML.parse(raw) as Record<string, unknown>;
+  } catch (cause) {
+    return fail(
+      `${CONFIG_REL_PATH} is not valid TOML: ${describeCause(cause)}`,
+      `fix the TOML syntax in ${CONFIG_REL_PATH}`,
+      { path: CONFIG_REL_PATH },
+    );
   }
 }
 
-/** Project the parsed TOML onto a {@link LoreConfig}, validating known keys and merging over defaults. */
-function validateConfig(parsed: unknown): LoreConfig {
-  const root = asTable(parsed, "<root>");
-  if (root === undefined) {
-    return fail(`${CONFIG_REL_PATH} must be a TOML table`, `see the ${CONFIG_REL_PATH} format in ADR-0013`, {
-      path: CONFIG_REL_PATH,
-    });
-  }
+/** Project the parsed TOML table onto a {@link LoreConfig}, validating known keys and merging over defaults. */
+function validateConfig(root: Record<string, unknown>): LoreConfig {
   const defaults = defaultConfig();
 
   const reconcileTable = asTable(root.reconcile, "reconcile");
@@ -175,20 +187,23 @@ function validateConfig(parsed: unknown): LoreConfig {
       defaults.validate.promotePortability,
   };
 
-  return { reconcile, validate, confluence: validateConfluence(asTable(root.confluence, "confluence")) };
+  return {
+    reconcile,
+    validate,
+    confluence: validateConfluence(asTable(root.confluence, "confluence"), defaults.confluence),
+  };
 }
 
 /** Project the `[confluence]` table, rejecting a committed token (ADR-0013: secrets never enter the repo). */
-function validateConfluence(table: Record<string, unknown> | undefined): ConfluenceConfig {
-  if (table && "token" in table) {
-    fail(
-      `${CONFIG_REL_PATH}: a Confluence token must not be committed`,
-      `remove \`token\` from [confluence] and set $${TOKEN_ENV} instead`,
-      { key: "confluence.token" },
-    );
+function validateConfluence(table: Record<string, unknown> | undefined, defaults: ConfluenceConfig): ConfluenceConfig {
+  if (table) {
+    // ADR-0013: the token must never be committed. Scan the whole [confluence]
+    // subtree, not just its top level, so a token tucked into a nested subtable
+    // (e.g. [confluence.auth]) is caught rather than tolerated as an unknown key.
+    assertNoCommittedToken(table, "confluence");
   }
   const confluence: ConfluenceConfig = {
-    format: asEnum(table?.format, "confluence.format", CONFLUENCE_FORMATS) ?? "storage",
+    format: asEnum(table?.format, "confluence.format", CONFLUENCE_FORMATS) ?? defaults.format,
   };
   const baseUrl = asString(table?.base_url, "confluence.base_url");
   if (baseUrl !== undefined) {
@@ -198,7 +213,7 @@ function validateConfluence(table: Record<string, unknown> | undefined): Conflue
   if (space !== undefined) {
     confluence.space = space;
   }
-  const parentPageId = asString(table?.parent_page_id, "confluence.parent_page_id");
+  const parentPageId = asPageId(table?.parent_page_id, "confluence.parent_page_id");
   if (parentPageId !== undefined) {
     confluence.parentPageId = parentPageId;
   }
@@ -206,14 +221,40 @@ function validateConfluence(table: Record<string, unknown> | undefined): Conflue
 }
 
 /**
- * Overlay the Confluence token from the environment. Only a non-empty value
- * counts: an unset or blank `$LORE_CONFLUENCE_TOKEN` leaves the token absent so
- * the (deferred) publish adapter fails loud rather than sending an empty
- * credential (ADR-0013). The token is never written back to the file.
+ * Reject a committed Confluence token anywhere under `[confluence]` (ADR-0013),
+ * recursing through nested subtables and arrays of tables so a `token` key at
+ * any depth fails loud with a pointer to the env var instead of slipping
+ * through as an unrecognized nested key. The token value is never echoed.
+ */
+function assertNoCommittedToken(table: Record<string, unknown>, path: string): void {
+  if ("token" in table) {
+    fail(
+      `${CONFIG_REL_PATH}: a Confluence token must not be committed`,
+      `remove \`token\` from [${path}] and set $${TOKEN_ENV} instead`,
+      { key: `${path}.token` },
+    );
+  }
+  for (const [childKey, childValue] of Object.entries(table)) {
+    const childPath = `${path}.${childKey}`;
+    for (const candidate of Array.isArray(childValue) ? childValue : [childValue]) {
+      if (typeof candidate === "object" && candidate !== null && !Array.isArray(candidate)) {
+        assertNoCommittedToken(candidate as Record<string, unknown>, childPath);
+      }
+    }
+  }
+}
+
+/**
+ * Overlay the Confluence token from the environment. Only a value with
+ * non-whitespace content counts: an unset, empty, or whitespace-only
+ * `$LORE_CONFLUENCE_TOKEN` leaves the token absent so the (deferred) publish
+ * adapter fails loud rather than sending a blank credential (ADR-0013). Stray
+ * surrounding whitespace (a shell or CI secret can introduce it) is trimmed, and
+ * the token is never written back to the file.
  */
 function overlayEnv(config: LoreConfig, env: Record<string, string | undefined>): LoreConfig {
-  const token = env[TOKEN_ENV];
-  if (token === undefined || token === "") {
+  const token = env[TOKEN_ENV]?.trim();
+  if (!token) {
     return config;
   }
   return { ...config, confluence: { ...config.confluence, token } };
@@ -222,6 +263,32 @@ function overlayEnv(config: LoreConfig, env: Record<string, string | undefined>)
 /** Throw a `"validation"` {@link LoreError}; typed `never` so callers can `return fail(...)`. */
 function fail(message: string, hint: string, input: Record<string, unknown>): never {
   throw new LoreError("validation", message, hint, input);
+}
+
+/** True when `cause` is a Node fs error carrying the given errno `code` (e.g. `"ENOENT"`). */
+function isErrnoCode(cause: unknown, code: string): boolean {
+  return typeof cause === "object" && cause !== null && (cause as { code?: unknown }).code === code;
+}
+
+/**
+ * A single-line human reason from a thrown cause, for embedding in a diagnostic.
+ * An aggregate parse error (Bun can throw one for TOML) is flattened to its
+ * sub-messages; anything else uses its `Error.message`.
+ */
+function describeCause(cause: unknown): string {
+  const parts: string[] = [];
+  if (cause !== null && typeof cause === "object" && Array.isArray((cause as { errors?: unknown }).errors)) {
+    for (const sub of (cause as { errors: unknown[] }).errors) {
+      parts.push(sub instanceof Error ? sub.message : String(sub));
+    }
+  }
+  if (parts.length === 0) {
+    parts.push(cause instanceof Error ? cause.message : String(cause));
+  }
+  return parts
+    .join("; ")
+    .replace(/\s*[\r\n]+\s*/g, " ")
+    .trim();
 }
 
 /** Require a TOML table (plain object) when present; `undefined` passes through for "absent". */
@@ -284,7 +351,12 @@ function asStringMap(value: unknown, key: string): Record<string, string> | unde
   if (table === undefined) {
     return undefined;
   }
-  const out: Record<string, string> = {};
+  // `Object.create(null)`, not `{}`: an override literally keyed `__proto__`
+  // (or `constructor`/`prototype`) assigned into a plain object hits the
+  // inherited setter and is silently dropped — the same hazard errors.ts guards
+  // against in its JSON projection. A null-prototype object keeps it as a real
+  // own key, so no override silently vanishes.
+  const out: Record<string, string> = Object.create(null);
   for (const [entryKey, entryValue] of Object.entries(table)) {
     if (typeof entryValue !== "string") {
       fail(`${CONFIG_REL_PATH}: ${key}.${entryKey} must be a string`, `quote ${key}.${entryKey} as a string`, {
@@ -295,4 +367,30 @@ function asStringMap(value: unknown, key: string): Record<string, string> | unde
     out[entryKey] = entryValue;
   }
   return out;
+}
+
+/**
+ * Accept a Confluence page id as a string or an unquoted TOML integer (its most
+ * natural form, e.g. `parent_page_id = 98765`). A non-safe integer is rejected
+ * with a hint to quote it, since an id beyond `Number.MAX_SAFE_INTEGER` would
+ * lose precision as a JS double and point publish at the wrong page.
+ */
+function asPageId(value: unknown, key: string): string | undefined {
+  if (value === undefined || typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" && Number.isInteger(value)) {
+    if (!Number.isSafeInteger(value)) {
+      fail(
+        `${CONFIG_REL_PATH}: ${key} is too large to represent exactly as a number`,
+        `quote ${key} as a string so its precision is preserved`,
+        { key, value },
+      );
+    }
+    return String(value);
+  }
+  fail(`${CONFIG_REL_PATH}: ${key} must be a string or an integer`, `set ${key} to a page-id string or integer`, {
+    key,
+    value,
+  });
 }

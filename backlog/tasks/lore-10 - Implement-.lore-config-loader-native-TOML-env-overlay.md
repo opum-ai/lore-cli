@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-06-23 13:47'
+updated_date: '2026-06-23 15:24'
 labels:
   - core
 milestone: m-1
@@ -45,6 +45,8 @@ Decisions (user-approved this session): module = src/config.ts; token-committed-
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented src/config.ts: loadConfig({root?, env?}) -> LoreConfig. Bun-native Bun.TOML.parse (no dependency; parses data not a module, so it survives bun build --compile). Sync via existsSync+readFileSync; a missing file -> zero-config defaults; snake_case TOML mapped to camelCase at the boundary. Hand-rolled type/enum validation (Zod deferred to LORE-15) raises LoreError type=validation (exit 6) on malformed TOML or an out-of-contract value; unknown keys/sections are tolerated for forward-compat. The Confluence token is read ONLY from the LORE_CONFLUENCE_TOKEN env var, never persisted; a committed [confluence].token fails loud (validation) even when the env token is set. Decisions (user-approved this session): (1) module = src/config.ts, a focused loader the design's state.ts consumes (lore-design module tree section 2 + 2.4 updated to match); (2) committed token = hard-error per ADR-0013 fail-loud. Validation: bun test 70 pass / 0 fail (18 new config tests), bun run lint PASS, bun run typecheck PASS; e2e smoke: committed config -> defaults, env token overlays onto confluence, committed token -> --json validation envelope on stderr + exit 6.
+
+Round-1 /code-review max (35 agents, ~1M tokens): 11 findings, applied 9, deferred 1, skipped 1. Fixed: (1) __proto__/constructor override keys silently dropped in asStringMap -> Object.create(null) (matches errors.ts hardening); (2) committed-token guard now deep-scans the whole [confluence] subtree incl. nested subtables/arrays (was top-level only); (3) whitespace-only LORE_CONFLUENCE_TOKEN treated as absent and trimmed; (4) consolidated file read+parse - single readFileSync (ENOENT->defaults, removes existsSync TOCTOU), non-ENOENT failures surfaced with their OS reason not a blanket 'check permissions', and Bun's parser message surfaced not swallowed; (5) parent_page_id accepts an unquoted TOML integer (coerced to string; over-MAX_SAFE_INTEGER rejected with a quote-it hint); (6) softened overrides doc comment (value semantics deferred to reconcile.ts/LORE-23); (7) removed the dead <root> branch; (8) single-sourced the confluence.format default; (9) exported defaultConfig + test imports it (was a hand-copied literal) and de-vacuoused the tolerance test. Deferred: (10) repo-root discovery when run from a subdir - belongs with bundle-root/CLI wiring, not yet triggerable (cli is a stub). Skipped: obscure [[confluence]] array-of-tables typo masking. +8 tests (78 total, 0 fail), lint+typecheck clean, e2e smoke re-verified. Running a 2nd max pass per the foundational-module >=2-passes convention.
 <!-- SECTION:NOTES:END -->
 
 ## Comments

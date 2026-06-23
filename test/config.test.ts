@@ -2,15 +2,13 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type LoreConfig, loadConfig } from "../src/config";
+import { defaultConfig, loadConfig } from "../src/config";
 import { LoreError } from "../src/errors";
 
-// The zero-config defaults `loadConfig` returns when nothing overrides them.
-const DEFAULTS: LoreConfig = {
-  reconcile: { mode: "task-rollup", overrides: {} },
-  validate: { externalLinks: false, promotePortability: false },
-  confluence: { format: "storage" },
-};
+// The zero-config defaults `loadConfig` returns when nothing overrides them —
+// the production source of truth, not a hand-copied literal, so these tests keep
+// pinning the real defaults if they ever change.
+const DEFAULTS = defaultConfig();
 
 const createdRoots: string[] = [];
 
@@ -98,6 +96,16 @@ format = "adf"
   });
 });
 
+describe("loadConfig — reconcile.overrides preserves dangerous keys", () => {
+  test("an override keyed __proto__ is kept as an own key, not silently dropped", () => {
+    const toml = '[reconcile.overrides]\n"__proto__" = "in-progress"\n"In Review" = "done"\n';
+    const { reconcile } = loadConfig({ root: repoRoot(toml), env: {} });
+    expect(Object.keys(reconcile.overrides).sort()).toEqual(["In Review", "__proto__"]);
+    expect(Object.getOwnPropertyDescriptor(reconcile.overrides, "__proto__")?.value).toBe("in-progress");
+    expect(reconcile.overrides["In Review"]).toBe("done");
+  });
+});
+
 describe("loadConfig — environment overlay for the Confluence token", () => {
   test("the token is overlaid from $LORE_CONFLUENCE_TOKEN, not the file", () => {
     const config = loadConfig({
@@ -124,6 +132,16 @@ describe("loadConfig — environment overlay for the Confluence token", () => {
     const config = loadConfig({ root: repoRoot(), env: { PATH: "/irrelevant" } });
     expect(config.confluence.token).toBeUndefined();
   });
+
+  test("a whitespace-only token is treated as absent (no blank credential)", () => {
+    const config = loadConfig({ root: repoRoot(), env: { LORE_CONFLUENCE_TOKEN: "   " } });
+    expect(config.confluence.token).toBeUndefined();
+  });
+
+  test("surrounding whitespace is trimmed off the token", () => {
+    const config = loadConfig({ root: repoRoot(), env: { LORE_CONFLUENCE_TOKEN: "  tok-123\n" } });
+    expect(config.confluence.token).toBe("tok-123");
+  });
 });
 
 describe("loadConfig — a committed token is rejected (ADR-0013)", () => {
@@ -142,11 +160,30 @@ describe("loadConfig — a committed token is rejected (ADR-0013)", () => {
       }),
     );
   });
+
+  test("a token in a nested [confluence.*] subtable is also rejected", () => {
+    const err = expectValidationError(() =>
+      loadConfig({ root: repoRoot('[confluence.auth]\ntoken = "leaked"\n'), env: {} }),
+    );
+    expect(err.hint).toContain("LORE_CONFLUENCE_TOKEN");
+  });
 });
 
 describe("loadConfig — malformed input and out-of-contract values", () => {
-  test("malformed TOML is a validation error", () => {
-    expectValidationError(() => loadConfig({ root: repoRoot("this is = = not ["), env: {} }));
+  test("malformed TOML is a validation error that surfaces the parser's reason", () => {
+    const err = expectValidationError(() => loadConfig({ root: repoRoot("a = = 1"), env: {} }));
+    expect(err.message).toContain("not valid TOML");
+    expect(err.message).toContain("Unexpected"); // the parser's own message, not swallowed
+  });
+
+  test("a directory at the config path is reported with its OS reason, not as a permissions problem", () => {
+    const root = mkdtempSync(join(tmpdir(), "lore-config-"));
+    createdRoots.push(root);
+    // Make `.lore/config.toml` itself a directory so the read fails with EISDIR.
+    mkdirSync(join(root, ".lore", "config.toml"), { recursive: true });
+    const err = expectValidationError(() => loadConfig({ root, env: {} }));
+    expect(err.message).toContain("could not be read");
+    expect(err.message).toMatch(/EISDIR|directory/i);
   });
 
   test("an unknown confluence.format is a validation error listing the allowed values", () => {
@@ -179,8 +216,27 @@ describe("loadConfig — malformed input and out-of-contract values", () => {
   });
 });
 
+describe("loadConfig — confluence.parent_page_id accepts integers", () => {
+  test("an unquoted integer id is coerced to a string", () => {
+    const config = loadConfig({ root: repoRoot("[confluence]\nparent_page_id = 98765\n"), env: {} });
+    expect(config.confluence.parentPageId).toBe("98765");
+  });
+
+  test("a quoted string id is preserved verbatim", () => {
+    const config = loadConfig({ root: repoRoot('[confluence]\nparent_page_id = "98765"\n'), env: {} });
+    expect(config.confluence.parentPageId).toBe("98765");
+  });
+
+  test("an id beyond MAX_SAFE_INTEGER is rejected with a quote-it hint", () => {
+    const err = expectValidationError(() =>
+      loadConfig({ root: repoRoot("[confluence]\nparent_page_id = 9007199254740993\n"), env: {} }),
+    );
+    expect(err.hint).toContain("quote");
+  });
+});
+
 describe("loadConfig — OKF-style tolerance and the committed file", () => {
-  test("unknown sections and keys are tolerated for forward-compat", () => {
+  test("unknown sections and keys are tolerated and never leak into the output", () => {
     const toml = `
 [reconcile]
 mode = "task-rollup"
@@ -189,10 +245,10 @@ future_key = "ignored"
 [brand_new_section]
 anything = true
 `;
-    const config = loadConfig({ root: repoRoot(toml), env: {} });
-    expect(config.reconcile.mode).toBe("task-rollup");
-    expect(config).not.toHaveProperty("brand_new_section");
-    expect(config.reconcile).not.toHaveProperty("future_key");
+    // Tolerance: the unknown top-level section and the unknown key under
+    // [reconcile] neither throw nor appear anywhere in the resolved config —
+    // asserting full-output equality (not just absence) makes this non-vacuous.
+    expect(loadConfig({ root: repoRoot(toml), env: {} })).toEqual(DEFAULTS);
   });
 
   test("lore's own committed .lore/config.toml is valid and loads as defaults (AC#1)", () => {
