@@ -100,8 +100,8 @@ format = "adf"
 });
 
 describe("loadConfig — reconcile.overrides rejects reserved object keys", () => {
-  test("an override keyed __proto__/constructor/prototype is rejected, not dropped or shadowing", () => {
-    for (const reserved of ["__proto__", "constructor", "prototype"]) {
+  test("an override keyed by any Object.prototype member (or prototype) is rejected", () => {
+    for (const reserved of ["__proto__", "constructor", "prototype", "toString", "hasOwnProperty"]) {
       const err = expectValidationError(() =>
         loadConfig({ root: repoRoot(`[reconcile.overrides]\n"${reserved}" = "done"\n`), env: {} }),
       );
@@ -208,6 +208,15 @@ describe("loadConfig — malformed input and out-of-contract values", () => {
     // which would silently bypass the committed-token check (ADR-0013).
     const err = expectValidationError(() =>
       loadConfig({ root: repoRoot(`${BOM}[confluence]\ntoken = "leaked"\n`), env: {} }),
+    );
+    expect(err.hint).toContain("LORE_CONFLUENCE_TOKEN");
+  });
+
+  test("multiple leading BOMs are all stripped (regression pin for the double-BOM bypass)", () => {
+    // A single-slice strip would leave a residual BOM, re-parsing the file as {}
+    // and letting the committed token slip past the guard — so pin >1 BOM here.
+    const err = expectValidationError(() =>
+      loadConfig({ root: repoRoot(`${BOM}${BOM}[confluence]\ntoken = "leaked"\n`), env: {} }),
     );
     expect(err.hint).toContain("LORE_CONFLUENCE_TOKEN");
   });

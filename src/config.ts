@@ -43,9 +43,6 @@ const RECONCILE_MODES = ["task-rollup"] as const;
 /** The Confluence wire formats the (deferred) publish adapter understands (ADR-0013). */
 const CONFLUENCE_FORMATS = ["storage", "adf"] as const;
 
-/** Object keys that cannot serve as map keys without dropping or shadowing a prototype member. */
-const RESERVED_OBJECT_KEYS = new Set(["__proto__", "constructor", "prototype"]);
-
 /** The status roll-up policy applied by `lore sync` / `lore check`. */
 export type ReconcileMode = (typeof RECONCILE_MODES)[number];
 
@@ -394,6 +391,16 @@ function asEnum<T extends string>(value: unknown, key: string, allowed: readonly
   return value as T;
 }
 
+/**
+ * True for a key that cannot be stored on a plain object without being dropped or
+ * shadowing an inherited member: every `Object.prototype` member (`__proto__`,
+ * `constructor`, `toString`, `hasOwnProperty`, …) plus `prototype`. (TOML keys are
+ * always strings, so this covers every key the loader can see.)
+ */
+function isUnsafeMapKey(key: string): boolean {
+  return key === "prototype" || key in Object.prototype;
+}
+
 /** Require a table whose every value is a string when present (e.g. `[reconcile.overrides]`). */
 function asStringMap(value: unknown, key: string): Record<string, string> | undefined {
   const table = asTable(value, key);
@@ -408,17 +415,18 @@ function asStringMap(value: unknown, key: string): Record<string, string> | unde
         value: entryValue,
       });
     }
-    // Reject the reserved object keys (`__proto__`/`constructor`/`prototype`)
-    // outright: assigning them with `=` silently drops the entry (the inherited
-    // setter), and forcing them on as own data properties would shadow
-    // `Object.prototype` members for a later consumer. A Backlog status is never
-    // legitimately one of these, so failing loud keeps the returned map a normal,
-    // fully-typed `Record<string,string>` with no dropped or shadowing keys.
-    if (RESERVED_OBJECT_KEYS.has(entryKey)) {
+    // Reject any key that names an `Object.prototype` member (`__proto__`,
+    // `constructor`, `toString`, `hasOwnProperty`, …) or `prototype`: assigning it
+    // with `=` is silently dropped (the `__proto__` setter) or shadows that member
+    // as a string on the returned map, which would crash a later consumer that
+    // calls it. A Backlog status is never legitimately one of these, so failing
+    // loud keeps the map a normal, fully-typed `Record<string,string>` with no
+    // dropped or shadowing keys.
+    if (isUnsafeMapKey(entryKey)) {
       fail(
         `${CONFIG_REL_PATH}: ${key}.${entryKey} uses a reserved object key`,
         `rename the "${entryKey}" entry under [${key}] to a real status name`,
-        { key: `${key}.${entryKey}` },
+        { key: `${key}.${entryKey}`, value: entryValue },
       );
     }
     out[entryKey] = entryValue;
@@ -429,12 +437,14 @@ function asStringMap(value: unknown, key: string): Record<string, string> | unde
 /**
  * Accept a Confluence page id as a positive-integer string (any length, so an id
  * beyond `Number.MAX_SAFE_INTEGER` keeps full precision) or an unquoted positive
- * integer (its most natural form, e.g. `parent_page_id = 98765`). Both forms are
- * validated identically — a `0`/negative, non-integer, empty, or non-numeric id
- * is rejected at load time rather than surfacing later as a publish 404 — so
- * quoting (the remedy for an over-large unquoted id) cannot smuggle an invalid id
- * past the check. The sign is checked before magnitude so a negative id reports
- * "must be positive", not "too large".
+ * integer (its most natural form, e.g. `parent_page_id = 98765`). Both forms must
+ * resolve to a positive integer — a `0`/negative, non-integer, empty, or
+ * non-numeric id is rejected at load time rather than surfacing later as a publish
+ * 404. The number form is constrained by its *value* (Bun has already normalized
+ * `0x10`/`1_000`/`1e3` to a decimal integer), the string form by its literal text
+ * (`/^[1-9][0-9]*$/`); the two are not byte-identical checks, but neither admits an
+ * invalid id. The sign is checked before magnitude so a negative id reports "must
+ * be positive", not "too large".
  */
 function asPageId(value: unknown, key: string): string | undefined {
   if (value === undefined) {
