@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `.lore/config.toml` loader (LORE-10): `src/config.ts` — `loadConfig({ root?, env? })`
+  parses the committed config with **Bun-native TOML** (no added dependency) into a
+  typed, validated `LoreConfig` (`reconcile`, `validate`, `confluence`). Zero-config
+  (a missing file yields the documented defaults), deterministic via injectable
+  `root`/`env` seams, and snake_case TOML keys map to camelCase fields. The Confluence
+  token is read **only** from `$LORE_CONFLUENCE_TOKEN` and is never persisted; a token
+  committed under `[confluence]` fails loud. Malformed TOML or an out-of-contract value
+  throws a `validation` `LoreError` (exit `6`); unknown keys/sections are tolerated for
+  forward-compatibility. lore's own `.lore/config.toml` is committed; `.lore/cache/`
+  stays gitignored (ADR-0013).
 - Shared error model (LORE-11): `src/errors.ts` — the `LoreError` taxonomy and
   centralized semantic exit-code mapping (`0` ok, `2` usage, `3` not-found,
   `4` denied, `5` conflict, `6` validation/drift; `1` reserved for uncaught
