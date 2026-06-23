@@ -245,13 +245,20 @@ unrelated condition.
 | `3` | not_found | A referenced thing does not exist: concept id, task id, file path, link target. |
 | `4` | denied | The operation is refused: e.g. an edit targeting a lore-managed region, or a guarded destructive op without the required confirmation. |
 | `5` | conflict | Already-exists / write-race: id collision on `new`, supersede target already superseded, concurrent-write conflict. |
-| `6` | validation_or_drift | A gate failed: `lore validate` non-conformance, or `lore check` drift / broken-link / heading-anchor / portability failure. |
+| `6` | `validation` / `drift` | A gate failed: `lore validate` non-conformance (`validation`), or `lore check` drift / broken-link / heading-anchor / portability failure (`drift`). Two distinct `error_type` strings sharing exit `6` (§5.3). |
 
 **Code `1` is intentionally NOT used for any expected, classifiable
 condition.** It is reserved to mean "unexpected / uncaught" — a crash or bug.
 An agent should treat exit `1` as *report this*, not *handle this*. This lets a
 caller distinguish "lore told me my input was wrong" (2/3/4/5/6) from "lore
 itself broke" (1).
+
+Even an uncaught failure stays on-contract. In `--json` mode it is reported as a
+minimal error envelope on stderr — `{ "error_type": "uncaught", "message":
+<string> }`, with no `hint`/`input` — so a crash still yields exactly one
+parseable diagnostic line and an empty stdout. `uncaught` is the **only**
+`error_type` outside the §5.3 table: it is the catch-all for any non-`LoreError`
+throw and never collides with a classifiable category.
 
 This taxonomy lets shell- and CI-level branching stay free of JSON parsing:
 

@@ -351,7 +351,8 @@ type ErrorType =
   | "not_found"    // concept/task/path missing  → exit 3
   | "denied"       // permission / probe refusal → exit 4
   | "conflict"     // already-exists / clash     → exit 5
-  | "validation";  // validation OR drift        → exit 6
+  | "validation"   // validate ERROR tier        → exit 6
+  | "drift";       // check drift / broken link  → exit 6 (distinct error_type)
 
 class LoreError extends Error {
   constructor(
