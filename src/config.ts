@@ -43,6 +43,9 @@ const RECONCILE_MODES = ["task-rollup"] as const;
 /** The Confluence wire formats the (deferred) publish adapter understands (ADR-0013). */
 const CONFLUENCE_FORMATS = ["storage", "adf"] as const;
 
+/** Object keys that cannot serve as map keys without dropping or shadowing a prototype member. */
+const RESERVED_OBJECT_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 /** The status roll-up policy applied by `lore sync` / `lore check`. */
 export type ReconcileMode = (typeof RECONCILE_MODES)[number];
 
@@ -157,11 +160,15 @@ function readConfigText(path: string): string | undefined {
 
 /** Parse TOML via Bun's native parser, surfacing the parser's own message on failure. */
 function parseToml(raw: string): Record<string, unknown> {
-  // Strip a leading UTF-8 BOM: Windows editors (Notepad, some PowerShell paths)
-  // prepend U+FEFF, which Bun.TOML.parse otherwise swallows — parsing the file as
-  // an empty document `{}`, silently dropping every committed setting AND
-  // bypassing the committed-token guard (ADR-0013).
-  const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+  // Strip leading UTF-8 BOM(s): Windows editors (Notepad, some PowerShell paths)
+  // prepend U+FEFF — and some prepend more than one — which Bun.TOML.parse
+  // otherwise swallows, parsing the file as an empty document `{}`: every
+  // committed setting is silently dropped AND the committed-token guard (ADR-0013)
+  // is bypassed. Strip every leading BOM, not just the first.
+  let text = raw;
+  while (text.charCodeAt(0) === 0xfeff) {
+    text = text.slice(1);
+  }
   try {
     return Bun.TOML.parse(text) as Record<string, unknown>;
   } catch (cause) {
@@ -295,17 +302,26 @@ function describeCause(cause: unknown): string {
   const parts: string[] = [];
   if (cause !== null && typeof cause === "object" && Array.isArray((cause as { errors?: unknown }).errors)) {
     for (const sub of (cause as { errors: unknown[] }).errors) {
-      parts.push(causeMessage(sub));
+      pushIfNonEmpty(parts, causeMessage(sub));
     }
   }
+  // Fall back to the top-level message when the aggregate yielded nothing usable
+  // (an `errors` array whose sub-messages are all empty), so the diagnostic never
+  // degrades to a bare base with no reason.
   if (parts.length === 0) {
-    parts.push(causeMessage(cause));
+    pushIfNonEmpty(parts, causeMessage(cause));
   }
   return parts
-    .filter((part) => part !== "")
     .join("; ")
     .replace(/\s*[\r\n]+\s*/g, " ")
     .trim();
+}
+
+/** Push `message` onto `parts` only when it carries content. */
+function pushIfNonEmpty(parts: string[], message: string): void {
+  if (message !== "") {
+    parts.push(message);
+  }
 }
 
 /**
@@ -392,56 +408,68 @@ function asStringMap(value: unknown, key: string): Record<string, string> | unde
         value: entryValue,
       });
     }
-    // `defineProperty`, not `out[entryKey] = …`: a key literally named
-    // `__proto__`/`constructor`/`prototype` assigned with `=` hits the inherited
-    // setter and is silently dropped. Defining an own data property lands every
-    // key verbatim while keeping the normal Object prototype, so the returned map
-    // both preserves dangerous keys and matches its `Record<string,string>` type
-    // (consumers can still call `Object` methods such as `hasOwnProperty` on it).
-    Object.defineProperty(out, entryKey, { value: entryValue, enumerable: true, writable: true, configurable: true });
+    // Reject the reserved object keys (`__proto__`/`constructor`/`prototype`)
+    // outright: assigning them with `=` silently drops the entry (the inherited
+    // setter), and forcing them on as own data properties would shadow
+    // `Object.prototype` members for a later consumer. A Backlog status is never
+    // legitimately one of these, so failing loud keeps the returned map a normal,
+    // fully-typed `Record<string,string>` with no dropped or shadowing keys.
+    if (RESERVED_OBJECT_KEYS.has(entryKey)) {
+      fail(
+        `${CONFIG_REL_PATH}: ${key}.${entryKey} uses a reserved object key`,
+        `rename the "${entryKey}" entry under [${key}] to a real status name`,
+        { key: `${key}.${entryKey}` },
+      );
+    }
+    out[entryKey] = entryValue;
   }
   return out;
 }
 
 /**
- * Accept a Confluence page id as a non-empty string or an unquoted positive TOML
- * integer (its most natural form, e.g. `parent_page_id = 98765`). A `0`/negative
- * id, an empty string, or a non-safe integer (beyond `Number.MAX_SAFE_INTEGER`,
- * which would lose precision as a JS double and point publish at the wrong page)
- * is rejected at load time rather than surfacing later as a publish 404.
+ * Accept a Confluence page id as a positive-integer string (any length, so an id
+ * beyond `Number.MAX_SAFE_INTEGER` keeps full precision) or an unquoted positive
+ * integer (its most natural form, e.g. `parent_page_id = 98765`). Both forms are
+ * validated identically — a `0`/negative, non-integer, empty, or non-numeric id
+ * is rejected at load time rather than surfacing later as a publish 404 — so
+ * quoting (the remedy for an over-large unquoted id) cannot smuggle an invalid id
+ * past the check. The sign is checked before magnitude so a negative id reports
+ * "must be positive", not "too large".
  */
 function asPageId(value: unknown, key: string): string | undefined {
   if (value === undefined) {
     return undefined;
   }
   if (typeof value === "string") {
-    if (value.trim() === "") {
-      fail(`${CONFIG_REL_PATH}: ${key} must not be empty`, `set ${key} to a Confluence page id`, { key });
-    }
-    return value;
-  }
-  if (typeof value === "number" && Number.isInteger(value)) {
-    if (!Number.isSafeInteger(value)) {
+    if (!/^[1-9][0-9]*$/.test(value)) {
       fail(
-        `${CONFIG_REL_PATH}: ${key} is too large to represent exactly as a number`,
-        `quote ${key} as a string so its precision is preserved`,
+        `${CONFIG_REL_PATH}: ${key} must be a positive integer page id`,
+        `set ${key} to a positive integer page id, e.g. ${key} = "98765"`,
         { key, value },
       );
     }
-    if (value <= 0) {
-      fail(`${CONFIG_REL_PATH}: ${key} must be a positive page id`, `set ${key} to a positive integer page id`, {
-        key,
-        value,
-      });
+    return value;
+  }
+  if (typeof value === "number") {
+    if (!Number.isInteger(value) || value <= 0) {
+      fail(
+        `${CONFIG_REL_PATH}: ${key} must be a positive integer page id`,
+        `set ${key} to a positive integer page id`,
+        { key, value },
+      );
+    }
+    if (!Number.isSafeInteger(value)) {
+      fail(
+        `${CONFIG_REL_PATH}: ${key} is too large to represent exactly as a number`,
+        `quote ${key} as a string to preserve its precision`,
+        { key, value },
+      );
     }
     return String(value);
   }
   fail(
-    `${CONFIG_REL_PATH}: ${key} must be a string or a positive integer`,
-    `set ${key} to a page-id string or integer`,
-    {
-      key,
-      value,
-    },
+    `${CONFIG_REL_PATH}: ${key} must be a positive integer page id`,
+    `set ${key} to a positive integer page id (a quoted string or an unquoted integer)`,
+    { key, value },
   );
 }

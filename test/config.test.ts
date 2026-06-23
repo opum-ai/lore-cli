@@ -99,20 +99,21 @@ format = "adf"
   });
 });
 
-describe("loadConfig — reconcile.overrides preserves dangerous keys", () => {
-  test("an override keyed __proto__ is kept as an own key, not silently dropped", () => {
-    const toml = '[reconcile.overrides]\n"__proto__" = "in-progress"\n"In Review" = "done"\n';
-    const { reconcile } = loadConfig({ root: repoRoot(toml), env: {} });
-    expect(Object.keys(reconcile.overrides).sort()).toEqual(["In Review", "__proto__"]);
-    expect(Object.getOwnPropertyDescriptor(reconcile.overrides, "__proto__")?.value).toBe("in-progress");
-    expect(reconcile.overrides["In Review"]).toBe("done");
+describe("loadConfig — reconcile.overrides rejects reserved object keys", () => {
+  test("an override keyed __proto__/constructor/prototype is rejected, not dropped or shadowing", () => {
+    for (const reserved of ["__proto__", "constructor", "prototype"]) {
+      const err = expectValidationError(() =>
+        loadConfig({ root: repoRoot(`[reconcile.overrides]\n"${reserved}" = "done"\n`), env: {} }),
+      );
+      expect(err.message).toContain("reserved object key");
+    }
   });
 
-  test("the overrides map keeps a normal Object prototype (no null-prototype trap)", () => {
+  test("a normal override is stored on a plain, fully-typed map", () => {
     const { reconcile } = loadConfig({ root: repoRoot('[reconcile.overrides]\n"In Review" = "done"\n'), env: {} });
-    // A null-prototype map (Object.create(null)) would break a consumer that calls
-    // an inherited method like overrides.hasOwnProperty(...); assert the prototype
-    // is the normal Object.prototype so those methods remain available.
+    expect(reconcile.overrides["In Review"]).toBe("done");
+    // The map keeps a normal Object prototype, so a consumer (reconcile.ts/LORE-23)
+    // can call inherited methods on the typed Record.
     expect(Object.getPrototypeOf(reconcile.overrides)).toBe(Object.prototype);
   });
 });
@@ -274,20 +275,38 @@ describe("loadConfig — confluence.parent_page_id accepts integers", () => {
     expect(err.hint).toContain("quote");
   });
 
-  test("a zero or negative integer id is rejected as not a positive page id", () => {
-    for (const id of ["0", "-5"]) {
+  test("a zero/negative/non-integer number id is rejected as not a positive page id", () => {
+    for (const id of ["0", "-5", "1.5"]) {
       const err = expectValidationError(() =>
         loadConfig({ root: repoRoot(`[confluence]\nparent_page_id = ${id}\n`), env: {} }),
       );
-      expect(err.message).toContain("positive");
+      expect(err.message).toContain("positive integer page id");
     }
   });
 
-  test("an empty-string id is rejected", () => {
+  test("a quoted 0/negative/non-numeric/empty/leading-zero id is rejected like the unquoted form", () => {
+    for (const id of ['"0"', '"-5"', '"not-a-number"', '""', '"007"']) {
+      const err = expectValidationError(() =>
+        loadConfig({ root: repoRoot(`[confluence]\nparent_page_id = ${id}\n`), env: {} }),
+      );
+      expect(err.message).toContain("positive integer page id");
+    }
+  });
+
+  test("a quoted huge id is accepted verbatim, preserving precision", () => {
+    const config = loadConfig({
+      root: repoRoot('[confluence]\nparent_page_id = "9007199254740993"\n'),
+      env: {},
+    });
+    expect(config.confluence.parentPageId).toBe("9007199254740993");
+  });
+
+  test("a negative non-safe integer reports the sign, not the magnitude", () => {
     const err = expectValidationError(() =>
-      loadConfig({ root: repoRoot('[confluence]\nparent_page_id = ""\n'), env: {} }),
+      loadConfig({ root: repoRoot("[confluence]\nparent_page_id = -9007199254740993\n"), env: {} }),
     );
-    expect(err.message).toContain("parent_page_id");
+    expect(err.message).toContain("positive integer page id");
+    expect(err.message).not.toContain("too large");
   });
 });
 
@@ -307,15 +326,13 @@ anything = true
     expect(loadConfig({ root: repoRoot(toml), env: {} })).toEqual(DEFAULTS);
   });
 
-  test("lore's own committed .lore/config.toml is valid and loads as a well-formed config (AC#1)", () => {
-    // Resolve the repo root from this test file's location, not cwd, so the check
-    // is robust to where `bun test` is invoked. Assert it loads as a well-formed
-    // config (not that it equals the defaults) so editing the committed sample to a
-    // genuinely non-default value never makes this test fail spuriously.
+  test("lore's own committed .lore/config.toml mirrors the built-in defaults (AC#1)", () => {
+    // The committed sample documents itself as a no-op over the defaults, so pin it
+    // to defaultConfig(): an edit that sets a genuinely non-default value must also
+    // update the sample's header, and this makes that drift loud rather than letting
+    // the shipped "documents the defaults" sample silently diverge. Resolved from
+    // this file's location (not cwd) so it is invocation-robust.
     const config = loadConfig({ root: join(import.meta.dir, ".."), env: {} });
-    expect(["task-rollup"]).toContain(config.reconcile.mode);
-    expect(typeof config.validate.externalLinks).toBe("boolean");
-    expect(typeof config.validate.promotePortability).toBe("boolean");
-    expect(["storage", "adf"]).toContain(config.confluence.format);
+    expect(config).toEqual(DEFAULTS);
   });
 });
