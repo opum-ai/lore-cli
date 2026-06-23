@@ -10,6 +10,9 @@ import { LoreError } from "../src/errors";
 // pinning the real defaults if they ever change.
 const DEFAULTS = defaultConfig();
 
+// A leading UTF-8 BOM, built ASCII-safely so there is no literal U+FEFF in source.
+const BOM = String.fromCharCode(0xfeff);
+
 const createdRoots: string[] = [];
 
 /**
@@ -104,6 +107,14 @@ describe("loadConfig — reconcile.overrides preserves dangerous keys", () => {
     expect(Object.getOwnPropertyDescriptor(reconcile.overrides, "__proto__")?.value).toBe("in-progress");
     expect(reconcile.overrides["In Review"]).toBe("done");
   });
+
+  test("the overrides map keeps a normal Object prototype (no null-prototype trap)", () => {
+    const { reconcile } = loadConfig({ root: repoRoot('[reconcile.overrides]\n"In Review" = "done"\n'), env: {} });
+    // A null-prototype map (Object.create(null)) would break a consumer that calls
+    // an inherited method like overrides.hasOwnProperty(...); assert the prototype
+    // is the normal Object.prototype so those methods remain available.
+    expect(Object.getPrototypeOf(reconcile.overrides)).toBe(Object.prototype);
+  });
 });
 
 describe("loadConfig — environment overlay for the Confluence token", () => {
@@ -167,13 +178,42 @@ describe("loadConfig — a committed token is rejected (ADR-0013)", () => {
     );
     expect(err.hint).toContain("LORE_CONFLUENCE_TOKEN");
   });
+
+  test("a token under a [[confluence]] array-of-tables typo still fails loud with the env-var pointer", () => {
+    const err = expectValidationError(() =>
+      loadConfig({ root: repoRoot('[[confluence]]\ntoken = "leaked"\n'), env: {} }),
+    );
+    expect(err.message).toContain("must not be committed");
+    expect(err.hint).toContain("LORE_CONFLUENCE_TOKEN");
+  });
 });
 
 describe("loadConfig — malformed input and out-of-contract values", () => {
-  test("malformed TOML is a validation error that surfaces the parser's reason", () => {
+  test("malformed TOML surfaces the parser's reason without leaking its class name", () => {
     const err = expectValidationError(() => loadConfig({ root: repoRoot("a = = 1"), env: {} }));
     expect(err.message).toContain("not valid TOML");
-    expect(err.message).toContain("Unexpected"); // the parser's own message, not swallowed
+    expect(err.message).toContain("Unexpected"); // the parser's own message, surfaced
+    expect(err.message).not.toContain("BuildMessage"); // ...without Bun's internal class-name prefix
+  });
+
+  test("a multi-error TOML file flattens the parser's sub-messages (aggregate path)", () => {
+    const err = expectValidationError(() => loadConfig({ root: repoRoot("this is = = not ["), env: {} }));
+    expect(err.message).toContain("not valid TOML:");
+    expect(err.message).toContain("Unexpected"); // a sub-message from Bun's AggregateError
+  });
+
+  test("a UTF-8 BOM does not defeat the committed-token guard", () => {
+    // Regression guard: a leading BOM must not make the file parse as empty {},
+    // which would silently bypass the committed-token check (ADR-0013).
+    const err = expectValidationError(() =>
+      loadConfig({ root: repoRoot(`${BOM}[confluence]\ntoken = "leaked"\n`), env: {} }),
+    );
+    expect(err.hint).toContain("LORE_CONFLUENCE_TOKEN");
+  });
+
+  test("a UTF-8 BOM-prefixed config still applies its settings", () => {
+    const config = loadConfig({ root: repoRoot(`${BOM}[validate]\nexternal_links = true\n`), env: {} });
+    expect(config.validate.externalLinks).toBe(true);
   });
 
   test("a directory at the config path is reported with its OS reason, not as a permissions problem", () => {
@@ -233,6 +273,22 @@ describe("loadConfig — confluence.parent_page_id accepts integers", () => {
     );
     expect(err.hint).toContain("quote");
   });
+
+  test("a zero or negative integer id is rejected as not a positive page id", () => {
+    for (const id of ["0", "-5"]) {
+      const err = expectValidationError(() =>
+        loadConfig({ root: repoRoot(`[confluence]\nparent_page_id = ${id}\n`), env: {} }),
+      );
+      expect(err.message).toContain("positive");
+    }
+  });
+
+  test("an empty-string id is rejected", () => {
+    const err = expectValidationError(() =>
+      loadConfig({ root: repoRoot('[confluence]\nparent_page_id = ""\n'), env: {} }),
+    );
+    expect(err.message).toContain("parent_page_id");
+  });
 });
 
 describe("loadConfig — OKF-style tolerance and the committed file", () => {
@@ -251,10 +307,15 @@ anything = true
     expect(loadConfig({ root: repoRoot(toml), env: {} })).toEqual(DEFAULTS);
   });
 
-  test("lore's own committed .lore/config.toml is valid and loads as defaults (AC#1)", () => {
+  test("lore's own committed .lore/config.toml is valid and loads as a well-formed config (AC#1)", () => {
     // Resolve the repo root from this test file's location, not cwd, so the check
-    // is robust to where `bun test` is invoked.
+    // is robust to where `bun test` is invoked. Assert it loads as a well-formed
+    // config (not that it equals the defaults) so editing the committed sample to a
+    // genuinely non-default value never makes this test fail spuriously.
     const config = loadConfig({ root: join(import.meta.dir, ".."), env: {} });
-    expect(config).toEqual(DEFAULTS);
+    expect(["task-rollup"]).toContain(config.reconcile.mode);
+    expect(typeof config.validate.externalLinks).toBe("boolean");
+    expect(typeof config.validate.promotePortability).toBe("boolean");
+    expect(["storage", "adf"]).toContain(config.confluence.format);
   });
 });

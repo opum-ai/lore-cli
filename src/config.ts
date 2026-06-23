@@ -148,7 +148,7 @@ function readConfigText(path: string): string | undefined {
       return undefined;
     }
     return fail(
-      `${CONFIG_REL_PATH} could not be read: ${describeCause(cause)}`,
+      withReason(`${CONFIG_REL_PATH} could not be read`, cause),
       `ensure ${CONFIG_REL_PATH} is a readable file`,
       { path: CONFIG_REL_PATH },
     );
@@ -157,11 +157,16 @@ function readConfigText(path: string): string | undefined {
 
 /** Parse TOML via Bun's native parser, surfacing the parser's own message on failure. */
 function parseToml(raw: string): Record<string, unknown> {
+  // Strip a leading UTF-8 BOM: Windows editors (Notepad, some PowerShell paths)
+  // prepend U+FEFF, which Bun.TOML.parse otherwise swallows — parsing the file as
+  // an empty document `{}`, silently dropping every committed setting AND
+  // bypassing the committed-token guard (ADR-0013).
+  const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
   try {
-    return Bun.TOML.parse(raw) as Record<string, unknown>;
+    return Bun.TOML.parse(text) as Record<string, unknown>;
   } catch (cause) {
     return fail(
-      `${CONFIG_REL_PATH} is not valid TOML: ${describeCause(cause)}`,
+      withReason(`${CONFIG_REL_PATH} is not valid TOML`, cause),
       `fix the TOML syntax in ${CONFIG_REL_PATH}`,
       { path: CONFIG_REL_PATH },
     );
@@ -187,6 +192,11 @@ function validateConfig(root: Record<string, unknown>): LoreConfig {
       defaults.validate.promotePortability,
   };
 
+  // Scan for a committed token across whatever shape `confluence` takes — a
+  // table, or an array of tables on a `[[confluence]]` typo — BEFORE the
+  // table-shape check below, so a committed secret always gets the fail-loud
+  // token diagnostic with the env-var pointer, not a generic "must be a table".
+  assertNoCommittedToken(root.confluence, "confluence");
   return {
     reconcile,
     validate,
@@ -194,14 +204,8 @@ function validateConfig(root: Record<string, unknown>): LoreConfig {
   };
 }
 
-/** Project the `[confluence]` table, rejecting a committed token (ADR-0013: secrets never enter the repo). */
+/** Project the `[confluence]` table over defaults. The committed-token guard runs in {@link validateConfig}. */
 function validateConfluence(table: Record<string, unknown> | undefined, defaults: ConfluenceConfig): ConfluenceConfig {
-  if (table) {
-    // ADR-0013: the token must never be committed. Scan the whole [confluence]
-    // subtree, not just its top level, so a token tucked into a nested subtable
-    // (e.g. [confluence.auth]) is caught rather than tolerated as an unknown key.
-    assertNoCommittedToken(table, "confluence");
-  }
   const confluence: ConfluenceConfig = {
     format: asEnum(table?.format, "confluence.format", CONFLUENCE_FORMATS) ?? defaults.format,
   };
@@ -221,12 +225,23 @@ function validateConfluence(table: Record<string, unknown> | undefined, defaults
 }
 
 /**
- * Reject a committed Confluence token anywhere under `[confluence]` (ADR-0013),
- * recursing through nested subtables and arrays of tables so a `token` key at
- * any depth fails loud with a pointer to the env var instead of slipping
- * through as an unrecognized nested key. The token value is never echoed.
+ * Reject a committed Confluence token anywhere under `value` (ADR-0013),
+ * recursing through tables and arrays of tables so a token at any depth — a
+ * nested `[confluence.auth]` subtable or a `[[confluence]]` array-of-tables typo
+ * — fails loud with a pointer to the env var, rather than slipping through or
+ * surfacing a generic shape error. The token value is never echoed.
  */
-function assertNoCommittedToken(table: Record<string, unknown>, path: string): void {
+function assertNoCommittedToken(value: unknown, path: string): void {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      assertNoCommittedToken(item, path);
+    }
+    return;
+  }
+  if (typeof value !== "object" || value === null) {
+    return;
+  }
+  const table = value as Record<string, unknown>;
   if ("token" in table) {
     fail(
       `${CONFIG_REL_PATH}: a Confluence token must not be committed`,
@@ -235,12 +250,7 @@ function assertNoCommittedToken(table: Record<string, unknown>, path: string): v
     );
   }
   for (const [childKey, childValue] of Object.entries(table)) {
-    const childPath = `${path}.${childKey}`;
-    for (const candidate of Array.isArray(childValue) ? childValue : [childValue]) {
-      if (typeof candidate === "object" && candidate !== null && !Array.isArray(candidate)) {
-        assertNoCommittedToken(candidate as Record<string, unknown>, childPath);
-      }
-    }
+    assertNoCommittedToken(childValue, `${path}.${childKey}`);
   }
 }
 
@@ -270,25 +280,48 @@ function isErrnoCode(cause: unknown, code: string): boolean {
   return typeof cause === "object" && cause !== null && (cause as { code?: unknown }).code === code;
 }
 
+/** Append `: <reason>` to `base` only when a non-empty reason can be derived from `cause`. */
+function withReason(base: string, cause: unknown): string {
+  const reason = describeCause(cause);
+  return reason ? `${base}: ${reason}` : base;
+}
+
 /**
  * A single-line human reason from a thrown cause, for embedding in a diagnostic.
- * An aggregate parse error (Bun can throw one for TOML) is flattened to its
- * sub-messages; anything else uses its `Error.message`.
+ * An aggregate parse error (Bun throws one for some malformed TOML) is flattened
+ * to its sub-messages; otherwise the cause's own `message` is used.
  */
 function describeCause(cause: unknown): string {
   const parts: string[] = [];
   if (cause !== null && typeof cause === "object" && Array.isArray((cause as { errors?: unknown }).errors)) {
     for (const sub of (cause as { errors: unknown[] }).errors) {
-      parts.push(sub instanceof Error ? sub.message : String(sub));
+      parts.push(causeMessage(sub));
     }
   }
   if (parts.length === 0) {
-    parts.push(cause instanceof Error ? cause.message : String(cause));
+    parts.push(causeMessage(cause));
   }
   return parts
+    .filter((part) => part !== "")
     .join("; ")
     .replace(/\s*[\r\n]+\s*/g, " ")
     .trim();
+}
+
+/**
+ * Best-effort human message from a thrown value. Prefers a string `message`
+ * property over `String(value)` so a non-`Error` carrier (e.g. Bun's
+ * `BuildMessage` TOML error) yields its reason — "Unexpected =" — rather than
+ * leaking the runtime class-name prefix "BuildMessage: …".
+ */
+function causeMessage(cause: unknown): string {
+  if (cause !== null && typeof cause === "object") {
+    const message = (cause as { message?: unknown }).message;
+    if (typeof message === "string") {
+      return message;
+    }
+  }
+  return typeof cause === "string" ? cause : String(cause);
 }
 
 /** Require a TOML table (plain object) when present; `undefined` passes through for "absent". */
@@ -351,12 +384,7 @@ function asStringMap(value: unknown, key: string): Record<string, string> | unde
   if (table === undefined) {
     return undefined;
   }
-  // `Object.create(null)`, not `{}`: an override literally keyed `__proto__`
-  // (or `constructor`/`prototype`) assigned into a plain object hits the
-  // inherited setter and is silently dropped — the same hazard errors.ts guards
-  // against in its JSON projection. A null-prototype object keeps it as a real
-  // own key, so no override silently vanishes.
-  const out: Record<string, string> = Object.create(null);
+  const out: Record<string, string> = {};
   for (const [entryKey, entryValue] of Object.entries(table)) {
     if (typeof entryValue !== "string") {
       fail(`${CONFIG_REL_PATH}: ${key}.${entryKey} must be a string`, `quote ${key}.${entryKey} as a string`, {
@@ -364,19 +392,32 @@ function asStringMap(value: unknown, key: string): Record<string, string> | unde
         value: entryValue,
       });
     }
-    out[entryKey] = entryValue;
+    // `defineProperty`, not `out[entryKey] = …`: a key literally named
+    // `__proto__`/`constructor`/`prototype` assigned with `=` hits the inherited
+    // setter and is silently dropped. Defining an own data property lands every
+    // key verbatim while keeping the normal Object prototype, so the returned map
+    // both preserves dangerous keys and matches its `Record<string,string>` type
+    // (consumers can still call `Object` methods such as `hasOwnProperty` on it).
+    Object.defineProperty(out, entryKey, { value: entryValue, enumerable: true, writable: true, configurable: true });
   }
   return out;
 }
 
 /**
- * Accept a Confluence page id as a string or an unquoted TOML integer (its most
- * natural form, e.g. `parent_page_id = 98765`). A non-safe integer is rejected
- * with a hint to quote it, since an id beyond `Number.MAX_SAFE_INTEGER` would
- * lose precision as a JS double and point publish at the wrong page.
+ * Accept a Confluence page id as a non-empty string or an unquoted positive TOML
+ * integer (its most natural form, e.g. `parent_page_id = 98765`). A `0`/negative
+ * id, an empty string, or a non-safe integer (beyond `Number.MAX_SAFE_INTEGER`,
+ * which would lose precision as a JS double and point publish at the wrong page)
+ * is rejected at load time rather than surfacing later as a publish 404.
  */
 function asPageId(value: unknown, key: string): string | undefined {
-  if (value === undefined || typeof value === "string") {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "string") {
+    if (value.trim() === "") {
+      fail(`${CONFIG_REL_PATH}: ${key} must not be empty`, `set ${key} to a Confluence page id`, { key });
+    }
     return value;
   }
   if (typeof value === "number" && Number.isInteger(value)) {
@@ -387,10 +428,20 @@ function asPageId(value: unknown, key: string): string | undefined {
         { key, value },
       );
     }
+    if (value <= 0) {
+      fail(`${CONFIG_REL_PATH}: ${key} must be a positive page id`, `set ${key} to a positive integer page id`, {
+        key,
+        value,
+      });
+    }
     return String(value);
   }
-  fail(`${CONFIG_REL_PATH}: ${key} must be a string or an integer`, `set ${key} to a page-id string or integer`, {
-    key,
-    value,
-  });
+  fail(
+    `${CONFIG_REL_PATH}: ${key} must be a string or a positive integer`,
+    `set ${key} to a page-id string or integer`,
+    {
+      key,
+      value,
+    },
+  );
 }
