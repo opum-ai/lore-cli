@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-06-23 13:46'
+updated_date: '2026-06-23 13:47'
 labels:
   - core
 milestone: m-1
@@ -46,6 +46,16 @@ Decisions (user-approved this session): module = src/config.ts; token-committed-
 <!-- SECTION:NOTES:BEGIN -->
 Implemented src/config.ts: loadConfig({root?, env?}) -> LoreConfig. Bun-native Bun.TOML.parse (no dependency; parses data not a module, so it survives bun build --compile). Sync via existsSync+readFileSync; a missing file -> zero-config defaults; snake_case TOML mapped to camelCase at the boundary. Hand-rolled type/enum validation (Zod deferred to LORE-15) raises LoreError type=validation (exit 6) on malformed TOML or an out-of-contract value; unknown keys/sections are tolerated for forward-compat. The Confluence token is read ONLY from the LORE_CONFLUENCE_TOKEN env var, never persisted; a committed [confluence].token fails loud (validation) even when the env token is set. Decisions (user-approved this session): (1) module = src/config.ts, a focused loader the design's state.ts consumes (lore-design module tree section 2 + 2.4 updated to match); (2) committed token = hard-error per ADR-0013 fail-loud. Validation: bun test 70 pass / 0 fail (18 new config tests), bun run lint PASS, bun run typecheck PASS; e2e smoke: committed config -> defaults, env token overlays onto confluence, committed token -> --json validation envelope on stderr + exit 6.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: @claude
+created: 2026-06-23 13:47
+---
+Delivered as PR #10 (https://github.com/jeremy-newhouse/lore/pull/10) into dev, branch feat/lore-10-config-loader. Implementation complete and verified (70 tests, lint, typecheck, e2e smoke); left In Progress pending review/merge.
+---
+<!-- COMMENTS:END -->
 
 ## Final Summary
 
