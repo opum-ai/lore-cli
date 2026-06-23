@@ -115,9 +115,33 @@ describe("toErrorEnvelope", () => {
     expect("input" in toErrorEnvelope(new LoreError("not_found", "missing", undefined, 0))).toBe(false);
   });
 
-  test("still echoes an array input (arrays are objects)", () => {
+  test("omits an array input (§5.2 types input as an object, not an array)", () => {
     const envelope = toErrorEnvelope(new LoreError("conflict", "dupes", undefined, ["a", "b"]));
-    expect(envelope.input).toEqual(["a", "b"]);
+    expect("input" in envelope).toBe(false);
+  });
+
+  test("coerces a non-string hint to a string (§5.2 types hint as a string)", () => {
+    const err = new LoreError("validation", "bad");
+    // hint is `readonly string?`, but a JS caller can store a non-string; cast past it.
+    (err as { hint?: unknown }).hint = { structured: true };
+    const envelope = toErrorEnvelope(err);
+    expect(typeof envelope.hint).toBe("string");
+    expect(envelope.hint).toContain("structured");
+  });
+
+  test("coerces a non-string message to a string (§5.2 types message as a string)", () => {
+    const err = new LoreError("validation", "ok");
+    // Error.message is typed string but can be reassigned to anything at runtime.
+    (err as { message: unknown }).message = { code: 7 };
+    const envelope = toErrorEnvelope(err);
+    expect(typeof envelope.message).toBe("string");
+    expect(envelope.message).toContain("7");
+  });
+
+  test("collapses newlines in message and hint to keep them single-line (§5.2)", () => {
+    const envelope = toErrorEnvelope(new LoreError("validation", "line1\nline2", "do a\nthen b"));
+    expect(envelope.message).toBe("line1 line2");
+    expect(envelope.hint).toBe("do a then b");
   });
 });
 
@@ -294,13 +318,23 @@ describe("reportError", () => {
     expect(parsed.input.self).toBe("[Circular]");
   });
 
-  test("--json keeps the envelope on one line when message/input contain newlines", () => {
+  test("--json keeps one line: message newlines collapse (§5.2), input newlines are preserved", () => {
     const stderr = capture();
     reportError(new LoreError("usage", "line1\nline2", undefined, { note: "a\nb" }), { json: true, stderr });
     expect(stderr.lines()).toHaveLength(1);
     const parsed = JSON.parse(stderr.text());
-    expect(parsed.message).toBe("line1\nline2");
+    // message is single-line per §5.2 (newlines collapsed to a space)...
+    expect(parsed.message).toBe("line1 line2");
+    // ...but input is echoed structured data, so its newlines survive (escaped).
     expect(parsed.input.note).toBe("a\nb");
+  });
+
+  test("text mode collapses a multi-line message to a single stderr line (§5.4)", () => {
+    const stderr = capture();
+    const code = reportError(new LoreError("validation", "first\nsecond", "fix a\nfix b"), { json: false, stderr });
+    expect(code).toBe(6);
+    // One logical error → one `error:` line and one `hint:` line; no orphan lines.
+    expect(stderr.text()).toBe("error: first second\nhint: fix a fix b\n");
   });
 
   test("a non-LoreError with a hostile toString is reported as uncaught without throwing (json)", () => {
@@ -365,6 +399,18 @@ describe("reportError", () => {
     expect(parsed.message).toContain("EACCES");
   });
 
+  test("a thrown object with an empty-string message does not leak its other fields", () => {
+    const stderr = capture();
+    reportError({ message: "", token: "s3cret", cwd: "/home/u" }, { json: true, stderr });
+    const parsed = JSON.parse(stderr.text());
+    expect(parsed.error_type).toBe("uncaught");
+    // An empty own `message` is honored as-is; we must NOT fall back to dumping the
+    // whole object, which would leak `token`/`cwd` the thrower kept out of `message`.
+    expect(parsed.message).toBe("");
+    expect(stderr.text()).not.toContain("s3cret");
+    expect(stderr.text()).not.toContain("/home/u");
+  });
+
   test("--json safe path honors a custom toJSON on input (fast/safe paths agree)", () => {
     // A BigInt sibling forces the safe-serialization path; the value with a
     // custom toJSON must still serialize via its toJSON, not its raw fields.
@@ -382,6 +428,40 @@ describe("reportError", () => {
     reportError(new LoreError("conflict", "stamp", undefined, { when, n: 1n }), { json: true, stderr });
     const parsed = JSON.parse(stderr.text());
     expect(parsed.input.when).toBe("2026-06-22T00:00:00.000Z");
+  });
+
+  test("--json safe path passes the property key to a custom toJSON (matches JSON.stringify)", () => {
+    // toJSON echoes the key it receives; native JSON.stringify passes the property
+    // name. A BigInt sibling forces the safe path, which must agree with the fast one.
+    const keyed = {
+      toJSON(key?: string): string {
+        return `k=${String(key)}`;
+      },
+    };
+    const stderr = capture();
+    reportError(new LoreError("validation", "keyed", undefined, { field: keyed, n: 1n }), { json: true, stderr });
+    const parsed = JSON.parse(stderr.text());
+    expect(parsed.input.field).toBe("k=field");
+    expect(parsed.input.n).toBe("1");
+  });
+
+  test("--json safe path preserves a '__proto__' data field in input (not swallowed by the setter)", () => {
+    // Build via defineProperty: an object literal `{ __proto__: ... }` would set the
+    // prototype, not create a data key. The BigInt sibling forces the safe path.
+    const input: Record<string, unknown> = { keep: 2, n: 4n };
+    Object.defineProperty(input, "__proto__", {
+      value: { evil: 1 },
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    const stderr = capture();
+    reportError(new LoreError("validation", "proto", undefined, input), { json: true, stderr });
+    expect(stderr.lines()).toHaveLength(1);
+    // The __proto__-named field must appear in the serialized envelope, matching the
+    // fast JSON.stringify path instead of being silently dropped by the assignment.
+    expect(stderr.text()).toContain('"__proto__":{"evil":1}');
+    expect(JSON.parse(stderr.text()).input.keep).toBe(2);
   });
 });
 

@@ -99,22 +99,58 @@ interface UncaughtEnvelope {
 }
 
 /**
- * Project a {@link LoreError} onto its `--json` error envelope. `hint` is omitted
- * when absent or empty; `input` is included only when it is a non-null object
- * (cli-contract §5.2 types it as an object), so a `null`/primitive `input` is
- * dropped rather than emitted as noise. Field order matches the contract example.
+ * Coerce a value the contract types as a `string` (a `message` or `hint`) into an
+ * actual string. The taxonomy types both as `string`, but a JS caller — or an
+ * `Error.message`/`hint` reassigned at runtime — can still hand us a non-string,
+ * while cli-contract §5.2 promises the envelope's `message`/`hint` ARE strings.
+ * Guarded through {@link safeStringify} so coercion on the error path can never
+ * itself throw (a hostile value cannot crash the very code reporting a failure).
+ */
+function asText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value === undefined || value === null) {
+    return "";
+  }
+  return safeStringify(value);
+}
+
+/**
+ * Collapse a diagnostic field to a single line: any run of line breaks (with
+ * adjacent horizontal whitespace) becomes one space, and the ends are trimmed.
+ * cli-contract §5.2 types `message` as single-line and §5.4 promises the text
+ * diagnostic is one stderr line, so a multi-line `message`/`hint` can neither
+ * spill across lines nor smuggle a second, unprefixed line into stderr. `input`
+ * is deliberately exempt — it is echoed structured data, not a human-readable
+ * line, and its newlines are preserved (escaped) in JSON.
+ */
+function singleLine(text: string): string {
+  return text.replace(/\s*[\r\n]+\s*/g, " ").trim();
+}
+
+/**
+ * Project a {@link LoreError} onto its `--json` error envelope. `message`/`hint`
+ * are coerced to single-line strings (§5.2); `hint` is omitted when absent or
+ * empty; `input` is included only when it is a non-null, non-array object
+ * (cli-contract §5.2 types it as an object), so a `null`/primitive/array `input`
+ * is dropped rather than emitted as noise. Field order matches the contract example.
  */
 export function toErrorEnvelope(err: LoreError): ErrorEnvelope {
-  const envelope: ErrorEnvelope = { error_type: err.type, message: err.message };
-  // A hint counts as present only when it is a non-empty string; an empty hint
-  // would emit a meaningless `"hint": ""` (and a dangling `hint:` line in text).
+  // §5.2 types `message`/`hint` as single-line strings. Coerce (a reassigned or
+  // mis-typed value need not be a string) and collapse newlines, so the envelope
+  // honors the contract regardless of what a caller stored on the error.
+  const envelope: ErrorEnvelope = { error_type: err.type, message: singleLine(asText(err.message)) };
+  // A hint counts as present only when it is non-empty; an empty hint would emit
+  // a meaningless `"hint": ""` (and a dangling `hint:` line in text).
   if (err.hint) {
-    envelope.hint = err.hint;
+    envelope.hint = singleLine(asText(err.hint));
   }
-  // §5.2 documents `input` as an object. Echo a non-null object (or array) only;
-  // a `null` or primitive would emit `input: null` / `input: "..."`, which a
-  // consumer that reads `envelope.input.<field>` cannot tolerate.
-  if (typeof err.input === "object" && err.input !== null) {
+  // §5.2 types `input` as an object. Echo a non-null, non-array object only: a
+  // `null`/primitive (`input: null` / `input: "..."`) or an array (`input: [...]`)
+  // would break a consumer that decodes `input` as an object and reads
+  // `envelope.input.<field>`.
+  if (typeof err.input === "object" && err.input !== null && !Array.isArray(err.input)) {
     envelope.input = err.input;
   }
   return envelope;
@@ -157,11 +193,13 @@ function errorHead(message: string, color: boolean): string {
  */
 export function formatErrorText(err: LoreError, opts: { color?: boolean } = {}): string {
   const color = opts.color ?? false;
-  const head = errorHead(err.message, color);
+  // Same single-line coercion as the envelope (§5.2/§5.4): a multi-line or
+  // non-string message/hint must not split the stderr diagnostic across lines.
+  const head = errorHead(singleLine(asText(err.message)), color);
   if (!err.hint) {
     return head;
   }
-  return `${head}\n${paint("hint:", DIM, color)} ${err.hint}`;
+  return `${head}\n${paint("hint:", DIM, color)} ${singleLine(asText(err.hint))}`;
 }
 
 /** A minimal write sink — `process.stderr` satisfies it, and tests inject a fake. */
@@ -191,7 +229,7 @@ export interface Writer {
  * `error_type`/`message`/`hint` always survive this path. `ancestors` is the
  * set of objects on the current path (O(1) membership; cleared on unwind).
  */
-function toJsonSafe(value: unknown, ancestors: Set<object>): unknown {
+function toJsonSafe(value: unknown, ancestors: Set<object>, key = ""): unknown {
   if (value === null) {
     return null;
   }
@@ -216,34 +254,42 @@ function toJsonSafe(value: unknown, ancestors: Set<object>): unknown {
     try {
       const toJson = (value as { toJSON?: unknown }).toJSON;
       if (typeof toJson === "function") {
-        replacement = (toJson as () => unknown).call(value);
+        // JSON.stringify passes the property key to toJSON (the index for an
+        // array element, "" at the root); pass it too so a key-sensitive toJSON
+        // serializes identically on this fallback as on the fast path.
+        replacement = (toJson as (key: string) => unknown).call(value, key);
         replaced = true;
       }
     } catch {
       return "[Unserializable]";
     }
     if (replaced) {
-      return toJsonSafe(replacement, ancestors);
+      return toJsonSafe(replacement, ancestors, key);
     }
     if (Array.isArray(value)) {
-      return (value as unknown[]).map((item) => {
+      return (value as unknown[]).map((item, index) => {
         try {
-          return toJsonSafe(item, ancestors);
+          return toJsonSafe(item, ancestors, String(index));
         } catch {
           return "[Unserializable]";
         }
       });
     }
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>)) {
+    // `Object.create(null)`, not `{}`: a data field literally named `__proto__`
+    // assigned to a normal object hits the inherited prototype setter and is
+    // silently dropped (diverging from the fast JSON.stringify path); a
+    // null-prototype object has no such setter, so the key lands as an own
+    // enumerable property and JSON.stringify emits it.
+    const out: Record<string, unknown> = Object.create(null);
+    for (const childKey of Object.keys(value as Record<string, unknown>)) {
       try {
         // Reading the property may itself throw (a getter); keep it isolated.
-        const projected = toJsonSafe((value as Record<string, unknown>)[key], ancestors);
+        const projected = toJsonSafe((value as Record<string, unknown>)[childKey], ancestors, childKey);
         if (projected !== undefined) {
-          out[key] = projected;
+          out[childKey] = projected;
         }
       } catch {
-        out[key] = "[Unserializable]";
+        out[childKey] = "[Unserializable]";
       }
     }
     return out;
@@ -296,7 +342,11 @@ function deriveMessage(err: unknown): string {
     }
     if (typeof err === "object" && err !== null) {
       const own = (err as { message?: unknown }).message;
-      return typeof own === "string" && own !== "" ? own : safeStringify(err);
+      // Honor an own string `message` even when empty: an empty string is a valid
+      // (if unhelpful) message, whereas falling through to safeStringify(err) would
+      // dump every other field of the thrown object — leaking internals the thrower
+      // deliberately kept out of `message` (e.g. a token) into stderr.
+      return typeof own === "string" ? own : safeStringify(err);
     }
     return String(err);
   } catch {
@@ -330,17 +380,21 @@ export function reportError(err: unknown, opts: { json: boolean; color?: boolean
     } else {
       stderr.write(`${formatErrorText(err, { color: opts.color })}\n`);
     }
-    return EXIT_CODES[err.type];
-  }
-
-  const message = deriveMessage(err);
-  if (opts.json) {
-    const envelope: UncaughtEnvelope = { error_type: "uncaught", message };
-    stderr.write(`${safeStringify(envelope)}\n`);
   } else {
-    stderr.write(`${errorHead(message, opts.color ?? false)}\n`);
+    // Single-line per §5.2/§5.4: deriveMessage can yield a multi-line string (an
+    // Error.message with embedded newlines), which would otherwise split the
+    // uncaught diagnostic across stderr lines.
+    const message = singleLine(deriveMessage(err));
+    if (opts.json) {
+      const envelope: UncaughtEnvelope = { error_type: "uncaught", message };
+      stderr.write(`${safeStringify(envelope)}\n`);
+    } else {
+      stderr.write(`${errorHead(message, opts.color ?? false)}\n`);
+    }
   }
-  return EXIT_UNCAUGHT;
+  // Single source of truth for the exit code: exitCodeFor maps a LoreError via
+  // EXIT_CODES and anything else to EXIT_UNCAUGHT — don't re-derive it inline.
+  return exitCodeFor(err);
 }
 
 /**
@@ -385,8 +439,10 @@ export class WarningCollector {
   flush(opts: { color?: boolean; stderr?: Writer } = {}): number {
     const stderr = opts.stderr ?? process.stderr;
     const color = opts.color ?? false;
+    // The painted prefix is loop-invariant — build it once, not once per warning.
+    const prefix = paint("warning:", YELLOW, color);
     for (const message of this.messages) {
-      stderr.write(`${paint("warning:", YELLOW, color)} ${message}\n`);
+      stderr.write(`${prefix} ${message}\n`);
     }
     return this.messages.length;
   }

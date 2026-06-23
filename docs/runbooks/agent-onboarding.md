@@ -162,7 +162,7 @@ lore check          # plain auto-selected when non-TTY (e.g. in CI)
 written status no longer matches its tasks, or a stale managed block), broken
 internal links, missing heading anchors, and portability-lint findings, and it
 surfaces per-doc/bundle token **estimates**. On any failing condition it exits
-**`6` (validation_or_drift)**; the fix is to run `lore sync` and commit. Because
+**`6`** (`error_type` `drift`); the fix is to run `lore sync` and commit. Because
 `check` writes nothing, it is safe to run in CI on every merge — and because the
 core is deterministic, a green `check` locally means a green `check` in CI.
 
@@ -286,7 +286,7 @@ are always safe. Never read diagnostics or progress from stdout.
 | `3` | not_found | a concept/task/link target is missing — create or correct it |
 | `4` | denied | you targeted a managed region or a guarded op — back off |
 | `5` | conflict | id collision / already-exists / write-race — reconcile, then retry |
-| `6` | validation_or_drift | run `lore sync`, then re-run the gate |
+| `6` | `validation` / `drift` | run `lore sync` (drift) or fix the flagged non-conformance (validation), then re-run the gate |
 
 Exit **`1` is reserved for an uncaught bug** — treat it as *report this*, not
 *handle this*. The exit code carries the same meaning in every mode, so

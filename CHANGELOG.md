@@ -25,8 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and respects a `toJSON` written to hide fields. The uncaught branch guards
   message derivation against a hostile `toString`/`Symbol.toPrimitive` and
   surfaces a thrown non-Error object's detail (its `message`, else a JSON
-  projection) instead of `"[object Object]"`. The envelope omits an empty `hint`
-  and only echoes a non-null object `input` (cli-contract §5.2).
+  projection, with an empty `message` honored as-is rather than dumping the
+  object's other fields) instead of `"[object Object]"`. The envelope coerces
+  `message`/`hint` to single-line strings, omits an empty `hint`, and echoes only
+  a non-null, non-array object `input` (cli-contract §5.2).
   `WarningCollector.flush` is documented as non-draining, and `EXIT_CODES` is
   frozen.
 - CI (LORE-8): GitHub Actions workflow running `lint`, `typecheck`, and
