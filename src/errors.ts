@@ -105,8 +105,12 @@ interface UncaughtEnvelope {
  * while cli-contract §5.2 promises the envelope's `message`/`hint` ARE strings.
  * Guarded through {@link safeStringify} so coercion on the error path can never
  * itself throw (a hostile value cannot crash the very code reporting a failure).
+ *
+ * Exported alongside {@link singleLine} so the output layer applies the same
+ * coercion before single-lining the truncation `hint` — a non-string hint from a
+ * JS caller must degrade, not crash `String.prototype.replace`.
  */
-function asText(value: unknown): string {
+export function asText(value: unknown): string {
   if (typeof value === "string") {
     return value;
   }
@@ -124,9 +128,17 @@ function asText(value: unknown): string {
  * spill across lines nor smuggle a second, unprefixed line into stderr. `input`
  * is deliberately exempt — it is echoed structured data, not a human-readable
  * line, and its newlines are preserved (escaped) in JSON.
+ *
+ * The run matches every ECMAScript line terminator — CR, LF, and the Unicode
+ * LINE/PARAGRAPH SEPARATORs U+2028/U+2029 — so a separator that `trim()` already
+ * treats as whitespace cannot survive here as a smuggled break.
+ *
+ * Exported so the output layer (output.ts) collapses its single-line fields — the
+ * truncation `hint` (cli-contract §3.2) — through the *same* discipline rather
+ * than letting an embedded newline smuggle a second line onto stdout.
  */
-function singleLine(text: string): string {
-  return text.replace(/\s*[\r\n]+\s*/g, " ").trim();
+export function singleLine(text: string): string {
+  return text.replace(/\s*[\r\n\u2028\u2029]+\s*/g, " ").trim();
 }
 
 /**

@@ -10,25 +10,8 @@ import {
   reportError,
   toErrorEnvelope,
   WarningCollector,
-  type Writer,
 } from "../src/errors";
-
-// A capturing Writer so tests assert exactly what reaches stderr without
-// touching the real process streams.
-function capture(): Writer & { text(): string; lines(): string[] } {
-  const chunks: string[] = [];
-  return {
-    write(s: string): void {
-      chunks.push(s);
-    },
-    text(): string {
-      return chunks.join("");
-    },
-    lines(): string[] {
-      return chunks.join("").split("\n").filter(Boolean);
-    },
-  };
-}
+import { capture } from "./helpers";
 
 const ALL_TYPES: ErrorType[] = ["usage", "not_found", "denied", "conflict", "validation", "drift"];
 
@@ -140,6 +123,12 @@ describe("toErrorEnvelope", () => {
 
   test("collapses newlines in message and hint to keep them single-line (§5.2)", () => {
     const envelope = toErrorEnvelope(new LoreError("validation", "line1\nline2", "do a\nthen b"));
+    expect(envelope.message).toBe("line1 line2");
+    expect(envelope.hint).toBe("do a then b");
+  });
+
+  test("collapses Unicode line/paragraph separators too (U+2028/U+2029), not only CR/LF", () => {
+    const envelope = toErrorEnvelope(new LoreError("validation", "line1\u2028line2", "do a\u2029then b"));
     expect(envelope.message).toBe("line1 line2");
     expect(envelope.hint).toBe("do a then b");
   });
