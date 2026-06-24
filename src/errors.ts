@@ -124,8 +124,12 @@ function asText(value: unknown): string {
  * spill across lines nor smuggle a second, unprefixed line into stderr. `input`
  * is deliberately exempt — it is echoed structured data, not a human-readable
  * line, and its newlines are preserved (escaped) in JSON.
+ *
+ * Exported so the output layer (output.ts) collapses its single-line fields — the
+ * truncation `hint` (cli-contract §3.2) — through the *same* discipline rather
+ * than letting an embedded newline smuggle a second line onto stdout.
  */
-function singleLine(text: string): string {
+export function singleLine(text: string): string {
   return text.replace(/\s*[\r\n]+\s*/g, " ").trim();
 }
 

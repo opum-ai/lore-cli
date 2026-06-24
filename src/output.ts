@@ -33,7 +33,7 @@
  * Design: docs/specs/lore-design.md §5. Rationale: docs/adr/0005-cli-contract.md.
  */
 
-import type { Writer } from "./errors";
+import { singleLine, type Writer } from "./errors";
 
 // Re-exported so a command author gets the write sink type from the rendering
 // seam itself, without a second import from errors.ts.
@@ -172,13 +172,33 @@ export interface Truncation {
 
 /**
  * Build a {@link Truncation} from the full and shown counts, deriving
- * `truncated = shown < total`. An empty `hint` is dropped rather than emitted as
- * a meaningless `"hint": ""` (mirroring the error envelope's hint handling).
+ * `truncated = shown < total`.
+ *
+ * Counts are item tallies, so they must be non-negative integers with
+ * `shown <= total`; a `NaN`/`Infinity`/fractional/negative/transposed count is an
+ * upstream arithmetic slip and throws a `RangeError` rather than producing
+ * misleading output. The guard matters because the failure is otherwise *silent*:
+ * `NaN < total` is `false`, so a genuinely partial result would report
+ * `truncated: false`, and `JSON.stringify(NaN)` emits `null` into the `--json`
+ * envelope (§3.1) — a consumer that branches on `truncated`/`total` is told a
+ * dropped-rows result is complete. A fractional count would also render as
+ * `showing 30.5 of 120` (§3.2).
+ *
+ * The `hint` is collapsed to a single line via {@link singleLine} (so an embedded
+ * newline cannot split the §3.2 line or appear multi-line in `--json`), and a
+ * hint that is empty or whitespace-only after collapsing is dropped rather than
+ * emitted as a meaningless `"hint": ""`.
  */
 export function truncation(total: number, shown: number, hint?: string): Truncation {
+  if (!Number.isInteger(total) || !Number.isInteger(shown) || shown < 0 || shown > total) {
+    throw new RangeError(
+      `truncation: counts must be integers with 0 <= shown <= total, received total=${String(total)}, shown=${String(shown)}`,
+    );
+  }
+  const cleanHint = hint ? singleLine(hint) : "";
   const result: Truncation = { total, shown, truncated: shown < total };
-  if (hint) {
-    result.hint = hint;
+  if (cleanHint) {
+    result.hint = cleanHint;
   }
   return result;
 }
@@ -218,42 +238,86 @@ export interface Renderable<T> {
  * Render a {@link Renderable} to stdout in the resolved mode — the seam every
  * command's success path goes through.
  *
- * - **json:** the {@link SuccessEnvelope} as one compact line. The payload is
- *   serialized *before* the write, so a non-serializable `data` (a bug — core
- *   returns plain data) throws here with **nothing** written, keeping "stdout
- *   parses or stays silent" (§4) intact. Unlike the error path, a bad success
- *   payload is deliberately *not* degraded: it must surface as an uncaught
- *   failure on stderr, never be dressed up as a success.
- * - **plain / pretty:** the renderer's text, normalized to exactly one trailing
- *   newline (an empty body writes nothing, so stdout stays clean). Pretty
- *   receives the resolved `color`.
+ * - **json:** the {@link SuccessEnvelope} as one compact line. `data` is checked
+ *   to be an object/array and then serialized *before* the write, so a malformed
+ *   or non-serializable payload (a bug — core returns plain data) throws here
+ *   with **nothing** written, keeping "stdout parses or stays silent" (§4)
+ *   intact. Unlike the error path, a bad success payload is deliberately *not*
+ *   degraded: it must surface as an uncaught failure on stderr, never be dressed
+ *   up as a success.
+ * - **plain / pretty:** the renderer's text via {@link writeBody}, normalized to
+ *   exactly one trailing newline (an empty/whitespace-only body writes nothing,
+ *   so stdout stays clean). Pretty receives the resolved `color`.
  *
- * stdout-only by contract; diagnostics are the caller's job via errors.ts on
- * stderr. `out` defaults to `process.stdout` and is injectable for tests.
+ * The `switch` is exhaustive over {@link OutputMode}: the `never` default makes
+ * adding a mode without handling it here a compile error. stdout-only by
+ * contract; diagnostics are the caller's job via errors.ts on stderr. `out`
+ * defaults to `process.stdout` and is injectable for tests.
  */
 export function emit<T>(renderable: Renderable<T>, ctx: OutputContext, out: Writer = process.stdout): void {
-  if (ctx.mode === "json") {
-    // Serialize first; only write once it has succeeded (see the doc comment).
-    const text = JSON.stringify(successEnvelope(renderable.kind, renderable.data));
-    out.write(`${text}\n`);
-    return;
+  switch (ctx.mode) {
+    case "json": {
+      // Reject off-contract data, then serialize; only write once both succeed,
+      // so a bad payload never lands a malformed "success" on stdout.
+      assertEnvelopeData(renderable.kind, renderable.data);
+      const text = JSON.stringify(successEnvelope(renderable.kind, renderable.data));
+      out.write(`${text}\n`);
+      return;
+    }
+    case "plain": {
+      writeBody(renderable.plain(renderable.data), out);
+      return;
+    }
+    case "pretty": {
+      writeBody(renderable.pretty(renderable.data, { color: ctx.color }), out);
+      return;
+    }
+    default: {
+      // Exhaustiveness guard: if OutputMode grows a member, this stops compiling.
+      const unreachable: never = ctx.mode;
+      throw new TypeError(`emit: unhandled output mode ${String(unreachable)}`);
+    }
   }
-  const body =
-    ctx.mode === "plain" ? renderable.plain(renderable.data) : renderable.pretty(renderable.data, { color: ctx.color });
-  writeBody(body, out);
 }
 
 /**
  * Write a pretty/plain body with exactly one trailing newline. Renderers return
  * the logical text without one (as errors.ts's `formatErrorText` does), so the
- * single source of truth for the line terminator is here. Trailing newlines are
- * collapsed to one; an empty body (after that collapse) writes nothing, so a
- * command with no rows leaves stdout silent rather than emitting a lone newline.
+ * single source of truth for the line terminator is here.
+ *
+ * All trailing whitespace is stripped — spaces, tabs, and line endings of either
+ * convention, since a bare `\n` strip would leave a stray `\r` from a `\r\n`
+ * ending — and a body that is entirely whitespace collapses to nothing and
+ * writes **nothing**, so a command with no rows leaves stdout silent rather than
+ * emitting a blank line. Only the trailing edge is normalized: leading and
+ * interior formatting is the renderer's payload and is preserved verbatim —
+ * pretty mode may format freely (§1.2) and a plain renderer owns its own
+ * diff-stability (§1.3).
  */
 function writeBody(body: string, out: Writer): void {
-  const trimmed = body.replace(/\n+$/, "");
+  const trimmed = body.replace(/\s+$/, "");
   if (trimmed === "") {
     return;
   }
   out.write(`${trimmed}\n`);
+}
+
+/**
+ * Assert a `--json` envelope's `data` satisfies cli-contract §2 (an object or
+ * array) before it is serialized. A value `JSON.stringify` drops as a property —
+ * `undefined`, a function, a symbol — would otherwise yield an envelope with no
+ * `data` key at all (malformed, §2-violating), and a `null` or primitive would
+ * put a `data` that a `JSON.parse(stdout).data.<field>` consumer crashes on.
+ * Either way the "success" would be a lie. Throwing here keeps the §4 invariant:
+ * nothing reaches stdout, and the throw surfaces as an uncaught error on stderr
+ * (exit 1) instead of a malformed success at exit 0.
+ */
+function assertEnvelopeData(kind: string, data: unknown): void {
+  if (typeof data !== "object" || data === null) {
+    throw new TypeError(
+      `emit: --json envelope data for kind "${kind}" must be an object or array, received ${
+        data === null ? "null" : typeof data
+      }`,
+    );
+  }
 }

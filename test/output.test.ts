@@ -3,7 +3,6 @@ import { LoreError, reportError, WarningCollector, type Writer } from "../src/er
 import {
   emit,
   type OutputContext,
-  type OutputMode,
   type Renderable,
   renderTruncationLine,
   resolveMode,
@@ -14,8 +13,10 @@ import {
 } from "../src/output";
 
 // A capturing Writer so tests assert exactly what reaches a stream without
-// touching the real process streams (mirrors test/errors.test.ts).
-function capture(): Writer & { text(): string; lines(): string[] } {
+// touching the real process streams (mirrors test/errors.test.ts). Only the raw
+// joined text is exposed — no blank-line-filtering helper, so every newline
+// assertion is made against the exact bytes written.
+function capture(): Writer & { text(): string } {
   const chunks: string[] = [];
   return {
     write(s: string): void {
@@ -23,9 +24,6 @@ function capture(): Writer & { text(): string; lines(): string[] } {
     },
     text(): string {
       return chunks.join("");
-    },
-    lines(): string[] {
-      return chunks.join("").split("\n").filter(Boolean);
     },
   };
 }
@@ -169,7 +167,8 @@ describe("emit — json mode", () => {
     const cap = capture();
     emit(renderable("query.results", { total: 1 }), JSON_CTX, cap);
     expect(cap.text()).toBe('{"schemaVersion":1,"kind":"query.results","data":{"total":1}}\n');
-    expect(cap.lines()).toHaveLength(1);
+    // Exactly one newline total (the trailing one) — no leading/embedded blank line.
+    expect((cap.text().match(/\n/g) ?? []).length).toBe(1);
     expect(JSON.parse(cap.text())).toEqual({ schemaVersion: 1, kind: "query.results", data: { total: 1 } });
   });
 
@@ -207,6 +206,34 @@ describe("emit — json mode", () => {
     expect(cap.text()).toBe("");
   });
 
+  test("undefined data throws — never a §2 envelope missing the data key", () => {
+    const cap = capture();
+    // JSON.stringify would silently DROP an undefined `data`, emitting
+    // {"schemaVersion":1,"kind":"k"} — a malformed success. The guard rejects it.
+    expect(() => emit(renderable("k", undefined), JSON_CTX, cap)).toThrow(TypeError);
+    expect(cap.text()).toBe("");
+  });
+
+  test("null data throws (a JSON.parse(stdout).data.<field> consumer would crash)", () => {
+    const cap = capture();
+    expect(() => emit(renderable("k", null), JSON_CTX, cap)).toThrow(TypeError);
+    expect(cap.text()).toBe("");
+  });
+
+  test("primitive data (string/number/boolean) throws — §2 data must be object|array", () => {
+    for (const bad of ["hi", 42, true]) {
+      const cap = capture();
+      expect(() => emit(renderable("k", bad), JSON_CTX, cap)).toThrow(TypeError);
+      expect(cap.text()).toBe("");
+    }
+  });
+
+  test("array data is accepted (an envelope data of array shape is valid §2)", () => {
+    const cap = capture();
+    emit(renderable("graph.export", [1, 2, 3]), JSON_CTX, cap);
+    expect(JSON.parse(cap.text())).toEqual({ schemaVersion: 1, kind: "graph.export", data: [1, 2, 3] });
+  });
+
   test("defaults the sink to process.stdout", () => {
     const original = process.stdout.write.bind(process.stdout);
     const chunks: string[] = [];
@@ -241,6 +268,27 @@ describe("emit — plain mode", () => {
     const cap = capture();
     emit(renderable("k", {}, { plain: () => "" }), PLAIN_CTX, cap);
     expect(cap.text()).toBe("");
+  });
+
+  test("a whitespace-only body writes nothing (no stray line for a no-rows result)", () => {
+    for (const blank of ["   ", "\t", "  \n", "\r\n\r\n", "\n  \n"]) {
+      const cap = capture();
+      emit(renderable("k", {}, { plain: () => blank }), PLAIN_CTX, cap);
+      expect(cap.text()).toBe("");
+    }
+  });
+
+  test("strips a CRLF terminator cleanly — no stray \\r before the added \\n", () => {
+    const cap = capture();
+    emit(renderable("k", {}, { plain: () => "row one\r\nrow two\r\n" }), PLAIN_CTX, cap);
+    // Interior CRLF is the renderer's payload; only the trailing edge is normalized.
+    expect(cap.text()).toBe("row one\r\nrow two\n");
+  });
+
+  test("preserves leading/interior formatting — only the trailing edge is normalized", () => {
+    const cap = capture();
+    emit(renderable("k", {}, { plain: () => "  indented first\n\n  indented again" }), PLAIN_CTX, cap);
+    expect(cap.text()).toBe("  indented first\n\n  indented again\n");
   });
 
   test("does not invoke the pretty renderer", () => {
@@ -303,7 +351,7 @@ describe("truncation builder (cli-contract §3)", () => {
     expect(truncation(0, 0)).toEqual({ total: 0, shown: 0, truncated: false });
   });
 
-  test("includes a non-empty hint and drops an empty one", () => {
+  test("includes a non-empty hint and drops an empty or whitespace-only one", () => {
     expect(truncation(120, 30, "narrow with --type story")).toEqual({
       total: 120,
       shown: 30,
@@ -311,6 +359,21 @@ describe("truncation builder (cli-contract §3)", () => {
       hint: "narrow with --type story",
     });
     expect(truncation(120, 30, "")).toEqual({ total: 120, shown: 30, truncated: true });
+    expect(truncation(120, 30, "   \n ")).toEqual({ total: 120, shown: 30, truncated: true });
+  });
+
+  test("collapses a multi-line hint to one line (matches errors.ts singleLine)", () => {
+    expect(truncation(120, 30, "narrow with\n--type story").hint).toBe("narrow with --type story");
+  });
+
+  test("rejects non-integer / negative / transposed counts (no silent mislabel)", () => {
+    expect(() => truncation(Number.NaN, 30)).toThrow(RangeError); // NaN < total is false → would mislabel as complete
+    expect(() => truncation(30, Number.NaN)).toThrow(RangeError);
+    expect(() => truncation(Number.POSITIVE_INFINITY, 30)).toThrow(RangeError);
+    expect(() => truncation(120.5, 30)).toThrow(RangeError); // would render "showing 30 of 120.5"
+    expect(() => truncation(120, 30.5)).toThrow(RangeError);
+    expect(() => truncation(120, -1)).toThrow(RangeError);
+    expect(() => truncation(30, 120)).toThrow(RangeError); // transposed: shown > total
   });
 });
 
@@ -328,10 +391,4 @@ describe("renderTruncationLine (cli-contract §3.2)", () => {
   test("returns empty string when nothing was truncated", () => {
     expect(renderTruncationLine(truncation(30, 30, "ignored"))).toBe("");
   });
-});
-
-// Type-level: OutputMode is the union the layer is built on.
-const _modes: OutputMode[] = ["json", "plain", "pretty"];
-test("OutputMode union has exactly the three modes", () => {
-  expect(_modes).toEqual(["json", "plain", "pretty"]);
 });
