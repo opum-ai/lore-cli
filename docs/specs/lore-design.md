@@ -80,8 +80,9 @@ src/
 │   └── confluence.ts # one-way publish (DEFERRED, v2; zero core dependency)
 ├── commands/         # one thin file per CLI command
 ├── output.ts         # the output-mode layer (pretty / --plain / --json)
+├── config.ts         # .lore/config.toml loader (native TOML + env overlay)
 ├── errors.ts         # LoreError taxonomy → exit codes + JSON error envelope
-└── state.ts          # .lore/ read/write + git ownership of backlog/
+└── state.ts          # .lore/ read/write (consumes config.ts) + git ownership of backlog/
 ```
 
 ### 2.1 `core/` is a reusable library that returns structured objects
@@ -165,9 +166,14 @@ copied logic.
 
 ### 2.4 `state.ts` — `.lore/` and git ownership
 
-`state.ts` reads/writes `.lore/` (`config.toml`, `cache/`, `schemas/`,
-`templates/`) per [ADR-0013](../adr/0013-lore-state-directory.md), and performs
-all git operations on `backlog/`. lore is the **sole committer** of `backlog/`:
+`state.ts` reads/writes `.lore/` (`config.toml` — parsed and validated by the
+`config.ts` loader — plus `cache/`, `schemas/`, `templates/`) per
+[ADR-0013](../adr/0013-lore-state-directory.md), and performs all git operations
+on `backlog/`. The `config.ts` loader is deterministic and side-effect-free: it
+takes injectable `root`/`env` seams, returns a typed `LoreConfig` (a missing
+file is the zero-config default), reads the Confluence token **only** from
+`$LORE_CONFLUENCE_TOKEN` (a committed token fails loud), and throws a
+`validation` `LoreError` on malformed TOML or an out-of-contract value. lore is the **sole committer** of `backlog/`:
 after any task write, `state.ts` runs `git add` / `git commit` on the changed
 task files itself (§7). It configures Backlog with `auto_commit=false`,
 `check_active_branches=false`, and `remote_operations=false`, and gitignores

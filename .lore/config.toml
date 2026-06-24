@@ -1,0 +1,22 @@
+# .lore/config.toml — lore's own configuration.
+#
+# Every key is optional: lore runs zero-config, and this file only documents the
+# defaults it already uses (so it is intentionally a no-op over the built-in
+# defaults). See docs/adr/0013-lore-state-directory.md for the full contract.
+#
+# The Confluence API token is NEVER stored here — it is read only from
+# $LORE_CONFLUENCE_TOKEN, and a token committed under [confluence] is rejected
+# with a fail-loud validation error.
+
+[reconcile]
+# Status roll-up policy for `lore sync` / `lore check`:
+# all tasks Done -> done; any In Progress -> in-progress; else todo.
+mode = "task-rollup"
+
+[validate]
+external_links = false      # external-link liveness is opt-in (`lore check --external`)
+promote_portability = false # the portability lint stays a warning, not an error
+
+# [confluence] — omitted: lore does not publish to Confluence (the one-way
+# publish adapter is deferred, LORE-43). When enabled, set base_url / space /
+# parent_page_id / format here and provide the token via $LORE_CONFLUENCE_TOKEN.
