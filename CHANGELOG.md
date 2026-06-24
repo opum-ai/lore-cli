@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Concept frontmatter layer (LORE-15): `src/core/schema.ts` + `src/core/concept.ts` —
+  the frontmatter boundary and Zod source of truth. `schema.ts` authors the
+  story-convention profile (the six known types `Epic`/`Story`/`Spec`/`ADR`/`Runbook`/
+  `Reference`) in Zod; `validateFrontmatter` enforces the OKF tiers — a missing `type`
+  or a mistyped known field throws a `validation` `LoreError` (exit `6`), while an
+  unknown type, an extra key on a known type, or a missing/over-long `summary` is a
+  warning (OKF tolerance), recorded on a `WarningCollector` rather than printed.
+  Validation never rewrites the data, and dates stay ISO **strings** (ADR-0006 §2).
+  `concept.ts` turns a `.md` file into a typed `Concept {id, path, type, frontmatter,
+  body}` (`parseConcept`) and back (`serializeConcept`) through one frozen
+  gray-matter + js-yaml engine (`JSON_SCHEMA` keeps timestamps as strings; pinned dump
+  options give deterministic block style, no wrapping, stable minimal quoting). Output
+  is **byte-stable**: known keys emit in a fixed canonical order with unknown keys
+  preserved verbatim, so re-serializing a canonical doc reproduces the exact bytes and
+  the round-trip is a fixpoint (ADR-0011; golden + idempotency tests, design §9.2). A
+  literal `__proto__` frontmatter key is preserved as data without prototype pollution.
+  New runtime deps, version-pinned for serializer stability (ADR-0011): `gray-matter`,
+  `js-yaml`, `zod`. JSON-Schema emission and the above-fence editor modeline are
+  deferred to `lore init`/`lore new` (LORE-17), where they are consumed.
 - Output-mode layer (LORE-12): `src/output.ts` — lore's single rendering seam.
   `resolveMode`/`resolveOutput` resolve one of three modes up front with the locked
   precedence `--json > --plain > pretty`; a non-TTY stdout auto-selects `--plain`
