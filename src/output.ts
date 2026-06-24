@@ -94,7 +94,10 @@ export function resolveMode(inputs: ModeInputs): OutputMode {
  * `WarningCollector.flush` expect, so a command passes the whole context to
  * either — the extra `mode` field is structurally ignored. `json` is carried
  * explicitly (rather than recomputed as `mode === "json"` at each call site) so
- * the error path and the output path read the *same* boolean.
+ * the error path and the output path read the *same* boolean. It is derivable
+ * from `mode`, but cannot drift from it in practice: every field is `readonly`
+ * and the only constructor is {@link resolveOutput}, which sets `json` to
+ * `mode === "json"`.
  */
 export interface OutputContext {
   readonly mode: OutputMode;
@@ -208,13 +211,21 @@ export function truncation(total: number, shown: number, hint?: string): Truncat
  * `showing 30 of 120 — narrow with --type story`. Returns `""` when nothing was
  * truncated, so a caller can unconditionally append it and add no line when the
  * full result fit.
+ *
+ * The `hint` is single-lined here, not only in the {@link truncation} builder:
+ * the parameter is the exported {@link Truncation}, so a caller may hand-build one
+ * whose `hint` contains a newline, which would otherwise smuggle a second,
+ * unprefixed line onto stdout (breaking the §3.2 single-line footer and the §4
+ * stream discipline). Mirrors errors.ts, which single-lines at both build and
+ * render.
  */
 export function renderTruncationLine(t: Truncation): string {
   if (!t.truncated) {
     return "";
   }
   const head = `showing ${t.shown} of ${t.total}`;
-  return t.hint ? `${head} — ${t.hint}` : head;
+  const hint = t.hint ? singleLine(t.hint) : "";
+  return hint ? `${head} — ${hint}` : head;
 }
 
 /**
@@ -238,13 +249,13 @@ export interface Renderable<T> {
  * Render a {@link Renderable} to stdout in the resolved mode — the seam every
  * command's success path goes through.
  *
- * - **json:** the {@link SuccessEnvelope} as one compact line. `data` is checked
- *   to be an object/array and then serialized *before* the write, so a malformed
- *   or non-serializable payload (a bug — core returns plain data) throws here
- *   with **nothing** written, keeping "stdout parses or stays silent" (§4)
- *   intact. Unlike the error path, a bad success payload is deliberately *not*
- *   degraded: it must surface as an uncaught failure on stderr, never be dressed
- *   up as a success.
+ * - **json:** the {@link SuccessEnvelope} as one compact line. `kind` and `data`
+ *   are validated against §2 (see {@link assertEnvelopeData}) and then serialized
+ *   *before* the write, so a malformed or non-serializable payload (a bug — core
+ *   returns plain data) throws here with **nothing** written, keeping "stdout
+ *   parses or stays silent" (§4) intact. Unlike the error path, a bad success
+ *   payload is deliberately *not* degraded: it must surface as an uncaught
+ *   failure on stderr, never be dressed up as a success.
  * - **plain / pretty:** the renderer's text via {@link writeBody}, normalized to
  *   exactly one trailing newline (an empty/whitespace-only body writes nothing,
  *   so stdout stays clean). Pretty receives the resolved `color`.
@@ -257,8 +268,8 @@ export interface Renderable<T> {
 export function emit<T>(renderable: Renderable<T>, ctx: OutputContext, out: Writer = process.stdout): void {
   switch (ctx.mode) {
     case "json": {
-      // Reject off-contract data, then serialize; only write once both succeed,
-      // so a bad payload never lands a malformed "success" on stdout.
+      // Reject an off-contract kind/data, then serialize; only write once both
+      // succeed, so a bad payload never lands a malformed "success" on stdout.
       assertEnvelopeData(renderable.kind, renderable.data);
       const text = JSON.stringify(successEnvelope(renderable.kind, renderable.data));
       out.write(`${text}\n`);
@@ -285,39 +296,54 @@ export function emit<T>(renderable: Renderable<T>, ctx: OutputContext, out: Writ
  * the logical text without one (as errors.ts's `formatErrorText` does), so the
  * single source of truth for the line terminator is here.
  *
- * All trailing whitespace is stripped — spaces, tabs, and line endings of either
- * convention, since a bare `\n` strip would leave a stray `\r` from a `\r\n`
- * ending — and a body that is entirely whitespace collapses to nothing and
- * writes **nothing**, so a command with no rows leaves stdout silent rather than
- * emitting a blank line. Only the trailing edge is normalized: leading and
- * interior formatting is the renderer's payload and is preserved verbatim —
- * pretty mode may format freely (§1.2) and a plain renderer owns its own
- * diff-stability (§1.3).
+ * A body that is entirely whitespace is treated as "no content" and writes
+ * **nothing**, so a command with no rows leaves stdout silent rather than
+ * emitting a blank line; the emptiness test uses `trim()`, which covers spaces,
+ * tabs, line terminators of either convention, and the BOM. A content-bearing
+ * body has only its trailing line terminators stripped (`\n`, and the `\r` of a
+ * `\r\n`, which a bare `\n` strip would leave behind), then exactly one `\n` is
+ * appended. Everything else is the renderer's payload and is preserved verbatim —
+ * including trailing *horizontal* whitespace on the last line, which a plain
+ * renderer may treat as a significant field (e.g. an empty trailing TSV column,
+ * §1.3), and all leading/interior formatting (pretty may format freely, §1.2).
  */
 function writeBody(body: string, out: Writer): void {
-  const trimmed = body.replace(/\s+$/, "");
-  if (trimmed === "") {
+  if (body.trim() === "") {
     return;
   }
+  const trimmed = body.replace(/[\r\n]+$/, "");
   out.write(`${trimmed}\n`);
 }
 
 /**
- * Assert a `--json` envelope's `data` satisfies cli-contract §2 (an object or
- * array) before it is serialized. A value `JSON.stringify` drops as a property —
- * `undefined`, a function, a symbol — would otherwise yield an envelope with no
- * `data` key at all (malformed, §2-violating), and a `null` or primitive would
- * put a `data` that a `JSON.parse(stdout).data.<field>` consumer crashes on.
- * Either way the "success" would be a lie. Throwing here keeps the §4 invariant:
- * nothing reaches stdout, and the throw surfaces as an uncaught error on stderr
- * (exit 1) instead of a malformed success at exit 0.
+ * Assert a `--json` envelope's `kind` and `data` satisfy cli-contract §2 before
+ * it is serialized — `kind` a non-empty string, `data` an object or array.
+ *
+ * A `typeof data === "object"` check is too weak: a `Date` (or any object whose
+ * `toJSON` returns a primitive) is `typeof "object"` yet `JSON.stringify`s to a
+ * bare string, so `data` is validated by what it *actually* serializes to —
+ * `undefined`/function/symbol (dropped, leaving no `data` key), `null`, and every
+ * primitive all fail, only `{…}`/`[…]` pass. A non-string `kind` is dropped by
+ * `JSON.stringify` the same way, yielding an envelope with no `kind`. Serializing
+ * `data` here also makes a `BigInt`/circular payload throw *before* any byte is
+ * written. Either failure would otherwise put a malformed/contract-violating
+ * "success" on stdout that a `JSON.parse(stdout).data.<field>` consumer crashes
+ * on; throwing instead keeps the §4 invariant — nothing reaches stdout and the
+ * failure surfaces as an uncaught error on stderr (exit 1), never a lie at exit 0.
+ *
+ * `data` is serialized once more by {@link successEnvelope} for the actual write;
+ * the duplicate is deliberate — it keeps `successEnvelope` the single envelope
+ * shape authority (no hand-built JSON string to drift from §2) and the cost is
+ * bounded by the §3 output cap on read-heavy payloads.
  */
 function assertEnvelopeData(kind: string, data: unknown): void {
-  if (typeof data !== "object" || data === null) {
+  if (typeof kind !== "string" || kind === "") {
+    throw new TypeError("emit: --json envelope kind must be a non-empty string (cli-contract §2)");
+  }
+  const dataJson = JSON.stringify(data);
+  if (dataJson === undefined || !(dataJson.startsWith("{") || dataJson.startsWith("["))) {
     throw new TypeError(
-      `emit: --json envelope data for kind "${kind}" must be an object or array, received ${
-        data === null ? "null" : typeof data
-      }`,
+      `emit: --json envelope data for kind "${kind}" must serialize to a JSON object or array (cli-contract §2)`,
     );
   }
 }

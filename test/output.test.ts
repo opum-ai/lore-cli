@@ -9,6 +9,7 @@ import {
   resolveOutput,
   SCHEMA_VERSION,
   successEnvelope,
+  type Truncation,
   truncation,
 } from "../src/output";
 
@@ -66,6 +67,18 @@ describe("resolveMode — precedence --json > --plain > pretty", () => {
   test("a TTY with no flag yields pretty", () => {
     expect(resolveMode({ isTTY: true })).toBe("pretty");
     expect(resolveMode({ json: false, plain: false, isTTY: true })).toBe("pretty");
+  });
+
+  test("produces exactly the three output modes (catches a removed mode)", () => {
+    // The `never` default in emit's switch catches an ADDED mode at compile time;
+    // this pins the resolvable set to exactly {json, plain, pretty} so a REMOVED
+    // mode (a silently shrunk contract) fails a test rather than passing quietly.
+    const produced = new Set([
+      resolveMode({ json: true }),
+      resolveMode({ plain: true, isTTY: true }),
+      resolveMode({ isTTY: true }),
+    ]);
+    expect([...produced].sort()).toEqual(["json", "plain", "pretty"]);
   });
 });
 
@@ -234,6 +247,20 @@ describe("emit — json mode", () => {
     expect(JSON.parse(cap.text())).toEqual({ schemaVersion: 1, kind: "graph.export", data: [1, 2, 3] });
   });
 
+  test("a toJSON-collapsing object (Date) throws — typeof 'object' is not enough", () => {
+    const cap = capture();
+    // typeof new Date() === "object" but it serializes to a bare string, which
+    // would put a string `data` on stdout that a .data.<field> consumer crashes on.
+    expect(() => emit(renderable("k", new Date(0)), JSON_CTX, cap)).toThrow(TypeError);
+    expect(cap.text()).toBe("");
+  });
+
+  test("an empty/non-string kind throws — JSON.stringify would drop the kind key", () => {
+    const cap = capture();
+    expect(() => emit(renderable("", { ok: true }), JSON_CTX, cap)).toThrow(TypeError);
+    expect(cap.text()).toBe("");
+  });
+
   test("defaults the sink to process.stdout", () => {
     const original = process.stdout.write.bind(process.stdout);
     const chunks: string[] = [];
@@ -289,6 +316,14 @@ describe("emit — plain mode", () => {
     const cap = capture();
     emit(renderable("k", {}, { plain: () => "  indented first\n\n  indented again" }), PLAIN_CTX, cap);
     expect(cap.text()).toBe("  indented first\n\n  indented again\n");
+  });
+
+  test("preserves significant trailing horizontal whitespace (e.g. an empty TSV field)", () => {
+    const cap = capture();
+    // Only the trailing newline is stripped; the trailing tab is the renderer's
+    // data (an empty last column) and must survive so every row split is symmetric.
+    emit(renderable("k", {}, { plain: () => "col1\tcol2\t\n" }), PLAIN_CTX, cap);
+    expect(cap.text()).toBe("col1\tcol2\t\n");
   });
 
   test("does not invoke the pretty renderer", () => {
@@ -390,5 +425,14 @@ describe("renderTruncationLine (cli-contract §3.2)", () => {
 
   test("returns empty string when nothing was truncated", () => {
     expect(renderTruncationLine(truncation(30, 30, "ignored"))).toBe("");
+  });
+
+  test("single-lines a hand-built Truncation's multi-line hint (no smuggled stdout line)", () => {
+    // The parameter is the exported Truncation, so a caller can bypass truncation()
+    // and hand-build one. A newline in the hint must not split the §3.2 footer.
+    const handBuilt: Truncation = { total: 120, shown: 30, truncated: true, hint: "no match\ntry --type story" };
+    const line = renderTruncationLine(handBuilt);
+    expect(line).toBe("showing 30 of 120 — no match try --type story");
+    expect(line).not.toContain("\n");
   });
 });
