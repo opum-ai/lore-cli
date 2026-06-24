@@ -1,11 +1,11 @@
 ---
 id: LORE-12
 title: 'Output layer: --plain, --json, and pretty modes'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-06-24 16:17'
+updated_date: '2026-06-24 20:19'
 labels:
   - core
   - agent-api
