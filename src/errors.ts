@@ -343,8 +343,14 @@ function safeStringify(value: unknown): string {
  * that `String()` would produce. All coercion is guarded: deriving the message
  * must never become a second throw on the crash-reporting path (a thrown value
  * may carry a hostile `toString`/`Symbol.toPrimitive`).
+ *
+ * Exported so any code that needs a safe human message from a caught value — e.g.
+ * concept.ts turning a thrown `YAMLException` into a diagnostic — shares this one
+ * guarded routine instead of hand-rolling a thinner, unguarded `instanceof Error`
+ * check that a future fix here would silently bypass. The result may be multi-line;
+ * single-line it through {@link singleLine} when the contract requires one line.
  */
-function deriveMessage(err: unknown): string {
+export function deriveMessage(err: unknown): string {
   try {
     if (err instanceof Error) {
       return typeof err.message === "string" && err.message !== "" ? err.message : String(err);
