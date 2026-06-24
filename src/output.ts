@@ -17,8 +17,8 @@
  * - **Own the color decision.** Color is emitted only in pretty mode and only
  *   when `NO_COLOR` is unset (§6). This module reads the TTY and `NO_COLOR`;
  *   {@link errors} deliberately does not — it takes an already-resolved
- *   `{ json, color }`. An {@link OutputContext} *is* that pair (plus `mode`),
- *   so a command hands it straight to `reportError`/`WarningCollector.flush`.
+ *   `{ json, color }`, which {@link errorRenderOpts} derives from an
+ *   {@link OutputContext} for `reportError`/`WarningCollector.flush`.
  * - **Emit the success envelope** `{ schemaVersion, kind, data }` on stdout in
  *   `--json` mode (§2), and the pretty/plain text otherwise.
  * - **Keep the streams disciplined.** Only the payload goes to stdout; all
@@ -33,7 +33,7 @@
  * Design: docs/specs/lore-design.md §5. Rationale: docs/adr/0005-cli-contract.md.
  */
 
-import { singleLine, type Writer } from "./errors";
+import { asText, singleLine, type Writer } from "./errors";
 
 // Re-exported so a command author gets the write sink type from the rendering
 // seam itself, without a second import from errors.ts.
@@ -90,19 +90,16 @@ export function resolveMode(inputs: ModeInputs): OutputMode {
  * The resolved output decision, threaded through a command after a single
  * up-front {@link resolveOutput} call.
  *
- * `json` and `color` are the exact pair {@link errors.reportError} and
- * `WarningCollector.flush` expect, so a command passes the whole context to
- * either — the extra `mode` field is structurally ignored. `json` is carried
- * explicitly (rather than recomputed as `mode === "json"` at each call site) so
- * the error path and the output path read the *same* boolean. It is derivable
- * from `mode`, but cannot drift from it in practice: every field is `readonly`
- * and the only constructor is {@link resolveOutput}, which sets `json` to
- * `mode === "json"`.
+ * `mode` is the **one** routing key: {@link emit} switches on it for the success
+ * path, and {@link errorRenderOpts} derives the `{ json, color }` the error path
+ * needs from it. There is deliberately no separate `json` field — a derivable,
+ * independently-settable boolean could be hand-built to disagree with `mode`
+ * (JSON envelope on stdout but a text error on stderr, or vice versa), so it is
+ * computed on demand instead. `color` *is* carried: it is not derivable from
+ * `mode` alone (it also depends on `NO_COLOR`).
  */
 export interface OutputContext {
   readonly mode: OutputMode;
-  /** `true` iff `mode === "json"`. The `{ json }` errors.ts consumes. */
-  readonly json: boolean;
   /** Whether ANSI color may be emitted. Only ever `true` in pretty mode. */
   readonly color: boolean;
 }
@@ -131,7 +128,19 @@ export function resolveOutput(inputs: ResolveInputs): OutputContext {
   const mode = resolveMode(inputs);
   const env = inputs.env ?? process.env;
   const color = mode === "pretty" && env.NO_COLOR === undefined;
-  return { mode, json: mode === "json", color };
+  return { mode, color };
+}
+
+/**
+ * Derive the `{ json, color }` pair {@link errors.reportError} and
+ * `WarningCollector.flush` consume from a resolved {@link OutputContext}. `json`
+ * is computed from `mode` here rather than stored on the context, so the success
+ * path (routed by `mode`) and the error path (routed by `json`) cannot disagree.
+ * Usage in a command's catch block: `reportError(err, { ...errorRenderOpts(ctx),
+ * stderr })` (or `flush` likewise).
+ */
+export function errorRenderOpts(ctx: OutputContext): { json: boolean; color: boolean } {
+  return { json: ctx.mode === "json", color: ctx.color };
 }
 
 /**
@@ -177,28 +186,19 @@ export interface Truncation {
  * Build a {@link Truncation} from the full and shown counts, deriving
  * `truncated = shown < total`.
  *
- * Counts are item tallies, so they must be non-negative integers with
- * `shown <= total`; a `NaN`/`Infinity`/fractional/negative/transposed count is an
- * upstream arithmetic slip and throws a `RangeError` rather than producing
- * misleading output. The guard matters because the failure is otherwise *silent*:
- * `NaN < total` is `false`, so a genuinely partial result would report
- * `truncated: false`, and `JSON.stringify(NaN)` emits `null` into the `--json`
- * envelope (§3.1) — a consumer that branches on `truncated`/`total` is told a
- * dropped-rows result is complete. A fractional count would also render as
- * `showing 30.5 of 120` (§3.2).
+ * Counts must be item tallies (see {@link assertCounts}) — a `NaN`/`Infinity`/
+ * fractional/negative/transposed count throws rather than silently mis-deriving
+ * `truncated` or serializing `NaN`→`null` in `--json` (§3.1).
  *
- * The `hint` is collapsed to a single line via {@link singleLine} (so an embedded
- * newline cannot split the §3.2 line or appear multi-line in `--json`), and a
- * hint that is empty or whitespace-only after collapsing is dropped rather than
- * emitted as a meaningless `"hint": ""`.
+ * The `hint` is coerced ({@link asText}, so a non-string from a JS caller degrades
+ * instead of crashing `String.prototype.replace`) and collapsed to one line
+ * ({@link singleLine}, so an embedded newline cannot split the §3.2 line or appear
+ * multi-line in `--json`); a hint empty or whitespace-only after collapsing is
+ * dropped rather than emitted as a meaningless `"hint": ""`.
  */
 export function truncation(total: number, shown: number, hint?: string): Truncation {
-  if (!Number.isInteger(total) || !Number.isInteger(shown) || shown < 0 || shown > total) {
-    throw new RangeError(
-      `truncation: counts must be integers with 0 <= shown <= total, received total=${String(total)}, shown=${String(shown)}`,
-    );
-  }
-  const cleanHint = hint ? singleLine(hint) : "";
+  assertCounts(total, shown);
+  const cleanHint = hint ? singleLine(asText(hint)) : "";
   const result: Truncation = { total, shown, truncated: shown < total };
   if (cleanHint) {
     result.hint = cleanHint;
@@ -212,19 +212,22 @@ export function truncation(total: number, shown: number, hint?: string): Truncat
  * truncated, so a caller can unconditionally append it and add no line when the
  * full result fit.
  *
- * The `hint` is single-lined here, not only in the {@link truncation} builder:
- * the parameter is the exported {@link Truncation}, so a caller may hand-build one
- * whose `hint` contains a newline, which would otherwise smuggle a second,
- * unprefixed line onto stdout (breaking the §3.2 single-line footer and the §4
- * stream discipline). Mirrors errors.ts, which single-lines at both build and
- * render.
+ * Both the counts and the `hint` are re-validated here, not only in the
+ * {@link truncation} builder: the parameter is the exported {@link Truncation}, so
+ * a caller may hand-build one (bypassing the builder) with corrupt counts —
+ * rendering `showing 30 of NaN` — or a multi-line/non-string `hint` that smuggles
+ * a second, unprefixed line onto stdout (breaking the §3.2 single-line footer and
+ * §4 stream discipline). Counts go through the same {@link assertCounts}; the hint
+ * is coerced + single-lined as in the builder. Mirrors errors.ts, which guards at
+ * both build and render.
  */
 export function renderTruncationLine(t: Truncation): string {
   if (!t.truncated) {
     return "";
   }
+  assertCounts(t.total, t.shown);
   const head = `showing ${t.shown} of ${t.total}`;
-  const hint = t.hint ? singleLine(t.hint) : "";
+  const hint = t.hint ? singleLine(asText(t.hint)) : "";
   return hint ? `${head} — ${hint}` : head;
 }
 
@@ -249,13 +252,14 @@ export interface Renderable<T> {
  * Render a {@link Renderable} to stdout in the resolved mode — the seam every
  * command's success path goes through.
  *
- * - **json:** the {@link SuccessEnvelope} as one compact line. `kind` and `data`
- *   are validated against §2 (see {@link assertEnvelopeData}) and then serialized
- *   *before* the write, so a malformed or non-serializable payload (a bug — core
- *   returns plain data) throws here with **nothing** written, keeping "stdout
- *   parses or stays silent" (§4) intact. Unlike the error path, a bad success
- *   payload is deliberately *not* degraded: it must surface as an uncaught
- *   failure on stderr, never be dressed up as a success.
+ * - **json:** the {@link SuccessEnvelope} as one compact line. It is serialized
+ *   *first*, then those exact bytes are validated against §2 (see
+ *   {@link assertSerializedEnvelope}) before the write, so a malformed or
+ *   non-serializable payload (a bug — core returns plain data) throws with
+ *   **nothing** written, keeping "stdout parses or stays silent" (§4) intact.
+ *   Unlike the error path, a bad success payload is deliberately *not* degraded:
+ *   it must surface as an uncaught failure on stderr, never be dressed up as a
+ *   success.
  * - **plain / pretty:** the renderer's text via {@link writeBody}, normalized to
  *   exactly one trailing newline (an empty/whitespace-only body writes nothing,
  *   so stdout stays clean). Pretty receives the resolved `color`.
@@ -268,10 +272,11 @@ export interface Renderable<T> {
 export function emit<T>(renderable: Renderable<T>, ctx: OutputContext, out: Writer = process.stdout): void {
   switch (ctx.mode) {
     case "json": {
-      // Reject an off-contract kind/data, then serialize; only write once both
-      // succeed, so a bad payload never lands a malformed "success" on stdout.
-      assertEnvelopeData(renderable.kind, renderable.data);
+      // Serialize ONCE, then validate the exact bytes (not the live object): this
+      // closes a TOCTOU where a non-idempotent toJSON could ship a value different
+      // from the one checked. The write happens only after both succeed.
       const text = JSON.stringify(successEnvelope(renderable.kind, renderable.data));
+      assertSerializedEnvelope(text);
       out.write(`${text}\n`);
       return;
     }
@@ -296,54 +301,69 @@ export function emit<T>(renderable: Renderable<T>, ctx: OutputContext, out: Writ
  * the logical text without one (as errors.ts's `formatErrorText` does), so the
  * single source of truth for the line terminator is here.
  *
- * A body that is entirely whitespace is treated as "no content" and writes
- * **nothing**, so a command with no rows leaves stdout silent rather than
- * emitting a blank line; the emptiness test uses `trim()`, which covers spaces,
- * tabs, line terminators of either convention, and the BOM. A content-bearing
- * body has only its trailing line terminators stripped (`\n`, and the `\r` of a
- * `\r\n`, which a bare `\n` strip would leave behind), then exactly one `\n` is
- * appended. Everything else is the renderer's payload and is preserved verbatim —
- * including trailing *horizontal* whitespace on the last line, which a plain
- * renderer may treat as a significant field (e.g. an empty trailing TSV column,
- * §1.3), and all leading/interior formatting (pretty may format freely, §1.2).
+ * A body with no non-whitespace character is treated as "no content" and writes
+ * **nothing**, so a command with no rows leaves stdout silent rather than emitting
+ * a blank line. The test is `!/\S/` — `\S` is the complement of `\s`, which covers
+ * spaces, tabs, CR/LF, the Unicode LINE/PARAGRAPH separators (U+2028/U+2029), and
+ * the BOM — and allocates nothing, unlike `trim()`. A content-bearing body has
+ * only its trailing line terminators stripped (LF, the CR of a CRLF, and
+ * U+2028/U+2029 — the same set the emptiness test treats as whitespace, so the two
+ * cannot disagree), then exactly one `\n` is appended. Everything else is the
+ * renderer's payload and is preserved verbatim — including trailing *horizontal*
+ * whitespace on the last line, which a plain renderer may treat as a significant
+ * field (e.g. an empty trailing TSV column, §1.3), and all leading/interior
+ * formatting (pretty may format freely, §1.2).
  */
 function writeBody(body: string, out: Writer): void {
-  if (body.trim() === "") {
+  if (!/\S/.test(body)) {
     return;
   }
-  const trimmed = body.replace(/[\r\n]+$/, "");
+  const trimmed = body.replace(/[\r\n\u2028\u2029]+$/, "");
   out.write(`${trimmed}\n`);
 }
 
 /**
- * Assert a `--json` envelope's `kind` and `data` satisfy cli-contract §2 before
- * it is serialized — `kind` a non-empty string, `data` an object or array.
+ * Validate the **serialized** `--json` envelope (cli-contract §2) — `kind` a
+ * non-empty string, `data` an object or array — by parsing the exact bytes
+ * {@link emit} is about to write.
  *
- * A `typeof data === "object"` check is too weak: a `Date` (or any object whose
- * `toJSON` returns a primitive) is `typeof "object"` yet `JSON.stringify`s to a
- * bare string, so `data` is validated by what it *actually* serializes to —
- * `undefined`/function/symbol (dropped, leaving no `data` key), `null`, and every
- * primitive all fail, only `{…}`/`[…]` pass. A non-string `kind` is dropped by
- * `JSON.stringify` the same way, yielding an envelope with no `kind`. Serializing
- * `data` here also makes a `BigInt`/circular payload throw *before* any byte is
- * written. Either failure would otherwise put a malformed/contract-violating
- * "success" on stdout that a `JSON.parse(stdout).data.<field>` consumer crashes
- * on; throwing instead keeps the §4 invariant — nothing reaches stdout and the
- * failure surfaces as an uncaught error on stderr (exit 1), never a lie at exit 0.
- *
- * `data` is serialized once more by {@link successEnvelope} for the actual write;
- * the duplicate is deliberate — it keeps `successEnvelope` the single envelope
- * shape authority (no hand-built JSON string to drift from §2) and the cost is
- * bounded by the §3 output cap on read-heavy payloads.
+ * Checking the serialized form rather than the live object is what closes the
+ * validate-then-reserialize TOCTOU: whatever a non-idempotent `toJSON`/getter
+ * produced is already baked into `serialized`, so the value validated *is* the
+ * value written. A `typeof` check on the live object cannot see this — a `Date`
+ * (or any primitive-returning `toJSON`) is `typeof "object"` yet serializes to a
+ * bare string; here that string, a `null`, or a dropped `data`/`kind` key (from an
+ * `undefined`/function/symbol value, or a non-string `kind`) all fail. The
+ * `JSON.parse` cannot throw — `serialized` came straight from `JSON.stringify`.
+ * Throwing keeps the §4 invariant: the caller has not written yet, so stdout stays
+ * silent and the bug surfaces on stderr (exit 1), never as a lie at exit 0.
  */
-function assertEnvelopeData(kind: string, data: unknown): void {
-  if (typeof kind !== "string" || kind === "") {
+function assertSerializedEnvelope(serialized: string): void {
+  const parsed = JSON.parse(serialized) as { kind?: unknown; data?: unknown };
+  if (typeof parsed.kind !== "string" || parsed.kind === "") {
     throw new TypeError("emit: --json envelope kind must be a non-empty string (cli-contract §2)");
   }
-  const dataJson = JSON.stringify(data);
-  if (dataJson === undefined || !(dataJson.startsWith("{") || dataJson.startsWith("["))) {
+  if (typeof parsed.data !== "object" || parsed.data === null) {
     throw new TypeError(
-      `emit: --json envelope data for kind "${kind}" must serialize to a JSON object or array (cli-contract §2)`,
+      `emit: --json envelope data for kind "${parsed.kind}" must be an object or array (cli-contract §2)`,
+    );
+  }
+}
+
+/**
+ * Assert truncation counts are item tallies — non-negative integers with
+ * `shown <= total`. Shared by {@link truncation} (build) and
+ * {@link renderTruncationLine} (render) so a hand-built {@link Truncation} cannot
+ * bypass the check at either seam. A `NaN`/`Infinity`/fractional/negative/
+ * transposed count is an upstream arithmetic slip: at build it makes
+ * `shown < total` mis-derive `truncated` and serialize `NaN`→`null` in `--json`
+ * (§3.1); at render it prints `showing 30 of NaN` / `showing 30 of 120.5` (§3.2).
+ * Fail loud either way.
+ */
+function assertCounts(total: number, shown: number): void {
+  if (!Number.isInteger(total) || !Number.isInteger(shown) || shown < 0 || shown > total) {
+    throw new RangeError(
+      `truncation: counts must be integers with 0 <= shown <= total, received total=${String(total)}, shown=${String(shown)}`,
     );
   }
 }

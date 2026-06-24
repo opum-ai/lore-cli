@@ -10,25 +10,8 @@ import {
   reportError,
   toErrorEnvelope,
   WarningCollector,
-  type Writer,
 } from "../src/errors";
-
-// A capturing Writer so tests assert exactly what reaches stderr without
-// touching the real process streams.
-function capture(): Writer & { text(): string; lines(): string[] } {
-  const chunks: string[] = [];
-  return {
-    write(s: string): void {
-      chunks.push(s);
-    },
-    text(): string {
-      return chunks.join("");
-    },
-    lines(): string[] {
-      return chunks.join("").split("\n").filter(Boolean);
-    },
-  };
-}
+import { capture } from "./helpers";
 
 const ALL_TYPES: ErrorType[] = ["usage", "not_found", "denied", "conflict", "validation", "drift"];
 

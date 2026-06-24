@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { LoreError, reportError, WarningCollector, type Writer } from "../src/errors";
+import { LoreError, reportError, WarningCollector } from "../src/errors";
 import {
   emit,
+  errorRenderOpts,
   type OutputContext,
   type Renderable,
   renderTruncationLine,
@@ -12,22 +13,7 @@ import {
   type Truncation,
   truncation,
 } from "../src/output";
-
-// A capturing Writer so tests assert exactly what reaches a stream without
-// touching the real process streams (mirrors test/errors.test.ts). Only the raw
-// joined text is exposed — no blank-line-filtering helper, so every newline
-// assertion is made against the exact bytes written.
-function capture(): Writer & { text(): string } {
-  const chunks: string[] = [];
-  return {
-    write(s: string): void {
-      chunks.push(s);
-    },
-    text(): string {
-      return chunks.join("");
-    },
-  };
-}
+import { capture } from "./helpers";
 
 // Build a Renderable with default text renderers; override per test as needed.
 function renderable<T>(kind: string, data: T, over: Partial<Renderable<T>> = {}): Renderable<T> {
@@ -39,10 +25,10 @@ function renderable<T>(kind: string, data: T, over: Partial<Renderable<T>> = {})
   };
 }
 
-const JSON_CTX: OutputContext = { mode: "json", json: true, color: false };
-const PLAIN_CTX: OutputContext = { mode: "plain", json: false, color: false };
-const PRETTY_CTX: OutputContext = { mode: "pretty", json: false, color: true };
-const PRETTY_NOCOLOR_CTX: OutputContext = { mode: "pretty", json: false, color: false };
+const JSON_CTX: OutputContext = { mode: "json", color: false };
+const PLAIN_CTX: OutputContext = { mode: "plain", color: false };
+const PRETTY_CTX: OutputContext = { mode: "pretty", color: true };
+const PRETTY_NOCOLOR_CTX: OutputContext = { mode: "pretty", color: false };
 
 describe("resolveMode — precedence --json > --plain > pretty", () => {
   test("--json wins over everything (cli-contract §1.1)", () => {
@@ -84,7 +70,7 @@ describe("resolveMode — precedence --json > --plain > pretty", () => {
 
 describe("resolveOutput — color policy and context shape", () => {
   test("pretty on a TTY with NO_COLOR unset enables color (§6)", () => {
-    expect(resolveOutput({ isTTY: true, env: {} })).toEqual({ mode: "pretty", json: false, color: true });
+    expect(resolveOutput({ isTTY: true, env: {} })).toEqual({ mode: "pretty", color: true });
   });
 
   test("NO_COLOR set to ANY value — including empty — disables color (§6)", () => {
@@ -101,10 +87,10 @@ describe("resolveOutput — color policy and context shape", () => {
     expect(resolveOutput({ isTTY: false, env: {} }).color).toBe(false);
   });
 
-  test("context.json is exactly mode === 'json' across the matrix", () => {
-    expect(resolveOutput({ json: true, env: {} })).toMatchObject({ mode: "json", json: true });
-    expect(resolveOutput({ plain: true, env: {} })).toMatchObject({ mode: "plain", json: false });
-    expect(resolveOutput({ isTTY: true, env: {} })).toMatchObject({ mode: "pretty", json: false });
+  test("returns a { mode, color } context with no separate, drift-prone json field", () => {
+    expect(resolveOutput({ json: true, env: {} })).toEqual({ mode: "json", color: false });
+    expect(resolveOutput({ plain: true, env: {} })).toEqual({ mode: "plain", color: false });
+    expect(resolveOutput({ isTTY: true, env: {} })).toEqual({ mode: "pretty", color: true });
   });
 
   test("env defaults to process.env when not provided", () => {
@@ -125,11 +111,17 @@ describe("resolveOutput — color policy and context shape", () => {
   });
 });
 
-describe("OutputContext is consumable by errors.ts", () => {
+describe("errorRenderOpts bridges a context to errors.ts", () => {
+  test("derives { json, color } from mode (json computed, not stored)", () => {
+    expect(errorRenderOpts({ mode: "json", color: false })).toEqual({ json: true, color: false });
+    expect(errorRenderOpts({ mode: "plain", color: false })).toEqual({ json: false, color: false });
+    expect(errorRenderOpts({ mode: "pretty", color: true })).toEqual({ json: false, color: true });
+  });
+
   test("a json context drives reportError to the JSON envelope and exit code", () => {
     const ctx = resolveOutput({ json: true, env: {} });
     const cap = capture();
-    const code = reportError(new LoreError("not_found", "nope"), { ...ctx, stderr: cap });
+    const code = reportError(new LoreError("not_found", "nope"), { ...errorRenderOpts(ctx), stderr: cap });
     expect(code).toBe(3);
     expect(JSON.parse(cap.text())).toEqual({ error_type: "not_found", message: "nope" });
   });
@@ -138,7 +130,7 @@ describe("OutputContext is consumable by errors.ts", () => {
     const ctx = resolveOutput({ isTTY: true, env: {} });
     expect(ctx.color).toBe(true);
     const cap = capture();
-    reportError(new LoreError("usage", "bad flag"), { ...ctx, stderr: cap });
+    reportError(new LoreError("usage", "bad flag"), { ...errorRenderOpts(ctx), stderr: cap });
     expect(cap.text()).toContain("\x1b[31m"); // red error head, because color is on
     expect(cap.text()).toContain("bad flag"); // message text present after the colored prefix
   });
@@ -148,7 +140,7 @@ describe("OutputContext is consumable by errors.ts", () => {
     const wc = new WarningCollector();
     wc.add("heads up");
     const cap = capture();
-    const n = wc.flush({ ...ctx, stderr: cap });
+    const n = wc.flush({ ...errorRenderOpts(ctx), stderr: cap });
     expect(n).toBe(1);
     expect(cap.text()).toBe("warning: heads up\n"); // plain context → no ANSI
   });
@@ -261,6 +253,23 @@ describe("emit — json mode", () => {
     expect(cap.text()).toBe("");
   });
 
+  test("serializes once — a non-idempotent toJSON cannot ship an unvalidated value (TOCTOU)", () => {
+    let calls = 0;
+    // Returns an object the first time, a bare string the second. A
+    // validate-then-reserialize design would validate the object but WRITE the
+    // string; serializing once and validating those exact bytes cannot.
+    const data = {
+      toJSON() {
+        calls++;
+        return calls === 1 ? { ok: true } : "UNVALIDATED_SECOND_CALL";
+      },
+    };
+    const cap = capture();
+    emit(renderable("k", data), JSON_CTX, cap);
+    expect(calls).toBe(1); // serialized exactly once
+    expect(JSON.parse(cap.text())).toEqual({ schemaVersion: 1, kind: "k", data: { ok: true } });
+  });
+
   test("defaults the sink to process.stdout", () => {
     const original = process.stdout.write.bind(process.stdout);
     const chunks: string[] = [];
@@ -298,7 +307,10 @@ describe("emit — plain mode", () => {
   });
 
   test("a whitespace-only body writes nothing (no stray line for a no-rows result)", () => {
-    for (const blank of ["   ", "\t", "  \n", "\r\n\r\n", "\n  \n"]) {
+    // Includes the Unicode LINE/PARAGRAPH separators (U+2028/U+2029) and the BOM —
+    // the emptiness check and the trailing strip must agree on what counts as a
+    // line terminator, or one of them leaks a visually-blank line.
+    for (const blank of ["   ", "\t", "  \n", "\r\n\r\n", "\n  \n", "\u2028", "\u2029", "\uFEFF"]) {
       const cap = capture();
       emit(renderable("k", {}, { plain: () => blank }), PLAIN_CTX, cap);
       expect(cap.text()).toBe("");
@@ -310,6 +322,12 @@ describe("emit — plain mode", () => {
     emit(renderable("k", {}, { plain: () => "row one\r\nrow two\r\n" }), PLAIN_CTX, cap);
     // Interior CRLF is the renderer's payload; only the trailing edge is normalized.
     expect(cap.text()).toBe("row one\r\nrow two\n");
+  });
+
+  test("strips a trailing Unicode line separator (U+2028) — same set as the empty-check", () => {
+    const cap = capture();
+    emit(renderable("k", {}, { plain: () => "row\u2028" }), PLAIN_CTX, cap);
+    expect(cap.text()).toBe("row\n");
   });
 
   test("preserves leading/interior formatting — only the trailing edge is normalized", () => {
@@ -361,6 +379,17 @@ describe("emit — pretty mode", () => {
     expect(noColor.text()).toBe("WITHOUT\n");
   });
 
+  test("applies the same writeBody normalization as plain (empty → silent, one trailing newline)", () => {
+    // pretty and plain share writeBody; pin the body invariants for pretty too, so a
+    // future mode-specific branch can't silently break stdout discipline here.
+    const empty = capture();
+    emit(renderable("k", {}, { pretty: () => "   " }), PRETTY_CTX, empty);
+    expect(empty.text()).toBe("");
+    const trailing = capture();
+    emit(renderable("k", {}, { pretty: () => "row\n\n" }), PRETTY_CTX, trailing);
+    expect(trailing.text()).toBe("row\n");
+  });
+
   test("does not invoke the plain renderer", () => {
     let plainTouched = false;
     const r = renderable(
@@ -410,6 +439,12 @@ describe("truncation builder (cli-contract §3)", () => {
     expect(() => truncation(120, -1)).toThrow(RangeError);
     expect(() => truncation(30, 120)).toThrow(RangeError); // transposed: shown > total
   });
+
+  test("coerces a non-string hint instead of crashing String.replace (asText)", () => {
+    // A JS caller (no compile-time types) may pass a non-string hint; it must
+    // degrade to its text form, not throw inside singleLine's `.replace`.
+    expect(truncation(120, 30, 5 as unknown as string).hint).toBe("5");
+  });
 });
 
 describe("renderTruncationLine (cli-contract §3.2)", () => {
@@ -434,5 +469,11 @@ describe("renderTruncationLine (cli-contract §3.2)", () => {
     const line = renderTruncationLine(handBuilt);
     expect(line).toBe("showing 30 of 120 — no match try --type story");
     expect(line).not.toContain("\n");
+  });
+
+  test("rejects a hand-built Truncation with corrupt counts (no 'showing 30 of NaN')", () => {
+    // Counts are re-validated at the render seam too, not only in truncation().
+    const bad: Truncation = { total: Number.NaN, shown: 30, truncated: true };
+    expect(() => renderTruncationLine(bad)).toThrow(RangeError);
   });
 });
