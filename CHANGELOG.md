@@ -12,17 +12,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `resolveMode`/`resolveOutput` resolve one of three modes up front with the locked
   precedence `--json > --plain > pretty`; a non-TTY stdout auto-selects `--plain`
   (deterministic pipes without a flag) and `--json` always overrides (cli-contract §1).
-  The returned `OutputContext` is exactly the `{ json, color }` pair
-  `reportError`/`WarningCollector.flush` consume — color is enabled **only** in pretty
-  mode with `NO_COLOR` unset (any value, including the empty string, suppresses;
-  cli-contract §6), so errors.ts keeps owning no TTY/mode logic. `successEnvelope`
-  builds the additive-only `{ schemaVersion, kind, data }` success envelope
-  (`SCHEMA_VERSION = 1`, §2). `emit` serializes the `--json` payload **before** writing,
-  so a non-serializable result throws with empty stdout (the "stdout parses or stays
-  silent" invariant, §4), and normalizes pretty/plain output to exactly one trailing
-  newline (an empty body stays silent). `truncation`/`renderTruncationLine` provide
-  explicit bounded-output hints (`showing 30 of 120 — narrow with …`, §3). Module +
-  tests only; commands wire it in at M1 (matches the errors.ts/config.ts precedent).
+  The returned `OutputContext` carries `mode` as the single routing key (plus the
+  env-dependent `color`); `errorRenderOpts(ctx)` derives the `{ json, color }` pair
+  `reportError`/`WarningCollector.flush` consume, so the success and error paths can't
+  disagree and errors.ts keeps owning no TTY/mode logic. Color is enabled **only** in
+  pretty mode with `NO_COLOR` unset (any value, including the empty string, suppresses;
+  cli-contract §6). `successEnvelope` builds the additive-only
+  `{ schemaVersion, kind, data }` success envelope (`SCHEMA_VERSION = 1`, §2). `emit`
+  serializes the `--json` envelope **then validates those exact bytes** before writing,
+  so a malformed/non-serializable payload (`undefined`/primitive/`Date`-like/`BigInt`/
+  circular `data`, or a non-`object`/array result) throws with empty stdout (the "stdout
+  parses or stays silent" invariant, §4) rather than emitting a lie at exit 0; pretty/
+  plain output is normalized to exactly one trailing newline (an empty or whitespace-only
+  body stays silent, significant trailing whitespace is preserved). `truncation`/
+  `renderTruncationLine` provide explicit, count- and newline-guarded bounded-output
+  hints (`showing 30 of 120 — narrow with …`, §3). Hardened across four `/code-review max`
+  passes. Module + tests only; commands wire it in at M1 (matches the errors.ts/config.ts
+  precedent). `errors.ts` additionally exports `singleLine`/`asText` (shared text
+  discipline) used by the truncation hint.
 - `.lore/config.toml` loader (LORE-10): `src/config.ts` — `loadConfig({ root?, env? })`
   parses the committed config with **Bun-native TOML** (no added dependency) into a
   typed, validated `LoreConfig` (`reconcile`, `validate`, `confluence`). Zero-config

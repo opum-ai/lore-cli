@@ -442,8 +442,10 @@ describe("truncation builder (cli-contract §3)", () => {
 
   test("coerces a non-string hint instead of crashing String.replace (asText)", () => {
     // A JS caller (no compile-time types) may pass a non-string hint; it must
-    // degrade to its text form, not throw inside singleLine's `.replace`.
+    // degrade to its text form, not throw inside singleLine's `.replace`. A falsy
+    // non-string (0) is coerced too — not silently dropped like an omitted hint.
     expect(truncation(120, 30, 5 as unknown as string).hint).toBe("5");
+    expect(truncation(120, 30, 0 as unknown as string).hint).toBe("0");
   });
 });
 
@@ -475,5 +477,12 @@ describe("renderTruncationLine (cli-contract §3.2)", () => {
     // Counts are re-validated at the render seam too, not only in truncation().
     const bad: Truncation = { total: Number.NaN, shown: 30, truncated: true };
     expect(() => renderTruncationLine(bad)).toThrow(RangeError);
+  });
+
+  test("derives 'truncated' from the counts, ignoring a hand-built flag", () => {
+    // A lying `truncated: false` with shown < total must STILL render the footer —
+    // otherwise a partial result prints as complete (§3); the inverse must not render.
+    expect(renderTruncationLine({ total: 120, shown: 30, truncated: false })).toBe("showing 30 of 120");
+    expect(renderTruncationLine({ total: 30, shown: 30, truncated: true })).toBe("");
   });
 });

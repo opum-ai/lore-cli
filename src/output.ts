@@ -198,7 +198,11 @@ export interface Truncation {
  */
 export function truncation(total: number, shown: number, hint?: string): Truncation {
   assertCounts(total, shown);
-  const cleanHint = hint ? singleLine(asText(hint)) : "";
+  // `!== undefined`, not a truthy check: a provided-but-falsy hint (a JS caller's
+  // `0`/`false`) must still be coerced via asText, not silently dropped — only an
+  // omitted hint is skipped. (An empty/whitespace-only hint collapses to "" below
+  // and is then dropped by the `if (cleanHint)` guard.)
+  const cleanHint = hint !== undefined ? singleLine(asText(hint)) : "";
   const result: Truncation = { total, shown, truncated: shown < total };
   if (cleanHint) {
     result.hint = cleanHint;
@@ -212,22 +216,29 @@ export function truncation(total: number, shown: number, hint?: string): Truncat
  * truncated, so a caller can unconditionally append it and add no line when the
  * full result fit.
  *
- * Both the counts and the `hint` are re-validated here, not only in the
- * {@link truncation} builder: the parameter is the exported {@link Truncation}, so
- * a caller may hand-build one (bypassing the builder) with corrupt counts —
- * rendering `showing 30 of NaN` — or a multi-line/non-string `hint` that smuggles
- * a second, unprefixed line onto stdout (breaking the §3.2 single-line footer and
- * §4 stream discipline). Counts go through the same {@link assertCounts}; the hint
- * is coerced + single-lined as in the builder. Mirrors errors.ts, which guards at
- * both build and render.
+ * The parameter is the exported {@link Truncation}, so a caller may hand-build one
+ * (bypassing the builder), and every field is therefore re-derived or re-validated
+ * here rather than trusted:
+ *
+ * - **`truncated` is derived** from `shown < total`, never read from the object — a
+ *   hand-built `{ shown: 30, total: 120, truncated: false }` would otherwise drop
+ *   the footer and present a partial result as complete (the §3 guarantee it must
+ *   not), and the inverse would print a misleading `showing 30 of 30`.
+ * - **counts** go through the same {@link assertCounts} (a corrupt count would
+ *   render `showing 30 of NaN`).
+ * - the **`hint`** is coerced + single-lined exactly as in the builder, so a
+ *   multi-line/non-string hint cannot smuggle a second, unprefixed line onto stdout
+ *   (§3.2/§4).
+ *
+ * Mirrors errors.ts, which guards at both build and render.
  */
 export function renderTruncationLine(t: Truncation): string {
-  if (!t.truncated) {
+  assertCounts(t.total, t.shown);
+  if (t.shown >= t.total) {
     return "";
   }
-  assertCounts(t.total, t.shown);
   const head = `showing ${t.shown} of ${t.total}`;
-  const hint = t.hint ? singleLine(asText(t.hint)) : "";
+  const hint = t.hint !== undefined ? singleLine(asText(t.hint)) : "";
   return hint ? `${head} — ${hint}` : head;
 }
 
@@ -306,13 +317,14 @@ export function emit<T>(renderable: Renderable<T>, ctx: OutputContext, out: Writ
  * a blank line. The test is `!/\S/` — `\S` is the complement of `\s`, which covers
  * spaces, tabs, CR/LF, the Unicode LINE/PARAGRAPH separators (U+2028/U+2029), and
  * the BOM — and allocates nothing, unlike `trim()`. A content-bearing body has
- * only its trailing line terminators stripped (LF, the CR of a CRLF, and
- * U+2028/U+2029 — the same set the emptiness test treats as whitespace, so the two
- * cannot disagree), then exactly one `\n` is appended. Everything else is the
- * renderer's payload and is preserved verbatim — including trailing *horizontal*
- * whitespace on the last line, which a plain renderer may treat as a significant
- * field (e.g. an empty trailing TSV column, §1.3), and all leading/interior
- * formatting (pretty may format freely, §1.2).
+ * only its trailing **line terminators** stripped (LF, the CR of a CRLF, and
+ * U+2028/U+2029 — the line-terminator subset of what the emptiness test counts as
+ * whitespace, so a terminator-only body is silenced *and* a trailing terminator on
+ * a content line is normalized), then exactly one `\n` is appended. All other
+ * whitespace is the renderer's payload and is preserved verbatim — including
+ * trailing *horizontal* whitespace on the last line, which a plain renderer may
+ * treat as a significant field (e.g. an empty trailing TSV column, §1.3), and all
+ * leading/interior formatting (pretty may format freely, §1.2).
  */
 function writeBody(body: string, out: Writer): void {
   if (!/\S/.test(body)) {

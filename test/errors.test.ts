@@ -126,6 +126,12 @@ describe("toErrorEnvelope", () => {
     expect(envelope.message).toBe("line1 line2");
     expect(envelope.hint).toBe("do a then b");
   });
+
+  test("collapses Unicode line/paragraph separators too (U+2028/U+2029), not only CR/LF", () => {
+    const envelope = toErrorEnvelope(new LoreError("validation", "line1\u2028line2", "do a\u2029then b"));
+    expect(envelope.message).toBe("line1 line2");
+    expect(envelope.hint).toBe("do a then b");
+  });
 });
 
 describe("formatErrorText", () => {
