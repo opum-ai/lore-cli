@@ -1,11 +1,11 @@
 ---
 id: LORE-10
 title: Implement .lore config loader (native TOML + env overlay)
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-06-23 22:12'
+updated_date: '2026-06-24 00:52'
 labels:
   - core
 milestone: m-1
