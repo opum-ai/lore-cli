@@ -7,6 +7,31 @@ okf_version: "0.1"
 
 # `lore` — Specification v0.2 (TypeScript / Bun)
 
+> ⚠️ **SUPERSEDED FRAMING — read before this spec.** This is the v0.2 product
+> spec and remains the narrative origin, but two of its framings have been
+> superseded by locked decisions. The canonical correction is the superseded-framing
+> note in [docs/specs/lore-design.md](docs/specs/lore-design.md); this in-place
+> banner summarizes it so a spec-first reader is not misled:
+>
+> - **Backlog adapter is JSON-only, not `--plain`.** Every reference below to a
+>   `--plain` text-parsing Backlog adapter (the §3 "via the CLI" adapter, the
+>   `backlog … --plain` / `Bun.spawn` notes, `backlog task list --plain`) is
+>   superseded: the adapter invokes `backlog … --json` and parses the
+>   `{schemaVersion, kind, data}` envelope, with **no `--plain` fallback**. See
+>   [ADR-0002 — Backlog.md integration: JSON-only via `--json`](docs/adr/0002-backlog-integration-json-only.md).
+>   (lore's own *output* layer still has a `--plain` mode; that is unrelated to
+>   how it reads Backlog.)
+> - **CLI-first; MCP deferred, not "CLI + MCP".** The title, intro, §5.6, the
+>   tech-stack dependency table, the file tree, and §6 present lore as "both a CLI
+>   and an MCP server" (each `lore mcp` / `@modelcontextprotocol/sdk` / `mcp.ts`
+>   mention is flagged inline below). That is superseded: the **CLI is the primary
+>   surface** and the **MCP server is secondary, deferred to v2** (built on a
+>   reusable core so the future MCP tool calls the same functions). See
+>   [ADR-0004 — CLI-first; MCP deferred](docs/adr/0004-cli-first-skill-bridge-mcp-deferred.md).
+>
+> Where this document and the locked ADRs disagree, the ADRs and
+> [lore-design.md](docs/specs/lore-design.md) win.
+
 A thin tool that makes repo-resident documentation a first-class, agent-readable
 **OKF bundle**, tightly coupled to **Backlog.md** tasks, exposed as **both a CLI
 and an MCP server**, with a **one-way** publish adapter to Confluence. The repo
@@ -206,7 +231,7 @@ agent loops).
 | CLI framework | **Commander.js** | Same as Backlog.md — consistent UX/flags |
 | Frontmatter | **gray-matter** | Battle-tested YAML frontmatter parse/serialize |
 | Markdown AST | **unified / remark (mdast)** | Real AST for managed-block surgery + link rewriting |
-| MCP server | **@modelcontextprotocol/sdk** | Expose `lore` as agent-callable tools |
+| MCP server *(deferred to v2 — ADR-0004)* | **@modelcontextprotocol/sdk** | Expose `lore` as agent-callable tools — **not a v0.2 dependency** |
 | Confluence | `fetch` + Confluence REST (no SDK needed) | Isolated adapter module |
 | Validation | **zod** | Frontmatter schema validation per `type` |
 
@@ -255,9 +280,9 @@ lore publish confluence [PATHS…]  # repo → Confluence; changed only by defau
   --space KEY --parent PAGE_ID --dry-run --all --prune
 ```
 
-### 5.6 MCP server
+### 5.6 MCP server — **deferred to v2** (ADR-0004; see the banner under the H1)
 ```
-lore mcp                          # start the MCP server over stdio (§6)
+lore mcp                          # start the MCP server over stdio (§6) — DEFERRED to v2
 ```
 
 ---
@@ -350,7 +375,7 @@ lore/
 ├── tsconfig.json
 ├── src/
 │   ├── cli.ts                   # Commander entrypoint
-│   ├── mcp.ts                   # MCP server entrypoint (`lore mcp`)
+│   ├── mcp.ts                   # MCP server entrypoint (`lore mcp`) — DEFERRED to v2 (ADR-0004)
 │   ├── core/
 │   │   ├── concept.ts           # frontmatter <-> object (gray-matter + zod)
 │   │   ├── bundle.ts            # walk docs/, build graph, index/log gen
