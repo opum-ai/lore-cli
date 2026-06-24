@@ -1,11 +1,11 @@
 ---
 id: LORE-15
 title: 'concept.ts: frontmatter parse/serialize + Zod per-type schemas'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-06-24 23:09'
+updated_date: '2026-06-24 23:27'
 labels:
   - core
 milestone: m-2
