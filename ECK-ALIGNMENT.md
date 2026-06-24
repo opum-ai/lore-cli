@@ -123,8 +123,18 @@ Reviewed each decision against Lore's 16 locked (Accepted) ADRs; every verdict w
 2. **D2** — the **shared-package boundary and a library-publishing extension to ADR-0001** must be decided before ECK can `import` Lore modules; ADR-0012 sole-committer must be preserved (the adapter must not give ECK a second write path into `backlog/`).
 3. **D4** — the **identity bridge is not 1:1**: ADR-0009 makes a Lore Story own *many* Backlog tasks (with a status rollup). Lore must define `ECK feature → Lore Story (1:1) → Backlog tasks (1:N)` and the `ECK-DEV-119 ↔ task-N` ID mapping before ECK relies on the equivalence.
 
-**Housekeeping (D10) — resolved on this branch:**
-- `backlog/config.yml`: set `check_active_branches: false` and `remote_operations: false` to match ADR-0012 (the dev repo dogfoods its own coexistence contract; it would otherwise fail `lore check`'s exit-6 drift gate), with an inline note.
-- `lore-spec.md`: added a SUPERSEDED banner under the H1 redirecting the `--plain` Backlog-adapter and MCP-first framing to ADR-0002, ADR-0004, and `docs/specs/lore-design.md`.
+**Housekeeping (D10)** — both fixes (the config-drift flags and the `lore-spec.md` SUPERSEDED banner) were applied on this branch; the specifics live once in the D10 decision notes above (and the summary-table row), not restated here.
+
+## References
+
+ADRs and design docs cited above, as relative links from this repo root:
+
+- [ADR-0001 — Runtime, build & distribution](docs/adr/0001-runtime-build-distribution.md) · [ADR-0002 — Backlog.md integration (JSON-only)](docs/adr/0002-backlog-integration-json-only.md) · [ADR-0003 — OKF substrate](docs/adr/0003-okf-substrate.md) · [ADR-0004 — CLI-first; MCP deferred](docs/adr/0004-cli-first-skill-bridge-mcp-deferred.md)
+- [ADR-0005 — CLI contract](docs/adr/0005-cli-contract.md) · [ADR-0006 — Schema, types & templates](docs/adr/0006-schema-types-templates.md) · [ADR-0007 — Validation & coherence](docs/adr/0007-validation-and-coherence.md) · [ADR-0008 — Managed block (remark AST)](docs/adr/0008-managed-block-remark-ast.md)
+- [ADR-0009 — Story/task coupling & reconciliation](docs/adr/0009-story-task-coupling-reconciliation.md) · [ADR-0010 — Multi-consumer docs layer](docs/adr/0010-multi-consumer-docs-layer.md) · [ADR-0011 — Frontmatter serialization stability](docs/adr/0011-frontmatter-serialization-stability.md) · [ADR-0012 — Backlog coexistence & git ownership](docs/adr/0012-backlog-coexistence-git-ownership.md)
+- [ADR-0013 — `.lore/` state directory](docs/adr/0013-lore-state-directory.md) · [ADR-0014 — Core has no LLM dependency](docs/adr/0014-core-has-no-llm-dependency.md) · [ADR-0015 — Lightweight retrieval, no vectors](docs/adr/0015-lightweight-retrieval-no-vectors.md) · [ADR-0016 — Confluence one-way publish, deferred](docs/adr/0016-confluence-one-way-publish-deferred.md)
+- Design & reference: [lore design spec](docs/specs/lore-design.md) · [CLI contract](docs/reference/cli-contract.md) · [CLI surface](docs/reference/cli-surface.md) · [OKF conformance](docs/reference/okf-conformance.md)
+
+---
 
 _Method note: verdicts produced by a fan-out review (one analyst per decision against the cited ADRs) with an independent adversarial verification pass per verdict._
