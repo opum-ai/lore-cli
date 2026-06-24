@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-06-24 15:23'
+updated_date: '2026-06-24 16:17'
 labels:
   - core
   - agent-api
@@ -25,8 +25,8 @@ Three output tiers with precedence --json > --plain > pretty; auto-plain on non-
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 JSON output uses the schemaVersion/kind/data envelope
-- [ ] #2 Non-TTY auto-selects plain; --json overrides
+- [x] #1 JSON output uses the schemaVersion/kind/data envelope
+- [x] #2 Non-TTY auto-selects plain; --json overrides
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -52,3 +52,19 @@ Review: /code-review max (NOT /review). Round 1 fixed 4 confirmed (silent droppe
 
 Declined findings (deliberate, with rationale): (1) truncation() RangeError on bad counts is intentional fail-loud — counts are list lengths; crashing on an upstream arithmetic bug beats silently mislabeling a partial result complete. (2) NO_COLOR present-but-undefined treated as unset — value-based ===undefined is correct for process.env (values are always strings) and 'undefined = no preference'; also appeared in the verifier's refuted set. (3) zero-width-only (U+200B) bodies not silenced — exotic, no realistic renderer; BOM/U+FEFF is covered by trim(). (4) OutputContext.json 'redundant' — intentional ergonomic seam for errors.ts; readonly + single resolveOutput constructor prevents drift. (5) Folding truncation into emit (auto-append/auto-merge) — deferred to M1 when real command renderers exist to validate the API shape. (6) stdout backpressure — matches errors.ts pattern; output is §3-bounded. (7) shared capture() test fixture — left to test locality.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: @claude
+created: 2026-06-24 16:17
+---
+Ready for review — PR #11: https://github.com/jeremy-newhouse/lore/pull/11
+---
+<!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Delivered src/output.ts (the output-mode layer / single rendering seam) + test/output.test.ts via PR #11 (feat/lore-12-output-layer → dev). Public surface: OutputMode (json|plain|pretty, defined here); resolveMode/resolveOutput (precedence --json>--plain>pretty, non-TTY auto-plain, color only in pretty with NO_COLOR unset §6); OutputContext {mode,color} with mode the single routing key; errorRenderOpts(ctx)→{json,color} bridge to errors.ts; SCHEMA_VERSION=1 + successEnvelope {schemaVersion,kind,data} §2; emit() exhaustive switch, --json serializes-then-validates the exact bytes before writing (stdout parses-or-silent §4); truncation()/renderTruncationLine() bounded-output hints §3 (count- and newline-guarded, truncated derived from counts). errors.ts gained additive exports singleLine/asText (shared single-line discipline). AC#1 (envelope) and AC#2 (non-TTY→plain, --json overrides) met. Verified: bun test (142 pass), bun run lint, bun run typecheck — all green. Hardened across 4 /code-review max passes (converged). Scope: module + tests only; command wiring lands with M1 (errors.ts/config.ts precedent). Left In Progress pending Jeremy's review/merge of PR #11; mark Done on merge (LORE-10 precedent).
+<!-- SECTION:FINAL_SUMMARY:END -->
