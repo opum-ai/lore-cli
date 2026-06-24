@@ -81,18 +81,23 @@ import { CANONICAL_KEY_ORDER, validateFrontmatter } from "./schema";
  * parsed YAML mapping (every key preserved, never coerced or reordered on read);
  * `type` is a convenience mirror of `frontmatter.type` (always a non-empty string
  * after {@link parseConcept}); `body` is the markdown after the closing fence.
+ *
+ * `id`, `path`, and `type` are **`readonly`** identity/derived fields: they snapshot
+ * what was parsed and are not the write surface. `frontmatter` is authoritative for
+ * serialization — to retype a concept, set `frontmatter.type` (assigning the readonly
+ * `type` mirror is a compile error precisely because serialize ignores it).
  */
 export interface Concept {
   /** Repo-relative path minus the `.md` suffix, e.g. `stories/bulk-archive`. */
-  id: string;
+  readonly id: string;
   /** Repo-relative path as given to {@link parseConcept}, e.g. `stories/bulk-archive.md`. */
-  path: string;
+  readonly path: string;
   /**
-   * The resolved (trimmed, non-empty) `type` — a read convenience mirroring
+   * The resolved (trimmed, non-empty) `type` — a read-only mirror of
    * `frontmatter.type`. `frontmatter.type` is authoritative for serialization; to
-   * retype a concept, set `frontmatter.type` (not just this mirror).
+   * retype a concept, set `frontmatter.type` (this mirror cannot be assigned).
    */
-  type: string;
+  readonly type: string;
   /**
    * The verbatim parsed frontmatter mapping — validated where known, passthrough
    * where not. Keys are never dropped or reordered on read; a value may be `null`
@@ -264,33 +269,30 @@ function splitFrontmatter(path: string, raw: string): { frontmatter: Record<stri
  * as an own property rather than hitting the prototype setter — no key is dropped
  * (ADR-0011 §5). This mirrors the `Object.create(null)` technique errors.ts uses for
  * the same prototype-pollution hazard; js-yaml dumps a null-prototype object the same
- * as a plain one.
+ * as a plain one. Reads are plain index access: an own `__proto__` *data* property
+ * shadows the inherited accessor, so `frontmatter["__proto__"]` returns its value (no
+ * descriptor read needed); the null-proto target is what makes the *write* side safe.
  */
 function canonicalize(frontmatter: Record<string, unknown>): Record<string, unknown> {
   const ordered: Record<string, unknown> = Object.create(null);
   for (const key of CANONICAL_KEY_ORDER) {
     if (Object.hasOwn(frontmatter, key)) {
-      ordered[key] = readOwn(frontmatter, key);
+      ordered[key] = frontmatter[key];
     }
   }
   for (const key of Object.getOwnPropertyNames(frontmatter)) {
     if (!Object.hasOwn(ordered, key)) {
-      ordered[key] = readOwn(frontmatter, key);
+      ordered[key] = frontmatter[key];
     }
   }
   return ordered;
 }
 
 /**
- * Read an own property's value through its descriptor, so a `__proto__` key returns
- * its stored data rather than the inherited prototype accessor. Callers guard that
- * the key is own, so the descriptor is always present.
+ * Derive a concept id from its path: the path minus a trailing `.md`, matched
+ * **case-insensitively** so the same on-disk file yields one id whether referenced
+ * as `Foo.md` or `Foo.MD` (a real divergence on case-insensitive filesystems).
  */
-function readOwn(from: Record<string, unknown>, key: string): unknown {
-  return Object.getOwnPropertyDescriptor(from, key)?.value;
-}
-
-/** Derive a concept id from its path: the path minus a trailing `.md`. */
 function idFromPath(path: string): string {
-  return path.endsWith(".md") ? path.slice(0, -3) : path;
+  return /\.md$/i.test(path) ? path.slice(0, -3) : path;
 }

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-06-24 22:19'
+updated_date: '2026-06-24 23:09'
 labels:
   - core
 milestone: m-2
@@ -79,6 +79,13 @@ Round 4 converged to 2 PATHOLOGICAL, representation-inherent edges — DOCUMENTE
 All four documented limitations (in-frontmatter comments, |+ trailing-newline scalar, integer keys, big numbers) are pinned by convergence tests. Final gates: bun test (198), lint, typecheck all green.
 
 Delivered as PR #12 (https://github.com/jeremy-newhouse/lore/pull/12) into dev — awaiting review/merge by Jeremy. Status stays In Progress; mark Done ON MERGE via a direct-to-dev chore commit (LORE-10/12 precedent).
+
+/review on PR #12 (8 angles + verify, single-context): no byte-stability/crash/correctness bug survived (the 4 /code-review max passes had cleared those). 4 precision findings resolved in commit c929f4d:
+1. idFromPath strips .md case-insensitively (.MD vs .md → one id on case-insensitive FS).
+2. Concept.id/path/type made readonly (type is a parse-time mirror serialize ignores; assigning it is now a compile error, not a silent no-op).
+3. canonicalize drops the per-key getOwnPropertyDescriptor — an own __proto__ data prop shadows the inherited accessor, so a plain index read returns its value (write-side null-proto target already safe); removes per-key allocation.
+4. schema.ts single-sources the Zod-issue path projection (projectIssue) so the human message and --json input.issues can't drift.
+Refuted/intended (not changed): serialize re-running validateFrontmatter (deliberate write/read symmetry); no summary warning on unknown types (type-only validation by design); CRLF→LF in values (documented LF policy). 199 tests; lint+typecheck green.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

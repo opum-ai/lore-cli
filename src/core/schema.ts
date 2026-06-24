@@ -315,12 +315,27 @@ function warnSummary(summary: unknown, where: string, warnings: WarningCollector
   }
 }
 
+/**
+ * Project one Zod issue onto its `{ path, message }` pair — the single source of the
+ * dotted-path rendering, so the human message ({@link describeIssues}) and the JSON
+ * envelope's `input.issues` ({@link issueList}) can never spell a nested path two
+ * different ways if Zod's issue shape changes.
+ */
+function projectIssue(issue: z.core.$ZodIssue): { path: string; message: string } {
+  return { path: issue.path.join("."), message: issue.message };
+}
+
 /** Flatten Zod issues to a single-line, human "field: reason; field: reason" string. */
 function describeIssues(error: z.ZodError): string {
-  return error.issues.map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`).join("; ");
+  return error.issues
+    .map((issue) => {
+      const { path, message } = projectIssue(issue);
+      return `${path || "(root)"}: ${message}`;
+    })
+    .join("; ");
 }
 
 /** Project Zod issues onto a plain, JSON-safe array for the error envelope's `input`. */
 function issueList(error: z.ZodError): Array<{ path: string; message: string }> {
-  return error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }));
+  return error.issues.map(projectIssue);
 }

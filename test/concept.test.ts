@@ -66,6 +66,11 @@ describe("parseConcept — structure", () => {
     expect(parseConcept("index", MINIMAL_GOLDEN).id).toBe("index");
   });
 
+  test("the .md suffix is stripped case-insensitively (one id per file on a case-insensitive FS)", () => {
+    expect(parseConcept("stories/Foo.MD", MINIMAL_GOLDEN).id).toBe("stories/Foo");
+    expect(parseConcept("stories/Foo.md", MINIMAL_GOLDEN).id).toBe("stories/Foo");
+  });
+
   test("timestamps stay ISO strings — never coerced to Date (ADR-0006 §2)", () => {
     const concept = parseConcept("x.md", "---\ntype: ADR\ntimestamp: 2026-06-21T00:00:00Z\n---\nB\n");
     expect(typeof concept.frontmatter.timestamp).toBe("string");
