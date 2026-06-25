@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-06-25 11:58'
+updated_date: '2026-06-25 12:22'
 labels:
   - cmd
 milestone: m-2
@@ -54,4 +54,14 @@ DEVIATION FROM KICKOFF HANDOVER (flagged for review): the handover said emit the
 
 SCOPE (confirmed w/ Jeremy): minimal root index only — generateIndexes()/log.md deferred to LORE-29/M3; template CONTENT deferred to LORE-18 (init only ensures templates/ dir).
 DEPENDENCY NOTE: no Commander added — hand-rolled minimal router to keep the PR dependency-neutral re: EXDEV/CI-isolated-linker. Design names Commander as eventual entrypoint; adoption deferred. Flag for review.
+
+/code-review max (44 agents, 8 changed files): 14 reported findings. Fixed in 9f84b28:
+- CORRECTNESS: (1) cli.ts unknown-flag swallowing on version/help/no-command paths -> reject flags on every path; (2) --version/--help now honor --json via the emit() envelope; (3) empty-string cwd coalescing (|| not ??); (4) okf_version self-warning -> exempt OKF-reserved key, freshly-init'd bundle now loads with 0 warnings.
+- COUPLING: export+reuse SCHEMAS_DIR, OKF_VERSION, CONFIG_REL_PATH so producer (scaffold) and consumers stay in lockstep.
+- TEST QUALITY: include test/ in typecheck (closed the gap that masked a dead json:undefined field; fixed the 3 issues it surfaced incl. a 1-line type-safe recast of a LORE-12 output.test shim); removed inert temp-dir ceremony; build scaffold plan once; +5 tests. 289 green.
+
+DEFERRED (documented, not blockers):
+- #8 modeline-inside-fence is not a serialization fixpoint: js-yaml drops the in-fence comment on re-serialize. Inherent to inside-fence placement (parseConcept needs --- at byte 0) and affects all 16 modeline docs equally; init writes once. REAL future concern for LORE-26/29 sync (rewriting the root index would drop the modeline) — flag when sync lands; proper fix is modeline-aware concept.ts (own task).
+- #9 zod-byte coupling: schema bytes track z.toJSONSchema; tests assert STRUCTURE not exact bytes so a zod bump won't false-fail. Cross-version idempotency is a separate release/upgrade concern.
+- #12 'docs' bundle-root literal: bundle.ts takes root as a param (no hardcoded 'docs'); a shared DOCS_ROOT const is nice-to-have.
 <!-- SECTION:NOTES:END -->
