@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-06-25 10:50'
+updated_date: '2026-06-25 11:18'
 labels:
   - core
 milestone: m-2
@@ -58,4 +58,6 @@ Caught + fixed a latent bug: docs/adr/0009 and docs/specs/lore-design had invali
 Delivered via PR #13 (https://github.com/jeremy-newhouse/lore/pull/13) into dev, awaiting Jeremy's review/merge. Both ACs checked. New dep: mdast-util-from-markdown@2.0.3 (pinned exact).
 
 CI green on PR #13: lint·typecheck·test pass on ubuntu/macos/windows + compile smoke. Fixed one CI-only break (@types/mdast must be a direct devDep for the isolated linker). Mergeable, awaiting Jeremy.
+
+PR #13 admin squash-merged into dev as 08411e3 (2026-06-25 10:48 UTC); LORE-16 Done. Post-merge /code-review max (8 finder angles, 2 verified) found NO actionable correctness bugs — every candidate was a documented-by-design choice (internalTarget /\.md$/i intentionally mirrors idFromPath's case-insensitivity; posix.join native-root is fine since Node fs accepts / on Windows) or an optional test nit (object-valued / whitespace-only frontmatter refs are correctly dropped, just untested). 247 tests green on the merged tree. dev finalized at 6fd305c (Done flip + handover archive).
 <!-- SECTION:NOTES:END -->
