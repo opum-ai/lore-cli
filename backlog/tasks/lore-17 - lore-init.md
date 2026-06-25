@@ -1,11 +1,11 @@
 ---
 id: LORE-17
 title: lore init
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-06-25 14:13'
+updated_date: '2026-06-25 14:27'
 labels:
   - cmd
 milestone: m-2
@@ -73,3 +73,9 @@ Post-PR /code-review max (8 finder angles + verify) on PR #14 — resolved findi
 - DEFERRED (intentional, not changed): OKF_RESERVED_KEYS exemption applies to all types — per-file validation lacks the bundle context to enforce 'only the root index may carry okf_version'; that placement check belongs to bundle-level lore validate/check (LORE-26), where it can see the root. Enforcing it in warnExtraKeys would be fragile (depends on repo- vs bundle-relative path). Cross-version schema drift and buildScaffold-throws-on-bad-timestamp left as documented by-design.
 Gates: 297 tests pass (was 289); lint+typecheck clean; coverage 98% funcs/96% lines (scaffold/schema/concept 100%). Verified end-to-end via real CLI: init -- (exit 0), conflict dir/symlink (exit 5, text+json envelope).
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Delivered `lore init` (M1 first command surface) via PR #14, squash-merged to dev as a0f6815. Scaffolds an empty, conformant OKF bundle: pure core/scaffold.ts byte-plan, thin idempotent commands/init.ts (atomic wx write-if-absent, never clobbers), hand-rolled cli.ts router (no Commander), and Zod->Draft-7 JSON-Schema + modeline helpers in schema.ts. AC#1 (conformant empty bundle, index round-trips + loads with 0 warnings) and AC#2 (idempotent re-run, byte-identical) both verified. Two review rounds (/code-review max, pre- and post-PR): a non-regular entry (dir/symlink) at a scaffold file path now raises a conflict (exit 5) instead of a silent success on a malformed bundle; modeline splice extracted to serializeConceptWithModeline (LORE-18 reuses it); shared ANSI/paint; POSIX -- terminator. 297 tests green; lint+typecheck clean; all 4 CI jobs (ubuntu/macos/windows + compile-smoke) green. Deferred (documented): root-only okf_version placement -> LORE-26 validate/check; template content -> LORE-18.
+<!-- SECTION:FINAL_SUMMARY:END -->
