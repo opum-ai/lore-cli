@@ -17,6 +17,7 @@
 
 import { runInit } from "./commands/init";
 import { runNew } from "./commands/new";
+import { runValidate } from "./commands/validate";
 import { EXIT_OK, LoreError, reportError, type Writer } from "./errors";
 import { VERSION } from "./meta";
 import { emit, errorRenderOpts, type OutputContext, type Renderable, resolveOutput } from "./output";
@@ -29,6 +30,7 @@ Usage:
 Commands:
   init            Scaffold an empty, conformant OKF bundle (.lore/ + docs/index.md)
   new             Scaffold a typed concept from a template (lore new <type> "<title>")
+  validate        Check concept files against OKF + the lore profile (lore validate [paths…])
 
 Options:
   --json          Machine-readable JSON output (the {schemaVersion, kind, data} envelope)
@@ -199,6 +201,8 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
       return runInit({ root, output, stdout: context.stdout });
     case "new":
       return runNew({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
+    case "validate":
+      return runValidate({ root, output, args: parsed.commandArgs, stdout: context.stdout });
     default:
       throw new LoreError("usage", `unknown command "${parsed.command}"`, "run `lore --help` to list commands", {
         command: parsed.command,

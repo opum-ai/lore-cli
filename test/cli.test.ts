@@ -177,6 +177,59 @@ describe("cli — new dispatch", () => {
   });
 });
 
+describe("cli — validate dispatch", () => {
+  let cwd: string;
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), "lore-cli-validate-"));
+  });
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test("`lore validate` emits the validate.report envelope and exits 0 on a clean bundle", () => {
+    const c = ctx({ cwd });
+    expect(run(argv("init"), c)).toBe(0);
+    const v = ctx({ cwd });
+    expect(run(argv("validate", "--json"), v)).toBe(0);
+    const envelope = JSON.parse(v.stdout.text()) as { kind: string; data: { errorCount: number } };
+    expect(envelope.kind).toBe("validate.report");
+    expect(envelope.data.errorCount).toBe(0);
+  });
+
+  test("`lore validate` returns exit 6 (not a thrown error) when a file has an error", () => {
+    const c = ctx({ cwd });
+    mkdirSync(join(cwd, "docs/adr"), { recursive: true });
+    writeFileSync(join(cwd, "docs/adr/bad.md"), "---\ntype: ADR\nsummary: A short summary.\n---\n\n# X\n");
+    // The report (payload) still lands on stdout; the exit code is the gate signal.
+    expect(run(argv("validate", "--json"), c)).toBe(EXIT_CODES.validation);
+    const envelope = JSON.parse(c.stdout.text()) as { kind: string; data: { errorCount: number } };
+    expect(envelope.kind).toBe("validate.report");
+    expect(envelope.data.errorCount).toBeGreaterThan(0);
+  });
+
+  test("the router forwards `validate`'s paths and flags to the command", () => {
+    const c = ctx({ cwd });
+    expect(run(argv("init"), c)).toBe(0);
+    const v = ctx({ cwd });
+    // `--type` is a value-taking command flag the global parser forwards verbatim.
+    expect(run(argv("validate", "--type", "ADR", "--json"), v)).toBe(0);
+    const envelope = JSON.parse(v.stdout.text()) as { kind: string; data: { files: { type?: string }[] } };
+    expect(envelope.data.files.every((f) => f.type === "ADR")).toBe(true);
+  });
+
+  test("an unknown flag on `validate` is a usage error", () => {
+    const c = ctx({ cwd });
+    expect(run(argv("validate", "--bogus"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).toContain("unknown option");
+  });
+
+  test("`lore --help` lists the validate command", () => {
+    const c = ctx();
+    expect(run(argv("--help"), c)).toBe(0);
+    expect(c.stdout.text()).toContain("validate");
+  });
+});
+
 describe("cli — option terminator and bare dash", () => {
   test("`--` ends options: a following flag-looking token is a positional, not parsed as a flag", () => {
     const c = ctx();

@@ -240,8 +240,12 @@ export function buildGraph(concepts: readonly Concept[]): BundleGraph {
  * on Linux but never reproduces on a case-insensitive macOS. Restricting the walk
  * to `.md` keeps the id space collision-free and the result identical across
  * platforms; a non-`.md` file is simply not a concept.
+ *
+ * Exported so `lore validate`'s command layer reuses the *same* robust walk for a
+ * directory target (sorted, symlink-safe, `.md`-only, nested-unreadable-tolerant)
+ * instead of re-rolling a thinner one that would drift from how the bundle is loaded.
  */
-function walkMarkdown(root: string, warnings: WarningCollector | undefined): string[] {
+export function walkMarkdown(root: string, warnings: WarningCollector | undefined): string[] {
   const found: string[] = [];
 
   const recurse = (relDir: string): void => {

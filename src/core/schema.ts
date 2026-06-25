@@ -275,6 +275,51 @@ export function typeDirectory(type: string): string {
 }
 
 /**
+ * The **required body sections** (`##` headings) each known type must carry — the per-type
+ * tier-2 section contract `lore validate` enforces as an **error** (ADR-0007 §"Per-type shape";
+ * cli-surface §validate). This is the single source of truth for the section vocabulary,
+ * deliberately kept beside {@link KNOWN_TYPES} and the schemas so the type profile and its
+ * structural contract never drift.
+ *
+ * The policy is **minimal and evidence-based** (LORE-19): a section is required only where it is
+ * either *universal across the existing bundle* or *named by ADR-0007*, so that lore's own
+ * hand-authored `docs/` bundle — whose Reference/Spec/Runbook pages use heterogeneous,
+ * page-specific headings — keeps validating clean rather than being mass-invalidated:
+ *
+ * - **ADR** → `Status`, `Context`, `Decision`, `Consequences`: present in every one of the
+ *   bundle's ADRs and emitted verbatim by the built-in ADR template.
+ * - **Story** → `Acceptance criteria`: the one section ADR-0007 names as load-bearing ("a
+ *   `Story` without acceptance criteria … is a defect"); no authored Story pages exist yet, so
+ *   only the built-in template must satisfy it (it does).
+ * - **Epic / Spec / Runbook / Reference** → none: their real pages are structurally diverse, so
+ *   requiring the template skeleton would reject conformant existing docs. Their built-in
+ *   templates still scaffold a conventional skeleton; it is guidance, not a gate.
+ *
+ * Each known type's required set is a **subset** of the headings its built-in template emits, so
+ * a no-flag `lore new <type>` is valid by construction (LORE-18) — pinned by a drift test.
+ * Matching is case-insensitive on trimmed heading text ({@link validate}), so `## status` and
+ * `## Status` both satisfy the `Status` requirement.
+ */
+const REQUIRED_SECTIONS: Readonly<Record<KnownType, readonly string[]>> = Object.freeze({
+  Epic: [],
+  Story: ["Acceptance criteria"],
+  Spec: [],
+  ADR: ["Status", "Context", "Decision", "Consequences"],
+  Runbook: [],
+  Reference: [],
+});
+
+/**
+ * The body sections (`##` headings) a concept of `type` must carry, or an empty array for a type
+ * with no structural contract — an unknown (producer-extension) type included (OKF tolerance: lore
+ * never imposes a section shape on a type it does not own). The single source the validator reads,
+ * so the required-section policy lives in one place beside the schemas.
+ */
+export function requiredSectionsFor(type: string): readonly string[] {
+  return isKnownType(type) ? REQUIRED_SECTIONS[type] : [];
+}
+
+/**
  * Validate a frontmatter object against the lore profile, **throwing** on an
  * error-tier problem and **recording** warning-tier ones on `options.warnings`.
  *
