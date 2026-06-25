@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `lore validate [paths…]` (LORE-19): tiered, per-file conformance reporting. Unlike the
+  fail-fast write path, validate is an **aggregating reporter** — it surfaces *every* file's
+  findings in one pass, tiered error/warning, and emits a `kind: validate.report` payload on
+  stdout, then **returns** exit `6` when any error-tier finding exists (or any warning under
+  `--strict`); the report is the payload, the exit code is the gate signal. Tiers (ADR-0007):
+  **OKF §9** (frontmatter parses, non-empty `type`) and **per-type shape** — the strict Zod
+  schema **plus per-type required body sections** — are errors; an **unknown type / extra key /
+  summary** issue is a warning (OKF tolerance: unknown types never fail, LORE-19 AC#1); and a
+  cross-cutting **frontmatter quote-safety** check flags unquoted scalars a YAML-1.1 consumer
+  would coerce (`yes`→bool, bare dates, leading `@`/`*`/… indicators, colon-space). Required
+  sections follow a **minimal, evidence-based** policy (ADR → `Status`/`Context`/`Decision`/
+  `Consequences`; Story → `Acceptance criteria`; others none) so the existing hand-authored
+  bundle stays green while a fresh `lore new` of any type still validates clean. With no paths
+  the whole `docs/` bundle is walked; explicit `[paths…]` (a file or directory) validate only
+  those — the staged-only pre-commit run (AC#2). A non-concept file (no frontmatter) is
+  **skipped**, not failed. Flags: `--type <T>` (limit to one type), `--strict` (warnings fail).
+  `src/core/validate.ts` is the pure engine (`validateConceptText`/`validateFiles`/
+  `quoteSafetyFindings`); `src/commands/validate.ts` the thin discovery/I/O layer. Required
+  sections are a single source of truth in `schema.ts` (`requiredSectionsFor`); `walkMarkdown`
+  is exported from `bundle.ts` for reuse.
 - `lore new <type> "<title>"` (LORE-18): scaffold a typed concept from a template.
   lore **owns the frontmatter** — it is built structurally (type/title/summary/timestamp,
   plus `--tags`) and serialized through the byte-stable concept boundary, so a title or

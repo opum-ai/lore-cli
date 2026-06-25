@@ -240,8 +240,12 @@ export function buildGraph(concepts: readonly Concept[]): BundleGraph {
  * on Linux but never reproduces on a case-insensitive macOS. Restricting the walk
  * to `.md` keeps the id space collision-free and the result identical across
  * platforms; a non-`.md` file is simply not a concept.
+ *
+ * Exported so `lore validate`'s command layer reuses the *same* robust walk for a
+ * directory target (sorted, symlink-safe, `.md`-only, nested-unreadable-tolerant)
+ * instead of re-rolling a thinner one that would drift from how the bundle is loaded.
  */
-function walkMarkdown(root: string, warnings: WarningCollector | undefined): string[] {
+export function walkMarkdown(root: string, warnings: WarningCollector | undefined): string[] {
   const found: string[] = [];
 
   const recurse = (relDir: string): void => {
@@ -251,7 +255,7 @@ function walkMarkdown(root: string, warnings: WarningCollector | undefined): str
       entries = readdirSync(absDir, { withFileTypes: true });
     } catch (cause) {
       if (relDir === "") {
-        throw readError(cause, `cannot read bundle root ${absDir}`, { root, dir: absDir });
+        throw readError(cause, `cannot read directory ${absDir}`, { root, dir: absDir });
       }
       // A nested unreadable directory skips (with a warning), so one restricted
       // folder doesn't take the whole bundle down with it.
@@ -487,8 +491,11 @@ function makeTokenEstimate(byId: ReadonlyMap<string, Concept>): (id?: string) =>
  * whole bundle build — `mdast-util-from-markdown` itself parses such input
  * iteratively, so the walk must too. Children are pushed in reverse so they pop in
  * document order (a stable pre-order traversal).
+ *
+ * Exported so `lore validate`'s heading extraction reuses this one stack-safe
+ * traversal instead of re-rolling the same explicit-stack walk and risking drift.
  */
-function walkMdast(root: Nodes, visit: (node: Nodes) => void): void {
+export function walkMdast(root: Nodes, visit: (node: Nodes) => void): void {
   const stack: Nodes[] = [root];
   while (stack.length > 0) {
     const node = stack.pop();
