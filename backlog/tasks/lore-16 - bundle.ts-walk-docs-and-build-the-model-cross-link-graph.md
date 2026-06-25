@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-06-25 05:01'
+updated_date: '2026-06-25 05:06'
 labels:
   - core
 milestone: m-2
@@ -54,4 +54,8 @@ Caught + fixed a latent bug: docs/adr/0009 and docs/specs/lore-design had invali
 /code-review max round 3: 15 findings. Fixed: case-variant .md conflict crash on Linux (walk now lowercase .md only); unreadable subdir aborting whole load (subdirs warn+skip, only root is fatal); bare-anchor frontmatter ref ('#section') mis-resolving to sibling directory (empty-after-strip guard → dangles); tokenEstimate/buildGraph validation design (REVERTED round-2's buildGraph re-validation — it double-validated AND didn't fix post-build mutation; now honest snapshot docstring, validation stays at the parse boundary); shared errnoCode extracted to errors.ts (config.ts + bundle.ts reuse). Documented-intentional: raw-HTML links (non-canonical, lint's job), scheme/colon (RFC-3986), footnote-link wording, numeric refs (schema-gated unreachable), body-link .md vs ref id-form (by design), non-mapping frontmatter skip (loader tolerance; validate is the loud gate). 243 tests green. Round 4 = final verification pass.
 
 /code-review max round 4 (final, budgeted): mostly repeats of round-3 documented decisions + one false positive (#15 backlog file 'hand-edited' — it was edited VIA the CLI, as required). Fixed actionable items: walkMdast made iterative (a ~20k-deep nested body overflowed the recursive AST walk → hard crash; fromMarkdown itself parses iteratively, now the walk does too) + collapsed to a single tree-walk; protocol-relative //host URLs classified external; resolveRef now applies the shared external-scheme guard (absolute-URL refs dangle instead of being path-mangled); toRefList coerces a YAML numeric/boolean ref to string (visible dangling edge vs silent drop, reachable on unknown types); Edge.target docstring made honest (resolved form, not byte-verbatim). Held as documented design decisions: non-mapping frontmatter skip (loader tolerance), id-first ref precedence (lore writes ids), colon/scheme (RFC-3986), lowercase-.md walk (cross-platform determinism), serialize re-validation (inherent). 247 tests green, typecheck+lint clean. CONVERGED at 4 rounds.
+
+Delivered via PR #13 (https://github.com/jeremy-newhouse/lore/pull/13) into dev, awaiting Jeremy's review/merge. Both ACs checked. New dep: mdast-util-from-markdown@2.0.3 (pinned exact).
+
+CI green on PR #13: lint·typecheck·test pass on ubuntu/macos/windows + compile smoke. Fixed one CI-only break (@types/mdast must be a direct devDep for the isolated linker). Mergeable, awaiting Jeremy.
 <!-- SECTION:NOTES:END -->
