@@ -1,11 +1,11 @@
 ---
 id: LORE-16
 title: 'bundle.ts: walk docs/ and build the model + cross-link graph'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-06-25 05:06'
+updated_date: '2026-06-25 10:50'
 labels:
   - core
 milestone: m-2
