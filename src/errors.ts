@@ -176,15 +176,25 @@ export function exitCodeFor(err: unknown): number {
   return err instanceof LoreError ? EXIT_CODES[err.type] : EXIT_UNCAUGHT;
 }
 
-// ANSI sequences for color rendering. Color is purely cosmetic and applied only
-// when the caller passes `color: true`; this module never decides that itself.
-const RED = "\x1b[31m";
-const YELLOW = "\x1b[33m";
-const DIM = "\x1b[2m";
-const RESET = "\x1b[0m";
+/**
+ * The ANSI SGR sequences lore paints diagnostics and output with. Shared (exported)
+ * so every painted surface — the error/warning heads here, the `lore init` summary in
+ * commands/ — emits byte-identical sequences under one color policy, instead of each
+ * module re-spelling `\x1b[…m`. Color is purely cosmetic and applied only when a caller
+ * passes `color: true`; this module never decides that itself (output.ts owns the
+ * TTY/`NO_COLOR` decision and threads the resolved boolean here).
+ */
+export const ANSI = Object.freeze({
+  red: "\x1b[31m",
+  yellow: "\x1b[33m",
+  green: "\x1b[32m",
+  dim: "\x1b[2m",
+  reset: "\x1b[0m",
+});
 
-function paint(label: string, sequence: string, color: boolean): string {
-  return color ? `${sequence}${label}${RESET}` : label;
+/** Wrap `label` in an ANSI `sequence` (reset-terminated) when `color`, else return it bare. */
+export function paint(label: string, sequence: string, color: boolean): string {
+  return color ? `${sequence}${label}${ANSI.reset}` : label;
 }
 
 /**
@@ -194,7 +204,7 @@ function paint(label: string, sequence: string, color: boolean): string {
  * drift in prefix/color/spacing.
  */
 function errorHead(message: string, color: boolean): string {
-  return `${paint("error:", RED, color)} ${message}`;
+  return `${paint("error:", ANSI.red, color)} ${message}`;
 }
 
 /**
@@ -211,7 +221,7 @@ export function formatErrorText(err: LoreError, opts: { color?: boolean } = {}):
   if (!err.hint) {
     return head;
   }
-  return `${head}\n${paint("hint:", DIM, color)} ${singleLine(asText(err.hint))}`;
+  return `${head}\n${paint("hint:", ANSI.dim, color)} ${singleLine(asText(err.hint))}`;
 }
 
 /** A minimal write sink — `process.stderr` satisfies it, and tests inject a fake. */
@@ -473,7 +483,7 @@ export class WarningCollector {
     const stderr = opts.stderr ?? process.stderr;
     const color = opts.color ?? false;
     // The painted prefix is loop-invariant — build it once, not once per warning.
-    const prefix = paint("warning:", YELLOW, color);
+    const prefix = paint("warning:", ANSI.yellow, color);
     for (const message of this.messages) {
       stderr.write(`${prefix} ${message}\n`);
     }

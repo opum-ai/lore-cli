@@ -25,6 +25,6 @@
     // Bun runtime globals (Bun.spawn, Bun.file, process, …).
     "types": ["bun"]
   },
-  "include": ["src/**/*.ts", "*.ts"],
+  "include": ["src/**/*.ts", "test/**/*.ts", "*.ts"],
   "exclude": ["node_modules", "dist"]
 }
