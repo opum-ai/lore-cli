@@ -185,12 +185,19 @@ describe("lore init — filesystem conflicts (a non-regular entry blocks the sca
     expectConflict();
   });
 
-  test("a symlink where a scaffold file must go is a conflict (lstat, not followed)", () => {
-    // A symlink (here dangling) occupying a scaffold file path also yields EEXIST on
-    // the `wx` write; lstat sees the link itself, so it is treated as the non-regular
-    // conflict it is rather than silently honored via its target.
-    mkdirSync(join(root, ".lore"), { recursive: true });
-    symlinkSync("nowhere", join(root, ".lore", ".gitignore"));
-    expectConflict();
-  });
+  // POSIX-only: Windows symlink creation needs privilege and its `wx`-over-a-symlink
+  // semantics differ (the dangling link does not surface EEXIST the same way), so this
+  // case is unreliable there. The non-regular-entry conflict path itself is covered
+  // cross-platform by the directory test above (same lstat → not-a-regular-file branch).
+  test.skipIf(process.platform === "win32")(
+    "a symlink where a scaffold file must go is a conflict (lstat, not followed)",
+    () => {
+      // A symlink (here dangling) occupying a scaffold file path also yields EEXIST on
+      // the `wx` write; lstat sees the link itself, so it is treated as the non-regular
+      // conflict it is rather than silently honored via its target.
+      mkdirSync(join(root, ".lore"), { recursive: true });
+      symlinkSync("nowhere", join(root, ".lore", ".gitignore"));
+      expectConflict();
+    },
+  );
 });
