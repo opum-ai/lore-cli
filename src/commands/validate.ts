@@ -15,13 +15,13 @@
  * unreadable path) throws, funneling through the router's one error seam like every command.
  */
 
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { walkMarkdown } from "../core/bundle";
 import { DOCS_DIR } from "../core/scaffold";
 import { canonicalType } from "../core/schema";
 import { type FileReport, type Finding, type ValidateReport, validateFiles } from "../core/validate";
-import { ANSI, EXIT_CODES, EXIT_OK, errnoCode, LoreError, paint, type Writer } from "../errors";
+import { ANSI, EXIT_CODES, EXIT_OK, errnoCode, LoreError, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 
 /** Options for {@link runValidate}; `root` and the streams are injectable for tests. */
@@ -34,6 +34,8 @@ export interface ValidateOptions {
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
+  /** stderr sink for discovery advisories (a skipped symlink, an unreadable sub-directory); defaults to `process.stderr`. */
+  stderr?: Writer;
 }
 
 /** The parsed form of `lore validate`'s arguments. */
@@ -57,14 +59,20 @@ interface SourceFile {
  * emit the `validate.report`, and return the exit code — `0` when clean (or warnings-only without
  * `--strict`), `6` when any error-tier finding exists (or any warning under `--strict`). A bad
  * flag throws a `usage` {@link LoreError} (exit `2`); an unreadable path a `not_found`/`denied`.
+ *
+ * Discovery advisories (a `.md` concept skipped behind a symlink, an unreadable sub-directory) are
+ * flushed to stderr — never silently swallowed, so a run that omits files says so — but, like every
+ * advisory, they do not change the exit code.
  */
 export function runValidate(options: ValidateOptions): number {
   const parsed = parseValidateArgs(options.args);
   const type = parsed.type === undefined ? undefined : canonicalType(parsed.type);
-  const files = collectFiles(options.root, parsed.paths);
+  const walkWarnings = new WarningCollector();
+  const files = collectFiles(options.root, parsed.paths, walkWarnings);
 
   const report = validateFiles(files, type);
   emit(reportRenderable(report), options.output, options.stdout);
+  walkWarnings.flush({ color: options.output.color, stderr: options.stderr });
 
   const failed = report.errorCount > 0 || (parsed.strict && report.warningCount > 0);
   return failed ? EXIT_CODES.validation : EXIT_OK;
@@ -133,22 +141,25 @@ function parseValidateArgs(args: readonly string[]): ValidateArgs {
  * Discover and read every file to validate. With no explicit paths the target is the whole
  * bundle (`docs/`); otherwise each path is taken verbatim — a **directory** is walked for `.md`
  * files (via the same {@link walkMarkdown} the bundle loader uses, so the walk is sorted,
- * symlink-safe, and `.md`-only), and a **file** is read directly even if it is not `.md` (the
- * user named it explicitly). Results are de-duplicated by repo-relative path, so a file named
- * both directly and under a walked directory is validated once.
+ * symlink-safe, and `.md`-only — its skipped-symlink/unreadable-subdir advisories flow to
+ * `warnings`), and a **file** is read directly even if it is not `.md` (the user named it
+ * explicitly). Results are de-duplicated by the file's **canonical (realpath) identity**, so the
+ * same physical file named twice — including via two casings on a case-insensitive filesystem, or
+ * once directly and once under a walked directory — is validated and counted once.
  */
-function collectFiles(root: string, paths: readonly string[]): SourceFile[] {
+function collectFiles(root: string, paths: readonly string[], warnings: WarningCollector): SourceFile[] {
   const targets = paths.length > 0 ? paths : [DOCS_DIR];
   const files: SourceFile[] = [];
   const seen = new Set<string>();
   for (const target of targets) {
     const abs = resolve(root, target);
-    for (const absFile of expandTarget(abs, target)) {
-      const repoRel = toRepoRelative(root, absFile);
-      if (seen.has(repoRel)) {
+    for (const absFile of expandTarget(abs, target, warnings)) {
+      const identity = canonicalIdentity(absFile);
+      if (seen.has(identity)) {
         continue;
       }
-      seen.add(repoRel);
+      seen.add(identity);
+      const repoRel = toRepoRelative(root, absFile);
       files.push({ path: repoRel, raw: readSource(absFile, repoRel) });
     }
   }
@@ -156,12 +167,28 @@ function collectFiles(root: string, paths: readonly string[]): SourceFile[] {
 }
 
 /**
- * Expand one target to the absolute file paths it names: a directory to every `.md` under it (a
- * sorted, symlink-safe walk), a file to itself. A path that does not exist is a `not_found`
- * {@link LoreError} (exit `3`) naming the target the user gave, so a typo'd path fails loud rather
- * than silently validating nothing.
+ * A stable de-duplication key for an absolute file path: its `realpath` when resolvable (which
+ * folds case on a case-insensitive filesystem and collapses symlinks, so two spellings of one
+ * physical file share a key), else the path verbatim (a file that vanished mid-walk still gets a
+ * key, and `readSource` raises the real I/O error).
  */
-function expandTarget(abs: string, target: string): string[] {
+function canonicalIdentity(absFile: string): string {
+  try {
+    return realpathSync.native(absFile);
+  } catch {
+    return absFile;
+  }
+}
+
+/**
+ * Expand one target to the absolute file paths it names: a directory to every `.md` under it (a
+ * sorted walk that does not follow symlinks *inside* the tree, routing its advisories to
+ * `warnings`), a file to itself. A path that does not exist is a `not_found` {@link LoreError}
+ * (exit `3`) naming the target the user gave, so a typo'd path fails loud rather than silently
+ * validating nothing. An explicitly-named directory *is* followed through a top-level symlink
+ * (the user named it); only links discovered beneath it are skipped, matching `loadBundle`.
+ */
+function expandTarget(abs: string, target: string, warnings: WarningCollector): string[] {
   let stat: ReturnType<typeof statSync>;
   try {
     stat = statSync(abs);
@@ -180,7 +207,7 @@ function expandTarget(abs: string, target: string): string[] {
     throw cause;
   }
   if (stat.isDirectory()) {
-    return walkMarkdown(abs, undefined).map((rel) => join(abs, rel));
+    return walkMarkdown(abs, warnings).map((rel) => join(abs, rel));
   }
   return [abs];
 }
@@ -221,26 +248,23 @@ function toRepoRelative(root: string, abs: string): string {
 
 /** The per-result-type rendering bundle for `validate` (output.ts dispatches on the mode). */
 function reportRenderable(data: ValidateReport): Renderable<ValidateReport> {
-  return { kind: "validate.report", data, pretty: renderPretty, plain: renderPlain };
+  return {
+    kind: "validate.report",
+    data,
+    // Pretty and plain are the same layout; only color differs (plain is always ANSI-free), so a
+    // single renderer keyed on the color flag keeps the two views from ever drifting.
+    pretty: (report, opts) => renderReport(report, opts.color),
+    plain: (report) => renderReport(report, false),
+  };
 }
 
-/** Human view: one line per finding (colored by severity), a per-file status, then a summary. */
-function renderPretty(data: ValidateReport, opts: { color: boolean }): string {
+/** One line per finding (colored by severity), a per-file `ok`/`skip` status otherwise, then a summary. */
+function renderReport(data: ValidateReport, color: boolean): string {
   const lines: string[] = [];
   for (const file of data.files) {
-    lines.push(...fileLines(file, opts.color));
+    lines.push(...fileLines(file, color));
   }
-  lines.push(summaryLine(data, opts.color));
-  return lines.join("\n");
-}
-
-/** ANSI-free, diff-stable view: the same lines without color, for pipes and snapshots. */
-function renderPlain(data: ValidateReport): string {
-  const lines: string[] = [];
-  for (const file of data.files) {
-    lines.push(...fileLines(file, false));
-  }
-  lines.push(summaryLine(data, false));
+  lines.push(summaryLine(data, color));
   return lines.join("\n");
 }
 

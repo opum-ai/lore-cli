@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInit } from "../src/commands/init";
@@ -495,5 +495,96 @@ describe("validate (command)", () => {
     } catch (err) {
       expect((err as LoreError).type).toBe("not_found");
     }
+  });
+});
+
+// ── Review hardening (LORE-19 /code-review max) ────────────────────────────────
+
+describe("validate — --type never silently drops a broken file", () => {
+  // The dominant review finding: `--type` filtered on report.type, but error/unparseable files
+  // have no confirmed type and were dropped — turning a per-type gate green over malformed concepts.
+  const brokenOfEveryShape: Array<[string, string]> = [
+    ["a schema-invalid known type", "---\ntype: ADR\ntags: not-a-list\n---\n\n# X\n"],
+    ["unparseable YAML", "---\ntype: [unclosed\n---\n\n# X\n"],
+    ["a missing type", "---\ntitle: no type here\n---\n\n# X\n"],
+  ];
+  for (const [label, raw] of brokenOfEveryShape) {
+    test(`--type ADR keeps and counts ${label}`, () => {
+      const report = validateFiles([{ path: "docs/adr/broken.md", raw }], "ADR");
+      expect(report.files).toHaveLength(1);
+      expect(report.errorCount).toBeGreaterThan(0);
+    });
+  }
+
+  test("--type still drops a clean concept of another type", () => {
+    const report = validateFiles(
+      [
+        { path: "docs/reference/r.md", raw: "---\ntype: Reference\nsummary: A short summary.\n---\n\n# R\n" },
+        { path: "docs/adr/a.md", raw: CLEAN_ADR },
+      ],
+      "ADR",
+    );
+    expect(report.files.map((f) => f.path)).toEqual(["docs/adr/a.md"]);
+  });
+});
+
+describe("validate — quote-safety ignores trailing YAML comments", () => {
+  const block = (line: string): string => `---\ntype: Reference\nsummary: A short summary.\n${line}\n---\n\n# R\n`;
+
+  test("a colon-space inside a trailing comment is not a false error", () => {
+    expect(quoteSafetyFindings(block("owner: alice # see: the notes"))).toEqual([]);
+    expect(quoteSafetyFindings(block("title: Release # v1: shipped"))).toEqual([]);
+  });
+
+  test("a real hazard before a trailing comment is still flagged", () => {
+    const findings = quoteSafetyFindings(block("flag: yes # a note"));
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ severity: "error", rule: "quote-safety" });
+  });
+
+  test("a comment-only value (YAML null) yields nothing", () => {
+    expect(quoteSafetyFindings(block("note: # just a comment"))).toEqual([]);
+  });
+
+  test("a `#` with no leading space (a URL fragment) is part of the value, not a comment", () => {
+    expect(quoteSafetyFindings(block("ref: docs/x.md#anchor"))).toEqual([]);
+  });
+});
+
+describe("validate — error files surface quote-safety in the same pass", () => {
+  test("a missing-type file still reports its YAML-1.1 hazard alongside the frontmatter error", () => {
+    const raw = "---\ntitle: no type\nflag: yes\n---\n\n# X\n";
+    const findings = validateConceptText("docs/x.md", raw).findings;
+    expect(findings.some((f) => f.rule === "frontmatter" && f.severity === "error")).toBe(true);
+    expect(findings.some((f) => f.rule === "quote-safety" && f.severity === "error")).toBe(true);
+  });
+});
+
+describe("validate (command) — discovery hardening", () => {
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "lore-validate-disc-"));
+    mkdirSync(join(root, "docs"), { recursive: true });
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("the same physical file named twice is validated once (realpath de-dup)", () => {
+    writeFileSync(join(root, "docs/r.md"), "---\ntype: Reference\nsummary: A short summary.\n---\n\n# R\n");
+    const stdout = capture();
+    runValidate({ root, output: JSON_CTX, args: ["docs/r.md", "docs/r.md"], stdout });
+    const report = (JSON.parse(stdout.text()) as { data: ValidateReport }).data;
+    expect(report.files).toHaveLength(1);
+  });
+
+  test("a `.md` concept skipped behind a symlink is surfaced on stderr, not silently dropped", () => {
+    writeFileSync(join(root, "docs/real.md"), "---\ntype: Reference\nsummary: A short summary.\n---\n\n# R\n");
+    symlinkSync(join(root, "docs/real.md"), join(root, "docs/link.md"));
+    const stdout = capture();
+    const stderr = capture();
+    runValidate({ root, output: { mode: "plain", color: false }, args: ["docs"], stdout, stderr });
+    expect(stderr.text()).toContain("symlink");
+    expect(stderr.text()).toContain("link.md");
   });
 });

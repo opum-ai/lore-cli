@@ -202,7 +202,7 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
     case "new":
       return runNew({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     case "validate":
-      return runValidate({ root, output, args: parsed.commandArgs, stdout: context.stdout });
+      return runValidate({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     default:
       throw new LoreError("usage", `unknown command "${parsed.command}"`, "run `lore --help` to list commands", {
         command: parsed.command,

@@ -255,7 +255,7 @@ export function walkMarkdown(root: string, warnings: WarningCollector | undefine
       entries = readdirSync(absDir, { withFileTypes: true });
     } catch (cause) {
       if (relDir === "") {
-        throw readError(cause, `cannot read bundle root ${absDir}`, { root, dir: absDir });
+        throw readError(cause, `cannot read directory ${absDir}`, { root, dir: absDir });
       }
       // A nested unreadable directory skips (with a warning), so one restricted
       // folder doesn't take the whole bundle down with it.
@@ -491,8 +491,11 @@ function makeTokenEstimate(byId: ReadonlyMap<string, Concept>): (id?: string) =>
  * whole bundle build — `mdast-util-from-markdown` itself parses such input
  * iteratively, so the walk must too. Children are pushed in reverse so they pop in
  * document order (a stable pre-order traversal).
+ *
+ * Exported so `lore validate`'s heading extraction reuses this one stack-safe
+ * traversal instead of re-rolling the same explicit-stack walk and risking drift.
  */
-function walkMdast(root: Nodes, visit: (node: Nodes) => void): void {
+export function walkMdast(root: Nodes, visit: (node: Nodes) => void): void {
   const stack: Nodes[] = [root];
   while (stack.length > 0) {
     const node = stack.pop();

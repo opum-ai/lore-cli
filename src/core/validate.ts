@@ -1,15 +1,18 @@
 /**
  * validate.ts — the **pure**, aggregating engine behind `lore validate`.
  *
- * Where {@link parseConcept}/{@link validateFrontmatter} are *fail-fast* (they throw the
+ * Where {@link tryParseConcept}/{@link validateFrontmatter} are *fail-fast* (they throw the
  * first error-tier problem they hit, which is right for the write path — lore must never
- * emit bytes it would refuse to read back), `lore validate` is a **reporter**: it must
- * surface *every* file's findings in one pass, tiered error/warning, so an author or a
- * pre-commit hook sees the whole picture rather than only the first failure (cli-surface
- * §validate, ADR-0007). This module turns that fail-fast machinery into an aggregator: it
- * runs the existing frontmatter engine per file under a try/catch, collects what it throws
- * or warns as {@link Finding}s, and layers the two checks ADR-0007 adds on top —
- * **per-type required sections** and **frontmatter quote-safety**.
+ * emit bytes it would refuse to read back), `lore validate` is a **reporter**: it surfaces
+ * *every file's* findings in one pass — fail-fast aborts the whole run on the first bad file;
+ * this never does — so an author or a pre-commit hook sees the whole bundle's picture at once
+ * (cli-surface §validate, ADR-0007). Within a single file the frontmatter tier still
+ * short-circuits: a parse failure yields the one frontmatter error (plus the raw-text
+ * quote-safety scan), and the per-type section checks — which presuppose a parsed type/body —
+ * run only once the frontmatter parses. This module turns the fail-fast machinery into an
+ * aggregator: it runs the existing frontmatter engine per file, collects what it throws or
+ * warns as {@link Finding}s, and layers the two checks ADR-0007 adds on top — **per-type
+ * required sections** and **frontmatter quote-safety**.
  *
  * It stays within the core contract (lore-design §2.1): pure, filesystem-free, no printing
  * or `process.exit`. The command layer (`commands/validate.ts`) owns file discovery and I/O
@@ -18,10 +21,10 @@
  * The tiers (ADR-0007 "How lore checks conformance"):
  *
  * - **Tier 1 — OKF §9 (error):** frontmatter parses and `type` is present/non-empty. Reuses
- *   {@link parseConcept}, whose thrown `validation` {@link LoreError} becomes one finding.
+ *   {@link tryParseConcept}, whose thrown `validation` {@link LoreError} becomes one finding.
  * - **Tier 2 — per-type shape (error):** a *known* type's strict Zod schema (surfaced through
- *   the same {@link parseConcept} throw) **plus** its {@link requiredSectionsFor required body
- *   sections} (this module).
+ *   the same {@link tryParseConcept} throw) **plus** its {@link requiredSectionsFor required
+ *   body sections} (this module).
  * - **Tier 3 — extensions (warning):** an unknown `type`, an extra key on a known type, or a
  *   missing/over-long `summary` — collected from the {@link WarningCollector}.
  * - **Cross-cutting — quote-safety:** unquoted frontmatter scalars that a YAML-1.1 consumer
@@ -37,7 +40,8 @@
 import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { LoreError, WarningCollector } from "../errors";
-import { parseConcept, tryParseConcept } from "./concept";
+import { walkMdast } from "./bundle";
+import { type Concept, tryParseConcept } from "./concept";
 import { requiredSectionsFor } from "./schema";
 
 /** The two finding tiers (cli-contract §4.1): an `error` fails the file, a `warning` never does. */
@@ -97,28 +101,30 @@ export interface ValidateReport {
  * never silently dressed up as a validation finding.
  */
 export function validateConceptText(path: string, raw: string): FileReport {
-  // Skip a non-concept the same way the bundle walk does: tryParseConcept returns null for a
-  // file with no usable frontmatter mapping, and still *throws* for a real-but-malformed one.
-  let probe: ReturnType<typeof tryParseConcept>;
-  try {
-    probe = tryParseConcept(path, raw);
-  } catch {
-    // A real-but-malformed concept threw: capture the precise diagnostic as an error finding.
-    return frontmatterErrorReport(path, raw);
-  }
-  if (probe === null) {
-    return { path, findings: [], skipped: true, ok: true };
-  }
-
-  // The file is a concept. Re-run the frontmatter engine with a collector so its warnings
-  // (tier 3) are captured rather than dropped; the parse cannot throw now (the probe proved
-  // it parses), but we keep the try for symmetry and to satisfy the type.
+  // Parse exactly once. tryParseConcept fills the collector with tier-3 warnings, returns null for
+  // a non-concept (skip), and throws a `validation` LoreError for a real-but-malformed concept —
+  // so a single call draws every distinction the reporter needs without re-parsing the same bytes.
   const warnings = new WarningCollector();
-  let concept: ReturnType<typeof parseConcept>;
+  let concept: Concept | null;
   try {
-    concept = parseConcept(path, raw, { warnings });
-  } catch {
-    return frontmatterErrorReport(path, raw);
+    concept = tryParseConcept(path, raw, { warnings });
+  } catch (err) {
+    // A genuine bug (a non-LoreError) must never be dressed up as a validation finding — propagate
+    // it (the invariant this module states). A malformed concept becomes one error finding; its
+    // `type` is recovered best-effort from the raw frontmatter so a `--type` run still attributes
+    // (and so never silently drops) a known-type-but-invalid file — the gate it exists to enforce.
+    if (!(err instanceof LoreError)) {
+      throw err;
+    }
+    const findings: Finding[] = [{ severity: "error", rule: "frontmatter", message: err.message }];
+    // Quote-safety is a raw-text scan needing no parsed concept, so it still runs and the author
+    // sees YAML hazards in the same pass; per-type section checks presuppose a parsed type/body
+    // and are deferred until the frontmatter parses.
+    findings.push(...quoteSafetyFindings(raw));
+    return { path, type: recoverType(raw), findings, skipped: false, ok: false };
+  }
+  if (concept === null) {
+    return { path, findings: [], skipped: true, ok: true };
   }
 
   const findings: Finding[] = [];
@@ -136,22 +142,36 @@ export function validateConceptText(path: string, raw: string): FileReport {
  * narrowed to a single `type`. Pure over its inputs (the command layer does the reading), so the
  * aggregation and the `--type` filter are testable without the filesystem.
  *
- * `type` (the `--type <T>` flag, already canonicalized by the caller) keeps only the files whose
- * resolved concept type matches case-insensitively; a skipped non-concept or an unparseable file
- * (neither of which has a confirmed type) is dropped from a type-filtered run, since its type
- * cannot be confirmed to match.
+ * `type` (the `--type <T>` flag, already canonicalized by the caller) narrows the report to one
+ * concept type — but **never** at the cost of hiding a broken file from the gate: see
+ * {@link keepForType}.
  */
 export function validateFiles(files: readonly { path: string; raw: string }[], type?: string): ValidateReport {
   const wanted = type?.toLowerCase();
   const reports: FileReport[] = [];
   for (const file of files) {
     const report = validateConceptText(file.path, file.raw);
-    if (wanted !== undefined && report.type?.toLowerCase() !== wanted) {
+    if (wanted !== undefined && !keepForType(report, wanted)) {
       continue;
     }
     reports.push(report);
   }
   return summarize(reports);
+}
+
+/**
+ * Whether a per-file report belongs in a `--type <wanted>` run. An **error** file is **always
+ * kept**: silently dropping a broken file would turn the very gate `--type` scopes green over a
+ * malformed concept, and a malformed file's true type can never be trusted to be *not* `wanted`
+ * (its frontmatter did not parse). A clean concept is kept only when its type matches; a skipped
+ * non-concept is dropped (it is genuinely not `wanted`). The error file's {@link recoverType}d
+ * type is for display only — never a reason to filter it out.
+ */
+function keepForType(report: FileReport, wanted: string): boolean {
+  if (!report.ok && !report.skipped) {
+    return true;
+  }
+  return report.type?.toLowerCase() === wanted;
 }
 
 /** Tally per-file reports into the aggregate counts (errors, warnings, skips). */
@@ -184,39 +204,61 @@ function finalize(path: string, type: string, findings: readonly Finding[]): Fil
 }
 
 /**
- * The error report for a malformed concept: re-run {@link parseConcept} to capture the precise
- * `validation` {@link LoreError} message as a single error finding. Reached only after a parse
- * is known to throw, so the catch's fallback message is defensive (it should never fire).
+ * A best-effort `type` read from the raw frontmatter of a file that failed to parse, so a `--type`
+ * run can attribute (and therefore never silently drop) a known-type-but-invalid concept. Scans the
+ * fenced block for a top-level `type:` line, stripping a trailing comment and surrounding quotes;
+ * returns `undefined` when no `type` is recoverable (unparseable YAML, or a missing `type`). The
+ * value is raw (not canonicalized) — it is matched case-insensitively, only for filtering/display.
  */
-function frontmatterErrorReport(path: string, raw: string): FileReport {
-  let message = `${path}: frontmatter is invalid`;
-  try {
-    parseConcept(path, raw);
-  } catch (err) {
-    message = err instanceof LoreError ? err.message : message;
+function recoverType(raw: string): string | undefined {
+  const block = frontmatterBlock(raw);
+  if (block === null) {
+    return undefined;
   }
-  const findings: Finding[] = [{ severity: "error", rule: "frontmatter", message }];
-  return { path, findings, skipped: false, ok: false };
+  for (const line of block.split("\n")) {
+    const match = /^type:[ \t]+(.*)$/.exec(line);
+    if (match === null) {
+      continue;
+    }
+    const value = unquoteScalar(stripInlineComment((match[1] ?? "").trim()));
+    return value === "" ? undefined : value;
+  }
+  return undefined;
+}
+
+/** Strip a trailing YAML comment (` #…`, the `#` preceded by whitespace) from a raw scalar value. */
+function stripInlineComment(value: string): string {
+  return value.replace(/\s+#.*$/, "").trimEnd();
+}
+
+/** Remove a matching pair of surrounding quotes from a scalar value, else return it unchanged. */
+function unquoteScalar(value: string): string {
+  const quote = value[0];
+  if (value.length >= 2 && (quote === '"' || quote === "'") && value.endsWith(quote)) {
+    return value.slice(1, -1);
+  }
+  return value;
 }
 
 // ── Tier 2: required body sections ─────────────────────────────────────────────—
 
 /**
  * The required-section findings for a concept body: one **error** per
- * {@link requiredSectionsFor required `##` heading} the body does not carry. Matching is
- * case-insensitive on trimmed heading text, so `## status` satisfies a `Status` requirement.
- * A type with no required sections (every unknown type, and Epic/Spec/Runbook/Reference under
- * the minimal policy) yields nothing.
+ * {@link requiredSectionsFor required `##` heading} the body does not carry. Matching is on
+ * {@link normalizeHeading normalized} heading text (trimmed, interior whitespace collapsed,
+ * lower-cased), so `## status` and `## Acceptance  criteria` (a double space that renders
+ * identically) both satisfy their requirement. A type with no required sections (every unknown
+ * type, and Epic/Spec/Runbook/Reference under the minimal policy) yields nothing.
  */
 function requiredSectionFindings(type: string, body: string): Finding[] {
   const required = requiredSectionsFor(type);
   if (required.length === 0) {
     return [];
   }
-  const present = new Set(h2Headings(body).map((heading) => heading.trim().toLowerCase()));
+  const present = new Set(h2Headings(body).map(normalizeHeading));
   const findings: Finding[] = [];
   for (const section of required) {
-    if (!present.has(section.toLowerCase())) {
+    if (!present.has(normalizeHeading(section))) {
       findings.push({
         severity: "error",
         rule: "required-section",
@@ -227,57 +269,36 @@ function requiredSectionFindings(type: string, body: string): Finding[] {
   return findings;
 }
 
+/** Normalize a heading or section name for comparison: trim, collapse interior whitespace, lower-case. */
+function normalizeHeading(text: string): string {
+  return text.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 /**
  * The text of every depth-2 (`##`) heading in a markdown body, in document order. Extraction
  * defers to a CommonMark parser (`mdast-util-from-markdown`) so a `## ` that appears inside a
  * fenced/indented code block is **not** mistaken for a heading — matching how {@link loadBundle}
- * extracts links. The walk is iterative (an explicit stack) for the same reason bundle.ts's is:
- * a pathologically deep body must not overflow the call stack.
+ * extracts links. The traversal reuses bundle.ts's stack-safe {@link walkMdast}, so a
+ * pathologically deep body cannot overflow the call stack.
  */
 function h2Headings(body: string): string[] {
   const headings: string[] = [];
-  const stack: Nodes[] = [fromMarkdown(body)];
-  while (stack.length > 0) {
-    const node = stack.pop();
-    if (node === undefined) {
-      break;
-    }
+  walkMdast(fromMarkdown(body), (node) => {
     if (node.type === "heading" && node.depth === 2) {
       headings.push(nodeText(node));
     }
-    if ("children" in node) {
-      for (let i = node.children.length - 1; i >= 0; i--) {
-        const child = node.children[i];
-        if (child !== undefined) {
-          stack.push(child);
-        }
-      }
-    }
-  }
+  });
   return headings;
 }
 
-/** Concatenate the literal text of a heading's inline content (`text` + `inlineCode` values). */
+/** Concatenate the literal text of a node's inline content (`text` + `inlineCode` values). */
 function nodeText(node: Nodes): string {
   let text = "";
-  const stack: Nodes[] = [node];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (current === undefined) {
-      break;
-    }
+  walkMdast(node, (current) => {
     if (current.type === "text" || current.type === "inlineCode") {
       text += current.value;
     }
-    if ("children" in current) {
-      for (let i = current.children.length - 1; i >= 0; i--) {
-        const child = current.children[i];
-        if (child !== undefined) {
-          stack.push(child);
-        }
-      }
-    }
-  }
+  });
   return text;
 }
 
@@ -381,18 +402,26 @@ function topLevelScalarValues(raw: string): string[] {
     if (match === null) {
       continue; // not a simple `key:`/`key: value` line (e.g. a `- item`, or `?`-complex key)
     }
-    const rawValue = (match[1] ?? "").trim();
-    if (rawValue === "") {
-      continue; // empty value (`key:`) — a null, or a block/list continued on following lines
+    let value = (match[1] ?? "").trim();
+    // An empty value (`key:`) or a comment-only value (`key: # note`, which YAML reads as null)
+    // carries no scalar to judge.
+    if (value === "" || value.startsWith("#")) {
+      continue;
     }
-    const quote = rawValue[0];
+    const quote = value[0];
     if (quote === '"' || quote === "'") {
       continue; // already quoted — explicitly a string, safe
     }
-    if (rawValue.startsWith("[") || rawValue.startsWith("{")) {
+    if (value.startsWith("[") || value.startsWith("{")) {
       continue; // flow collection — a structured list/map, not a scalar string
     }
-    values.push(rawValue);
+    // Strip a trailing YAML comment only now, on a known-unquoted scalar: a `#` with no leading
+    // space (a URL fragment `a#b`) is part of the value and must survive, while ` # note` is a
+    // comment YAML discards — analyzing it would be a false positive (a colon there is not a hazard).
+    value = stripInlineComment(value);
+    if (value !== "") {
+      values.push(value);
+    }
   }
   return values;
 }
@@ -419,6 +448,3 @@ function frontmatterBlock(raw: string): string | null {
   }
   return rest.slice(0, end);
 }
-
-// Re-export the collector type name used in signatures above without a second import line.
-export type { WarningCollector };
