@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `lore new <type> "<title>"` (LORE-18): scaffold a typed concept from a template.
+  lore **owns the frontmatter** — it is built structurally (type/title/summary/timestamp,
+  plus `--tags`) and serialized through the byte-stable concept boundary, so a title or
+  summary containing YAML-special characters can never corrupt the file — while the
+  **template owns the body**: a body-only markdown skeleton with `{{placeholders}}`
+  resolved from `.lore/templates/<name>.md` when present, else a built-in per type. New
+  docs **validate clean by construction** (a known type, a stub `summary`, and the editor
+  modeline spliced inside the fence) and a re-run never clobbers an existing file (a
+  `conflict`, exit `5`). `src/core/template.ts` is the pure renderer (`slugify`,
+  `renderTemplate`, `buildNewConcept`); `src/commands/new.ts` the thin I/O layer. Flags:
+  `--var k=v` (repeatable; an unfilled `{{var}}` fails loud, exit `6`), `--template <name>`,
+  `--summary`, `--tags a,b`, `--out <path>` (confined to the repo). Unknown types are
+  accepted (OKF tolerance) and scaffolded against the lenient shape without a modeline.
+  Type config gains a per-type output directory (`typeDirectory`) and case-insensitive
+  type resolution (`canonicalType`) in `schema.ts`; `DOCS_DIR` is exported from
+  `scaffold.ts`; the never-clobber/conflict write path is factored to `src/commands/fswrite.ts`
+  and shared with `lore init`. (Coupling flags `--epic`/`--story`/`--resource` deferred to
+  the story-task coupling work, ADR-0009.)
 - Concept frontmatter layer (LORE-15): `src/core/schema.ts` + `src/core/concept.ts` —
   the frontmatter boundary and Zod source of truth. `schema.ts` authors the
   story-convention profile (the six known types `Epic`/`Story`/`Spec`/`ADR`/`Runbook`/

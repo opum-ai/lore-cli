@@ -16,6 +16,7 @@
  */
 
 import { runInit } from "./commands/init";
+import { runNew } from "./commands/new";
 import { EXIT_OK, LoreError, reportError, type Writer } from "./errors";
 import { VERSION } from "./meta";
 import { emit, errorRenderOpts, type OutputContext, type Renderable, resolveOutput } from "./output";
@@ -27,6 +28,7 @@ Usage:
 
 Commands:
   init            Scaffold an empty, conformant OKF bundle (.lore/ + docs/index.md)
+  new             Scaffold a typed concept from a template (lore new <type> "<title>")
 
 Options:
   --json          Machine-readable JSON output (the {schemaVersion, kind, data} envelope)
@@ -36,58 +38,84 @@ Options:
 
 Docs: docs/index.md`;
 
-/** The global flags and positionals a single invocation resolves to. */
+/** The global flags, the subcommand, and the command's own argument tokens a single invocation resolves to. */
 interface ParsedArgs {
   command?: string;
-  rest: string[];
+  /**
+   * The ordered tokens after the command — its positionals **and** its own flags — for the
+   * command to parse itself. Global flags are removed; a command that takes value-bearing
+   * flags (e.g. `new --var k=v`) needs the raw tail, since only it knows which flags consume
+   * a following token.
+   */
+  commandArgs: string[];
   json: boolean;
   plain: boolean;
   version: boolean;
   help: boolean;
-  unknownFlags: string[];
+  /** Unknown `-`-flags appearing **before** any command — a global usage error (e.g. `lore --bogus`). */
+  leadingUnknownFlags: string[];
 }
 
-/** Split `argv` into the known global flags, the subcommand, and its positionals. */
+/**
+ * Split `argv` into the global flags, the subcommand, and the command's own tokens.
+ *
+ * Global flags (`--json`/`--plain`/`-v`/`--version`/`-h`/`--help`) are recognized in **any**
+ * position and stripped. The **first positional** (a non-`-` token, or a bare `-`) is the
+ * command; every token after it — positionals and unrecognized flags alike — is collected
+ * verbatim into {@link ParsedArgs.commandArgs} for the command to parse, because only the
+ * command knows which of its flags take a value. An unrecognized `-`-flag appearing *before*
+ * the command has no command to own it, so it is a global usage error
+ * ({@link ParsedArgs.leadingUnknownFlags}). A `-`-token is never treated as the command (it
+ * would be an "unknown option", not an "unknown command"); a bare `-` is a positional.
+ */
 function parseArgs(argv: readonly string[]): ParsedArgs {
   let json = false;
   let plain = false;
   let version = false;
   let help = false;
-  const positionals: string[] = [];
-  const unknownFlags: string[] = [];
+  let command: string | undefined;
+  const commandArgs: string[] = [];
+  const leadingUnknownFlags: string[] = [];
   const args = argv.slice(2);
-  for (const [i, arg] of args.entries()) {
-    // POSIX end-of-options: everything after a bare `--` is a positional, even if it
-    // looks like a flag — so a future command can accept a value that begins with `-`.
+
+  // After a bare `--` (POSIX end-of-options) every remaining token is a positional, even one
+  // that looks like a flag — so a command can take a value beginning with `-`.
+  const pushPositional = (token: string): void => {
+    if (command === undefined) {
+      command = token;
+    } else {
+      commandArgs.push(token);
+    }
+  };
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] as string;
     if (arg === "--") {
-      positionals.push(...args.slice(i + 1));
+      for (const rest of args.slice(i + 1)) {
+        pushPositional(rest);
+      }
       break;
     }
-    switch (arg) {
-      case "--json":
-        json = true;
-        break;
-      case "--plain":
-        plain = true;
-        break;
-      case "--version":
-      case "-v":
-        version = true;
-        break;
-      case "--help":
-      case "-h":
-        help = true;
-        break;
-      default:
-        // A bare `-` is the conventional stdin/positional marker, not an unknown flag.
-        if (arg.startsWith("-") && arg !== "-") {
-          unknownFlags.push(arg);
-        } else {
-          positionals.push(arg);
-        }
+    if (arg === "--json") {
+      json = true;
+    } else if (arg === "--plain") {
+      plain = true;
+    } else if (arg === "--version" || arg === "-v") {
+      version = true;
+    } else if (arg === "--help" || arg === "-h") {
+      help = true;
+    } else if (arg.startsWith("-") && arg !== "-") {
+      // A non-global `-`-flag: a command flag once we have a command, else a global usage error.
+      if (command === undefined) {
+        leadingUnknownFlags.push(arg);
+      } else {
+        commandArgs.push(arg);
+      }
+    } else {
+      pushPositional(arg);
     }
   }
-  return { command: positionals[0], rest: positionals.slice(1), json, plain, version, help, unknownFlags };
+  return { command, commandArgs, json, plain, version, help, leadingUnknownFlags };
 }
 
 /** The injectable environment a {@link run} sees; every field defaults to the real process. */
@@ -125,7 +153,7 @@ export function run(argv: readonly string[], context: RunContext = {}): number {
     env: context.env ?? process.env,
   });
   try {
-    rejectUnknownFlags(parsed.unknownFlags);
+    rejectUnknownFlags(parsed.leadingUnknownFlags);
     if (parsed.version) {
       return emitMeta("version", { version: VERSION }, VERSION, output, stdout);
     }
@@ -158,10 +186,13 @@ function emitMeta(
 
 /** Route a parsed invocation to its command handler, throwing a `usage` error on bad input. */
 function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext): number {
+  const root = context.cwd || process.cwd();
   switch (parsed.command) {
     case "init":
-      rejectExtraPositionals(parsed.rest, "init");
-      return runInit({ root: context.cwd || process.cwd(), output, stdout: context.stdout });
+      rejectCommandArgs(parsed.commandArgs, "init");
+      return runInit({ root, output, stdout: context.stdout });
+    case "new":
+      return runNew({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     default:
       throw new LoreError("usage", `unknown command "${parsed.command}"`, "run `lore --help` to list commands", {
         command: parsed.command,
@@ -169,7 +200,7 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
   }
 }
 
-/** Throw a `usage` {@link LoreError} when any unrecognized flag was passed. */
+/** Throw a `usage` {@link LoreError} when any unrecognized leading flag was passed. */
 function rejectUnknownFlags(unknownFlags: readonly string[]): void {
   if (unknownFlags.length > 0) {
     throw new LoreError("usage", `unknown option "${unknownFlags[0]}"`, "run `lore --help` to list options", {
@@ -178,16 +209,27 @@ function rejectUnknownFlags(unknownFlags: readonly string[]): void {
   }
 }
 
-/** Throw a `usage` {@link LoreError} when a command that takes no positionals got some. */
-function rejectExtraPositionals(rest: readonly string[], command: string): void {
-  if (rest.length > 0) {
-    throw new LoreError(
-      "usage",
-      `\`lore ${command}\` takes no arguments, got "${rest[0]}"`,
-      `run \`lore ${command}\` with no positional arguments`,
-      { command, unexpected: [...rest] },
-    );
+/**
+ * Throw a `usage` {@link LoreError} when a command that takes no arguments got any. A
+ * leftover `-`-flag is reported as an unknown option, a leftover positional as an unexpected
+ * argument — so the diagnostic matches what the user actually mistyped.
+ */
+function rejectCommandArgs(commandArgs: readonly string[], command: string): void {
+  if (commandArgs.length === 0) {
+    return;
   }
+  const first = commandArgs[0] as string;
+  if (first.startsWith("-") && first !== "-") {
+    throw new LoreError("usage", `unknown option "${first}"`, "run `lore --help` to list options", {
+      options: [...commandArgs],
+    });
+  }
+  throw new LoreError(
+    "usage",
+    `\`lore ${command}\` takes no arguments, got "${first}"`,
+    `run \`lore ${command}\` with no positional arguments`,
+    { command, unexpected: [...commandArgs] },
+  );
 }
 
 // Only drive the real process when executed directly (not when imported by tests).
