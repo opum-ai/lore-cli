@@ -40,6 +40,7 @@
  * timestamp to a `Date`.
  */
 
+import { posix } from "node:path";
 import { z } from "zod";
 import { LoreError, type WarningCollector } from "../errors";
 
@@ -338,4 +339,63 @@ function describeIssues(error: z.ZodError): string {
 /** Project Zod issues onto a plain, JSON-safe array for the error envelope's `input`. */
 function issueList(error: z.ZodError): Array<{ path: string; message: string }> {
   return error.issues.map(projectIssue);
+}
+
+// ── JSON Schema emission + editor modeline (ADR-0006 §3) ───────────────────────
+//
+// The same Zod schemas that gate frontmatter at runtime are the source of the
+// **editor** experience: `lore init` exports each known type to a Draft-7 JSON
+// Schema under `.lore/schemas/`, and `lore new`/the scaffolded root index carry a
+// `# yaml-language-server:` modeline pointing at the matching file, so a
+// `yaml-language-server`-aware editor validates and autocompletes frontmatter live.
+// Keeping the filename convention and the modeline beside the schemas means the
+// emitter, the modeline writer, and the runtime validator can never disagree about
+// what a type's schema is called or where it lives.
+
+/** Where lore writes the emitted JSON Schemas, relative to the repo root (ADR-0013). */
+const SCHEMAS_DIR = ".lore/schemas";
+
+/**
+ * The on-disk filename for a type's JSON Schema, e.g. `Reference` → `reference.schema.json`.
+ * Lower-cased so the path is stable across case-insensitive filesystems and matches the
+ * `$schema=` modelines authored throughout this bundle. The single source of the
+ * convention, shared by {@link jsonSchemaFor}'s consumers and {@link schemaModeline}.
+ */
+export function schemaFileName(type: KnownType): string {
+  return `${type.toLowerCase()}.schema.json`;
+}
+
+/**
+ * Export a known type's Zod schema to a **Draft-7 JSON Schema** object (ADR-0006 §3).
+ *
+ * It descends from the *same* loose per-type schema the runtime validator uses
+ * ({@link knownSchema}), so the editor schema is deliberately the **lenient** tier:
+ * `required: ["type"]` and an open `additionalProperties`, so an author's custom
+ * frontmatter keys never light up as errors mid-edit (OKF producer-extension
+ * tolerance). The stricter "extra keys warn" enforcement lives only in the CLI path
+ * ({@link validateFrontmatter}); editor = guide, CLI = gate. The output is a plain
+ * JSON-serializable object; the caller owns byte formatting (and its golden test).
+ */
+export function jsonSchemaFor(type: KnownType): Record<string, unknown> {
+  return z.toJSONSchema(SCHEMAS[type], { target: "draft-7" }) as Record<string, unknown>;
+}
+
+/**
+ * The editor modeline for a concept at `docPath` of `type` — the comment
+ * `# yaml-language-server: $schema=<relative path to .lore/schemas/<type>.schema.json>`
+ * (ADR-0006 §3). The `$schema` path is computed **relative to the document's own
+ * directory** with POSIX separators, so it resolves identically on every consumer
+ * regardless of how deep the doc sits (`docs/index.md` → `../.lore/schemas/…`,
+ * `docs/adr/x.md` → `../../.lore/schemas/…`). Pure and filesystem-free.
+ *
+ * The writer inserts the returned line as the **first line inside** the `---`
+ * frontmatter fence (a YAML comment), which is the placement every modeline-bearing
+ * doc in this bundle uses: it is the line `yaml-language-server` reads to bind the
+ * schema to the frontmatter document, and the only placement lore's own parser reads
+ * back as a concept (`parseConcept` requires `---` at byte 0, so an above-fence
+ * comment would be treated as a non-concept body).
+ */
+export function schemaModeline(docPath: string, type: KnownType): string {
+  const relDir = posix.relative(posix.dirname(docPath), SCHEMAS_DIR);
+  return `# yaml-language-server: $schema=${posix.join(relDir, schemaFileName(type))}`;
 }

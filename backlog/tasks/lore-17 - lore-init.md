@@ -1,10 +1,11 @@
 ---
 id: LORE-17
 title: lore init
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-06-21 06:28'
+updated_date: '2026-06-25 11:58'
 labels:
   - cmd
 milestone: m-2
@@ -25,6 +26,32 @@ Create the docs/ bundle, .lore/ state, and the root index.md (okf_version on roo
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 init produces a conformant empty OKF bundle
-- [ ] #2 Re-running init is idempotent
+- [x] #1 init produces a conformant empty OKF bundle
+- [x] #2 Re-running init is idempotent
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. core/schema.ts: add schemaFileName(type), jsonSchemaFor(type) via z.toJSONSchema(draft-7), schemaModeline(docPath,type). Lenient editor schema (additionalProperties open) descends from existing looseObject SCHEMAS.
+2. core/scaffold.ts (PURE, no I/O): buildScaffold({timestamp}) -> {dirs[], files[{path,contents}]}: 6 .lore/schemas/<type>.schema.json (byte-stable JSON), .lore/.gitignore (cache/), .lore/config.toml default (commented), .lore/templates/.gitkeep (content deferred to LORE-18), .lore/cache/ dir, docs/index.md minimal root (modeline + okf_version: 0.1, ONLY okf_version carrier). Type dirs created lazily (NOT here).
+3. commands/init.ts: resolve root + injectable clock; build plan; apply IDEMPOTENTLY (write-if-absent, never clobber; mkdir -p); collect created vs skipped; render via output.emit (kind init); return exit code.
+4. cli.ts: minimal hand-rolled router (init + --version/--help/--json/--plain); NO new dependency (Commander deferred to keep PR dependency-neutral re: EXDEV/CI-isolated-linker; design says Commander -> flag for review).
+5. Tests: test/scaffold.test.ts (golden bytes: schemas, index, config, modeline) + test/init.test.ts (temp-dir: fresh tree+exit0+json envelope; AC#2 idempotent byte-identical re-run; never-clobber existing index.md; AC#1 conformance: index parses, okf_version sole carrier, schemas valid JSON; partial fill-in).
+6. Gates: bun test/lint/typecheck/coverage -> /code-review max -> PR into dev (ask before merge).
+Scope (confirmed w/ Jeremy): minimal root index only (no generateIndexes/log.md -> LORE-29); template content deferred to LORE-18.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented lore init: core/scaffold.ts (pure plan), commands/init.ts (idempotent write-if-absent apply), schema.ts JSON-Schema emission + modeline helpers, cli.ts router. 284 tests green (was 247); lint+typecheck clean; coverage 99% funcs / 97% lines (scaffold+schema 100%).
+
+AC#1 (conformant empty bundle): init emits .lore/{config.toml default, .gitignore, schemas/<6>.schema.json (z.toJSONSchema draft-7, lenient open additionalProperties), templates/.gitkeep, cache/} + docs/index.md (Reference, okf_version: 0.1 — sole carrier). Verified: emitted index round-trips through parseConcept and loadBundle indexes it as a concept.
+AC#2 (idempotent): write-if-absent via atomic wx flag — re-run (even with a different clock) creates nothing, exits 0, byte-identical tree; never clobbers an existing index.md; fills only missing pieces after partial delete.
+
+DEVIATION FROM KICKOFF HANDOVER (flagged for review): the handover said emit the modeline ABOVE the fence. Verified against the codebase that is WRONG — parseConcept needs --- at byte 0, so an above-fence modeline makes loadBundle skip index.md as a non-concept; all 16 modeline-bearing docs in this bundle put it INSIDE the fence (line 1 of frontmatter). Emitting inside-fence to match. Trade-off: js-yaml drops the in-fence comment on re-serialize (documented concept.ts limitation, applies bundle-wide; init writes once, never rewrites).
+
+SCOPE (confirmed w/ Jeremy): minimal root index only — generateIndexes()/log.md deferred to LORE-29/M3; template CONTENT deferred to LORE-18 (init only ensures templates/ dir).
+DEPENDENCY NOTE: no Commander added — hand-rolled minimal router to keep the PR dependency-neutral re: EXDEV/CI-isolated-linker. Design names Commander as eventual entrypoint; adoption deferred. Flag for review.
+<!-- SECTION:NOTES:END -->
