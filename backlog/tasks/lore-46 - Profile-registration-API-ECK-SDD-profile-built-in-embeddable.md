@@ -1,10 +1,11 @@
 ---
 id: LORE-46
 title: 'Declarative .lore profile: per-project type vocabulary, schemas & templates'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@jeremy'
 created_date: '2026-06-21 20:16'
-updated_date: '2026-06-22 02:06'
+updated_date: '2026-06-25 22:02'
 labels:
   - eck-alignment
   - core
@@ -47,3 +48,15 @@ ADR amendments: ADR-0006 (primary inversion; RETAIN the §5 summary-length heuri
 - [ ] #7 Type-name -> generated schema filename + yaml-language-server modeline = LOWER-KEBAB slug (e.g. 'QA Plan' -> qa-plan.json), matching the template naming; multi-word/space type names never produce an invalid path/URI
 - [ ] #8 Grammar validated against ECK's 17-type SDD draft (first external consumer): reconciles with ZERO consumer-file edits; ADR-0006 §5 summary-length heuristic retained as a lore built-in
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. NEW src/core/profile.ts (mirrors config.ts: Bun.TOML.parse, hand-rolled validation, injectable root, zero-config). Owns: Profile types; loadProfile({root}) reading .lore/profile.toml (.json secondary, .toml wins) -> COMPILED Profile carrying parsed data + derived artifacts (Map<type,ZodSchema> via z.looseObject from field specs, per-type JSON Schemas, canonical key order = base+per-type fields in declaration order, LOWER-KEBAB slug map); defaultProfile() = today's 6-type story convention as a profile literal (AC#3 zero-config, byte-identical). Generators: field-spec(kind/enum/items/required/default)->Zod, ->Draft-7 JSON Schema, type-name->qa-plan slug (AC#7). Load-tier ERRORS (dup type, enum+non-string kind, malformed table) vs warnings (unknown profile key). NEW test/profile.test.ts.
+2. Invert src/core/schema.ts: validateFrontmatter/requiredSectionsFor/isKnownType/canonicalType/typeDirectory/jsonSchemaFor/schemaModeline/schemaFileName operate against a passed-in Profile (explicit-param threading, confirmed). summary soft-limit stays a built-in (ADR-0006 §5, not declarative). Update test/schema.test.ts.
+3. Thread Profile through: concept.ts canonicalize (key order from profile, ADR-0011 byte-stability), core/validate.ts (requiredSectionsFor), template.ts (built-in templates move into default profile), scaffold.ts + commands/init.ts (emit .lore/schemas by iterating loaded profile types), commands/new.ts, commands/validate.ts. Each command loads profile once. Fix all affected tests (scaffold/init/validate/template/new/concept/cli).
+4. AC#8: test fixture profile encoding ECK 17 Title-Case types (ADR/PRD/FRD/Spec/Design/Discovery/Research/Risk/QA Plan/Tasks/Review/Guide/Reference/Overview/Template/Bug/Policy) incl QA Plan->qa-plan; assert loads, generates valid schemas+slugs, reconciles ZERO consumer edits.
+5. ADR amendments: 0006 (declarative profile is source of truth; inversion), 0007 (required sections profile-driven), 0011 (append-slot order = profile field order), 0013 (introduce .lore/profile.toml separate from config.toml; resource_base a [profile] key). CHANGELOG Unreleased.
+6. Gates (bun test + biome + tsc + coverage) -> /code-review max -> PR into dev (no self-merge).
+SCOPE BOUNDARY: resource_base is PARSED/validated/exposed here, but resource STAMPING at lore new + GitAdapter/ADR-0014 are LORE-47, out of scope.
+<!-- SECTION:PLAN:END -->

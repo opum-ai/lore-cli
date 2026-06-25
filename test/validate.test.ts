@@ -5,12 +5,16 @@ import { join } from "node:path";
 import { runInit } from "../src/commands/init";
 import { runNew } from "../src/commands/new";
 import { runValidate, type ValidateOptions } from "../src/commands/validate";
-import { KNOWN_TYPES, requiredSectionsFor } from "../src/core/schema";
+import { defaultProfile } from "../src/core/profile";
+import { requiredSectionsFor } from "../src/core/schema";
 import { builtinTemplateFor } from "../src/core/template";
 import { quoteSafetyFindings, type ValidateReport, validateConceptText, validateFiles } from "../src/core/validate";
 import { EXIT_CODES, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
+
+/** The six story-convention type names, sourced from the built-in profile. */
+const KNOWN_TYPES = [...defaultProfile().types.keys()];
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 const FIXED_CLOCK = (): Date => new Date("2026-06-25T12:00:00Z");

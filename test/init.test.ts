@@ -37,6 +37,7 @@ describe("lore init — fresh bundle (AC#1)", () => {
     expect(result.skipped).toEqual([]);
     expect(result.created).toEqual([
       ".lore/config.toml",
+      ".lore/profile.toml",
       ".lore/.gitignore",
       ".lore/schemas/epic.schema.json",
       ".lore/schemas/story.schema.json",
@@ -94,7 +95,7 @@ describe("lore init — idempotent re-run (AC#2)", () => {
     const { code, result } = init({ clock: () => new Date("2030-12-31T23:59:59Z") });
     expect(code).toBe(0);
     expect(result.created).toEqual([]);
-    expect(result.skipped.length).toBe(10);
+    expect(result.skipped.length).toBe(11);
     expect(readFileSync(join(root, "docs/index.md"), "utf8")).toBe(before);
   });
 

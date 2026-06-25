@@ -31,6 +31,7 @@ describe("scaffold — the empty-bundle plan", () => {
   test("emits a stable, ordered file set", () => {
     expect(buildScaffold({ timestamp: TS }).files.map((f) => f.path)).toEqual([
       ".lore/config.toml",
+      ".lore/profile.toml",
       ".lore/.gitignore",
       ".lore/schemas/epic.schema.json",
       ".lore/schemas/story.schema.json",

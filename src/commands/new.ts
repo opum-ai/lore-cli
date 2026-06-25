@@ -18,6 +18,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { idFromPath } from "../core/concept";
+import { loadProfile, type Profile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { canonicalType, isKnownType, SCHEMAS_DIR, schemaFileName, schemaModeline, typeDirectory } from "../core/schema";
 import { buildNewConcept, builtinTemplateFor, slugify } from "../core/template";
@@ -86,8 +87,9 @@ interface NewArgs {
  */
 export function runNew(options: NewOptions): number {
   const clock = options.clock ?? (() => new Date());
+  const profile = loadProfile({ root: options.root });
   const parsed = parseNewArgs(options.args);
-  const type = canonicalType(parsed.type);
+  const type = canonicalType(parsed.type, profile);
   if (!VALID_TYPE.test(type)) {
     throw usage(
       `"${parsed.type}" is not a valid type`,
@@ -107,7 +109,8 @@ export function runNew(options: NewOptions): number {
     tags: parseTags(parsed.tags),
     bodyTemplate,
     vars: parsed.vars,
-    modeline: resolveModeline(type, docPath, options.root),
+    modeline: resolveModeline(type, docPath, options.root, profile),
+    profile,
   });
 
   const absPath = join(options.root, docPath);
@@ -143,8 +146,8 @@ function conflict(docPath: string): LoreError {
  * `.lore/schemas/` either — in both cases lore writes no modeline rather than one pointing at a
  * `$schema` file that is not there.
  */
-function resolveModeline(type: string, docPath: string, root: string): string | undefined {
-  if (!isKnownType(type)) {
+function resolveModeline(type: string, docPath: string, root: string, profile: Profile): string | undefined {
+  if (!isKnownType(type, profile)) {
     return undefined;
   }
   if (!existsSync(join(root, SCHEMAS_DIR, schemaFileName(type)))) {

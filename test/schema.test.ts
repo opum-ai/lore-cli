@@ -1,13 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import {
-  CANONICAL_KEY_ORDER,
-  declaredKnownFields,
-  isKnownType,
-  KNOWN_TYPES,
-  OKF_VERSION,
-  schemaForType,
-  validateFrontmatter,
-} from "../src/core/schema";
+import { defaultProfile } from "../src/core/profile";
+import { isKnownType, validateFrontmatter } from "../src/core/schema";
 import { EXIT_CODES, LoreError, WarningCollector } from "../src/errors";
 
 /** Assert `fn` throws a `validation` {@link LoreError}, returning it for further assertions. */
@@ -22,30 +15,32 @@ function expectValidation(fn: () => unknown): LoreError {
   throw new Error("expected validateFrontmatter to throw a validation LoreError, but it returned");
 }
 
-describe("schema — the known-type profile", () => {
-  test("KNOWN_TYPES is exactly the six story-convention types", () => {
-    expect([...KNOWN_TYPES]).toEqual(["Epic", "Story", "Spec", "ADR", "Runbook", "Reference"]);
+describe("schema — the default (story-convention) profile", () => {
+  test("the built-in profile is exactly the six story-convention types", () => {
+    expect([...defaultProfile().types.keys()]).toEqual(["Epic", "Story", "Spec", "ADR", "Runbook", "Reference"]);
   });
 
-  test("isKnownType narrows known vs unknown types", () => {
+  test("isKnownType narrows known vs unknown types against the default profile", () => {
     expect(isKnownType("Story")).toBe(true);
     expect(isKnownType("Glossary")).toBe(false);
   });
 
-  test("schemaForType resolves a schema for known types and undefined for unknown", () => {
-    for (const type of KNOWN_TYPES) {
-      expect(schemaForType(type)).toBeDefined();
+  test("each known type carries a generated validator", () => {
+    for (const type of defaultProfile().types.values()) {
+      expect(type.schema).toBeDefined();
     }
-    expect(schemaForType("Glossary")).toBeUndefined();
+    expect(defaultProfile().types.get("Glossary")).toBeUndefined();
   });
 
-  test("CANONICAL_KEY_ORDER covers every schema-declared field (drift guard)", () => {
-    // Single-source guard: a field added to a schema but forgotten in CANONICAL_KEY_ORDER
-    // would silently serialize into the unknown-key tail in arbitrary order. Pin that the
-    // canonical order is a superset of every declared field so that drift fails loudly here.
-    const ordered = new Set<string>(CANONICAL_KEY_ORDER);
-    for (const field of declaredKnownFields()) {
-      expect(ordered.has(field)).toBe(true);
+  test("the canonical key order covers every declared field across all types (drift guard)", () => {
+    // A field a type declares but the canonical order omits would serialize into the unknown-key
+    // tail in arbitrary order. Pin that the canonical order is a superset of every declared field.
+    const profile = defaultProfile();
+    const ordered = new Set<string>(profile.canonicalKeyOrder);
+    for (const type of profile.types.values()) {
+      for (const field of type.declaredFields) {
+        expect(ordered.has(field)).toBe(true);
+      }
     }
   });
 });
@@ -148,7 +143,10 @@ describe("schema — the warning tier (never throws)", () => {
 
   test("okf_version is an OKF-reserved key, not flagged as unknown (the root index carries it)", () => {
     const warnings = new WarningCollector();
-    validateFrontmatter({ type: "Reference", title: "T", summary: "s", okf_version: OKF_VERSION }, { warnings });
+    validateFrontmatter(
+      { type: "Reference", title: "T", summary: "s", okf_version: defaultProfile().okfVersion },
+      { warnings },
+    );
     expect(warnings.list().some((w) => w.includes("okf_version"))).toBe(false);
   });
 

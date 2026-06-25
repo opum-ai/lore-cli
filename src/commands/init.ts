@@ -16,6 +16,7 @@
  */
 
 import { join } from "node:path";
+import { loadProfile } from "../core/profile";
 import { buildScaffold } from "../core/scaffold";
 import { ANSI, EXIT_OK, paint, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
@@ -51,7 +52,10 @@ export interface InitOptions {
  */
 export function runInit(options: InitOptions): number {
   const clock = options.clock ?? (() => new Date());
-  const plan = buildScaffold({ timestamp: clock().toISOString() });
+  // Honor a pre-existing `.lore/profile.toml` so `init` scaffolds schemas for a project's custom
+  // types; with none present this is the built-in story-convention profile (zero-config).
+  const profile = loadProfile({ root: options.root });
+  const plan = buildScaffold({ timestamp: clock().toISOString(), profile });
 
   for (const dir of plan.dirs) {
     ensureDir(join(options.root, dir), dir);

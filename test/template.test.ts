@@ -1,15 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { parseConcept } from "../src/core/concept";
-import {
-  canonicalType,
-  isKnownType,
-  KNOWN_TYPES,
-  type KnownType,
-  schemaModeline,
-  typeDirectory,
-} from "../src/core/schema";
+import { defaultProfile } from "../src/core/profile";
+import { canonicalType, isKnownType, schemaModeline, typeDirectory } from "../src/core/schema";
 import { buildNewConcept, builtinTemplateFor, renderTemplate, slugify } from "../src/core/template";
 import { LoreError, WarningCollector } from "../src/errors";
+
+/** The six story-convention type names, sourced from the built-in profile. */
+const KNOWN_TYPES = [...defaultProfile().types.keys()];
 
 const TIMESTAMP = "2026-06-25T12:00:00Z";
 
@@ -77,7 +74,7 @@ describe("buildNewConcept — known types validate clean by construction (AC#1)"
 
       // The bytes parse back as the same type with no warnings — the AC#1 guarantee.
       const warnings = new WarningCollector();
-      const docPath = `docs/${typeDirectory(type as KnownType)}/sample.md`;
+      const docPath = `docs/${typeDirectory(type)}/sample.md`;
       const concept = parseConcept(docPath, result.contents, { warnings });
       expect(concept.type).toBe(type);
       expect(concept.frontmatter.title).toBe("Sample Title");

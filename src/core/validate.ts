@@ -42,6 +42,7 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 import { LoreError, WarningCollector } from "../errors";
 import { walkMdast } from "./bundle";
 import { type Concept, tryParseConcept } from "./concept";
+import { defaultProfile, type Profile } from "./profile";
 import { requiredSectionsFor } from "./schema";
 
 /** The two finding tiers (cli-contract §4.1): an `error` fails the file, a `warning` never does. */
@@ -100,14 +101,14 @@ export interface ValidateReport {
  * A non-{@link LoreError} (a genuine bug) is *not* swallowed — it propagates, so a crash is
  * never silently dressed up as a validation finding.
  */
-export function validateConceptText(path: string, raw: string): FileReport {
+export function validateConceptText(path: string, raw: string, profile: Profile = defaultProfile()): FileReport {
   // Parse exactly once. tryParseConcept fills the collector with tier-3 warnings, returns null for
   // a non-concept (skip), and throws a `validation` LoreError for a real-but-malformed concept —
   // so a single call draws every distinction the reporter needs without re-parsing the same bytes.
   const warnings = new WarningCollector();
   let concept: Concept | null;
   try {
-    concept = tryParseConcept(path, raw, { warnings });
+    concept = tryParseConcept(path, raw, { warnings, profile });
   } catch (err) {
     // A genuine bug (a non-LoreError) must never be dressed up as a validation finding — propagate
     // it (the invariant this module states). A malformed concept becomes one error finding; its
@@ -131,7 +132,7 @@ export function validateConceptText(path: string, raw: string): FileReport {
   for (const message of warnings.list()) {
     findings.push({ severity: "warning", rule: "frontmatter", message });
   }
-  findings.push(...requiredSectionFindings(concept.type, concept.body));
+  findings.push(...requiredSectionFindings(concept.type, concept.body, profile));
   findings.push(...quoteSafetyFindings(raw));
 
   return finalize(path, concept.type, findings);
@@ -146,11 +147,15 @@ export function validateConceptText(path: string, raw: string): FileReport {
  * concept type — but **never** at the cost of hiding a broken file from the gate: see
  * {@link keepForType}.
  */
-export function validateFiles(files: readonly { path: string; raw: string }[], type?: string): ValidateReport {
+export function validateFiles(
+  files: readonly { path: string; raw: string }[],
+  type?: string,
+  profile: Profile = defaultProfile(),
+): ValidateReport {
   const wanted = type?.toLowerCase();
   const reports: FileReport[] = [];
   for (const file of files) {
-    const report = validateConceptText(file.path, file.raw);
+    const report = validateConceptText(file.path, file.raw, profile);
     if (wanted !== undefined && !keepForType(report, wanted)) {
       continue;
     }
@@ -250,8 +255,8 @@ function unquoteScalar(value: string): string {
  * identically) both satisfy their requirement. A type with no required sections (every unknown
  * type, and Epic/Spec/Runbook/Reference under the minimal policy) yields nothing.
  */
-function requiredSectionFindings(type: string, body: string): Finding[] {
-  const required = requiredSectionsFor(type);
+function requiredSectionFindings(type: string, body: string, profile: Profile): Finding[] {
+  const required = requiredSectionsFor(type, profile);
   if (required.length === 0) {
     return [];
   }
