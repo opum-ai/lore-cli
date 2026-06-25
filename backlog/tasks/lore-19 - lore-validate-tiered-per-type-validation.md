@@ -1,11 +1,11 @@
 ---
 id: LORE-19
 title: 'lore validate: tiered per-type validation'
-status: In Progress
+status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-06-25 18:12'
+updated_date: '2026-06-25 19:13'
 labels:
   - cmd
 milestone: m-2
@@ -46,4 +46,6 @@ OKF section 9 conformance = error; per-type frontmatter shape + required section
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented lore validate (LORE-19). core/validate.ts = pure aggregating reporter (validateConceptText/validateFiles/quoteSafetyFindings); commands/validate.ts = thin discovery/I-O; wired into cli.ts dispatch+USAGE. Tiers reuse the existing frontmatter engine (parseConcept under try/catch + WarningCollector) and add per-type required sections + frontmatter quote-safety. Decisions (confirmed with Jeremy): required-sections = minimal/evidence-based (ADR->Status/Context/Decision/Consequences; Story->Acceptance criteria; Epic/Spec/Runbook/Reference->none) so the existing hand-authored bundle stays green AND a fresh 'lore new' of any type validates clean (pinned by test); quote-safety landed in-PR. AC#1: unknown types warn, never error (asserted). AC#2: explicit [paths..] validate only those (staged pre-commit). Exit = report on stdout + return 6 on any error (or any warning under --strict), not a thrown error. Gates green: 403 tests pass, tsc + biome clean, core/validate.ts 100% func/99% line. 'lore validate' on the real docs/ bundle = 0 errors (16 pre-existing over-200-char summary warnings, 1 skip). Required-sections single source of truth = schema.ts requiredSectionsFor; walkMarkdown exported from bundle.ts.
+
+/code-review max (56 agents): 15 findings (13 CONFIRMED, 1 PLAUSIBLE, 11 refuted). Fixed in 83e7d09. Correctness: (1) --type silently dropped error-tier files -> per-type gate went green over malformed concepts [DOMINANT] -> keepForType always keeps error files; (2) quote-safety false-errored on trailing YAML comments w/ colon -> strip comments from unquoted scalars; (3) required-section failed on interior-double-space headings -> normalize interior whitespace; (4) error files now surface quote-safety same-pass. Robustness: dir discovery flushes skipped-symlink/unreadable-subdir advisories to stderr (was swallowed); realpath de-dup (case-insensitive double-count); parse-once (was 2-3x); reuse walkMdast; collapse plain/pretty renderers; generalize walkMarkdown msg; drop dead re-export. ACCEPTED (not changed): top-level symlink-follow on an explicitly-named dir target (intended: user named it; links INSIDE still skipped, matches loadBundle); dangling-symlink 'does not exist' msg (minor); errno-mapping duplication across commands (PLAUSIBLE, lowest tier — bundle/fswrite helpers not exported; not worth widening scope). 11 regression tests added; 414 pass.
 <!-- SECTION:NOTES:END -->
