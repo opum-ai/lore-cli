@@ -223,6 +223,58 @@ export function isKnownType(type: string): type is KnownType {
 }
 
 /**
+ * The known types keyed by their lower-cased spelling, so a user-supplied `<type>`
+ * token resolves case-insensitively to its canonical form. Built once at module load.
+ */
+const CANONICAL_BY_LOWER: ReadonlyMap<string, KnownType> = new Map(
+  KNOWN_TYPES.map((type) => [type.toLowerCase(), type] as const),
+);
+
+/**
+ * Resolve a user-supplied `<type>` token to its canonical spelling. `lore new` accepts
+ * a type case-insensitively (`story`, `ADR`, `reference` — cli-surface §new), so a token
+ * whose lower-case form names a {@link KnownType} returns that type's canonical casing
+ * (`Story`, `ADR`, `Reference`) — the value lore writes to `type:` and keys its schema by.
+ *
+ * An **unknown** type is a tolerated OKF producer extension: it is returned **trimmed but
+ * otherwise verbatim** (the author's own casing preserved), never folded or rejected, so
+ * `lore new Decision "…"` scaffolds a `type: Decision` concept against the lenient shape.
+ */
+export function canonicalType(input: string): string {
+  const trimmed = input.trim();
+  return CANONICAL_BY_LOWER.get(trimmed.toLowerCase()) ?? trimmed;
+}
+
+/**
+ * The bundle sub-directory each known type's concepts live under, relative to the bundle
+ * root (`docs/`). This is the **type config's** single source of truth for `lore new`'s
+ * conventional output location — kept here beside {@link KNOWN_TYPES} so the type
+ * vocabulary and its on-disk home never drift. The directory names are **not derivable**
+ * from the type by any single rule (the bundle uses the acronym `adr`, the singular
+ * `reference`, and the plurals `runbooks`/`specs`), so they are mapped explicitly; they
+ * match the directories the bundle already uses. A caller may always override the
+ * computed path (`lore new … --out <path>`).
+ */
+const TYPE_DIRECTORIES: Readonly<Record<KnownType, string>> = Object.freeze({
+  Epic: "epics",
+  Story: "stories",
+  Spec: "specs",
+  ADR: "adr",
+  Runbook: "runbooks",
+  Reference: "reference",
+});
+
+/**
+ * The bundle sub-directory a concept of `type` is scaffolded into. A known type maps via
+ * {@link TYPE_DIRECTORIES}; an unknown (producer-extension) type falls back to its own
+ * lower-cased name, so `lore new Decision "…"` lands under `docs/decision/`. Returns a path
+ * segment relative to the bundle root, never including `docs/` itself.
+ */
+export function typeDirectory(type: string): string {
+  return isKnownType(type) ? TYPE_DIRECTORIES[type] : type.toLowerCase();
+}
+
+/**
  * Validate a frontmatter object against the lore profile, **throwing** on an
  * error-tier problem and **recording** warning-tier ones on `options.warnings`.
  *

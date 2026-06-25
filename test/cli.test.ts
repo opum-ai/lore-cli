@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type RunContext, run } from "../src/cli";
@@ -75,6 +75,20 @@ describe("cli — usage errors (exit 2)", () => {
     expect(run(argv("--version", "--bogus"), c)).toBe(EXIT_CODES.usage);
   });
 
+  test("an unknown flag AFTER the command is not swallowed by --version", () => {
+    // Regression guard: a post-command typo'd flag must still be rejected, not slip through
+    // the --version short-circuit to a silent exit 0.
+    const c = ctx();
+    expect(run(argv("init", "--bogus", "--version"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).toContain("unknown option");
+    expect(c.stdout.text()).toBe("");
+  });
+
+  test("an unknown flag after the command is not swallowed by --help either", () => {
+    const c = ctx();
+    expect(run(argv("init", "--bogus", "--help"), c)).toBe(EXIT_CODES.usage);
+  });
+
   test("an extra positional on init is a usage error", () => {
     const c = ctx();
     expect(run(argv("init", "extra"), c)).toBe(EXIT_CODES.usage);
@@ -112,6 +126,54 @@ describe("cli — init dispatch", () => {
     const c = ctx({ cwd });
     expect(run(argv("init", "--"), c)).toBe(0);
     expect(existsSync(join(cwd, "docs/index.md"))).toBe(true);
+  });
+});
+
+describe("cli — new dispatch", () => {
+  let cwd: string;
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), "lore-cli-new-"));
+  });
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test('`lore new <type> "<title>"` scaffolds and emits the new envelope', () => {
+    const c = ctx({ cwd });
+    expect(run(argv("new", "adr", "Use soft deletes", "--json"), c)).toBe(0);
+    const envelope = JSON.parse(c.stdout.text()) as { kind: string; data: { path: string } };
+    expect(envelope.kind).toBe("new");
+    expect(envelope.data.path).toBe("docs/adr/use-soft-deletes.md");
+    expect(existsSync(join(cwd, "docs/adr/use-soft-deletes.md"))).toBe(true);
+  });
+
+  test("the router passes command flags (`--var`, `--summary`) through to the command", () => {
+    // The global parser collects `--var owner=payments` as command args and `new` parses
+    // it — a value-taking command flag the global parser does not itself understand.
+    const c = ctx({ cwd });
+    const tmplDir = join(cwd, ".lore/templates");
+    mkdirSync(tmplDir, { recursive: true });
+    writeFileSync(join(tmplDir, "reference.md"), "\n# {{title}}\n\nOwner: {{owner}}\n");
+    expect(run(argv("new", "reference", "Orders", "--var", "owner=payments", "--json"), c)).toBe(0);
+    expect(readFileSync(join(cwd, "docs/reference/orders.md"), "utf8")).toContain("Owner: payments");
+  });
+
+  test("an unknown flag on `new` is a usage error", () => {
+    const c = ctx({ cwd });
+    expect(run(argv("new", "adr", "Title", "--bogus"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).toContain("unknown option");
+  });
+
+  test("a missing title on `new` is a usage error", () => {
+    const c = ctx({ cwd });
+    expect(run(argv("new", "adr"), c)).toBe(EXIT_CODES.usage);
+  });
+
+  test("the `--` terminator is forwarded so a dash-leading title is accepted", () => {
+    const c = ctx({ cwd });
+    // `--json` must precede `--`; anything after the terminator is a positional (the title).
+    expect(run(argv("new", "adr", "--json", "--", "-5 minute timeout"), c)).toBe(0);
+    expect(existsSync(join(cwd, "docs/adr/5-minute-timeout.md"))).toBe(true);
   });
 });
 

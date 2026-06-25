@@ -36,8 +36,15 @@ import {
   schemaModeline,
 } from "./schema";
 
+/**
+ * The bundle root — the directory every concept lives under, relative to the repo root.
+ * The single source of truth for the `docs/` convention, shared by the scaffolder, the
+ * bundle walk, and `lore new`'s output-path computation so they never spell it differently.
+ */
+export const DOCS_DIR = "docs";
+
 /** The reserved bundle-root index — the only file that carries `okf_version`. */
-const ROOT_INDEX_PATH = "docs/index.md";
+const ROOT_INDEX_PATH = `${DOCS_DIR}/index.md`;
 
 /** A single file the scaffold wants to exist, with the exact bytes to write when it is absent. */
 export interface ScaffoldFile {
@@ -76,7 +83,7 @@ export interface ScaffoldOptions {
  */
 export function buildScaffold(options: ScaffoldOptions): ScaffoldPlan {
   return {
-    dirs: [".lore", ".lore/schemas", ".lore/templates", ".lore/cache", "docs"],
+    dirs: [".lore", ".lore/schemas", ".lore/templates", ".lore/cache", DOCS_DIR],
     files: [
       { path: CONFIG_REL_PATH, contents: DEFAULT_CONFIG_TOML },
       { path: ".lore/.gitignore", contents: LORE_GITIGNORE },
