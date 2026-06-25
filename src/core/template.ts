@@ -26,25 +26,18 @@
 
 import { LoreError, WarningCollector } from "../errors";
 import { type Concept, idFromPath, serializeConcept, serializeConceptWithModeline } from "./concept";
-import { defaultProfile, type Profile } from "./profile";
+import { defaultProfile, type Profile, slugForTypeName } from "./profile";
 import { validateFrontmatter } from "./schema";
 
 /**
- * Derive a filename slug from a concept title: Unicode-normalized, diacritics stripped,
- * lower-cased, every run of non-alphanumerics collapsed to a single `-`, and leading/
- * trailing `-` trimmed (`"Bulk Archive Orders!"` → `"bulk-archive-orders"`). The result
- * is the last path segment of the new doc's id, so it uses the same `[a-z0-9-]` alphabet a
- * portable bundle path needs. A title with no alphanumeric content yields `""`; the caller
- * treats that as "cannot derive a path, pass `--out`" rather than writing a `-.md` file.
+ * Derive a filename slug from a concept title — the LOWER-KEBAB transform {@link slugForTypeName}
+ * applies to type names (`"Bulk Archive Orders!"` → `"bulk-archive-orders"`). The result is the last
+ * path segment of the new doc's id, so it uses the `[a-z0-9-]` alphabet a portable bundle path
+ * needs. A title with no alphanumeric content yields `""`; the caller treats that as "cannot derive
+ * a path, pass `--out`" rather than writing a `-.md` file. Aliased to the canonical slug algorithm
+ * so a title and a type name can never slug two different ways.
  */
-export function slugify(title: string): string {
-  return title
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
+export const slugify = slugForTypeName;
 
 /** The `{{ key }}` token grammar: a name of word chars, dots, and dashes, with optional inner padding. */
 const PLACEHOLDER = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;

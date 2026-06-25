@@ -57,7 +57,10 @@ describe("defaultProfile — the built-in story convention (AC#3)", () => {
     expect(p.name).toBe("story-convention");
   });
 
-  test("canonical key order ends with the reserved coupling fields then Story's own fields", () => {
+  test("canonical key order: base, then Story's own fields, then the reserved coupling fields LAST", () => {
+    // Reserved coupling fields trail per-type fields, matching the order lore emitted before the
+    // profile existed (ADR-0011 byte-stability), so a Story with tasks/specs AND supersedes keeps
+    // its on-disk key order.
     expect(defaultProfile().canonicalKeyOrder).toEqual([
       "type",
       "title",
@@ -66,10 +69,10 @@ describe("defaultProfile — the built-in story convention (AC#3)", () => {
       "summary",
       "timestamp",
       "status",
-      "supersedes",
-      "superseded_by",
       "tasks",
       "specs",
+      "supersedes",
+      "superseded_by",
     ]);
   });
 
@@ -139,13 +142,14 @@ describe("loadProfile — zero-config and file resolution", () => {
   test("profile.toml wins over profile.json when both exist", () => {
     writeFileSync(
       join(root, PROFILE_REL_PATH),
-      '[profile]\nname = "from-toml"\nokf_version = "0.1"\n[base.fields]\ntype = { required = true }\n',
+      '[profile]\nname = "from-toml"\nokf_version = "0.1"\n[base.fields]\ntype = { required = true }\n[[types]]\nname = "T"\n',
     );
     writeFileSync(
       join(root, PROFILE_JSON_REL_PATH),
       JSON.stringify({
         profile: { name: "from-json", okf_version: "0.1" },
         base: { fields: { type: { required: true } } },
+        types: [{ name: "T" }],
       }),
     );
     expect(loadProfile({ root }).name).toBe("from-toml");
@@ -170,6 +174,23 @@ describe("loadProfile — zero-config and file resolution", () => {
   test("an all-commented profile.toml (what `lore init` scaffolds) is zero-config — yields the default", () => {
     writeFileSync(join(root, PROFILE_REL_PATH), '# every line commented\n# name = "x"\n');
     expect(loadProfile({ root }).name).toBe("story-convention");
+  });
+
+  test("an empty/commented profile.toml does NOT shadow a populated profile.json", () => {
+    // Regression: lore init scaffolds a commented .toml; it must fall through to a real .json,
+    // not short-circuit to the default and silently ignore the user's JSON profile.
+    writeFileSync(join(root, PROFILE_REL_PATH), "# commented out\n");
+    writeFileSync(
+      join(root, PROFILE_JSON_REL_PATH),
+      JSON.stringify({
+        profile: { name: "from-json", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "Note" }],
+      }),
+    );
+    const p = loadProfile({ root });
+    expect(p.name).toBe("from-json");
+    expect([...p.types.keys()]).toEqual(["Note"]);
   });
 });
 
@@ -288,6 +309,25 @@ describe("parseProfile — grammar errors throw (exit 6)", () => {
         base: { fields: { type: { required: true }, f: { required: "yes" } } },
       }),
     );
+  });
+
+  test("a non-empty profile that declares no [[types]] is an error (the gate must never silently empty)", () => {
+    const err = expectValidation(() =>
+      parse({ profile: { name: "x", okf_version: "0.1" }, base: { fields: { type: { required: true } } } }),
+    );
+    expect(err.message).toContain("at least one [[types]]");
+  });
+
+  test("a field named after an Object.prototype member is rejected (prototype-pollution guard)", () => {
+    for (const bad of ["__proto__", "constructor", "toString"]) {
+      const err = expectValidation(() =>
+        parse({
+          profile: { name: "x", okf_version: "0.1" },
+          base: { fields: { type: { required: true }, [bad]: {} } },
+        }),
+      );
+      expect(err.message).toContain("reserved object key");
+    }
   });
 });
 

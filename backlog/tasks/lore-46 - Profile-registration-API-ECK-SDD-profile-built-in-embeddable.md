@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@jeremy'
 created_date: '2026-06-21 20:16'
-updated_date: '2026-06-25 22:02'
+updated_date: '2026-06-25 22:35'
 labels:
   - eck-alignment
   - core
@@ -39,15 +39,31 @@ ADR amendments: ADR-0006 (primary inversion; RETAIN the §5 summary-length heuri
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 ADR-0006 amended: the declarative .lore/profile is the source of truth for type vocabulary + per-type schema; lore generates runtime validators + editor JSON-Schemas from it (supersedes 'Zod-in-code is THE single source of truth' for the type/profile layer). Invariants preserved: warn-not-error on unknown types, ISO-string timestamps, byte-stable round-trip, strict-known/lenient-unknown tiers, JSON-Schema editor emission
-- [ ] #2 Profile format defined (toml/json): type vocabulary; per-type required/optional fields with types (string, string[], ISO-date, enum, number, boolean) + simple constraints; required body sections; template ref. Ergonomic lore format, NOT raw JSON Schema
-- [ ] #3 lore ships the default story-convention profile built-in (Epic/Story/Spec/ADR/Runbook/Reference); fully usable with zero config
-- [ ] #4 A project configures custom types by adding .lore/profile.* — read by the STANDALONE binary as DATA; no code, no library/embedding required; lore bundles NO consumer-specific profile (ECK ships its profile in its own repo)
-- [ ] #5 NO code-registration / escape hatch: the declarative language is the boundary; document the expressiveness limit (no arbitrary cross-field/custom refinements)
-- [ ] #6 LORE-15 builds validators from the active profile; LORE-19/LORE-20 iterate it; profile loading is deterministic (sorted, order-independent emitted bytes — ADR-0014)
-- [ ] #7 Type-name -> generated schema filename + yaml-language-server modeline = LOWER-KEBAB slug (e.g. 'QA Plan' -> qa-plan.json), matching the template naming; multi-word/space type names never produce an invalid path/URI
-- [ ] #8 Grammar validated against ECK's 17-type SDD draft (first external consumer): reconciles with ZERO consumer-file edits; ADR-0006 §5 summary-length heuristic retained as a lore built-in
+- [x] #1 ADR-0006 amended: the declarative .lore/profile is the source of truth for type vocabulary + per-type schema; lore generates runtime validators + editor JSON-Schemas from it (supersedes 'Zod-in-code is THE single source of truth' for the type/profile layer). Invariants preserved: warn-not-error on unknown types, ISO-string timestamps, byte-stable round-trip, strict-known/lenient-unknown tiers, JSON-Schema editor emission
+- [x] #2 Profile format defined (toml/json): type vocabulary; per-type required/optional fields with types (string, string[], ISO-date, enum, number, boolean) + simple constraints; required body sections; template ref. Ergonomic lore format, NOT raw JSON Schema
+- [x] #3 lore ships the default story-convention profile built-in (Epic/Story/Spec/ADR/Runbook/Reference); fully usable with zero config
+- [x] #4 A project configures custom types by adding .lore/profile.* — read by the STANDALONE binary as DATA; no code, no library/embedding required; lore bundles NO consumer-specific profile (ECK ships its profile in its own repo)
+- [x] #5 NO code-registration / escape hatch: the declarative language is the boundary; document the expressiveness limit (no arbitrary cross-field/custom refinements)
+- [x] #6 LORE-15 builds validators from the active profile; LORE-19/LORE-20 iterate it; profile loading is deterministic (sorted, order-independent emitted bytes — ADR-0014)
+- [x] #7 Type-name -> generated schema filename + yaml-language-server modeline = LOWER-KEBAB slug (e.g. 'QA Plan' -> qa-plan.json), matching the template naming; multi-word/space type names never produce an invalid path/URI
+- [x] #8 Grammar validated against ECK's 17-type SDD draft (first external consumer): reconciles with ZERO consumer-file edits; ADR-0006 §5 summary-length heuristic retained as a lore built-in
 <!-- AC:END -->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ## Implementation Plan
 
@@ -60,3 +76,13 @@ ADR amendments: ADR-0006 (primary inversion; RETAIN the §5 summary-length heuri
 6. Gates (bun test + biome + tsc + coverage) -> /code-review max -> PR into dev (no self-merge).
 SCOPE BOUNDARY: resource_base is PARSED/validated/exposed here, but resource STAMPING at lore new + GitAdapter/ADR-0014 are LORE-47, out of scope.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented on feat/lore-46-declarative-profile (commit 6bd7bdc). Inverted ADR-0006: new src/core/profile.ts loads+compiles .lore/profile.toml (Bun.TOML, hand-rolled grammar validation mirroring config.ts, injectable root, zero-config) into an immutable Profile carrying generated per-type Zod + Draft-7 JSON Schemas, LOWER-KEBAB slugs, and the canonical key order. schema.ts/concept.ts/core/validate.ts/scaffold.ts/template.ts and the init/new/validate commands thread the compiled Profile via an explicit param defaulting to the memoized built-in defaultProfile() — so any caller not opting into a custom profile is byte-for-byte unaffected (proved: all pre-existing tests + scaffold/init schema goldens pass unchanged).
+
+Key decisions: (1) supersedes/superseded_by keep their string|list union as lore-reserved coupling fields with a built-in validator (the grammar's kind cannot express a union — AC#5 expressiveness limit, same precedent as the §5 summary heuristic), which also keeps their JSON schema byte-identical. (2) Editor schema filename keeps the .schema.json suffix with the slug as stem (Reference->reference.schema.json unchanged; QA Plan->qa-plan.schema.json) — renaming to <slug>.json would break every committed modeline in docs/; read AC#7's 'qa-plan.json' as naming the slug. (3) typeDirectory stays a lore built-in convenience map (not in the finalized grammar). (4) lore init now scaffolds a commented .lore/profile.toml; an all-commented/empty profile -> zero-config default. (5) resource_base is parsed/validated/exposed here; the actual resource STAMPING + GitAdapter/ADR-0014 are LORE-47 (out of scope).
+
+End-to-end dogfooded through the real CLI: init -> new adr (default profile, validates clean) -> custom .lore/profile.toml with a PRD type read by the standalone binary as data -> new PRD -> validate enforces the PRD's declared required sections as Tier-2 errors. Gates: 461 tests pass (incl. new test/profile.test.ts), tsc clean, biome clean, profile.ts 94% lines/100% funcs. ADR-0006/0007/0011/0013 amended; CHANGELOG updated. /code-review max running.
+<!-- SECTION:NOTES:END -->

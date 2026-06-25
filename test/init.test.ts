@@ -84,6 +84,31 @@ describe("lore init — fresh bundle (AC#1)", () => {
     init();
     expect(existsSync(join(root, ".lore/cache"))).toBe(true);
   });
+
+  test("a pre-existing custom profile that retypes Reference does not crash init", () => {
+    // Regression: the reserved root index is lore's own structural file; it must serialize against
+    // the built-in default, so a custom `Reference` adding a required field cannot abort init while
+    // writing docs/index.md. The custom type's schema is still emitted under its slug.
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      [
+        "[profile]",
+        'name = "demo"',
+        'okf_version = "0.1"',
+        "[base.fields]",
+        "type = { required = true }",
+        "title = {}",
+        "[[types]]",
+        'name = "Reference"',
+        "fields = { owner = { required = true } }",
+      ].join("\n"),
+    );
+    const { code } = init();
+    expect(code).toBe(0);
+    expect(existsSync(join(root, "docs/index.md"))).toBe(true);
+    expect(existsSync(join(root, ".lore/schemas/reference.schema.json"))).toBe(true);
+  });
 });
 
 describe("lore init — idempotent re-run (AC#2)", () => {

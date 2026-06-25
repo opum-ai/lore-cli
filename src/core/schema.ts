@@ -94,7 +94,7 @@ export function requiredSectionsFor(type: string, profile: Profile = defaultProf
  * from the type by any single rule (the bundle uses the acronym `adr`, the singular `reference`, and
  * the plurals `runbooks`/`specs`), so they are a lore built-in convenience map — independent of the
  * profile, which (by its finalized grammar) carries no per-type directory. A type outside this map
- * (a producer extension, or a custom-profile type) falls back to its lower-cased name.
+ * (a producer extension, or a custom-profile type) falls back to its LOWER-KEBAB slug.
  */
 const TYPE_DIRECTORIES: Readonly<Record<string, string>> = Object.freeze({
   Epic: "epics",
@@ -107,12 +107,14 @@ const TYPE_DIRECTORIES: Readonly<Record<string, string>> = Object.freeze({
 
 /**
  * The bundle sub-directory a concept of `type` is scaffolded into: the {@link TYPE_DIRECTORIES}
- * convention for a story-convention type, else the type's own lower-cased name (so `lore new
- * Decision "…"` lands under `docs/decision/`). Returns a path segment relative to the bundle root,
- * never including `docs/` itself. A caller may always override the computed path (`lore new … --out`).
+ * convention for a story-convention type, else the type's {@link slugForTypeName LOWER-KEBAB slug}
+ * (so `lore new "QA Plan" …` lands under `docs/qa-plan/`, never `docs/qa plan/`). Using the slug —
+ * not a bare lower-case — keeps a multi-word/space-containing profile type from yielding an invalid
+ * path segment. Returns a path segment relative to the bundle root, never including `docs/` itself.
+ * A caller may always override the computed path (`lore new … --out`).
  */
 export function typeDirectory(type: string): string {
-  return TYPE_DIRECTORIES[type] ?? type.toLowerCase();
+  return TYPE_DIRECTORIES[type] ?? slugForTypeName(type);
 }
 
 /**

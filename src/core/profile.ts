@@ -61,6 +61,9 @@ export const FIELD_KINDS = ["string", "list", "datetime", "number", "integer", "
 /** A declared field's scalar/sequence kind. */
 export type FieldKind = (typeof FIELD_KINDS)[number];
 
+/** A scalar (non-list) kind — what a list's element may be (no nested lists). */
+export type ScalarKind = Exclude<FieldKind, "list">;
+
 /**
  * The casing convention a profile's type names follow. Powers the unknown-type
  * "did you mean" hint and is advisory only — it never coerces an authored `type`
@@ -82,8 +85,8 @@ export interface FieldSpec {
   readonly kind: FieldKind;
   /** A closed set of allowed string values (implies `kind: "string"`, exact case-sensitive match). */
   readonly enum?: readonly string[];
-  /** For a `list`, the element kind/enum (default: string elements). */
-  readonly items?: { readonly kind: FieldKind; readonly enum?: readonly string[] };
+  /** For a `list`, the element kind/enum (default: string elements; no nested lists). */
+  readonly items?: { readonly kind: ScalarKind; readonly enum?: readonly string[] };
   /** Editor-advertised default surfaced in the JSON Schema — **never** stamped onto a concept (byte-stability). */
   readonly default?: unknown;
 }
@@ -130,10 +133,8 @@ export interface CompiledType {
   readonly requiredSections: readonly string[];
   /** The template filename under `.lore/templates/`, if the type declares one. */
   readonly template?: string;
-  /** The field names this type declares (base ∪ own), for the extra-key warning. */
+  /** The field names this type declares (base ∪ own ∪ reserved), for the extra-key warning. */
   readonly declaredFields: ReadonlySet<string>;
-  /** This type's field names in emission order (base order, with its own fields appended). */
-  readonly fieldOrder: readonly string[];
 }
 
 /**
@@ -200,15 +201,22 @@ export function slugForTypeName(name: string): string {
  */
 export function loadProfile(options: LoadProfileOptions = {}): Profile {
   const root = options.root ?? process.cwd();
+  // A present-but-empty `.toml` (the commented file `lore init` scaffolds) is NOT a populated
+  // profile, so it must not shadow a real `.json` form — fall through to it, exactly as an absent
+  // `.toml` would. Only a non-empty profile (either form) is compiled; otherwise the default.
   const tomlText = readProfileText(join(root, PROFILE_REL_PATH), PROFILE_REL_PATH);
   if (tomlText !== undefined) {
     const doc = parseToml(tomlText);
-    return isEmptyDoc(doc) ? defaultProfile() : compileProfile(parseProfile(doc, PROFILE_REL_PATH));
+    if (!isEmptyDoc(doc)) {
+      return compileProfile(parseProfile(doc, PROFILE_REL_PATH));
+    }
   }
   const jsonText = readProfileText(join(root, PROFILE_JSON_REL_PATH), PROFILE_JSON_REL_PATH);
   if (jsonText !== undefined) {
     const doc = parseJson(jsonText);
-    return isEmptyDoc(doc) ? defaultProfile() : compileProfile(parseProfile(doc, PROFILE_JSON_REL_PATH));
+    if (!isEmptyDoc(doc)) {
+      return compileProfile(parseProfile(doc, PROFILE_JSON_REL_PATH));
+    }
   }
   return defaultProfile();
 }
@@ -306,6 +314,17 @@ export function parseProfile(doc: Record<string, unknown>, source: string): Pars
   }
 
   const types = parseTypes(doc.types, source);
+  if (types.length === 0) {
+    // A profile with no types validates nothing — every concept would fall through to the
+    // unknown-type warning tier, silently turning `lore validate` green over real defects. The
+    // common cause is uncommenting [profile]/[base.fields] but leaving the example [[types]]
+    // commented; fail loud so the gate is never accidentally disabled.
+    fail(
+      `${source}: a profile must declare at least one [[types]]`,
+      'add a [[types]] block (name = "…"), or remove the file to use the built-in story-convention profile',
+      { key: "types" },
+    );
+  }
   return { name, okfVersion, case: caseStyle, resourceBase, baseFields, types };
 }
 
@@ -355,10 +374,29 @@ function parseTypes(value: unknown, source: string): ParsedType[] {
   return types;
 }
 
+/**
+ * True for a field name that cannot be a plain-object key without being dropped or shadowing an
+ * inherited member — every `Object.prototype` member (`__proto__`, `constructor`, `toString`, …)
+ * plus `prototype`. The same guard `config.ts` applies to untrusted `[reconcile.overrides]` keys;
+ * field specs are built the same way (bracket assignment from untrusted TOML keys), so a field
+ * literally named `__proto__` would otherwise hit the prototype setter and silently vanish — a
+ * required field that never enters the generated Zod object, so concepts missing it validate clean.
+ */
+function isUnsafeFieldName(name: string): boolean {
+  return name === "prototype" || name in Object.prototype;
+}
+
 /** Parse a `fields` table (`name -> inline-table spec`) into {@link FieldSpec}s, preserving declaration order. */
 function parseFieldTable(table: Record<string, unknown>, where: string, source: string): Record<string, FieldSpec> {
   const fields: Record<string, FieldSpec> = {};
   for (const [fieldName, raw] of Object.entries(table)) {
+    if (isUnsafeFieldName(fieldName)) {
+      fail(
+        `${source}: ${where}.${fieldName} uses a reserved object key`,
+        `rename the "${fieldName}" field to a real frontmatter key name`,
+        { key: `${where}.${fieldName}` },
+      );
+    }
     fields[fieldName] = parseFieldSpec(raw, `${where}.${fieldName}`, source);
   }
   return fields;
@@ -403,7 +441,7 @@ function parseFieldSpec(raw: unknown, where: string, source: string): FieldSpec 
 }
 
 /** Parse a list field's `items` element spec (default: string elements). Only `kind`/`enum` apply to an element. */
-function parseItems(raw: unknown, where: string, source: string): { kind: FieldKind; enum?: readonly string[] } {
+function parseItems(raw: unknown, where: string, source: string): { kind: ScalarKind; enum?: readonly string[] } {
   if (raw === undefined) {
     return { kind: "string" };
   }
@@ -430,34 +468,37 @@ function parseItems(raw: unknown, where: string, source: string): { kind: FieldK
  * (base fields then each type's own fields, first-seen). Pure and deterministic.
  */
 export function compileProfile(parsed: ParsedProfile): Profile {
-  // The base field set every type carries = the declarative `[base.fields]`, then lore's reserved
-  // coupling fields (see RESERVED_FIELDS) appended unless a profile re-declares one. The coupling
-  // fields carry a built-in validator (their `string | list-of-refs` shape is not declaratively
-  // expressible — AC#5), so they live here rather than in the grammar, like the §5 summary heuristic.
+  // Each type's field order is: the declarative `[base.fields]` (declaration order), then that
+  // type's own new fields, then lore's reserved coupling fields (see RESERVED_FIELDS) LAST. The
+  // coupling fields carry a built-in validator (their `string | list-of-refs` shape is not
+  // declaratively expressible — AC#5), so they live here, like the §5 summary heuristic; emitting
+  // them last keeps the canonical key order — and thus concept serialization — byte-stable against
+  // what lore emitted before the profile existed (ADR-0011). A profile may still override one by
+  // declaring it in `[base.fields]`, in which case it keeps its declared position.
   const declaredBase = Object.keys(parsed.baseFields);
   const reservedBase = RESERVED_FIELD_NAMES.filter((name) => !(name in parsed.baseFields));
-  const baseNames = [...declaredBase, ...reservedBase];
 
   const types = new Map<string, CompiledType>();
   const byLowerName = new Map<string, string>();
-  const canonicalKeyOrder: string[] = [...baseNames];
-  const seenKeys = new Set<string>(baseNames);
+  const canonicalKeyOrder: string[] = [...declaredBase];
+  const seenKeys = new Set<string>([...declaredBase, ...reservedBase]);
 
   for (const type of parsed.types) {
-    // Merge base ∪ own (own overrides a base field by name = full replace), keeping base
-    // position for an override and appending genuinely-new fields in declaration order.
+    // Merge base ∪ own (own overrides a base/reserved field by name = full replace); collect the
+    // type's genuinely-new fields (neither base nor reserved) in declaration order.
     const merged: Record<string, FieldSpec> = { ...parsed.baseFields };
-    const fieldOrder: string[] = [...baseNames];
+    const ownNew: string[] = [];
     for (const [fieldName, spec] of Object.entries(type.fields)) {
-      if (!baseNames.includes(fieldName)) {
-        fieldOrder.push(fieldName);
+      merged[fieldName] = spec;
+      if (!declaredBase.includes(fieldName) && !reservedBase.includes(fieldName)) {
+        ownNew.push(fieldName);
         if (!seenKeys.has(fieldName)) {
           canonicalKeyOrder.push(fieldName);
           seenKeys.add(fieldName);
         }
       }
-      merged[fieldName] = spec;
     }
+    const fieldOrder = [...declaredBase, ...ownNew, ...reservedBase];
     const schema = buildTypeSchema(type.name, merged, fieldOrder);
     const compiled: CompiledType = {
       name: type.name,
@@ -466,12 +507,13 @@ export function compileProfile(parsed: ParsedProfile): Profile {
       jsonSchema: buildJsonSchema(schema, merged, fieldOrder),
       requiredSections: type.sections,
       declaredFields: new Set(fieldOrder),
-      fieldOrder,
       ...(type.template === undefined ? {} : { template: type.template }),
     };
     types.set(type.name, compiled);
     byLowerName.set(type.name.toLowerCase(), type.name);
   }
+  // Reserved coupling fields trail every authored/known key in the global canonical order.
+  canonicalKeyOrder.push(...reservedBase);
 
   return {
     name: parsed.name,
@@ -570,31 +612,25 @@ function baseKindToZod(spec: FieldSpec): z.ZodType {
   if (spec.enum !== undefined) {
     return z.enum([...spec.enum]);
   }
-  switch (spec.kind) {
-    case "string":
-      return z.string();
-    case "datetime":
-      return z.iso.datetime({ offset: true });
-    case "number":
-      return z.number();
-    case "integer":
-      return z.int();
-    case "boolean":
-      return z.boolean();
-    case "list":
-      return z.array(itemToZod(spec.items));
-  }
+  return spec.kind === "list" ? z.array(itemToZod(spec.items)) : scalarKindToZod(spec.kind);
 }
 
-/** The Zod element schema for a list's `items` spec (default: non-empty-tolerant string elements). */
+/** The Zod element schema for a list's `items` spec (default: string elements). */
 function itemToZod(items: FieldSpec["items"]): z.ZodType {
   if (items === undefined) {
     return z.string();
   }
-  if (items.enum !== undefined) {
-    return z.enum([...items.enum]);
-  }
-  switch (items.kind) {
+  return items.enum !== undefined ? z.enum([...items.enum]) : scalarKindToZod(items.kind);
+}
+
+/**
+ * The Zod schema for a scalar (non-list) kind — the single source shared by {@link baseKindToZod}
+ * and {@link itemToZod} so a field and a list element of the same kind can never diverge. `list`
+ * is never passed here (a field's list wraps this for its element; nested lists are rejected at
+ * parse). `datetime` is an ISO-8601 string with offset, never a `Date` (ADR-0006 §2).
+ */
+function scalarKindToZod(kind: Exclude<FieldKind, "list">): z.ZodType {
+  switch (kind) {
     case "datetime":
       return z.iso.datetime({ offset: true });
     case "number":

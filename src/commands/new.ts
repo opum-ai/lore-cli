@@ -90,15 +90,19 @@ export function runNew(options: NewOptions): number {
   const profile = loadProfile({ root: options.root });
   const parsed = parseNewArgs(options.args);
   const type = canonicalType(parsed.type, profile);
-  if (!VALID_TYPE.test(type)) {
+  // A profile-declared type is valid by definition — including a multi-word/space-containing name
+  // like "QA Plan" (its path segments come from the LOWER-KEBAB slug, which is always safe). The
+  // VALID_TYPE shape check only gates an *ad-hoc* unknown type, whose raw token would otherwise
+  // become a directory/filename segment verbatim.
+  if (!isKnownType(type, profile) && !VALID_TYPE.test(type)) {
     throw usage(
       `"${parsed.type}" is not a valid type`,
-      "a type must start with a letter and contain only letters, digits, dashes, or underscores",
+      "a type must start with a letter and contain only letters, digits, dashes, or underscores — or be declared in .lore/profile.toml",
     );
   }
 
   const docPath = resolveDocPath(parsed, type, options.root);
-  const bodyTemplate = resolveTemplate(parsed, type, options.root);
+  const bodyTemplate = resolveTemplate(parsed, type, options.root, profile);
 
   const build = buildNewConcept({
     docPath,
@@ -328,15 +332,18 @@ function resolveOutPath(out: string, root: string): string {
 
 /**
  * Resolve the template text. The file base is `--template <name>` when given, else the type;
- * the file is `.lore/templates/<base>.md`. To be correct on **case-sensitive** filesystems
- * (Linux/CI) while staying convenient on case-insensitive ones, the lookup tries the name as
- * given (e.g. `Reference.md`, matching the docs' canonical-case `<type>` spelling) and then its
- * lower-cased form (`reference.md`, matching the schema filenames). A present file is the user
- * template (override, AC#2). If none exists: an explicit `--template` is a `not_found` error
- * (the caller asked for a specific template); otherwise lore falls back to the built-in.
+ * the file is `.lore/templates/<base>.md`. The base precedence is: an explicit `--template <name>`,
+ * else the **profile type's declared `template`** (its filename minus `.md`), else the type name.
+ * To be correct on **case-sensitive** filesystems (Linux/CI) while staying convenient on
+ * case-insensitive ones, the lookup tries the name as given (e.g. `Reference.md`, matching the
+ * docs' canonical-case `<type>` spelling) and then its lower-cased form (`reference.md`, matching
+ * the schema filenames). A present file is the user template (override, AC#2). If none exists: an
+ * explicit `--template` is a `not_found` error (the caller asked for a specific template); a
+ * profile-declared-but-missing template, like the default, falls back to the built-in body.
  */
-function resolveTemplate(parsed: NewArgs, type: string, root: string): string {
-  const base = parsed.template ?? type;
+function resolveTemplate(parsed: NewArgs, type: string, root: string, profile: Profile): string {
+  const declared = profile.types.get(type)?.template?.replace(/\.md$/i, "");
+  const base = parsed.template ?? declared ?? type;
   for (const candidate of templateCandidates(base)) {
     const relPath = `${TEMPLATES_DIR}/${candidate}.md`;
     const text = readTemplateFile(join(root, relPath), relPath);

@@ -139,11 +139,18 @@ function rootIndexDocument(timestamp: string, profile: Profile): string {
     },
     body: ROOT_INDEX_BODY,
   };
-  // The root index carries a modeline only when the profile actually defines its type (so the
-  // `$schema` it points at was emitted); a profile without a `Reference` type gets a plain index.
+  // The root index is lore's OWN reserved structural file with a fixed shape, not a user concept,
+  // so it is serialized/validated against the built-in default profile — never the active one. A
+  // custom profile that retypes `Reference` (e.g. adds a required field) therefore cannot make
+  // `lore init` abort while writing docs/index.md. (Only `okf_version` above is profile-derived.)
+  // The modeline is carried only when the *active* profile defines the type, so the `$schema` it
+  // points at was actually emitted under `.lore/schemas/`.
+  const structural = defaultProfile();
   return profile.types.has(ROOT_INDEX_TYPE)
-    ? serializeConceptWithModeline(concept, schemaModeline(ROOT_INDEX_PATH, ROOT_INDEX_TYPE), { profile })
-    : serializeConcept(concept, { profile });
+    ? serializeConceptWithModeline(concept, schemaModeline(ROOT_INDEX_PATH, ROOT_INDEX_TYPE), {
+        profile: structural,
+      })
+    : serializeConcept(concept, { profile: structural });
 }
 
 /** The reserved root index's `type` — lore's bundle entry point is conventionally a `Reference`. */
