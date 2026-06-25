@@ -29,7 +29,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { LoreError } from "./errors";
+import { errnoCode, LoreError } from "./errors";
 
 /** Where lore's config lives, relative to the repo root. */
 const CONFIG_REL_PATH = ".lore/config.toml";
@@ -281,7 +281,7 @@ function fail(message: string, hint: string, input: Record<string, unknown>): ne
 
 /** True when `cause` is a Node fs error carrying the given errno `code` (e.g. `"ENOENT"`). */
 function isErrnoCode(cause: unknown, code: string): boolean {
-  return typeof cause === "object" && cause !== null && (cause as { code?: unknown }).code === code;
+  return errnoCode(cause) === code;
 }
 
 /** Append `: <reason>` to `base` only when a non-empty reason can be derived from `cause`. */

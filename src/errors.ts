@@ -220,6 +220,21 @@ export interface Writer {
 }
 
 /**
+ * The `errno` string code (`"ENOENT"`, `"EACCES"`, …) carried by a thrown Node
+ * filesystem error, or `undefined` for a value that is not such an error. The one
+ * place lore reads `cause.code`, so every module that classifies a filesystem
+ * failure (config load, bundle walk) shares one guarded extractor instead of
+ * re-spelling the `typeof`/`in` dance.
+ */
+export function errnoCode(cause: unknown): string | undefined {
+  if (typeof cause === "object" && cause !== null && "code" in cause) {
+    const code = (cause as { code: unknown }).code;
+    return typeof code === "string" ? code : undefined;
+  }
+  return undefined;
+}
+
+/**
  * Project an arbitrary value onto a JSON-safe shape — primitives, arrays, and
  * plain objects only — that {@link JSON.stringify} can encode without throwing.
  * This is the degraded path {@link safeStringify} takes when a raw stringify

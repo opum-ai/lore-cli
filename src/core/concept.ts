@@ -70,6 +70,7 @@
  *   `JSON_SCHEMA` parses numbers to JS doubles); quote such a value to keep it exact.
  */
 
+import { posix } from "node:path";
 import matter from "gray-matter";
 import type { DumpOptions, LoadOptions } from "js-yaml";
 import yaml from "js-yaml";
@@ -169,11 +170,44 @@ export interface ParseConceptOptions {
  * @param raw  the file's raw text (the `---`-fenced frontmatter plus body).
  */
 export function parseConcept(path: string, raw: string, options: ParseConceptOptions = {}): Concept {
-  const { frontmatter, body } = splitFrontmatter(path, normalizeInput(raw));
-  // validateFrontmatter returns the resolved (trimmed, non-empty) type, so `type`
-  // mirrors the semantic type even when `frontmatter.type` carries stray whitespace.
-  const type = validateFrontmatter(frontmatter, { warnings: options.warnings, path });
-  return { id: idFromPath(path), path, type, frontmatter, body };
+  const split = splitFrontmatter(path, normalizeInput(raw));
+  if (!split.present) {
+    throw absentFrontmatterError(path, split.reason);
+  }
+  return conceptFromSplit(path, split, options);
+}
+
+/**
+ * Like {@link parseConcept}, but returns `null` when `raw` is **not a concept
+ * file** — it has no frontmatter, an empty fence, or a non-mapping fence (a bare
+ * scalar/list, e.g. a hand-written doc that merely *opens* with a `---` thematic
+ * break). It still **throws** for a real but malformed concept: unparseable YAML,
+ * or a frontmatter *mapping* that fails the lore profile (missing/invalid `type`,
+ * mistyped field).
+ *
+ * This is the distinction a bundle walk ({@link loadBundle}) needs: a non-concept
+ * is skipped, a broken concept fails loud. A plain `hasFrontmatter`-style prefix
+ * check cannot draw it — telling "an empty/HR `---`" from "real frontmatter"
+ * requires actually parsing the YAML, which is exactly what this does (once), so a
+ * caller never parses the same bytes twice.
+ */
+export function tryParseConcept(path: string, raw: string, options: ParseConceptOptions = {}): Concept | null {
+  const split = splitFrontmatter(path, normalizeInput(raw));
+  return split.present ? conceptFromSplit(path, split, options) : null;
+}
+
+/**
+ * Validate a present frontmatter split against the lore profile and assemble the
+ * {@link Concept}. Shared by {@link parseConcept} and {@link tryParseConcept} so
+ * the validate-and-construct step (and the byte-stable `frontmatter`/`body`
+ * passthrough) has one home. `validateFrontmatter` returns the resolved (trimmed,
+ * non-empty) `type`, so the `type` mirror is correct even when `frontmatter.type`
+ * carries stray whitespace; it throws a `validation` {@link LoreError} on a
+ * malformed mapping.
+ */
+function conceptFromSplit(path: string, split: PresentSplit, options: ParseConceptOptions): Concept {
+  const type = validateFrontmatter(split.frontmatter, { warnings: options.warnings, path });
+  return { id: idFromPath(path), path, type, frontmatter: split.frontmatter, body: split.body };
 }
 
 /**
@@ -217,13 +251,35 @@ function normalizeInput(raw: string): string {
     .replace(/^\s+/, "");
 }
 
+/** A frontmatter split that yielded a usable mapping. */
+interface PresentSplit {
+  readonly present: true;
+  readonly frontmatter: Record<string, unknown>;
+  readonly body: string;
+}
+
 /**
- * Split normalized bytes into a frontmatter mapping + body via gray-matter, mapping
- * every failure into a `validation` {@link LoreError}: malformed YAML, a non-mapping
- * frontmatter (a bare scalar/list between the fences), or no frontmatter at all
- * (a concept needs at least a `type:`).
+ * The outcome of splitting a normalized file: either a usable frontmatter mapping
+ * ({@link PresentSplit}), or **absent** — the file is not a concept at all. `reason`
+ * distinguishes the two absent shapes so {@link parseConcept} can raise the precise
+ * diagnostic: `"non-mapping"` is a fence holding a bare scalar/list (e.g. a doc
+ * that merely *opens* with a `---` thematic break), `"missing"` is no fence, an
+ * empty fence, or a `null` fence.
  */
-function splitFrontmatter(path: string, raw: string): { frontmatter: Record<string, unknown>; body: string } {
+type FrontmatterSplit = PresentSplit | { readonly present: false; readonly reason: "non-mapping" | "missing" };
+
+/**
+ * Split normalized bytes into a frontmatter mapping + body via gray-matter.
+ *
+ * It **throws** a `validation` {@link LoreError} only for genuinely malformed YAML
+ * inside a fence. The two *not-a-concept* shapes — a non-mapping fence (a bare
+ * scalar/list, which is what a leading `---` thematic break parses to) and a
+ * missing/empty/`null` fence — are returned as `present: false`, **not** thrown, so
+ * a caller can decide: {@link parseConcept} turns them into the matching error,
+ * while {@link tryParseConcept} skips the file. This is what keeps a stray
+ * thematic-break doc from aborting a whole {@link loadBundle}.
+ */
+function splitFrontmatter(path: string, raw: string): FrontmatterSplit {
   let file: matter.GrayMatterFile<string>;
   try {
     file = matter(raw, MATTER_OPTIONS);
@@ -238,26 +294,37 @@ function splitFrontmatter(path: string, raw: string): { frontmatter: Record<stri
 
   const data: unknown = file.data;
   if (typeof data !== "object" || data === null || Array.isArray(data)) {
-    throw new LoreError(
+    return { present: false, reason: "non-mapping" };
+  }
+  if (Object.getOwnPropertyNames(data).length === 0) {
+    // gray-matter maps a missing fence, an empty fence, AND a fence holding a bare
+    // `null` all to `{}` — one "no usable frontmatter mapping" outcome.
+    return { present: false, reason: "missing" };
+  }
+  return { present: true, frontmatter: data as Record<string, unknown>, body: file.content };
+}
+
+/**
+ * The `validation` {@link LoreError} {@link parseConcept} raises when frontmatter
+ * is absent — the strict-parse counterpart to {@link tryParseConcept} returning
+ * `null`. The message matches the absent `reason` so the diagnostic points at the
+ * real fix.
+ */
+function absentFrontmatterError(path: string, reason: "non-mapping" | "missing"): LoreError {
+  if (reason === "non-mapping") {
+    return new LoreError(
       "validation",
       `frontmatter in ${path} must be a YAML mapping`,
       "write frontmatter as `key: value` lines between the --- fences",
       { path },
     );
   }
-  if (Object.getOwnPropertyNames(data).length === 0) {
-    // gray-matter maps a missing fence, an empty fence, AND a fence holding a bare
-    // `null` all to `{}`, so this one message covers every "no usable frontmatter
-    // mapping" case rather than misclaiming "no frontmatter" when an (empty/null)
-    // block is present.
-    throw new LoreError(
-      "validation",
-      `${path} has no usable frontmatter (it is missing, empty, or null); a concept file needs at least a \`type:\``,
-      "add a frontmatter block, e.g. `---` then `type: Reference` then `---`",
-      { path },
-    );
-  }
-  return { frontmatter: data as Record<string, unknown>, body: file.content };
+  return new LoreError(
+    "validation",
+    `${path} has no usable frontmatter (it is missing, empty, or null); a concept file needs at least a \`type:\``,
+    "add a frontmatter block, e.g. `---` then `type: Reference` then `---`",
+    { path },
+  );
 }
 
 /**
@@ -292,7 +359,16 @@ function canonicalize(frontmatter: Record<string, unknown>): Record<string, unkn
  * Derive a concept id from its path: the path minus a trailing `.md`, matched
  * **case-insensitively** so the same on-disk file yields one id whether referenced
  * as `Foo.md` or `Foo.MD` (a real divergence on case-insensitive filesystems).
+ *
+ * Exported as the single source of the path→id rule so the bundle layer
+ * ({@link loadBundle}) strips the `.md` suffix the exact same way when resolving a
+ * cross-link target to a concept id — the resolution must agree byte-for-byte with
+ * how this module derived the id, or a valid link would dangle. The path is
+ * POSIX-normalized first (`adr/./x.md` and `a/../adr/x.md` collapse to `adr/x`), so
+ * a stored id and a link that resolves to it agree even when one side carries a
+ * redundant `.`/`..` segment.
  */
-function idFromPath(path: string): string {
-  return /\.md$/i.test(path) ? path.slice(0, -3) : path;
+export function idFromPath(path: string): string {
+  const normalized = posix.normalize(path);
+  return /\.md$/i.test(normalized) ? normalized.slice(0, -3) : normalized;
 }

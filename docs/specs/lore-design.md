@@ -4,7 +4,7 @@ type: Spec
 title: lore implementation design
 description: The implementation design for lore — module responsibilities and boundaries, command sequence flows, the error/exit-code model, the idempotency strategy, git-native versioning, the output-mode layer, and the testing strategy — elaborating the product spec into a buildable plan.
 tags: [design, spec, core, commands, idempotency, testing, exit-codes]
-summary: How lore is built: a deterministic core/ library returning structured objects, thin commands over it, byte-stable serialization, git-native versioning, and a layered output/error model — with the testing strategy that locks it all down.
+summary: "How lore is built: a deterministic core/ library returning structured objects, thin commands over it, byte-stable serialization, git-native versioning, and a layered output/error model — with the testing strategy that locks it all down."
 timestamp: 2026-06-21T00:00:00Z
 ---
 
