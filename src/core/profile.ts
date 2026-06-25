@@ -680,18 +680,22 @@ function storyConventionProfile(): ParsedProfile {
       // supersedes / superseded_by are reserved coupling fields (RESERVED_FIELDS): their
       // `string | list` union is added by the compiler, not declared here.
     },
+    // The story-convention types declare NO `template`: their bodies come from the built-in
+    // code templates (template.ts BUILTIN_TEMPLATES via builtinTemplateFor), not from a file
+    // under .lore/templates/. A declared `template` is for a custom profile that ships its own
+    // template files; setting one here would force `lore new`'s lookup to a lowercased filename
+    // and stop honoring a canonical-case `Reference.md` on a case-sensitive filesystem.
     types: [
-      { name: "Epic", fields: {}, sections: [], template: "epic.md" },
+      { name: "Epic", fields: {}, sections: [] },
       {
         name: "Story",
         fields: { tasks: optionalStringList, specs: optionalStringList },
         sections: ["Acceptance criteria"],
-        template: "story.md",
       },
-      { name: "Spec", fields: {}, sections: [], template: "spec.md" },
-      { name: "ADR", fields: {}, sections: ["Status", "Context", "Decision", "Consequences"], template: "adr.md" },
-      { name: "Runbook", fields: {}, sections: [], template: "runbook.md" },
-      { name: "Reference", fields: {}, sections: [], template: "reference.md" },
+      { name: "Spec", fields: {}, sections: [] },
+      { name: "ADR", fields: {}, sections: ["Status", "Context", "Decision", "Consequences"] },
+      { name: "Runbook", fields: {}, sections: [] },
+      { name: "Reference", fields: {}, sections: [] },
     ],
   };
 }

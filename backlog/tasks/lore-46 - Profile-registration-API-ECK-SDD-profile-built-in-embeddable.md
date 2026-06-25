@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@jeremy'
 created_date: '2026-06-21 20:16'
-updated_date: '2026-06-25 22:35'
+updated_date: '2026-06-25 23:39'
 labels:
   - eck-alignment
   - core
@@ -49,22 +49,6 @@ ADR amendments: ADR-0006 (primary inversion; RETAIN the §5 summary-length heuri
 - [x] #8 Grammar validated against ECK's 17-type SDD draft (first external consumer): reconciles with ZERO consumer-file edits; ADR-0006 §5 summary-length heuristic retained as a lore built-in
 <!-- AC:END -->
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
@@ -85,4 +69,10 @@ Implemented on feat/lore-46-declarative-profile (commit 6bd7bdc). Inverted ADR-0
 Key decisions: (1) supersedes/superseded_by keep their string|list union as lore-reserved coupling fields with a built-in validator (the grammar's kind cannot express a union — AC#5 expressiveness limit, same precedent as the §5 summary heuristic), which also keeps their JSON schema byte-identical. (2) Editor schema filename keeps the .schema.json suffix with the slug as stem (Reference->reference.schema.json unchanged; QA Plan->qa-plan.schema.json) — renaming to <slug>.json would break every committed modeline in docs/; read AC#7's 'qa-plan.json' as naming the slug. (3) typeDirectory stays a lore built-in convenience map (not in the finalized grammar). (4) lore init now scaffolds a commented .lore/profile.toml; an all-commented/empty profile -> zero-config default. (5) resource_base is parsed/validated/exposed here; the actual resource STAMPING + GitAdapter/ADR-0014 are LORE-47 (out of scope).
 
 End-to-end dogfooded through the real CLI: init -> new adr (default profile, validates clean) -> custom .lore/profile.toml with a PRD type read by the standalone binary as data -> new PRD -> validate enforces the PRD's declared required sections as Tier-2 errors. Gates: 461 tests pass (incl. new test/profile.test.ts), tsc clean, biome clean, profile.ts 94% lines/100% funcs. ADR-0006/0007/0011/0013 amended; CHANGELOG updated. /code-review max running.
+
+/code-review max (workflow-backed, 8 finder angles + per-candidate verify) ran clean and found real bugs; fixed in commit 120c14a. FIXED: (1) partial profile [base.fields] but no [[types]] silently emptied the gate -> now a load error; (2) empty/commented profile.toml shadowed a populated profile.json -> now falls through; (3) custom Reference type crashed lore init -> root index serializes against the default profile; (4) multi-word profile type (QA Plan) blocked by VALID_TYPE -> allowed for profile-known types, typeDirectory uses slug; (5) per-type template field was dead -> resolveTemplate honors it; (6) canonical key order byte-regression (reserved coupling before per-type) -> reserved emit LAST, matching pre-LORE-46 order (ADR-0011); (7) prototype-pollution on untrusted field names -> guarded. Plus cleanups (shared scalarKindToZod, slugify aliases slugForTypeName, removed dead CompiledType.fieldOrder). Regression tests added (profile/new/init); 466 tests pass, tsc+biome clean.
+
+DEFERRED (noted for follow-up, low severity): (a) non-Latin type names slug to '' and are rejected — loud clear error; ASCII-alphanumeric required in a type name for its schema filename (acceptable for v1; ECK is ASCII). (b) loadBundle/estimateConcept in bundle.ts not profile-threaded — latent (no shipped command calls loadBundle yet); thread the active profile when the graph/context commands (LORE-31/34) wire it. (c) config.ts and profile.ts duplicate the hand-rolled TOML-shape validators — intentional mirroring; a shared toml-shape util is a future DRY cleanup touching config.ts. (d) CompiledType.jsonSchema is built eagerly though only lore init consumes it — negligible (z.toJSONSchema over <=17 types per invocation).
+
+PR #17 opened into dev (https://github.com/jeremy-newhouse/lore/pull/17), HEAD 120c14a. Awaiting Jeremy's review + merge (no self-merge). Status stays In Progress until merged.
 <!-- SECTION:NOTES:END -->
