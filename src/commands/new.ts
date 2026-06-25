@@ -15,11 +15,11 @@
  * creates a *new* concept and must never overwrite or silently no-op onto an existing file.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { idFromPath } from "../core/concept";
 import { DOCS_DIR } from "../core/scaffold";
-import { canonicalType, typeDirectory } from "../core/schema";
+import { canonicalType, isKnownType, SCHEMAS_DIR, schemaFileName, schemaModeline, typeDirectory } from "../core/schema";
 import { buildNewConcept, builtinTemplateFor, slugify } from "../core/template";
 import { EXIT_OK, errnoCode, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
@@ -27,6 +27,12 @@ import { createIfAbsent, ensureDir } from "./fswrite";
 
 /** Where user templates live, relative to the repo root. */
 const TEMPLATES_DIR = ".lore/templates";
+
+/** The reserved bundle-root index `lore init` owns (the sole `okf_version` carrier); `lore new` must not write it. */
+const RESERVED_ROOT_INDEX = `${DOCS_DIR}/index.md`;
+
+/** A valid concept type token: starts with a letter, then letters/digits/dashes/underscores — no spaces or path separators. */
+const VALID_TYPE = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
 /**
  * The stub `summary` injected when no `--summary` is given. Short and present, so a no-flag
@@ -82,6 +88,12 @@ export function runNew(options: NewOptions): number {
   const clock = options.clock ?? (() => new Date());
   const parsed = parseNewArgs(options.args);
   const type = canonicalType(parsed.type);
+  if (!VALID_TYPE.test(type)) {
+    throw usage(
+      `"${parsed.type}" is not a valid type`,
+      "a type must start with a letter and contain only letters, digits, dashes, or underscores",
+    );
+  }
 
   const docPath = resolveDocPath(parsed, type, options.root);
   const bodyTemplate = resolveTemplate(parsed, type, options.root);
@@ -95,17 +107,19 @@ export function runNew(options: NewOptions): number {
     tags: parseTags(parsed.tags),
     bodyTemplate,
     vars: parsed.vars,
+    modeline: resolveModeline(type, docPath, options.root),
   });
 
   const absPath = join(options.root, docPath);
+  // Check for an existing target before creating any parent directories, so an aborted
+  // (conflicting) run leaves no empty scaffold dirs behind. `createIfAbsent`'s atomic `wx`
+  // write remains the authority that closes the time-of-check/time-of-use race.
+  if (existsSync(absPath)) {
+    throw conflict(docPath);
+  }
   ensureDir(join(options.root, posix.dirname(docPath)), posix.dirname(docPath));
   if (!createIfAbsent(absPath, build.contents, docPath)) {
-    throw new LoreError(
-      "conflict",
-      `${docPath} already exists`,
-      "choose a different title, pass --out <path>, or remove the existing file",
-      { path: docPath },
-    );
+    throw conflict(docPath);
   }
 
   flushWarnings(build.warnings, options.output, options.stderr);
@@ -113,14 +127,42 @@ export function runNew(options: NewOptions): number {
   return EXIT_OK;
 }
 
+/** A `conflict` {@link LoreError} (exit `5`) for a target path that already exists. */
+function conflict(docPath: string): LoreError {
+  return new LoreError(
+    "conflict",
+    `${docPath} already exists`,
+    "choose a different title, pass --out <path>, or remove the existing file",
+    { path: docPath },
+  );
+}
+
+/**
+ * The editor modeline for a known type whose exported schema actually exists on disk, else
+ * `undefined`. An unknown type has no schema; a doc written into a never-`init`-ed bundle has no
+ * `.lore/schemas/` either — in both cases lore writes no modeline rather than one pointing at a
+ * `$schema` file that is not there.
+ */
+function resolveModeline(type: string, docPath: string, root: string): string | undefined {
+  if (!isKnownType(type)) {
+    return undefined;
+  }
+  if (!existsSync(join(root, SCHEMAS_DIR, schemaFileName(type)))) {
+    return undefined;
+  }
+  return schemaModeline(docPath, type);
+}
+
 // ── Argument parsing ───────────────────────────────────────────────────────────
 
 /**
- * Parse `new`'s tokens into positionals (`<type> <title>`) and its flags. Global flags
- * (`--json`/`--plain`/…) are already stripped by the router, so anything `--`-prefixed here
- * is a command flag: an unrecognized one is a `usage` error, as is a value-taking flag with
- * no value, a malformed `--var`, or the wrong positional count. Both `--flag value` and
- * `--flag=value` forms are accepted.
+ * Parse `new`'s tokens into positionals (`<type> <title>`) and its flags. The router has
+ * already stripped lore's global flags, so anything `--`-prefixed here is a command flag: an
+ * unrecognized one is a `usage` error, as is a malformed `--var` or the wrong positional count.
+ * Both `--flag value` and `--flag=value` forms are accepted; a value-taking flag refuses to
+ * consume a following flag-looking token as its value (so `--summary --tags x` reports the
+ * missing summary value rather than silently eating `--tags`). A `--` ends option parsing so a
+ * title may begin with `-` (`lore new adr -- "-5 minute timeout"`).
  */
 function parseNewArgs(args: readonly string[]): NewArgs {
   const positionals: string[] = [];
@@ -132,17 +174,24 @@ function parseNewArgs(args: readonly string[]): NewArgs {
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] as string;
+    if (arg === "--") {
+      // End of options: every remaining token is a positional, even if it looks like a flag.
+      positionals.push(...args.slice(i + 1));
+      break;
+    }
     if (arg.startsWith("--") && arg.length > 2) {
       const eq = arg.indexOf("=");
       const name = eq >= 0 ? arg.slice(2, eq) : arg.slice(2);
-      // Consume the flag's value: the inline `=` form, else the next token (which must exist).
+      // Consume the flag's value: the inline `=` form, else the next token — which must exist
+      // and must not itself be a flag (a following `--json`/`--tags`/`--` is a missing value,
+      // not the value), so a mis-ordered flag fails loud instead of silently binding.
       const takeValue = (): string => {
         if (eq >= 0) {
           return arg.slice(eq + 1);
         }
         const next = args[i + 1];
-        if (next === undefined) {
-          throw usage(`option "--${name}" needs a value`, `pass a value, e.g. --${name} <value>`);
+        if (next === undefined || (next.startsWith("-") && next !== "-")) {
+          throw usage(`option "--${name}" needs a value`, `pass a value, e.g. --${name}=<value>`);
         }
         i++;
         return next;
@@ -187,7 +236,7 @@ function parseNewArgs(args: readonly string[]): NewArgs {
       'pass exactly a type and a title; quote a multi-word title: lore new <type> "<title>"',
     );
   }
-  return { type, title, vars, template, summary, tags, out };
+  return { type: type.trim(), title: title.trim(), vars, template, summary, tags, out };
 }
 
 /**
@@ -242,43 +291,71 @@ function resolveDocPath(parsed: NewArgs, type: string, root: string): string {
 }
 
 /**
- * Resolve a `--out` value to a repo-relative POSIX path, ensuring it stays **inside** the
- * repo (a `..`-escaping or absolute-outside path is a usage error, not a write outside the
- * bundle) and ends in `.md` (appended when the caller omitted it).
+ * Resolve a `--out` value to a repo-relative POSIX path, confining it to the **bundle root**
+ * (`docs/`) and ending it in `.md` (appended when omitted). A path that escapes the repo
+ * (`../…`, an absolute path elsewhere), lands outside `docs/`, or targets the reserved
+ * bundle-root index (`docs/index.md`, owned by `lore init`) is a `usage` error — so `lore new`
+ * can never write an orphaned file the bundle walk won't see, nor clobber the conformance root.
+ * The `..` escape is matched by path **segment** (`..` exactly or a leading `../`), so a real
+ * in-repo path whose first segment merely starts with `..` (e.g. `..notes/x`) is not rejected.
  */
 function resolveOutPath(out: string, root: string): string {
   const rel = relative(root, resolve(root, out));
-  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+  if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
     throw usage(`--out path "${out}" must be inside the repo`, "give a path relative to the repo root");
   }
-  const posixRel = rel.split(sep).join("/");
-  return posixRel.endsWith(".md") ? posixRel : `${posixRel}.md`;
+  let posixRel = rel.split(sep).join("/");
+  if (!posixRel.endsWith(".md")) {
+    posixRel = `${posixRel}.md`;
+  }
+  if (posixRel !== DOCS_DIR && !posixRel.startsWith(`${DOCS_DIR}/`)) {
+    throw usage(
+      `--out path "${out}" must be inside the bundle root (${DOCS_DIR}/)`,
+      `give a path under ${DOCS_DIR}/, e.g. --out ${DOCS_DIR}/reference/orders.md`,
+    );
+  }
+  if (posixRel === RESERVED_ROOT_INDEX) {
+    throw usage(
+      `${RESERVED_ROOT_INDEX} is the reserved bundle-root index`,
+      "choose another path; `lore init` owns the root index that carries okf_version",
+    );
+  }
+  return posixRel;
 }
 
 /**
- * Resolve the template text. The file base is `--template <name>` when given, else the
- * type; the file is `.lore/templates/<base>.md`, lower-cased to match the lower-cased schema
- * filenames and to be stable on case-insensitive filesystems. A present file is the user
- * template (override, AC#2). An absent file falls back to the built-in for the type — unless
- * `--template` named it explicitly, in which case its absence is a `not_found` error rather
- * than a silent fallback the caller did not ask for.
+ * Resolve the template text. The file base is `--template <name>` when given, else the type;
+ * the file is `.lore/templates/<base>.md`. To be correct on **case-sensitive** filesystems
+ * (Linux/CI) while staying convenient on case-insensitive ones, the lookup tries the name as
+ * given (e.g. `Reference.md`, matching the docs' canonical-case `<type>` spelling) and then its
+ * lower-cased form (`reference.md`, matching the schema filenames). A present file is the user
+ * template (override, AC#2). If none exists: an explicit `--template` is a `not_found` error
+ * (the caller asked for a specific template); otherwise lore falls back to the built-in.
  */
 function resolveTemplate(parsed: NewArgs, type: string, root: string): string {
-  const base = (parsed.template ?? type).toLowerCase();
-  const relPath = `${TEMPLATES_DIR}/${base}.md`;
-  const text = readTemplateFile(join(root, relPath), relPath);
-  if (text !== undefined) {
-    return text;
+  const base = parsed.template ?? type;
+  for (const candidate of templateCandidates(base)) {
+    const relPath = `${TEMPLATES_DIR}/${candidate}.md`;
+    const text = readTemplateFile(join(root, relPath), relPath);
+    if (text !== undefined) {
+      return text;
+    }
   }
   if (parsed.template !== undefined) {
     throw new LoreError(
       "not_found",
-      `template "${parsed.template}" not found at ${relPath}`,
-      "create the template file, or omit --template to use the built-in",
-      { path: relPath },
+      `template "${parsed.template}" not found in ${TEMPLATES_DIR}/`,
+      `create ${TEMPLATES_DIR}/${parsed.template}.md, or omit --template to use the built-in`,
+      { path: `${TEMPLATES_DIR}/${parsed.template}.md` },
     );
   }
   return builtinTemplateFor(type);
+}
+
+/** The template filenames to try for a base, the name as given first then its lower-cased form (deduped). */
+function templateCandidates(base: string): string[] {
+  const lower = base.toLowerCase();
+  return base === lower ? [base] : [base, lower];
 }
 
 /**

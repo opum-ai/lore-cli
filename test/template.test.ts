@@ -1,23 +1,32 @@
 import { describe, expect, test } from "bun:test";
 import { parseConcept } from "../src/core/concept";
-import { canonicalType, KNOWN_TYPES, type KnownType, typeDirectory } from "../src/core/schema";
+import {
+  canonicalType,
+  isKnownType,
+  KNOWN_TYPES,
+  type KnownType,
+  schemaModeline,
+  typeDirectory,
+} from "../src/core/schema";
 import { buildNewConcept, builtinTemplateFor, renderTemplate, slugify } from "../src/core/template";
 import { LoreError, WarningCollector } from "../src/errors";
 
 const TIMESTAMP = "2026-06-25T12:00:00Z";
 
-/** Build a concept of `type` from its built-in body at the type's conventional path. */
+/** Build a concept of `type` from its built-in body at the type's conventional path, with the known-type modeline. */
 function buildBuiltin(type: string, over: { title?: string; summary?: string; tags?: string[] } = {}) {
-  const docPath = `docs/${typeDirectory(canonicalType(type))}/sample.md`;
+  const canonical = canonicalType(type);
+  const docPath = `docs/${typeDirectory(canonical)}/sample.md`;
   return buildNewConcept({
     docPath,
-    type: canonicalType(type),
+    type: canonical,
     title: over.title ?? "Sample Title",
     summary: over.summary ?? "A one-line summary.",
     timestamp: TIMESTAMP,
     tags: over.tags,
-    bodyTemplate: builtinTemplateFor(canonicalType(type)),
+    bodyTemplate: builtinTemplateFor(canonical),
     vars: Object.create(null),
+    modeline: isKnownType(canonical) ? schemaModeline(docPath, canonical) : undefined,
   });
 }
 
@@ -151,5 +160,34 @@ describe("buildNewConcept — unfilled body placeholders fail loud (exit 6)", ()
       vars: Object.assign(Object.create(null), { title: "Ignored", type: "Ignored" }),
     });
     expect(result.contents).toContain("# Real Title (Reference)");
+  });
+
+  test("a --var shadowing an auto token surfaces a warning instead of being silently dropped", () => {
+    const result = buildNewConcept({
+      docPath: "docs/reference/sample.md",
+      type: "Reference",
+      title: "Real Title",
+      summary: "Real summary.",
+      timestamp: TIMESTAMP,
+      bodyTemplate: "\n# {{title}}\n",
+      vars: Object.assign(Object.create(null), { title: "Ignored" }),
+    });
+    expect(result.warnings.some((w) => w.includes("ignoring --var title"))).toBe(true);
+  });
+});
+
+describe("buildNewConcept — the modeline is caller-supplied", () => {
+  test("no modeline is spliced when none is provided (e.g. an un-initialized bundle)", () => {
+    const result = buildNewConcept({
+      docPath: "docs/reference/sample.md",
+      type: "Reference",
+      title: "Orders",
+      summary: "The orders.",
+      timestamp: TIMESTAMP,
+      bodyTemplate: "\n# {{title}}\n",
+      vars: Object.create(null),
+    });
+    expect(result.contents).not.toContain("yaml-language-server");
+    expect(result.contents.startsWith("---\ntype: Reference\n")).toBe(true);
   });
 });

@@ -19,8 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `conflict`, exit `5`). `src/core/template.ts` is the pure renderer (`slugify`,
   `renderTemplate`, `buildNewConcept`); `src/commands/new.ts` the thin I/O layer. Flags:
   `--var k=v` (repeatable; an unfilled `{{var}}` fails loud, exit `6`), `--template <name>`,
-  `--summary`, `--tags a,b`, `--out <path>` (confined to the repo). Unknown types are
-  accepted (OKF tolerance) and scaffolded against the lenient shape without a modeline.
+  `--summary`, `--tags a,b`, `--out <path>` (confined to the `docs/` bundle root, never the
+  reserved `index.md`). The type token is validated (no path-escaping/whitespace), `--`
+  ends option parsing (a dash-leading title), a value-taking flag won't swallow a following
+  flag, and a user template is resolved case-insensitively. Unknown types are accepted (OKF
+  tolerance) and scaffolded against the lenient shape without a modeline.
   Type config gains a per-type output directory (`typeDirectory`) and case-insensitive
   type resolution (`canonicalType`) in `schema.ts`; `DOCS_DIR` is exported from
   `scaffold.ts`; the never-clobber/conflict write path is factored to `src/commands/fswrite.ts`

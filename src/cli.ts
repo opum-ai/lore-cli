@@ -60,13 +60,19 @@ interface ParsedArgs {
  * Split `argv` into the global flags, the subcommand, and the command's own tokens.
  *
  * Global flags (`--json`/`--plain`/`-v`/`--version`/`-h`/`--help`) are recognized in **any**
- * position and stripped. The **first positional** (a non-`-` token, or a bare `-`) is the
- * command; every token after it — positionals and unrecognized flags alike — is collected
- * verbatim into {@link ParsedArgs.commandArgs} for the command to parse, because only the
- * command knows which of its flags take a value. An unrecognized `-`-flag appearing *before*
+ * position before a `--` and stripped (they set their bool, they do not reach the command).
+ * The **first positional** (a non-`-` token, or a bare `-`) is the command; every token after
+ * it — positionals and the command's own flags — is collected verbatim into
+ * {@link ParsedArgs.commandArgs} for the command to parse, because only the command knows which
+ * of its flags take a value.
+ *
+ * The POSIX `--` end-of-options marker is honored: before the command, the next token is the
+ * command and the rest are its positionals; **after** the command, the marker and the remaining
+ * tokens are forwarded verbatim so the command can take a value (e.g. a title) that begins with
+ * `-`. Tokens after a `--` are never re-interpreted as flags. An unrecognized `-`-flag *before*
  * the command has no command to own it, so it is a global usage error
- * ({@link ParsedArgs.leadingUnknownFlags}). A `-`-token is never treated as the command (it
- * would be an "unknown option", not an "unknown command"); a bare `-` is a positional.
+ * ({@link ParsedArgs.leadingUnknownFlags}); a `-`-token is never the command (it is an "unknown
+ * option", not an "unknown command"), and a bare `-` is a positional.
  */
 function parseArgs(argv: readonly string[]): ParsedArgs {
   let json = false;
@@ -78,21 +84,15 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   const leadingUnknownFlags: string[] = [];
   const args = argv.slice(2);
 
-  // After a bare `--` (POSIX end-of-options) every remaining token is a positional, even one
-  // that looks like a flag — so a command can take a value beginning with `-`.
-  const pushPositional = (token: string): void => {
-    if (command === undefined) {
-      command = token;
-    } else {
-      commandArgs.push(token);
-    }
-  };
-
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] as string;
     if (arg === "--") {
-      for (const rest of args.slice(i + 1)) {
-        pushPositional(rest);
+      if (command === undefined) {
+        const rest = args.slice(i + 1);
+        command = rest[0];
+        commandArgs.push(...rest.slice(1));
+      } else {
+        commandArgs.push(arg, ...args.slice(i + 1));
       }
       break;
     }
@@ -105,14 +105,15 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     } else if (arg === "--help" || arg === "-h") {
       help = true;
     } else if (arg.startsWith("-") && arg !== "-") {
-      // A non-global `-`-flag: a command flag once we have a command, else a global usage error.
       if (command === undefined) {
         leadingUnknownFlags.push(arg);
       } else {
         commandArgs.push(arg);
       }
+    } else if (command === undefined) {
+      command = arg;
     } else {
-      pushPositional(arg);
+      commandArgs.push(arg);
     }
   }
   return { command, commandArgs, json, plain, version, help, leadingUnknownFlags };
@@ -154,13 +155,18 @@ export function run(argv: readonly string[], context: RunContext = {}): number {
   });
   try {
     rejectUnknownFlags(parsed.leadingUnknownFlags);
-    if (parsed.version) {
-      return emitMeta("version", { version: VERSION }, VERSION, output, stdout);
-    }
-    if (parsed.help || parsed.command === undefined) {
+    if (parsed.version || parsed.help || parsed.command === undefined) {
+      // The version/help/no-command paths short-circuit before any command runs, so no command
+      // will validate the tail. A stray non-global flag here (e.g. `lore init --bogus --version`)
+      // would otherwise slip through to a silent exit 0 — reject it, preserving the invariant
+      // that a typo'd flag is never swallowed by `--version`/`--help`.
+      rejectStrayCommandFlags(parsed.commandArgs);
+      if (parsed.version) {
+        return emitMeta("version", { version: VERSION }, VERSION, output, stdout);
+      }
       return emitMeta("help", { usage: USAGE }, USAGE, output, stdout);
     }
-    return dispatch(parsed, { ...context, stdout }, output);
+    return dispatch(parsed, { ...context, stdout, stderr }, output);
   } catch (err) {
     return reportError(err, { ...errorRenderOpts(output), stderr });
   }
@@ -210,25 +216,42 @@ function rejectUnknownFlags(unknownFlags: readonly string[]): void {
 }
 
 /**
- * Throw a `usage` {@link LoreError} when a command that takes no arguments got any. A
- * leftover `-`-flag is reported as an unknown option, a leftover positional as an unexpected
- * argument — so the diagnostic matches what the user actually mistyped.
+ * Reject the stray flags in `commandArgs` on a path where no command will run
+ * (version/help/no-command). Positionals and the `--` terminator are ignored — a leftover
+ * positional that `--version` simply overrides is not an error; only an unrecognized `-`-flag
+ * is, preserving the invariant that a typo'd flag is never swallowed by `--version`/`--help`.
+ */
+function rejectStrayCommandFlags(commandArgs: readonly string[]): void {
+  const stray = commandArgs.find((token) => token.startsWith("-") && token !== "-" && token !== "--");
+  if (stray !== undefined) {
+    throw new LoreError("usage", `unknown option "${stray}"`, "run `lore --help` to list options", {
+      options: [stray],
+    });
+  }
+}
+
+/**
+ * Throw a `usage` {@link LoreError} when a command that takes no arguments got any. The `--`
+ * end-of-options marker is a no-op and skipped (so `lore init --` still scaffolds); a leftover
+ * `-`-flag is reported as an unknown option, a leftover positional as an unexpected argument,
+ * so the diagnostic matches what the user actually mistyped.
  */
 function rejectCommandArgs(commandArgs: readonly string[], command: string): void {
-  if (commandArgs.length === 0) {
+  const leftover = commandArgs.filter((token) => token !== "--");
+  if (leftover.length === 0) {
     return;
   }
-  const first = commandArgs[0] as string;
+  const first = leftover[0] as string;
   if (first.startsWith("-") && first !== "-") {
     throw new LoreError("usage", `unknown option "${first}"`, "run `lore --help` to list options", {
-      options: [...commandArgs],
+      options: [...leftover],
     });
   }
   throw new LoreError(
     "usage",
     `\`lore ${command}\` takes no arguments, got "${first}"`,
     `run \`lore ${command}\` with no positional arguments`,
-    { command, unexpected: [...commandArgs] },
+    { command, unexpected: [...leftover] },
   );
 }
 

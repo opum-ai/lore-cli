@@ -75,6 +75,20 @@ describe("cli — usage errors (exit 2)", () => {
     expect(run(argv("--version", "--bogus"), c)).toBe(EXIT_CODES.usage);
   });
 
+  test("an unknown flag AFTER the command is not swallowed by --version", () => {
+    // Regression guard: a post-command typo'd flag must still be rejected, not slip through
+    // the --version short-circuit to a silent exit 0.
+    const c = ctx();
+    expect(run(argv("init", "--bogus", "--version"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).toContain("unknown option");
+    expect(c.stdout.text()).toBe("");
+  });
+
+  test("an unknown flag after the command is not swallowed by --help either", () => {
+    const c = ctx();
+    expect(run(argv("init", "--bogus", "--help"), c)).toBe(EXIT_CODES.usage);
+  });
+
   test("an extra positional on init is a usage error", () => {
     const c = ctx();
     expect(run(argv("init", "extra"), c)).toBe(EXIT_CODES.usage);
@@ -153,6 +167,13 @@ describe("cli — new dispatch", () => {
   test("a missing title on `new` is a usage error", () => {
     const c = ctx({ cwd });
     expect(run(argv("new", "adr"), c)).toBe(EXIT_CODES.usage);
+  });
+
+  test("the `--` terminator is forwarded so a dash-leading title is accepted", () => {
+    const c = ctx({ cwd });
+    // `--json` must precede `--`; anything after the terminator is a positional (the title).
+    expect(run(argv("new", "adr", "--json", "--", "-5 minute timeout"), c)).toBe(0);
+    expect(existsSync(join(cwd, "docs/adr/5-minute-timeout.md"))).toBe(true);
   });
 });
 

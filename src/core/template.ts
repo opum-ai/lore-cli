@@ -26,7 +26,7 @@
 
 import { LoreError, WarningCollector } from "../errors";
 import { type Concept, idFromPath, serializeConcept, serializeConceptWithModeline } from "./concept";
-import { isKnownType, type KnownType, schemaModeline, validateFrontmatter } from "./schema";
+import { isKnownType, type KnownType, validateFrontmatter } from "./schema";
 
 /**
  * Derive a filename slug from a concept title: Unicode-normalized, diacritics stripped,
@@ -98,6 +98,13 @@ export interface BuildNewConceptInput {
   bodyTemplate: string;
   /** Extra `--var` placeholder values for the body (the auto tokens are added and take precedence). */
   vars: Record<string, string>;
+  /**
+   * The editor modeline to splice inside the fence, or absent for none. The command decides: a
+   * known type whose exported schema actually exists on disk gets one; an unknown type, or a
+   * doc written outside an initialized bundle, gets none rather than a modeline pointing at a
+   * schema file that is not there.
+   */
+  modeline?: string;
 }
 
 /** The result of {@link buildNewConcept}: the bytes to write and any advisory warnings raised on validation. */
@@ -123,11 +130,13 @@ export interface BuildNewConceptResult {
  * it is valid by construction regardless of what characters the title/summary/tags contain.
  * It is validated ({@link validateFrontmatter}: a known type yields a clean concept; an
  * unknown type warns and is tolerated) and serialized through the byte-stable concept
- * boundary, with the editor modeline spliced inside the fence for a **known** type
- * ({@link serializeConceptWithModeline}); an unknown type has no exported schema, so it is
- * written without a modeline rather than pointing at a file that does not exist.
+ * boundary, with the caller-supplied editor modeline spliced inside the fence when present
+ * ({@link serializeConceptWithModeline}), else no modeline. A `--var` that shadows an auto
+ * token is reported as an advisory warning rather than silently dropped.
  */
 export function buildNewConcept(input: BuildNewConceptInput): BuildNewConceptResult {
+  const warnings = new WarningCollector();
+  warnShadowedVars(input.vars, input.docPath, warnings);
   const body = renderBody(input);
 
   const frontmatter: Record<string, unknown> = {
@@ -140,7 +149,6 @@ export function buildNewConcept(input: BuildNewConceptInput): BuildNewConceptRes
     frontmatter.tags = [...input.tags];
   }
 
-  const warnings = new WarningCollector();
   const resolvedType = validateFrontmatter(frontmatter, { warnings, path: input.docPath });
   const concept: Concept = {
     id: idFromPath(input.docPath),
@@ -150,10 +158,21 @@ export function buildNewConcept(input: BuildNewConceptInput): BuildNewConceptRes
     body,
   };
 
-  const contents = isKnownType(resolvedType)
-    ? serializeConceptWithModeline(concept, schemaModeline(input.docPath, resolvedType))
-    : serializeConcept(concept);
+  const contents =
+    input.modeline !== undefined ? serializeConceptWithModeline(concept, input.modeline) : serializeConcept(concept);
   return { contents, type: resolvedType, warnings: warnings.list() };
+}
+
+/** The placeholder names lore fills automatically; a `--var` for one of these is ignored (it would be overridden). */
+const AUTO_TOKENS = ["type", "title", "timestamp", "summary"] as const;
+
+/** Warn for each `--var` whose key shadows an auto token, so a discarded override is visible rather than silent. */
+function warnShadowedVars(vars: Record<string, string>, path: string, warnings: WarningCollector): void {
+  for (const token of AUTO_TOKENS) {
+    if (Object.hasOwn(vars, token)) {
+      warnings.add(`ignoring --var ${token} in ${path}; \`${token}\` is set automatically by \`lore new\``);
+    }
+  }
 }
 
 /** Render the body template with the auto tokens layered over `--var` (autos win), failing loud on any unfilled token. */

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runInit } from "../src/commands/init";
 import { type NewResult, runNew } from "../src/commands/new";
 import { loadBundle } from "../src/core/bundle";
 import { LoreError, WarningCollector } from "../src/errors";
@@ -15,9 +16,9 @@ let root: string;
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "lore-new-"));
-  // `new` writes into docs/<dir>/; it does not require a full `init`, but the templates
-  // directory is where user-template tests drop files, so ensure it exists up front.
-  mkdirSync(join(root, ".lore/templates"), { recursive: true });
+  // `new` is run inside an initialized bundle: `init` creates `.lore/schemas/` (so a known
+  // type gets its editor modeline) and `.lore/templates/` (where user-template tests drop files).
+  runInit({ root, output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
 });
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
@@ -92,6 +93,25 @@ describe("lore new — scaffolding a known type", () => {
     const { result } = newCmd(["reference", "Orders table", "--out=docs/reference/inline"]);
     expect(result.path).toBe("docs/reference/inline.md");
   });
+
+  test("a `--` terminator lets a title begin with a dash", () => {
+    const { result } = newCmd(["adr", "--", "-5 minute timeout"]);
+    expect(result.path).toBe("docs/adr/5-minute-timeout.md");
+    // The dash-leading title is YAML-quoted structurally (never corrupts the frontmatter).
+    expect(readFileSync(join(root, result.path), "utf8")).toContain('title: "-5 minute timeout"');
+  });
+
+  test("a trimmed title: surrounding whitespace is dropped from frontmatter and slug alike", () => {
+    const { result } = newCmd(["adr", "  Soft deletes  "]);
+    expect(result.path).toBe("docs/adr/soft-deletes.md");
+    expect(readFileSync(join(root, result.path), "utf8")).toContain("title: Soft deletes\n");
+  });
+
+  test("a --var shadowing an auto token is ignored with a warning, not silently dropped", () => {
+    const { stderr } = newCmd(["adr", "Real Title", "--var", "title=Ignored"]);
+    expect(stderr.text()).toContain("ignoring --var title");
+    expect(readFileSync(join(root, "docs/adr/real-title.md"), "utf8")).toContain("title: Real Title");
+  });
 });
 
 describe("lore new — user templates override built-ins (AC#2)", () => {
@@ -110,6 +130,20 @@ describe("lore new — user templates override built-ins (AC#2)", () => {
     writeFileSync(join(root, ".lore/templates/rich.md"), "\n# {{title}}\n\nfrom rich template\n");
     const { result } = newCmd(["reference", "Orders table", "--template", "rich"]);
     expect(readFileSync(join(root, result.path), "utf8")).toContain("from rich template");
+  });
+
+  test("a canonical-case template file (Reference.md) is honored on case-sensitive filesystems", () => {
+    // The default lookup tries the type's canonical case before lowercasing, so a user template
+    // named with the documented `<type>` spelling overrides the built-in even on Linux/CI.
+    writeFileSync(join(root, ".lore/templates/Reference.md"), "\n# {{title}}\n\ncanonical-case template\n");
+    const { result } = newCmd(["reference", "Orders table"]);
+    expect(readFileSync(join(root, result.path), "utf8")).toContain("canonical-case template");
+  });
+
+  test("an explicit mixed-case --template resolves its mixed-case file", () => {
+    writeFileSync(join(root, ".lore/templates/Rich.md"), "\n# {{title}}\n\nfrom Rich\n");
+    const { result } = newCmd(["reference", "Orders table", "--template", "Rich"]);
+    expect(readFileSync(join(root, result.path), "utf8")).toContain("from Rich");
   });
 
   test("an explicit --template that does not exist is a not_found error", () => {
@@ -192,6 +226,43 @@ describe("lore new — usage errors (exit 2)", () => {
 
   test("an --out escaping the repo is a usage error", () => {
     expect(expectError(["adr", "Title", "--out", "../../etc/evil"]).type).toBe("usage");
+  });
+
+  test("a type containing path separators is a usage error (no bundle escape)", () => {
+    expect(expectError(["../evil", "Title"]).type).toBe("usage");
+  });
+
+  test("a bare `-` type is a usage error", () => {
+    expect(expectError(["-", "Title"]).type).toBe("usage");
+  });
+
+  test("a value-taking flag followed by another flag reports the missing value", () => {
+    const err = expectError(["adr", "Title", "--summary", "--tags", "x"]);
+    expect(err.type).toBe("usage");
+    expect(err.message).toContain("--summary");
+  });
+});
+
+describe("lore new — output path is confined to the bundle root", () => {
+  test("--out outside docs/ is a usage error (no orphaned out-of-bundle file)", () => {
+    const err = expectError(["adr", "Title", "--out", "src/notes.md"]);
+    expect(err.type).toBe("usage");
+    expect(existsSync(join(root, "src/notes.md"))).toBe(false);
+  });
+
+  test("--out onto the reserved root index docs/index.md is a usage error", () => {
+    const before = readFileSync(join(root, "docs/index.md"), "utf8");
+    expect(expectError(["reference", "Home", "--out", "docs/index.md"]).type).toBe("usage");
+    // The init-owned root index (with okf_version) is untouched.
+    expect(readFileSync(join(root, "docs/index.md"), "utf8")).toBe(before);
+  });
+
+  test("a path segment merely starting with `..` is confined by docs/, not the escape guard", () => {
+    // `..notes` is a real segment, not a `..` parent escape: outside docs/ it fails the bundle
+    // check (not a false 'escapes the repo'), and under docs/ it is a legitimate directory name.
+    expect(expectError(["adr", "Title", "--out", "..notes/x"]).type).toBe("usage");
+    const { result } = newCmd(["adr", "Title", "--out", "docs/..notes/x"]);
+    expect(result.path).toBe("docs/..notes/x.md");
   });
 });
 
