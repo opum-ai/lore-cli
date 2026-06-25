@@ -1,9 +1,9 @@
 ---
 type: ADR
 title: "ADR-0009: Story↔Task coupling & status reconciliation"
-description: How lore couples a Story doc to Backlog.md tasks (doc→task via the Story's tasks: frontmatter, task→doc via a queryable doc:<conceptId> label), and how it reconciles a Story's status from live task statuses using the status set read from Backlog config rather than a hardcoded list.
+description: "How lore couples a Story doc to Backlog.md tasks (doc→task via the Story's tasks: frontmatter, task→doc via a queryable doc:<conceptId> label), and how it reconciles a Story's status from live task statuses using the status set read from Backlog config rather than a hardcoded list."
 tags: [adr, backlog, coupling, status, reconciliation, labels, story]
-summary: A Story's tasks: frontmatter is the doc→task source of truth, the task→doc back-reference is a queryable Backlog label doc:<conceptId>, and a Story's status is reconciled from live task statuses using the status set from Backlog config, with tasks linked by ID and paths resolved fresh each run.
+summary: "A Story's tasks: frontmatter is the doc→task source of truth, the task→doc back-reference is a queryable Backlog label doc:<conceptId>, and a Story's status is reconciled from live task statuses using the status set from Backlog config, with tasks linked by ID and paths resolved fresh each run."
 timestamp: 2026-06-21T00:00:00Z
 ---
 
