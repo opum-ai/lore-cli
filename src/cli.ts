@@ -18,7 +18,7 @@
 import { runInit } from "./commands/init";
 import { LoreError, reportError, type Writer } from "./errors";
 import { VERSION } from "./meta";
-import { errorRenderOpts, type OutputContext, resolveOutput } from "./output";
+import { emit, errorRenderOpts, type OutputContext, type Renderable, resolveOutput } from "./output";
 
 const USAGE = `lore ${VERSION} — OKF-native documentation CLI
 
@@ -94,24 +94,19 @@ export interface RunContext {
 /**
  * Parse `argv`, dispatch the subcommand, and return the process exit code. Pure with
  * respect to its injected {@link RunContext} (streams, env, cwd, TTY) so the whole
- * router is testable without touching the real process. `--version`/`--help` and an
- * absent command short-circuit to stdout with exit `0` before any command runs;
- * everything else resolves the output mode and reports a thrown error through it.
+ * router is testable without touching the real process.
+ *
+ * The output mode is resolved first, then **every** path runs under one try/catch:
+ * unknown global flags are rejected before any short-circuit (so a typo'd flag never
+ * slips through `--version`/`--help`/no-command to a silent exit 0), and `--version`/
+ * `--help` render through the same {@link emit} seam as a command — a
+ * `{schemaVersion, kind, data}` envelope under `--json`, plain text otherwise — so a
+ * machine consumer that always pipes `--json` can decode their output too.
  */
 export function run(argv: readonly string[], context: RunContext = {}): number {
   const stdout = context.stdout ?? process.stdout;
   const stderr = context.stderr ?? process.stderr;
   const parsed = parseArgs(argv);
-
-  if (parsed.version) {
-    stdout.write(`${VERSION}\n`);
-    return 0;
-  }
-  if (parsed.help || parsed.command === undefined) {
-    stdout.write(`${USAGE}\n`);
-    return 0;
-  }
-
   const output = resolveOutput({
     json: parsed.json,
     plain: parsed.plain,
@@ -119,19 +114,43 @@ export function run(argv: readonly string[], context: RunContext = {}): number {
     env: context.env ?? process.env,
   });
   try {
+    rejectUnknownFlags(parsed.unknownFlags);
+    if (parsed.version) {
+      return emitMeta("version", { version: VERSION }, VERSION, output, stdout);
+    }
+    if (parsed.help || parsed.command === undefined) {
+      return emitMeta("help", { usage: USAGE }, USAGE, output, stdout);
+    }
     return dispatch(parsed, { ...context, stdout }, output);
   } catch (err) {
     return reportError(err, { ...errorRenderOpts(output), stderr });
   }
 }
 
+/**
+ * Render a meta result (version / help) through the same {@link emit} seam a command
+ * uses: a `{schemaVersion, kind, data}` envelope under `--json`, the plain `text`
+ * otherwise. This is what keeps `lore --version --json` machine-parseable instead of a
+ * bare line a `--json` consumer cannot decode.
+ */
+function emitMeta(
+  kind: string,
+  data: Record<string, string>,
+  text: string,
+  output: OutputContext,
+  stdout: Writer,
+): number {
+  const renderable: Renderable<Record<string, string>> = { kind, data, pretty: () => text, plain: () => text };
+  emit(renderable, output, stdout);
+  return 0;
+}
+
 /** Route a parsed invocation to its command handler, throwing a `usage` error on bad input. */
 function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext): number {
-  rejectUnknownFlags(parsed.unknownFlags);
   switch (parsed.command) {
     case "init":
       rejectExtraPositionals(parsed.rest, "init");
-      return runInit({ root: context.cwd ?? process.cwd(), output, stdout: context.stdout });
+      return runInit({ root: context.cwd || process.cwd(), output, stdout: context.stdout });
     default:
       throw new LoreError("usage", `unknown command "${parsed.command}"`, "run `lore --help` to list commands", {
         command: parsed.command,

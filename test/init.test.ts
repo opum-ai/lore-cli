@@ -3,7 +3,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type InitResult, runInit } from "../src/commands/init";
+import { loadBundle } from "../src/core/bundle";
 import { parseConcept } from "../src/core/concept";
+import { WarningCollector } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
 
@@ -60,6 +62,16 @@ describe("lore init — fresh bundle (AC#1)", () => {
     for (const path of [".lore/schemas/reference.schema.json", ".lore/config.toml"]) {
       expect(readFileSync(join(root, path), "utf8")).not.toContain("okf_version");
     }
+  });
+
+  test("loads cleanly: a freshly-initialized bundle yields no loadBundle warnings", () => {
+    init();
+    const warnings = new WarningCollector();
+    const graph = loadBundle(join(root, "docs"), { warnings });
+    expect(graph.concepts.has("index")).toBe(true);
+    // The scaffolded index carries okf_version; lore must not warn about its own
+    // conformant root index (the reserved-key exemption in schema.ts).
+    expect(warnings.list()).toEqual([]);
   });
 
   test("stamps the index timestamp from the injected clock", () => {

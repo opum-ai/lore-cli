@@ -31,8 +31,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { errnoCode, LoreError } from "./errors";
 
-/** Where lore's config lives, relative to the repo root. */
-const CONFIG_REL_PATH = ".lore/config.toml";
+/** Where lore's config lives, relative to the repo root. Exported so the `lore init` scaffolder writes to the exact path the loader reads. */
+export const CONFIG_REL_PATH = ".lore/config.toml";
 
 /** The single environment variable that may carry the Confluence API token. */
 const TOKEN_ENV = "LORE_CONFLUENCE_TOKEN";

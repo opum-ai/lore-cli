@@ -5,9 +5,12 @@ import { buildScaffold, type ScaffoldFile } from "../src/core/scaffold";
 /** A fixed ISO timestamp so every plan in this suite is byte-deterministic. */
 const TS = "2026-06-25T12:00:00.000Z";
 
-/** The single file in a plan with the given repo-relative path (fails if absent). */
+/** Built once (it runs 6 Zod→JSON-Schema conversions + a serialize) and reused across assertions. */
+const PLAN = buildScaffold({ timestamp: TS });
+
+/** The single file in {@link PLAN} with the given repo-relative path (fails if absent). */
 function fileNamed(path: string): ScaffoldFile {
-  const file = buildScaffold({ timestamp: TS }).files.find((f) => f.path === path);
+  const file = PLAN.files.find((f) => f.path === path);
   if (file === undefined) {
     throw new Error(`scaffold plan has no file ${path}`);
   }
@@ -93,7 +96,7 @@ describe("scaffold — exported JSON Schemas", () => {
       // additionalProperties), so an author's custom frontmatter never errors mid-edit.
       expect(schema.additionalProperties).toEqual({});
       const properties = schema.properties as Record<string, { const?: string }>;
-      expect(properties.type.const).toBe(type);
+      expect(properties.type?.const).toBe(type);
     });
   }
 

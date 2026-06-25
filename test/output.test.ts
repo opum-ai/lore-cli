@@ -273,11 +273,12 @@ describe("emit — json mode", () => {
   test("defaults the sink to process.stdout", () => {
     const original = process.stdout.write.bind(process.stdout);
     const chunks: string[] = [];
-    // @ts-expect-error narrow test shim for the single-string call emit makes
-    process.stdout.write = (s: string) => {
+    // Narrow test shim for the single-string call emit makes; cast to the full
+    // overloaded signature so it type-checks once test/ is in the typecheck include.
+    process.stdout.write = ((s: string) => {
       chunks.push(s);
       return true;
-    };
+    }) as typeof process.stdout.write;
     try {
       emit(renderable("k", { ok: true }), JSON_CTX);
     } finally {

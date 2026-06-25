@@ -54,6 +54,27 @@ export const KNOWN_TYPES = ["Epic", "Story", "Spec", "ADR", "Runbook", "Referenc
 /** A `type` value lore validates against a per-type schema. */
 export type KnownType = (typeof KNOWN_TYPES)[number];
 
+/**
+ * The OKF version string lore's producer profile emits. It is a profile-wide
+ * fact — the single source of truth so the scaffolder, and any future conformance
+ * gate, agree on the version — and is carried by the bundle-root `index.md` alone
+ * ([okf-conformance](../../docs/reference/okf-conformance.md)).
+ */
+export const OKF_VERSION = "0.1";
+
+/**
+ * OKF-reserved frontmatter keys that pass validation without an "unknown key"
+ * warning even on a known type. `okf_version` is the bundle-root index's
+ * conformance marker: it is a legitimate, recognized field — not a stray producer
+ * extension — so flagging it as unknown (as the generic extra-key check otherwise
+ * would) is a false positive on lore's own conformant output. Its placement
+ * discipline — only the root index may carry it — is a whole-bundle conformance
+ * check (`lore validate`/`lore check`), not a per-file extra-key warning, so it is
+ * deliberately not enforced here. The key stays an unordered passthrough (it is not
+ * in {@link CANONICAL_KEY_ORDER}), so serialized bytes are unchanged.
+ */
+const OKF_RESERVED_KEYS: ReadonlySet<string> = new Set(["okf_version"]);
+
 // ── Field schemas, shared across the known types ───────────────────────────────
 //
 // Every field except `type` is OPTIONAL: OKF requires only a non-empty `type`, and
@@ -294,7 +315,7 @@ function warnExtraKeys(
   }
   const declared = DECLARED_FIELDS[type];
   for (const key of Object.getOwnPropertyNames(fm)) {
-    if (!declared.has(key)) {
+    if (!declared.has(key) && !OKF_RESERVED_KEYS.has(key)) {
       warnings.add(`unknown key "${key}"${where}; preserved but not validated`);
     }
   }
@@ -353,7 +374,7 @@ function issueList(error: z.ZodError): Array<{ path: string; message: string }> 
 // what a type's schema is called or where it lives.
 
 /** Where lore writes the emitted JSON Schemas, relative to the repo root (ADR-0013). */
-const SCHEMAS_DIR = ".lore/schemas";
+export const SCHEMAS_DIR = ".lore/schemas";
 
 /**
  * The on-disk filename for a type's JSON Schema, e.g. `Reference` → `reference.schema.json`.

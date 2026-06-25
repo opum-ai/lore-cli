@@ -4,6 +4,7 @@ import {
   declaredKnownFields,
   isKnownType,
   KNOWN_TYPES,
+  OKF_VERSION,
   schemaForType,
   validateFrontmatter,
 } from "../src/core/schema";
@@ -143,6 +144,12 @@ describe("schema — the warning tier (never throws)", () => {
       validateFrontmatter({ type: "Reference", title: "T", custom_key: "kept" }, { warnings }),
     ).not.toThrow();
     expect(warnings.list().some((w) => w.includes('unknown key "custom_key"'))).toBe(true);
+  });
+
+  test("okf_version is an OKF-reserved key, not flagged as unknown (the root index carries it)", () => {
+    const warnings = new WarningCollector();
+    validateFrontmatter({ type: "Reference", title: "T", summary: "s", okf_version: OKF_VERSION }, { warnings });
+    expect(warnings.list().some((w) => w.includes("okf_version"))).toBe(false);
   });
 
   test("a missing summary warns", () => {

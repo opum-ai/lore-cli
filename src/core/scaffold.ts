@@ -24,11 +24,17 @@
  * `.lore/templates/` directory exists.
  */
 
+import { CONFIG_REL_PATH } from "../config";
 import { type Concept, idFromPath, serializeConcept } from "./concept";
-import { jsonSchemaFor, KNOWN_TYPES, type KnownType, schemaFileName, schemaModeline } from "./schema";
-
-/** The OKF version this producer emits; carried by the root index alone (okf-conformance). */
-const OKF_VERSION = "0.1";
+import {
+  jsonSchemaFor,
+  KNOWN_TYPES,
+  type KnownType,
+  OKF_VERSION,
+  SCHEMAS_DIR,
+  schemaFileName,
+  schemaModeline,
+} from "./schema";
 
 /** The reserved bundle-root index — the only file that carries `okf_version`. */
 const ROOT_INDEX_PATH = "docs/index.md";
@@ -72,7 +78,7 @@ export function buildScaffold(options: ScaffoldOptions): ScaffoldPlan {
   return {
     dirs: [".lore", ".lore/schemas", ".lore/templates", ".lore/cache", "docs"],
     files: [
-      { path: ".lore/config.toml", contents: DEFAULT_CONFIG_TOML },
+      { path: CONFIG_REL_PATH, contents: DEFAULT_CONFIG_TOML },
       { path: ".lore/.gitignore", contents: LORE_GITIGNORE },
       ...schemaFiles(),
       // Materialize the templates directory without committing to per-type content:
@@ -92,7 +98,7 @@ export function buildScaffold(options: ScaffoldOptions): ScaffoldPlan {
  */
 function schemaFiles(): ScaffoldFile[] {
   return KNOWN_TYPES.map((type: KnownType) => ({
-    path: `.lore/schemas/${schemaFileName(type)}`,
+    path: `${SCHEMAS_DIR}/${schemaFileName(type)}`,
     contents: `${JSON.stringify(jsonSchemaFor(type), null, 2)}\n`,
   }));
 }

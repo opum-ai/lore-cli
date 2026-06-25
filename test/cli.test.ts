@@ -17,7 +17,9 @@ function ctx(over: Partial<RunContext> = {}): RunContext & {
   stdout: ReturnType<typeof capture>;
   stderr: ReturnType<typeof capture>;
 } {
-  return { stdout: capture(), stderr: capture(), env: {}, isTTY: false, ...over };
+  // Captures come last so they always win over `over` and the return type's
+  // `stdout`/`stderr` are exactly the capturing sinks (callers only override cwd/flags).
+  return { env: {}, isTTY: false, ...over, stdout: capture(), stderr: capture() };
 }
 
 describe("cli — version and help short-circuits", () => {
@@ -25,6 +27,14 @@ describe("cli — version and help short-circuits", () => {
     const c = ctx();
     expect(run(argv("--version"), c)).toBe(0);
     expect(c.stdout.text()).toBe(`${VERSION}\n`);
+  });
+
+  test("--version --json emits a parseable version envelope", () => {
+    const c = ctx();
+    expect(run(argv("--version", "--json"), c)).toBe(0);
+    const envelope = JSON.parse(c.stdout.text()) as { kind: string; data: { version: string } };
+    expect(envelope.kind).toBe("version");
+    expect(envelope.data.version).toBe(VERSION);
   });
 
   test("no command prints usage and exits 0", () => {
@@ -48,21 +58,31 @@ describe("cli — usage errors (exit 2)", () => {
   });
 
   test("an unknown option on a real command is a usage error", () => {
-    const c = ctx({ cwd: mkdtempSync(join(tmpdir(), "lore-cli-")) });
+    // rejectUnknownFlags throws before runInit, so no scaffold touches the filesystem.
+    const c = ctx();
     expect(run(argv("init", "--bogus"), c)).toBe(EXIT_CODES.usage);
     expect(c.stderr.text()).toContain("unknown option");
-    rmSync(c.cwd as string, { recursive: true, force: true });
+  });
+
+  test("an unknown global flag is rejected even with no command (not swallowed)", () => {
+    const c = ctx();
+    expect(run(argv("--bogus"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).toContain("unknown option");
+  });
+
+  test("an unknown flag alongside --version is rejected, not swallowed", () => {
+    const c = ctx();
+    expect(run(argv("--version", "--bogus"), c)).toBe(EXIT_CODES.usage);
   });
 
   test("an extra positional on init is a usage error", () => {
-    const c = ctx({ cwd: mkdtempSync(join(tmpdir(), "lore-cli-")) });
+    const c = ctx();
     expect(run(argv("init", "extra"), c)).toBe(EXIT_CODES.usage);
     expect(c.stderr.text()).toContain("takes no arguments");
-    rmSync(c.cwd as string, { recursive: true, force: true });
   });
 
   test("a usage error in --json mode is a one-line error envelope on stderr", () => {
-    const c = ctx({ json: undefined });
+    const c = ctx();
     expect(run(argv("frobnicate", "--json"), c)).toBe(EXIT_CODES.usage);
     const envelope = JSON.parse(c.stderr.text()) as { error_type: string };
     expect(envelope.error_type).toBe("usage");
