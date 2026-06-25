@@ -1,11 +1,11 @@
 ---
 id: LORE-46
 title: 'Declarative .lore profile: per-project type vocabulary, schemas & templates'
-status: In Progress
+status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-06-21 20:16'
-updated_date: '2026-06-25 23:39'
+updated_date: '2026-06-25 23:45'
 labels:
   - eck-alignment
   - core
@@ -75,4 +75,6 @@ End-to-end dogfooded through the real CLI: init -> new adr (default profile, val
 DEFERRED (noted for follow-up, low severity): (a) non-Latin type names slug to '' and are rejected — loud clear error; ASCII-alphanumeric required in a type name for its schema filename (acceptable for v1; ECK is ASCII). (b) loadBundle/estimateConcept in bundle.ts not profile-threaded — latent (no shipped command calls loadBundle yet); thread the active profile when the graph/context commands (LORE-31/34) wire it. (c) config.ts and profile.ts duplicate the hand-rolled TOML-shape validators — intentional mirroring; a shared toml-shape util is a future DRY cleanup touching config.ts. (d) CompiledType.jsonSchema is built eagerly though only lore init consumes it — negligible (z.toJSONSchema over <=17 types per invocation).
 
 PR #17 opened into dev (https://github.com/jeremy-newhouse/lore/pull/17), HEAD 120c14a. Awaiting Jeremy's review + merge (no self-merge). Status stays In Progress until merged.
+
+Delivered via PR #17 (squash 61d5b73), merged to dev 2026-06-25 (admin-merge, ssh down). CI green across ubuntu/macOS/windows + compile smoke. All 8 ACs met; /code-review max findings fixed (3 commits: feature 6bd7bdc + review-fixes 120c14a + CI case-sensitivity fix d03aad3).
 <!-- SECTION:NOTES:END -->
