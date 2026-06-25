@@ -13,6 +13,16 @@ timestamp: 2026-06-21T00:00:00Z
 
 Accepted — 2026-06-21
 
+Amended — 2026-06-25 (LORE-46): the **Tier-2 per-type contract is now profile-driven**. A type's
+required body sections come from the `sections` array of its `[[types]]` entry in
+`.lore/profile.toml` (see [ADR-0006 amendment](0006-schema-types-templates.md) and
+[ADR-0013](0013-lore-state-directory.md)), and its frontmatter shape from the generated per-type
+validator — both derived from the declarative profile rather than hand-authored in code. The
+tiers themselves are unchanged: a missing required section / mistyped known field = Tier-2
+**error**; an unknown type or extra key = Tier-3 **warning**. Section matching is unchanged
+(heading text, depth ≤2, order not enforced). A type with no declared `sections` (and every
+unknown type) has no section contract, preserving OKF tolerance.
+
 ## Context
 
 lore must answer two distinct questions about a docs bundle, and conflating

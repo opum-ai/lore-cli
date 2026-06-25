@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Declarative `.lore/profile.toml` — the type system is now data, not code** (LORE-46). A
+  committed, declarative profile is the single source of truth for the type vocabulary, each
+  type's frontmatter shape, its required body sections, and its template; lore **generates** its
+  runtime Zod validators *and* the editor Draft-7 JSON Schemas from it at load (inverting
+  ADR-0006: declarative profile → generated Zod → `z.toJSONSchema`). The grammar (TOML, with a
+  `.json` form) declares `[profile]` (name, okf_version, case, resource_base), `[base.fields]`
+  (fields every type carries; `type` must be required), and `[[types]]` (name, `fields` with
+  `kind`/`enum`/`items`/`required`/`default`, required `sections`, and a `template` ref). It is
+  **zero-config**: absent — or every line commented — falls back to the built-in
+  story-convention profile (Epic/Story/Spec/ADR/Runbook/Reference), so existing bundles behave
+  byte-for-byte as before. A custom profile is read by the **standalone binary as data** — no
+  code, no library; the declarative language is the boundary (no escape hatch). Two things stay
+  lore built-ins (not declaratively expressible): the ADR-0006 §5 summary heuristic and the
+  `supersedes`/`superseded_by` `string | list` coupling fields. A type's editor schema filename
+  is its **LOWER-KEBAB slug** + `.schema.json` (`QA Plan` → `qa-plan.schema.json`); single-word
+  story types are unchanged. `lore init` now scaffolds a commented `.lore/profile.toml`. The
+  grammar is validated against ECK's 17-type SDD vocabulary with zero consumer-file edits.
+  `src/core/profile.ts` owns loading + compiling; `schema.ts`/`concept.ts`/`validate.ts`/
+  `scaffold.ts` and the commands thread the compiled `Profile` (ADR-0006/0007/0011/0013 amended).
 - `lore validate [paths…]` (LORE-19): tiered, per-file conformance reporting. Unlike the
   fail-fast write path, validate is an **aggregating reporter** — it surfaces *every* file's
   findings in one pass, tiered error/warning, and emits a `kind: validate.report` payload on

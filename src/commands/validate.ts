@@ -18,6 +18,7 @@
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { walkMarkdown } from "../core/bundle";
+import { loadProfile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { canonicalType } from "../core/schema";
 import { type FileReport, type Finding, type ValidateReport, validateFiles } from "../core/validate";
@@ -66,11 +67,12 @@ interface SourceFile {
  */
 export function runValidate(options: ValidateOptions): number {
   const parsed = parseValidateArgs(options.args);
-  const type = parsed.type === undefined ? undefined : canonicalType(parsed.type);
+  const profile = loadProfile({ root: options.root });
+  const type = parsed.type === undefined ? undefined : canonicalType(parsed.type, profile);
   const walkWarnings = new WarningCollector();
   const files = collectFiles(options.root, parsed.paths, walkWarnings);
 
-  const report = validateFiles(files, type);
+  const report = validateFiles(files, type, profile);
   emit(reportRenderable(report), options.output, options.stdout);
   walkWarnings.flush({ color: options.output.color, stderr: options.stderr });
 

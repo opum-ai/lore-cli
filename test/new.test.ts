@@ -68,6 +68,35 @@ describe("lore new — scaffolding a known type", () => {
     expect(warnings.list()).toEqual([]);
   });
 
+  test("a multi-word profile-declared type (e.g. 'QA Plan') scaffolds under its slug directory", () => {
+    // Regression: VALID_TYPE forbids spaces, but a profile-declared multi-word type must scaffold —
+    // landing under docs/<slug>/ and rendering its declared template (LORE-46 AC#7).
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      [
+        "[profile]",
+        'name = "demo"',
+        'okf_version = "0.1"',
+        "[base.fields]",
+        "type = { required = true }",
+        "title = {}",
+        "summary = {}",
+        'timestamp = { kind = "datetime" }',
+        "[[types]]",
+        'name = "QA Plan"',
+        'template = "qa-plan.md"',
+      ].join("\n"),
+    );
+    writeFileSync(join(root, ".lore/templates/qa-plan.md"), "\n# {{title}}\n\n## Coverage\n");
+    const { code, result } = newCmd(["QA Plan", "Checkout suite"]);
+    expect(code).toBe(0);
+    expect(result.type).toBe("QA Plan");
+    expect(result.path).toBe("docs/qa-plan/checkout-suite.md");
+    const text = readFileSync(join(root, result.path), "utf8");
+    expect(text).toContain("type: QA Plan");
+    expect(text).toContain("## Coverage"); // the profile-declared template was rendered
+  });
+
   test("--summary and --tags land on the frontmatter", () => {
     const { result } = newCmd([
       "story",

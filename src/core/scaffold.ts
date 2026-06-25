@@ -25,16 +25,9 @@
  */
 
 import { CONFIG_REL_PATH } from "../config";
-import { type Concept, idFromPath, serializeConceptWithModeline } from "./concept";
-import {
-  jsonSchemaFor,
-  KNOWN_TYPES,
-  type KnownType,
-  OKF_VERSION,
-  SCHEMAS_DIR,
-  schemaFileName,
-  schemaModeline,
-} from "./schema";
+import { type Concept, idFromPath, serializeConcept, serializeConceptWithModeline } from "./concept";
+import { defaultProfile, PROFILE_REL_PATH, type Profile } from "./profile";
+import { SCHEMAS_DIR, schemaFileName, schemaModeline } from "./schema";
 
 /**
  * The bundle root — the directory every concept lives under, relative to the repo root.
@@ -74,39 +67,47 @@ export interface ScaffoldOptions {
    * golden-testable (lore-design §8).
    */
   readonly timestamp: string;
+  /**
+   * The active profile whose types drive the emitted JSON Schemas and whose `okfVersion` stamps
+   * the root index. Defaults to the built-in {@link defaultProfile}, so a zero-config `lore init`
+   * scaffolds the six story-convention schemas exactly as before.
+   */
+  readonly profile?: Profile;
 }
 
 /**
- * Build the {@link ScaffoldPlan} for an empty OKF bundle: the `.lore/` state tree, the
- * six exported JSON Schemas, and the reserved root `docs/index.md`. Pure — it touches
- * no filesystem and reads no clock; identical `options` always produce identical bytes.
+ * Build the {@link ScaffoldPlan} for an empty OKF bundle: the `.lore/` state tree, one exported
+ * JSON Schema per profile type, and the reserved root `docs/index.md`. Pure — it touches no
+ * filesystem and reads no clock; identical `options` always produce identical bytes.
  */
 export function buildScaffold(options: ScaffoldOptions): ScaffoldPlan {
+  const profile = options.profile ?? defaultProfile();
   return {
     dirs: [".lore", ".lore/schemas", ".lore/templates", ".lore/cache", DOCS_DIR],
     files: [
       { path: CONFIG_REL_PATH, contents: DEFAULT_CONFIG_TOML },
+      { path: PROFILE_REL_PATH, contents: DEFAULT_PROFILE_TOML },
       { path: ".lore/.gitignore", contents: LORE_GITIGNORE },
-      ...schemaFiles(),
+      ...schemaFiles(profile),
       // Materialize the templates directory without committing to per-type content:
       // `lore new` (LORE-18) owns the template bodies and their override-if-present
       // logic, so init only keeps the directory tracked.
       { path: ".lore/templates/.gitkeep", contents: "" },
-      { path: ROOT_INDEX_PATH, contents: rootIndexDocument(options.timestamp) },
+      { path: ROOT_INDEX_PATH, contents: rootIndexDocument(options.timestamp, profile) },
     ],
   };
 }
 
 /**
- * One {@link ScaffoldFile} per known type, each the Draft-7 JSON Schema exported from
- * the Zod source of truth, pretty-printed with a trailing newline. Emitted in
- * {@link KNOWN_TYPES} order so the plan (and its golden) is stable. The 2-space,
- * newline-terminated formatting is the byte contract these schema files commit to.
+ * One {@link ScaffoldFile} per profile type, each the generated Draft-7 JSON Schema pretty-printed
+ * with a trailing newline. Emitted in the profile's type-declaration order so the plan (and its
+ * golden) is stable. The 2-space, newline-terminated formatting is the byte contract these schema
+ * files commit to.
  */
-function schemaFiles(): ScaffoldFile[] {
-  return KNOWN_TYPES.map((type: KnownType) => ({
-    path: `${SCHEMAS_DIR}/${schemaFileName(type)}`,
-    contents: `${JSON.stringify(jsonSchemaFor(type), null, 2)}\n`,
+function schemaFiles(profile: Profile): ScaffoldFile[] {
+  return [...profile.types.values()].map((type) => ({
+    path: `${SCHEMAS_DIR}/${schemaFileName(type.name)}`,
+    contents: `${JSON.stringify(type.jsonSchema, null, 2)}\n`,
   }));
 }
 
@@ -124,22 +125,36 @@ function schemaFiles(): ScaffoldFile[] {
  * re-serialized — a documented round-trip limitation in concept.ts that applies to all
  * such docs equally; `init` writes the index once and never rewrites it.)
  */
-function rootIndexDocument(timestamp: string): string {
+function rootIndexDocument(timestamp: string, profile: Profile): string {
   const concept: Concept = {
     id: idFromPath(ROOT_INDEX_PATH),
     path: ROOT_INDEX_PATH,
-    type: "Reference",
+    type: ROOT_INDEX_TYPE,
     frontmatter: {
-      type: "Reference",
+      type: ROOT_INDEX_TYPE,
       title: "Documentation",
       summary: "Root index of this OKF documentation bundle, created by `lore init`.",
       timestamp,
-      okf_version: OKF_VERSION,
+      okf_version: profile.okfVersion,
     },
     body: ROOT_INDEX_BODY,
   };
-  return serializeConceptWithModeline(concept, schemaModeline(ROOT_INDEX_PATH, "Reference"));
+  // The root index is lore's OWN reserved structural file with a fixed shape, not a user concept,
+  // so it is serialized/validated against the built-in default profile — never the active one. A
+  // custom profile that retypes `Reference` (e.g. adds a required field) therefore cannot make
+  // `lore init` abort while writing docs/index.md. (Only `okf_version` above is profile-derived.)
+  // The modeline is carried only when the *active* profile defines the type, so the `$schema` it
+  // points at was actually emitted under `.lore/schemas/`.
+  const structural = defaultProfile();
+  return profile.types.has(ROOT_INDEX_TYPE)
+    ? serializeConceptWithModeline(concept, schemaModeline(ROOT_INDEX_PATH, ROOT_INDEX_TYPE), {
+        profile: structural,
+      })
+    : serializeConcept(concept, { profile: structural });
 }
+
+/** The reserved root index's `type` — lore's bundle entry point is conventionally a `Reference`. */
+const ROOT_INDEX_TYPE = "Reference";
 
 /** The body of the scaffolded root index (after the frontmatter fence). */
 const ROOT_INDEX_BODY = `
@@ -181,4 +196,39 @@ const DEFAULT_CONFIG_TOML = `# lore configuration — committed, team-shared kno
 # space          = "ENG"
 # parent_page_id = "98765"
 # format         = "storage"   # or "adf"
+`;
+
+/**
+ * The default, fully-commented `.lore/profile.toml`. The profile is the declarative source of
+ * truth for the type vocabulary (ADR-0006): with this file absent — or every line below
+ * commented — lore uses the built-in story-convention profile (Epic/Story/Spec/ADR/Runbook/
+ * Reference), so a fresh `init` produces a file that changes nothing until a team defines its own
+ * types. It is separate from `config.toml`: config carries operational knobs, the profile carries
+ * the type system. See docs/adr/0006-schema-types-templates.md.
+ */
+const DEFAULT_PROFILE_TOML = `# lore profile — committed, declarative type vocabulary for this bundle.
+# OPTIONAL: with this file absent, or every line below commented, lore uses the built-in
+# story-convention profile (Epic/Story/Spec/ADR/Runbook/Reference). Fill it in to define your
+# own types. lore generates its runtime validators + editor JSON Schemas from this file at load.
+
+# [profile]
+# name = "my-project"      # required once any line below is uncommented
+# okf_version = "0.1"      # required; asserted against the bundle-root index.md
+# case = "Title"           # type-name casing convention (advisory; powers the did-you-mean hint)
+# resource_base = ""       # prefix for the stamped \`resource\` link (empty = none)
+
+# [base.fields]
+# Fields every type carries. \`type\` MUST be required (OKF's one hard requirement).
+# type = { required = true }
+# title = {}
+# description = {}
+# tags = { kind = "list" }
+# summary = {}
+# timestamp = { kind = "datetime" }
+
+# [[types]]
+# name = "Spec"                       # the OKF \`type\` value
+# sections = ["Summary", "Design"]    # required body headings (## …)
+# template = "spec.md"                # template under .lore/templates/
+# fields = { feature = { required = true }, status = { enum = ["draft", "approved"] } }
 `;

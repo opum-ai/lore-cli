@@ -13,6 +13,44 @@ timestamp: 2026-06-21T00:00:00Z
 
 Accepted — 2026-06-21
 
+Amended — 2026-06-25 (LORE-46): the source of truth is **inverted**. See the amendment below;
+the original decision text is retained as the historical record.
+
+## Amendment (LORE-46): the declarative profile is the source of truth
+
+The type/profile layer is now **data, not code**. A committed, declarative
+`.lore/profile.toml` (see [ADR-0013](0013-lore-state-directory.md)) is the single source of
+truth for the type vocabulary, each type's frontmatter shape, its required body sections, and
+its template. lore **generates** its runtime Zod validators *and* the editor Draft-7 JSON
+Schemas *from* the profile at load (declarative profile → generated Zod → `z.toJSONSchema`),
+in [core/profile.ts](../../src/core/profile.ts). This supersedes "Zod-in-code is **the**
+single source of truth" **for the type/profile layer only** — the Zod *mechanism*, the
+strict-runtime/lenient-editor split, and the ISO-string date rule below all stand; they are now
+fed by generated schemas rather than hand-authored ones.
+
+Every invariant of the original decision is preserved by construction:
+
+- **Unknown types/keys warn, never error** (OKF tolerance): generated per-type schemas are
+  loose, the editor schema stays open (`additionalProperties: true`).
+- **ISO-string timestamps**, never coerced to `Date` (`datetime` kind → `z.iso.datetime`).
+- **Byte-stable round-trip**: an editor-advertised field `default` is surfaced in the JSON
+  Schema but **never** applied at runtime, so it is never stamped onto a concept.
+- **Strict-known / lenient-unknown tiers** and **JSON-Schema editor emission** are unchanged.
+
+Two things stay **lore built-ins**, because the declarative grammar deliberately cannot express
+them (the expressiveness limit is the boundary — there is no code-registration escape hatch):
+
+- The **§5 summary-length heuristic** (warn on a missing/over-long `summary`) lives in
+  [core/validate.ts](../../src/core/validate.ts).
+- The **`supersedes` / `superseded_by`** coupling fields, whose `string | list-of-refs` union no
+  `kind` expresses, carry a built-in validator and are present on every type.
+
+The editor schema filename is the type's **LOWER-KEBAB slug** + `.schema.json`
+(`Reference` → `reference.schema.json`, `QA Plan` → `qa-plan.schema.json`); for the single-word
+story-convention types the slug equals the old lower-cased stem, so existing modelines resolve
+unchanged. lore ships the built-in **story-convention** profile (Epic/Story/Spec/ADR/Runbook/
+Reference) so a zero-config bundle behaves exactly as it did before this amendment.
+
 ## Context
 
 Every non-index concept file in the bundle starts with YAML frontmatter. OKF

@@ -13,6 +13,15 @@ timestamp: 2026-06-21T00:00:00Z
 
 Accepted — 2026-06-21
 
+Amended — 2026-06-25 (LORE-46): the **canonical key order is profile-driven**. The "append-slot"
+for lore-written keys (§3) is the active profile's **field declaration order** — base fields in
+declaration order, then each type's own fields, then lore's reserved coupling fields
+(`supersedes`/`superseded_by`) — derived from `.lore/profile.toml`
+(see [ADR-0006 amendment](0006-schema-types-templates.md)). The guarantees are unchanged: known
+keys emit in this fixed order, **authored unknown keys follow verbatim**, no key is dropped, and
+there is **no global re-sort**. The byte-stable fixpoint and `__proto__`-safe ordering still hold;
+only the *source* of the known-key order moved from a hard-coded list to the compiled profile.
+
 ## Context
 
 Every non-index concept file in the bundle begins with a YAML frontmatter

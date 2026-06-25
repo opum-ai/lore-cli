@@ -27,8 +27,8 @@
  * - **`JSON_SCHEMA` on parse.** js-yaml's `JSON_SCHEMA` never resolves a timestamp
  *   to a `Date`, so `2026-06-21T00:00:00Z` stays the ISO **string** ADR-0006 §2
  *   requires — which is also what keeps it byte-stable and Zod-validatable.
- * - **Canonical key order on serialize.** Known keys are emitted in a fixed order
- *   ({@link CANONICAL_KEY_ORDER}, the single source of truth in schema.ts); unknown
+ * - **Canonical key order on serialize.** Known keys are emitted in a fixed order (the active
+ *   profile's {@link Profile.canonicalKeyOrder}, from [core/profile.ts](./profile.ts)); unknown
  *   producer-extension keys follow in their existing order, preserved verbatim
  *   (ADR-0011 §3, §5; OKF tolerance).
  * - **Input normalization on parse.** A leading BOM, CRLF/CR line endings, and
@@ -68,7 +68,7 @@
  * - Integer-like keys (e.g. a `9:` producer-extension key) are emitted in ascending
  *   numeric order ahead of the named keys, not in authored order — JS object semantics
  *   reorder integer keys at parse time (`js-yaml` builds a plain object), so the order
- *   is unrecoverable here regardless of {@link CANONICAL_KEY_ORDER}.
+ *   is unrecoverable here regardless of the profile's canonical key order.
  * - A large/high-precision unquoted *numeric* value loses precision (`js-yaml`'s
  *   `JSON_SCHEMA` parses numbers to JS doubles); quote such a value to keep it exact.
  */
@@ -78,7 +78,8 @@ import matter from "gray-matter";
 import type { DumpOptions, LoadOptions } from "js-yaml";
 import yaml from "js-yaml";
 import { deriveMessage, LoreError, singleLine, type WarningCollector } from "../errors";
-import { CANONICAL_KEY_ORDER, validateFrontmatter } from "./schema";
+import { defaultProfile, type Profile } from "./profile";
+import { validateFrontmatter } from "./schema";
 
 /**
  * A single concept file as a typed object. `frontmatter` is the **verbatim**
@@ -128,7 +129,7 @@ const YAML_LOAD_OPTIONS: LoadOptions = Object.freeze({ schema: yaml.JSON_SCHEMA 
  *
  * - `schema: JSON_SCHEMA` — symmetric with the load schema.
  * - `lineWidth: -1` — never wrap/reflow long strings or lists into different bytes.
- * - `sortKeys: false` — we control key order ourselves ({@link CANONICAL_KEY_ORDER}).
+ * - `sortKeys: false` — we control key order ourselves (the active profile's canonical key order).
  * - `noRefs: true` — never emit YAML anchors/aliases for a shared object.
  * - `quotingType: '"'` + `forceQuotes: false` — when a value *must* be quoted, use
  *   double quotes; otherwise leave it unquoted (don't gratuitously re-quote).
@@ -157,6 +158,8 @@ const MATTER_OPTIONS = {
 export interface ParseConceptOptions {
   /** Sink for advisory warnings (unknown type, extra keys, summary); absent → dropped. */
   warnings?: WarningCollector;
+  /** The active profile to validate against; defaults to the built-in {@link defaultProfile}. */
+  profile?: Profile;
 }
 
 /**
@@ -209,7 +212,7 @@ export function tryParseConcept(path: string, raw: string, options: ParseConcept
  * malformed mapping.
  */
 function conceptFromSplit(path: string, split: PresentSplit, options: ParseConceptOptions): Concept {
-  const type = validateFrontmatter(split.frontmatter, { warnings: options.warnings, path });
+  const type = validateFrontmatter(split.frontmatter, { warnings: options.warnings, path, profile: options.profile });
   return { id: idFromPath(path), path, type, frontmatter: split.frontmatter, body: split.body };
 }
 
@@ -227,10 +230,21 @@ function conceptFromSplit(path: string, split: PresentSplit, options: ParseConce
  * `validation` {@link LoreError} here instead of producing an unreadable file. This is
  * exact write/read symmetry, not a weaker non-empty-`type` floor.
  */
-export function serializeConcept(concept: Concept): string {
-  validateFrontmatter(concept.frontmatter, { path: concept.path });
-  const ordered = canonicalize(concept.frontmatter);
+export function serializeConcept(concept: Concept, options: SerializeConceptOptions = {}): string {
+  const profile = options.profile ?? defaultProfile();
+  validateFrontmatter(concept.frontmatter, { path: concept.path, profile });
+  const ordered = canonicalize(concept.frontmatter, profile.canonicalKeyOrder);
   return `${FENCE}${yaml.dump(ordered, YAML_DUMP_OPTIONS)}${FENCE}${concept.body}`;
+}
+
+/** Options for {@link serializeConcept}/{@link serializeConceptWithModeline}. */
+export interface SerializeConceptOptions {
+  /**
+   * The active profile, supplying the canonical key order (ADR-0011 append-slot = profile field
+   * declaration order) and the validators re-asserted on write. Defaults to the built-in
+   * {@link defaultProfile}, so a caller that does not opt into a custom profile is unaffected.
+   */
+  profile?: Profile;
 }
 
 /**
@@ -250,8 +264,12 @@ export function serializeConcept(concept: Concept): string {
  * Round-trip caveat (ADR-0011 §2): js-yaml drops the in-fence comment if the file is
  * ever re-serialized, so a doc written this way is emitted once, not rewritten in place.
  */
-export function serializeConceptWithModeline(concept: Concept, modeline: string): string {
-  const serialized = serializeConcept(concept);
+export function serializeConceptWithModeline(
+  concept: Concept,
+  modeline: string,
+  options: SerializeConceptOptions = {},
+): string {
+  const serialized = serializeConcept(concept, options);
   return `${FENCE}${modeline}\n${serialized.slice(FENCE.length)}`;
 }
 
@@ -353,8 +371,11 @@ function absentFrontmatterError(path: string, reason: "non-mapping" | "missing")
 }
 
 /**
- * Reorder a frontmatter mapping into canonical emission order — {@link CANONICAL_KEY_ORDER}
- * first (those present, in order), then every remaining key in its existing order.
+ * Reorder a frontmatter mapping into canonical emission order — the profile's
+ * {@link Profile.canonicalKeyOrder} first (those present, in order), then every remaining key in
+ * its existing order. The order is the active profile's field-declaration order (ADR-0011
+ * append-slot), so a custom profile drives where its own fields sit; unknown producer keys always
+ * trail verbatim.
  *
  * The result is a **null-prototype** object so a literal `__proto__` data key (which
  * js-yaml stores as an own property, a tolerated OKF producer extension) is assigned
@@ -365,9 +386,9 @@ function absentFrontmatterError(path: string, reason: "non-mapping" | "missing")
  * shadows the inherited accessor, so `frontmatter["__proto__"]` returns its value (no
  * descriptor read needed); the null-proto target is what makes the *write* side safe.
  */
-function canonicalize(frontmatter: Record<string, unknown>): Record<string, unknown> {
+function canonicalize(frontmatter: Record<string, unknown>, keyOrder: readonly string[]): Record<string, unknown> {
   const ordered: Record<string, unknown> = Object.create(null);
-  for (const key of CANONICAL_KEY_ORDER) {
+  for (const key of keyOrder) {
     if (Object.hasOwn(frontmatter, key)) {
       ordered[key] = frontmatter[key];
     }

@@ -26,24 +26,18 @@
 
 import { LoreError, WarningCollector } from "../errors";
 import { type Concept, idFromPath, serializeConcept, serializeConceptWithModeline } from "./concept";
-import { isKnownType, type KnownType, validateFrontmatter } from "./schema";
+import { defaultProfile, type Profile, slugForTypeName } from "./profile";
+import { validateFrontmatter } from "./schema";
 
 /**
- * Derive a filename slug from a concept title: Unicode-normalized, diacritics stripped,
- * lower-cased, every run of non-alphanumerics collapsed to a single `-`, and leading/
- * trailing `-` trimmed (`"Bulk Archive Orders!"` → `"bulk-archive-orders"`). The result
- * is the last path segment of the new doc's id, so it uses the same `[a-z0-9-]` alphabet a
- * portable bundle path needs. A title with no alphanumeric content yields `""`; the caller
- * treats that as "cannot derive a path, pass `--out`" rather than writing a `-.md` file.
+ * Derive a filename slug from a concept title — the LOWER-KEBAB transform {@link slugForTypeName}
+ * applies to type names (`"Bulk Archive Orders!"` → `"bulk-archive-orders"`). The result is the last
+ * path segment of the new doc's id, so it uses the `[a-z0-9-]` alphabet a portable bundle path
+ * needs. A title with no alphanumeric content yields `""`; the caller treats that as "cannot derive
+ * a path, pass `--out`" rather than writing a `-.md` file. Aliased to the canonical slug algorithm
+ * so a title and a type name can never slug two different ways.
  */
-export function slugify(title: string): string {
-  return title
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
+export const slugify = slugForTypeName;
 
 /** The `{{ key }}` token grammar: a name of word chars, dots, and dashes, with optional inner padding. */
 const PLACEHOLDER = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
@@ -105,6 +99,8 @@ export interface BuildNewConceptInput {
    * schema file that is not there.
    */
   modeline?: string;
+  /** The active profile to validate/serialize against; defaults to the built-in {@link defaultProfile}. */
+  profile?: Profile;
 }
 
 /** The result of {@link buildNewConcept}: the bytes to write and any advisory warnings raised on validation. */
@@ -149,7 +145,8 @@ export function buildNewConcept(input: BuildNewConceptInput): BuildNewConceptRes
     frontmatter.tags = [...input.tags];
   }
 
-  const resolvedType = validateFrontmatter(frontmatter, { warnings, path: input.docPath });
+  const profile = input.profile ?? defaultProfile();
+  const resolvedType = validateFrontmatter(frontmatter, { warnings, path: input.docPath, profile });
   const concept: Concept = {
     id: idFromPath(input.docPath),
     path: input.docPath,
@@ -159,7 +156,9 @@ export function buildNewConcept(input: BuildNewConceptInput): BuildNewConceptRes
   };
 
   const contents =
-    input.modeline !== undefined ? serializeConceptWithModeline(concept, input.modeline) : serializeConcept(concept);
+    input.modeline !== undefined
+      ? serializeConceptWithModeline(concept, input.modeline, { profile })
+      : serializeConcept(concept, { profile });
   return { contents, type: resolvedType, warnings: warnings.list() };
 }
 
@@ -206,7 +205,7 @@ function renderBody(input: BuildNewConceptInput): string {
  * has a fallback for every type when no user template is present.
  */
 export function builtinTemplateFor(type: string): string {
-  return isKnownType(type) ? BUILTIN_TEMPLATES[type] : GENERIC_TEMPLATE;
+  return Object.hasOwn(BUILTIN_TEMPLATES, type) ? (BUILTIN_TEMPLATES[type] as string) : GENERIC_TEMPLATE;
 }
 
 // ── Built-in body templates ──────────────────────────────────────────────────────
@@ -291,11 +290,14 @@ const STORY_TEMPLATE = `
 `;
 
 /**
- * The built-in body template per known type. Keyed by {@link KnownType} so adding a type to
- * the profile surfaces a missing template as a compile error here, beside the schemas that
- * define the types.
+ * The built-in body template content lore ships for the six story-convention types — the
+ * zero-config fallback when no `.lore/templates/<type>.md` is present. Keyed by canonical type
+ * name (a plain string map, **independent of the active profile**): a custom-profile type lore
+ * ships no body for falls back to {@link GENERIC_TEMPLATE}, and the project supplies its own
+ * template file. Decoupling this from the profile is why {@link builtinTemplateFor} tests
+ * membership here rather than asking whether the type is profile-known.
  */
-const BUILTIN_TEMPLATES: Readonly<Record<KnownType, string>> = Object.freeze({
+const BUILTIN_TEMPLATES: Readonly<Record<string, string>> = Object.freeze({
   Reference: REFERENCE_TEMPLATE,
   Spec: SPEC_TEMPLATE,
   ADR: ADR_TEMPLATE,
