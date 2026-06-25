@@ -1,11 +1,11 @@
 ---
 id: LORE-18
 title: lore new with templates
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-06-25 16:14'
+updated_date: '2026-06-25 17:19'
 labels:
   - cmd
 milestone: m-2
@@ -25,8 +25,8 @@ Scaffold typed concepts from .lore/templates/<type>.md with {{placeholders}} and
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 New docs validate clean by construction
-- [ ] #2 User templates override bundled defaults
+- [x] #1 New docs validate clean by construction
+- [x] #2 User templates override bundled defaults
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -45,4 +45,6 @@ Scaffold typed concepts from .lore/templates/<type>.md with {{placeholders}} and
 
 <!-- SECTION:NOTES:BEGIN -->
 Design confirmed with Jeremy (2026-06-25): (a) target path = docs/<typeDirectory>/<slug>.md, per-type dir mapped in schema.ts (the type config), user-overridable via --out; (b) unknown types ACCEPTED per cli-surface.md §new — generic lenient built-in template, dir = type-name lowercased, no modeline (no schema exists); (c) flag scope = AC-focused subset: <type> <title> --var(repeat) --template <name> --summary --tags; DEFERRED --epic/--story/--resource to coupling tasks (ADR-0009); (d) type token is case-insensitive (lore new story -> Story). Kind 'new' (matches shipped 'init'; spec says new.result/init.result — minor naming drift to reconcile in a later spec pass). Exit codes: 2 usage/bad var, 5 target exists, 6 template missing {{var}}/bad frontmatter.
+
+Implemented across two commits on feat/lore-18-new: 4f48345 (feature) + e157573 (review fixes). AC#1 (validate clean by construction): frontmatter built structurally (lore owns it) + body-only templates; each built-in renders a zero-warning, re-parseable concept (test/template.test.ts loops KNOWN_TYPES; test/new.test.ts loadBundle yields 0 warnings). AC#2 (user templates override): .lore/templates/<name>.md body overrides the built-in, resolved case-insensitively. /code-review max ran (51 agents, 21 verified findings -> 15 distinct); ALL fixed per Jeremy's 'all tiers' decision: type-token validation (no bundle escape), --out confined to docs/ + reserved-index guard, parser regression (post-command unknown flag vs --version/--help), -- terminator forwarding, value-flag won't swallow following flag, case-insensitive template lookup, conditional modeline (no dangling $schema), --var shadow warning, title trim, conflict-before-mkdir, stderr threading. Accepted as working-as-intended: two titles -> same slug -> never-clobber conflict (exit 5). Gates green: 361 tests pass, tsc clean, biome clean, coverage 98.6% funcs / 96.5% lines (uncovered = defensive permission branches). Deferred (noted): coupling flags --epic/--story/--resource (ADR-0009); kind 'new' vs spec 'new.result' naming drift; not_found(3) used for an explicit missing --template.
 <!-- SECTION:NOTES:END -->
