@@ -107,4 +107,27 @@ describe("cli — init dispatch", () => {
     expect(envelope.data.created).toContain("docs/index.md");
     expect(existsSync(join(cwd, ".lore/schemas/reference.schema.json"))).toBe(true);
   });
+
+  test("`lore init --` honors the POSIX end-of-options terminator and still scaffolds", () => {
+    const c = ctx({ cwd });
+    expect(run(argv("init", "--"), c)).toBe(0);
+    expect(existsSync(join(cwd, "docs/index.md"))).toBe(true);
+  });
+});
+
+describe("cli — option terminator and bare dash", () => {
+  test("`--` ends options: a following flag-looking token is a positional, not parsed as a flag", () => {
+    const c = ctx();
+    // After `--`, `--version` is a positional (the command), so it is an unknown
+    // command — not the version short-circuit.
+    expect(run(argv("--", "--version"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).toContain("unknown command");
+    expect(c.stdout.text()).toBe(""); // not the version line
+  });
+
+  test("a bare `-` is treated as a positional (unknown command), not an unknown option", () => {
+    const c = ctx();
+    expect(run(argv("-"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).toContain("unknown command");
+  });
 });

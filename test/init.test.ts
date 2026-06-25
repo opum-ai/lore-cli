@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type InitResult, runInit } from "../src/commands/init";
 import { loadBundle } from "../src/core/bundle";
 import { parseConcept } from "../src/core/concept";
-import { WarningCollector } from "../src/errors";
+import { LoreError, WarningCollector } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
 
@@ -156,12 +156,41 @@ describe("lore init — output rendering", () => {
   });
 });
 
-describe("lore init — filesystem failures", () => {
-  test("surfaces a non-permission IO error instead of silently swallowing it", () => {
-    // A regular file sitting where the `.lore` directory must go makes `mkdir -p`
-    // fail with EEXIST — not a permission error, so it propagates (exit 1 territory)
-    // rather than being mistaken for a created/skipped entry.
+describe("lore init — filesystem conflicts (a non-regular entry blocks the scaffold)", () => {
+  /** Run init and assert it throws a `conflict` {@link LoreError}, returning it for further checks. */
+  function expectConflict(): LoreError {
+    try {
+      runInit({ root, output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("conflict");
+      return err as LoreError;
+    }
+    throw new Error("expected a conflict LoreError, but init returned");
+  }
+
+  test("a regular file where the `.lore` directory must go is a conflict, not an uncaught crash", () => {
+    // `mkdir -p` over a regular file fails with EEXIST — a user-fixable structural
+    // conflict (exit 5 with a hint), not a mislabeled permission error or a raw crash.
     writeFileSync(join(root, ".lore"), "not a directory");
-    expect(() => runInit({ root, output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK })).toThrow();
+    const err = expectConflict();
+    expect(err.hint).toContain("remove or rename");
+  });
+
+  test("a directory where a scaffold file must go is a conflict, not a silent skip", () => {
+    // A directory occupying `docs/index.md` makes the `wx` write fail with EEXIST. It
+    // must NOT be reported as a normally-existing file (which would claim success on a
+    // malformed bundle) — it is surfaced as a conflict.
+    mkdirSync(join(root, "docs", "index.md"), { recursive: true });
+    expectConflict();
+  });
+
+  test("a symlink where a scaffold file must go is a conflict (lstat, not followed)", () => {
+    // A symlink (here dangling) occupying a scaffold file path also yields EEXIST on
+    // the `wx` write; lstat sees the link itself, so it is treated as the non-regular
+    // conflict it is rather than silently honored via its target.
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    symlinkSync("nowhere", join(root, ".lore", ".gitignore"));
+    expectConflict();
   });
 });

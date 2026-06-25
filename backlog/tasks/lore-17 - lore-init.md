@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-06-25 12:22'
+updated_date: '2026-06-25 14:13'
 labels:
   - cmd
 milestone: m-2
@@ -64,4 +64,12 @@ DEFERRED (documented, not blockers):
 - #8 modeline-inside-fence is not a serialization fixpoint: js-yaml drops the in-fence comment on re-serialize. Inherent to inside-fence placement (parseConcept needs --- at byte 0) and affects all 16 modeline docs equally; init writes once. REAL future concern for LORE-26/29 sync (rewriting the root index would drop the modeline) — flag when sync lands; proper fix is modeline-aware concept.ts (own task).
 - #9 zod-byte coupling: schema bytes track z.toJSONSchema; tests assert STRUCTURE not exact bytes so a zod bump won't false-fail. Cross-version idempotency is a separate release/upgrade concern.
 - #12 'docs' bundle-root literal: bundle.ts takes root as a param (no hardcoded 'docs'); a shared DOCS_ROOT const is nice-to-have.
+
+Post-PR /code-review max (8 finder angles + verify) on PR #14 — resolved findings on feat/lore-17-init:
+- ROBUSTNESS (createIfAbsent/ioError, init.ts): a directory/symlink occupying a scaffold FILE path mapped every EEXIST to 'skipped' → init claimed success (exit 0) on a malformed bundle. Now lstat-checks the existing entry: a regular file is the normal never-clobber skip; a non-regular entry throws a 'conflict' LoreError (exit 5). ioError also maps EEXIST/ENOTDIR (file blocking a directory path) to 'conflict' with an actionable hint instead of a raw exit-1 crash. +3 conflict tests (dir/symlink/file-at-dir).
+- ALTITUDE/REUSE (modeline splice): extracted serializeConceptWithModeline(concept, modeline) into concept.ts — slices the known FENCE prefix (no fragile first-occurrence .replace content-search) and is the single home LORE-18 'lore new' will reuse. scaffold.ts consumes it; bytes unchanged (golden still passes). Fixed the stale concept.ts header that said modeline goes ABOVE the fence. +3 concept tests.
+- REUSE (ANSI dup): exported shared ANSI palette + paint() from errors.ts; init.ts renderPretty consumes them instead of its own GREEN/DIM/RESET.
+- MINOR: cli.ts parseArgs now honors the POSIX '--' end-of-options terminator and treats a bare '-' as a positional (not an unknown flag); +2 cli tests. isTTY seam: an injected stdout sink with no TTY hint resolves to non-TTY (no stray ANSI in a captured buffer). EXIT_OK used for the success returns (was a bare 0).
+- DEFERRED (intentional, not changed): OKF_RESERVED_KEYS exemption applies to all types — per-file validation lacks the bundle context to enforce 'only the root index may carry okf_version'; that placement check belongs to bundle-level lore validate/check (LORE-26), where it can see the root. Enforcing it in warnExtraKeys would be fragile (depends on repo- vs bundle-relative path). Cross-version schema drift and buildScaffold-throws-on-bad-timestamp left as documented by-design.
+Gates: 297 tests pass (was 289); lint+typecheck clean; coverage 98% funcs/96% lines (scaffold/schema/concept 100%). Verified end-to-end via real CLI: init -- (exit 0), conflict dir/symlink (exit 5, text+json envelope).
 <!-- SECTION:NOTES:END -->

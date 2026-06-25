@@ -15,10 +15,10 @@
  * that already has a rich `docs/index.md` keeps it untouched.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildScaffold } from "../core/scaffold";
-import { errnoCode, LoreError, type Writer } from "../errors";
+import { ANSI, EXIT_OK, errnoCode, LoreError, paint, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 
 /** The result of an `init` run: what was created versus already present, and where. */
@@ -68,7 +68,7 @@ export function runInit(options: InitOptions): number {
   }
 
   emit(initRenderable({ root: options.root, created, skipped }), options.output, options.stdout);
-  return 0;
+  return EXIT_OK;
 }
 
 /** `mkdir -p` for a scaffold directory, mapping a permission failure to a `denied` error. */
@@ -92,16 +92,40 @@ function createIfAbsent(absPath: string, contents: string, relPath: string): boo
     return true;
   } catch (cause) {
     if (errnoCode(cause) === "EEXIST") {
-      return false;
+      // Something already occupies the path. A regular file is the normal idempotent
+      // case (never-clobber: leave the user's file exactly as-is, report it skipped).
+      // A directory, symlink, or other non-regular entry is a structural conflict —
+      // surface it instead of reporting a malformed bundle as a clean, exit-0 re-run.
+      if (existingIsRegularFile(absPath)) {
+        return false;
+      }
+      throw conflictError(relPath);
     }
     throw ioError(cause, relPath, "write file");
   }
 }
 
 /**
+ * Whether the entry already at `absPath` is a regular file. Uses `lstat` (does not
+ * follow symlinks), so a symlink occupying a scaffold path is treated as the
+ * non-regular conflict it is rather than silently honored via its target. A failing
+ * stat — the entry vanished in a concurrent race after the `wx` EEXIST — degrades to
+ * `true` so init reports a benign skip instead of crashing on a self-resolving race.
+ */
+function existingIsRegularFile(absPath: string): boolean {
+  try {
+    return lstatSync(absPath).isFile();
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Map a filesystem failure to a diagnostic. A permission error (`EACCES`/`EPERM`)
- * becomes a `denied` {@link LoreError} with an actionable hint; anything else is
- * rethrown so a genuinely unexpected IO fault surfaces as an uncaught failure
+ * becomes a `denied` {@link LoreError}; a file occupying a path lore needs as a
+ * directory (`EEXIST` on `mkdir`) or a file sitting on an ancestor segment (`ENOTDIR`)
+ * becomes a `conflict` {@link LoreError}. Both carry an actionable hint. Anything else
+ * is rethrown so a genuinely unexpected IO fault surfaces as an uncaught failure
  * (exit 1, "report this") rather than being mislabeled a user condition.
  */
 function ioError(cause: unknown, relPath: string, action: string): unknown {
@@ -114,18 +138,26 @@ function ioError(cause: unknown, relPath: string, action: string): unknown {
       { path: relPath, code },
     );
   }
+  if (code === "EEXIST" || code === "ENOTDIR") {
+    return conflictError(relPath, code);
+  }
   return cause;
+}
+
+/** A `conflict` {@link LoreError}: a non-regular file blocks a path the scaffold must create. */
+function conflictError(relPath: string, code?: string): LoreError {
+  return new LoreError(
+    "conflict",
+    `cannot initialize ${relPath}: a conflicting file already exists where lore needs to create it`,
+    "remove or rename the conflicting entry, then re-run `lore init`",
+    code ? { path: relPath, code } : { path: relPath },
+  );
 }
 
 /** The per-result-type rendering bundle for `init` (output.ts dispatches on the mode). */
 function initRenderable(data: InitResult): Renderable<InitResult> {
   return { kind: "init", data, pretty: renderPretty, plain: renderPlain };
 }
-
-// ANSI green for the created marker; emitted only when the resolved mode permits color.
-const GREEN = "\x1b[32m";
-const DIM = "\x1b[2m";
-const RESET = "\x1b[0m";
 
 /** Human view: a one-line summary, then the created (and any skipped) paths. */
 function renderPretty(data: InitResult, opts: { color: boolean }): string {
@@ -134,10 +166,10 @@ function renderPretty(data: InitResult, opts: { color: boolean }): string {
     : `lore bundle already initialized at ${data.root} (nothing to create)`;
   const lines = [head];
   for (const path of data.created) {
-    lines.push(opts.color ? `  ${GREEN}+${RESET} ${path}` : `  + ${path}`);
+    lines.push(`  ${paint("+", ANSI.green, opts.color)} ${path}`);
   }
   for (const path of data.skipped) {
-    lines.push(opts.color ? `  ${DIM}· ${path} (exists)${RESET}` : `  · ${path} (exists)`);
+    lines.push(`  ${paint(`· ${path} (exists)`, ANSI.dim, opts.color)}`);
   }
   return lines.join("\n");
 }

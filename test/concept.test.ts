@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type Concept, parseConcept, serializeConcept } from "../src/core/concept";
+import { type Concept, parseConcept, serializeConcept, serializeConceptWithModeline } from "../src/core/concept";
 import { LoreError, WarningCollector } from "../src/errors";
 
 /** A leading UTF-8 BOM, built ASCII-safely so there is no literal U+FEFF in source. */
@@ -178,6 +178,39 @@ describe("serializeConcept — golden byte-exactness (design §9.2)", () => {
     const messy = "---\nsummary: S.\ntype: Reference\ntitle: T\ncustom_key: kept\n---\nBody.\n";
     const canonical = "---\ntype: Reference\ntitle: T\nsummary: S.\ncustom_key: kept\n---\nBody.\n";
     expect(serializeConcept(parseConcept("reference/x.md", messy))).toBe(canonical);
+  });
+});
+
+describe("serializeConceptWithModeline — modeline spliced inside the opening fence", () => {
+  const MODELINE = "# yaml-language-server: $schema=../.lore/schemas/reference.schema.json";
+
+  test("inserts the modeline as the first line inside the fence, leaving the rest byte-identical", () => {
+    const concept = parseConcept("reference/x.md", MINIMAL_GOLDEN);
+    const expected = `---\n${MODELINE}\n${MINIMAL_GOLDEN.slice("---\n".length)}`;
+    expect(serializeConceptWithModeline(concept, MODELINE)).toBe(expected);
+  });
+
+  test("the result still round-trips through parseConcept as the same concept", () => {
+    const concept = parseConcept("reference/x.md", MINIMAL_GOLDEN);
+    const withModeline = serializeConceptWithModeline(concept, MODELINE);
+    expect(withModeline.startsWith("---\n")).toBe(true); // fence still at byte 0
+    expect(parseConcept("reference/x.md", withModeline).type).toBe("Reference");
+  });
+
+  test("targets the opening fence, not a `---` that appears in the body", () => {
+    // A body containing its own `---\n` must not be where the modeline lands.
+    const concept: Concept = {
+      id: "reference/x",
+      path: "reference/x.md",
+      type: "Reference",
+      frontmatter: { type: "Reference" },
+      body: "intro\n---\na thematic break in the body\n",
+    };
+    const out = serializeConceptWithModeline(concept, MODELINE);
+    // The modeline is on line 2 (inside the opening fence), and the body's own
+    // `---` is untouched further down.
+    expect(out.split("\n")[1]).toBe(MODELINE);
+    expect(out.endsWith("a thematic break in the body\n")).toBe(true);
   });
 });
 

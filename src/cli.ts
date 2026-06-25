@@ -16,7 +16,7 @@
  */
 
 import { runInit } from "./commands/init";
-import { LoreError, reportError, type Writer } from "./errors";
+import { EXIT_OK, LoreError, reportError, type Writer } from "./errors";
 import { VERSION } from "./meta";
 import { emit, errorRenderOpts, type OutputContext, type Renderable, resolveOutput } from "./output";
 
@@ -55,7 +55,14 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let help = false;
   const positionals: string[] = [];
   const unknownFlags: string[] = [];
-  for (const arg of argv.slice(2)) {
+  const args = argv.slice(2);
+  for (const [i, arg] of args.entries()) {
+    // POSIX end-of-options: everything after a bare `--` is a positional, even if it
+    // looks like a flag — so a future command can accept a value that begins with `-`.
+    if (arg === "--") {
+      positionals.push(...args.slice(i + 1));
+      break;
+    }
     switch (arg) {
       case "--json":
         json = true;
@@ -72,7 +79,8 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
         help = true;
         break;
       default:
-        if (arg.startsWith("-")) {
+        // A bare `-` is the conventional stdin/positional marker, not an unknown flag.
+        if (arg.startsWith("-") && arg !== "-") {
           unknownFlags.push(arg);
         } else {
           positionals.push(arg);
@@ -110,7 +118,10 @@ export function run(argv: readonly string[], context: RunContext = {}): number {
   const output = resolveOutput({
     json: parsed.json,
     plain: parsed.plain,
-    isTTY: context.isTTY ?? process.stdout.isTTY,
+    // A caller that injects its own stdout sink but no TTY hint is not at a terminal,
+    // so its mode resolves to plain (no stray ANSI in a captured buffer); only the
+    // real-process path (no injected sink) reads the actual `process.stdout.isTTY`.
+    isTTY: context.isTTY ?? (context.stdout ? false : process.stdout.isTTY),
     env: context.env ?? process.env,
   });
   try {
@@ -142,7 +153,7 @@ function emitMeta(
 ): number {
   const renderable: Renderable<Record<string, string>> = { kind, data, pretty: () => text, plain: () => text };
   emit(renderable, output, stdout);
-  return 0;
+  return EXIT_OK;
 }
 
 /** Route a parsed invocation to its command handler, throwing a `usage` error on bad input. */

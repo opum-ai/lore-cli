@@ -25,7 +25,7 @@
  */
 
 import { CONFIG_REL_PATH } from "../config";
-import { type Concept, idFromPath, serializeConcept } from "./concept";
+import { type Concept, idFromPath, serializeConceptWithModeline } from "./concept";
 import {
   jsonSchemaFor,
   KNOWN_TYPES,
@@ -105,8 +105,9 @@ function schemaFiles(): ScaffoldFile[] {
 
 /**
  * The minimal reserved root index: byte-stable frontmatter (a `Reference` carrying
- * `okf_version: "0.1"` — the sole carrier in the bundle) via {@link serializeConcept},
- * with the editor modeline inserted as the **first line inside** the `---` fence.
+ * `okf_version: "0.1"` — the sole carrier in the bundle), with the editor modeline
+ * spliced in as the **first line inside** the `---` fence via
+ * {@link serializeConceptWithModeline} (the shared placement seam in concept.ts).
  *
  * The modeline sits *inside* the frontmatter, not above it, because that is the only
  * placement that both (a) lets lore read the file back as a concept — `parseConcept`
@@ -130,10 +131,7 @@ function rootIndexDocument(timestamp: string): string {
     },
     body: ROOT_INDEX_BODY,
   };
-  const modeline = schemaModeline(ROOT_INDEX_PATH, "Reference");
-  // serializeConcept emits `---\n<yaml>---\n<body>`; splice the modeline in as the
-  // first line within the opening fence.
-  return serializeConcept(concept).replace("---\n", `---\n${modeline}\n`);
+  return serializeConceptWithModeline(concept, schemaModeline(ROOT_INDEX_PATH, "Reference"));
 }
 
 /** The body of the scaffolded root index (after the frontmatter fence). */

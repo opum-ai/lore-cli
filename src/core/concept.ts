@@ -49,8 +49,11 @@
  * calls `process.exit`. Advisory warnings flow to an optional {@link WarningCollector}.
  *
  * Scope note: a concept document is the `---`-fenced frontmatter plus its body. The
- * editor modeline (`# yaml-language-server: …`) is written *above* the fence by
- * `lore new` (ADR-0006 §3) and is that command's concern, not this module's.
+ * editor modeline (`# yaml-language-server: …`) is spliced in as the first line
+ * *inside* the opening fence by {@link serializeConceptWithModeline} — the only
+ * placement lore's own parser reads back as a concept (`parseConcept` needs `---` at
+ * byte 0, so an above-fence comment makes the file a non-concept). The modeline text
+ * itself is `schema.schemaModeline`'s concern (ADR-0006 §3).
  *
  * Documented limitations, all for inputs no real concept produces (frontmatter keys
  * are field-name identifiers and values are short scalars/dates/lists — never comments,
@@ -228,6 +231,28 @@ export function serializeConcept(concept: Concept): string {
   validateFrontmatter(concept.frontmatter, { path: concept.path });
   const ordered = canonicalize(concept.frontmatter);
   return `${FENCE}${yaml.dump(ordered, YAML_DUMP_OPTIONS)}${FENCE}${concept.body}`;
+}
+
+/**
+ * Serialize a {@link Concept} and splice an editor modeline (a `# yaml-language-server:`
+ * comment, produced by `schema.schemaModeline`) in as the **first line inside** the
+ * opening `---` fence. The single home for that placement, so every command that emits a
+ * modeline-bearing doc (`lore init`, and `lore new` next) shares one implementation
+ * instead of re-deriving the splice.
+ *
+ * Inside-fence is the only placement lore's own parser reads back as a concept
+ * ({@link parseConcept} requires `---` at byte 0, so an above-fence comment would make
+ * the file a non-concept). The splice slices off {@link serializeConcept}'s known `---\n`
+ * opening fence and re-prepends it with the modeline — operating on that fixed prefix,
+ * never a content search, so a `---\n` occurring later in a value or the body can never
+ * be targeted.
+ *
+ * Round-trip caveat (ADR-0011 §2): js-yaml drops the in-fence comment if the file is
+ * ever re-serialized, so a doc written this way is emitted once, not rewritten in place.
+ */
+export function serializeConceptWithModeline(concept: Concept, modeline: string): string {
+  const serialized = serializeConcept(concept);
+  return `${FENCE}${modeline}\n${serialized.slice(FENCE.length)}`;
 }
 
 /**
