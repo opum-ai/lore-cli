@@ -29,6 +29,8 @@
  */
 
 import { posix } from "node:path";
+import { compareCodeUnits } from "./order";
+import { DOCS_DIR } from "./scaffold";
 
 /**
  * One commit as the {@link GitAdapter} surfaces it — the minimal, deterministic projection
@@ -71,17 +73,22 @@ export interface GitAdapter {
 /** Options for {@link generateLog}. */
 export interface GenerateLogOptions {
   /**
-   * The bundle root the log is scoped to (default `"docs"`). A commit's files outside this root
-   * are ignored, so `log.md` reflects bundle history, not unrelated source churn. Compared by path
-   * segment, so `"docs"` matches `docs/x.md` but never a sibling like `docsite/x.md`.
+   * The bundle root the log is scoped to (default {@link DOCS_DIR}, `"docs"`). A commit's files
+   * outside this root are ignored, so `log.md` reflects bundle history, not unrelated source churn.
+   * Compared by path segment, so `"docs"` matches `docs/x.md` but never a sibling like `docsite/x.md`.
+   * An empty string falls back to the default (an empty root would match nothing).
    */
   readonly root?: string;
   /** The document's top-level heading (default `"Change log"`). */
   readonly title?: string;
 }
 
-/** The default bundle root `generateLog` scopes folders to. */
-const DEFAULT_ROOT = "docs";
+/** One commit as it renders in `log.md` — the commit's identity plus its subject collapsed once. */
+interface LogEntry {
+  readonly hash: string;
+  readonly timestamp: string;
+  readonly subject: string;
+}
 
 /**
  * Build a `log.md`'s bytes from a {@link GitAdapter} over a pinned range — the function `lore sync`
@@ -104,30 +111,36 @@ export function buildLog(adapter: GitAdapter, range: GitLogRange, options: Gener
  * the heading, so the file is always well-formed.
  */
 export function generateLog(commits: readonly GitCommit[], options: GenerateLogOptions = {}): string {
-  const root = options.root ?? DEFAULT_ROOT;
+  const root = options.root || DOCS_DIR;
   const title = options.title ?? "Change log";
 
-  // folder → commits touching it. A Map keyed by commit hash dedups a commit that touched several
-  // files in the same folder (it must appear once per folder, not once per file).
-  const byFolder = new Map<string, Map<string, GitCommit>>();
+  // folder → the commits touching it. `foldersTouched` already returns a *set* of folders, so each
+  // commit is appended at most once per folder — no dedup keyed by hash, which would otherwise
+  // collapse two genuinely distinct commits that share an abbreviated hash. The subject is collapsed
+  // once here (per commit), not once per folder it lands in.
+  const byFolder = new Map<string, LogEntry[]>();
   for (const commit of commits) {
-    for (const folder of foldersTouched(commit.files, root)) {
-      let bucket = byFolder.get(folder);
+    const folders = foldersTouched(commit.files, root);
+    if (folders.size === 0) {
+      continue;
+    }
+    const entry: LogEntry = { hash: commit.hash, timestamp: commit.timestamp, subject: singleLine(commit.subject) };
+    for (const folder of folders) {
+      const bucket = byFolder.get(folder);
       if (bucket === undefined) {
-        bucket = new Map<string, GitCommit>();
-        byFolder.set(folder, bucket);
+        byFolder.set(folder, [entry]);
+      } else {
+        bucket.push(entry);
       }
-      bucket.set(commit.hash, commit);
     }
   }
 
-  const folders = [...byFolder.keys()].sort(compareStrings);
-  const sections = folders.map((folder) => {
-    const lines = [...(byFolder.get(folder) as Map<string, GitCommit>).values()]
-      .sort(compareCommits)
-      .map((commit) => `- ${commit.timestamp} ${commit.hash} ${singleLine(commit.subject)}`);
-    return `## ${folder}\n\n${lines.join("\n")}\n`;
-  });
+  const sections = [...byFolder.entries()]
+    .sort(([a], [b]) => compareCodeUnits(a, b))
+    .map(([folder, entries]) => {
+      const lines = entries.sort(compareEntries).map((e) => `- ${e.timestamp} ${e.hash} ${e.subject}`);
+      return `## ${folder}\n\n${lines.join("\n")}\n`;
+    });
 
   return [`# ${title}\n`, ...sections].join("\n");
 }
@@ -147,9 +160,14 @@ function foldersTouched(files: readonly string[], root: string): Set<string> {
   return folders;
 }
 
-/** True when `file` is the bundle root or sits under it, matched by path segment (not bare prefix). */
+/**
+ * True when `file` sits **strictly under** the bundle root (`<root>/…`). A file whose path *equals*
+ * the root is deliberately excluded: it is a file literally named `docs` (not a bundle document), and
+ * `posix.dirname` would put it under the root's *parent* (`.`), emitting a section above the bundle.
+ * A document directly under the root — `docs/index.md` — still matches and groups under `## docs`.
+ */
 function isUnderRoot(file: string, root: string): boolean {
-  return file === root || file.startsWith(`${root}/`);
+  return file.startsWith(`${root}/`);
 }
 
 /** Collapse any newline run in a commit subject to a single space so one commit is always one line. */
@@ -157,12 +175,18 @@ function singleLine(text: string): string {
   return text.replace(/\s*[\r\n]+\s*/g, " ").trim();
 }
 
-/** Stable, locale-independent string order (code-unit comparison) for folder sorting. */
-function compareStrings(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
-/** Order commits by ascending `timestamp`, tie-broken by `hash`, so the per-folder list is deterministic. */
-function compareCommits(a: GitCommit, b: GitCommit): number {
-  return compareStrings(a.timestamp, b.timestamp) || compareStrings(a.hash, b.hash);
+/**
+ * Order entries by ascending **instant**, tie-broken by `hash`. Timestamps are ISO-8601 *with
+ * offset* (see {@link GitCommit.timestamp}), so two equal instants written in different offsets must
+ * compare equal — a lexical string compare would order them by wall-clock text instead. Parse each to
+ * epoch milliseconds and compare numerically; fall back to a code-unit compare only when a value is
+ * unparseable (so the order stays total and deterministic even on malformed input).
+ */
+function compareEntries(a: LogEntry, b: LogEntry): number {
+  const ta = Date.parse(a.timestamp);
+  const tb = Date.parse(b.timestamp);
+  if (!Number.isNaN(ta) && !Number.isNaN(tb) && ta !== tb) {
+    return ta < tb ? -1 : 1;
+  }
+  return compareCodeUnits(a.timestamp, b.timestamp) || compareCodeUnits(a.hash, b.hash);
 }

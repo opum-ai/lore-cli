@@ -172,7 +172,7 @@ export function buildNewConcept(input: BuildNewConceptInput): BuildNewConceptRes
   }
 
   const profile = input.profile ?? defaultProfile();
-  stampResource(frontmatter, input.docPath, profile.resourceBase);
+  stampResource(frontmatter, input.docPath, profile);
   const resolvedType = validateFrontmatter(frontmatter, { warnings, path: input.docPath, profile });
   const concept: Concept = {
     id: idFromPath(input.docPath),
@@ -191,25 +191,35 @@ export function buildNewConcept(input: BuildNewConceptInput): BuildNewConceptRes
 
 /**
  * Stamp the OKF `resource` key onto `frontmatter` when the profile opts in (LORE-47 / AC#4),
- * mutating in place to slot it alongside the other built structural keys. Two guards gate it,
- * so the zero-config default is **byte-identical to before the key existed**:
+ * mutating in place to slot it alongside the other built structural keys. Three guards gate it,
+ * so the zero-config default is **byte-identical to before the key existed** and lore never writes a
+ * value its own profile would reject:
  *
  * - **`resourceBase` empty** (the default) → omit. A project that sets no `[profile].resource_base`
  *   gets no `resource` line at all.
  * - **the doc is an index** (`index.md`, root or sub-index) → omit. Index/sub-index files are
- *   bundle-structure pages lore generates, not authored concepts a reader cites; a `resource`
- *   link on them would point a reader at scaffolding. The basename test covers `docs/index.md`
- *   and every `docs/<dir>/index.md` in one rule.
+ *   bundle-structure pages, not authored concepts a reader cites; a `resource` link on them would
+ *   point a reader at scaffolding. The basename test covers `docs/index.md` and every
+ *   `docs/<dir>/index.md` in one rule.
+ * - **the profile declares its own `resource` field** → omit. If a profile puts `resource` in
+ *   `[base.fields]` (or a type's `fields`), the field is profile-*owned* with its own kind/required
+ *   shape; auto-stamping a URL string would collide with that validator (e.g. a `datetime` or
+ *   `required` `resource` would fail the generated schema). lore defers to the declared field rather
+ *   than fight it — `canonicalKeyOrder` carries every declared (non-reserved) field name.
  *
- * The value is {@link resourceFor}; `concept.ts` emits it as a recognized non-profile key
+ * Otherwise the value is {@link resourceFor}; `concept.ts` emits it as a recognized non-profile key
  * (trailing the profile's declared fields, in the canonical order), and `schema.ts` lists it in
  * `OKF_RESERVED_KEYS` so it never trips the extra-key warning.
  */
-function stampResource(frontmatter: Record<string, unknown>, docPath: string, resourceBase: string): void {
-  if (resourceBase === "" || posix.basename(docPath) === "index.md") {
+function stampResource(frontmatter: Record<string, unknown>, docPath: string, profile: Profile): void {
+  if (
+    profile.resourceBase === "" ||
+    posix.basename(docPath) === "index.md" ||
+    profile.canonicalKeyOrder.includes("resource")
+  ) {
     return;
   }
-  frontmatter.resource = resourceFor(resourceBase, docPath);
+  frontmatter.resource = resourceFor(profile.resourceBase, docPath);
 }
 
 /** The placeholder names lore fills automatically; a `--var` for one of these is ignored (it would be overridden). */

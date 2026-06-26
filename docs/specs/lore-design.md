@@ -498,8 +498,10 @@ no lore-specific tooling is needed to read history.
 
 ## 8. Determinism and the injectable seams
 
-The core is deterministic, so the genuinely nondeterministic inputs are
-isolated behind injectable seams the tests can fake:
+The core is deterministic, so every input that would otherwise break that —
+whether genuinely nondeterministic (the clock) or merely impure and awkward to
+drive in a test (a subprocess, the git history) — is isolated behind an
+injectable seam the tests can fake:
 
 - **The clock.** Anything needing "now" (the `timestamp` in `lore new`) takes a
   `clock: () => Date` dependency. Tests inject a fixed clock so generated files

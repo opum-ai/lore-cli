@@ -109,6 +109,59 @@ describe("generateLog — per-folder, directory-sorted, byte-stable (AC#3)", () 
   });
 });
 
+describe("generateLog — determinism edge cases", () => {
+  test("orders by true instant, not lexical text, across differing UTC offsets", () => {
+    // 05:30-06:00 == 11:30Z is chronologically LATER than 10:00Z, though it sorts EARLIER lexically.
+    const out = generateLog([
+      { hash: "late", timestamp: "2026-06-20T05:30:00-06:00", subject: "later instant", files: ["docs/x.md"] },
+      { hash: "early", timestamp: "2026-06-20T10:00:00Z", subject: "earlier instant", files: ["docs/x.md"] },
+    ]);
+    expect(out).toBe(
+      [
+        "# Change log",
+        "",
+        "## docs",
+        "",
+        "- 2026-06-20T10:00:00Z early earlier instant",
+        "- 2026-06-20T05:30:00-06:00 late later instant",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  test("a file whose path equals the root is ignored (no `## .` section above the bundle)", () => {
+    const out = generateLog([
+      { hash: "r1", timestamp: "2026-06-20T00:00:00Z", subject: "file literally named docs", files: ["docs"] },
+    ]);
+    expect(out).toBe("# Change log\n");
+    expect(out).not.toContain("## .");
+  });
+
+  test("two distinct commits sharing an abbreviated hash both render (no dedup-by-hash collapse)", () => {
+    const out = generateLog([
+      { hash: "abc1234", timestamp: "2026-06-20T10:00:00Z", subject: "first", files: ["docs/x.md"] },
+      { hash: "abc1234", timestamp: "2026-06-21T10:00:00Z", subject: "second", files: ["docs/x.md"] },
+    ]);
+    expect(out.match(/abc1234/g)?.length).toBe(2);
+  });
+
+  test("an explicitly empty root falls back to the default bundle root", () => {
+    expect(generateLog(FAKE_HISTORY, { root: "" })).toBe(generateLog(FAKE_HISTORY));
+  });
+
+  test("commits at the same instant tie-break deterministically by hash", () => {
+    const out = generateLog([
+      { hash: "zzz", timestamp: "2026-06-20T10:00:00Z", subject: "z", files: ["docs/x.md"] },
+      { hash: "aaa", timestamp: "2026-06-20T10:00:00Z", subject: "a", files: ["docs/x.md"] },
+    ]);
+    expect(out).toBe(
+      ["# Change log", "", "## docs", "", "- 2026-06-20T10:00:00Z aaa a", "- 2026-06-20T10:00:00Z zzz z", ""].join(
+        "\n",
+      ),
+    );
+  });
+});
+
 describe("buildLog — the GitAdapter seam is exercised (AC#1)", () => {
   test("resolves history through the injected fake adapter and renders it", () => {
     const adapter = fakeAdapter();

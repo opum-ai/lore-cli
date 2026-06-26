@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseConcept } from "../src/core/concept";
+import { parseConcept, serializeConcept } from "../src/core/concept";
 import { compileProfile, defaultProfile, type Profile, parseProfile } from "../src/core/profile";
 import { canonicalType, isKnownType, schemaModeline, typeDirectory } from "../src/core/schema";
 import { buildNewConcept, builtinTemplateFor, renderTemplate, resourceFor, slugify } from "../src/core/template";
@@ -259,22 +259,34 @@ describe("buildNewConcept — resource stamping is profile-gated (AC#4)", () => 
 
   test("`resource` trails the profile's declared keys and round-trips byte-stably", () => {
     const profile = profileWithResourceBase("https://docs.example.com/");
-    const first = build("docs/reference/orders.md", profile);
-    const concept = parseConcept("docs/reference/orders.md", first.contents, { profile });
-    // serialize(parse(x)) === x: the stamped key reaches a fixpoint on the first write.
-    expect(
-      buildNewConcept({
-        docPath: "docs/reference/orders.md",
-        type: "Reference",
-        title: "Orders",
-        summary: "The orders.",
-        timestamp: TIMESTAMP,
-        bodyTemplate: builtinTemplateFor("Reference"),
-        vars: Object.create(null),
-        profile,
-      }).contents,
-    ).toBe(first.contents);
+    const first = build("docs/reference/orders.md", profile).contents;
+    const concept = parseConcept("docs/reference/orders.md", first, { profile });
+    // The genuine fixpoint: re-serializing the parsed-back concept reproduces the exact bytes, so a
+    // regression that reordered/dropped the trailing `resource` key on re-emit would fail here.
+    expect(serializeConcept(concept, { profile })).toBe(first);
     expect(Object.keys(concept.frontmatter).at(-1)).toBe("resource");
+  });
+
+  test("defers to a profile that declares its own `resource` field (no auto-stamp, no crash)", () => {
+    // A profile owning `resource` (here a required datetime) would reject a stamped URL string;
+    // lore must not auto-stamp — the field is the profile's to fill, not lore's.
+    const doc = Bun.TOML.parse(
+      [
+        "[profile]",
+        'name = "owns-resource"',
+        'okf_version = "0.1"',
+        'resource_base = "https://docs.example.com/"',
+        "[base.fields]",
+        "type = { required = true }",
+        'resource = { kind = "datetime" }',
+        "[[types]]",
+        'name = "Reference"',
+      ].join("\n"),
+    ) as Record<string, unknown>;
+    const profile = compileProfile(parseProfile(doc, "owns-resource"));
+    // Would throw exit-6 (URL vs datetime) if lore auto-stamped; it must build cleanly instead.
+    const result = build("docs/reference/orders.md", profile);
+    expect(result.contents).not.toContain("https://docs.example.com");
   });
 });
 
