@@ -51,8 +51,25 @@ import { type CompiledType, defaultProfile, type Profile, slugForTypeName } from
  *   field: keeping it here — instead of in `[base.fields]` — means it never changes a type's
  *   generated validator or the committed `.lore/schemas/*.json` (it is advisory metadata, not a
  *   shape constraint), while still suppressing the extra-key warning on lore's own output.
+ *   **Index files are the exception** ({@link isReservedKey}): lore never stamps `resource` on an
+ *   `index.md` (it is a structure page, not a cited concept — LORE-47 AC#4/#5), so a `resource:`
+ *   hand-authored onto one is not lore's recognized output and is warned like any other extra key.
  */
 const OKF_RESERVED_KEYS: ReadonlySet<string> = new Set(["okf_version", "resource"]);
+
+/**
+ * Whether `key` is an OKF-reserved key that passes the extra-key warning on a known type. All
+ * {@link OKF_RESERVED_KEYS} are reserved on an ordinary concept; on an **index file** `resource` is
+ * *not* reserved — an index carries no lore-stamped `resource`, so a hand-authored one there is a
+ * genuine extra key the author should see, while `okf_version` (the root index's own conformance
+ * marker) stays reserved.
+ */
+function isReservedKey(key: string, isIndex: boolean): boolean {
+  if (key === "resource") {
+    return !isIndex;
+  }
+  return OKF_RESERVED_KEYS.has(key);
+}
 
 /** The longest a `summary` should be before lore warns it is no longer a one-liner (ADR-0006 §5). */
 const SUMMARY_SOFT_LIMIT = 200;
@@ -162,7 +179,8 @@ export function validateFrontmatter(fm: Record<string, unknown>, options: Valida
     );
   }
 
-  warnExtraKeys(fm, compiled, where, options.warnings);
+  const isIndex = options.path !== undefined && posix.basename(options.path) === "index.md";
+  warnExtraKeys(fm, compiled, where, options.warnings, isIndex);
   warnSummary(fm.summary, where, options.warnings);
   return type;
 }
@@ -205,12 +223,13 @@ function warnExtraKeys(
   compiled: CompiledType,
   where: string,
   warnings: WarningCollector | undefined,
+  isIndex: boolean,
 ): void {
   if (warnings === undefined) {
     return;
   }
   for (const key of Object.getOwnPropertyNames(fm)) {
-    if (!compiled.declaredFields.has(key) && !OKF_RESERVED_KEYS.has(key)) {
+    if (!compiled.declaredFields.has(key) && !isReservedKey(key, isIndex)) {
       warnings.add(`unknown key "${key}"${where}; preserved but not validated`);
     }
   }

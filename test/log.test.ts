@@ -160,6 +160,51 @@ describe("generateLog — determinism edge cases", () => {
       ),
     );
   });
+
+  test("commits sharing an instant AND an abbreviated hash tie-break by subject (no input-order churn)", () => {
+    const out = generateLog([
+      { hash: "dup", timestamp: "2026-06-20T10:00:00Z", subject: "zebra", files: ["docs/x.md"] },
+      { hash: "dup", timestamp: "2026-06-20T10:00:00Z", subject: "alpha", files: ["docs/x.md"] },
+    ]);
+    expect(out).toBe(
+      [
+        "# Change log",
+        "",
+        "## docs",
+        "",
+        "- 2026-06-20T10:00:00Z dup alpha",
+        "- 2026-06-20T10:00:00Z dup zebra",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  test("a trailing slash on the root still matches files under it (no silently-empty log)", () => {
+    expect(generateLog(FAKE_HISTORY, { root: "docs/" })).toBe(generateLog(FAKE_HISTORY));
+    expect(generateLog(FAKE_HISTORY, { root: "docs///" })).toBe(generateLog(FAKE_HISTORY));
+  });
+
+  test("offset-less timestamps order by text, not a host-local-TZ parse (machine-independent)", () => {
+    // Neither carries an offset, so neither is trusted as an absolute instant; they order by
+    // deterministic code-unit text, identically on every machine and time zone.
+    const out = generateLog([
+      { hash: "b", timestamp: "2026-06-20T10:00:00", subject: "second", files: ["docs/x.md"] },
+      { hash: "a", timestamp: "2026-06-20T09:00:00", subject: "first", files: ["docs/x.md"] },
+    ]);
+    expect(out).toBe(
+      ["# Change log", "", "## docs", "", "- 2026-06-20T09:00:00 a first", "- 2026-06-20T10:00:00 b second", ""].join(
+        "\n",
+      ),
+    );
+  });
+
+  test("an absolute-instant commit sorts before an offset-less one regardless of wall text", () => {
+    const out = generateLog([
+      { hash: "nooff", timestamp: "2026-06-20T01:00:00", subject: "no offset", files: ["docs/x.md"] },
+      { hash: "withoff", timestamp: "2026-06-20T23:00:00Z", subject: "has offset", files: ["docs/x.md"] },
+    ]);
+    expect(out.indexOf("withoff")).toBeLessThan(out.indexOf("nooff"));
+  });
 });
 
 describe("buildLog — the GitAdapter seam is exercised (AC#1)", () => {

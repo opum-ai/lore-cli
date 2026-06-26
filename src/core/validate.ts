@@ -44,12 +44,13 @@ import { walkMdast } from "./bundle";
 import { type Concept, tryParseConcept } from "./concept";
 import { defaultProfile, type Profile } from "./profile";
 import { requiredSectionsFor } from "./schema";
+import { expectedResource } from "./template";
 
 /** The two finding tiers (cli-contract §4.1): an `error` fails the file, a `warning` never does. */
 export type Severity = "error" | "warning";
 
 /** Which check produced a {@link Finding}, for machine consumers and grouped display. */
-export type FindingRule = "frontmatter" | "required-section" | "quote-safety";
+export type FindingRule = "frontmatter" | "required-section" | "quote-safety" | "resource";
 
 /** One tiered problem found in a single file. */
 export interface Finding {
@@ -133,6 +134,7 @@ export function validateConceptText(path: string, raw: string, profile: Profile 
     findings.push({ severity: "warning", rule: "frontmatter", message });
   }
   findings.push(...requiredSectionFindings(concept.type, concept.body, profile));
+  findings.push(...resourceDriftFindings(path, concept, profile));
   findings.push(...quoteSafetyFindings(raw));
 
   return finalize(path, concept.type, findings);
@@ -272,6 +274,39 @@ function requiredSectionFindings(type: string, body: string, profile: Profile): 
     }
   }
   return findings;
+}
+
+// ── Cross-cutting: resource drift ──────────────────────────────────────────────—
+
+/**
+ * The resource-drift finding for a concept whose stamped `resource` no longer matches what its
+ * path + the profile's `resource_base` would produce (LORE-47 / AC#4) — one **warning** when a
+ * **present** string `resource` differs from {@link expectedResource}. Unlike `index.md`/`log.md`,
+ * a stamped `resource` is not regenerated, so a later rename or `resource_base` change silently
+ * leaves a stale URL; this surfaces that drift in the same pass.
+ *
+ * It judges only what lore itself would stamp: a file with no `resource`, a non-string `resource`,
+ * or one where lore would stamp nothing here ({@link expectedResource} `undefined` — no
+ * `resource_base`, an index file, or a type that owns its own `resource` field) yields nothing, so
+ * an author-owned `resource` is never second-guessed. Advisory tier (`resource` is advisory
+ * metadata, not a shape constraint), so it reports the staleness without failing the file.
+ */
+function resourceDriftFindings(path: string, concept: Concept, profile: Profile): Finding[] {
+  const actual = concept.frontmatter.resource;
+  if (typeof actual !== "string") {
+    return [];
+  }
+  const expected = expectedResource(concept.type, path, profile);
+  if (expected === undefined || actual === expected) {
+    return [];
+  }
+  return [
+    {
+      severity: "warning",
+      rule: "resource",
+      message: `resource "${actual}" is stale; this path under the profile's resource_base is "${expected}" — update it or remove the \`resource\` key`,
+    },
+  ];
 }
 
 /** Normalize a heading or section name for comparison: trim, collapse interior whitespace, lower-case. */

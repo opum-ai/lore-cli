@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { runInit } from "../src/commands/init";
 import { runNew } from "../src/commands/new";
 import { runValidate, type ValidateOptions } from "../src/commands/validate";
-import { defaultProfile } from "../src/core/profile";
+import { compileProfile, defaultProfile, parseProfile } from "../src/core/profile";
 import { requiredSectionsFor } from "../src/core/schema";
 import { builtinTemplateFor } from "../src/core/template";
 import { quoteSafetyFindings, type ValidateReport, validateConceptText, validateFiles } from "../src/core/validate";
@@ -283,6 +283,57 @@ describe("validate (core) — quote-safety", () => {
 
   test("a file with no frontmatter fence yields no findings", () => {
     expect(quoteSafetyFindings("# Just a body\n")).toEqual([]);
+  });
+});
+
+// ── Core engine: resource drift (AC#4) ─────────────────────────────────────────—
+
+describe("validate (core) — resource drift", () => {
+  /** A one-type profile with a `resource_base`, so `expectedResource` produces a value to compare. */
+  function resourceProfile() {
+    const doc = Bun.TOML.parse(
+      [
+        "[profile]",
+        'name = "rp"',
+        'okf_version = "0.1"',
+        'resource_base = "https://docs.example.com/"',
+        "[base.fields]",
+        "type = { required = true }",
+        "[[types]]",
+        'name = "Reference"',
+      ].join("\n"),
+    ) as Record<string, unknown>;
+    return compileProfile(parseProfile(doc, "rp"));
+  }
+  const profile = resourceProfile();
+  const conceptWith = (resource: string) =>
+    `---\ntype: Reference\ntitle: Orders\nsummary: The orders.\nresource: ${resource}\n---\n\n# Orders\n`;
+  const resourceFindings = (path: string, raw: string, prof = profile) =>
+    validateConceptText(path, raw, prof).findings.filter((f) => f.rule === "resource");
+
+  test("a `resource` matching its path + resource_base yields no finding", () => {
+    const raw = conceptWith("https://docs.example.com/docs/reference/orders.md");
+    expect(resourceFindings("docs/reference/orders.md", raw)).toEqual([]);
+  });
+
+  test("a stale `resource` (path no longer matches) warns it drifted, but never fails the file", () => {
+    const raw = conceptWith("https://docs.example.com/docs/reference/OLD-NAME.md");
+    const report = validateConceptText("docs/reference/orders.md", raw, profile);
+    const findings = report.findings.filter((f) => f.rule === "resource");
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ severity: "warning", rule: "resource" });
+    expect(findings[0]?.message).toContain("https://docs.example.com/docs/reference/orders.md");
+    expect(report.ok).toBe(true); // advisory tier — a warning, not an error
+  });
+
+  test("without a resource_base (default profile) an authored `resource` is never judged", () => {
+    const raw = conceptWith("https://anywhere.example/whatever.md");
+    expect(resourceFindings("docs/reference/orders.md", raw, defaultProfile())).toEqual([]);
+  });
+
+  test("an index file's `resource` is not drift-checked (lore stamps none there)", () => {
+    const raw = conceptWith("https://docs.example.com/docs/STALE.md");
+    expect(resourceFindings("docs/index.md", raw)).toEqual([]);
   });
 });
 

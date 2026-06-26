@@ -150,6 +150,24 @@ describe("schema — the warning tier (never throws)", () => {
     expect(warnings.list().some((w) => w.includes("okf_version"))).toBe(false);
   });
 
+  test("`resource` is OKF-reserved on an ordinary concept (the stamped canonical link)", () => {
+    const warnings = new WarningCollector();
+    validateFrontmatter(
+      { type: "Reference", title: "T", summary: "s", resource: "https://x.dev/docs/reference/r.md" },
+      { warnings, path: "docs/reference/r.md" },
+    );
+    expect(warnings.list().some((w) => w.includes("resource"))).toBe(false);
+  });
+
+  test("`resource` is NOT reserved on an index file — a hand-authored one is warned (it carries none)", () => {
+    const warnings = new WarningCollector();
+    validateFrontmatter(
+      { type: "Reference", title: "T", summary: "s", resource: "https://x.dev/docs/index.md" },
+      { warnings, path: "docs/index.md" },
+    );
+    expect(warnings.list().some((w) => w.includes('unknown key "resource"'))).toBe(true);
+  });
+
   test("a missing summary warns", () => {
     const warnings = new WarningCollector();
     validateFrontmatter({ type: "Reference", title: "T" }, { warnings });

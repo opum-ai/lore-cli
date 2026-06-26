@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 20:16'
-updated_date: '2026-06-26 11:59'
+updated_date: '2026-06-26 20:00'
 labels:
   - eck-alignment
   - core
@@ -35,24 +35,14 @@ Add the third injectable deterministic seam (GitAdapter) and the resource_base c
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-Scope (confirmed with Jeremy): build the GitAdapter seam + pure log fn now; DEFER command wiring (no `lore sync`/`lore check` yet — only init/new/validate exist).
-
-1. resource stamping (AC#4) — least-churn home:
-   - schema.ts: add `resource` to OKF_RESERVED_KEYS so a stamped resource never trips the extra-key warning, WITHOUT touching the profile, generated validators, or committed .lore/schemas/*.json (no schema churn).
-   - template.ts buildNewConcept: pure helper resourceFor(resourceBase, docPath). Stamp frontmatter.resource ONLY when profile.resourceBase is non-empty AND posix.basename(docPath) !== 'index.md' (never root/sub-index). Value = resourceBase (trailing slashes trimmed) + '/' + docPath, each docPath segment encodeURIComponent'd (slugs unchanged, spaces/unicode encoded), '.md' kept, exactly one join slash. resource trails as a recognized non-profile key (byte-stable, like other producer keys).
-
-2. GitAdapter seam + log.md (AC#1/#3) — new core/log.ts:
-   - GitCommit { hash, timestamp(ISO), subject, files[] }, GitLogRange, GitAdapter { history(range): GitCommit[] } interface (the 3rd injectable seam, faked in tests).
-   - pure generateLog(commits): per-folder grouping (each docs/ folder a commit touched), folders directory-sorted, commits under each sorted by (timestamp, hash) → byte-stable, idempotent markdown. No real spawning adapter (that is sync-time wiring; deferred + documented).
-   - test/log.test.ts: fixed FAKE history fixture; assert grouping/sort/byte-stability/idempotence. Excluded from byte goldens.
-
-3. ADR amendments:
-   - ADR-0014: Amended note naming GitAdapter as the 3rd injectable seam (clock, BacklogAdapter, GitAdapter); git = local deterministic computation, faked in tests (AC#1). Mirror in lore-design §8.
-   - ADR-0007: Amended note — log.md is a sync-time materialized artifact EXCLUDED from `lore check` drift-compare; index.md + managed blocks stay gated (AC#2).
-   - ADR-0013: refine existing LORE-46 amendment — resource_base in profile.toml [profile] (NOT config.toml), empty default => resource omitted, stamping now implemented (AC#5).
-
-4. test/new.test.ts: resource stamped when resourceBase set; omitted when empty; omitted on index.md; URL-encoding + one-slash join.
-5. CHANGELOG (Unreleased) entry. Gates: bun test + biome + tsc + coverage -> /code-review max -> PR into dev.
+Fix-everything disposition of the 13 /code-review max findings (Jeremy approved 2026-06-26). Order:
+1. profile.ts: add CompiledType.acceptsStampedResource (true unless the type OWNS a resource field whose kind!=string or has an enum) — the per-type fact stampResource needs.
+2. template.ts: (#1/#2) replace the global canonicalKeyOrder.includes('resource') guard with a per-type check via new shared expectedResource(type,docPath,profile); stampResource + the validate drift-check both consume it (single source). (#3) trim resourceBase in resourceFor and at the profile.ts parse boundary so whitespace base is normalized/treated-as-unset.
+3. schema.ts: (#4) treat 'resource' as reserved-except-on-index so a hand-authored resource: on index.md is warned again; okf_version stays always-reserved.
+4. log.ts: (#6) import singleLine from ../errors (U+2028/29); (#7) normalize trailing-slash root; (#8) subject tiebreak; (#9) only offset-bearing ISO yields an absolute instant, else deterministic text fallback (no local-TZ dependence); (#11) drop timestamp-text primary fallback; (#12) cache instant on LogEntry.
+5. validate.ts: (#5) new 'resource' warning rule — a present resource that != expectedResource(...) is flagged stale (drift), advisory tier since resource is advisory metadata.
+6. tests: (#13) give profileWithResourceBase an extra-base-fields arg; add tests for required-string resource stamped, cross-type non-suppression, whitespace base, index hand-authored-resource warning, resource drift, log subject/offset-less tiebreaks.
+Gate: bun test + biome + tsc + coverage -> push via gh-token, keep PR #18 open.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -73,4 +63,43 @@ CORRECTNESS: (1) profile declaring its own [base.fields] resource -> lore now de
 REUSE: new core/order.ts compareCodeUnits shared by bundle.ts + log.ts (dup comparator); log.ts imports DOCS_DIR not a re-spelled literal.
 DOCS/TESTS: ADR-0013 LORE-47 stamping split into its own dated amendment (was misattributed to the LORE-46 block); lore-design §8 reworded (git is deterministic/seamed-for-impurity, not 'genuinely nondeterministic'); fixpoint test now does the real serialize(parse(x))===x round-trip; added offset-sort/file-equals-root/hash-collision/empty-root/tie-break/profile-owned-resource tests.
 DECLINED w/ reasoning: (a) index.md authored page omits resource — by-design per AC#4/#5 ('never on root/sub-index files'); lore can't distinguish a generated sub-index from an authored page named index.md at new-time. (b) global resource warning-suppression — intended: resource is now a recognized OKF key like title/summary (a stray correct-spelling resource: is indistinguishable from intent; a misspelling still warns), consistent with okf_version. (c) extract shared under-root predicate between log.ts and new.ts — they legitimately differ after fix #3 (log wants strictly-under-root; new.ts confines incl. the root index). REFUTED by verifiers: backlog-md hand-edit (used CLI), encodeURIComponent JSDoc, the cast-crash claim. Gates: 491 tests pass, tsc+biome clean, 100% cov on log.ts/order.ts/template.ts/schema.ts.
+
+## /code-review max of PR #18 — 2026-06-26 (13 verified findings; disposition PENDING Jeremy)
+
+Workflow-backed review (35 agents, 10 finder angles, every candidate independently verified): 22 candidates → 6 refuted → 13 distinct findings. PR #18 still open/unreviewed at a9177cc when run. NONE applied yet — awaiting Jeremy's call: fix-on-branch / inline PR comments / defer the log.ts ones to the deferred sync follow-up task.
+
+CORRECTNESS — stampResource guard (worst two; root cause: `canonicalKeyOrder.includes('resource')` tests the profile-GLOBAL field list, not the concept's own type):
+1. template.ts:218 (CONFIRMED) — declaring a typed `resource` on ANY one type suppresses auto-stamping for EVERY type (global canonicalKeyOrder aggregates all types' fields). Fix: test the concept's own type's declared fields.
+2. template.ts:214 (CONFIRMED) — a `resource = {required=true}` field makes `lore new <type>` fail exit 6 forever: stampResource defers (no stamp) → validateFrontmatter rejects missing required field; no --resource flag to supply it. The guard's doc comment wrongly claims deferral prevents this.
+CORRECTNESS — resource stamping (smaller):
+3. template.ts:60 (CONFIRMED) — resource_base with surrounding whitespace neither normalized nor treated as unset (omit guard is exact ===''); yields 'resource: https://x.com/ /docs/...md' (embedded space → broken URL).
+4. schema.ts:55 (CONFIRMED) — adding 'resource' to global OKF_RESERVED_KEYS means a hand-authored `resource:` on an index.md is no longer warned, contradicting the index-files-carry-no-resource invariant.
+5. template.ts:222 (CONFIRMED) — stamped `resource` is never regenerated/drift-checked (unlike index.md/log.md/managed blocks); after a rename or resource_base change the stale URL ships green.
+CORRECTNESS — log.ts (LATENT: no production caller until lore sync is wired):
+6. log.ts:174 (CONFIRMED) — private singleLine() (/\s*[\r\n]+\s*/g) drops U+2028/U+2029 that canonical errors.ts singleLine handles; a commit subject with U+2028 splits its log entry across two lines. Fix: import singleLine from ../errors (no cycle).
+7. log.ts:114 (PLAUSIBLE) — isUnderRoot startsWith(`${root}/`) never normalizes root; root='docs/' → compares 'docs//' → matches nothing → silently empty log.md. Asymmetric with resourceFor (same PR) which strips trailing slashes.
+8. log.ts:191 (PLAUSIBLE) — compareEntries sorts by (timestamp,hash) only; missing subject tiebreak → equal-ts+equal-abbrev-hash commits fall back to input order → non-reproducible churn.
+9. log.ts:186 (PLAUSIBLE) — Date.parse on an offset-LESS ISO timestamp resolves in host-local TZ → per-machine ordering; reintroduces the machine-dependence order.ts was made to kill.
+10. template.ts:65 (PLAUSIBLE) — resourceFor joins base to full repo-rel path incl. 'docs/'; a base already at the docs root double-prefixes → <base>/docs/docs/...  (by-design AC#4 but silently accepted misconfig).
+CLEANUPS:
+11. log.ts:185 (CONFIRMED) — dead NaN/lexical-fallback branch unreachable for ISO contract; where reachable it tie-breaks by timestamp TEXT, contradicting the 'tie-broken by hash' doc. Simpler: (ta<tb?-1:ta>tb?1:0)||compareCodeUnits(a.hash,b.hash).
+12. log.ts:186 (CONFIRMED) — Date.parse re-run inside comparator O(N log N)/folder; cache numeric instant on LogEntry at construction (line 127) → commits.length parses total.
+13. test/template.test.ts:273 (PLAUSIBLE) — inline Bun.TOML.parse re-inlines profileWithResourceBase wholesale; give the helper an extra-base-fields arg.
+
+REFUTED (6, not actionable, for the record): broader unknown-key-warning widening (intended/tested); encodeURIComponent surrogate-throw (unreachable on slugged paths); isUnderRoot-as-own-function (style); seam-has-no-caller (intentional defer); hardcoded 'index.md' literal; 'recursive folder' doc reading.
+
+Full transcript: workflow wf_dbed19c0-3ff.
+
+## Disposition of the 13 /code-review max findings — FIXED ON BRANCH (2026-06-26, Jeremy chose 'fix everything')
+
+All 13 applied on feat/lore-47-gitadapter-resource; +15 tests; gates green (506 pass, tsc/biome clean, core files template/log/schema/order 100% cov).
+- #1/#2 (template.ts stampResource): replaced the global canonicalKeyOrder.includes('resource') guard with a per-type check. New CompiledType.acceptsStampedResource (profile.ts) = true unless the concept's OWN type declares a resource field whose kind!=string or has an enum. Cross-type suppression gone; a required-STRING resource is now satisfied by the stamp (no exit-6); an incompatible (datetime/enum) field still defers. Extracted shared expectedResource(type,docPath,profile) — single source for stamp + drift-check.
+- #3 (resourceFor:60 + profile parse): trim the base in resourceFor AND trim resource_base at the parse boundary, so a whitespace base is normalized / treated-as-unset (no embedded-space URL).
+- #4 (schema.ts:55): new isReservedKey(key,isIndex) — resource is reserved (no extra-key warn) EXCEPT on index.md, where a hand-authored resource: is now warned again; okf_version stays always-reserved.
+- #5 (validate.ts): new 'resource' warning rule — a present resource != expectedResource(...) is flagged stale (drift); advisory tier (resource is advisory metadata), inert under zero-config (no resource_base).
+- #6 (log.ts:174): dropped private singleLine; import canonical singleLine from ../errors (handles U+2028/2029).
+- #7 (log.ts:114): strip trailing slash(es) from root (docs/ -> docs) so it isn't a silently-empty log.
+- #8/#9/#11/#12 (log.ts compareEntries): cache an 'instant' on LogEntry (parse once); only offset-bearing ISO yields an absolute instant (offset-less -> NaN -> deterministic text fallback, no host-local-TZ dependence); subject added as final tiebreak; dropped the timestamp-text primary fallback.
+- #13 (template.test.ts): profileWithResourceBase now takes an extraBaseFields arg; the owns-resource test uses it.
+The 6 REFUTED findings remain not-actionable (recorded above).
 <!-- SECTION:NOTES:END -->

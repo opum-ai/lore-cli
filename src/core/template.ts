@@ -57,7 +57,10 @@ export const slugify = slugForTypeName;
  * computes the value.
  */
 export function resourceFor(resourceBase: string, docPath: string): string {
-  const base = resourceBase.replace(/\/+$/, "");
+  // Trim before joining so a base padded with stray whitespace (or one whose configured value
+  // carried trailing whitespace after a slash) can never contribute an embedded space — `https://x/ `
+  // + `docs/a.md` would otherwise yield the broken `https://x/ /docs/a.md`.
+  const base = resourceBase.trim().replace(/\/+$/, "");
   const encodedPath = docPath
     .split("/")
     .map((segment) => encodeURIComponent(segment))
@@ -172,7 +175,7 @@ export function buildNewConcept(input: BuildNewConceptInput): BuildNewConceptRes
   }
 
   const profile = input.profile ?? defaultProfile();
-  stampResource(frontmatter, input.docPath, profile);
+  stampResource(frontmatter, input.type, input.docPath, profile);
   const resolvedType = validateFrontmatter(frontmatter, { warnings, path: input.docPath, profile });
   const concept: Concept = {
     id: idFromPath(input.docPath),
@@ -190,36 +193,46 @@ export function buildNewConcept(input: BuildNewConceptInput): BuildNewConceptRes
 }
 
 /**
- * Stamp the OKF `resource` key onto `frontmatter` when the profile opts in (LORE-47 / AC#4),
- * mutating in place to slot it alongside the other built structural keys. Three guards gate it,
- * so the zero-config default is **byte-identical to before the key existed** and lore never writes a
- * value its own profile would reject:
+ * The OKF `resource` value lore stamps for a concept of `type` at `docPath` under `profile`, or
+ * `undefined` when none should be stamped (LORE-47 / AC#4). The **single source** shared by the
+ * `lore new` write path ({@link stampResource}) and the `lore validate` drift check, so a value lore
+ * writes and a value it later checks for staleness are computed one way and can never disagree.
+ * Three guards keep the zero-config default **byte-identical to before the key existed** and stop
+ * lore writing a value its own profile would reject:
  *
- * - **`resourceBase` empty** (the default) → omit. A project that sets no `[profile].resource_base`
+ * - **`resourceBase` empty** (the default) → none. A project that sets no `[profile].resource_base`
  *   gets no `resource` line at all.
- * - **the doc is an index** (`index.md`, root or sub-index) → omit. Index/sub-index files are
+ * - **the doc is an index** (`index.md`, root or sub-index) → none. Index/sub-index files are
  *   bundle-structure pages, not authored concepts a reader cites; a `resource` link on them would
  *   point a reader at scaffolding. The basename test covers `docs/index.md` and every
  *   `docs/<dir>/index.md` in one rule.
- * - **the profile declares its own `resource` field** → omit. If a profile puts `resource` in
- *   `[base.fields]` (or a type's `fields`), the field is profile-*owned* with its own kind/required
- *   shape; auto-stamping a URL string would collide with that validator (e.g. a `datetime` or
- *   `required` `resource` would fail the generated schema). lore defers to the declared field rather
- *   than fight it — `canonicalKeyOrder` carries every declared (non-reserved) field name.
+ * - **the concept's own type owns an incompatible `resource` field** → none. If *this* type declares
+ *   a `resource` field whose shape a URL string cannot satisfy (a `datetime`/`number`/`list` field,
+ *   or a closed `enum`), the field is the profile's to fill, not lore's — auto-stamping a URL would
+ *   fail that type's validator. The test is **per-type** ({@link import("./profile").CompiledType.acceptsStampedResource}),
+ *   not the old global key-order union: one type declaring its own `resource` no longer suppresses
+ *   stamping for every other type, and a `resource = { required = true }` *string* field is now
+ *   **satisfied** by the stamp instead of making `lore new` fail with a missing-required error.
  *
- * Otherwise the value is {@link resourceFor}; `concept.ts` emits it as a recognized non-profile key
- * (trailing the profile's declared fields, in the canonical order), and `schema.ts` lists it in
- * `OKF_RESERVED_KEYS` so it never trips the extra-key warning.
+ * Otherwise the value is {@link resourceFor}; `concept.ts` emits it as a recognized key and
+ * `schema.ts` keeps it from tripping the extra-key warning.
  */
-function stampResource(frontmatter: Record<string, unknown>, docPath: string, profile: Profile): void {
-  if (
-    profile.resourceBase === "" ||
-    posix.basename(docPath) === "index.md" ||
-    profile.canonicalKeyOrder.includes("resource")
-  ) {
-    return;
+export function expectedResource(type: string, docPath: string, profile: Profile): string | undefined {
+  if (profile.resourceBase === "" || posix.basename(docPath) === "index.md") {
+    return undefined;
   }
-  frontmatter.resource = resourceFor(profile.resourceBase, docPath);
+  if (profile.types.get(type)?.acceptsStampedResource === false) {
+    return undefined;
+  }
+  return resourceFor(profile.resourceBase, docPath);
+}
+
+/** Stamp {@link expectedResource} onto `frontmatter` in place when one is due, else leave it untouched. */
+function stampResource(frontmatter: Record<string, unknown>, type: string, docPath: string, profile: Profile): void {
+  const value = expectedResource(type, docPath, profile);
+  if (value !== undefined) {
+    frontmatter.resource = value;
+  }
 }
 
 /** The placeholder names lore fills automatically; a `--var` for one of these is ignored (it would be overridden). */

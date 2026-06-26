@@ -29,6 +29,7 @@
  */
 
 import { posix } from "node:path";
+import { singleLine } from "../errors";
 import { compareCodeUnits } from "./order";
 import { DOCS_DIR } from "./scaffold";
 
@@ -88,6 +89,13 @@ interface LogEntry {
   readonly hash: string;
   readonly timestamp: string;
   readonly subject: string;
+  /**
+   * The absolute instant the {@link timestamp} denotes (epoch ms), or `NaN` when it carries no
+   * explicit offset (so a host-local — machine-dependent — parse is never trusted) or is
+   * unparseable. Computed once at construction so {@link compareEntries} parses each commit's
+   * timestamp **once** total, not O(N log N) times inside the sort comparator.
+   */
+  readonly instant: number;
 }
 
 /**
@@ -111,7 +119,10 @@ export function buildLog(adapter: GitAdapter, range: GitLogRange, options: Gener
  * the heading, so the file is always well-formed.
  */
 export function generateLog(commits: readonly GitCommit[], options: GenerateLogOptions = {}): string {
-  const root = options.root || DOCS_DIR;
+  // Strip trailing slash(es) so a root authored as `docs/` matches `docs/x.md` (the `${root}/`
+  // probe would otherwise compare against `docs//` and match nothing — a silently empty log). A
+  // root that is only slashes, like the empty string, falls back to the default bundle root.
+  const root = (options.root || DOCS_DIR).replace(/\/+$/, "") || DOCS_DIR;
   const title = options.title ?? "Change log";
 
   // folder → the commits touching it. `foldersTouched` already returns a *set* of folders, so each
@@ -124,7 +135,12 @@ export function generateLog(commits: readonly GitCommit[], options: GenerateLogO
     if (folders.size === 0) {
       continue;
     }
-    const entry: LogEntry = { hash: commit.hash, timestamp: commit.timestamp, subject: singleLine(commit.subject) };
+    const entry: LogEntry = {
+      hash: commit.hash,
+      timestamp: commit.timestamp,
+      subject: singleLine(commit.subject),
+      instant: toInstant(commit.timestamp),
+    };
     for (const folder of folders) {
       const bucket = byFolder.get(folder);
       if (bucket === undefined) {
@@ -170,23 +186,44 @@ function isUnderRoot(file: string, root: string): boolean {
   return file.startsWith(`${root}/`);
 }
 
-/** Collapse any newline run in a commit subject to a single space so one commit is always one line. */
-function singleLine(text: string): string {
-  return text.replace(/\s*[\r\n]+\s*/g, " ").trim();
+/** Matches the offset suffix of an ISO-8601 timestamp — `Z`, or `±HH:MM`/`±HHMM` (colon optional). */
+const ISO_OFFSET = /(?:Z|[+-]\d{2}:?\d{2})$/;
+
+/**
+ * The absolute instant `timestamp` denotes, in epoch milliseconds, or `NaN` when it does not denote
+ * one. Only an **offset-bearing** ISO-8601 timestamp (the {@link GitCommit.timestamp} contract) is a
+ * fixed instant; an offset-*less* one would be parsed in the host's local time zone — a
+ * machine-dependent result that has no place in byte-stable output — so it is reported as `NaN` and
+ * left to the deterministic text tiebreak, never trusted as a number.
+ */
+function toInstant(timestamp: string): number {
+  return ISO_OFFSET.test(timestamp) ? Date.parse(timestamp) : Number.NaN;
 }
 
 /**
- * Order entries by ascending **instant**, tie-broken by `hash`. Timestamps are ISO-8601 *with
- * offset* (see {@link GitCommit.timestamp}), so two equal instants written in different offsets must
- * compare equal — a lexical string compare would order them by wall-clock text instead. Parse each to
- * epoch milliseconds and compare numerically; fall back to a code-unit compare only when a value is
- * unparseable (so the order stays total and deterministic even on malformed input).
+ * Order entries by ascending absolute **instant**, then by deterministic, machine-independent
+ * tiebreaks. Timestamps are ISO-8601 *with offset* (see {@link GitCommit.timestamp}), so two equal
+ * instants written in different offsets compare equal — a lexical compare would order them by
+ * wall-clock text instead. Each entry's instant is precomputed ({@link LogEntry.instant}); when both
+ * are real instants they order numerically, and an entry with a real instant always precedes one
+ * without (an offset-less/unparseable timestamp). On an exact instant tie — or when neither has an
+ * instant — the order falls through to `(timestamp, hash, subject)` code-unit compares, so it stays
+ * **total and reproducible** (the subject tiebreak keeps two commits sharing an instant *and* an
+ * abbreviated hash from falling back to input order).
  */
 function compareEntries(a: LogEntry, b: LogEntry): number {
-  const ta = Date.parse(a.timestamp);
-  const tb = Date.parse(b.timestamp);
-  if (!Number.isNaN(ta) && !Number.isNaN(tb) && ta !== tb) {
-    return ta < tb ? -1 : 1;
+  const aHasInstant = !Number.isNaN(a.instant);
+  const bHasInstant = !Number.isNaN(b.instant);
+  if (aHasInstant && bHasInstant) {
+    if (a.instant !== b.instant) {
+      return a.instant < b.instant ? -1 : 1;
+    }
+  } else if (aHasInstant !== bHasInstant) {
+    return aHasInstant ? -1 : 1;
   }
-  return compareCodeUnits(a.timestamp, b.timestamp) || compareCodeUnits(a.hash, b.hash);
+  return (
+    compareCodeUnits(a.timestamp, b.timestamp) ||
+    compareCodeUnits(a.hash, b.hash) ||
+    compareCodeUnits(a.subject, b.subject)
+  );
 }
