@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 20:16'
-updated_date: '2026-06-26 11:21'
+updated_date: '2026-06-26 11:59'
 labels:
   - eck-alignment
   - core
@@ -67,4 +67,10 @@ AC#1/#3 (GitAdapter seam + log.md): src/core/log.ts — GitCommit/GitLogRange/Gi
 ADRs: ADR-0014 (names GitAdapter as 3rd seam), ADR-0007 (log.md sync-materialized, excluded from check), ADR-0013 (resource_base in profile.toml [profile], empty default omits), lore-design §8 (GitAdapter bullet). CHANGELOG Unreleased entry added.
 
 DEFERRED follow-up (for the lore sync task): (1) real GitAdapter that shells 'git log' over a pinned range + parses name-only output; (2) wire generateLog into 'lore sync' to materialize docs/log.md; (3) ensure 'lore check' skips log.md. Gates green: 485 tests pass, tsc clean, biome clean, lore validate on edited docs = 0 errors.
+
+/code-review max disposition (run wf_df76fedf-0cd, 47 agents, 34 verified -> 15 reported). Fixed in commit 7e36a14:
+CORRECTNESS: (1) profile declaring its own [base.fields] resource -> lore now defers (no auto-stamp; was exit-6 crash on every create). (2) log.ts chronological sort by parsed instant not lexical text (ISO offsets). (3) log.ts file-equals-root no longer emits spurious '## .' section. (4) log.ts per-folder arrays (push) not hash-keyed Map -> abbreviated-hash collisions both render; subject collapsed once/commit. (5) log.ts empty-root option falls back to default.
+REUSE: new core/order.ts compareCodeUnits shared by bundle.ts + log.ts (dup comparator); log.ts imports DOCS_DIR not a re-spelled literal.
+DOCS/TESTS: ADR-0013 LORE-47 stamping split into its own dated amendment (was misattributed to the LORE-46 block); lore-design §8 reworded (git is deterministic/seamed-for-impurity, not 'genuinely nondeterministic'); fixpoint test now does the real serialize(parse(x))===x round-trip; added offset-sort/file-equals-root/hash-collision/empty-root/tie-break/profile-owned-resource tests.
+DECLINED w/ reasoning: (a) index.md authored page omits resource — by-design per AC#4/#5 ('never on root/sub-index files'); lore can't distinguish a generated sub-index from an authored page named index.md at new-time. (b) global resource warning-suppression — intended: resource is now a recognized OKF key like title/summary (a stray correct-spelling resource: is indistinguishable from intent; a misspelling still warns), consistent with okf_version. (c) extract shared under-root predicate between log.ts and new.ts — they legitimately differ after fix #3 (log wants strictly-under-root; new.ts confines incl. the root index). REFUTED by verifiers: backlog-md hand-edit (used CLI), encodeURIComponent JSDoc, the cast-crash claim. Gates: 491 tests pass, tsc+biome clean, 100% cov on log.ts/order.ts/template.ts/schema.ts.
 <!-- SECTION:NOTES:END -->
