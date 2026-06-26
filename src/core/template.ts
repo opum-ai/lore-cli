@@ -24,6 +24,7 @@
  * filesystem resolution is the command's concern, not this module's.
  */
 
+import { posix } from "node:path";
 import { LoreError, WarningCollector } from "../errors";
 import { type Concept, idFromPath, serializeConcept, serializeConceptWithModeline } from "./concept";
 import { defaultProfile, type Profile, slugForTypeName } from "./profile";
@@ -38,6 +39,31 @@ import { validateFrontmatter } from "./schema";
  * so a title and a type name can never slug two different ways.
  */
 export const slugify = slugForTypeName;
+
+/**
+ * The OKF `resource` link value for a concept at `docPath` under `resourceBase` (LORE-47 / AC#4) —
+ * the canonical published location a reader follows, joined producer-side from two parts:
+ *
+ * - **`resourceBase`** is the configured prefix verbatim (`[profile].resource_base`), with any
+ *   trailing slash(es) trimmed so the join contributes exactly one. It is *not* re-encoded: it is
+ *   a user-authored URL that may legitimately carry a scheme, host, and its own path separators.
+ * - **`docPath`** is the doc's repo-relative POSIX path (e.g. `docs/stories/bulk-archive.md`),
+ *   appended with each segment `encodeURIComponent`-encoded so a title-derived slug stays
+ *   byte-identical (the `-` `_` `.` set is preserved) while a space- or non-ASCII-bearing `--out`
+ *   path is percent-escaped into a valid URL. The `/` separators and the `.md` suffix are kept.
+ *
+ * Pure and total: the result is `<base-without-trailing-slash>/<encoded-doc-path>`, always exactly
+ * one slash at the seam. The caller decides *whether* to stamp ({@link stampResource}); this only
+ * computes the value.
+ */
+export function resourceFor(resourceBase: string, docPath: string): string {
+  const base = resourceBase.replace(/\/+$/, "");
+  const encodedPath = docPath
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  return `${base}/${encodedPath}`;
+}
 
 /** The `{{ key }}` token grammar: a name of word chars, dots, and dashes, with optional inner padding. */
 const PLACEHOLDER = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
@@ -146,6 +172,7 @@ export function buildNewConcept(input: BuildNewConceptInput): BuildNewConceptRes
   }
 
   const profile = input.profile ?? defaultProfile();
+  stampResource(frontmatter, input.docPath, profile.resourceBase);
   const resolvedType = validateFrontmatter(frontmatter, { warnings, path: input.docPath, profile });
   const concept: Concept = {
     id: idFromPath(input.docPath),
@@ -160,6 +187,29 @@ export function buildNewConcept(input: BuildNewConceptInput): BuildNewConceptRes
       ? serializeConceptWithModeline(concept, input.modeline, { profile })
       : serializeConcept(concept, { profile });
   return { contents, type: resolvedType, warnings: warnings.list() };
+}
+
+/**
+ * Stamp the OKF `resource` key onto `frontmatter` when the profile opts in (LORE-47 / AC#4),
+ * mutating in place to slot it alongside the other built structural keys. Two guards gate it,
+ * so the zero-config default is **byte-identical to before the key existed**:
+ *
+ * - **`resourceBase` empty** (the default) → omit. A project that sets no `[profile].resource_base`
+ *   gets no `resource` line at all.
+ * - **the doc is an index** (`index.md`, root or sub-index) → omit. Index/sub-index files are
+ *   bundle-structure pages lore generates, not authored concepts a reader cites; a `resource`
+ *   link on them would point a reader at scaffolding. The basename test covers `docs/index.md`
+ *   and every `docs/<dir>/index.md` in one rule.
+ *
+ * The value is {@link resourceFor}; `concept.ts` emits it as a recognized non-profile key
+ * (trailing the profile's declared fields, in the canonical order), and `schema.ts` lists it in
+ * `OKF_RESERVED_KEYS` so it never trips the extra-key warning.
+ */
+function stampResource(frontmatter: Record<string, unknown>, docPath: string, resourceBase: string): void {
+  if (resourceBase === "" || posix.basename(docPath) === "index.md") {
+    return;
+  }
+  frontmatter.resource = resourceFor(resourceBase, docPath);
 }
 
 /** The placeholder names lore fills automatically; a `--var` for one of these is ignored (it would be overridden). */

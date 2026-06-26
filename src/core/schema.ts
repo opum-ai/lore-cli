@@ -39,13 +39,20 @@ import { type CompiledType, defaultProfile, type Profile, slugForTypeName } from
 
 /**
  * OKF-reserved frontmatter keys that pass validation without an "unknown key" warning even
- * on a known type. `okf_version` is the bundle-root index's conformance marker: a legitimate,
- * recognized field — not a stray producer extension — so flagging it as unknown (as the
- * generic extra-key check otherwise would) is a false positive on lore's own conformant
- * output. Its placement discipline — only the root index may carry it — is a whole-bundle
- * conformance check (`lore validate`/`lore check`), not a per-file extra-key warning.
+ * on a known type. Both are legitimate, recognized fields — not stray producer extensions —
+ * so flagging them as unknown (as the generic extra-key check otherwise would) is a false
+ * positive on lore's own conformant output:
+ *
+ * - `okf_version` is the bundle-root index's conformance marker. Its placement discipline —
+ *   only the root index may carry it — is a whole-bundle conformance check
+ *   (`lore validate`/`lore check`), not a per-file extra-key warning.
+ * - `resource` is the OKF-recommended canonical link `lore new` stamps from the profile's
+ *   `resource_base` (LORE-47). It is a producer-stamped, recognized key rather than a profile
+ *   field: keeping it here — instead of in `[base.fields]` — means it never changes a type's
+ *   generated validator or the committed `.lore/schemas/*.json` (it is advisory metadata, not a
+ *   shape constraint), while still suppressing the extra-key warning on lore's own output.
  */
-const OKF_RESERVED_KEYS: ReadonlySet<string> = new Set(["okf_version"]);
+const OKF_RESERVED_KEYS: ReadonlySet<string> = new Set(["okf_version", "resource"]);
 
 /** The longest a `summary` should be before lore warns it is no longer a one-liner (ADR-0006 §5). */
 const SUMMARY_SOFT_LIMIT = 200;

@@ -23,6 +23,14 @@ tiers themselves are unchanged: a missing required section / mistyped known fiel
 (heading text, depth ≤2, order not enforced). A type with no declared `sections` (and every
 unknown type) has no section contract, preserving OKF tolerance.
 
+Amended — 2026-06-26 (LORE-47): the bundle's **`log.md` is a `sync`-time materialized artifact,
+excluded from `lore check`'s regenerate-and-compare drift gate.** Unlike `index.md` and the
+`<!-- lore:tasks -->` managed blocks — which are deterministic functions of the bundle/Backlog state
+and stay gated — `log.md` is derived from git commit history (via the `GitAdapter` seam, see
+[ADR-0014 amendment](0014-core-has-no-llm-dependency.md)) and so changes on *every* commit, including
+the gate's own. Gating it would report permanent drift and break on shallow/read-only CI checkouts
+that lack full history. `lore sync` writes `log.md`; `lore check` neither regenerates nor compares it.
+
 ## Context
 
 lore must answer two distinct questions about a docs bundle, and conflating

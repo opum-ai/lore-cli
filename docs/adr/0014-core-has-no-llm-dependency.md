@@ -17,6 +17,18 @@ timestamp: 2026-06-21T00:00:00Z
 
 Accepted — 2026-06-21.
 
+Amended — 2026-06-26 (LORE-47): names **`git`** as a third deterministic input, read through an
+injectable **`GitAdapter`** seam alongside the clock and the Backlog subprocess (lore-design §8).
+`git log` over a **pinned commit range** is local, reproducible computation — not a network-model
+call — so deriving the bundle's `log.md` from commit history (`core/log.ts`) upholds every guarantee
+below: it is offline-, air-gap-, and CI-reproducible, and adds no prompt-injection surface (history
+metadata is data, never instructions). Core depends only on the `GitAdapter` *interface*; the real
+adapter that shells `git` is impure command-layer wiring — the same boundary the real
+`() => new Date()` clock sits on — supplied where `lore sync` is built, and faked in tests with a
+fixed fake history (never real `git`). Because a git-derived `log.md` changes on every commit, it is
+materialized at `sync` time and excluded from `lore check`'s drift gate (see
+[ADR-0007 amendment](0007-validation-and-coherence.md)).
+
 This decision is foundational to lore's positioning and is referenced by the
 CLI-first transport decision, which relies on the core being a deterministic
 library that any surface can wrap. See

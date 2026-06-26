@@ -1,9 +1,26 @@
 import { describe, expect, test } from "bun:test";
 import { parseConcept } from "../src/core/concept";
-import { defaultProfile } from "../src/core/profile";
+import { compileProfile, defaultProfile, type Profile, parseProfile } from "../src/core/profile";
 import { canonicalType, isKnownType, schemaModeline, typeDirectory } from "../src/core/schema";
-import { buildNewConcept, builtinTemplateFor, renderTemplate, slugify } from "../src/core/template";
+import { buildNewConcept, builtinTemplateFor, renderTemplate, resourceFor, slugify } from "../src/core/template";
 import { LoreError, WarningCollector } from "../src/errors";
+
+/** Compile a minimal one-type profile carrying `resourceBase`, for the `resource`-stamping tests. */
+function profileWithResourceBase(resourceBase: string): Profile {
+  const doc = Bun.TOML.parse(
+    [
+      "[profile]",
+      'name = "t"',
+      'okf_version = "0.1"',
+      `resource_base = "${resourceBase}"`,
+      "[base.fields]",
+      "type = { required = true }",
+      "[[types]]",
+      'name = "Reference"',
+    ].join("\n"),
+  ) as Record<string, unknown>;
+  return compileProfile(parseProfile(doc, "test-profile"));
+}
 
 /** The six story-convention type names, sourced from the built-in profile. */
 const KNOWN_TYPES = [...defaultProfile().types.keys()];
@@ -170,6 +187,94 @@ describe("buildNewConcept — unfilled body placeholders fail loud (exit 6)", ()
       vars: Object.assign(Object.create(null), { title: "Ignored" }),
     });
     expect(result.warnings.some((w) => w.includes("ignoring --var title"))).toBe(true);
+  });
+});
+
+describe("resourceFor — base + repo-rel path, one slash, URL-encoded segments (AC#4)", () => {
+  test("joins with exactly one slash, trimming the base's trailing slash(es)", () => {
+    expect(resourceFor("https://docs.example.com", "docs/stories/foo.md")).toBe(
+      "https://docs.example.com/docs/stories/foo.md",
+    );
+    expect(resourceFor("https://docs.example.com/", "docs/stories/foo.md")).toBe(
+      "https://docs.example.com/docs/stories/foo.md",
+    );
+    expect(resourceFor("https://docs.example.com///", "docs/stories/foo.md")).toBe(
+      "https://docs.example.com/docs/stories/foo.md",
+    );
+  });
+
+  test("keeps the .md suffix and a slug's safe characters unchanged", () => {
+    expect(resourceFor("https://x.dev", "docs/adr/0006-schema-types.md")).toBe(
+      "https://x.dev/docs/adr/0006-schema-types.md",
+    );
+  });
+
+  test("URL-encodes each path segment but never the separators", () => {
+    expect(resourceFor("https://x.dev", "docs/qa plan/déjà vu.md")).toBe(
+      "https://x.dev/docs/qa%20plan/d%C3%A9j%C3%A0%20vu.md",
+    );
+  });
+
+  test("preserves a base that carries its own path", () => {
+    expect(resourceFor("https://x.atlassian.net/wiki/spaces/ENG", "docs/index-of-things.md")).toBe(
+      "https://x.atlassian.net/wiki/spaces/ENG/docs/index-of-things.md",
+    );
+  });
+});
+
+describe("buildNewConcept — resource stamping is profile-gated (AC#4)", () => {
+  const build = (docPath: string, profile: Profile) =>
+    buildNewConcept({
+      docPath,
+      type: "Reference",
+      title: "Orders",
+      summary: "The orders.",
+      timestamp: TIMESTAMP,
+      bodyTemplate: builtinTemplateFor("Reference"),
+      vars: Object.create(null),
+      profile,
+    });
+
+  test("stamps `resource` when the profile sets resource_base", () => {
+    const result = build("docs/reference/orders.md", profileWithResourceBase("https://docs.example.com/"));
+    const concept = parseConcept("docs/reference/orders.md", result.contents);
+    expect(concept.frontmatter.resource).toBe("https://docs.example.com/docs/reference/orders.md");
+    // It is a recognized OKF key — stamping it raises no extra-key warning.
+    expect(result.warnings.some((w) => w.includes("resource"))).toBe(false);
+  });
+
+  test("omits `resource` under the default profile (empty resource_base) — byte-identical to before", () => {
+    const result = build("docs/reference/orders.md", defaultProfile());
+    expect(result.contents).not.toContain("resource:");
+    expect(parseConcept("docs/reference/orders.md", result.contents).frontmatter.resource).toBeUndefined();
+  });
+
+  test("never stamps `resource` on an index/sub-index file, even with a resource_base", () => {
+    const profile = profileWithResourceBase("https://docs.example.com/");
+    for (const indexPath of ["docs/index.md", "docs/reference/index.md"]) {
+      const result = build(indexPath, profile);
+      expect(result.contents).not.toContain("resource:");
+    }
+  });
+
+  test("`resource` trails the profile's declared keys and round-trips byte-stably", () => {
+    const profile = profileWithResourceBase("https://docs.example.com/");
+    const first = build("docs/reference/orders.md", profile);
+    const concept = parseConcept("docs/reference/orders.md", first.contents, { profile });
+    // serialize(parse(x)) === x: the stamped key reaches a fixpoint on the first write.
+    expect(
+      buildNewConcept({
+        docPath: "docs/reference/orders.md",
+        type: "Reference",
+        title: "Orders",
+        summary: "The orders.",
+        timestamp: TIMESTAMP,
+        bodyTemplate: builtinTemplateFor("Reference"),
+        vars: Object.create(null),
+        profile,
+      }).contents,
+    ).toBe(first.contents);
+    expect(Object.keys(concept.frontmatter).at(-1)).toBe("resource");
   });
 });
 

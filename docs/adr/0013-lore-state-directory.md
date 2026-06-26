@@ -29,8 +29,11 @@ Amended — 2026-06-25 (LORE-46): `.lore/` gains a second committed TOML, **`pro
 the declarative **type system** — the type vocabulary, per-type frontmatter shape, required
 sections, and templates from which lore generates its validators and editor JSON Schemas
 (see [ADR-0006 amendment](0006-schema-types-templates.md)). Its `[profile]` table also carries
-`resource_base`, the prefix for the `resource` link `lore new` stamps (the stamping itself is
-LORE-47). Like `config.toml`, the profile is **zero-config**: absent — or present with every line
+`resource_base` (a key of `profile.toml`, **not** `config.toml`), the prefix `lore new` joins to a
+concept's repo-relative path to stamp the OKF-recommended `resource` link (LORE-47). An **empty**
+`resource_base` — the default — omits the `resource` key entirely, so output stays byte-identical to
+before the key existed; index/sub-index files never carry it. Like `config.toml`, the profile is
+**zero-config**: absent — or present with every line
 commented — it falls back to the built-in story-convention profile, so `lore init` scaffolds a
 fully-commented `profile.toml` that changes nothing until a team fills it in.
 

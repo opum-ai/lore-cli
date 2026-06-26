@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`GitAdapter` seam + git-history `log.md`, and `resource` stamping** (LORE-47). Two pieces of
+  the ECK↔lore alignment (D5):
+  - The **third injectable deterministic seam, `GitAdapter`** (after the clock and the Backlog
+    subprocess — lore-design §8, ADR-0014), plus a pure `generateLog` that renders the bundle's
+    `log.md` from commit history: per-folder, directory-sorted, commits sorted by
+    `(timestamp, hash)`, so output is order-independent and **byte-stable**. git is local,
+    deterministic computation over a **pinned commit range** — not a network model — so it stays
+    offline-, air-gap-, and CI-reproducible. `core/log.ts` (interface + pure fn) is delivered and
+    tested against a **fixed fake history** (never real `git`); the real `git`-shelling adapter and
+    the `lore sync` wiring that materializes `log.md` land with `sync`. Because a git-derived
+    `log.md` changes on every commit, it is a `sync`-time artifact **excluded** from `lore check`'s
+    drift gate (ADR-0007 amended); `index.md` and managed blocks stay gated.
+  - `lore new` now **stamps the OKF-recommended `resource` key** from the profile's
+    `[profile].resource_base`: `resource = <resource_base>/<repo-relative doc path>`, exactly one
+    join slash, each path segment URL-encoded (slugs unchanged; spaces/non-ASCII percent-escaped),
+    `.md` kept. It is **opt-in and byte-safe**: an empty `resource_base` (the default) omits the key
+    entirely, and index/sub-index files never carry it, so zero-config output is unchanged.
+    `resource` is a recognized OKF key (`schema.ts` `OKF_RESERVED_KEYS`), not a profile field, so it
+    raises no extra-key warning and changes no generated validator or committed schema (ADR-0013
+    amended).
 - **Declarative `.lore/profile.toml` — the type system is now data, not code** (LORE-46). A
   committed, declarative profile is the single source of truth for the type vocabulary, each
   type's frontmatter shape, its required body sections, and its template; lore **generates** its
