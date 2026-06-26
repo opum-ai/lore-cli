@@ -1,9 +1,32 @@
 import { describe, expect, test } from "bun:test";
-import { parseConcept } from "../src/core/concept";
-import { defaultProfile } from "../src/core/profile";
+import { parseConcept, serializeConcept } from "../src/core/concept";
+import { compileProfile, defaultProfile, type Profile, parseProfile } from "../src/core/profile";
 import { canonicalType, isKnownType, schemaModeline, typeDirectory } from "../src/core/schema";
-import { buildNewConcept, builtinTemplateFor, renderTemplate, slugify } from "../src/core/template";
+import { buildNewConcept, builtinTemplateFor, renderTemplate, resourceFor, slugify } from "../src/core/template";
 import { LoreError, WarningCollector } from "../src/errors";
+
+/**
+ * Compile a minimal one-type (`Reference`) profile carrying `resourceBase`, for the
+ * `resource`-stamping tests. `extraBaseFields` are extra `[base.fields]` lines (e.g. a profile-owned
+ * `resource = { … }`) spliced in, so a test that needs the profile to own `resource` does not have
+ * to re-inline the whole document.
+ */
+function profileWithResourceBase(resourceBase: string, extraBaseFields: string[] = []): Profile {
+  const doc = Bun.TOML.parse(
+    [
+      "[profile]",
+      'name = "t"',
+      'okf_version = "0.1"',
+      `resource_base = "${resourceBase}"`,
+      "[base.fields]",
+      "type = { required = true }",
+      ...extraBaseFields,
+      "[[types]]",
+      'name = "Reference"',
+    ].join("\n"),
+  ) as Record<string, unknown>;
+  return compileProfile(parseProfile(doc, "test-profile"));
+}
 
 /** The six story-convention type names, sourced from the built-in profile. */
 const KNOWN_TYPES = [...defaultProfile().types.keys()];
@@ -170,6 +193,150 @@ describe("buildNewConcept — unfilled body placeholders fail loud (exit 6)", ()
       vars: Object.assign(Object.create(null), { title: "Ignored" }),
     });
     expect(result.warnings.some((w) => w.includes("ignoring --var title"))).toBe(true);
+  });
+});
+
+describe("resourceFor — base + repo-rel path, one slash, URL-encoded segments (AC#4)", () => {
+  test("joins with exactly one slash, trimming the base's trailing slash(es)", () => {
+    expect(resourceFor("https://docs.example.com", "docs/stories/foo.md")).toBe(
+      "https://docs.example.com/docs/stories/foo.md",
+    );
+    expect(resourceFor("https://docs.example.com/", "docs/stories/foo.md")).toBe(
+      "https://docs.example.com/docs/stories/foo.md",
+    );
+    expect(resourceFor("https://docs.example.com///", "docs/stories/foo.md")).toBe(
+      "https://docs.example.com/docs/stories/foo.md",
+    );
+  });
+
+  test("keeps the .md suffix and a slug's safe characters unchanged", () => {
+    expect(resourceFor("https://x.dev", "docs/adr/0006-schema-types.md")).toBe(
+      "https://x.dev/docs/adr/0006-schema-types.md",
+    );
+  });
+
+  test("URL-encodes each path segment but never the separators", () => {
+    expect(resourceFor("https://x.dev", "docs/qa plan/déjà vu.md")).toBe(
+      "https://x.dev/docs/qa%20plan/d%C3%A9j%C3%A0%20vu.md",
+    );
+  });
+
+  test("preserves a base that carries its own path", () => {
+    expect(resourceFor("https://x.atlassian.net/wiki/spaces/ENG", "docs/index-of-things.md")).toBe(
+      "https://x.atlassian.net/wiki/spaces/ENG/docs/index-of-things.md",
+    );
+  });
+
+  test("trims surrounding whitespace on the base so no space is embedded at the seam", () => {
+    expect(resourceFor("  https://x.dev/  ", "docs/a.md")).toBe("https://x.dev/docs/a.md");
+  });
+});
+
+describe("buildNewConcept — resource stamping is profile-gated (AC#4)", () => {
+  const build = (docPath: string, profile: Profile) =>
+    buildNewConcept({
+      docPath,
+      type: "Reference",
+      title: "Orders",
+      summary: "The orders.",
+      timestamp: TIMESTAMP,
+      bodyTemplate: builtinTemplateFor("Reference"),
+      vars: Object.create(null),
+      profile,
+    });
+
+  test("stamps `resource` when the profile sets resource_base", () => {
+    const result = build("docs/reference/orders.md", profileWithResourceBase("https://docs.example.com/"));
+    const concept = parseConcept("docs/reference/orders.md", result.contents);
+    expect(concept.frontmatter.resource).toBe("https://docs.example.com/docs/reference/orders.md");
+    // It is a recognized OKF key — stamping it raises no extra-key warning.
+    expect(result.warnings.some((w) => w.includes("resource"))).toBe(false);
+  });
+
+  test("omits `resource` under the default profile (empty resource_base) — byte-identical to before", () => {
+    const result = build("docs/reference/orders.md", defaultProfile());
+    expect(result.contents).not.toContain("resource:");
+    expect(parseConcept("docs/reference/orders.md", result.contents).frontmatter.resource).toBeUndefined();
+  });
+
+  test("never stamps `resource` on an index/sub-index file, even with a resource_base", () => {
+    const profile = profileWithResourceBase("https://docs.example.com/");
+    for (const indexPath of ["docs/index.md", "docs/reference/index.md"]) {
+      const result = build(indexPath, profile);
+      expect(result.contents).not.toContain("resource:");
+    }
+  });
+
+  test("`resource` trails the profile's declared keys and round-trips byte-stably", () => {
+    const profile = profileWithResourceBase("https://docs.example.com/");
+    const first = build("docs/reference/orders.md", profile).contents;
+    const concept = parseConcept("docs/reference/orders.md", first, { profile });
+    // The genuine fixpoint: re-serializing the parsed-back concept reproduces the exact bytes, so a
+    // regression that reordered/dropped the trailing `resource` key on re-emit would fail here.
+    expect(serializeConcept(concept, { profile })).toBe(first);
+    expect(Object.keys(concept.frontmatter).at(-1)).toBe("resource");
+  });
+
+  test("defers to a type that owns an INCOMPATIBLE `resource` field (no auto-stamp, no crash)", () => {
+    // A type owning `resource` as a datetime would reject a stamped URL string; lore must not
+    // auto-stamp — the field is the profile's to fill, not lore's. Would throw exit-6 if it did.
+    const profile = profileWithResourceBase("https://docs.example.com/", ['resource = { kind = "datetime" }']);
+    const result = build("docs/reference/orders.md", profile);
+    expect(result.contents).not.toContain("https://docs.example.com");
+  });
+
+  test("STAMPS into a `resource = { required = true }` string field the type owns (satisfies it, no exit-6)", () => {
+    // A required *string* `resource` is satisfied by the stamp, not failed: the old global guard
+    // deferred here and `lore new` then died exit-6 on the missing required field.
+    const profile = profileWithResourceBase("https://docs.example.com/", ["resource = { required = true }"]);
+    const result = build("docs/reference/orders.md", profile);
+    const concept = parseConcept("docs/reference/orders.md", result.contents, { profile });
+    expect(concept.frontmatter.resource).toBe("https://docs.example.com/docs/reference/orders.md");
+  });
+
+  test("a `resource` field on ONE type no longer suppresses stamping on ANOTHER (per-type guard)", () => {
+    const doc = Bun.TOML.parse(
+      [
+        "[profile]",
+        'name = "multi"',
+        'okf_version = "0.1"',
+        'resource_base = "https://x.dev/"',
+        "[base.fields]",
+        "type = { required = true }",
+        "[[types]]",
+        'name = "Reference"',
+        "[[types]]",
+        'name = "Pinned"',
+        'fields.resource = { kind = "datetime" }',
+      ].join("\n"),
+    ) as Record<string, unknown>;
+    const profile = compileProfile(parseProfile(doc, "multi"));
+    // Reference does NOT own `resource`, so it is still stamped even though Pinned declares its own
+    // (the old `canonicalKeyOrder.includes("resource")` union suppressed every type here).
+    const result = buildNewConcept({
+      docPath: "docs/reference/orders.md",
+      type: "Reference",
+      title: "Orders",
+      summary: "The orders.",
+      timestamp: TIMESTAMP,
+      bodyTemplate: builtinTemplateFor("Reference"),
+      vars: Object.create(null),
+      profile,
+    });
+    expect(parseConcept("docs/reference/orders.md", result.contents, { profile }).frontmatter.resource).toBe(
+      "https://x.dev/docs/reference/orders.md",
+    );
+  });
+
+  test("a whitespace-only `resource_base` is treated as unset (no stamp)", () => {
+    const result = build("docs/reference/orders.md", profileWithResourceBase("   "));
+    expect(result.contents).not.toContain("resource:");
+  });
+
+  test("trims surrounding whitespace on the base instead of embedding a space in the URL", () => {
+    const result = build("docs/reference/orders.md", profileWithResourceBase("  https://docs.example.com/  "));
+    const concept = parseConcept("docs/reference/orders.md", result.contents);
+    expect(concept.frontmatter.resource).toBe("https://docs.example.com/docs/reference/orders.md");
   });
 });
 

@@ -135,6 +135,19 @@ export interface CompiledType {
   readonly template?: string;
   /** The field names this type declares (base ∪ own ∪ reserved), for the extra-key warning. */
   readonly declaredFields: ReadonlySet<string>;
+  /**
+   * Whether `lore new` may auto-stamp a `resource` URL string onto a concept of **this** type
+   * (LORE-47 / AC#4). `true` unless the type **owns** a `resource` field whose shape a URL string
+   * cannot satisfy — i.e. a declared `resource` field with a non-`string` `kind` (a `datetime`,
+   * `number`, … `resource` would reject the stamped URL) or an `enum` (a closed value set a free
+   * URL is not in). A type that does **not** declare `resource`, or declares it as a plain
+   * (optionally required) string, accepts the stamp. Computed per-type so one type declaring its
+   * own `resource` never suppresses stamping for the others (the old global-key-order guard did),
+   * and a `resource = { required = true }` string field is **satisfied** by the stamp rather than
+   * failing `lore new` with a missing-required error. The single fact {@link import("./template").expectedResource}
+   * reads to decide whether to stamp.
+   */
+  readonly acceptsStampedResource: boolean;
 }
 
 /**
@@ -301,7 +314,9 @@ export function parseProfile(doc: Record<string, unknown>, source: string): Pars
   const name = requireString(profileTable.name, "profile.name", source);
   const okfVersion = requireString(profileTable.okf_version, "profile.okf_version", source);
   const caseStyle = asEnum(profileTable.case, "profile.case", CASE_STYLES, source) ?? "Title";
-  const resourceBase = asString(profileTable.resource_base, "profile.resource_base", source) ?? "";
+  // Trim at the config boundary so a whitespace-only `resource_base` is treated as unset (no stamp)
+  // and a base padded with stray whitespace can never join into an embedded-space (broken) URL.
+  const resourceBase = (asString(profileTable.resource_base, "profile.resource_base", source) ?? "").trim();
 
   const baseTable = asTable(doc.base, "base", source) ?? {};
   const baseFields = parseFieldTable(asTable(baseTable.fields, "base.fields", source) ?? {}, "base.fields", source);
@@ -507,6 +522,7 @@ export function compileProfile(parsed: ParsedProfile): Profile {
       jsonSchema: buildJsonSchema(schema, merged, fieldOrder),
       requiredSections: type.sections,
       declaredFields: new Set(fieldOrder),
+      acceptsStampedResource: acceptsStampedResource(merged.resource),
       ...(type.template === undefined ? {} : { template: type.template }),
     };
     types.set(type.name, compiled);
@@ -544,6 +560,17 @@ const RESERVED_FIELD_NAMES = Object.keys(RESERVED_FIELDS);
 /** A concept reference or a list of them (the `supersedes`/`superseded_by` shape), accepting absent and null. */
 function conceptRefs(): z.ZodType {
   return z.union([z.string(), z.array(z.string())]).nullish();
+}
+
+/**
+ * Whether an auto-stamped `resource` URL string is valid for a type owning the given `resource`
+ * field spec ({@link CompiledType.acceptsStampedResource}). `undefined` (the type declares no
+ * `resource` field) → `true`: lore stamps a recognized reserved key. A declared field accepts the
+ * stamp only when it is a plain `string` with no `enum` — a free URL satisfies a (required or
+ * optional) string field, but never a `datetime`/`number`/`list` field or a closed `enum`.
+ */
+function acceptsStampedResource(spec: FieldSpec | undefined): boolean {
+  return spec === undefined || (spec.kind === "string" && spec.enum === undefined);
 }
 
 /**

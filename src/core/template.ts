@@ -24,6 +24,7 @@
  * filesystem resolution is the command's concern, not this module's.
  */
 
+import { posix } from "node:path";
 import { LoreError, WarningCollector } from "../errors";
 import { type Concept, idFromPath, serializeConcept, serializeConceptWithModeline } from "./concept";
 import { defaultProfile, type Profile, slugForTypeName } from "./profile";
@@ -38,6 +39,34 @@ import { validateFrontmatter } from "./schema";
  * so a title and a type name can never slug two different ways.
  */
 export const slugify = slugForTypeName;
+
+/**
+ * The OKF `resource` link value for a concept at `docPath` under `resourceBase` (LORE-47 / AC#4) —
+ * the canonical published location a reader follows, joined producer-side from two parts:
+ *
+ * - **`resourceBase`** is the configured prefix verbatim (`[profile].resource_base`), with any
+ *   trailing slash(es) trimmed so the join contributes exactly one. It is *not* re-encoded: it is
+ *   a user-authored URL that may legitimately carry a scheme, host, and its own path separators.
+ * - **`docPath`** is the doc's repo-relative POSIX path (e.g. `docs/stories/bulk-archive.md`),
+ *   appended with each segment `encodeURIComponent`-encoded so a title-derived slug stays
+ *   byte-identical (the `-` `_` `.` set is preserved) while a space- or non-ASCII-bearing `--out`
+ *   path is percent-escaped into a valid URL. The `/` separators and the `.md` suffix are kept.
+ *
+ * Pure and total: the result is `<base-without-trailing-slash>/<encoded-doc-path>`, always exactly
+ * one slash at the seam. The caller decides *whether* to stamp ({@link stampResource}); this only
+ * computes the value.
+ */
+export function resourceFor(resourceBase: string, docPath: string): string {
+  // Trim before joining so a base padded with stray whitespace (or one whose configured value
+  // carried trailing whitespace after a slash) can never contribute an embedded space — `https://x/ `
+  // + `docs/a.md` would otherwise yield the broken `https://x/ /docs/a.md`.
+  const base = resourceBase.trim().replace(/\/+$/, "");
+  const encodedPath = docPath
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  return `${base}/${encodedPath}`;
+}
 
 /** The `{{ key }}` token grammar: a name of word chars, dots, and dashes, with optional inner padding. */
 const PLACEHOLDER = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
@@ -146,6 +175,7 @@ export function buildNewConcept(input: BuildNewConceptInput): BuildNewConceptRes
   }
 
   const profile = input.profile ?? defaultProfile();
+  stampResource(frontmatter, input.type, input.docPath, profile);
   const resolvedType = validateFrontmatter(frontmatter, { warnings, path: input.docPath, profile });
   const concept: Concept = {
     id: idFromPath(input.docPath),
@@ -160,6 +190,49 @@ export function buildNewConcept(input: BuildNewConceptInput): BuildNewConceptRes
       ? serializeConceptWithModeline(concept, input.modeline, { profile })
       : serializeConcept(concept, { profile });
   return { contents, type: resolvedType, warnings: warnings.list() };
+}
+
+/**
+ * The OKF `resource` value lore stamps for a concept of `type` at `docPath` under `profile`, or
+ * `undefined` when none should be stamped (LORE-47 / AC#4). The **single source** shared by the
+ * `lore new` write path ({@link stampResource}) and the `lore validate` drift check, so a value lore
+ * writes and a value it later checks for staleness are computed one way and can never disagree.
+ * Three guards keep the zero-config default **byte-identical to before the key existed** and stop
+ * lore writing a value its own profile would reject:
+ *
+ * - **`resourceBase` empty** (the default) → none. A project that sets no `[profile].resource_base`
+ *   gets no `resource` line at all.
+ * - **the doc is an index** (`index.md`, root or sub-index) → none. Index/sub-index files are
+ *   bundle-structure pages, not authored concepts a reader cites; a `resource` link on them would
+ *   point a reader at scaffolding. The basename test covers `docs/index.md` and every
+ *   `docs/<dir>/index.md` in one rule.
+ * - **the concept's own type owns an incompatible `resource` field** → none. If *this* type declares
+ *   a `resource` field whose shape a URL string cannot satisfy (a `datetime`/`number`/`list` field,
+ *   or a closed `enum`), the field is the profile's to fill, not lore's — auto-stamping a URL would
+ *   fail that type's validator. The test is **per-type** ({@link import("./profile").CompiledType.acceptsStampedResource}),
+ *   not the old global key-order union: one type declaring its own `resource` no longer suppresses
+ *   stamping for every other type, and a `resource = { required = true }` *string* field is now
+ *   **satisfied** by the stamp instead of making `lore new` fail with a missing-required error.
+ *
+ * Otherwise the value is {@link resourceFor}; `concept.ts` emits it as a recognized key and
+ * `schema.ts` keeps it from tripping the extra-key warning.
+ */
+export function expectedResource(type: string, docPath: string, profile: Profile): string | undefined {
+  if (profile.resourceBase === "" || posix.basename(docPath) === "index.md") {
+    return undefined;
+  }
+  if (profile.types.get(type)?.acceptsStampedResource === false) {
+    return undefined;
+  }
+  return resourceFor(profile.resourceBase, docPath);
+}
+
+/** Stamp {@link expectedResource} onto `frontmatter` in place when one is due, else leave it untouched. */
+function stampResource(frontmatter: Record<string, unknown>, type: string, docPath: string, profile: Profile): void {
+  const value = expectedResource(type, docPath, profile);
+  if (value !== undefined) {
+    frontmatter.resource = value;
+  }
 }
 
 /** The placeholder names lore fills automatically; a `--var` for one of these is ignored (it would be overridden). */

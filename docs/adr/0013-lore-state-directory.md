@@ -34,6 +34,12 @@ LORE-47). Like `config.toml`, the profile is **zero-config**: absent — or pres
 commented — it falls back to the built-in story-convention profile, so `lore init` scaffolds a
 fully-commented `profile.toml` that changes nothing until a team fills it in.
 
+Amended — 2026-06-26 (LORE-47): the `resource_base` key (a key of `profile.toml` `[profile]`,
+**not** `config.toml`) is now consumed — `lore new` joins it to a concept's repo-relative path to
+stamp the OKF-recommended `resource` link. An **empty** `resource_base` — the default — omits the
+`resource` key entirely, so output stays byte-identical to before; index/sub-index files never carry
+it, and a profile that declares its own `resource` field keeps ownership (lore does not auto-stamp).
+
 ## Context
 
 lore is repo-resident and repo-is-source-of-truth, but it still has a small

@@ -498,8 +498,10 @@ no lore-specific tooling is needed to read history.
 
 ## 8. Determinism and the injectable seams
 
-The core is deterministic, so the two genuinely nondeterministic inputs are
-isolated behind injectable seams the tests can fake:
+The core is deterministic, so every input that would otherwise break that —
+whether genuinely nondeterministic (the clock) or merely impure and awkward to
+drive in a test (a subprocess, the git history) — is isolated behind an
+injectable seam the tests can fake:
 
 - **The clock.** Anything needing "now" (the `timestamp` in `lore new`) takes a
   `clock: () => Date` dependency. Tests inject a fixed clock so generated files
@@ -508,6 +510,14 @@ isolated behind injectable seams the tests can fake:
   a hardcoded `Bun.spawn`. Unit and golden tests inject a fake adapter that
   returns canned `{schemaVersion, kind, data}` envelopes; e2e tests inject the
   real one driving the compiled fork.
+- **The git history.** Deriving `log.md` from commit history (`core/log.ts`) takes
+  a `GitAdapter` interface that returns commits over a **pinned range**, never a
+  hardcoded `git` spawn. git is local, deterministic computation — not a network
+  model (ADR-0014) — so over a pinned range it is reproducible and offline-safe;
+  `generateLog` sorts folders and commits so output is order-independent and
+  byte-stable. Tests inject a fake adapter with a fixed fake history. Because the
+  result changes on every commit, `log.md` is materialized on `lore sync` and is
+  excluded from `lore check`'s drift gate (ADR-0007).
 
 No other source of nondeterminism is permitted in the core path: no `Math.random`,
 no `Date.now()` outside the clock seam, no filesystem-order dependence (directory

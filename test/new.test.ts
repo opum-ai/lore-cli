@@ -143,6 +143,47 @@ describe("lore new — scaffolding a known type", () => {
   });
 });
 
+describe("lore new — stamps the OKF `resource` from the profile's resource_base (LORE-47 / AC#4)", () => {
+  /** Overwrite the scaffolded profile with one declaring a resource_base and the story types under test. */
+  function writeResourceProfile(resourceBase: string): void {
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      [
+        "[profile]",
+        'name = "demo"',
+        'okf_version = "0.1"',
+        `resource_base = "${resourceBase}"`,
+        "[base.fields]",
+        "type = { required = true }",
+        "title = {}",
+        "summary = {}",
+        'timestamp = { kind = "datetime" }',
+        "[[types]]",
+        'name = "Reference"',
+        "[[types]]",
+        'name = "ADR"',
+      ].join("\n"),
+    );
+  }
+
+  test("stamps a `resource` link joining resource_base to the new doc's repo-relative path", () => {
+    writeResourceProfile("https://docs.example.com/");
+    const { result } = newCmd(["reference", "Orders table"]);
+    const raw = readFileSync(join(root, result.path), "utf8");
+    expect(raw).toContain("resource: https://docs.example.com/docs/reference/orders-table.md");
+    // It loads back clean — `resource` is a recognized OKF key, not a warned extra.
+    const warnings = new WarningCollector();
+    loadBundle(join(root, "docs"), { warnings });
+    expect(warnings.list()).toEqual([]);
+  });
+
+  test("with no resource_base set, `lore new` output is byte-identical to before (no resource line)", () => {
+    // The scaffolded (commented) profile leaves resource_base empty → the default behavior.
+    const { result } = newCmd(["adr", "Use soft deletes"]);
+    expect(readFileSync(join(root, result.path), "utf8")).not.toContain("resource:");
+  });
+});
+
 describe("lore new — user templates override built-ins (AC#2)", () => {
   test("a .lore/templates/<type>.md body is used instead of the built-in", () => {
     writeFileSync(join(root, ".lore/templates/reference.md"), "\n# {{title}}\n\nOwner: {{owner}}\n");

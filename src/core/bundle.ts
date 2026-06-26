@@ -61,6 +61,7 @@ import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { deriveMessage, errnoCode, LoreError, type WarningCollector } from "../errors";
 import { type Concept, idFromPath, serializeConcept, tryParseConcept } from "./concept";
+import { compareCodeUnits } from "./order";
 
 /**
  * The kind of a concept→concept reference. `"link"` is a body markdown
@@ -190,7 +191,7 @@ export function loadBundle(root: string, options: LoadBundleOptions = {}): Bundl
  */
 export function buildGraph(concepts: readonly Concept[]): BundleGraph {
   const byId = new Map<string, Concept>();
-  for (const concept of [...concepts].sort((a, b) => compareIds(a.id, b.id))) {
+  for (const concept of [...concepts].sort((a, b) => compareCodeUnits(a.id, b.id))) {
     if (byId.has(concept.id)) {
       throw new LoreError(
         "conflict",
@@ -275,7 +276,7 @@ export function walkMarkdown(root: string, warnings: WarningCollector | undefine
   };
 
   recurse("");
-  return found.sort(compareIds);
+  return found.sort(compareCodeUnits);
 }
 
 /** Read one bundle file as UTF-8, mapping an I/O failure to a classified {@link LoreError}. */
@@ -617,13 +618,4 @@ function decodeTarget(target: string): string {
   } catch {
     return target;
   }
-}
-
-/**
- * Total order over ids/names: a plain lexicographic compare on UTF-16 code units.
- * Stable and locale-independent (unlike the default `Array.sort`), so the walk and
- * the graph order are reproducible on any machine.
- */
-function compareIds(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
 }
