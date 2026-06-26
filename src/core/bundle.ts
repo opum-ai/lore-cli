@@ -61,6 +61,7 @@ import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { deriveMessage, errnoCode, LoreError, type WarningCollector } from "../errors";
 import { type Concept, idFromPath, serializeConcept, tryParseConcept } from "./concept";
+import { decodeTarget, isExternalTarget, stripFragment, stripQuery } from "./links";
 import { compareCodeUnits } from "./order";
 
 /**
@@ -419,19 +420,6 @@ function internalTarget(target: string): string | null {
   return /\.md$/i.test(path) ? path : null;
 }
 
-/**
- * Whether a destination is **not** an internal concept reference: empty, a bare
- * `#anchor`, a protocol-relative URL (`//host/…`), or a `scheme:`-qualified URL
- * (`http:`, `mailto:`, …, per RFC-3986 — including the pathological relative file
- * whose first segment carries a colon, which lore's canonical relative `.md` links
- * never do, ADR-0010). Shared by body-link ({@link internalTarget}) and frontmatter-
- * ref ({@link resolveRef}) classification so the two agree on what counts as
- * external.
- */
-function isExternalTarget(s: string): boolean {
-  return s === "" || s.startsWith("#") || s.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(s);
-}
-
 // ── Token estimate ───────────────────────────────────────────────────────────—
 
 /** chars/4 token estimate over one concept's canonical serialized bytes. */
@@ -597,25 +585,4 @@ function scalarToRef(item: unknown): string | null {
     typeof item === "string" ? item : typeof item === "number" || typeof item === "boolean" ? String(item) : "";
   const trimmed = text.trim();
   return trimmed === "" ? null : trimmed;
-}
-
-/** Drop a `#fragment` (and anything after it). */
-function stripFragment(target: string): string {
-  const hash = target.indexOf("#");
-  return hash === -1 ? target : target.slice(0, hash);
-}
-
-/** Drop a `?query` (and anything after it). */
-function stripQuery(target: string): string {
-  const question = target.indexOf("?");
-  return question === -1 ? target : target.slice(0, question);
-}
-
-/** URL-decode a target, degrading to the raw text if it is not valid percent-encoding. */
-function decodeTarget(target: string): string {
-  try {
-    return decodeURIComponent(target);
-  } catch {
-    return target;
-  }
 }
