@@ -1,11 +1,11 @@
 ---
 id: LORE-47
 title: 'GitAdapter seam: git-history log.md + resource_base stamping'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 20:16'
-updated_date: '2026-06-26 20:00'
+updated_date: '2026-06-26 21:15'
 labels:
   - eck-alignment
   - core
