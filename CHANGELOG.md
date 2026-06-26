@@ -27,7 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     entirely, and index/sub-index files never carry it, so zero-config output is unchanged.
     `resource` is a recognized OKF key (`schema.ts` `OKF_RESERVED_KEYS`), not a profile field, so it
     raises no extra-key warning and changes no generated validator or committed schema (ADR-0013
-    amended).
+    amended) — except on an `index.md`, where a hand-authored `resource:` *is* warned (an index
+    carries none). Whether to stamp is decided **per-type**: a type that declares its own `resource`
+    field defers only for *that* type, and a `resource = { required = true }` string field is
+    satisfied by the stamp (not failed) — an incompatible `datetime`/`enum`/`list` field still
+    defers. `lore validate` also gains an advisory **`resource` drift** warning: a present `resource`
+    that no longer matches its path + `resource_base` is flagged stale (inert under zero-config).
 - **Declarative `.lore/profile.toml` — the type system is now data, not code** (LORE-46). A
   committed, declarative profile is the single source of truth for the type vocabulary, each
   type's frontmatter shape, its required body sections, and its template; lore **generates** its
