@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Graph-derived `index.md` generation — `core/indexes.ts`** (LORE-29). A pure
+  `generateIndexes(g, { existing })` that regenerates every bundle `index.md` as a deterministic,
+  byte-stable **navigable hub**: the reserved root entry point plus one local hub per
+  concept-bearing directory (and its ancestors, so the tree links from the root down), each listing
+  its immediate child concepts and child-directory indexes as portable, percent-encoded relative
+  `.md` links sorted with `compareCodeUnits`. Index files are **hand-authored documents with one
+  machine-owned region**: only the `<!-- lore:index:begin -->…<!-- lore:index:end -->` block is
+  regenerated, **string-spliced into the file's raw bytes** so frontmatter, the root index's in-fence
+  modeline, and all curated prose survive byte-for-byte (lore-design §6.2) — never round-tripped
+  through `serializeConcept` (which would drop the modeline). The current on-disk bytes enter through
+  an injected `existing` seam (the determinism boundary `log.ts` draws with `GitAdapter`), keeping
+  core pure; a sub-index that does not yet exist is synthesized **frontmatter-free** (AC#2), and the
+  root index's `okf_version`/creation stays `lore init`'s job. Splicing is a **fixpoint** — a
+  no-change run is a byte-level no-op — so `index.md` stays trustworthy under `lore check`'s
+  regenerate-and-compare drift gate (AC#1). Delivered as pure core + tests (`indexes.ts` 100%
+  line/func); the `lore sync` wiring that reads/writes the files is LORE-26, the remark/mdast
+  unification of all managed regions is LORE-22, and the temporary local path-segment encoder is
+  swapped for `links.ts`'s shared `encodePathSegments` once LORE-28 lands on `dev`.
+  Hardened after a `/code-review max` pass: untrusted titles are single-lined, bracket-escaped, and
+  have HTML-comment sentinels neutralized (a title cannot break a link or poison its own block); the
+  splice collapses duplicate blocks (first-begin → last-end) and rewrites a truncated region to EOF
+  so regeneration converges to a fixpoint from a merge-corrupted file; and a present-but-empty index
+  is synthesized like an absent one. Known follow-up for the link gate: a generated root hub links to
+  frontmatter-free sub-indexes (not graph concepts), so `lore check` (LORE-27) must treat reserved
+  `index.md`/`log.md` link targets as resolved, not broken.
 - **`GitAdapter` seam + git-history `log.md`, and `resource` stamping** (LORE-47). Two pieces of
   the ECK↔lore alignment (D5):
   - The **third injectable deterministic seam, `GitAdapter`** (after the clock and the Backlog

@@ -18,7 +18,7 @@
  * same plan.
  *
  * Scope (confirmed for LORE-17): an empty bundle only. Full index/log *generation*
- * (`bundle.generateIndexes`, `log.md`) is M3 / `lore sync` and is **not** done here —
+ * (`indexes.generateIndexes`, `log.ts` → `log.md`) is M3 / `lore sync` and is **not** done here —
  * init writes a *minimal* root index. Per-type template *content* is `lore new`'s
  * concern (LORE-18, which carries built-in fallbacks); init only ensures the
  * `.lore/templates/` directory exists.
