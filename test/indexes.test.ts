@@ -80,6 +80,27 @@ describe("generateIndexes — graph-derived navigable hubs (LORE-29)", () => {
     expect(out.get("a/b/c/index.md")).toContain("- [Deep](deep.md)");
   });
 
+  test("title text is escaped so brackets cannot break the markdown link", () => {
+    const out = generateIndexes(buildGraph([concept("adr/0001-x.md", { title: "Plan [B] (draft)" })]));
+    expect(out.get("adr/index.md")).toContain("- [Plan \\[B\\] (draft)](0001-x.md)");
+  });
+
+  test("a title is single-lined so a newline cannot split the entry out of the list", () => {
+    const out = generateIndexes(buildGraph([concept("adr/0001-x.md", { title: "Line one\nline two" })]));
+    expect(out.get("adr/index.md")).toContain("- [Line one line two](0001-x.md)");
+  });
+
+  test("a title containing the end sentinel is neutralized, so the block stays a fixpoint (regression for the self-poison bug)", () => {
+    const g = buildGraph([concept("adr/0001-x.md", { title: "Decision <!-- lore:index:end --> note" })]);
+    const first = generateIndexes(g).get("adr/index.md") ?? "";
+    // The raw end marker never reaches the block interior...
+    expect(first).not.toContain(`note ${INDEX_BLOCK_END}`);
+    expect(first.split(INDEX_BLOCK_END).length).toBe(2); // exactly one (real) end marker
+    // ...so regeneration is byte-identical instead of corrupting/growing the file each run.
+    const second = generateIndexes(g, { existing: new Map([["adr/index.md", first]]) }).get("adr/index.md");
+    expect(second).toBe(first);
+  });
+
   test("reserved index.md/log.md are never listed as children", () => {
     const out = generateIndexes(buildGraph([concept("adr/index.md"), concept("adr/0001-x.md", { title: "X" })]));
     const adr = out.get("adr/index.md") ?? "";
@@ -108,14 +129,35 @@ describe("generateIndexes — managed-region splice preserves authored bytes (lo
     expect(root).toContain(block("- [adr](adr/index.md)", "- [reference](reference/index.md)"));
   });
 
-  test("a truncated block (begin marker, no end marker) is treated as absent and a fresh block appended", () => {
+  test("a truncated block (begin marker, no end marker) is rewritten whole and then converges (fixpoint)", () => {
+    const g = buildGraph([concept("adr/0001-x.md", { title: "X" })]);
     const existing = new Map([["adr/index.md", `# ADRs\n\nProse.\n\n${INDEX_BLOCK_BEGIN}\n- [stale](stale.md)\n`]]);
-    const out = generateIndexes(buildGraph([concept("adr/0001-x.md", { title: "X" })]), { existing });
-    const adr = out.get("adr/index.md") ?? "";
-    // The unterminated prior block is left in place (authored bytes are never deleted)...
-    expect(adr).toContain(`${INDEX_BLOCK_BEGIN}\n- [stale](stale.md)`);
-    // ...and a fresh, well-formed block is appended.
-    expect(adr.endsWith(`${block("- [X](0001-x.md)")}\n`)).toBe(true);
+    const first = generateIndexes(g, { existing }).get("adr/index.md") ?? "";
+    // The orphan begin is absorbed (region runs to EOF), leaving exactly one well-formed block...
+    expect(first).toBe(`# ADRs\n\nProse.\n\n${block("- [X](0001-x.md)")}\n`);
+    expect(first).not.toContain("stale");
+    // ...and re-running over that output is a byte-level no-op (the truncated state never recurs).
+    const second = generateIndexes(g, { existing: new Map([["adr/index.md", first]]) }).get("adr/index.md");
+    expect(second).toBe(first);
+  });
+
+  test("duplicate well-formed blocks (a merge artifact) collapse into one — no stale region survives", () => {
+    const g = buildGraph([concept("adr/0001-x.md", { title: "X" })]);
+    const existing = new Map([
+      ["adr/index.md", `# ADRs\n\n${block("- [live](live.md)")}\n\nmid\n\n${block("- [stale2](s2.md)")}\n`],
+    ]);
+    const first = generateIndexes(g, { existing }).get("adr/index.md") ?? "";
+    expect(first).toBe(`# ADRs\n\n${block("- [X](0001-x.md)")}\n`);
+    expect(first).not.toContain("stale2");
+    // Converges.
+    const second = generateIndexes(g, { existing: new Map([["adr/index.md", first]]) }).get("adr/index.md");
+    expect(second).toBe(first);
+  });
+
+  test("a present-but-empty index file is synthesized like an absent one (heading, no leading blanks)", () => {
+    const g = buildGraph([concept("notes/a.md", { title: "A" })]);
+    const out = generateIndexes(g, { existing: new Map([["notes/index.md", "   \n\n"]]) });
+    expect(out.get("notes/index.md")).toBe(`# notes\n\n${block("- [A](a.md)")}\n`);
   });
 
   test("replaces an existing block in place, keeping prose above and below it", () => {

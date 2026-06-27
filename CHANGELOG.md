@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   line/func); the `lore sync` wiring that reads/writes the files is LORE-26, the remark/mdast
   unification of all managed regions is LORE-22, and the temporary local path-segment encoder is
   swapped for `links.ts`'s shared `encodePathSegments` once LORE-28 lands on `dev`.
+  Hardened after a `/code-review max` pass: untrusted titles are single-lined, bracket-escaped, and
+  have HTML-comment sentinels neutralized (a title cannot break a link or poison its own block); the
+  splice collapses duplicate blocks (first-begin → last-end) and rewrites a truncated region to EOF
+  so regeneration converges to a fixpoint from a merge-corrupted file; and a present-but-empty index
+  is synthesized like an absent one. Known follow-up for the link gate: a generated root hub links to
+  frontmatter-free sub-indexes (not graph concepts), so `lore check` (LORE-27) must treat reserved
+  `index.md`/`log.md` link targets as resolved, not broken.
 - **`GitAdapter` seam + git-history `log.md`, and `resource` stamping** (LORE-47). Two pieces of
   the ECK↔lore alignment (D5):
   - The **third injectable deterministic seam, `GitAdapter`** (after the clock and the Backlog

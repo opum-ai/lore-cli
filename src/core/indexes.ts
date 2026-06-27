@@ -39,10 +39,20 @@
  * regenerate-and-compare drift gate stays trustworthy (`index.md` is gated, unlike the
  * git-derived `log.md`; see [log.ts](./log.ts)).
  *
+ * ### A note for the link gate (LORE-27)
+ *
+ * A generated hub links to child-directory indexes (`[adr](adr/index.md)`), but those sub-indexes
+ * are frontmatter-free (AC#2) and so are **not** concepts in the {@link BundleGraph} — the root
+ * index *is* a concept (it carries `okf_version`), so `bundle.ts` extracts those links as edges that
+ * resolve to `null` (dangling). That is expected: when `lore check`'s broken-link reporting lands
+ * (LORE-27), it must treat a reserved `index.md`/`log.md` link target as resolving to the file, not
+ * flag a freshly-generated, correct hub as broken.
+ *
  * Per the core contract (lore-design §2.1) this module is pure: no filesystem, no spawn, no clock.
  */
 
 import { posix } from "node:path";
+import { singleLine } from "../errors";
 import type { BundleGraph } from "./bundle";
 import type { Concept } from "./concept";
 import { compareCodeUnits } from "./order";
@@ -163,8 +173,29 @@ function buildListing(concepts: readonly Concept[], childDirSet: readonly string
 
   return entries
     .sort((a, b) => compareCodeUnits(a.link, b.link))
-    .map((e) => `- [${e.title}](${e.link})`)
+    .map((e) => `- [${linkText(e.title)}](${e.link})`)
     .join("\n");
+}
+
+/**
+ * Sanitize an untrusted title (a concept's frontmatter `title` or a file/dir base name) into safe
+ * markdown **link text**. Three defenses, all of which keep the rendered text readable:
+ *
+ * - **Single-line** ({@link singleLine}, as `log.ts` does for commit subjects) — a title carrying a
+ *   newline (a YAML block scalar) would otherwise split the entry out of the list.
+ * - **Escape `[` / `]`** — an unbalanced bracket would truncate or break the `[text](link)` syntax,
+ *   leaving the entry as literal text that links nowhere.
+ * - **Neutralize HTML-comment sentinels** (`<!--` / `-->` → entities) — a title literally containing
+ *   the managed-block end marker would otherwise be written *inside* the generated block and, on the
+ *   next run, be mistaken for the region boundary — corrupting the file and breaking the AC#1
+ *   fixpoint. The entities render identically (and, as a bonus, a stray `<!--` no longer starts a
+ *   real HTML comment that hides text).
+ */
+function linkText(title: string): string {
+  return singleLine(title)
+    .replace(/[[\]]/g, (c) => `\\${c}`)
+    .replace(/<!--/g, "&lt;!--")
+    .replace(/-->/g, "--&gt;");
 }
 
 /**
@@ -188,17 +219,28 @@ function conceptTitle(concept: Concept): string {
  *   other bytes are preserved verbatim (frontmatter, modeline, prose), so only the listing changes.
  * - **Existing file without markers** → the block is appended after the body, separated by one
  *   blank line, with a single trailing newline; nothing the author wrote is altered.
- * - **Absent file** → a minimal, frontmatter-free hub is synthesized (`# <title>` + the block).
+ * - **Absent or blank file** → a minimal, frontmatter-free hub is synthesized (`# <title>` + the
+ *   block). An existing-but-empty/whitespace-only file is treated like an absent one so a
+ *   `touch`-ed or blanked index still gets a heading rather than a heading-less, blank-line-led stub.
  *   The root index is never synthesized with `okf_version` here (that is `lore init`'s job); a
  *   synthesized root simply carries the block under a heading.
+ *
+ * Every branch ends in exactly one trailing newline, and re-rendering the output is a **fixpoint**
+ * (AC#1): the replace branch absorbs a block left at end-of-file by re-adding the newline only when
+ * nothing follows the block.
  */
 function render(current: string | undefined, block: string, dir: string): string {
-  if (current === undefined) {
+  if (current === undefined || current.trim() === "") {
     return `# ${headingFor(dir)}\n\n${block}\n`;
   }
   const bounds = blockBounds(current);
   if (bounds !== null) {
-    return current.slice(0, bounds.start) + block + current.slice(bounds.end);
+    const tail = current.slice(bounds.end);
+    const spliced = current.slice(0, bounds.start) + block + tail;
+    // A block sitting at end-of-file (a normal append, or a truncated region replaced to EOF) leaves
+    // no trailing newline; add exactly one. When prose follows the block, `tail` already carries it
+    // (newline included), so this is a no-op and the result stays a fixpoint.
+    return tail === "" ? `${spliced}\n` : spliced;
   }
   // No managed region yet: append it, normalizing to exactly one blank-line separator and one
   // trailing newline so a second run (which now finds the markers) is a byte-level fixpoint.
@@ -206,24 +248,35 @@ function render(current: string | undefined, block: string, dir: string): string
 }
 
 /**
- * Locate the managed block in `content` as a `[start, end)` byte range covering exactly the begin
- * marker through the end marker, or `null` when the markers are absent or malformed (end before
- * begin, or one missing). The range stops at the end marker and **excludes** its trailing newline:
- * the bytes after the marker (that newline and any prose below the block) are preserved by the
- * caller's `slice(end)`, which is what makes a replace a byte-level fixpoint — re-splicing an
- * identical block reproduces the file. Only the **first** begin and the **first** end after it are
- * honored, so a stray sentinel later in prose cannot widen the range.
+ * Locate the managed block in `content` as a `[start, end)` byte range, or `null` when no begin
+ * marker is present (an unmanaged file the caller appends to). The range runs from the **first**
+ * begin marker to the **last** end marker after it, and excludes the end marker's trailing newline
+ * (the caller's `slice(end)` preserves it and any prose below). Two deliberate choices make
+ * regeneration converge to a byte-level fixpoint (AC#1) even from a corrupted file:
+ *
+ * - **first-begin → last-end** collapses *duplicate* well-formed blocks (a 3-way-merge artifact)
+ *   into the single regenerated block, so a stale second block can't survive and silently pass the
+ *   `lore check` drift gate.
+ * - **begin with no following end → to end-of-file**: a *truncated* region (end marker lost to a
+ *   merge/interrupted write) is rewritten whole rather than leaving an orphan begin that the next
+ *   run would pair with the freshly-appended end (which would make one sync never converge).
+ *
+ * The unavoidable cost of literal markers (no AST): a begin/end the *author* wrote in prose — e.g. a
+ * doc demonstrating this very format — is treated as a real boundary, so content between an authored
+ * marker and a real one is collapsed. That ambiguity is what LORE-22's mdast-based managed-block
+ * resolves; here it is a documented limitation of the string splice.
  */
 function blockBounds(content: string): { start: number; end: number } | null {
   const start = content.indexOf(INDEX_BLOCK_BEGIN);
   if (start === -1) {
     return null;
   }
-  const endMarker = content.indexOf(INDEX_BLOCK_END, start + INDEX_BLOCK_BEGIN.length);
-  if (endMarker === -1) {
-    return null;
+  const lastEnd = content.lastIndexOf(INDEX_BLOCK_END);
+  // No end marker after the begin (truncated region): the region runs to end-of-file.
+  if (lastEnd < start + INDEX_BLOCK_BEGIN.length) {
+    return { start, end: content.length };
   }
-  return { start, end: endMarker + INDEX_BLOCK_END.length };
+  return { start, end: lastEnd + INDEX_BLOCK_END.length };
 }
 
 /** The synthesized heading for a brand-new index: the directory's base name, or `index` for the root. */
