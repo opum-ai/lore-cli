@@ -47,7 +47,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`validateLinks`+anchors → LORE-30; `rewriteInbound` → LORE-35). **Behavior ripple:** the shared
   encoder now also percent-escapes the markdown-significant `! ' ( ) *` that `encodeURIComponent`
   leaves raw, so a `lore new` `resource` URL for a doc path containing those characters is now
-  correctly escaped (an unbalanced `)` previously truncated such a link on CommonMark/MkDocs).
+  correctly escaped (an unbalanced `)` previously truncated such a link on CommonMark/MkDocs). To
+  keep that ripple non-breaking, `lore validate`'s resource-drift check now compares decode-tolerantly
+  (`decodeTarget` on both sides), so a `resource` stamped before the encoder tightened (literal
+  `( ) ! ' *`) is recognized as equivalent — not falsely reported "stale" — on upgrade.
 - **`GitAdapter` seam + git-history `log.md`, and `resource` stamping** (LORE-47). Two pieces of
   the ECK↔lore alignment (D5):
   - The **third injectable deterministic seam, `GitAdapter`** (after the clock and the Backlog
