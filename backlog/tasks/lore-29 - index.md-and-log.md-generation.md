@@ -1,11 +1,11 @@
 ---
 id: LORE-29
 title: index.md and log.md generation
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-06-27 03:56'
+updated_date: '2026-06-27 14:06'
 labels:
   - core
 milestone: m-4
@@ -47,4 +47,6 @@ Scope boundaries: wiring into lore sync = LORE-26; remark/AST unification of man
 Implemented src/core/indexes.ts (commit 21f72d1) + hardening (8ea3fb1) on feat/lore-29-index-log. Pure generateIndexes(g, { existing }) builds graph-derived navigable index.md hubs via the user-chosen managed-listing-region model (<!-- lore:index:begin -->…<!-- lore:index:end -->): only the listing block is regenerated, string-spliced into raw existing bytes so frontmatter/modeline/prose survive byte-for-byte (lore-design §6.2); never round-tripped through serializeConcept. Existing index bytes are an injected seam (like GitAdapter for log). Sub-indexes synthesized frontmatter-free when absent (AC#2); okf_version/root creation stays init's job. Separate module mirroring log.ts (bundle.ts header says index/log byte-gen is not the graph layer's job). AC#1 (byte-identical regen) = fixpoint of the splice, tested. AC#2 tested.
 
 /code-review max (workflow, 47 agents) disposition — 24 verified → 15 distinct. FIXED in 8ea3fb1: (166/222) untrusted titles single-lined + bracket-escaped + comment-sentinel-neutralized so a title can't break a link or poison its own block (the latter broke AC#1 self-fixpoint); (205) truncated block (orphan begin) rewritten to EOF so it converges instead of perpetual drift; (217) duplicate blocks collapsed first-begin→last-end so no stale block survives the drift gate; (196) present-but-empty file synthesized like absent; (99) stale scaffold.ts cross-ref bundle.generateIndexes→indexes.generateIndexes. DEFERRED (PLAUSIBLE, owned elsewhere): (161) root-hub links to frontmatter-free sub-indexes dangle in the graph → LORE-27 link gate must treat reserved index/log targets as resolved (documented in module header + CHANGELOG); (197 absent-root okf_version, 201 CRLF, 100 case-sensitive reserved match) → LORE-26 sync write layer; (277 encoder dup) → swap for links.ts encodePathSegments once LORE-28 lands; (54 reserved-name dup, 156/116 micro-perf) → minor, left. Gates: 525 pass (+20 total), biome+tsc clean; indexes.ts 100% line/func.
+
+Delivered via #20 (squash 875ee62 on dev). LORE-29 complete.
 <!-- SECTION:NOTES:END -->
