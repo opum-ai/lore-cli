@@ -45,6 +45,10 @@ describe("normalizeLink — .md suffix", () => {
   test("does not require the linking file to carry a .md suffix (uses its directory only)", () => {
     expect(normalizeLink("stories/x", "reference/orders.md")).toBe("../reference/orders.md");
   });
+
+  test("coerces a wrong-case .MD suffix to canonical lowercase .md", () => {
+    expect(normalizeLink("stories/x.md", "reference/orders.MD")).toBe("../reference/orders.md");
+  });
 });
 
 describe("normalizeLink — URL encoding", () => {
@@ -62,6 +66,17 @@ describe("normalizeLink — URL encoding", () => {
     const link = normalizeLink("stories/x.md", "reference/order schema.md");
     expect(link).toContain("%20");
     expect(link).not.toContain("%2520");
+  });
+
+  test("escapes parentheses (encodeURIComponent leaves them raw and they break markdown destinations)", () => {
+    expect(normalizeLink("docs/stories/x.md", "backlog/tasks/task-12 - Archive (legacy).md")).toBe(
+      "../../backlog/tasks/task-12%20-%20Archive%20%28legacy%29.md",
+    );
+  });
+
+  test("the writer's output passes the linter (validateLink(normalizeLink(...)) is clean)", () => {
+    const link = normalizeLink("docs/stories/x.md", "backlog/tasks/task-12 - Archive (legacy).md");
+    expect(validateLink(link)).toEqual([]);
   });
 
   test("is deterministic: same inputs yield the same output (regenerate-and-compare safe)", () => {
@@ -107,6 +122,10 @@ describe("validateLink — portable links pass clean", () => {
     expect(validateLink("../reference/order%20schema.md")).toEqual([]);
   });
 
+  test("accepts valid lowercase-hex percent-encoding (RFC-3986 case-insensitive)", () => {
+    expect(validateLink("../reference/caf%c3%a9.md")).toEqual([]);
+  });
+
   test("a link with a heading anchor is clean (the fragment is ignored for the form)", () => {
     expect(validateLink("../reference/orders.md#archival-policy")).toEqual([]);
   });
@@ -122,6 +141,10 @@ describe("validateLink — external destinations are not linted", () => {
     "//cdn/x.md",
   ])("external/anchor-only target %p yields no findings", (target) => {
     expect(validateLink(target)).toEqual([]);
+  });
+
+  test("documented limitation: a colon-first-segment is read as a scheme and not linted (LORE-30 body-scan's job)", () => {
+    expect(validateLink("notes:2026 draft.md")).toEqual([]);
   });
 });
 
@@ -140,8 +163,8 @@ describe("validateLink — missing extension", () => {
     expect(issues("../reference/orders")).toEqual(["missing-extension"]);
   });
 
-  test("flags a deliberate non-.md asset link (the documented contract)", () => {
-    expect(issues("../img/diagram.png")).toEqual(["missing-extension"]);
+  test("does NOT flag a non-.md asset link (it has an extension; resolver ignores it, not a dropped suffix)", () => {
+    expect(issues("../img/diagram.png")).toEqual([]);
   });
 
   test("ignores the fragment when checking the extension", () => {
@@ -156,6 +179,10 @@ describe("validateLink — unencoded segments", () => {
 
   test("flags malformed percent-escaping", () => {
     expect(issues("../reference/order%2.md")).toEqual(["unencoded"]);
+  });
+
+  test("flags raw parentheses (markdown-significant, left raw by encodeURIComponent)", () => {
+    expect(issues("../tasks/Archive (legacy).md")).toEqual(["unencoded"]);
   });
 
   test("reports a single unencoded finding even with several bad segments", () => {

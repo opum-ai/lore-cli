@@ -24,11 +24,12 @@
  * {@link normalizeLink} *writes* it ({@link `lore new`}, sync/index generation,
  * `lore link`, managed blocks, and the rewrite half of `lore rename`/`supersede`),
  * and {@link validateLink} *detects* deviations from it (the per-link half of `lore
- * check`'s portability lint). The low-level destination classifiers
- * ({@link isExternalTarget}, {@link stripFragment}, {@link stripQuery},
- * {@link decodeTarget}) live here too and are reused by the bundle graph's
- * cross-link resolution, so writing, linting, and resolving all agree on what a
- * link destination *is*.
+ * check`'s portability lint). The segment encoder ({@link encodePathSegments}) is
+ * shared with the `resource:` URL stamper (template.ts), and the low-level
+ * destination classifiers ({@link isExternalTarget}, {@link stripFragment},
+ * {@link stripQuery}, {@link decodeTarget}) are reused by the bundle graph's
+ * cross-link resolution — so linting and resolving agree on what a link destination
+ * *is*, and every place that encodes a path encodes it the same way.
  *
  * Per the core contract (design §2.1) everything here is pure: string in, string
  * or typed finding out — no filesystem, no printing, no flags, no `process.exit`.
@@ -54,38 +55,49 @@ import { posix } from "node:path";
  * the value that goes inside `[text](…)`, in the relative · URL-encoded ·
  * `.md`-suffixed · no-leading-slash form (ADR-0010).
  *
- * `fromPath` and `toPath` must be expressed in the **same coordinate space** — both
- * bundle-root-relative (`stories/x.md` → `reference/orders.md`) or both
- * repo-relative (`docs/stories/x.md` → `backlog/tasks/task-42.md`) — because the
- * result is `posix.relative(dirname(fromPath), toPath)`: pure path arithmetic that
- * happily crosses out of the bundle (`../../backlog/tasks/…`) when the two live in
- * different subtrees, which is exactly what a managed `lore:tasks` block linking a
- * `docs/` story to a Backlog task file needs.
+ * **Inputs are file *paths*, not link destinations.** `fromPath` and `toPath` must
+ * be expressed in the **same coordinate space** — both bundle-root-relative
+ * (`stories/x.md` → `reference/orders.md`) or both repo-relative
+ * (`docs/stories/x.md` → `docs/reference/orders.md`) — because the result is
+ * `posix.relative(dirname(fromPath), toPath)`: pure path arithmetic that happily
+ * crosses subtrees (`../../backlog/tasks/…`) when the two live apart, which is
+ * exactly what a managed `lore:tasks` block linking a `docs/` story to a Backlog
+ * task file needs. The coordinate space is a **caller precondition** the two-string
+ * arithmetic cannot itself verify; a mismatched pair yields a wrong relative link,
+ * not an error. `toPath` is a path, so it must **not** carry a `#fragment` or
+ * `?query` — pass a heading via `anchor` (a caller rewriting an existing link, e.g.
+ * `lore rename`, splits the fragment off first and feeds it here).
  *
  * Mechanics, each pinned to one property of the form:
  *
- * - **`.md`-suffixed** — `toPath` is normalized and given a `.md` suffix if it
- *   lacks one, so a caller may pass either a path (`reference/orders.md`) or a bare
- *   concept id (`reference/orders`) and get a file link either way.
+ * - **`.md`-suffixed** — `toPath` is normalized and coerced to a single canonical
+ *   lowercase `.md` ({@link ensureMarkdownSuffix}), so a caller may pass a path
+ *   (`reference/orders.md`), a bare concept id (`reference/orders`), or even a
+ *   wrong-case `reference/orders.MD` and get the one canonical file link.
  * - **relative, no leading slash** — `posix.relative` is computed from the linking
  *   file's *directory* and never returns a leading slash, so both properties hold
  *   by construction (a sibling becomes `orders.md`, a parent-dir target
  *   `../reference/orders.md`).
- * - **URL-encoded** — every path segment is percent-encoded with
- *   {@link encodeURIComponent} (which leaves `.`/`..` and the unreserved set
- *   untouched), so a space becomes `%20` and the `/` separators stay literal.
+ * - **URL-encoded** — every path segment is percent-encoded by
+ *   {@link encodePathSegments}, which escapes a space to `%20` *and* the markdown-
+ *   significant `! ' ( ) *` that bare `encodeURIComponent` leaves raw (an
+ *   unbalanced `)` would otherwise truncate the link destination on
+ *   CommonMark/Python-Markdown), while leaving the `/` separators and `.`/`..`
+ *   steps literal.
  *
  * `anchor`, when given, is appended as `#<anchor>` **verbatim** — the caller passes
  * an already-resolved GitHub heading slug (lowercased, spaces → `-`, punctuation
  * stripped), which by construction needs no encoding; re-encoding it would mangle a
  * correct slug, since GitHub anchors are not percent-encoded.
  *
- * Idempotent on its own output: re-normalizing a link this function produced (its
- * segments already encoded, already `.md`-suffixed) yields the identical string, so
- * a regenerate-and-compare pass over already-canonical links is a no-op.
+ * **Deterministic, not idempotent on its own output.** The same `(fromPath, toPath,
+ * anchor)` always yields the same destination, so a regenerate-and-compare pass
+ * over canonical links is a no-op — but note the inputs are *paths*: feeding this
+ * function's *output* (an already-relative, already-encoded destination) back in as
+ * `toPath` is misuse and would double-encode and re-base it.
  *
  * @param fromPath the linking file (its directory anchors the relative path).
- * @param toPath the target file or bare concept id (a missing `.md` is added).
+ * @param toPath the target file or bare concept id (a missing `.md` is added; no `#`/`?`).
  * @param anchor optional pre-slugified heading anchor, appended as `#anchor`.
  * @returns the canonical relative destination string for `[text](…)`.
  */
@@ -93,16 +105,48 @@ export function normalizeLink(fromPath: string, toPath: string, anchor?: string)
   const fromDir = posix.dirname(posix.normalize(fromPath));
   const toFile = ensureMarkdownSuffix(toPath);
   const relative = posix.relative(fromDir, toFile);
-  // Encode per segment so the `/` separators and `.`/`..` stay literal while a
-  // space (or other reserved char) inside a single segment becomes `%20`.
-  const encoded = relative.split("/").map(encodeURIComponent).join("/");
+  const encoded = encodePathSegments(relative);
   return anchor ? `${encoded}#${anchor}` : encoded;
 }
 
-/** POSIX-normalize a target and ensure exactly one trailing `.md` (added when absent). */
+/**
+ * POSIX-normalize a target and coerce it to a single **canonical lowercase `.md`**
+ * suffix. A bundle never holds a `.MD`/`.Md` file (the walk matches lowercase `.md`
+ * only) and {@link idFromPath} strips `.md` case-insensitively, so the writer must
+ * re-add it in canonical case: a wrong-case `orders.MD` becomes `orders.md`, a
+ * bare id `orders` becomes `orders.md`, and an already-correct `orders.md` is
+ * unchanged.
+ */
 function ensureMarkdownSuffix(path: string): string {
   const normalized = posix.normalize(path);
-  return /\.md$/i.test(normalized) ? normalized : `${normalized}.md`;
+  return /\.md$/i.test(normalized) ? `${normalized.slice(0, -3)}.md` : `${normalized}.md`;
+}
+
+/**
+ * Percent-encode each `/`-separated segment of a relative path for use as a
+ * markdown link destination, leaving the separators and `.`/`..` steps literal.
+ *
+ * Exported as the **single** path-segment encoder so body cross-links
+ * ({@link normalizeLink}) and the `resource:` frontmatter URL (template.ts
+ * `resourceFor`) encode a path the exact same way and can never drift — the whole
+ * reason this module exists. Each segment goes through {@link encodePathSegment},
+ * which extends {@link encodeURIComponent} to also escape the markdown-significant
+ * `! ' ( ) *` it leaves raw.
+ */
+export function encodePathSegments(path: string): string {
+  return path.split("/").map(encodePathSegment).join("/");
+}
+
+/**
+ * Percent-encode one path segment to the canonical form: {@link encodeURIComponent}
+ * plus the five characters it leaves raw (`! ' ( ) *`), which are unreserved in a
+ * URI but significant in a markdown link destination — an unbalanced `)` truncates
+ * the destination on CommonMark/Python-Markdown. Hex is uppercase, matching
+ * `encodeURIComponent`, so {@link normalizeLink}'s output and the
+ * {@link validateLink} round-trip agree on the canonical bytes.
+ */
+function encodePathSegment(segment: string): string {
+  return encodeURIComponent(segment).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
 // ── Linting the canonical form ──────────────────────────────────────────────────
@@ -142,10 +186,12 @@ export interface LinkFinding {
  * **External destinations are clean here.** An empty target, a bare `#anchor`, a
  * protocol-relative `//host/…`, or a `scheme:`-qualified URL ({@link isExternalTarget})
  * is not an internal cross-link, so it yields no findings — linting an external URL
- * for a `.md` suffix would be nonsense. Every other destination is treated as an
- * *intended internal cross-link*: that is the contract, so a deliberate non-`.md`
- * asset link (`[pic](../img/x.png)`) will, correctly per the form, report
- * `missing-extension`.
+ * for a `.md` suffix would be nonsense. This uses the **same** classifier the bundle
+ * graph's resolver applies, so writer, resolver, and linter agree on what counts as
+ * external. One consequence of that shared rule (ADR-0010): a destination whose
+ * first segment carries a colon (`notes:2026.md`) is read as a `scheme:` URL and so
+ * is *not* linted — catching an accidental-colon filename is the body-text scan's
+ * job (LORE-30), not this per-destination primitive's.
  *
  * The three checks mirror the three machine-checkable properties of the form (the
  * fourth, "relative", is implied by "no leading slash"; "no wikilinks" is a body
@@ -153,13 +199,19 @@ export interface LinkFinding {
  *
  * - **`leading-slash`** — a `/`-absolute destination, which resolves against each
  *   consumer's differing server root.
- * - **`missing-extension`** — an internal target without a `.md` suffix (the
- *   `#fragment`/`?query` is ignored for the test), which GitHub will not render to
- *   a file.
+ * - **`missing-extension`** — an internal target with **no file extension at all**
+ *   (`../reference/orders`, the `#fragment`/`?query` ignored): it looks like a
+ *   concept link that dropped its `.md`, which GitHub will not render to a file. A
+ *   target that carries *some* other extension (`../img/x.png`) is a non-concept
+ *   asset link, not a dropped-suffix concept link — matching the bundle resolver,
+ *   which treats a non-`.md` target as simply *not an edge* rather than a broken
+ *   one — so it is left alone.
  * - **`unencoded`** — a path segment that is not canonically percent-encoded:
- *   re-encoding its decoded form changes it (a raw space, an unescaped reserved
- *   char) or it carries malformed `%` escaping. An already-encoded `%20`
- *   round-trips and is clean; double-encoding is not this check's concern.
+ *   re-encoding its decoded form (case-insensitively, since `%C3`/`%c3` both
+ *   resolve) changes it — a raw space, a raw markdown-significant `(`/`)`, or other
+ *   unescaped reserved char — or it carries malformed `%` escaping. An already-
+ *   encoded segment (`%20`, lowercase or upper) is clean; double-encoding is not
+ *   this check's concern.
  *
  * @param target the link destination to classify (the value inside `[text](…)`).
  * @returns a {@link LinkFinding} per violation; empty when portable or external.
@@ -180,7 +232,10 @@ export function validateLink(target: string): LinkFinding[] {
   }
 
   const path = stripQuery(stripFragment(trimmed));
-  if (path !== "" && !/\.md$/i.test(path)) {
+  // A dropped-suffix concept link has NO extension at all; a non-.md target that
+  // carries some other extension is an asset link the resolver ignores, not a
+  // broken concept link, so it is not flagged.
+  if (path !== "" && posix.extname(path) === "") {
     findings.push({
       target,
       issue: "missing-extension",
@@ -207,10 +262,18 @@ export function validateLink(target: string): LinkFinding[] {
 
 /**
  * Whether a path segment is already in canonical percent-encoded form: decoding
- * then re-encoding it leaves it unchanged. A raw space (`a b` → `a%20b`) or an
- * unescaped reserved char fails the round-trip; an already-encoded `%20` survives
- * it. Malformed escaping (`%2`) makes {@link decodeURIComponent} throw and counts
- * as not encoded — it is broken either way.
+ * then re-encoding it (via the same {@link encodePathSegment} encoder, so a raw
+ * `(`/`)` is treated as un-encoded too) reproduces it. A raw space (`a b` →
+ * `a%20b`) or an unescaped reserved char fails the round-trip; an already-encoded
+ * `%20` survives it. Malformed escaping (`%2`) makes {@link decodeURIComponent}
+ * throw and counts as not encoded — it is broken either way.
+ *
+ * The comparison is **case-insensitive** because percent-escapes are case-
+ * insensitive per RFC-3986 (`%C3` and `%c3` both resolve, on every renderer): a
+ * validly lowercase-encoded segment is portable even though the encoder emits
+ * uppercase hex. Lowercasing only affects the hex digits — an unreserved letter is
+ * identical on both sides of the compare — so it never accepts a genuinely
+ * unencoded segment.
  */
 function isCanonicallyEncoded(segment: string): boolean {
   let decoded: string;
@@ -219,7 +282,7 @@ function isCanonicallyEncoded(segment: string): boolean {
   } catch {
     return false; // malformed percent-escaping is not canonical encoding
   }
-  return encodeURIComponent(decoded) === segment;
+  return encodePathSegment(decoded).toLowerCase() === segment.toLowerCase();
 }
 
 // ── Destination classification (shared with the bundle graph) ────────────────────
@@ -229,9 +292,11 @@ function isCanonicallyEncoded(segment: string): boolean {
  * `#anchor`, a protocol-relative URL (`//host/…`), or a `scheme:`-qualified URL
  * (`http:`, `mailto:`, …, per RFC-3986 — including the pathological relative file
  * whose first segment carries a colon, which lore's canonical relative `.md` links
- * never do, ADR-0010). The single classifier shared by link writing
- * ({@link validateLink}), link resolution (the bundle graph's body-link and
- * frontmatter-ref handling), so all three agree on what counts as external.
+ * never do, ADR-0010). The single classifier shared by the portability linter
+ * ({@link validateLink}) and link resolution (the bundle graph's body-link and
+ * frontmatter-ref handling), so the linter and resolver agree on what counts as
+ * external. ({@link normalizeLink}, the writer, takes a known concept *path* and so
+ * needs no classification — it never sees an arbitrary destination.)
  */
 export function isExternalTarget(s: string): boolean {
   return s === "" || s.startsWith("#") || s.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(s);
