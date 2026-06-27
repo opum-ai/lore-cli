@@ -33,6 +33,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is synthesized like an absent one. Known follow-up for the link gate: a generated root hub links to
   frontmatter-free sub-indexes (not graph concepts), so `lore check` (LORE-27) must treat reserved
   `index.md`/`log.md` link targets as resolved, not broken.
+- **`core/links.ts` — the canonical cross-link form in one place** (LORE-28). The single home for
+  the ADR-0010 link rule (relative · URL-encoded · `.md`-suffixed · no leading slash · no
+  wikilinks), so the form can never be spelled two ways. `normalizeLink(fromPath, toPath, anchor?)`
+  is the deterministic **writer** (path arithmetic over `posix.relative`, canonical lowercase `.md`
+  coercion, per-segment encoding); `validateLink(target)` is the per-link portability **classifier**
+  (`leading-slash`/`missing-extension`/`unencoded`) that `lore check`'s lint will compose. The
+  segment encoder (`encodePathSegments`) is shared with the `resource:` URL stamper, and the
+  destination classifiers (`isExternalTarget`/`decodeTarget`/`stripFragment`/`stripQuery`) moved out
+  of `bundle.ts` into `links.ts` and are re-imported there. Pure core (lore-design §2.1): string in,
+  string/typed-finding out; non-portable input is a finding, never a throw. The command wiring
+  (new/sync/link/index-gen/managed-block) and the graph-wide passes land with their consumers
+  (`validateLinks`+anchors → LORE-30; `rewriteInbound` → LORE-35). **Behavior ripple:** the shared
+  encoder now also percent-escapes the markdown-significant `! ' ( ) *` that `encodeURIComponent`
+  leaves raw, so a `lore new` `resource` URL for a doc path containing those characters is now
+  correctly escaped (an unbalanced `)` previously truncated such a link on CommonMark/MkDocs). To
+  keep that ripple non-breaking, `lore validate`'s resource-drift check now compares decode-tolerantly
+  (`decodeTarget` on both sides), so a `resource` stamped before the encoder tightened (literal
+  `( ) ! ' *`) is recognized as equivalent — not falsely reported "stale" — on upgrade.
 - **`GitAdapter` seam + git-history `log.md`, and `resource` stamping** (LORE-47). Two pieces of
   the ECK↔lore alignment (D5):
   - The **third injectable deterministic seam, `GitAdapter`** (after the clock and the Backlog

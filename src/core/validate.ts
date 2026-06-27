@@ -42,6 +42,7 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 import { LoreError, WarningCollector } from "../errors";
 import { walkMdast } from "./bundle";
 import { type Concept, tryParseConcept } from "./concept";
+import { decodeTarget } from "./links";
 import { defaultProfile, type Profile } from "./profile";
 import { requiredSectionsFor } from "./schema";
 import { expectedResource } from "./template";
@@ -298,6 +299,14 @@ function resourceDriftFindings(path: string, concept: Concept, profile: Profile)
   }
   const expected = expectedResource(concept.type, path, profile);
   if (expected === undefined || actual === expected) {
+    return [];
+  }
+  // Compare decode-tolerantly: the shared segment encoder (links.ts `encodePathSegment`) escapes the
+  // markdown-significant `! ' ( ) *` that `encodeURIComponent` leaves raw, so a `resource` stamped
+  // before LORE-28 (or hand-authored with those chars literal) differs from the freshly-encoded
+  // `expected` only in percent-encoding — an equivalent URL, not drift. Decoding both collapses that
+  // difference while a real path/`resource_base` change still decodes to a different string.
+  if (decodeTarget(actual) === decodeTarget(expected)) {
     return [];
   }
   return [

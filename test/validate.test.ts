@@ -326,6 +326,15 @@ describe("validate (core) — resource drift", () => {
     expect(report.ok).toBe(true); // advisory tier — a warning, not an error
   });
 
+  test("a `resource` encoded the old way (literal `( ) ! ' *`) is not flagged after the encoder tightened", () => {
+    // Before LORE-28, resourceFor used bare `encodeURIComponent`, which leaves `( ) ! ' *` raw; the
+    // shared encoder now percent-escapes them. A resource stamped pre-upgrade is byte-different from
+    // the freshly-encoded `expected` but an equivalent URL — drift must be judged decode-tolerantly,
+    // or every such doc would falsely warn (and fail `lore validate --strict`) on upgrade.
+    const raw = conceptWith("https://docs.example.com/docs/reference/orders(v2)!.md");
+    expect(resourceFindings("docs/reference/orders(v2)!.md", raw)).toEqual([]);
+  });
+
   test("without a resource_base (default profile) an authored `resource` is never judged", () => {
     const raw = conceptWith("https://anywhere.example/whatever.md");
     expect(resourceFindings("docs/reference/orders.md", raw, defaultProfile())).toEqual([]);

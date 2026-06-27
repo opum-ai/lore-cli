@@ -27,6 +27,7 @@
 import { posix } from "node:path";
 import { LoreError, WarningCollector } from "../errors";
 import { type Concept, idFromPath, serializeConcept, serializeConceptWithModeline } from "./concept";
+import { encodePathSegments } from "./links";
 import { defaultProfile, type Profile, slugForTypeName } from "./profile";
 import { validateFrontmatter } from "./schema";
 
@@ -48,9 +49,11 @@ export const slugify = slugForTypeName;
  *   trailing slash(es) trimmed so the join contributes exactly one. It is *not* re-encoded: it is
  *   a user-authored URL that may legitimately carry a scheme, host, and its own path separators.
  * - **`docPath`** is the doc's repo-relative POSIX path (e.g. `docs/stories/bulk-archive.md`),
- *   appended with each segment `encodeURIComponent`-encoded so a title-derived slug stays
- *   byte-identical (the `-` `_` `.` set is preserved) while a space- or non-ASCII-bearing `--out`
- *   path is percent-escaped into a valid URL. The `/` separators and the `.md` suffix are kept.
+ *   appended with each segment encoded through the shared {@link encodePathSegments} so a
+ *   title-derived slug stays byte-identical (the `-` `_` `.` set is preserved) while a space-,
+ *   paren-, or non-ASCII-bearing `--out` path is percent-escaped into a valid URL. Using the same
+ *   encoder as the body cross-link writer ({@link normalizeLink}) keeps a doc's `resource` URL and
+ *   its cross-links encoded identically. The `/` separators and the `.md` suffix are kept.
  *
  * Pure and total: the result is `<base-without-trailing-slash>/<encoded-doc-path>`, always exactly
  * one slash at the seam. The caller decides *whether* to stamp ({@link stampResource}); this only
@@ -61,11 +64,7 @@ export function resourceFor(resourceBase: string, docPath: string): string {
   // carried trailing whitespace after a slash) can never contribute an embedded space — `https://x/ `
   // + `docs/a.md` would otherwise yield the broken `https://x/ /docs/a.md`.
   const base = resourceBase.trim().replace(/\/+$/, "");
-  const encodedPath = docPath
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
-  return `${base}/${encodedPath}`;
+  return `${base}/${encodePathSegments(docPath)}`;
 }
 
 /** The `{{ key }}` token grammar: a name of word chars, dots, and dashes, with optional inner padding. */
