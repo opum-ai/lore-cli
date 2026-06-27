@@ -4,7 +4,7 @@ title: 'lore check: link/anchor + portability lint'
 status: To Do
 assignee: []
 created_date: '2026-06-21 06:26'
-updated_date: '2026-06-27 14:08'
+updated_date: '2026-06-27 22:50'
 labels:
   - cmd
   - ci
@@ -49,3 +49,12 @@ ALSO from the same review, NOT LORE-30's code but tracked here so it isn't lost:
 - [links.ts, PLAUSIBLE] normalizeLink uses posix.relative which resolves relative inputs against process.cwd(); an absolute toPath or a ..-escaping fromPath yields cwd-dependent output, contradicting the pure/deterministic contract. Guard when LORE-35/index-gen pass non-relative paths.
 - Reuse/efficiency (minor): extract one pathPart() (stripQuery∘stripFragment, 3 sites); ensureMarkdownSuffix should compose idFromPath; drop redundant double posix.normalize; hoist regex literals.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-06-27 22:50
+---
+Unblocked: LORE-28 delivered via PR #19 (822592a on dev). The folded [LORE-28/validate, SHIPPING] resourceFor resource-drift item is RESOLVED on #19 (decode-tolerant compare). Remaining LORE-30 scope unchanged: validateLink classifier defects (wire-time fixes) + validateLinks(graph)+anchors + body-text Obsidian/MDX scan + reserved index.md/log.md link-gate exclusion.
+---
+<!-- COMMENTS:END -->
