@@ -1,11 +1,11 @@
 ---
 id: LORE-35.1
 title: lore replace (managed-region-safe find/replace)
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-28 05:18'
-updated_date: '2026-06-28 06:24'
+updated_date: '2026-06-28 11:22'
 labels:
   - cmd
 milestone: m-4
@@ -35,3 +35,9 @@ Implemented as pure core engine core/replace.ts (replaceInText + managedRanges +
 
 Folded a /code-review max pass (11 verified correctness defects). Engine redesigned to a single whole-document pass: regex anchors/\b/lookaround bind to the real document (not gap boundaries); matches overlapping a managed region are skipped; $1/$&/$`/$'/$<name> expanded explicitly and verified byte-for-byte vs String.replace. Empty-MATCHING patterns (x*, a?, \b, ^) rejected up front via a probe. Managed bounds now via the shared indexes.locateManagedBlock (first-begin→last-end), so replace protects exactly what sync/check regenerate, incl. prose between two blocks. Command discovery: skips symlinks (no write-escape), canonical-realpath dedup (no double-apply), absolute --in globs via resolve(), excludes generated log.md; pattern compiled/validated ONCE before discovery (fails even with zero files); two-phase read-all-then-write (atomic abort on read error / bad pattern); no-op (find===replace) writes/reports nothing; fswrite maps EISDIR->conflict. Extracted shared commands/discover.ts (readSource/canonicalIdentity/toRepoRelative/withinRepo) and migrated check.ts+validate.ts onto it. Deferred: shared flag-tokenizer across the 4 command parsers. Gates: 708 tests, biome, tsc; core/replace 100% func/~99% line. Re-dogfooded end-to-end (two-block protection, log.md exclusion, symlink skip, no-op, absolute glob).
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Delivered via PR #22 (squash 89330e4). lore replace: managed-region-safe literal/regex find-replace (AC#1). Pure core/replace.ts (single whole-document pass, shared indexes.locateManagedBlock bounds, explicit $1 expansion) + thin commands/replace.ts (symlink-skip, canonical dedup, absolute globs, log.md excluded, two-phase atomic write, no-op no-churn) + shared commands/discover.ts (check/validate migrated onto it). Folded a /code-review max pass (11 verified defects). 708 tests, biome, tsc green; core 100% func. Deferred: shared flag-tokenizer across the 4 command parsers.
+<!-- SECTION:FINAL_SUMMARY:END -->
