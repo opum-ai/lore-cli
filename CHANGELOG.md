@@ -27,6 +27,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   status-reconciliation and managed-block-drift passes (which need the Backlog JSON adapter +
   `lore sync`, LORE-26) are wired in later. Delivered as pure core + tests (`core/check.ts` 100%
   line/func).
+  Hardened after a `/code-review max` pass: the GitHub slugger now runs the full github-slugger
+  collision loop (so `Release`/`Release 1`/`Release` yield `release`/`release-1`/`release-2`, not a
+  false broken `#release-2`); each root passed to `lore check` is now an **independent bundle with
+  its own id namespace** (two roots sharing a relative path like `index.md` no longer drop or shadow
+  one another); a `/`-absolute link resolves against the bundle root (not the linking dir); the
+  callout detector is anchored to the start of a blockquote line (a literal `[!important]` mid-prose
+  no longer false-warns under `--strict`); the bundle-escape test no longer mis-skips a file literally
+  named `..x.md`; each file body is parsed by mdast **once** and shared across the heading/link/
+  portability passes; and `bodyText` reuses the canonical `normalizeInput` + gray-matter boundary
+  (with `nodeText` hoisted to `bundle.ts` so anchor slugging and section matching can't drift). The
+  noisy block-reference detector and accidental-colon-filename detection are deferred to LORE-48.
+- **`validateLink` `unencoded` lint aligned with the writer's alphabet** (LORE-30, from the same
+  review). A path segment is now canonical iff it is only RFC-3986 unreserved characters and valid
+  `%`-escapes — so a raw `! ' *` (which `encodePathSegment` percent-encodes) is flagged, keeping the
+  linter and writer in agreement, while an over-encoded `%41` or lowercase `%c3` still passes.
 - **`validateLink` classifier hardening** (LORE-30, folded from PR #19's `/code-review max`). Fixed
   the per-link portability classifier now that `lore check` is its first caller: a **wrong-case**
   `.md` (`orders.MD`) is flagged (404s on a case-sensitive host) while **dotfiles** (`.gitignore`),

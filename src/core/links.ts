@@ -201,8 +201,8 @@ export interface LinkFinding {
  * graph's resolver applies, so writer, resolver, and linter agree on what counts as
  * external. One consequence of that shared rule (ADR-0010): a destination whose
  * first segment carries a colon (`notes:2026.md`) is read as a `scheme:` URL and so
- * is *not* linted — catching an accidental-colon filename is the body-text scan's
- * job (LORE-30), not this per-destination primitive's.
+ * is *not* linted — catching an accidental-colon filename is a body-text-scan concern,
+ * deferred to a `lore check` follow-up (LORE-48), not this per-destination primitive's.
  *
  * The checks mirror the machine-checkable properties of the form (the "relative"
  * property is implied by "no leading slash"; "no wikilinks" is a body scan):
@@ -319,13 +319,19 @@ function lacksMarkdownSuffix(rawPath: string): boolean {
  *   trailing `/` is a directory link, not an empty segment).
  * - **`malformed`** — a `%` not followed by two hex digits (`order%2.md`): broken
  *   percent-escaping, where the generic "encode a space" advice would be wrong.
- * - **`raw`** — a raw destination-breaking character (ASCII whitespace, or a
- *   markdown-significant `(`/`)`) anywhere in the path or the `#fragment`/`?query`.
+ * - **`raw`** — a **path segment** that is not in the canonical form
+ *   ({@link isCanonicalSegment}: only RFC-3986 unreserved characters and valid
+ *   `%`-escapes), or a destination-breaking character (ASCII whitespace, `(`/`)`) in
+ *   the `#fragment`/`?query`. The path check is what keeps the linter and
+ *   {@link encodePathSegment writer} in agreement: a raw space, paren, or any of the
+ *   markdown-significant `! ' *` the writer percent-encodes is flagged, so a bundle the
+ *   lint calls clean is one the writer would re-emit byte-for-byte.
  *
- * The scan accepts a **valid but non-canonical** encoding (`a%41b.md` = `aAb.md`, a
- * lowercase `%c3`): over-encoding survives every renderer, so it is portable even
- * though {@link normalizeLink} would not emit it — the lint flags what *breaks*, not
- * every deviation from the writer's exact bytes.
+ * The scan still accepts a **valid but non-canonical** encoding (`a%41b.md` = `aAb.md`,
+ * a lowercase `%c3`): over-encoding survives every renderer and round-trips, so it is
+ * portable even though {@link normalizeLink} would not emit it. The `#fragment` is held
+ * to the looser "no destination-breaker" rule, not full canonical encoding — a GitHub
+ * anchor slug (`#café`) is not percent-encoded and must not be flagged.
  */
 function encodingProblem(rawPath: string, suffix: string): "empty-segment" | "malformed" | "raw" | null {
   const segments = rawPath.split("/");
@@ -337,7 +343,7 @@ function encodingProblem(rawPath: string, suffix: string): "empty-segment" | "ma
   if (hasMalformedPercent(rawPath) || hasMalformedPercent(suffix)) {
     return "malformed";
   }
-  if (hasRawBreaker(rawPath) || hasRawBreaker(suffix)) {
+  if (segments.some((segment) => segment !== "" && !isCanonicalSegment(segment)) || hasRawBreaker(suffix)) {
     return "raw";
   }
   return null;
@@ -358,6 +364,18 @@ function encodingMessage(target: string, problem: "empty-segment" | "malformed" 
 /** Whether a string carries a `%` that is not the start of a valid two-hex-digit escape. */
 function hasMalformedPercent(s: string): boolean {
   return /%(?![0-9A-Fa-f]{2})/.test(s);
+}
+
+/**
+ * Whether a path segment is in the canonical percent-encoded form: every character is
+ * either an RFC-3986 **unreserved** char (`A-Za-z0-9-._~`, which includes the `.`/`..`
+ * relative steps) or a valid `%XX` escape. This is exactly the alphabet
+ * {@link encodePathSegment} can emit, so a raw space, a `(`/`)`, or any of the
+ * markdown-significant `! ' *` the writer escapes makes a segment non-canonical — while an
+ * over-encoded `%41` or a lowercase `%c3` still passes (both are valid `%`-escapes).
+ */
+function isCanonicalSegment(segment: string): boolean {
+  return /^(?:[A-Za-z0-9\-._~]|%[0-9A-Fa-f]{2})*$/.test(segment);
 }
 
 /** Whether a string carries a raw character that breaks a markdown link destination (whitespace or a paren). */

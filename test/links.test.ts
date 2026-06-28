@@ -253,6 +253,20 @@ describe("validateLink — interior double slash", () => {
   });
 });
 
+describe("validateLink — writer/linter agree on the canonical alphabet", () => {
+  test.each([
+    "../reference/order!.md",
+    "../ref/it's.md",
+    "../ref/order*.md",
+  ])("flags a raw char the writer percent-encodes: %p", (target) => {
+    expect(issues(target)).toEqual(["unencoded"]);
+  });
+
+  test("still accepts an over-encoded segment (does not regress the defect-5 fix)", () => {
+    expect(validateLink("../reference/a%41b.md")).toEqual([]);
+  });
+});
+
 describe("validateLink — malformed percent-escape gets its own message", () => {
   test("a malformed % escape is flagged with a distinct, non-'space' message", () => {
     const [finding] = validateLink("../reference/order%2.md");

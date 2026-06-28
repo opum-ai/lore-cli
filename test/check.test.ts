@@ -54,6 +54,13 @@ describe("extractHeadingSlugs", () => {
     expect([...slugs].sort()).toEqual(["intro", "intro-1", "intro-2"]);
   });
 
+  test("a deduped slug that collides with a natural slug skips ahead (github-slugger loop)", () => {
+    // "Release" / "Release 1" / "Release": the 2nd "Release" must become release-2, not a
+    // second release-1 that would shadow the real "Release 1" anchor.
+    const slugs = extractHeadingSlugs("# Release\n\n## Release 1\n\n## Release\n");
+    expect([...slugs].sort()).toEqual(["release", "release-1", "release-2"]);
+  });
+
   test("a `#` inside a fenced code block is not a heading", () => {
     const slugs = extractHeadingSlugs("# Real\n\n```\n# not a heading\n```\n");
     expect([...slugs]).toEqual(["real"]);
@@ -107,6 +114,22 @@ describe("checkBundle — internal cross-link existence (error tier)", () => {
   test("a cross-bundle ../-escaping link is out of scope (skipped, not broken)", () => {
     const adr: CheckInputFile = { path: "x.md", raw: ref("X", "See [task](../backlog/tasks/task-1.md).") };
     expect(checkBundle([adr]).errorCount).toBe(0);
+  });
+
+  test("a /-absolute link resolves against the bundle root, not the linking dir", () => {
+    // The link is non-portable (a leading-slash portability warning), but its existence must be
+    // judged from the bundle root — so a real root-relative target is found, and a missing one
+    // names the right path.
+    const adr: CheckInputFile = { path: "adr/x.md", raw: ref("X", "See [o](/reference/orders.md).") };
+    const report = checkBundle([adr, orders]);
+    expect(report.errorCount).toBe(0); // reference/orders.md exists at the root
+    expect(report.findings.some((f) => f.rule === "portability")).toBe(true); // still flagged non-portable
+  });
+
+  test("a /-absolute link to a missing root target reports the root-relative path", () => {
+    const adr: CheckInputFile = { path: "adr/x.md", raw: ref("X", "See [g](/reference/ghost.md).") };
+    const broken = checkBundle([adr, orders]).findings.find((f) => f.rule === "broken-link");
+    expect(broken?.message).toContain("reference/ghost.md");
   });
 });
 
@@ -191,9 +214,9 @@ describe("checkBundle — portability warnings (AC#2)", () => {
     expect(finding?.severity).toBe("warning");
   });
 
-  test("a block reference is a warning", () => {
-    const doc: CheckInputFile = { path: "x.md", raw: ref("X", "Some text ^block-id") };
-    expect(checkBundle([doc]).findings.some((f) => f.message.includes("block reference"))).toBe(true);
+  test("a callout `[!type]` mid-prose is NOT a callout (no false positive)", () => {
+    const doc: CheckInputFile = { path: "x.md", raw: ref("X", "Please mark it [!important] in the tracker.") };
+    expect(checkBundle([doc]).warningCount).toBe(0);
   });
 
   test("a wikilink inside an inline code span is NOT flagged (code is excluded)", () => {
@@ -310,6 +333,22 @@ describe("runCheck — exit codes and discovery", () => {
 
   test("a single-file path is a usage error (check is whole-bundle)", () => {
     expect(() => runCheck(opts(["docs/index.md"]))).toThrow(/not a directory/);
+  });
+
+  test("two distinct roots are checked independently — the 2nd root's broken link is caught (#1)", () => {
+    // Two bundles, each with its own index.md; the second's link is broken. The old shared-seen
+    // keying dropped the 2nd index.md and passed the bundle; each must be checked in full.
+    mkdirSync(join(root, "a"), { recursive: true });
+    mkdirSync(join(root, "b"), { recursive: true });
+    writeFileSync(join(root, "a", "index.md"), "# A\n\nClean.\n");
+    writeFileSync(join(root, "b", "index.md"), "# B\n\nSee [ghost](./ghost.md).\n");
+    const o = opts(["a", "b"], JSON_CTX);
+    const code = runCheck(o);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(parsed.data.fileCount).toBe(2); // both index.md files examined
+    expect(parsed.data.errorCount).toBe(1); // b/index.md's broken link is caught
+    expect(parsed.data.findings[0].file).toBe("b/index.md"); // labelled by its root
+    expect(code).toBe(EXIT_CODES.validation);
   });
 
   test("the same root passed twice de-duplicates its files", () => {

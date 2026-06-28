@@ -10,8 +10,8 @@
  *   a rotted anchor is an **error** {@link CheckFinding}.
  * - **Portability lint** (advisory, warn-only): non-portable link *form* (via the shared
  *   {@link validateLink} classifier) plus a body-text scan for Obsidian-isms (wikilinks,
- *   embeds, callouts, highlights, `%%`-comments, block refs). Every such finding is a
- *   **warning** that never fails the gate on its own (ADR-0007, portable-markdown.md).
+ *   embeds, callouts, highlights, `%%`-comments). Every such finding is a **warning** that
+ *   never fails the gate on its own (ADR-0007, portable-markdown.md).
  *
  * The other two `lore check` passes — status reconciliation and managed-block drift —
  * depend on the Backlog JSON adapter and `lore sync` (LORE-26) and are wired in by their
@@ -40,10 +40,11 @@
  */
 
 import { posix } from "node:path";
+import matter from "gray-matter";
 import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
-import { extractBodyTargets, walkMdast } from "./bundle";
-import { idFromPath } from "./concept";
+import { extractLinkTargets, nodeText, walkMdast } from "./bundle";
+import { idFromPath, normalizeInput } from "./concept";
 import { decodeTarget, isExternalTarget, pathPart, validateLink } from "./links";
 
 /** `error` fails the gate (exit `6`); `warning` is advisory (fails only under `--strict`). */
@@ -92,41 +93,42 @@ export interface CheckReport {
  * Pure over its inputs (the command layer does the reading), so the resolution and slug
  * logic are testable without the filesystem.
  *
- * Two passes over the files: the first indexes every file's heading slugs and registers it
- * as a resolvable member; the second resolves each file's links/anchors against that index
- * and runs the portability lint. The split is what lets a link resolve to a file that is
- * walked *after* the linking file (a forward reference) — every member is known before any
- * link is checked.
+ * Two passes over the files: the first parses every file **once** and indexes its
+ * heading-slug set under its bundle-relative id; the second resolves each file's
+ * links/anchors against that index (the id set is the bundle membership the link gate
+ * resolves against) and runs the portability lint over the same parsed tree. The split is
+ * what lets a link resolve to a file walked *after* the linking file (a forward reference)
+ * — every member is known before any link is checked — and the single parse per file is
+ * shared across the heading, link, and portability consumers.
  */
 export function checkBundle(files: readonly CheckInputFile[]): CheckReport {
-  // Pass 1 — index: each file's stripped body, bundle-relative id, and heading-slug set. The
-  // id set is the membership the link gate resolves against; bodies are kept so pass 2 never
-  // re-strips. Every file is prepared before any link is checked, so a forward reference
-  // resolves.
-  const prepared: { file: CheckInputFile; body: string; id: string }[] = [];
+  // Pass 1 — index: parse each file's body once into an mdast tree, keyed by bundle-relative
+  // id, and record its heading-slug set. The id key set is the membership; every file is
+  // indexed before any link is checked, so a forward reference resolves.
+  const prepared: { file: CheckInputFile; tree: Nodes; id: string }[] = [];
   const slugsById = new Map<string, ReadonlySet<string>>();
   for (const file of files) {
-    const body = bodyText(file.raw);
+    const tree = fromMarkdown(bodyText(file.raw));
     const id = idFromPath(file.path);
-    prepared.push({ file, body, id });
-    slugsById.set(id, extractHeadingSlugs(body));
+    prepared.push({ file, tree, id });
+    slugsById.set(id, extractHeadingSlugs(tree));
   }
-  const members = new Set(slugsById.keys());
 
-  // Pass 2 — judge: per file, the link/anchor gate then the portability lint.
+  // Pass 2 — judge: per file, the link/anchor gate then the portability lint, over the one
+  // shared parse. Membership is `slugsById` itself — every file id is a key.
   const findings: CheckFinding[] = [];
-  for (const { file, body, id } of prepared) {
+  for (const { file, tree, id } of prepared) {
     const dir = posix.dirname(file.path);
-    const targets = extractBodyTargets(body);
+    const targets = extractLinkTargets(tree);
     for (const target of targets) {
-      findings.push(...linkFindings(target, file.path, dir, id, members, slugsById));
+      findings.push(...linkFindings(target, file.path, dir, id, slugsById));
     }
     for (const target of targets) {
       for (const finding of validateLink(target)) {
         findings.push({ severity: "warning", rule: "portability", file: file.path, message: finding.message });
       }
     }
-    findings.push(...portabilityScan(body, file.path));
+    findings.push(...portabilityScan(tree, file.path));
   }
 
   return summarize(findings, files.length);
@@ -148,7 +150,6 @@ function linkFindings(
   file: string,
   dir: string,
   fromId: string,
-  members: ReadonlySet<string>,
   slugsById: ReadonlyMap<string, ReadonlySet<string>>,
 ): CheckFinding[] {
   const trimmed = target.trim();
@@ -166,12 +167,16 @@ function linkFindings(
   if (!/\.md$/i.test(decoded)) {
     return []; // a non-`.md` asset link — not a concept edge (matches the bundle resolver)
   }
-  const resolved = posix.normalize(posix.join(dir, decoded));
-  if (resolved.startsWith("..")) {
+  // A `/`-absolute destination resolves against the bundle root, not the linking file's
+  // directory (it is non-portable — `validateLink` warns — but its existence is judged from
+  // the root so the broken-link message names the path the author meant). A relative path
+  // joins to the linking dir as usual.
+  const resolved = posix.normalize(decoded.startsWith("/") ? decoded.slice(1) : posix.join(dir, decoded));
+  if (resolved === ".." || resolved.startsWith("../")) {
     return []; // escapes the bundle root — a cross-bundle link, out of scope for this pass
   }
   const targetId = idFromPath(resolved);
-  if (!members.has(targetId)) {
+  if (!slugsById.has(targetId)) {
     return [
       {
         severity: "error",
@@ -230,16 +235,17 @@ function fragmentOf(target: string): string {
  * order. Other renderers (MkDocs, Docusaurus) may slug differently; `lore check` validates
  * against the GitHub slug because that is the form lore writes and the matrix targets.
  *
- * Headings are extracted via the same CommonMark parser + stack-safe {@link walkMdast} the
- * rest of core uses, so a `#` inside a fenced/indented code block is not mistaken for a
- * heading.
+ * Headings are read from an already-parsed mdast tree (shared with the link and portability
+ * passes) and walked with the stack-safe {@link walkMdast}, so a `#` inside a fenced/indented
+ * code block is not mistaken for a heading. A string overload is offered for tests.
  */
-export function extractHeadingSlugs(body: string): ReadonlySet<string> {
+export function extractHeadingSlugs(source: Nodes | string): ReadonlySet<string> {
+  const tree = typeof source === "string" ? fromMarkdown(source) : source;
   const seen = new Map<string, number>();
   const slugs = new Set<string>();
-  walkMdast(fromMarkdown(body), (node) => {
+  walkMdast(tree, (node) => {
     if (node.type === "heading") {
-      slugs.add(uniqueSlug(slugify(headingText(node)), seen));
+      slugs.add(uniqueSlug(slugify(nodeText(node)), seen));
     }
   });
   return slugs;
@@ -259,25 +265,28 @@ export function slugify(text: string): string {
 }
 
 /**
- * GitHub's per-document slug de-duplication: the first occurrence of a base slug is used
- * verbatim; each later occurrence is suffixed `-N` with an incrementing per-base counter
- * (`intro`, `intro-1`, `intro-2`). `seen` carries the counts across a single document.
+ * GitHub's per-document slug de-duplication (the github-slugger algorithm): the first
+ * occurrence of a base slug is used verbatim; each later occurrence appends `-N` with an
+ * incrementing per-base counter — but, crucially, if that candidate **collides with a slug
+ * already taken** (a natural slug or an earlier disambiguation), the counter keeps advancing
+ * until a free one is found. So headings `Release`, `Release 1`, `Release` yield
+ * `release`, `release-1`, `release-2` — *not* a second `release-1` that would shadow the
+ * real one and falsely fail a `#release-2` anchor. Every produced slug is registered (count
+ * `0`) so a later natural collision is itself disambiguated. `seen` carries state across one
+ * document.
  */
 function uniqueSlug(base: string, seen: Map<string, number>): string {
-  const count = seen.get(base) ?? 0;
-  seen.set(base, count + 1);
-  return count === 0 ? base : `${base}-${count}`;
-}
-
-/** The literal text content of a heading node (`text` + `inlineCode` values concatenated). */
-function headingText(node: Nodes): string {
-  let text = "";
-  walkMdast(node, (current) => {
-    if (current.type === "text" || current.type === "inlineCode") {
-      text += current.value;
-    }
-  });
-  return text;
+  let slug = base;
+  if (seen.has(base)) {
+    let count = seen.get(base) ?? 0;
+    do {
+      count++;
+      slug = `${base}-${count}`;
+    } while (seen.has(slug));
+    seen.set(base, count);
+  }
+  seen.set(slug, 0);
+  return slug;
 }
 
 // ── Portability lint (warn-only body-text scan) ──────────────────────────────────
@@ -291,9 +300,18 @@ interface Detector {
 /**
  * The Obsidian-ism detectors (portable-markdown.md). Each renders as literal characters (or
  * not at all) outside Obsidian, so lore detects and **warns** — it never rewrites. Wikilinks,
- * embeds, and callouts are LORE-30 AC#2; highlights, `%%`-comments, and block refs round out
- * the portable-markdown.md table. (Raw-`<`/`{` MDX hazards and the `_`-prefix/`.mdx` filename
- * rules are deferred to a follow-up.)
+ * embeds, and callouts are LORE-30 AC#2; highlights and `%%`-comments round out the
+ * low-false-positive subset of the portable-markdown.md table.
+ *
+ * The patterns are tuned to flag the real syntax without crying wolf on ordinary prose:
+ * wikilinks/embeds (`[[…]]`/`![[…]]`), highlights (`==…==`), and `%%`-comments are
+ * distinctive enough to match anywhere in a text node, but a **callout** (`[!type]`) is only
+ * a callout at the **start** of a blockquote line, so its pattern is anchored to the start of
+ * the text node — a literal `[!important]` mid-sentence is left alone (it renders portably).
+ * The Obsidian **block-reference** detector (`^id`), and the MDX raw-`<`/`{` and
+ * `_`-prefix/`.mdx` filename rules, are deferred to a follow-up (LORE-48): a precise block-ref
+ * detector must both avoid carets in prose/math and catch digit-leading auto IDs, which the
+ * text-node regex cannot do reliably.
  */
 const DETECTORS: readonly Detector[] = [
   {
@@ -305,7 +323,9 @@ const DETECTORS: readonly Detector[] = [
         : `non-portable wikilink "${m[0]}"; use the relative .md link form (renders literally off Obsidian)`,
   },
   {
-    re: /\[!([A-Za-z][\w-]*)\][^\n]*/g,
+    // Anchored to the start of the text node: a real callout is `> [!type]`, where the
+    // blockquote marker is stripped and the paragraph's first text starts with `[!type]`.
+    re: /^\s*\[!([A-Za-z][\w-]*)\]/g,
     describe: (m) => `non-portable callout "[!${m[1]}]"; GitHub shows it as a plain blockquote with literal text`,
   },
   {
@@ -316,10 +336,6 @@ const DETECTORS: readonly Detector[] = [
     re: /%%[^\n]*?%%/g,
     describe: () => `non-portable Obsidian comment "%% … %%"; use an HTML comment <!-- … -->, which hides everywhere`,
   },
-  {
-    re: /(?:^|\s)(\^[A-Za-z][\w-]*)(?=\s|$)/g,
-    describe: (m) => `non-portable block reference "${m[1]}"; link to a heading anchor instead`,
-  },
 ];
 
 /**
@@ -328,9 +344,9 @@ const DETECTORS: readonly Detector[] = [
  * `code`) is what excludes fenced and inline code for free — the same characters are
  * legitimate there — so a `[[x]]` inside a code span is correctly left alone.
  */
-function portabilityScan(body: string, file: string): CheckFinding[] {
+function portabilityScan(tree: Nodes, file: string): CheckFinding[] {
   const findings: CheckFinding[] = [];
-  walkMdast(fromMarkdown(body), (node) => {
+  walkMdast(tree, (node) => {
     if (node.type !== "text") {
       return; // code spans/blocks and structural nodes carry no portability prose
     }
@@ -367,23 +383,21 @@ function summarize(findings: readonly CheckFinding[], fileCount: number): CheckR
  * removed — so heading and link extraction see the same body for a concept (frontmatter
  * stripped) and a frontmatter-free `index.md`/`log.md` (returned unchanged). Stripping the
  * fence matters: a `#`-prefixed YAML comment inside it would otherwise parse as a phantom
- * heading. Normalization (BOM, CRLF→LF, leading whitespace) mirrors the concept parser, so
- * a BOM/Windows file is split identically to how it is parsed; a file with no closing fence
- * is treated as all-body (the parse tier reports the malformed fence elsewhere).
+ * heading.
+ *
+ * Reuses the canonical parse boundary rather than re-rolling one: normalizeInput (the concept
+ * parser's BOM/CRLF/leading-whitespace normalization) then gray-matter — the same fence split
+ * concept.ts uses — so `lore check` and the parser cannot disagree on where a body begins.
+ * gray-matter throws only on unparseable YAML; there the gate degrades to scanning the whole
+ * (normalized) file rather than crashing — a genuinely malformed concept is `lore validate`'s
+ * error to report, not `check`'s to die on. A file with no frontmatter (or no closing fence)
+ * yields its whole content as the body.
  */
 function bodyText(raw: string): string {
-  const normalized = raw
-    .replace(/^\uFEFF+/, "")
-    .replace(/\r\n?/g, "\n")
-    .replace(/^\s+/, "");
-  if (!normalized.startsWith("---\n")) {
+  const normalized = normalizeInput(raw);
+  try {
+    return matter(normalized).content;
+  } catch {
     return normalized;
   }
-  const rest = normalized.slice(4);
-  const fenceNewline = rest.indexOf("\n---");
-  if (fenceNewline === -1) {
-    return normalized; // no closing fence — not a well-formed concept; treat the whole as body
-  }
-  const afterClose = rest.indexOf("\n", fenceNewline + 1);
-  return afterClose === -1 ? "" : rest.slice(afterClose + 1);
 }

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-06-28 00:33'
+updated_date: '2026-06-28 01:41'
 labels:
   - cmd
   - ci
@@ -64,6 +64,8 @@ ALSO from the same review, NOT LORE-30's code but tracked here so it isn't lost:
 - Reuse/efficiency (minor): extract one pathPart() (stripQuery∘stripFragment, 3 sites); ensureMarkdownSuffix should compose idFromPath; drop redundant double posix.normalize; hoist regex literals.
 
 Implemented on feat/lore-30-check. Shipped lore check with the link/anchor + portability passes (status-recon + managed-block drift deferred to post-LORE-26). Pure engine core/check.ts (checkBundle: membership-set link resolution incl reserved non-concept index.md/log.md → resolves the LORE-29 link-gate follow-up; GitHub-style heading slugger + dedup for AC#1 anchor rot; mdast text-node Obsidian-ism scan for AC#2). Thin commands/check.ts (--external accepted+deferred, --strict, exit 6 on broken link/anchor). All 8 folded validateLink classifier defects fixed in links.ts (TDD). core/check.ts + core/links.ts at 100% line/func. Dogfooded: lore check on the repo's own docs/ found + fixed 2 real defects (an em-dash anchor-rot in backlog-cli-contract.md, and a multi-line inline-code example in adr/0008 that parsed as a live link) — bundle now 0/0. Deferred (follow-ups): --external network liveness; MDX raw </{ + _-prefix/.mdx filename portability rules; the parked non-LORE-30 review items (normalizeLink cwd-relative guard; reuse/efficiency minors).
+
+Folded the /code-review max (PR #21) verified findings: fixed the github-slugger collision loop (#2), per-root independent bundles with own id namespace (#1), root-absolute link resolution against bundle root (#3), unencoded lint aligned to the writer's canonical alphabet so raw !'* are flagged while over-encoding passes (#7), callout detector anchored to blockquote-line start to kill mid-prose false positives (#6), and the bundle-escape test no longer mis-skips ..x.md files (#9). Quality: parse each body once shared across passes (#11), removed the redundant members set (#15), hoisted nodeText to bundle.ts shared with validate (#12), bodyText reuses normalizeInput+gray-matter (#10). Deferred to LORE-48: block-ref detector (#8), colon-filename detection (#5), trailing-slash dir-link policy (#4), finding-model convergence (#13), IO-errno helper (#14). core/check.ts + core/links.ts + core/concept.ts at 100% line/func; 651 tests green; repo docs/ still 0/0.
 <!-- SECTION:NOTES:END -->
 
 ## Comments

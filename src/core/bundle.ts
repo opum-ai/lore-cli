@@ -533,13 +533,22 @@ export function walkMdast(root: Nodes, visit: (node: Nodes) => void): void {
  * them; the anchor check needs them).
  */
 export function extractBodyTargets(body: string): string[] {
+  return extractLinkTargets(fromMarkdown(body));
+}
+
+/**
+ * Like {@link extractBodyTargets}, but over an **already-parsed** mdast tree — so a caller
+ * that also needs the tree's headings or text nodes (e.g. `lore check`) parses the body
+ * **once** and shares the tree across every consumer, instead of re-parsing it per pass.
+ */
+export function extractLinkTargets(tree: Nodes): string[] {
   // One walk records, in document order, each inline link's url (a `string`) and
   // each reference link's identifier (a `{ ref }`), and indexes every definition —
   // because a `linkReference` may appear before its definition, resolution waits
   // until the walk is done and every definition is known.
   const definitions = new Map<string, string>();
   const events: Array<string | { ref: string }> = [];
-  walkMdast(fromMarkdown(body), (node) => {
+  walkMdast(tree, (node) => {
     if (node.type === "definition") {
       if (!definitions.has(node.identifier)) {
         definitions.set(node.identifier, node.url);
@@ -563,6 +572,22 @@ export function extractBodyTargets(body: string): string[] {
     }
   }
   return targets;
+}
+
+/**
+ * The literal text content of an mdast node — every `text` and `inlineCode` value
+ * concatenated in document order, via the stack-safe {@link walkMdast}. Exported as the one
+ * "what text does this node render" rule so heading-anchor slugging (`lore check`) and
+ * required-section matching (`lore validate`) cannot drift apart on what a heading *says*.
+ */
+export function nodeText(node: Nodes): string {
+  let text = "";
+  walkMdast(node, (current) => {
+    if (current.type === "text" || current.type === "inlineCode") {
+      text += current.value;
+    }
+  });
+  return text;
 }
 
 /**

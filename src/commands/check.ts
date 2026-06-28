@@ -71,9 +71,9 @@ export function runCheck(options: CheckOptions): number {
   if (parsed.external) {
     advisories.add("--external is accepted but external-URL liveness checking is not yet implemented; ignoring it");
   }
-  const files = collectFiles(options.root, parsed.paths, advisories);
+  const bundles = collectBundles(options.root, parsed.paths, advisories);
 
-  const report = checkBundle(files);
+  const report = checkBundles(bundles);
   emit(reportRenderable(report), options.output, options.stdout);
   advisories.flush({ color: options.output.color, stderr: options.stderr });
 
@@ -124,34 +124,67 @@ function parseCheckArgs(args: readonly string[]): CheckArgs {
 
 // ── File discovery ─────────────────────────────────────────────────────────────
 
+/** One discovered bundle root: the path the user named (for display) and its files. */
+interface Bundle {
+  /** The bundle root as given (e.g. `docs`), used to disambiguate findings across roots. */
+  readonly label: string;
+  /** The root's files, each keyed by its **bundle-root-relative** path. */
+  readonly files: CheckInputFile[];
+}
+
 /**
- * Discover and read every markdown file in the bundle(s) to check, each as a
- * **bundle-root-relative** {@link CheckInputFile} — the id space the link gate resolves
- * within. With no explicit paths the bundle is `docs/`; otherwise each path names a bundle
- * root. The walk reuses the same {@link walkMarkdown} the bundle loader uses (sorted,
- * symlink-safe, `.md`-only; its skipped-symlink/unreadable-subdir advisories flow to
- * `warnings`).
+ * Discover and read each bundle root's markdown as an **independent** {@link Bundle} — files
+ * keyed by their path **within that root**, so a link resolves against its own bundle the same
+ * way `loadBundle` derives ids. With no explicit paths the single bundle is `docs/`; otherwise
+ * each path names a bundle root (duplicate roots are de-duplicated). The walk reuses the same
+ * {@link walkMarkdown} the bundle loader uses (sorted, symlink-safe, `.md`-only; its
+ * skipped-symlink/unreadable-subdir advisories flow to `warnings`).
  *
- * Files are keyed by their path **within their bundle root**, so a link resolves against the
- * bundle the same way `loadBundle` derives ids — independent of where the bundle sits in the
- * repo. (Checking two roots at once therefore checks each independently; cross-root links are
- * out of scope, the same as any bundle-escaping link.)
+ * Each root is a separate bundle with its **own id namespace** — so two roots that share a
+ * relative path (e.g. a per-bundle `index.md`) never collide or shadow one another, and each is
+ * checked in full. Cross-root links are out of scope, the same as any bundle-escaping link.
  */
-function collectFiles(root: string, paths: readonly string[], warnings: WarningCollector): CheckInputFile[] {
+function collectBundles(root: string, paths: readonly string[], warnings: WarningCollector): Bundle[] {
   const roots = paths.length > 0 ? paths : [DOCS_DIR];
-  const files: CheckInputFile[] = [];
-  const seen = new Set<string>();
+  const bundles: Bundle[] = [];
+  const seenRoots = new Set<string>();
   for (const bundleRoot of roots) {
     const absRoot = join(root, bundleRoot);
-    for (const rel of expandRoot(absRoot, bundleRoot, warnings)) {
-      if (seen.has(rel)) {
-        continue;
-      }
-      seen.add(rel);
-      files.push({ path: rel, raw: readSource(join(absRoot, rel), `${bundleRoot}/${rel}`) });
+    if (seenRoots.has(absRoot)) {
+      continue; // the same root named twice is one bundle, not two
+    }
+    seenRoots.add(absRoot);
+    const files = expandRoot(absRoot, bundleRoot, warnings).map((rel) => ({
+      path: rel,
+      raw: readSource(join(absRoot, rel), `${bundleRoot}/${rel}`),
+    }));
+    bundles.push({ label: bundleRoot, files });
+  }
+  return bundles;
+}
+
+/**
+ * Check every discovered {@link Bundle} independently and merge into one {@link CheckReport}.
+ * When more than one root is checked, each finding's `file` is prefixed with its bundle label
+ * so two roots' same-named files stay distinguishable in the report; a single bundle's findings
+ * are left as the plain bundle-relative path.
+ */
+function checkBundles(bundles: readonly Bundle[]): CheckReport {
+  const multi = bundles.length > 1;
+  const findings: CheckFinding[] = [];
+  let fileCount = 0;
+  let errorCount = 0;
+  let warningCount = 0;
+  for (const bundle of bundles) {
+    const report = checkBundle(bundle.files);
+    fileCount += report.fileCount;
+    errorCount += report.errorCount;
+    warningCount += report.warningCount;
+    for (const finding of report.findings) {
+      findings.push(multi ? { ...finding, file: `${bundle.label}/${finding.file}` } : finding);
     }
   }
-  return files;
+  return { findings, errorCount, warningCount, fileCount };
 }
 
 /**
@@ -183,7 +216,10 @@ function expandRoot(absRoot: string, given: string, warnings: WarningCollector):
     throw cause;
   }
   if (!stat.isDirectory()) {
-    throw usage(`"${given}" is not a directory`, "pass a bundle directory (e.g. docs/); `check` validates the whole bundle");
+    throw usage(
+      `"${given}" is not a directory`,
+      "pass a bundle directory (e.g. docs/); `check` validates the whole bundle",
+    );
   }
   return walkMarkdown(absRoot, warnings);
 }
