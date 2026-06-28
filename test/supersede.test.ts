@@ -119,13 +119,16 @@ describe("lore supersede — supersedes append (don't clobber)", () => {
     expect(fresh.frontmatter.supersedes).toEqual(["adr/0001-a", "adr/0007-old"]);
   });
 
-  test("does not duplicate an old id already referenced in path form", () => {
+  test("does not duplicate an old id already referenced in path form, and does not rewrite the new doc", () => {
     writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
     // a path-form ref that already resolves to adr/0007-old — must not be duplicated as a bare id
-    writeDoc("adr/0012-new.md", "---\ntype: ADR\nsupersedes:\n  - 0007-old.md\n---\nNew.\n");
-    supersedeCmd(["adr/0007-old", "adr/0012-new"]);
-    const fresh = parseConcept("adr/0012-new.md", readDoc("adr/0012-new.md"));
-    expect(fresh.frontmatter.supersedes).toEqual(["0007-old.md"]); // unchanged, no bare-id duplicate
+    const newBytes = "---\ntype: ADR\nsupersedes:\n  - 0007-old.md\n---\nNew.\n";
+    writeDoc("adr/0012-new.md", newBytes);
+    const { report } = supersedeCmd(["adr/0007-old", "adr/0012-new"]);
+    // wireNew is a no-op, so the new doc is neither rewritten nor counted — only the old doc changed.
+    expect(readDoc("adr/0012-new.md")).toBe(newBytes); // byte-identical, not even re-canonicalized
+    expect(report.files.map((f) => f.path)).toEqual(["docs/adr/0007-old.md"]);
+    expect(report.filesChanged).toBe(1);
   });
 });
 
@@ -166,13 +169,40 @@ describe("lore supersede — --rewrite-links (AC#2)", () => {
     expect(readDoc("adr/0007-old.md")).toContain("[myself](0007-old.md)"); // preserved history
   });
 
-  test("repoints an inbound frontmatter ref to the successor", () => {
+  test("does NOT repoint an inbound frontmatter ref — the old file is preserved, so the ref is valid", () => {
     writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
     writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
-    writeDoc("stories/use.md", "---\ntype: Story\nspecs:\n  - ../adr/0007-old.md\n---\nText.\n");
+    // a Story that specs the old reference: it still validly specs it (old exists) — leave it alone
+    const useBytes = "---\ntype: Story\nspecs:\n  - ../adr/0007-old.md\n---\nText.\n";
+    writeDoc("stories/use.md", useBytes);
+    const { report } = supersedeCmd(["adr/0007-old", "adr/0012-new", "--rewrite-links"]);
+    expect(readDoc("stories/use.md")).toBe(useBytes); // untouched
+    expect(report.files.map((f) => f.path)).not.toContain("docs/stories/use.md");
+  });
+
+  test("does NOT fabricate history: a third party's `superseded_by`/`supersedes` ref to old is preserved", () => {
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
+    // adr/0003-ancient was historically superseded BY adr/0007-old (which still exists on disk)
+    const ancientBytes = "---\ntype: ADR\nstatus: superseded\nsuperseded_by: adr/0007-old\n---\nAncient.\n";
+    writeDoc("adr/0003-ancient.md", ancientBytes);
+    // adr/0099-z supersedes adr/0007-old
+    const zBytes = "---\ntype: ADR\nsupersedes: adr/0007-old\n---\nZ.\n";
+    writeDoc("adr/0099-z.md", zBytes);
     supersedeCmd(["adr/0007-old", "adr/0012-new", "--rewrite-links"]);
-    const fresh = parseConcept("stories/use.md", readDoc("stories/use.md"));
-    expect(fresh.frontmatter.specs).toEqual(["adr/0012-new"]);
+    expect(readDoc("adr/0003-ancient.md")).toBe(ancientBytes); // historical superseded_by NOT repointed
+    expect(readDoc("adr/0099-z.md")).toBe(zBytes); // historical supersedes NOT repointed
+  });
+
+  test("does NOT rewrite a machine-owned index.md hub that links to the old concept", () => {
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
+    // a root index that is itself a concept (carries okf_version) and links to old in its body
+    const rootIndex = "---\ntype: Reference\nokf_version: 0.1\n---\nSee [old](adr/0007-old.md).\n";
+    writeDoc("index.md", rootIndex);
+    const { report } = supersedeCmd(["adr/0007-old", "adr/0012-new", "--rewrite-links"]);
+    expect(readDoc("index.md")).toBe(rootIndex); // the hub is excluded — listings are unchanged
+    expect(report.files.map((f) => f.path)).not.toContain("docs/index.md");
   });
 });
 
@@ -243,12 +273,65 @@ describe("lore supersede — errors and arg parsing", () => {
     expect(expectError(["adr/0007-old", "adr/0012-new"]).type).toBe("conflict");
   });
 
+  test("a non-lowercase `status: Superseded` is still detected (case-insensitive guard)", () => {
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: Superseded\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
+    expect(expectError(["adr/0007-old", "adr/0012-new"]).type).toBe("conflict");
+  });
+
+  test("an existing `superseded_by` (any status) blocks the supersede — it is never clobbered (exit 5)", () => {
+    // the old doc already records adr/0042-x as its successor; superseding would silently overwrite it
+    const oldBytes = "---\ntype: ADR\nstatus: active\nsuperseded_by: adr/0042-x\n---\nOld.\n";
+    writeDoc("adr/0007-old.md", oldBytes);
+    writeDoc("adr/0042-x.md", "---\ntype: ADR\n---\nX.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
+    expect(expectError(["adr/0007-old", "adr/0012-new"]).type).toBe("conflict");
+    expect(readDoc("adr/0007-old.md")).toBe(oldBytes); // recorded successor preserved, not lost
+  });
+
+  test("a reserved hub name (index/log) is rejected as either principal (usage)", () => {
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
+    expect(expectError(["adr/0007-old", "index"]).type).toBe("usage");
+    expect(expectError(["adr/0007-old", "log"]).type).toBe("usage");
+    expect(expectError(["index", "adr/0012-new"]).type).toBe("usage");
+  });
+
   test("accepts a -- options terminator before the ids", () => {
     writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
     writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
     const { code } = supersedeCmd(["--", "adr/0007-old", "adr/0012-new"]);
     expect(code).toBe(EXIT_OK);
     expect(parseConcept("adr/0007-old.md", readDoc("adr/0007-old.md")).frontmatter.status).toBe("superseded");
+  });
+});
+
+// ── active-profile validation on write ─────────────────────────────────────────
+
+describe("lore supersede — active profile", () => {
+  test("validates the written `status` against the project profile, failing fast on a custom enum", () => {
+    // a profile whose `status` enum forbids "superseded": writing it must fail here, not slip through
+    // to break the next `lore validate` / CI.
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      [
+        "[profile]",
+        'name = "strict"',
+        'okf_version = "0.1"',
+        "[base.fields]",
+        "type = { required = true }",
+        'status = { enum = ["draft", "approved"] }',
+        "[[types]]",
+        'name = "ADR"',
+      ].join("\n"),
+    );
+    const oldBytes = "---\ntype: ADR\nstatus: approved\n---\nOld.\n";
+    writeDoc("adr/0007-old.md", oldBytes);
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\nstatus: approved\n---\nNew.\n");
+    const err = expectError(["adr/0007-old", "adr/0012-new"]);
+    expect(err.type).toBe("validation");
+    expect(readDoc("adr/0007-old.md")).toBe(oldBytes); // failed before writing — nothing stamped
   });
 });
 

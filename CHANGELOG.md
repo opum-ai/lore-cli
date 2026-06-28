@@ -14,18 +14,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   both directions: on the **old** concept it sets `status: superseded` and `superseded_by: <newId>`;
   on the **new** concept it **appends** `<oldId>` to `supersedes` (normalizing a scalar to a list and
   never clobbering or duplicating an existing entry — a concept may supersede several). Both edits go
-  through the byte-stable `serializeConcept` (canonical key order, frozen YAML config), so the wiring
-  is the only diff and the whole body round-trips verbatim (ADR-0011). Unlike `lore rename`, the old
-  file is **preserved as history** — nothing moves, nothing is deleted, and no `index.md` is
-  regenerated (listings are unchanged). With `--rewrite-links` it also repoints **inbound** references
-  to the successor — body cross-links and `specs`/`supersedes`/`superseded_by` frontmatter refs — by
-  reusing the same pure `core/rewrite.ts` `rewriteInbound` engine `lore rename` ships, in place-only
-  (`move:false`) mode. The two **principals are deliberately excluded** from that rewrite: the old
-  doc's own (historical) body links and the new doc's legitimate links *to* its predecessor are left
-  intact, so the successor is never made to link to itself. All validation lives in the thin
-  `commands/supersede.ts` (the engine's `move:false` path checks only that `oldId` exists): both ids
-  must name concepts and the old one must not already be superseded. Exit `0` ok · `2` bad usage /
-  self-supersede · `3` either id not found · `5` old id already superseded.
+  through the byte-stable `serializeConcept` under the **active profile** (so the written `status` is
+  validated against the project's own profile — a custom `status` enum that forbids `superseded` fails
+  fast here rather than slipping through to break the next `lore validate`), in canonical key order,
+  so the wiring is the only diff and the whole body round-trips verbatim (ADR-0011). Unlike `lore
+  rename`, the old file is **preserved as history** — nothing moves, nothing is deleted, and no
+  `index.md` is regenerated (listings are unchanged). With `--rewrite-links` it repoints inbound
+  **body links** to the successor by reusing the same pure `core/rewrite.ts` `rewriteInbound` engine
+  `lore rename` ships, in place-only (`move:false`) mode, with two supersede-specific restrictions:
+  (a) `specs`/`supersedes`/`superseded_by` **frontmatter** refs are left intact — because the old file
+  is preserved, a third party's ref to it is a valid historical record, not a dead pointer, so
+  repointing it would fabricate a relationship that never happened; and (b) the two **principals** and
+  the machine-owned `index.md`/`log.md` hubs are **excluded** — the old doc's own (historical) body
+  links and the new doc's legitimate links *to* its predecessor stay intact (so the successor is never
+  made to link to itself), and a generated hub is never hand-rewritten. All validation lives in the
+  thin `commands/supersede.ts` (the engine's `move:false` path checks only that `oldId` exists): both
+  ids must name concepts and neither may be a reserved hub name; the old concept must not already be
+  superseded — `status: superseded` (matched case-insensitively) **or** an already-recorded
+  `superseded_by` (which would otherwise be silently overwritten, losing the recorded successor).
+  Exit `0` ok · `2` bad usage / self-supersede / reserved id · `3` either id not found · `5` old id
+  already superseded. The `rewriteInbound` engine gained two reusable options for this —
+  `rewriteFrontmatterRefs` (default `true`, preserving `lore rename`'s behavior) and an `exclude` id
+  set — and `core/bundle.ts` now exports a shared `conceptNotInBundle` `not_found` factory so the
+  command layer and the engine surface identical wording.
 - **`lore rename` — graph-aware concept rename** (LORE-35.2, the second of LORE-35's three refactoring
   commands; delivers LORE-35 AC#2). `lore rename <oldId> <newId> [--dry-run]` moves a concept to a new
   id/path and repoints **every** inbound reference to it — body cross-links (including used

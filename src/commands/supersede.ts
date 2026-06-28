@@ -10,28 +10,37 @@
  * - on the **new** concept: `supersedes: <oldId>`, **appended** to any existing entry (a concept may
  *   supersede several) rather than clobbering it.
  *
- * Both writes go through {@link serializeConcept} (canonical key order, frozen YAML config), so an
- * already-canonical concept's other frontmatter and its whole body round-trip byte-for-byte and the
- * wiring is the only diff (ADR-0011).
+ * Both writes go through {@link serializeConcept} under the **active profile** (so the `status` value
+ * is validated against the project's own profile, not just the default — a custom `status` enum that
+ * forbids `superseded` fails fast here rather than slipping through to break the next `lore validate`),
+ * in canonical key order with the frozen YAML config, so an already-canonical concept's other
+ * frontmatter and its whole body round-trip byte-for-byte and the wiring is the only diff (ADR-0011).
  *
- * With `--rewrite-links` it additionally repoints **inbound** references to the successor via the
- * shared pure {@link rewriteInbound} engine in `place-only` mode (`move:false`) — the same engine
- * `lore rename` uses to move a concept, here asked only to redirect references. Crucially the two
- * **principals are excluded** from that rewrite: the old doc's own body (it is preserved history)
- * and the new doc's legitimate links *to* the old concept (its predecessor — redirecting them would
- * make the successor link to itself) are left untouched, so only third-party inbound references are
- * redirected. The principals' frontmatter wiring is applied separately and wins.
+ * With `--rewrite-links` it additionally repoints **inbound body links** to the successor via the
+ * shared pure {@link rewriteInbound} engine in place-only (`move:false`) mode, with two restrictions
+ * that distinguish supersede from rename (whose machinery it reuses):
  *
- * Validation lives here, because the engine's `move:false` path checks only that `oldId` exists
- * (its conflict guard is move-only): both ids must name concepts (`not_found`, exit 3), and the old
- * concept must not already be superseded (`conflict`, exit 5). A bad flag or a self-supersede is a
- * `usage` error (exit 2). All file I/O is here ({@link writeFileOverwriting}, overwrite in place);
- * every link/ref judgement stays pure in `core/rewrite.ts`.
+ * - `rewriteFrontmatterRefs:false` — because the old file is **preserved**, a third party's
+ *   `supersedes`/`superseded_by`/`specs` ref to it remains a true historical record; repointing it
+ *   would fabricate a relationship that never happened. Only navigational body links are redirected.
+ * - `exclude` the two **principals** and the machine-owned `index.md`/`log.md` hubs — the old doc's
+ *   own (historical) body links and the new doc's legitimate links *to* its predecessor must stay
+ *   intact (else the successor links to itself), and a generated hub is never hand-rewritten (its
+ *   file listing is unchanged, since supersede moves nothing).
+ *
+ * Validation lives here, because the engine's `move:false` path checks only that `oldId` exists (its
+ * conflict guard is move-only): both ids must name concepts (`not_found`, exit 3); neither may be a
+ * reserved hub name (`usage`, exit 2); and the old concept must not already be superseded —
+ * `status: superseded` (any case) **or** an already-recorded `superseded_by` — which would otherwise
+ * be silently overwritten (`conflict`, exit 5). All file I/O is here
+ * ({@link writeFileOverwriting}, overwrite in place); every link/ref judgement stays pure in
+ * `core/rewrite.ts`.
  */
 
 import { join, posix } from "node:path";
-import { loadBundle, resolveRef } from "../core/bundle";
+import { conceptNotInBundle, loadBundle, resolveRef } from "../core/bundle";
 import { type Concept, idFromPath, serializeConcept } from "../core/concept";
+import { loadProfile } from "../core/profile";
 import { rewriteInbound } from "../core/rewrite";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
@@ -40,6 +49,13 @@ import { writeFileOverwriting } from "./fswrite";
 
 /** The frontmatter `status` value that marks a concept superseded — the lifecycle signal we set and detect. */
 const SUPERSEDED_STATUS = "superseded";
+
+/**
+ * Reserved file stems that name machine-generated hubs (`index.md`, `log.md`): a concept may never be
+ * a supersede principal under one of these, and they are excluded from `--rewrite-links` — they are
+ * regenerated wholesale by `lore sync`, not authored concepts. Mirrors `lore rename`'s guard.
+ */
+const RESERVED_STEMS: ReadonlySet<string> = new Set(["index", "log"]);
 
 /** Options for {@link runSupersede}; `root` and the streams are injectable for tests. */
 export interface SupersedeOptions {
@@ -61,7 +77,7 @@ interface SupersedeArgs {
   oldId: string;
   /** The successor concept id (or path). */
   newId: string;
-  /** `--rewrite-links`: also repoint inbound references to the successor. */
+  /** `--rewrite-links`: also repoint inbound body links to the successor. */
   rewriteLinks: boolean;
   /** `--dry-run`: report what would change, write nothing. */
   dryRun: boolean;
@@ -79,23 +95,23 @@ export interface SupersedeReport {
   readonly old: string;
   /** The successor concept's repo-relative path. */
   readonly new: string;
-  /** Every file written (the two principals, plus any repointed inbound files), ascending. */
+  /** Every file written (the principals that changed, plus any repointed inbound files), ascending. */
   readonly files: readonly ChangedFile[];
   /** How many files changed (== `files.length`). */
   readonly filesChanged: number;
-  /** Whether `--rewrite-links` repointed inbound references too. */
+  /** Whether any inbound body link was actually repointed (not merely whether `--rewrite-links` was passed). */
   readonly rewroteLinks: boolean;
   /** Whether this was a `--dry-run` (nothing was written). */
   readonly dryRun: boolean;
 }
 
 /**
- * Run `lore supersede`: parse the arguments, load the bundle, validate both concepts exist and the
- * old one is not already superseded, wire the supersession frontmatter both ways, optionally repoint
- * inbound references to the successor, write the changed files (unless `--dry-run`), emit the
- * `supersede.result`, and return `0`. A bad flag or a self-supersede throws a `usage`
- * {@link LoreError} (exit `2`); a missing id a `not_found` (exit `3`); an already-superseded old id a
- * `conflict` (exit `5`).
+ * Run `lore supersede`: parse the arguments, load the bundle and active profile, validate both
+ * concepts exist and the old one is not already superseded, wire the supersession frontmatter both
+ * ways, optionally repoint inbound body links to the successor, write the changed files (unless
+ * `--dry-run`), emit the `supersede.result`, and return `0`. A bad flag / self-supersede / reserved
+ * id throws a `usage` {@link LoreError} (exit `2`); a missing id a `not_found` (exit `3`); an
+ * already-superseded old id a `conflict` (exit `5`).
  */
 export function runSupersede(options: SupersedeOptions): number {
   const parsed = parseSupersedeArgs(options.args);
@@ -106,41 +122,50 @@ export function runSupersede(options: SupersedeOptions): number {
       id: oldId,
     });
   }
+  assertNotReserved(oldId);
+  assertNotReserved(newId);
 
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
   const graph = loadBundle(docsRoot, { warnings: advisories });
+  const profile = loadProfile({ root: options.root });
 
   // The command owns all validation: the engine's `move:false` path checks only that `oldId` exists.
   const oldConcept = graph.concepts.get(oldId);
   if (oldConcept === undefined) {
-    throw notFound(oldId);
+    throw conceptNotInBundle(oldId);
   }
   const newConcept = graph.concepts.get(newId);
   if (newConcept === undefined) {
-    throw notFound(newId);
+    throw conceptNotInBundle(newId);
   }
-  assertNotAlreadySuperseded(oldConcept, newId, graph);
+  assertNotAlreadySuperseded(oldConcept);
 
-  // Wire the two principals' frontmatter (cloned, never mutating the graph snapshot) and serialize
-  // byte-stably. The old doc's body is preserved verbatim; only its frontmatter gains the lifecycle
-  // keys. The new doc's `supersedes` gains `oldId`, appended to any existing entry.
+  // Optionally repoint inbound body links to the successor. The principals and the machine-owned
+  // hubs are excluded (the engine never even parses them), and frontmatter refs are left intact —
+  // the old file is preserved, so a ref to it is valid history, not a dead pointer.
   const writes = new Map<string, string>();
+  let rewroteLinks = false;
   if (parsed.rewriteLinks) {
-    // Redirect inbound references to the successor, but never the two principals: the old doc keeps
-    // its own (historical) body links, and the new doc keeps its legitimate links to its predecessor
-    // — repointing either would corrupt the relationship (a self-link on the successor). Their
-    // frontmatter wiring below overwrites any plan entry for them.
-    const plan = rewriteInbound(graph, oldId, newId, { move: false });
+    const plan = rewriteInbound(graph, oldId, newId, {
+      move: false,
+      rewriteFrontmatterRefs: false,
+      exclude: excludedFromRewrite(graph, oldConcept.path, newConcept.path),
+    });
     for (const w of plan.writes) {
-      if (w.path === oldConcept.path || w.path === newConcept.path) {
-        continue;
-      }
       writes.set(w.path, w.bytes);
     }
+    rewroteLinks = writes.size > 0;
   }
-  writes.set(oldConcept.path, serializeConcept(wireOld(oldConcept, newId)));
-  writes.set(newConcept.path, serializeConcept(wireNew(newConcept, oldId, graph)));
+
+  // Wire the principals' frontmatter (cloned, never mutating the graph snapshot) and serialize under
+  // the active profile. The old doc always changes (it gains the lifecycle keys); the new doc is
+  // written only when its `supersedes` actually changes, so a no-op append is not reported as a write.
+  writes.set(oldConcept.path, serializeConcept(wireOld(oldConcept, newId), { profile }));
+  const wiredNew = wireNew(newConcept, oldId, graph);
+  if (wiredNew !== null) {
+    writes.set(newConcept.path, serializeConcept(wiredNew, { profile }));
+  }
 
   const sorted = new Map([...writes].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)));
 
@@ -150,10 +175,29 @@ export function runSupersede(options: SupersedeOptions): number {
     }
   }
 
-  const report = buildReport(oldConcept, newConcept, sorted, parsed);
+  const report = buildReport(oldConcept, newConcept, sorted, { rewroteLinks, dryRun: parsed.dryRun });
   emit(reportRenderable(report), options.output, options.stdout);
   advisories.flush({ color: options.output.color, stderr: options.stderr });
   return EXIT_OK;
+}
+
+/**
+ * The concept ids `--rewrite-links` must never touch: the two principals (the command wires their
+ * frontmatter itself) and every machine-owned `index.md`/`log.md` hub in the bundle (regenerated by
+ * `lore sync`, not hand-rewritten — and since supersede moves nothing, their listings are unchanged).
+ */
+function excludedFromRewrite(
+  graph: { concepts: ReadonlyMap<string, Concept> },
+  oldPath: string,
+  newPath: string,
+): ReadonlySet<string> {
+  const ids = new Set<string>([idFromPath(oldPath), idFromPath(newPath)]);
+  for (const id of graph.concepts.keys()) {
+    if (RESERVED_STEMS.has(posix.basename(id))) {
+      ids.add(id);
+    }
+  }
+  return ids;
 }
 
 // ── Frontmatter wiring ─────────────────────────────────────────────────────────
@@ -162,7 +206,9 @@ export function runSupersede(options: SupersedeOptions): number {
  * The old concept with its supersession frontmatter set: `status: superseded` and
  * `superseded_by: <newId>` (the bare-id successor, lore's canonical ref form). Returns a clone — the
  * graph snapshot is never mutated. The body is carried over verbatim, so re-serializing the
- * already-canonical concept changes only these two keys.
+ * already-canonical concept changes only these two keys. Safe to overwrite `superseded_by`
+ * unconditionally because {@link assertNotAlreadySuperseded} has already rejected a concept that
+ * carries one.
  */
 function wireOld(concept: Concept, newId: string): Concept {
   return {
@@ -172,18 +218,21 @@ function wireOld(concept: Concept, newId: string): Concept {
 }
 
 /**
- * The new concept with `oldId` appended to its `supersedes`. A concept may supersede several, so an
- * existing entry is **preserved**: an absent `supersedes` becomes the single bare id `oldId`; an
- * existing scalar or list gains `oldId` (normalized to a list when adding a second), unless it
- * already references the old concept — in which case the field is returned unchanged (idempotent,
- * preserving its authored shape). Membership is decided by resolving each existing entry to a
- * concept id via the bundle's own {@link resolveRef}, so a path-form entry that already names the
- * old concept is not duplicated as a bare id.
+ * The new concept with `oldId` appended to its `supersedes`, or `null` when that is a no-op (the
+ * concept already references the old one) — so an unchanged successor is neither rewritten nor
+ * counted. A concept may supersede several, so an existing entry is **preserved**: an absent
+ * `supersedes` becomes the single bare id `oldId`; an existing scalar or list gains `oldId`
+ * (normalized to a list when adding a second). Membership is decided by resolving each existing entry
+ * to a concept id via the bundle's own {@link resolveRef}, so a path-form entry that already names
+ * the old concept is not duplicated as a bare id.
  */
-function wireNew(concept: Concept, oldId: string, graph: { concepts: ReadonlyMap<string, Concept> }): Concept {
+function wireNew(concept: Concept, oldId: string, graph: { concepts: ReadonlyMap<string, Concept> }): Concept | null {
   const dir = posix.dirname(concept.path);
   const existing = concept.frontmatter.supersedes;
   const next = appendSupersedes(existing, oldId, dir, graph.concepts);
+  if (next === existing) {
+    return null; // already references the old concept — nothing to write
+  }
   return { ...concept, frontmatter: { ...concept.frontmatter, supersedes: next } };
 }
 
@@ -198,9 +247,8 @@ function appendSupersedes(
     return oldId;
   }
   const list = Array.isArray(existing) ? existing : [existing];
-  const alreadyReferences = list.some((item) => typeof item === "string" && resolveRef(item, dir, byId) === oldId);
-  if (alreadyReferences) {
-    return existing as string | string[];
+  if (list.some((item) => typeof item === "string" && resolveRef(item, dir, byId) === oldId)) {
+    return existing as string | string[]; // already references the old concept — preserve as-is
   }
   return [...list, oldId];
 }
@@ -209,18 +257,13 @@ function appendSupersedes(
 
 /**
  * Reject superseding a concept that is already superseded (`conflict`, exit 5). "Already superseded"
- * is the `status: superseded` lifecycle signal, or an existing `superseded_by` that already resolves
- * to this very successor (a no-op re-run); a `superseded_by` naming a *different* concept is not
- * blocked on its own — `status` is the authoritative signal.
+ * is either the `status: superseded` lifecycle signal (matched case-insensitively, since `status` is
+ * a free-form string) **or** an already-recorded `superseded_by` — the structured field
+ * {@link wireOld} would otherwise silently overwrite, discarding the concept's real recorded
+ * successor.
  */
-function assertNotAlreadySuperseded(
-  oldConcept: Concept,
-  newId: string,
-  graph: { concepts: ReadonlyMap<string, Concept> },
-): void {
-  const status = oldConcept.frontmatter.status;
-  const statusIsSuperseded = typeof status === "string" && status.trim() === SUPERSEDED_STATUS;
-  if (statusIsSuperseded || supersededByNames(oldConcept, newId, graph.concepts)) {
+function assertNotAlreadySuperseded(oldConcept: Concept): void {
+  if (hasRecordedSuccessor(oldConcept) || statusIsSuperseded(oldConcept)) {
     throw new LoreError(
       "conflict",
       `concept "${oldConcept.id}" is already superseded`,
@@ -230,22 +273,31 @@ function assertNotAlreadySuperseded(
   }
 }
 
-/** Whether the old concept's `superseded_by` already resolves to `newId` (the idempotent re-run case). */
-function supersededByNames(oldConcept: Concept, newId: string, byId: ReadonlyMap<string, Concept>): boolean {
-  const value = oldConcept.frontmatter.superseded_by;
+/** Whether the concept already records a successor (`superseded_by` set to a non-empty value). */
+function hasRecordedSuccessor(concept: Concept): boolean {
+  const value = concept.frontmatter.superseded_by;
   if (value === undefined || value === null) {
     return false;
   }
-  const dir = posix.dirname(oldConcept.path);
-  const list = Array.isArray(value) ? value : [value];
-  return list.some((item) => typeof item === "string" && resolveRef(item, dir, byId) === newId);
+  return !(Array.isArray(value) && value.length === 0);
 }
 
-/** A `not_found` {@link LoreError} (exit 3) for a concept id absent from the bundle. */
-function notFound(id: string): LoreError {
-  return new LoreError("not_found", `concept "${id}" is not in the bundle`, "run `lore check` to list concept ids", {
-    id,
-  });
+/** Whether the concept's `status` is `superseded`, matched case-insensitively (status is free-form text). */
+function statusIsSuperseded(concept: Concept): boolean {
+  const status = concept.frontmatter.status;
+  return typeof status === "string" && status.trim().toLowerCase() === SUPERSEDED_STATUS;
+}
+
+/** Reject a reserved hub name (`index`/`log`) as either supersede principal — a `usage` error. */
+function assertNotReserved(id: string): void {
+  if (RESERVED_STEMS.has(posix.basename(id))) {
+    throw new LoreError(
+      "usage",
+      `cannot supersede "${id}": "${posix.basename(id)}" is a reserved, machine-generated file name`,
+      "index.md/log.md are generated by lore, not authored concepts",
+      { id },
+    );
+  }
 }
 
 // ── Argument parsing ───────────────────────────────────────────────────────────
@@ -310,7 +362,7 @@ function buildReport(
   oldConcept: Concept,
   newConcept: Concept,
   writes: Map<string, string>,
-  parsed: SupersedeArgs,
+  flags: { rewroteLinks: boolean; dryRun: boolean },
 ): SupersedeReport {
   const files = [...writes.keys()].map((path) => ({ path: `${DOCS_DIR}/${path}` }));
   return {
@@ -318,8 +370,8 @@ function buildReport(
     new: `${DOCS_DIR}/${newConcept.path}`,
     files,
     filesChanged: files.length,
-    rewroteLinks: parsed.rewriteLinks,
-    dryRun: parsed.dryRun,
+    rewroteLinks: flags.rewroteLinks,
+    dryRun: flags.dryRun,
   };
 }
 

@@ -353,6 +353,18 @@ function collectBodyEdges(concept: Concept, dir: string, byId: ReadonlyMap<strin
 }
 
 /**
+ * The canonical `not_found` {@link LoreError} (exit 3) for a concept id absent from the bundle —
+ * the single source of its message and hint so the graph-aware refactoring commands (`lore rename`,
+ * `lore supersede`) and the rewrite engine all surface the same wording, whichever layer detects the
+ * absence.
+ */
+export function conceptNotInBundle(id: string): LoreError {
+  return new LoreError("not_found", `concept "${id}" is not in the bundle`, "run `lore check` to list concept ids", {
+    id,
+  });
+}
+
+/**
  * Resolve a frontmatter concept reference to a concept id, or `null` if it
  * dangles. A ref may be authored as a **bundle-relative id** (how `lore supersede`
  * writes it, e.g. `adr/0009-x`) or as a **relative path** (e.g. `../adr/0009-x.md`);
