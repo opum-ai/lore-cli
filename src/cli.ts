@@ -20,6 +20,7 @@ import { runInit } from "./commands/init";
 import { runNew } from "./commands/new";
 import { runRename } from "./commands/rename";
 import { runReplace } from "./commands/replace";
+import { runSupersede } from "./commands/supersede";
 import { runValidate } from "./commands/validate";
 import { EXIT_OK, LoreError, reportError, type Writer } from "./errors";
 import { VERSION } from "./meta";
@@ -37,6 +38,7 @@ Commands:
   check           Validate internal links/anchors + lint portability across the bundle (lore check [paths…])
   replace         Find-and-replace across the bundle, skipping managed regions (lore replace "<find>" "<replace>")
   rename          Move a concept and repoint every inbound link + ref (lore rename <oldId> <newId>)
+  supersede       Mark a concept superseded by another, wiring both ways (lore supersede <oldId> <newId>)
 
 Options:
   --json          Machine-readable JSON output (the {schemaVersion, kind, data} envelope)
@@ -215,6 +217,8 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
       return runReplace({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     case "rename":
       return runRename({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
+    case "supersede":
+      return runSupersede({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     default:
       throw new LoreError("usage", `unknown command "${parsed.command}"`, "run `lore --help` to list commands", {
         command: parsed.command,

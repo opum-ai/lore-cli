@@ -1,9 +1,11 @@
 ---
 id: LORE-35.3
 title: lore supersede (frontmatter wiring + inbound rewrite)
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-06-28 05:18'
+updated_date: '2026-06-28 13:11'
 labels:
   - cmd
 milestone: m-4

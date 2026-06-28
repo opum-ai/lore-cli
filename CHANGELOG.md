@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lore supersede` — record a supersession both ways** (LORE-35.3, the last of LORE-35's three
+  refactoring commands; delivers the supersede half of LORE-35). `lore supersede <oldId> <newId>
+  [--rewrite-links] [--dry-run]` marks one concept superseded by another and wires the relationship in
+  both directions: on the **old** concept it sets `status: superseded` and `superseded_by: <newId>`;
+  on the **new** concept it **appends** `<oldId>` to `supersedes` (normalizing a scalar to a list and
+  never clobbering or duplicating an existing entry — a concept may supersede several). Both edits go
+  through the byte-stable `serializeConcept` (canonical key order, frozen YAML config), so the wiring
+  is the only diff and the whole body round-trips verbatim (ADR-0011). Unlike `lore rename`, the old
+  file is **preserved as history** — nothing moves, nothing is deleted, and no `index.md` is
+  regenerated (listings are unchanged). With `--rewrite-links` it also repoints **inbound** references
+  to the successor — body cross-links and `specs`/`supersedes`/`superseded_by` frontmatter refs — by
+  reusing the same pure `core/rewrite.ts` `rewriteInbound` engine `lore rename` ships, in place-only
+  (`move:false`) mode. The two **principals are deliberately excluded** from that rewrite: the old
+  doc's own (historical) body links and the new doc's legitimate links *to* its predecessor are left
+  intact, so the successor is never made to link to itself. All validation lives in the thin
+  `commands/supersede.ts` (the engine's `move:false` path checks only that `oldId` exists): both ids
+  must name concepts and the old one must not already be superseded. Exit `0` ok · `2` bad usage /
+  self-supersede · `3` either id not found · `5` old id already superseded.
 - **`lore rename` — graph-aware concept rename** (LORE-35.2, the second of LORE-35's three refactoring
   commands; delivers LORE-35 AC#2). `lore rename <oldId> <newId> [--dry-run]` moves a concept to a new
   id/path and repoints **every** inbound reference to it — body cross-links (including used
