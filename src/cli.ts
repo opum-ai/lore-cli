@@ -20,6 +20,7 @@ import { runInit } from "./commands/init";
 import { runNew } from "./commands/new";
 import { runRename } from "./commands/rename";
 import { runReplace } from "./commands/replace";
+import { runSchema } from "./commands/schema";
 import { runSupersede } from "./commands/supersede";
 import { runValidate } from "./commands/validate";
 import { EXIT_OK, LoreError, reportError, type Writer } from "./errors";
@@ -39,6 +40,7 @@ Commands:
   replace         Find-and-replace across the bundle, skipping managed regions (lore replace "<find>" "<replace>")
   rename          Move a concept and repoint every inbound link + ref (lore rename <oldId> <newId>)
   supersede       Mark a concept superseded by another, wiring both ways (lore supersede <oldId> <newId>)
+  schema          Export the profile's editor JSON Schemas to .lore/schemas/ (lore schema export)
 
 Options:
   --json          Machine-readable JSON output (the {schemaVersion, kind, data} envelope)
@@ -219,6 +221,8 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
       return runRename({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     case "supersede":
       return runSupersede({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
+    case "schema":
+      return runSchema({ root, output, args: parsed.commandArgs, stdout: context.stdout });
     default:
       throw new LoreError("usage", `unknown command "${parsed.command}"`, "run `lore --help` to list commands", {
         command: parsed.command,

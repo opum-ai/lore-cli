@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lore schema export` — materialize the profile's editor JSON Schemas** (LORE-20). `lore schema
+  export [--out <dir>] [--type <T>]` writes one Draft-7 JSON Schema per active-profile type to
+  `.lore/schemas/` (default), so the `# yaml-language-server: $schema=…` modeline `lore new`/`lore
+  init` stamp resolves and drives YAML autocomplete/validation in VS Code and Obsidian (AC#1). The
+  profile is loaded from the project's `.lore/profile.toml`, so a project's **custom** types export
+  too (AC#2); with no profile present it is the built-in story-convention profile (zero-config). The
+  per-type bytes come from the **shared** `core/schema.ts` `emitSchemaFiles` emitter that backs `lore
+  init`, so an exported schema is byte-identical to a scaffolded one (two-space pretty JSON, one
+  trailing newline). `--type <T>` exports a single type (resolved case-insensitively); `--out <dir>`
+  redirects output and is **confined to the repo** (a `..`-escaping or absolute path is a usage error,
+  so an overwrite can never clobber files outside the bundle). A **full** export (no `--type`) also
+  **prunes** orphaned `<slug>.schema.json` files left by a type the profile no longer declares, so
+  `.lore/schemas/` mirrors the active profile instead of drifting; a single-`--type` export prunes
+  nothing. Two type names that reduce to the same lower-kebab slug — which would collide on one schema
+  (and template) file — are now rejected at profile load (`core/profile.ts`) rather than silently
+  overwriting each other. Output `kind: schema.result`; exit `0` ok · `2` bad usage / unknown or
+  repeated flag / unknown `--type` / repo-escaping `--out` · `4` output directory not writable.
 - **`lore supersede` — record a supersession both ways** (LORE-35.3, the last of LORE-35's three
   refactoring commands; delivers the supersede half of LORE-35). `lore supersede <oldId> <newId>
   [--rewrite-links] [--dry-run]` marks one concept superseded by another and wires the relationship in
