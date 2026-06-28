@@ -15,6 +15,7 @@
  * count justifies the dependency.
  */
 
+import { runCheck } from "./commands/check";
 import { runInit } from "./commands/init";
 import { runNew } from "./commands/new";
 import { runValidate } from "./commands/validate";
@@ -31,6 +32,7 @@ Commands:
   init            Scaffold an empty, conformant OKF bundle (.lore/ + docs/index.md)
   new             Scaffold a typed concept from a template (lore new <type> "<title>")
   validate        Check concept files against OKF + the lore profile (lore validate [paths…])
+  check           Validate internal links/anchors + lint portability across the bundle (lore check [paths…])
 
 Options:
   --json          Machine-readable JSON output (the {schemaVersion, kind, data} envelope)
@@ -203,6 +205,8 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
       return runNew({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     case "validate":
       return runValidate({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
+    case "check":
+      return runCheck({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     default:
       throw new LoreError("usage", `unknown command "${parsed.command}"`, "run `lore --help` to list commands", {
         command: parsed.command,

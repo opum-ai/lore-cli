@@ -152,6 +152,17 @@ function encodePathSegment(segment: string): string {
 // ── Linting the canonical form ──────────────────────────────────────────────────
 
 /**
+ * The portable-markdown path **part** of a destination — everything before a
+ * `#fragment` or `?query`. The single composition of {@link stripFragment} and
+ * {@link stripQuery} (fragment first, so a `?` that lives *inside* a fragment is
+ * not mistaken for a query), shared by the linter ({@link validateLink}) and the
+ * bundle resolver so both split a destination into path / suffix the same way.
+ */
+export function pathPart(target: string): string {
+  return stripQuery(stripFragment(target));
+}
+
+/**
  * The way a link destination departs from the canonical form. Each value is one
  * property of the ADR-0010 link rule, so a caller can branch on the *kind* of
  * portability problem rather than parse the message.
@@ -193,25 +204,25 @@ export interface LinkFinding {
  * is *not* linted — catching an accidental-colon filename is the body-text scan's
  * job (LORE-30), not this per-destination primitive's.
  *
- * The three checks mirror the three machine-checkable properties of the form (the
- * fourth, "relative", is implied by "no leading slash"; "no wikilinks" is a body
- * scan):
+ * The checks mirror the machine-checkable properties of the form (the "relative"
+ * property is implied by "no leading slash"; "no wikilinks" is a body scan):
  *
  * - **`leading-slash`** — a `/`-absolute destination, which resolves against each
  *   consumer's differing server root.
- * - **`missing-extension`** — an internal target with **no file extension at all**
- *   (`../reference/orders`, the `#fragment`/`?query` ignored): it looks like a
- *   concept link that dropped its `.md`, which GitHub will not render to a file. A
- *   target that carries *some* other extension (`../img/x.png`) is a non-concept
- *   asset link, not a dropped-suffix concept link — matching the bundle resolver,
- *   which treats a non-`.md` target as simply *not an edge* rather than a broken
- *   one — so it is left alone.
- * - **`unencoded`** — a path segment that is not canonically percent-encoded:
- *   re-encoding its decoded form (case-insensitively, since `%C3`/`%c3` both
- *   resolve) changes it — a raw space, a raw markdown-significant `(`/`)`, or other
- *   unescaped reserved char — or it carries malformed `%` escaping. An already-
- *   encoded segment (`%20`, lowercase or upper) is clean; double-encoding is not
- *   this check's concern.
+ * - **`missing-extension`** — an internal target missing the canonical **lowercase**
+ *   `.md` suffix ({@link lacksMarkdownSuffix}): either no extension at all
+ *   (`../reference/orders`) or a wrong-case `.md` (`orders.MD`), both of which 404
+ *   on GitHub/Linux. A directory link (`../reference/`), a dotfile
+ *   (`../config/.gitignore`), and any other asset extension (`../img/x.png`) are
+ *   left alone — matching the bundle resolver, which treats a non-`.md` target as
+ *   simply *not an edge* rather than a broken one. The extension is judged on the
+ *   *decoded* path, so the linter and the resolver (which decodes first) agree.
+ * - **`unencoded`** — a destination that will not survive a markdown parser
+ *   ({@link encodingProblem}): a raw space or paren in the path *or* in the
+ *   `#fragment`/`?query`, a malformed `%`-escape, or an interior `//`. A valid but
+ *   non-canonical encoding (`a%41b.md`, lowercase `%c3`) is **clean** — over-encoding
+ *   renders everywhere, so the lint flags what *breaks*, not every deviation from the
+ *   writer's exact bytes.
  *
  * @param target the link destination to classify (the value inside `[text](…)`).
  * @returns a {@link LinkFinding} per violation; empty when portable or external.
@@ -231,58 +242,127 @@ export function validateLink(target: string): LinkFinding[] {
     });
   }
 
-  const path = stripQuery(stripFragment(trimmed));
-  // A dropped-suffix concept link has NO extension at all; a non-.md target that
-  // carries some other extension is an asset link the resolver ignores, not a
-  // broken concept link, so it is not flagged.
-  if (path !== "" && posix.extname(path) === "") {
+  // Split into the path part and the raw `#fragment`/`?query` remainder, the same
+  // way the bundle resolver does (shared {@link pathPart}). Both halves are scanned:
+  // a destination-breaking char in a fragment (`orders.md#Archival Policy`) truncates
+  // the link just as surely as one in the path.
+  const path = pathPart(trimmed);
+  const suffix = trimmed.slice(path.length);
+
+  if (lacksMarkdownSuffix(path)) {
     findings.push({
       target,
       issue: "missing-extension",
-      message: `link "${target}" is missing the .md suffix; GitHub and Obsidian link to the file and need the extension`,
+      message: `link "${target}" is missing the .md suffix; GitHub and Obsidian link to the file and need the lowercase .md extension`,
     });
   }
 
-  for (const segment of path.split("/")) {
-    if (segment === "" || segment === "." || segment === "..") {
-      continue; // separators and relative steps carry nothing to encode
-    }
-    if (!isCanonicallyEncoded(segment)) {
-      findings.push({
-        target,
-        issue: "unencoded",
-        message: `link "${target}" has an unencoded path segment; percent-encode reserved characters (e.g. space -> %20)`,
-      });
-      break; // one finding per destination is enough to flag the form
-    }
+  const problem = encodingProblem(path, suffix);
+  if (problem !== null) {
+    findings.push({ target, issue: "unencoded", message: encodingMessage(target, problem) });
   }
 
   return findings;
 }
 
 /**
- * Whether a path segment is already in canonical percent-encoded form: decoding
- * then re-encoding it (via the same {@link encodePathSegment} encoder, so a raw
- * `(`/`)` is treated as un-encoded too) reproduces it. A raw space (`a b` →
- * `a%20b`) or an unescaped reserved char fails the round-trip; an already-encoded
- * `%20` survives it. Malformed escaping (`%2`) makes {@link decodeURIComponent}
- * throw and counts as not encoded — it is broken either way.
+ * Whether a destination's path part lacks the canonical lowercase `.md` suffix and
+ * so looks like a dropped-extension concept link — judged on the **decoded** path
+ * (`orders%2Emd` decodes to `orders.md`), so the linter and the bundle resolver,
+ * which {@link decodeTarget}s before resolving, agree on what the extension *is*.
  *
- * The comparison is **case-insensitive** because percent-escapes are case-
- * insensitive per RFC-3986 (`%C3` and `%c3` both resolve, on every renderer): a
- * validly lowercase-encoded segment is portable even though the encoder emits
- * uppercase hex. Lowercasing only affects the hex digits — an unreserved letter is
- * identical on both sides of the compare — so it never accepts a genuinely
- * unencoded segment.
+ * The canonical form is **lowercase** `.md` only; the rule mirrors how the resolver
+ * treats a destination, flagging exactly the two cases that 404 on GitHub/Linux:
+ *
+ * - **no extension at all** (`../reference/orders`) — a dropped-suffix concept link;
+ * - **a wrong-case `.md`** (`orders.MD`/`orders.Md`) — meant to be the portable
+ *   suffix but case-broken on a case-sensitive host.
+ *
+ * Three shapes are deliberately **left alone**, matching the resolver's "a non-`.md`
+ * target is simply not a concept edge" rule, so the lint does not cry wolf:
+ *
+ * - an empty path (a pure `#fragment`/`?query` destination);
+ * - a **directory** link (a trailing `/`, e.g. `../reference/`);
+ * - a **dotfile** (`../config/.gitignore`) or any other **asset** extension
+ *   (`../img/x.png`), which is a real non-concept link, not a dropped suffix.
+ *
+ * A dotted filename that *was* meant as a concept (`orders.v2` for `orders.v2.md`)
+ * is indistinguishable from an asset and is treated as one — the same call the
+ * resolver makes; a genuinely broken such link surfaces as a dangling edge in
+ * `lore check`'s link-existence pass, not here.
  */
-function isCanonicallyEncoded(segment: string): boolean {
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(segment);
-  } catch {
-    return false; // malformed percent-escaping is not canonical encoding
+function lacksMarkdownSuffix(rawPath: string): boolean {
+  const path = decodeTarget(rawPath);
+  if (path === "" || path.endsWith("/")) {
+    return false; // pure fragment/query, or a directory link — no file suffix to demand
   }
-  return encodePathSegment(decoded).toLowerCase() === segment.toLowerCase();
+  const last = path.slice(path.lastIndexOf("/") + 1);
+  if (last === "" || last.startsWith(".")) {
+    return false; // a dotfile (.gitignore) is an asset, not a dropped suffix
+  }
+  if (/\.md$/.test(last)) {
+    return false; // canonical lowercase .md
+  }
+  if (/\.md$/i.test(last)) {
+    return true; // wrong-case .MD/.Md — meant to be .md, 404s on a case-sensitive host
+  }
+  return !last.includes("."); // no extension → dropped suffix; any other extension → asset
+}
+
+/**
+ * The kind of encoding problem a destination carries, or `null` when its path and
+ * suffix are both portable. One finding per destination is enough to flag the form,
+ * so the first problem found (in this fixed precedence) wins:
+ *
+ * - **`empty-segment`** — an *interior* `//` (`a//b.md`): an empty path step that is
+ *   non-canonical (a leading `//` is protocol-relative and already external; a
+ *   trailing `/` is a directory link, not an empty segment).
+ * - **`malformed`** — a `%` not followed by two hex digits (`order%2.md`): broken
+ *   percent-escaping, where the generic "encode a space" advice would be wrong.
+ * - **`raw`** — a raw destination-breaking character (ASCII whitespace, or a
+ *   markdown-significant `(`/`)`) anywhere in the path or the `#fragment`/`?query`.
+ *
+ * The scan accepts a **valid but non-canonical** encoding (`a%41b.md` = `aAb.md`, a
+ * lowercase `%c3`): over-encoding survives every renderer, so it is portable even
+ * though {@link normalizeLink} would not emit it — the lint flags what *breaks*, not
+ * every deviation from the writer's exact bytes.
+ */
+function encodingProblem(rawPath: string, suffix: string): "empty-segment" | "malformed" | "raw" | null {
+  const segments = rawPath.split("/");
+  for (let i = 1; i < segments.length - 1; i++) {
+    if (segments[i] === "") {
+      return "empty-segment"; // interior // — endpoints are a leading slash / trailing dir slash
+    }
+  }
+  if (hasMalformedPercent(rawPath) || hasMalformedPercent(suffix)) {
+    return "malformed";
+  }
+  if (hasRawBreaker(rawPath) || hasRawBreaker(suffix)) {
+    return "raw";
+  }
+  return null;
+}
+
+/** The human-readable message for an {@link encodingProblem} kind, naming the offending `target`. */
+function encodingMessage(target: string, problem: "empty-segment" | "malformed" | "raw"): string {
+  switch (problem) {
+    case "empty-segment":
+      return `link "${target}" has an empty path segment ("//"); use a single "/" separator`;
+    case "malformed":
+      return `link "${target}" has a malformed percent-escape (a "%" not followed by two hex digits); fix or remove it`;
+    case "raw":
+      return `link "${target}" has an unencoded character; percent-encode reserved characters (e.g. space -> %20)`;
+  }
+}
+
+/** Whether a string carries a `%` that is not the start of a valid two-hex-digit escape. */
+function hasMalformedPercent(s: string): boolean {
+  return /%(?![0-9A-Fa-f]{2})/.test(s);
+}
+
+/** Whether a string carries a raw character that breaks a markdown link destination (whitespace or a paren). */
+function hasRawBreaker(s: string): boolean {
+  return /[\s()]/.test(s);
 }
 
 // ── Destination classification (shared with the bundle graph) ────────────────────

@@ -8,6 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lore check` — internal link/anchor validation + portability lint** (LORE-30). A new read-only
+  coherence gate built on the pure `checkBundle(files)` engine (`core/check.ts`): a whole-bundle pass
+  that (1) resolves every internal relative `.md` cross-link against the **full bundle file set**
+  — concepts *and* the frontmatter-free `index.md`/`log.md` hubs, so a generated hub link to a
+  non-concept sub-index resolves rather than falsely reporting broken (the LORE-29 link-gate
+  follow-up) — reporting a missing target as a `broken-link` **error**; (2) validates every
+  `#fragment` against the target file's GitHub-style heading slugs (deduped `-1`/`-2`), reporting
+  anchor rot as a `broken-anchor` **error** (AC#1), including same-file anchors; and (3) lints
+  portability — non-portable link *form* via the shared `validateLink` classifier plus an
+  mdast-text-node scan for wikilinks, embeds, callouts, highlights, `%%`-comments, and block refs
+  — as **warnings** that never fail the gate on their own (AC#2). Built on the existing
+  `mdast-util-from-markdown` + `walkMdast` machinery (no `remark-validate-links` / `unified`
+  dependency, keeping zero-config `bunx`); the thin `commands/check.ts` owns discovery/IO/exit and
+  exits `6` on any broken link/anchor (or any warning under `--strict`), `0` otherwise. `--external`
+  (external-URL liveness) is **accepted but deferred** — a stable surface with no non-deterministic
+  networking in the gate. Scope (LORE-30): the two deterministic, dependency-free passes; the
+  status-reconciliation and managed-block-drift passes (which need the Backlog JSON adapter +
+  `lore sync`, LORE-26) are wired in later. Delivered as pure core + tests (`core/check.ts` 100%
+  line/func).
+- **`validateLink` classifier hardening** (LORE-30, folded from PR #19's `/code-review max`). Fixed
+  the per-link portability classifier now that `lore check` is its first caller: a **wrong-case**
+  `.md` (`orders.MD`) is flagged (404s on a case-sensitive host) while **dotfiles** (`.gitignore`),
+  **directory links** (`../reference/`), and other **asset** extensions are correctly left alone; the
+  extension is judged on the **decoded** path so the linter and the bundle resolver agree;
+  destination-breaking characters in a `#fragment`/`?query` are now scanned (not just the path); a
+  **valid-but-non-canonical** encoding (`a%41b.md`, lowercase `%c3`) is accepted instead of mislabeled
+  `unencoded`; an interior `//` is reported; and a **malformed** `%`-escape gets its own message. A
+  shared `pathPart()` (`stripQuery ∘ stripFragment`) replaces the three duplicated call sites and is
+  reused by `bundle.ts`.
 - **Graph-derived `index.md` generation — `core/indexes.ts`** (LORE-29). A pure
   `generateIndexes(g, { existing })` that regenerates every bundle `index.md` as a deterministic,
   byte-stable **navigable hub**: the reserved root entry point plus one local hub per
