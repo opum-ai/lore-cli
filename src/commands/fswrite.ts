@@ -16,7 +16,7 @@
  * semantics are identical across every command.
  */
 
-import { lstatSync, mkdirSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { errnoCode, LoreError } from "../errors";
 
 /** `mkdir -p` for a scaffold directory, mapping a permission failure to a `denied` error. */
@@ -64,6 +64,24 @@ export function writeFileOverwriting(absPath: string, contents: string, relPath:
     writeFileSync(absPath, contents);
   } catch (cause) {
     throw ioError(cause, relPath, "write file");
+  }
+}
+
+/**
+ * Delete the file at `absPath` — the moved-from half of `lore rename`'s relocation (a rename is
+ * "write the new path, then delete the old"). A vanished file (`ENOENT`) is treated as already
+ * gone (idempotent, so a re-run or an interrupted move does not fail); a permission failure maps
+ * to `denied` and any other fault is rethrown via the shared {@link ioError}. Uses `rmSync`
+ * without `recursive`, so a directory occupying the path raises rather than being removed wholesale.
+ */
+export function removeFile(absPath: string, relPath: string): void {
+  try {
+    rmSync(absPath);
+  } catch (cause) {
+    if (errnoCode(cause) === "ENOENT") {
+      return; // already gone — the relocation's delete is idempotent
+    }
+    throw ioError(cause, relPath, "delete file");
   }
 }
 

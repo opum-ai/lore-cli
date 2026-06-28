@@ -1,9 +1,10 @@
 ---
 id: LORE-35.2
 title: lore rename (graph-aware inbound link/ref rewrite)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-06-28 05:18'
+updated_date: '2026-06-28 11:34'
 labels:
   - cmd
 milestone: m-4
