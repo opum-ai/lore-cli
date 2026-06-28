@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lore graph` — emit the bundle's cross-link graph** (LORE-31). `lore graph [<id>] [--format
+  dot|json] [--depth <n>]` surfaces the graph `loadBundle` already builds — concepts as nodes (each
+  with its `type`, optional `title`, and a chars/4 token estimate), OKF body cross-links and the
+  `specs`/`supersedes`/`superseded_by` frontmatter refs as edges (a broken reference is a visible
+  `dangling` edge, never an error). With **no `<id>`** it exports the whole bundle; with an `<id>` it
+  exports the **subgraph** rooted there, bounded to `--depth` hops (unbounded when `--depth` is
+  omitted), narrowed by a new shared, undirected, cycle-tolerant neighborhood traversal
+  (`core/query.ts` `subgraph`) that `lore context`/`orphans` will reuse. `--json` is always the
+  structured model (the machine envelope `kind: graph.export` — nodes, edges, summed token estimate);
+  `--format` selects the **pretty/plain** rendering: `json` (default) a human node/edge listing, `dot`
+  Graphviz text, so `lore graph --format dot | dot -Tpng` works (a piped stdout auto-selects plain).
+  Exit `0` ok · `2` bad usage / unknown or repeated flag / non-`dot|json` `--format` / non-integer
+  `--depth` / `--depth` without a root · `3` root `<id>` not in the bundle.
 - **`lore schema export` — materialize the profile's editor JSON Schemas** (LORE-20). `lore schema
   export [--out <dir>] [--type <T>]` writes one Draft-7 JSON Schema per active-profile type to
   `.lore/schemas/` (default), so the `# yaml-language-server: $schema=…` modeline `lore new`/`lore
