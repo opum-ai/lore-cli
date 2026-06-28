@@ -100,8 +100,8 @@ Concretely:
 4. **Determinism of row order and rendering.** Rows are emitted in a stable,
    defined order — the order of the doc's `tasks:` frontmatter list, with any
    tasks Backlog returns out-of-band appended in `task-N` numeric order — never
-   in Backlog's response order. Each row renders `| [<display-id>](<link>) |
-   <title> | <status> |`. Titles and statuses are taken verbatim from the JSON;
+   in Backlog's response order. Each row renders `| [<display-id>](<link>) | <title> | <status> |`.
+   Titles and statuses are taken verbatim from the JSON;
    table-cell-significant characters (`|`, leading/trailing whitespace) are
    escaped/normalized deterministically.
 

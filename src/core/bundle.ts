@@ -61,7 +61,7 @@ import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { deriveMessage, errnoCode, LoreError, type WarningCollector } from "../errors";
 import { type Concept, idFromPath, serializeConcept, tryParseConcept } from "./concept";
-import { decodeTarget, isExternalTarget, stripFragment, stripQuery } from "./links";
+import { decodeTarget, isExternalTarget, pathPart } from "./links";
 import { compareCodeUnits } from "./order";
 
 /**
@@ -366,7 +366,7 @@ function resolveRef(ref: string, dir: string, byId: ReadonlyMap<string, Concept>
   if (isExternalTarget(ref.trim())) {
     return null;
   }
-  const decoded = decodeTarget(stripQuery(stripFragment(ref)));
+  const decoded = decodeTarget(pathPart(ref));
   if (decoded === "") {
     return null;
   }
@@ -416,7 +416,7 @@ function internalTarget(target: string): string | null {
   if (isExternalTarget(trimmed)) {
     return null; // empty, anchor-only, scheme-qualified, or protocol-relative (external)
   }
-  const path = decodeTarget(stripQuery(stripFragment(trimmed)));
+  const path = decodeTarget(pathPart(trimmed));
   return /\.md$/i.test(path) ? path : null;
 }
 
@@ -525,15 +525,30 @@ export function walkMdast(root: Nodes, visit: (node: Nodes) => void): void {
  * - **Plain CommonMark, no GFM extensions.** Without the footnote extension a
  *   `[^1]: …` line is ordinary text, so any markdown link inside it is a normal
  *   link and an edge — which is correct: it *is* a rendered link.
+ *
+ * Exported so `lore check`'s link/anchor pass (LORE-30) extracts a file's link
+ * destinations through the *same* code-span-safe, reference-resolving walk the graph
+ * uses, instead of re-rolling one that would drift from how edges are built. The
+ * returned destinations keep their `#fragment`/`?query` intact (the resolver strips
+ * them; the anchor check needs them).
  */
-function extractBodyTargets(body: string): string[] {
+export function extractBodyTargets(body: string): string[] {
+  return extractLinkTargets(fromMarkdown(body));
+}
+
+/**
+ * Like {@link extractBodyTargets}, but over an **already-parsed** mdast tree — so a caller
+ * that also needs the tree's headings or text nodes (e.g. `lore check`) parses the body
+ * **once** and shares the tree across every consumer, instead of re-parsing it per pass.
+ */
+export function extractLinkTargets(tree: Nodes): string[] {
   // One walk records, in document order, each inline link's url (a `string`) and
   // each reference link's identifier (a `{ ref }`), and indexes every definition —
   // because a `linkReference` may appear before its definition, resolution waits
   // until the walk is done and every definition is known.
   const definitions = new Map<string, string>();
   const events: Array<string | { ref: string }> = [];
-  walkMdast(fromMarkdown(body), (node) => {
+  walkMdast(tree, (node) => {
     if (node.type === "definition") {
       if (!definitions.has(node.identifier)) {
         definitions.set(node.identifier, node.url);
@@ -557,6 +572,22 @@ function extractBodyTargets(body: string): string[] {
     }
   }
   return targets;
+}
+
+/**
+ * The literal text content of an mdast node — every `text` and `inlineCode` value
+ * concatenated in document order, via the stack-safe {@link walkMdast}. Exported as the one
+ * "what text does this node render" rule so heading-anchor slugging (`lore check`) and
+ * required-section matching (`lore validate`) cannot drift apart on what a heading *says*.
+ */
+export function nodeText(node: Nodes): string {
+  let text = "";
+  walkMdast(node, (current) => {
+    if (current.type === "text" || current.type === "inlineCode") {
+      text += current.value;
+    }
+  });
+  return text;
 }
 
 /**

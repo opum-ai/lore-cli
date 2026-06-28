@@ -22,7 +22,7 @@ Two facts shape everything below:
    [Backlog --json patch runbook](../runbooks/backlog-json-patch.md) and the
    [Backlog JSON schema](backlog-json-schema.md). There is **no `--plain`
    text-parser fallback** — that is a deliberate rejection (see
-   [appendix](#appendix-rejected-fallback-why-lore-does-not-parse---plain)).
+   [appendix](#appendix-rejected-fallback--why-lore-does-not-parse---plain)).
 2. **Writes go through the CLI, never file writes.** `lore` never writes
    `backlog/tasks/*.md` directly. All task mutations run `backlog task create` /
    `backlog task edit`. `lore` is the **sole git committer** for `backlog/`.

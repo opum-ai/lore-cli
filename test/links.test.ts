@@ -196,6 +196,85 @@ describe("validateLink — unencoded segments", () => {
   });
 });
 
+// ── validateLink: the folded PR #19 /code-review classifier defects (LORE-30) ─────
+
+describe("validateLink — wrong-case .md suffix (404s on a case-sensitive host)", () => {
+  test("flags an uppercase .MD as missing the lowercase suffix", () => {
+    expect(issues("../reference/orders.MD")).toEqual(["missing-extension"]);
+  });
+
+  test("flags a mixed-case .Md", () => {
+    expect(issues("orders.Md")).toEqual(["missing-extension"]);
+  });
+});
+
+describe("validateLink — dotfile and directory links are not dropped-suffix", () => {
+  test("does NOT flag a dotfile link (.gitignore is an asset, not a missing .md)", () => {
+    expect(issues("../config/.gitignore")).toEqual([]);
+  });
+
+  test("does NOT flag a trailing-slash directory link", () => {
+    expect(issues("../reference/")).toEqual([]);
+  });
+});
+
+describe("validateLink — destination-breaking chars in the fragment/query", () => {
+  test("flags a raw space inside a #fragment (it truncates the destination)", () => {
+    expect(issues("orders.md#Archival Policy")).toEqual(["unencoded"]);
+  });
+
+  test("flags a raw space inside a ?query", () => {
+    expect(issues("orders.md?v=draft 2")).toEqual(["unencoded"]);
+  });
+
+  test("a normal slugified anchor is clean", () => {
+    expect(validateLink("orders.md#archival-policy")).toEqual([]);
+  });
+});
+
+describe("validateLink — accepts valid but non-canonical encoding", () => {
+  test("does NOT flag an over-encoded segment (a%41b.md == aAb.md everywhere)", () => {
+    expect(validateLink("../reference/a%41b.md")).toEqual([]);
+  });
+
+  test("an over-encoded extension dot (orders%2Emd) is read as .md, not a dropped suffix", () => {
+    expect(validateLink("orders%2Emd")).toEqual([]);
+  });
+});
+
+describe("validateLink — interior double slash", () => {
+  test("flags an empty interior path segment (a//b.md)", () => {
+    expect(issues("a//b.md")).toEqual(["unencoded"]);
+  });
+
+  test("the empty-segment message names the // problem, not 'encode a space'", () => {
+    const [finding] = validateLink("a//b.md");
+    expect(finding?.message).toContain('"//"');
+  });
+});
+
+describe("validateLink — writer/linter agree on the canonical alphabet", () => {
+  test.each([
+    "../reference/order!.md",
+    "../ref/it's.md",
+    "../ref/order*.md",
+  ])("flags a raw char the writer percent-encodes: %p", (target) => {
+    expect(issues(target)).toEqual(["unencoded"]);
+  });
+
+  test("still accepts an over-encoded segment (does not regress the defect-5 fix)", () => {
+    expect(validateLink("../reference/a%41b.md")).toEqual([]);
+  });
+});
+
+describe("validateLink — malformed percent-escape gets its own message", () => {
+  test("a malformed % escape is flagged with a distinct, non-'space' message", () => {
+    const [finding] = validateLink("../reference/order%2.md");
+    expect(finding?.issue).toBe("unencoded");
+    expect(finding?.message).toContain("malformed");
+  });
+});
+
 // ── Shared destination classifiers (the bundle graph reuses these) ────────────────
 
 describe("isExternalTarget", () => {

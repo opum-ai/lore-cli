@@ -37,10 +37,9 @@
  * globs `*.md` does not trip over a non-concept file.
  */
 
-import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { LoreError, WarningCollector } from "../errors";
-import { walkMdast } from "./bundle";
+import { nodeText, walkMdast } from "./bundle";
 import { type Concept, tryParseConcept } from "./concept";
 import { decodeTarget } from "./links";
 import { defaultProfile, type Profile } from "./profile";
@@ -338,17 +337,6 @@ function h2Headings(body: string): string[] {
     }
   });
   return headings;
-}
-
-/** Concatenate the literal text of a node's inline content (`text` + `inlineCode` values). */
-function nodeText(node: Nodes): string {
-  let text = "";
-  walkMdast(node, (current) => {
-    if (current.type === "text" || current.type === "inlineCode") {
-      text += current.value;
-    }
-  });
-  return text;
 }
 
 // ── Cross-cutting: frontmatter quote-safety ────────────────────────────────────—

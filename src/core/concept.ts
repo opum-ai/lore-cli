@@ -287,7 +287,7 @@ export function serializeConceptWithModeline(
  * Multiple leading BOMs are all stripped (some Windows editors emit more than one —
  * the same case config.ts handles).
  */
-function normalizeInput(raw: string): string {
+export function normalizeInput(raw: string): string {
   return raw
     .replace(/^\uFEFF+/, "")
     .replace(/\r\n?/g, "\n")
