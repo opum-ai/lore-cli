@@ -312,8 +312,15 @@ function readError(cause: unknown, what: string, input: Record<string, unknown>)
  * order. The `satisfies` clause pins this list to the non-`"link"` {@link EdgeKind}
  * members, so adding an edge kind without listing it here (or vice versa) is a
  * compile error rather than a silent drift.
+ *
+ * Exported so the rewrite engine (`lore rename`/`supersede`) iterates the **same**
+ * ref fields the graph counts as edges, rather than re-declaring the list and risking
+ * the two drifting (e.g. a future `depends_on` ref kind silently un-rewritten).
  */
-const REF_FIELDS = ["specs", "supersedes", "superseded_by"] as const satisfies readonly Exclude<EdgeKind, "link">[];
+export const REF_FIELDS = ["specs", "supersedes", "superseded_by"] as const satisfies readonly Exclude<
+  EdgeKind,
+  "link"
+>[];
 
 /**
  * Append the `specs`/`supersedes`/`superseded_by` frontmatter edges for one
@@ -356,17 +363,24 @@ function collectBodyEdges(concept: Concept, dir: string, byId: ReadonlyMap<strin
  * `.md` suffix — the bare-id form is exactly what lore writes — which is why the
  * two paths classify the same string differently by design: a body cross-link must
  * be the portable `.md`-suffixed form (ADR-0010), while a frontmatter ref is an id.
+ *
+ * The ref is **trimmed** before classification and resolution, so a whitespace-padded
+ * value resolves to the same id whether reached through the edge collector (which
+ * trims via {@link toRefList}) or a caller that passes a raw frontmatter value (the
+ * rewrite engine). Exported as the single frontmatter-ref→id rule so `lore rename`/
+ * `supersede` repoint exactly the refs the graph counts as edges.
  */
-function resolveRef(ref: string, dir: string, byId: ReadonlyMap<string, Concept>): string | null {
+export function resolveRef(ref: string, dir: string, byId: ReadonlyMap<string, Concept>): string | null {
   // A ref that is external (a `scheme:`/protocol-relative URL) or a bare `#anchor`
   // is not a concept reference — reject it the same way a body link is, so an
   // absolute URL is never run through path normalization (which would mangle its
   // `//`) and a stray `#anchor` never resolves to the referring file's own
   // directory.
-  if (isExternalTarget(ref.trim())) {
+  const trimmed = ref.trim();
+  if (isExternalTarget(trimmed)) {
     return null;
   }
-  const decoded = decodeTarget(pathPart(ref));
+  const decoded = decodeTarget(pathPart(trimmed));
   if (decoded === "") {
     return null;
   }
@@ -392,7 +406,7 @@ function resolveRef(ref: string, dir: string, byId: ReadonlyMap<string, Concept>
  * therefore dangles — the correct signal, since that link is already broken on a
  * case-sensitive filesystem.
  */
-function resolvePath(path: string, dir: string, byId: ReadonlyMap<string, Concept>): string | null {
+export function resolvePath(path: string, dir: string, byId: ReadonlyMap<string, Concept>): string | null {
   const id = idFromPath(posix.join(dir, path));
   return byId.has(id) ? id : null;
 }
@@ -410,8 +424,12 @@ function resolvePath(path: string, dir: string, byId: ReadonlyMap<string, Concep
  * relative and colon-free (ADR-0010), and the portability lint flags any that are
  * not, so this is a deliberate, documented edge rather than a resolution lore
  * needs to second-guess.
+ *
+ * Exported as the single body-link classifier so the rewrite engine (`lore rename`)
+ * decides "is this an internal `.md` link, and to what decoded path" the exact same
+ * way the graph does — trimming first — rather than re-deriving it and drifting.
  */
-function internalTarget(target: string): string | null {
+export function internalTarget(target: string): string | null {
   const trimmed = target.trim();
   if (isExternalTarget(trimmed)) {
     return null; // empty, anchor-only, scheme-qualified, or protocol-relative (external)

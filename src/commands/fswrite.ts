@@ -16,7 +16,7 @@
  * semantics are identical across every command.
  */
 
-import { lstatSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { errnoCode, LoreError } from "../errors";
 
 /** `mkdir -p` for a scaffold directory, mapping a permission failure to a `denied` error. */
@@ -68,20 +68,20 @@ export function writeFileOverwriting(absPath: string, contents: string, relPath:
 }
 
 /**
- * Delete the file at `absPath` — the moved-from half of `lore rename`'s relocation (a rename is
- * "write the new path, then delete the old"). A vanished file (`ENOENT`) is treated as already
- * gone (idempotent, so a re-run or an interrupted move does not fail); a permission failure maps
- * to `denied` and any other fault is rethrown via the shared {@link ioError}. Uses `rmSync`
- * without `recursive`, so a directory occupying the path raises rather than being removed wholesale.
+ * Relocate a file from `fromAbs` to `toAbs` — the filesystem half of `lore rename`. A rename
+ * **renames the source** (rather than writing a new file and deleting the old) for one critical
+ * reason: on a case-insensitive filesystem a case-only rename (`Foo.md` → `foo.md`) targets the
+ * **same inode**, where a write-new-then-delete-old sequence would delete the very file it just
+ * wrote — silent data loss. `renameSync` instead atomically changes the name (including its case)
+ * and is crash-safe: the old path is never gone before the new one exists. The caller guarantees
+ * the destination directory exists and is unoccupied (the never-clobber pre-flight). A permission
+ * failure maps to `denied` and a non-regular blocker to `conflict` via the shared {@link ioError}.
  */
-export function removeFile(absPath: string, relPath: string): void {
+export function moveFile(fromAbs: string, toAbs: string, relPath: string): void {
   try {
-    rmSync(absPath);
+    renameSync(fromAbs, toAbs);
   } catch (cause) {
-    if (errnoCode(cause) === "ENOENT") {
-      return; // already gone — the relocation's delete is idempotent
-    }
-    throw ioError(cause, relPath, "delete file");
+    throw ioError(cause, relPath, "move file");
   }
 }
 

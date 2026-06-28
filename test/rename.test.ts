@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { run } from "../src/cli";
 import { type RenameReport, runRename } from "../src/commands/rename";
 import { loadBundle } from "../src/core/bundle";
+import { INDEX_BLOCK_BEGIN, INDEX_BLOCK_END } from "../src/core/indexes";
 import { type RewritePlan, rewriteInbound } from "../src/core/rewrite";
 import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
@@ -201,6 +202,43 @@ describe("rewriteInbound — splice fidelity", () => {
     const body = writesByPath(plan).get("stories/bulk.md") ?? "";
     expect(body).toBe(original.replace("../reference/orders.md", "../reference/sales-orders.md"));
   });
+
+  test("preserves a ?query suffix from the source bytes", () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    writeDoc("stories/bulk.md", "---\ntype: Story\n---\nLink [x](../reference/orders.md?v=2).\n");
+    const plan = rewriteInbound(graph(), "reference/orders", "reference/sales-orders", { move: true });
+    expect(writesByPath(plan).get("stories/bulk.md")).toContain("[x](../reference/sales-orders.md?v=2)");
+  });
+});
+
+// ── core: the moved file's frontmatter and orphan definitions (review fixes) ───────
+
+describe("rewriteInbound — moved-file outbound references (review fixes)", () => {
+  test("canonicalizes a path-form frontmatter ref to another concept into a bare id (#8)", () => {
+    writeDoc("adr/0009-x.md", "---\ntype: Reference\n---\nADR.\n");
+    writeDoc("reference/orders.md", "---\ntype: Reference\nspecs:\n  - ../adr/0009-x.md\n---\nText.\n");
+    const plan = rewriteInbound(graph(), "reference/orders", "deep/nested/orders", { move: true });
+    const moved = writesByPath(plan).get("deep/nested/orders.md") ?? "";
+    expect(moved).toContain("- adr/0009-x"); // bare id survives the move regardless of depth
+    expect(moved).not.toContain("0009-x.md");
+  });
+
+  test("recomputes the moved file's orphan (unused) reference definition (#12)", () => {
+    writeDoc("stories/bulk.md", "---\ntype: Story\n---\nBulk.\n");
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nText.\n\n[orphan]: ../stories/bulk.md\n");
+    const plan = rewriteInbound(graph(), "reference/orders", "deep/nested/orders", { move: true });
+    const moved = writesByPath(plan).get("deep/nested/orders.md") ?? "";
+    expect(moved).toContain("[orphan]: ../../stories/bulk.md"); // recomputed for the deeper location
+  });
+
+  test("rewrites a scalar (non-list) frontmatter ref pointing at the renamed concept", () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    // An unknown type leaves fields unconstrained, so a single scalar `supersedes` is accepted —
+    // the bundle still counts it as an inbound edge, so rename must repoint it.
+    writeDoc("stories/heir.md", "---\ntype: Custom\nsupersedes: ../reference/orders.md\n---\nHeir.\n");
+    const plan = rewriteInbound(graph(), "reference/orders", "reference/sales-orders", { move: true });
+    expect(writesByPath(plan).get("stories/heir.md")).toContain("supersedes: reference/sales-orders");
+  });
 });
 
 // ── core: rewriteInbound — modes and errors ───────────────────────────────────────
@@ -379,6 +417,53 @@ describe("lore rename — errors and arg parsing", () => {
     const { code } = renameCmd(["--", "reference/orders", "reference/sales-orders"]);
     expect(code).toBe(EXIT_OK);
     expect(existsSync(join(root, "docs/reference/sales-orders.md"))).toBe(true);
+  });
+
+  test("renaming onto a reserved file name (index/log) is a usage error (#4)", () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    expect(expectError(["reference/orders", "reference/index"]).type).toBe("usage");
+    expect(expectError(["reference/orders", "reference/log"]).type).toBe("usage");
+    expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true); // nothing moved
+  });
+
+  test("renaming onto an existing non-concept .md file is a conflict, not a clobber (#3)", () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    const nonConcept = "Just prose, no frontmatter — not a concept.\n";
+    writeDoc("reference/notes.md", nonConcept);
+    expect(expectError(["reference/orders", "reference/notes"]).type).toBe("conflict");
+    expect(readDoc("reference/notes.md")).toBe(nonConcept); // untouched
+    expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true); // source intact
+  });
+});
+
+describe("lore rename — data-loss-safe relocation (review fixes)", () => {
+  test("a case-only rename does not destroy the file (#1)", () => {
+    writeDoc("stories/Foo.md", "---\ntype: Story\n---\nBody of Foo.\n");
+    const { code } = renameCmd(["stories/Foo", "stories/foo"]);
+    expect(code).toBe(EXIT_OK);
+    // On any filesystem the lowercase target exists with the content preserved (never deleted).
+    expect(existsSync(join(root, "docs/stories/foo.md"))).toBe(true);
+    expect(readDoc("stories/foo.md")).toContain("Body of Foo.");
+  });
+
+  test("renames into a not-yet-existing directory (creates it) (#5)", () => {
+    writeDoc("stories/old.md", "---\ntype: Story\n---\nMoving to a new category.\n");
+    const { code } = renameCmd(["stories/old", "archive/2026/old"]);
+    expect(code).toBe(EXIT_OK);
+    expect(existsSync(join(root, "docs/archive/2026/old.md"))).toBe(true);
+    expect(existsSync(join(root, "docs/stories/old.md"))).toBe(false);
+  });
+
+  test("clears the stale listing in a directory the rename empties (#7)", () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntitle: Orders\n---\nOrders.\n");
+    const refIndex = `# reference\n\n${INDEX_BLOCK_BEGIN}\n- [Orders](orders.md)\n${INDEX_BLOCK_END}\n`;
+    writeDoc("reference/index.md", refIndex);
+    const { code } = renameCmd(["reference/orders", "stories/orders"]);
+    expect(code).toBe(EXIT_OK);
+    const after = readDoc("reference/index.md");
+    expect(after).not.toContain("[Orders](orders.md)"); // dead link gone from the managed block
+    expect(after).toContain(INDEX_BLOCK_BEGIN); // block still present, now empty
+    expect(after).toContain(INDEX_BLOCK_END);
   });
 });
 
