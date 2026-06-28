@@ -246,3 +246,42 @@ describe("cli — option terminator and bare dash", () => {
     expect(c.stderr.text()).toContain("unknown command");
   });
 });
+
+describe("cli — schema dispatch", () => {
+  let cwd: string;
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), "lore-cli-schema-"));
+  });
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test("`lore schema export` emits the schema.result envelope and writes schemas", () => {
+    const c = ctx({ cwd });
+    expect(run(argv("schema", "export", "--json"), c)).toBe(0);
+    const envelope = JSON.parse(c.stdout.text()) as { kind: string; data: { count: number } };
+    expect(envelope.kind).toBe("schema.result");
+    expect(envelope.data.count).toBe(6);
+    expect(existsSync(join(cwd, ".lore/schemas/reference.schema.json"))).toBe(true);
+  });
+
+  test("the router forwards `schema`'s value flags to the command", () => {
+    const c = ctx({ cwd });
+    // `--type` is a value-taking command flag the global parser must forward verbatim.
+    expect(run(argv("schema", "export", "--type", "ADR", "--json"), c)).toBe(0);
+    const envelope = JSON.parse(c.stdout.text()) as { kind: string; data: { count: number } };
+    expect(envelope.data.count).toBe(1);
+  });
+
+  test("an unknown flag on `schema` is a usage error", () => {
+    const c = ctx({ cwd });
+    expect(run(argv("schema", "export", "--bogus"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).toContain("unknown option");
+  });
+
+  test("`lore --help` lists the schema command", () => {
+    const c = ctx();
+    expect(run(argv("--help"), c)).toBe(0);
+    expect(c.stdout.text()).toContain("schema");
+  });
+});

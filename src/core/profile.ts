@@ -354,6 +354,7 @@ function parseTypes(value: unknown, source: string): ParsedType[] {
     });
   }
   const seen = new Set<string>();
+  const seenSlugs = new Set<string>();
   const types: ParsedType[] = [];
   for (let i = 0; i < value.length; i++) {
     const table = asTable(value[i], `types[${i}]`, source);
@@ -363,7 +364,8 @@ function parseTypes(value: unknown, source: string): ParsedType[] {
       });
     }
     const name = requireString(table.name, `types[${i}].name`, source).trim();
-    if (slugForTypeName(name) === "") {
+    const slug = slugForTypeName(name);
+    if (slug === "") {
       fail(
         `${source}: types[${i}].name "${name}" has no slug-able characters`,
         "give the type a name with at least one letter or digit",
@@ -376,7 +378,19 @@ function parseTypes(value: unknown, source: string): ParsedType[] {
         key: `types[${i}].name`,
       });
     }
+    // Two type names that differ but reduce to the same LOWER-KEBAB slug (e.g. "Foo Bar" / "Foo-Bar")
+    // would key the SAME `.lore/schemas/<slug>.schema.json` and `.lore/templates/<slug>.md` file, so the
+    // second silently overwrites the first on export/scaffold (a count-lying data loss). The slug is the
+    // file identity, so it must be unique too — not just the type name. Reject the collision at load.
+    if (seenSlugs.has(slug)) {
+      fail(
+        `${source}: types[${i}].name "${name}" reduces to the schema/template slug "${slug}", already used by another type`,
+        "two type names must not share a lower-kebab slug (it names their schema and template files); rename one",
+        { key: `types[${i}].name` },
+      );
+    }
     seen.add(lower);
+    seenSlugs.add(slug);
     const fields = parseFieldTable(
       asTable(table.fields, `types[${i}].fields`, source) ?? {},
       `types[${i}].fields`,

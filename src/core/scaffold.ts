@@ -27,7 +27,7 @@
 import { CONFIG_REL_PATH } from "../config";
 import { type Concept, idFromPath, serializeConcept, serializeConceptWithModeline } from "./concept";
 import { defaultProfile, PROFILE_REL_PATH, type Profile } from "./profile";
-import { SCHEMAS_DIR, schemaFileName, schemaModeline } from "./schema";
+import { emitSchemaFiles, schemaModeline } from "./schema";
 
 /**
  * The bundle root — the directory every concept lives under, relative to the repo root.
@@ -100,15 +100,12 @@ export function buildScaffold(options: ScaffoldOptions): ScaffoldPlan {
 
 /**
  * One {@link ScaffoldFile} per profile type, each the generated Draft-7 JSON Schema pretty-printed
- * with a trailing newline. Emitted in the profile's type-declaration order so the plan (and its
- * golden) is stable. The 2-space, newline-terminated formatting is the byte contract these schema
- * files commit to.
+ * with a trailing newline, in the profile's type-declaration order so the plan (and its golden) is
+ * stable. Delegates to the shared {@link emitSchemaFiles} (the byte contract `lore schema export`
+ * reuses), so a scaffolded schema and a re-exported one can never diverge.
  */
 function schemaFiles(profile: Profile): ScaffoldFile[] {
-  return [...profile.types.values()].map((type) => ({
-    path: `${SCHEMAS_DIR}/${schemaFileName(type.name)}`,
-    contents: `${JSON.stringify(type.jsonSchema, null, 2)}\n`,
-  }));
+  return emitSchemaFiles(profile);
 }
 
 /**

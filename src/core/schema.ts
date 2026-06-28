@@ -306,3 +306,36 @@ export function schemaModeline(docPath: string, type: string): string {
   const relDir = posix.relative(posix.dirname(docPath), SCHEMAS_DIR);
   return `# yaml-language-server: $schema=${posix.join(relDir, schemaFileName(type))}`;
 }
+
+/** A single emitted JSON Schema file: its `<dir>`-relative path and the exact bytes to write. */
+export interface SchemaFile {
+  /** `<dir>/<slug>.schema.json`, POSIX-joined (`.lore/schemas/reference.schema.json`). */
+  readonly path: string;
+  /** The type's Draft-7 JSON Schema, two-space pretty-printed with one trailing newline (the byte contract). */
+  readonly contents: string;
+}
+
+/** Options for {@link emitSchemaFiles}. */
+export interface EmitSchemaFilesOptions {
+  /** Directory the files are placed under (default {@link SCHEMAS_DIR}). */
+  readonly dir?: string;
+  /** Emit only this one compiled type; default: every type in the profile, in declaration order. */
+  readonly only?: CompiledType;
+}
+
+/**
+ * The emitted JSON Schema files for a `profile` — one {@link SchemaFile} per type (or just
+ * `options.only`), each the type's generated Draft-7 JSON Schema pretty-printed with a two-space
+ * indent and a single trailing newline (the committed byte contract), placed under `options.dir`.
+ * Pure and deterministic: the same profile always yields the same files in the same order. This is
+ * the **single source** `lore init` ({@link import("./scaffold").buildScaffold}) and
+ * `lore schema export` share, so a scaffolded schema file and a re-exported one are byte-identical.
+ */
+export function emitSchemaFiles(profile: Profile, options: EmitSchemaFilesOptions = {}): SchemaFile[] {
+  const dir = options.dir ?? SCHEMAS_DIR;
+  const types = options.only ? [options.only] : [...profile.types.values()];
+  return types.map((type) => ({
+    path: posix.join(dir, schemaFileName(type.name)),
+    contents: `${JSON.stringify(type.jsonSchema, null, 2)}\n`,
+  }));
+}
