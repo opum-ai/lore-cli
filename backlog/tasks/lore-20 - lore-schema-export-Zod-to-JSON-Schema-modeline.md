@@ -1,11 +1,11 @@
 ---
 id: LORE-20
 title: lore schema export (Zod to JSON Schema + modeline)
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-06-28 17:40'
+updated_date: '2026-06-28 19:32'
 labels:
   - cmd
 milestone: m-2
