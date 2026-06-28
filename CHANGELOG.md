@@ -8,6 +8,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lore rename` — graph-aware concept rename** (LORE-35.2, the second of LORE-35's three refactoring
+  commands; delivers LORE-35 AC#2). `lore rename <oldId> <newId> [--dry-run]` moves a concept to a new
+  id/path and repoints **every** inbound reference to it — body cross-links (including used
+  reference-style definitions, with any `#fragment`/`?query` preserved) and `specs`/`supersedes`/
+  `superseded_by` frontmatter refs (rewritten to the canonical bare-id form) — then recomputes the
+  moved file's **own** outbound links against its new directory (a sibling becomes a `../` link, a
+  self-link retargets, and even a dangling link is corrected by pure path arithmetic), and regenerates
+  the affected `index.md` listing hubs against the post-rename graph. The new pure `core/rewrite.ts`
+  engine (`rewriteInbound`, 100% func) computes the rewrite plan from the bundle graph and edits link
+  destinations by a **surgical mdast-position string splice** — never parse→stringify — so authored
+  prose outside a changed destination is byte-for-byte unchanged (AC#3) and no markdown serializer is
+  pulled in (ADR-0001/ADR-0008 §7). Because a parsed `node.url` is not byte-equal to its source
+  (angle-bracket `<…>` wrapper stripped, `\(`→`(` unescaped, `"title"` dropped), the destination's
+  exact byte range is located structurally inside each link node rather than by text search.
+  Resolution mirrors the bundle graph's own rules (case-sensitive, leading-slash absorbed), so it
+  rewrites exactly the edges the graph counts; only **concept** files are rewritten (a link from a
+  non-concept file is left for `lore check`). The thin `commands/rename.ts` owns IO: it loads the
+  bundle, relocates the renamed file atomically (`fswrite.moveFile` renames the inode), skips an
+  unrelated already-canonical hub (no churn), and emits a `rename.result` report. Exit `0` ok · `2`
+  bad usage / same id / reserved target name · `3` old id not found · `5` new id already exists.
+  Hardened after a `/code-review max` pass that found 15 correctness defects, all folded — a cluster
+  of them silent **data loss**: a case-only rename (`Foo`→`foo`) on a case-insensitive filesystem no
+  longer deletes the just-written file (the file is **renamed**, not write-new-then-delete-old); a
+  `newId` that collides with an existing file is rejected even when it differs only in **case** or is
+  a **non-concept** `.md` (the conflict guard now checks the filesystem, not just the graph); renaming
+  onto a reserved `index`/`log` name is refused; renaming into a **not-yet-existing directory** now
+  creates it (`mkdir -p`) instead of failing ENOENT; and emptying a directory of its last concept now
+  **clears that directory's stale `index.md` listing** instead of leaving a dead link in a managed
+  block. The rewrite engine was tightened too: the moved file's own path-form **frontmatter** refs to
+  *other* concepts and its **orphan** reference definitions are now recomputed for the new location
+  (previously asymmetric with body links); a `#fragment`/`?query` is preserved from the **source**
+  bytes (not the decoded `node.url`), keeping AC#3 byte-fidelity; and the engine now **reuses**
+  `bundle.ts`'s `resolveRef`/`internalTarget`/`resolvePath`/`REF_FIELDS` (exported) instead of
+  re-implementing them, so its trimming and classification can no longer drift from how the graph
+  counts edges. (Full cross-file transactional rollback on a mid-commit IO failure remains a shared
+  concern with `lore replace`, deferred.)
 - **`lore replace` — managed-region-safe find-and-replace** (LORE-35.1, the first of LORE-35's three
   refactoring commands). Literal or regex (`--regex`, with `$1`/`$&` substitution) find-and-replace
   across one doc or the whole `docs/` bundle (`--in <glob>`, repeatable), with `--dry-run` to preview.

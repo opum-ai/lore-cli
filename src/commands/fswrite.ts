@@ -16,7 +16,7 @@
  * semantics are identical across every command.
  */
 
-import { lstatSync, mkdirSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { errnoCode, LoreError } from "../errors";
 
 /** `mkdir -p` for a scaffold directory, mapping a permission failure to a `denied` error. */
@@ -64,6 +64,24 @@ export function writeFileOverwriting(absPath: string, contents: string, relPath:
     writeFileSync(absPath, contents);
   } catch (cause) {
     throw ioError(cause, relPath, "write file");
+  }
+}
+
+/**
+ * Relocate a file from `fromAbs` to `toAbs` — the filesystem half of `lore rename`. A rename
+ * **renames the source** (rather than writing a new file and deleting the old) for one critical
+ * reason: on a case-insensitive filesystem a case-only rename (`Foo.md` → `foo.md`) targets the
+ * **same inode**, where a write-new-then-delete-old sequence would delete the very file it just
+ * wrote — silent data loss. `renameSync` instead atomically changes the name (including its case)
+ * and is crash-safe: the old path is never gone before the new one exists. The caller guarantees
+ * the destination directory exists and is unoccupied (the never-clobber pre-flight). A permission
+ * failure maps to `denied` and a non-regular blocker to `conflict` via the shared {@link ioError}.
+ */
+export function moveFile(fromAbs: string, toAbs: string, relPath: string): void {
+  try {
+    renameSync(fromAbs, toAbs);
+  } catch (cause) {
+    throw ioError(cause, relPath, "move file");
   }
 }
 
