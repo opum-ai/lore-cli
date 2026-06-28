@@ -262,6 +262,37 @@ describe("rewriteInbound — modes and validation", () => {
     expect(writes.has("reference/orders.md")).toBe(false); // the superseded file is not moved/rewritten
   });
 
+  test("rewriteFrontmatterRefs=false repoints body links but leaves frontmatter refs intact (supersede)", () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    writeDoc("reference/orders-v2.md", "---\ntype: Reference\n---\nNewer.\n");
+    writeDoc(
+      "stories/bulk.md",
+      "---\ntype: Story\nspecs:\n  - ../reference/orders.md\n---\nUses [orders](../reference/orders.md).\n",
+    );
+    const plan = rewriteInbound(graph(), "reference/orders", "reference/orders-v2", {
+      move: false,
+      rewriteFrontmatterRefs: false,
+    });
+    const body = writesByPath(plan).get("stories/bulk.md") ?? "";
+    expect(body).toContain("[orders](../reference/orders-v2.md)"); // body link repointed
+    expect(body).toContain("- ../reference/orders.md"); // frontmatter ref preserved (history, not a dead pointer)
+  });
+
+  test("exclude skips the listed ids entirely — they are neither rewritten nor planned", () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    writeDoc("reference/orders-v2.md", "---\ntype: Reference\n---\nNewer.\n");
+    // both bulk.md and the excluded heir.md link to orders; only bulk.md should be planned
+    writeDoc("stories/bulk.md", "---\ntype: Story\n---\n[orders](../reference/orders.md)\n");
+    writeDoc("stories/heir.md", "---\ntype: Story\n---\n[orders](../reference/orders.md)\n");
+    const plan = rewriteInbound(graph(), "reference/orders", "reference/orders-v2", {
+      move: false,
+      exclude: new Set(["stories/heir"]),
+    });
+    const paths = plan.writes.map((w) => w.path);
+    expect(paths).toContain("stories/bulk.md");
+    expect(paths).not.toContain("stories/heir.md"); // excluded — engine never touches it
+  });
+
   test("throws not_found when the old id is not a concept", () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
     expect(() => rewriteInbound(graph(), "reference/ghost", "reference/x", { move: true })).toThrow(LoreError);
