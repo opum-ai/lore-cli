@@ -1,11 +1,11 @@
 ---
 id: LORE-35
 title: lore replace / rename / supersede
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-06-28 04:05'
+updated_date: '2026-06-28 15:58'
 labels:
   - cmd
 milestone: m-4
