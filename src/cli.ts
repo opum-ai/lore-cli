@@ -18,6 +18,7 @@
 import { runCheck } from "./commands/check";
 import { runInit } from "./commands/init";
 import { runNew } from "./commands/new";
+import { runReplace } from "./commands/replace";
 import { runValidate } from "./commands/validate";
 import { EXIT_OK, LoreError, reportError, type Writer } from "./errors";
 import { VERSION } from "./meta";
@@ -33,6 +34,7 @@ Commands:
   new             Scaffold a typed concept from a template (lore new <type> "<title>")
   validate        Check concept files against OKF + the lore profile (lore validate [paths…])
   check           Validate internal links/anchors + lint portability across the bundle (lore check [paths…])
+  replace         Find-and-replace across the bundle, skipping managed regions (lore replace "<find>" "<replace>")
 
 Options:
   --json          Machine-readable JSON output (the {schemaVersion, kind, data} envelope)
@@ -207,6 +209,8 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
       return runValidate({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     case "check":
       return runCheck({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
+    case "replace":
+      return runReplace({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     default:
       throw new LoreError("usage", `unknown command "${parsed.command}"`, "run `lore --help` to list commands", {
         command: parsed.command,

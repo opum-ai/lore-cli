@@ -22,13 +22,14 @@
  * keeps the surface stable without adding non-deterministic networking to the gate.
  */
 
-import { readFileSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { join } from "node:path";
 import { walkMarkdown } from "../core/bundle";
 import { type CheckFinding, type CheckInputFile, type CheckReport, checkBundle } from "../core/check";
 import { DOCS_DIR } from "../core/scaffold";
 import { ANSI, EXIT_CODES, EXIT_OK, errnoCode, LoreError, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { readSource } from "./discover";
 
 /** Options for {@link runCheck}; `root` and the streams are injectable for tests. */
 export interface CheckOptions {
@@ -222,24 +223,6 @@ function expandRoot(absRoot: string, given: string, warnings: WarningCollector):
     );
   }
   return walkMarkdown(absRoot, warnings);
-}
-
-/** Read one bundle file as UTF-8, mapping an I/O failure to a classified {@link LoreError}. */
-function readSource(abs: string, display: string): string {
-  try {
-    return readFileSync(abs, "utf8");
-  } catch (cause) {
-    const code = errnoCode(cause);
-    if (code === "EACCES" || code === "EPERM") {
-      throw new LoreError("denied", `permission denied reading ${display}`, `make ${display} readable`, {
-        path: display,
-        code,
-      });
-    }
-    throw new LoreError("not_found", `cannot read ${display}`, "check the path exists and is readable", {
-      path: display,
-    });
-  }
 }
 
 // ── Output ─────────────────────────────────────────────────────────────────────

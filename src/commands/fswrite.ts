@@ -1,16 +1,19 @@
 /**
- * commands/fswrite.ts — the shared write seam for scaffolding commands.
+ * commands/fswrite.ts — the shared write seam for file-writing commands.
  *
- * `lore init` and `lore new` both create files the same way: ensure parent directories
- * exist, then write each file **only when absent** so a re-run (or a pre-existing user
- * edit) is never clobbered. Centralizing that here means the never-clobber and
- * filesystem-conflict semantics are identical across commands — a directory or symlink
- * sitting where a file must go is the same `conflict` {@link LoreError} (exit 5) whether
- * it blocks `init`'s scaffold or `new`'s output — instead of each command re-deriving the
- * `wx`/`EEXIST`/`lstat` dance and drifting.
+ * Two write disciplines live here, one per command family:
+ *
+ * - **never-clobber** — `lore init` and `lore new` create files **only when absent**
+ *   ({@link createIfAbsent}), so a re-run (or a pre-existing user edit) is never overwritten.
+ *   A directory or symlink sitting where a file must go is a `conflict` {@link LoreError}
+ *   (exit 5) for both, instead of each command re-deriving the `wx`/`EEXIST`/`lstat` dance.
+ * - **overwrite** — the refactoring commands (`lore replace`/`rename`/`supersede`) rewrite
+ *   the bytes of files that already exist ({@link writeFileOverwriting}). This is deliberately
+ *   *not* never-clobber: the whole point is to edit an existing doc in place.
  *
  * All side effects live in the command layer (lore-design §2.1); core stays pure. These
- * helpers are that side-effecting layer, factored to one module.
+ * helpers are that side-effecting layer, factored to one module so the filesystem-conflict
+ * semantics are identical across every command.
  */
 
 import { lstatSync, mkdirSync, writeFileSync } from "node:fs";
@@ -49,6 +52,22 @@ export function createIfAbsent(absPath: string, contents: string, relPath: strin
 }
 
 /**
+ * Overwrite (or create) a file with `contents`, the write discipline the refactoring commands
+ * need: `lore replace`/`rename`/`supersede` edit the bytes of a doc that already exists, so —
+ * unlike {@link createIfAbsent} — an existing regular file is *meant* to be replaced. Parent
+ * directories are assumed to exist (a refactor writes back over a file it just read); a
+ * permission failure maps to `denied` and a non-regular entry blocking the path to `conflict`,
+ * via the shared {@link ioError}.
+ */
+export function writeFileOverwriting(absPath: string, contents: string, relPath: string): void {
+  try {
+    writeFileSync(absPath, contents);
+  } catch (cause) {
+    throw ioError(cause, relPath, "write file");
+  }
+}
+
+/**
  * Whether the entry already at `absPath` is a regular file. Uses `lstat` (does not
  * follow symlinks), so a symlink occupying a path is treated as the non-regular conflict
  * it is rather than silently honored via its target. A failing stat — the entry vanished
@@ -65,11 +84,11 @@ function existingIsRegularFile(absPath: string): boolean {
 
 /**
  * Map a filesystem failure to a diagnostic. A permission error (`EACCES`/`EPERM`)
- * becomes a `denied` {@link LoreError}; a file occupying a path lore needs as a
- * directory (`EEXIST` on `mkdir`) or a file sitting on an ancestor segment (`ENOTDIR`)
- * becomes a `conflict` {@link LoreError}. Both carry an actionable hint. Anything else
- * is rethrown so a genuinely unexpected IO fault surfaces as an uncaught failure
- * (exit 1, "report this") rather than being mislabeled a user condition.
+ * becomes a `denied` {@link LoreError}; a non-regular entry occupying a path lore needs — a directory
+ * where a file must go (`EISDIR` on an overwrite, `EEXIST` on a never-clobber `mkdir`) or a file
+ * sitting on an ancestor segment (`ENOTDIR`) — becomes a `conflict` {@link LoreError}. Both carry an
+ * actionable hint. Anything else is rethrown so a genuinely unexpected IO fault surfaces as an
+ * uncaught failure (exit 1, "report this") rather than being mislabeled a user condition.
  */
 export function ioError(cause: unknown, relPath: string, action: string): unknown {
   const code = errnoCode(cause);
@@ -81,7 +100,7 @@ export function ioError(cause: unknown, relPath: string, action: string): unknow
       { path: relPath, code },
     );
   }
-  if (code === "EEXIST" || code === "ENOTDIR") {
+  if (code === "EEXIST" || code === "ENOTDIR" || code === "EISDIR") {
     return conflictError(relPath, code);
   }
   return cause;
