@@ -8,6 +8,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lore replace` — managed-region-safe find-and-replace** (LORE-35.1, the first of LORE-35's three
+  refactoring commands). Literal or regex (`--regex`, with `$1`/`$&` substitution) find-and-replace
+  across one doc or the whole `docs/` bundle (`--in <glob>`, repeatable), with `--dry-run` to preview.
+  Its inviolable rule is AC#1: a lore-**managed region is never touched**. The pure `replaceInText`
+  engine (`core/replace.ts`) partitions each file at its managed-region boundaries and rewrites only
+  the author-owned gaps, stitching every managed region back byte-for-byte and counting matches
+  outside those regions only — so a refactor can never corrupt or churn machine-owned content that
+  `lore sync` regenerates. Managed regions come from a small extensible marker registry
+  (`MANAGED_MARKERS`); today the only kind is the `<!-- lore:index:begin/end -->` listing block
+  (markers imported from `core/indexes.ts` for one source of truth), with `<!-- lore:tasks -->` a
+  one-entry addition once LORE-22 lands. The thin `commands/replace.ts` owns discovery/IO: `.md`-only
+  targeting (a glob match on `mkdocs.yml` or other config is left alone), `Bun.Glob` scoping confined
+  to the repo, overwrite writes via a new `fswrite.writeFileOverwriting`, and a `replace.result`
+  report (per-file counts + run totals). Exit `0` ok · `2` invalid regex / bad usage. Delivered as
+  pure core (100% line/func) + tests.
+  Hardened after a `/code-review max` pass that found 11 correctness defects, all folded: the engine now
+  runs **one pass over the whole document** (so regex anchors/`\b`/lookaround bind to the real document,
+  not to the gaps around a managed block) and skips any match overlapping a managed region, with explicit
+  `$1`/`$&`/`` $` ``/`$'`/`$<name>` expansion verified byte-for-byte against `String.prototype.replace`;
+  an empty-**matching** pattern (`x*`, `a?`, `\b`, `^`, …) is rejected up front, not just the literal
+  empty find; managed-region bounds are now located by the **shared** `indexes.locateManagedBlock`
+  (first-begin → last-end) so `replace` protects exactly the span `lore sync`/`check` regenerate
+  (including the prose between two blocks); discovery **skips symlinks** (a write can't escape the repo),
+  **de-duplicates by canonical realpath** (one physical file rewritten once, never double-applied),
+  resolves **absolute `--in` globs** correctly, and **excludes the generated `log.md`**; the pattern is
+  validated **once up front** so a bad pattern fails even with zero matched files; all reads + replaces
+  complete **before any write** (a read error or bad pattern aborts atomically, leaving the bundle
+  untouched); a **no-op** replacement (`find === replace`) changes and reports nothing; and
+  `writeFileOverwriting` maps `EISDIR` to a `conflict` (exit 5). The shared file-read/identity helpers
+  were extracted to `commands/discover.ts` (`readSource`/`canonicalIdentity`/`toRepoRelative`/
+  `withinRepo`), de-duplicating the copies in `check`/`validate`. (The shared flag-tokenizer cleanup
+  across the four command parsers is deferred.)
 - **`lore check` — internal link/anchor validation + portability lint** (LORE-30). A new read-only
   coherence gate built on the pure `checkBundle(files)` engine (`core/check.ts`): a whole-bundle pass
   that (1) resolves every internal relative `.md` cross-link against the **full bundle file set**

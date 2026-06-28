@@ -267,16 +267,32 @@ function render(current: string | undefined, block: string, dir: string): string
  * resolves; here it is a documented limitation of the string splice.
  */
 function blockBounds(content: string): { start: number; end: number } | null {
-  const start = content.indexOf(INDEX_BLOCK_BEGIN);
+  return locateManagedBlock(content, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END);
+}
+
+/**
+ * The generic first-begin → last-end block locator behind {@link blockBounds}, exported as the **one**
+ * rule for where a lore-managed region lives in raw text — `[start, end)` spanning the first `begin`
+ * marker to the last `end` marker (markers included), or to end-of-file when no `end` follows the
+ * begin (a truncated region), or `null` when no `begin` is present.
+ *
+ * Exported so every consumer that must agree on a managed region's extent uses the *same* arithmetic:
+ * index regeneration ({@link generateIndexes}) splices it, and `lore replace` (LORE-35) protects it.
+ * Sharing this is what keeps `replace` from editing a span that `lore sync` would later regenerate —
+ * the first-begin → last-end collapse (which folds a duplicated/merge-artifact block into one region)
+ * must be identical on both sides, or a refactor could land in bytes `sync` silently reverts.
+ */
+export function locateManagedBlock(content: string, begin: string, end: string): { start: number; end: number } | null {
+  const start = content.indexOf(begin);
   if (start === -1) {
     return null;
   }
-  const lastEnd = content.lastIndexOf(INDEX_BLOCK_END);
+  const lastEnd = content.lastIndexOf(end);
   // No end marker after the begin (truncated region): the region runs to end-of-file.
-  if (lastEnd < start + INDEX_BLOCK_BEGIN.length) {
+  if (lastEnd < start + begin.length) {
     return { start, end: content.length };
   }
-  return { start, end: lastEnd + INDEX_BLOCK_END.length };
+  return { start, end: lastEnd + end.length };
 }
 
 /** The synthesized heading for a brand-new index: the directory's base name, or `index` for the root. */

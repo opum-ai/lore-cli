@@ -15,8 +15,8 @@
  * unreadable path) throws, funneling through the router's one error seam like every command.
  */
 
-import { readFileSync, realpathSync, statSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { statSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { walkMarkdown } from "../core/bundle";
 import { loadProfile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
@@ -24,6 +24,7 @@ import { canonicalType } from "../core/schema";
 import { type FileReport, type Finding, type ValidateReport, validateFiles } from "../core/validate";
 import { ANSI, EXIT_CODES, EXIT_OK, errnoCode, LoreError, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { canonicalIdentity, readSource, toRepoRelative } from "./discover";
 
 /** Options for {@link runValidate}; `root` and the streams are injectable for tests. */
 export interface ValidateOptions {
@@ -169,20 +170,6 @@ function collectFiles(root: string, paths: readonly string[], warnings: WarningC
 }
 
 /**
- * A stable de-duplication key for an absolute file path: its `realpath` when resolvable (which
- * folds case on a case-insensitive filesystem and collapses symlinks, so two spellings of one
- * physical file share a key), else the path verbatim (a file that vanished mid-walk still gets a
- * key, and `readSource` raises the real I/O error).
- */
-function canonicalIdentity(absFile: string): string {
-  try {
-    return realpathSync.native(absFile);
-  } catch {
-    return absFile;
-  }
-}
-
-/**
  * Expand one target to the absolute file paths it names: a directory to every `.md` under it (a
  * sorted walk that does not follow symlinks *inside* the tree, routing its advisories to
  * `warnings`), a file to itself. A path that does not exist is a `not_found` {@link LoreError}
@@ -212,38 +199,6 @@ function expandTarget(abs: string, target: string, warnings: WarningCollector): 
     return walkMarkdown(abs, warnings).map((rel) => join(abs, rel));
   }
   return [abs];
-}
-
-/** Read one source file as UTF-8, mapping an I/O failure to a classified {@link LoreError}. */
-function readSource(abs: string, repoRel: string): string {
-  try {
-    return readFileSync(abs, "utf8");
-  } catch (cause) {
-    const code = errnoCode(cause);
-    if (code === "EACCES" || code === "EPERM") {
-      throw new LoreError("denied", `permission denied reading ${repoRel}`, `make ${repoRel} readable`, {
-        path: repoRel,
-        code,
-      });
-    }
-    throw new LoreError("not_found", `cannot read ${repoRel}`, "check the path exists and is readable", {
-      path: repoRel,
-    });
-  }
-}
-
-/**
- * The repo-relative POSIX path for a discovered file, for stable display and de-duplication. A
- * path inside the repo renders relative (`docs/adr/x.md`); an explicit target *outside* the repo
- * keeps its given form (the relative path can escape with `../`), since `validate` is per-file and
- * stateless and may be pointed anywhere.
- */
-function toRepoRelative(root: string, abs: string): string {
-  const rel = relative(root, abs);
-  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
-    return abs;
-  }
-  return rel.split(sep).join("/");
 }
 
 // ── Output ─────────────────────────────────────────────────────────────────────
