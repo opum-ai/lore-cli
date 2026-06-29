@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-06-29 01:33'
+updated_date: '2026-06-29 02:14'
 labels:
   - cmd
 milestone: m-4
@@ -58,4 +58,20 @@ Gates GREEN: bun test (890 pass) · biome clean · tsc --noEmit clean · coverag
 cli-surface §context: flags/kind unchanged (matched the locked contract); added exit-2 to the exit row for accuracy/parity with graph. CHANGELOG Unreleased/Added entry added.
 
 PENDING: workflow /code-review max fold, then PR into dev.
+
+Workflow /code-review max (33 agents): 12 findings verified, 4 refuted. Folded (commit d02233b):
+- [CORRECTNESS] --max-tokens never bounded the always-emitted target body and undercounted neighbor cost. Fix: neighbor charged its full emitted entry (id+type+summary), not summary alone; truncated now set (with an 'over budget' line) when the mandatory target alone exceeds the budget, so truncated:false honestly means 'everything fit'. Strengthens AC#1.
+- [CORRECTNESS] title field diverged from lore graph (collapse/trim vs verbatim). Fix: one shared core/bundle.ts frontmatterScalar used by both graph + context; finite-number guard so non-finite scalars no longer render Infinity/NaN.
+- [CORRECTNESS] truncation hint 'lower --depth to include more' was counterfactual → now 'raise --max-tokens'.
+- [QUALITY] reverted the speculative subgraph adjacency memoization (adjacencyOf/WeakMap): no shipping command traverses twice per process AND it exported a mutable shared map. Re-deferred until lore orphans (the real multi-traversal consumer) lands — the deferred LORE-31 premise ('context calls subgraph per-target') was wrong; a single 'lore context <id>' does ONE traversal.
+- [QUALITY] buildContext simplified to a single break-early fill (no materialize-then-rewalk; total=reached.size-1; dropped neighbors' summaries never computed); neighbor title coerced once; chars/4 kernel shared via estimateTokens.
+
+DEFERRED (not folded, by design):
+- Flag-parser scaffolding cloned from graph.ts/schema.ts: accepted shared-parser-refactor debt (the established clone pattern); no NEW divergence introduced.
+- chars/4 over UTF-16 code units mis-measures non-ASCII: the documented project-wide heuristic (labeled chars/4 everywhere), not a regression.
+- Unquoted numeric scalar precision (1.10 -> 1.1): inherent to YAML parse (source text gone post-parse); quote to preserve. Now consistent with lore graph.
+
+Refuted (correctly): CRLF body (normalizeInput strips CR pre-split); cache immutability precondition (documented + now moot after revert); estimateTokens/neighborSummary style-only.
+
+Re-ran gates after fold: bun test 891 pass · biome · tsc · coverage 100% func+line on core/context.ts, core/query.ts, core/graph.ts, commands/context.ts.
 <!-- SECTION:NOTES:END -->
