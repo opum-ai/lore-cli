@@ -16,7 +16,7 @@
  * **included** nodes, so a subgraph reports the budget of exactly what it shows.
  */
 
-import type { BundleGraph, EdgeKind } from "./bundle";
+import { type BundleGraph, type EdgeKind, frontmatterScalar } from "./bundle";
 import { compareCodeUnits } from "./order";
 
 /** One concept in the exported graph. */
@@ -103,7 +103,7 @@ export function buildGraphExport(graph: BundleGraph, options: GraphExportOptions
     }
     const tokens = graph.tokenEstimate(id);
     tokenEstimate += tokens;
-    const title = nodeTitle(concept.frontmatter.title);
+    const title = frontmatterScalar(concept.frontmatter.title);
     nodes.push({
       id,
       type: concept.type,
@@ -132,25 +132,6 @@ export function buildGraphExport(graph: BundleGraph, options: GraphExportOptions
     edges,
     tokenEstimate,
   };
-}
-
-/**
- * Normalize a concept's `title` frontmatter to a display string, or `undefined`
- * when there is nothing to show. A string is kept verbatim **unless** it is
- * empty/whitespace-only (which would render as a blank DOT label, defeating the
- * id fallback); a YAML-coerced number/boolean (reachable on an unknown type whose
- * fields the schema leaves untouched — e.g. an unquoted `title: 2024`) is coerced
- * to its string form rather than silently dropped, mirroring how the graph treats
- * such scalars elsewhere.
- */
-function nodeTitle(value: unknown): string | undefined {
-  if (typeof value === "string") {
-    return value.trim() === "" ? undefined : value;
-  }
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  return undefined;
 }
 
 /**

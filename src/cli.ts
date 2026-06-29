@@ -16,6 +16,7 @@
  */
 
 import { runCheck } from "./commands/check";
+import { runContext } from "./commands/context";
 import { runGraph } from "./commands/graph";
 import { runInit } from "./commands/init";
 import { runNew } from "./commands/new";
@@ -43,6 +44,7 @@ Commands:
   supersede       Mark a concept superseded by another, wiring both ways (lore supersede <oldId> <newId>)
   schema          Export the profile's editor JSON Schemas to .lore/schemas/ (lore schema export)
   graph           Emit the bundle's cross-link graph as json or dot (lore graph [<id>])
+  context         Assemble a concept + neighbor summaries within a token budget (lore context <id>)
 
 Options:
   --json          Machine-readable JSON output (the {schemaVersion, kind, data} envelope)
@@ -227,6 +229,8 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
       return runSchema({ root, output, args: parsed.commandArgs, stdout: context.stdout });
     case "graph":
       return runGraph({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
+    case "context":
+      return runContext({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     default:
       throw new LoreError("usage", `unknown command "${parsed.command}"`, "run `lore --help` to list commands", {
         command: parsed.command,

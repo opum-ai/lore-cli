@@ -452,9 +452,51 @@ export function internalTarget(target: string): string | null {
 
 // ── Token estimate ───────────────────────────────────────────────────────────—
 
+/**
+ * The project's token-count **heuristic**: chars/4 over a string (`Math.ceil`, so a
+ * non-empty string is never 0). This is the single home of the chars/4 rule — the
+ * whole-concept estimator below and `lore context`'s per-neighbor budget both call
+ * it, so the "what is a token" definition can never drift between the figures a
+ * single command sums into one budget. It is explicitly *not* a real tokenizer
+ * (`length` is UTF-16 code units, so non-ASCII text is mis-measured); the surfaces
+ * that show it label it `chars/4`.
+ */
+export function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
 /** chars/4 token estimate over one concept's canonical serialized bytes. */
 function estimateConcept(concept: Concept): number {
-  return Math.ceil(serializeConcept(concept).length / 4);
+  return estimateTokens(serializeConcept(concept));
+}
+
+/**
+ * Coerce a frontmatter scalar to a display string, or `undefined` when there is
+ * nothing to show — the single rule every command that surfaces a concept's `title`
+ * (or a `title`-shaped field) shares, so the same concept's `title` reads identically
+ * from `lore graph` and `lore context`.
+ *
+ * A **string** is kept **verbatim** (leading/trailing and internal whitespace
+ * preserved) unless it is empty/whitespace-only, which has no display form. A
+ * **finite** number or a boolean (a YAML-coerced scalar on an unknown type whose
+ * fields the schema leaves untouched — e.g. an unquoted `title: 2024`) is coerced to
+ * its string form rather than dropped; a non-finite number (an overflowing
+ * `1e400` → `Infinity`, or `NaN`) has no meaningful display form and is dropped
+ * rather than rendered as the literal `Infinity`/`NaN`. Anything else (`null`, a
+ * list, an object) yields `undefined`.
+ *
+ * Note this reflects the **parsed** value: js-yaml has already turned an unquoted
+ * `1.10` into the number `1.1`, so the authored text is unrecoverable here — quote a
+ * scalar whose exact spelling matters.
+ */
+export function frontmatterScalar(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value.trim() === "" ? undefined : value;
+  }
+  if ((typeof value === "number" && Number.isFinite(value)) || typeof value === "boolean") {
+    return String(value);
+  }
+  return undefined;
 }
 
 /**
