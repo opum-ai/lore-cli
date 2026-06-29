@@ -20,6 +20,7 @@ import { runContext } from "./commands/context";
 import { runGraph } from "./commands/graph";
 import { runInit } from "./commands/init";
 import { runNew } from "./commands/new";
+import { runQuery } from "./commands/query";
 import { runRename } from "./commands/rename";
 import { runReplace } from "./commands/replace";
 import { runSchema } from "./commands/schema";
@@ -44,6 +45,7 @@ Commands:
   supersede       Mark a concept superseded by another, wiring both ways (lore supersede <oldId> <newId>)
   schema          Export the profile's editor JSON Schemas to .lore/schemas/ (lore schema export)
   graph           Emit the bundle's cross-link graph as json or dot (lore graph [<id>])
+  query           Full-text search the bundle with frontmatter filters (lore query ["<text>"])
   context         Assemble a concept + neighbor summaries within a token budget (lore context <id>)
 
 Options:
@@ -229,6 +231,8 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
       return runSchema({ root, output, args: parsed.commandArgs, stdout: context.stdout });
     case "graph":
       return runGraph({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
+    case "query":
+      return runQuery({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     case "context":
       return runContext({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     default:

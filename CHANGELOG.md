@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lore query` — full-text search the bundle with frontmatter filters** (LORE-33). `lore query
+  ["<text>"] [--type <T>] [--tag <t>]… [--status <S>] [--field k=v]… [--limit <n>]` ranks concepts by
+  **BM25-style** in-memory relevance to the search text and filters them by frontmatter — `--type`,
+  `--tag` (repeatable, AND), `--status`, and an arbitrary `--field key=value` (repeatable, AND), all
+  matched **case-insensitively** (AC#1). The lexical index is built fresh from the loaded graph over
+  each concept's id, `title`, `summary`, `description`, `tags`, and body; a text query also acts as a
+  relevance filter (a concept with none of its terms is dropped), and ties — and a **filters-only**
+  query, where every score is `0` — break by ascending id, so the order is fully deterministic. Each
+  hit carries a `summary`-derived one-line snippet (falling back to `title`, else omitted — the same
+  compaction `lore context` applies). Output is **bounded** by `--limit` (default 20) with the standard
+  `total`/`shown`/`truncated` signal and a *narrow-it* hint (AC#2). **No vectors, RAG, or chunking**
+  (ADR-0015) — a deterministic lexical index, not a semantic one. Output follows the uniform CLI modes:
+  a ranked text listing (pretty/plain) or the `kind: query.results` envelope under the global `--json`.
+  Exit `0` ok (zero hits is still `0`) · `2` bad usage (unknown/repeated/value-less flag, non-integer/
+  too-large/non-positive `--limit`, malformed `--field`, or a second positional). The BM25 search lands
+  in the shared `core/query.ts` beside the `subgraph` traversal — the two halves of "navigate the
+  bundle" (lexical relevance and structural reach) over one `BundleGraph`.
 - **`lore context` — assemble a token-budgeted context pack for a concept** (LORE-34). `lore context
   <id> [--max-tokens <n>] [--depth <n>]` emits the target concept's **full body** plus a **one-line
   `summary` compaction** of its neighbors out to `--depth` hops (default 1), so an agent can be handed
