@@ -1,5 +1,5 @@
 /**
- * commands/graph.ts — `lore graph [<id>] [--format dot|json] [--depth <n>]`.
+ * commands/graph.ts — `lore graph [<id>] [--dot] [--depth <n>]`.
  *
  * The thin, read-only layer that emits the bundle's cross-link graph (cli-surface
  * §graph; LORE-31). It loads the `docs/` bundle into a {@link BundleGraph}, then:
@@ -8,23 +8,30 @@
  * - with an `<id>` exports the **subgraph** rooted there, bounded to `--depth`
  *   hops ({@link subgraph}; unbounded when `--depth` is omitted).
  *
- * The structured model (nodes, edges, per-node + total token estimates) is the
- * `--json` envelope's `data` — `--json` is *the* machine format, so it is always
- * the structured model regardless of `--format`. `--format` selects the
- * **pretty/plain** rendering: `json` (default) prints a human node/edge listing,
- * `dot` prints Graphviz DOT. Because a piped/redirected stdout auto-selects plain
- * (cli-contract §1.1), `lore graph --format dot | dot -Tpng` just works.
+ * Output follows the uniform CLI modes: a human node/edge listing at a TTY (or
+ * piped plain), and the `{schemaVersion, kind: "graph.export", data}` envelope
+ * under the global `--json` — there is no command-specific JSON flag, so machine
+ * consumers use the same `--json` they use everywhere. `--dot` is the one
+ * representation override: it emits Graphviz DOT instead of the listing, so `lore
+ * graph --dot | dot -Tpng` works (a piped stdout auto-selects plain). `--dot` and
+ * `--json` are mutually exclusive — DOT has no envelope form.
+ *
+ * The positional `<id>` is normalized through {@link idFromPath} exactly as `lore
+ * rename`/`supersede` normalize theirs, so a path-form, `./`-prefixed, or
+ * `.md`-suffixed id resolves to the same bundle key (consistent id acceptance
+ * across the id-taking commands).
  *
  * Validation lives here (the byte/shape computation stays pure in `core/graph.ts`
- * and `core/query.ts`): an unknown flag, a repeated or value-less `--format`/
- * `--depth`, a `--format` that is not `dot`/`json`, a non-integer/negative
- * `--depth`, a `--depth` without a root `<id>`, or a stray second positional is a
- * `usage` error (exit 2); a root `<id>` absent from the bundle surfaces as the
- * `not_found` error (exit 3) {@link subgraph} throws.
+ * and `core/query.ts`): an unknown flag, a repeated/value-less or value-bearing
+ * `--dot`, a repeated/value-less/non-integer/too-large `--depth`, a `--depth`
+ * without a root `<id>`, `--dot` together with `--json`, or a stray second
+ * positional is a `usage` error (exit 2); a root `<id>` absent from the bundle
+ * surfaces as the `not_found` error (exit 3) {@link subgraph} throws.
  */
 
 import { join } from "node:path";
-import { type BundleGraph, loadBundle } from "../core/bundle";
+import { loadBundle } from "../core/bundle";
+import { idFromPath } from "../core/concept";
 import { buildGraphExport, type GraphExport, toDot } from "../core/graph";
 import { subgraph } from "../core/query";
 import { DOCS_DIR } from "../core/scaffold";
@@ -45,15 +52,12 @@ export interface GraphOptions {
   stderr?: Writer;
 }
 
-/** The pretty/plain rendering format `--format` selects (the `--json` envelope is always structured). */
-type GraphFormat = "json" | "dot";
-
 /** The parsed form of `lore graph`'s arguments. */
 interface GraphArgs {
-  /** The root concept id (positional); `undefined` exports the whole bundle. */
+  /** The root concept id (positional, already {@link idFromPath}-normalized); `undefined` exports the whole bundle. */
   id?: string;
-  /** The text-rendering format (`--format`); defaults to `json`. */
-  format: GraphFormat;
+  /** Emit Graphviz DOT instead of the node/edge listing (`--dot`). */
+  dot: boolean;
   /** The hop radius (`--depth`); `undefined` means unbounded. Requires `id`. */
   depth?: number;
 }
@@ -61,14 +65,22 @@ interface GraphArgs {
 /**
  * Run `lore graph`: parse the arguments, load the bundle, narrow to the rooted
  * subgraph when an `<id>` is given, shape the export, emit the `graph.export`,
- * and return `0`. A bad flag/positional throws a `usage` {@link LoreError} (exit
- * `2`); an `<id>` not in the bundle a `not_found` one (exit `3`).
+ * and return `0`. A bad flag/positional (including `--dot` with `--json`) throws
+ * a `usage` {@link LoreError} (exit `2`); an `<id>` not in the bundle a
+ * `not_found` one (exit `3`).
  */
 export function runGraph(options: GraphOptions): number {
   const parsed = parseGraphArgs(options.args);
+  if (parsed.dot && options.output.mode === "json") {
+    throw usage("--dot cannot be combined with --json", "DOT has no JSON envelope; pass one of --dot or --json");
+  }
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
-  const graph: BundleGraph = loadBundle(docsRoot, { warnings: advisories });
+  const graph = loadBundle(docsRoot, { warnings: advisories });
+  // Flush load warnings before the subgraph lookup, which throws not_found for an
+  // unknown root — otherwise an advisory that explains *why* a file is not a
+  // concept would be discarded on exactly the path that most needs it.
+  advisories.flush({ color: options.output.color, stderr: options.stderr });
 
   let data: GraphExport;
   if (parsed.id === undefined) {
@@ -78,25 +90,24 @@ export function runGraph(options: GraphOptions): number {
     data = buildGraphExport(graph, { include, root: parsed.id, depth: parsed.depth });
   }
 
-  advisories.flush({ color: options.output.color, stderr: options.stderr });
-  emit(graphRenderable(data, parsed.format), options.output, options.stdout);
+  emit(graphRenderable(data, parsed.dot), options.output, options.stdout);
   return EXIT_OK;
 }
 
 // ── Argument parsing ───────────────────────────────────────────────────────────
 
 /**
- * Parse `graph`'s tokens into the optional root `<id>` positional and the value
- * flags `--format <dot|json>` / `--depth <n>` (both also accept the
- * `--flag=value` form). The router has already stripped lore's global flags, so a
- * `--`-prefixed token here is a command flag: an unrecognized one is a `usage`
- * error, as is a repeated or value-less flag, a `--format` outside `{dot,json}`,
- * a non-integer/negative `--depth`, a `--depth` with no root, or a second
- * positional. A `--` ends option parsing.
+ * Parse `graph`'s tokens into the optional root `<id>` positional, the boolean
+ * `--dot`, and the value flag `--depth <n>` (also accepting `--depth=<n>`). The
+ * router has already stripped lore's global flags, so a `--`-prefixed token here
+ * is a command flag: an unrecognized one is a `usage` error, as is a repeated or
+ * value-bearing `--dot`, a repeated/value-less/non-integer/too-large `--depth`, a
+ * `--depth` with no root, or a second positional. A `--` ends option parsing. The
+ * `<id>` is {@link idFromPath}-normalized so path/`.md`/`./` forms resolve.
  */
 function parseGraphArgs(args: readonly string[]): GraphArgs {
   const positionals: string[] = [];
-  let format: GraphFormat | undefined;
+  let dot = false;
   let depth: number | undefined;
 
   for (let i = 0; i < args.length; i++) {
@@ -110,14 +121,14 @@ function parseGraphArgs(args: readonly string[]): GraphArgs {
       const eq = body.indexOf("=");
       const name = eq === -1 ? body : body.slice(0, eq);
       const inline = eq === -1 ? undefined : body.slice(eq + 1);
-      if (name === "format") {
-        if (format !== undefined) {
-          throw usage("--format given more than once", "pass --format at most once");
+      if (name === "dot") {
+        if (inline !== undefined) {
+          throw usage("--dot takes no value", "pass --dot on its own to emit Graphviz DOT");
         }
-        format = parseFormat(readValue("--format", inline, args, i));
-        if (inline === undefined) {
-          i++;
+        if (dot) {
+          throw usage("--dot given more than once", "pass --dot at most once");
         }
+        dot = true;
       } else if (name === "depth") {
         if (depth !== undefined) {
           throw usage("--depth given more than once", "pass --depth at most once");
@@ -137,58 +148,51 @@ function parseGraphArgs(args: readonly string[]): GraphArgs {
   }
 
   if (positionals.length > 1) {
-    throw usage(`unexpected argument "${positionals[1]}"`, "run `lore graph [<id>] [--format dot|json] [--depth <n>]`");
+    throw usage(`unexpected argument "${positionals[1]}"`, "run `lore graph [<id>] [--dot] [--depth <n>]`");
   }
-  const id = positionals[0];
-  if (depth !== undefined && id === undefined) {
+  const raw = positionals[0];
+  if (depth !== undefined && raw === undefined) {
     throw usage(
       "--depth needs a root <id>",
       "give the concept to bound the radius from, e.g. `lore graph <id> --depth 2`",
     );
   }
-  return { id, format: format ?? "json", depth };
+  return { id: raw !== undefined ? idFromPath(raw) : undefined, dot, depth };
 }
 
-/** Validate a `--format` value, the only legal values being `dot` and `json`. */
-function parseFormat(value: string): GraphFormat {
-  if (value === "dot" || value === "json") {
-    return value;
-  }
-  throw usage(`unknown --format "${value}"`, "use --format dot or --format json");
-}
-
-/** Parse a `--depth` value as a non-negative integer (`0` = root only). */
+/** Parse a `--depth` value as a non-negative, safe integer (`0` = root only). */
 function parseDepth(value: string): number {
   // Accept only a bare run of digits — Number() would coerce "1.5"/"0x2"/" 2 "/"1e3".
   if (!/^\d+$/.test(value)) {
     throw usage(`invalid --depth "${value}"`, "pass a non-negative integer, e.g. `--depth 2`");
   }
-  return Number.parseInt(value, 10);
+  const depth = Number.parseInt(value, 10);
+  // A >2^53 run of digits parses without error but loses precision, so the echoed
+  // `depth` would differ from what the user typed; reject it rather than lie.
+  if (!Number.isSafeInteger(depth)) {
+    throw usage(`--depth "${value}" is too large`, "pass a smaller non-negative integer");
+  }
+  return depth;
 }
 
 /**
  * Read a value flag's argument: its inline `--flag=value` form when present, else
  * the **next** token. A missing/empty value — or a next token that is itself an
- * option (`--format --depth`) — is a `usage` error rather than a silently
- * swallowed flag (mirroring `lore schema`'s value-flag guard).
+ * option (`--depth --dot`) — is a `usage` error rather than a silently swallowed
+ * flag (mirroring `lore schema`'s value-flag guard).
  */
 function readValue(flag: string, inline: string | undefined, args: readonly string[], i: number): string {
   if (inline !== undefined) {
     if (inline === "") {
-      throw missingValue(flag);
+      throw usage(`${flag} needs a value`, "pass a value, e.g. `--depth 2`");
     }
     return inline;
   }
   const next = args[i + 1];
   if (next === undefined || next === "" || (next.startsWith("-") && next !== "-")) {
-    throw missingValue(flag);
+    throw usage(`${flag} needs a value`, "pass a value, e.g. `--depth 2`");
   }
   return next;
-}
-
-/** The `usage` error a value-less value flag raises, with a flag-appropriate example. */
-function missingValue(flag: string): LoreError {
-  return usage(`${flag} needs a value`, `pass a value, e.g. \`${flag} ${flag === "--depth" ? "2" : "dot"}\``);
 }
 
 // ── Output ─────────────────────────────────────────────────────────────────────
@@ -196,12 +200,12 @@ function missingValue(flag: string): LoreError {
 /**
  * The per-result rendering bundle for `graph` (output.ts dispatches on the mode).
  * `--json` always carries the structured {@link GraphExport}; the pretty/plain
- * text is the DOT serialization under `--format dot`, else a human node/edge
- * listing. The two text modes render identically (the data is structural — no
- * severities to color), so pretty and plain share one renderer.
+ * text is the DOT serialization under `--dot`, else a human node/edge listing.
+ * The two text modes render identically (the data is structural — no severities
+ * to color), so pretty and plain share one renderer.
  */
-function graphRenderable(data: GraphExport, format: GraphFormat): Renderable<GraphExport> {
-  const render = format === "dot" ? toDot : renderText;
+function graphRenderable(data: GraphExport, dot: boolean): Renderable<GraphExport> {
+  const render = dot ? toDot : renderText;
   return { kind: "graph.export", data, pretty: render, plain: render };
 }
 

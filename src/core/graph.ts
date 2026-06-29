@@ -17,6 +17,7 @@
  */
 
 import type { BundleGraph, EdgeKind } from "./bundle";
+import { compareCodeUnits } from "./order";
 
 /** One concept in the exported graph. */
 export interface GraphNode {
@@ -88,30 +89,37 @@ export interface GraphExportOptions {
  */
 export function buildGraphExport(graph: BundleGraph, options: GraphExportOptions = {}): GraphExport {
   const { include, root, depth } = options;
+  // Drive node iteration by the *smaller* of the two: the whole concept map for a
+  // full export (already ascending-id order), or just the included ids — sorted to
+  // preserve that order — for a subgraph, so a bounded `--depth` query costs
+  // O(N_sub log N_sub), not O(N_total).
+  const ids = include === undefined ? graph.concepts.keys() : [...include].sort(compareCodeUnits);
   const nodes: GraphNode[] = [];
   let tokenEstimate = 0;
-  for (const [id, concept] of graph.concepts) {
-    if (include !== undefined && !include.has(id)) {
-      continue;
+  for (const id of ids) {
+    const concept = graph.concepts.get(id);
+    if (concept === undefined) {
+      continue; // an include id that names no concept — ignored, never an error
     }
     const tokens = graph.tokenEstimate(id);
     tokenEstimate += tokens;
-    const title = concept.frontmatter.title;
+    const title = nodeTitle(concept.frontmatter.title);
     nodes.push({
       id,
       type: concept.type,
-      ...(typeof title === "string" ? { title } : {}),
+      ...(title !== undefined ? { title } : {}),
       tokenEstimate: tokens,
     });
   }
 
-  const included = new Set(nodes.map((node) => node.id));
+  // Edge closure: for a full export every edge qualifies (per the Edge contract
+  // `from` is always a concept and `to` is null-or-concept), so no membership
+  // filtering is needed; for a subgraph, keep an edge whose `from` is included and
+  // whose `to` is included or dangling — the `include` set already equals the node
+  // id-set, so no second set is built.
   const edges: GraphEdge[] = [];
   for (const edge of graph.edges) {
-    if (!included.has(edge.from)) {
-      continue;
-    }
-    if (edge.to !== null && !included.has(edge.to)) {
+    if (include !== undefined && (!include.has(edge.from) || (edge.to !== null && !include.has(edge.to)))) {
       continue; // leads outside the requested subgraph — an explicit radius cut
     }
     edges.push({ from: edge.from, to: edge.to, kind: edge.kind, target: edge.target, dangling: edge.to === null });
@@ -127,13 +135,32 @@ export function buildGraphExport(graph: BundleGraph, options: GraphExportOptions
 }
 
 /**
+ * Normalize a concept's `title` frontmatter to a display string, or `undefined`
+ * when there is nothing to show. A string is kept verbatim **unless** it is
+ * empty/whitespace-only (which would render as a blank DOT label, defeating the
+ * id fallback); a YAML-coerced number/boolean (reachable on an unknown type whose
+ * fields the schema leaves untouched — e.g. an unquoted `title: 2024`) is coerced
+ * to its string form rather than silently dropped, mirroring how the graph treats
+ * such scalars elsewhere.
+ */
+function nodeTitle(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value.trim() === "" ? undefined : value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return undefined;
+}
+
+/**
  * Render a {@link GraphExport} as Graphviz DOT — a `digraph` with one statement
  * per node (labeled with its title or id) and one per **resolved** edge (labeled
  * with its kind). Dangling edges are omitted: they have no target node to draw
  * to, and the `--json` model already carries them for tooling that needs the
  * broken-link signal (`lore check` is the dedicated reporter). Output is
  * deterministic — nodes in the export's id order, edges in graph order — so
- * `lore graph --format dot | dot -Tpng` is stable across runs.
+ * `lore graph --dot | dot -Tpng` is stable across runs.
  */
 export function toDot(data: GraphExport): string {
   const lines = ["digraph lore {"];

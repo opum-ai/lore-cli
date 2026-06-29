@@ -50,6 +50,11 @@ export function subgraph(graph: BundleGraph, rootId: string, maxDepth: number): 
   if (!graph.concepts.has(rootId)) {
     throw conceptNotInBundle(rootId);
   }
+  // A root-only radius never reads the adjacency, so don't pay to build the whole
+  // O(E) index for it.
+  if (maxDepth <= 0) {
+    return new Set([rootId]);
+  }
   const adjacency = buildAdjacency(graph.edges);
   const visited = new Set<string>([rootId]);
   let frontier: string[] = [rootId];

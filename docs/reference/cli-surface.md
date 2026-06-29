@@ -285,10 +285,10 @@ humans for orientation, by consumers for navigation, and by
 
 | | |
 |---|---|
-| **Args** | optional `<id>` (subgraph rooted at one concept) |
-| **Key flags** | `--format dot|json` (default `json`; `dot` for Graphviz) · `--depth <n>` (bound subgraph radius) |
-| **Output** | `kind: graph.export` — nodes, edges, token estimates (or DOT text under `--format dot`) |
-| **Exit** | `0` ok · `3` root `<id>` not found |
+| **Args** | optional `<id>` (subgraph rooted at one concept; normalized like [`rename`](#rename), so path/`.md`/`./` forms resolve) |
+| **Key flags** | `--dot` (emit Graphviz DOT; mutually exclusive with `--json`) · `--depth <n>` (bound subgraph radius) |
+| **Output** | `kind: graph.export` — nodes, edges, token estimates (or DOT text under `--dot`). Machine JSON is the global `--json` envelope, as for every command. |
+| **Exit** | `0` ok · `2` bad usage (`--dot` with `--json`, bad flag/`--depth`) · `3` root `<id>` not found |
 
 ### `query`
 

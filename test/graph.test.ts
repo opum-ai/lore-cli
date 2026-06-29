@@ -132,6 +132,20 @@ describe("buildGraphExport — whole-bundle shaping", () => {
     ]);
   });
 
+  test("an empty/whitespace title is omitted; a YAML-coerced non-string title is coerced", () => {
+    writeDoc("blank.md", '---\ntype: Story\ntitle: "   "\n---\nText.\n'); // whitespace-only
+    writeDoc("num.md", "---\ntype: Widget\ntitle: 2024\n---\nText.\n"); // unknown type → unquoted number survives
+    const nodes = buildGraphExport(graph()).nodes;
+    expect(nodes.find((n) => n.id === "blank")).not.toHaveProperty("title");
+    expect(nodes.find((n) => n.id === "num")?.title).toBe("2024");
+  });
+
+  test("an include id that names no concept is ignored, not an error", () => {
+    writeStandardBundle();
+    const { nodes } = buildGraphExport(graph(), { include: new Set(["reference/orders", "ghost/x"]) });
+    expect(nodes.map((n) => n.id)).toEqual(["reference/orders"]);
+  });
+
   test("the total token estimate is the sum over the included nodes", () => {
     writeStandardBundle();
     const data = buildGraphExport(graph());
@@ -200,7 +214,14 @@ describe("lore graph — command", () => {
     expect(data).toMatchObject({ root: "reference/orders", depth: 1 });
   });
 
-  test("plain mode (default format) lists nodes and edges with a header", () => {
+  test("a path/.md-form root id is normalized like rename/supersede", () => {
+    writeStandardBundle();
+    // `reference/orders.md` and `./reference/orders` must resolve to the bundle key.
+    expect(exportGraph(["reference/orders.md", "--depth", "0"]).data.root).toBe("reference/orders");
+    expect(exportGraph(["./reference/orders", "--depth", "0"]).data.root).toBe("reference/orders");
+  });
+
+  test("plain mode lists nodes and edges with a header", () => {
     writeStandardBundle();
     const stdout = capture();
     runGraph({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: [] });
@@ -210,17 +231,19 @@ describe("lore graph — command", () => {
     expect(text).toContain("adr/0001-x -link-> (dangling: ./missing.md)");
   });
 
-  test("--format dot renders DOT text in plain mode", () => {
+  test("--dot renders DOT text in plain mode", () => {
     writeStandardBundle();
     const stdout = capture();
-    runGraph({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: ["--format", "dot"] });
+    runGraph({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: ["--dot"] });
     expect(stdout.text().startsWith("digraph lore {")).toBe(true);
   });
 
-  test("--format dot still emits the structured model under --json (json is the machine format)", () => {
+  test("--dot combined with --json is a usage error (DOT has no envelope)", () => {
     writeStandardBundle();
-    const { data } = exportGraph(["--format", "dot"]);
-    expect(data.nodes).toHaveLength(4); // structured, not a DOT string
+    const err = expectError("usage", () =>
+      runGraph({ root, output: JSON_CTX, stdout: capture(), stderr: capture(), args: ["--dot"] }),
+    );
+    expect(err.message).toContain("--dot cannot be combined with --json");
   });
 
   test("an unknown root id surfaces as a not_found error", () => {
@@ -232,13 +255,13 @@ describe("lore graph — command", () => {
 
   test.each([
     [["--bogus"], "unknown option"],
-    [["--format"], "needs a value"],
-    [["--format", "yaml"], 'unknown --format "yaml"'],
-    [["--format", "dot", "--format", "json"], "given more than once"],
+    [["--dot", "--dot"], "--dot given more than once"],
+    [["--dot=x"], "--dot takes no value"],
     [["--depth", "1.5"], 'invalid --depth "1.5"'],
     [["--depth=-1"], 'invalid --depth "-1"'],
     [["--depth", "-1"], "--depth needs a value"],
     [["--depth", "1", "--depth", "2"], "--depth given more than once"],
+    [["reference/orders", "--depth", "99999999999999999999"], "too large"],
     [["--depth", "2"], "--depth needs a root <id>"],
     [["-x"], 'unknown option "-x"'],
     [["a", "b"], 'unexpected argument "b"'],
