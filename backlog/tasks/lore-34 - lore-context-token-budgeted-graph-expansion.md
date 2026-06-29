@@ -1,11 +1,11 @@
 ---
 id: LORE-34
 title: lore context (token-budgeted graph expansion)
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-06-29 02:14'
+updated_date: '2026-06-29 02:18'
 labels:
   - cmd
 milestone: m-4
