@@ -1,11 +1,11 @@
 ---
 id: LORE-33
 title: lore query (full-text + frontmatter filters)
-status: In Progress
+status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-06-29 09:13'
+updated_date: '2026-06-29 17:28'
 labels:
   - cmd
 milestone: m-4
@@ -25,8 +25,8 @@ In-memory full-text (BM25-style) + frontmatter-field filters; --max-tokens budge
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Filter by type/tag/status/any field
-- [ ] #2 Bounded output with a narrow-it hint
+- [x] #1 Filter by type/tag/status/any field
+- [x] #2 Bounded output with a narrow-it hint
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -43,4 +43,6 @@ In-memory full-text (BM25-style) + frontmatter-field filters; --max-tokens budge
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented on feat/lore-33-query (commit 2626fe3). core/query.ts: pure query() with BM25-style ranking (k1=1.5, b=0.75, always-positive IDF) over a whole-bundle lexical index (id+title+summary+description+tags+body), case-insensitive frontmatter filters (--type/--tag/--status/--field, all AND), summary->title->none snippet (reuses frontmatterScalar+singleLine), --limit-bounded output with narrow-it hint. commands/query.ts: thin parser cloned from graph/context. Built to LOCKED cli-surface §query (--limit NOT --max-tokens; the task-desc --max-tokens was superseded by the locked contract). Gates green: bun test 934 pass, tsc clean, biome clean, coverage 100% func+line on both new files. /code-review max running (workflow wf_e90608c5-99f).
+
+/code-review max (37 agents, ~1.09M tok, run wf_e90608c5-99f): 15 verified findings. FOLDED 6 (commit a33ddc9): #0 punctuation-only text no longer nullifies filters (now filters-only); #1 --field key case-insensitive; #4+#5 --field value trimmed + empty-value rejected; #6 positive sub-0.005 score never renders 0.00; #10 --status/--tag routed through shared matchesField (removed divergent branches); #11 IDF precomputed once per query term. DEFERRED w/ rationale: #2 empty text -> whole bundle (accepted: bounded by --limit + truncated signal; consistency fixed by #0); #3 global flags intercept a search positional like --version (pre-existing router design affecting ALL commands; -- escape works; out of LORE-33 scope); #7/#8 leading-dash positional/value rejected (NO new arg-parser divergence per handover mandate; consistent w/ graph/context/schema; -- and inline = escapes); #9 PLAUSIBLE Unicode casefold asymmetry (toLowerCase consistent w/ canonicalType; out of scope); #12 per-doc tf-map retention (premature for small bundles, cf. adjacency-memoization revert); #13 toHit/neighborOf shaping dup + #14 readValue 4th copy (the explicitly-accepted shared-helper/parser-clone debt; no new divergence). Both ACs verified: AC#1 filter by type/tag/status/any field; AC#2 bounded output (--limit default 20) + narrow-it hint. Gates: 939 tests pass, tsc+biome clean, 100% func+line on both new files.
 <!-- SECTION:NOTES:END -->
