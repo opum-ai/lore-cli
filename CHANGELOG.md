@@ -16,17 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shared, undirected, cycle-tolerant `core/query.ts` `subgraph` traversal `lore graph` uses, and
   neighbors are taken **nearest-first** (depth-1 before depth-2). Each token figure is the chars/4
   heuristic: the target is charged the whole-concept estimate (the same `~tokens` `lore graph` reports),
-  while a neighbor — emitted only as its `summary` (falling back to `title`, else nothing) — is charged
-  just that line. `--max-tokens` trims neighbors greedily, **stopping at the first that would exceed the
-  budget** (a predictable nearest-first prefix) and reporting the drop via the standard
-  `total`/`shown`/`truncated` signal; the **target is always included** even when it alone exceeds the
-  budget. With no `--max-tokens` the pack is bounded only by `--depth`. The `<id>` is normalized like
-  `lore graph`/`rename`, and output follows the uniform CLI modes: a pasteable text pack (pretty/plain)
-  or the `kind: context.export` envelope under the global `--json`. Exit `0` ok · `2` bad usage (missing
-  or duplicate `<id>`, unknown/repeated/value-less flag, non-integer/too-large/out-of-range
-  `--max-tokens` or `--depth`) · `3` `<id>` not in the bundle. The shared `subgraph` adjacency is now
-  **memoized per `BundleGraph`** (`core/query.ts` `adjacencyOf`), so multi-target traversals stop
-  rebuilding the O(E) index on every call.
+  and each neighbor is charged its emitted entry — `id` + `type` + `summary` (`summary` falls back to
+  `title`, else nothing) — so a wide neighborhood of short summaries can't silently overrun the budget.
+  `--max-tokens` trims neighbors greedily, **stopping at the first that would exceed the budget** (a
+  predictable nearest-first prefix), reporting dropped neighbors via the standard `total`/`shown`/
+  `truncated` signal with a *raise `--max-tokens`* hint. The **target is always included** even when it
+  alone exceeds the budget — and that pack is honestly flagged `truncated` (with an `over budget` line),
+  so a `truncated: false` always means "everything fit", never a silent overrun. With no `--max-tokens`
+  the pack is bounded only by `--depth`. The `<id>` is normalized like `lore graph`/`rename`, and output
+  follows the uniform CLI modes: a pasteable text pack (pretty/plain) or the `kind: context.export`
+  envelope under the global `--json`. Exit `0` ok · `2` bad usage (missing or duplicate `<id>`,
+  unknown/repeated/value-less flag, non-integer/too-large/out-of-range `--max-tokens` or `--depth`) ·
+  `3` `<id>` not in the bundle. The `title` a concept reports is now byte-identical across `lore graph`
+  and `lore context` (one shared `core/bundle.ts` `frontmatterScalar` coercion).
 - **`lore graph` — emit the bundle's cross-link graph** (LORE-31). `lore graph [<id>] [--dot] [--depth
   <n>]` surfaces the graph `loadBundle` already builds — concepts as nodes (each with its `type`,
   optional `title`, and a chars/4 token estimate), OKF body cross-links and the

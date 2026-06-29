@@ -55,7 +55,7 @@ export function subgraph(graph: BundleGraph, rootId: string, maxDepth: number): 
   if (maxDepth <= 0) {
     return new Set([rootId]);
   }
-  const adjacency = adjacencyOf(graph);
+  const adjacency = buildAdjacency(graph.edges);
   const visited = new Set<string>([rootId]);
   let frontier: string[] = [rootId];
   // Level-by-level BFS: each iteration expands one hop. `maxDepth` is an upper
@@ -77,39 +77,6 @@ export function subgraph(graph: BundleGraph, rootId: string, maxDepth: number): 
 
 /** Shared empty neighbor list for nodes with no resolved edges (avoids a per-lookup allocation). */
 const EMPTY: readonly string[] = [];
-
-/**
- * The undirected adjacency map of each loaded {@link BundleGraph}, built once per
- * graph and cached. Keyed by the graph object so the entry is dropped when the
- * graph is — a {@link loadBundle} returns a fresh graph each call, so the cache is
- * scoped to that graph's lifetime, never shared across loads or leaked.
- */
-const ADJACENCY_CACHE = new WeakMap<BundleGraph, Map<string, Set<string>>>();
-
-/**
- * The undirected adjacency of `graph` ({@link buildAdjacency}), memoized per graph.
- *
- * The walk in {@link subgraph} reads the adjacency, and the bundle's edge list is
- * immutable (a refactor recomputes a fresh graph rather than mutating one), so the
- * adjacency is a pure function of the graph — building it once and caching it on
- * the graph object (mirroring how {@link BundleGraph.tokenEstimate} memoizes its
- * per-concept estimates) means a sequence of traversals over the same graph pays
- * the O(E) build only on the first. This matters for the commands that root a walk
- * at more than one concept (the per-target expansions behind `lore context`/`lore
- * orphans`), which would otherwise rebuild the whole index on each call.
- *
- * Exported so a multi-traversal caller (or a test asserting the cache holds) can
- * reach the same memoized map `subgraph` uses, rather than re-deriving one that
- * would drift from how reachability is computed.
- */
-export function adjacencyOf(graph: BundleGraph): Map<string, Set<string>> {
-  let adjacency = ADJACENCY_CACHE.get(graph);
-  if (adjacency === undefined) {
-    adjacency = buildAdjacency(graph.edges);
-    ADJACENCY_CACHE.set(graph, adjacency);
-  }
-  return adjacency;
-}
 
 /**
  * Build the undirected adjacency map from the bundle's edge list. Each resolved

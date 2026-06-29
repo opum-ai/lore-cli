@@ -201,8 +201,10 @@ function contextRenderable(data: ContextExport): Renderable<ContextExport> {
  * A human/pipe-stable context pack: a header naming the target, its depth/budget and
  * the pack's `~tokens`, then the target's full body, then a `neighbors (<shown> of
  * <total>)` section with one `- <id>  [<type>]  — <summary>` line each (the `— …`
- * dropped when a neighbor has no summary), and a §3 truncation footer when the budget
- * dropped neighbors. ANSI-free and deterministic.
+ * dropped when a neighbor has no summary), and a trailing budget line: an
+ * over-budget warning when the always-included target alone exceeds `--max-tokens`,
+ * else the §3 truncation footer when the budget dropped neighbors. ANSI-free and
+ * deterministic.
  */
 function renderText(data: ContextExport): string {
   const budget = data.maxTokens !== undefined ? `, budget ${data.maxTokens}` : "";
@@ -217,13 +219,27 @@ function renderText(data: ContextExport): string {
     const summary = neighbor.summary !== undefined ? `  — ${neighbor.summary}` : "";
     lines.push(`  - ${neighbor.id}  [${neighbor.type}]${summary}`);
   }
-  const footer = renderTruncationLine(
-    truncation(data.total, data.shown, "raise --max-tokens or lower --depth to include more"),
-  );
+  const footer = budgetFooter(data);
   if (footer !== "") {
     lines.push(footer);
   }
   return lines.join("\n");
+}
+
+/**
+ * The trailing budget line for the pack, or `""` when it fully fit. Over budget (the
+ * mandatory target alone exceeds `--max-tokens`, so no neighbor could be dropped to
+ * help) gets an explicit warning; otherwise a dropped-neighbor count gets the §3
+ * truncation footer. The hint is **only** `raise --max-tokens` — lowering `--depth`
+ * cannot surface more neighbors (the included set is a budget-bound nearest-first
+ * prefix, so a smaller `--depth` only removes farther candidates that were never
+ * going to be included).
+ */
+function budgetFooter(data: ContextExport): string {
+  if (data.maxTokens !== undefined && data.tokenEstimate > data.maxTokens) {
+    return `over budget: ~${data.tokenEstimate} tokens exceeds the ${data.maxTokens}-token limit — the target is always included; raise --max-tokens`;
+  }
+  return renderTruncationLine(truncation(data.total, data.shown, "raise --max-tokens to include more"));
 }
 
 /** A `usage` {@link LoreError} (exit `2`) with an actionable hint. */

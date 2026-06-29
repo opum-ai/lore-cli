@@ -19,17 +19,18 @@
  *
  * ## Token model (all figures are the chars/4 heuristic, never a real tokenizer)
  *
- * `graph.tokenEstimate(id)` is the chars/4 estimate over a concept's full
- * serialized bytes. The two roles in a pack are charged differently *because they
- * are emitted differently*:
+ * Every figure is {@link estimateTokens} — the project's shared chars/4 rule. The
+ * two roles in a pack are charged over the bytes each actually contributes:
  *
  * - The **target** is emitted in full, so it is charged
  *   {@link BundleGraph.tokenEstimate}`(root)` — the whole-concept estimate, which is
  *   the *same* `~tokens` `lore graph` reports for that concept (cross-command
  *   consistency, and a reuse of the one memoized estimator).
- * - A **neighbor** is compacted to a single `summary` line, so it is charged only
- *   the chars/4 of *that line* ({@link summaryTokens}); charging the whole concept
- *   would defeat the compaction the command exists to perform.
+ * - A **neighbor** is compacted to a one-line entry, so it is charged the chars/4 of
+ *   that entry's content — its `id`, `type`, and `summary` — not the whole concept
+ *   (which would defeat the compaction) and not the summary alone (which would
+ *   under-count the always-present id/type, letting a wide neighborhood overrun the
+ *   budget).
  *
  * The export's `tokenEstimate` is the target's estimate plus every **included**
  * neighbor's — the size of the pack actually emitted. Neighbors are added in
@@ -38,7 +39,9 @@
  * nearest-first prefix, not a greedy "skip the big one and keep filling"), and any
  * remaining neighbors are dropped with `truncated` set. The **target is always
  * present** — a context without its subject is meaningless — so a `--max-tokens`
- * smaller than the target still returns the target with zero neighbors.
+ * smaller than the target still returns the target with zero neighbors; that pack is
+ * **over budget**, and `truncated` is set in that case too (so a `truncated: false`
+ * is an honest "everything fit", never a silent overrun the target alone caused).
  *
  * Like the rest of `core/` (design §2.1) this module is pure: it reads the graph
  * and returns plain data or throws a {@link LoreError}; it never touches the
@@ -46,7 +49,7 @@
  */
 
 import { singleLine } from "../errors";
-import type { BundleGraph } from "./bundle";
+import { type BundleGraph, estimateTokens, frontmatterScalar } from "./bundle";
 import type { Concept } from "./concept";
 import { subgraph } from "./query";
 
@@ -79,7 +82,7 @@ export interface ContextNeighbor {
    * sentence to show.
    */
   readonly summary?: string;
-  /** The chars/4 estimate of the emitted `summary` line (`0` when there is none) — what this neighbor costs the budget. */
+  /** The chars/4 estimate of the emitted entry (`id` + `type` + `summary`) — what this neighbor costs the budget. */
   readonly tokenEstimate: number;
 }
 
@@ -101,7 +104,13 @@ export interface ContextExport {
   readonly total: number;
   /** The number of neighbors actually included (`shown <= total`). */
   readonly shown: number;
-  /** `true` when the budget dropped one or more neighbors (`shown < total`). */
+  /**
+   * `true` when the pack does not fully fit the budget: either the budget dropped
+   * one or more neighbors (`shown < total`), or the always-present target alone
+   * pushes `tokenEstimate` past `--max-tokens` (an over-budget pack with no neighbor
+   * to drop). `false` is therefore an honest "the whole neighborhood is here and
+   * within budget", never a silent overrun.
+   */
   readonly truncated: boolean;
 }
 
@@ -151,31 +160,21 @@ export function buildContext(graph: BundleGraph, root: string, options: BuildCon
     tokenEstimate: graph.tokenEstimate(root),
   };
 
-  // Nearest-first neighbors: subgraph's iteration is root-first then by level, so
-  // dropping the root leaves depth-1 before depth-2 — exactly the order the budget
-  // should fill (keep the closest).
-  const candidates: ContextNeighbor[] = [];
+  // Every reached id but the root is a neighbor (subgraph yields only real concepts),
+  // so the candidate count is known without materializing the dropped ones.
+  const total = reached.size - 1;
+  // Single nearest-first fill: subgraph iterates root-first then by level, so dropping
+  // the root visits depth-1 before depth-2 — exactly the order the budget should keep.
+  // Include each neighbor while it still fits and STOP at the first that would exceed
+  // the budget (a predictable prefix), so a dropped neighbor's summary is never even
+  // computed. An omitted budget keeps every neighbor.
+  const neighbors: ContextNeighbor[] = [];
+  let tokenEstimate = target.tokenEstimate;
   for (const id of reached) {
     if (id === root) {
       continue;
     }
-    const concept = conceptAt(graph, id);
-    const summary = neighborSummary(concept.frontmatter.summary, concept.frontmatter.title);
-    candidates.push({
-      id,
-      type: concept.type,
-      ...titleField(concept.frontmatter.title),
-      ...(summary !== undefined ? { summary } : {}),
-      tokenEstimate: summaryTokens(summary),
-    });
-  }
-
-  // Greedy nearest-first fill: include each neighbor while it still fits, and stop at
-  // the first that would exceed the budget so the kept set is a predictable prefix of
-  // the nearest-first order. An omitted budget keeps every neighbor.
-  const neighbors: ContextNeighbor[] = [];
-  let tokenEstimate = target.tokenEstimate;
-  for (const neighbor of candidates) {
+    const neighbor = neighborOf(conceptAt(graph, id), id);
     if (maxTokens !== undefined && tokenEstimate + neighbor.tokenEstimate > maxTokens) {
       break;
     }
@@ -183,6 +182,7 @@ export function buildContext(graph: BundleGraph, root: string, options: BuildCon
     tokenEstimate += neighbor.tokenEstimate;
   }
 
+  const overBudget = maxTokens !== undefined && tokenEstimate > maxTokens;
   return {
     root,
     depth,
@@ -190,9 +190,28 @@ export function buildContext(graph: BundleGraph, root: string, options: BuildCon
     target,
     neighbors,
     tokenEstimate,
-    total: candidates.length,
+    total,
     shown: neighbors.length,
-    truncated: neighbors.length < candidates.length,
+    truncated: neighbors.length < total || overBudget,
+  };
+}
+
+/**
+ * Shape one neighbor concept into its compacted {@link ContextNeighbor}: its `type`,
+ * optional `title`, the one-line summary (its `summary`, falling back to its
+ * `title`), and the chars/4 cost of the emitted entry (`id` + `type` + `summary`).
+ * The `title` scalar is coerced once and reused for both the `title` field and the
+ * summary fallback.
+ */
+function neighborOf(concept: Concept, id: string): ContextNeighbor {
+  const title = frontmatterScalar(concept.frontmatter.title);
+  const summary = oneLine(frontmatterScalar(concept.frontmatter.summary) ?? title);
+  return {
+    id,
+    type: concept.type,
+    ...(title !== undefined ? { title } : {}),
+    ...(summary !== undefined ? { summary } : {}),
+    tokenEstimate: estimateTokens(`${id} ${concept.type} ${summary ?? ""}`),
   };
 }
 
@@ -208,41 +227,27 @@ function conceptAt(graph: BundleGraph, id: string): Concept {
 }
 
 /**
- * The one-line compaction for a neighbor: its `summary` frontmatter when present,
- * else its `title`, collapsed to a single line ({@link singleLine}, so a multi-line
- * YAML scalar cannot smuggle extra lines into the pack), or `undefined` when the
- * concept carries neither. A YAML-coerced number/boolean is stringified rather than
- * dropped — mirroring how `core/graph.ts` treats such scalars — so a stray
- * `summary: 2024` still shows.
+ * A `title` frontmatter value as a `{ title }` field to spread, or `{}` when it has
+ * no display form. Uses the shared {@link frontmatterScalar} so the `title` a target
+ * or neighbor reports is **byte-identical** to what `lore graph` reports for the same
+ * concept (verbatim string, finite number/boolean coerced, else absent).
  */
-function neighborSummary(summary: unknown, title: unknown): string | undefined {
-  return scalarLine(summary) ?? scalarLine(title);
-}
-
-/**
- * A scalar frontmatter value as a single trimmed, non-empty line, or `undefined`.
- * A string is collapsed and trimmed; a number/boolean is stringified (YAML coercion
- * on an unknown type, e.g. an unquoted `summary: 2024`); anything else — `null`, a
- * list, an object — has no one-line form.
- */
-function scalarLine(value: unknown): string | undefined {
-  if (typeof value === "string") {
-    const line = singleLine(value).trim();
-    return line === "" ? undefined : line;
-  }
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  return undefined;
-}
-
-/** A `title` frontmatter value as a `{ title }` field to spread, or `{}` when it has no one-line form. */
 function titleField(value: unknown): { title?: string } {
-  const title = scalarLine(value);
+  const title = frontmatterScalar(value);
   return title !== undefined ? { title } : {};
 }
 
-/** The chars/4 token estimate of an emitted summary line (`0` when there is none). */
-function summaryTokens(summary: string | undefined): number {
-  return summary === undefined ? 0 : Math.ceil(summary.length / 4);
+/**
+ * Collapse an already-coerced scalar ({@link frontmatterScalar}) to a single trimmed,
+ * non-empty line for the neighbor compaction, or `undefined`. Unlike the `title`
+ * field — which is kept verbatim to match `lore graph` — the summary is a one-line
+ * display, so {@link singleLine} + trim ensures a multi-line YAML scalar cannot
+ * smuggle extra lines into the pack.
+ */
+function oneLine(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const line = singleLine(value).trim();
+  return line === "" ? undefined : line;
 }

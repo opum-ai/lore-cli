@@ -4,9 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/cli";
 import { type ContextOptions, runContext } from "../src/commands/context";
-import { loadBundle } from "../src/core/bundle";
+import { estimateTokens, loadBundle } from "../src/core/bundle";
 import { buildContext, type ContextExport } from "../src/core/context";
-import { adjacencyOf, subgraph } from "../src/core/query";
 import { LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
@@ -84,30 +83,6 @@ function expectError(type: LoreError["type"], fn: () => unknown): LoreError {
   throw new Error(`expected a ${type} LoreError, but it returned`);
 }
 
-// ── core/query: adjacency memoization ─────────────────────────────────────────────
-
-describe("adjacencyOf — memoized per graph", () => {
-  test("returns the same map instance across calls on one graph, a fresh one per graph", () => {
-    writeChainBundle();
-    const g = graph();
-    expect(adjacencyOf(g)).toBe(adjacencyOf(g)); // cached on the graph object
-    expect(adjacencyOf(graph())).not.toBe(adjacencyOf(g)); // a different load → its own map
-  });
-
-  test("subgraph traversal reflects the memoized undirected adjacency", () => {
-    writeChainBundle();
-    const g = graph();
-    // Priming the cache must not change reachability — depth 2 from bulk is the chain.
-    adjacencyOf(g);
-    expect([...subgraph(g, "stories/bulk", 2)]).toEqual([
-      "stories/bulk",
-      "specs/archive",
-      "reference/orders",
-      "adr/0001-x",
-    ]);
-  });
-});
-
 // ── core/context: pack shaping ─────────────────────────────────────────────────────
 
 describe("buildContext — target shaping", () => {
@@ -148,11 +123,12 @@ describe("buildContext — neighbor compaction", () => {
     expect(data.neighbors.find((n) => n.id === "reference/orders")?.summary).toBe("The orders domain reference.");
   });
 
-  test("a neighbor with neither summary nor title omits the summary field and costs no budget", () => {
+  test("a neighbor with neither summary nor title omits the summary field; its cost is its id+type", () => {
     writeChainBundle();
     const data = buildContext(graph(), "stories/bulk", { depth: 2 });
     const adr = data.neighbors.find((n) => n.id === "adr/0001-x");
-    expect(adr).toMatchObject({ type: "Adr", tokenEstimate: 0 });
+    // No summary, but the always-emitted id + type still carry a (charged) cost.
+    expect(adr).toMatchObject({ type: "Adr", tokenEstimate: estimateTokens("adr/0001-x Adr ") });
     expect(adr).not.toHaveProperty("summary");
   });
 
@@ -167,13 +143,24 @@ describe("buildContext — neighbor compaction", () => {
     expect(data.neighbors.find((n) => n.id === "flag")?.summary).toBe("2024");
   });
 
-  test("each neighbor's estimate is chars/4 of its summary line, and the total sums target + included", () => {
+  test("each neighbor's estimate is chars/4 of its id+type+summary, and the total sums target + included", () => {
     writeChainBundle();
     const data = buildContext(graph(), "stories/bulk", { depth: 2 });
     const ref = data.neighbors.find((n) => n.id === "reference/orders");
-    expect(ref?.tokenEstimate).toBe(Math.ceil("The orders domain reference.".length / 4));
+    // The whole emitted entry (id, type, summary) is charged — not the summary alone —
+    // so a wide neighborhood of short summaries can't silently overrun the budget.
+    expect(ref?.tokenEstimate).toBe(estimateTokens("reference/orders Reference The orders domain reference."));
     const sum = data.target.tokenEstimate + data.neighbors.reduce((acc, n) => acc + n.tokenEstimate, 0);
     expect(data.tokenEstimate).toBe(sum);
+  });
+
+  test("the target's and a neighbor's `title` are kept verbatim, matching `lore graph`", () => {
+    // A title with surrounding whitespace must NOT be trimmed/collapsed (graph keeps it verbatim).
+    writeDoc("hub.md", '---\ntype: Story\ntitle: "  Spaced Hub  "\n---\nTo [n](./n.md).\n');
+    writeDoc("n.md", '---\ntype: Reference\ntitle: "  Edge Ref  "\n---\nText.\n');
+    const data = buildContext(graph(), "hub", { depth: 1 });
+    expect(data.target.title).toBe("  Spaced Hub  ");
+    expect(data.neighbors.find((n) => n.id === "n")?.title).toBe("  Edge Ref  ");
   });
 });
 
@@ -181,10 +168,12 @@ describe("buildContext — token budget", () => {
   test("stops at the first neighbor that would exceed --max-tokens (a nearest-first prefix)", () => {
     writeChainBundle();
     const g = graph();
+    // Read the real costs from an unbudgeted run: the nearest neighbor (specs/archive)
+    // and the target. A budget that fits exactly those two leaves no room for the
+    // second neighbor, so the fill stops at it — a predictable nearest-first prefix.
+    const full = buildContext(g, "stories/bulk", { depth: 2 });
     const target = g.tokenEstimate("stories/bulk");
-    const firstCost = Math.ceil("Archive".length / 4); // specs/archive's summary (title fallback)
-    // Budget fits target + the first neighbor exactly; the second (reference/orders)
-    // overflows, so the fill stops there even though a later 0-cost neighbor would fit.
+    const firstCost = (full.neighbors.find((n) => n.id === "specs/archive") as { tokenEstimate: number }).tokenEstimate;
     const data = buildContext(g, "stories/bulk", { depth: 2, maxTokens: target + firstCost });
     expect(data.neighbors.map((n) => n.id)).toEqual(["specs/archive"]);
     expect(data).toMatchObject({ maxTokens: target + firstCost, total: 3, shown: 1, truncated: true });
@@ -206,6 +195,17 @@ describe("buildContext — token budget", () => {
     expect(data.neighbors.map((n) => n.id)).toEqual(["specs/archive", "reference/orders", "adr/0001-x"]);
     expect(data).toMatchObject({ total: 3, shown: 3, truncated: false });
     expect(data.maxTokens).toBeUndefined();
+  });
+
+  test("an over-budget target with no neighbors still reports truncated (not a silent overrun)", () => {
+    writeChainBundle();
+    const g = graph();
+    // depth 0 → zero neighbors, so `shown < total` cannot fire; the only over-budget
+    // signal is the target body itself exceeding --max-tokens.
+    const data = buildContext(g, "stories/bulk", { depth: 0, maxTokens: 1 });
+    expect(data).toMatchObject({ total: 0, shown: 0, truncated: true });
+    expect(data.tokenEstimate).toBe(g.tokenEstimate("stories/bulk"));
+    expect(data.tokenEstimate).toBeGreaterThan(1); // pack is over the requested budget
   });
 });
 
@@ -244,13 +244,32 @@ describe("lore context — command", () => {
     expect(text).toContain("  - specs/archive  [Spec]  — Archive");
   });
 
-  test("plain mode shows the §3 truncation footer when the budget drops neighbors", () => {
+  test("plain mode shows the §3 truncation footer (raise --max-tokens) when the budget drops neighbors", () => {
+    writeChainBundle();
+    // A budget that fits the target exactly leaves no room for any neighbor, but is not
+    // over budget — so it is the dropped-neighbor footer, with the corrected hint.
+    const target = loadBundle(join(root, "docs")).tokenEstimate("stories/bulk");
+    const stdout = capture();
+    runContext({
+      root,
+      output: PLAIN_CTX,
+      stdout,
+      stderr: capture(),
+      args: ["stories/bulk", "--max-tokens", String(target)],
+    });
+    const text = stdout.text();
+    expect(text).toContain("neighbors (0 of 2):");
+    expect(text).toContain("showing 0 of 2 — raise --max-tokens to include more");
+    expect(text).not.toContain("lower --depth"); // the counterfactual clause is gone
+  });
+
+  test("plain mode warns when the always-included target alone exceeds --max-tokens", () => {
     writeChainBundle();
     const stdout = capture();
     runContext({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: ["stories/bulk", "--max-tokens", "1"] });
     const text = stdout.text();
-    expect(text).toContain("neighbors (0 of 2):");
-    expect(text).toContain("showing 0 of 2 — raise --max-tokens or lower --depth to include more");
+    expect(text).toContain("over budget:");
+    expect(text).toContain("exceeds the 1-token limit");
   });
 
   test("an unknown id surfaces as a not_found error", () => {

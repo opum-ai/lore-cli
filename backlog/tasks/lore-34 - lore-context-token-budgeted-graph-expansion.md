@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-06-29 01:24'
+updated_date: '2026-06-29 01:33'
 labels:
   - cmd
 milestone: m-4
@@ -26,8 +26,8 @@ Assemble a concept body plus 1-line neighbor summaries via the graph, depth-boun
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Output respects --max-tokens
-- [ ] #2 Deterministic for the same inputs
+- [x] #1 Output respects --max-tokens
+- [x] #2 Deterministic for the same inputs
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -40,3 +40,22 @@ Assemble a concept body plus 1-line neighbor summaries via the graph, depth-boun
 5. test/context.test.ts: clone graph.test.ts style (core query identity-cache test; buildContext token/budget/truncation/summary-fallback; command arg-parse + not_found + dispatch).
 6. Gates: bun test + biome + tsc + coverage; /code-review max fold; CHANGELOG Unreleased/Added; verify cli-surface §context matches; PR into dev.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented on feat/lore-34-context (commit e040f29).
+
+- NEW pure core/context.ts: buildContext(graph, root, {depth=1, maxTokens?}) -> ContextExport. Reuses the shared core/query.ts subgraph() traversal for the neighborhood (nearest-first discovery order, root excluded). Token model (chars/4 throughout): target charged graph.tokenEstimate(root) (whole-concept, == lore graph's per-node number); each neighbor compacted to its summary (frontmatter summary -> title -> none) and charged ceil(summary/4). export.tokenEstimate = target + included neighbors. Greedy nearest-first fill STOPS at the first neighbor that would exceed --max-tokens (predictable prefix); target ALWAYS included. Structural, no ranking (ADR-0015).
+- NEW thin commands/context.ts: cloned graph.ts arg parser; required <id> (idFromPath-normalized), --max-tokens <n> (>=1), --depth <n> (default 1, >=0); loadBundle + flush advisories BEFORE the not_found throw; emit(context.export); reuses truncation()/renderTruncationLine() for the §3 footer.
+- cli.ts registers 'context' + USAGE line.
+- FOLDED the deferred LORE-31 finding: subgraph adjacency is now memoized per BundleGraph via adjacencyOf() (WeakMap), so multi-target traversals no longer rebuild the O(E) index.
+
+AC#1 (respects --max-tokens): covered by buildContext budget tests (stop-at-first-overflow prefix; target-always-included; omitted budget keeps all) + command --max-tokens=1 truncation-footer test.
+AC#2 (deterministic): neighbor order is subgraph's deterministic discovery order; all estimates are pure chars/4; no Date/random. Pinned by the order/equality assertions.
+
+Gates GREEN: bun test (890 pass) · biome clean · tsc --noEmit clean · coverage core/context.ts + core/query.ts + commands/context.ts all 100% func+line. Smoke-tested read-only on the repo's own docs/ bundle (pack renders; exit 3 on unknown id).
+cli-surface §context: flags/kind unchanged (matched the locked contract); added exit-2 to the exit row for accuracy/parity with graph. CHANGELOG Unreleased/Added entry added.
+
+PENDING: workflow /code-review max fold, then PR into dev.
+<!-- SECTION:NOTES:END -->
