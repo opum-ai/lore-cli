@@ -212,23 +212,30 @@ const BM25_B = 0.75;
 export function query(graph: BundleGraph, options: QueryOptions = {}): QueryResult {
   const limit = options.limit ?? DEFAULT_QUERY_LIMIT;
   const normalizedText = (options.text ?? "").trim();
-  const hasText = normalizedText !== "";
-  const queryTerms = hasText ? [...new Set(tokenize(normalizedText))] : [];
+  const queryTerms = [...new Set(tokenize(normalizedText))];
+  // `hasText` keys off the *tokenized* terms, not the raw string: a non-empty text
+  // that yields no searchable term (punctuation/separators only, e.g. `"%%%"`) is
+  // treated as a filters-only query rather than a ranked one that would score every
+  // concept 0 and silently drop the frontmatter filters passed alongside it.
+  const hasText = queryTerms.length > 0;
 
   // Iterating the id-ordered `concepts` map keeps the filtered list ascending by id,
   // which is already the filters-only order and the tie-break order under ranking.
   const matched: Array<{ concept: Concept; score: number }> = [];
+  // IDF is a per-term, per-corpus constant — compute it once here, not once per scored
+  // document, so a query over a large filtered set does not recompute the same logs.
   const index = hasText ? buildBm25Index(graph) : undefined;
+  const idf = index !== undefined ? idfForTerms(index, queryTerms) : undefined;
   for (const concept of graph.concepts.values()) {
     if (!matchesFilters(concept, options)) {
       continue;
     }
-    if (index === undefined) {
+    if (index === undefined || idf === undefined) {
       matched.push({ concept, score: 0 });
       continue;
     }
     // A text query also filters: a concept with none of its terms scores 0 and is dropped.
-    const score = scoreBm25(index, concept.id, queryTerms);
+    const score = scoreBm25(index, idf, concept.id, queryTerms);
     if (score > 0) {
       matched.push({ concept, score });
     }
@@ -263,21 +270,23 @@ function toHit(concept: Concept, score: number): QueryHit {
   };
 }
 
-/** Whether `concept` satisfies every provided filter — the AC#1 type/tag/status/field gate. */
+/**
+ * Whether `concept` satisfies every provided filter — the AC#1 type/tag/status/field
+ * gate. `--type` compares the resolved `type` mirror; `--status` and each `--tag` are
+ * just the general `--field` test against the `status`/`tags` keys (one matcher, so
+ * the scalar-vs-list and case rules can never diverge between them and an arbitrary
+ * `--field`). All comparisons fold case.
+ */
 function matchesFilters(concept: Concept, options: QueryOptions): boolean {
   if (options.type !== undefined && !equalsFold(concept.type, options.type)) {
     return false;
   }
-  if (options.status !== undefined) {
-    const status = frontmatterScalar(concept.frontmatter.status);
-    if (status === undefined || !equalsFold(status, options.status)) {
-      return false;
-    }
+  if (options.status !== undefined && !matchesField(concept, { key: "status", value: options.status })) {
+    return false;
   }
   if (options.tags !== undefined) {
-    const tags = tagsOf(concept);
     for (const want of options.tags) {
-      if (!tags.some((tag) => equalsFold(tag, want))) {
+      if (!matchesField(concept, { key: "tags", value: want })) {
         return false;
       }
     }
@@ -295,14 +304,21 @@ function matchesFilters(concept: Concept, options: QueryOptions): boolean {
 /**
  * Whether `concept`'s `filter.key` frontmatter matches `filter.value`: a list field
  * matches when **any** element equals the value (case-insensitively), a scalar field
- * when it equals the value. Only an **own** key is read (an inherited `constructor`/
- * `toString` can never satisfy a filter). A field with no scalar/list value never matches.
+ * when it equals the value.
+ *
+ * The **key** is resolved case-insensitively too — a `--field Status=…` finds a
+ * `status:` key — so the key and the value fold consistently (and consistently with
+ * `--type`/`--tag`/`--status`), instead of a verbatim-case key lookup silently
+ * missing. Only **own** enumerable keys are scanned (`Object.keys`), so an inherited
+ * `constructor`/`toString` can never satisfy a filter. A field with no scalar/list
+ * value, or no matching key, never matches.
  */
 function matchesField(concept: Concept, filter: FieldFilter): boolean {
-  if (!Object.hasOwn(concept.frontmatter, filter.key)) {
+  const key = Object.keys(concept.frontmatter).find((candidate) => equalsFold(candidate, filter.key));
+  if (key === undefined) {
     return false;
   }
-  const raw = concept.frontmatter[filter.key];
+  const raw = concept.frontmatter[key];
   if (Array.isArray(raw)) {
     return raw.some((item) => {
       const value = frontmatterScalar(item);
@@ -419,17 +435,32 @@ function buildBm25Index(graph: BundleGraph): Bm25Index {
 }
 
 /**
+ * The inverse-document-frequency of each query term — computed once per query, since
+ * IDF depends only on the corpus, not the document being scored. The always-non-negative
+ * variant `ln(1 + (N − n + 0.5)/(n + 0.5))`, so a term in most documents can never push
+ * a score negative.
+ */
+function idfForTerms(index: Bm25Index, terms: readonly string[]): ReadonlyMap<string, number> {
+  const idf = new Map<string, number>();
+  for (const term of terms) {
+    const df = index.df.get(term) ?? 0;
+    idf.set(term, Math.log(1 + (index.n - df + 0.5) / (df + 0.5)));
+  }
+  return idf;
+}
+
+/**
  * The BM25 relevance of document `id` to `terms` — the sum over the query terms the
- * document contains of `IDF(term) · saturated-tf`. IDF is the always-non-negative
- * variant `ln(1 + (N − n + 0.5)/(n + 0.5))`, so a term in most documents can never
- * push a score negative. `avgdl` is safely positive wherever it is read: a term with
- * a non-zero frequency means the document has tokens, which means the corpus does too.
+ * document contains of `IDF(term) · saturated-tf`, using the precomputed {@link idfForTerms}.
+ * `avgdl` is safely positive wherever it is read: a term with a non-zero frequency means
+ * the document has tokens, which means the corpus does too.
  *
  * `id` is always an indexed document — the index is built from the same bundle
  * {@link query} iterates, so every concept it scores has an entry (asserting that
- * keeps the scorer straight-line, with no dead "missing doc" branch).
+ * keeps the scorer straight-line, with no dead "missing doc" branch). Likewise every
+ * scored term has an `idf` entry (both come from the same query-term list).
  */
-function scoreBm25(index: Bm25Index, id: string, terms: readonly string[]): number {
+function scoreBm25(index: Bm25Index, idf: ReadonlyMap<string, number>, id: string, terms: readonly string[]): number {
   const doc = index.docs.get(id) as IndexedDoc;
   let score = 0;
   for (const term of terms) {
@@ -437,10 +468,8 @@ function scoreBm25(index: Bm25Index, id: string, terms: readonly string[]): numb
     if (freq === undefined) {
       continue;
     }
-    const df = index.df.get(term) ?? 0;
-    const idf = Math.log(1 + (index.n - df + 0.5) / (df + 0.5));
     const denominator = freq + BM25_K1 * (1 - BM25_B + (BM25_B * doc.length) / index.avgdl);
-    score += (idf * (freq * (BM25_K1 + 1))) / denominator;
+    score += ((idf.get(term) as number) * (freq * (BM25_K1 + 1))) / denominator;
   }
   return score;
 }

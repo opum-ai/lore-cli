@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@jeremy'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-06-29 09:07'
+updated_date: '2026-06-29 09:13'
 labels:
   - cmd
 milestone: m-4
@@ -38,3 +38,9 @@ In-memory full-text (BM25-style) + frontmatter-field filters; --max-tokens budge
 4. test/query.test.ts: core + command + router coverage (core 100% func+line).
 5. Gates: bun test, biome, tsc, coverage. /code-review max fold. CHANGELOG Unreleased/Added. Build to LOCKED cli-surface §query (--limit, NOT --max-tokens).
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented on feat/lore-33-query (commit 2626fe3). core/query.ts: pure query() with BM25-style ranking (k1=1.5, b=0.75, always-positive IDF) over a whole-bundle lexical index (id+title+summary+description+tags+body), case-insensitive frontmatter filters (--type/--tag/--status/--field, all AND), summary->title->none snippet (reuses frontmatterScalar+singleLine), --limit-bounded output with narrow-it hint. commands/query.ts: thin parser cloned from graph/context. Built to LOCKED cli-surface §query (--limit NOT --max-tokens; the task-desc --max-tokens was superseded by the locked contract). Gates green: bun test 934 pass, tsc clean, biome clean, coverage 100% func+line on both new files. /code-review max running (workflow wf_e90608c5-99f).
+<!-- SECTION:NOTES:END -->

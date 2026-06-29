@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/cli";
-import { type QueryCommandOptions, runQuery } from "../src/commands/query";
+import { formatScore, type QueryCommandOptions, runQuery } from "../src/commands/query";
 import { loadBundle } from "../src/core/bundle";
 import { DEFAULT_QUERY_LIMIT, type QueryResult, query } from "../src/core/query";
 import { LoreError } from "../src/errors";
@@ -127,11 +127,15 @@ describe("query — text ranking (BM25)", () => {
     expect(twice.hits[0]?.score).toBeCloseTo(once.hits[0]?.score ?? -1, 10);
   });
 
-  test("a text query with no indexable terms (punctuation only) matches nothing", () => {
+  test("a text with no indexable terms (punctuation only) is a filters-only query, honoring filters", () => {
     writeMixedBundle();
-    const data = query(graph(), { text: "!!! ??? ..." });
-    expect(data).toMatchObject({ query: "!!! ??? ...", total: 0, shown: 0, truncated: false });
-    expect(data.hits).toEqual([]);
+    // Punctuation-only text tokenizes to nothing → treated as filters-only (no query
+    // field), NOT a ranked query that would score everything 0 and drop the filters.
+    const filtered = query(graph(), { text: "!!! ???", type: "ADR" });
+    expect(filtered.query).toBeUndefined();
+    expect(filtered.hits.map((h) => h.id)).toEqual(["adr/0001-retention"]);
+    // With no filter alongside it, it lists the whole (bounded) bundle.
+    expect(query(graph(), { text: "..." }).total).toBe(4);
   });
 
   test("a whitespace-only or absent text is a filters-only query (no query field, score 0, id order)", () => {
@@ -201,6 +205,14 @@ describe("query — frontmatter filters", () => {
     ]);
     // A key no concept has → no matches.
     expect(query(graph(), { fields: [{ key: "nonesuch", value: "x" }] }).hits).toEqual([]);
+  });
+
+  test("--field resolves the key case-insensitively (consistent with the value and the other filters)", () => {
+    writeMixedBundle();
+    // `Status`/`STATUS` find the `status:` frontmatter key, not just a verbatim-case match.
+    expect(query(graph(), { fields: [{ key: "Status", value: "done" }] }).hits.map((h) => h.id)).toEqual([
+      "adr/0001-retention",
+    ]);
   });
 
   test("filters compose (AND) and combine with a text query", () => {
@@ -335,6 +347,8 @@ describe("lore query — command", () => {
     [["--field"], "--field needs a value"],
     [["--field", "novalue"], 'invalid --field "novalue"'],
     [["--field", "=orphan"], 'invalid --field "=orphan"'],
+    [["--field", "status="], "the value after = must not be empty"],
+    [["--field", "status=   "], "the value after = must not be empty"],
   ])("rejects %j with a usage error", (args, fragment) => {
     writeMixedBundle();
     const err = expectError("usage", () =>
@@ -347,6 +361,22 @@ describe("lore query — command", () => {
     writeDoc("x.md", "---\ntype: Reference\nslug: a=b\n---\nBody.\n");
     const { data } = exportQuery(["--field", "slug=a=b"]);
     expect(data.hits.map((h) => h.id)).toEqual(["x"]);
+  });
+
+  test("--field trims a space-padded value so it still matches", () => {
+    writeMixedBundle();
+    const { data } = exportQuery(["--field", "status=  In Progress  "]);
+    expect(data.hits.map((h) => h.id)).toEqual(["stories/bulk-archive"]);
+  });
+});
+
+// ── command: score formatting ────────────────────────────────────────────────────
+
+describe("formatScore", () => {
+  test("two decimals normally, but a positive sub-0.005 score keeps significant digits", () => {
+    expect(formatScore(2.345)).toBe("2.35");
+    expect(formatScore(0)).toBe("0.00"); // a genuine zero (filters-only) stays 0.00
+    expect(formatScore(0.001)).toBe("0.0010"); // a tiny positive score is never shown as 0.00
   });
 });
 

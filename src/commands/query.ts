@@ -178,8 +178,12 @@ function parseQueryArgs(args: readonly string[]): QueryArgs {
 
 /**
  * Parse a `--field` argument into a `key=value` {@link FieldFilter}. Splits on the
- * **first** `=` (so a value may itself contain `=`); the key is trimmed and must be
- * non-empty, the value is taken verbatim. A missing `=` or empty key is a `usage` error.
+ * **first** `=` (so a value may itself contain `=`); both sides are **trimmed** (the
+ * comparison folds case and ignores surrounding space, so a padded `status= Done` must
+ * not silently miss). A missing `=`, an empty key, or an **empty value** is a `usage`
+ * error — the latter matching the empty-value guard {@link readValue} enforces for every
+ * other flag, so `--field status=` is rejected rather than matching only a literally
+ * empty field.
  */
 function parseFieldFilter(raw: string): FieldFilter {
   const eq = raw.indexOf("=");
@@ -190,7 +194,11 @@ function parseFieldFilter(raw: string): FieldFilter {
   if (key === "") {
     throw usage(`invalid --field "${raw}"`, "the field name before = must not be empty");
   }
-  return { key, value: raw.slice(eq + 1) };
+  const value = raw.slice(eq + 1).trim();
+  if (value === "") {
+    throw usage(`invalid --field "${raw}"`, "the value after = must not be empty");
+  }
+  return { key, value };
 }
 
 /**
@@ -257,7 +265,7 @@ function renderText(data: QueryResult): string {
   const head = data.query !== undefined ? `query "${data.query}"` : "query (filters)";
   const lines = [`${head}: ${data.total} ${data.total === 1 ? "match" : "matches"}`];
   for (const hit of data.hits) {
-    const score = data.query !== undefined ? `  (${hit.score.toFixed(2)})` : "";
+    const score = data.query !== undefined ? `  (${formatScore(hit.score)})` : "";
     const snippet = hit.snippet !== undefined ? `  — ${hit.snippet}` : "";
     lines.push(`  ${hit.id}  [${hit.type}]${score}${snippet}`);
   }
@@ -266,6 +274,18 @@ function renderText(data: QueryResult): string {
     lines.push(footer);
   }
   return lines.join("\n");
+}
+
+/**
+ * Format a BM25 score for the text listing: two decimals normally, but a **positive**
+ * score that would round to `0.00` (a real hit whose relevance is tiny — e.g. a
+ * near-ubiquitous term in a large bundle) falls back to two significant figures, so a
+ * returned hit is never displayed as the `0.00` that reads like "should have been
+ * dropped". Exported for direct unit coverage of both branches.
+ */
+export function formatScore(score: number): string {
+  const fixed = score.toFixed(2);
+  return score > 0 && Number(fixed) === 0 ? score.toPrecision(2) : fixed;
 }
 
 /** A `usage` {@link LoreError} (exit `2`) with an actionable hint. */
