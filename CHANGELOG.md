@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lore context` — assemble a token-budgeted context pack for a concept** (LORE-34). `lore context
+  <id> [--max-tokens <n>] [--depth <n>]` emits the target concept's **full body** plus a **one-line
+  `summary` compaction** of its neighbors out to `--depth` hops (default 1), so an agent can be handed
+  a concept *and* enough of what surrounds it within a budget. It is deliberately **structural, not
+  ranked** (no relevance heuristics — that is `lore query`'s job): the neighborhood comes from the same
+  shared, undirected, cycle-tolerant `core/query.ts` `subgraph` traversal `lore graph` uses, and
+  neighbors are taken **nearest-first** (depth-1 before depth-2). Each token figure is the chars/4
+  heuristic: the target is charged the whole-concept estimate (the same `~tokens` `lore graph` reports),
+  while a neighbor — emitted only as its `summary` (falling back to `title`, else nothing) — is charged
+  just that line. `--max-tokens` trims neighbors greedily, **stopping at the first that would exceed the
+  budget** (a predictable nearest-first prefix) and reporting the drop via the standard
+  `total`/`shown`/`truncated` signal; the **target is always included** even when it alone exceeds the
+  budget. With no `--max-tokens` the pack is bounded only by `--depth`. The `<id>` is normalized like
+  `lore graph`/`rename`, and output follows the uniform CLI modes: a pasteable text pack (pretty/plain)
+  or the `kind: context.export` envelope under the global `--json`. Exit `0` ok · `2` bad usage (missing
+  or duplicate `<id>`, unknown/repeated/value-less flag, non-integer/too-large/out-of-range
+  `--max-tokens` or `--depth`) · `3` `<id>` not in the bundle. The shared `subgraph` adjacency is now
+  **memoized per `BundleGraph`** (`core/query.ts` `adjacencyOf`), so multi-target traversals stop
+  rebuilding the O(E) index on every call.
 - **`lore graph` — emit the bundle's cross-link graph** (LORE-31). `lore graph [<id>] [--dot] [--depth
   <n>]` surfaces the graph `loadBundle` already builds — concepts as nodes (each with its `type`,
   optional `title`, and a chars/4 token estimate), OKF body cross-links and the
