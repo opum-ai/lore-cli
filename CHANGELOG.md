@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lore check --external` — opt-in external-URL liveness** (LORE-48). With `--external`, `lore
+  check` probes every `http(s)` link in the bundle with Bun `fetch` (no Rust/lychee runtime
+  dependency) and reports dead, unreachable, or timed-out URLs as advisory `external-link`
+  findings. Because liveness is **non-deterministic**, these findings are kept entirely out of the
+  deterministic gate (ADR-0007): they **never change the exit code — not even under `--strict`** —
+  and the network IO lives in the command layer, never in pure `core/` (ADR-0014). Each distinct
+  URL is fetched once (bounded concurrency, per-request timeout) and reported per referencing file;
+  the `--json` envelope carries them in a separate `externalFindings` array, leaving the gate
+  `errorCount`/`warningCount` untouched.
+- **`lore check` portability lint additions** (LORE-48, warn-only): **MDX hazards** (un-escaped raw
+  `<`/`{` in prose and raw HTML tags, which break Docusaurus's MDX build), **filename rules**
+  (leading-underscore files/folders Docusaurus ignores as partials, and `.mdx` files), a precise
+  **Obsidian block-reference** (`^id`) detector (sparing `x^2`, footnotes, and mid-prose carets
+  while catching digit-leading auto ids), **accidental-colon filenames** (`notes:2026.md`, read as
+  a `scheme:` URL), and **trailing-slash directory links** (`../reference/`).
+
 - **`lore query` — full-text search the bundle with frontmatter filters** (LORE-33). `lore query
   ["<text>"] [--type <T>] [--tag <t>]… [--status <S>] [--field k=v]… [--limit <n>]` ranks concepts by
   **BM25-style** in-memory relevance to the search text and filters them by frontmatter — `--type`,
@@ -438,5 +454,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Product specification (`lore-spec.md`) and the OKF documentation bundle under `docs/`
   (architecture, tech stack, design, ADRs, runbooks, references).
 - Build plan tracked as Backlog.md milestones and tasks.
+
+### Changed
+- **`lore check` internals** (LORE-48): the `validate`/`check` finding model is unified on a shared
+  `Severity`/`Finding<Rule>` (`core/finding.ts`); the filesystem-errno→`LoreError` mapping is
+  consolidated into one `ioError` policy (`errors.ts`); `bundle.ts`'s markdown walk is generalized to
+  a predicate-driven `walkFiles`; and `normalizeLink` now rejects absolute operands and computes a
+  cwd-independent relative link.
 
 [Unreleased]: https://github.com/jeremy-newhouse/lore/commits/dev
