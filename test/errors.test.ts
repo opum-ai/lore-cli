@@ -475,6 +475,14 @@ describe("ioError — the shared fs-errno policy (LORE-48)", () => {
     }
   });
 
+  test("attaches the errno code to the LoreError input (LORE-48 review regression)", () => {
+    try {
+      ioError({ code: "EACCES" }, spec);
+    } catch (err) {
+      expect((err as LoreError).input).toEqual({ path: "p", code: "EACCES" });
+    }
+  });
+
   test("maps ENOENT to a not_found LoreError (exit 3)", () => {
     expect(() => ioError({ code: "ENOENT" }, spec)).toThrow(/missing msg/);
     try {

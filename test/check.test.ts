@@ -273,6 +273,15 @@ describe("checkBundle — MDX hazards (LORE-48)", () => {
     expect(checkBundle([{ path: "x.md", raw: ref("X", "<!-- a portable comment -->\n\nBody.") }]).warningCount).toBe(0);
   });
 
+  test("raw HTML after a comment in one html node is still flagged (LORE-48 review)", () => {
+    // `<!-- c --><div>` is one html node beginning with a comment; the trailing <div> must not be
+    // skipped just because the node starts with `<!--`.
+    const finding = checkBundle([{ path: "x.md", raw: ref("X", "<!-- c --><div>body</div>") }]).findings.find((f) =>
+      f.message.includes("raw HTML"),
+    );
+    expect(finding?.severity).toBe("warning");
+  });
+
   test("a long raw-HTML snippet is clipped with an ellipsis", () => {
     const longTag = `<div data-x="${"y".repeat(80)}"></div>`;
     const finding = checkBundle([{ path: "x.md", raw: ref("X", longTag) }]).findings.find((f) =>
@@ -313,6 +322,19 @@ describe("checkBundle — Obsidian block references (LORE-48)", () => {
 
   test("a mid-block caret is NOT flagged (only end-of-block markers)", () => {
     expect(warnings("foo ^bar baz qux")).toBe(0);
+  });
+
+  test("a caret followed by inline formatting is NOT flagged (LORE-48 review: block-end, not text-node-end)", () => {
+    // mdast splits this into [text 'see note ^id ', strong]; the caret is mid-paragraph, before the
+    // bold, so it must not be mistaken for a block-end ^id.
+    expect(warnings("see note ^id **bold**")).toBe(0);
+  });
+
+  test("a caret-id that genuinely ends the block after inline formatting IS flagged", () => {
+    const finding = checkBundle([{ path: "x.md", raw: ref("X", "**bold** then ^real-id") }]).findings.find((f) =>
+      f.message.includes("block reference"),
+    );
+    expect(finding?.severity).toBe("warning");
   });
 });
 

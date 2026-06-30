@@ -282,11 +282,14 @@ export interface IoErrorSpec {
  */
 export function ioError(cause: unknown, spec: IoErrorSpec): never {
   const code = errnoCode(cause);
+  // Attach the errno `code` to the structured input so the `--json` error envelope carries it
+  // (preserving the field `discover.ts`'s denied read used to set by hand, now uniform across sites).
+  const input = code !== undefined ? { ...spec.input, code } : spec.input;
   if (code === "EACCES" || code === "EPERM") {
-    throw new LoreError("denied", spec.denied.message, spec.denied.hint, spec.input);
+    throw new LoreError("denied", spec.denied.message, spec.denied.hint, input);
   }
   if (code === "ENOENT" || !spec.rethrowUnknown) {
-    throw new LoreError("not_found", spec.notFound.message, spec.notFound.hint, spec.input);
+    throw new LoreError("not_found", spec.notFound.message, spec.notFound.hint, input);
   }
   throw cause;
 }

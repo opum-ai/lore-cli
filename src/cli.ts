@@ -26,7 +26,7 @@ import { runReplace } from "./commands/replace";
 import { runSchema } from "./commands/schema";
 import { runSupersede } from "./commands/supersede";
 import { runValidate } from "./commands/validate";
-import { EXIT_CODES, EXIT_OK, LoreError, reportError, type Writer } from "./errors";
+import { EXIT_OK, EXIT_UNCAUGHT, LoreError, reportError, type Writer } from "./errors";
 import { VERSION } from "./meta";
 import { emit, errorRenderOpts, type OutputContext, type Renderable, resolveOutput } from "./output";
 
@@ -186,7 +186,15 @@ export function run(argv: readonly string[], context: RunContext = {}): number |
       }
       return emitMeta("help", { usage: USAGE }, USAGE, output, stdout);
     }
-    return dispatch(parsed, { ...context, stdout, stderr }, output);
+    const result = dispatch(parsed, { ...context, stdout, stderr }, output);
+    // The one async command path (`check --external`) returns a Promise; a rejection from it must
+    // funnel through the **same** error seam as a synchronous throw (formatted diagnostic + the
+    // right exit code), not escape to the entrypoint's bare backstop. The sync `catch` below cannot
+    // see an async rejection, so attach the seam to the promise here.
+    if (result instanceof Promise) {
+      return result.catch((err: unknown) => reportError(err, { ...errorRenderOpts(output), stderr }));
+    }
+    return result;
   } catch (err) {
     return reportError(err, { ...errorRenderOpts(output), stderr });
   }
@@ -305,12 +313,13 @@ function rejectCommandArgs(commandArgs: readonly string[], command: string): voi
 }
 
 // Only drive the real process when executed directly (not when imported by tests). `run` returns a
-// number for synchronous commands and a Promise for the one async path (`check --external`);
-// `Promise.resolve` handles both, and the `.catch` is a backstop so an unexpected async fault still
-// exits non-zero rather than crashing as an unhandled rejection.
+// number for synchronous commands and a Promise for the one async path (`check --external`); it
+// funnels its own async rejections through `reportError`, so `Promise.resolve(...).then` normally
+// receives a numeric exit code. The `.catch` is a last-ditch backstop (e.g. `reportError` itself
+// throwing) — `EXIT_UNCAUGHT` (1), the uncaught-fault code, not the validation gate's `6`.
 if (import.meta.main) {
   Promise.resolve(run(process.argv)).then(
     (code) => process.exit(code),
-    () => process.exit(EXIT_CODES.validation),
+    () => process.exit(EXIT_UNCAUGHT),
   );
 }

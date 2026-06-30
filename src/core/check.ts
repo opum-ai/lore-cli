@@ -350,13 +350,11 @@ interface Detector {
  * wikilinks/embeds (`[[…]]`/`![[…]]`), highlights (`==…==`), and `%%`-comments are
  * distinctive enough to match anywhere in a text node, but a **callout** (`[!type]`) is only
  * a callout at the **start** of a blockquote line, so its pattern is anchored to the start of
- * the text node — a literal `[!important]` mid-sentence is left alone (it renders portably). The
- * Obsidian **block-reference** marker (`^id`) joins them (LORE-48): its pattern requires the
- * caret to be preceded by whitespace or the block start and the id to run to the block end, so a
- * math/superscript `x^2`, a GFM footnote `[^1]`, and a mid-prose caret are all spared while a
- * digit-leading auto id (`^3f9a2b`) is still caught. (The MDX raw-`<`/`{` hazard and the
- * `_`-prefix/`.mdx` filename rules are handled separately — {@link mdxHazardFindings} and the
- * command layer — not as body-text regexes.)
+ * the text node — a literal `[!important]` mid-sentence is left alone (it renders portably). (The
+ * Obsidian **block-reference** `^id`, the MDX raw-`<`/`{` hazard, and the `_`-prefix/`.mdx`
+ * filename rules are handled separately — {@link blockReferenceFinding}, {@link mdxHazardFindings},
+ * and the command layer — not as body-text regexes, because each needs structural context a
+ * per-text-node regex cannot see.)
  */
 const DETECTORS: readonly Detector[] = [
   {
@@ -381,17 +379,17 @@ const DETECTORS: readonly Detector[] = [
     re: /%%[^\n]*?%%/g,
     describe: () => `non-portable Obsidian comment "%% … %%"; use an HTML comment <!-- … -->, which hides everywhere`,
   },
-  {
-    // An Obsidian block-reference marker: `^id` at the **end** of a block, with the caret
-    // preceded by whitespace or the block start (so `x^2`, a GFM footnote `[^1]`, and any
-    // mid-prose caret are spared) and the id allowing a digit-leading auto id (`^3f9a2b`). The
-    // `g` flag + end-anchor `$` means at most one match per text node. The `[[note#^id]]`
-    // reference form is already caught by the wikilink detector.
-    re: /(?:^|\s)\^([A-Za-z0-9][A-Za-z0-9-]*)\s*$/g,
-    describe: (m) =>
-      `non-portable Obsidian block reference "^${m[1]}"; renders literally off Obsidian — link to a heading anchor instead`,
-  },
 ];
+
+/**
+ * An Obsidian block-reference marker `^id`, matched only at the very **end of its block**: the
+ * caret must be preceded by whitespace or the block start (so `x^2`, a GFM footnote `[^1]`, and any
+ * mid-prose caret are spared) and the id — which may be digit-leading, e.g. `^3f9a2b` — runs to the
+ * end. This is judged against a **block's last text child** (see {@link blockReferenceFinding}), not
+ * an arbitrary text node, so `see note ^id **bold**` (where the caret is mid-paragraph, before the
+ * bold) is *not* flagged. The `[[note#^id]]` reference form is already caught by the wikilink detector.
+ */
+const BLOCK_REFERENCE = /(?:^|\s)\^([A-Za-z0-9][A-Za-z0-9-]*)$/;
 
 /**
  * The portability warnings for a body's prose: the {@link DETECTORS Obsidian-ism detectors} plus
@@ -414,9 +412,40 @@ function portabilityScan(tree: Nodes, file: string): CheckFinding[] {
         }
       }
     }
+    findings.push(...blockReferenceFinding(node, file));
     findings.push(...mdxHazardFindings(node, file));
   });
   return findings;
+}
+
+/**
+ * The Obsidian block-reference warning for a block, judged from its **last inline child** so the
+ * `^id` marker is only flagged when it truly ends the block ({@link BLOCK_REFERENCE}). Only a
+ * `paragraph` is inspected — the block kind an Obsidian `^id` attaches to (a list item's text lives
+ * in a nested paragraph, so it is covered too) — and only when that paragraph's last child is a text
+ * node ending in `^id`. A caret followed by inline formatting (`^id **bold**`, where the last child
+ * is the `strong`, not text) or sitting mid-prose is therefore not a false positive.
+ */
+function blockReferenceFinding(node: Nodes, file: string): CheckFinding[] {
+  if (node.type !== "paragraph") {
+    return [];
+  }
+  const last = node.children.at(-1);
+  if (last?.type !== "text") {
+    return [];
+  }
+  const match = BLOCK_REFERENCE.exec(last.value.trimEnd());
+  if (match === null) {
+    return [];
+  }
+  return [
+    {
+      severity: "warning",
+      rule: "portability",
+      file,
+      message: `non-portable Obsidian block reference "^${match[1]}"; renders literally off Obsidian — link to a heading anchor instead`,
+    },
+  ];
 }
 
 /**
@@ -426,9 +455,10 @@ function portabilityScan(tree: Nodes, file: string): CheckFinding[] {
  * lore detects (never escapes) two shapes, one finding apiece to keep the report readable:
  *
  * - a `<` or `{` CommonMark left literal in a **text** node (`temperature < 0`, `{ "k": 1 }`);
- * - a raw-`html` node that is **not** an HTML comment (`<T>`, `<div>`, `<Component>` — what
- *   CommonMark pulled out of the text as inline/block HTML). An HTML comment (`<!-- … -->`) is
- *   portable and is what lore writes for its managed regions, so it is left alone.
+ * - a raw-`html` node that carries any non-comment markup (`<T>`, `<div>`, `<Component>` — what
+ *   CommonMark pulled out of the text as inline/block HTML). HTML **comments** (`<!-- … -->`) are
+ *   portable and are what lore writes for its managed regions, so they are stripped first; a node
+ *   that is *only* comments is left alone, but `<!-- … --><div>` still flags the `<div>`.
  *
  * Code spans/blocks are `inlineCode`/`code` nodes, never `text`/`html`, so they never reach here.
  */
@@ -441,7 +471,7 @@ function mdxHazardFindings(node: Nodes, file: string): CheckFinding[] {
     if (node.value.includes("{")) {
       findings.push(mdxHazard(file, "{"));
     }
-  } else if (node.type === "html" && !node.value.trimStart().startsWith("<!--")) {
+  } else if (node.type === "html" && node.value.replace(HTML_COMMENT, "").trim() !== "") {
     findings.push({
       severity: "warning",
       rule: "portability",
@@ -451,6 +481,9 @@ function mdxHazardFindings(node: Nodes, file: string): CheckFinding[] {
   }
   return findings;
 }
+
+/** An HTML comment span — stripped before judging whether an `html` node carries real (non-comment) markup. */
+const HTML_COMMENT = /<!--[\s\S]*?-->/g;
 
 /** One MDX raw-character warning, naming the hazard and the portable escape. */
 function mdxHazard(file: string, ch: "<" | "{"): CheckFinding {

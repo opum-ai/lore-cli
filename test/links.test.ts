@@ -160,6 +160,14 @@ describe("validateLink — external destinations are not linted", () => {
     expect(validateLink("mailto:team@x.md.co")).toEqual([]);
     expect(validateLink("https://example.com/page.md")).toEqual([]);
   });
+
+  test("a known scheme whose value ends in the .md TLD is NOT an accidental colon (LORE-48 review)", () => {
+    // `.md` is the Moldova TLD, so "ends in .md" alone must not flag a real URL. A known scheme,
+    // a `/`-tail, or an `@`-tail all mark it as a genuine link, not a mistyped filename.
+    expect(validateLink("mailto:doctor@clinic.md")).toEqual([]);
+    expect(validateLink("https://news.md")).toEqual([]);
+    expect(validateLink("file:///notes/x.md")).toEqual([]);
+  });
 });
 
 describe("validateLink — leading slash", () => {

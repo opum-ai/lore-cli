@@ -367,12 +367,36 @@ function lacksMarkdownSuffix(rawPath: string): boolean {
   return !last.includes("."); // no extension → dropped suffix; any other extension → asset
 }
 
+/** The URL schemes a docs bundle legitimately links with — never an accidental-colon filename. */
+const KNOWN_URL_SCHEMES = new Set([
+  "http",
+  "https",
+  "ftp",
+  "ftps",
+  "file",
+  "mailto",
+  "tel",
+  "sms",
+  "data",
+  "ws",
+  "wss",
+  "git",
+  "ssh",
+  "irc",
+  "urn",
+]);
+
 /**
  * Whether a destination is a relative file whose **first path segment carries a colon**
  * (`notes:2026.md`), which {@link isExternalTarget} reads as a `scheme:` URL and so leaves
- * unlinted. Genuine URLs are excluded: a hierarchical scheme's tail begins with `/` (`http://…`,
- * `file:///…`), and a non-hierarchical scheme's tail (`mailto:a@b`) does not end in `.md`. So a
- * `scheme:` whose tail neither starts with `/` nor lacks a markdown suffix is taken to be a
+ * unlinted. Real URLs are excluded three ways, because `.md` is a live TLD (Moldova) so "ends in
+ * `.md`" alone is not enough:
+ *
+ * - a **known** URL scheme (`http`, `mailto`, `file`, …) is a real link, never a filename;
+ * - a hierarchical tail beginning with `/` (`http://…`, `file:///…`) is a real URL;
+ * - a tail containing `@` (`mailto:user@example.md`) is a mailbox, not a path.
+ *
+ * Only an *unknown* scheme whose tail is a bare relative-looking `.md` path is taken to be a
  * filename with an accidental colon — the one case lore never writes and the resolver silently
  * skips. (A colon in a *later* segment, `dir/notes:2026.md`, is not a scheme and is already
  * flagged `unencoded`.)
@@ -383,8 +407,12 @@ function accidentalColonFile(target: string): boolean {
   if (scheme === null) {
     return false; // a bare #anchor or `//host` reaches here with no scheme to mistake for a colon
   }
+  const name = scheme[0].slice(0, -1).toLowerCase(); // the scheme word, without its trailing ":"
+  if (KNOWN_URL_SCHEMES.has(name)) {
+    return false; // a genuine URL scheme, not a mistyped filename
+  }
   const tail = path.slice(scheme[0].length);
-  return !tail.startsWith("/") && MD_SUFFIX_ANY_CASE.test(tail);
+  return !tail.startsWith("/") && !tail.includes("@") && MD_SUFFIX_ANY_CASE.test(tail);
 }
 
 /**
