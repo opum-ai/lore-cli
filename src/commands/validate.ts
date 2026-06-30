@@ -22,7 +22,7 @@ import { loadProfile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { canonicalType } from "../core/schema";
 import { type FileReport, type Finding, type ValidateReport, validateFiles } from "../core/validate";
-import { ANSI, EXIT_CODES, EXIT_OK, errnoCode, LoreError, paint, WarningCollector, type Writer } from "../errors";
+import { ANSI, EXIT_CODES, EXIT_OK, ioError, LoreError, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { canonicalIdentity, readSource, toRepoRelative } from "./discover";
 
@@ -182,18 +182,12 @@ function expandTarget(abs: string, target: string, warnings: WarningCollector): 
   try {
     stat = statSync(abs);
   } catch (cause) {
-    const code = errnoCode(cause);
-    if (code === "ENOENT") {
-      throw new LoreError("not_found", `path "${target}" does not exist`, "check the path and try again", {
-        path: target,
-      });
-    }
-    if (code === "EACCES" || code === "EPERM") {
-      throw new LoreError("denied", `cannot access "${target}"`, "check filesystem permissions on that path", {
-        path: target,
-      });
-    }
-    throw cause;
+    ioError(cause, {
+      denied: { message: `cannot access "${target}"`, hint: "check filesystem permissions on that path" },
+      notFound: { message: `path "${target}" does not exist`, hint: "check the path and try again" },
+      input: { path: target },
+      rethrowUnknown: true,
+    });
   }
   if (stat.isDirectory()) {
     return walkMarkdown(abs, warnings).map((rel) => join(abs, rel));

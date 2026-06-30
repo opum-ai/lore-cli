@@ -45,28 +45,27 @@ import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { extractLinkTargets, nodeText, walkMdast } from "./bundle";
 import { idFromPath, normalizeInput } from "./concept";
+import type { Finding, Severity } from "./finding";
 import { decodeTarget, isExternalTarget, pathPart, validateLink } from "./links";
 
-/** `error` fails the gate (exit `6`); `warning` is advisory (fails only under `--strict`). */
-export type CheckSeverity = "error" | "warning";
+/** `error` fails the gate (exit `6`); `warning` is advisory (fails only under `--strict`). The shared {@link Severity}. */
+export type CheckSeverity = Severity;
 
 /**
  * Which check produced a {@link CheckFinding}. `broken-link`/`broken-anchor` are the
- * error-tier gate; `portability` is the warn-tier lint.
+ * error-tier gate; `portability` is the warn-tier lint; `external-link` is the opt-in,
+ * non-deterministic liveness advisory (`--external`) that never fails the gate (ADR-0007).
  */
-export type CheckRule = "broken-link" | "broken-anchor" | "portability";
+export type CheckRule = "broken-link" | "broken-anchor" | "portability" | "external-link";
 
-/** One problem found in the bundle, attributed to the file that carries it. */
-export interface CheckFinding {
-  /** `error` (broken link/anchor → exit 6) or `warning` (portability → advisory). */
-  readonly severity: CheckSeverity;
-  /** The pass that raised it. */
-  readonly rule: CheckRule;
+/**
+ * One problem found in the bundle, attributed to the file that carries it: the shared
+ * {@link Finding} (narrowed to `check`'s rules) plus that per-file attribution.
+ */
+export type CheckFinding = Finding<CheckRule> & {
   /** The bundle-root-relative POSIX path of the file the finding is in. */
   readonly file: string;
-  /** A single-line, actionable description. */
-  readonly message: string;
-}
+};
 
 /** One bundle file handed to {@link checkBundle}: its **bundle-root-relative** path and raw bytes. */
 export interface CheckInputFile {

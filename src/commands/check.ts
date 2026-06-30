@@ -27,7 +27,7 @@ import { join } from "node:path";
 import { walkMarkdown } from "../core/bundle";
 import { type CheckFinding, type CheckInputFile, type CheckReport, checkBundle } from "../core/check";
 import { DOCS_DIR } from "../core/scaffold";
-import { ANSI, EXIT_CODES, EXIT_OK, errnoCode, LoreError, paint, WarningCollector, type Writer } from "../errors";
+import { ANSI, EXIT_CODES, EXIT_OK, ioError, LoreError, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { readSource } from "./discover";
 
@@ -203,18 +203,12 @@ function expandRoot(absRoot: string, given: string, warnings: WarningCollector):
   try {
     stat = statSync(absRoot);
   } catch (cause) {
-    const code = errnoCode(cause);
-    if (code === "ENOENT") {
-      throw new LoreError("not_found", `path "${given}" does not exist`, "check the path and try again", {
-        path: given,
-      });
-    }
-    if (code === "EACCES" || code === "EPERM") {
-      throw new LoreError("denied", `cannot access "${given}"`, "check filesystem permissions on that path", {
-        path: given,
-      });
-    }
-    throw cause;
+    ioError(cause, {
+      denied: { message: `cannot access "${given}"`, hint: "check filesystem permissions on that path" },
+      notFound: { message: `path "${given}" does not exist`, hint: "check the path and try again" },
+      input: { path: given },
+      rethrowUnknown: true,
+    });
   }
   if (!stat.isDirectory()) {
     throw usage(

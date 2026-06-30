@@ -12,22 +12,17 @@
 
 import { readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
-import { errnoCode, LoreError } from "../errors";
+import { ioError } from "../errors";
 
-/** Read one file as UTF-8, mapping an I/O failure to a classified {@link LoreError}. */
+/** Read one file as UTF-8, mapping an I/O failure to a classified {@link LoreError} via the shared {@link ioError} policy. */
 export function readSource(abs: string, display: string): string {
   try {
     return readFileSync(abs, "utf8");
   } catch (cause) {
-    const code = errnoCode(cause);
-    if (code === "EACCES" || code === "EPERM") {
-      throw new LoreError("denied", `permission denied reading ${display}`, `make ${display} readable`, {
-        path: display,
-        code,
-      });
-    }
-    throw new LoreError("not_found", `cannot read ${display}`, "check the path exists and is readable", {
-      path: display,
+    ioError(cause, {
+      denied: { message: `permission denied reading ${display}`, hint: `make ${display} readable` },
+      notFound: { message: `cannot read ${display}`, hint: "check the path exists and is readable" },
+      input: { path: display },
     });
   }
 }
