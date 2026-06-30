@@ -3,8 +3,14 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/cli";
-import { runCheck } from "../src/commands/check";
-import { type CheckInputFile, checkBundle, extractHeadingSlugs, slugify } from "../src/core/check";
+import { type FetchLike, runCheck } from "../src/commands/check";
+import {
+  type CheckInputFile,
+  checkBundle,
+  collectExternalLinks,
+  extractHeadingSlugs,
+  slugify,
+} from "../src/core/check";
 import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
@@ -233,6 +239,109 @@ describe("checkBundle — portability warnings (AC#2)", () => {
   });
 });
 
+// ── checkBundle: MDX-safety lint (LORE-48) ───────────────────────────────────────
+
+describe("checkBundle — MDX hazards (LORE-48)", () => {
+  function messages(body: string): string[] {
+    return checkBundle([{ path: "x.md", raw: ref("X", body) }]).findings.map((f) => f.message);
+  }
+
+  test("a raw < in prose is a portability warning", () => {
+    expect(messages("When temperature < 0 it freezes.").some((m) => m.includes('raw "<"'))).toBe(true);
+  });
+
+  test("a raw { in prose is a portability warning", () => {
+    expect(messages("A literal { not code } in a sentence.").some((m) => m.includes('raw "{"'))).toBe(true);
+  });
+
+  test("a < inside inline code is NOT flagged (code excluded)", () => {
+    expect(checkBundle([{ path: "x.md", raw: ref("X", "Use `Promise<T>` generics.") }]).warningCount).toBe(0);
+  });
+
+  test("a < inside a fenced code block is NOT flagged", () => {
+    expect(checkBundle([{ path: "x.md", raw: ref("X", "```ts\nconst a = 1 < 2;\n```") }]).warningCount).toBe(0);
+  });
+
+  test("a raw HTML tag (a non-comment html node) is flagged as raw HTML", () => {
+    const finding = checkBundle([{ path: "x.md", raw: ref("X", "Press <kbd>Esc</kbd> now.") }]).findings.find((f) =>
+      f.message.includes("raw HTML"),
+    );
+    expect(finding?.severity).toBe("warning");
+  });
+
+  test("an HTML comment is NOT flagged (portable; lore's managed regions use it)", () => {
+    expect(checkBundle([{ path: "x.md", raw: ref("X", "<!-- a portable comment -->\n\nBody.") }]).warningCount).toBe(0);
+  });
+
+  test("a long raw-HTML snippet is clipped with an ellipsis", () => {
+    const longTag = `<div data-x="${"y".repeat(80)}"></div>`;
+    const finding = checkBundle([{ path: "x.md", raw: ref("X", longTag) }]).findings.find((f) =>
+      f.message.includes("raw HTML"),
+    );
+    expect(finding?.message).toContain("…");
+  });
+});
+
+// ── checkBundle: Obsidian block references (LORE-48) ──────────────────────────────
+
+describe("checkBundle — Obsidian block references (LORE-48)", () => {
+  function warnings(body: string): number {
+    return checkBundle([{ path: "x.md", raw: ref("X", body) }]).warningCount;
+  }
+
+  test("a block-ref marker at the end of a block is flagged", () => {
+    const finding = checkBundle([{ path: "x.md", raw: ref("X", "Some claim worth citing. ^block-id") }]).findings.find(
+      (f) => f.message.includes("block reference"),
+    );
+    expect(finding?.severity).toBe("warning");
+  });
+
+  test("a digit-leading auto id (^3f9a2b) is still caught", () => {
+    const finding = checkBundle([{ path: "x.md", raw: ref("X", "An auto-generated id ^3f9a2b") }]).findings.find((f) =>
+      f.message.includes("block reference"),
+    );
+    expect(finding).toBeDefined();
+  });
+
+  test("a superscript x^2 is NOT flagged (caret not preceded by whitespace)", () => {
+    expect(warnings("The area is x^2 in total.")).toBe(0);
+  });
+
+  test("a GFM footnote marker [^1] is NOT flagged", () => {
+    expect(warnings("A claim with a footnote.[^1]")).toBe(0);
+  });
+
+  test("a mid-block caret is NOT flagged (only end-of-block markers)", () => {
+    expect(warnings("foo ^bar baz qux")).toBe(0);
+  });
+});
+
+// ── collectExternalLinks: the --external worklist (LORE-48) ───────────────────────
+
+describe("collectExternalLinks (LORE-48)", () => {
+  test("returns http(s) targets per file, deduped within a file, skipping internal/mailto/protocol-relative", () => {
+    const files: CheckInputFile[] = [
+      {
+        path: "a.md",
+        raw: ref(
+          "A",
+          "[1](https://x.example) [2](https://x.example) [3](http://y.example) [in](./b.md) [m](mailto:a@b.co) [pr](//cdn/z)",
+        ),
+      },
+      { path: "b.md", raw: ref("B", "[4](https://z.example)") },
+    ];
+    expect(collectExternalLinks(files)).toEqual([
+      { file: "a.md", url: "https://x.example" },
+      { file: "a.md", url: "http://y.example" },
+      { file: "b.md", url: "https://z.example" },
+    ]);
+  });
+
+  test("a bundle with no external links yields an empty worklist", () => {
+    expect(collectExternalLinks([{ path: "a.md", raw: ref("A", "Just [internal](./b.md).") }])).toEqual([]);
+  });
+});
+
 describe("checkBundle — clean bundle and aggregation", () => {
   test("a clean bundle yields no findings", () => {
     const a: CheckInputFile = { path: "reference/orders.md", raw: ref("Orders", "## Archival Policy") };
@@ -308,10 +417,97 @@ describe("runCheck — exit codes and discovery", () => {
     expect(runCheck(opts(["--strict"]))).toBe(EXIT_CODES.validation);
   });
 
-  test("--external is accepted but flushes a deferred advisory to stderr", () => {
-    const o = opts(["--external"]);
+  test("--external reports a dead link as an advisory but keeps the gate exit (AC#1/#2)", async () => {
+    writeFileSync(
+      join(root, "docs", "adr", "x.md"),
+      ref("X", "See [up](https://up.example) and [down](https://down.example)."),
+    );
+    const fetchFake: FetchLike = async (url) => ({ ok: url.includes("up"), status: url.includes("up") ? 200 : 404 });
+    const o = { ...opts(["--external"]), fetch: fetchFake };
+    expect(await runCheck(o)).toBe(EXIT_OK); // a dead external link never fails the gate
+    const out = (o.stdout as ReturnType<typeof capture>).text();
+    expect(out).toContain("[external-link]");
+    expect(out).toContain("https://down.example");
+    expect(out).not.toContain("https://up.example"); // a live URL yields no finding
+  });
+
+  test("--external liveness never gates, even under --strict (AC#2)", async () => {
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[down](https://down.example)."));
+    const fetchFake: FetchLike = async () => ({ ok: false, status: 500 });
+    expect(await runCheck({ ...opts(["--external", "--strict"]), fetch: fetchFake })).toBe(EXIT_OK);
+  });
+
+  test("without --external no network is touched and the run stays synchronous", () => {
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[down](https://down.example)."));
+    let fetched = false;
+    const fetchFake: FetchLike = async () => {
+      fetched = true;
+      return { ok: false, status: 404 };
+    };
+    const result = runCheck({ ...opts([]), fetch: fetchFake });
+    expect(typeof result).toBe("number"); // synchronous: no Promise without --external
+    expect(result).toBe(EXIT_OK);
+    expect(fetched).toBe(false);
+  });
+
+  test("--external fetches a repeated URL once but reports it per file", async () => {
+    writeFileSync(join(root, "docs", "adr", "a.md"), ref("A", "[x](https://dup.example)"));
+    writeFileSync(join(root, "docs", "adr", "b.md"), ref("B", "[x](https://dup.example)"));
+    let calls = 0;
+    const fetchFake: FetchLike = async () => {
+      calls++;
+      return { ok: false, status: 404 };
+    };
+    const o = { ...opts(["--external"]), fetch: fetchFake };
+    await runCheck(o);
+    expect(calls).toBe(1); // deduped
+    const out = (o.stdout as ReturnType<typeof capture>).text();
+    expect((out.match(/\[external-link\]/g) ?? []).length).toBe(2); // reported per file
+  });
+
+  test("--external classifies a timeout and an unreachable host", async () => {
+    writeFileSync(join(root, "docs", "adr", "a.md"), ref("A", "[t](https://slow.example) [u](https://gone.example)"));
+    const fetchFake: FetchLike = async (url) => {
+      if (url.includes("slow")) {
+        const e = new Error("timed out");
+        e.name = "TimeoutError";
+        throw e;
+      }
+      throw new Error("getaddrinfo ENOTFOUND");
+    };
+    const o = { ...opts(["--external"]), fetch: fetchFake };
+    await runCheck(o);
+    const out = (o.stdout as ReturnType<typeof capture>).text();
+    expect(out).toContain("did not respond");
+    expect(out).toContain("is unreachable");
+  });
+
+  test("--external folds liveness into the --json envelope without changing the gate counts", async () => {
+    writeFileSync(join(root, "docs", "adr", "a.md"), ref("A", "[d](https://d.example)"));
+    const fetchFake: FetchLike = async () => ({ ok: false, status: 404 });
+    const o = { root, output: JSON_CTX, args: ["--external"], stdout: capture(), stderr: capture(), fetch: fetchFake };
+    await runCheck(o);
+    const env = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(env.data.errorCount).toBe(0);
+    expect(env.data.warningCount).toBe(0);
+    expect(env.data.externalFindings).toHaveLength(1);
+    expect(env.data.externalFindings[0].rule).toBe("external-link");
+  });
+
+  test("flags a leading-underscore filename as a portability warning (LORE-48)", () => {
+    writeFileSync(join(root, "docs", "_partial.md"), ref("P", "Body."));
+    const o = opts([]);
     runCheck(o);
-    expect((o.stderr as ReturnType<typeof capture>).text()).toContain("external-URL liveness");
+    expect((o.stdout as ReturnType<typeof capture>).text()).toContain('non-portable name "_partial.md"');
+  });
+
+  test("flags a .mdx file as a portability warning, without content-checking it (LORE-48)", () => {
+    // The .mdx carries a broken internal link; because lore never treats .mdx as a concept, the
+    // broken link is NOT a gate error — only the filename warning fires.
+    writeFileSync(join(root, "docs", "weird.mdx"), ref("W", "[ghost](./nope.md)"));
+    const o = opts([]);
+    expect(runCheck(o)).toBe(EXIT_OK);
+    expect((o.stdout as ReturnType<typeof capture>).text()).toContain('non-portable ".mdx" file');
   });
 
   test("an unknown flag is a usage error", () => {
@@ -411,5 +607,15 @@ describe("cli — check dispatch", () => {
 
   test("`lore check --bogus` is a usage error", () => {
     expect(run(["bun", "lore", "check", "--bogus"], ctx())).toBe(EXIT_CODES.usage);
+  });
+
+  test("`lore check --external` returns a Promise resolving to the gate code (via injected fetch)", async () => {
+    writeFileSync(join(cwd, "docs", "x.md"), ref("X", "[d](https://d.example)"));
+    const fetchFake: FetchLike = async () => ({ ok: false, status: 404 });
+    const c = { ...ctx(), fetch: fetchFake };
+    const result = run(["bun", "lore", "check", "--external", "--plain"], c);
+    expect(result).toBeInstanceOf(Promise);
+    expect(await result).toBe(EXIT_OK); // a dead external link never fails the gate
+    expect((c.stdout as ReturnType<typeof capture>).text()).toContain("[external-link]");
   });
 });

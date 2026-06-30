@@ -77,7 +77,7 @@ export interface CheckInputFile {
 
 /** The aggregate result of a `lore check` run over a bundle. */
 export interface CheckReport {
-  /** Every finding, in file-then-document order. */
+  /** Every deterministic finding, in file-then-document order (the gate + portability lint). */
   readonly findings: readonly CheckFinding[];
   /** Total error-severity findings (broken links + anchors) — the gate count. */
   readonly errorCount: number;
@@ -85,7 +85,51 @@ export interface CheckReport {
   readonly warningCount: number;
   /** Number of files examined. */
   readonly fileCount: number;
+  /**
+   * Opt-in external-URL **liveness** results (`--external`), each an `external-link` warning. These
+   * are **non-deterministic** (they depend on the network), so they are kept out of the gate
+   * entirely: never folded into {@link errorCount}/{@link warningCount}, never affecting the exit
+   * code — not even under `--strict` (ADR-0007). Absent (undefined) unless `--external` ran. Core
+   * leaves this empty; the command layer fills it (the probing is network IO, ADR-0014).
+   */
+  readonly externalFindings?: readonly CheckFinding[];
 }
+
+/** One external URL discovered in the bundle, attributed to its file — the `--external` probe's worklist item. */
+export interface ExternalLink {
+  /** The bundle-root-relative POSIX path of the file the link is in. */
+  readonly file: string;
+  /** The external `http(s)` URL as authored. */
+  readonly url: string;
+}
+
+/**
+ * Collect the distinct `http(s)` link targets per file — the worklist the opt-in `--external`
+ * liveness probe (command layer) fetches. Pure: it parses the same bundle bodies and returns URLs,
+ * touching no network (ADR-0014). Only `http`/`https` are returned; other external schemes
+ * (`mailto:`, `tel:`, protocol-relative `//host`) are not liveness-checkable and are skipped, as
+ * are duplicates **within a file** (one finding per file per URL). Parsing here, rather than
+ * reusing {@link checkBundle}'s internal parse, keeps that gate function's signature unpolluted by
+ * the optional, non-deterministic feature.
+ */
+export function collectExternalLinks(files: readonly CheckInputFile[]): ExternalLink[] {
+  const links: ExternalLink[] = [];
+  for (const file of files) {
+    const tree = fromMarkdown(bodyText(file.raw));
+    const seen = new Set<string>();
+    for (const target of extractLinkTargets(tree)) {
+      const url = target.trim();
+      if (HTTP_URL.test(url) && !seen.has(url)) {
+        seen.add(url);
+        links.push({ file: file.path, url });
+      }
+    }
+  }
+  return links;
+}
+
+/** An `http`/`https` URL — the only externally-probeable link scheme. */
+const HTTP_URL = /^https?:\/\//i;
 
 /**
  * Run the link/anchor + portability passes over a whole bundle and aggregate the findings.
@@ -411,12 +455,12 @@ function mdxHazardFindings(node: Nodes, file: string): CheckFinding[] {
 /** One MDX raw-character warning, naming the hazard and the portable escape. */
 function mdxHazard(file: string, ch: "<" | "{"): CheckFinding {
   const role = ch === "<" ? "a JSX/HTML element" : "a JSX expression";
-  const escape = ch === "<" ? "&lt;" : "&#123;";
+  const entity = ch === "<" ? "&lt;" : "&#123;";
   return {
     severity: "warning",
     rule: "portability",
     file,
-    message: `non-portable raw "${ch}" in prose; MDX (Docusaurus) reads it as the start of ${role} — escape it (${escape}) or wrap the text in backticks`,
+    message: `non-portable raw "${ch}" in prose; MDX (Docusaurus) reads it as the start of ${role} — escape it (${entity}) or wrap the text in backticks`,
   };
 }
 

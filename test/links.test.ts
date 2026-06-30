@@ -31,6 +31,15 @@ describe("normalizeLink — relative computation", () => {
   test("never emits a leading slash", () => {
     expect(normalizeLink("a/b/c.md", "d/e.md").startsWith("/")).toBe(false);
   });
+
+  test("is cwd-independent for a `..`-escaping fromPath (rooted at a virtual /)", () => {
+    expect(normalizeLink("a/../b/x.md", "b/y.md")).toBe("y.md");
+  });
+
+  test("rejects an absolute operand as a caller bug (LORE-48 guard)", () => {
+    expect(() => normalizeLink("/abs/x.md", "reference/orders.md")).toThrow(/relative paths/);
+    expect(() => normalizeLink("stories/x.md", "/abs/orders.md")).toThrow(/relative paths/);
+  });
 });
 
 describe("normalizeLink — .md suffix", () => {

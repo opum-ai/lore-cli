@@ -178,7 +178,10 @@ export function encodePathSegments(path: string): string {
  * {@link validateLink} round-trip agree on the canonical bytes.
  */
 function encodePathSegment(segment: string): string {
-  return encodeURIComponent(segment).replace(MARKDOWN_SIGNIFICANT, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return encodeURIComponent(segment).replace(
+    MARKDOWN_SIGNIFICANT,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
 }
 
 // ── Linting the canonical form ──────────────────────────────────────────────────

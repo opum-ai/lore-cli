@@ -248,6 +248,23 @@ export function buildGraph(concepts: readonly Concept[]): BundleGraph {
  * instead of re-rolling a thinner one that would drift from how the bundle is loaded.
  */
 export function walkMarkdown(root: string, warnings: WarningCollector | undefined): string[] {
+  return walkFiles(root, warnings, (name) => /\.md$/.test(name));
+}
+
+/**
+ * The generic robust walk {@link walkMarkdown} is built on: a sorted, symlink-safe,
+ * nested-unreadable-tolerant recursion that returns every regular file the `accept` predicate
+ * keeps (matched on the file's **base name**), as bundle-root-relative POSIX paths. The same
+ * symlink-skip / unreadable-subdir-warn / fatal-unreadable-root rules as the markdown walk apply;
+ * only the extension policy varies. `lore check`'s command layer uses it with a `.md`-or-`.mdx`
+ * predicate so the filename-portability lint can *see* a stray `.mdx` (which the `.md`-only bundle
+ * walk deliberately excludes) without re-rolling the traversal.
+ */
+export function walkFiles(
+  root: string,
+  warnings: WarningCollector | undefined,
+  accept: (name: string) => boolean,
+): string[] {
   const found: string[] = [];
 
   const recurse = (relDir: string): void => {
@@ -270,7 +287,7 @@ export function walkMarkdown(root: string, warnings: WarningCollector | undefine
         warnings?.add(`skipping symlink ${rel}: symlinks are not followed`);
       } else if (entry.isDirectory()) {
         recurse(rel);
-      } else if (entry.isFile() && /\.md$/.test(entry.name)) {
+      } else if (entry.isFile() && accept(entry.name)) {
         found.push(rel);
       }
     }
