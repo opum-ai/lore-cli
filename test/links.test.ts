@@ -143,8 +143,13 @@ describe("validateLink — external destinations are not linted", () => {
     expect(validateLink(target)).toEqual([]);
   });
 
-  test("documented limitation: a colon-first-segment is read as a scheme and not linted (LORE-30 body-scan's job)", () => {
-    expect(validateLink("notes:2026 draft.md")).toEqual([]);
+  test("flags an accidental-colon filename read as a scheme (notes:2026 draft.md) — LORE-48", () => {
+    expect(issues("notes:2026 draft.md")).toEqual(["accidental-colon"]);
+  });
+
+  test("a real scheme whose tail is not a .md file stays clean (mailto:, http://…)", () => {
+    expect(validateLink("mailto:team@x.md.co")).toEqual([]);
+    expect(validateLink("https://example.com/page.md")).toEqual([]);
   });
 });
 
@@ -208,13 +213,17 @@ describe("validateLink — wrong-case .md suffix (404s on a case-sensitive host)
   });
 });
 
-describe("validateLink — dotfile and directory links are not dropped-suffix", () => {
+describe("validateLink — dotfile and directory links", () => {
   test("does NOT flag a dotfile link (.gitignore is an asset, not a missing .md)", () => {
     expect(issues("../config/.gitignore")).toEqual([]);
   });
 
-  test("does NOT flag a trailing-slash directory link", () => {
-    expect(issues("../reference/")).toEqual([]);
+  test("flags a trailing-slash directory link as directory-link (LORE-48), not missing-extension", () => {
+    expect(issues("../reference/")).toEqual(["directory-link"]);
+  });
+
+  test("a /-absolute directory link is both leading-slash and directory-link", () => {
+    expect(issues("/reference/").sort()).toEqual(["directory-link", "leading-slash"]);
   });
 });
 

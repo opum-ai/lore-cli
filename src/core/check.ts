@@ -306,11 +306,13 @@ interface Detector {
  * wikilinks/embeds (`[[…]]`/`![[…]]`), highlights (`==…==`), and `%%`-comments are
  * distinctive enough to match anywhere in a text node, but a **callout** (`[!type]`) is only
  * a callout at the **start** of a blockquote line, so its pattern is anchored to the start of
- * the text node — a literal `[!important]` mid-sentence is left alone (it renders portably).
- * The Obsidian **block-reference** detector (`^id`), and the MDX raw-`<`/`{` and
- * `_`-prefix/`.mdx` filename rules, are deferred to a follow-up (LORE-48): a precise block-ref
- * detector must both avoid carets in prose/math and catch digit-leading auto IDs, which the
- * text-node regex cannot do reliably.
+ * the text node — a literal `[!important]` mid-sentence is left alone (it renders portably). The
+ * Obsidian **block-reference** marker (`^id`) joins them (LORE-48): its pattern requires the
+ * caret to be preceded by whitespace or the block start and the id to run to the block end, so a
+ * math/superscript `x^2`, a GFM footnote `[^1]`, and a mid-prose caret are all spared while a
+ * digit-leading auto id (`^3f9a2b`) is still caught. (The MDX raw-`<`/`{` hazard and the
+ * `_`-prefix/`.mdx` filename rules are handled separately — {@link mdxHazardFindings} and the
+ * command layer — not as body-text regexes.)
  */
 const DETECTORS: readonly Detector[] = [
   {
@@ -335,30 +337,93 @@ const DETECTORS: readonly Detector[] = [
     re: /%%[^\n]*?%%/g,
     describe: () => `non-portable Obsidian comment "%% … %%"; use an HTML comment <!-- … -->, which hides everywhere`,
   },
+  {
+    // An Obsidian block-reference marker: `^id` at the **end** of a block, with the caret
+    // preceded by whitespace or the block start (so `x^2`, a GFM footnote `[^1]`, and any
+    // mid-prose caret are spared) and the id allowing a digit-leading auto id (`^3f9a2b`). The
+    // `g` flag + end-anchor `$` means at most one match per text node. The `[[note#^id]]`
+    // reference form is already caught by the wikilink detector.
+    re: /(?:^|\s)\^([A-Za-z0-9][A-Za-z0-9-]*)\s*$/g,
+    describe: (m) =>
+      `non-portable Obsidian block reference "^${m[1]}"; renders literally off Obsidian — link to a heading anchor instead`,
+  },
 ];
 
 /**
- * The portability warnings for a body's prose: run every {@link DETECTORS Obsidian-ism
- * detector} over the body's **text nodes only**. Scanning text nodes (never `inlineCode`/
- * `code`) is what excludes fenced and inline code for free — the same characters are
- * legitimate there — so a `[[x]]` inside a code span is correctly left alone.
+ * The portability warnings for a body's prose: the {@link DETECTORS Obsidian-ism detectors} plus
+ * the {@link mdxHazardFindings MDX-safety} scan, over the parsed tree. The Obsidian detectors run
+ * over **text nodes only** — scanning text (never `inlineCode`/`code`) excludes fenced and inline
+ * code for free, so a `[[x]]` inside a code span is correctly left alone — while the MDX scan also
+ * inspects raw-`html` nodes (the form CommonMark pulls a `<tag>` out of the text as), skipping
+ * HTML comments.
  */
 function portabilityScan(tree: Nodes, file: string): CheckFinding[] {
   const findings: CheckFinding[] = [];
   walkMdast(tree, (node) => {
-    if (node.type !== "text") {
-      return; // code spans/blocks and structural nodes carry no portability prose
-    }
-    for (const detector of DETECTORS) {
-      detector.re.lastIndex = 0;
-      let match: RegExpExecArray | null = detector.re.exec(node.value);
-      while (match !== null) {
-        findings.push({ severity: "warning", rule: "portability", file, message: detector.describe(match) });
-        match = detector.re.exec(node.value);
+    if (node.type === "text") {
+      for (const detector of DETECTORS) {
+        detector.re.lastIndex = 0;
+        let match: RegExpExecArray | null = detector.re.exec(node.value);
+        while (match !== null) {
+          findings.push({ severity: "warning", rule: "portability", file, message: detector.describe(match) });
+          match = detector.re.exec(node.value);
+        }
       }
     }
+    findings.push(...mdxHazardFindings(node, file));
   });
   return findings;
+}
+
+/**
+ * MDX-safety warnings (portable-markdown.md §MDX): Docusaurus parses Markdown as **MDX**, where a
+ * raw `<` starts a JSX element and a raw `{` a JSX expression — so un-escaped, non-code `<`/`{` in
+ * prose make its build throw even though the same source renders fine on GitHub/Obsidian/MkDocs.
+ * lore detects (never escapes) two shapes, one finding apiece to keep the report readable:
+ *
+ * - a `<` or `{` CommonMark left literal in a **text** node (`temperature < 0`, `{ "k": 1 }`);
+ * - a raw-`html` node that is **not** an HTML comment (`<T>`, `<div>`, `<Component>` — what
+ *   CommonMark pulled out of the text as inline/block HTML). An HTML comment (`<!-- … -->`) is
+ *   portable and is what lore writes for its managed regions, so it is left alone.
+ *
+ * Code spans/blocks are `inlineCode`/`code` nodes, never `text`/`html`, so they never reach here.
+ */
+function mdxHazardFindings(node: Nodes, file: string): CheckFinding[] {
+  const findings: CheckFinding[] = [];
+  if (node.type === "text") {
+    if (node.value.includes("<")) {
+      findings.push(mdxHazard(file, "<"));
+    }
+    if (node.value.includes("{")) {
+      findings.push(mdxHazard(file, "{"));
+    }
+  } else if (node.type === "html" && !node.value.trimStart().startsWith("<!--")) {
+    findings.push({
+      severity: "warning",
+      rule: "portability",
+      file,
+      message: `non-portable raw HTML "${clip(node.value)}"; the portable subset has no raw HTML outside comments, and MDX (Docusaurus) parses it as JSX`,
+    });
+  }
+  return findings;
+}
+
+/** One MDX raw-character warning, naming the hazard and the portable escape. */
+function mdxHazard(file: string, ch: "<" | "{"): CheckFinding {
+  const role = ch === "<" ? "a JSX/HTML element" : "a JSX expression";
+  const escape = ch === "<" ? "&lt;" : "&#123;";
+  return {
+    severity: "warning",
+    rule: "portability",
+    file,
+    message: `non-portable raw "${ch}" in prose; MDX (Docusaurus) reads it as the start of ${role} — escape it (${escape}) or wrap the text in backticks`,
+  };
+}
+
+/** Collapse whitespace and clip a raw-HTML snippet to a single readable line for a finding message. */
+function clip(value: string): string {
+  const flat = value.replace(/\s+/g, " ").trim();
+  return flat.length > 50 ? `${flat.slice(0, 50)}…` : flat;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────────

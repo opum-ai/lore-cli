@@ -47,6 +47,25 @@
  */
 
 import { posix } from "node:path";
+import { idFromPath } from "./concept";
+
+// ── Shared patterns ───────────────────────────────────────────────────────────
+// Hoisted to module scope so each is compiled once rather than re-built per call.
+
+/** A trailing `.md` in **canonical lowercase** only. */
+const MD_SUFFIX_CANONICAL = /\.md$/;
+/** A trailing `.md` in any case (`.md`/`.MD`/`.Md`) — the writer's id-stripping rule. */
+const MD_SUFFIX_ANY_CASE = /\.md$/i;
+/** The markdown-significant characters {@link encodeURIComponent} leaves raw (`! ' ( ) *`). */
+const MARKDOWN_SIGNIFICANT = /[!'()*]/g;
+/** A `%` that is **not** the start of a valid two-hex-digit escape. */
+const MALFORMED_PERCENT = /%(?![0-9A-Fa-f]{2})/;
+/** A path segment in canonical form: only RFC-3986 unreserved chars or valid `%XX` escapes. */
+const CANONICAL_SEGMENT = /^(?:[A-Za-z0-9\-._~]|%[0-9A-Fa-f]{2})*$/;
+/** A raw character that breaks a markdown link destination (whitespace or a paren). */
+const RAW_BREAKER = /[\s()]/;
+/** An RFC-3986 `scheme:` prefix — what makes a destination look like an absolute URL. */
+const URL_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 
 // ── Writing the canonical form ──────────────────────────────────────────────────
 
@@ -102,8 +121,19 @@ import { posix } from "node:path";
  * @returns the canonical relative destination string for `[text](…)`.
  */
 export function normalizeLink(fromPath: string, toPath: string, anchor?: string): string {
-  const fromDir = posix.dirname(posix.normalize(fromPath));
-  const toFile = ensureMarkdownSuffix(toPath);
+  // Precondition guard (the docstring's coordinate-space rule the arithmetic can't verify):
+  // an **absolute** operand has no place in lore's relative coordinate space and would make the
+  // result depend on process.cwd() — reject it loudly as the caller bug it is rather than emit a
+  // silently-wrong link.
+  if (posix.isAbsolute(fromPath) || posix.isAbsolute(toPath)) {
+    throw new Error(`normalizeLink expects relative paths (got from="${fromPath}", to="${toPath}")`);
+  }
+  // Root both operands at a fixed virtual "/" before the relative computation so the output is
+  // cwd-independent even when a path carries `..` segments — `posix.relative` otherwise resolves
+  // a relative operand against process.cwd(), which cancels only for two in-tree paths. `posix.join`
+  // also collapses `.`/`..`, so no separate normalize is needed.
+  const fromDir = posix.join("/", posix.dirname(fromPath));
+  const toFile = posix.join("/", ensureMarkdownSuffix(toPath));
   const relative = posix.relative(fromDir, toFile);
   const encoded = encodePathSegments(relative);
   return anchor ? `${encoded}#${anchor}` : encoded;
@@ -118,8 +148,10 @@ export function normalizeLink(fromPath: string, toPath: string, anchor?: string)
  * unchanged.
  */
 function ensureMarkdownSuffix(path: string): string {
-  const normalized = posix.normalize(path);
-  return /\.md$/i.test(normalized) ? `${normalized.slice(0, -3)}.md` : `${normalized}.md`;
+  // idFromPath POSIX-normalizes and strips a case-insensitive `.md`; re-adding the canonical
+  // lowercase suffix yields the one canonical file link and reuses the single path→id rule (so a
+  // bare id, a correct `.md`, and a wrong-case `.MD` all converge) instead of re-rolling it here.
+  return `${idFromPath(path)}.md`;
 }
 
 /**
@@ -146,7 +178,7 @@ export function encodePathSegments(path: string): string {
  * {@link validateLink} round-trip agree on the canonical bytes.
  */
 function encodePathSegment(segment: string): string {
-  return encodeURIComponent(segment).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return encodeURIComponent(segment).replace(MARKDOWN_SIGNIFICANT, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
 // ── Linting the canonical form ──────────────────────────────────────────────────
@@ -167,7 +199,7 @@ export function pathPart(target: string): string {
  * property of the ADR-0010 link rule, so a caller can branch on the *kind* of
  * portability problem rather than parse the message.
  */
-export type LinkIssue = "leading-slash" | "missing-extension" | "unencoded";
+export type LinkIssue = "leading-slash" | "missing-extension" | "unencoded" | "accidental-colon" | "directory-link";
 
 /**
  * One portability problem with a single link destination. `target` is the
@@ -199,21 +231,25 @@ export interface LinkFinding {
  * is not an internal cross-link, so it yields no findings — linting an external URL
  * for a `.md` suffix would be nonsense. This uses the **same** classifier the bundle
  * graph's resolver applies, so writer, resolver, and linter agree on what counts as
- * external. One consequence of that shared rule (ADR-0010): a destination whose
- * first segment carries a colon (`notes:2026.md`) is read as a `scheme:` URL and so
- * is *not* linted — catching an accidental-colon filename is a body-text-scan concern,
- * deferred to a `lore check` follow-up (LORE-48), not this per-destination primitive's.
+ * external. The **one** exception (LORE-48) is the pathological destination whose first
+ * segment carries a colon (`notes:2026.md`): the shared classifier reads it as a
+ * `scheme:` URL (ADR-0010) — a form lore never writes — so it is flagged here as an
+ * `accidental-colon` filename rather than skipped in silence by both linter and resolver.
  *
  * The checks mirror the machine-checkable properties of the form (the "relative"
  * property is implied by "no leading slash"; "no wikilinks" is a body scan):
  *
  * - **`leading-slash`** — a `/`-absolute destination, which resolves against each
  *   consumer's differing server root.
+ * - **`accidental-colon`** — a relative file whose first segment carries a colon
+ *   ({@link accidentalColonFile}), read as a `scheme:` URL and otherwise unlinted.
+ * - **`directory-link`** — a non-external destination ending in `/` (`../reference/`):
+ *   it resolves to a file on no renderer and is almost always a dropped filename.
  * - **`missing-extension`** — an internal target missing the canonical **lowercase**
  *   `.md` suffix ({@link lacksMarkdownSuffix}): either no extension at all
  *   (`../reference/orders`) or a wrong-case `.md` (`orders.MD`), both of which 404
- *   on GitHub/Linux. A directory link (`../reference/`), a dotfile
- *   (`../config/.gitignore`), and any other asset extension (`../img/x.png`) are
+ *   on GitHub/Linux. A directory link is its own `directory-link` finding (above); a
+ *   dotfile (`../config/.gitignore`) and any other asset extension (`../img/x.png`) are
  *   left alone — matching the bundle resolver, which treats a non-`.md` target as
  *   simply *not an edge* rather than a broken one. The extension is judged on the
  *   *decoded* path, so the linter and the resolver (which decodes first) agree.
@@ -231,7 +267,20 @@ export function validateLink(target: string): LinkFinding[] {
   const findings: LinkFinding[] = [];
   const trimmed = target.trim();
   if (isExternalTarget(trimmed)) {
-    return findings; // external / anchor-only — not an internal cross-link
+    // A scheme:-qualified destination is external and not linted — with one exception. lore never
+    // writes a colon inside a path segment, so a `scheme:` whose tail is a relative `.md` file
+    // (`notes:2026.md`) is almost certainly a filename with an accidental colon, which both this
+    // linter and the bundle resolver would otherwise skip in silence. Flag that one case;
+    // everything else (`http:`, `mailto:`, a bare `#anchor`, a protocol-relative `//host`) is
+    // genuinely external.
+    if (accidentalColonFile(trimmed)) {
+      findings.push({
+        target,
+        issue: "accidental-colon",
+        message: `link "${target}" looks like a relative file whose name contains a ":"; it is read as a "scheme:" URL and skipped by link resolution — remove the colon (lore filenames never contain one)`,
+      });
+    }
+    return findings;
   }
 
   if (trimmed.startsWith("/")) {
@@ -249,7 +298,13 @@ export function validateLink(target: string): LinkFinding[] {
   const path = pathPart(trimmed);
   const suffix = trimmed.slice(path.length);
 
-  if (lacksMarkdownSuffix(path)) {
+  if (isDirectoryLink(path)) {
+    findings.push({
+      target,
+      issue: "directory-link",
+      message: `link "${target}" points at a directory (a trailing "/"); name the .md file instead (a directory link resolves on no renderer — likely a dropped filename)`,
+    });
+  } else if (lacksMarkdownSuffix(path)) {
     findings.push({
       target,
       issue: "missing-extension",
@@ -300,13 +355,44 @@ function lacksMarkdownSuffix(rawPath: string): boolean {
   if (last === "" || last.startsWith(".")) {
     return false; // a dotfile (.gitignore) is an asset, not a dropped suffix
   }
-  if (/\.md$/.test(last)) {
+  if (MD_SUFFIX_CANONICAL.test(last)) {
     return false; // canonical lowercase .md
   }
-  if (/\.md$/i.test(last)) {
+  if (MD_SUFFIX_ANY_CASE.test(last)) {
     return true; // wrong-case .MD/.Md — meant to be .md, 404s on a case-sensitive host
   }
   return !last.includes("."); // no extension → dropped suffix; any other extension → asset
+}
+
+/**
+ * Whether a destination is a relative file whose **first path segment carries a colon**
+ * (`notes:2026.md`), which {@link isExternalTarget} reads as a `scheme:` URL and so leaves
+ * unlinted. Genuine URLs are excluded: a hierarchical scheme's tail begins with `/` (`http://…`,
+ * `file:///…`), and a non-hierarchical scheme's tail (`mailto:a@b`) does not end in `.md`. So a
+ * `scheme:` whose tail neither starts with `/` nor lacks a markdown suffix is taken to be a
+ * filename with an accidental colon — the one case lore never writes and the resolver silently
+ * skips. (A colon in a *later* segment, `dir/notes:2026.md`, is not a scheme and is already
+ * flagged `unencoded`.)
+ */
+function accidentalColonFile(target: string): boolean {
+  const path = pathPart(target);
+  const scheme = URL_SCHEME.exec(path);
+  if (scheme === null) {
+    return false; // a bare #anchor or `//host` reaches here with no scheme to mistake for a colon
+  }
+  const tail = path.slice(scheme[0].length);
+  return !tail.startsWith("/") && MD_SUFFIX_ANY_CASE.test(tail);
+}
+
+/**
+ * Whether a (non-external) destination's path part names a **directory** — a trailing `/` after
+ * decoding (`../reference/`). Such a link resolves to a file on no renderer and is almost always
+ * a dropped filename, so it warns. The pure leading-slash `/` (already flagged `leading-slash`)
+ * and an empty path (a bare fragment) are excluded so neither double-reports.
+ */
+function isDirectoryLink(rawPath: string): boolean {
+  const path = decodeTarget(rawPath);
+  return path !== "" && path !== "/" && path.endsWith("/");
 }
 
 /**
@@ -363,7 +449,7 @@ function encodingMessage(target: string, problem: "empty-segment" | "malformed" 
 
 /** Whether a string carries a `%` that is not the start of a valid two-hex-digit escape. */
 function hasMalformedPercent(s: string): boolean {
-  return /%(?![0-9A-Fa-f]{2})/.test(s);
+  return MALFORMED_PERCENT.test(s);
 }
 
 /**
@@ -375,12 +461,12 @@ function hasMalformedPercent(s: string): boolean {
  * over-encoded `%41` or a lowercase `%c3` still passes (both are valid `%`-escapes).
  */
 function isCanonicalSegment(segment: string): boolean {
-  return /^(?:[A-Za-z0-9\-._~]|%[0-9A-Fa-f]{2})*$/.test(segment);
+  return CANONICAL_SEGMENT.test(segment);
 }
 
 /** Whether a string carries a raw character that breaks a markdown link destination (whitespace or a paren). */
 function hasRawBreaker(s: string): boolean {
-  return /[\s()]/.test(s);
+  return RAW_BREAKER.test(s);
 }
 
 // ── Destination classification (shared with the bundle graph) ────────────────────
@@ -397,7 +483,7 @@ function hasRawBreaker(s: string): boolean {
  * needs no classification — it never sees an arbitrary destination.)
  */
 export function isExternalTarget(s: string): boolean {
-  return s === "" || s.startsWith("#") || s.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(s);
+  return s === "" || s.startsWith("#") || s.startsWith("//") || URL_SCHEME.test(s);
 }
 
 /** Drop a `#fragment` (and anything after it) from a destination. */
