@@ -59,7 +59,7 @@ import { type Dirent, readdirSync, readFileSync } from "node:fs";
 import { posix } from "node:path";
 import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
-import { deriveMessage, errnoCode, LoreError, type WarningCollector } from "../errors";
+import { deriveMessage, ioError, LoreError, type WarningCollector } from "../errors";
 import { type Concept, idFromPath, serializeConcept, tryParseConcept } from "./concept";
 import { decodeTarget, isExternalTarget, pathPart } from "./links";
 import { compareCodeUnits } from "./order";
@@ -248,6 +248,23 @@ export function buildGraph(concepts: readonly Concept[]): BundleGraph {
  * instead of re-rolling a thinner one that would drift from how the bundle is loaded.
  */
 export function walkMarkdown(root: string, warnings: WarningCollector | undefined): string[] {
+  return walkFiles(root, warnings, (name) => /\.md$/.test(name));
+}
+
+/**
+ * The generic robust walk {@link walkMarkdown} is built on: a sorted, symlink-safe,
+ * nested-unreadable-tolerant recursion that returns every regular file the `accept` predicate
+ * keeps (matched on the file's **base name**), as bundle-root-relative POSIX paths. The same
+ * symlink-skip / unreadable-subdir-warn / fatal-unreadable-root rules as the markdown walk apply;
+ * only the extension policy varies. `lore check`'s command layer uses it with a `.md`-or-`.mdx`
+ * predicate so the filename-portability lint can *see* a stray `.mdx` (which the `.md`-only bundle
+ * walk deliberately excludes) without re-rolling the traversal.
+ */
+export function walkFiles(
+  root: string,
+  warnings: WarningCollector | undefined,
+  accept: (name: string) => boolean,
+): string[] {
   const found: string[] = [];
 
   const recurse = (relDir: string): void => {
@@ -257,7 +274,7 @@ export function walkMarkdown(root: string, warnings: WarningCollector | undefine
       entries = readdirSync(absDir, { withFileTypes: true });
     } catch (cause) {
       if (relDir === "") {
-        throw readError(cause, `cannot read directory ${absDir}`, { root, dir: absDir });
+        readError(cause, `cannot read directory ${absDir}`, { root, dir: absDir });
       }
       // A nested unreadable directory skips (with a warning), so one restricted
       // folder doesn't take the whole bundle down with it.
@@ -270,7 +287,7 @@ export function walkMarkdown(root: string, warnings: WarningCollector | undefine
         warnings?.add(`skipping symlink ${rel}: symlinks are not followed`);
       } else if (entry.isDirectory()) {
         recurse(rel);
-      } else if (entry.isFile() && /\.md$/.test(entry.name)) {
+      } else if (entry.isFile() && accept(entry.name)) {
         found.push(rel);
       }
     }
@@ -285,24 +302,23 @@ function readConcept(root: string, rel: string): string {
   try {
     return readFileSync(posix.join(root, rel), "utf8");
   } catch (cause) {
-    throw readError(cause, `cannot read ${rel}`, { root, path: rel });
+    readError(cause, `cannot read ${rel}`, { root, path: rel });
   }
 }
 
 /**
- * Map a caught filesystem error to the right {@link LoreError} category: a
- * permission failure (`EACCES`/`EPERM`) is `denied` (exit 4) with a permissions
- * hint, so an unreadable sub-directory is not misreported as a missing bundle
- * root; anything else (a missing path, a file that vanished mid-walk) is
- * `not_found` (exit 3). The cause's message is appended for diagnosis.
+ * Raise the right {@link LoreError} for a caught read failure, deferring the errno→category
+ * decision to the shared {@link ioError} policy (`EACCES`/`EPERM` → `denied`; anything else →
+ * `not_found`, so an unreadable sub-directory is not misreported as a missing bundle root). Only
+ * the wording is bundle's: the cause's message is appended to `what` for diagnosis. Always throws.
  */
-function readError(cause: unknown, what: string, input: Record<string, unknown>): LoreError {
-  const code = errnoCode(cause);
+function readError(cause: unknown, what: string, input: Record<string, unknown>): never {
   const message = `${what}: ${deriveMessage(cause)}`;
-  if (code === "EACCES" || code === "EPERM") {
-    return new LoreError("denied", message, "check filesystem permissions on that path", input);
-  }
-  return new LoreError("not_found", message, "check the path exists and is readable", input);
+  ioError(cause, {
+    denied: { message, hint: "check filesystem permissions on that path" },
+    notFound: { message, hint: "check the path exists and is readable" },
+    input,
+  });
 }
 
 // ── Edge collection ──────────────────────────────────────────────────────────—

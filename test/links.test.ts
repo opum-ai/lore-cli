@@ -31,6 +31,15 @@ describe("normalizeLink — relative computation", () => {
   test("never emits a leading slash", () => {
     expect(normalizeLink("a/b/c.md", "d/e.md").startsWith("/")).toBe(false);
   });
+
+  test("is cwd-independent for a `..`-escaping fromPath (rooted at a virtual /)", () => {
+    expect(normalizeLink("a/../b/x.md", "b/y.md")).toBe("y.md");
+  });
+
+  test("rejects an absolute operand as a caller bug (LORE-48 guard)", () => {
+    expect(() => normalizeLink("/abs/x.md", "reference/orders.md")).toThrow(/relative paths/);
+    expect(() => normalizeLink("stories/x.md", "/abs/orders.md")).toThrow(/relative paths/);
+  });
 });
 
 describe("normalizeLink — .md suffix", () => {
@@ -143,8 +152,21 @@ describe("validateLink — external destinations are not linted", () => {
     expect(validateLink(target)).toEqual([]);
   });
 
-  test("documented limitation: a colon-first-segment is read as a scheme and not linted (LORE-30 body-scan's job)", () => {
-    expect(validateLink("notes:2026 draft.md")).toEqual([]);
+  test("flags an accidental-colon filename read as a scheme (notes:2026 draft.md) — LORE-48", () => {
+    expect(issues("notes:2026 draft.md")).toEqual(["accidental-colon"]);
+  });
+
+  test("a real scheme whose tail is not a .md file stays clean (mailto:, http://…)", () => {
+    expect(validateLink("mailto:team@x.md.co")).toEqual([]);
+    expect(validateLink("https://example.com/page.md")).toEqual([]);
+  });
+
+  test("a known scheme whose value ends in the .md TLD is NOT an accidental colon (LORE-48 review)", () => {
+    // `.md` is the Moldova TLD, so "ends in .md" alone must not flag a real URL. A known scheme,
+    // a `/`-tail, or an `@`-tail all mark it as a genuine link, not a mistyped filename.
+    expect(validateLink("mailto:doctor@clinic.md")).toEqual([]);
+    expect(validateLink("https://news.md")).toEqual([]);
+    expect(validateLink("file:///notes/x.md")).toEqual([]);
   });
 });
 
@@ -208,13 +230,17 @@ describe("validateLink — wrong-case .md suffix (404s on a case-sensitive host)
   });
 });
 
-describe("validateLink — dotfile and directory links are not dropped-suffix", () => {
+describe("validateLink — dotfile and directory links", () => {
   test("does NOT flag a dotfile link (.gitignore is an asset, not a missing .md)", () => {
     expect(issues("../config/.gitignore")).toEqual([]);
   });
 
-  test("does NOT flag a trailing-slash directory link", () => {
-    expect(issues("../reference/")).toEqual([]);
+  test("flags a trailing-slash directory link as directory-link (LORE-48), not missing-extension", () => {
+    expect(issues("../reference/")).toEqual(["directory-link"]);
+  });
+
+  test("a /-absolute directory link is both leading-slash and directory-link", () => {
+    expect(issues("/reference/").sort()).toEqual(["directory-link", "leading-slash"]);
   });
 });
 

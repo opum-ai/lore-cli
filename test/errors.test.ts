@@ -6,6 +6,7 @@ import {
   EXIT_UNCAUGHT,
   exitCodeFor,
   formatErrorText,
+  ioError,
   LoreError,
   reportError,
   toErrorEnvelope,
@@ -451,6 +452,68 @@ describe("reportError", () => {
     // fast JSON.stringify path instead of being silently dropped by the assignment.
     expect(stderr.text()).toContain('"__proto__":{"evil":1}');
     expect(JSON.parse(stderr.text()).input.keep).toBe(2);
+  });
+});
+
+describe("ioError — the shared fs-errno policy (LORE-48)", () => {
+  const spec = {
+    denied: { message: "denied msg", hint: "denied hint" },
+    notFound: { message: "missing msg", hint: "missing hint" },
+    input: { path: "p" },
+  };
+
+  test("maps EACCES/EPERM to a denied LoreError (exit 4)", () => {
+    for (const code of ["EACCES", "EPERM"]) {
+      try {
+        ioError({ code }, spec);
+        throw new Error("should have thrown");
+      } catch (err) {
+        expect(err).toBeInstanceOf(LoreError);
+        expect((err as LoreError).type).toBe("denied");
+        expect((err as LoreError).message).toBe("denied msg");
+      }
+    }
+  });
+
+  test("attaches the errno code to the LoreError input (LORE-48 review regression)", () => {
+    try {
+      ioError({ code: "EACCES" }, spec);
+    } catch (err) {
+      expect((err as LoreError).input).toEqual({ path: "p", code: "EACCES" });
+    }
+  });
+
+  test("maps ENOENT to a not_found LoreError (exit 3)", () => {
+    expect(() => ioError({ code: "ENOENT" }, spec)).toThrow(/missing msg/);
+    try {
+      ioError({ code: "ENOENT" }, spec);
+    } catch (err) {
+      expect((err as LoreError).type).toBe("not_found");
+    }
+  });
+
+  test("maps an unknown errno to not_found by default (read-failure policy)", () => {
+    try {
+      ioError({ code: "EIO" }, spec);
+    } catch (err) {
+      expect((err as LoreError).type).toBe("not_found");
+    }
+  });
+
+  test("re-throws an unknown errno unchanged when rethrowUnknown is set (stat-on-named-path policy)", () => {
+    const cause = { code: "EIO", marker: true };
+    try {
+      ioError(cause, { ...spec, rethrowUnknown: true });
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect(err).toBe(cause); // the original cause, not a LoreError
+    }
+    // ENOENT still maps to not_found even under rethrowUnknown.
+    try {
+      ioError({ code: "ENOENT" }, { ...spec, rethrowUnknown: true });
+    } catch (err) {
+      expect((err as LoreError).type).toBe("not_found");
+    }
   });
 });
 

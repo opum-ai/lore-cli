@@ -41,26 +41,19 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 import { LoreError, WarningCollector } from "../errors";
 import { nodeText, walkMdast } from "./bundle";
 import { type Concept, tryParseConcept } from "./concept";
+import type { Finding as BaseFinding, Severity } from "./finding";
 import { decodeTarget } from "./links";
 import { defaultProfile, type Profile } from "./profile";
 import { requiredSectionsFor } from "./schema";
 import { expectedResource } from "./template";
 
-/** The two finding tiers (cli-contract §4.1): an `error` fails the file, a `warning` never does. */
-export type Severity = "error" | "warning";
+export type { Severity };
 
 /** Which check produced a {@link Finding}, for machine consumers and grouped display. */
 export type FindingRule = "frontmatter" | "required-section" | "quote-safety" | "resource";
 
-/** One tiered problem found in a single file. */
-export interface Finding {
-  /** `error` (fails the file / exit 6) or `warning` (advisory; fails only under `--strict`). */
-  readonly severity: Severity;
-  /** The check that raised it. */
-  readonly rule: FindingRule;
-  /** A single-line, actionable description. */
-  readonly message: string;
-}
+/** One tiered problem found in a single file — the shared {@link BaseFinding} narrowed to `validate`'s rules. */
+export type Finding = BaseFinding<FindingRule>;
 
 /** The validation outcome for one file. */
 export interface FileReport {

@@ -193,11 +193,12 @@ The portability lint is the mechanism behind everything above. It runs as part
 of [`lore check`](cli-contract.md) over the whole bundle and reports:
 
 - non-portable **link form** — `/`-absolute, missing `.md`, unencoded spaces,
-  wikilinks/embeds;
+  wikilinks/embeds, accidental-colon filenames (`notes:2026.md`, read as a
+  `scheme:` URL), trailing-slash directory links (`../reference/`);
 - **Obsidian-isms** — `==highlight==`, `%% comment %%`, `^block-id`,
   `> [!callout]`;
-- **MDX hazards** — un-escaped raw `<` / `{` in prose, `_`-prefixed file names,
-  `.mdx` files.
+- **MDX hazards** — un-escaped raw `<` / `{` in prose, raw HTML tags,
+  `_`-prefixed file names, `.mdx` files.
 
 Every finding is a **warning** (output mode follows the global
 `--json` / `--plain` / pretty precedence; warnings go to stderr, data to

@@ -45,28 +45,27 @@ import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { extractLinkTargets, nodeText, walkMdast } from "./bundle";
 import { idFromPath, normalizeInput } from "./concept";
+import type { Finding, Severity } from "./finding";
 import { decodeTarget, isExternalTarget, pathPart, validateLink } from "./links";
 
-/** `error` fails the gate (exit `6`); `warning` is advisory (fails only under `--strict`). */
-export type CheckSeverity = "error" | "warning";
+/** `error` fails the gate (exit `6`); `warning` is advisory (fails only under `--strict`). The shared {@link Severity}. */
+export type CheckSeverity = Severity;
 
 /**
  * Which check produced a {@link CheckFinding}. `broken-link`/`broken-anchor` are the
- * error-tier gate; `portability` is the warn-tier lint.
+ * error-tier gate; `portability` is the warn-tier lint; `external-link` is the opt-in,
+ * non-deterministic liveness advisory (`--external`) that never fails the gate (ADR-0007).
  */
-export type CheckRule = "broken-link" | "broken-anchor" | "portability";
+export type CheckRule = "broken-link" | "broken-anchor" | "portability" | "external-link";
 
-/** One problem found in the bundle, attributed to the file that carries it. */
-export interface CheckFinding {
-  /** `error` (broken link/anchor → exit 6) or `warning` (portability → advisory). */
-  readonly severity: CheckSeverity;
-  /** The pass that raised it. */
-  readonly rule: CheckRule;
+/**
+ * One problem found in the bundle, attributed to the file that carries it: the shared
+ * {@link Finding} (narrowed to `check`'s rules) plus that per-file attribution.
+ */
+export type CheckFinding = Finding<CheckRule> & {
   /** The bundle-root-relative POSIX path of the file the finding is in. */
   readonly file: string;
-  /** A single-line, actionable description. */
-  readonly message: string;
-}
+};
 
 /** One bundle file handed to {@link checkBundle}: its **bundle-root-relative** path and raw bytes. */
 export interface CheckInputFile {
@@ -78,7 +77,7 @@ export interface CheckInputFile {
 
 /** The aggregate result of a `lore check` run over a bundle. */
 export interface CheckReport {
-  /** Every finding, in file-then-document order. */
+  /** Every deterministic finding, in file-then-document order (the gate + portability lint). */
   readonly findings: readonly CheckFinding[];
   /** Total error-severity findings (broken links + anchors) — the gate count. */
   readonly errorCount: number;
@@ -86,7 +85,51 @@ export interface CheckReport {
   readonly warningCount: number;
   /** Number of files examined. */
   readonly fileCount: number;
+  /**
+   * Opt-in external-URL **liveness** results (`--external`), each an `external-link` warning. These
+   * are **non-deterministic** (they depend on the network), so they are kept out of the gate
+   * entirely: never folded into {@link errorCount}/{@link warningCount}, never affecting the exit
+   * code — not even under `--strict` (ADR-0007). Absent (undefined) unless `--external` ran. Core
+   * leaves this empty; the command layer fills it (the probing is network IO, ADR-0014).
+   */
+  readonly externalFindings?: readonly CheckFinding[];
 }
+
+/** One external URL discovered in the bundle, attributed to its file — the `--external` probe's worklist item. */
+export interface ExternalLink {
+  /** The bundle-root-relative POSIX path of the file the link is in. */
+  readonly file: string;
+  /** The external `http(s)` URL as authored. */
+  readonly url: string;
+}
+
+/**
+ * Collect the distinct `http(s)` link targets per file — the worklist the opt-in `--external`
+ * liveness probe (command layer) fetches. Pure: it parses the same bundle bodies and returns URLs,
+ * touching no network (ADR-0014). Only `http`/`https` are returned; other external schemes
+ * (`mailto:`, `tel:`, protocol-relative `//host`) are not liveness-checkable and are skipped, as
+ * are duplicates **within a file** (one finding per file per URL). Parsing here, rather than
+ * reusing {@link checkBundle}'s internal parse, keeps that gate function's signature unpolluted by
+ * the optional, non-deterministic feature.
+ */
+export function collectExternalLinks(files: readonly CheckInputFile[]): ExternalLink[] {
+  const links: ExternalLink[] = [];
+  for (const file of files) {
+    const tree = fromMarkdown(bodyText(file.raw));
+    const seen = new Set<string>();
+    for (const target of extractLinkTargets(tree)) {
+      const url = target.trim();
+      if (HTTP_URL.test(url) && !seen.has(url)) {
+        seen.add(url);
+        links.push({ file: file.path, url });
+      }
+    }
+  }
+  return links;
+}
+
+/** An `http`/`https` URL — the only externally-probeable link scheme. */
+const HTTP_URL = /^https?:\/\//i;
 
 /**
  * Run the link/anchor + portability passes over a whole bundle and aggregate the findings.
@@ -307,11 +350,11 @@ interface Detector {
  * wikilinks/embeds (`[[…]]`/`![[…]]`), highlights (`==…==`), and `%%`-comments are
  * distinctive enough to match anywhere in a text node, but a **callout** (`[!type]`) is only
  * a callout at the **start** of a blockquote line, so its pattern is anchored to the start of
- * the text node — a literal `[!important]` mid-sentence is left alone (it renders portably).
- * The Obsidian **block-reference** detector (`^id`), and the MDX raw-`<`/`{` and
- * `_`-prefix/`.mdx` filename rules, are deferred to a follow-up (LORE-48): a precise block-ref
- * detector must both avoid carets in prose/math and catch digit-leading auto IDs, which the
- * text-node regex cannot do reliably.
+ * the text node — a literal `[!important]` mid-sentence is left alone (it renders portably). (The
+ * Obsidian **block-reference** `^id`, the MDX raw-`<`/`{` hazard, and the `_`-prefix/`.mdx`
+ * filename rules are handled separately — {@link blockReferenceFinding}, {@link mdxHazardFindings},
+ * and the command layer — not as body-text regexes, because each needs structural context a
+ * per-text-node regex cannot see.)
  */
 const DETECTORS: readonly Detector[] = [
   {
@@ -339,27 +382,125 @@ const DETECTORS: readonly Detector[] = [
 ];
 
 /**
- * The portability warnings for a body's prose: run every {@link DETECTORS Obsidian-ism
- * detector} over the body's **text nodes only**. Scanning text nodes (never `inlineCode`/
- * `code`) is what excludes fenced and inline code for free — the same characters are
- * legitimate there — so a `[[x]]` inside a code span is correctly left alone.
+ * An Obsidian block-reference marker `^id`, matched only at the very **end of its block**: the
+ * caret must be preceded by whitespace or the block start (so `x^2`, a GFM footnote `[^1]`, and any
+ * mid-prose caret are spared) and the id — which may be digit-leading, e.g. `^3f9a2b` — runs to the
+ * end. This is judged against a **block's last text child** (see {@link blockReferenceFinding}), not
+ * an arbitrary text node, so `see note ^id **bold**` (where the caret is mid-paragraph, before the
+ * bold) is *not* flagged. The `[[note#^id]]` reference form is already caught by the wikilink detector.
+ */
+const BLOCK_REFERENCE = /(?:^|\s)\^([A-Za-z0-9][A-Za-z0-9-]*)$/;
+
+/**
+ * The portability warnings for a body's prose: the {@link DETECTORS Obsidian-ism detectors} plus
+ * the {@link mdxHazardFindings MDX-safety} scan, over the parsed tree. The Obsidian detectors run
+ * over **text nodes only** — scanning text (never `inlineCode`/`code`) excludes fenced and inline
+ * code for free, so a `[[x]]` inside a code span is correctly left alone — while the MDX scan also
+ * inspects raw-`html` nodes (the form CommonMark pulls a `<tag>` out of the text as), skipping
+ * HTML comments.
  */
 function portabilityScan(tree: Nodes, file: string): CheckFinding[] {
   const findings: CheckFinding[] = [];
   walkMdast(tree, (node) => {
-    if (node.type !== "text") {
-      return; // code spans/blocks and structural nodes carry no portability prose
-    }
-    for (const detector of DETECTORS) {
-      detector.re.lastIndex = 0;
-      let match: RegExpExecArray | null = detector.re.exec(node.value);
-      while (match !== null) {
-        findings.push({ severity: "warning", rule: "portability", file, message: detector.describe(match) });
-        match = detector.re.exec(node.value);
+    if (node.type === "text") {
+      for (const detector of DETECTORS) {
+        detector.re.lastIndex = 0;
+        let match: RegExpExecArray | null = detector.re.exec(node.value);
+        while (match !== null) {
+          findings.push({ severity: "warning", rule: "portability", file, message: detector.describe(match) });
+          match = detector.re.exec(node.value);
+        }
       }
     }
+    findings.push(...blockReferenceFinding(node, file));
+    findings.push(...mdxHazardFindings(node, file));
   });
   return findings;
+}
+
+/**
+ * The Obsidian block-reference warning for a block, judged from its **last inline child** so the
+ * `^id` marker is only flagged when it truly ends the block ({@link BLOCK_REFERENCE}). Only a
+ * `paragraph` is inspected — the block kind an Obsidian `^id` attaches to (a list item's text lives
+ * in a nested paragraph, so it is covered too) — and only when that paragraph's last child is a text
+ * node ending in `^id`. A caret followed by inline formatting (`^id **bold**`, where the last child
+ * is the `strong`, not text) or sitting mid-prose is therefore not a false positive.
+ */
+function blockReferenceFinding(node: Nodes, file: string): CheckFinding[] {
+  if (node.type !== "paragraph") {
+    return [];
+  }
+  const last = node.children.at(-1);
+  if (last?.type !== "text") {
+    return [];
+  }
+  const match = BLOCK_REFERENCE.exec(last.value.trimEnd());
+  if (match === null) {
+    return [];
+  }
+  return [
+    {
+      severity: "warning",
+      rule: "portability",
+      file,
+      message: `non-portable Obsidian block reference "^${match[1]}"; renders literally off Obsidian — link to a heading anchor instead`,
+    },
+  ];
+}
+
+/**
+ * MDX-safety warnings (portable-markdown.md §MDX): Docusaurus parses Markdown as **MDX**, where a
+ * raw `<` starts a JSX element and a raw `{` a JSX expression — so un-escaped, non-code `<`/`{` in
+ * prose make its build throw even though the same source renders fine on GitHub/Obsidian/MkDocs.
+ * lore detects (never escapes) two shapes, one finding apiece to keep the report readable:
+ *
+ * - a `<` or `{` CommonMark left literal in a **text** node (`temperature < 0`, `{ "k": 1 }`);
+ * - a raw-`html` node that carries any non-comment markup (`<T>`, `<div>`, `<Component>` — what
+ *   CommonMark pulled out of the text as inline/block HTML). HTML **comments** (`<!-- … -->`) are
+ *   portable and are what lore writes for its managed regions, so they are stripped first; a node
+ *   that is *only* comments is left alone, but `<!-- … --><div>` still flags the `<div>`.
+ *
+ * Code spans/blocks are `inlineCode`/`code` nodes, never `text`/`html`, so they never reach here.
+ */
+function mdxHazardFindings(node: Nodes, file: string): CheckFinding[] {
+  const findings: CheckFinding[] = [];
+  if (node.type === "text") {
+    if (node.value.includes("<")) {
+      findings.push(mdxHazard(file, "<"));
+    }
+    if (node.value.includes("{")) {
+      findings.push(mdxHazard(file, "{"));
+    }
+  } else if (node.type === "html" && node.value.replace(HTML_COMMENT, "").trim() !== "") {
+    findings.push({
+      severity: "warning",
+      rule: "portability",
+      file,
+      message: `non-portable raw HTML "${clip(node.value)}"; the portable subset has no raw HTML outside comments, and MDX (Docusaurus) parses it as JSX`,
+    });
+  }
+  return findings;
+}
+
+/** An HTML comment span — stripped before judging whether an `html` node carries real (non-comment) markup. */
+const HTML_COMMENT = /<!--[\s\S]*?-->/g;
+
+/** One MDX raw-character warning, naming the hazard and the portable escape. */
+function mdxHazard(file: string, ch: "<" | "{"): CheckFinding {
+  const role = ch === "<" ? "a JSX/HTML element" : "a JSX expression";
+  const entity = ch === "<" ? "&lt;" : "&#123;";
+  return {
+    severity: "warning",
+    rule: "portability",
+    file,
+    message: `non-portable raw "${ch}" in prose; MDX (Docusaurus) reads it as the start of ${role} — escape it (${entity}) or wrap the text in backticks`,
+  };
+}
+
+/** Collapse whitespace and clip a raw-HTML snippet to a single readable line for a finding message. */
+function clip(value: string): string {
+  const flat = value.replace(/\s+/g, " ").trim();
+  return flat.length > 50 ? `${flat.slice(0, 50)}…` : flat;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────────

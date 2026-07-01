@@ -244,6 +244,56 @@ export function errnoCode(cause: unknown): string | undefined {
   return undefined;
 }
 
+/** The per-category message + hint an {@link ioError} attaches to its {@link LoreError}. */
+interface IoErrorText {
+  /** The single-line failure message. */
+  readonly message: string;
+  /** The actionable recovery hint. */
+  readonly hint: string;
+}
+
+/** How a caught filesystem error maps onto the `denied`/`not_found` categories. */
+export interface IoErrorSpec {
+  /** Text for a permission failure (`EACCES`/`EPERM` → `denied`, exit 4). */
+  readonly denied: IoErrorText;
+  /** Text for a missing path (`ENOENT` → `not_found`, exit 3) — and any other errno unless {@link rethrowUnknown}. */
+  readonly notFound: IoErrorText;
+  /** Structured context attached to the raised {@link LoreError} (for the `--json` envelope). */
+  readonly input?: Record<string, unknown>;
+  /**
+   * When set, an errno that is neither `EACCES`/`EPERM` nor `ENOENT` re-throws the original
+   * `cause` unchanged (the stat-on-a-user-named-path policy) instead of mapping to `not_found`.
+   * Left unset, every non-permission failure is `not_found` (the read-failure policy).
+   */
+  readonly rethrowUnknown?: boolean;
+}
+
+/**
+ * The **one** filesystem-errno → {@link LoreError} policy, shared by every command and core
+ * module that classifies an I/O failure (`bundle.ts` reads, `commands/check.ts` /
+ * `commands/validate.ts` path expansion, `commands/discover.ts` reads). A permission failure
+ * (`EACCES`/`EPERM`) is `denied` (exit 4); a missing path (`ENOENT`) is `not_found` (exit 3);
+ * any other errno is `not_found` too, unless {@link IoErrorSpec.rethrowUnknown} asks for the
+ * original cause to propagate (so a `stat` on a path the *user* named surfaces an unexpected
+ * fault rather than masking it as "missing"). Centralizing the mapping keeps two call sites
+ * from ever classifying the same failure into different exit codes; each caller supplies only
+ * its own message/hint wording. Always throws — its `never` return lets a `catch` fall through
+ * with the surrounding binding still treated as definitely-assigned.
+ */
+export function ioError(cause: unknown, spec: IoErrorSpec): never {
+  const code = errnoCode(cause);
+  // Attach the errno `code` to the structured input so the `--json` error envelope carries it
+  // (preserving the field `discover.ts`'s denied read used to set by hand, now uniform across sites).
+  const input = code !== undefined ? { ...spec.input, code } : spec.input;
+  if (code === "EACCES" || code === "EPERM") {
+    throw new LoreError("denied", spec.denied.message, spec.denied.hint, input);
+  }
+  if (code === "ENOENT" || !spec.rethrowUnknown) {
+    throw new LoreError("not_found", spec.notFound.message, spec.notFound.hint, input);
+  }
+  throw cause;
+}
+
 /**
  * Project an arbitrary value onto a JSON-safe shape — primitives, arrays, and
  * plain objects only — that {@link JSON.stringify} can encode without throwing.

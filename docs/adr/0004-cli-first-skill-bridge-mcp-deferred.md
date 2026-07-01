@@ -52,7 +52,7 @@ The evidence against MCP-as-primary is concrete:
 
 Two facts about `lore`'s own design make the CLI a clean primary surface:
 
-1. The CLI already emits **`--json`** ({schemaVersion, kind, data}) and **`--plain`**
+1. The CLI already emits **`--json`** (`{schemaVersion, kind, data}`) and **`--plain`**
    (ANSI-free, stable) modes, with precedence `--json > --plain > pretty` and
    semantic exit codes (see [cli-contract.md](../reference/cli-contract.md) and
    [cli-surface.md](../reference/cli-surface.md)). An agent gets fully structured,

@@ -154,21 +154,28 @@ The **drift gate** — read-only, never writes. Aggregates:
   [`sync`](#sync)). See [ADR-0009](../adr/0009-story-task-coupling-reconciliation.md).
 - **Managed-block drift** — reports any `<!-- lore:tasks -->` region that
   `sync` would change.
-- **Internal link + heading-anchor validation** — whole-bundle pass using
-  pure-JS `remark-validate-links`; internal links and anchors checked by
-  default. External-URL liveness is opt-in with `--external` (no Rust/lychee
-  runtime dependency; see [ADR-0010](../adr/0010-multi-consumer-docs-layer.md)).
-- **Portability lint** — flags non-portable Markdown/link syntax (wikilinks,
-  absolute or non-`.md` cross-links) per the [portable Markdown rules](./portable-markdown.md).
+- **Internal link + heading-anchor validation** — whole-bundle pure-JS pass:
+  every internal `.md` cross-link must resolve and every `#anchor` must hit a
+  real heading. **External-URL liveness** is opt-in with `--external` (Bun
+  `fetch`, no Rust/lychee runtime dependency; see
+  [ADR-0010](../adr/0010-multi-consumer-docs-layer.md)) and is **non-deterministic**,
+  so its `external-link` findings are **advisory only — they never change the
+  exit code, not even under `--strict`** ([ADR-0007](../adr/0007-validation-and-coherence.md)).
+- **Portability lint** (warn-only) — flags non-portable Markdown/link syntax per
+  the [portable Markdown rules](./portable-markdown.md): wikilinks/embeds/callouts/
+  highlights/`%%`-comments and Obsidian block refs (`^id`); non-portable link
+  form (leading-slash, missing `.md`, unencoded, accidental-colon filenames,
+  trailing-slash directory links); and MDX hazards (raw `<`/`{` in prose, raw
+  HTML, leading-underscore and `.mdx` file names).
 
 Also surfaces per-doc and bundle **token estimates** (labeled chars/4 heuristic).
 
 | | |
 |---|---|
 | **Args** | optional `[paths…]` (default: whole bundle) |
-| **Key flags** | `--external` (also check external-URL liveness) · `--fix` (where safe, defer to `sync` for managed-block/status — `check` itself never writes) |
-| **Output** | `kind: check.report` — drift, broken links/anchors, portability findings, token estimates |
-| **Exit** | `0` no drift · `6` any drift / broken internal link / portability failure |
+| **Key flags** | `--strict` (treat portability warnings as failures for the exit code) · `--external` (also probe external-URL liveness — advisory, never gates) · `--fix` (where safe, defer to `sync` for managed-block/status — `check` itself never writes) |
+| **Output** | `kind: check.report` — drift, broken links/anchors, portability findings, token estimates; plus advisory `externalFindings` when `--external` ran |
+| **Exit** | `0` no broken internal links/anchors · `6` any broken internal link/anchor (or any portability warning under `--strict`). External-liveness results never affect the exit. |
 
 ---
 

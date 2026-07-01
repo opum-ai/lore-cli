@@ -15,7 +15,7 @@
  * count justifies the dependency.
  */
 
-import { runCheck } from "./commands/check";
+import { type FetchLike, runCheck } from "./commands/check";
 import { runContext } from "./commands/context";
 import { runGraph } from "./commands/graph";
 import { runInit } from "./commands/init";
@@ -26,7 +26,7 @@ import { runReplace } from "./commands/replace";
 import { runSchema } from "./commands/schema";
 import { runSupersede } from "./commands/supersede";
 import { runValidate } from "./commands/validate";
-import { EXIT_OK, LoreError, reportError, type Writer } from "./errors";
+import { EXIT_OK, EXIT_UNCAUGHT, LoreError, reportError, type Writer } from "./errors";
 import { VERSION } from "./meta";
 import { emit, errorRenderOpts, type OutputContext, type Renderable, resolveOutput } from "./output";
 
@@ -144,6 +144,8 @@ export interface RunContext {
   env?: Record<string, string | undefined>;
   cwd?: string;
   isTTY?: boolean;
+  /** The fetch `check --external` uses for liveness; defaults to the global `fetch`. Injected so a caller (or a test) controls or stubs the network. */
+  fetch?: FetchLike;
 }
 
 /**
@@ -158,7 +160,7 @@ export interface RunContext {
  * `{schemaVersion, kind, data}` envelope under `--json`, plain text otherwise — so a
  * machine consumer that always pipes `--json` can decode their output too.
  */
-export function run(argv: readonly string[], context: RunContext = {}): number {
+export function run(argv: readonly string[], context: RunContext = {}): number | Promise<number> {
   const stdout = context.stdout ?? process.stdout;
   const stderr = context.stderr ?? process.stderr;
   const parsed = parseArgs(argv);
@@ -184,7 +186,15 @@ export function run(argv: readonly string[], context: RunContext = {}): number {
       }
       return emitMeta("help", { usage: USAGE }, USAGE, output, stdout);
     }
-    return dispatch(parsed, { ...context, stdout, stderr }, output);
+    const result = dispatch(parsed, { ...context, stdout, stderr }, output);
+    // The one async command path (`check --external`) returns a Promise; a rejection from it must
+    // funnel through the **same** error seam as a synchronous throw (formatted diagnostic + the
+    // right exit code), not escape to the entrypoint's bare backstop. The sync `catch` below cannot
+    // see an async rejection, so attach the seam to the promise here.
+    if (result instanceof Promise) {
+      return result.catch((err: unknown) => reportError(err, { ...errorRenderOpts(output), stderr }));
+    }
+    return result;
   } catch (err) {
     return reportError(err, { ...errorRenderOpts(output), stderr });
   }
@@ -208,8 +218,12 @@ function emitMeta(
   return EXIT_OK;
 }
 
-/** Route a parsed invocation to its command handler, throwing a `usage` error on bad input. */
-function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext): number {
+/**
+ * Route a parsed invocation to its command handler, throwing a `usage` error on bad input. Returns
+ * a `number` for the synchronous commands and a `Promise<number>` for the one async path
+ * (`check --external`, whose liveness probe is non-deterministic network IO).
+ */
+function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext): number | Promise<number> {
   const root = context.cwd || process.cwd();
   switch (parsed.command) {
     case "init":
@@ -220,7 +234,14 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
     case "validate":
       return runValidate({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     case "check":
-      return runCheck({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
+      return runCheck({
+        root,
+        output,
+        args: parsed.commandArgs,
+        stdout: context.stdout,
+        stderr: context.stderr,
+        fetch: context.fetch,
+      });
     case "replace":
       return runReplace({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     case "rename":
@@ -291,7 +312,14 @@ function rejectCommandArgs(commandArgs: readonly string[], command: string): voi
   );
 }
 
-// Only drive the real process when executed directly (not when imported by tests).
+// Only drive the real process when executed directly (not when imported by tests). `run` returns a
+// number for synchronous commands and a Promise for the one async path (`check --external`); it
+// funnels its own async rejections through `reportError`, so `Promise.resolve(...).then` normally
+// receives a numeric exit code. The `.catch` is a last-ditch backstop (e.g. `reportError` itself
+// throwing) — `EXIT_UNCAUGHT` (1), the uncaught-fault code, not the validation gate's `6`.
 if (import.meta.main) {
-  process.exit(run(process.argv));
+  Promise.resolve(run(process.argv)).then(
+    (code) => process.exit(code),
+    () => process.exit(EXIT_UNCAUGHT),
+  );
 }
