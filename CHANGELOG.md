@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lore link` / `lore unlink` — wire a concept's `tasks:` frontmatter to Backlog task ids**
+  (LORE-24, ADR-0009 §1–§2). `link` adds task ids to the concept's `tasks:` list and records the
+  back-reference on each task: a queryable `doc:<conceptId>` label plus the concept's repo-relative
+  path via `--doc` (display-only). `unlink` removes both sides. Every task id is validated to exist
+  before `link` writes anything (fail loud, no partial edit); `unlink` tolerates a task id already
+  deleted from Backlog — the doc-side reference is still cleaned up, the back-reference edit is
+  simply skipped. Because `--doc` is a SET/REPLACE flag (backlog-cli-contract §2.4), both commands
+  read the task's current `documentation` array first and write back the full desired array, so
+  linking/unlinking never clobbers an unrelated doc reference on a multiply-referenced task; when
+  removal would leave the array empty, `--doc` is omitted entirely (Backlog cannot clear it via an
+  empty value) — the cosmetic drift ADR-0009 already documents as an accepted tradeoff. `--no-back-ref`
+  skips the Backlog-side edit on either command. Not yet consumed by `reconcile.ts`/`managed-block.ts`
+  (LORE-26/27's job).
 - **`core/reconcile.ts` — roll a Story/Spec's linked task statuses up into one derived `status`**
   (LORE-23). The pure engine behind the `status:` half of `lore sync`/`lore check` (ADR-0009 §3):
   `reconcileStatus(taskStatuses, statusFlow)` classifies each linked task by its position in the
