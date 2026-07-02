@@ -1,11 +1,11 @@
 ---
 id: LORE-4
 title: Build the patched binary and wire lore capability probe
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-07-02 00:02'
+updated_date: '2026-07-02 01:05'
 labels:
   - backlog-fork
   - build
