@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-02 19:48'
+updated_date: '2026-07-02 20:13'
 labels:
   - cmd
 milestone: m-3
@@ -28,8 +28,6 @@ Add tasks to a Story frontmatter and tag the task with a queryable label doc:<co
 - [x] #1 orphans can find tasks owning a doc via the label
 - [x] #2 unlink removes both sides cleanly
 <!-- AC:END -->
-
-
 
 ## Implementation Plan
 
@@ -107,4 +105,31 @@ defaultFetch). Manually verified end-to-end against the real --json fork (not ju
 tests' fake adapter): link/re-link/unlink round-trip on a scratch Backlog project confirmed
 tasks:/doc:/--doc/label wiring, idempotency, and the --doc-can't-clear-when-empty tradeoff, all
 byte-for-byte as designed.
+
+/code-review max on PR #35: 6 findings confirmed after independent verification (0 refuted),
+posted in full as a PR comment. Fixed in 20bf2f1:
+- (most severe, correctness) runLink/runUnlink's per-task Backlog editTask loop had no
+  resilience -- one task's subprocess failure threw, aborting the command mid-loop with the
+  rest silently unprocessed and no report. Fixed: every back-ref edit now runs concurrently
+  and independently (Promise.allSettled); a failure is caught and reported on that task's row
+  (backRef:"failed" + a one-line error) instead of corrupting/blocking the others, and the
+  command exits 6 (drift) rather than silently swallowing the failure. The doc-side tasks:
+  write never depended on back-ref success, so it's unaffected either way -- this makes
+  ADR-0009's already-accepted "two references can disagree" tradeoff visible/reported instead
+  of an opaque uncaught exception.
+- (correctness) WarningCollector.flush() was called twice per invocation, double-printing every
+  load advisory to stderr -- removed the redundant trailing flush.
+- (correctness) the local frontmatterList silently dropped any non-string tasks: entry (reachable
+  on a type with no schema-declared tasks field, e.g. Reference). Replaced with bundle.ts's
+  existing toRefList (now exported for reuse), which coerces a stray scalar to a visible ref
+  string instead of dropping it -- matching supersedes/superseded_by's existing behavior.
+- (cleanup) renderLinkReport/renderUnlinkReport were byte-identical; consolidated into
+  renderTaskReport.
+- (perf, minor) runLink's existence-validation reads now batch via Promise.all instead of one
+  viewTask subprocess at a time; still reports the first invalid id in argument order.
+
+4 new tests added (concurrent-failure/exit-6 for both commands, the double-flush fix, the
+non-string tasks: coercion). Gates after fixes: 27/27 link tests, full suite 1116/1116,
+typecheck clean, biome clean, coverage 97.37%/99.50% func/line on link.ts. Re-verified
+end-to-end against the real --json fork after the redesign (concurrent multi-task link).
 <!-- SECTION:NOTES:END -->
