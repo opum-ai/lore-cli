@@ -1,11 +1,11 @@
 ---
 id: LORE-23
 title: 'reconcile.ts: status rollup'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-02 13:19'
+updated_date: '2026-07-02 13:22'
 labels:
   - core
 milestone: m-3
