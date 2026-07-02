@@ -1,0 +1,55 @@
+{
+  "schemaVersion": "1",
+  "kind": "taskList",
+  "data": [
+    {
+      "id": "LORE-1",
+      "title": "Fork Backlog.md and create the --json tracking task",
+      "status": "Done",
+      "priority": "high",
+      "ordinal": 1000,
+      "assignees": [
+        "@jeremy"
+      ],
+      "labels": [
+        "backlog-fork"
+      ],
+      "milestone": "m-0",
+      "parentTaskId": null,
+      "filePath": "{REPO}/backlog/tasks/lore-1 - Fork-Backlog.md-and-create-the-json-tracking-task.md",
+      "filePathRelative": "backlog/tasks/lore-1 - Fork-Backlog.md-and-create-the-json-tracking-task.md"
+    },
+    {
+      "id": "LORE-2",
+      "title": "Implement shared task-json serializer and --json on read commands",
+      "status": "Done",
+      "priority": "high",
+      "ordinal": 2000,
+      "assignees": [],
+      "labels": [
+        "backlog-fork"
+      ],
+      "milestone": "m-0",
+      "parentTaskId": null,
+      "filePath": "{REPO}/backlog/tasks/lore-2 - Implement-shared-task-json-serializer-and-json-on-read-commands.md",
+      "filePathRelative": "backlog/tasks/lore-2 - Implement-shared-task-json-serializer-and-json-on-read-commands.md"
+    },
+    {
+      "id": "LORE-6",
+      "title": "Scaffold package.json, tsconfig, and pinned Bun toolchain",
+      "status": "Done",
+      "priority": "high",
+      "ordinal": 6000,
+      "assignees": [
+        "@claude"
+      ],
+      "labels": [
+        "tooling"
+      ],
+      "milestone": "m-1",
+      "parentTaskId": null,
+      "filePath": "{REPO}/backlog/tasks/lore-6 - Scaffold-package.json-tsconfig-and-pinned-Bun-toolchain.md",
+      "filePathRelative": "backlog/tasks/lore-6 - Scaffold-package.json-tsconfig-and-pinned-Bun-toolchain.md"
+    }
+  ]
+}
