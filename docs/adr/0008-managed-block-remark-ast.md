@@ -11,7 +11,13 @@ timestamp: 2026-06-21T00:00:00Z
 
 ## Status
 
-Accepted — 2026-06-21
+Accepted — 2026-06-21. Amended — 2026-07-02 (LORE-22): the serializer step
+(item 3) is superseded — lore ships **no markdown serializer**, so the managed
+block is built as a frozen-format **string** and spliced over the byte range
+between the marker nodes, rather than re-serialized with `remark-stringify`.
+mdast is still used, but only to *locate* the markers structurally; every other
+guarantee below (structural location, marker validation, byte-identity, bounded
+blast radius) is unchanged. See `src/core/managed-block.ts`.
 
 ## Context
 
@@ -75,12 +81,17 @@ has changed.**
 Concretely:
 
 1. **Locate the region structurally, not textually.** Parse the document with
-   `remark` (`unified().use(remarkParse)` with GFM enabled for tables). Walk
-   the mdast for two `html` nodes whose values match the canonical
-   `lore:tasks:begin` / `lore:tasks:end` sentinels at the top level of the
-   tree. Comment-shaped text that appears *inside* a `code` fence or other
-   container parses as part of that node, not as a top-level `html` node, so it
-   is never mistaken for a marker.
+   `mdast-util-from-markdown` (the parser lore already ships; *amended
+   (LORE-22)* — not `unified().use(remarkParse)`, and **no GFM/table
+   extension** is needed, since only the two comment nodes are read and the
+   bytes between them are replaced wholesale). Walk the mdast for two `html`
+   nodes whose values match the canonical `lore:tasks:begin` /
+   `lore:tasks:end` sentinels at the top level of the tree (the node value is
+   whitespace-trimmed before matching, since the parser keeps a marker line's
+   leading indent and trailing spaces in the node value). Comment-shaped text
+   that appears *inside* a `code` fence or other container parses as part of
+   that node, not as a top-level `html` node, so it is never mistaken for a
+   marker.
 
 2. **Validate the markers before writing.** Exactly one balanced
    begin/end pair, begin before end, both at document top level. Missing,
@@ -88,14 +99,21 @@ Concretely:
    failure, exit code 6) — lore refuses to guess and never writes a partial or
    corrupted block.
 
-3. **Build the new content as mdast nodes, then serialize once.** Construct the
-   replacement — a GFM `table` node (plus a "no linked tasks" paragraph when the
-   `tasks:` list is empty) — as mdast and replace the run of nodes strictly
-   *between* the two `html` marker nodes. Serialize the whole document with
-   `remark-stringify` (`remark-gfm`) using a **single fixed configuration**
-   (bullet, emphasis, fence, list-indent, `tablePipeAlign`, `incrementListMarker`,
-   `setext: false`, etc.). A frozen serializer config is what makes the output
-   deterministic across runs and machines.
+3. **Build the new content as a frozen string, then splice it in.** *Amended
+   (LORE-22).* lore deliberately ships **no markdown serializer** — its only
+   markdown dependency is `mdast-util-from-markdown` (a parser); there is no
+   `remark-stringify`/`mdast-util-to-markdown` (ADR-0001 packaging constraint), and
+   re-emitting the whole document would reflow the author's untouched prose (item 7
+   forbids this). So the replacement is constructed as a **frozen-format string** —
+   a GFM table (header `| Task | Title | Status |`, a compact `|---|---|---|`
+   delimiter, one `| [id](link) | title | status |` row each), or a fixed
+   `_No linked tasks._` paragraph when the `tasks:` list is empty — and **spliced
+   over the byte range strictly between the two `html` marker nodes** (located via
+   `node.position` offsets), copying every other byte verbatim. The frozen string
+   format (not a serializer config) is what makes the output deterministic across
+   runs and machines. This mirrors the settled string-splice pattern in
+   `src/core/rewrite.ts` (`lore rename`/`supersede`) and `src/core/indexes.ts`
+   (`lore:index` blocks); the shared engine lives in `src/core/managed-block.ts`.
 
 4. **Determinism of row order and rendering.** Rows are emitted in a stable,
    defined order — the order of the doc's `tasks:` frontmatter list, with any
@@ -118,11 +136,15 @@ Concretely:
    shown in the link *text* comes from the JSON `id` field as-is.
 
 6. **Byte-identical on no change.** Because location is structural, ordering is
-   defined, links come from canonical JSON paths, and serialization uses a
-   frozen config, a regenerate over an already-current block reproduces the
-   exact same bytes. lore can therefore compare new-vs-old and treat "no byte
-   difference" as a genuine no-op: `lore sync` writes nothing, and `lore check`
-   reports no drift.
+   defined, links come from canonical JSON paths, and the block is emitted from
+   a frozen-format string (*amended (LORE-22)* — the byte-stability rests on the
+   fixed string format, not a serializer config), a regenerate over an
+   already-current block reproduces the exact same bytes. lore can therefore
+   compare new-vs-old and treat "no byte difference" as a genuine no-op: `lore
+   sync` writes nothing, and `lore check` reports no drift. (This holds for
+   LF-normalized input, which every lore read path guarantees — see
+   `concept.ts` `normalizeInput`; the splice does not itself normalize line
+   endings.)
 
 7. **Idempotent surgery, bounded blast radius.** Only the nodes between the
    markers are replaced; the markers themselves and every node before `begin`
@@ -149,9 +171,12 @@ data is fetched.
   [`lore check`](0007-validation-and-coherence.md) can flag a stale managed block by a
   pure byte comparison, with exit code 6, and no false positives.
 - **Robust against pathological markdown.** Sentinels inside code fences,
-  blockquotes, or nested lists are not confused for markers; CRLF/LF, blank-line,
-  and table-alignment handling come from the serializer, not from hand-rolled
-  string math.
+  blockquotes, or nested lists are not confused for markers, because location is
+  structural (a top-level `html` node), not a text scan. *Amended (LORE-22):*
+  line-ending normalization is **not** part of this engine — input is expected
+  LF-normalized (every lore read path guarantees it via `concept.ts`
+  `normalizeInput`), and the frozen string format fixes blank-line and
+  table-alignment shape directly rather than deferring to a serializer.
 - **Correct, portable links by construction.** Sourcing the path from
   `filePathRelative` sidesteps the uppercase-display-ID / lowercase-filename
   trap and emits links in the one cross-renderer-portable form
@@ -165,11 +190,14 @@ data is fetched.
 
 ### Negative / tradeoffs
 
-- **Serializer coupling.** Byte-stability depends on a pinned remark/remark-gfm
-  version and a frozen `remark-stringify` config. A remark upgrade can change
-  default formatting; we mitigate with the pinned config, snapshot tests over
-  the rendered block, and a one-time reflow being acceptable on deliberate
-  upgrades.
+- **Format coupling.** *Amended (LORE-22).* With no serializer, byte-stability
+  depends on the frozen table-string format in `managed-block.ts` and on the
+  parser (`mdast-util-from-markdown`) assigning stable marker offsets — a much
+  smaller surface than a `remark-stringify` config. A deliberate change to the
+  frozen format is a one-time reflow; we mitigate with byte-identity (fixpoint)
+  tests over the rendered block. Locating markers structurally still depends on
+  the parser recognizing a top-level `html` comment node, which is CommonMark
+  core (not a GFM extension), so it needs no table-parsing extension.
 - **Heavier than a regex.** Parsing the whole document to mdast is more work per
   file than a single regex match. In practice doc files are small and `sync`/
   `check` are not hot paths, so the cost is negligible and bounded by bundle
