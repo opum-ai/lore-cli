@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@jeremy'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-02 11:29'
+updated_date: '2026-07-02 12:09'
 labels:
   - core
 milestone: m-3
@@ -52,6 +52,16 @@ Gates: typecheck clean; biome lint clean (3 pre-existing infos); bun test 1071 p
 Scope: engine only — NOT wired into cli.ts (link/unlink/sync are LORE-24+). ADR-0008 records a remark-stringify mechanism that lore cannot ship; the module docstring records the splice supersession — whether to amend the ADR file itself is pending a user decision.
 
 ADR-0008 amended in this PR (user decision): Status now carries an 'Amended — 2026-07-02 (LORE-22)' note, §Decision item 3 records the frozen-string-splice mechanism (no serializer), and the 'Serializer coupling' tradeoff became 'Format coupling'. lore validate/check stay clean (0 errors/0 warnings).
+
+Applied /code-review (max) findings. FIXED in-PR:
+- (correctness) Marker regexes were whitespace-intolerant: mdast keeps a marker line's leading indent / trailing spaces in the html node value, so a stray trailing space made findMarkers throw a false 'region missing' (fails lore check/CI on a visibly-correct doc). Fix: trim node.value before matching (test added; still a byte-fixpoint, marker bytes preserved).
+- (correctness) renderRow guarded on 'file === null' only, so an empty-string filePathRelative rendered a broken '../..md' link. Fix: treat null OR '' as no-file -> plain-text id (test added).
+- (docs) Completed the ADR-0008 amendment the review flagged as incomplete: §Decision item 1 (was 'unified().use(remarkParse)' + GFM) now names mdast-util-from-markdown / no-GFM + the whitespace-trim; item 6 ('serialization uses a frozen config') now credits the frozen-string format; the 'Robust against pathological markdown' Positive bullet no longer claims CRLF/serializer handling and states the LF precondition. validate/check clean.
+DEFERRED (rationale):
+- normalizeLink throws a bare Error (not LoreError) on an absolute path -> belongs at the LORE-24 command boundary (docPath is a caller-supplied repo-relative precondition), not the pure engine.
+- offsetsOf/Marker duplicate rewrite.ts positionOf/ByteRange, and cell/escapeLinkText duplicate indexes.ts linkText -> real DRY, but consolidation touches files outside LORE-22; fold into a shared mdast-utils / md-cell-safety helper later (cf. indexes.ts encodePathSegments TODO(LORE-28) pattern).
+- findMarkers is tasks-only (not parameterized for lore:index structural location) -> forward scope beyond LORE-22 ACs.
+Gates after fixes: typecheck, lint, 1073 tests, validate/check all green; managed-block coverage 100% funcs / 97.80% lines.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

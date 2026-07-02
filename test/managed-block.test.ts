@@ -92,6 +92,12 @@ describe("regenerateTaskBlock — table rendering (AC#2)", () => {
 });
 
 describe("regenerateTaskBlock — tolerance and cell hardening", () => {
+  test("an empty-string file (not just null) renders the id as plain text, never a broken `..md` link", () => {
+    const out = regenerateTaskBlock(doc(), [{ id: "LORE-9", title: "T", status: "Done", file: "" }], OPTS);
+    expect(out).toContain("| LORE-9 | T | Done |");
+    expect(out).not.toContain("..md");
+  });
+
   test("a null file (task absent on this branch) renders the id as plain text, never a broken link or an error", () => {
     const out = regenerateTaskBlock(
       doc(),
@@ -168,6 +174,15 @@ describe("regenerateTaskBlock — idempotency and boundary safety (AC#1)", () =>
     expect(out).toContain("```markdown\n" + `${TASK_BLOCK_BEGIN}\nexample in a doc\n${TASK_BLOCK_END}\n` + "```");
     expect(out).toContain(block("_No linked tasks._"));
     expect(regenerateTaskBlock(out, [], OPTS)).toBe(out); // still a fixpoint with the fence present
+  });
+
+  test("a marker line with surrounding whitespace (trailing space / leading indent) is still recognized", () => {
+    // mdast keeps a marker line's leading indent and trailing spaces in the html node value; an
+    // invisible trailing space must not make a visibly-correct block read as "missing".
+    const spaced = `# T\n\n  ${TASK_BLOCK_BEGIN} \nstale\n${TASK_BLOCK_END}\t\n`;
+    const out = regenerateTaskBlock(spaced, [], OPTS);
+    expect(out).toContain("_No linked tasks._");
+    expect(regenerateTaskBlock(out, [], OPTS)).toBe(out); // still a byte-fixpoint with the surrounding whitespace preserved
   });
 
   test("the whitespace-tolerant sentinel form (`<!--lore:tasks:begin-->`) is recognized", () => {

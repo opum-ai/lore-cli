@@ -70,9 +70,12 @@ export const TASK_BLOCK_BEGIN = "<!-- lore:tasks:begin -->";
 export const TASK_BLOCK_END = "<!-- lore:tasks:end -->";
 
 /**
- * Match a top-level `html` node's value against a marker sentinel, tolerant of internal whitespace
- * (`<!--lore:tasks:begin-->` and the canonical spaced form both match) but requiring the node to be
- * *exactly* the marker comment — a node carrying other text (or both markers on one line) matches
+ * Match a top-level `html` node's value against a marker sentinel, tolerant of whitespace both inside
+ * the comment (`<!--lore:tasks:begin-->` and the canonical spaced form both match) and *around* it —
+ * the node value is trimmed before matching, because `mdast-util-from-markdown` keeps a marker line's
+ * leading indent (1–3 spaces) and trailing spaces in the `html` node's `value`, and an invisible
+ * trailing space must not make a visibly-correct marker read as "missing". The node must still be
+ * *exactly* the marker comment; a node carrying other text (or both markers on one line) matches
  * neither, and is surfaced by {@link findMarkers}'s validation rather than silently paired.
  */
 const BEGIN_MARKER = /^<!--\s*lore:tasks:begin\s*-->$/;
@@ -172,9 +175,10 @@ function findMarkers(content: string): { begin: Marker; end: Marker } {
     if (span === null) {
       continue; // defensive: a parsed html node always carries offsets
     }
-    if (BEGIN_MARKER.test(node.value)) {
+    const value = node.value.trim(); // mdast keeps a marker line's surrounding whitespace in `value`; ignore it
+    if (BEGIN_MARKER.test(value)) {
       begins.push(span);
-    } else if (END_MARKER.test(node.value)) {
+    } else if (END_MARKER.test(value)) {
       ends.push(span);
     }
   }
@@ -234,12 +238,13 @@ function buildTable(rows: readonly ManagedTaskRow[], docPath: string): string {
 /**
  * Render one task as a table row. The id becomes the link text; its target is the canonical relative
  * link to the task file ({@link normalizeLink} over the repo-relative `docPath` and `file`). When the
- * file is absent (`null`), the id is rendered as plain text — the task still appears, marked, rather
- * than linking nowhere or erroring (ADR-0008 §5 tolerance).
+ * file is absent — `null`, or the empty string a not-yet-written task can carry — the id is rendered
+ * as plain text: the task still appears, marked, rather than linking to a broken `..md` target or
+ * erroring (ADR-0008 §5 tolerance).
  */
 function renderRow(row: ManagedTaskRow, docPath: string): string {
   const label = escapeLinkText(row.id);
-  const taskCell = row.file === null ? label : `[${label}](${normalizeLink(docPath, row.file)})`;
+  const taskCell = row.file === null || row.file === "" ? label : `[${label}](${normalizeLink(docPath, row.file)})`;
   return `| ${taskCell} | ${cell(row.title)} | ${cell(row.status)} |`;
 }
 
