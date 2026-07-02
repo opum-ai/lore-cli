@@ -1,11 +1,11 @@
 ---
 id: LORE-13
 title: Test fixtures and golden outputs
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-07-02 01:45'
+updated_date: '2026-07-02 02:07'
 labels:
   - test
   - fixtures
