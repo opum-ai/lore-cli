@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-07-02 00:00'
+updated_date: '2026-07-02 00:02'
 labels:
   - backlog-fork
   - build
@@ -58,3 +58,19 @@ NOT wired into cli.ts dispatch: the coupling commands it gates (link/unlink/task
 DOC FIX: corrected docs/reference/backlog-cli-contract.md §1 envelope + §5 step 4 to the schema-of-record values (schemaVersion string '1', kind camelCase task/taskList/searchResult) so LORE-21 does not implement against the wrong contract.
 SCOPE CALL (git-dep): neither AC requires the package.json github git-dep pin from runbook §6. The adapter shells out to 'backlog' on PATH (contract §5, design §2.3), and lore lives on /Volumes/external where a compiling github git-dep hits the EXDEV/silent-compile trap — so I built+verified the binary (AC#1) and documented, rather than forcing a hazardous git-dep install into lore. Flagging for user review.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: @claude
+created: 2026-07-02 00:02
+---
+Ready for review — PR #30 (feat/lore-4-backlog-probe) open into dev. Leaving status In Progress until merged; will mark Done via a chore(LORE-4) commit post-merge, per the LORE-31/33/34/48 pattern. One decision flagged in the PR: the runbook §6 package.json git-dep pin was deliberately skipped (adapter shells to backlog on PATH; lore lives on the EXDEV-prone external volume).
+---
+<!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Delivered milestone m-0. AC#1: compiled the --json fork (tasks/back-510-json-output @ a80b7a1) to a 66MB internal-disk binary (dodging the /Volumes/external silent-compile trap) and verified it emits the expected {schemaVersion:'1', kind} envelopes for task list/view/search. AC#2: shipped src/adapters/backlog.ts (the only backlog subprocess seam), a minimal standalone fail-loud capability probe over an injectable BacklogSpawn — absent binary -> not_found/exit 3, non-fork binary -> validation/exit 6; +16 tests. Also fixed the backlog-cli-contract.md envelope prose to the schema-of-record values. Full adapter read/write surface deferred to LORE-21 (extends this file). typecheck+biome+990 tests green; lore validate/check clean. Shipped as PR #30 into dev (awaiting user review/merge); git-dep pin intentionally NOT added (adapter shells to PATH; external-volume trap) — flagged for review.
+<!-- SECTION:FINAL_SUMMARY:END -->
