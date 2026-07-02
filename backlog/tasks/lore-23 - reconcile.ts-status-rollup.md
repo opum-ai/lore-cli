@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-02 12:40'
+updated_date: '2026-07-02 13:19'
 labels:
   - core
 milestone: m-3
@@ -53,6 +53,16 @@ Design note (non-obvious, worth flagging for LORE-24 review): the rollup is elim
 Reading backlog/config.yml (YAML -> ordered statusFlow) and resolving each linked task's live status are explicitly OUT of scope here -- command-layer concerns for LORE-24, which will need a way to obtain the config-driven status list (no existing adapter method reads backlog config; adapter.ts currently only covers task list/view/search/create/edit).
 
 15/15 tests pass (test/reconcile.test.ts); typecheck clean; full suite 1088/1088 pass; biome clean on both new files. Not wired into cli.ts (LORE-24's job per the task description).
+
+/code-review (max) on PR #34 (4 confirmed findings). FIXED in-PR:
+- (correctness) classify() checked terminal before not-started, so a single-entry statusFlow (e.g. ["To Do"]) always classified as terminal -- any project with a 1-status backlog config silently reconciled every doc to "done". validateStatusFlow now requires >=2 entries; regression test added (reconcileStatus(["To Do"], ["To Do"]) empirically reproduced "done" before the fix, throws validation after).
+- (docs) citations said "cli-contract §3.1/§3.2"; the normative source is the DIFFERENT doc docs/reference/backlog-cli-contract.md (bare "cli-contract" is already used elsewhere, validate.ts, for docs/reference/cli-contract.md's unrelated §4.1). Fixed in reconcile.ts + reconcile.test.ts.
+
+DEFERRED (scope question raised to the user, not silently expanded):
+- (design gap) src/config.ts (LORE-10) already ships `[reconcile.overrides]` (Readonly<Record<string,string>>, a Backlog status name -> a rollup status string) with a doc comment assigning its semantics to "reconcile.ts (LORE-23)". reconcileStatus never reads it -- an override like "Won't Do" -> "done" can never take effect, since "Won't Do" isn't literally in statusFlow and hits the unrecognized-status fail-loud path instead. ADR-0009 §3 (this task's Documentation link, Accepted) defines reconciliation purely by ordered-flow position and never mentions an override map at all, so the override's intended semantics (does it bypass the flow-position check? is the override target added to the flow only for override purposes?) are underspecified by the authoritative spec. Not implemented here pending a design decision -- ADR-0009 amendment or a LORE-24+ follow-up task.
+- (cleanup) test/reconcile.test.ts's loreError() duplicates test/managed-block.test.ts's helper verbatim (same pattern already drifted across 5+ other test files: replace/new/rename/supersede's expectError, backlog-adapter's async loreError). Consolidating into test/helpers.ts is real DRY but touches files outside this task's scope, same rationale as LORE-22's deferred offsetsOf/cell dedup.
+
+Gates after fixes: typecheck clean; biome clean; 16/16 reconcile tests pass; full suite 1089/1089.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
