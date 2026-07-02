@@ -40,8 +40,13 @@ and the relevant ADRs (linked inline).
 All reads request the canonical envelope from the forked binary:
 
 ```json
-{ "schemaVersion": 1, "kind": "<task|task-list|search>", "data": <payload> }
+{ "schemaVersion": "1", "kind": "<task|taskList|searchResult>", "data": <payload> }
 ```
+
+`schemaVersion` is the **string** `"1"` and `kind` is one of `"task"`,
+`"taskList"`, `"searchResult"` (camelCase) — the exact values the fork emits and
+that [backlog-json-schema.md](backlog-json-schema.md) (the schema of record)
+pins. The capability probe and the M2 adapter assert these verbatim.
 
 `lore` runs the command, `JSON.parse`s stdout, asserts `schemaVersion` and
 `kind`, and reads `data`. A parse failure or a `kind`/`schemaVersion` mismatch
@@ -295,7 +300,7 @@ Run once at startup, cached in `.lore/cache/`. See the
 3. semver-compare ver >= MIN_BACKLOG       → MIN_BACKLOG = the --json-capable fork floor
 4. spawn("backlog", "task", "list", "--json")
    → assert exit 0 AND stdout parses to {schemaVersion, kind, data} with the expected
-     schemaVersion and kind:"task-list"
+     schemaVersion "1" and kind:"taskList" (camelCase — the value the fork emits)
 ```
 
 - `backlog --version` (and `-v`) prints **bare semver + newline** to stdout,
