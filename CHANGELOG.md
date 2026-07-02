@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`core/reconcile.ts` — roll a Story/Spec's linked task statuses up into one derived `status`**
+  (LORE-23). The pure engine behind the `status:` half of `lore sync`/`lore check` (ADR-0009 §3):
+  `reconcileStatus(taskStatuses, statusFlow)` classifies each linked task by its position in the
+  project's **config-driven** ordered status flow — never hardcoded to the three Backlog defaults —
+  and rolls up by elimination: every task terminal → `done`; any task in a non-first, non-terminal
+  state → `in-progress`; otherwise → `todo`. A doc with no linked tasks returns `null` so its
+  authored `status` is left untouched (a narrative-only doc is never forced into a workflow state).
+  Fails loud (exit 6) on a task status absent from the flow or a degenerate (empty/duplicate) flow —
+  lore reports a status it cannot classify rather than guessing. Reading `backlog/config.yml`'s
+  `statuses:` and resolving each linked task's live status are command-layer concerns (LORE-24+);
+  this module only consumes the two already-resolved arrays. **Not yet wired into the CLI.**
 - **`core/managed-block.ts` — regenerate the `<!-- lore:tasks -->` region from live Backlog data**
   (LORE-22). The pure engine behind `lore sync` (writes) and `lore check` (diffs) rewrites a Story's
   managed task table from the JSON the LORE-21 adapter's `viewTask` returns. Markers are located
