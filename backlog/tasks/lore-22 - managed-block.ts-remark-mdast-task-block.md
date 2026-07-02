@@ -1,11 +1,11 @@
 ---
 id: LORE-22
 title: 'managed-block.ts: remark/mdast task block'
-status: In Progress
+status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-02 12:09'
+updated_date: '2026-07-02 12:21'
 labels:
   - core
 milestone: m-3
