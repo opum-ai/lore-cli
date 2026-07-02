@@ -1,11 +1,11 @@
 ---
 id: LORE-21
 title: 'backlog.ts adapter: JSON-only read + CLI writes'
-status: In Progress
+status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-07-02 02:50'
+updated_date: '2026-07-02 11:13'
 labels:
   - core
   - adapter
