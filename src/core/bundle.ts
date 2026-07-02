@@ -684,9 +684,11 @@ export function nodeText(node: Nodes): string {
  * on an unknown-type concept, whose fields the schema does not constrain) is
  * coerced to its string form rather than dropped, so a stray `supersedes: 123`
  * becomes a *visible* (dangling) edge instead of silently vanishing; `null` and
- * non-scalar items contribute nothing.
+ * non-scalar items contribute nothing. Exported so `commands/link.ts` reads a
+ * concept's `tasks:` list through the same tolerant normalization, rather than a
+ * second implementation that silently drops what this one coerces.
  */
-function toRefList(value: unknown): string[] {
+export function toRefList(value: unknown): string[] {
   const items = Array.isArray(value) ? value : [value];
   const refs: string[] = [];
   for (const item of items) {

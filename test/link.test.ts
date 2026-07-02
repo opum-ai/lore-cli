@@ -19,7 +19,7 @@ import { join } from "node:path";
 import type { BacklogAdapter, BacklogTaskDetail, EditTaskPatch } from "../src/adapters/backlog";
 import { type LinkOptions, type LinkReport, runLink, runUnlink, type UnlinkReport } from "../src/commands/link";
 import { parseConcept } from "../src/core/concept";
-import { EXIT_OK, LoreError } from "../src/errors";
+import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
 
@@ -94,11 +94,15 @@ function makeTask(id: string, overrides: Partial<BacklogTaskDetail> = {}): Backl
 }
 
 /** An in-memory {@link BacklogAdapter} fake: `viewTask` reads a seeded map (case-insensitive), `editTask` mutates it and records the call. Every other method throws — link/unlink never call them. */
-function fakeAdapter(seed: readonly BacklogTaskDetail[]): BacklogAdapter & { calls: EditCall[] } {
+function fakeAdapter(
+  seed: readonly BacklogTaskDetail[],
+  opts: { poisonEdits?: readonly string[] } = {},
+): BacklogAdapter & { calls: EditCall[] } {
   const tasks = new Map<string, BacklogTaskDetail>();
   for (const t of seed) {
     tasks.set(t.id.toLowerCase(), t);
   }
+  const poison = new Set((opts.poisonEdits ?? []).map((id) => id.toLowerCase()));
   const calls: EditCall[] = [];
   const notImplemented = (name: string) => (): never => {
     throw new Error(`fakeAdapter: ${name} is not implemented (link/unlink never call it)`);
@@ -115,6 +119,9 @@ function fakeAdapter(seed: readonly BacklogTaskDetail[]): BacklogAdapter & { cal
     },
     async editTask(id: string, patch: EditTaskPatch): Promise<void> {
       calls.push({ id, patch });
+      if (poison.has(id.toLowerCase())) {
+        throw new Error(`simulated Backlog failure editing ${id}`);
+      }
       const existing = tasks.get(id.toLowerCase());
       if (existing === undefined) {
         throw new LoreError("not_found", `task "${id}" not found`, "");
@@ -539,6 +546,100 @@ describe("lore link/unlink — plain rendering and parser edge cases", () => {
       const adapter = fakeAdapter([]);
       const err = await expectLinkError(["stories/x", "-z"], adapter);
       expect(err.type).toBe("usage");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ── Resilience: a per-task Backlog failure never aborts or corrupts the rest ──────
+
+describe("lore link/unlink — per-task back-ref resilience", () => {
+  test("link: one poisoned task's back-ref fails, the other still succeeds, doc-side write includes both, exit is drift (6)", async () => {
+    reset();
+    try {
+      writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+      const adapter = fakeAdapter([makeTask("LORE-1"), makeTask("LORE-2")], { poisonEdits: ["lore-2"] });
+
+      const { code, report } = await linkCmd(["stories/x", "lore-1", "lore-2"], adapter);
+      expect(code).toBe(EXIT_CODES.drift);
+      expect(report.changed).toBe(true);
+      expect(report.tasks).toEqual([
+        { task: "lore-1", status: "added", backRef: "added" },
+        {
+          task: "lore-2",
+          status: "added",
+          backRef: "failed",
+          error: "simulated Backlog failure editing lore-2",
+        },
+      ]);
+
+      // The doc-side write is unaffected by the Backlog-side failure: both ids are linked.
+      const concept = parseConcept("stories/x.md", readDoc("stories/x.md"));
+      expect(concept.frontmatter.tasks).toEqual(["lore-1", "lore-2"]);
+      // The successful task's edit is unaffected by the other task's failure.
+      expect(adapter.calls.find((c) => c.id === "lore-1")?.patch.addLabels).toEqual(["doc:stories/x"]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("unlink: one poisoned task's back-ref fails, the other still succeeds, doc-side removal includes both, exit is drift (6)", async () => {
+    reset();
+    try {
+      writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n  - lore-2\n---\nBody.\n");
+      const adapter = fakeAdapter([makeTask("LORE-1"), makeTask("LORE-2")], { poisonEdits: ["lore-2"] });
+
+      const { code, report } = await unlinkCmd(["stories/x", "lore-1", "lore-2"], adapter);
+      expect(code).toBe(EXIT_CODES.drift);
+      expect(report.changed).toBe(true);
+      expect(report.tasks).toEqual([
+        { task: "lore-1", status: "removed", backRef: "already-absent" },
+        {
+          task: "lore-2",
+          status: "removed",
+          backRef: "failed",
+          error: "simulated Backlog failure editing lore-2",
+        },
+      ]);
+
+      // The doc-side removal is unaffected by the Backlog-side failure: both ids are unlinked.
+      const concept = parseConcept("stories/x.md", readDoc("stories/x.md"));
+      expect(concept.frontmatter.tasks).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("a single WarningCollector flush: a load advisory is printed to stderr exactly once, not twice", async () => {
+    reset();
+    try {
+      // A Story with no `summary` triggers a `loadBundle` advisory.
+      writeDoc("stories/x.md", "---\ntype: Story\ntitle: X\n---\nBody.\n");
+      const adapter = fakeAdapter([makeTask("LORE-1")]);
+      const stderr = capture();
+
+      await runLink({ root, output: JSON_CTX, args: ["stories/x", "lore-1"], stdout: capture(), stderr, adapter });
+
+      const occurrences = stderr.text().split("missing `summary`").length - 1;
+      expect(occurrences).toBe(1);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("a non-string tasks: entry (a YAML-coerced number, on a type with no schema-declared tasks field) is preserved, not silently dropped", async () => {
+    reset();
+    try {
+      // `Reference` declares no `tasks` field, so a numeric entry is unvalidated passthrough —
+      // exactly the case toRefList's scalar coercion (shared with rewrite.ts's ref handling) exists for.
+      writeDoc("reference/x.md", "---\ntype: Reference\ntasks:\n  - 42\n  - task-2\n---\nBody.\n");
+      const adapter = fakeAdapter([makeTask("LORE-3")]);
+
+      const { report } = await linkCmd(["reference/x", "lore-3"], adapter);
+      expect(report.changed).toBe(true);
+      const concept = parseConcept("reference/x.md", readDoc("reference/x.md"));
+      expect(concept.frontmatter.tasks).toEqual(["42", "task-2", "lore-3"]);
     } finally {
       cleanup();
     }
