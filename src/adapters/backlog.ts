@@ -20,6 +20,7 @@
  * the probe asserts. (The CLI contract's prose `"task-list"` is a documentation slip, tracked in LORE-4.)
  */
 
+import { z } from "zod";
 import { errnoCode, LoreError } from "../errors";
 
 /**
@@ -222,4 +223,543 @@ export function bunBacklogSpawn(binary: string = BACKLOG_BINARY): BacklogSpawn {
     ]);
     return { exitCode, stdout, stderr };
   };
+}
+
+// ── The `--json` contract mirror (schema of record) ────────────────────────────────
+//
+// A Zod encoding of docs/reference/backlog-json-schema.md §1–§5 — the schema of record for what the
+// fork's `--json` emits. Every read validates its envelope's `data` against the matching shape here:
+// unknown *extra* keys are tolerated (`z.looseObject`, the additive-only contract §2), missing required
+// keys are rejected. This is the runtime authority the doc describes (§7 step 4); the golden test
+// (`test/backlog-json-golden.test.ts`) re-imports these same schemas via `test/support/backlog-golden.ts`
+// so the committed fixtures and the adapter can never validate against two different contracts.
+
+/** Priority is a closed set or null (§3.2). */
+const Priority = z.enum(["high", "medium", "low"]).nullable();
+
+/** Provenance is a closed set or null (§3.2 `source`). */
+const Source = z.enum(["local", "remote", "completed", "local-branch"]).nullable();
+
+/** An acceptance-criterion / definition-of-done item; `index` is positional and NON-durable (§6). */
+const Criterion = z.looseObject({
+  index: z.number(),
+  text: z.string(),
+  checked: z.boolean(),
+});
+
+/** A task comment (§3.1); `author` may be null. */
+const Comment = z.looseObject({
+  index: z.number(),
+  author: z.string().nullable(),
+  createdDate: z.string(),
+  body: z.string(),
+});
+
+/**
+ * `kind: "task"` — the full task object (§3.2), the richest shape. `looseObject` tolerates unknown
+ * additive keys (§2). `rawContent` (opt-in, §6) and `lastModified` (omitted/normalized, §2) are
+ * deliberately NOT declared here; the golden test asserts they are absent from the recorded output.
+ */
+export const TaskSchema = z.looseObject({
+  id: z.string(),
+  title: z.string(),
+  status: z.string(),
+  priority: Priority,
+  ordinal: z.number().nullable(),
+  filePath: z.string().nullable(),
+  filePathRelative: z.string().nullable(),
+  assignees: z.array(z.string()),
+  reporter: z.string().nullable(),
+  createdDate: z.string(),
+  updatedDate: z.string().nullable(),
+  labels: z.array(z.string()),
+  milestone: z.string().nullable(),
+  dependencies: z.array(z.string()),
+  references: z.array(z.string()),
+  documentation: z.array(z.string()),
+  modifiedFiles: z.array(z.string()),
+  parentTaskId: z.string().nullable(),
+  // View-only enrichment (§6): present on `task view`, optional/absent on list/search.
+  parentTaskTitle: z.string().nullable().optional(),
+  subtasks: z.array(z.looseObject({ id: z.string(), title: z.string() })).optional(),
+  acceptanceCriteria: z.array(Criterion),
+  definitionOfDone: z.array(Criterion),
+  description: z.string().nullable(),
+  implementationPlan: z.string().nullable(),
+  implementationNotes: z.string().nullable(),
+  finalSummary: z.string().nullable(),
+  comments: z.array(Comment),
+  source: Source,
+  branch: z.string().nullable(),
+  onStatusChange: z.union([z.record(z.string(), z.unknown()), z.string()]).nullable(),
+});
+
+/**
+ * A `taskList` entry / `searchResult` task item — the stable summary subset (§4). Field-compatible
+ * with {@link TaskSchema} on its shared keys, per the fork's `serializeTaskSummary` contract.
+ */
+export const TaskSummarySchema = z.looseObject({
+  id: z.string(),
+  title: z.string(),
+  status: z.string(),
+  priority: Priority,
+  ordinal: z.number().nullable(),
+  assignees: z.array(z.string()),
+  labels: z.array(z.string()),
+  milestone: z.string().nullable(),
+  parentTaskId: z.string().nullable(),
+  filePath: z.string().nullable(),
+  filePathRelative: z.string().nullable(),
+});
+
+/** One scored search hit (§5): a `type`-tagged, `score`d wrapper around the matched `item`. */
+export const SearchHitSchema = z.looseObject({
+  type: z.enum(["task", "document", "decision"]),
+  score: z.number().nullable(),
+  // `item` shape depends on `type`; `lore` only consumes task hits (§5). Task items must match the
+  // summary subset; document/decision items are Backlog-owned and only shape-checked loosely.
+  item: z.looseObject({}),
+});
+
+/** The per-`kind` envelope (§1): exactly one object, `schemaVersion` "1", camelCase `kind`, typed `data`. */
+export const EnvelopeSchema = z.discriminatedUnion("kind", [
+  z.looseObject({ schemaVersion: z.literal("1"), kind: z.literal("task"), data: TaskSchema }),
+  z.looseObject({ schemaVersion: z.literal("1"), kind: z.literal("taskList"), data: z.array(TaskSummarySchema) }),
+  z.looseObject({ schemaVersion: z.literal("1"), kind: z.literal("searchResult"), data: z.array(SearchHitSchema) }),
+]);
+
+/** The three envelope kinds a `--json` command can carry, in the fork's camelCase spelling. */
+export type EnvelopeKind = "task" | "taskList" | "searchResult";
+
+// ── lore's internal task model (the mapped read surface) ────────────────────────────
+//
+// The adapter maps the validated `--json` payload into these types before any coupling command sees
+// it. The mapping bakes in two load-bearing caveats from backlog-json-schema.md §6 so a caller cannot
+// get them wrong: `file` is always `filePathRelative` (the portable path) — the absolute, host-specific
+// `filePath` is dropped and never surfaced — and AC/DoD items drop their NON-durable positional `index`
+// so callers must match on `text`. `id` is kept verbatim as identity (display-cased); a filename is
+// never derived from it.
+
+/** Task priority, mirroring the JSON `priority` closed set. */
+export type BacklogPriority = "high" | "medium" | "low" | null;
+
+/** Task provenance, mirroring the JSON `source` closed set. */
+export type BacklogSource = "local" | "remote" | "completed" | "local-branch" | null;
+
+/**
+ * An acceptance-criterion / definition-of-done line, with the JSON `index` **deliberately dropped**
+ * (§6: it is positional and renumbers on edit). Callers key on {@link text}, never a position.
+ */
+export interface BacklogCriterion {
+  readonly text: string;
+  readonly checked: boolean;
+}
+
+/** A task comment, with the positional `index` dropped for the same reason as {@link BacklogCriterion}. */
+export interface BacklogComment {
+  readonly author: string | null;
+  readonly createdDate: string;
+  readonly body: string;
+}
+
+/**
+ * The **summary** of a task — the stable subset every read surfaces (`task list`, `search`, and the
+ * richer `task view`). Enough to render a listing and reconcile status without a per-task `view`.
+ * {@link file} is the repo-relative path (`backlog/tasks/…`) or `null`; the absolute host-specific
+ * `filePath` is never carried. `labels` includes any `doc:<conceptId>` back-reference (§3.2).
+ */
+export interface BacklogTask {
+  /** Display-cased identity (`"LORE-21"`). Identity only — never derive a filename from it (§6). */
+  readonly id: string;
+  readonly title: string;
+  /** The raw configured status string, no presentation icon (§2). */
+  readonly status: string;
+  readonly priority: BacklogPriority;
+  /** Sort ordinal within status, or `null`. */
+  readonly ordinal: number | null;
+  readonly assignees: readonly string[];
+  /** Includes the `doc:<conceptId>` back-reference label lore reads for coupling (§3.2). */
+  readonly labels: readonly string[];
+  readonly milestone: string | null;
+  readonly parentTaskId: string | null;
+  /** `filePathRelative` (portable) or `null` on a not-yet-written task; never the absolute path (§6). */
+  readonly file: string | null;
+}
+
+/**
+ * The **full** task (output of `backlog task view <id> --json`, `kind: "task"`), extending
+ * {@link BacklogTask} with the fields only the per-id view carries: dependencies, the doc/ref arrays,
+ * the structured body sections, and comments. The view-only enrichment fields (`parentTaskTitle`,
+ * `subtasks`) are normalized to a value here (`null` / `[]`) rather than left possibly-absent.
+ */
+export interface BacklogTaskDetail extends BacklogTask {
+  readonly reporter: string | null;
+  readonly createdDate: string;
+  readonly updatedDate: string | null;
+  readonly dependencies: readonly string[];
+  readonly references: readonly string[];
+  readonly documentation: readonly string[];
+  readonly modifiedFiles: readonly string[];
+  readonly parentTaskTitle: string | null;
+  readonly subtasks: readonly { readonly id: string; readonly title: string }[];
+  readonly acceptanceCriteria: readonly BacklogCriterion[];
+  readonly definitionOfDone: readonly BacklogCriterion[];
+  readonly description: string | null;
+  readonly implementationPlan: string | null;
+  readonly implementationNotes: string | null;
+  readonly finalSummary: string | null;
+  readonly comments: readonly BacklogComment[];
+  readonly source: BacklogSource;
+  readonly branch: string | null;
+}
+
+/** Map a validated `taskList`/`searchResult` summary item into lore's {@link BacklogTask}. */
+function mapSummary(item: z.infer<typeof TaskSummarySchema>): BacklogTask {
+  return {
+    id: item.id,
+    title: item.title,
+    status: item.status,
+    priority: item.priority,
+    ordinal: item.ordinal,
+    assignees: item.assignees,
+    labels: item.labels,
+    milestone: item.milestone,
+    parentTaskId: item.parentTaskId,
+    file: item.filePathRelative,
+  };
+}
+
+/** Strip the non-durable `index` from AC/DoD items (§6): callers match on text, never position. */
+function mapCriteria(items: readonly z.infer<typeof Criterion>[]): BacklogCriterion[] {
+  return items.map((c) => ({ text: c.text, checked: c.checked }));
+}
+
+/** Map a validated `task` payload into lore's {@link BacklogTaskDetail} (full per-id view). */
+function mapTask(data: z.infer<typeof TaskSchema>): BacklogTaskDetail {
+  return {
+    id: data.id,
+    title: data.title,
+    status: data.status,
+    priority: data.priority,
+    ordinal: data.ordinal,
+    assignees: data.assignees,
+    labels: data.labels,
+    milestone: data.milestone,
+    parentTaskId: data.parentTaskId,
+    file: data.filePathRelative,
+    reporter: data.reporter,
+    createdDate: data.createdDate,
+    updatedDate: data.updatedDate,
+    dependencies: data.dependencies,
+    references: data.references,
+    documentation: data.documentation,
+    modifiedFiles: data.modifiedFiles,
+    parentTaskTitle: data.parentTaskTitle ?? null,
+    subtasks: data.subtasks ?? [],
+    acceptanceCriteria: mapCriteria(data.acceptanceCriteria),
+    definitionOfDone: mapCriteria(data.definitionOfDone),
+    description: data.description,
+    implementationPlan: data.implementationPlan,
+    implementationNotes: data.implementationNotes,
+    finalSummary: data.finalSummary,
+    comments: data.comments.map((c) => ({ author: c.author, createdDate: c.createdDate, body: c.body })),
+    source: data.source,
+    branch: data.branch,
+  };
+}
+
+// ── Read/write fail-loud helpers ────────────────────────────────────────────────────
+
+/** Flatten Zod issues to a single-line `field: reason; field: reason` string (mirrors core/schema.ts). */
+function describeZodIssues(error: z.ZodError): string {
+  return error.issues.map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`).join("; ");
+}
+
+/** Project Zod issues onto a plain, JSON-safe array for a {@link LoreError}'s `input.issues`. */
+function zodIssueList(error: z.ZodError): Array<{ path: string; message: string }> {
+  return error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }));
+}
+
+/**
+ * A `--json` read did not return the envelope lore expects (unparseable stdout, a `schemaVersion`/`kind`
+ * mismatch, or a `data` shape that fails the contract mirror). This is **fail-loud drift** (exit 6): the
+ * adapter never best-effort parses and there is deliberately no `--plain` text fallback (ADR-0002).
+ */
+function readDrift(reason: string, input?: Record<string, unknown>): never {
+  throw new LoreError("drift", `\`backlog\` --json read drift: ${reason}`, RUNBOOK_HINT, input);
+}
+
+/**
+ * Parse and validate one `--json` envelope's stdout for `command`, asserting it carries `expectedKind`,
+ * and return the validated `data`. Staged like the probe so each failure names its cause: parseable
+ * JSON → an envelope object → the pinned `schemaVersion` → the expected `kind` → the per-kind `data`
+ * shape (Zod). Every step failing is {@link readDrift} (exit 6) — never a silent degrade.
+ */
+function parseEnvelope<S extends z.ZodType>(
+  stdout: string,
+  expectedKind: EnvelopeKind,
+  dataSchema: S,
+  command: string,
+): z.infer<S> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    readDrift(`\`${command}\` did not print parseable JSON`);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    readDrift(`\`${command}\` did not print a JSON envelope object`);
+  }
+  const { schemaVersion, kind, data } = parsed as { schemaVersion?: unknown; kind?: unknown; data?: unknown };
+  if (schemaVersion !== EXPECTED_SCHEMA_VERSION) {
+    readDrift(
+      `\`${command}\` envelope schemaVersion was ${JSON.stringify(schemaVersion)} (this lore understands ${JSON.stringify(EXPECTED_SCHEMA_VERSION)})`,
+      { schemaVersion },
+    );
+  }
+  if (kind !== expectedKind) {
+    readDrift(`\`${command}\` envelope kind was ${JSON.stringify(kind)}, expected ${JSON.stringify(expectedKind)}`);
+  }
+  const result = dataSchema.safeParse(data);
+  if (!result.success) {
+    throw new LoreError(
+      "validation",
+      `\`backlog ${command}\` --json payload failed contract validation: ${describeZodIssues(result.error)}`,
+      RUNBOOK_HINT,
+      { command, issues: zodIssueList(result.error) },
+    );
+  }
+  return result.data;
+}
+
+/** The `data` schema for a `taskList` envelope: an array of summaries. */
+const TaskListData = z.array(TaskSummarySchema);
+/** The `data` schema for a `searchResult` envelope: an array of scored hits. */
+const SearchResultData = z.array(SearchHitSchema);
+
+// ── The typed adapter (JSON-only reads, CLI writes) ─────────────────────────────────
+
+/** Filters for {@link BacklogAdapter.listTasks}, passed through to `task list --json`. */
+export interface ListTasksOptions {
+  /** Filter to one configured status (`--status`, case-insensitive). */
+  readonly status?: string;
+  /** Require every listed label (`--labels`, AND-match); e.g. `["doc:stories/x"]`. */
+  readonly labels?: readonly string[];
+}
+
+/** Input for {@link BacklogAdapter.createTask}. Only the fields lore's coupling commands set. */
+export interface CreateTaskInput {
+  readonly title: string;
+  /** Labels to set on the new task (comma-joined into one `--labels`, per contract §2.4). */
+  readonly labels?: readonly string[];
+  readonly description?: string;
+  /** Documentation refs (`--doc`, accumulator) — the display cross-reference. */
+  readonly doc?: readonly string[];
+  readonly milestone?: string;
+}
+
+/** A patch for {@link BacklogAdapter.editTask}. Label ops are **incremental** (add/remove), never SET. */
+export interface EditTaskPatch {
+  /** Labels to add (`--add-label`, case-insensitive de-dup) — e.g. a `doc:<conceptId>` back-ref. */
+  readonly addLabels?: readonly string[];
+  /** Labels to remove (`--remove-label`). */
+  readonly removeLabels?: readonly string[];
+  /** New status (`--status`). */
+  readonly status?: string;
+  /** Documentation refs to set (`--doc`) — SET/REPLACE the whole array (contract §2.4). */
+  readonly doc?: readonly string[];
+}
+
+/**
+ * The typed Backlog.md read/write surface — the **only** consumer of the {@link BacklogSpawn} seam
+ * beyond the probe, and the sole place the `--json` schema is parsed (design §2.3, schema doc §7).
+ *
+ * Reads are JSON-only: each shells the matching `--json` command, `JSON.parse`s the single envelope,
+ * asserts `schemaVersion`/`kind`, validates `data` against the contract mirror, and maps to lore's
+ * internal types — never touching `--plain` (ADR-0002). Writes go through `task create`/`task edit`;
+ * a create's new id is captured from the `Created task <ID>` stdout line, not from JSON (contract §2.1).
+ * Every method first runs the capability {@link probeBacklog} (memoized once per adapter), so a binary
+ * that is not `--json`-capable is refused before any command's output is trusted.
+ */
+export interface BacklogAdapter {
+  /** The cached capability probe verdict; runs `probeBacklog` at most once, fail-loud on an incapable binary. */
+  probe(): Promise<BacklogCapability>;
+  /** `task list --json` → the summaries on the current branch, optionally filtered by status/labels. */
+  listTasks(opts?: ListTasksOptions): Promise<BacklogTask[]>;
+  /** `task view <id> --json` → the full task, or `null` when the id has no task (never trusts exit code). */
+  viewTask(id: string): Promise<BacklogTaskDetail | null>;
+  /** `task list --json --labels <label>` → tasks carrying an exact label (e.g. a `doc:<conceptId>` back-ref). */
+  searchByLabel(label: string): Promise<BacklogTask[]>;
+  /** `search <query> --json` → the **task** hits only (document/decision hits are dropped, §5). */
+  searchTasks(query: string): Promise<BacklogTask[]>;
+  /** `task create` (no `--plain`/`--json`) → the new display-cased id, captured from `Created task <ID>`. */
+  createTask(input: CreateTaskInput): Promise<string>;
+  /** `task edit <id> --json` with an incremental patch; fail-loud on a missing task or a non-zero exit. */
+  editTask(id: string, patch: EditTaskPatch): Promise<void>;
+}
+
+/** Captures the display-cased id from a create's first stdout line (`Created task LORE-1` / `Created draft …`). */
+const CREATED_ID = /^Created (?:task|draft) (\S+)$/m;
+
+/** Join multiple values for a single-value, last-wins flag into one comma-separated argument (§2.4). */
+function commaJoin(values: readonly string[]): string {
+  return values.join(",");
+}
+
+/**
+ * Build the typed {@link BacklogAdapter} over an injected {@link BacklogSpawn} (real via
+ * {@link bunBacklogSpawn}, a fake in tests). The capability probe is memoized on first use — its promise
+ * is cached so a passing verdict runs the underlying `--version` + dry `task list --json` exactly once
+ * per adapter, and a failing verdict rejects every method the same way. (The cross-process cache in
+ * `.lore/cache/` described in the schema doc §7 is a command-layer concern, layered on top of this.)
+ */
+export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
+  let capability: Promise<BacklogCapability> | undefined;
+  const ensureProbed = (): Promise<BacklogCapability> => {
+    if (capability === undefined) {
+      capability = probeBacklog(spawn);
+    }
+    return capability;
+  };
+
+  /** Run a read command through the probe gate and return its captured {@link SpawnResult}. */
+  async function read(args: readonly string[], command: string): Promise<SpawnResult> {
+    await ensureProbed();
+    const result = await spawn(args);
+    if (result.exitCode !== 0) {
+      readDrift(`\`${command}\` exited ${result.exitCode}`, { exitCode: result.exitCode });
+    }
+    return result;
+  }
+
+  return {
+    probe: ensureProbed,
+
+    async listTasks(opts?: ListTasksOptions): Promise<BacklogTask[]> {
+      const args = ["task", "list", "--json"];
+      if (opts?.status !== undefined) {
+        args.push("--status", opts.status);
+      }
+      if (opts?.labels !== undefined && opts.labels.length > 0) {
+        args.push("--labels", commaJoin(opts.labels));
+      }
+      const result = await read(args, "task list --json");
+      return parseEnvelope(result.stdout, "taskList", TaskListData, "task list --json").map(mapSummary);
+    },
+
+    async viewTask(id: string): Promise<BacklogTaskDetail | null> {
+      await ensureProbed();
+      const result = await spawn(["task", "view", id, "--json"]);
+      // A missing task is NOT an error to Backlog: `task view <missing>` exits 0 with EMPTY stdout and a
+      // "Task <id> not found." line on stderr (verified against the fork; contract §2.2 — the exit code is
+      // meaningless here). Empty stdout is the clean missing signal; any other output must parse as a task
+      // envelope or fail loud. This is why `viewTask` cannot share the `read` helper's exit-code guard.
+      if (result.stdout.trim() === "") {
+        return null;
+      }
+      if (result.exitCode !== 0) {
+        readDrift(`\`task view --json\` exited ${result.exitCode}`, { exitCode: result.exitCode, id });
+      }
+      return mapTask(parseEnvelope(result.stdout, "task", TaskSchema, "task view --json"));
+    },
+
+    async searchByLabel(label: string): Promise<BacklogTask[]> {
+      return this.listTasks({ labels: [label] });
+    },
+
+    async searchTasks(query: string): Promise<BacklogTask[]> {
+      const result = await read(["search", query, "--json"], "search --json");
+      const hits = parseEnvelope(result.stdout, "searchResult", SearchResultData, "search --json");
+      // lore consumes only task hits (§5); document/decision hits are Backlog-owned. Re-validate each
+      // task hit's loosely-typed `item` against the summary contract before mapping.
+      const tasks: BacklogTask[] = [];
+      for (const hit of hits) {
+        if (hit.type !== "task") {
+          continue;
+        }
+        const item = TaskSummarySchema.safeParse(hit.item);
+        if (!item.success) {
+          throw new LoreError(
+            "validation",
+            `\`backlog search --json\` task hit failed contract validation: ${describeZodIssues(item.error)}`,
+            RUNBOOK_HINT,
+            { issues: zodIssueList(item.error) },
+          );
+        }
+        tasks.push(mapSummary(item.data));
+      }
+      return tasks;
+    },
+
+    async createTask(input: CreateTaskInput): Promise<string> {
+      await ensureProbed();
+      // Create runs WITHOUT --plain and WITHOUT --json (contract §2.1): --plain suppresses the
+      // `Created task <ID>` line lore captures, and create emits no JSON envelope.
+      const args = ["task", "create", input.title];
+      if (input.description !== undefined) {
+        args.push("--description", input.description);
+      }
+      if (input.labels !== undefined && input.labels.length > 0) {
+        args.push("--labels", commaJoin(input.labels));
+      }
+      if (input.milestone !== undefined) {
+        args.push("--milestone", input.milestone);
+      }
+      for (const doc of input.doc ?? []) {
+        args.push("--doc", doc); // --doc is an accumulator (§2.4): repeat, don't comma-join.
+      }
+      const result = await spawn(args);
+      if (result.exitCode !== 0) {
+        throw new LoreError(
+          "validation",
+          `\`backlog task create\` exited ${result.exitCode}`,
+          singleLineStderr(result),
+          {
+            exitCode: result.exitCode,
+          },
+        );
+      }
+      const newId = CREATED_ID.exec(result.stdout)?.[1];
+      if (newId === undefined) {
+        readDrift("`task create` did not print a `Created task <ID>` line to capture the new id");
+      }
+      return newId;
+    },
+
+    async editTask(id: string, patch: EditTaskPatch): Promise<void> {
+      await ensureProbed();
+      const args = ["task", "edit", id, "--json"];
+      if (patch.addLabels !== undefined && patch.addLabels.length > 0) {
+        args.push("--add-label", commaJoin(patch.addLabels)); // single-value flag (§2.4): comma-join.
+      }
+      if (patch.removeLabels !== undefined && patch.removeLabels.length > 0) {
+        args.push("--remove-label", commaJoin(patch.removeLabels));
+      }
+      if (patch.status !== undefined) {
+        args.push("--status", patch.status);
+      }
+      for (const doc of patch.doc ?? []) {
+        args.push("--doc", doc); // accumulator, SET/REPLACE the whole array (§2.4).
+      }
+      const result = await spawn(args);
+      // `task edit <missing>` exits 1 (contract §2.2) — the one write whose exit code IS meaningful.
+      if (result.exitCode !== 0) {
+        const missing = /not found/i.test(result.stderr);
+        throw new LoreError(
+          missing ? "not_found" : "validation",
+          missing
+            ? `\`backlog task edit\` could not find task ${JSON.stringify(id)}`
+            : `\`backlog task edit\` exited ${result.exitCode}`,
+          singleLineStderr(result),
+          { id, exitCode: result.exitCode },
+        );
+      }
+    },
+  };
+}
+
+/** Collapse a failed invocation's stderr to a one-line hint for a {@link LoreError} (empty → undefined). */
+function singleLineStderr(result: SpawnResult): string | undefined {
+  const trimmed = result.stderr.trim().replace(/\s+/g, " ");
+  return trimmed === "" ? undefined : trimmed;
 }

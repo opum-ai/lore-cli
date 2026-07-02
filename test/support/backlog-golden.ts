@@ -14,20 +14,28 @@
  *    form with a single trailing newline. Together they make golden generation a **fixpoint**:
  *    `canonicalize(redact(x))` fed through again is byte-identical (the AC#2 idempotency check).
  *
- * 2. **The contract mirror** — a Zod schema mirroring the normative
+ * 2. **The contract mirror** — the Zod schema mirroring the normative
  *    [Backlog.md `--json` schema](../../docs/reference/backlog-json-schema.md) (the schema of
  *    record). The golden test parses each committed golden and validates it against this mirror,
  *    "locking" the recorded output to the documented contract: a drift in either the fork's shape
- *    or the doc surfaces as a failing test. Unknown keys are tolerated ({@link z.looseObject}) per
- *    the additive-only contract (§2); missing required keys are rejected.
+ *    or the doc surfaces as a failing test. Unknown keys are tolerated (`z.looseObject`) per the
+ *    additive-only contract (§2); missing required keys are rejected.
  *
- * The mirror lives in `test/` deliberately: the runtime adapter's own Zod validation of this
- * same shape is **LORE-21** (`src/adapters/backlog.ts`, the typed read path). When that lands it
- * becomes the schema of record in code, and this mirror should be retargeted to import it rather
- * than duplicate it. Until then, this is the only machine-checked encoding of §3–§5.
+ * As of **LORE-21** the mirror is the *runtime adapter's own* schema of record — it lives in
+ * `src/adapters/backlog.ts` (the typed read path). This module **re-exports** those schemas so the
+ * golden test and the recorder keep a single import site while validating against exactly the same
+ * shapes the adapter parses at runtime — there is no second copy.
  */
 
-import { z } from "zod";
+export type { EnvelopeKind } from "../../src/adapters/backlog";
+// The contract mirror is owned by the runtime adapter (LORE-21); re-export it so golden fixtures are
+// validated against the very shapes the adapter parses. Canonicalization/redaction below stay test-only.
+export {
+  EnvelopeSchema,
+  SearchHitSchema,
+  TaskSchema,
+  TaskSummarySchema,
+} from "../../src/adapters/backlog";
 
 /** The token an absolute checkout root is rewritten to in a committed golden, keeping it portable. */
 export const REPO_PLACEHOLDER = "{REPO}";
@@ -75,102 +83,3 @@ export function canonicalize(value: unknown): string {
 export function recanonicalize(text: string): string {
   return canonicalize(JSON.parse(text) as unknown);
 }
-
-// ── The contract mirror (docs/reference/backlog-json-schema.md §1–§5) ───────────────
-
-/** Priority is a closed set or null (§3.2). */
-const Priority = z.enum(["high", "medium", "low"]).nullable();
-
-/** Provenance is a closed set or null (§3.2 `source`). */
-const Source = z.enum(["local", "remote", "completed", "local-branch"]).nullable();
-
-/** An acceptance-criterion / definition-of-done item; `index` is positional and NON-durable (§6). */
-const Criterion = z.looseObject({
-  index: z.number(),
-  text: z.string(),
-  checked: z.boolean(),
-});
-
-/** A task comment (§3.1); `author` may be null. */
-const Comment = z.looseObject({
-  index: z.number(),
-  author: z.string().nullable(),
-  createdDate: z.string(),
-  body: z.string(),
-});
-
-/**
- * `kind: "task"` — the full task object (§3.2), the richest shape. `looseObject` tolerates unknown
- * additive keys (§2). `rawContent` (opt-in, §6) and `lastModified` (omitted/normalized, §2) are
- * deliberately NOT declared here; the golden test asserts they are absent from the recorded output.
- */
-export const TaskSchema = z.looseObject({
-  id: z.string(),
-  title: z.string(),
-  status: z.string(),
-  priority: Priority,
-  ordinal: z.number().nullable(),
-  filePath: z.string().nullable(),
-  filePathRelative: z.string().nullable(),
-  assignees: z.array(z.string()),
-  reporter: z.string().nullable(),
-  createdDate: z.string(),
-  updatedDate: z.string().nullable(),
-  labels: z.array(z.string()),
-  milestone: z.string().nullable(),
-  dependencies: z.array(z.string()),
-  references: z.array(z.string()),
-  documentation: z.array(z.string()),
-  modifiedFiles: z.array(z.string()),
-  parentTaskId: z.string().nullable(),
-  // View-only enrichment (§6): present on `task view`, optional/absent on list/search.
-  parentTaskTitle: z.string().nullable().optional(),
-  subtasks: z.array(z.looseObject({ id: z.string(), title: z.string() })).optional(),
-  acceptanceCriteria: z.array(Criterion),
-  definitionOfDone: z.array(Criterion),
-  description: z.string().nullable(),
-  implementationPlan: z.string().nullable(),
-  implementationNotes: z.string().nullable(),
-  finalSummary: z.string().nullable(),
-  comments: z.array(Comment),
-  source: Source,
-  branch: z.string().nullable(),
-  onStatusChange: z.union([z.record(z.string(), z.unknown()), z.string()]).nullable(),
-});
-
-/**
- * A `taskList` entry / `searchResult` task item — the stable summary subset (§4). Field-compatible
- * with {@link TaskSchema} on its shared keys, per the fork's `serializeTaskSummary` contract.
- */
-export const TaskSummarySchema = z.looseObject({
-  id: z.string(),
-  title: z.string(),
-  status: z.string(),
-  priority: Priority,
-  ordinal: z.number().nullable(),
-  assignees: z.array(z.string()),
-  labels: z.array(z.string()),
-  milestone: z.string().nullable(),
-  parentTaskId: z.string().nullable(),
-  filePath: z.string().nullable(),
-  filePathRelative: z.string().nullable(),
-});
-
-/** One scored search hit (§5): a `type`-tagged, `score`d wrapper around the matched `item`. */
-export const SearchHitSchema = z.looseObject({
-  type: z.enum(["task", "document", "decision"]),
-  score: z.number().nullable(),
-  // `item` shape depends on `type`; `lore` only consumes task hits (§5). Task items must match the
-  // summary subset; document/decision items are Backlog-owned and only shape-checked loosely.
-  item: z.looseObject({}),
-});
-
-/** The per-`kind` envelope (§1): exactly one object, `schemaVersion` "1", camelCase `kind`, typed `data`. */
-export const EnvelopeSchema = z.discriminatedUnion("kind", [
-  z.looseObject({ schemaVersion: z.literal("1"), kind: z.literal("task"), data: TaskSchema }),
-  z.looseObject({ schemaVersion: z.literal("1"), kind: z.literal("taskList"), data: z.array(TaskSummarySchema) }),
-  z.looseObject({ schemaVersion: z.literal("1"), kind: z.literal("searchResult"), data: z.array(SearchHitSchema) }),
-]);
-
-/** The three envelope kinds a golden file can carry, in the fork's camelCase spelling. */
-export type EnvelopeKind = "task" | "taskList" | "searchResult";

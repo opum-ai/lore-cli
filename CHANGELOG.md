@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`adapters/backlog.ts` — the typed JSON-only Backlog.md read/write surface** (LORE-21). The
+  capability probe (LORE-4) now backs a full typed adapter over the same injectable `BacklogSpawn`
+  seam — the sole place a `backlog` subprocess is spawned and the sole place the `--json` schema is
+  parsed. Reads (`listTasks`, `viewTask`, `searchTasks`, `searchByLabel`) `JSON.parse` the
+  `{schemaVersion, kind, data}` envelope, assert `schemaVersion`/`kind`, Zod-validate `data` against
+  the promoted contract mirror (moved out of the test support module into `src/`, so runtime and the
+  golden fixtures lock to one schema), and map into lore's internal `BacklogTask`/`BacklogTaskDetail`
+  types — surfacing only the portable `filePathRelative`, dropping the non-durable AC/DoD/comment
+  `index`, and keeping `id` as identity. There is **no `--plain` text fallback** (ADR-0002): a bad
+  envelope fails loud (exit 6). Writes go through `createTask` (id captured from the `Created task
+  <ID>` stdout line, never JSON) and `editTask` (incremental `--add-label`/`--remove-label`);
+  `viewTask` returns `null` on a missing id via empty stdout, never trusting `task view`'s exit code.
+  The probe is memoized into every path, so a non-`--json`-capable Backlog is refused before any
+  output is trusted. **Not yet wired into the CLI** — the coupling commands (`link`/`sync`/…) are
+  LORE-22+; this is the adapter layer only.
 - **`lore check --external` — opt-in external-URL liveness** (LORE-48). With `--external`, `lore
   check` probes every `http(s)` link in the bundle with Bun `fetch` (no Rust/lychee runtime
   dependency) and reports dead, unreachable, or timed-out URLs as advisory `external-link`
