@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`core/managed-block.ts` — regenerate the `<!-- lore:tasks -->` region from live Backlog data**
+  (LORE-22). The pure engine behind `lore sync` (writes) and `lore check` (diffs) rewrites a Story's
+  managed task table from the JSON the LORE-21 adapter's `viewTask` returns. Markers are located
+  **structurally** — the document is parsed with `mdast-util-from-markdown` and only a top-level
+  `html` comment node is a candidate, so a sentinel inside a code fence or blockquote is never
+  mistaken for a boundary — then the table is built as a **frozen-format string** and **spliced over
+  the byte range between the markers**, copying frontmatter, editor modeline, and prose verbatim.
+  This supersedes ADR-0008's `remark-stringify` step: lore ships no markdown serializer, so it
+  follows the settled parse-to-locate + string-splice pattern of `rewrite.ts`/`indexes.ts` (ADR-0008
+  amended). Regenerating an unchanged block is **byte-identical** (a fixpoint — a no-op `lore sync`
+  touches zero bytes and the drift gate stays exact), and each row link comes from the task's
+  `filePathRelative` (portable, cross-subtree, `%20`-encoded), never reconstructed from the
+  upper-cased display id; a linked task with no on-disk file yet is tolerated (its id renders as
+  plain text, never a broken link or an error). Malformed markers (missing/duplicated/crossed) fail
+  loud (exit 6). **Not yet wired into the CLI** — `link`/`unlink`/`sync` are LORE-24+; this is the
+  managed-block engine only.
 - **`adapters/backlog.ts` — the typed JSON-only Backlog.md read/write surface** (LORE-21). The
   capability probe (LORE-4) now backs a full typed adapter over the same injectable `BacklogSpawn`
   seam — the sole place a `backlog` subprocess is spawned and the sole place the `--json` schema is
