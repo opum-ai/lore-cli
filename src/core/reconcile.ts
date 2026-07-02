@@ -21,7 +21,7 @@
 
 import { LoreError } from "../errors";
 
-/** The three derived rollup values (ADR-0009 §3, cli-contract §3.2). */
+/** The three derived rollup values (ADR-0009 §3, backlog-cli-contract.md §3.2). */
 export type ReconciledStatus = "todo" | "in-progress" | "done";
 
 /** Where one task's status falls in the project's ordered {@link StatusFlow}. */
@@ -30,10 +30,11 @@ type StatusPosition = "not-started" | "active" | "terminal";
 /**
  * A project's status set, **ordered** exactly as configured (`backlog/config.yml` `statuses:` /
  * `backlog config get statuses`) — never the hardcoded `["To Do", "In Progress", "Done"]` default
- * (cli-contract §3.1). Index `0` is the not-started state; the last index is the terminal
- * ("done") state; everything between is an active/started state (`In Progress`, `Review`,
- * `Testing`, `Blocked`, …). Reading this from config is a command-layer concern — this engine only
- * consumes the resolved list.
+ * (backlog-cli-contract.md §3.1). Index `0` is the not-started state; the last index is the
+ * terminal ("done") state; everything between is an active/started state (`In Progress`,
+ * `Review`, `Testing`, `Blocked`, …). Reading this from config is a command-layer concern — this
+ * engine only consumes the resolved list. Must carry **at least two** entries: a single-entry flow
+ * cannot distinguish "not started" from "terminal" ({@link reconcileStatus} rejects it).
  */
 export type StatusFlow = readonly string[];
 
@@ -49,20 +50,20 @@ export type StatusFlow = readonly string[];
  *   `"in-progress"`.
  * - otherwise (tasks exist, none active, not all terminal) → `"todo"`.
  *
- * The three rules are applied by elimination, in that order, exactly as cli-contract §3.2 states
- * it. One corner case follows directly from the literal rule and is intentional, not a bug: a
- * Story linking only a `Done` task and a `To Do` task (no task in an explicit mid-flow status)
- * rolls up to `"todo"`, not `"in-progress"` — "in-progress" is defined purely by the presence of an
- * active-state task, not by partial completion among terminal/not-started tasks.
+ * The three rules are applied by elimination, in that order, exactly as backlog-cli-contract.md
+ * §3.2 states it. One corner case follows directly from the literal rule and is intentional, not
+ * a bug: a Story linking only a `Done` task and a `To Do` task (no task in an explicit mid-flow
+ * status) rolls up to `"todo"`, not `"in-progress"` — "in-progress" is defined purely by the
+ * presence of an active-state task, not by partial completion among terminal/not-started tasks.
  *
  * @param taskStatuses the raw configured `status` string of every linked task (AC#1: any custom
  *   flow, not just the three defaults), in any order — order does not affect the rollup.
  * @param statusFlow the project's ordered status set, resolved from Backlog config.
  * @returns the rolled-up status, or `null` when there are no linked tasks.
- * @throws LoreError `validation` when `statusFlow` is empty or carries a duplicate entry (an
- *   ambiguous flow lore cannot classify against — ADR-0009 "must report rather than guess"), or
- *   when a task's status is not present in `statusFlow` at all (a config/task drift lore refuses
- *   to guess past).
+ * @throws LoreError `validation` when `statusFlow` has fewer than two entries, is empty, or
+ *   carries a duplicate entry (an ambiguous flow lore cannot classify against — ADR-0009 "must
+ *   report rather than guess"), or when a task's status is not present in `statusFlow` at all (a
+ *   config/task drift lore refuses to guess past).
  */
 export function reconcileStatus(taskStatuses: readonly string[], statusFlow: StatusFlow): ReconciledStatus | null {
   if (taskStatuses.length === 0) {
@@ -80,16 +81,18 @@ export function reconcileStatus(taskStatuses: readonly string[], statusFlow: Sta
 }
 
 /**
- * Reject a `statusFlow` lore cannot classify against unambiguously: empty (no not-started/terminal
- * state to anchor on) or carrying a duplicate entry (an entry's position — and so its
- * not-started/active/terminal classification — would depend on which occurrence is meant).
+ * Reject a `statusFlow` lore cannot classify against unambiguously: fewer than two entries (with
+ * only one entry, index `0` is simultaneously the not-started **and** the terminal position — the
+ * two roles {@link classify} treats as distinct would silently collapse to the same index) or
+ * carrying a duplicate entry (an entry's position — and so its not-started/active/terminal
+ * classification — would depend on which occurrence is meant).
  */
 function validateStatusFlow(statusFlow: StatusFlow): void {
-  if (statusFlow.length === 0) {
+  if (statusFlow.length < 2) {
     throw new LoreError(
       "validation",
-      "cannot reconcile status: the project's configured status flow is empty",
-      'set `statuses:` in `backlog/config.yml` to a non-empty ordered list (e.g. ["To Do", "In Progress", "Done"])',
+      `cannot reconcile status: the project's configured status flow has ${statusFlow.length} ${statusFlow.length === 1 ? "entry" : "entries"} (need at least 2 to distinguish "not started" from "terminal")`,
+      'set `statuses:` in `backlog/config.yml` to an ordered list of at least two statuses (e.g. ["To Do", "In Progress", "Done"])',
       { statusFlow },
     );
   }

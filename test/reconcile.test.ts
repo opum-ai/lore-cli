@@ -61,7 +61,7 @@ describe("reconcileStatus — default 3-state flow", () => {
   });
 
   test("corner case: Done + To Do only (no explicit active-state task) rolls up to todo, not in-progress", () => {
-    // Literal elimination order (cli-contract §3.2): "in-progress" requires a task in a
+    // Literal elimination order (backlog-cli-contract.md §3.2): "in-progress" requires a task in a
     // non-first, non-terminal state. Neither Done nor To Do qualifies, so this is NOT "every
     // task terminal" (falls through the "done" check) and falls to "todo" by elimination.
     expect(reconcileStatus(["Done", "To Do"], DEFAULT_FLOW)).toBe("todo");
@@ -118,7 +118,16 @@ describe("reconcileStatus — fail-loud on a degenerate status flow", () => {
     const err = loreError(() => reconcileStatus(["Done"], []));
     expect(err.type).toBe("validation");
     expect(exitCodeFor(err)).toBe(6);
-    expect(err.message).toContain("empty");
+    expect(err.message).toContain("0 entries");
+  });
+
+  test("a single-entry status flow is a validation error, not a silent 'done'", () => {
+    // Regression: index 0 is simultaneously "not started" and "terminal" in a 1-entry flow, which
+    // must be rejected rather than mechanically classified as terminal (the bug this guards).
+    const err = loreError(() => reconcileStatus(["To Do"], ["To Do"]));
+    expect(err.type).toBe("validation");
+    expect(exitCodeFor(err)).toBe(6);
+    expect(err.message).toContain("1 entry");
   });
 
   test("a duplicate entry in the status flow is a validation error naming the duplicate", () => {
