@@ -48,6 +48,7 @@ import { loadProfile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_CODES, EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { parseCommandArgs, usage } from "./args";
 import { writeFileOverwriting } from "./fswrite";
 
 /** Options shared by {@link runLink} and {@link runUnlink}; `root`, the streams, and `adapter` are injectable for tests. */
@@ -134,24 +135,27 @@ export interface UnlinkReport {
  */
 export async function runLink(options: LinkOptions): Promise<number> {
   const { concept, taskIds, noBackRef, docsRoot } = await prepare(options, "link");
-  const adapter = options.adapter ?? defaultAdapter();
+  const adapter = options.adapter ?? defaultAdapter(options.root);
   const docPath = repoRelativePath(concept.path);
   const label = backRefLabel(concept.id);
 
   // Validate every task exists BEFORE any write — a missing id fails the whole command loud,
-  // rather than leaving the doc half-linked. Reads are independent so they run concurrently, but
-  // the FIRST invalid id in argument order is what gets reported, not merely the first to settle.
-  const detailResults = await Promise.all(taskIds.map((taskId) => adapter.viewTask(taskId)));
-  const details = new Map<string, BacklogTaskDetail>();
+  // rather than leaving the doc half-linked. Reads are independent so they run concurrently
+  // (`allSettled`, not `all`: a rejection must not race ahead of an earlier id's not-found), but the
+  // FIRST invalid id in argument order — not-found or a genuine read failure — is what gets
+  // reported, decided by an in-order scan after every read has settled.
+  const detailResults = await Promise.allSettled(taskIds.map((taskId) => adapter.viewTask(taskId)));
   for (let i = 0; i < taskIds.length; i++) {
     const taskId = taskIds[i] as string;
-    const detail = detailResults[i] as BacklogTaskDetail | null;
-    if (detail === null) {
+    const result = detailResults[i] as PromiseSettledResult<BacklogTaskDetail | null>;
+    if (result.status === "rejected") {
+      throw result.reason instanceof Error ? result.reason : new Error(String(result.reason));
+    }
+    if (result.value === null) {
       throw new LoreError("not_found", `task "${taskId}" does not exist`, "check the task id and try again", {
         taskId,
       });
     }
-    details.set(taskId, detail);
   }
 
   const existingTasks = toRefList(concept.frontmatter.tasks);
@@ -159,12 +163,7 @@ export async function runLink(options: LinkOptions): Promise<number> {
     const alreadyLinked = existingTasks.some((t) => t.toLowerCase() === taskId.toLowerCase());
     return { task: taskId, status: alreadyLinked ? "already-linked" : "added", backRef: "skipped" };
   });
-  const nextTasks = [...existingTasks];
-  for (const taskId of taskIds) {
-    if (!existingTasks.some((t) => t.toLowerCase() === taskId.toLowerCase())) {
-      nextTasks.push(taskId.toLowerCase());
-    }
-  }
+  const nextTasks = [...existingTasks, ...tasks.filter((t) => t.status === "added").map((t) => t.task.toLowerCase())];
 
   const changed = writeTasksIfChanged(options.root, docsRoot, concept, existingTasks, nextTasks);
 
@@ -172,11 +171,21 @@ export async function runLink(options: LinkOptions): Promise<number> {
   if (!noBackRef) {
     const outcomes = await Promise.allSettled(
       taskIds.map(async (taskId) => {
-        const detail = details.get(taskId) as BacklogTaskDetail;
+        // Re-read fresh right before editing (not the up-front validation snapshot): matches
+        // runUnlink's freshness and closes a narrow race where the task changed out-of-band
+        // between the existence check above and this edit.
+        const detail = await adapter.viewTask(taskId);
+        if (detail === null) {
+          throw new Error(`task "${taskId}" no longer exists in Backlog`);
+        }
         const wasPresent = hasLabel(detail, label);
+        const docChanged = !detail.documentation.includes(docPath);
+        if (wasPresent && !docChanged) {
+          return "already-present" as const; // both the label and --doc already reflect this link
+        }
         const desiredDocs = addDoc(detail.documentation, docPath);
         await adapter.editTask(taskId, { addLabels: [label], doc: desiredDocs });
-        return wasPresent ? ("already-present" as const) : ("added" as const);
+        return "added" as const;
       }),
     );
     outcomes.forEach((outcome, i) => {
@@ -208,7 +217,7 @@ export async function runLink(options: LinkOptions): Promise<number> {
  */
 export async function runUnlink(options: LinkOptions): Promise<number> {
   const { concept, taskIds, noBackRef, docsRoot } = await prepare(options, "unlink");
-  const adapter = options.adapter ?? defaultAdapter();
+  const adapter = options.adapter ?? defaultAdapter(options.root);
   const docPath = repoRelativePath(concept.path);
   const label = backRefLabel(concept.id);
 
@@ -219,6 +228,12 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
     return { task: taskId, status: wasLinked ? "removed" : "not-linked", backRef: "skipped" };
   });
 
+  // Write the doc-side removal FIRST — mirrors runLink's order. The doc write needs no Backlog
+  // round-trip and never depends on any back-reference edit's outcome, so committing it before the
+  // per-task Backlog edits means a failure on the Backlog side can never strand it (the reverse
+  // order would leave already-applied Backlog mutations unreported if this write then failed).
+  const changed = writeTasksIfChanged(options.root, docsRoot, concept, existingTasks, nextTasks);
+
   let anyBackRefFailed = false;
   if (!noBackRef) {
     const outcomes = await Promise.allSettled(
@@ -228,6 +243,10 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
           return "skipped" as const; // the task no longer exists in Backlog — nothing to clean up
         }
         const hadLabel = hasLabel(detail, label);
+        const hadDoc = detail.documentation.includes(docPath);
+        if (!hadLabel && !hadDoc) {
+          return "already-absent" as const; // nothing to remove — skip the edit entirely
+        }
         const desiredDocs = removeDoc(detail.documentation, docPath);
         await adapter.editTask(taskId, {
           removeLabels: [label],
@@ -235,7 +254,7 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
           // entirely rather than send a no-op empty accumulator that would be silently ignored.
           doc: desiredDocs.length > 0 ? desiredDocs : undefined,
         });
-        return hadLabel ? ("removed" as const) : ("already-absent" as const);
+        return "removed" as const;
       }),
     );
     outcomes.forEach((outcome, i) => {
@@ -249,8 +268,6 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
     });
   }
 
-  const changed = writeTasksIfChanged(options.root, docsRoot, concept, existingTasks, nextTasks);
-
   const report: UnlinkReport = { concept: docPath, tasks, changed };
   emit(reportRenderable("unlink.result", report, renderTaskReport), options.output, options.stdout);
   return anyBackRefFailed ? EXIT_CODES.drift : EXIT_OK;
@@ -258,9 +275,9 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
 
 // ── Shared setup ───────────────────────────────────────────────────────────────
 
-/** The default {@link BacklogAdapter}: the real `backlog` binary resolved from PATH. */
-function defaultAdapter(): BacklogAdapter {
-  return createBacklogAdapter(bunBacklogSpawn());
+/** The default {@link BacklogAdapter}: the real `backlog` binary resolved from PATH, spawned in `root` so a non-default root routes writes to the right project. */
+function defaultAdapter(root: string): BacklogAdapter {
+  return createBacklogAdapter(bunBacklogSpawn(undefined, root));
 }
 
 /** Everything {@link runLink}/{@link runUnlink} need after parsing and loading the bundle. */
@@ -310,9 +327,14 @@ function repoRelativePath(conceptPath: string): string {
   return `${DOCS_DIR}/${conceptPath}`;
 }
 
-/** The queryable back-reference label (ADR-0009 §2): the concept id, lowercased. */
+/**
+ * The queryable back-reference label (ADR-0009 §2): `doc:<conceptId>`, case-preserved. Concept ids
+ * are case-sensitive throughout the graph (`buildGraph`'s lookup is a plain, case-sensitive `Map`),
+ * so two concepts differing only by case are distinct nodes; lowercasing here would collapse them
+ * onto the same label and let unlinking one strip the other's real back-reference.
+ */
 function backRefLabel(conceptId: string): string {
-  return `doc:${conceptId.toLowerCase()}`;
+  return `doc:${conceptId}`;
 }
 
 /** Whether a task's labels already carry `label`, matched case-insensitively (Backlog's own label de-dup). */
@@ -350,7 +372,7 @@ function writeTasksIfChanged(
   writeFileOverwriting(
     join(docsRoot, concept.path),
     serializeConcept(updated, { profile }),
-    `${DOCS_DIR}/${concept.path}`,
+    repoRelativePath(concept.path),
   );
   return true;
 }
@@ -363,34 +385,13 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
 // ── Argument parsing ───────────────────────────────────────────────────────────
 
 /**
- * Parse `link`/`unlink`'s tokens into `<id> <taskId…>` and `--no-back-ref`. The router has
- * already stripped lore's global flags, so a `--`-prefixed token here is a command flag: an
- * unrecognized one is a `usage` error. A `--` ends option parsing so an id may begin with `-`.
- * Mirrors `commands/supersede.ts`'s parser.
+ * Parse `link`/`unlink`'s tokens into `<id> <taskId…>` and `--no-back-ref`, via the shared
+ * {@link parseCommandArgs} tokenizer (mirrors `commands/rename.ts`/`commands/supersede.ts`'s
+ * parsers). Positional arity is validated here since it differs per command (a variadic task-id
+ * tail, not a fixed count).
  */
 function parseLinkArgs(args: readonly string[], command: "link" | "unlink"): LinkArgs {
-  const positionals: string[] = [];
-  let noBackRef = false;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      positionals.push(...args.slice(i + 1));
-      break;
-    }
-    if (arg.startsWith("--") && arg.length > 2) {
-      const name = arg.slice(2);
-      if (name === "no-back-ref") {
-        noBackRef = true;
-      } else {
-        throw usage(`unknown option "--${name}"`, `run \`lore ${command} --help\` to list options`);
-      }
-    } else if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, `run \`lore ${command} --help\` to list options`);
-    } else {
-      positionals.push(arg);
-    }
-  }
+  const { positionals, flags } = parseCommandArgs(args, command, ["no-back-ref"]);
 
   const id = positionals[0];
   if (id === undefined) {
@@ -403,7 +404,7 @@ function parseLinkArgs(args: readonly string[], command: "link" | "unlink"): Lin
       `pass one or more task ids, e.g. \`lore ${command} ${id} task-42\``,
     );
   }
-  return { id, taskIds, noBackRef };
+  return { id, taskIds, noBackRef: flags.has("no-back-ref") };
 }
 
 // ── Output ─────────────────────────────────────────────────────────────────────
@@ -438,9 +439,4 @@ function renderTaskReport(data: TaskReportLike): string {
 /** A one-line message for a rejected `editTask` call, for the report's `error` field. */
 function describeError(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
-}
-
-/** A `usage` {@link LoreError} (exit `2`) with an actionable hint. */
-function usage(message: string, hint: string): LoreError {
-  return new LoreError("usage", message, hint);
 }

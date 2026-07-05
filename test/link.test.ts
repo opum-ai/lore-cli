@@ -96,13 +96,14 @@ function makeTask(id: string, overrides: Partial<BacklogTaskDetail> = {}): Backl
 /** An in-memory {@link BacklogAdapter} fake: `viewTask` reads a seeded map (case-insensitive), `editTask` mutates it and records the call. Every other method throws — link/unlink never call them. */
 function fakeAdapter(
   seed: readonly BacklogTaskDetail[],
-  opts: { poisonEdits?: readonly string[] } = {},
+  opts: { poisonEdits?: readonly string[]; poisonViews?: readonly string[] } = {},
 ): BacklogAdapter & { calls: EditCall[] } {
   const tasks = new Map<string, BacklogTaskDetail>();
   for (const t of seed) {
     tasks.set(t.id.toLowerCase(), t);
   }
   const poison = new Set((opts.poisonEdits ?? []).map((id) => id.toLowerCase()));
+  const poisonViews = new Set((opts.poisonViews ?? []).map((id) => id.toLowerCase()));
   const calls: EditCall[] = [];
   const notImplemented = (name: string) => (): never => {
     throw new Error(`fakeAdapter: ${name} is not implemented (link/unlink never call it)`);
@@ -115,6 +116,9 @@ function fakeAdapter(
     createTask: notImplemented("createTask"),
     calls,
     async viewTask(id: string): Promise<BacklogTaskDetail | null> {
+      if (poisonViews.has(id.toLowerCase())) {
+        throw new Error(`simulated Backlog read failure viewing ${id}`);
+      }
       return tasks.get(id.toLowerCase()) ?? null;
     },
     async editTask(id: string, patch: EditTaskPatch): Promise<void> {
@@ -242,17 +246,38 @@ describe("lore link — wiring (AC#1)", () => {
     }
   });
 
-  test("is idempotent: re-linking an already-linked task writes no doc bytes", async () => {
+  test("is idempotent: re-linking an already-linked, fully-synced task writes no doc bytes and calls no Backlog edit", async () => {
     reset();
     try {
       writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - task-42\n---\nBody.\n");
       const before = readDoc("stories/x.md");
-      const adapter = fakeAdapter([makeTask("TASK-42", { labels: ["doc:stories/x"] })]);
+      const adapter = fakeAdapter([
+        makeTask("TASK-42", { labels: ["doc:stories/x"], documentation: ["docs/stories/x.md"] }),
+      ]);
 
       const { report } = await linkCmd(["stories/x", "task-42"], adapter);
       expect(report.changed).toBe(false);
       expect(report.tasks).toEqual([{ task: "task-42", status: "already-linked", backRef: "already-present" }]);
       expect(readDoc("stories/x.md")).toBe(before);
+      expect(adapter.calls).toHaveLength(0); // both the label and --doc already reflect this link — no-op, no edit
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("re-linking reports a silent --doc repair as added, not already-present, even when the label was already there", async () => {
+    reset();
+    try {
+      writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - task-42\n---\nBody.\n");
+      const before = readDoc("stories/x.md");
+      // The label is present but --doc was never recorded (or was hand-cleared) — a real repair.
+      const adapter = fakeAdapter([makeTask("TASK-42", { labels: ["doc:stories/x"] })]);
+
+      const { report } = await linkCmd(["stories/x", "task-42"], adapter);
+      expect(report.changed).toBe(false);
+      expect(report.tasks).toEqual([{ task: "task-42", status: "already-linked", backRef: "added" }]);
+      expect(readDoc("stories/x.md")).toBe(before); // the doc-side tasks: list is still unchanged
+      expect(adapter.calls[0]?.patch.doc).toEqual(["docs/stories/x.md"]); // --doc silently repaired
     } finally {
       cleanup();
     }
@@ -588,7 +613,9 @@ describe("lore link/unlink — per-task back-ref resilience", () => {
     reset();
     try {
       writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n  - lore-2\n---\nBody.\n");
-      const adapter = fakeAdapter([makeTask("LORE-1"), makeTask("LORE-2")], { poisonEdits: ["lore-2"] });
+      const adapter = fakeAdapter([makeTask("LORE-1"), makeTask("LORE-2", { labels: ["doc:stories/x"] })], {
+        poisonEdits: ["lore-2"],
+      });
 
       const { code, report } = await unlinkCmd(["stories/x", "lore-1", "lore-2"], adapter);
       expect(code).toBe(EXIT_CODES.drift);
@@ -640,6 +667,138 @@ describe("lore link/unlink — per-task back-ref resilience", () => {
       expect(report.changed).toBe(true);
       const concept = parseConcept("reference/x.md", readDoc("reference/x.md"));
       expect(concept.frontmatter.tasks).toEqual(["42", "task-2", "lore-3"]);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ── 2nd-pass fixes: write order, no-op short-circuit, fresh reads, case-preserving labels ──
+
+describe("lore link/unlink — 2nd-pass code-review fixes", () => {
+  test("unlink writes the doc-side tasks: removal before any Backlog mutation (write-order safety)", async () => {
+    reset();
+    try {
+      writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+      const adapter = fakeAdapter([
+        makeTask("LORE-1", { labels: ["doc:stories/x"], documentation: ["docs/stories/x.md"] }),
+      ]);
+      let docAlreadyUpdatedWhenEditCalled = false;
+      const originalEditTask = adapter.editTask.bind(adapter);
+      adapter.editTask = async (id: string, patch: EditTaskPatch) => {
+        docAlreadyUpdatedWhenEditCalled = !readDoc("stories/x.md").includes("lore-1");
+        return originalEditTask(id, patch);
+      };
+
+      await unlinkCmd(["stories/x", "lore-1"], adapter);
+      expect(docAlreadyUpdatedWhenEditCalled).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("unlink is a full no-op on the Backlog side when the label and --doc were never set: no edit call", async () => {
+    reset();
+    try {
+      writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+      const adapter = fakeAdapter([makeTask("LORE-1")]); // no label, no documentation entry
+
+      const { report } = await unlinkCmd(["stories/x", "lore-1"], adapter);
+      expect(report.tasks).toEqual([{ task: "lore-1", status: "removed", backRef: "already-absent" }]);
+      expect(adapter.calls).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("existence pre-check reports the first invalid id in argument order, even when a later id's read rejects first", async () => {
+    reset();
+    try {
+      writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+      const adapter = fakeAdapter([makeTask("LORE-1")], { poisonViews: ["lore-3"] });
+
+      // lore-2 is not-found (resolves null); lore-3's read genuinely rejects. Argument order must
+      // still surface lore-2's not_found first, not race ahead on whichever settles/rejects first.
+      const err = await expectLinkError(["stories/x", "lore-2", "lore-3"], adapter);
+      expect(err.type).toBe("not_found");
+      expect(err.message).toContain("lore-2");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("a genuine viewTask read failure during the existence pre-check surfaces (not swallowed)", async () => {
+    reset();
+    try {
+      writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+      const adapter = fakeAdapter([makeTask("LORE-1")], { poisonViews: ["lore-1"] });
+
+      try {
+        await runLink(opts(["stories/x", "lore-1"], adapter));
+        throw new Error("expected a throw");
+      } catch (err) {
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toContain("simulated Backlog read failure");
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("link re-reads the task fresh right before editing, not the up-front validation snapshot", async () => {
+    reset();
+    try {
+      writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+      const adapter = fakeAdapter([makeTask("LORE-1")]);
+      let viewCount = 0;
+      const originalViewTask = adapter.viewTask.bind(adapter);
+      adapter.viewTask = async (id: string) => {
+        viewCount++;
+        const detail = await originalViewTask(id);
+        // The 2nd read (the back-ref edit's fresh read) sees a change that happened after the
+        // up-front existence check (the 1st read) already ran.
+        if (viewCount === 2 && detail !== null) {
+          return { ...detail, documentation: ["docs/other/out-of-band.md"] };
+        }
+        return detail;
+      };
+
+      await linkCmd(["stories/x", "lore-1"], adapter);
+      expect(adapter.calls[0]?.patch.doc).toEqual(["docs/other/out-of-band.md", "docs/stories/x.md"]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("link reports a task deleted between validation and the back-ref edit as failed, not a crash", async () => {
+    reset();
+    try {
+      writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+      const adapter = fakeAdapter([makeTask("LORE-1")]);
+      let viewCount = 0;
+      const originalViewTask = adapter.viewTask.bind(adapter);
+      adapter.viewTask = async (id: string) => {
+        viewCount++;
+        return viewCount === 2 ? null : originalViewTask(id);
+      };
+
+      const { code, report } = await linkCmd(["stories/x", "lore-1"], adapter);
+      expect(code).toBe(EXIT_CODES.drift);
+      expect(report.tasks[0]).toMatchObject({ backRef: "failed" });
+      expect(report.tasks[0]?.error).toContain("no longer exists");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("backRefLabel preserves the concept id's case instead of lowercasing it (avoids collapsing two case-distinct concepts onto one label)", async () => {
+    reset();
+    try {
+      writeDoc("stories/Bulk-Archive.md", "---\ntype: Story\n---\nBody.\n");
+      const adapter = fakeAdapter([makeTask("LORE-42")]);
+
+      await linkCmd(["stories/Bulk-Archive", "lore-42"], adapter);
+      expect(adapter.calls[0]?.patch.addLabels).toEqual(["doc:stories/Bulk-Archive"]);
     } finally {
       cleanup();
     }

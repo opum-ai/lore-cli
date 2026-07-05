@@ -45,6 +45,7 @@ import { rewriteInbound } from "../core/rewrite";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { parseCommandArgs, usage } from "./args";
 import { writeFileOverwriting } from "./fswrite";
 
 /** The frontmatter `status` value that marks a concept superseded — the lifecycle signal we set and detect. */
@@ -304,36 +305,12 @@ function assertNotReserved(id: string): void {
 
 /**
  * Parse `supersede`'s tokens into its two positionals (`<oldId> <newId>`), `--rewrite-links`, and
- * `--dry-run`. The router has already stripped lore's global flags, so a `--`-prefixed token here is
- * a command flag: an unrecognized one is a `usage` error. A `--` ends option parsing so an id may
- * begin with `-`. Mirrors `commands/rename.ts`'s parser.
+ * `--dry-run`, via the shared {@link parseCommandArgs} tokenizer (mirrors
+ * `commands/rename.ts`/`commands/link.ts`'s parsers). Positional arity is validated here since it
+ * differs per command.
  */
 function parseSupersedeArgs(args: readonly string[]): SupersedeArgs {
-  const positionals: string[] = [];
-  let rewriteLinks = false;
-  let dryRun = false;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      positionals.push(...args.slice(i + 1));
-      break;
-    }
-    if (arg.startsWith("--") && arg.length > 2) {
-      const name = arg.slice(2);
-      if (name === "rewrite-links") {
-        rewriteLinks = true;
-      } else if (name === "dry-run") {
-        dryRun = true;
-      } else {
-        throw usage(`unknown option "--${name}"`, "run `lore supersede --help` to list options");
-      }
-    } else if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, "run `lore supersede --help` to list options");
-    } else {
-      positionals.push(arg);
-    }
-  }
+  const { positionals, flags } = parseCommandArgs(args, "supersede", ["rewrite-links", "dry-run"]);
 
   const oldId = positionals[0];
   if (oldId === undefined) {
@@ -352,7 +329,7 @@ function parseSupersedeArgs(args: readonly string[]): SupersedeArgs {
       "pass exactly an old and a new id; scope nothing else (supersede wires the whole bundle)",
     );
   }
-  return { oldId, newId, rewriteLinks, dryRun };
+  return { oldId, newId, rewriteLinks: flags.has("rewrite-links"), dryRun: flags.has("dry-run") };
 }
 
 // ── Output ─────────────────────────────────────────────────────────────────────
@@ -397,9 +374,4 @@ function render(data: SupersedeReport): string {
   const noun = data.filesChanged === 1 ? "file" : "files";
   lines.push(`${data.filesChanged} ${noun} changed${data.dryRun ? " (dry-run)" : ""}`);
   return lines.join("\n");
-}
-
-/** A `usage` {@link LoreError} (exit `2`) with an actionable hint. */
-function usage(message: string, hint: string): LoreError {
-  return new LoreError("usage", message, hint);
 }

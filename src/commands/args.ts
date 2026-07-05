@@ -1,0 +1,57 @@
+/**
+ * commands/args.ts — the shared `<positional…> [--flag…]` tokenizer for `link`/`unlink`, `rename`,
+ * and `supersede` (their arg shapes agree exactly: some positionals, some boolean `--flags`, a `--`
+ * end-of-options marker so a positional may itself start with `-`).
+ *
+ * Only the tokenizing loop and the `unknown option` / bad-single-dash errors are shared here — each
+ * command still validates its own positional arity (how many ids it needs, and what hint to give)
+ * locally, since that varies per command.
+ */
+
+import { LoreError } from "../errors";
+
+/** The tokenized form of a command's arguments: positionals in order, and which known `--flags` were set. */
+export interface ParsedArgs {
+  /** Every non-flag token, in order (everything after a `--` marker included verbatim). */
+  readonly positionals: string[];
+  /** The set of recognized `--flag` names that were passed. */
+  readonly flags: ReadonlySet<string>;
+}
+
+/**
+ * Split `args` into positionals and boolean flags. A `--`-prefixed token is a flag: one of
+ * `knownFlags` is recorded, anything else throws a `usage` {@link LoreError}. A bare `-x` (single
+ * dash, not just `-`) is also an unknown-option usage error — lore's commands have no single-dash
+ * flags. A `--` token ends option parsing so a positional may begin with `-`.
+ */
+export function parseCommandArgs(args: readonly string[], command: string, knownFlags: readonly string[]): ParsedArgs {
+  const positionals: string[] = [];
+  const flags = new Set<string>();
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] as string;
+    if (arg === "--") {
+      positionals.push(...args.slice(i + 1));
+      break;
+    }
+    if (arg.startsWith("--") && arg.length > 2) {
+      const name = arg.slice(2);
+      if (knownFlags.includes(name)) {
+        flags.add(name);
+      } else {
+        throw usage(`unknown option "--${name}"`, `run \`lore ${command} --help\` to list options`);
+      }
+    } else if (arg.startsWith("-") && arg !== "-") {
+      throw usage(`unknown option "${arg}"`, `run \`lore ${command} --help\` to list options`);
+    } else {
+      positionals.push(arg);
+    }
+  }
+
+  return { positionals, flags };
+}
+
+/** A `usage` {@link LoreError} (exit `2`) with an actionable hint. */
+export function usage(message: string, hint: string): LoreError {
+  return new LoreError("usage", message, hint);
+}

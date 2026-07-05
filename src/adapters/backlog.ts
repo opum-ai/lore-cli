@@ -211,11 +211,13 @@ export async function probeBacklog(spawn: BacklogSpawn): Promise<BacklogCapabili
  * {@link probeBacklog} maps to `not_found`.
  *
  * `binary` defaults to `"backlog"` (resolved from PATH); it is a parameter so a test or a pinned
- * install can point at an explicit path.
+ * install can point at an explicit path. `cwd` defaults to the current process's working directory
+ * (`Bun.spawn`'s own default); a caller working against a non-default `root` must pass it explicitly,
+ * or the subprocess resolves Backlog's project files against the wrong directory.
  */
-export function bunBacklogSpawn(binary: string = BACKLOG_BINARY): BacklogSpawn {
+export function bunBacklogSpawn(binary: string = BACKLOG_BINARY, cwd?: string): BacklogSpawn {
   return async (args: readonly string[]): Promise<SpawnResult> => {
-    const proc = Bun.spawn([binary, ...args], { stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn([binary, ...args], { stdout: "pipe", stderr: "pipe", cwd });
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),

@@ -98,9 +98,14 @@ doc:stories/bulk-archive-orders
   free text is not reliably searchable, so it is never the thing lore queries.
   The label carries the machine-readable coupling; `--doc` carries the pretty
   name.
-- `<conceptId>` is the concept ID (path minus `.md`), normalized lowercase to
-  match the doc-side ID convention, so the two directions agree under
-  case-insensitive comparison.
+- `<conceptId>` is the concept ID (path minus `.md`), **case-preserved** —
+  unlike the doc-side task IDs (§1), which are a closed, lowercase-normalized
+  set. Concept IDs are not: `buildGraph`'s lookup is a plain, case-sensitive
+  `Map` (deliberately, for cross-platform determinism — see
+  `core/bundle.ts`), so two concepts differing only by case are distinct
+  nodes. Lowercasing the ID in the label would collapse both onto the same
+  `doc:` label, and unlinking one would strip the other's real
+  back-reference.
 
 ### 3. Status reconciliation from live task statuses
 
