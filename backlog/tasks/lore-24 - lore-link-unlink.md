@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-02 20:13'
+updated_date: '2026-07-05 18:17'
 labels:
   - cmd
 milestone: m-3
@@ -132,4 +132,37 @@ posted in full as a PR comment. Fixed in 20bf2f1:
 non-string tasks: coercion). Gates after fixes: 27/27 link tests, full suite 1116/1116,
 typecheck clean, biome clean, coverage 97.37%/99.50% func/line on link.ts. Re-verified
 end-to-end against the real --json fork after the redesign (concurrent multi-task link).
+
+/code-review max, 2nd pass on PR #35 (post-fix): 6 finder angles, 12 pooled candidates,
+10 distinct root causes independently verified (0 refuted). NOT yet fixed -- pending
+decision on whether to fold a follow-up commit into #35 or ship as-is and track
+separately. Posted in full as a PR comment (issuecomment-4887108051).
+
+Correctness (most severe):
+- runUnlink (link.ts:252) applies per-task Backlog mutations BEFORE writing the
+  concept's tasks: frontmatter (runLink is the opposite order) -- a doc-write failure
+  after Backlog mutations strands them with zero report.
+- backRefLabel() (link.ts:314) lowercases the concept id -- two concepts differing
+  only by case collide on one Backlog label; unlinking one can strip the other's
+  real back-reference.
+- defaultAdapter() (link.ts:263) never forwards root/options.root to the backlog
+  subprocess spawn -- a non-default root silently routes Backlog writes to the wrong
+  project while the doc-side edit still reports success.
+- runLink's reported backRef status (link.ts:176) reflects only label presence, not
+  whether --doc actually needed rewriting -- a silent repair reports as
+  already-present.
+- runLink's existence pre-check (link.ts:144) uses Promise.all not allSettled -- a
+  viewTask rejection can report the wrong task id as invalid instead of the
+  documented first-in-argument-order one.
+- runLink/runUnlink (link.ts:178) call adapter.editTask unconditionally even when
+  nothing needs to change -- no no-op short-circuit, churns Backlog edit history on
+  repeated idempotent calls.
+- (PLAUSIBLE) runLink's --doc payload (link.ts:175) is computed from the up-front
+  validation snapshot, not a fresh read right before the edit, unlike runUnlink --
+  narrow race if the task changes out-of-band mid-command.
+
+Cleanup: duplicated case-insensitive membership loop (link.ts:162); parseLinkArgs is
+a third near-verbatim copy of the rename.ts/supersede.ts arg parser (link.ts:371);
+writeTasksIfChanged re-inlines repoRelativePath()'s template instead of calling it
+(link.ts:353).
 <!-- SECTION:NOTES:END -->
