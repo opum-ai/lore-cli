@@ -298,8 +298,14 @@ interface Prepared {
 async function prepare(options: LinkOptions, command: "link" | "unlink"): Promise<Prepared> {
   const parsed = parseLinkArgs(options.args, command);
   const id = idFromPath(parsed.id);
+  // Reserved-hub-stem is checked unconditionally: the doc-side tasks: write always happens
+  // (--no-back-ref only skips the Backlog side), so index.md/log.md is never a safe target either
+  // way. The comma/case-collision guards below are Backlog-label concerns, so they gate on
+  // `!noBackRef` — --no-back-ref never sends a doc: label, so neither problem can occur on that path.
   assertNotReserved(id, command);
-  assertNoCommaInId(id, command);
+  if (!parsed.noBackRef) {
+    assertNoCommaInId(id, command);
+  }
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
   const graph = loadBundle(docsRoot, { warnings: advisories });
@@ -309,7 +315,9 @@ async function prepare(options: LinkOptions, command: "link" | "unlink"): Promis
   if (concept === undefined) {
     throw conceptNotInBundle(id);
   }
-  assertNoLabelCaseCollision(graph, concept);
+  if (!parsed.noBackRef) {
+    assertNoLabelCaseCollision(graph, concept);
+  }
   return { concept, taskIds: dedupeTaskIds(parsed.taskIds), noBackRef: parsed.noBackRef, docsRoot };
 }
 
@@ -324,14 +332,15 @@ function assertNotReserved(id: string, command: "link" | "unlink"): void {
 }
 
 /**
- * Reject a concept id containing a comma as a link/unlink principal — a `usage` error, checked
- * unconditionally and before any write (like {@link assertNotReserved}), not only when a `doc:`
- * label would actually be sent. Backlog's `--add-label`/`--remove-label` have no escape for an
- * embedded comma (backlog-cli-contract §2.4; `commaJoin` in `adapters/backlog.ts` now rejects one
- * outright rather than silently splitting it into two labels) — so a comma-bearing id could never
- * get a working `doc:` back-reference either way. Failing loud here, once, up front gives one clear
- * reason instead of every per-task `editTask` call failing forever and reporting `drift` on every
- * future invocation for that concept.
+ * Reject a concept id containing a comma as a link/unlink principal — a `usage` error. Backlog's
+ * `--add-label`/`--remove-label` have no escape for an embedded comma (backlog-cli-contract §2.4;
+ * `commaJoin` in `adapters/backlog.ts` now rejects one outright rather than silently splitting it
+ * into two labels), so a comma-bearing id could never get a working `doc:` back-reference. Failing
+ * loud here, once, up front (the caller only calls this when a back-ref edit will actually be
+ * attempted — see `prepare`'s `!noBackRef` gate) gives one clear reason instead of every per-task
+ * `editTask` call failing forever and reporting `drift` on every future invocation for that concept.
+ * A pure `--no-back-ref` doc-side edit never sends a `doc:` label at all, so it is never blocked by
+ * this — the comma problem this guards against cannot occur on that path.
  */
 function assertNoCommaInId(id: string, command: "link" | "unlink"): void {
   if (id.includes(",")) {
@@ -349,7 +358,9 @@ function assertNoCommaInId(id: string, command: "link" | "unlink"): void {
  * `--add-label`/`--remove-label` de-dup case-insensitively in its label store (backlog-cli-contract
  * §2.4), so no encoding lore sends can give them independently addressable `doc:` back-references.
  * Rather than silently let one concept's unlink strip the other's real back-reference, refuse the
- * operation outright.
+ * operation outright. The caller only calls this when a back-ref edit will actually be attempted
+ * (see `prepare`'s `!noBackRef` gate): a pure `--no-back-ref` doc-side edit never sends a `doc:`
+ * label at all, so the collision this guards against cannot occur on that path either.
  */
 export function assertNoLabelCaseCollision(graph: BundleGraph, concept: Concept): void {
   for (const other of graph.concepts.values()) {

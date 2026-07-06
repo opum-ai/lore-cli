@@ -657,6 +657,17 @@ describe("lore link/unlink — 2nd-pass code-review fixes", () => {
     }
   });
 
+  test("--no-back-ref bypasses the comma-id guard: no Backlog label is ever sent on that path, so the comma problem cannot occur", async () => {
+    writeDoc("notes/release-notes,v2.md", "---\ntype: Reference\n---\nBody.\n");
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+
+    const { report } = await linkCmd(["notes/release-notes,v2", "lore-1", "--no-back-ref"], adapter);
+    expect(report.changed).toBe(true);
+    expect(adapter.calls).toHaveLength(0);
+    const concept = parseConcept("notes/release-notes,v2.md", readDoc("notes/release-notes,v2.md"));
+    expect(concept.frontmatter.tasks).toEqual(["lore-1"]);
+  });
+
   test("assertNoLabelCaseCollision rejects two concepts whose ids differ only by case (Backlog's own label store can't distinguish them)", () => {
     // Can't reproduce this via real files: mac/windows filesystems are case-insensitive, so two
     // paths differing only by case would collide as the same file on disk. Build the graph
