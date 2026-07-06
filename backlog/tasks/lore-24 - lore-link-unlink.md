@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-06 02:37'
+updated_date: '2026-07-06 03:03'
 labels:
   - cmd
 milestone: m-3
@@ -262,4 +262,40 @@ verified (0 refuted). Fixed in 29ee7aa:
   of --no-back-ref).
 
 1 new test. Full suite 1131/1131, typecheck clean, biome clean.
+
+/code-review max, 6th pass on PR #35 (workflow-backed, post-5th-pass-fix
+commit 1d7cd85): 6 finder angles, 5 pooled candidates, all 5 independently
+verified (0 refuted). 3 of 5 fixed in e242d59:
+- (correctness) added a pretty-mode test for link/unlink (none existed,
+  unlike every sibling command suite).
+- (cleanup) extracted assertNotReservedStem(id, action) into
+  commands/args.ts, replacing 3 independently-maintained copies of the
+  index/log reserved-stem guard across rename.ts/supersede.ts/link.ts.
+- (cleanup) factored link.ts's 3 hand-rolled case-insensitive membership
+  checks into one containsCaseInsensitive helper.
+
+2 findings NOT fixed, one deferred to the user, one recorded as an
+accepted tradeoff:
+- [0, correctness, most severe] `lore rename` never updates a renamed
+  concept's Backlog doc:<id> label or --doc path -- ADR-0009 Sec2's prose
+  claims "a renamed concept updates the label" but no code path does
+  this (rename.ts predates link.ts/ADR-0009 entirely and has zero
+  Backlog awareness). Renaming a linked concept permanently orphans its
+  Backlog back-reference: lore unlink on the new id computes the NEW
+  id's label/doc path, which never matches what's actually stored
+  (still the OLD id), so it reports "already-absent" and skips the
+  edit -- no lore command can ever clean up the stale doc:<oldId> label.
+  This is a real gap but a materially larger, cross-command design
+  question (make rename Backlog-aware and async? detect via
+  check/orphans instead, per ADR-0009's own "reconciles both ways"
+  philosophy?) -- raised to the user for a decision rather than
+  unilaterally implemented.
+- [2, cleanup] runLink's per-task loop reads each task fresh right
+  before its edit instead of batching all fresh reads concurrently up
+  front. Deliberately left as-is: batching would widen the staleness
+  window for later-processed tasks in a multi-task invocation, which is
+  exactly what the round-2 fresh-read fix (from the 2nd pass) exists to
+  close. Accepted tradeoff, not a bug.
+
+1 new test. Full suite 1132/1132, typecheck clean, biome clean.
 <!-- SECTION:NOTES:END -->
