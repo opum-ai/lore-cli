@@ -275,10 +275,79 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
   return anyBackRefFailed ? EXIT_CODES.drift : EXIT_OK;
 }
 
+/** One task's outcome after {@link moveBackRefs} moves its back-reference to a concept's new id/path. */
+export interface MovedBackRef {
+  /** The task id, as given. */
+  readonly task: string;
+  /** Whether the label/`--doc` already reflected the new id/path, were moved, or the move failed. */
+  readonly backRef: "moved" | "already-current" | "failed";
+  /** A one-line reason, present only when `backRef` is `"failed"`. */
+  readonly error?: string;
+}
+
+/**
+ * Move every `taskId`'s back-reference from a concept's old id/path to its new one — the
+ * Backlog-side half of `lore rename` keeping ADR-0009 §2's coupling intact across a move, called
+ * by `commands/rename.ts` (this file is the single owner of the `doc:<conceptId>` label contract).
+ * A task with neither the old label nor the old doc path (or one no longer present in Backlog) is
+ * already current and its edit is skipped entirely — the same no-op short-circuit `runLink`/
+ * `runUnlink` use. Otherwise mirrors their per-task resilience: edits run sequentially, never
+ * concurrently (ADR-0012 §5), and a single task's failure is caught and reported without blocking
+ * the rest.
+ */
+export async function moveBackRefs(
+  adapter: BacklogAdapter,
+  taskIds: readonly string[],
+  oldConceptId: string,
+  newConceptId: string,
+  oldDocPath: string,
+  newDocPath: string,
+): Promise<readonly MovedBackRef[]> {
+  const oldLabel = backRefLabel(oldConceptId);
+  const newLabel = backRefLabel(newConceptId);
+  const outcomes = await runSequentially(taskIds, async (taskId) => {
+    const detail = await adapter.viewTask(taskId);
+    if (detail === null) {
+      return "already-current" as const; // the task no longer exists in Backlog — nothing to move
+    }
+    const hasOldLabel = hasLabel(detail, oldLabel);
+    const hasNewLabel = hasLabel(detail, newLabel);
+    const hasOldDoc = detail.documentation.includes(oldDocPath);
+    const hasNewDoc = detail.documentation.includes(newDocPath);
+    if ((hasNewLabel || !hasOldLabel) && (hasNewDoc || !hasOldDoc)) {
+      return "already-current" as const; // nothing to move
+    }
+    const docs = detail.documentation.filter((d) => d !== oldDocPath);
+    if (!docs.includes(newDocPath)) {
+      docs.push(newDocPath);
+    }
+    await adapter.editTask(taskId, {
+      addLabels: hasNewLabel ? undefined : [newLabel],
+      removeLabels: hasOldLabel ? [oldLabel] : undefined,
+      doc: docs,
+    });
+    return "moved" as const;
+  });
+  return taskIds.map((task, i) => {
+    const outcome = outcomes[i] as PromiseSettledResult<"moved" | "already-current">;
+    if (outcome.status === "fulfilled") {
+      return { task, backRef: outcome.value };
+    }
+    return { task, backRef: "failed" as const, error: describeError(outcome.reason) };
+  });
+}
+
 // ── Shared setup ───────────────────────────────────────────────────────────────
 
-/** The default {@link BacklogAdapter}: the real `backlog` binary resolved from PATH, spawned in `root` so a non-default root routes writes to the right project. */
-function defaultAdapter(root: string): BacklogAdapter {
+/**
+ * The default {@link BacklogAdapter}: the real `backlog` binary resolved from PATH, spawned in
+ * `root` so a non-default root routes writes to the right project. Shared with `commands/rename.ts`,
+ * which needs the same adapter to move a renamed concept's back-references (see
+ * {@link moveBackRefs}) — this file is the single owner of the `doc:<conceptId>` coupling contract
+ * (ADR-0009 §2), so any command that touches it goes through this module rather than re-deriving
+ * the label/adapter rules itself.
+ */
+export function defaultAdapter(root: string): BacklogAdapter {
   return createBacklogAdapter(bunBacklogSpawn(undefined, root));
 }
 

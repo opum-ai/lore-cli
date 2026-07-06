@@ -26,7 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mutating Backlog commands). Neither command will target a reserved hub stem (`index`/`log`), or a
   concept whose id collides case-insensitively with another concept's — Backlog's own label store
   de-dups case-insensitively, so two such concepts could not have independently addressable `doc:`
-  back-references. Not yet consumed by `reconcile.ts`/`managed-block.ts` (LORE-26/27's job).
+  back-references. `lore rename` now also moves every linked task's `doc:<conceptId>` label and
+  `--doc` path to the renamed concept's new id/path (the file move commits first; the back-ref move
+  is best-effort per task, `drift`/exit `6` on a partial failure, and never attempted for an
+  unlinked concept or under `--dry-run`) — closing the gap where a rename would otherwise silently
+  orphan a task's back-reference. Not yet consumed by `reconcile.ts`/`managed-block.ts` (LORE-26/27's
+  job).
 - **`core/reconcile.ts` — roll a Story/Spec's linked task statuses up into one derived `status`**
   (LORE-23). The pure engine behind the `status:` half of `lore sync`/`lore check` (ADR-0009 §3):
   `reconcileStatus(taskStatuses, statusFlow)` classifies each linked task by its position in the

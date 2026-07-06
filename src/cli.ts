@@ -227,8 +227,8 @@ function emitMeta(
 /**
  * Route a parsed invocation to its command handler, throwing a `usage` error on bad input. Returns
  * a `number` for the synchronous commands and a `Promise<number>` for the async ones — `check
- * --external` (whose liveness probe is non-deterministic network IO) and `link`/`unlink` (which
- * drive the Backlog adapter).
+ * --external` (whose liveness probe is non-deterministic network IO) and `link`/`unlink`/`rename`
+ * (which drive the Backlog adapter).
  */
 function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext): number | Promise<number> {
   const root = context.cwd || process.cwd();
@@ -252,7 +252,14 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
     case "replace":
       return runReplace({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     case "rename":
-      return runRename({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
+      return runRename({
+        root,
+        output,
+        args: parsed.commandArgs,
+        stdout: context.stdout,
+        stderr: context.stderr,
+        adapter: context.adapter,
+      });
     case "supersede":
       return runSupersede({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     case "link":

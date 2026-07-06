@@ -185,10 +185,21 @@ see [ADR-0006: Schema, types & templates](0006-schema-types-templates.md).
   in the project's Backlog label space; a team already using `doc:`-prefixed
   labels for another purpose would collide. The prefix is documented and
   consistent, but it is a shared namespace.
-- **`--doc` and the label can diverge cosmetically.** Because `--doc` is
-  display-only and the label is the index, a renamed concept updates the label
-  but a stale `--doc` annotation can linger until the next `lore link`. This is
-  cosmetic only and never affects queries.
+- **`lore rename` actively moves the label and `--doc` path.** A concept's
+  `doc:<conceptId>` label is derived from its id, so relocating the file would
+  otherwise silently orphan every linked task's back-reference (the old label
+  keeps pointing at an id nothing owns anymore, and no command could ever clean
+  it up again). `lore rename` closes this: after committing the file move, it
+  moves every linked task's label and `--doc` path to the new id/path via
+  `commands/link.ts`'s `moveBackRefs`, mirroring `link`/`unlink`'s per-task
+  resilience (sequential edits per ADR-0012 §5, one failure isolated and
+  reported without blocking the rest, `drift`/exit `6` on any partial
+  failure). Renaming a concept with no `tasks:` entries never constructs a
+  `BacklogAdapter` at all, so it keeps zero Backlog dependency. `--dry-run`
+  previews the file-level plan only, not a Backlog-side one — the back-ref
+  move is skipped entirely under `--dry-run`. The residual cosmetic-drift
+  case is now narrower: a concept relocated by hand (not via `lore rename`)
+  still leaves a stale label/`--doc` until the next `lore link`/`unlink`.
 
 ## Alternatives considered
 
