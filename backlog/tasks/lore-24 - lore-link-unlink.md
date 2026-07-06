@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-06 14:25'
+updated_date: '2026-07-06 15:11'
 labels:
   - cmd
 milestone: m-3
@@ -387,4 +387,28 @@ documentation correction + deferred design question:
   unilaterally in this already-large PR.
 
 4 new/updated tests. Full suite 1145/1145, typecheck clean, biome clean.
+
+Implemented the deeper fix for the 8th-pass finding 0 (user chose "fix
+it now too" over deferring): added `lore unlink <id> <taskId...>
+--allow-missing` (unlink-only), which tolerates <id> not resolving to a
+live concept and cleans up just the stale Backlog-side doc: label/--doc
+entry -- the recovery path for a concept relocated outside lore rename.
+Fixed in 50655d5:
+- prepare() returns concept: undefined for unlink+allowMissing instead
+  of throwing not_found; runUnlink skips the doc-side tasks: write
+  entirely in that mode (no concept file exists) but still runs the
+  Backlog-side removal via a new shared removeBackRefs() helper
+  (factored from the pre-existing per-task loop, reused by both paths).
+- The case-collision guard still applies in bare-id mode -- a LIVE
+  concept whose id collides case-insensitively with the given id is
+  still protected from having its real back-reference stripped.
+- link still requires a live concept (adding tasks: to a nonexistent
+  file is meaningless) -- --allow-missing is rejected as an unknown
+  flag for link.
+- Updated cli-surface.md's link/unlink/rename exit tables (also closed
+  pre-existing gaps: exit 5/6 were missing from link/unlink's tables
+  and 5/6 from rename's, predating this session), ADR-0009 Sec2, and
+  CHANGELOG.
+
+7 new tests. Full suite 1152/1152, typecheck clean, biome clean.
 <!-- SECTION:NOTES:END -->
