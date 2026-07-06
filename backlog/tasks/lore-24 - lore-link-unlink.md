@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-06 15:11'
+updated_date: '2026-07-06 15:41'
 labels:
   - cmd
 milestone: m-3
@@ -411,4 +411,32 @@ Fixed in 50655d5:
   CHANGELOG.
 
 7 new tests. Full suite 1152/1152, typecheck clean, biome clean.
+
+/code-review max, 9th pass on PR #35 (workflow-backed, post-allow-
+missing commit 3c9d952): 6 finder angles, 6 pooled candidates, 5
+confirmed + 1 refuted. All 5 fixed in ebd6ee1:
+- (correctness) unlink --allow-missing's docPath is reconstructed from
+  the bare id, not read from a live concept, so it may not match the
+  originally-stored casing; hasLabel already tolerated this (case-
+  insensitive) but hadDoc/removeDoc didn't (exact match) -- a case-
+  mismatched recovery id removed the label but stranded the --doc entry
+  forever while reporting success. Made doc-path matching case-
+  insensitive too (safe: assertNoLabelCaseCollision already rules out
+  any other concept that could collide).
+- (correctness) rename's Backlog-only guards fired even under
+  --dry-run, breaking the documented "dry-run never touches Backlog"
+  contract. Gated on `!parsed.dryRun` too.
+- (cleanup) a third stale cli.ts comment (near import.meta.main) still
+  omitted rename from the async-commands list.
+- (cleanup) clarified rename.ts's dead-in-practice plan.rename!==null
+  check with a comment explaining why it's kept anyway.
+- (cleanup) simplified a redundant doc:[]:undefined ternary; updated
+  the one test encoding the old (behaviorally identical) shape.
+
+One finding refuted on verification: moveBackRefs "adding a label to a
+task that only had the old --doc path" was confirmed out of scope for
+the "never had any back-ref" invariant, not a bug -- first refutation
+in this whole review loop, a good convergence signal.
+
+3 new/updated tests. Full suite 1154/1154, typecheck clean, biome clean.
 <!-- SECTION:NOTES:END -->
