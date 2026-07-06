@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-06 01:54'
+updated_date: '2026-07-06 02:37'
 labels:
   - cmd
 milestone: m-3
@@ -224,4 +224,42 @@ nextTasks from already-computed status, matching runLink); stale module
 doc comment updated. ADR-0009 Sec2 amended to document case-preserving +
 the collision guard together. 9 new/updated tests, full suite
 1129/1129, typecheck clean, biome clean.
+
+/code-review max, 4th pass on PR #35 (workflow-backed, post-3rd-pass-fix
+commit 940569d): 6 finder angles, 3 pooled candidates, all 3 independently
+verified (0 refuted). Fixed in 088c433:
+- (correctness) the round-3 commaJoin() comma-rejection meant a concept
+  whose path contains a comma could never get its Backlog back-reference
+  written/removed -- every editTask call would throw, permanently
+  reporting drift on every future invocation. Added assertNoCommaInId(),
+  checked unconditionally before any write (same pattern as the
+  reserved-stem/case-collision guards): fails loud once with a clear
+  reason instead of silent, permanent per-task drift.
+- (cleanup) link.test.ts's fake BacklogAdapter treated doc: [] as "clear
+  documentation", diverging from the real adapter's --doc accumulator
+  (empty array = no-op, same as undefined). Fixed the fake to match.
+
+One finding left as an ACCEPTED TRADEOFF, not fixed: runLink reads each
+task via viewTask twice (existence check, then a fresh read right before
+editing). This is deliberate -- the round-2 fix -- to close a narrow
+out-of-band-change race; the review's own writeup agrees removing it is
+a correctness/perf tradeoff, not a free win. Not changing it.
+
+2 new/updated tests. Full suite 1130/1130, typecheck clean, biome clean.
+
+/code-review max, 5th pass on PR #35 (workflow-backed, post-4th-pass-fix
+commit 088c433): 6 finder angles, 2 pooled candidates, both independently
+verified (0 refuted). Fixed in 29ee7aa:
+- (correctness) assertNoCommaInId() and assertNoLabelCaseCollision()
+  (added in the 3rd/4th passes) ran unconditionally in prepare(), even
+  though both exist solely to protect the Backlog doc:<id> label
+  encoding -- which --no-back-ref never touches. This blocked a
+  legitimate pure-frontmatter `--no-back-ref` link/unlink on a
+  comma-bearing or case-colliding concept id -- a regression for the
+  comma case versus the branch's own pre-088c433 behavior. Both checks
+  now gate on `!parsed.noBackRef`; the reserved-stem guard stays
+  unconditional (the doc-side tasks: write always happens regardless
+  of --no-back-ref).
+
+1 new test. Full suite 1131/1131, typecheck clean, biome clean.
 <!-- SECTION:NOTES:END -->
