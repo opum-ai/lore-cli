@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { BacklogAdapter, BacklogTaskDetail, EditTaskPatch } from "../src/adapters/backlog";
+import type { BacklogAdapter, EditTaskPatch } from "../src/adapters/backlog";
 import {
   assertNoLabelCaseCollision,
   type LinkOptions,
@@ -29,7 +29,7 @@ import { buildGraph } from "../src/core/bundle";
 import { parseConcept } from "../src/core/concept";
 import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
-import { capture } from "./helpers";
+import { capture, fakeAdapter, makeTask } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 const PLAIN_CTX: OutputContext = { mode: "plain", color: false };
@@ -54,108 +54,6 @@ function writeDoc(rel: string, contents: string): void {
 
 function readDoc(rel: string): string {
   return readFileSync(join(root, "docs", rel), "utf8");
-}
-
-// ── Fake adapter ─────────────────────────────────────────────────────────────────
-
-/** A recorded `editTask` call, for assertions. */
-interface EditCall {
-  readonly id: string;
-  readonly patch: EditTaskPatch;
-}
-
-/** Build a minimal {@link BacklogTaskDetail}, overriding only the fields a test cares about. */
-function makeTask(id: string, overrides: Partial<BacklogTaskDetail> = {}): BacklogTaskDetail {
-  return {
-    id,
-    title: `Title for ${id}`,
-    status: "To Do",
-    priority: null,
-    ordinal: null,
-    assignees: [],
-    labels: [],
-    milestone: null,
-    parentTaskId: null,
-    file: `backlog/tasks/${id.toLowerCase()} - title.md`,
-    reporter: null,
-    createdDate: "2026-01-01T00:00:00Z",
-    updatedDate: null,
-    dependencies: [],
-    references: [],
-    documentation: [],
-    modifiedFiles: [],
-    parentTaskTitle: null,
-    subtasks: [],
-    acceptanceCriteria: [],
-    definitionOfDone: [],
-    description: null,
-    implementationPlan: null,
-    implementationNotes: null,
-    finalSummary: null,
-    comments: [],
-    source: null,
-    branch: null,
-    ...overrides,
-  };
-}
-
-/** An in-memory {@link BacklogAdapter} fake: `viewTask` reads a seeded map (case-insensitive), `editTask` mutates it and records the call. Every other method throws — link/unlink never call them. */
-function fakeAdapter(
-  seed: readonly BacklogTaskDetail[],
-  opts: { poisonEdits?: readonly string[]; poisonViews?: readonly string[] } = {},
-): BacklogAdapter & { calls: EditCall[] } {
-  const tasks = new Map<string, BacklogTaskDetail>();
-  for (const t of seed) {
-    tasks.set(t.id.toLowerCase(), t);
-  }
-  const poison = new Set((opts.poisonEdits ?? []).map((id) => id.toLowerCase()));
-  const poisonViews = new Set((opts.poisonViews ?? []).map((id) => id.toLowerCase()));
-  const calls: EditCall[] = [];
-  const notImplemented = (name: string) => (): never => {
-    throw new Error(`fakeAdapter: ${name} is not implemented (link/unlink never call it)`);
-  };
-  return {
-    probe: notImplemented("probe"),
-    listTasks: notImplemented("listTasks"),
-    searchByLabel: notImplemented("searchByLabel"),
-    searchTasks: notImplemented("searchTasks"),
-    createTask: notImplemented("createTask"),
-    calls,
-    async viewTask(id: string): Promise<BacklogTaskDetail | null> {
-      if (poisonViews.has(id.toLowerCase())) {
-        throw new Error(`simulated Backlog read failure viewing ${id}`);
-      }
-      return tasks.get(id.toLowerCase()) ?? null;
-    },
-    async editTask(id: string, patch: EditTaskPatch): Promise<void> {
-      calls.push({ id, patch });
-      if (poison.has(id.toLowerCase())) {
-        throw new Error(`simulated Backlog failure editing ${id}`);
-      }
-      const existing = tasks.get(id.toLowerCase());
-      if (existing === undefined) {
-        throw new LoreError("not_found", `task "${id}" not found`, "");
-      }
-      const labels = new Set(existing.labels.map((l) => l.toLowerCase()));
-      const byLower = new Map(existing.labels.map((l) => [l.toLowerCase(), l]));
-      for (const add of patch.addLabels ?? []) {
-        if (!labels.has(add.toLowerCase())) {
-          labels.add(add.toLowerCase());
-          byLower.set(add.toLowerCase(), add);
-        }
-      }
-      for (const remove of patch.removeLabels ?? []) {
-        labels.delete(remove.toLowerCase());
-        byLower.delete(remove.toLowerCase());
-      }
-      const nextLabels = [...labels].map((l) => byLower.get(l) as string);
-      // Mirrors the real adapter's `--doc` accumulator (backlog.ts's `for (const doc of patch.doc ?? [])`):
-      // it emits one repeated flag per entry, so an EMPTY array sends zero flags and is a no-op, exactly
-      // like `undefined` — never a "clear". Both must leave `documentation` untouched.
-      const nextDocs = patch.doc !== undefined && patch.doc.length > 0 ? [...patch.doc] : existing.documentation;
-      tasks.set(id.toLowerCase(), { ...existing, labels: nextLabels, documentation: nextDocs });
-    },
-  };
 }
 
 function opts(args: string[], adapter: BacklogAdapter): LinkOptions {
@@ -705,5 +603,22 @@ describe("lore link/unlink — 2nd-pass code-review fixes", () => {
     const a = parseConcept("stories/x.md", "---\ntype: Story\n---\nBody.\n");
     const graph = buildGraph([a]);
     expect(() => assertNoLabelCaseCollision(graph, a.id, a.id, "link/unlink")).not.toThrow();
+  });
+
+  test("assertNoLabelCaseCollision detects a collision when excludeId differs from candidateId (lore rename's own call pattern: candidateId=newId, excludeId=oldId)", () => {
+    // A concept "a" is being renamed onto "stories/b", which case-collides with an unrelated
+    // sibling "stories/B" already in the bundle — excludeId is "a"'s OLD id, not the candidate, so
+    // the check must still fire even though candidateId !== excludeId.
+    const a = parseConcept("stories/a.md", "---\ntype: Story\n---\nA.\n");
+    const bColliding = parseConcept("stories/B.md", "---\ntype: Story\n---\nB.\n");
+    const graph = buildGraph([a, bColliding]);
+
+    try {
+      assertNoLabelCaseCollision(graph, "stories/b", a.id, "rename to");
+      throw new Error("expected a LoreError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("conflict");
+    }
   });
 });

@@ -44,7 +44,14 @@ import { emit, type OutputContext, type Renderable } from "../output";
 import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
 import { canonicalIdentity, readSource } from "./discover";
 import { ensureDir, moveFile, writeFileOverwriting } from "./fswrite";
-import { assertNoCommaInId, assertNoLabelCaseCollision, defaultAdapter, type MovedBackRef, moveBackRefs } from "./link";
+import {
+  assertNoCommaInId,
+  assertNoLabelCaseCollision,
+  dedupeTaskIds,
+  defaultAdapter,
+  type MovedBackRef,
+  moveBackRefs,
+} from "./link";
 
 /** The reserved index file name, regenerated from the post-rename graph rather than spliced as a link. */
 const INDEX_FILE = "index.md";
@@ -136,7 +143,7 @@ export async function runRename(options: RenameOptions): Promise<number> {
   // when the concept actually has linked tasks, since an unlinked rename never touches Backlog and
   // neither problem can occur on that path (mirrors link.ts's `!noBackRef` scoping).
   const oldConcept = graph.concepts.get(oldId) as Concept;
-  const linkedTasks = toRefList(oldConcept.frontmatter.tasks);
+  const linkedTasks = dedupeTaskIds(toRefList(oldConcept.frontmatter.tasks));
   if (linkedTasks.length > 0) {
     assertNoCommaInId(newId, "rename to");
     assertNoLabelCaseCollision(graph, newId, oldId, "rename to");

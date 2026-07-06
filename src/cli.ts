@@ -193,7 +193,7 @@ export function run(argv: readonly string[], context: RunContext = {}): number |
       return emitMeta("help", { usage: USAGE }, USAGE, output, stdout);
     }
     const result = dispatch(parsed, { ...context, stdout, stderr }, output);
-    // The async command paths (`check --external`, `link`, `unlink`) return a Promise; a
+    // The async command paths (`check --external`, `link`, `unlink`, `rename`) return a Promise; a
     // rejection from one must funnel through the **same** error seam as a synchronous throw
     // (formatted diagnostic + the right exit code), not escape to the entrypoint's bare backstop.
     // The sync `catch` below cannot see an async rejection, so attach the seam to the promise here.

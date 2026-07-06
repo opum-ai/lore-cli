@@ -290,10 +290,11 @@ export interface MovedBackRef {
  * Backlog-side half of `lore rename` keeping ADR-0009 §2's coupling intact across a move, called
  * by `commands/rename.ts` (this file is the single owner of the `doc:<conceptId>` label contract).
  * A task with neither the old label nor the old doc path (or one no longer present in Backlog) is
- * already current and its edit is skipped entirely — the same no-op short-circuit `runLink`/
- * `runUnlink` use. Otherwise mirrors their per-task resilience: edits run sequentially, never
- * concurrently (ADR-0012 §5), and a single task's failure is caught and reported without blocking
- * the rest.
+ * already current and its edit is skipped entirely — this also covers a task linked with
+ * `--no-back-ref` (or one whose label was stripped by hand): it never had a back-reference for the
+ * old id, so *moving* one never introduces a new one it didn't already have. Otherwise mirrors
+ * `runLink`/`runUnlink`'s per-task resilience: edits run sequentially, never concurrently
+ * (ADR-0012 §5), and a single task's failure is caught and reported without blocking the rest.
  */
 export async function moveBackRefs(
   adapter: BacklogAdapter,
@@ -322,8 +323,15 @@ export async function moveBackRefs(
     const staleLabel = detail.labels.find((l) => l.toLowerCase() === oldLabel.toLowerCase() && l !== newLabel);
     const hasOldDoc = detail.documentation.includes(oldDocPath);
     const hasNewDoc = detail.documentation.includes(newDocPath);
+    if (!hasExactNewLabel && staleLabel === undefined && !hasOldDoc && !hasNewDoc) {
+      // No trace of this concept's back-reference at all, old or new — the task was never given
+      // one (e.g. linked with `--no-back-ref`) or had it stripped by hand. There is nothing to
+      // *move*; unlike `runLink`, moving never introduces a back-reference that wasn't already
+      // present under the old id, so this is left alone rather than newly adding one.
+      return "already-current" as const;
+    }
     if (hasExactNewLabel && staleLabel === undefined && hasNewDoc && !hasOldDoc) {
-      return "already-current" as const; // nothing to move
+      return "already-current" as const; // already fully migrated — nothing to move
     }
     const docs = detail.documentation.filter((d) => d !== oldDocPath);
     if (!docs.includes(newDocPath)) {
@@ -448,8 +456,14 @@ export function assertNoLabelCaseCollision(
   }
 }
 
-/** Deduplicate task ids case-insensitively, keeping the first-seen casing and argument order. */
-function dedupeTaskIds(taskIds: readonly string[]): string[] {
+/**
+ * Deduplicate task ids case-insensitively, keeping the first-seen casing and argument order.
+ * Exported for `commands/rename.ts`, which needs the same dedup applied to a concept's `tasks:`
+ * frontmatter list before {@link moveBackRefs} — that list isn't schema-enforced unique, so a
+ * hand-edited case-duplicate (`["lore-1", "LORE-1"]`) would otherwise drive a redundant Backlog
+ * round trip and a duplicate report row.
+ */
+export function dedupeTaskIds(taskIds: readonly string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const taskId of taskIds) {

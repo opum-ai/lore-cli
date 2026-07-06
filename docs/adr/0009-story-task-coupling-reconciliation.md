@@ -197,9 +197,17 @@ see [ADR-0006: Schema, types & templates](0006-schema-types-templates.md).
   failure). Renaming a concept with no `tasks:` entries never constructs a
   `BacklogAdapter` at all, so it keeps zero Backlog dependency. `--dry-run`
   previews the file-level plan only, not a Backlog-side one — the back-ref
-  move is skipped entirely under `--dry-run`. The residual cosmetic-drift
-  case is now narrower: a concept relocated by hand (not via `lore rename`)
-  still leaves a stale label/`--doc` until the next `lore link`/`unlink`.
+  move is skipped entirely under `--dry-run`. A concept relocated **by
+  hand** (`git mv`, an IDE refactor — not `lore rename`) is not covered by
+  this: `lore link` on the new id only *adds* its own label, with no notion
+  of a previous id to remove, and `lore unlink` on the old id fails
+  `not_found` once that id no longer resolves to any concept. No lore
+  command can currently clean up that stale `doc:<oldId>` label — a known
+  limitation, not resolved by re-running `lore link`/`unlink`. Recognizing
+  and repairing this class of drift is deferred to orphan/drift detection
+  (`lore orphans`/`lore check`, LORE-26/27's job), consistent with this
+  ADR's "two references can disagree, reconciled rather than silently
+  trusted" philosophy.
 
 ## Alternatives considered
 

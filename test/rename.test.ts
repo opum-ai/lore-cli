@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { BacklogAdapter, BacklogTaskDetail, EditTaskPatch } from "../src/adapters/backlog";
 import { run } from "../src/cli";
 import { type RenameReport, runRename } from "../src/commands/rename";
 import { loadBundle } from "../src/core/bundle";
@@ -10,7 +9,7 @@ import { INDEX_BLOCK_BEGIN, INDEX_BLOCK_END } from "../src/core/indexes";
 import { type RewritePlan, rewriteInbound } from "../src/core/rewrite";
 import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
-import { capture } from "./helpers";
+import { capture, fakeAdapter, makeTask } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 
@@ -44,101 +43,6 @@ function graph() {
 /** The plan's writes as a `bundle-path → bytes` map, for terse assertions. */
 function writesByPath(plan: RewritePlan): Map<string, string> {
   return new Map(plan.writes.map((w) => [w.path, w.bytes]));
-}
-
-// ── Fake adapter (mirrors link.test.ts's, for the Backlog back-ref move) ─────────
-
-/** A recorded `editTask` call, for assertions. */
-interface EditCall {
-  readonly id: string;
-  readonly patch: EditTaskPatch;
-}
-
-/** Build a minimal {@link BacklogTaskDetail}, overriding only the fields a test cares about. */
-function makeTask(id: string, overrides: Partial<BacklogTaskDetail> = {}): BacklogTaskDetail {
-  return {
-    id,
-    title: `Title for ${id}`,
-    status: "To Do",
-    priority: null,
-    ordinal: null,
-    assignees: [],
-    labels: [],
-    milestone: null,
-    parentTaskId: null,
-    file: `backlog/tasks/${id.toLowerCase()} - title.md`,
-    reporter: null,
-    createdDate: "2026-01-01T00:00:00Z",
-    updatedDate: null,
-    dependencies: [],
-    references: [],
-    documentation: [],
-    modifiedFiles: [],
-    parentTaskTitle: null,
-    subtasks: [],
-    acceptanceCriteria: [],
-    definitionOfDone: [],
-    description: null,
-    implementationPlan: null,
-    implementationNotes: null,
-    finalSummary: null,
-    comments: [],
-    source: null,
-    branch: null,
-    ...overrides,
-  };
-}
-
-/** An in-memory {@link BacklogAdapter} fake: `viewTask` reads a seeded map (case-insensitive), `editTask` mutates it and records the call. Every other method throws — `moveBackRefs` never calls them. */
-function fakeAdapter(
-  seed: readonly BacklogTaskDetail[],
-  opts: { poisonEdits?: readonly string[] } = {},
-): BacklogAdapter & { calls: EditCall[] } {
-  const tasks = new Map<string, BacklogTaskDetail>();
-  for (const t of seed) {
-    tasks.set(t.id.toLowerCase(), t);
-  }
-  const poison = new Set((opts.poisonEdits ?? []).map((id) => id.toLowerCase()));
-  const calls: EditCall[] = [];
-  const notImplemented = (name: string) => (): never => {
-    throw new Error(`fakeAdapter: ${name} is not implemented (moveBackRefs never calls it)`);
-  };
-  return {
-    probe: notImplemented("probe"),
-    listTasks: notImplemented("listTasks"),
-    searchByLabel: notImplemented("searchByLabel"),
-    searchTasks: notImplemented("searchTasks"),
-    createTask: notImplemented("createTask"),
-    calls,
-    async viewTask(id: string): Promise<BacklogTaskDetail | null> {
-      return tasks.get(id.toLowerCase()) ?? null;
-    },
-    async editTask(id: string, patch: EditTaskPatch): Promise<void> {
-      calls.push({ id, patch });
-      if (poison.has(id.toLowerCase())) {
-        throw new Error(`simulated Backlog failure editing ${id}`);
-      }
-      const existing = tasks.get(id.toLowerCase());
-      if (existing === undefined) {
-        throw new LoreError("not_found", `task "${id}" not found`, "");
-      }
-      const labels = new Set(existing.labels.map((l) => l.toLowerCase()));
-      const byLower = new Map(existing.labels.map((l) => [l.toLowerCase(), l]));
-      for (const add of patch.addLabels ?? []) {
-        if (!labels.has(add.toLowerCase())) {
-          labels.add(add.toLowerCase());
-          byLower.set(add.toLowerCase(), add);
-        }
-      }
-      for (const remove of patch.removeLabels ?? []) {
-        labels.delete(remove.toLowerCase());
-        byLower.delete(remove.toLowerCase());
-      }
-      const nextLabels = [...labels].map((l) => byLower.get(l) as string);
-      const nextDocs = patch.doc !== undefined && patch.doc.length > 0 ? [...patch.doc] : existing.documentation;
-      tasks.set(id.toLowerCase(), { ...existing, labels: nextLabels, documentation: nextDocs });
-    },
-  };
 }
 
 // ── core: rewriteInbound — inbound references ─────────────────────────────────────
@@ -874,5 +778,47 @@ describe("lore rename — Backlog back-ref move", () => {
 
     expect(code).toBe(EXIT_OK);
     expect(existsSync(join(root, "docs/reference/orders,v2.md"))).toBe(true);
+  });
+
+  test("a task never given a back-ref (e.g. linked with --no-back-ref) is left alone across a rename, not newly labeled (8th-pass fix)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n---\nOrders.\n");
+    const adapter = fakeAdapter([makeTask("LORE-1")]); // no labels, no documentation at all
+    const stdout = capture();
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/sales-orders"],
+      stdout,
+      stderr: capture(),
+      adapter,
+    });
+    const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
+
+    expect(code).toBe(EXIT_OK);
+    expect(envelope.data.backRefs).toEqual([{ task: "lore-1", backRef: "already-current" }]);
+    expect(adapter.calls).toHaveLength(0); // never introduces a back-ref the task didn't already have
+  });
+
+  test("case-duplicate ids in tasks: frontmatter are deduped before the Backlog move (8th-pass fix)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n  - LORE-1\n---\nOrders.\n");
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", { labels: ["doc:reference/orders"], documentation: ["docs/reference/orders.md"] }),
+    ]);
+    const stdout = capture();
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/sales-orders"],
+      stdout,
+      stderr: capture(),
+      adapter,
+    });
+    const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
+
+    expect(code).toBe(EXIT_OK);
+    expect(envelope.data.backRefs).toEqual([{ task: "lore-1", backRef: "moved" }]); // one row, not two
+    expect(adapter.calls).toHaveLength(1); // one Backlog round trip, not two
   });
 });
