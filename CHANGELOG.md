@@ -30,7 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--doc` path to the renamed concept's new id/path (the file move commits first; the back-ref move
   is best-effort per task, `drift`/exit `6` on a partial failure, and never attempted for an
   unlinked concept or under `--dry-run`) — closing the gap where a rename would otherwise silently
-  orphan a task's back-reference. Not yet consumed by `reconcile.ts`/`managed-block.ts` (LORE-26/27's
+  orphan a task's back-reference. For a concept relocated **outside** `lore rename` (`git mv`, an
+  IDE refactor), `lore unlink <id> <taskId…> --allow-missing` tolerates `<id>` not resolving to a
+  live concept and cleans up just the stale Backlog-side `doc:` label/`--doc` entry (there is no
+  concept file to touch `tasks:` on) — the case-collision guard still protects a *live* concept
+  whose id collides with `<id>`. Not yet consumed by `reconcile.ts`/`managed-block.ts` (LORE-26/27's
   job).
 - **`core/reconcile.ts` — roll a Story/Spec's linked task statuses up into one derived `status`**
   (LORE-23). The pure engine behind the `status:` half of `lore sync`/`lore check` (ADR-0009 §3):

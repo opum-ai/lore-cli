@@ -12,6 +12,15 @@
  * task-not-found case — a task already deleted from Backlog is tolerated, the doc-side reference
  * is still cleaned up, and the back-reference edit is simply skipped for that id.
  *
+ * `unlink --allow-missing` tolerates `id` itself not resolving to a live concept — the recovery
+ * path for a concept relocated **outside** `lore rename` (`git mv`, an IDE refactor, a hand edit):
+ * `lore link <newId> <taskId>` only ever adds its own label, with no notion of a previous id to
+ * remove, so the old `doc:<id>` label and stale `--doc` entry would otherwise be permanently
+ * un-cleanable (see ADR-0009 §2). In this mode there is no concept file to write `tasks:` on, so
+ * only the Backlog-side label/`--doc` removal runs, computed directly from the given `id` string;
+ * the case-collision guard still applies (a *live* concept whose id collides with `id` is still
+ * protected, since Backlog's label store can't tell the two apart either).
+ *
  * `--doc` is a SET/REPLACE accumulator (backlog-cli-contract §2.4): repassing it replaces the
  * task's whole `documentation:` array, so both commands read the task's current array — freshly,
  * right before the edit, never reusing an earlier snapshot (see below) — and compute the full
@@ -72,7 +81,7 @@ export interface LinkOptions {
   adapter?: BacklogAdapter;
 }
 
-/** The parsed form of `link`/`unlink`'s arguments: identical shape for both commands. */
+/** The parsed form of `link`/`unlink`'s arguments. `allowMissing` is `unlink`-only (see {@link parseLinkArgs}). */
 interface LinkArgs {
   /** The concept id (or path) being linked/unlinked. */
   id: string;
@@ -80,6 +89,8 @@ interface LinkArgs {
   taskIds: string[];
   /** `--no-back-ref`: skip the Backlog-side label/`--doc` edit entirely. */
   noBackRef: boolean;
+  /** `unlink --allow-missing`: tolerate `id` not resolving to a live concept — see {@link runUnlink}. Always `false` for `link`. */
+  allowMissing: boolean;
 }
 
 /** One task's outcome in a {@link LinkReport}. */
@@ -108,7 +119,7 @@ export interface LinkReport {
 export interface UnlinkedTask {
   /** The task id as given. */
   readonly task: string;
-  /** Whether the concept's `tasks:` frontmatter lost this id or never carried it. */
+  /** Whether the concept's `tasks:` frontmatter lost this id or never carried it — always `"not-linked"` under `--allow-missing` (there is no `tasks:` list to check). */
   readonly status: "removed" | "not-linked";
   /** Whether the task's `doc:<conceptId>` label was removed, was already absent, the edit was skipped (`--no-back-ref`, or the task no longer exists in Backlog), or the edit failed. */
   readonly backRef: "removed" | "already-absent" | "skipped" | "failed";
@@ -118,11 +129,11 @@ export interface UnlinkedTask {
 
 /** The `unlink.result` payload. */
 export interface UnlinkReport {
-  /** The concept's repo-relative path. */
+  /** The concept's repo-relative path — reconstructed from the given id (`docs/<id>.md`) under `--allow-missing`, since there is then no live concept to read a real path from. */
   readonly concept: string;
   /** Every task id passed, in argument order, deduplicated case-insensitively. */
   readonly tasks: readonly UnlinkedTask[];
-  /** Whether the concept file was written (false when every id was already unlinked). */
+  /** Whether the concept file was written; always `false` under `--allow-missing` (no concept file exists to write). */
   readonly changed: boolean;
 }
 
@@ -139,7 +150,12 @@ export interface UnlinkReport {
  *   least one failed — the report still names every task's actual outcome either way.
  */
 export async function runLink(options: LinkOptions): Promise<number> {
-  const { concept, taskIds, noBackRef, docsRoot } = await prepare(options, "link");
+  const { concept, id, taskIds, noBackRef, docsRoot } = await prepare(options, "link");
+  if (concept === undefined) {
+    // Unreachable: `--allow-missing` is `unlink`-only (see `parseLinkArgs`), so `prepare` always
+    // resolves `id` to a live concept or throws `not_found` for `link`.
+    throw conceptNotInBundle(id);
+  }
   const adapter = options.adapter ?? defaultAdapter(options.root);
   const docPath = repoRelativePath(concept.path);
   const label = backRefLabel(concept.id);
@@ -215,50 +231,43 @@ export async function runLink(options: LinkOptions): Promise<number> {
  * the back-reference edit is skipped for that id. The doc-side write needs no Backlog round-trip
  * at all, so it never depends on any back-reference edit's outcome.
  *
+ * With `--allow-missing`, `id` itself may not resolve to a live concept ({@link prepare} returns
+ * `concept: undefined`): there is then no `tasks:` frontmatter to write (`changed` is always
+ * `false`, every task's doc-side `status` is `"not-linked"`), and only the Backlog-side label/
+ * `--doc` removal runs, computed straight from `id` — see the module doc.
+ *
  * @returns `0` when every back-reference edit (if any ran) succeeded; `6` (`drift`) when at
  *   least one failed — the report still names every task's actual outcome either way.
  */
 export async function runUnlink(options: LinkOptions): Promise<number> {
-  const { concept, taskIds, noBackRef, docsRoot } = await prepare(options, "unlink");
+  const { concept, id, taskIds, noBackRef, docsRoot } = await prepare(options, "unlink");
   const adapter = options.adapter ?? defaultAdapter(options.root);
-  const docPath = repoRelativePath(concept.path);
-  const label = backRefLabel(concept.id);
+  const docPath = concept !== undefined ? repoRelativePath(concept.path) : `${DOCS_DIR}/${id}.md`;
+  const label = backRefLabel(concept?.id ?? id);
 
-  const existingTasks = toRefList(concept.frontmatter.tasks);
-  const tasks: UnlinkedTask[] = taskIds.map((taskId) => {
-    const wasLinked = containsCaseInsensitive(existingTasks, taskId);
-    return { task: taskId, status: wasLinked ? "removed" : "not-linked", backRef: "skipped" };
-  });
-  const removedLower = new Set(tasks.filter((t) => t.status === "removed").map((t) => t.task.toLowerCase()));
-  const nextTasks = existingTasks.filter((t) => !removedLower.has(t.toLowerCase()));
-
-  // Write the doc-side removal FIRST — mirrors runLink's order. The doc write needs no Backlog
-  // round-trip and never depends on any back-reference edit's outcome, so committing it before the
-  // per-task Backlog edits means a failure on the Backlog side can never strand it (the reverse
-  // order would leave already-applied Backlog mutations unreported if this write then failed).
-  const changed = writeTasksIfChanged(options.root, docsRoot, concept, existingTasks, nextTasks);
+  let tasks: UnlinkedTask[];
+  let changed = false;
+  if (concept !== undefined) {
+    const existingTasks = toRefList(concept.frontmatter.tasks);
+    tasks = taskIds.map((taskId) => {
+      const wasLinked = containsCaseInsensitive(existingTasks, taskId);
+      return { task: taskId, status: wasLinked ? "removed" : "not-linked", backRef: "skipped" };
+    });
+    const removedLower = new Set(tasks.filter((t) => t.status === "removed").map((t) => t.task.toLowerCase()));
+    const nextTasks = existingTasks.filter((t) => !removedLower.has(t.toLowerCase()));
+    // Write the doc-side removal FIRST — mirrors runLink's order. The doc write needs no Backlog
+    // round-trip and never depends on any back-reference edit's outcome, so committing it before
+    // the per-task Backlog edits means a failure on the Backlog side can never strand it (the
+    // reverse order would leave already-applied Backlog mutations unreported if this write failed).
+    changed = writeTasksIfChanged(options.root, docsRoot, concept, existingTasks, nextTasks);
+  } else {
+    // --allow-missing, id doesn't resolve: no concept file exists to carry a tasks: list at all.
+    tasks = taskIds.map((taskId) => ({ task: taskId, status: "not-linked", backRef: "skipped" }));
+  }
 
   let anyBackRefFailed = false;
   if (!noBackRef) {
-    const outcomes = await runSequentially(taskIds, async (taskId) => {
-      const detail = await adapter.viewTask(taskId);
-      if (detail === null) {
-        return "skipped" as const; // the task no longer exists in Backlog — nothing to clean up
-      }
-      const hadLabel = hasLabel(detail, label);
-      const hadDoc = detail.documentation.includes(docPath);
-      if (!hadLabel && !hadDoc) {
-        return "already-absent" as const; // nothing to remove — skip the edit entirely
-      }
-      const desiredDocs = removeDoc(detail.documentation, docPath);
-      await adapter.editTask(taskId, {
-        removeLabels: [label],
-        // Backlog cannot clear `--doc` via an empty value (contract §2.4); omit the flag
-        // entirely rather than send a no-op empty accumulator that would be silently ignored.
-        doc: desiredDocs.length > 0 ? desiredDocs : undefined,
-      });
-      return "removed" as const;
-    });
+    const outcomes = await removeBackRefs(adapter, taskIds, label, docPath);
     outcomes.forEach((outcome, i) => {
       const entry = tasks[i] as UnlinkedTask;
       if (outcome.status === "fulfilled") {
@@ -273,6 +282,38 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
   const report: UnlinkReport = { concept: docPath, tasks, changed };
   emit(reportRenderable("unlink.result", report, renderTaskReport), options.output, options.stdout);
   return anyBackRefFailed ? EXIT_CODES.drift : EXIT_OK;
+}
+
+/**
+ * Remove `label`/`docPath` from every `taskId`'s Backlog record — the per-task removal loop shared
+ * by {@link runUnlink}'s normal and `--allow-missing` (bare-id) paths, which differ only in how
+ * `label`/`docPath` were derived, not in how the removal itself works.
+ */
+async function removeBackRefs(
+  adapter: BacklogAdapter,
+  taskIds: readonly string[],
+  label: string,
+  docPath: string,
+): Promise<readonly PromiseSettledResult<"removed" | "already-absent" | "skipped">[]> {
+  return runSequentially(taskIds, async (taskId) => {
+    const detail = await adapter.viewTask(taskId);
+    if (detail === null) {
+      return "skipped" as const; // the task no longer exists in Backlog — nothing to clean up
+    }
+    const hadLabel = hasLabel(detail, label);
+    const hadDoc = detail.documentation.includes(docPath);
+    if (!hadLabel && !hadDoc) {
+      return "already-absent" as const; // nothing to remove — skip the edit entirely
+    }
+    const desiredDocs = removeDoc(detail.documentation, docPath);
+    await adapter.editTask(taskId, {
+      removeLabels: [label],
+      // Backlog cannot clear `--doc` via an empty value (contract §2.4); omit the flag
+      // entirely rather than send a no-op empty accumulator that would be silently ignored.
+      doc: desiredDocs.length > 0 ? desiredDocs : undefined,
+    });
+    return "removed" as const;
+  });
 }
 
 /** One task's outcome after {@link moveBackRefs} moves its back-reference to a concept's new id/path. */
@@ -367,9 +408,14 @@ export function defaultAdapter(root: string): BacklogAdapter {
   return createBacklogAdapter(bunBacklogSpawn(undefined, root));
 }
 
-/** Everything {@link runLink}/{@link runUnlink} need after parsing and loading the bundle. */
+/**
+ * Everything {@link runLink}/{@link runUnlink} need after parsing and loading the bundle.
+ * `concept` is `undefined` only for `unlink --allow-missing` when `id` doesn't resolve to a live
+ * concept — `id` is always the resolved (post-`idFromPath`) id, needed either way.
+ */
 interface Prepared {
-  readonly concept: Concept;
+  readonly concept: Concept | undefined;
+  readonly id: string;
   readonly taskIds: string[];
   readonly noBackRef: boolean;
   readonly docsRoot: string;
@@ -378,7 +424,9 @@ interface Prepared {
 /**
  * Parse arguments, load the bundle, and resolve the concept — shared by both commands. Advisories
  * are flushed immediately after `loadBundle`, before the lookup that can throw `not_found`, so a
- * load warning is never lost on the failing path.
+ * load warning is never lost on the failing path. `link` (and `unlink` without `--allow-missing`)
+ * always resolve `id` to a live concept or throw `not_found`; `unlink --allow-missing` tolerates a
+ * miss and returns `concept: undefined` instead (see {@link runUnlink}).
  */
 async function prepare(options: LinkOptions, command: "link" | "unlink"): Promise<Prepared> {
   const parsed = parseLinkArgs(options.args, command);
@@ -398,12 +446,21 @@ async function prepare(options: LinkOptions, command: "link" | "unlink"): Promis
 
   const concept = graph.concepts.get(id);
   if (concept === undefined) {
+    if (parsed.allowMissing) {
+      // The case-collision guard still applies: Backlog's own label store can't distinguish `id`
+      // from a *live* concept whose id collides with it case-insensitively, so removing `id`'s
+      // label could otherwise strip that live concept's real back-reference.
+      if (!parsed.noBackRef) {
+        assertNoLabelCaseCollision(graph, id, id, command);
+      }
+      return { concept: undefined, id, taskIds: dedupeTaskIds(parsed.taskIds), noBackRef: parsed.noBackRef, docsRoot };
+    }
     throw conceptNotInBundle(id);
   }
   if (!parsed.noBackRef) {
     assertNoLabelCaseCollision(graph, concept.id, concept.id, command);
   }
-  return { concept, taskIds: dedupeTaskIds(parsed.taskIds), noBackRef: parsed.noBackRef, docsRoot };
+  return { concept, id, taskIds: dedupeTaskIds(parsed.taskIds), noBackRef: parsed.noBackRef, docsRoot };
 }
 
 /**
@@ -550,7 +607,10 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
  * tail, not a fixed count).
  */
 function parseLinkArgs(args: readonly string[], command: "link" | "unlink"): LinkArgs {
-  const { positionals, flags } = parseCommandArgs(args, command, ["no-back-ref"]);
+  // `--allow-missing` is unlink-only: `link` fundamentally needs a live concept to add `tasks:`
+  // to, so tolerating a miss would be meaningless there.
+  const knownFlags = command === "unlink" ? ["no-back-ref", "allow-missing"] : ["no-back-ref"];
+  const { positionals, flags } = parseCommandArgs(args, command, knownFlags);
 
   const id = positionals[0];
   if (id === undefined) {
@@ -563,7 +623,7 @@ function parseLinkArgs(args: readonly string[], command: "link" | "unlink"): Lin
       `pass one or more task ids, e.g. \`lore ${command} ${id} task-42\``,
     );
   }
-  return { id, taskIds, noBackRef: flags.has("no-back-ref") };
+  return { id, taskIds, noBackRef: flags.has("no-back-ref"), allowMissing: flags.has("allow-missing") };
 }
 
 // ── Output ─────────────────────────────────────────────────────────────────────

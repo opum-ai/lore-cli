@@ -225,7 +225,7 @@ lore link stories/bulk-archive-orders task-42 task-57
 | **Args** | `<id>` `<taskId…>` |
 | **Key flags** | `--no-back-ref` (skip the `doc:` label write to the task) |
 | **Output** | `kind: link.result` — links added / already present |
-| **Exit** | `0` ok · `3` concept or task id not found · `4` writing into a managed region denied |
+| **Exit** | `0` ok · `2` usage (bad flag, comma-bearing id) · `3` concept or task id not found · `4` writing into a managed region denied · `5` `<id>` collides case-insensitively with another concept · `6` a task's back-reference edit failed (drift) |
 
 ### `unlink`
 
@@ -236,12 +236,23 @@ Remove task ids from a concept's `tasks:` frontmatter and remove the matching
 lore unlink stories/bulk-archive-orders task-42
 ```
 
+With `--allow-missing`, `<id>` may not resolve to a live concept — the recovery
+path for a concept relocated **outside** `lore rename` (`git mv`, an IDE
+refactor), which would otherwise leave its `doc:<id>` label permanently
+un-cleanable (`lore link` on the new id only ever adds; it has no notion of a
+previous id to remove). Only the Backlog-side label/`--doc` are touched; there
+is no concept file to update `tasks:` on.
+
+```
+lore unlink stories/bulk-archive-orders task-42 --allow-missing
+```
+
 | | |
 |---|---|
 | **Args** | `<id>` `<taskId…>` |
-| **Key flags** | `--no-back-ref` (leave the `doc:` label on the task) |
+| **Key flags** | `--no-back-ref` (leave the `doc:` label on the task) · `--allow-missing` (tolerate `<id>` not resolving to a live concept) |
 | **Output** | `kind: unlink.result` — links removed / already absent |
-| **Exit** | `0` ok · `3` concept not found |
+| **Exit** | `0` ok · `2` usage (bad flag, comma-bearing id) · `3` concept not found (unless `--allow-missing`) · `5` `<id>` collides case-insensitively with a live concept · `6` a task's back-reference edit failed (drift) |
 
 ### `tasks`
 
@@ -365,6 +376,12 @@ inbound cross-link and frontmatter ref** across the bundle using the link
 graph, then update sub-indexes. Links remain
 [portable](./portable-markdown.md) (relative, URL-encoded, `.md`-suffixed).
 
+If the renamed concept has `tasks:` entries, every linked task's `doc:<id>`
+label and `--doc` path are moved to the new id/path too (LORE-24, ADR-0009
+§2) — the file move commits first, then the Backlog-side move runs, so a
+Backlog failure never strands an already-renamed file. Unlinked concepts
+never touch Backlog at all.
+
 ```
 lore rename stories/bulk-archive-orders stories/order-archival
 ```
@@ -372,9 +389,9 @@ lore rename stories/bulk-archive-orders stories/order-archival
 | | |
 |---|---|
 | **Args** | `<oldId>` `<newId>` |
-| **Key flags** | `--dry-run` (report rewrites, move nothing) |
-| **Output** | `kind: rename.result` — moved path + every link rewrite applied |
-| **Exit** | `0` ok · `3` `<oldId>` not found · `5` `<newId>` already exists |
+| **Key flags** | `--dry-run` (report rewrites, move nothing — never attempts the Backlog-side move) |
+| **Output** | `kind: rename.result` — moved path + every link rewrite applied + every linked task's back-reference move outcome |
+| **Exit** | `0` ok · `3` `<oldId>` not found · `5` `<newId>` already exists, or (a linked concept only) collides case-insensitively with another concept · `6` a linked task's back-reference move failed (drift) |
 
 ### `supersede`
 

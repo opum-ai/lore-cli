@@ -622,3 +622,90 @@ describe("lore link/unlink — 2nd-pass code-review fixes", () => {
     }
   });
 });
+
+// ── unlink --allow-missing: clean up a stale label after a hand-relocation ────────
+
+describe("lore unlink --allow-missing", () => {
+  test("cleans up a stale doc: label/--doc for an id that no longer resolves to any concept", async () => {
+    // Simulates the aftermath of a hand relocation (git mv, an IDE refactor — not `lore rename`):
+    // the concept that used to be "stories/foo" is gone from the bundle, but LORE-1 still carries
+    // its stale back-reference.
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", { labels: ["doc:stories/foo"], documentation: ["docs/stories/foo.md"] }),
+    ]);
+
+    const { code, report } = await unlinkCmd(["stories/foo", "lore-1", "--allow-missing"], adapter);
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.concept).toBe("docs/stories/foo.md");
+    expect(report.changed).toBe(false); // no concept file exists to write tasks: on
+    expect(report.tasks).toEqual([{ task: "lore-1", status: "not-linked", backRef: "removed" }]);
+    expect(adapter.calls).toEqual([{ id: "lore-1", patch: { removeLabels: ["doc:stories/foo"], doc: undefined } }]);
+  });
+
+  test("without --allow-missing, the same id still fails loud (not_found)", async () => {
+    const adapter = fakeAdapter([makeTask("LORE-1", { labels: ["doc:stories/foo"] })]);
+
+    try {
+      await runUnlink(opts(["stories/foo", "lore-1"], adapter));
+      throw new Error("expected a LoreError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("not_found");
+    }
+    expect(adapter.calls).toHaveLength(0);
+  });
+
+  test("is idempotent: reports already-absent and calls nothing when the task never had the label", async () => {
+    const adapter = fakeAdapter([makeTask("LORE-1")]); // no labels, no documentation
+
+    const { report } = await unlinkCmd(["stories/foo", "lore-1", "--allow-missing"], adapter);
+
+    expect(report.tasks).toEqual([{ task: "lore-1", status: "not-linked", backRef: "already-absent" }]);
+    expect(adapter.calls).toHaveLength(0);
+  });
+
+  test("still guards against a LIVE concept whose id collides case-insensitively with the given id", async () => {
+    writeDoc("stories/Foo.md", "---\ntype: Story\n---\nBody.\n"); // a real, unrelated, currently-linked concept
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", { labels: ["doc:stories/foo"], documentation: ["docs/stories/foo.md"] }),
+    ]);
+
+    try {
+      await runUnlink(opts(["stories/foo", "lore-1", "--allow-missing"], adapter));
+      throw new Error("expected a LoreError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("conflict");
+    }
+    expect(adapter.calls).toHaveLength(0); // refused before any Backlog edit
+  });
+
+  test("still rejects a comma-bearing id up front", async () => {
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+
+    try {
+      await runUnlink(opts(["notes/foo,bar", "lore-1", "--allow-missing"], adapter));
+      throw new Error("expected a LoreError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("usage");
+    }
+  });
+
+  test("combined with --no-back-ref is a full no-op (nothing to write, nothing to remove)", async () => {
+    const adapter = fakeAdapter([makeTask("LORE-1", { labels: ["doc:stories/foo"] })]);
+
+    const { code, report } = await unlinkCmd(["stories/foo", "lore-1", "--allow-missing", "--no-back-ref"], adapter);
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks).toEqual([{ task: "lore-1", status: "not-linked", backRef: "skipped" }]);
+    expect(adapter.calls).toHaveLength(0);
+  });
+
+  test("`lore link` rejects --allow-missing as an unknown flag (unlink-only)", async () => {
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+    const err = await expectLinkError(["stories/x", "lore-1", "--allow-missing"], adapter);
+    expect(err.type).toBe("usage");
+  });
+});

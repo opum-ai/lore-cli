@@ -201,13 +201,15 @@ see [ADR-0006: Schema, types & templates](0006-schema-types-templates.md).
   hand** (`git mv`, an IDE refactor — not `lore rename`) is not covered by
   this: `lore link` on the new id only *adds* its own label, with no notion
   of a previous id to remove, and `lore unlink` on the old id fails
-  `not_found` once that id no longer resolves to any concept. No lore
-  command can currently clean up that stale `doc:<oldId>` label — a known
-  limitation, not resolved by re-running `lore link`/`unlink`. Recognizing
-  and repairing this class of drift is deferred to orphan/drift detection
-  (`lore orphans`/`lore check`, LORE-26/27's job), consistent with this
-  ADR's "two references can disagree, reconciled rather than silently
-  trusted" philosophy.
+  `not_found` once that id no longer resolves to any concept — by default.
+  `lore unlink <oldId> <taskId…> --allow-missing` is the recovery path:
+  it tolerates `<oldId>` not resolving to a live concept and removes just
+  the Backlog-side `doc:` label/`--doc` entry (there is no concept file to
+  update `tasks:` on). The case-collision guard still applies in this
+  mode, so a *live* concept whose id collides with `<oldId>` case-
+  insensitively is still protected. Recognizing *that* this drift exists
+  in the first place (as opposed to repairing it once found) remains
+  `lore orphans`/`lore check`'s job (LORE-26/27).
 
 ## Alternatives considered
 
