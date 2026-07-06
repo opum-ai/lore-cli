@@ -205,11 +205,14 @@ describe("bunBacklogSpawn — the real Bun.spawn seam", () => {
   });
 
   test("runs the subprocess in the given cwd, not the caller's own working directory", async () => {
-    // realpath: on macOS, tmpdir() resolves through a /tmp -> /private/tmp symlink, which `pwd`
-    // reports as the real path — resolve both sides the same way before comparing.
+    // Spawns the current runtime binary itself (not an external `pwd`, which isn't reliably on
+    // PATH on Windows CI runners) with an inline script printing its own cwd — portable across all
+    // three CI platforms. realpath: on macOS, tmpdir() resolves through a /tmp -> /private/tmp
+    // symlink, which the spawned process's own cwd resolution follows too — resolve both sides the
+    // same way before comparing.
     const dir = realpathSync(mkdtempSync(`${tmpdir()}/lore-spawn-cwd-`));
     try {
-      const result = await bunBacklogSpawn("pwd", dir)([]);
+      const result = await bunBacklogSpawn(process.execPath, dir)(["-e", "console.log(process.cwd())"]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout.trim()).toBe(dir);
     } finally {
