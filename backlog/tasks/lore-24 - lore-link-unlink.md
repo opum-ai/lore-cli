@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-06 13:19'
+updated_date: '2026-07-06 13:48'
 labels:
   - cmd
 milestone: m-3
@@ -318,4 +318,37 @@ afterward). Fixed in e1c4f50:
 - Amended ADR-0009 Sec2 to describe actual (not aspirational) behavior.
 
 9 new tests. Full suite 1138/1138, typecheck clean, biome clean.
+
+/code-review max, 7th pass on PR #35 (workflow-backed, post-rename-
+Backlog-awareness commit 209c43a): 6 finder angles, 7 pooled
+candidates, all 7 independently verified (0 refuted; reported as 5
+distinct root causes). All fixed in be47f28:
+- (correctness, most severe) moveBackRefs's case-insensitive hasLabel()
+  used to independently test hasOldLabel/hasNewLabel broke down for a
+  case-only concept rename -- both came back true against the single
+  stored label, so the label was removed and never re-added,
+  permanently and silently destroying the task's back-reference with
+  exit 0 and backRef:"moved" reported (a false success). Fixed with an
+  exact-match "new label already correct" check plus a case-insensitive
+  "stale label to remove" scan.
+- (correctness, same fix) a task already carrying BOTH the old and new
+  label/doc (a stale dual-labeled task) was wrongly classified
+  already-current by the old OR-based short-circuit, permanently
+  leaving the stale old label un-cleaned. Same fix closes this too.
+- (correctness) rename.ts never checked newId against
+  assertNoLabelCaseCollision before moving back-refs onto it, letting a
+  case-sensitive-filesystem rename entangle two unrelated tasks' back-
+  references. Generalized the guard (candidateId/excludeId/action) for
+  reuse.
+- (correctness) rename.ts never rejected a comma-bearing newId up
+  front, so the file move committed before the back-ref edit failed on
+  it -- permanent partial state on every retry. Exported/generalized
+  assertNoCommaInId for reuse; both guards now run before any write,
+  scoped to when the concept has linked tasks.
+- (correctness) the shared usage() helper dropped the LoreError input
+  diagnostic (cli-contract Sec5.2) rename/supersede's original reserved-
+  stem errors used to attach. Restored via an optional 3rd param.
+
+9 new/updated tests. Full suite 1142/1142, typecheck clean, biome
+clean.
 <!-- SECTION:NOTES:END -->
