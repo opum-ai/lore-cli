@@ -428,6 +428,22 @@ describe("lore link/unlink — plain rendering and parser edge cases", () => {
     expect(stdout.text()).toBe("lore-1: removed (doc), back-ref already-absent\ndocs/stories/x.md: updated\n");
   });
 
+  test("pretty (color) mode renders the same report body", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+    const stdout = capture();
+
+    await runLink({
+      root,
+      output: { mode: "pretty", color: true },
+      args: ["stories/x", "lore-1"],
+      stdout,
+      stderr: capture(),
+      adapter,
+    });
+    expect(stdout.text()).toBe("lore-1: added (doc), back-ref added\ndocs/stories/x.md: updated\n");
+  });
+
   test("reads a bare-scalar tasks: authored value as a single-element list (an undeclared field on a non-Story type is unvalidated passthrough)", async () => {
     // `Reference` declares no `tasks` field, so it's an unvalidated passthrough key — unlike
     // `Story`'s schema-enforced array, a hand-authored scalar here is exactly what
