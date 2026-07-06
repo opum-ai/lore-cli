@@ -238,7 +238,7 @@ describe("lore unlink — removal (AC#2)", () => {
     expect(adapter.calls).toHaveLength(1);
     expect(adapter.calls[0]).toEqual({
       id: "lore-1",
-      patch: { removeLabels: ["doc:stories/x"], doc: undefined },
+      patch: { removeLabels: ["doc:stories/x"], doc: [] },
     });
   });
 
@@ -251,13 +251,13 @@ describe("lore unlink — removal (AC#2)", () => {
     expect(adapter.calls[0]?.patch.doc).toEqual(["docs/other/y.md"]);
   });
 
-  test("omits --doc entirely when the remaining set would be empty (Backlog cannot clear via empty)", async () => {
+  test("sends an empty --doc array when the remaining set would be empty (Backlog treats [] and undefined identically, contract §2.4)", async () => {
     writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
     const adapter = fakeAdapter([makeTask("LORE-1", { documentation: ["docs/stories/x.md"] })]);
 
     await unlinkCmd(["stories/x", "lore-1"], adapter);
 
-    expect(adapter.calls[0]?.patch.doc).toBeUndefined();
+    expect(adapter.calls[0]?.patch.doc).toEqual([]);
   });
 
   test("tolerates a task id no longer present in Backlog: doc-side cleaned, back-ref skipped, no throw", async () => {
@@ -640,7 +640,21 @@ describe("lore unlink --allow-missing", () => {
     expect(report.concept).toBe("docs/stories/foo.md");
     expect(report.changed).toBe(false); // no concept file exists to write tasks: on
     expect(report.tasks).toEqual([{ task: "lore-1", status: "not-linked", backRef: "removed" }]);
-    expect(adapter.calls).toEqual([{ id: "lore-1", patch: { removeLabels: ["doc:stories/foo"], doc: undefined } }]);
+    expect(adapter.calls).toEqual([{ id: "lore-1", patch: { removeLabels: ["doc:stories/foo"], doc: [] } }]);
+  });
+
+  test("cleans up the stale --doc entry even when the recovery id's case doesn't match the originally-stored casing (9th-pass fix)", async () => {
+    // The concept used to be "stories/Foo" (mixed case) before it was hand-relocated; the user
+    // recalls/types the natural lowercase guess. The label matches case-insensitively regardless
+    // (Backlog's own de-dup); the --doc path must too, or it would be silently stranded forever.
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", { labels: ["doc:stories/Foo"], documentation: ["docs/stories/Foo.md"] }),
+    ]);
+
+    const { report } = await unlinkCmd(["stories/foo", "lore-1", "--allow-missing"], adapter);
+
+    expect(report.tasks).toEqual([{ task: "lore-1", status: "not-linked", backRef: "removed" }]);
+    expect(adapter.calls).toEqual([{ id: "lore-1", patch: { removeLabels: ["doc:stories/foo"], doc: [] } }]);
   });
 
   test("without --allow-missing, the same id still fails loud (not_found)", async () => {

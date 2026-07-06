@@ -346,7 +346,7 @@ function rejectCommandArgs(commandArgs: readonly string[], command: string): voi
 
 // Only drive the real process when executed directly (not when imported by tests). `run` returns a
 // number for synchronous commands and a Promise for the async ones (`check --external`, `link`,
-// `unlink`); it funnels its own async rejections through `reportError`, so `Promise.resolve(...).then` normally
+// `unlink`, `rename`); it funnels its own async rejections through `reportError`, so `Promise.resolve(...).then` normally
 // receives a numeric exit code. The `.catch` is a last-ditch backstop (e.g. `reportError` itself
 // throwing) — `EXIT_UNCAUGHT` (1), the uncaught-fault code, not the validation gate's `6`.
 if (import.meta.main) {

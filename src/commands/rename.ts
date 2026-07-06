@@ -140,11 +140,12 @@ export async function runRename(options: RenameOptions): Promise<number> {
   assertTargetFree(plan, docsRoot);
 
   // The Backlog back-ref move's own preconditions, checked up front (before any write) — but only
-  // when the concept actually has linked tasks, since an unlinked rename never touches Backlog and
-  // neither problem can occur on that path (mirrors link.ts's `!noBackRef` scoping).
+  // when the move will actually be attempted: a linked concept (an unlinked rename never touches
+  // Backlog) that isn't a `--dry-run` (which previews the file-level plan only and never attempts
+  // the Backlog-side move either — see below). Mirrors link.ts's `!noBackRef` scoping.
   const oldConcept = graph.concepts.get(oldId) as Concept;
   const linkedTasks = dedupeTaskIds(toRefList(oldConcept.frontmatter.tasks));
-  if (linkedTasks.length > 0) {
+  if (linkedTasks.length > 0 && !parsed.dryRun) {
     assertNoCommaInId(newId, "rename to");
     assertNoLabelCaseCollision(graph, newId, oldId, "rename to");
   }
@@ -162,6 +163,10 @@ export async function runRename(options: RenameOptions): Promise<number> {
   // unlinked doc keeps its historical zero-Backlog-dependency behavior — and under `--dry-run`,
   // which previews the file-level plan only, not a Backlog-side one.
   let backRefs: readonly MovedBackRef[] = [];
+  // `plan.rename` is never actually `null` here — `rewriteInbound` above is always called with
+  // `move: true` — but the check is kept (mirrors `assertTargetFree`'s identical guard) so this
+  // stays correct by construction rather than by the caller's current behavior, should a future
+  // change ever make `move` conditional in this function.
   if (plan.rename !== null && !parsed.dryRun && linkedTasks.length > 0) {
     const adapter = options.adapter ?? defaultAdapter(options.root);
     backRefs = await moveBackRefs(

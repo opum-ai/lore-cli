@@ -821,4 +821,17 @@ describe("lore rename — Backlog back-ref move", () => {
     expect(envelope.data.backRefs).toEqual([{ task: "lore-1", backRef: "moved" }]); // one row, not two
     expect(adapter.calls).toHaveLength(1); // one Backlog round trip, not two
   });
+
+  test("--dry-run previews a rename to a comma-bearing new id instead of throwing, even when linked (9th-pass fix)", async () => {
+    // cli-surface.md documents --dry-run as never touching Backlog; the comma/case-collision
+    // guards exist purely to protect the Backlog move, so they must not fire under --dry-run.
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n---\nOrders.\n");
+
+    const { code, report } = await renameCmd(["reference/orders", "reference/orders,v2", "--dry-run"]);
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.dryRun).toBe(true);
+    expect(report.backRefs).toEqual([]); // never attempted under --dry-run
+    expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true); // not moved
+  });
 });

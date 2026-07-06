@@ -301,17 +301,20 @@ async function removeBackRefs(
       return "skipped" as const; // the task no longer exists in Backlog — nothing to clean up
     }
     const hadLabel = hasLabel(detail, label);
-    const hadDoc = detail.documentation.includes(docPath);
+    // Matched case-insensitively, like `hasLabel` — necessary for `--allow-missing`, whose
+    // `docPath` is *reconstructed* from the given id, not read from a live concept's real path, so
+    // it may not match the originally-stored casing exactly. Safe because `assertNoLabelCaseCollision`
+    // already ran up front and ruled out any other concept whose id (and so doc path) could
+    // case-collide, so a case-insensitive match here can't strip a different concept's real entry.
+    const hadDoc = containsCaseInsensitive(detail.documentation, docPath);
     if (!hadLabel && !hadDoc) {
       return "already-absent" as const; // nothing to remove — skip the edit entirely
     }
-    const desiredDocs = removeDoc(detail.documentation, docPath);
-    await adapter.editTask(taskId, {
-      removeLabels: [label],
-      // Backlog cannot clear `--doc` via an empty value (contract §2.4); omit the flag
-      // entirely rather than send a no-op empty accumulator that would be silently ignored.
-      doc: desiredDocs.length > 0 ? desiredDocs : undefined,
-    });
+    // An empty `desiredDocs` is not special-cased: the real adapter's `--doc` accumulator
+    // (`for (const doc of patch.doc ?? [])`) sends zero flags for `[]`, identical to `undefined` —
+    // Backlog is left with whatever it already had (it cannot clear `--doc` via an empty value,
+    // contract §2.4), so a stale annotation cosmetically lingers either way.
+    await adapter.editTask(taskId, { removeLabels: [label], doc: removeDoc(detail.documentation, docPath) });
     return "removed" as const;
   });
 }
@@ -563,9 +566,13 @@ function addDoc(existing: readonly string[], docPath: string): string[] {
   return existing.includes(docPath) ? [...existing] : [...existing, docPath];
 }
 
-/** The desired full `documentation` array after removing `docPath` (SET/REPLACE-safe: preserves every other entry). */
+/**
+ * The desired full `documentation` array after removing `docPath` (SET/REPLACE-safe: preserves
+ * every other entry). Matched case-insensitively — see {@link removeBackRefs}'s `hadDoc` comment
+ * for why this is safe.
+ */
 function removeDoc(existing: readonly string[], docPath: string): string[] {
-  return existing.filter((d) => d !== docPath);
+  return existing.filter((d) => d.toLowerCase() !== docPath.toLowerCase());
 }
 
 /**
