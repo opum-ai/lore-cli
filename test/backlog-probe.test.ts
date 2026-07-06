@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import {
   type BacklogCapability,
   type BacklogSpawn,
@@ -200,5 +202,21 @@ describe("bunBacklogSpawn — the real Bun.spawn seam", () => {
       code = (err as { code?: unknown }).code;
     }
     expect(code).toBe("ENOENT");
+  });
+
+  test("runs the subprocess in the given cwd, not the caller's own working directory", async () => {
+    // Spawns the current runtime binary itself (not an external `pwd`, which isn't reliably on
+    // PATH on Windows CI runners) with an inline script printing its own cwd — portable across all
+    // three CI platforms. realpath: on macOS, tmpdir() resolves through a /tmp -> /private/tmp
+    // symlink, which the spawned process's own cwd resolution follows too — resolve both sides the
+    // same way before comparing.
+    const dir = realpathSync(mkdtempSync(`${tmpdir()}/lore-spawn-cwd-`));
+    try {
+      const result = await bunBacklogSpawn(process.execPath, dir)(["-e", "console.log(process.cwd())"]);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -9,7 +9,7 @@ import { INDEX_BLOCK_BEGIN, INDEX_BLOCK_END } from "../src/core/indexes";
 import { type RewritePlan, rewriteInbound } from "../src/core/rewrite";
 import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
-import { capture } from "./helpers";
+import { capture, fakeAdapter, makeTask } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 
@@ -318,18 +318,18 @@ describe("rewriteInbound — modes and validation", () => {
 // ── command: runRename ────────────────────────────────────────────────────────────
 
 /** Run `rename` in JSON mode and return the parsed `data` payload plus the exit code. */
-function renameCmd(args: string[]): { code: number; report: RenameReport } {
+async function renameCmd(args: string[]): Promise<{ code: number; report: RenameReport }> {
   const stdout = capture();
-  const code = runRename({ root, output: JSON_CTX, args, stdout, stderr: capture() });
+  const code = await runRename({ root, output: JSON_CTX, args, stdout, stderr: capture() });
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
   expect(envelope.kind).toBe("rename.result");
   return { code, report: envelope.data };
 }
 
 /** Run `rename` expecting a thrown {@link LoreError}, returned for assertions. */
-function expectError(args: string[]): LoreError {
+async function expectError(args: string[]): Promise<LoreError> {
   try {
-    runRename({ root, output: JSON_CTX, args, stdout: capture(), stderr: capture() });
+    await runRename({ root, output: JSON_CTX, args, stdout: capture(), stderr: capture() });
   } catch (err) {
     expect(err).toBeInstanceOf(LoreError);
     return err as LoreError;
@@ -338,7 +338,7 @@ function expectError(args: string[]): LoreError {
 }
 
 describe("lore rename — end to end", () => {
-  test("moves the file, deletes the old path, repoints inbound links, regenerates the hub", () => {
+  test("moves the file, deletes the old path, repoints inbound links, regenerates the hub", async () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\ntitle: Orders\n---\nOrders.\n");
     writeDoc("stories/bulk.md", "---\ntype: Story\n---\nUses [orders](../reference/orders.md#Frag).\n");
     writeDoc(
@@ -346,7 +346,7 @@ describe("lore rename — end to end", () => {
       "# reference\n\n<!-- lore:index:begin -->\n- [Orders](orders.md)\n<!-- lore:index:end -->\n",
     );
 
-    const { code, report } = renameCmd(["reference/orders", "reference/sales-orders"]);
+    const { code, report } = await renameCmd(["reference/orders", "reference/sales-orders"]);
     expect(code).toBe(EXIT_OK);
     expect(report.from).toBe("docs/reference/orders.md");
     expect(report.to).toBe("docs/reference/sales-orders.md");
@@ -357,31 +357,31 @@ describe("lore rename — end to end", () => {
     expect(readDoc("reference/index.md")).toContain("[Orders](sales-orders.md)");
   });
 
-  test("--dry-run reports the plan but writes nothing", () => {
+  test("--dry-run reports the plan but writes nothing", async () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
     writeDoc("stories/bulk.md", "---\ntype: Story\n---\n[orders](../reference/orders.md)\n");
-    const { report } = renameCmd(["reference/orders", "reference/sales-orders", "--dry-run"]);
+    const { report } = await renameCmd(["reference/orders", "reference/sales-orders", "--dry-run"]);
     expect(report.dryRun).toBe(true);
     expect(report.filesChanged).toBeGreaterThan(0);
     expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true); // not moved
     expect(readDoc("stories/bulk.md")).toContain("[orders](../reference/orders.md)"); // not rewritten
   });
 
-  test("an unrelated, already-canonical index hub is not rewritten", () => {
+  test("an unrelated, already-canonical index hub is not rewritten", async () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\ntitle: Orders\n---\nOrders.\n");
     writeDoc("stories/tale.md", "---\ntype: Story\ntitle: Tale\n---\nTale.\n");
     const storiesIndex = "# stories\n\n<!-- lore:index:begin -->\n- [Tale](tale.md)\n<!-- lore:index:end -->\n";
     writeDoc("stories/index.md", storiesIndex);
-    const { report } = renameCmd(["reference/orders", "reference/sales-orders"]);
+    const { report } = await renameCmd(["reference/orders", "reference/sales-orders"]);
     expect(report.files.map((f) => f.path)).not.toContain("docs/stories/index.md");
     expect(readDoc("stories/index.md")).toBe(storiesIndex); // byte-identical
   });
 
-  test("plain mode renders a relocation line, per-file updates, and a summary", () => {
+  test("plain mode renders a relocation line, per-file updates, and a summary", async () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
     writeDoc("stories/bulk.md", "---\ntype: Story\n---\n[orders](../reference/orders.md)\n");
     const stdout = capture();
-    runRename({
+    await runRename({
       root,
       output: { mode: "plain", color: false },
       args: ["reference/orders", "reference/sales-orders"],
@@ -394,10 +394,10 @@ describe("lore rename — end to end", () => {
     expect(text).toMatch(/\d+ files? changed/);
   });
 
-  test("pretty (color) mode renders the same diff-stable report body", () => {
+  test("pretty (color) mode renders the same diff-stable report body", async () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nLonely.\n");
     const stdout = capture();
-    runRename({
+    await runRename({
       root,
       output: { mode: "pretty", color: true },
       args: ["reference/orders", "reference/sales-orders"],
@@ -410,86 +410,88 @@ describe("lore rename — end to end", () => {
 });
 
 describe("lore rename — errors and arg parsing", () => {
-  test("a missing new id is a usage error", () => {
-    expect(expectError(["only-old"]).type).toBe("usage");
+  test("a missing new id is a usage error", async () => {
+    expect((await expectError(["only-old"])).type).toBe("usage");
   });
 
-  test("a third positional is a usage error", () => {
-    expect(expectError(["a", "b", "c"]).type).toBe("usage");
+  test("a third positional is a usage error", async () => {
+    expect((await expectError(["a", "b", "c"])).type).toBe("usage");
   });
 
-  test("a single-dash unknown flag is a usage error", () => {
-    expect(expectError(["a", "b", "-x"]).type).toBe("usage");
+  test("a single-dash unknown flag is a usage error", async () => {
+    expect((await expectError(["a", "b", "-x"])).type).toBe("usage");
   });
 
-  test("an unknown flag is a usage error", () => {
-    expect(expectError(["a", "b", "--bogus"]).type).toBe("usage");
+  test("an unknown flag is a usage error", async () => {
+    expect((await expectError(["a", "b", "--bogus"])).type).toBe("usage");
   });
 
-  test("renaming an id to itself is a usage error", () => {
+  test("renaming an id to itself is a usage error", async () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
-    expect(expectError(["reference/orders", "reference/orders.md"]).type).toBe("usage"); // .md stripped → same id
+    expect((await expectError(["reference/orders", "reference/orders.md"])).type).toBe("usage"); // .md stripped → same id
   });
 
-  test("an absent old id surfaces not_found (exit 3) through the command", () => {
+  test("an absent old id surfaces not_found (exit 3) through the command", async () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
-    const err = expectError(["reference/ghost", "reference/x"]);
+    const err = await expectError(["reference/ghost", "reference/x"]);
     expect(err.type).toBe("not_found");
   });
 
-  test("an existing new id surfaces conflict (exit 5) through the command", () => {
+  test("an existing new id surfaces conflict (exit 5) through the command", async () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
     writeDoc("reference/sales.md", "---\ntype: Reference\n---\nTaken.\n");
-    expect(expectError(["reference/orders", "reference/sales"]).type).toBe("conflict");
+    expect((await expectError(["reference/orders", "reference/sales"])).type).toBe("conflict");
   });
 
-  test("accepts a -- options terminator before the ids", () => {
+  test("accepts a -- options terminator before the ids", async () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
-    const { code } = renameCmd(["--", "reference/orders", "reference/sales-orders"]);
+    const { code } = await renameCmd(["--", "reference/orders", "reference/sales-orders"]);
     expect(code).toBe(EXIT_OK);
     expect(existsSync(join(root, "docs/reference/sales-orders.md"))).toBe(true);
   });
 
-  test("renaming onto a reserved file name (index/log) is a usage error (#4)", () => {
+  test("renaming onto a reserved file name (index/log) is a usage error (#4)", async () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
-    expect(expectError(["reference/orders", "reference/index"]).type).toBe("usage");
-    expect(expectError(["reference/orders", "reference/log"]).type).toBe("usage");
+    const err = await expectError(["reference/orders", "reference/index"]);
+    expect(err.type).toBe("usage");
+    expect(err.input).toEqual({ id: "reference/index" }); // the offending input is echoed back (cli-contract §5.2)
+    expect((await expectError(["reference/orders", "reference/log"])).type).toBe("usage");
     expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true); // nothing moved
   });
 
-  test("renaming onto an existing non-concept .md file is a conflict, not a clobber (#3)", () => {
+  test("renaming onto an existing non-concept .md file is a conflict, not a clobber (#3)", async () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
     const nonConcept = "Just prose, no frontmatter — not a concept.\n";
     writeDoc("reference/notes.md", nonConcept);
-    expect(expectError(["reference/orders", "reference/notes"]).type).toBe("conflict");
+    expect((await expectError(["reference/orders", "reference/notes"])).type).toBe("conflict");
     expect(readDoc("reference/notes.md")).toBe(nonConcept); // untouched
     expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true); // source intact
   });
 });
 
 describe("lore rename — data-loss-safe relocation (review fixes)", () => {
-  test("a case-only rename does not destroy the file (#1)", () => {
+  test("a case-only rename does not destroy the file (#1)", async () => {
     writeDoc("stories/Foo.md", "---\ntype: Story\n---\nBody of Foo.\n");
-    const { code } = renameCmd(["stories/Foo", "stories/foo"]);
+    const { code } = await renameCmd(["stories/Foo", "stories/foo"]);
     expect(code).toBe(EXIT_OK);
     // On any filesystem the lowercase target exists with the content preserved (never deleted).
     expect(existsSync(join(root, "docs/stories/foo.md"))).toBe(true);
     expect(readDoc("stories/foo.md")).toContain("Body of Foo.");
   });
 
-  test("renames into a not-yet-existing directory (creates it) (#5)", () => {
+  test("renames into a not-yet-existing directory (creates it) (#5)", async () => {
     writeDoc("stories/old.md", "---\ntype: Story\n---\nMoving to a new category.\n");
-    const { code } = renameCmd(["stories/old", "archive/2026/old"]);
+    const { code } = await renameCmd(["stories/old", "archive/2026/old"]);
     expect(code).toBe(EXIT_OK);
     expect(existsSync(join(root, "docs/archive/2026/old.md"))).toBe(true);
     expect(existsSync(join(root, "docs/stories/old.md"))).toBe(false);
   });
 
-  test("clears the stale listing in a directory the rename empties (#7)", () => {
+  test("clears the stale listing in a directory the rename empties (#7)", async () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\ntitle: Orders\n---\nOrders.\n");
     const refIndex = `# reference\n\n${INDEX_BLOCK_BEGIN}\n- [Orders](orders.md)\n${INDEX_BLOCK_END}\n`;
     writeDoc("reference/index.md", refIndex);
-    const { code } = renameCmd(["reference/orders", "stories/orders"]);
+    const { code } = await renameCmd(["reference/orders", "stories/orders"]);
     expect(code).toBe(EXIT_OK);
     const after = readDoc("reference/index.md");
     expect(after).not.toContain("[Orders](orders.md)"); // dead link gone from the managed block
@@ -499,9 +501,9 @@ describe("lore rename — data-loss-safe relocation (review fixes)", () => {
 });
 
 describe("lore rename — router integration", () => {
-  test("`lore rename` is dispatched and relocates through the router", () => {
+  test("`lore rename` is dispatched and relocates through the router", async () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
-    const code = run(["bun", "lore", "rename", "reference/orders", "reference/sales-orders", "--json"], {
+    const code = await run(["bun", "lore", "rename", "reference/orders", "reference/sales-orders", "--json"], {
       cwd: root,
       stdout: capture(),
       stderr: capture(),
@@ -510,13 +512,326 @@ describe("lore rename — router integration", () => {
     expect(existsSync(join(root, "docs/reference/sales-orders.md"))).toBe(true);
   });
 
-  test("a not_found surfaces exit 3 through the router", () => {
+  test("a not_found surfaces exit 3 through the router", async () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
-    const code = run(["bun", "lore", "rename", "reference/ghost", "reference/x", "--json"], {
+    const code = await run(["bun", "lore", "rename", "reference/ghost", "reference/x", "--json"], {
       cwd: root,
       stdout: capture(),
       stderr: capture(),
     });
     expect(code).toBe(EXIT_CODES.not_found);
+  });
+});
+
+// ── Backlog back-ref move (LORE-24 follow-up: rename keeps the doc: coupling intact) ──
+
+describe("lore rename — Backlog back-ref move", () => {
+  test("renaming a linked concept moves the doc: label and --doc path to the new id/path", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n---\nOrders.\n");
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", { labels: ["doc:reference/orders"], documentation: ["docs/reference/orders.md"] }),
+    ]);
+    const stdout = capture();
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/sales-orders"],
+      stdout,
+      stderr: capture(),
+      adapter,
+    });
+    const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
+
+    expect(code).toBe(EXIT_OK);
+    expect(envelope.data.backRefs).toEqual([{ task: "lore-1", backRef: "moved" }]);
+    expect(existsSync(join(root, "docs/reference/sales-orders.md"))).toBe(true);
+    expect(adapter.calls).toHaveLength(1);
+    expect(adapter.calls[0]).toEqual({
+      id: "lore-1",
+      patch: {
+        addLabels: ["doc:reference/sales-orders"],
+        removeLabels: ["doc:reference/orders"],
+        doc: ["docs/reference/sales-orders.md"],
+      },
+    });
+  });
+
+  test("renaming an unlinked concept never constructs a Backlog adapter at all", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    const stdout = capture();
+
+    // No `adapter` option passed — if the code tried to construct the real default adapter (which
+    // spawns a subprocess), this would either hang or throw in a sandboxed test run. Succeeding
+    // here proves the no-tasks: early-exit skips Backlog entirely.
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/sales-orders"],
+      stdout,
+      stderr: capture(),
+    });
+    const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
+
+    expect(code).toBe(EXIT_OK);
+    expect(envelope.data.backRefs).toEqual([]);
+    expect(existsSync(join(root, "docs/reference/sales-orders.md"))).toBe(true);
+  });
+
+  test("--dry-run skips the Backlog move entirely, even for a linked concept", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n---\nOrders.\n");
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", { labels: ["doc:reference/orders"], documentation: ["docs/reference/orders.md"] }),
+    ]);
+    const stdout = capture();
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/sales-orders", "--dry-run"],
+      stdout,
+      stderr: capture(),
+      adapter,
+    });
+    const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
+
+    expect(code).toBe(EXIT_OK);
+    expect(envelope.data.backRefs).toEqual([]);
+    expect(adapter.calls).toHaveLength(0);
+    expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true); // not moved
+  });
+
+  test("one task's failed back-ref move is reported without blocking the file rename; exit is drift (6)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n  - lore-2\n---\nOrders.\n");
+    const adapter = fakeAdapter(
+      [
+        makeTask("LORE-1", { labels: ["doc:reference/orders"], documentation: ["docs/reference/orders.md"] }),
+        makeTask("LORE-2", { labels: ["doc:reference/orders"], documentation: ["docs/reference/orders.md"] }),
+      ],
+      { poisonEdits: ["lore-2"] },
+    );
+    const stdout = capture();
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/sales-orders"],
+      stdout,
+      stderr: capture(),
+      adapter,
+    });
+    const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
+
+    expect(code).toBe(EXIT_CODES.drift);
+    expect(existsSync(join(root, "docs/reference/sales-orders.md"))).toBe(true); // the file still moved
+    expect(envelope.data.backRefs).toEqual([
+      { task: "lore-1", backRef: "moved" },
+      { task: "lore-2", backRef: "failed", error: "simulated Backlog failure editing lore-2" },
+    ]);
+  });
+
+  test("a task already deleted from Backlog is tolerated: already-current, no throw", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-999\n---\nOrders.\n");
+    const adapter = fakeAdapter([]); // lore-999 doesn't exist
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/sales-orders"],
+      stdout: capture(),
+      stderr: capture(),
+      adapter,
+    });
+
+    expect(code).toBe(EXIT_OK);
+    expect(adapter.calls).toHaveLength(0);
+    expect(existsSync(join(root, "docs/reference/sales-orders.md"))).toBe(true);
+  });
+
+  test("a task whose label/doc already reflect the new id/path is a full no-op: already-current, no edit call", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n---\nOrders.\n");
+    // Already carries the NEW label/doc (e.g. a prior partial run already moved it) — nothing to do.
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", {
+        labels: ["doc:reference/sales-orders"],
+        documentation: ["docs/reference/sales-orders.md"],
+      }),
+    ]);
+    const stdout = capture();
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/sales-orders"],
+      stdout,
+      stderr: capture(),
+      adapter,
+    });
+    const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
+
+    expect(code).toBe(EXIT_OK);
+    expect(envelope.data.backRefs).toEqual([{ task: "lore-1", backRef: "already-current" }]);
+    expect(adapter.calls).toHaveLength(0);
+  });
+
+  test("a case-only rename moves the label instead of destroying it (7th-pass fix)", async () => {
+    writeDoc("stories/Foo.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody of Foo.\n");
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", { labels: ["doc:stories/Foo"], documentation: ["docs/stories/Foo.md"] }),
+    ]);
+    const stdout = capture();
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["stories/Foo", "stories/foo"],
+      stdout,
+      stderr: capture(),
+      adapter,
+    });
+    const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
+
+    expect(code).toBe(EXIT_OK);
+    expect(envelope.data.backRefs).toEqual([{ task: "lore-1", backRef: "moved" }]);
+    // The label is actually MOVED (re-cased), not just removed: exactly one edit call, which both
+    // removes the old-cased label and adds the new-cased one in the same patch.
+    expect(adapter.calls).toHaveLength(1);
+    expect(adapter.calls[0]).toEqual({
+      id: "lore-1",
+      patch: {
+        addLabels: ["doc:stories/foo"],
+        removeLabels: ["doc:stories/Foo"],
+        doc: ["docs/stories/foo.md"],
+      },
+    });
+  });
+
+  test("a task already carrying both the old and new label/doc still has its stale old label removed (7th-pass fix)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n---\nOrders.\n");
+    // A stale dual-labeled task (e.g. left over from a prior hand-edit, per ADR-0009's documented
+    // cosmetic-drift tradeoff): it already carries BOTH the old and new label/doc.
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", {
+        labels: ["doc:reference/orders", "doc:reference/sales-orders"],
+        documentation: ["docs/reference/orders.md", "docs/reference/sales-orders.md"],
+      }),
+    ]);
+    const stdout = capture();
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/sales-orders"],
+      stdout,
+      stderr: capture(),
+      adapter,
+    });
+    const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
+
+    expect(code).toBe(EXIT_OK);
+    expect(envelope.data.backRefs).toEqual([{ task: "lore-1", backRef: "moved" }]); // NOT already-current
+    expect(adapter.calls).toEqual([
+      {
+        id: "lore-1",
+        patch: {
+          addLabels: undefined,
+          removeLabels: ["doc:reference/orders"],
+          doc: ["docs/reference/sales-orders.md"],
+        },
+      },
+    ]);
+  });
+
+  test("rejects a comma-bearing new id up front, before any write, when the concept is linked (7th-pass fix)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n---\nOrders.\n");
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+
+    try {
+      await runRename({
+        root,
+        output: JSON_CTX,
+        args: ["reference/orders", "reference/orders,v2"],
+        stdout: capture(),
+        stderr: capture(),
+        adapter,
+      });
+      throw new Error("expected a LoreError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("usage");
+      expect((err as LoreError).input).toEqual({ id: "reference/orders,v2" });
+    }
+    expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true); // nothing moved
+    expect(adapter.calls).toHaveLength(0);
+  });
+
+  test("a comma-bearing new id is fine for an unlinked concept (the guard is scoped to when Backlog is actually touched)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/orders,v2"],
+      stdout: capture(),
+      stderr: capture(),
+    });
+
+    expect(code).toBe(EXIT_OK);
+    expect(existsSync(join(root, "docs/reference/orders,v2.md"))).toBe(true);
+  });
+
+  test("a task never given a back-ref (e.g. linked with --no-back-ref) is left alone across a rename, not newly labeled (8th-pass fix)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n---\nOrders.\n");
+    const adapter = fakeAdapter([makeTask("LORE-1")]); // no labels, no documentation at all
+    const stdout = capture();
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/sales-orders"],
+      stdout,
+      stderr: capture(),
+      adapter,
+    });
+    const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
+
+    expect(code).toBe(EXIT_OK);
+    expect(envelope.data.backRefs).toEqual([{ task: "lore-1", backRef: "already-current" }]);
+    expect(adapter.calls).toHaveLength(0); // never introduces a back-ref the task didn't already have
+  });
+
+  test("case-duplicate ids in tasks: frontmatter are deduped before the Backlog move (8th-pass fix)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n  - LORE-1\n---\nOrders.\n");
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", { labels: ["doc:reference/orders"], documentation: ["docs/reference/orders.md"] }),
+    ]);
+    const stdout = capture();
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/sales-orders"],
+      stdout,
+      stderr: capture(),
+      adapter,
+    });
+    const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
+
+    expect(code).toBe(EXIT_OK);
+    expect(envelope.data.backRefs).toEqual([{ task: "lore-1", backRef: "moved" }]); // one row, not two
+    expect(adapter.calls).toHaveLength(1); // one Backlog round trip, not two
+  });
+
+  test("--dry-run previews a rename to a comma-bearing new id instead of throwing, even when linked (9th-pass fix)", async () => {
+    // cli-surface.md documents --dry-run as never touching Backlog; the comma/case-collision
+    // guards exist purely to protect the Backlog move, so they must not fire under --dry-run.
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n---\nOrders.\n");
+
+    const { code, report } = await renameCmd(["reference/orders", "reference/orders,v2", "--dry-run"]);
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.dryRun).toBe(true);
+    expect(report.backRefs).toEqual([]); // never attempted under --dry-run
+    expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true); // not moved
   });
 });

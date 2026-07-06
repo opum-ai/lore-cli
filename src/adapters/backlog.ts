@@ -211,11 +211,13 @@ export async function probeBacklog(spawn: BacklogSpawn): Promise<BacklogCapabili
  * {@link probeBacklog} maps to `not_found`.
  *
  * `binary` defaults to `"backlog"` (resolved from PATH); it is a parameter so a test or a pinned
- * install can point at an explicit path.
+ * install can point at an explicit path. `cwd` defaults to the current process's working directory
+ * (`Bun.spawn`'s own default); a caller working against a non-default `root` must pass it explicitly,
+ * or the subprocess resolves Backlog's project files against the wrong directory.
  */
-export function bunBacklogSpawn(binary: string = BACKLOG_BINARY): BacklogSpawn {
+export function bunBacklogSpawn(binary: string = BACKLOG_BINARY, cwd?: string): BacklogSpawn {
   return async (args: readonly string[]): Promise<SpawnResult> => {
-    const proc = Bun.spawn([binary, ...args], { stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn([binary, ...args], { stdout: "pipe", stderr: "pipe", cwd });
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
@@ -601,8 +603,22 @@ export interface BacklogAdapter {
 /** Captures the display-cased id from a create's first stdout line (`Created task LORE-1` / `Created draft …`). */
 const CREATED_ID = /^Created (?:task|draft) (\S+)$/m;
 
-/** Join multiple values for a single-value, last-wins flag into one comma-separated argument (§2.4). */
+/**
+ * Join multiple values for a single-value, last-wins flag into one comma-separated argument (§2.4).
+ * Backlog's CLI has no escape for an embedded comma — the comma **is** the delimiter — so a value
+ * containing one cannot be sent safely: it would silently split into two (or more) unrelated
+ * Backlog-side values instead of the one lore intends. Reject it instead.
+ */
 function commaJoin(values: readonly string[]): string {
+  const offender = values.find((v) => v.includes(","));
+  if (offender !== undefined) {
+    throw new LoreError(
+      "validation",
+      `cannot send "${offender}" to Backlog: a comma-separated flag has no escape for an embedded comma`,
+      "rename the concept/label/value so it contains no comma",
+      { value: offender },
+    );
+  }
   return values.join(",");
 }
 

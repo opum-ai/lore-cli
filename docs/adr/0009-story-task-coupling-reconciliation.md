@@ -98,9 +98,24 @@ doc:stories/bulk-archive-orders
   free text is not reliably searchable, so it is never the thing lore queries.
   The label carries the machine-readable coupling; `--doc` carries the pretty
   name.
-- `<conceptId>` is the concept ID (path minus `.md`), normalized lowercase to
-  match the doc-side ID convention, so the two directions agree under
-  case-insensitive comparison.
+- `<conceptId>` is the concept ID (path minus `.md`), **case-preserved** —
+  unlike the doc-side task IDs (§1), which are a closed, lowercase-normalized
+  set. Concept IDs are not: `buildGraph`'s lookup is a plain, case-sensitive
+  `Map` (deliberately, for cross-platform determinism — see
+  `core/bundle.ts`), so two concepts differing only by case are distinct
+  nodes.
+- **Case-preserving the label is necessary but not sufficient.** Backlog's own
+  `--add-label`/`--remove-label` de-dup **case-insensitively** in its label
+  store (backlog-cli-contract §2.4) — so even with a case-preserved
+  `<conceptId>`, two concepts whose ids differ only by case would still
+  collide on one stored Backlog label, and unlinking one could silently strip
+  the other's real back-reference. `lore link`/`unlink` therefore refuse
+  outright (`conflict`, exit 5) to operate on a concept whose id collides
+  case-insensitively with another concept's id — the case-preserving encoding
+  keeps the label faithful to the concept's real id for display and for the
+  (rare, cross-platform) case where no collision exists; the reject-on-
+  collision guard is what actually keeps two case-colliding concepts from
+  corrupting each other's back-reference.
 
 ### 3. Status reconciliation from live task statuses
 
@@ -170,10 +185,31 @@ see [ADR-0006: Schema, types & templates](0006-schema-types-templates.md).
   in the project's Backlog label space; a team already using `doc:`-prefixed
   labels for another purpose would collide. The prefix is documented and
   consistent, but it is a shared namespace.
-- **`--doc` and the label can diverge cosmetically.** Because `--doc` is
-  display-only and the label is the index, a renamed concept updates the label
-  but a stale `--doc` annotation can linger until the next `lore link`. This is
-  cosmetic only and never affects queries.
+- **`lore rename` actively moves the label and `--doc` path.** A concept's
+  `doc:<conceptId>` label is derived from its id, so relocating the file would
+  otherwise silently orphan every linked task's back-reference (the old label
+  keeps pointing at an id nothing owns anymore, and no command could ever clean
+  it up again). `lore rename` closes this: after committing the file move, it
+  moves every linked task's label and `--doc` path to the new id/path via
+  `commands/link.ts`'s `moveBackRefs`, mirroring `link`/`unlink`'s per-task
+  resilience (sequential edits per ADR-0012 §5, one failure isolated and
+  reported without blocking the rest, `drift`/exit `6` on any partial
+  failure). Renaming a concept with no `tasks:` entries never constructs a
+  `BacklogAdapter` at all, so it keeps zero Backlog dependency. `--dry-run`
+  previews the file-level plan only, not a Backlog-side one — the back-ref
+  move is skipped entirely under `--dry-run`. A concept relocated **by
+  hand** (`git mv`, an IDE refactor — not `lore rename`) is not covered by
+  this: `lore link` on the new id only *adds* its own label, with no notion
+  of a previous id to remove, and `lore unlink` on the old id fails
+  `not_found` once that id no longer resolves to any concept — by default.
+  `lore unlink <oldId> <taskId…> --allow-missing` is the recovery path:
+  it tolerates `<oldId>` not resolving to a live concept and removes just
+  the Backlog-side `doc:` label/`--doc` entry (there is no concept file to
+  update `tasks:` on). The case-collision guard still applies in this
+  mode, so a *live* concept whose id collides with `<oldId>` case-
+  insensitively is still protected. Recognizing *that* this drift exists
+  in the first place (as opposed to repairing it once found) remains
+  `lore orphans`/`lore check`'s job (LORE-26/27).
 
 ## Alternatives considered
 

@@ -15,10 +15,12 @@
  * count justifies the dependency.
  */
 
+import type { BacklogAdapter } from "./adapters/backlog";
 import { type FetchLike, runCheck } from "./commands/check";
 import { runContext } from "./commands/context";
 import { runGraph } from "./commands/graph";
 import { runInit } from "./commands/init";
+import { runLink, runUnlink } from "./commands/link";
 import { runNew } from "./commands/new";
 import { runQuery } from "./commands/query";
 import { runRename } from "./commands/rename";
@@ -43,6 +45,8 @@ Commands:
   replace         Find-and-replace across the bundle, skipping managed regions (lore replace "<find>" "<replace>")
   rename          Move a concept and repoint every inbound link + ref (lore rename <oldId> <newId>)
   supersede       Mark a concept superseded by another, wiring both ways (lore supersede <oldId> <newId>)
+  link            Add task ids to a concept's tasks: + the doc: back-ref label (lore link <id> <taskId…>)
+  unlink          Remove task ids from a concept's tasks: + the doc: back-ref label (lore unlink <id> <taskId…>)
   schema          Export the profile's editor JSON Schemas to .lore/schemas/ (lore schema export)
   graph           Emit the bundle's cross-link graph as json or dot (lore graph [<id>])
   query           Full-text search the bundle with frontmatter filters (lore query ["<text>"])
@@ -146,6 +150,8 @@ export interface RunContext {
   isTTY?: boolean;
   /** The fetch `check --external` uses for liveness; defaults to the global `fetch`. Injected so a caller (or a test) controls or stubs the network. */
   fetch?: FetchLike;
+  /** The Backlog adapter `link`/`unlink` use; defaults to the real `backlog` binary on PATH. Injected so a caller (or a test) touches no subprocess. */
+  adapter?: BacklogAdapter;
 }
 
 /**
@@ -187,10 +193,10 @@ export function run(argv: readonly string[], context: RunContext = {}): number |
       return emitMeta("help", { usage: USAGE }, USAGE, output, stdout);
     }
     const result = dispatch(parsed, { ...context, stdout, stderr }, output);
-    // The one async command path (`check --external`) returns a Promise; a rejection from it must
-    // funnel through the **same** error seam as a synchronous throw (formatted diagnostic + the
-    // right exit code), not escape to the entrypoint's bare backstop. The sync `catch` below cannot
-    // see an async rejection, so attach the seam to the promise here.
+    // The async command paths (`check --external`, `link`, `unlink`, `rename`) return a Promise; a
+    // rejection from one must funnel through the **same** error seam as a synchronous throw
+    // (formatted diagnostic + the right exit code), not escape to the entrypoint's bare backstop.
+    // The sync `catch` below cannot see an async rejection, so attach the seam to the promise here.
     if (result instanceof Promise) {
       return result.catch((err: unknown) => reportError(err, { ...errorRenderOpts(output), stderr }));
     }
@@ -220,8 +226,9 @@ function emitMeta(
 
 /**
  * Route a parsed invocation to its command handler, throwing a `usage` error on bad input. Returns
- * a `number` for the synchronous commands and a `Promise<number>` for the one async path
- * (`check --external`, whose liveness probe is non-deterministic network IO).
+ * a `number` for the synchronous commands and a `Promise<number>` for the async ones — `check
+ * --external` (whose liveness probe is non-deterministic network IO) and `link`/`unlink`/`rename`
+ * (which drive the Backlog adapter).
  */
 function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext): number | Promise<number> {
   const root = context.cwd || process.cwd();
@@ -245,9 +252,34 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
     case "replace":
       return runReplace({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     case "rename":
-      return runRename({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
+      return runRename({
+        root,
+        output,
+        args: parsed.commandArgs,
+        stdout: context.stdout,
+        stderr: context.stderr,
+        adapter: context.adapter,
+      });
     case "supersede":
       return runSupersede({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
+    case "link":
+      return runLink({
+        root,
+        output,
+        args: parsed.commandArgs,
+        stdout: context.stdout,
+        stderr: context.stderr,
+        adapter: context.adapter,
+      });
+    case "unlink":
+      return runUnlink({
+        root,
+        output,
+        args: parsed.commandArgs,
+        stdout: context.stdout,
+        stderr: context.stderr,
+        adapter: context.adapter,
+      });
     case "schema":
       return runSchema({ root, output, args: parsed.commandArgs, stdout: context.stdout });
     case "graph":
@@ -313,8 +345,8 @@ function rejectCommandArgs(commandArgs: readonly string[], command: string): voi
 }
 
 // Only drive the real process when executed directly (not when imported by tests). `run` returns a
-// number for synchronous commands and a Promise for the one async path (`check --external`); it
-// funnels its own async rejections through `reportError`, so `Promise.resolve(...).then` normally
+// number for synchronous commands and a Promise for the async ones (`check --external`, `link`,
+// `unlink`, `rename`); it funnels its own async rejections through `reportError`, so `Promise.resolve(...).then` normally
 // receives a numeric exit code. The `.catch` is a last-ditch backstop (e.g. `reportError` itself
 // throwing) — `EXIT_UNCAUGHT` (1), the uncaught-fault code, not the validation gate's `6`.
 if (import.meta.main) {

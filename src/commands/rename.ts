@@ -16,28 +16,45 @@
  * index bytes — only index files whose bytes actually change are written, so an unrelated, already
  * canonical hub is never churned.
  *
+ * **Renaming a concept linked to Backlog tasks (LORE-24, ADR-0009 §2) also moves each linked
+ * task's `doc:<conceptId>` label and `--doc` path** to the new id/path, via `commands/link.ts`'s
+ * {@link moveBackRefs} — the file move commits first (it needs no Backlog round-trip and never
+ * depends on the back-ref move's outcome), then the per-task Backlog edits run, so a Backlog
+ * failure can never strand an already-renamed file. A concept with no `tasks:` entries never
+ * constructs a `BacklogAdapter` at all — renaming an unlinked doc has exactly the same
+ * zero-Backlog-dependency behavior it always did. `--dry-run` skips the Backlog move entirely
+ * (it previews the file-level plan only, not a Backlog-side preview).
+ *
  * A bad flag or a missing/duplicate id is a `usage` error (exit 2); an absent `oldId` a
- * `not_found` (exit 3, from the engine); an already-taken `newId` a `conflict` (exit 5) — all
- * funnel through the router's one error seam like every command.
+ * `not_found` (exit 3, from the engine); an already-taken `newId` a `conflict` (exit 5); a failed
+ * back-ref move is `drift` (exit 6, same as `link`/`unlink`) — all funnel through the router's one
+ * error seam like every command.
  */
 
 import { existsSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
-import { type BundleGraph, buildGraph, loadBundle, walkMarkdown } from "../core/bundle";
+import type { BacklogAdapter } from "../adapters/backlog";
+import { type BundleGraph, buildGraph, loadBundle, toRefList, walkMarkdown } from "../core/bundle";
 import { type Concept, idFromPath, parseConcept } from "../core/concept";
 import { generateIndexes, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END, locateManagedBlock } from "../core/indexes";
 import { type RewritePlan, rewriteInbound } from "../core/rewrite";
 import { DOCS_DIR } from "../core/scaffold";
-import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
+import { EXIT_CODES, EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
 import { canonicalIdentity, readSource } from "./discover";
 import { ensureDir, moveFile, writeFileOverwriting } from "./fswrite";
+import {
+  assertNoCommaInId,
+  assertNoLabelCaseCollision,
+  dedupeTaskIds,
+  defaultAdapter,
+  type MovedBackRef,
+  moveBackRefs,
+} from "./link";
 
 /** The reserved index file name, regenerated from the post-rename graph rather than spliced as a link. */
 const INDEX_FILE = "index.md";
-
-/** Reserved file stems a concept may never be renamed onto (they are machine-owned, regenerated wholesale). */
-const RESERVED_STEMS: ReadonlySet<string> = new Set(["index", "log"]);
 
 /** Options for {@link runRename}; `root` and the streams are injectable for tests. */
 export interface RenameOptions {
@@ -51,6 +68,8 @@ export interface RenameOptions {
   stdout?: Writer;
   /** stderr sink for bundle-load advisories; defaults to `process.stderr`. */
   stderr?: Writer;
+  /** The Backlog adapter; defaults to the real `backlog` binary on PATH. Only ever constructed (and only ever injected in tests) when the renamed concept has `tasks:` entries. */
+  adapter?: BacklogAdapter;
 }
 
 /** The parsed form of `lore rename`'s arguments. */
@@ -79,6 +98,8 @@ export interface RenameReport {
   readonly files: readonly ChangedFile[];
   /** How many files changed (== `files.length`). */
   readonly filesChanged: number;
+  /** Every linked task's back-reference move outcome (empty when the concept had no `tasks:`, or under `--dry-run`, which never attempts the Backlog move). */
+  readonly backRefs: readonly MovedBackRef[];
   /** Whether this was a `--dry-run` (nothing was written). */
   readonly dryRun: boolean;
 }
@@ -86,11 +107,12 @@ export interface RenameReport {
 /**
  * Run `lore rename`: parse the arguments, load the bundle, plan the move + inbound rewrite,
  * regenerate the affected indexes, write the changed files and relocate the renamed file (unless
- * `--dry-run`), emit the `rename.result`, and return `0`. A bad flag or duplicate id throws a
- * `usage` {@link LoreError} (exit `2`); an absent `oldId` a `not_found` (exit `3`); a taken `newId`
- * a `conflict` (exit `5`).
+ * `--dry-run`), move every linked task's Backlog back-reference to the new id/path, emit the
+ * `rename.result`, and return the exit code. A bad flag or duplicate id throws a `usage`
+ * {@link LoreError} (exit `2`); an absent `oldId` a `not_found` (exit `3`); a taken `newId` a
+ * `conflict` (exit `5`); a failed back-reference move `drift` (exit `6`).
  */
-export function runRename(options: RenameOptions): number {
+export async function runRename(options: RenameOptions): Promise<number> {
   const parsed = parseRenameArgs(options.args);
   const oldId = idFromPath(parsed.oldId);
   const newId = idFromPath(parsed.newId);
@@ -101,14 +123,7 @@ export function runRename(options: RenameOptions): number {
   }
   // A concept may not be renamed onto a reserved, machine-owned file name (index.md/log.md): those
   // are regenerated wholesale, so the relocated content would be silently clobbered.
-  if (RESERVED_STEMS.has(posix.basename(newId))) {
-    throw new LoreError(
-      "usage",
-      `cannot rename to "${newId}": "${posix.basename(newId)}" is a reserved, machine-generated file name`,
-      "choose a different id; index.md/log.md are generated by lore, not authored concepts",
-      { id: newId },
-    );
-  }
+  assertNotReservedStem(newId, "rename to");
 
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
@@ -123,16 +138,51 @@ export function runRename(options: RenameOptions): number {
   // concept differing only in case (which a case-sensitive `Map.has` misses) is never overwritten.
   // A target resolving to the *same* inode as the source is a legitimate case-only rename, allowed.
   assertTargetFree(plan, docsRoot);
+
+  // The Backlog back-ref move's own preconditions, checked up front (before any write) — but only
+  // when the move will actually be attempted: a linked concept (an unlinked rename never touches
+  // Backlog) that isn't a `--dry-run` (which previews the file-level plan only and never attempts
+  // the Backlog-side move either — see below). Mirrors link.ts's `!noBackRef` scoping.
+  const oldConcept = graph.concepts.get(oldId) as Concept;
+  const linkedTasks = dedupeTaskIds(toRefList(oldConcept.frontmatter.tasks));
+  if (linkedTasks.length > 0 && !parsed.dryRun) {
+    assertNoCommaInId(newId, "rename to");
+    assertNoLabelCaseCollision(graph, newId, oldId, "rename to");
+  }
+
   const writes = mergeIndexWrites(plan, graph, docsRoot);
 
   if (!parsed.dryRun) {
     commitWrites(writes, plan, docsRoot);
   }
 
-  const report = buildReport(plan, writes, parsed.dryRun);
+  // Move every linked task's Backlog back-reference LAST — mirrors link.ts's write-order fix: the
+  // file rename needs no Backlog round-trip and never depends on the back-ref move's outcome, so
+  // committing it first means a Backlog failure can never strand an already-renamed file. Skipped
+  // entirely (no BacklogAdapter even constructed) when the concept has no `tasks:` — renaming an
+  // unlinked doc keeps its historical zero-Backlog-dependency behavior — and under `--dry-run`,
+  // which previews the file-level plan only, not a Backlog-side one.
+  let backRefs: readonly MovedBackRef[] = [];
+  // `plan.rename` is never actually `null` here — `rewriteInbound` above is always called with
+  // `move: true` — but the check is kept (mirrors `assertTargetFree`'s identical guard) so this
+  // stays correct by construction rather than by the caller's current behavior, should a future
+  // change ever make `move` conditional in this function.
+  if (plan.rename !== null && !parsed.dryRun && linkedTasks.length > 0) {
+    const adapter = options.adapter ?? defaultAdapter(options.root);
+    backRefs = await moveBackRefs(
+      adapter,
+      linkedTasks,
+      oldId,
+      newId,
+      `${DOCS_DIR}/${plan.rename.from}`,
+      `${DOCS_DIR}/${plan.rename.to}`,
+    );
+  }
+
+  const report = buildReport(plan, writes, backRefs, parsed.dryRun);
   emit(reportRenderable(report), options.output, options.stdout);
   advisories.flush({ color: options.output.color, stderr: options.stderr });
-  return EXIT_OK;
+  return backRefs.some((b) => b.backRef === "failed") ? EXIT_CODES.drift : EXIT_OK;
 }
 
 // ── Filesystem commit ──────────────────────────────────────────────────────────
@@ -318,33 +368,12 @@ function buildPostRenameGraph(graph: BundleGraph, plan: RewritePlan): BundleGrap
 // ── Argument parsing ───────────────────────────────────────────────────────────
 
 /**
- * Parse `rename`'s tokens into its two positionals (`<oldId> <newId>`) and `--dry-run`. The router
- * has already stripped lore's global flags, so a `--`-prefixed token here is a command flag: an
- * unrecognized one is a `usage` error. A `--` ends option parsing so an id may begin with `-`.
+ * Parse `rename`'s tokens into its two positionals (`<oldId> <newId>`) and `--dry-run`, via the
+ * shared {@link parseCommandArgs} tokenizer (mirrors `commands/supersede.ts`/`commands/link.ts`'s
+ * parsers). Positional arity is validated here since it differs per command.
  */
 function parseRenameArgs(args: readonly string[]): RenameArgs {
-  const positionals: string[] = [];
-  let dryRun = false;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      positionals.push(...args.slice(i + 1));
-      break;
-    }
-    if (arg.startsWith("--") && arg.length > 2) {
-      const name = arg.slice(2);
-      if (name === "dry-run") {
-        dryRun = true;
-      } else {
-        throw usage(`unknown option "--${name}"`, "run `lore rename --help` to list options");
-      }
-    } else if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, "run `lore rename --help` to list options");
-    } else {
-      positionals.push(arg);
-    }
-  }
+  const { positionals, flags } = parseCommandArgs(args, "rename", ["dry-run"]);
 
   const oldId = positionals[0];
   if (oldId === undefined) {
@@ -360,19 +389,25 @@ function parseRenameArgs(args: readonly string[]): RenameArgs {
       "pass exactly an old and a new id; scope nothing else (rename rewrites the whole bundle)",
     );
   }
-  return { oldId, newId, dryRun };
+  return { oldId, newId, dryRun: flags.has("dry-run") };
 }
 
 // ── Output ─────────────────────────────────────────────────────────────────────
 
-/** Assemble the {@link RenameReport} from the plan and the merged writes (repo-relative display paths). */
-function buildReport(plan: RewritePlan, writes: Map<string, string>, dryRun: boolean): RenameReport {
+/** Assemble the {@link RenameReport} from the plan, the merged writes, and the back-ref move outcomes (repo-relative display paths). */
+function buildReport(
+  plan: RewritePlan,
+  writes: Map<string, string>,
+  backRefs: readonly MovedBackRef[],
+  dryRun: boolean,
+): RenameReport {
   const files = [...writes.keys()].map((path) => ({ path: `${DOCS_DIR}/${path}` }));
   return {
     from: plan.rename ? `${DOCS_DIR}/${plan.rename.from}` : "",
     to: plan.rename ? `${DOCS_DIR}/${plan.rename.to}` : "",
     files,
     filesChanged: files.length,
+    backRefs,
     dryRun,
   };
 }
@@ -387,7 +422,7 @@ function reportRenderable(data: RenameReport): Renderable<RenameReport> {
   };
 }
 
-/** The relocation line, one line per other changed file, then a summary. (No color: no severities.) */
+/** The relocation line, one line per other changed file, one per moved back-reference, then a summary. (No color: no severities.) */
 function render(data: RenameReport): string {
   const verb = data.dryRun ? "would rename" : "renamed";
   const lines = [`${verb} ${data.from} -> ${data.to}`];
@@ -396,12 +431,11 @@ function render(data: RenameReport): string {
       lines.push(`${data.dryRun ? "would update" : "updated"} ${file.path}`);
     }
   }
+  for (const b of data.backRefs) {
+    const suffix = b.error !== undefined ? ` (${b.error})` : "";
+    lines.push(`back-ref ${b.task}: ${b.backRef}${suffix}`);
+  }
   const noun = data.filesChanged === 1 ? "file" : "files";
   lines.push(`${data.filesChanged} ${noun} changed${data.dryRun ? " (dry-run)" : ""}`);
   return lines.join("\n");
-}
-
-/** A `usage` {@link LoreError} (exit `2`) with an actionable hint. */
-function usage(message: string, hint: string): LoreError {
-  return new LoreError("usage", message, hint);
 }

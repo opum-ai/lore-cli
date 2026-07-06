@@ -39,6 +39,14 @@ export const DOCS_DIR = "docs";
 /** The reserved bundle-root index — the only file that carries `okf_version`. */
 const ROOT_INDEX_PATH = `${DOCS_DIR}/index.md`;
 
+/**
+ * Reserved file stems that name machine-generated hubs (`index.md`, `log.md`): regenerated
+ * wholesale by `lore sync`, never a rename/supersede/link/unlink principal. Shared by
+ * `commands/rename.ts`, `commands/supersede.ts`, and `commands/link.ts` — each guards its own
+ * concept-id argument(s) against it.
+ */
+export const RESERVED_STEMS: ReadonlySet<string> = new Set(["index", "log"]);
+
 /** A single file the scaffold wants to exist, with the exact bytes to write when it is absent. */
 export interface ScaffoldFile {
   /** Repo-relative POSIX path. */

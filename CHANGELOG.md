@@ -8,6 +8,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lore link` / `lore unlink` — wire a concept's `tasks:` frontmatter to Backlog task ids**
+  (LORE-24, ADR-0009 §1–§2). `link` adds task ids to the concept's `tasks:` list and records the
+  back-reference on each task: a queryable `doc:<conceptId>` label plus the concept's repo-relative
+  path via `--doc` (display-only). `unlink` removes both sides. Every task id is validated to exist
+  before `link` writes anything (fail loud, no partial edit); `unlink` tolerates a task id already
+  deleted from Backlog — the doc-side reference is still cleaned up, the back-reference edit is
+  simply skipped. Because `--doc` is a SET/REPLACE flag (backlog-cli-contract §2.4), both commands
+  read the task's current `documentation` array first and write back the full desired array, so
+  linking/unlinking never clobbers an unrelated doc reference on a multiply-referenced task; when
+  removal would leave the array empty, `--doc` is omitted entirely (Backlog cannot clear it via an
+  empty value) — the cosmetic drift ADR-0009 already documents as an accepted tradeoff. `--no-back-ref`
+  skips the Backlog-side edit on either command. Every task's back-reference edit is independent and
+  freshly re-read right before writing; a single Backlog subprocess failure is reported on that
+  task's row (`backRef: "failed"`) rather than aborting the rest, and the command exits `6` (`drift`)
+  when any edit failed — edits run one at a time within an invocation (ADR-0012 §5: no concurrent
+  mutating Backlog commands). Neither command will target a reserved hub stem (`index`/`log`), or a
+  concept whose id collides case-insensitively with another concept's — Backlog's own label store
+  de-dups case-insensitively, so two such concepts could not have independently addressable `doc:`
+  back-references. `lore rename` now also moves every linked task's `doc:<conceptId>` label and
+  `--doc` path to the renamed concept's new id/path (the file move commits first; the back-ref move
+  is best-effort per task, `drift`/exit `6` on a partial failure, and never attempted for an
+  unlinked concept or under `--dry-run`) — closing the gap where a rename would otherwise silently
+  orphan a task's back-reference. For a concept relocated **outside** `lore rename` (`git mv`, an
+  IDE refactor), `lore unlink <id> <taskId…> --allow-missing` tolerates `<id>` not resolving to a
+  live concept and cleans up just the stale Backlog-side `doc:` label/`--doc` entry (there is no
+  concept file to touch `tasks:` on) — the case-collision guard still protects a *live* concept
+  whose id collides with `<id>`. Not yet consumed by `reconcile.ts`/`managed-block.ts` (LORE-26/27's
+  job).
 - **`core/reconcile.ts` — roll a Story/Spec's linked task statuses up into one derived `status`**
   (LORE-23). The pure engine behind the `status:` half of `lore sync`/`lore check` (ADR-0009 §3):
   `reconcileStatus(taskStatuses, statusFlow)` classifies each linked task by its position in the

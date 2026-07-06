@@ -350,6 +350,15 @@ describe("editTask — incremental patch (§2.4), meaningful exit code (§2.2)",
     ]);
   });
 
+  test("rejects an add-label containing a comma instead of silently splitting it into two Backlog labels", async () => {
+    const spawn = scriptedSpawn((argv) => (argv[1] === "edit" ? ok("Updated task LORE-1") : undefined));
+    const err = await loreError(() =>
+      createBacklogAdapter(spawn).editTask("LORE-1", { addLabels: ["doc:notes/release-notes,v2"] }),
+    );
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("release-notes,v2");
+  });
+
   test("a missing task (edit exits 1, `not found` on stderr) maps to not_found (exit 3)", async () => {
     const spawn = scriptedSpawn((argv) => (argv[1] === "edit" ? fail(1, "Task LORE-9 not found.") : undefined));
     const err = await loreError(() => createBacklogAdapter(spawn).editTask("LORE-9", { status: "Done" }));
