@@ -42,7 +42,7 @@ import { conceptNotInBundle, loadBundle, resolveRef } from "../core/bundle";
 import { type Concept, idFromPath, serializeConcept } from "../core/concept";
 import { loadProfile } from "../core/profile";
 import { rewriteInbound } from "../core/rewrite";
-import { DOCS_DIR } from "../core/scaffold";
+import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { parseCommandArgs, usage } from "./args";
@@ -50,13 +50,6 @@ import { writeFileOverwriting } from "./fswrite";
 
 /** The frontmatter `status` value that marks a concept superseded — the lifecycle signal we set and detect. */
 const SUPERSEDED_STATUS = "superseded";
-
-/**
- * Reserved file stems that name machine-generated hubs (`index.md`, `log.md`): a concept may never be
- * a supersede principal under one of these, and they are excluded from `--rewrite-links` — they are
- * regenerated wholesale by `lore sync`, not authored concepts. Mirrors `lore rename`'s guard.
- */
-const RESERVED_STEMS: ReadonlySet<string> = new Set(["index", "log"]);
 
 /** Options for {@link runSupersede}; `root` and the streams are injectable for tests. */
 export interface SupersedeOptions {

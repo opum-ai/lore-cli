@@ -27,7 +27,7 @@ import { type BundleGraph, buildGraph, loadBundle, walkMarkdown } from "../core/
 import { type Concept, idFromPath, parseConcept } from "../core/concept";
 import { generateIndexes, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END, locateManagedBlock } from "../core/indexes";
 import { type RewritePlan, rewriteInbound } from "../core/rewrite";
-import { DOCS_DIR } from "../core/scaffold";
+import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { parseCommandArgs, usage } from "./args";
@@ -36,9 +36,6 @@ import { ensureDir, moveFile, writeFileOverwriting } from "./fswrite";
 
 /** The reserved index file name, regenerated from the post-rename graph rather than spliced as a link. */
 const INDEX_FILE = "index.md";
-
-/** Reserved file stems a concept may never be renamed onto (they are machine-owned, regenerated wholesale). */
-const RESERVED_STEMS: ReadonlySet<string> = new Set(["index", "log"]);
 
 /** Options for {@link runRename}; `root` and the streams are injectable for tests. */
 export interface RenameOptions {

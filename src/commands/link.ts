@@ -13,39 +13,44 @@
  * is still cleaned up, and the back-reference edit is simply skipped for that id.
  *
  * `--doc` is a SET/REPLACE accumulator (backlog-cli-contract §2.4): repassing it replaces the
- * task's whole `documentation:` array, so both commands read the task's current array first
- * (via the same `viewTask` call used for existence) and compute the full desired array —
- * `link` never clobbers an existing unrelated doc reference, and `unlink` never disturbs a
- * *different* doc's reference on a multiply-referenced task. When removal would leave the array
- * empty, `unlink` omits `--doc` entirely: Backlog's CLI cannot clear it via an empty value (§2.4),
- * so the stale annotation cosmetically lingers until the next `lore link` — an accepted ADR-0009
- * tradeoff, not a bug this command works around.
+ * task's whole `documentation:` array, so both commands read the task's current array — freshly,
+ * right before the edit, never reusing an earlier snapshot (see below) — and compute the full
+ * desired array: `link` never clobbers an existing unrelated doc reference, and `unlink` never
+ * disturbs a *different* doc's reference on a multiply-referenced task. When removal would leave
+ * the array empty, `unlink` omits `--doc` entirely: Backlog's CLI cannot clear it via an empty
+ * value (§2.4), so the stale annotation cosmetically lingers until the next `lore link` — an
+ * accepted ADR-0009 tradeoff, not a bug this command works around.
  *
- * **Per-task back-reference edits are independent and best-effort.** The doc-side `tasks:` write
- * never depends on any Backlog edit succeeding (existence is already validated up front for
- * `link`; `unlink`'s doc-side removal needs no Backlog round-trip at all), so every task's
- * `editTask` call runs concurrently and a single failure is caught and reported on that task's
- * row (`backRef: "failed"`) rather than aborting the rest or leaving an opaque, uncaught
- * exception — the command still exits non-zero (`drift`, exit 6) when any edit failed, so the
- * failure is never silently swallowed, but a transient Backlog error on one task id never blocks
- * or corrupts the others. This is the ADR-0009 "two references can disagree" tradeoff made
- * visible and reported rather than an all-or-nothing transaction lore cannot actually provide
- * across two independent systems (a local file write and N Backlog subprocess calls).
+ * **Per-task back-reference edits are independent, freshly-read, and run sequentially.** The
+ * doc-side `tasks:` write never depends on any Backlog edit succeeding (existence is already
+ * validated up front for `link`; `unlink`'s doc-side removal needs no Backlog round-trip at all),
+ * so a single edit failure is caught and reported on that task's row (`backRef: "failed"`) rather
+ * than aborting the rest or leaving an opaque, uncaught exception — the command still exits
+ * non-zero (`drift`, exit 6) when any edit failed, so the failure is never silently swallowed, but
+ * a transient Backlog error on one task id never blocks or corrupts the others. This is the
+ * ADR-0009 "two references can disagree" tradeoff made visible and reported rather than an
+ * all-or-nothing transaction lore cannot actually provide across two independent systems (a local
+ * file write and N Backlog subprocess calls). Each edit re-reads its task **fresh** right before
+ * writing (never the up-front existence-check's snapshot), closing a race where the task changed
+ * out-of-band in between — and every edit runs **one at a time**, never concurrently: ADR-0012 §5
+ * is a locked decision that `lore` does not run concurrent mutating Backlog commands within one
+ * invocation, so a multi-task `link`/`unlink` serializes its `editTask` calls (see
+ * {@link runSequentially}) even though each one's *outcome* is still independent of the others'.
  *
  * [ADR-0009]: ../../docs/adr/0009-story-task-coupling-reconciliation.md
  */
 
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import {
   type BacklogAdapter,
   type BacklogTaskDetail,
   bunBacklogSpawn,
   createBacklogAdapter,
 } from "../adapters/backlog";
-import { conceptNotInBundle, loadBundle, toRefList } from "../core/bundle";
+import { type BundleGraph, conceptNotInBundle, loadBundle, toRefList } from "../core/bundle";
 import { type Concept, idFromPath, serializeConcept } from "../core/concept";
 import { loadProfile } from "../core/profile";
-import { DOCS_DIR } from "../core/scaffold";
+import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
 import { EXIT_CODES, EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { parseCommandArgs, usage } from "./args";
@@ -169,25 +174,23 @@ export async function runLink(options: LinkOptions): Promise<number> {
 
   let anyBackRefFailed = false;
   if (!noBackRef) {
-    const outcomes = await Promise.allSettled(
-      taskIds.map(async (taskId) => {
-        // Re-read fresh right before editing (not the up-front validation snapshot): matches
-        // runUnlink's freshness and closes a narrow race where the task changed out-of-band
-        // between the existence check above and this edit.
-        const detail = await adapter.viewTask(taskId);
-        if (detail === null) {
-          throw new Error(`task "${taskId}" no longer exists in Backlog`);
-        }
-        const wasPresent = hasLabel(detail, label);
-        const docChanged = !detail.documentation.includes(docPath);
-        if (wasPresent && !docChanged) {
-          return "already-present" as const; // both the label and --doc already reflect this link
-        }
-        const desiredDocs = addDoc(detail.documentation, docPath);
-        await adapter.editTask(taskId, { addLabels: [label], doc: desiredDocs });
-        return "added" as const;
-      }),
-    );
+    const outcomes = await runSequentially(taskIds, async (taskId) => {
+      // Re-read fresh right before editing (not the up-front validation snapshot): matches
+      // runUnlink's freshness and closes a narrow race where the task changed out-of-band
+      // between the existence check above and this edit.
+      const detail = await adapter.viewTask(taskId);
+      if (detail === null) {
+        throw new Error(`task "${taskId}" no longer exists in Backlog`);
+      }
+      const wasPresent = hasLabel(detail, label);
+      const docChanged = !detail.documentation.includes(docPath);
+      if (wasPresent && !docChanged) {
+        return "already-present" as const; // both the label and --doc already reflect this link
+      }
+      const desiredDocs = addDoc(detail.documentation, docPath);
+      await adapter.editTask(taskId, { addLabels: [label], doc: desiredDocs });
+      return "added" as const;
+    });
     outcomes.forEach((outcome, i) => {
       const entry = tasks[i] as LinkedTask;
       if (outcome.status === "fulfilled") {
@@ -222,11 +225,12 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
   const label = backRefLabel(concept.id);
 
   const existingTasks = toRefList(concept.frontmatter.tasks);
-  const nextTasks = existingTasks.filter((t) => !taskIds.some((taskId) => taskId.toLowerCase() === t.toLowerCase()));
   const tasks: UnlinkedTask[] = taskIds.map((taskId) => {
     const wasLinked = existingTasks.some((t) => t.toLowerCase() === taskId.toLowerCase());
     return { task: taskId, status: wasLinked ? "removed" : "not-linked", backRef: "skipped" };
   });
+  const removedLower = new Set(tasks.filter((t) => t.status === "removed").map((t) => t.task.toLowerCase()));
+  const nextTasks = existingTasks.filter((t) => !removedLower.has(t.toLowerCase()));
 
   // Write the doc-side removal FIRST — mirrors runLink's order. The doc write needs no Backlog
   // round-trip and never depends on any back-reference edit's outcome, so committing it before the
@@ -236,27 +240,25 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
 
   let anyBackRefFailed = false;
   if (!noBackRef) {
-    const outcomes = await Promise.allSettled(
-      taskIds.map(async (taskId) => {
-        const detail = await adapter.viewTask(taskId);
-        if (detail === null) {
-          return "skipped" as const; // the task no longer exists in Backlog — nothing to clean up
-        }
-        const hadLabel = hasLabel(detail, label);
-        const hadDoc = detail.documentation.includes(docPath);
-        if (!hadLabel && !hadDoc) {
-          return "already-absent" as const; // nothing to remove — skip the edit entirely
-        }
-        const desiredDocs = removeDoc(detail.documentation, docPath);
-        await adapter.editTask(taskId, {
-          removeLabels: [label],
-          // Backlog cannot clear `--doc` via an empty value (contract §2.4); omit the flag
-          // entirely rather than send a no-op empty accumulator that would be silently ignored.
-          doc: desiredDocs.length > 0 ? desiredDocs : undefined,
-        });
-        return "removed" as const;
-      }),
-    );
+    const outcomes = await runSequentially(taskIds, async (taskId) => {
+      const detail = await adapter.viewTask(taskId);
+      if (detail === null) {
+        return "skipped" as const; // the task no longer exists in Backlog — nothing to clean up
+      }
+      const hadLabel = hasLabel(detail, label);
+      const hadDoc = detail.documentation.includes(docPath);
+      if (!hadLabel && !hadDoc) {
+        return "already-absent" as const; // nothing to remove — skip the edit entirely
+      }
+      const desiredDocs = removeDoc(detail.documentation, docPath);
+      await adapter.editTask(taskId, {
+        removeLabels: [label],
+        // Backlog cannot clear `--doc` via an empty value (contract §2.4); omit the flag
+        // entirely rather than send a no-op empty accumulator that would be silently ignored.
+        doc: desiredDocs.length > 0 ? desiredDocs : undefined,
+      });
+      return "removed" as const;
+    });
     outcomes.forEach((outcome, i) => {
       const entry = tasks[i] as UnlinkedTask;
       if (outcome.status === "fulfilled") {
@@ -296,6 +298,7 @@ interface Prepared {
 async function prepare(options: LinkOptions, command: "link" | "unlink"): Promise<Prepared> {
   const parsed = parseLinkArgs(options.args, command);
   const id = idFromPath(parsed.id);
+  assertNotReserved(id, command);
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
   const graph = loadBundle(docsRoot, { warnings: advisories });
@@ -305,7 +308,40 @@ async function prepare(options: LinkOptions, command: "link" | "unlink"): Promis
   if (concept === undefined) {
     throw conceptNotInBundle(id);
   }
+  assertNoLabelCaseCollision(graph, concept);
   return { concept, taskIds: dedupeTaskIds(parsed.taskIds), noBackRef: parsed.noBackRef, docsRoot };
+}
+
+/** Reject a reserved hub name (`index`/`log`) as a link/unlink principal — a `usage` error. Mirrors `rename.ts`/`supersede.ts`'s guard. */
+function assertNotReserved(id: string, command: "link" | "unlink"): void {
+  if (RESERVED_STEMS.has(posix.basename(id))) {
+    throw usage(
+      `cannot ${command} "${id}": "${posix.basename(id)}" is a reserved, machine-generated file name`,
+      "index.md/log.md are generated by lore, not authored concepts",
+    );
+  }
+}
+
+/**
+ * Reject linking/unlinking a concept whose id collides case-insensitively with another concept's
+ * id (`conflict`, exit 5). Concept ids are case-sensitive in the graph (`buildGraph`'s lookup is a
+ * plain `Map`), so two such concepts are legitimately distinct nodes — but Backlog's own
+ * `--add-label`/`--remove-label` de-dup case-insensitively in its label store (backlog-cli-contract
+ * §2.4), so no encoding lore sends can give them independently addressable `doc:` back-references.
+ * Rather than silently let one concept's unlink strip the other's real back-reference, refuse the
+ * operation outright.
+ */
+export function assertNoLabelCaseCollision(graph: BundleGraph, concept: Concept): void {
+  for (const other of graph.concepts.values()) {
+    if (other.id !== concept.id && other.id.toLowerCase() === concept.id.toLowerCase()) {
+      throw new LoreError(
+        "conflict",
+        `cannot link/unlink "${concept.id}": concept "${other.id}" has an id differing only by case`,
+        "Backlog's own doc: label store de-dups case-insensitively, so these two concepts cannot have independent back-references — rename one so their ids are case-distinct",
+        { id: concept.id, collidesWith: other.id },
+      );
+    }
+  }
 }
 
 /** Deduplicate task ids case-insensitively, keeping the first-seen casing and argument order. */
@@ -434,6 +470,28 @@ function renderTaskReport(data: TaskReportLike): string {
   });
   lines.push(`${data.concept}: ${data.changed ? "updated" : "unchanged"}`);
   return lines.join("\n");
+}
+
+/**
+ * Run `fn` over `items` one at a time — never concurrently — collecting each result as a
+ * {@link PromiseSettledResult}, exactly like `Promise.allSettled` would, but serialized: ADR-0012
+ * §5 is a locked decision that `lore` does not run concurrent mutating Backlog commands within one
+ * invocation. A failure on one item is still caught and does not stop the rest from running (the
+ * per-task independence the round-1 fix established); only the *concurrency* is removed.
+ */
+async function runSequentially<T>(
+  items: readonly string[],
+  fn: (item: string) => Promise<T>,
+): Promise<PromiseSettledResult<T>[]> {
+  const results: PromiseSettledResult<T>[] = [];
+  for (const item of items) {
+    try {
+      results.push({ status: "fulfilled", value: await fn(item) });
+    } catch (reason) {
+      results.push({ status: "rejected", reason });
+    }
+  }
+  return results;
 }
 
 /** A one-line message for a rejected `editTask` call, for the report's `error` field. */

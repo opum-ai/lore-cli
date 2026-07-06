@@ -603,8 +603,22 @@ export interface BacklogAdapter {
 /** Captures the display-cased id from a create's first stdout line (`Created task LORE-1` / `Created draft …`). */
 const CREATED_ID = /^Created (?:task|draft) (\S+)$/m;
 
-/** Join multiple values for a single-value, last-wins flag into one comma-separated argument (§2.4). */
+/**
+ * Join multiple values for a single-value, last-wins flag into one comma-separated argument (§2.4).
+ * Backlog's CLI has no escape for an embedded comma — the comma **is** the delimiter — so a value
+ * containing one cannot be sent safely: it would silently split into two (or more) unrelated
+ * Backlog-side values instead of the one lore intends. Reject it instead.
+ */
 function commaJoin(values: readonly string[]): string {
+  const offender = values.find((v) => v.includes(","));
+  if (offender !== undefined) {
+    throw new LoreError(
+      "validation",
+      `cannot send "${offender}" to Backlog: a comma-separated flag has no escape for an embedded comma`,
+      "rename the concept/label/value so it contains no comma",
+      { value: offender },
+    );
+  }
   return values.join(",");
 }
 

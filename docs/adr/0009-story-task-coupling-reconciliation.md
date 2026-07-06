@@ -103,9 +103,19 @@ doc:stories/bulk-archive-orders
   set. Concept IDs are not: `buildGraph`'s lookup is a plain, case-sensitive
   `Map` (deliberately, for cross-platform determinism — see
   `core/bundle.ts`), so two concepts differing only by case are distinct
-  nodes. Lowercasing the ID in the label would collapse both onto the same
-  `doc:` label, and unlinking one would strip the other's real
-  back-reference.
+  nodes.
+- **Case-preserving the label is necessary but not sufficient.** Backlog's own
+  `--add-label`/`--remove-label` de-dup **case-insensitively** in its label
+  store (backlog-cli-contract §2.4) — so even with a case-preserved
+  `<conceptId>`, two concepts whose ids differ only by case would still
+  collide on one stored Backlog label, and unlinking one could silently strip
+  the other's real back-reference. `lore link`/`unlink` therefore refuse
+  outright (`conflict`, exit 5) to operate on a concept whose id collides
+  case-insensitively with another concept's id — the case-preserving encoding
+  keeps the label faithful to the concept's real id for display and for the
+  (rare, cross-platform) case where no collision exists; the reject-on-
+  collision guard is what actually keeps two case-colliding concepts from
+  corrupting each other's back-reference.
 
 ### 3. Status reconciliation from live task statuses
 
