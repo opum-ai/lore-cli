@@ -11,10 +11,16 @@
  * sync` writes the result; `lore check` diffs it against the persisted `status` and never writes
  * (ADR-0007).
  *
- * Per the core contract (lore-design §2.1) this module is pure: two string arrays in, a derived
- * status (or `null`) or a typed {@link LoreError} out — no filesystem, no spawn, no clock. Reading
- * `backlog/config.yml` and resolving each task's live status are command-layer concerns, kept out
- * of this engine so it stays a single deterministic function over already-resolved data.
+ * Per-repo `[reconcile.overrides]` (`.lore/config.toml`, LORE-26) lets a project map a specific
+ * Backlog status straight to a {@link ReconciledStatus}, bypassing `statusFlow` position entirely —
+ * the escape hatch for a status an ordered flow cannot classify unambiguously (see
+ * {@link reconcileStatus}'s `overrides` parameter).
+ *
+ * Per the core contract (lore-design §2.1) this module is pure: two string arrays (plus an optional
+ * overrides map) in, a derived status (or `null`) or a typed {@link LoreError} out — no filesystem,
+ * no spawn, no clock. Reading `backlog/config.yml` and resolving each task's live status are
+ * command-layer concerns, kept out of this engine so it stays a single deterministic function over
+ * already-resolved data.
  *
  * [ADR-0009]: ../../docs/adr/0009-story-task-coupling-reconciliation.md
  */
@@ -24,8 +30,21 @@ import { LoreError } from "../errors";
 /** The three derived rollup values (ADR-0009 §3, backlog-cli-contract.md §3.2). */
 export type ReconciledStatus = "todo" | "in-progress" | "done";
 
+/** The closed set {@link ReconciledStatus} draws from, for validating a `[reconcile.overrides]` target. */
+const RECONCILED_STATUSES: readonly ReconciledStatus[] = ["todo", "in-progress", "done"];
+
 /** Where one task's status falls in the project's ordered {@link StatusFlow}. */
 type StatusPosition = "not-started" | "active" | "terminal";
+
+/**
+ * Per-repo `[reconcile.overrides]` (`.lore/config.toml`, `config.ts`'s {@link ReconcileConfig.overrides}):
+ * a raw Backlog status string → the {@link ReconciledStatus} it should contribute to the rollup,
+ * **bypassing** {@link StatusFlow} position entirely for that status (ADR-0009 §3). `config.ts` parses
+ * this as an unvalidated `Record<string, string>` — "reconcile.ts owns the rollup-status vocabulary and
+ * its semantics" (config.ts) — so {@link reconcileStatus} is where an out-of-vocabulary target value is
+ * caught.
+ */
+export type StatusOverrides = Readonly<Record<string, string>>;
 
 /**
  * A project's status set, **ordered** exactly as configured (`backlog/config.yml` `statuses:` /
@@ -59,18 +78,29 @@ export type StatusFlow = readonly string[];
  * @param taskStatuses the raw configured `status` string of every linked task (AC#1: any custom
  *   flow, not just the three defaults), in any order — order does not affect the rollup.
  * @param statusFlow the project's ordered status set, resolved from Backlog config.
+ * @param overrides per-repo `[reconcile.overrides]` (default `{}`): a status matching a key here
+ *   contributes its mapped {@link ReconciledStatus} directly, bypassing `statusFlow` position
+ *   entirely — the escape hatch for a status a strict ordered flow cannot classify unambiguously
+ *   (a bespoke `Cancelled`/`Won't Fix` state, or one a team added without reordering `statuses:`).
+ *   Takes precedence over position even when the status is *also* present in `statusFlow`.
  * @returns the rolled-up status, or `null` when there are no linked tasks.
  * @throws LoreError `validation` when `statusFlow` has fewer than two entries, is empty, or
  *   carries a duplicate entry (an ambiguous flow lore cannot classify against — ADR-0009 "must
- *   report rather than guess"), or when a task's status is not present in `statusFlow` at all (a
+ *   report rather than guess"), when an override's target is not one of `todo`/`in-progress`/
+ *   `done`, or when a task's status is not present in `statusFlow` **and** has no override (a
  *   config/task drift lore refuses to guess past).
  */
-export function reconcileStatus(taskStatuses: readonly string[], statusFlow: StatusFlow): ReconciledStatus | null {
+export function reconcileStatus(
+  taskStatuses: readonly string[],
+  statusFlow: StatusFlow,
+  overrides: StatusOverrides = {},
+): ReconciledStatus | null {
   if (taskStatuses.length === 0) {
     return null;
   }
   validateStatusFlow(statusFlow);
-  const positions = taskStatuses.map((status) => classify(status, statusFlow));
+  const validatedOverrides = validateOverrides(overrides);
+  const positions = taskStatuses.map((status) => classify(status, statusFlow, validatedOverrides));
   if (positions.every((position) => position === "terminal")) {
     return "done";
   }
@@ -111,20 +141,59 @@ function validateStatusFlow(statusFlow: StatusFlow): void {
 }
 
 /**
- * Classify one task's raw `status` string by its index in `statusFlow`: the first entry is
- * not-started, the last is terminal, everything between is active. Matching is exact-string
- * (Backlog status labels are canonical configured strings, verbatim in the `--json` payload — not
- * user-typed free text lore case-folds elsewhere).
+ * Validate a `[reconcile.overrides]` map and return it keyed for safe, exhaustive lookup: a `Map`
+ * (not the input `Record`) so a status string that happens to name an `Object.prototype` member
+ * (`constructor`, `toString`, …) can never resolve to an inherited value instead of a real miss —
+ * the same class of hazard `config.ts`'s `asStringMap` guards on the write side.
  *
- * @throws LoreError `validation` when `status` is absent from `statusFlow` entirely.
+ * @throws LoreError `validation` naming the offending status and target when a target is not one
+ *   of {@link RECONCILED_STATUSES} — `config.ts` deliberately leaves this vocabulary check to
+ *   reconcile.ts (its own header comment), so a bad `.lore/config.toml` value is caught here.
  */
-function classify(status: string, statusFlow: StatusFlow): StatusPosition {
+function validateOverrides(overrides: StatusOverrides): ReadonlyMap<string, ReconciledStatus> {
+  const validated = new Map<string, ReconciledStatus>();
+  for (const [status, target] of Object.entries(overrides)) {
+    if (!isReconciledStatus(target)) {
+      throw new LoreError(
+        "validation",
+        `cannot reconcile status: [reconcile.overrides] maps ${JSON.stringify(status)} to ${JSON.stringify(target)}, which is not a valid rollup status`,
+        `set [reconcile.overrides] "${status}" in .lore/config.toml to one of: ${RECONCILED_STATUSES.join(", ")}`,
+        { status, target, valid: RECONCILED_STATUSES },
+      );
+    }
+    validated.set(status, target);
+  }
+  return validated;
+}
+
+/** Narrow an override's raw string target to {@link ReconciledStatus}, for {@link validateOverrides}. */
+function isReconciledStatus(value: string): value is ReconciledStatus {
+  return (RECONCILED_STATUSES as readonly string[]).includes(value);
+}
+
+/**
+ * Classify one task's raw `status` string, checking `overrides` before falling back to its index in
+ * `statusFlow`: the first entry is not-started, the last is terminal, everything between is active.
+ * Matching is exact-string (Backlog status labels are canonical configured strings, verbatim in the
+ * `--json` payload — not user-typed free text lore case-folds elsewhere).
+ *
+ * @throws LoreError `validation` when `status` has no override and is absent from `statusFlow` entirely.
+ */
+function classify(
+  status: string,
+  statusFlow: StatusFlow,
+  overrides: ReadonlyMap<string, ReconciledStatus>,
+): StatusPosition {
+  const override = overrides.get(status);
+  if (override !== undefined) {
+    return positionForOverride(override);
+  }
   const index = statusFlow.indexOf(status);
   if (index === -1) {
     throw new LoreError(
       "validation",
-      `cannot reconcile status: task status ${JSON.stringify(status)} is not in the project's configured status flow (${statusFlow.map((s) => JSON.stringify(s)).join(", ")})`,
-      "the task's status must match one of `backlog/config.yml`'s `statuses:` exactly; re-run `backlog config get statuses` to check for drift",
+      `cannot reconcile status: task status ${JSON.stringify(status)} is not in the project's configured status flow (${statusFlow.map((s) => JSON.stringify(s)).join(", ")}) and has no [reconcile.overrides] entry`,
+      "the task's status must match one of `backlog/config.yml`'s `statuses:` exactly, or add a `[reconcile.overrides]` entry for it in .lore/config.toml",
       { status, statusFlow },
     );
   }
@@ -135,4 +204,16 @@ function classify(status: string, statusFlow: StatusFlow): StatusPosition {
     return "not-started";
   }
   return "active";
+}
+
+/** Map an override's validated target directly to the {@link StatusPosition} the aggregation rule expects. */
+function positionForOverride(target: ReconciledStatus): StatusPosition {
+  switch (target) {
+    case "done":
+      return "terminal";
+    case "in-progress":
+      return "active";
+    case "todo":
+      return "not-started";
+  }
 }

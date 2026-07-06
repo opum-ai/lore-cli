@@ -34,19 +34,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   IDE refactor), `lore unlink <id> <taskId…> --allow-missing` tolerates `<id>` not resolving to a
   live concept and cleans up just the stale Backlog-side `doc:` label/`--doc` entry (there is no
   concept file to touch `tasks:` on) — the case-collision guard still protects a *live* concept
-  whose id collides with `<id>`. Not yet consumed by `reconcile.ts`/`managed-block.ts` (LORE-26/27's
-  job).
+  whose id collides with `<id>`. Now consumed by `lore sync` (LORE-26); `lore check`'s read-only
+  drift gate over the same data is LORE-27's job.
 - **`core/reconcile.ts` — roll a Story/Spec's linked task statuses up into one derived `status`**
   (LORE-23). The pure engine behind the `status:` half of `lore sync`/`lore check` (ADR-0009 §3):
-  `reconcileStatus(taskStatuses, statusFlow)` classifies each linked task by its position in the
-  project's **config-driven** ordered status flow — never hardcoded to the three Backlog defaults —
-  and rolls up by elimination: every task terminal → `done`; any task in a non-first, non-terminal
-  state → `in-progress`; otherwise → `todo`. A doc with no linked tasks returns `null` so its
-  authored `status` is left untouched (a narrative-only doc is never forced into a workflow state).
-  Fails loud (exit 6) on a task status absent from the flow or a degenerate (empty/duplicate) flow —
-  lore reports a status it cannot classify rather than guessing. Reading `backlog/config.yml`'s
-  `statuses:` and resolving each linked task's live status are command-layer concerns (LORE-24+);
-  this module only consumes the two already-resolved arrays. **Not yet wired into the CLI.**
+  `reconcileStatus(taskStatuses, statusFlow, overrides?)` classifies each linked task by its
+  position in the project's **config-driven** ordered status flow — never hardcoded to the three
+  Backlog defaults — and rolls up by elimination: every task terminal → `done`; any task in a
+  non-first, non-terminal state → `in-progress`; otherwise → `todo`. A doc with no linked tasks
+  returns `null` so its authored `status` is left untouched (a narrative-only doc is never forced
+  into a workflow state). Fails loud (exit 6) on a task status absent from the flow (and with no
+  override) or a degenerate (empty/duplicate) flow — lore reports a status it cannot classify rather
+  than guessing. **`overrides` (LORE-26)** — sourced from `.lore/config.toml`'s `[reconcile.overrides]`
+  — lets a status map straight to a rollup value, bypassing flow position entirely; validated against
+  the three rollup values here (`config.ts` deliberately defers that check to this module). Reading
+  `backlog/config.yml`'s `statuses:` and resolving each linked task's live status are command-layer
+  concerns; wired into `lore sync` (LORE-26).
 - **`core/managed-block.ts` — regenerate the `<!-- lore:tasks -->` region from live Backlog data**
   (LORE-22). The pure engine behind `lore sync` (writes) and `lore check` (diffs) rewrites a Story's
   managed task table from the JSON the LORE-21 adapter's `viewTask` returns. Markers are located
@@ -61,8 +64,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `filePathRelative` (portable, cross-subtree, `%20`-encoded), never reconstructed from the
   upper-cased display id; a linked task with no on-disk file yet is tolerated (its id renders as
   plain text, never a broken link or an error). Malformed markers (missing/duplicated/crossed) fail
-  loud (exit 6). **Not yet wired into the CLI** — `link`/`unlink`/`sync` are LORE-24+; this is the
-  managed-block engine only.
+  loud (exit 6). Wired into `lore sync` (LORE-26); `lore check` (LORE-27) still diffs read-only.
+- **`lore sync [paths…] [--dry-run] [--no-index]` — the write counterpart to `lore check`**
+  (LORE-26, ADR-0009, ADR-0012, ADR-0013). For every concept whose `tasks:` links Backlog tasks:
+  resolves each linked task's live status (`viewTask`, every id validated to exist **before** any
+  write — a missing id fails loud, `not_found`/exit 3, no partial state), recomputes `status` via
+  `reconcile.ts` (honoring `[reconcile.overrides]`) and rewrites it when changed, and regenerates the
+  `<!-- lore:tasks -->` managed block (`managed-block.ts`) from the same data. Unless `--no-index`,
+  also regenerates every bundle `index.md` (`indexes.ts`) and the git-history-derived `log.md`
+  (`log.ts`, via a new real `git log`-shelling adapter, `adapters/git.ts`) pinned to the current
+  `HEAD` sha (a repo with no commits yet gets an empty log, not an error). Every write is a byte-diff
+  against current disk content first, so a fully clean tree is a true no-op (AC#1) — verified end to
+  end against a real git repository, not just fakes. `--dry-run` computes and reports the same diff
+  but writes nothing (`docs/` or `backlog/`); `[paths…]` scopes which concepts get
+  reconciled/managed-block-regenerated (index/log stay whole-bundle, being inherently global). Each
+  changed file is written **atomically** (`fswrite.ts`'s new `writeFileAtomic`: temp file + rename) —
+  `sync` is the one command that can write many files in one invocation, so a crash mid-run must
+  never leave any single file truncated. **`src/state.ts` (new)** — the `.lore/`-and-git-ownership
+  module the design spec calls for (§2.4): a fourth injectable seam (`GitSpawn`, mirroring
+  `BacklogSpawn`) backing `commitBacklogIfDirty`, which detects whatever is currently uncommitted
+  under `backlog/` (from an earlier `link`/`unlink`/`rename`, or a human's direct `backlog task
+  edit`) and commits exactly those paths in one `lore`-authored commit — satisfying ADR-0012's "lore
+  is the sole committer of `backlog/`" (AC#2) by vacuuming up drift regardless of source, rather than
+  requiring every Backlog-writing command to commit its own touch (tracked as a follow-up,
+  retrofitting `link`/`unlink`/`rename` to commit immediately per the design's own sequence flow).
+  Skipped entirely under `--dry-run`. Also new: `adapters/backlog.ts`'s `readStatusFlow` reads the
+  project's ordered status flow directly from `backlog/config.yml`'s `statuses:` (defaulting to the
+  three Backlog defaults when absent), rather than shelling a further Backlog subcommand.
 - **`adapters/backlog.ts` — the typed JSON-only Backlog.md read/write surface** (LORE-21). The
   capability probe (LORE-4) now backs a full typed adapter over the same injectable `BacklogSpawn`
   seam — the sole place a `backlog` subprocess is spawned and the sole place the `--json` schema is

@@ -16,7 +16,8 @@
  * semantics are identical across every command.
  */
 
-import { lstatSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { errnoCode, LoreError } from "../errors";
 
 /** `mkdir -p` for a scaffold directory, mapping a permission failure to a `denied` error. */
@@ -63,6 +64,32 @@ export function writeFileOverwriting(absPath: string, contents: string, relPath:
   try {
     writeFileSync(absPath, contents);
   } catch (cause) {
+    throw ioError(cause, relPath, "write file");
+  }
+}
+
+/**
+ * Overwrite (or create) a file **atomically**: write the new bytes to a sibling temp file, then
+ * `renameSync` it over `absPath`. `lore sync` (LORE-26) is the one command that can write many
+ * files in a single invocation, so a crash or kill mid-run must never leave any *one* target file
+ * truncated or half-written — a plain `writeFileSync` truncates the destination before writing,
+ * which a crash between those two steps would leave corrupted; a same-directory rename is atomic
+ * (same filesystem, POSIX and NTFS both guarantee it) so the destination is always either its old
+ * complete bytes or its new complete bytes, never a partial write. Only `lore sync`'s writes use
+ * this; every other command keeps {@link writeFileOverwriting} — see that function's own doc for why
+ * a plain overwrite is the right discipline there.
+ */
+export function writeFileAtomic(absPath: string, contents: string, relPath: string): void {
+  const tmpPath = join(dirname(absPath), `.lore-sync-tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
+  try {
+    writeFileSync(tmpPath, contents);
+    renameSync(tmpPath, absPath);
+  } catch (cause) {
+    try {
+      unlinkSync(tmpPath);
+    } catch {
+      // best-effort cleanup only — the write/rename failure below is what's actually reported
+    }
     throw ioError(cause, relPath, "write file");
   }
 }

@@ -1,0 +1,363 @@
+/**
+ * sync.test.ts — `lore sync` (LORE-26, cli-surface §sync).
+ *
+ * Most cases inject a fake `BacklogAdapter` (helpers.ts), a fake `GitAdapter`/`resolveHead` (so
+ * `log.md` regeneration needs no real git history), and a scripted `GitSpawn` (so the `backlog/`
+ * commit step needs no real subprocess) — fast and deterministic. A final "real git integration"
+ * suite proves the actual seams (`bunGitSpawn`, `realGitAdapter`, `resolveHeadSha`) and the CLI
+ * router wiring end to end.
+ *
+ *   AC#1 — idempotent: a second sync makes no changes.
+ *   AC#2 — lore is the sole committer of backlog/ (satisfied here, per the locked decision, by
+ *          sync vacuuming up whatever is dirty under backlog/ regardless of source).
+ */
+
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { BacklogAdapter } from "../src/adapters/backlog";
+import { realGitAdapter, resolveHeadSha } from "../src/adapters/git";
+import { run } from "../src/cli";
+import { runSync, type SyncOptions, type SyncReport } from "../src/commands/sync";
+import type { GitAdapter, GitCommit, GitLogRange } from "../src/core/log";
+import { EXIT_OK, LoreError } from "../src/errors";
+import type { OutputContext } from "../src/output";
+import { bunGitSpawn, type GitSpawn, type GitSpawnResult } from "../src/state";
+import { capture, fakeAdapter, makeTask } from "./helpers";
+
+const JSON_CTX: OutputContext = { mode: "json", color: false };
+
+let root: string;
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), "lore-sync-"));
+  mkdirSync(join(root, "docs"), { recursive: true });
+});
+afterEach(() => {
+  rmSync(root, { recursive: true, force: true });
+});
+
+function writeDoc(rel: string, contents: string): void {
+  const abs = join(root, "docs", rel);
+  mkdirSync(join(abs, ".."), { recursive: true });
+  writeFileSync(abs, contents);
+}
+
+function readDoc(rel: string): string {
+  return readFileSync(join(root, "docs", rel), "utf8");
+}
+
+function docExists(rel: string): boolean {
+  try {
+    readDoc(rel);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** A minimal Story with `tasks:` and an already-present (empty) managed task block. */
+function storyDoc(title: string, taskIds: readonly string[], status?: string): string {
+  const tasksYaml = taskIds.map((t) => `\n  - ${t}`).join("");
+  const statusLine = status !== undefined ? `status: ${status}\n` : "";
+  return (
+    `---\ntype: Story\ntitle: ${title}\n${statusLine}tasks:${tasksYaml}\n---\n` +
+    `# ${title}\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n`
+  );
+}
+
+/** A fake GitAdapter returning a fixed, empty history (log.md regenerates to just its heading). */
+function emptyGitAdapter(): GitAdapter {
+  return { history: (_range: GitLogRange): readonly GitCommit[] => [] };
+}
+
+const FIXED_SHA = "0000000000000000000000000000000000000000";
+
+function ok(stdout: string): GitSpawnResult {
+  return { exitCode: 0, stdout, stderr: "" };
+}
+
+/** A GitSpawn reporting a clean `backlog/` (no commit attempted). */
+function cleanGitSpawn(): GitSpawn & { calls: string[][] } {
+  const calls: string[][] = [];
+  const spawn = (async (args: readonly string[]): Promise<GitSpawnResult> => {
+    calls.push([...args]);
+    return ok("");
+  }) as GitSpawn & { calls: string[][] };
+  spawn.calls = calls;
+  return spawn;
+}
+
+/** A GitSpawn reporting one dirty backlog/ file, then succeeding add/commit. */
+function dirtyGitSpawn(porcelainLine: string): GitSpawn & { calls: string[][] } {
+  const calls: string[][] = [];
+  let call = 0;
+  const spawn = (async (args: readonly string[]): Promise<GitSpawnResult> => {
+    calls.push([...args]);
+    call++;
+    return call === 1 ? ok(`${porcelainLine}\n`) : ok("");
+  }) as GitSpawn & { calls: string[][] };
+  spawn.calls = calls;
+  return spawn;
+}
+
+function baseOptions(overrides: Partial<SyncOptions> = {}): Omit<SyncOptions, "root" | "output" | "args"> {
+  return {
+    stdout: capture(),
+    stderr: capture(),
+    gitAdapter: emptyGitAdapter(),
+    resolveHead: () => FIXED_SHA,
+    gitSpawn: cleanGitSpawn(),
+    ...overrides,
+  };
+}
+
+async function syncCmd(
+  args: string[],
+  adapter: BacklogAdapter,
+  overrides: Partial<SyncOptions> = {},
+): Promise<{ code: number; report: SyncReport }> {
+  const stdout = capture();
+  const code = await runSync({ root, output: JSON_CTX, args, adapter, ...baseOptions(overrides), stdout });
+  const envelope = JSON.parse(stdout.text()) as { kind: string; data: SyncReport };
+  expect(envelope.kind).toBe("sync.result");
+  return { code, report: envelope.data };
+}
+
+async function expectSyncError(
+  args: string[],
+  adapter: BacklogAdapter,
+  overrides: Partial<SyncOptions> = {},
+): Promise<LoreError> {
+  try {
+    await runSync({ root, output: JSON_CTX, args, adapter, ...baseOptions(overrides) });
+  } catch (err) {
+    expect(err).toBeInstanceOf(LoreError);
+    return err as LoreError;
+  }
+  throw new Error("expected a LoreError, but runSync returned");
+}
+
+// ── AC#1: idempotency ────────────────────────────────────────────────────────────
+
+describe("lore sync — AC#1: idempotent", () => {
+  test("reconciles status + managed block, regenerates index/log, then a second run changes nothing", async () => {
+    writeDoc("stories/x.md", storyDoc("X", ["lore-1"], "todo"));
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done", title: "Ship it" })]);
+
+    const first = await syncCmd([], adapter);
+    expect(first.code).toBe(EXIT_OK);
+    expect(first.report.filesChanged).toBeGreaterThan(0);
+    expect(first.report.files.map((f) => f.path)).toContain("docs/stories/x.md");
+    expect(first.report.files.map((f) => f.path)).toContain("docs/index.md");
+    expect(first.report.files.map((f) => f.path)).toContain("docs/log.md");
+
+    const updated = readDoc("stories/x.md");
+    expect(updated).toContain("status: done");
+    expect(updated).toContain("Ship it");
+    expect(updated).toContain("Done");
+
+    const second = await syncCmd([], adapter, { gitSpawn: cleanGitSpawn() });
+    expect(second.code).toBe(EXIT_OK);
+    expect(second.report.files).toEqual([]);
+    expect(second.report.filesChanged).toBe(0);
+    expect(readDoc("stories/x.md")).toBe(updated); // byte-identical, untouched
+  });
+
+  test("a concept with no tasks: is never touched, and no BacklogAdapter call is ever made", async () => {
+    const doc = "---\ntype: Story\ntitle: Untouched\n---\nBody.\n";
+    writeDoc("stories/plain.md", doc);
+    const poison = fakeAdapter([], { poisonViews: ["never-called"] });
+    // A poisoned id that's never referenced proves the adapter's viewTask is never invoked at all
+    // for a bundle with no tasks: anywhere (no adapter methods are called; a real call would throw
+    // "not implemented" for anything but viewTask, which would poison-throw here if ever invoked).
+
+    const { report } = await syncCmd([], poison);
+    expect(readDoc("stories/plain.md")).toBe(doc);
+    expect(report.files.map((f) => f.path)).not.toContain("docs/stories/plain.md");
+  });
+});
+
+// ── AC#2: sole committer of backlog/ ──────────────────────────────────────────────
+
+describe("lore sync — AC#2: sole committer of backlog/", () => {
+  test("commits whatever is dirty under backlog/ in one lore-authored commit", async () => {
+    writeDoc("index.md", "# Index\n");
+    const adapter = fakeAdapter([]);
+    const gitSpawn = dirtyGitSpawn(" M backlog/tasks/lore-1 - x.md");
+
+    const { report } = await syncCmd([], adapter, { gitSpawn });
+    expect(report.backlogCommit).toEqual({ committed: true, files: ["backlog/tasks/lore-1 - x.md"] });
+    expect(gitSpawn.calls[1]).toEqual(["add", "--", "backlog/tasks/lore-1 - x.md"]);
+    expect(gitSpawn.calls[2]?.[0]).toBe("commit");
+  });
+
+  test("a clean backlog/ makes no commit and the report says so", async () => {
+    const adapter = fakeAdapter([]);
+    const { report } = await syncCmd([], adapter, { gitSpawn: cleanGitSpawn() });
+    expect(report.backlogCommit).toEqual({ committed: false, files: [] });
+  });
+});
+
+// ── Missing task: fail loud, no partial writes ────────────────────────────────────
+
+describe("lore sync — a linked task that no longer exists", () => {
+  test("aborts with not_found (exit 3) before writing anything", async () => {
+    const doc = storyDoc("X", ["lore-99"], "todo");
+    writeDoc("stories/x.md", doc);
+    const adapter = fakeAdapter([]); // lore-99 resolves to null
+
+    const err = await expectSyncError([], adapter);
+    expect(err.type).toBe("not_found");
+    expect(err.message).toContain("lore-99");
+    expect(readDoc("stories/x.md")).toBe(doc); // untouched
+    expect(docExists("index.md")).toBe(false); // no index/log write either
+  });
+});
+
+// ── A concept with tasks: but no managed-block markers ────────────────────────────
+
+describe("lore sync — a concept with tasks: but no managed block", () => {
+  test("is a fail-loud validation error (exit 6), not a guess", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nNo markers here.\n");
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+
+    const err = await expectSyncError([], adapter);
+    expect(err.type).toBe("validation");
+  });
+});
+
+// ── --dry-run ──────────────────────────────────────────────────────────────────
+
+describe("lore sync — --dry-run", () => {
+  test("reports what would change but writes nothing, and never touches backlog/", async () => {
+    const doc = storyDoc("X", ["lore-1"], "todo");
+    writeDoc("stories/x.md", doc);
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+    const gitSpawn = dirtyGitSpawn(" M backlog/tasks/lore-1 - x.md");
+
+    const { report } = await syncCmd(["--dry-run"], adapter, { gitSpawn });
+    expect(report.dryRun).toBe(true);
+    expect(report.filesChanged).toBeGreaterThan(0);
+    expect(report.backlogCommit).toEqual({ committed: false, files: [] });
+    expect(gitSpawn.calls).toHaveLength(0); // git is never even queried under --dry-run
+    expect(readDoc("stories/x.md")).toBe(doc); // untouched
+    expect(docExists("index.md")).toBe(false);
+  });
+});
+
+// ── --no-index ─────────────────────────────────────────────────────────────────
+
+describe("lore sync — --no-index", () => {
+  test("skips both index.md and log.md regeneration", async () => {
+    writeDoc("stories/x.md", storyDoc("X", ["lore-1"], "todo"));
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const { report } = await syncCmd(["--no-index"], adapter);
+    expect(report.files.map((f) => f.path)).toContain("docs/stories/x.md");
+    expect(report.files.map((f) => f.path)).not.toContain("docs/index.md");
+    expect(report.files.map((f) => f.path)).not.toContain("docs/log.md");
+    expect(docExists("index.md")).toBe(false);
+    expect(docExists("log.md")).toBe(false);
+  });
+});
+
+// ── [reconcile.overrides] wiring ──────────────────────────────────────────────────
+
+describe("lore sync — [reconcile.overrides] (LORE-26, ADR-0009 §3)", () => {
+  test("a status outside the default flow reconciles via a configured override instead of failing loud", async () => {
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(join(root, ".lore", "config.toml"), '[reconcile.overrides]\nCancelled = "done"\n');
+    writeDoc("stories/x.md", storyDoc("X", ["lore-1"], "todo"));
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Cancelled" })]);
+
+    const { code } = await syncCmd([], adapter);
+    expect(code).toBe(EXIT_OK);
+    expect(readDoc("stories/x.md")).toContain("status: done");
+  });
+
+  test("without the override, the same unrecognized status is a fail-loud validation error", async () => {
+    writeDoc("stories/x.md", storyDoc("X", ["lore-1"], "todo"));
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Cancelled" })]);
+
+    const err = await expectSyncError([], adapter);
+    expect(err.type).toBe("validation");
+  });
+});
+
+// ── [paths…] scoping ─────────────────────────────────────────────────────────────
+
+describe("lore sync — [paths…] scoping", () => {
+  test("scopes reconciliation to only the given concept, leaving the other linked concept untouched", async () => {
+    writeDoc("stories/a.md", storyDoc("A", ["lore-1"], "todo"));
+    writeDoc("stories/b.md", storyDoc("B", ["lore-2"], "todo"));
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" }), makeTask("LORE-2", { status: "Done" })]);
+
+    const { report } = await syncCmd(["stories/a"], adapter, { gitSpawn: cleanGitSpawn() });
+    expect(report.files.map((f) => f.path)).toContain("docs/stories/a.md");
+    expect(report.files.map((f) => f.path)).not.toContain("docs/stories/b.md");
+    expect(readDoc("stories/a.md")).toContain("status: done");
+    expect(readDoc("stories/b.md")).toContain("status: todo"); // untouched
+  });
+});
+
+// ── Real git integration + CLI router wiring ──────────────────────────────────────
+
+describe("lore sync — real git integration + router", () => {
+  function git(args: string[]): void {
+    const proc = Bun.spawnSync(["git", ...args], { cwd: root, stdout: "pipe", stderr: "pipe" });
+    if (proc.exitCode !== 0) {
+      throw new Error(`git ${args.join(" ")} failed: ${proc.stderr.toString("utf8")}`);
+    }
+  }
+
+  test("regenerates log.md from real history and commits a real dirty backlog/ file", async () => {
+    git(["init", "-q"]);
+    git(["config", "user.name", "lore test"]);
+    git(["config", "user.email", "lore-test@example.com"]);
+    writeDoc("stories/x.md", storyDoc("X", ["lore-1"], "todo"));
+    git(["add", "."]);
+    git(["commit", "-q", "-m", "add story"]);
+
+    mkdirSync(join(root, "backlog", "tasks"), { recursive: true });
+    writeFileSync(join(root, "backlog", "tasks", "lore-1 - x.md"), "a real task file\n");
+
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+    const code = await runSync({
+      root,
+      output: JSON_CTX,
+      args: [],
+      adapter,
+      gitAdapter: realGitAdapter(root),
+      resolveHead: resolveHeadSha,
+      gitSpawn: bunGitSpawn(root),
+      stdout: capture(),
+      stderr: capture(),
+    });
+    expect(code).toBe(EXIT_OK);
+    expect(readDoc("log.md")).toContain("add story");
+
+    const status = Bun.spawnSync(["git", "status", "--porcelain"], { cwd: root, stdout: "pipe" }).stdout.toString(
+      "utf8",
+    );
+    // `sync` commits ONLY backlog/ (lore is its sole committer there) — its own docs/ writes are
+    // left staged-or-not per the user's own workflow, so they still show up as changes here.
+    expect(status).toContain("stories/x.md");
+    expect(status).toContain("index.md");
+    expect(status).toContain("log.md");
+    expect(status).not.toContain("backlog"); // the backlog/ file specifically was committed
+  });
+
+  test("router integration: `lore sync --json` dispatches through the real CLI", async () => {
+    git(["init", "-q"]);
+    git(["config", "user.name", "lore test"]);
+    git(["config", "user.email", "lore-test@example.com"]);
+    writeDoc("stories/x.md", storyDoc("X", [], "todo")); // no tasks: — no Backlog dependency at all
+    const stdout = capture();
+    const code = await run(["bun", "lore", "sync", "--json"], { cwd: root, stdout, stderr: capture() });
+    expect(code).toBe(EXIT_OK);
+    const envelope = JSON.parse(stdout.text()) as { kind: string; data: SyncReport };
+    expect(envelope.kind).toBe("sync.result");
+  });
+});
