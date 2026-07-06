@@ -1,11 +1,11 @@
 ---
 id: LORE-24
 title: lore link / unlink
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-06 15:55'
+updated_date: '2026-07-06 21:06'
 labels:
   - cmd
 milestone: m-3
