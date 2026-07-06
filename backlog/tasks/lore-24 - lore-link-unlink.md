@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-05 18:17'
+updated_date: '2026-07-06 01:54'
 labels:
   - cmd
 milestone: m-3
@@ -165,4 +165,63 @@ Cleanup: duplicated case-insensitive membership loop (link.ts:162); parseLinkArg
 a third near-verbatim copy of the rename.ts/supersede.ts arg parser (link.ts:371);
 writeTasksIfChanged re-inlines repoRelativePath()'s template instead of calling it
 (link.ts:353).
+
+/code-review max, 3rd pass on PR #35 (workflow-backed, post-round-2-fix commit
+a7f7be3): 6 finder angles, 8 pooled candidates, 8 independently verified (0
+refuted; 7 CONFIRMED, 1 PLAUSIBLE). NOT yet fixed -- pending a decision.
+Posted in full as a PR comment (issuecomment-4887577695).
+
+Correctness (most severe -- two mean the round-2 fixes did not fully close
+what they targeted):
+- backRefLabel()'s case-preserving fix (link.ts:336) doesn't actually prevent
+  the label collision it targeted: Backlog's own --add-label/--remove-label
+  de-dup case-insensitively (backlog-cli-contract Sec2.4), so two concepts
+  differing only by case still collide on ONE stored Backlog label regardless
+  of the exact casing lore sends. link on the 2nd concept silently no-ops
+  against the 1st's already-stored label while reporting backRef:"added"
+  (false success); unlink on either concept can still strip the other's real
+  back-reference. The fix changed what lore sends, not what Backlog stores.
+- A concept path/id containing a literal comma (link.ts:187) silently
+  corrupts its doc:<conceptId> label: --add-label/--remove-label treat their
+  value as comma-joined, splitting one label into two unrelated ones with no
+  error surfaced.
+- prepare() (link.ts:304, shared by runLink/runUnlink) has no RESERVED_STEMS
+  guard, unlike sibling rename.ts/supersede.ts (both touched by this same PR
+  to share commands/args.ts) -- `lore link index <task>` silently mutates the
+  machine-generated root index.md hub's frontmatter instead of failing loud.
+- (PLAUSIBLE) runLink/runUnlink (link.ts:173) fan out one `backlog task edit`
+  subprocess per task id concurrently, which the finder reads as in tension
+  with ADR-0012 Sec5's "lore does not run concurrent mutating Backlog
+  commands" decision -- worth reconciling explicitly even if not an active
+  bug today.
+- The module doc (link.ts:17) still claims --doc is "read via the same
+  viewTask call used for existence" -- stale since this session's fix added a
+  fresh 2nd viewTask read right before editing. Risks a future contributor
+  "optimizing away" the 2nd read and reintroducing the stale-snapshot race
+  the fix just closed.
+
+Cleanup:
+- runUnlink (link.ts:225) still does the two-scan case-insensitive membership
+  pattern this same commit's fix already eliminated from sibling runLink.
+- test/link.test.ts (line 184) hand-rolls reset()/cleanup() + try/finally in
+  all 35 tests instead of beforeEach/afterEach, unlike every sibling command
+  test file.
+- test/backlog-probe.test.ts's new cwd test (line 210) leaks its mkdtempSync
+  temp dir -- every other mkdtempSync call site in the suite pairs it with an
+  rmSync cleanup.
+
+3rd-pass findings fixed in 0926242 (all 8): case-preserving label fix
+replaced with assertNoLabelCaseCollision() (the real fix -- rejects
+conflict, exit 5, on a case-insensitive id collision, since Backlog's
+own label store de-dups case-insensitively regardless of casing lore
+sends); commaJoin() rejects embedded commas (validation error) instead
+of silently splitting one label into two; RESERVED_STEMS guard added to
+link/unlink (extracted to core/scaffold.ts, shared with rename/
+supersede); per-task Backlog edits now run sequentially via
+runSequentially() per ADR-0012 Sec5 (was concurrent via
+Promise.allSettled); runUnlink's duplicate scan removed (derives
+nextTasks from already-computed status, matching runLink); stale module
+doc comment updated. ADR-0009 Sec2 amended to document case-preserving +
+the collision guard together. 9 new/updated tests, full suite
+1129/1129, typecheck clean, biome clean.
 <!-- SECTION:NOTES:END -->

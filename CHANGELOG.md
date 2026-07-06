@@ -19,10 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   linking/unlinking never clobbers an unrelated doc reference on a multiply-referenced task; when
   removal would leave the array empty, `--doc` is omitted entirely (Backlog cannot clear it via an
   empty value) — the cosmetic drift ADR-0009 already documents as an accepted tradeoff. `--no-back-ref`
-  skips the Backlog-side edit on either command. Every task's back-reference edit runs independently;
-  a single Backlog subprocess failure is reported on that task's row (`backRef: "failed"`) rather than
-  aborting the rest, and the command exits `6` (`drift`) when any edit failed. Not yet consumed by
-  `reconcile.ts`/`managed-block.ts` (LORE-26/27's job).
+  skips the Backlog-side edit on either command. Every task's back-reference edit is independent and
+  freshly re-read right before writing; a single Backlog subprocess failure is reported on that
+  task's row (`backRef: "failed"`) rather than aborting the rest, and the command exits `6` (`drift`)
+  when any edit failed — edits run one at a time within an invocation (ADR-0012 §5: no concurrent
+  mutating Backlog commands). Neither command will target a reserved hub stem (`index`/`log`), or a
+  concept whose id collides case-insensitively with another concept's — Backlog's own label store
+  de-dups case-insensitively, so two such concepts could not have independently addressable `doc:`
+  back-references. Not yet consumed by `reconcile.ts`/`managed-block.ts` (LORE-26/27's job).
 - **`core/reconcile.ts` — roll a Story/Spec's linked task statuses up into one derived `status`**
   (LORE-23). The pure engine behind the `status:` half of `lore sync`/`lore check` (ADR-0009 §3):
   `reconcileStatus(taskStatuses, statusFlow)` classifies each linked task by its position in the
