@@ -149,7 +149,10 @@ function fakeAdapter(
         byLower.delete(remove.toLowerCase());
       }
       const nextLabels = [...labels].map((l) => byLower.get(l) as string);
-      const nextDocs = patch.doc !== undefined ? [...patch.doc] : existing.documentation;
+      // Mirrors the real adapter's `--doc` accumulator (backlog.ts's `for (const doc of patch.doc ?? [])`):
+      // it emits one repeated flag per entry, so an EMPTY array sends zero flags and is a no-op, exactly
+      // like `undefined` — never a "clear". Both must leave `documentation` untouched.
+      const nextDocs = patch.doc !== undefined && patch.doc.length > 0 ? [...patch.doc] : existing.documentation;
       tasks.set(id.toLowerCase(), { ...existing, labels: nextLabels, documentation: nextDocs });
     },
   };
@@ -636,6 +639,21 @@ describe("lore link/unlink — 2nd-pass code-review fixes", () => {
     } catch (err) {
       expect(err).toBeInstanceOf(LoreError);
       expect((err as LoreError).type).toBe("usage");
+    }
+  });
+
+  test("rejects a concept id containing a comma up front, before any write — Backlog's label ops have no escape for one", async () => {
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+    const err = await expectLinkError(["notes/release-notes,v2", "lore-1"], adapter);
+    expect(err.type).toBe("usage");
+    expect(adapter.calls).toHaveLength(0);
+
+    try {
+      await runUnlink(opts(["notes/release-notes,v2", "lore-1"], adapter));
+      throw new Error("expected a LoreError");
+    } catch (err2) {
+      expect(err2).toBeInstanceOf(LoreError);
+      expect((err2 as LoreError).type).toBe("usage");
     }
   });
 
