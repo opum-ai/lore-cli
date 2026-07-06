@@ -115,6 +115,36 @@ describe("realGitAdapter — history()", () => {
     }
   });
 
+  test("regression: a bundle nested below the git repository's own top level still reports bundle-relative paths", () => {
+    // Without --relative, `git log --name-only` always reports paths relative to the repo's TOP
+    // LEVEL, never `cwd` — so a lore project whose docs/ isn't at the git top level (a bundle
+    // nested inside a larger checkout) would see every file prefixed with that nesting (e.g.
+    // "project/docs/a.md" instead of "docs/a.md"), which core/log.ts's `isUnderRoot` (matched
+    // against the bundle-relative "docs" root) would never recognize as under the bundle.
+    const top = freshRepo();
+    try {
+      commit(top, "project/docs/a.md", "a\n", "add nested doc");
+      writeFileSync(join(top, "outside.txt"), "not part of the bundle\n");
+      run(top, ["add", "outside.txt"]);
+      run(top, ["commit", "-q", "-m", "add file outside the nested project"]);
+
+      const projectRoot = join(top, "project");
+      const sha = resolveHeadSha(projectRoot) as string;
+      const commits = realGitAdapter(projectRoot).history({ to: sha });
+
+      const addDoc = commits.find((c) => c.subject === "add nested doc");
+      expect(addDoc?.files).toEqual(["docs/a.md"]); // relative to projectRoot, not the repo top level
+
+      // The commit that only touched a file OUTSIDE this project's own root reports no files here at
+      // all (matching --relative's "exclude changes outside the directory" semantics) rather than a
+      // path like "../outside.txt" that isUnderRoot could never match either.
+      const outsideCommit = commits.find((c) => c.subject === "add file outside the nested project");
+      expect(outsideCommit?.files).toEqual([]);
+    } finally {
+      rmSync(top, { recursive: true, force: true });
+    }
+  });
+
   test("a subject containing characters near the sentinel/format boundary is not misparsed", () => {
     const root = freshRepo();
     try {

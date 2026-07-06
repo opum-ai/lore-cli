@@ -31,12 +31,11 @@
  * {@link BacklogAdapter} is even constructed unless at least one scoped concept links a task.
  */
 
-import { readFileSync } from "node:fs";
-import { dirname, join, posix } from "node:path";
+import { dirname, join } from "node:path";
 import { type BacklogAdapter, type BacklogTaskDetail, readStatusFlow } from "../adapters/backlog";
 import { realGitAdapter, resolveHeadSha } from "../adapters/git";
 import { loadConfig } from "../config";
-import { type BundleGraph, loadBundle, toRefList, walkMarkdown } from "../core/bundle";
+import { type BundleGraph, loadBundle, toRefList } from "../core/bundle";
 import { type Concept, idFromPath, serializeConcept } from "../core/concept";
 import { generateIndexes } from "../core/indexes";
 import { buildLog, type GitAdapter, generateLog } from "../core/log";
@@ -44,16 +43,15 @@ import { type ManagedTaskRow, regenerateTaskBlock } from "../core/managed-block"
 import { loadProfile } from "../core/profile";
 import { reconcileStatus } from "../core/reconcile";
 import { DOCS_DIR } from "../core/scaffold";
-import { EXIT_OK, errnoCode, ioError, LoreError, WarningCollector, type Writer } from "../errors";
+import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { type BacklogCommitResult, bunGitSpawn, commitBacklogIfDirty, type GitSpawn } from "../state";
 import { parseCommandArgs } from "./args";
-import { readSource } from "./discover";
+import { readIfExists, readIndexBytes, readSource } from "./discover";
 import { ensureDir, writeFileAtomic } from "./fswrite";
 import { dedupeTaskIds, defaultAdapter } from "./link";
 
-/** The reserved index/log file names, excluded from concept scanning (mirrors `rename.ts`). */
-const INDEX_FILE = "index.md";
+/** The reserved log file name, excluded from concept scanning (mirrors `rename.ts`'s index handling). */
 const LOG_FILE = "log.md";
 
 /** Options for {@link runSync}; `root`, the streams, and the adapters/seams are injectable for tests. */
@@ -226,37 +224,9 @@ function regenerateIndexAndLog(
     headSha === null
       ? generateLog([], { root: DOCS_DIR })
       : buildLog(options.gitAdapter ?? realGitAdapter(options.root), { to: headSha }, { root: DOCS_DIR });
-  const existingLog = readIfPresent(join(docsRoot, LOG_FILE), `${DOCS_DIR}/${LOG_FILE}`);
+  const existingLog = readIfExists(join(docsRoot, LOG_FILE), `${DOCS_DIR}/${LOG_FILE}`);
   if (logBytes !== existingLog) {
     writes.set(LOG_FILE, logBytes);
-  }
-}
-
-/** Read every existing `index.md` under the bundle as `bundle-relative-path → raw bytes` (mirrors `rename.ts`). */
-function readIndexBytes(docsRoot: string): Map<string, string> {
-  const bytes = new Map<string, string>();
-  for (const rel of walkMarkdown(docsRoot, undefined)) {
-    if (posix.basename(rel) === INDEX_FILE) {
-      bytes.set(rel, readSource(join(docsRoot, rel), `${DOCS_DIR}/${rel}`));
-    }
-  }
-  return bytes;
-}
-
-/** Read a file's bytes if it exists, else `undefined` (unlike `readSource`, absence is not an error — `log.md` may not exist yet). */
-function readIfPresent(absPath: string, relPath: string): string | undefined {
-  try {
-    return readFileSync(absPath, "utf8");
-  } catch (cause) {
-    if (errnoCode(cause) === "ENOENT") {
-      return undefined;
-    }
-    ioError(cause, {
-      denied: { message: `cannot read ${relPath}`, hint: "check filesystem permissions" },
-      notFound: { message: `cannot read ${relPath}`, hint: "check filesystem permissions" },
-      input: { path: relPath },
-      rethrowUnknown: true,
-    });
   }
 }
 

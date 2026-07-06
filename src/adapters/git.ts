@@ -16,7 +16,7 @@
  */
 
 import type { GitAdapter, GitCommit, GitLogRange } from "../core/log";
-import { LoreError } from "../errors";
+import { LoreError, stderrHint } from "../errors";
 
 /** A control-character line prefixing every commit's formatted header — never a legitimate subject or file path. */
 const SENTINEL = "\x01lore:log-entry\x01";
@@ -28,13 +28,20 @@ const PRETTY_FORMAT = `${SENTINEL}%n%H%n%cI%n%s`;
 export function realGitAdapter(cwd: string): GitAdapter {
   return {
     history(range: GitLogRange): readonly GitCommit[] {
-      const args = ["log", "--name-only", `--pretty=format:${PRETTY_FORMAT}`, ...rangeArgs(range)];
+      // `--relative` (a no-op when `cwd` is the git repository's own top level) makes `--name-only`
+      // report paths relative to `cwd` instead of git's default of always relative to the repo's
+      // top level: without it, a bundle nested below the repo root (docs/backlog not at the git
+      // top level) would get every file path prefixed with that nesting, which core/log.ts's
+      // `isUnderRoot` (matched against the bundle-relative `docs` root) would never recognize as
+      // under the bundle -- silently producing an empty log.md forever.
+      const args = ["log", "--name-only", "--relative", `--pretty=format:${PRETTY_FORMAT}`, ...rangeArgs(range)];
       const proc = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
       if (proc.exitCode !== 0) {
         throw new LoreError(
           "drift",
           `\`git log\` exited ${proc.exitCode}: could not build log.md`,
-          singleLineStderr(proc.stderr) ?? "check that this is a git repository and the given range is valid",
+          stderrHint(proc.stderr.toString("utf8")) ??
+            "check that this is a git repository and the given range is valid",
           { exitCode: proc.exitCode, range },
         );
       }
@@ -81,10 +88,4 @@ function parseHistory(output: string): GitCommit[] {
     commits.push({ hash, timestamp, subject, files });
   }
   return commits;
-}
-
-/** Collapse a failed invocation's stderr to a one-line hint (empty → undefined). */
-function singleLineStderr(stderr: Buffer): string | undefined {
-  const trimmed = stderr.toString("utf8").trim().replace(/\s+/g, " ");
-  return trimmed === "" ? undefined : trimmed;
 }

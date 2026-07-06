@@ -89,14 +89,14 @@ function cleanGitSpawn(): GitSpawn & { calls: string[][] } {
   return spawn;
 }
 
-/** A GitSpawn reporting one dirty backlog/ file, then succeeding add/commit. */
-function dirtyGitSpawn(porcelainLine: string): GitSpawn & { calls: string[][] } {
+/** A GitSpawn reporting one dirty backlog/ file (`-z`/NUL-terminated porcelain entry), then succeeding add/commit. */
+function dirtyGitSpawn(porcelainEntry: string): GitSpawn & { calls: string[][] } {
   const calls: string[][] = [];
   let call = 0;
   const spawn = (async (args: readonly string[]): Promise<GitSpawnResult> => {
     calls.push([...args]);
     call++;
-    return call === 1 ? ok(`${porcelainLine}\n`) : ok("");
+    return call === 1 ? ok(`${porcelainEntry}\0`) : ok("");
   }) as GitSpawn & { calls: string[][] };
   spawn.calls = calls;
   return spawn;

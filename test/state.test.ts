@@ -41,39 +41,96 @@ function fail(exitCode: number, stderr: string): GitSpawnResult {
   return { exitCode, stdout: "", stderr };
 }
 
+/** Build `-z` (NUL-delimited) porcelain stdout from `XY path` entries (each becomes one NUL-terminated field). */
+function porcelainZ(...entries: string[]): string {
+  return entries.length === 0 ? "" : `${entries.join("\0")}\0`;
+}
+
+/** One `XY path` entry for {@link porcelainZ}. */
+function entry(status: string, path: string): string {
+  return `${status} ${path}`;
+}
+
+/** A rename/copy entry: two NUL-terminated fields, `XY new-path\0old-path` (no `" -> "` text token at all in `-z` mode). */
+function renameEntry(status: string, newPath: string, oldPath: string): string {
+  return `${status} ${newPath}\0${oldPath}`;
+}
+
 describe("commitBacklogIfDirty — fake GitSpawn", () => {
   test("clean backlog/ (empty porcelain output) is a no-op: no add, no commit", async () => {
     const spawn = scriptedSpawn([ok("")]);
     const result = await commitBacklogIfDirty(spawn);
     expect(result).toEqual({ committed: false, files: [] });
     expect(spawn.calls).toHaveLength(1); // status only
-    expect(spawn.calls[0]?.args).toEqual(["status", "--porcelain", "--untracked-files=all", "--", "backlog/"]);
+    expect(spawn.calls[0]?.args).toEqual(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "backlog/"]);
   });
 
-  test("dirty backlog/ stages exactly the reported paths and commits them", async () => {
-    const porcelain = [" M backlog/tasks/lore-1 - x.md", "?? backlog/tasks/lore-2 - y.md", ""].join("\n");
-    const spawn = scriptedSpawn([ok(porcelain), ok(""), ok("")]);
+  test("dirty backlog/ stages exactly the reported paths and commits them, scoped to those paths", async () => {
+    const stdout = porcelainZ(entry(" M", "backlog/tasks/lore-1 - x.md"), entry("??", "backlog/tasks/lore-2 - y.md"));
+    const spawn = scriptedSpawn([ok(stdout), ok(""), ok("")]);
     const result = await commitBacklogIfDirty(spawn, "chore(backlog): sync task changes");
     expect(result.committed).toBe(true);
     expect(result.files).toEqual(["backlog/tasks/lore-1 - x.md", "backlog/tasks/lore-2 - y.md"]);
     expect(spawn.calls[1]?.args).toEqual(["add", "--", "backlog/tasks/lore-1 - x.md", "backlog/tasks/lore-2 - y.md"]);
-    expect(spawn.calls[2]?.args).toEqual(["commit", "-m", "chore(backlog): sync task changes"]);
+    // The commit is scoped to the same pathspec (not a bare `git commit`) — see the real-git
+    // regression test below proving this actually excludes unrelated staged content.
+    expect(spawn.calls[2]?.args).toEqual([
+      "commit",
+      "-m",
+      "chore(backlog): sync task changes",
+      "--",
+      "backlog/tasks/lore-1 - x.md",
+      "backlog/tasks/lore-2 - y.md",
+    ]);
   });
 
-  test("a renamed path (porcelain 'R  old -> new') commits only the new path", async () => {
-    const spawn = scriptedSpawn([
-      ok("R  backlog/tasks/lore-1 - old.md -> backlog/tasks/lore-1 - new.md\n"),
-      ok(""),
-      ok(""),
-    ]);
+  test("a staged rename (porcelain 'R  new\\0old') commits only the new path, not a literal '-> '-split", async () => {
+    const stdout = porcelainZ(renameEntry("R ", "backlog/tasks/lore-1 - new.md", "backlog/tasks/lore-1 - old.md"));
+    const spawn = scriptedSpawn([ok(stdout), ok(""), ok("")]);
     const result = await commitBacklogIfDirty(spawn);
     expect(result.files).toEqual(["backlog/tasks/lore-1 - new.md"]);
   });
 
+  test("a copy (status 'C') is treated the same two-field way as a rename", async () => {
+    const stdout = porcelainZ(renameEntry("C ", "backlog/tasks/lore-2 - copy.md", "backlog/tasks/lore-1 - x.md"));
+    const spawn = scriptedSpawn([ok(stdout), ok(""), ok("")]);
+    const result = await commitBacklogIfDirty(spawn);
+    expect(result.files).toEqual(["backlog/tasks/lore-2 - copy.md"]);
+  });
+
+  test("regression: an ordinary (non-rename) entry whose filename literally contains ' -> ' is never mis-split", async () => {
+    // Before the -z rewrite, a text-format parser that blindly searched for " -> " would slice this
+    // untracked add's own filename in half. -z mode has no " -> " separator at all for non-R/C
+    // entries, so the full filename must come through unmangled.
+    const stdout = porcelainZ(entry("??", "backlog/tasks/lore-5 - Cache -> DB fallback.md"));
+    const spawn = scriptedSpawn([ok(stdout), ok(""), ok("")]);
+    const result = await commitBacklogIfDirty(spawn);
+    expect(result.files).toEqual(["backlog/tasks/lore-5 - Cache -> DB fallback.md"]);
+  });
+
+  test("regression: an UNSTAGED rename (reported as two independent entries, not one 'R' entry) commits both sides", async () => {
+    // git only detects a rename once both sides are staged; an on-disk-only move (exactly what a
+    // human editing a task file by hand produces) shows up as a plain deletion plus a plain
+    // untracked add — both must be picked up and committed, not just one.
+    const stdout = porcelainZ(
+      entry(" D", "backlog/tasks/lore-1 - old title.md"),
+      entry("??", "backlog/tasks/lore-1 - new title.md"),
+    );
+    const spawn = scriptedSpawn([ok(stdout), ok(""), ok("")]);
+    const result = await commitBacklogIfDirty(spawn);
+    expect(result.files).toEqual(["backlog/tasks/lore-1 - old title.md", "backlog/tasks/lore-1 - new title.md"]);
+  });
+
   test("the default commit message is used when none is given", async () => {
-    const spawn = scriptedSpawn([ok(" M backlog/tasks/lore-1 - x.md\n"), ok(""), ok("")]);
+    const spawn = scriptedSpawn([ok(porcelainZ(entry(" M", "backlog/tasks/lore-1 - x.md"))), ok(""), ok("")]);
     await commitBacklogIfDirty(spawn);
-    expect(spawn.calls[2]?.args).toEqual(["commit", "-m", "chore(backlog): sync task changes"]);
+    expect(spawn.calls[2]?.args).toEqual([
+      "commit",
+      "-m",
+      "chore(backlog): sync task changes",
+      "--",
+      "backlog/tasks/lore-1 - x.md",
+    ]);
   });
 
   test("a failing `git status` throws a drift LoreError and never attempts add/commit", async () => {
@@ -91,7 +148,10 @@ describe("commitBacklogIfDirty — fake GitSpawn", () => {
   });
 
   test("a failing `git add` throws drift and never attempts commit", async () => {
-    const spawn = scriptedSpawn([ok(" M backlog/tasks/lore-1 - x.md\n"), fail(1, "error: pathspec did not match")]);
+    const spawn = scriptedSpawn([
+      ok(porcelainZ(entry(" M", "backlog/tasks/lore-1 - x.md"))),
+      fail(1, "error: pathspec did not match"),
+    ]);
     let err: unknown;
     try {
       await commitBacklogIfDirty(spawn);
@@ -104,7 +164,11 @@ describe("commitBacklogIfDirty — fake GitSpawn", () => {
   });
 
   test("a failing `git commit` (e.g. a rejected pre-commit hook) throws drift", async () => {
-    const spawn = scriptedSpawn([ok(" M backlog/tasks/lore-1 - x.md\n"), ok(""), fail(1, "hook rejected")]);
+    const spawn = scriptedSpawn([
+      ok(porcelainZ(entry(" M", "backlog/tasks/lore-1 - x.md"))),
+      ok(""),
+      fail(1, "hook rejected"),
+    ]);
     const err = await commitBacklogIfDirty(spawn).catch((e) => e);
     expect(err).toBeInstanceOf(LoreError);
     expect((err as LoreError).type).toBe("drift");
@@ -170,19 +234,84 @@ describe("bunGitSpawn + commitBacklogIfDirty — real git integration", () => {
     expect(afterSha).toBe(beforeSha);
   });
 
-  test("a non-ASCII filename (multi-byte UTF-8, C-quoted+octal-escaped by git) round-trips correctly", async () => {
+  test("a non-ASCII filename round-trips correctly (-z mode returns raw bytes, no quoting to undo)", async () => {
     mkdirSync(join(root, "backlog", "tasks"), { recursive: true });
     const name = "lore-1 - café 日本語.md";
     writeFileSync(join(root, "backlog", "tasks", name), "hi\n");
 
     const result = await commitBacklogIfDirty(bunGitSpawn(root));
     expect(result).toEqual({ committed: true, files: [`backlog/tasks/${name}`] });
-    // If unquoting had mis-decoded the path, `git add` would have missed the real file (a corrupted
-    // pathspec matches nothing) and it would still show up as untracked here.
     const status = Bun.spawnSync(["git", "status", "--porcelain"], { cwd: root, stdout: "pipe" }).stdout.toString(
       "utf8",
     );
     expect(status).toBe("");
+  });
+
+  test("a filename containing a literal ' -> ' commits correctly (regression: no text-based rename ambiguity)", async () => {
+    mkdirSync(join(root, "backlog", "tasks"), { recursive: true });
+    const name = "lore-5 - Cache -> DB fallback.md";
+    writeFileSync(join(root, "backlog", "tasks", name), "a\n");
+
+    const result = await commitBacklogIfDirty(bunGitSpawn(root));
+    expect(result).toEqual({ committed: true, files: [`backlog/tasks/${name}`] });
+    const status = Bun.spawnSync(["git", "status", "--porcelain"], { cwd: root, stdout: "pipe" }).stdout.toString(
+      "utf8",
+    );
+    expect(status).toBe("");
+  });
+
+  test("regression: an unrelated already-staged change is never swept into lore's commit", async () => {
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(join(root, "src", "foo.ts"), "a\n");
+    run(["add", "."]);
+    run(["commit", "-q", "-m", "add src/foo.ts"]);
+
+    // A developer stages in-progress work...
+    writeFileSync(join(root, "src", "foo.ts"), "b\n");
+    run(["add", "src/foo.ts"]);
+    // ...then a backlog/ task file becomes dirty, and sync's commit step runs.
+    mkdirSync(join(root, "backlog"), { recursive: true });
+    writeFileSync(join(root, "backlog", "x.md"), "a\n");
+
+    const result = await commitBacklogIfDirty(bunGitSpawn(root));
+    expect(result).toEqual({ committed: true, files: ["backlog/x.md"] });
+
+    const committedFiles = Bun.spawnSync(["git", "show", "--stat=200", "--pretty=format:", "HEAD"], {
+      cwd: root,
+      stdout: "pipe",
+    }).stdout.toString("utf8");
+    expect(committedFiles).toContain("backlog/x.md");
+    expect(committedFiles).not.toContain("foo.ts");
+    // The developer's unrelated staged change is untouched — still staged, not committed.
+    const status = Bun.spawnSync(["git", "status", "--porcelain"], { cwd: root, stdout: "pipe" }).stdout.toString(
+      "utf8",
+    );
+    expect(status).toBe("M  src/foo.ts\n");
+  });
+
+  test("regression: an unstaged on-disk rename (the human-edit case) commits both sides as one logical change", async () => {
+    mkdirSync(join(root, "backlog", "tasks"), { recursive: true });
+    const oldPath = join(root, "backlog", "tasks", "lore-1 - old title.md");
+    const newPath = join(root, "backlog", "tasks", "lore-1 - new title.md");
+    writeFileSync(oldPath, "a\n");
+    run(["add", "."]);
+    run(["commit", "-q", "-m", "add task"]);
+
+    // A plain filesystem rename, exactly what hand-editing a Backlog task's title produces — no
+    // `git add` in between, so git cannot detect this as a staged rename (it shows up as two
+    // independent porcelain entries: a deletion and an untracked add).
+    rmSync(oldPath);
+    writeFileSync(newPath, "a\n");
+
+    const result = await commitBacklogIfDirty(bunGitSpawn(root));
+    expect(result.committed).toBe(true);
+    expect([...result.files].sort()).toEqual(
+      ["backlog/tasks/lore-1 - new title.md", "backlog/tasks/lore-1 - old title.md"].sort(),
+    );
+    const status = Bun.spawnSync(["git", "status", "--porcelain"], { cwd: root, stdout: "pipe" }).stdout.toString(
+      "utf8",
+    );
+    expect(status).toBe(""); // both the deletion and the addition are fully committed
   });
 
   test("a change outside backlog/ is never staged or committed", async () => {

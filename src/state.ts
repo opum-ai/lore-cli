@@ -24,7 +24,7 @@
  * it exists specifically to shell `git`.
  */
 
-import { LoreError } from "./errors";
+import { LoreError, stderrHint } from "./errors";
 
 /** The result of one `git` invocation, mirroring `adapters/backlog.ts`'s `SpawnResult` shape. */
 export interface GitSpawnResult {
@@ -92,7 +92,11 @@ export async function commitBacklogIfDirty(
     return { committed: false, files: [] };
   }
   await run(spawn, ["add", "--", ...files], "git add");
-  await run(spawn, ["commit", "-m", message], "git commit");
+  // Scoped with the same pathspec as the `add` above: `git commit -- <paths>` commits ONLY those
+  // paths' content, leaving any OTHER already-staged change (e.g. in-progress work a developer
+  // staged separately) untouched in the index rather than swept into lore's commit — a bare,
+  // unscoped `git commit` would instead commit the entire index.
+  await run(spawn, ["commit", "-m", message, "--", ...files], "git commit");
   return { committed: true, files };
 }
 
@@ -100,68 +104,44 @@ export async function commitBacklogIfDirty(
 const DEFAULT_COMMIT_MESSAGE = "chore(backlog): sync task changes";
 
 /**
- * The repo-relative paths `git status --porcelain` reports as changed under `pathspec` (staged,
- * unstaged, or untracked — every porcelain status code). Each line is `XY PATH` (or `XY ORIG -> PATH`
- * for a rename, where only the new `PATH` is committed going forward); the two-character status
- * prefix and any `->` rename arrow are stripped, keeping just the current path, C-unquoted
- * ({@link unquoteGitPath}) so a path git wrapped in quotes (any path with a space — the common case
- * for Backlog task filenames — or other special characters) is a valid pathspec, not a literal
- * quoted string.
+ * The repo-relative paths `git status --porcelain -z` reports as changed under `pathspec` (staged,
+ * unstaged, or untracked — every porcelain status code). Parses the NUL-delimited machine format
+ * (`-z`), not the human `->`-separated text format: `-z` disables git's C-style quoting entirely
+ * (every path is raw bytes, even one containing a space, a literal arrow, or non-ASCII characters —
+ * no unescaping needed), and a rename/copy entry is two independent NUL-terminated fields
+ * (`new-path\0old-path\0`, no `" -> "` text token at all) rather than one line joined by a literal
+ * `" -> "` — which a text-format parser could otherwise mis-split when the path itself contains
+ * that exact substring. Only the current (new) path of a rename/copy is kept; its old path is
+ * already reflected by that same status line for a *staged* rename (nothing further to add), and an
+ * *unstaged* rename is reported by git as two ordinary independent entries (a deletion, an
+ * untracked add) rather than one `R` entry at all — both come through this parser as ordinary
+ * single-field entries and are both returned, so both sides of the move get staged and committed.
  */
 async function porcelainPaths(spawn: GitSpawn, pathspec: string): Promise<string[]> {
   // `--untracked-files=all` expands a brand-new untracked directory into its individual file paths
   // (plain `--porcelain` reports only the directory itself, e.g. `?? backlog/`) — scoped to `pathspec`
   // so, unlike a bare repo-wide `-uall`, this never walks more of the tree than lore is committing.
-  const result = await run(spawn, ["status", "--porcelain", "--untracked-files=all", "--", pathspec], "git status");
+  const result = await run(
+    spawn,
+    ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", pathspec],
+    "git status",
+  );
+  const tokens = result.stdout.split("\0");
   const paths: string[] = [];
-  for (const line of result.stdout.split("\n")) {
-    if (line.trim() === "") {
+  for (let i = 0; i < tokens.length; i++) {
+    const entry = tokens[i];
+    if (entry === undefined || entry === "") {
       continue;
     }
-    const rest = line.slice(3); // "XY " is always exactly 3 chars (porcelain v1 format)
-    const arrow = rest.indexOf(" -> ");
-    const raw = arrow === -1 ? rest : rest.slice(arrow + 4);
-    paths.push(unquoteGitPath(raw));
+    const status = entry.slice(0, 2);
+    const path = entry.slice(3); // "XY " is always exactly 3 chars, even in -z mode
+    paths.push(path);
+    if (status.includes("R") || status.includes("C")) {
+      i++; // a rename/copy's OLD path is the next NUL-terminated field — consume it, it's not a path to add/commit
+    }
   }
   return paths;
 }
-
-/**
- * Undo git's C-style quoting of one porcelain path. git wraps a path in `"..."` whenever it
- * contains a space or another character its space-delimited porcelain format would otherwise
- * misparse, escaping `\`/`"`/control characters with C escapes and any other special byte —
- * including, for a non-ASCII path, each byte of a multi-byte UTF-8 sequence individually — as a
- * three-digit octal `\NNN`. Reassembled as raw bytes and UTF-8-decoded once, so a non-ASCII path
- * round-trips correctly rather than being reassembled one (mis-decoded) byte at a time. An
- * unquoted path (no special characters) passes through unchanged.
- */
-function unquoteGitPath(path: string): string {
-  if (path.length < 2 || !path.startsWith('"') || !path.endsWith('"')) {
-    return path;
-  }
-  const inner = path.slice(1, -1);
-  const bytes: number[] = [];
-  for (let i = 0; i < inner.length; i++) {
-    const c = inner[i] as string;
-    if (c !== "\\") {
-      bytes.push(c.charCodeAt(0));
-      continue;
-    }
-    i++;
-    const next = inner[i];
-    if (next !== undefined && /[0-7]/.test(next)) {
-      const octal = (next + (inner[i + 1] ?? "") + (inner[i + 2] ?? "")).slice(0, 3);
-      bytes.push(Number.parseInt(octal, 8));
-      i += 2;
-      continue;
-    }
-    bytes.push(ESCAPE_BYTES[next ?? ""] ?? next?.charCodeAt(0) ?? 0);
-  }
-  return new TextDecoder("utf-8").decode(new Uint8Array(bytes));
-}
-
-/** Single-character C escapes git emits (beyond the `\NNN` octal form handled separately). */
-const ESCAPE_BYTES: Readonly<Record<string, number>> = { n: 10, t: 9, r: 13, "\\": 92, '"': 34 };
 
 /** Run one `git` invocation through {@link GitSpawn}, mapping a non-zero exit to a `drift` {@link LoreError}. */
 async function run(spawn: GitSpawn, args: readonly string[], label: string): Promise<GitSpawnResult> {
@@ -170,15 +150,9 @@ async function run(spawn: GitSpawn, args: readonly string[], label: string): Pro
     throw new LoreError(
       "drift",
       `\`${label}\` exited ${result.exitCode}: lore could not commit backlog/ changes`,
-      singleLineStderr(result) ?? "check the repository's git state (a dirty index, a rejected pre-commit hook, …)",
+      stderrHint(result.stderr) ?? "check the repository's git state (a dirty index, a rejected pre-commit hook, …)",
       { exitCode: result.exitCode },
     );
   }
   return result;
-}
-
-/** Collapse a failed invocation's stderr to a one-line hint (empty → undefined). */
-function singleLineStderr(result: GitSpawnResult): string | undefined {
-  const trimmed = result.stderr.trim().replace(/\s+/g, " ");
-  return trimmed === "" ? undefined : trimmed;
 }

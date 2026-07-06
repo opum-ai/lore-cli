@@ -28,7 +28,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import yaml from "js-yaml";
 import { z } from "zod";
-import { errnoCode, ioError, LoreError } from "../errors";
+import { errnoCode, LoreError, stderrHint } from "../errors";
 
 /**
  * The **binary version floor** the probe requires (`backlog --version`, contract §5 step 3). Pinned to
@@ -736,7 +736,7 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
         throw new LoreError(
           "validation",
           `\`backlog task create\` exited ${result.exitCode}`,
-          singleLineStderr(result),
+          stderrHint(result.stderr),
           {
             exitCode: result.exitCode,
           },
@@ -773,18 +773,12 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
           missing
             ? `\`backlog task edit\` could not find task ${JSON.stringify(id)}`
             : `\`backlog task edit\` exited ${result.exitCode}`,
-          singleLineStderr(result),
+          stderrHint(result.stderr),
           { id, exitCode: result.exitCode },
         );
       }
     },
   };
-}
-
-/** Collapse a failed invocation's stderr to a one-line hint for a {@link LoreError} (empty → undefined). */
-function singleLineStderr(result: SpawnResult): string | undefined {
-  const trimmed = result.stderr.trim().replace(/\s+/g, " ");
-  return trimmed === "" ? undefined : trimmed;
 }
 
 // ── Status flow from `backlog/config.yml` (LORE-26, backlog-cli-contract.md §3.1) ──────
@@ -851,15 +845,17 @@ export function readStatusFlow(root: string): string[] {
   try {
     text = readFileSync(join(root, relPath), "utf8");
   } catch (cause) {
-    if (errnoCode(cause) === "ENOENT") {
+    const code = errnoCode(cause);
+    if (code === "ENOENT") {
       return [...DEFAULT_STATUS_FLOW];
     }
-    ioError(cause, {
-      denied: { message: `cannot read ${relPath}`, hint: "check filesystem permissions on backlog/config.yml" },
-      notFound: { message: `cannot read ${relPath}`, hint: "check filesystem permissions on backlog/config.yml" },
-      input: { path: relPath },
-      rethrowUnknown: true,
-    });
+    if (code === "EACCES" || code === "EPERM") {
+      throw new LoreError("denied", `cannot read ${relPath}`, "check filesystem permissions on backlog/config.yml", {
+        path: relPath,
+        code,
+      });
+    }
+    throw cause; // anything else (e.g. a directory sitting at the path) surfaces as an unexpected fault
   }
   return parseStatusFlow(text);
 }

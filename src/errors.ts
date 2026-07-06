@@ -142,6 +142,18 @@ export function singleLine(text: string): string {
 }
 
 /**
+ * Collapse a failed subprocess invocation's stderr to a one-line hint, or `undefined` when it
+ * carried no content — the shared policy behind every `LoreError` hint built from a subprocess
+ * failure (`adapters/backlog.ts`'s Backlog spawn, `state.ts`'s git-write seam, `adapters/git.ts`'s
+ * real `GitAdapter`), so a future change to how stderr is condensed (stripping ANSI, capping
+ * length, …) has one home instead of three independently-drifting copies.
+ */
+export function stderrHint(stderr: string): string | undefined {
+  const trimmed = stderr.trim().replace(/\s+/g, " ");
+  return trimmed === "" ? undefined : trimmed;
+}
+
+/**
  * Project a {@link LoreError} onto its `--json` error envelope. `message`/`hint`
  * are coerced to single-line strings (§5.2); `hint` is omitted when absent or
  * empty; `input` is included only when it is a non-null, non-array object
