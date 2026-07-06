@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-06 15:41'
+updated_date: '2026-07-06 15:55'
 labels:
   - cmd
 milestone: m-3
@@ -439,4 +439,16 @@ the "never had any back-ref" invariant, not a bug -- first refutation
 in this whole review loop, a good convergence signal.
 
 3 new/updated tests. Full suite 1154/1154, typecheck clean, biome clean.
+
+10th /code-review max pass on PR #35 (commit e10668c): 0 findings
+survived verification -- full convergence across all 6 finder angles.
+
+However, checking live CI (gh pr checks 35) surfaced a REAL failure the
+review workflow doesn't run: windows-latest's test job failed. The
+6th-pass cwd test for bunBacklogSpawn spawned an external `pwd` binary,
+which isn't reliably on PATH on Windows runners -- every local
+verification this whole session ran on macOS, so this was never caught
+until CI actually exercised it on Windows. Fixed in a00a521: spawn the
+current runtime binary itself (process.execPath) with an inline script
+printing its own cwd, portable across all three CI platforms.
 <!-- SECTION:NOTES:END -->
