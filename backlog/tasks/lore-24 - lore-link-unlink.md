@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-06 03:03'
+updated_date: '2026-07-06 13:19'
 labels:
   - cmd
 milestone: m-3
@@ -298,4 +298,24 @@ accepted tradeoff:
   close. Accepted tradeoff, not a bug.
 
 1 new test. Full suite 1132/1132, typecheck clean, biome clean.
+
+Implemented the 6th-pass finding [0] this session (user chose "make
+rename Backlog-aware now" over deferring/documenting-only): lore rename
+never updated a renamed concept's doc:<id> Backlog label, permanently
+orphaning it (no lore command could ever clean up the stale label
+afterward). Fixed in e1c4f50:
+- Added moveBackRefs() to commands/link.ts (single owner of the
+  doc:<conceptId> label contract) -- moves every linked task's label +
+  --doc path from old to new id/path, mirroring link/unlink's per-task
+  resilience (sequential edits per ADR-0012 Sec5, fresh reads, isolated
+  per-task failure, no-op short-circuit when already current).
+- runRename is now async with an injectable BacklogAdapter, constructed
+  ONLY when the renamed concept has tasks: -- renaming an unlinked doc
+  keeps zero Backlog dependency. File move commits first; back-ref move
+  runs after (Backlog failure can never strand an already-renamed
+  file). --dry-run skips the Backlog move entirely.
+- RenameReport gains backRefs; a failed move exits drift (6).
+- Amended ADR-0009 Sec2 to describe actual (not aspirational) behavior.
+
+9 new tests. Full suite 1138/1138, typecheck clean, biome clean.
 <!-- SECTION:NOTES:END -->
