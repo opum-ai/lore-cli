@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-06 13:48'
+updated_date: '2026-07-06 14:25'
 labels:
   - cmd
 milestone: m-3
@@ -351,4 +351,40 @@ distinct root causes). All fixed in be47f28:
 
 9 new/updated tests. Full suite 1142/1142, typecheck clean, biome
 clean.
+
+/code-review max, 8th pass on PR #35 (workflow-backed, post-7th-pass-fix
+commit 7148aad): 6 finder angles, 6 pooled candidates, all 6 independently
+verified (0 refuted). 5 fixed in 56aab45, 1 (finding 0) resolved as a
+documentation correction + deferred design question:
+- (correctness) moveBackRefs's already-current short-circuit missed the
+  "never had any back-ref at all" case (a task linked with --no-back-ref,
+  or hand-stripped) -- such a task silently got the new label/doc added
+  during a later rename, contradicting the user's original opt-out. Added
+  the missing branch.
+- (correctness) rename.ts passed the raw, un-deduped tasks: list to
+  moveBackRefs; a case-duplicate id caused a redundant Backlog call +
+  duplicate report row. Exported/applied dedupeTaskIds.
+- (test coverage) added a unit test for assertNoLabelCaseCollision with
+  candidateId!==excludeId (rename's exact call pattern) -- the 7th-pass
+  fix shipped with zero test proving this exact shape, since it's
+  unreachable end-to-end on case-insensitive filesystems.
+- (cleanup) extracted makeTask/fakeAdapter/EditCall (copy-pasted,
+  already drifted between link.test.ts/rename.test.ts) into
+  test/helpers.ts.
+- (cleanup) fixed a stale cli.ts comment omitting rename from the
+  async-commands list.
+- (finding 0, correctness, most severe) a concept relocated BY HAND
+  (git mv, IDE refactor -- not lore rename) leaves a permanently
+  un-cleanable stale doc:<oldId> label: lore link on the new id only
+  ADDS its own label (no notion of a previous id to remove), and lore
+  unlink on the old id 404s once that id no longer resolves. My own
+  ADR-0009 amendment text overclaimed this resolves "at the next lore
+  link/unlink" -- corrected to accurately describe it as a known
+  limitation. The real fix (teaching some command to clean up a stale
+  label for an id that no longer resolves) is a genuine, separate
+  capability question adjacent to LORE-26/27's orphan-detection scope,
+  raised to the user as a decision point rather than implemented
+  unilaterally in this already-large PR.
+
+4 new/updated tests. Full suite 1145/1145, typecheck clean, biome clean.
 <!-- SECTION:NOTES:END -->
