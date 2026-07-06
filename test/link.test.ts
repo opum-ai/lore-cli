@@ -693,7 +693,7 @@ describe("lore link/unlink — 2nd-pass code-review fixes", () => {
     const graph = buildGraph([a, b]);
 
     try {
-      assertNoLabelCaseCollision(graph, a);
+      assertNoLabelCaseCollision(graph, a.id, a.id, "link/unlink");
       throw new Error("expected a LoreError");
     } catch (err) {
       expect(err).toBeInstanceOf(LoreError);
@@ -704,6 +704,6 @@ describe("lore link/unlink — 2nd-pass code-review fixes", () => {
   test("assertNoLabelCaseCollision allows a concept with no case-colliding sibling", () => {
     const a = parseConcept("stories/x.md", "---\ntype: Story\n---\nBody.\n");
     const graph = buildGraph([a]);
-    expect(() => assertNoLabelCaseCollision(graph, a)).not.toThrow();
+    expect(() => assertNoLabelCaseCollision(graph, a.id, a.id, "link/unlink")).not.toThrow();
   });
 });

@@ -44,7 +44,7 @@ import { emit, type OutputContext, type Renderable } from "../output";
 import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
 import { canonicalIdentity, readSource } from "./discover";
 import { ensureDir, moveFile, writeFileOverwriting } from "./fswrite";
-import { defaultAdapter, type MovedBackRef, moveBackRefs } from "./link";
+import { assertNoCommaInId, assertNoLabelCaseCollision, defaultAdapter, type MovedBackRef, moveBackRefs } from "./link";
 
 /** The reserved index file name, regenerated from the post-rename graph rather than spliced as a link. */
 const INDEX_FILE = "index.md";
@@ -131,6 +131,17 @@ export async function runRename(options: RenameOptions): Promise<number> {
   // concept differing only in case (which a case-sensitive `Map.has` misses) is never overwritten.
   // A target resolving to the *same* inode as the source is a legitimate case-only rename, allowed.
   assertTargetFree(plan, docsRoot);
+
+  // The Backlog back-ref move's own preconditions, checked up front (before any write) — but only
+  // when the concept actually has linked tasks, since an unlinked rename never touches Backlog and
+  // neither problem can occur on that path (mirrors link.ts's `!noBackRef` scoping).
+  const oldConcept = graph.concepts.get(oldId) as Concept;
+  const linkedTasks = toRefList(oldConcept.frontmatter.tasks);
+  if (linkedTasks.length > 0) {
+    assertNoCommaInId(newId, "rename to");
+    assertNoLabelCaseCollision(graph, newId, oldId, "rename to");
+  }
+
   const writes = mergeIndexWrites(plan, graph, docsRoot);
 
   if (!parsed.dryRun) {
@@ -143,8 +154,6 @@ export async function runRename(options: RenameOptions): Promise<number> {
   // entirely (no BacklogAdapter even constructed) when the concept has no `tasks:` — renaming an
   // unlinked doc keeps its historical zero-Backlog-dependency behavior — and under `--dry-run`,
   // which previews the file-level plan only, not a Backlog-side one.
-  const oldConcept = graph.concepts.get(oldId) as Concept;
-  const linkedTasks = toRefList(oldConcept.frontmatter.tasks);
   let backRefs: readonly MovedBackRef[] = [];
   if (plan.rename !== null && !parsed.dryRun && linkedTasks.length > 0) {
     const adapter = options.adapter ?? defaultAdapter(options.root);

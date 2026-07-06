@@ -310,11 +310,19 @@ export async function moveBackRefs(
     if (detail === null) {
       return "already-current" as const; // the task no longer exists in Backlog — nothing to move
     }
-    const hasOldLabel = hasLabel(detail, oldLabel);
-    const hasNewLabel = hasLabel(detail, newLabel);
+    // `hasLabel`'s case-insensitive match can't distinguish "old" from "new" when a rename is
+    // case-only (oldLabel/newLabel are then the SAME domain, just differently cased) — testing them
+    // independently would find the one stored label under both names and wrongly conclude both are
+    // present. Use an exact match for "is the new label already correct" and a case-insensitive
+    // scan (excluding anything already exactly the new label) for "is there a stale label to
+    // remove" — this handles a case-only rename (fixes the stored label's casing) and a normal
+    // rename that already separately carries the new label (still removes the stale old one)
+    // identically and correctly.
+    const hasExactNewLabel = detail.labels.includes(newLabel);
+    const staleLabel = detail.labels.find((l) => l.toLowerCase() === oldLabel.toLowerCase() && l !== newLabel);
     const hasOldDoc = detail.documentation.includes(oldDocPath);
     const hasNewDoc = detail.documentation.includes(newDocPath);
-    if ((hasNewLabel || !hasOldLabel) && (hasNewDoc || !hasOldDoc)) {
+    if (hasExactNewLabel && staleLabel === undefined && hasNewDoc && !hasOldDoc) {
       return "already-current" as const; // nothing to move
     }
     const docs = detail.documentation.filter((d) => d !== oldDocPath);
@@ -322,8 +330,8 @@ export async function moveBackRefs(
       docs.push(newDocPath);
     }
     await adapter.editTask(taskId, {
-      addLabels: hasNewLabel ? undefined : [newLabel],
-      removeLabels: hasOldLabel ? [oldLabel] : undefined,
+      addLabels: hasExactNewLabel ? undefined : [newLabel],
+      removeLabels: staleLabel !== undefined ? [staleLabel] : undefined,
       doc: docs,
     });
     return "moved" as const;
@@ -385,50 +393,56 @@ async function prepare(options: LinkOptions, command: "link" | "unlink"): Promis
     throw conceptNotInBundle(id);
   }
   if (!parsed.noBackRef) {
-    assertNoLabelCaseCollision(graph, concept);
+    assertNoLabelCaseCollision(graph, concept.id, concept.id, command);
   }
   return { concept, taskIds: dedupeTaskIds(parsed.taskIds), noBackRef: parsed.noBackRef, docsRoot };
 }
 
 /**
- * Reject a concept id containing a comma as a link/unlink principal — a `usage` error. Backlog's
+ * Reject a concept id containing a comma as a `<action>` principal — a `usage` error. Backlog's
  * `--add-label`/`--remove-label` have no escape for an embedded comma (backlog-cli-contract §2.4;
  * `commaJoin` in `adapters/backlog.ts` now rejects one outright rather than silently splitting it
  * into two labels), so a comma-bearing id could never get a working `doc:` back-reference. Failing
- * loud here, once, up front (the caller only calls this when a back-ref edit will actually be
- * attempted — see `prepare`'s `!noBackRef` gate) gives one clear reason instead of every per-task
- * `editTask` call failing forever and reporting `drift` on every future invocation for that concept.
- * A pure `--no-back-ref` doc-side edit never sends a `doc:` label at all, so it is never blocked by
- * this — the comma problem this guards against cannot occur on that path.
+ * loud here, once, up front (callers only call this when a back-ref edit will actually be
+ * attempted) gives one clear reason instead of every per-task `editTask` call failing forever and
+ * reporting `drift` on every future invocation for that concept. Shared by `link`/`unlink`
+ * (`commands/link.ts`) and `lore rename` (`commands/rename.ts`, moving a linked concept's back-ref).
  */
-function assertNoCommaInId(id: string, command: "link" | "unlink"): void {
+export function assertNoCommaInId(id: string, action: string): void {
   if (id.includes(",")) {
     throw usage(
-      `cannot ${command} "${id}": a concept id containing a comma cannot be encoded as a Backlog doc: label`,
+      `cannot ${action} "${id}": a concept id containing a comma cannot be encoded as a Backlog doc: label`,
       "Backlog's --add-label/--remove-label have no escape for an embedded comma — rename the concept so its id contains no comma",
+      { id },
     );
   }
 }
 
 /**
- * Reject linking/unlinking a concept whose id collides case-insensitively with another concept's
- * id (`conflict`, exit 5). Concept ids are case-sensitive in the graph (`buildGraph`'s lookup is a
- * plain `Map`), so two such concepts are legitimately distinct nodes — but Backlog's own
- * `--add-label`/`--remove-label` de-dup case-insensitively in its label store (backlog-cli-contract
- * §2.4), so no encoding lore sends can give them independently addressable `doc:` back-references.
- * Rather than silently let one concept's unlink strip the other's real back-reference, refuse the
- * operation outright. The caller only calls this when a back-ref edit will actually be attempted
- * (see `prepare`'s `!noBackRef` gate): a pure `--no-back-ref` doc-side edit never sends a `doc:`
- * label at all, so the collision this guards against cannot occur on that path either.
+ * Reject a `<candidateId>` that collides case-insensitively with another concept's id already in
+ * `graph` (`conflict`, exit 5) — `excludeId` is the id to ignore (the concept's own current id, so
+ * it never "collides with itself"; for `lore rename` this is the *old* id, since the concept is
+ * still keyed under it in the graph passed in). Concept ids are case-sensitive in the graph
+ * (`buildGraph`'s lookup is a plain `Map`), so two such concepts are legitimately distinct nodes —
+ * but Backlog's own `--add-label`/`--remove-label` de-dup case-insensitively in its label store
+ * (backlog-cli-contract §2.4), so no encoding lore sends can give them independently addressable
+ * `doc:` back-references. Rather than silently let one concept's unlink (or a rename onto a
+ * colliding id) strip or entangle the other's real back-reference, refuse the operation outright.
+ * Shared by `link`/`unlink` (`commands/link.ts`) and `lore rename` (`commands/rename.ts`).
  */
-export function assertNoLabelCaseCollision(graph: BundleGraph, concept: Concept): void {
+export function assertNoLabelCaseCollision(
+  graph: BundleGraph,
+  candidateId: string,
+  excludeId: string,
+  action: string,
+): void {
   for (const other of graph.concepts.values()) {
-    if (other.id !== concept.id && other.id.toLowerCase() === concept.id.toLowerCase()) {
+    if (other.id !== excludeId && other.id.toLowerCase() === candidateId.toLowerCase()) {
       throw new LoreError(
         "conflict",
-        `cannot link/unlink "${concept.id}": concept "${other.id}" has an id differing only by case`,
+        `cannot ${action} "${candidateId}": concept "${other.id}" has an id differing only by case`,
         "Backlog's own doc: label store de-dups case-insensitively, so these two concepts cannot have independent back-references — rename one so their ids are case-distinct",
-        { id: concept.id, collidesWith: other.id },
+        { id: candidateId, collidesWith: other.id },
       );
     }
   }

@@ -548,7 +548,9 @@ describe("lore rename — errors and arg parsing", () => {
 
   test("renaming onto a reserved file name (index/log) is a usage error (#4)", async () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
-    expect((await expectError(["reference/orders", "reference/index"])).type).toBe("usage");
+    const err = await expectError(["reference/orders", "reference/index"]);
+    expect(err.type).toBe("usage");
+    expect(err.input).toEqual({ id: "reference/index" }); // the offending input is echoed back (cli-contract §5.2)
     expect((await expectError(["reference/orders", "reference/log"])).type).toBe("usage");
     expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true); // nothing moved
   });
@@ -766,5 +768,111 @@ describe("lore rename — Backlog back-ref move", () => {
     expect(code).toBe(EXIT_OK);
     expect(envelope.data.backRefs).toEqual([{ task: "lore-1", backRef: "already-current" }]);
     expect(adapter.calls).toHaveLength(0);
+  });
+
+  test("a case-only rename moves the label instead of destroying it (7th-pass fix)", async () => {
+    writeDoc("stories/Foo.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody of Foo.\n");
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", { labels: ["doc:stories/Foo"], documentation: ["docs/stories/Foo.md"] }),
+    ]);
+    const stdout = capture();
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["stories/Foo", "stories/foo"],
+      stdout,
+      stderr: capture(),
+      adapter,
+    });
+    const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
+
+    expect(code).toBe(EXIT_OK);
+    expect(envelope.data.backRefs).toEqual([{ task: "lore-1", backRef: "moved" }]);
+    // The label is actually MOVED (re-cased), not just removed: exactly one edit call, which both
+    // removes the old-cased label and adds the new-cased one in the same patch.
+    expect(adapter.calls).toHaveLength(1);
+    expect(adapter.calls[0]).toEqual({
+      id: "lore-1",
+      patch: {
+        addLabels: ["doc:stories/foo"],
+        removeLabels: ["doc:stories/Foo"],
+        doc: ["docs/stories/foo.md"],
+      },
+    });
+  });
+
+  test("a task already carrying both the old and new label/doc still has its stale old label removed (7th-pass fix)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n---\nOrders.\n");
+    // A stale dual-labeled task (e.g. left over from a prior hand-edit, per ADR-0009's documented
+    // cosmetic-drift tradeoff): it already carries BOTH the old and new label/doc.
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", {
+        labels: ["doc:reference/orders", "doc:reference/sales-orders"],
+        documentation: ["docs/reference/orders.md", "docs/reference/sales-orders.md"],
+      }),
+    ]);
+    const stdout = capture();
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/sales-orders"],
+      stdout,
+      stderr: capture(),
+      adapter,
+    });
+    const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
+
+    expect(code).toBe(EXIT_OK);
+    expect(envelope.data.backRefs).toEqual([{ task: "lore-1", backRef: "moved" }]); // NOT already-current
+    expect(adapter.calls).toEqual([
+      {
+        id: "lore-1",
+        patch: {
+          addLabels: undefined,
+          removeLabels: ["doc:reference/orders"],
+          doc: ["docs/reference/sales-orders.md"],
+        },
+      },
+    ]);
+  });
+
+  test("rejects a comma-bearing new id up front, before any write, when the concept is linked (7th-pass fix)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n---\nOrders.\n");
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+
+    try {
+      await runRename({
+        root,
+        output: JSON_CTX,
+        args: ["reference/orders", "reference/orders,v2"],
+        stdout: capture(),
+        stderr: capture(),
+        adapter,
+      });
+      throw new Error("expected a LoreError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("usage");
+      expect((err as LoreError).input).toEqual({ id: "reference/orders,v2" });
+    }
+    expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true); // nothing moved
+    expect(adapter.calls).toHaveLength(0);
+  });
+
+  test("a comma-bearing new id is fine for an unlinked concept (the guard is scoped to when Backlog is actually touched)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/orders,v2"],
+      stdout: capture(),
+      stderr: capture(),
+    });
+
+    expect(code).toBe(EXIT_OK);
+    expect(existsSync(join(root, "docs/reference/orders,v2.md"))).toBe(true);
   });
 });
