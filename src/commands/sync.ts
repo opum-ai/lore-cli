@@ -41,7 +41,7 @@ import { generateIndexes } from "../core/indexes";
 import { buildLog, type GitAdapter, generateLog } from "../core/log";
 import { type ManagedTaskRow, regenerateTaskBlock } from "../core/managed-block";
 import { loadProfile } from "../core/profile";
-import { reconcileStatus } from "../core/reconcile";
+import { reconcileStatus, validateReconcileInputs } from "../core/reconcile";
 import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
 import { EXIT_OK, LoreError, readFileIfPresent, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
@@ -142,12 +142,17 @@ export async function runSync(options: SyncOptions): Promise<number> {
   const writes = new Map<string, string>(); // bundle-relative path -> new bytes
 
   if (linkedByConceptId.size > 0) {
-    // Fast, local, and can throw a `validation` config error: read these BEFORE spending any
-    // Backlog subprocess round-trip, so a broken backlog/config.yml or .lore/config.toml is
-    // reported immediately rather than being masked behind (and paid for after) N task resolutions.
+    // Fast, local, and can throw a `validation` config error: read (and, unlike a plain read,
+    // fully VALIDATE — validateReconcileInputs, not just readStatusFlow's own syntactic checks)
+    // these BEFORE spending any Backlog subprocess round-trip, so a broken backlog/config.yml or
+    // .lore/config.toml (including a semantically degenerate flow or override that only
+    // reconcileStatus itself would otherwise catch, per concept, deep inside the loop below) is
+    // reported immediately rather than being masked behind — and paid for after — N task
+    // resolutions.
     const flow = readStatusFlow(options.root);
     const config = loadConfig({ root: options.root });
     const profile = loadProfile({ root: options.root });
+    validateReconcileInputs(flow, config.reconcile.overrides);
 
     const adapter = options.adapter ?? defaultAdapter(options.root);
     const allTaskIds = dedupeTaskIds([...linkedByConceptId.values()].flat());

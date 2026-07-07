@@ -111,6 +111,23 @@ export function reconcileStatus(
 }
 
 /**
+ * Validate `statusFlow`/`overrides` up front, without needing any task data — the fail-fast half of
+ * {@link reconcileStatus} exposed on its own so a caller resolving many tasks per invocation (e.g.
+ * `lore sync`, one Backlog subprocess round-trip per linked task) can catch a semantically-broken
+ * config (a degenerate flow, an out-of-vocabulary override target) **before** spending any of that
+ * work — `reconcileStatus` itself only reaches this validation once real task data is in hand,
+ * which is too late for that fail-fast property alone. Re-validates the same inputs
+ * `reconcileStatus` will validate again per call; see that function's own note on why the
+ * redundancy is accepted rather than threading a pre-validated value through its signature.
+ *
+ * @throws LoreError `validation` — see {@link reconcileStatus}'s throws for the exact conditions.
+ */
+export function validateReconcileInputs(statusFlow: StatusFlow, overrides: StatusOverrides = {}): void {
+  validateStatusFlow(statusFlow);
+  validateOverrides(overrides);
+}
+
+/**
  * Reject a `statusFlow` lore cannot classify against unambiguously: fewer than two entries (with
  * only one entry, index `0` is simultaneously the not-started **and** the terminal position — the
  * two roles {@link classify} treats as distinct would silently collapse to the same index) or

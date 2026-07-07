@@ -24,7 +24,7 @@ import type { GitAdapter, GitCommit, GitLogRange } from "../src/core/log";
 import { EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { bunGitSpawn, type GitSpawn, type GitSpawnResult } from "../src/state";
-import { capture, fakeAdapter, makeTask } from "./helpers";
+import { capture, fakeAdapter, gitRun, makeTask } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 
@@ -89,14 +89,18 @@ function cleanGitSpawn(): GitSpawn & { calls: string[][] } {
   return spawn;
 }
 
-/** A GitSpawn reporting one dirty backlog/ file (`-z`/NUL-terminated porcelain entry), then succeeding add/commit. */
+/**
+ * A GitSpawn reporting one dirty backlog/ file (`-z`/NUL-terminated porcelain entry), then
+ * succeeding add/commit. Call 1 is always `git rev-parse --show-prefix` (answered "" — not
+ * nested); call 2 is `git status`, which gets the dirty entry.
+ */
 function dirtyGitSpawn(porcelainEntry: string): GitSpawn & { calls: string[][] } {
   const calls: string[][] = [];
   let call = 0;
   const spawn = (async (args: readonly string[]): Promise<GitSpawnResult> => {
     calls.push([...args]);
     call++;
-    return call === 1 ? ok(`${porcelainEntry}\0`) : ok("");
+    return call === 2 ? ok(`${porcelainEntry}\0`) : ok("");
   }) as GitSpawn & { calls: string[][] };
   spawn.calls = calls;
   return spawn;
@@ -189,8 +193,8 @@ describe("lore sync — AC#2: sole committer of backlog/", () => {
 
     const { report } = await syncCmd([], adapter, { gitSpawn });
     expect(report.backlogCommit).toEqual({ committed: true, files: ["backlog/tasks/lore-1 - x.md"] });
-    expect(gitSpawn.calls[1]).toEqual(["add", "--", "backlog/tasks/lore-1 - x.md"]);
-    expect(gitSpawn.calls[2]?.[0]).toBe("commit");
+    expect(gitSpawn.calls[2]).toEqual(["add", "--", "backlog/tasks/lore-1 - x.md"]);
+    expect(gitSpawn.calls[3]?.[0]).toBe("commit");
   });
 
   test("a clean backlog/ makes no commit and the report says so", async () => {
@@ -363,10 +367,7 @@ describe("lore sync — [paths…] scoping", () => {
 
 describe("lore sync — real git integration + router", () => {
   function git(args: string[]): void {
-    const proc = Bun.spawnSync(["git", ...args], { cwd: root, stdout: "pipe", stderr: "pipe" });
-    if (proc.exitCode !== 0) {
-      throw new Error(`git ${args.join(" ")} failed: ${proc.stderr.toString("utf8")}`);
-    }
+    gitRun(root, args);
   }
 
   test("regenerates log.md from real history and commits a real dirty backlog/ file", async () => {

@@ -81,19 +81,27 @@ export function writeFileOverwriting(absPath: string, contents: string, relPath:
  */
 export function writeFileAtomic(absPath: string, contents: string, relPath: string): void {
   const tmpPath = join(dirname(absPath), `.lore-sync-tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
+  let tmpFileExists = false;
   try {
     writeFileSync(tmpPath, contents);
+    tmpFileExists = true; // only true once the write itself has actually succeeded
     renameSync(tmpPath, absPath);
   } catch (cause) {
     let cleanupFailed = false;
-    try {
-      unlinkSync(tmpPath);
-    } catch {
-      // The write/rename failure below is what's primarily reported; a failure here (rare — the
-      // process is already failing) is folded into that error's own hint/input rather than
-      // silently dropped, so a stray `.lore-sync-tmp-*` file is at least surfaced, not silent litter.
-      cleanupFailed = true;
+    if (tmpFileExists) {
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        // The write/rename failure below is what's primarily reported; a failure here (rare — the
+        // process is already failing) is folded into that error's own hint/input rather than
+        // silently dropped, so a stray `.lore-sync-tmp-*` file is at least surfaced, not silent litter.
+        cleanupFailed = true;
+      }
     }
+    // A `writeFileSync` failure (e.g. EACCES on a read-only directory — the most common real-world
+    // trigger) never creates `tmpPath` at all, so cleanup is skipped above rather than attempted and
+    // its inevitable ENOENT misreported as "cleanup failed": the error below must never claim a temp
+    // file remains when none was ever created.
     const err = ioError(cause, relPath, "write file");
     if (cleanupFailed && err instanceof LoreError) {
       throw new LoreError(

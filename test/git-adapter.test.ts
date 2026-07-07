@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { realGitAdapter, resolveHeadSha } from "../src/adapters/git";
 import { generateLog } from "../src/core/log";
 import { LoreError } from "../src/errors";
+import { gitRun as run } from "./helpers";
 
 function freshRepo(): string {
   const root = mkdtempSync(join(tmpdir(), "lore-git-log-"));
@@ -20,13 +21,6 @@ function freshRepo(): string {
   run(root, ["config", "user.name", "lore test"]);
   run(root, ["config", "user.email", "lore-test@example.com"]);
   return root;
-}
-
-function run(root: string, args: string[]): void {
-  const proc = Bun.spawnSync(["git", ...args], { cwd: root, stdout: "pipe", stderr: "pipe" });
-  if (proc.exitCode !== 0) {
-    throw new Error(`git ${args.join(" ")} failed: ${proc.stderr.toString("utf8")}`);
-  }
 }
 
 function commit(root: string, path: string, contents: string, message: string): void {

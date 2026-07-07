@@ -504,4 +504,34 @@ describe("writeFileAtomic", () => {
     // directory that caused the conflict) is the only entry left in `dir`.
     expect(readdirSync(dir)).toEqual(["adir"]);
   });
+
+  test("regression: a write failure BEFORE any temp file exists never claims one 'may remain'", () => {
+    // A permission-denied directory makes writeFileSync(tmpPath, ...) itself fail -- no temp file is
+    // ever created, so the cleanup unlink's inevitable ENOENT must not be misreported as a failed
+    // cleanup (which would falsely tell the user a stray temp file needs manual removal).
+    if (process.getuid?.() === 0) {
+      return; // a 0o555 directory is still writable as root -- this probe can't be set up
+    }
+    chmodSync(dir, 0o555);
+    let writable = true;
+    try {
+      writeFileSync(join(dir, "probe.md"), "x");
+    } catch {
+      writable = false;
+    }
+    if (writable) {
+      chmodSync(dir, 0o755);
+      return; // environment ignores the mode (e.g. permissive FS) -- skip
+    }
+    try {
+      writeFileAtomic(join(dir, "f.md"), "x", "f.md");
+      throw new Error("expected a LoreError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("denied");
+      expect((err as LoreError).hint ?? "").not.toContain("temp file");
+    } finally {
+      chmodSync(dir, 0o755); // restore so afterEach's rmSync can clean up
+    }
+  });
 });

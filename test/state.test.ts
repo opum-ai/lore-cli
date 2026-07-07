@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exitCodeFor, LoreError } from "../src/errors";
 import { bunGitSpawn, commitBacklogIfDirty, type GitSpawn, type GitSpawnResult } from "../src/state";
+import { gitRun } from "./helpers";
 
 /** A recorded invocation, for assertions on exact argv. */
 interface Call {
@@ -56,25 +57,36 @@ function renameEntry(status: string, newPath: string, oldPath: string): string {
   return `${status} ${newPath}\0${oldPath}`;
 }
 
+/**
+ * A scripted fake, pre-seeded with the `git rev-parse --show-prefix` response every
+ * `commitBacklogIfDirty` call makes first — `""` (not nested; `cwd` is the repo's own top level),
+ * so every test below only needs to script what comes *after* it. The nested-repo translation
+ * itself is covered separately, by the dedicated `showPrefix` tests and the real-git integration
+ * suite below.
+ */
+function notNestedSpawn(...results: readonly GitSpawnResult[]): GitSpawn & { calls: Call[] } {
+  return scriptedSpawn([ok(""), ...results]);
+}
+
 describe("commitBacklogIfDirty — fake GitSpawn", () => {
   test("clean backlog/ (empty porcelain output) is a no-op: no add, no commit", async () => {
-    const spawn = scriptedSpawn([ok("")]);
+    const spawn = notNestedSpawn(ok(""));
     const result = await commitBacklogIfDirty(spawn);
     expect(result).toEqual({ committed: false, files: [] });
-    expect(spawn.calls).toHaveLength(1); // status only
-    expect(spawn.calls[0]?.args).toEqual(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "backlog/"]);
+    expect(spawn.calls).toHaveLength(2); // show-prefix + status only
+    expect(spawn.calls[1]?.args).toEqual(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "backlog/"]);
   });
 
   test("dirty backlog/ stages exactly the reported paths and commits them, scoped to those paths", async () => {
     const stdout = porcelainZ(entry(" M", "backlog/tasks/lore-1 - x.md"), entry("??", "backlog/tasks/lore-2 - y.md"));
-    const spawn = scriptedSpawn([ok(stdout), ok(""), ok("")]);
+    const spawn = notNestedSpawn(ok(stdout), ok(""), ok(""));
     const result = await commitBacklogIfDirty(spawn, "chore(backlog): sync task changes");
     expect(result.committed).toBe(true);
     expect(result.files).toEqual(["backlog/tasks/lore-1 - x.md", "backlog/tasks/lore-2 - y.md"]);
-    expect(spawn.calls[1]?.args).toEqual(["add", "--", "backlog/tasks/lore-1 - x.md", "backlog/tasks/lore-2 - y.md"]);
+    expect(spawn.calls[2]?.args).toEqual(["add", "--", "backlog/tasks/lore-1 - x.md", "backlog/tasks/lore-2 - y.md"]);
     // The commit is scoped to the same pathspec (not a bare `git commit`) — see the real-git
     // regression test below proving this actually excludes unrelated staged content.
-    expect(spawn.calls[2]?.args).toEqual([
+    expect(spawn.calls[3]?.args).toEqual([
       "commit",
       "-m",
       "chore(backlog): sync task changes",
@@ -90,13 +102,13 @@ describe("commitBacklogIfDirty — fake GitSpawn", () => {
     // into the tree instead of applying its staged deletion — the old path must be in the pathspec
     // too (see the real-git test below proving this against actual git, not just parsing).
     const stdout = porcelainZ(renameEntry("R ", "backlog/tasks/lore-1 - new.md", "backlog/tasks/lore-1 - old.md"));
-    const spawn = scriptedSpawn([ok(stdout), ok(""), ok("")]);
+    const spawn = notNestedSpawn(ok(stdout), ok(""), ok(""));
     const result = await commitBacklogIfDirty(spawn);
     expect(result.files).toEqual(["backlog/tasks/lore-1 - new.md", "backlog/tasks/lore-1 - old.md"]);
     // `add` gets only the new path — the old path of an already-staged rename is fully removed
     // from the index by `git mv`, so re-adding it fails outright ("did not match any files").
-    expect(spawn.calls[1]?.args).toEqual(["add", "--", "backlog/tasks/lore-1 - new.md"]);
-    expect(spawn.calls[2]?.args).toEqual([
+    expect(spawn.calls[2]?.args).toEqual(["add", "--", "backlog/tasks/lore-1 - new.md"]);
+    expect(spawn.calls[3]?.args).toEqual([
       "commit",
       "-m",
       "chore(backlog): sync task changes",
@@ -108,7 +120,7 @@ describe("commitBacklogIfDirty — fake GitSpawn", () => {
 
   test("a copy (status 'C') is treated the same two-field way as a rename", async () => {
     const stdout = porcelainZ(renameEntry("C ", "backlog/tasks/lore-2 - copy.md", "backlog/tasks/lore-1 - x.md"));
-    const spawn = scriptedSpawn([ok(stdout), ok(""), ok("")]);
+    const spawn = notNestedSpawn(ok(stdout), ok(""), ok(""));
     const result = await commitBacklogIfDirty(spawn);
     expect(result.files).toEqual(["backlog/tasks/lore-2 - copy.md", "backlog/tasks/lore-1 - x.md"]);
   });
@@ -118,7 +130,7 @@ describe("commitBacklogIfDirty — fake GitSpawn", () => {
     // untracked add's own filename in half. -z mode has no " -> " separator at all for non-R/C
     // entries, so the full filename must come through unmangled.
     const stdout = porcelainZ(entry("??", "backlog/tasks/lore-5 - Cache -> DB fallback.md"));
-    const spawn = scriptedSpawn([ok(stdout), ok(""), ok("")]);
+    const spawn = notNestedSpawn(ok(stdout), ok(""), ok(""));
     const result = await commitBacklogIfDirty(spawn);
     expect(result.files).toEqual(["backlog/tasks/lore-5 - Cache -> DB fallback.md"]);
   });
@@ -131,15 +143,15 @@ describe("commitBacklogIfDirty — fake GitSpawn", () => {
       entry(" D", "backlog/tasks/lore-1 - old title.md"),
       entry("??", "backlog/tasks/lore-1 - new title.md"),
     );
-    const spawn = scriptedSpawn([ok(stdout), ok(""), ok("")]);
+    const spawn = notNestedSpawn(ok(stdout), ok(""), ok(""));
     const result = await commitBacklogIfDirty(spawn);
     expect(result.files).toEqual(["backlog/tasks/lore-1 - old title.md", "backlog/tasks/lore-1 - new title.md"]);
   });
 
   test("the default commit message is used when none is given", async () => {
-    const spawn = scriptedSpawn([ok(porcelainZ(entry(" M", "backlog/tasks/lore-1 - x.md"))), ok(""), ok("")]);
+    const spawn = notNestedSpawn(ok(porcelainZ(entry(" M", "backlog/tasks/lore-1 - x.md"))), ok(""), ok(""));
     await commitBacklogIfDirty(spawn);
-    expect(spawn.calls[2]?.args).toEqual([
+    expect(spawn.calls[3]?.args).toEqual([
       "commit",
       "-m",
       "chore(backlog): sync task changes",
@@ -148,7 +160,7 @@ describe("commitBacklogIfDirty — fake GitSpawn", () => {
     ]);
   });
 
-  test("a failing `git status` throws a drift LoreError and never attempts add/commit", async () => {
+  test("a failing `git rev-parse --show-prefix` throws a drift LoreError and never attempts status/add/commit", async () => {
     const spawn = scriptedSpawn([fail(128, "fatal: not a git repository")]);
     let err: unknown;
     try {
@@ -162,11 +174,8 @@ describe("commitBacklogIfDirty — fake GitSpawn", () => {
     expect(spawn.calls).toHaveLength(1);
   });
 
-  test("a failing `git add` throws drift and never attempts commit", async () => {
-    const spawn = scriptedSpawn([
-      ok(porcelainZ(entry(" M", "backlog/tasks/lore-1 - x.md"))),
-      fail(1, "error: pathspec did not match"),
-    ]);
+  test("a failing `git status` throws a drift LoreError and never attempts add/commit", async () => {
+    const spawn = notNestedSpawn(fail(128, "fatal: not a git repository"));
     let err: unknown;
     try {
       await commitBacklogIfDirty(spawn);
@@ -175,19 +184,64 @@ describe("commitBacklogIfDirty — fake GitSpawn", () => {
     }
     expect(err).toBeInstanceOf(LoreError);
     expect((err as LoreError).type).toBe("drift");
-    expect(spawn.calls).toHaveLength(2); // status + add, no commit
+    expect(exitCodeFor(err)).toBe(6);
+    expect(spawn.calls).toHaveLength(2); // show-prefix + status
+  });
+
+  test("a failing `git add` throws drift and never attempts commit", async () => {
+    const spawn = notNestedSpawn(
+      ok(porcelainZ(entry(" M", "backlog/tasks/lore-1 - x.md"))),
+      fail(1, "error: pathspec did not match"),
+    );
+    let err: unknown;
+    try {
+      await commitBacklogIfDirty(spawn);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(LoreError);
+    expect((err as LoreError).type).toBe("drift");
+    expect(spawn.calls).toHaveLength(3); // show-prefix + status + add, no commit
   });
 
   test("a failing `git commit` (e.g. a rejected pre-commit hook) throws drift", async () => {
-    const spawn = scriptedSpawn([
+    const spawn = notNestedSpawn(
       ok(porcelainZ(entry(" M", "backlog/tasks/lore-1 - x.md"))),
       ok(""),
       fail(1, "hook rejected"),
-    ]);
+    );
     const err = await commitBacklogIfDirty(spawn).catch((e) => e);
     expect(err).toBeInstanceOf(LoreError);
     expect((err as LoreError).type).toBe("drift");
     expect((err as LoreError).hint).toContain("hook rejected");
+  });
+});
+
+describe("commitBacklogIfDirty — nested-bundle cwd (fake GitSpawn)", () => {
+  test("regression: a non-empty show-prefix is stripped from every reported path before add/commit", async () => {
+    // Reproduces the nested-checkout bug with a fake: `git status` (repo-top-relative) reports
+    // "project/backlog/tasks/x.md" while `cwd` is ".../project" — git add/commit resolve pathspecs
+    // relative to cwd, so the prefix "project/" must be stripped before either is called.
+    const stdout = porcelainZ(entry("??", "project/backlog/tasks/x.md"));
+    const spawn = scriptedSpawn([ok("project/\n"), ok(stdout), ok(""), ok("")]);
+    const result = await commitBacklogIfDirty(spawn);
+    expect(result.files).toEqual(["backlog/tasks/x.md"]);
+    expect(spawn.calls[0]?.args).toEqual(["rev-parse", "--show-prefix"]);
+    expect(spawn.calls[2]?.args).toEqual(["add", "--", "backlog/tasks/x.md"]);
+    expect(spawn.calls[3]?.args).toEqual([
+      "commit",
+      "-m",
+      "chore(backlog): sync task changes",
+      "--",
+      "backlog/tasks/x.md",
+    ]);
+  });
+
+  test("a staged rename under a nested cwd strips the prefix from BOTH the new and old path", async () => {
+    const stdout = porcelainZ(renameEntry("R ", "project/backlog/tasks/new.md", "project/backlog/tasks/old.md"));
+    const spawn = scriptedSpawn([ok("project/\n"), ok(stdout), ok(""), ok("")]);
+    const result = await commitBacklogIfDirty(spawn);
+    expect(result.files).toEqual(["backlog/tasks/new.md", "backlog/tasks/old.md"]);
   });
 });
 
@@ -209,10 +263,7 @@ describe("bunGitSpawn + commitBacklogIfDirty — real git integration", () => {
   });
 
   function run(args: string[]): void {
-    const proc = Bun.spawnSync(["git", ...args], { cwd: root, stdout: "pipe", stderr: "pipe" });
-    if (proc.exitCode !== 0) {
-      throw new Error(`git ${args.join(" ")} failed: ${proc.stderr.toString("utf8")}`);
-    }
+    gitRun(root, args);
   }
 
   function log(): string {
@@ -374,5 +425,40 @@ describe("bunGitSpawn + commitBacklogIfDirty — real git integration", () => {
     }).stdout.toString("utf8");
     expect(status).toContain("docs/index.md"); // still uncommitted/untracked
     expect(status).not.toContain("backlog/x.md"); // committed
+  });
+});
+
+describe("bunGitSpawn + commitBacklogIfDirty — nested-bundle checkout (real git)", () => {
+  test("regression: a lore project nested below the git repository's own top level still commits correctly", async () => {
+    // The exact topology adapters/git.ts's `--relative` fix handles for `git log` — `git status` has
+    // no equivalent flag at all, so this exercises `porcelainPaths`'s `git rev-parse --show-prefix`
+    // translation instead.
+    const top = mkdtempSync(join(tmpdir(), "lore-state-nested-"));
+    const projectRoot = join(top, "project");
+    try {
+      gitRun(top, ["init", "-q"]);
+      gitRun(top, ["config", "user.name", "lore test"]);
+      gitRun(top, ["config", "user.email", "lore-test@example.com"]);
+      mkdirSync(join(projectRoot, "backlog", "tasks"), { recursive: true });
+      writeFileSync(join(top, ".gitkeep"), "");
+      gitRun(top, ["add", "."]);
+      gitRun(top, ["commit", "-q", "-m", "initial"]);
+
+      writeFileSync(join(projectRoot, "backlog", "tasks", "lore-1 - x.md"), "hello\n");
+      const result = await commitBacklogIfDirty(bunGitSpawn(projectRoot));
+      expect(result).toEqual({ committed: true, files: ["backlog/tasks/lore-1 - x.md"] });
+
+      const tree = Bun.spawnSync(["git", "ls-tree", "-r", "HEAD", "--", "project/"], {
+        cwd: top,
+        stdout: "pipe",
+      }).stdout.toString("utf8");
+      expect(tree).toContain("project/backlog/tasks/lore-1 - x.md");
+      const status = Bun.spawnSync(["git", "status", "--porcelain"], { cwd: top, stdout: "pipe" }).stdout.toString(
+        "utf8",
+      );
+      expect(status).toBe("");
+    } finally {
+      rmSync(top, { recursive: true, force: true });
+    }
   });
 });

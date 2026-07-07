@@ -27,7 +27,7 @@
 import { join } from "node:path";
 import yaml from "js-yaml";
 import { z } from "zod";
-import { errnoCode, LoreError, readFileIfPresent, stderrHint } from "../errors";
+import { deriveMessage, errnoCode, LoreError, readFileIfPresent, stderrHint } from "../errors";
 
 /**
  * The **binary version floor** the probe requires (`backlog --version`, contract §5 step 3). Pinned to
@@ -856,8 +856,13 @@ function configError(reason: string): LoreError {
   );
 }
 
-/** Append `: <reason>` when a non-empty message can be derived from a thrown cause (mirrors config.ts). */
+/**
+ * Append `: <reason>` when a non-empty message can be derived from a thrown cause, via the shared,
+ * guarded {@link deriveMessage} — not a hand-rolled `instanceof Error` check, which would lose the
+ * reason (or itself throw) for a non-`Error` cause carrying its own `.message`, or one with a
+ * hostile `toString`/`Symbol.toPrimitive`.
+ */
 function reasonSuffix(cause: unknown): string {
-  const message = cause instanceof Error ? cause.message : String(cause);
-  return message.trim() === "" ? "" : `: ${message.trim()}`;
+  const message = deriveMessage(cause).trim();
+  return message === "" ? "" : `: ${message}`;
 }

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-07 00:10'
+updated_date: '2026-07-07 00:36'
 labels:
   - cmd
 milestone: m-3
@@ -220,4 +220,42 @@ resolveHeadSha test, and a config-validated-before-subprocess-calls test.
 Full suite 1213/1213, typecheck clean, biome clean. Starting a 3rd
 /code-review max pass given round 2 found a bug IN round 1's own fix --
 verifying convergence before asking for merge.
+
+3rd /code-review max pass on PR #36 (15 agents, ~974K subagent tokens, ~18 min).
+6 candidates verified, 1 refuted, 5 confirmed -- severity trending down (no
+more sweeping/resurrecting-caliber bugs), consistent with converging.
+
+- sync.ts:294 scopeConcepts silently matched zero concepts (0 files changed,
+  exit 0 -- reads as "already in sync") for a trailing-slash path
+  (idFromPath preserves it verbatim, breaking both match branches) or a
+  typo'd id, unlike link/unlink/rename's hard-fail on an unresolvable id.
+  Fixed: strip trailing slash before deriving the id; throw not_found when a
+  given path matches nothing.
+- fswrite.ts:89 writeFileAtomic's cleanup-unlink failure was silently
+  swallowed with zero diagnostic -- a crash between write and rename plus a
+  failed cleanup could litter docs/ with an untracked .lore-sync-tmp-* file
+  and no error ever mentions it. Fixed: the thrown error's hint/input now
+  name the stray temp file when cleanup also fails.
+- backlog.ts:842 readStatusFlow re-implemented discover.ts's readIfExists
+  ENOENT/EACCES branching verbatim -- adapters/ cannot import commands/, so
+  hoisted the shared "optional read" primitive (readFileIfPresent) into
+  errors.ts instead, which both layers already depend on. discover.ts's
+  wrapper deleted; sync.ts and backlog.ts both call errors.ts directly now.
+- state.ts:94 dead `if (addPaths.length > 0)` guard removed (unreachable
+  once the allPaths.length===0 early return has passed -- every entry
+  contributes to both arrays, so one being non-empty implies the other is).
+- reconcile.ts:152 (same finding as round 2, still deliberately deferred --
+  the verifier's own note acknowledged this explicitly).
+
+1 refuted: --dry-run hardcoding backlogCommit to {committed:false,files:[]}
+instead of previewing what WOULD be committed -- --dry-run's documented
+contract is "write nothing" (to docs/ OR backlog/), not "preview the write";
+the report already says so and this isn't a gap.
+
+New tests: trailing-slash + typo'd-path scoping regressions in sync.test.ts,
+and a full writeFileAtomic describe block in replace.test.ts (it had ZERO
+direct unit tests before this round -- success/overwrite/conflict+cleanup,
+mirroring the existing writeFileOverwriting block). Full suite 1218/1218,
+typecheck clean, biome clean. Starting a 4th /code-review max pass to check
+for convergence.
 <!-- SECTION:NOTES:END -->

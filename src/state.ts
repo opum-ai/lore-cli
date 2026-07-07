@@ -125,19 +125,34 @@ interface PorcelainPaths {
 }
 
 /**
- * The repo-relative paths `git status --porcelain -z` reports as changed under `pathspec` (staged,
- * unstaged, or untracked — every porcelain status code). Parses the NUL-delimited machine format
- * (`-z`), not the human `->`-separated text format: `-z` disables git's C-style quoting entirely
- * (every path is raw bytes, even one containing a space, a literal arrow, or non-ASCII characters —
- * no unescaping needed), and a rename/copy entry is two independent NUL-terminated fields
- * (`new-path\0old-path\0`, no `" -> "` text token at all) rather than one line joined by a literal
- * `" -> "` — which a text-format parser could otherwise mis-split when the path itself contains
- * that exact substring. An *unstaged* rename is reported by git as two ordinary independent entries
- * (a deletion, an untracked add) rather than one `R` entry at all — both come through as ordinary
- * single-field entries either way, so this needs no special casing (and both belong in `addPaths`
- * too, since neither is already-staged).
+ * The **cwd-relative** paths `git status --porcelain -z` reports as changed under `pathspec`
+ * (staged, unstaged, or untracked — every porcelain status code). Parses the NUL-delimited machine
+ * format (`-z`), not the human `->`-separated text format: `-z` disables git's C-style quoting
+ * entirely (every path is raw bytes, even one containing a space, a literal arrow, or non-ASCII
+ * characters — no unescaping needed), and a rename/copy entry is two independent NUL-terminated
+ * fields (`new-path\0old-path\0`, no `" -> "` text token at all) rather than one line joined by a
+ * literal `" -> "` — which a text-format parser could otherwise mis-split when the path itself
+ * contains that exact substring. An *unstaged* rename is reported by git as two ordinary
+ * independent entries (a deletion, an untracked add) rather than one `R` entry at all — both come
+ * through as ordinary single-field entries either way, so this needs no special casing (and both
+ * belong in `addPaths` too, since neither is already-staged).
+ *
+ * Unlike `adapters/git.ts`'s `git log --relative` fix for the identical concern, `git status` has
+ * **no** `--relative` flag at all — it always reports paths relative to the repository's top level,
+ * never `cwd`. Since `git add`/`git commit` (the very next calls, run in the same `cwd`) resolve
+ * their own pathspecs relative to `cwd`, a nested-bundle checkout (`cwd` below the repo's top level)
+ * would otherwise feed them a path they can never match (verified against real git: a project nested
+ * one level down reports `project/backlog/tasks/x.md`, but `git add` from `cwd=.../project` looks
+ * for `project/project/backlog/tasks/x.md`). `git rev-parse --show-prefix` gives exactly the
+ * translation needed — the path from the repo's top level down to `cwd` (e.g. `"project/"`, or `""`
+ * when `cwd` already is the top level) — stripped from every reported path before it is used.
  */
 async function porcelainPaths(spawn: GitSpawn, pathspec: string): Promise<PorcelainPaths> {
+  const prefixResult = await run(spawn, ["rev-parse", "--show-prefix"], "git rev-parse --show-prefix");
+  const prefix = prefixResult.stdout.trim();
+  const cwdRelative = (path: string): string =>
+    prefix !== "" && path.startsWith(prefix) ? path.slice(prefix.length) : path;
+
   // `--untracked-files=all` expands a brand-new untracked directory into its individual file paths
   // (plain `--porcelain` reports only the directory itself, e.g. `?? backlog/`) — scoped to `pathspec`
   // so, unlike a bare repo-wide `-uall`, this never walks more of the tree than lore is committing.
@@ -155,7 +170,7 @@ async function porcelainPaths(spawn: GitSpawn, pathspec: string): Promise<Porcel
       continue;
     }
     const status = entry.slice(0, 2);
-    const path = entry.slice(3); // "XY " is always exactly 3 chars, even in -z mode
+    const path = cwdRelative(entry.slice(3)); // "XY " is always exactly 3 chars, even in -z mode
     addPaths.push(path);
     allPaths.push(path);
     if (status.includes("R") || status.includes("C")) {
@@ -163,7 +178,7 @@ async function porcelainPaths(spawn: GitSpawn, pathspec: string): Promise<Porcel
       // PorcelainPaths.allPaths) but NOT `add`'s (see PorcelainPaths.addPaths).
       const oldPath = tokens[++i];
       if (oldPath !== undefined && oldPath !== "") {
-        allPaths.push(oldPath);
+        allPaths.push(cwdRelative(oldPath));
       }
     }
   }
