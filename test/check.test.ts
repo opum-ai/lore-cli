@@ -1149,6 +1149,91 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     expect(parsed.data.findings[0].file).toBe("a/x.md"); // labeled by its root, same convention as link/anchor findings
     expect(calls).toBe(1); // one adapter instance shared across both roots -- its capability probe runs once
   });
+
+  test("a task id linked from concepts in two different bundle roots is resolved exactly once (LORE-50)", async () => {
+    mkdirSync(join(root, "a"), { recursive: true });
+    mkdirSync(join(root, "b"), { recursive: true });
+    writeFileSync(join(root, "a", "index.md"), "# A\n\nClean.\n");
+    writeFileSync(join(root, "b", "index.md"), "# B\n\nClean.\n");
+    writeFileSync(join(root, "a", "x.md"), storyDoc("A", ["lore-1"], "done")); // stale (empty) block -- real drift
+    writeFileSync(join(root, "b", "x.md"), storyDoc("B", ["LORE-1"], "done")); // SAME task id (different casing), different root
+    let calls = 0;
+    const base = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+    const adapter: BacklogAdapter = {
+      ...base,
+      async viewTask(id: string) {
+        calls++;
+        return base.viewTask(id);
+      },
+    };
+
+    const o = { root, output: JSON_CTX, args: ["a", "b"], adapter, stdout: capture(), stderr: capture() };
+    const code = await runCheck(o);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(code).toBe(EXIT_CODES.validation);
+    // Both roots' own stale managed-block is still found independently...
+    const files = parsed.data.findings.map((f: { file: string }) => f.file).sort();
+    expect(files).toEqual(["a/x.md", "b/x.md"]);
+    // ...but the shared task id is fetched from Backlog exactly once for the whole run, not once per root.
+    expect(calls).toBe(1);
+  });
+
+  test("a status-flow override resolved once applies uniformly across every bundle root (LORE-50)", async () => {
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(join(root, ".lore", "config.toml"), '[reconcile.overrides]\nCancelled = "done"\n');
+    mkdirSync(join(root, "a"), { recursive: true });
+    mkdirSync(join(root, "b"), { recursive: true });
+    writeFileSync(join(root, "a", "index.md"), "# A\n\nClean.\n");
+    writeFileSync(join(root, "b", "index.md"), "# B\n\nClean.\n");
+    writeFileSync(join(root, "a", "x.md"), storyDoc("A", ["lore-1"], "todo")); // stale status; LORE-1 is Cancelled
+    writeFileSync(join(root, "b", "x.md"), storyDoc("B", ["lore-2"], "todo")); // stale status; LORE-2 is also Cancelled
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", { status: "Cancelled" }),
+      makeTask("LORE-2", { status: "Cancelled" }),
+    ]);
+
+    const o = { root, output: JSON_CTX, args: ["a", "b"], adapter, stdout: capture(), stderr: capture() };
+    const code = await runCheck(o);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(code).toBe(EXIT_CODES.validation);
+    const statusDrifts = parsed.data.findings.filter((f: { rule: string }) => f.rule === "status-drift");
+    // Without the override, an unrecognized "Cancelled" status would fail loud (validation error)
+    // instead of producing a status-drift finding -- both roots reconciling successfully proves the
+    // resolved config correctly reached both roots. This does NOT by itself prove the config was read
+    // only ONCE (a per-root re-read of the same file would produce an identical result) -- that half of
+    // LORE-50's AC #2 is covered instead by reconcile-shared.test.ts's "configOverride bypasses disk
+    // entirely" test, which proves the underlying mechanism `resolveSharedReconciliation` depends on:
+    // a caller holding an already-resolved config never touches disk again for it.
+    expect(statusDrifts.map((f: { file: string }) => f.file).sort()).toEqual(["a/x.md", "b/x.md"]);
+    for (const finding of statusDrifts) {
+      expect((finding as { message: string }).message).toContain("done");
+    }
+  });
+
+  test("a bundle root's own concept-scan error still wins over another root's shared config failure, in argument order (LORE-50 regression)", async () => {
+    // Reproduces the exact regression an earlier version of the LORE-50 pooling introduced: root "b"
+    // has its OWN scan error (a malformed concept -- no Backlog IO involved at all) and comes FIRST in
+    // argument order; root "a" has a real eligible concept that only fails because the shared config
+    // is ALSO broken. A version that short-circuited computeDriftFindings on the pooled config failure
+    // discarded b's own (more specific, actionable) scan error in favor of the generic
+    // config-validation error, regardless of argument order -- breaking the documented "first error,
+    // in bundle-argument order" contract.
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(join(root, ".lore", "config.toml"), '[reconcile.overrides]\nCancelled = "bogus"\n');
+    mkdirSync(join(root, "a"), { recursive: true });
+    mkdirSync(join(root, "b"), { recursive: true });
+    writeFileSync(join(root, "a", "index.md"), "# A\n\nClean.\n");
+    writeFileSync(join(root, "b", "index.md"), "# B\n\nClean.\n");
+    writeFileSync(join(root, "a", "x.md"), storyDoc("A", ["lore-1"], "done")); // real eligible concept
+    writeFileSync(
+      join(root, "b", "bad.md"), // b's ONLY concept fails to scan at all -- b collects zero concepts
+      "---\ntype: Story\nstatus: 12345\ntasks:\n  - lore-2\n---\n# Bad\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n",
+    );
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const o = { root, output: JSON_CTX, args: ["b", "a"], adapter, stdout: capture(), stderr: capture() };
+    await expect(runCheck(o)).rejects.toThrow(/invalid Story frontmatter/);
+  });
 });
 
 // ── CLI router wiring ────────────────────────────────────────────────────────────

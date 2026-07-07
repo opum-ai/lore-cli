@@ -22,6 +22,11 @@ import { RESERVED_STEMS } from "../core/scaffold";
 import { LoreError } from "../errors";
 import { dedupeTaskIds, defaultAdapter } from "./link";
 
+/** The outcome of resolving one task id: its live detail, or the error resolving it hit. */
+export type TaskResolution =
+  | { readonly ok: true; readonly detail: BacklogTaskDetail }
+  | { readonly ok: false; readonly error: unknown };
+
 /** One concept's resolved reconciliation: its recomputed status and live managed-block rows. */
 export interface ReconcileTarget {
   /** The concept as loaded (unmodified) — its `frontmatter.status` is the pre-reconciliation value. */
@@ -115,6 +120,20 @@ export function resolveReconcileConfig(root: string): ReconcileConfig {
  * @param configOverride an already-resolved-and-validated {@link ReconcileConfig} (`lore sync` passes
  *   its own, having already called {@link resolveReconcileConfig} itself for ordering reasons); when
  *   omitted, resolved (and validated) here.
+ * @param detailsOverride an already-resolved {@link TaskResolution} map, keyed by lowercase task id,
+ *   covering (at least) every id `concepts` links — `lore check`'s multi-root drift pass (LORE-50)
+ *   resolves the union of every bundle root's linked ids exactly once and passes the shared result
+ *   to each root's own `gatherReconciliation` call, rather than each root re-fetching the same id.
+ *   When omitted, every id is resolved fresh via `adapterOverride`/`defaultAdapter`, as before.
+ * @param configErrorOverride a config-validation failure another caller already hit resolving the
+ *   SAME config this call would otherwise read fresh (LORE-50: `lore check`'s multi-root pass
+ *   resolves the config once, up front, for every bundle root that has any eligible concept). When
+ *   set (and `configOverride` is not), thrown immediately in place of re-reading/re-validating —
+ *   preserving the exact fail-fast point a fresh {@link resolveReconcileConfig} call would have hit
+ *   for THIS call's own eligible concepts, without a second disk read. Ignored when `eligible` is
+ *   empty (mirrors `resolveReconcileConfig` never running for a concept list with nothing to
+ *   reconcile) or when `configOverride` is given (a caller with a genuinely resolved config, like
+ *   `lore sync`, never also carries a cached failure).
  * @throws LoreError `validation` if the status flow/overrides are malformed (before any task
  *   resolution); `not_found` (exit 3) naming the first linked task id that no longer exists.
  */
@@ -123,17 +142,23 @@ export async function gatherReconciliation(
   concepts: Iterable<Concept>,
   adapterOverride?: BacklogAdapter,
   configOverride?: ReconcileConfig,
+  detailsOverride?: ReadonlyMap<string, TaskResolution>,
+  configErrorOverride?: unknown,
 ): Promise<ReconcileTarget[]> {
   const eligible = linkedConcepts(concepts);
   if (eligible.length === 0) {
     return [];
   }
 
+  if (configOverride === undefined && configErrorOverride !== undefined) {
+    throw configErrorOverride;
+  }
   const { flow, overrides } = configOverride ?? resolveReconcileConfig(root);
 
-  const adapter = adapterOverride ?? defaultAdapter(root);
   const allTaskIds = dedupeTaskIds(eligible.flatMap((e) => e.linked));
-  const details = await resolveAllTasks(adapter, allTaskIds);
+  const details = detailsOverride
+    ? pickResolved(detailsOverride, allTaskIds)
+    : await resolveAllTasks(adapterOverride ?? defaultAdapter(root), allTaskIds);
 
   return eligible.map(({ concept, linked }) => {
     const detailList = linked.map((id) => details.get(id.toLowerCase()) as BacklogTaskDetail);
@@ -153,6 +178,45 @@ export async function gatherReconciliation(
 }
 
 /**
+ * Resolve every task id to a {@link TaskResolution}, keyed by lowercase id — a not-found or
+ * rejected `viewTask` becomes an `ok: false` entry rather than a thrown error, so a caller
+ * resolving ids shared across several independent groups (bundle roots, in `lore check`'s
+ * multi-root drift pass) can fetch each distinct id exactly once and let EACH group decide for
+ * itself whether ids IT needs failed, instead of one failing id aborting every group's resolution.
+ * Reads run concurrently (`allSettled`); this never throws.
+ */
+export async function resolveTaskDetails(
+  adapter: BacklogAdapter,
+  taskIds: readonly string[],
+): Promise<Map<string, TaskResolution>> {
+  const results = await Promise.allSettled(taskIds.map((id) => adapter.viewTask(id)));
+  const resolved = new Map<string, TaskResolution>();
+  for (let i = 0; i < taskIds.length; i++) {
+    const taskId = taskIds[i] as string;
+    const result = results[i] as PromiseSettledResult<BacklogTaskDetail | null>;
+    if (result.status === "rejected") {
+      resolved.set(taskId.toLowerCase(), {
+        ok: false,
+        error: result.reason instanceof Error ? result.reason : new Error(String(result.reason)),
+      });
+    } else if (result.value === null) {
+      resolved.set(taskId.toLowerCase(), {
+        ok: false,
+        error: new LoreError(
+          "not_found",
+          `task "${taskId}" does not exist`,
+          "a linked concept's tasks: list must reference only live Backlog tasks — check the id, or unlink it",
+          { taskId },
+        ),
+      });
+    } else {
+      resolved.set(taskId.toLowerCase(), { ok: true, detail: result.value });
+    }
+  }
+  return resolved;
+}
+
+/**
  * Resolve every task id to its live {@link BacklogTaskDetail}, keyed by lowercase id. Every id is
  * validated to exist BEFORE any concept's status/managed-block is computed — mirrors
  * `commands/link.ts`'s up-front validation exactly, including running the reads concurrently
@@ -164,23 +228,33 @@ async function resolveAllTasks(
   adapter: BacklogAdapter,
   taskIds: readonly string[],
 ): Promise<Map<string, BacklogTaskDetail>> {
-  const results = await Promise.allSettled(taskIds.map((id) => adapter.viewTask(id)));
+  const resolved = await resolveTaskDetails(adapter, taskIds);
+  return pickResolved(resolved, taskIds);
+}
+
+/**
+ * Extract `taskIds` from an already-resolved {@link TaskResolution} map, throwing the FIRST (in
+ * `taskIds` order) unresolved id's own error — the same contract {@link resolveAllTasks} always
+ * had, now shared by a caller (`lore check`, LORE-50) that resolved the map once, up front, for a
+ * UNION of ids spanning more than this one `taskIds` list. An id genuinely absent from `resolved`
+ * (the caller's union omitted one `gatherReconciliation` call actually needs — never expected in
+ * practice, since every caller derives its union from the same eligible concepts) fails loud rather
+ * than silently treating it as resolved.
+ */
+function pickResolved(
+  resolved: ReadonlyMap<string, TaskResolution>,
+  taskIds: readonly string[],
+): Map<string, BacklogTaskDetail> {
   const details = new Map<string, BacklogTaskDetail>();
-  for (let i = 0; i < taskIds.length; i++) {
-    const taskId = taskIds[i] as string;
-    const result = results[i] as PromiseSettledResult<BacklogTaskDetail | null>;
-    if (result.status === "rejected") {
-      throw result.reason instanceof Error ? result.reason : new Error(String(result.reason));
+  for (const taskId of taskIds) {
+    const r = resolved.get(taskId.toLowerCase());
+    if (r === undefined) {
+      throw new Error(`internal: task "${taskId}" was never resolved`);
     }
-    if (result.value === null) {
-      throw new LoreError(
-        "not_found",
-        `task "${taskId}" does not exist`,
-        "a linked concept's tasks: list must reference only live Backlog tasks — check the id, or unlink it",
-        { taskId },
-      );
+    if (!r.ok) {
+      throw r.error;
     }
-    details.set(taskId.toLowerCase(), result.value);
+    details.set(taskId.toLowerCase(), r.detail);
   }
   return details;
 }
