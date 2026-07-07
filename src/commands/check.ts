@@ -289,34 +289,6 @@ interface DriftResult {
 }
 
 /**
- * The status/managed-block drift findings for every `tasks:`-linked concept across every bundle
- * root, reusing the same `commands/reconcile-shared.ts` gather `lore sync` writes with. Every root
- * is resolved concurrently (`Promise.allSettled`, mirroring how the raw-file passes already treat
- * roots as independent), sharing one `adapter` instance so its capability probe runs at most once
- * regardless of how many roots are checked.
- *
- * The status-flow config and every distinct linked task id are each resolved AT MOST ONCE across
- * the WHOLE run (LORE-50), not once per bundle root: before the per-root loop, every root's eligible
- * concepts are pooled to compute the config once ({@link resolveReconcileConfig}) and the union of
- * linked ids once ({@link resolveTaskDetails}, itself never throwing), and both are handed to every
- * root's own {@link driftFindingsForBundle} call as overrides. This does not weaken per-root
- * isolation: a shared config failure fails every root identically to before (every root reads the
- * SAME file, so today it already fails the same way N times); a shared task-id failure only fails
- * the root(s) whose OWN linked concepts reference that id ({@link gatherReconciliation}'s
- * `detailsOverride` still throws per-call, scoped to that call's own ids) — a root that never links
- * the failing id is untouched, exactly as if it had resolved that id itself. The pooling step itself
- * is synchronous-safe: a config-validation throw is caught here (never left to reject this `async`
- * function outright) so `computeDriftFindings` keeps its own "never rejects" contract below.
- *
- * A root whose synchronous concept-scan already failed ({@link ConceptBundleResult.error}) still has
- * `driftFindingsForBundle` run over whatever concepts it DID successfully collect before the failure
- * (never skipped outright — an earlier version treated any scan error as "reject this whole root,
- * process nothing," discarding real drift on concepts the scan had already parsed fine before hitting
- * the one that failed). The root's own scan error is then combined with whatever
- * `driftFindingsForBundle` found, preferring the scan error when both exist (it is the logically
- * earlier problem — some of this root's concepts were never even examined because of it).
- */
-/**
  * The pooled reconciliation inputs {@link computeDriftFindings} resolves once for the whole run
  * (LORE-50). `config`/`details`/`configError` are all `undefined`/`null` when no bundle root has any
  * eligible concept — nothing to pool, and `computeDriftFindings`'s per-root calls fall through to
@@ -332,11 +304,13 @@ interface DriftResult {
  * discard every root's own already-known concept-scan error in favor of the shared config failure,
  * breaking the "first error, in bundle-argument order" contract {@link DriftResult} documents — a
  * root whose OWN scan failed must still report ITS OWN error first, same as before pooling existed.
+ * Never `undefined` when non-null: normalized the same way {@link resolveTaskDetails} normalizes a
+ * rejection reason, so it can never collide with the "no error" sentinel downstream.
  */
 interface PooledReconciliation {
   readonly config: ReconcileConfig | undefined;
   readonly details: ReadonlyMap<string, TaskResolution> | undefined;
-  readonly configError: unknown | null;
+  readonly configError: Error | null;
 }
 
 /**
@@ -350,6 +324,16 @@ interface PooledReconciliation {
  * concept would fail at the config step before ever reaching a task id anyway (`gatherReconciliation`'s
  * own fail-fast order), so attempting it here would only pay for Backlog IO whose result can never
  * be used.
+ *
+ * {@link resolveTaskDetails} is documented to never throw, but is called through a caller-supplied
+ * `adapter` this module does not control — a wrapper/decorator adapter that throws SYNCHRONOUSLY
+ * (rather than rejecting) would otherwise reject this whole pooling step, and from there
+ * `computeDriftFindings` itself, silently discarding the already-computed link/anchor report on
+ * whatever emits it (`runCheck`'s `driftPromise.then` has no `.catch`). Guarded the same way the
+ * config resolution above is: on failure, `details` stays `undefined` and every bundle root simply
+ * falls back to resolving its own ids independently (paying the per-root cost this pooling exists to
+ * avoid, but ONLY in this unexpected-failure case) — `computeDriftFindings`'s own per-root
+ * `Promise.allSettled` loop already isolates whatever happens next, same as before pooling existed.
  */
 async function resolveSharedReconciliation(
   root: string,
@@ -365,14 +349,47 @@ async function resolveSharedReconciliation(
   try {
     config = resolveReconcileConfig(root);
   } catch (err) {
-    return { config: undefined, details: undefined, configError: err };
+    return { config: undefined, details: undefined, configError: err instanceof Error ? err : new Error(String(err)) };
   }
 
   const allTaskIds = dedupeTaskIds(allEligible.flatMap((e) => e.linked));
-  const details = await resolveTaskDetails(adapter, allTaskIds);
+  let details: ReadonlyMap<string, TaskResolution> | undefined;
+  try {
+    details = await resolveTaskDetails(adapter, allTaskIds);
+  } catch {
+    details = undefined;
+  }
   return { config, details, configError: null };
 }
 
+/**
+ * The status/managed-block drift findings for every `tasks:`-linked concept across every bundle
+ * root, reusing the same `commands/reconcile-shared.ts` gather `lore sync` writes with. Every root
+ * is resolved concurrently (`Promise.allSettled`, mirroring how the raw-file passes already treat
+ * roots as independent), sharing one `adapter` instance so its capability probe runs at most once
+ * regardless of how many roots are checked.
+ *
+ * The status-flow config and every distinct linked task id are each resolved AT MOST ONCE across
+ * the WHOLE run (LORE-50), not once per bundle root: before the per-root loop, every root's eligible
+ * concepts are pooled ({@link resolveSharedReconciliation}) to compute the config once and the union
+ * of linked ids once, and both are handed to every root's own {@link driftFindingsForBundle} call as
+ * overrides. This does not weaken per-root isolation: a shared config failure fails every root
+ * identically to before (every root reads the SAME file, so today it already fails the same way N
+ * times); a shared task-id failure only fails the root(s) whose OWN linked concepts reference that id
+ * ({@link gatherReconciliation}'s `detailsOverride` still throws per-call, scoped to that call's own
+ * ids) — a root that never links the failing id is untouched, exactly as if it had resolved that id
+ * itself. The pooling step itself is synchronous-safe: a config-validation throw (or an unexpected
+ * pooled task-resolution failure) is caught inside `resolveSharedReconciliation`, never left to reject
+ * this function outright, so `computeDriftFindings` keeps its own "never rejects" contract below.
+ *
+ * A root whose synchronous concept-scan already failed ({@link ConceptBundleResult.error}) still has
+ * `driftFindingsForBundle` run over whatever concepts it DID successfully collect before the failure
+ * (never skipped outright — an earlier version treated any scan error as "reject this whole root,
+ * process nothing," discarding real drift on concepts the scan had already parsed fine before hitting
+ * the one that failed). The root's own scan error is then combined with whatever
+ * `driftFindingsForBundle` found, preferring the scan error when both exist (it is the logically
+ * earlier problem — some of this root's concepts were never even examined because of it).
+ */
 async function computeDriftFindings(
   root: string,
   conceptBundleResults: readonly ConceptBundleResult[],
@@ -383,16 +400,7 @@ async function computeDriftFindings(
 
   const settled = await Promise.allSettled(
     conceptBundleResults.map(async ({ bundle, concepts, error }) => {
-      const drift = await driftFindingsForBundle(
-        root,
-        bundle,
-        concepts,
-        multi,
-        adapter,
-        pooled.config,
-        pooled.details,
-        pooled.configError,
-      );
+      const drift = await driftFindingsForBundle(root, bundle, concepts, multi, adapter, pooled);
       return { findings: drift.findings, error: error ?? drift.error };
     }),
   );
@@ -424,12 +432,12 @@ async function computeDriftFindings(
  * fail-fast is already pending, mirroring {@link computeDriftFindings}'s own cross-root policy at
  * this finer, within-root grain.
  *
- * `config`/`details`/`configError` are {@link computeDriftFindings}'s pooled, resolved-once-per-run
- * inputs (LORE-50); passed straight through to {@link gatherReconciliation} as its overrides, so this
- * root never re-reads the config file or re-fetches a task id another root already resolved. When
- * `configError` is set (and this root has any eligible concept at all), `gatherReconciliation` throws
- * it immediately — the same fail-fast point a fresh config read would have hit for this root, without
- * a second read; a root with no eligible concept never reaches that check regardless.
+ * `pooled` is {@link computeDriftFindings}'s pooled, resolved-once-per-run input (LORE-50); its three
+ * fields are passed straight through to {@link gatherReconciliation} as its overrides, so this root
+ * never re-reads the config file or re-fetches a task id another root already resolved. When
+ * `pooled.configError` is set (and this root has any eligible concept at all), `gatherReconciliation`
+ * throws it immediately — the same fail-fast point a fresh config read would have hit for this root,
+ * without a second read; a root with no eligible concept never reaches that check regardless.
  */
 async function driftFindingsForBundle(
   root: string,
@@ -437,11 +445,16 @@ async function driftFindingsForBundle(
   concepts: readonly Concept[],
   multi: boolean,
   adapter: BacklogAdapter,
-  config: ReconcileConfig | undefined,
-  details: ReadonlyMap<string, TaskResolution> | undefined,
-  configError: unknown | null,
+  pooled: PooledReconciliation,
 ): Promise<{ findings: CheckFinding[]; error: unknown | null }> {
-  const targets = await gatherReconciliation(root, concepts, adapter, config, details, configError ?? undefined);
+  const targets = await gatherReconciliation(
+    root,
+    concepts,
+    adapter,
+    pooled.config,
+    pooled.details,
+    pooled.configError ?? undefined,
+  );
   const rawByPath = new Map(bundle.files.map((f) => [f.path, f.raw]));
   const fixable = isDocsRoot(bundle.label);
   const findings: CheckFinding[] = [];

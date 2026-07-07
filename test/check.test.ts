@@ -1199,7 +1199,11 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     const statusDrifts = parsed.data.findings.filter((f: { rule: string }) => f.rule === "status-drift");
     // Without the override, an unrecognized "Cancelled" status would fail loud (validation error)
     // instead of producing a status-drift finding -- both roots reconciling successfully proves the
-    // ONE resolved config (not a re-read per root) reached both.
+    // resolved config correctly reached both roots. This does NOT by itself prove the config was read
+    // only ONCE (a per-root re-read of the same file would produce an identical result) -- that half of
+    // LORE-50's AC #2 is covered instead by reconcile-shared.test.ts's "configOverride bypasses disk
+    // entirely" test, which proves the underlying mechanism `resolveSharedReconciliation` depends on:
+    // a caller holding an already-resolved config never touches disk again for it.
     expect(statusDrifts.map((f: { file: string }) => f.file).sort()).toEqual(["a/x.md", "b/x.md"]);
     for (const finding of statusDrifts) {
       expect((finding as { message: string }).message).toContain("done");

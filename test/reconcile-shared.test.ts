@@ -91,6 +91,19 @@ describe("gatherReconciliation", () => {
     await expect(gatherReconciliation(root, [doc], adapter)).rejects.toThrow(/lore-99/);
   });
 
+  test("configOverride bypasses disk entirely — a broken on-disk config never surfaces", async () => {
+    // The mechanism `lore check`'s multi-root pooling (LORE-50) depends on: a caller that already
+    // resolved-and-validated its own config never pays for (or is exposed to) a second, independent
+    // read/validation of the SAME files.
+    mkdirSync(join(root, "backlog"), { recursive: true });
+    writeFileSync(join(root, "backlog", "config.yml"), "statuses: not-a-list\n"); // would fail validation if read
+    const doc = concept("stories/x.md", { tasks: ["lore-1"], status: "todo" });
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const [target] = await gatherReconciliation(root, [doc], adapter, { flow: ["Todo", "Done"], overrides: {} });
+    expect(target?.newStatus).toBe("done");
+  });
+
   test("validates the status flow before any Backlog subprocess round-trip", async () => {
     mkdirSync(join(root, "backlog"), { recursive: true });
     writeFileSync(join(root, "backlog", "config.yml"), "statuses: not-a-list\n");
@@ -173,7 +186,7 @@ describe("resolveTaskDetails", () => {
     expect(entry?.ok).toBe(false);
   });
 
-  test("resolves each distinct id exactly once even when passed with duplicate casings", async () => {
+  test("calls the adapter exactly once for a single id", async () => {
     let calls = 0;
     const base = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
     const counting = {
@@ -183,9 +196,23 @@ describe("resolveTaskDetails", () => {
         return base.viewTask(id);
       },
     };
-    // The caller (gatherReconciliation) is what dedupes casings before calling this; resolveTaskDetails
-    // itself just resolves whatever distinct ids it's given, once each.
     await resolveTaskDetails(counting, ["lore-1"]);
     expect(calls).toBe(1);
+  });
+
+  test("does NOT dedupe duplicate casings of the same id itself -- that's the caller's job", async () => {
+    // gatherReconciliation dedupes (via dedupeTaskIds) BEFORE calling this; resolveTaskDetails just
+    // resolves whatever ids it's handed, once each, so a caller that skips dedup pays for it here.
+    let calls = 0;
+    const base = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+    const counting = {
+      ...base,
+      async viewTask(id: string): Promise<BacklogTaskDetail | null> {
+        calls++;
+        return base.viewTask(id);
+      },
+    };
+    await resolveTaskDetails(counting, ["lore-1", "LORE-1"]);
+    expect(calls).toBe(2);
   });
 });
