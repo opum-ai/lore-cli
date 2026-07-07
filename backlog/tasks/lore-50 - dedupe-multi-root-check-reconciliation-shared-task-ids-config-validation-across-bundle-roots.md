@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-07 04:11'
-updated_date: '2026-07-07 14:17'
+updated_date: '2026-07-07 15:47'
 labels:
   - cmd
 dependencies:
@@ -82,6 +82,30 @@ check.test.ts/reconcile-shared.test.ts); bun run lint clean (3 pre-existing info
 no new errors); each new test independently confirmed to fail against the pre-fix code before the fix
 was applied (both the initial dedup regression and the config-priority regression /code-review high
 caught).
+
+Post-Done follow-up: ran /code-review max against PR #38 (the already-merged-to-branch,
+not-yet-user-merged implementation). It found a second, more severe regression than the
+one caught during implementation: resolveSharedReconciliation guarded resolveReconcileConfig
+with try/catch but left the sibling resolveTaskDetails call unguarded -- a synchronously-
+throwing adapter would reject computeDriftFindings itself, and since runCheck's
+driftPromise.then has no .catch, the ENTIRE check.report (including already-computed
+link/anchor findings) was silently dropped instead of emitted. Empirically confirmed as a
+regression vs the pre-PR base and confirmed fixed. Pushed as commit f98dcde on the same
+feature branch, plus: normalized configError (closes a PLAUSIBLE undefined-sentinel
+collision), collapsed driftFindingsForBundle's positional pooled params into the existing
+PooledReconciliation object, fixed an orphaned JSDoc (two new declarations had been
+inserted between computeDriftFindings's doc comment and the function itself), and
+tightened/corrected three tests the review flagged as either mistitled or overclaiming
+coverage they didn't actually provide.
+
+Deferred (lower severity, noted rather than risking further churn on this same code path):
+linkedConcepts recomputed a 3rd time (cheap/pure, no IO); resolveSharedReconciliation
+duplicates gatherReconciliation's own config-then-ids ordering as a second hand-synced copy.
+
+Verification: bun run typecheck clean; full suite 1284/1284; lint clean (3 pre-existing
+infos, no new errors); the critical fix was independently reproduced against a
+synchronously-throwing adapter both before (report silently dropped) and after (report
+correctly emitted) the fix.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
