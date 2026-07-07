@@ -31,25 +31,24 @@
  * {@link BacklogAdapter} is even constructed unless at least one scoped concept links a task.
  */
 
-import { dirname, join, posix } from "node:path";
-import { type BacklogAdapter, type BacklogTaskDetail, readStatusFlow } from "../adapters/backlog";
+import { dirname, join } from "node:path";
+import type { BacklogAdapter } from "../adapters/backlog";
 import { realGitAdapter, resolveHeadSha } from "../adapters/git";
-import { loadConfig } from "../config";
-import { type BundleGraph, loadBundle, toRefList } from "../core/bundle";
+import { type BundleGraph, loadBundle } from "../core/bundle";
 import { type Concept, idFromPath, serializeConcept } from "../core/concept";
 import { generateIndexes } from "../core/indexes";
 import { buildLog, type GitAdapter, generateLog } from "../core/log";
-import { type ManagedTaskRow, regenerateTaskBlock } from "../core/managed-block";
-import { loadProfile } from "../core/profile";
-import { reconcileStatus, validateReconcileInputs } from "../core/reconcile";
-import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
+import { regenerateTaskBlock } from "../core/managed-block";
+import { loadProfile, type Profile } from "../core/profile";
+import { validateReconcileInputs } from "../core/reconcile";
+import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, readFileIfPresent, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { type BacklogCommitResult, bunGitSpawn, commitBacklogIfDirty, type GitSpawn } from "../state";
 import { parseCommandArgs } from "./args";
 import { readIndexBytes, readSource } from "./discover";
 import { ensureDir, writeFileAtomic } from "./fswrite";
-import { dedupeTaskIds, defaultAdapter } from "./link";
+import { gatherReconciliation, linkedConcepts, readReconcileConfig } from "./reconcile-shared";
 
 /** The reserved log file name, excluded from concept scanning (mirrors `rename.ts`'s index handling). */
 const LOG_FILE = "log.md";
@@ -122,72 +121,36 @@ export async function runSync(options: SyncOptions): Promise<number> {
   advisories.flush({ color: options.output.color, stderr: options.stderr });
 
   const scoped = scopeConcepts(graph, parsed.paths);
-  const linkedByConceptId = new Map<string, string[]>();
-  for (const concept of scoped) {
-    // A reserved-stem concept (index/log) is never eligible for task reconciliation, even if its
-    // frontmatter happens to carry a `tasks:` list (tolerated by schema validation as an unknown
-    // extra key, at most a warning): index.md/log.md are regenerated wholesale by
-    // regenerateIndexAndLog below, keyed by the SAME bundle-relative path — a reconciled write here
-    // would only be silently overwritten by that regeneration, never reach disk. Mirrors
-    // `assertNotReservedStem`'s policy in `link`/`rename`/`supersede`.
-    if (RESERVED_STEMS.has(posix.basename(concept.id))) {
-      continue;
-    }
-    const linked = dedupeTaskIds(toRefList(concept.frontmatter.tasks));
-    if (linked.length > 0) {
-      linkedByConceptId.set(concept.id, linked);
-    }
+  // This command's ORIGINAL (pre-LORE-27) precedence, restored exactly, for when MULTIPLE local
+  // config sources are simultaneously broken: backlog/config.yml/.lore/config.toml SYNTAX errors
+  // (readReconcileConfig, a plain read — no semantic check yet) surface first, then a malformed
+  // .lore/profile.toml, THEN validateReconcileInputs's SEMANTIC checks (a duplicate flow entry, an
+  // invalid override target) — which originally ran last, after profile had already loaded
+  // successfully. All three are local/fast and run before gatherReconciliation's Backlog round-trip;
+  // all three are conditioned on eligibility (mirrors gatherReconciliation's own check) so a bundle
+  // with nothing to reconcile never pays for any of them. The resolved, already-validated config is
+  // then passed straight into gatherReconciliation so it is never read/validated a second time.
+  const eligible = linkedConcepts(scoped).length > 0;
+  let profile: Profile | undefined;
+  const config = eligible ? readReconcileConfig(options.root) : undefined;
+  if (config !== undefined) {
+    profile = loadProfile({ root: options.root });
+    validateReconcileInputs(config.flow, config.overrides);
   }
+  const targets = await gatherReconciliation(options.root, scoped, options.adapter, config);
 
   const writes = new Map<string, string>(); // bundle-relative path -> new bytes
+  for (const { concept, newStatus, rows } of targets) {
+    const docPath = `${DOCS_DIR}/${concept.path}`;
+    const original = readSource(join(docsRoot, concept.path), docPath);
+    const statusChanged = newStatus !== null && newStatus !== concept.frontmatter.status;
+    const base = statusChanged
+      ? serializeConcept({ ...concept, frontmatter: { ...concept.frontmatter, status: newStatus } }, { profile })
+      : original;
 
-  if (linkedByConceptId.size > 0) {
-    // Fast, local, and can throw a `validation` config error: read (and, unlike a plain read,
-    // fully VALIDATE — validateReconcileInputs, not just readStatusFlow's own syntactic checks)
-    // these BEFORE spending any Backlog subprocess round-trip, so a broken backlog/config.yml or
-    // .lore/config.toml (including a semantically degenerate flow or override that only
-    // reconcileStatus itself would otherwise catch, per concept, deep inside the loop below) is
-    // reported immediately rather than being masked behind — and paid for after — N task
-    // resolutions.
-    const flow = readStatusFlow(options.root);
-    const config = loadConfig({ root: options.root });
-    const profile = loadProfile({ root: options.root });
-    validateReconcileInputs(flow, config.reconcile.overrides);
-
-    const adapter = options.adapter ?? defaultAdapter(options.root);
-    const allTaskIds = dedupeTaskIds([...linkedByConceptId.values()].flat());
-    const details = await resolveAllTasks(adapter, allTaskIds);
-
-    for (const concept of scoped) {
-      const linked = linkedByConceptId.get(concept.id);
-      if (linked === undefined) {
-        continue;
-      }
-      const detailList = linked.map((id) => details.get(id.toLowerCase()) as BacklogTaskDetail);
-      const newStatus = reconcileStatus(
-        detailList.map((d) => d.status),
-        flow,
-        config.reconcile.overrides,
-      );
-
-      const docPath = `${DOCS_DIR}/${concept.path}`;
-      const original = readSource(join(docsRoot, concept.path), docPath);
-      const statusChanged = newStatus !== null && newStatus !== concept.frontmatter.status;
-      const base = statusChanged
-        ? serializeConcept({ ...concept, frontmatter: { ...concept.frontmatter, status: newStatus } }, { profile })
-        : original;
-
-      const rows: ManagedTaskRow[] = detailList.map((d) => ({
-        id: d.id,
-        title: d.title,
-        status: d.status,
-        file: d.file,
-      }));
-      const final = regenerateTaskBlock(base, rows, { docPath });
-
-      if (final !== original) {
-        writes.set(concept.path, final);
-      }
+    const final = regenerateTaskBlock(base, rows, { docPath });
+    if (final !== original) {
+      writes.set(concept.path, final);
     }
   }
 
@@ -246,41 +209,6 @@ function regenerateIndexAndLog(
   if (logBytes !== existingLog) {
     writes.set(LOG_FILE, logBytes);
   }
-}
-
-// ── Task resolution ──────────────────────────────────────────────────────────────
-
-/**
- * Resolve every task id to its live {@link BacklogTaskDetail}, keyed by lowercase id. Every id is
- * validated to exist BEFORE any concept's status/managed-block is computed — mirrors
- * `commands/link.ts`'s up-front validation exactly, including running the reads concurrently
- * (`allSettled`) but reporting the first not-found/failure in argument order.
- *
- * @throws LoreError `not_found` (exit 3) naming the first missing task id, in `taskIds` order.
- */
-async function resolveAllTasks(
-  adapter: BacklogAdapter,
-  taskIds: readonly string[],
-): Promise<Map<string, BacklogTaskDetail>> {
-  const results = await Promise.allSettled(taskIds.map((id) => adapter.viewTask(id)));
-  const details = new Map<string, BacklogTaskDetail>();
-  for (let i = 0; i < taskIds.length; i++) {
-    const taskId = taskIds[i] as string;
-    const result = results[i] as PromiseSettledResult<BacklogTaskDetail | null>;
-    if (result.status === "rejected") {
-      throw result.reason instanceof Error ? result.reason : new Error(String(result.reason));
-    }
-    if (result.value === null) {
-      throw new LoreError(
-        "not_found",
-        `task "${taskId}" does not exist`,
-        "a linked concept's tasks: list must reference only live Backlog tasks — check the id, or unlink it",
-        { taskId },
-      );
-    }
-    details.set(taskId.toLowerCase(), result.value);
-  }
-  return details;
 }
 
 // ── Scoping ────────────────────────────────────────────────────────────────────

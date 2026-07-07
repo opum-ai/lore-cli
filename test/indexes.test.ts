@@ -1,17 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { buildGraph } from "../src/core/bundle";
-import { type Concept, idFromPath } from "../src/core/concept";
 import { generateIndexes, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END } from "../src/core/indexes";
-
-/**
- * Build a minimal valid {@link Concept} at a bundle-relative path. `buildGraph` does not re-validate
- * (the parse boundary already did), and `generateIndexes` reads only `id`, `path`, and
- * `frontmatter.title`, so a bare frontmatter is enough to pin the listing behavior.
- */
-function concept(path: string, frontmatter: Record<string, unknown> = {}): Concept {
-  const fm = { type: "Reference", ...frontmatter };
-  return { id: idFromPath(path), path, type: String(fm.type), frontmatter: fm, body: "" };
-}
+import { concept } from "./helpers";
 
 /** Wrap listing lines in the canonical managed block. */
 function block(...lines: string[]): string {

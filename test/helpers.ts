@@ -1,6 +1,17 @@
 import type { BacklogAdapter, BacklogTaskDetail, EditTaskPatch } from "../src/adapters/backlog";
+import { type Concept, idFromPath } from "../src/core/concept";
 import type { Writer } from "../src/errors";
 import { LoreError } from "../src/errors";
+
+/**
+ * Build a minimal valid {@link Concept} at a bundle-relative path, defaulting `frontmatter.type` to
+ * "Reference" — shared by `indexes.test.ts` and `reconcile-shared.test.ts`, which both only need a
+ * `Concept` shape (id/path/frontmatter/body), never a specific `type`'s own semantics.
+ */
+export function concept(path: string, frontmatter: Record<string, unknown> = {}): Concept {
+  const fm = { type: "Reference", ...frontmatter };
+  return { id: idFromPath(path), path, type: String(fm.type), frontmatter: fm, body: "" };
+}
 
 /**
  * Run `git <args>` in `cwd` via a real subprocess, throwing if it exits non-zero. The shared
@@ -79,6 +90,19 @@ export function makeTask(id: string, overrides: Partial<BacklogTaskDetail> = {})
     branch: null,
     ...overrides,
   };
+}
+
+/**
+ * A minimal Story with `tasks:` and an already-present (empty) managed task block — shared by
+ * `sync.test.ts` and `check.test.ts`, which both reconcile against the exact same doc shape.
+ */
+export function storyDoc(title: string, taskIds: readonly string[], status?: string): string {
+  const tasksYaml = taskIds.map((t) => `\n  - ${t}`).join("");
+  const statusLine = status !== undefined ? `status: ${status}\n` : "";
+  return (
+    `---\ntype: Story\ntitle: ${title}\n${statusLine}tasks:${tasksYaml}\n---\n` +
+    `# ${title}\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n`
+  );
 }
 
 /**
