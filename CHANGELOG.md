@@ -91,6 +91,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Skipped entirely under `--dry-run`. Also new: `adapters/backlog.ts`'s `readStatusFlow` reads the
   project's ordered status flow directly from `backlog/config.yml`'s `statuses:` (defaulting to the
   three Backlog defaults when absent), rather than shelling a further Backlog subcommand.
+- **`lore check` — status reconciliation + managed-block drift, the last two ADR-0007 passes**
+  (LORE-27). `check` now reuses the exact pure engines `lore sync` writes with
+  (`reconcile.ts`'s `reconcileStatus`, `managed-block.ts`'s `regenerateTaskBlock`) but only diffs
+  against disk — this command never writes. A `Story`/`Spec` whose persisted `status` no longer
+  matches its live Backlog rollup is a `status-drift` finding; a `<!-- lore:tasks -->` region that
+  no longer matches what `sync` would render is a `managed-block-drift` finding — both are **errors**
+  that always gate exit `6`, unlike the warn-only portability lint. **`commands/reconcile-shared.ts`
+  (new)** extracts the task-resolution + reconcile-compute gather previously inline in `sync.ts` so
+  both commands share one implementation rather than drifting apart; `sync.ts` was refactored onto
+  it with no behavior change. Reconciliation runs per discovered bundle root (mirroring the existing
+  multi-root link/anchor pass) but shares a single `BacklogAdapter` instance across roots, so its
+  capability probe still runs at most once. A bundle with no `tasks:`-linked concept at all never
+  constructs an adapter (mirrors `rename.ts`'s precedent) and `check` stays fully synchronous, the
+  existing contract every caller relies on; otherwise `check` now returns a `Promise<number>`. A
+  linked task id that no longer exists still fails loud (`not_found`, exit `3`); a concept with
+  `tasks:` but malformed/missing managed-block markers still fails loud (`validation`, exit `6`) —
+  both reuse `sync`'s own contracts unchanged. `check`'s file-discovery walk silently treats a
+  malformed concept as reconciliation-ineligible **only when it carries no `tasks:` link** — that
+  document's well-formedness is `lore validate`'s Tier-2 finding to report (ADR-0007's own
+  validate/check split), not a second thing `check` re-derives. A malformed concept that DOES declare
+  `tasks:` (or whose frontmatter YAML is itself unparseable, so its `tasks:` status can't be ruled
+  out) still fails loud instead — `lore sync` would refuse to touch that exact file too, so silently
+  treating it as un-linked would be the one case where `check` really would disagree with `sync`.
+  **Behavior change:** discovery advisories (a skipped symlink, an unreadable sub-directory) now
+  flush to stderr *before* the `check.report` is emitted to stdout, on every invocation — the reverse
+  of `check`'s pre-LORE-27 order, deliberately: advisories are now known and flushed in full before
+  any reconciliation step that could throw, so a later failure can never silently drop them (mirrors
+  `sync`'s own long-standing order). A script that merges stdout+stderr and assumes report-then-
+  advisories should re-check that assumption.
 - **`adapters/backlog.ts` — the typed JSON-only Backlog.md read/write surface** (LORE-21). The
   capability probe (LORE-4) now backs a full typed adapter over the same injectable `BacklogSpawn`
   seam — the sole place a `backlog` subprocess is spawned and the sole place the `--json` schema is

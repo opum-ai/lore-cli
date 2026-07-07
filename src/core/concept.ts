@@ -203,6 +203,31 @@ export function tryParseConcept(path: string, raw: string, options: ParseConcept
 }
 
 /**
+ * Best-effort read of a file's frontmatter **mapping alone**, without validating it against any
+ * profile schema — deliberately narrower than {@link tryParseConcept} (which always validates), but
+ * NOT more tolerant of a genuine parse failure: like {@link tryParseConcept}, this returns `null` for
+ * a file with no usable frontmatter mapping (nothing to skip), but still **throws** when the YAML
+ * itself is unparseable — there is no mapping to safely hand back in that case, so a caller cannot
+ * treat "unparseable" and "absent" as the same outcome (an unparseable file could easily have
+ * declared `tasks:`; there is no way to know, so it must not be assumed innocent).
+ *
+ * For a caller that needs to know a FACT about a file's frontmatter (e.g. does it declare `tasks:`?)
+ * without committing to full schema validation succeeding: `lore check`'s reconciliation-eligibility
+ * scan (LORE-27) uses this to recognize a concept that fails the lore profile but still links a
+ * Backlog task as reconciliation-relevant (and so re-throw the original error loud, matching what
+ * `lore sync` would do for the identical file) — rather than silently treating it as if it never
+ * existed, which it does for every OTHER malformed file with no such bearing. When the YAML itself
+ * is unparseable, this function's own throw propagates the same way, which is the conservative,
+ * correct default for that case.
+ *
+ * @throws LoreError `validation` — {@link splitFrontmatter}'s own contract — for unparseable YAML.
+ */
+export function tryReadFrontmatter(path: string, raw: string): Record<string, unknown> | null {
+  const split = splitFrontmatter(path, normalizeInput(raw));
+  return split.present ? split.frontmatter : null;
+}
+
+/**
  * Validate a present frontmatter split against the lore profile and assemble the
  * {@link Concept}. Shared by {@link parseConcept} and {@link tryParseConcept} so
  * the validate-and-construct step (and the byte-stable `frontmatter`/`body`

@@ -12,11 +12,18 @@
  *   {@link validateLink} classifier) plus a body-text scan for Obsidian-isms (wikilinks,
  *   embeds, callouts, highlights, `%%`-comments). Every such finding is a **warning** that
  *   never fails the gate on its own (ADR-0007, portable-markdown.md).
+ * - **Status reconciliation + managed-block drift** (LORE-27, the gate, exit `6`): a `Story`
+ *   whose persisted `status` no longer matches its live Backlog rollup, or whose
+ *   `<!-- lore:tasks -->` region no longer matches what {@link regenerateTaskBlock} would
+ *   produce from current task data, is drift — the same condition `lore sync` would fix by
+ *   writing. {@link reconcileDriftFindings} is the pure judgment; resolving each linked task's
+ *   live status (the Backlog JSON adapter) and reading each concept's on-disk bytes are
+ *   command-layer IO (`commands/check.ts`, via the shared `commands/reconcile-shared.ts`
+ *   gather it also feeds to `lore sync`) — ADR-0014 keeps that IO out of core. Both findings
+ *   are **errors**: unlike the portability lint, drift always gates (ADR-0007), never merely
+ *   advisory under `--strict`.
  *
- * The other two `lore check` passes — status reconciliation and managed-block drift —
- * depend on the Backlog JSON adapter and `lore sync` (LORE-26) and are wired in by their
- * own later tasks; this module leaves them as a seam. External-URL liveness is opt-in and
- * deferred (no networking in core).
+ * External-URL liveness is opt-in and deferred (no networking in core).
  *
  * Per the core contract (lore-design §2.1) everything here is pure: `{ path, raw }` files
  * in, typed findings out — no filesystem, no printing, no flags, no `process.exit`. The
@@ -47,16 +54,25 @@ import { extractLinkTargets, nodeText, walkMdast } from "./bundle";
 import { idFromPath, normalizeInput } from "./concept";
 import type { Finding, Severity } from "./finding";
 import { decodeTarget, isExternalTarget, pathPart, validateLink } from "./links";
+import { type ManagedTaskRow, regenerateTaskBlock } from "./managed-block";
+import type { ReconciledStatus } from "./reconcile";
 
 /** `error` fails the gate (exit `6`); `warning` is advisory (fails only under `--strict`). The shared {@link Severity}. */
 export type CheckSeverity = Severity;
 
 /**
- * Which check produced a {@link CheckFinding}. `broken-link`/`broken-anchor` are the
- * error-tier gate; `portability` is the warn-tier lint; `external-link` is the opt-in,
- * non-deterministic liveness advisory (`--external`) that never fails the gate (ADR-0007).
+ * Which check produced a {@link CheckFinding}. `broken-link`/`broken-anchor` and
+ * `status-drift`/`managed-block-drift` are all error-tier gate findings; `portability` is the
+ * warn-tier lint; `external-link` is the opt-in, non-deterministic liveness advisory
+ * (`--external`) that never fails the gate (ADR-0007).
  */
-export type CheckRule = "broken-link" | "broken-anchor" | "portability" | "external-link";
+export type CheckRule =
+  | "broken-link"
+  | "broken-anchor"
+  | "status-drift"
+  | "managed-block-drift"
+  | "portability"
+  | "external-link";
 
 /**
  * One problem found in the bundle, attributed to the file that carries it: the shared
@@ -79,7 +95,12 @@ export interface CheckInputFile {
 export interface CheckReport {
   /** Every deterministic finding, in file-then-document order (the gate + portability lint). */
   readonly findings: readonly CheckFinding[];
-  /** Total error-severity findings (broken links + anchors) — the gate count. */
+  /**
+   * Total error-severity findings — the gate count. This module's own passes (`checkBundle`)
+   * contribute `broken-link`/`broken-anchor`; `commands/check.ts` folds in `status-drift`/
+   * `managed-block-drift` (LORE-27) on top via the same {@link tallySeverity}, so a consumer of the
+   * final `check.report` should not assume this counts only link/anchor problems.
+   */
   readonly errorCount: number;
   /** Total warning-severity findings (portability) — advisory. */
   readonly warningCount: number;
@@ -175,6 +196,83 @@ export function checkBundle(files: readonly CheckInputFile[]): CheckReport {
   }
 
   return summarize(findings, files.length);
+}
+
+// ── Status + managed-block drift (the gate) ──────────────────────────────────────
+
+/** One `tasks:`-linked concept's already-resolved reconciliation data, for {@link reconcileDriftFindings}. */
+export interface ReconcileDriftInput {
+  /** The bundle-relative POSIX path of the concept, attributed on any finding (bundle-label-prefixed by the caller in multi-root mode). */
+  readonly path: string;
+  /** The concept's persisted `frontmatter.status`, as currently on disk. */
+  readonly currentStatus: unknown;
+  /** The recomputed status (`core/reconcile.ts`'s `reconcileStatus`); `null` only if the caller passes a concept with no linked tasks (never drift either way). */
+  readonly newStatus: ReconciledStatus | null;
+  /** The concept's full raw file bytes, as currently on disk (LF-normalized). */
+  readonly original: string;
+  /** The linked tasks' live data, in the concept's `tasks:` order — {@link regenerateTaskBlock}'s `rows`. */
+  readonly rows: readonly ManagedTaskRow[];
+  /** The concept's repo-relative path, for {@link regenerateTaskBlock}'s link computation. */
+  readonly docPath: string;
+  /**
+   * Whether `lore sync` would actually reconcile this concept if run — `sync` only ever operates on
+   * the default `docs/` bundle (no concept of an alternate root today), while `check` also supports
+   * checking any named bundle root (LORE-30's multi-root discovery). Decided by the command layer
+   * (which knows the bundle root as the user actually named it, canonicalized) rather than guessed
+   * here from `docPath`'s string shape — a non-canonical but equivalent spelling of the default root
+   * (`./docs`, a trailing slash) must not silently omit the hint.
+   */
+  readonly fixable: boolean;
+}
+
+/**
+ * The drift findings for one already-reconciled concept: a **status-drift** error when the
+ * recomputed status differs from what is persisted, and a **managed-block-drift** error when
+ * re-rendering the `<!-- lore:tasks -->` region from `rows` would change the file's bytes. Both
+ * are independent — a concept can have one, both, or neither — and both are `error` severity
+ * (ADR-0007: this gate is not a `--strict`-only advisory, unlike the portability lint).
+ *
+ * Reuses the exact pure engines `lore sync` writes with ({@link reconcileStatus},
+ * {@link regenerateTaskBlock}) so drift can never differ from what a `sync` run would fix.
+ *
+ * @throws LoreError `validation` (exit 6) — {@link regenerateTaskBlock}'s own contract — when the
+ *   concept's managed-block markers are missing, duplicated, or crossed; `check` refuses to guess
+ *   at a corrupted region rather than reporting a soft finding for it, the read-time mirror of
+ *   `sync`'s "never writes a partial block."
+ */
+export function reconcileDriftFindings(input: ReconcileDriftInput): CheckFinding[] {
+  const fixable = input.fixable;
+  const findings: CheckFinding[] = [];
+  if (input.newStatus !== null && input.newStatus !== input.currentStatus) {
+    // `status:` is schema-nullish (profile.ts's optional fields accept both an OMITTED key --
+    // `undefined` -- and an explicit empty/`null` scalar), and `JSON.stringify` renders each
+    // inconsistently: `undefined` becomes the bare, unquoted word "undefined" (not a string at all),
+    // while `null` at least stringifies correctly but reads as the literal word "null" rather than
+    // "no status set yet". Both are normalized to the same friendly placeholder, distinctly from
+    // `newStatus`'s always-quoted form.
+    const currentDisplay =
+      input.currentStatus === undefined || input.currentStatus === null
+        ? "(unset)"
+        : JSON.stringify(input.currentStatus);
+    const hint = fixable ? " — run `lore sync` to reconcile" : "";
+    findings.push({
+      severity: "error",
+      rule: "status-drift",
+      file: input.path,
+      message: `status is ${currentDisplay} but the linked tasks recompute to ${JSON.stringify(input.newStatus)}${hint}`,
+    });
+  }
+  const regenerated = regenerateTaskBlock(input.original, input.rows, { docPath: input.docPath });
+  if (regenerated !== input.original) {
+    const hint = fixable ? " — run `lore sync` to regenerate it from live task data" : "";
+    findings.push({
+      severity: "error",
+      rule: "managed-block-drift",
+      file: input.path,
+      message: `the <!-- lore:tasks --> block is stale${hint}`,
+    });
+  }
+  return findings;
 }
 
 // ── Link / anchor resolution (the gate) ──────────────────────────────────────────
@@ -507,6 +605,16 @@ function clip(value: string): string {
 
 /** Tally findings into the aggregate {@link CheckReport} counts. */
 function summarize(findings: readonly CheckFinding[], fileCount: number): CheckReport {
+  const { errorCount, warningCount } = tallySeverity(findings);
+  return { findings, errorCount, warningCount, fileCount };
+}
+
+/**
+ * Count `error`/`warning` findings — the one shared tally every aggregation reuses (this module's
+ * own {@link summarize}, and `commands/check.ts`'s multi-bundle and drift-merge aggregations), so a
+ * future severity-tier change is one edit, not a hunt across three near-identical loops.
+ */
+export function tallySeverity(findings: readonly CheckFinding[]): { errorCount: number; warningCount: number } {
   let errorCount = 0;
   let warningCount = 0;
   for (const finding of findings) {
@@ -516,7 +624,7 @@ function summarize(findings: readonly CheckFinding[], fileCount: number): CheckR
       warningCount++;
     }
   }
-  return { findings, errorCount, warningCount, fileCount };
+  return { errorCount, warningCount };
 }
 
 /**

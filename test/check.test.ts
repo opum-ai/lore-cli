@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { BacklogAdapter } from "../src/adapters/backlog";
 import { run } from "../src/cli";
-import { type FetchLike, runCheck } from "../src/commands/check";
+import { type FetchLike, isDocsRoot, runCheck } from "../src/commands/check";
 import {
   type CheckInputFile,
   checkBundle,
@@ -11,9 +12,10 @@ import {
   extractHeadingSlugs,
   slugify,
 } from "../src/core/check";
-import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
+import { type ManagedTaskRow, regenerateTaskBlock } from "../src/core/managed-block";
+import { EXIT_CODES, EXIT_OK, EXIT_UNCAUGHT, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
-import { capture } from "./helpers";
+import { capture, fakeAdapter, makeTask, storyDoc } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 const PLAIN_CTX: OutputContext = { mode: "plain", color: false };
@@ -595,12 +597,557 @@ describe("runCheck — exit codes and discovery", () => {
     expect(parsed.data.errorCount).toBe(1);
   });
 
-  test("skips a symlinked file with an advisory (does not follow it)", () => {
+  test("skips a symlinked file with an advisory (does not follow it), emitted exactly once", () => {
     writeFileSync(join(root, "docs", "adr", "real.md"), ref("R", "Body."));
     symlinkSync(join(root, "docs", "adr", "real.md"), join(root, "docs", "adr", "link.md"));
     const o = opts([]);
     runCheck(o);
+    const stderrText = (o.stderr as ReturnType<typeof capture>).text();
+    expect(stderrText).toContain("symlink");
+    // Regression: the reconciliation-eligibility scan reuses the SAME already-walked files rather
+    // than re-walking the directory, so this advisory (from the one raw-file walk) is never doubled.
+    // (Counting whole lines, not occurrences of the substring "symlink" — the message itself
+    // contains it twice: "skipping symlink ...: symlinks are not followed".)
+    const lines = stderrText.split("\n").filter((l) => l.includes("skipping symlink"));
+    expect(lines).toHaveLength(1);
+  });
+
+  test("advisories flush before the report on the plain, fully-synchronous path too (LORE-27 regression)", () => {
+    // Pins the deliberate ordering (round 3) for the single most common invocation: no reconciliation,
+    // no --external. Every other path in runCheck already has an order-pinning test; this one didn't.
+    writeFileSync(join(root, "docs", "adr", "real.md"), ref("R", "Body."));
+    symlinkSync(join(root, "docs", "adr", "real.md"), join(root, "docs", "adr", "link.md"));
+    const order: string[] = [];
+    const stdout = { write: (): void => void order.push("stdout") };
+    const stderr = { write: (): void => void order.push("stderr") };
+    const o = { root, output: JSON_CTX, args: [], stdout, stderr };
+    const result = runCheck(o);
+    expect(typeof result).toBe("number"); // stays fully synchronous
+    expect(order[0]).toBe("stderr");
+  });
+
+  test("a frontmatter-free doc produces no advisory noise (LORE-27 regression)", () => {
+    // docs/index.md (from beforeEach) has no frontmatter. Before the fix, the reconciliation-
+    // eligibility scan called loadBundle() directly, which itself warns "no frontmatter mapping"
+    // for every non-concept file — spurious noise on a fully clean, coherent bundle.
+    const o = opts([]);
+    expect(runCheck(o)).toBe(EXIT_OK);
+    expect((o.stderr as ReturnType<typeof capture>).text()).toBe("");
+  });
+
+  test("a malformed concept elsewhere in the bundle does not crash the gate (LORE-27 regression)", () => {
+    // Before the fix, the reconciliation-eligibility scan used loadBundle(), which THROWS on any
+    // schema-invalid frontmatter anywhere in the bundle — even a file with no tasks: link at all —
+    // dropping the real check.report (here, the broken link below) entirely.
+    writeFileSync(join(root, "docs", "bad.md"), "---\ntype: Story\nstatus: 12345\n---\n# Bad\n\nBody.\n");
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[ghost](../reference/ghost.md)."));
+    const o = opts([], JSON_CTX);
+    const code = runCheck(o);
+    expect(code).toBe(EXIT_CODES.validation);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(parsed.data.findings.some((f: { rule: string }) => f.rule === "broken-link")).toBe(true);
+  });
+});
+
+// ── isDocsRoot ─────────────────────────────────────────────────────────────────
+
+describe("isDocsRoot", () => {
+  // A pure string check, tested directly (not through a real directory) so the assertions hold
+  // regardless of the test machine's own filesystem case-sensitivity (macOS/Windows default to
+  // case-insensitive; Linux CI does not — this codebase has been bitten by that split before).
+  test.each([
+    ["docs", true],
+    ["./docs", true],
+    ["docs/", true],
+    ["Docs", true], // case-insensitive: the identical directory on macOS/Windows (LORE-27 regression)
+    ["DOCS", true],
+    ["docs\\", true], // Windows trailing-backslash idiom, mirroring the "docs/" case (LORE-27 regression)
+    [".\\docs", true], // Windows leading-relative idiom, mirroring "./docs"
+    ["alt", false],
+    ["docs2", false],
+    ["adocs", false],
+  ])("isDocsRoot(%p) === %p", (label, expected) => {
+    expect(isDocsRoot(label)).toBe(expected);
+  });
+});
+
+// ── Command layer: runCheck — status + managed-block drift (LORE-27) ─────────────
+
+describe("runCheck — status + managed-block drift (LORE-27)", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "lore-check-drift-"));
+    mkdirSync(join(root, "docs"), { recursive: true });
+    writeFileSync(join(root, "docs", "index.md"), "# Docs\n\nRoot.\n");
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  function writeDoc(rel: string, contents: string): void {
+    const abs = join(root, "docs", rel);
+    mkdirSync(join(abs, ".."), { recursive: true });
+    writeFileSync(abs, contents);
+  }
+
+  function opts(args: string[], adapter: BacklogAdapter, output: OutputContext = JSON_CTX) {
+    return { root, output, args, adapter, stdout: capture(), stderr: capture() };
+  }
+
+  /** A doc-LORE-1 row for a Done task, matching `makeTask`'s defaults. */
+  const doneRow: ManagedTaskRow = {
+    id: "LORE-1",
+    title: "Title for LORE-1",
+    status: "Done",
+    file: "backlog/tasks/lore-1 - title.md",
+  };
+
+  test("a fully reconciled doc has no drift findings and stays synchronous-free of extra findings", async () => {
+    const reconciled = regenerateTaskBlock(storyDoc("X", ["lore-1"], "done"), [doneRow], {
+      docPath: "docs/stories/x.md",
+    });
+    writeDoc("stories/x.md", reconciled);
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const code = await runCheck(opts([], adapter));
+    expect(code).toBe(EXIT_OK);
+  });
+
+  test("a stale persisted status is a status-drift error (exit 6)", async () => {
+    // Block already matches live data; only the frontmatter `status:` is behind.
+    const doc = regenerateTaskBlock(storyDoc("X", ["lore-1"], "todo"), [doneRow], { docPath: "docs/stories/x.md" });
+    writeDoc("stories/x.md", doc);
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const o = opts([], adapter);
+    const code = await runCheck(o);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(code).toBe(EXIT_CODES.validation);
+    expect(parsed.data.findings).toHaveLength(1);
+    expect(parsed.data.findings[0].rule).toBe("status-drift");
+    expect(parsed.data.findings[0].file).toBe("stories/x.md");
+  });
+
+  test("an unset status (no status: key) displays as (unset), not the bare word 'undefined' (LORE-27 regression)", async () => {
+    const doc = regenerateTaskBlock(storyDoc("X", ["lore-1"]), [doneRow], { docPath: "docs/stories/x.md" }); // no status: key at all
+    writeDoc("stories/x.md", doc);
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const o = opts([], adapter);
+    await runCheck(o);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    const drift = parsed.data.findings.find((f: { rule: string }) => f.rule === "status-drift");
+    expect(drift.message).toContain("(unset)");
+    expect(drift.message).not.toContain("undefined");
+  });
+
+  test("an explicit null status (status: with no value) also displays as (unset), not the bare word 'null' (LORE-27 regression)", async () => {
+    const raw =
+      "---\ntype: Story\ntitle: X\nstatus:\ntasks:\n  - lore-1\n---\n# X\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n";
+    const doc = regenerateTaskBlock(raw, [doneRow], { docPath: "docs/stories/x.md" });
+    writeDoc("stories/x.md", doc);
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const o = opts([], adapter);
+    await runCheck(o);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    const drift = parsed.data.findings.find((f: { rule: string }) => f.rule === "status-drift");
+    expect(drift.message).toContain("(unset)");
+    expect(drift.message).not.toContain("null");
+  });
+
+  test("a stale managed block is a managed-block-drift error (exit 6)", async () => {
+    // Frontmatter status already matches; the block itself (still the storyDoc default, empty) is stale.
+    writeDoc("stories/x.md", storyDoc("X", ["lore-1"], "done"));
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const o = opts([], adapter);
+    const code = await runCheck(o);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(code).toBe(EXIT_CODES.validation);
+    expect(parsed.data.findings).toHaveLength(1);
+    expect(parsed.data.findings[0].rule).toBe("managed-block-drift");
+  });
+
+  test("both status and managed-block drift are reported together", async () => {
+    writeDoc("stories/x.md", storyDoc("X", ["lore-1"], "todo")); // stale status AND empty (stale) block
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const o = opts([], adapter);
+    const code = await runCheck(o);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(code).toBe(EXIT_CODES.validation);
+    const rules = parsed.data.findings.map((f: { rule: string }) => f.rule).sort();
+    expect(rules).toEqual(["managed-block-drift", "status-drift"]);
+  });
+
+  test("--strict has no bearing on drift — it already always gates", async () => {
+    writeDoc("stories/x.md", storyDoc("X", ["lore-1"], "todo"));
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+    expect(await runCheck(opts(["--strict"], adapter))).toBe(EXIT_CODES.validation);
+  });
+
+  test("reconciliation drift and --external liveness compose in the same run (LORE-27 regression)", async () => {
+    // Previously untested combination: needsReconciliation && parsed.external together.
+    writeDoc("stories/x.md", storyDoc("X", ["lore-1"], "todo")); // status-drift: task is Done, doc says todo
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+    const fetchFake: FetchLike = async () => ({ ok: false, status: 404 });
+
+    const o = {
+      root,
+      output: JSON_CTX,
+      args: ["--external"],
+      adapter,
+      fetch: fetchFake,
+      stdout: capture(),
+      stderr: capture(),
+    };
+    const code = await runCheck(o);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(code).toBe(EXIT_CODES.validation); // the drift, not liveness, is what gates
+    expect(parsed.data.findings.some((f: { rule: string }) => f.rule === "status-drift")).toBe(true);
+    expect(parsed.data.externalFindings).toEqual([]); // no external link in this fixture at all
+  });
+
+  test("--external liveness runs concurrently with drift reconciliation, not serialized after it (LORE-27 regression)", async () => {
+    writeDoc("stories/x.md", storyDoc("X", ["lore-1"], "todo")); // needs reconciliation (slow adapter below)
+    writeDoc("adr/x.md", ref("X", "[d](https://d.example)")); // needs liveness
+    const order: string[] = [];
+    const base = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+    const adapter: BacklogAdapter = {
+      ...base,
+      async viewTask(id: string) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        order.push("drift-resolved");
+        return base.viewTask(id);
+      },
+    };
+    const fetchFake: FetchLike = async () => {
+      order.push("liveness-started");
+      return { ok: false, status: 404 };
+    };
+
+    const o = {
+      root,
+      output: JSON_CTX,
+      args: ["--external"],
+      adapter,
+      fetch: fetchFake,
+      stdout: capture(),
+      stderr: capture(),
+    };
+    await runCheck(o);
+    // If liveness were only started AFTER drift resolved (the pre-fix serialized behavior), the
+    // slower drift call (a 20ms delay) would always finish first. Started concurrently, liveness
+    // (no artificial delay) finishes first.
+    expect(order[0]).toBe("liveness-started");
+  });
+
+  test("a concept with no tasks: is never reconciled and constructs no adapter", async () => {
+    writeDoc("stories/plain.md", "---\ntype: Story\ntitle: Plain\n---\n# Plain\n\nNo tasks.\n");
+    const poison = new Proxy(
+      {},
+      {
+        get(): never {
+          throw new Error("no adapter method should ever be called");
+        },
+      },
+    ) as BacklogAdapter;
+
+    const result = runCheck(opts([], poison));
+    expect(typeof result).toBe("number"); // stays fully synchronous: no reconciliation needed at all
+    expect(result).toBe(EXIT_OK);
+  });
+
+  test("a missing linked task rejects with not_found (exit 3), never a soft finding", async () => {
+    writeDoc("stories/x.md", storyDoc("X", ["lore-99"], "todo"));
+    const adapter = fakeAdapter([]); // lore-99 resolves to null
+
+    const result = runCheck(opts([], adapter));
+    expect(result).toBeInstanceOf(Promise);
+    await expect(result).rejects.toThrow(/lore-99/);
+  });
+
+  test("discovery advisories are not lost when reconciliation rejects (LORE-27 regression)", async () => {
+    // A symlink advisory is collected during discovery; a missing linked task rejects afterward.
+    // Advisories must flush regardless — before the fix they were only flushed in the fulfillment
+    // branch of the reconciliation promise, so a rejection silently dropped them.
+    writeFileSync(join(root, "docs", "real.md"), ref("R", "Body."));
+    symlinkSync(join(root, "docs", "real.md"), join(root, "docs", "link.md"));
+    writeDoc("stories/x.md", storyDoc("X", ["lore-99"], "todo"));
+    const adapter = fakeAdapter([]); // lore-99 resolves to null
+
+    const o = opts([], adapter);
+    await expect(runCheck(o)).rejects.toThrow(/lore-99/);
     expect((o.stderr as ReturnType<typeof capture>).text()).toContain("symlink");
+  });
+
+  test("the already-computed report is still emitted when reconciliation rejects (LORE-27 regression)", async () => {
+    // A genuine broken link exists alongside a missing linked task. Before the fix, a rejection from
+    // reconciliation meant runCheck's driftPromise fulfillment callback (the ONLY place that emitted
+    // anything on this path) never ran, silently discarding the broken-link finding entirely.
+    writeDoc("adr/x.md", ref("X", "[ghost](../reference/ghost.md)."));
+    writeDoc("stories/x.md", storyDoc("X", ["lore-99"], "todo"));
+    const adapter = fakeAdapter([]); // lore-99 resolves to null
+
+    const o = opts([], adapter);
+    await expect(runCheck(o)).rejects.toThrow(/lore-99/);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(parsed.kind).toBe("check.report");
+    expect(parsed.data.findings.some((f: { rule: string }) => f.rule === "broken-link")).toBe(true);
+  });
+
+  test("a malformed concept that ALSO links tasks rejects instead of silently passing (LORE-27 regression)", async () => {
+    // Unlike a malformed concept with no tasks: link (silently skipped -- lore validate's job), one
+    // that DOES link a task is reconciliation-relevant: `lore sync` would refuse to touch it too, so
+    // silently treating it as un-linked would be a false negative.
+    writeDoc(
+      "stories/bad.md",
+      "---\ntype: Story\nstatus: 12345\ntasks:\n  - lore-1\n---\n# Bad\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n",
+    );
+    const poison = new Proxy(
+      {},
+      {
+        get(): never {
+          throw new Error("no adapter method should ever be called -- the throw happens before any Backlog IO");
+        },
+      },
+    ) as BacklogAdapter;
+
+    // needsReconciliation is true (the scan found a linked-but-invalid concept), so runCheck takes
+    // its async path and returns a rejecting Promise, not a synchronous throw.
+    const result = runCheck(opts([], poison));
+    expect(result).toBeInstanceOf(Promise);
+    await expect(result).rejects.toThrow(/invalid Story frontmatter/);
+  });
+
+  test("the already-computed report survives even a malformed-linked-concept rejection (LORE-27 regression)", async () => {
+    writeDoc("adr/x.md", ref("X", "[ghost](../reference/ghost.md)."));
+    writeDoc(
+      "stories/bad.md",
+      "---\ntype: Story\nstatus: 12345\ntasks:\n  - lore-1\n---\n# Bad\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n",
+    );
+    const poison = new Proxy(
+      {},
+      {
+        get: (): never => {
+          throw new Error("unreachable");
+        },
+      },
+    ) as BacklogAdapter;
+
+    const o = opts([], poison);
+    await expect(runCheck(o)).rejects.toThrow(/invalid Story frontmatter/);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(parsed.kind).toBe("check.report");
+    expect(parsed.data.findings.some((f: { rule: string }) => f.rule === "broken-link")).toBe(true);
+  });
+
+  test("advisories flush before the report is emitted, even on a malformed-linked-concept rejection (LORE-27 regression)", async () => {
+    // Matches every other path in runCheck: flushing after emit would mean a failing emit() drops
+    // the advisories entirely (exactly the bug class fixed for the async rejection path).
+    writeFileSync(join(root, "docs", "real.md"), ref("R", "Body."));
+    symlinkSync(join(root, "docs", "real.md"), join(root, "docs", "link.md"));
+    writeDoc(
+      "stories/bad.md",
+      "---\ntype: Story\nstatus: 12345\ntasks:\n  - lore-1\n---\n# Bad\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n",
+    );
+    const poison = new Proxy(
+      {},
+      {
+        get: (): never => {
+          throw new Error("unreachable");
+        },
+      },
+    ) as BacklogAdapter;
+
+    const order: string[] = [];
+    const stdout = { write: (): void => void order.push("stdout") };
+    const stderr = { write: (): void => void order.push("stderr") };
+    const o = { root, output: JSON_CTX, args: [], adapter: poison, stdout, stderr };
+    await expect(runCheck(o)).rejects.toThrow(/invalid Story frontmatter/);
+    expect(order[0]).toBe("stderr");
+  });
+
+  test("a concept with genuinely unparseable frontmatter YAML also re-throws, not just schema-invalid (LORE-27 regression)", async () => {
+    // Unlike a schema-invalid-but-PARSEABLE mapping (the tests above), this frontmatter's YAML
+    // itself doesn't parse at all -- there is no raw mapping to safely peek at for a tasks: field,
+    // so it must NOT be assumed innocent (silently skipped) the way an unrelated malformed doc is.
+    writeDoc("stories/bad.md", "---\ntype: [1,2\ntasks:\n  - lore-1\n---\n# Bad\n\nBody.\n");
+    const poison = new Proxy(
+      {},
+      {
+        get: (): never => {
+          throw new Error("unreachable");
+        },
+      },
+    ) as BacklogAdapter;
+
+    expect(() => runCheck(opts([], poison))).toThrow(/not valid YAML/);
+  });
+
+  test("one bundle root's rejection does not discard another root's already-resolved drift findings (LORE-27 regression)", async () => {
+    mkdirSync(join(root, "a"), { recursive: true });
+    mkdirSync(join(root, "b"), { recursive: true });
+    writeFileSync(join(root, "a", "index.md"), "# A\n\nClean.\n");
+    writeFileSync(join(root, "b", "index.md"), "# B\n\nClean.\n");
+    writeFileSync(join(root, "a", "x.md"), storyDoc("A", ["lore-1"], "done")); // stale (empty) block -- real drift
+    writeFileSync(join(root, "b", "x.md"), storyDoc("B", ["lore-99"], "todo")); // lore-99 does not exist -- rejects
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const o = { root, output: JSON_CTX, args: ["a", "b"], adapter, stdout: capture(), stderr: capture() };
+    await expect(runCheck(o)).rejects.toThrow(/lore-99/);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    // Root "a"'s managed-block-drift finding survives even though root "b" failed outright.
+    expect(
+      parsed.data.findings.some(
+        (f: { rule: string; file: string }) => f.rule === "managed-block-drift" && f.file === "a/x.md",
+      ),
+    ).toBe(true);
+  });
+
+  test("one bundle root's concept-scan failure does not discard another root's drift findings (LORE-27 regression)", async () => {
+    // Distinct from the test above: this failure originates in the concept-scan pass
+    // (tryConceptsForBundle, which itself runs synchronously per root), before any async
+    // reconciliation even begins -- a bare `bundles.map()` over that scan would abort for EVERY
+    // root the instant one root's scan throws, discarding drift that was never even computed for
+    // the others (not just already-computed-and-lost). The overall runCheck() call is still async
+    // either way (needsReconciliation is true), same as every other reconciliation-rejection test.
+    mkdirSync(join(root, "a"), { recursive: true });
+    mkdirSync(join(root, "b"), { recursive: true });
+    writeFileSync(join(root, "a", "index.md"), "# A\n\nClean.\n");
+    writeFileSync(join(root, "b", "index.md"), "# B\n\nClean.\n");
+    writeFileSync(join(root, "a", "x.md"), storyDoc("A", ["lore-1"], "done")); // stale (empty) block -- real drift
+    writeFileSync(
+      join(root, "b", "bad.md"),
+      "---\ntype: Story\nstatus: 12345\ntasks:\n  - lore-1\n---\n# Bad\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n",
+    );
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const o = { root, output: JSON_CTX, args: ["a", "b"], adapter, stdout: capture(), stderr: capture() };
+    await expect(runCheck(o)).rejects.toThrow(/invalid Story frontmatter/);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(
+      parsed.data.findings.some(
+        (f: { rule: string; file: string }) => f.rule === "managed-block-drift" && f.file === "a/x.md",
+      ),
+    ).toBe(true);
+  });
+
+  test("a non-docs bundle root's drift message never suggests `lore sync` (it can't fix that root)", async () => {
+    mkdirSync(join(root, "alt"), { recursive: true });
+    writeFileSync(join(root, "alt", "index.md"), "# Alt\n\nClean.\n");
+    writeFileSync(join(root, "alt", "x.md"), storyDoc("X", ["lore-1"], "done")); // stale (empty) block
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const o = { root, output: JSON_CTX, args: ["alt"], adapter, stdout: capture(), stderr: capture() };
+    await runCheck(o);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    const drift = parsed.data.findings.find((f: { rule: string }) => f.rule === "managed-block-drift");
+    expect(drift.message).not.toContain("lore sync");
+  });
+
+  test("a non-canonical spelling of the docs root (./docs) still gets the `lore sync` hint (LORE-27 regression)", async () => {
+    writeDoc("stories/x.md", storyDoc("X", ["lore-1"], "done")); // stale (empty) block
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const o = { root, output: JSON_CTX, args: ["./docs"], adapter, stdout: capture(), stderr: capture() };
+    await runCheck(o);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    const drift = parsed.data.findings.find((f: { rule: string }) => f.rule === "managed-block-drift");
+    expect(drift.message).toContain("lore sync");
+  });
+
+  test("a concept with tasks: but no managed-block markers is a fail-loud validation error", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nNo markers here.\n");
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const result = runCheck(opts([], adapter));
+    await expect(result).rejects.toThrow(LoreError);
+    await expect(result).rejects.toThrow(/managed task region/);
+  });
+
+  test("a later concept's malformed managed-block markers do not discard an earlier concept's drift finding in the SAME root (LORE-27 regression)", async () => {
+    writeDoc("stories/a.md", storyDoc("A", ["lore-1"], "done")); // stale (empty) block -- real drift
+    writeDoc("stories/b.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nNo markers here.\n"); // malformed; processed after a.md
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const o = opts([], adapter);
+    await expect(runCheck(o)).rejects.toThrow(/managed task region/);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(
+      parsed.data.findings.some(
+        (f: { rule: string; file: string }) => f.rule === "managed-block-drift" && f.file === "stories/a.md",
+      ),
+    ).toBe(true);
+  });
+
+  test("a later file's scan failure does not discard an earlier file's already-scanned concept in the SAME bundle (LORE-27 regression)", async () => {
+    // Distinct from the test above (which fails during reconcileDriftFindings, after the scan
+    // already succeeded): this file fails during the concept-SCAN stage itself
+    // (tryConceptsForBundle). An earlier version shared one try/catch across that whole loop, so
+    // this failure silently discarded stories/a.md's ALREADY-collected concept too, not just
+    // stories/bad.md's -- losing a.md's real drift finding entirely, before reconciliation even ran.
+    writeDoc("stories/a.md", storyDoc("A", ["lore-1"], "done")); // stale (empty) block -- real drift, scans fine
+    writeDoc(
+      "stories/bad.md", // processed after a.md; malformed AND tasks:-linked -- fails during the scan itself
+      "---\ntype: Story\nstatus: 12345\ntasks:\n  - lore-1\n---\n# Bad\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n",
+    );
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const o = opts([], adapter);
+    await expect(runCheck(o)).rejects.toThrow(/invalid Story frontmatter/);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(
+      parsed.data.findings.some(
+        (f: { rule: string; file: string }) => f.rule === "managed-block-drift" && f.file === "stories/a.md",
+      ),
+    ).toBe(true);
+  });
+
+  test("a reserved-stem concept (index/log) is never reconciled even if it carries tasks:", async () => {
+    writeFileSync(
+      join(root, "docs", "index.md"),
+      "---\ntype: Reference\ntitle: Documentation\ntasks:\n  - lore-1\n---\n# Documentation\n\n<!-- lore:index:begin -->\n<!-- lore:index:end -->\n",
+    );
+    const poison = new Proxy(
+      {},
+      {
+        get(): never {
+          throw new Error("no adapter method should ever be called for a reserved-stem concept");
+        },
+      },
+    ) as BacklogAdapter;
+
+    expect(runCheck(opts([], poison))).toBe(EXIT_OK); // synchronous: the only tasks:-carrying concept is reserved
+  });
+
+  test("two bundle roots are each reconciled independently, findings labeled by root", async () => {
+    mkdirSync(join(root, "a"), { recursive: true });
+    mkdirSync(join(root, "b"), { recursive: true });
+    writeFileSync(join(root, "a", "index.md"), "# A\n\nClean.\n");
+    writeFileSync(join(root, "b", "index.md"), "# B\n\nClean.\n");
+    writeFileSync(join(root, "a", "x.md"), storyDoc("A", ["lore-1"], "done")); // stale (empty) block
+    let calls = 0;
+    const base = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+    const adapter: BacklogAdapter = {
+      ...base,
+      async viewTask(id: string) {
+        calls++;
+        return base.viewTask(id);
+      },
+    };
+
+    const o = { root, output: JSON_CTX, args: ["a", "b"], adapter, stdout: capture(), stderr: capture() };
+    const code = await runCheck(o);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(code).toBe(EXIT_CODES.validation);
+    expect(parsed.data.findings).toHaveLength(1);
+    expect(parsed.data.findings[0].rule).toBe("managed-block-drift");
+    expect(parsed.data.findings[0].file).toBe("a/x.md"); // labeled by its root, same convention as link/anchor findings
+    expect(calls).toBe(1); // one adapter instance shared across both roots -- its capability probe runs once
   });
 });
 
@@ -639,5 +1186,19 @@ describe("cli — check dispatch", () => {
     expect(result).toBeInstanceOf(Promise);
     expect(await result).toBe(EXIT_OK); // a dead external link never fails the gate
     expect((c.stdout as ReturnType<typeof capture>).text()).toContain("[external-link]");
+  });
+
+  test("`lore check` forwards RunContext.adapter for reconciliation (LORE-27 regression)", async () => {
+    // Before the fix, cli.ts's dispatch() never passed context.adapter through to runCheck (unlike
+    // link/unlink/rename/sync), so this injected fake was silently ignored in favor of the real
+    // `backlog` binary on PATH. A distinctive poisoned-view failure proves THIS adapter was reached:
+    // the real adapter (a bare temp dir with no backlog/ at all) would fail differently (a capability
+    // probe error), not with this exact message.
+    writeFileSync(join(cwd, "docs", "x.md"), storyDoc("X", ["lore-1"], "done"));
+    const poison = fakeAdapter([], { poisonViews: ["lore-1"] });
+    const c = { ...ctx(), adapter: poison };
+    const code = await run(["bun", "lore", "check", "--plain"], c);
+    expect(code).toBe(EXIT_UNCAUGHT);
+    expect((c.stderr as ReturnType<typeof capture>).text()).toContain("simulated Backlog read failure viewing lore-1");
   });
 });

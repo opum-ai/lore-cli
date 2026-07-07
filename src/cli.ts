@@ -250,6 +250,7 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
         stdout: context.stdout,
         stderr: context.stderr,
         fetch: context.fetch,
+        adapter: context.adapter,
       });
     case "replace":
       return runReplace({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });

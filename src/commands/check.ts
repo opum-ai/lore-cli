@@ -15,18 +15,21 @@
  * (bad flag) or an *I/O* failure (an unreadable path) throws, funneling through the router's
  * one error seam like every command.
  *
- * Scope: this ships the two deterministic, dependency-free passes — internal link/anchor
- * validation and the portability lint (now including MDX-hazard and filename-portability
- * findings, LORE-48) — plus the **opt-in** `--external` URL liveness probe. Liveness is the one
- * non-deterministic, network-touching path: it is kept out of the gate entirely (advisory only,
- * never changes the exit code — not even under `--strict`, ADR-0007) and its IO lives here, never
- * in pure `core/` (ADR-0014). The status-reconciliation and managed-block-drift passes (which need
- * the Backlog JSON adapter + `lore sync`, LORE-26/27) are wired in later.
+ * Scope: this ships all four ADR-0007 passes. Internal link/anchor validation and the portability
+ * lint (now including MDX-hazard and filename-portability findings, LORE-48) are deterministic and
+ * dependency-free. Status reconciliation and managed-block drift (LORE-27) reuse the exact pure
+ * engines `lore sync` writes with ({@link reconcileStatus}, {@link regenerateTaskBlock}, via the
+ * `commands/reconcile-shared.ts` gather shared with `sync`) but only diff against disk — this
+ * command never writes. Both are **errors**, always gating (unlike the warn-only portability lint).
+ * Finally, the **opt-in** `--external` URL liveness probe: the one non-deterministic, network-
+ * touching path, kept out of the gate entirely (advisory only, never changes the exit code — not
+ * even under `--strict`, ADR-0007) with its IO living here, never in pure `core/` (ADR-0014).
  */
 
 import { statSync } from "node:fs";
-import { join } from "node:path";
-import { walkFiles } from "../core/bundle";
+import { join, posix } from "node:path";
+import type { BacklogAdapter } from "../adapters/backlog";
+import { toRefList, walkFiles } from "../core/bundle";
 import {
   type CheckFinding,
   type CheckInputFile,
@@ -34,11 +37,16 @@ import {
   checkBundle,
   collectExternalLinks,
   type ExternalLink,
+  reconcileDriftFindings,
+  tallySeverity,
 } from "../core/check";
+import { type Concept, parseConcept, tryReadFrontmatter } from "../core/concept";
 import { DOCS_DIR } from "../core/scaffold";
 import { ANSI, EXIT_CODES, EXIT_OK, ioError, LoreError, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { readSource } from "./discover";
+import { defaultAdapter } from "./link";
+import { gatherReconciliation, linkedConcepts } from "./reconcile-shared";
 
 /** A minimal fetch — the global `fetch` satisfies it, and tests inject a deterministic fake. */
 export type FetchLike = (url: string, init?: { signal?: AbortSignal }) => Promise<{ ok: boolean; status: number }>;
@@ -57,6 +65,8 @@ export interface CheckOptions {
   stderr?: Writer;
   /** The fetch used by `--external` liveness; defaults to the global `fetch`. Injected in tests so they touch no network. */
   fetch?: FetchLike;
+  /** The Backlog adapter for status/managed-block reconciliation; defaults to the real `backlog` binary on PATH. Only constructed when at least one discovered concept links a task. */
+  adapter?: BacklogAdapter;
 }
 
 /** The parsed form of `lore check`'s arguments. */
@@ -76,14 +86,16 @@ interface CheckArgs {
  * `--strict`). A bad flag throws a `usage` {@link LoreError} (exit `2`); an unreadable bundle
  * root a `not_found`/`denied`.
  *
- * **Return type.** The deterministic gate is synchronous: without `--external`, `runCheck` returns
- * a `number` directly (the contract every existing caller and test relies on). With `--external` it
- * returns a `Promise<number>` — the same gate exit code, resolved only after the **non-deterministic**
- * liveness probe has finished and its advisory `external-link` findings have been emitted. The
- * liveness results **never** change the exit code (not even under `--strict`), so the gate decision
- * itself is fixed before any network call (ADR-0007); the network IO lives here, never in core
- * (ADR-0014). All gate throws (`usage`/`not_found`/`denied`) happen on the synchronous path, before
- * any promise, so the router's one error seam still catches them.
+ * **Return type.** The deterministic gate is synchronous: when nothing discovered links a Backlog
+ * task and `--external` is absent, `runCheck` returns a `number` directly (the contract every
+ * existing caller and test relies on). Otherwise it returns a `Promise<number>` — the same gate
+ * exit code, resolved only after status/managed-block reconciliation (LORE-27) and/or the
+ * **non-deterministic** liveness probe have finished. Liveness results **never** change the exit
+ * code (not even under `--strict`); reconciliation drift **is** part of the gate (like broken
+ * links/anchors, always an error). The network IO for liveness lives here, never in core
+ * (ADR-0014). All gate throws (`usage`/`not_found`/`denied`/`validation`) happen either on the
+ * synchronous path or propagate through the returned promise's rejection, so the router's one
+ * error seam still catches them either way.
  *
  * Discovery advisories (a `.md` skipped behind a symlink, an unreadable sub-directory) are flushed
  * to stderr — never silently swallowed — but, like every advisory, do not change the exit code.
@@ -92,35 +104,294 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
   const parsed = parseCheckArgs(options.args);
   const advisories = new WarningCollector();
   const bundles = collectBundles(options.root, parsed.paths, advisories);
-  const report = checkBundles(bundles);
-  const exit = report.errorCount > 0 || (parsed.strict && report.warningCount > 0) ? EXIT_CODES.validation : EXIT_OK;
+  const baseReport = checkBundles(bundles);
+
+  // Reuse the SAME already-read files (no second directory walk, no second read) to find which are
+  // `tasks:`-linked concepts per bundle root, so status/managed-block reconciliation can run the same
+  // way the link/anchor pass already does. `tryConceptsForBundle` NEVER throws — a bundle root's own
+  // scan failure (a malformed-AND-`tasks:`-linked concept) is carried as `error` on its own result,
+  // isolated from every OTHER root's scan, mirroring how the async drift computation below already
+  // isolates root failures from each other (an earlier version of this scan used a bare `.map()` that
+  // let one root's throw abort every other root's scan too, discarding drift that was never even
+  // computed — LORE-27 round 9). Cheap to check without any Backlog IO: `linkedConcepts` is pure.
+  const conceptBundleResults = bundles.map(tryConceptsForBundle);
+  const needsReconciliation = conceptBundleResults.some(
+    (result) => result.error !== null || linkedConcepts(result.concepts).length > 0,
+  );
+
+  // Every discovery-time advisory is known by now — flush once, immediately, for every path
+  // uniformly (the scan above can no longer throw, so there is no special-cased branch to keep this
+  // in sync with): `advisories.flush` is non-draining, so flushing more than once would re-emit the
+  // same lines, and deferring risks losing them entirely if reconciliation later rejects. This means
+  // stderr (advisories) is now written BEFORE stdout (the report) — the opposite of this command's
+  // pre-LORE-27 order — deliberately: mirrors `sync.ts`'s own precedent (it flushes right after
+  // `loadBundle`, well before its own final `emit`), and "advisories survive a later rejection" is a
+  // stronger guarantee to keep than "stdout precedes stderr" (already an unreliable assumption for
+  // any CLI merging two independently-buffered streams).
+  advisories.flush({ color: options.output.color, stderr: options.stderr });
+
+  if (!needsReconciliation && !parsed.external) {
+    emit(reportRenderable(baseReport), options.output, options.stdout);
+    return exitFor(baseReport, parsed.strict);
+  }
+
+  const adapter = needsReconciliation ? (options.adapter ?? defaultAdapter(options.root)) : undefined;
+  const multi = bundles.length > 1;
+  // `driftPromise` never REJECTS — a per-root failure (a scan failure, a missing linked task, a
+  // malformed managed block, a bad status-flow config) is carried as `DriftResult.error` instead, so
+  // whatever DID resolve (this root's or another root's drift findings, and the already-computed
+  // `baseReport`) is never silently discarded the way a rejected promise would discard it. `error` is
+  // still re-thrown below, after emitting — it's a real gate failure, not best-effort like liveness.
+  const driftPromise: Promise<DriftResult> = needsReconciliation
+    ? computeDriftFindings(options.root, conceptBundleResults, multi, adapter as BacklogAdapter)
+    : Promise.resolve({ findings: [], error: null });
 
   if (!parsed.external) {
-    emit(reportRenderable(report), options.output, options.stdout);
-    advisories.flush({ color: options.output.color, stderr: options.stderr });
-    return exit;
+    return driftPromise.then(({ findings, error }) => {
+      const report = mergeFindings(baseReport, findings);
+      emit(reportRenderable(report), options.output, options.stdout);
+      if (error !== null) {
+        throw error;
+      }
+      return exitFor(report, parsed.strict);
+    });
   }
 
   // Opt-in liveness: probe every external http(s) URL off the (already-fixed) gate path, fold the
   // results into the report as advisory `external-link` findings, then emit once so the `--json`
-  // envelope carries gate + liveness together. The exit code stays the gate's `exit`, untouched.
-  const worklist = bundles.flatMap((bundle) =>
-    prefixLinks(collectExternalLinks(bundle.files), bundle.label, bundles.length > 1),
+  // envelope carries gate + liveness together. The exit code stays the gate's, untouched by liveness.
+  // Kicked off CONCURRENTLY with `driftPromise` (a `Promise.all`, not a `.then` chain) — the two are
+  // fully independent I/O (a Backlog subprocess round-trip vs. HTTP fetches over already-read bytes),
+  // so serializing them would needlessly inflate `--external`'s wall-clock time on any bundle that
+  // also reconciles.
+  const worklist = bundles.flatMap((bundle) => prefixLinks(collectExternalLinks(bundle.files), bundle.label, multi));
+  const livenessPromise = probeLiveness(worklist, options.fetch ?? defaultFetch).then(
+    (findings): LivenessResult => ({ ok: true, findings }),
+    (err: unknown): LivenessResult => ({ ok: false, err }),
   );
-  return probeLiveness(worklist, options.fetch ?? defaultFetch)
-    .then((externalFindings) => {
-      emit(reportRenderable({ ...report, externalFindings }), options.output, options.stdout);
-      advisories.flush({ color: options.output.color, stderr: options.stderr });
-      return exit;
-    })
-    .catch((err: unknown) => {
+  return Promise.all([driftPromise, livenessPromise]).then(([{ findings, error }, liveness]) => {
+    const report = mergeFindings(baseReport, findings);
+    if (liveness.ok) {
+      emit(reportRenderable({ ...report, externalFindings: liveness.findings }), options.output, options.stdout);
+    } else {
       // Liveness is best-effort: a probe failure becomes a finding, never a thrown error, so this
       // only fires on an unexpected fault. Surface it through the same seam and keep the gate code.
       emit(reportRenderable(report), options.output, options.stdout);
-      advisories.add(`external-link liveness aborted: ${err instanceof Error ? err.message : String(err)}`);
-      advisories.flush({ color: options.output.color, stderr: options.stderr });
-      return exit;
-    });
+      // A fresh collector for this one late advisory: the main `advisories` was already flushed
+      // above (non-draining — reusing it here would re-emit every earlier discovery advisory too).
+      const late = new WarningCollector();
+      late.add(
+        `external-link liveness aborted: ${liveness.err instanceof Error ? liveness.err.message : String(liveness.err)}`,
+      );
+      late.flush({ color: options.output.color, stderr: options.stderr });
+    }
+    if (error !== null) {
+      throw error;
+    }
+    return exitFor(report, parsed.strict);
+  });
+}
+
+/** The best-effort outcome of the opt-in `--external` liveness probe — never a rejection, so it composes with `Promise.all` without losing `driftPromise`'s own result. */
+type LivenessResult =
+  | { readonly ok: true; readonly findings: CheckFinding[] }
+  | { readonly ok: false; readonly err: unknown };
+
+/** One bundle root's concept-scan outcome: the `tasks:`-linked concepts it found, or its own scan failure. */
+interface ConceptBundleResult {
+  readonly bundle: Bundle;
+  readonly concepts: Concept[];
+  readonly error: unknown | null;
+}
+
+/**
+ * Best-effort, per-bundle-root parse of already-read files into `tasks:`-linked {@link Concept}s,
+ * for deciding reconciliation eligibility. NEVER throws — a scan failure is carried as `error`
+ * instead, isolated from every OTHER bundle root's scan and from the already-computed `baseReport`,
+ * which must survive regardless of whether any one root's scan fails ({@link computeDriftFindings}
+ * folds this the same way it folds an async per-root failure). Isolated PER FILE too, the same way:
+ * each file's own parse is its own try/catch, so a LATER file's failure never discards concepts
+ * already collected from EARLIER files in the same root (an earlier version of this function shared
+ * one try/catch across the whole loop, so any failure silently dropped every already-collected
+ * concept for that root, not just the one that actually failed — LORE-27 round 10).
+ *
+ * Each file's frontmatter is first PEEKED via the cheap, non-validating {@link tryReadFrontmatter}
+ * (no Zod schema check) — a file with no `tasks:` link (the vast majority of any bundle: ADRs,
+ * specs, index/log) is never reconciliation-relevant regardless of whether its frontmatter would
+ * otherwise validate, so it is skipped WITHOUT paying for full parse+validation at all.
+ *
+ * Only a file that DOES declare `tasks:` is fully parsed+validated ({@link parseConcept}, which
+ * throws loud on a malformed mapping) — `lore sync` would refuse to touch that exact file too, so
+ * silently treating it as un-linked would be a real false-negative against `check`'s own drift gate,
+ * the one case where `check` really would otherwise disagree with what `sync` does. An
+ * unparseable-YAML file (`tryReadFrontmatter` itself throws — there is no mapping to peek a `tasks:`
+ * field from, so it cannot be assumed innocent) is treated the same as "declares `tasks:`".
+ */
+function tryConceptsForBundle(bundle: Bundle): ConceptBundleResult {
+  const concepts: Concept[] = [];
+  let error: unknown | null = null;
+  for (const file of bundle.files) {
+    try {
+      const raw = tryReadFrontmatter(file.path, file.raw);
+      if (raw === null || toRefList(raw.tasks).length === 0) {
+        continue;
+      }
+      concepts.push(parseConcept(file.path, file.raw));
+    } catch (err) {
+      if (error === null) {
+        error = err; // first, in file order; keep scanning so later files' concepts still count too
+      }
+    }
+  }
+  return { bundle, concepts, error };
+}
+
+/** The gate's exit code from a {@link CheckReport}: `6` on any error, or any warning under `--strict`. */
+function exitFor(report: CheckReport, strict: boolean): number {
+  return report.errorCount > 0 || (strict && report.warningCount > 0) ? EXIT_CODES.validation : EXIT_OK;
+}
+
+/** Append findings (bundle-label-prefixed by the caller already) into a {@link CheckReport}'s counts. */
+function mergeFindings(report: CheckReport, extra: readonly CheckFinding[]): CheckReport {
+  if (extra.length === 0) {
+    return report;
+  }
+  const added = tallySeverity(extra);
+  return {
+    ...report,
+    findings: [...report.findings, ...extra],
+    errorCount: report.errorCount + added.errorCount,
+    warningCount: report.warningCount + added.warningCount,
+  };
+}
+
+// ── Status + managed-block reconciliation drift (LORE-27) ────────────────────────
+
+/**
+ * The outcome of {@link computeDriftFindings}: every drift finding that WAS successfully computed
+ * (across every bundle root, regardless of whether another root failed), plus the first failure (if
+ * any), in bundle-argument order — never wall-clock/settlement order, so which root's error is
+ * reported is deterministic and reproducible across runs, not a race. Deliberately never a rejected
+ * promise: `findings` must survive a `error !== null` outcome so the caller can still emit the full
+ * report before propagating the failure (a `Promise.all` rejection would discard every OTHER root's
+ * already-resolved findings, and the caller's already-computed `baseReport`, silently).
+ */
+interface DriftResult {
+  readonly findings: CheckFinding[];
+  readonly error: unknown | null;
+}
+
+/**
+ * The status/managed-block drift findings for every `tasks:`-linked concept across every bundle
+ * root, reusing the same `commands/reconcile-shared.ts` gather `lore sync` writes with. Every root
+ * is resolved concurrently (`Promise.allSettled`, mirroring how the raw-file passes already treat
+ * roots as independent), sharing one `adapter` instance so its capability probe runs at most once
+ * regardless of how many roots are checked.
+ *
+ * A root whose synchronous concept-scan already failed ({@link ConceptBundleResult.error}) still has
+ * `driftFindingsForBundle` run over whatever concepts it DID successfully collect before the failure
+ * (never skipped outright — an earlier version treated any scan error as "reject this whole root,
+ * process nothing," discarding real drift on concepts the scan had already parsed fine before hitting
+ * the one that failed). The root's own scan error is then combined with whatever
+ * `driftFindingsForBundle` found, preferring the scan error when both exist (it is the logically
+ * earlier problem — some of this root's concepts were never even examined because of it).
+ */
+async function computeDriftFindings(
+  root: string,
+  conceptBundleResults: readonly ConceptBundleResult[],
+  multi: boolean,
+  adapter: BacklogAdapter,
+): Promise<DriftResult> {
+  const settled = await Promise.allSettled(
+    conceptBundleResults.map(async ({ bundle, concepts, error }) => {
+      const drift = await driftFindingsForBundle(root, bundle, concepts, multi, adapter);
+      return { findings: drift.findings, error: error ?? drift.error };
+    }),
+  );
+  const findings: CheckFinding[] = [];
+  let error: unknown | null = null;
+  for (const result of settled) {
+    if (result.status === "fulfilled") {
+      findings.push(...result.value.findings);
+      if (error === null) {
+        error = result.value.error; // this root's own scan error, or a per-concept reconciliation
+        // failure within it (still findings alongside it either way)
+      }
+    } else if (error === null) {
+      error = result.reason; // this root's own scan failed, or gatherReconciliation itself rejected for
+      // it (a missing task, a bad status-flow config) -- that root's findings are unrecoverable at this
+      // granularity, same as before; every OTHER root's findings (and this one's own
+      // reconcileDriftFindings partial results, when IT throws instead) are still preserved above.
+    }
+  }
+  return { findings, error };
+}
+
+/**
+ * The drift findings for one bundle root, looking up each target's original bytes from the
+ * already-read `bundle.files` (no re-read). Each concept's own {@link reconcileDriftFindings} call is
+ * isolated: a later concept's malformed managed-block markers (or any other per-concept judgment
+ * failure) does not discard findings already computed for EARLIER concepts in this same root — only
+ * the first such error (in `targets` order) is carried, the rest are dropped as unreachable once a
+ * fail-fast is already pending, mirroring {@link computeDriftFindings}'s own cross-root policy at
+ * this finer, within-root grain.
+ */
+async function driftFindingsForBundle(
+  root: string,
+  bundle: Bundle,
+  concepts: readonly Concept[],
+  multi: boolean,
+  adapter: BacklogAdapter,
+): Promise<{ findings: CheckFinding[]; error: unknown | null }> {
+  const targets = await gatherReconciliation(root, concepts, adapter);
+  const rawByPath = new Map(bundle.files.map((f) => [f.path, f.raw]));
+  const fixable = isDocsRoot(bundle.label);
+  const findings: CheckFinding[] = [];
+  let error: unknown | null = null;
+  for (const { concept, newStatus, rows } of targets) {
+    const docPath = `${bundle.label}/${concept.path}`;
+    const original = rawByPath.get(concept.path) as string;
+    try {
+      const drift = reconcileDriftFindings({
+        path: concept.path,
+        currentStatus: concept.frontmatter.status,
+        newStatus,
+        original,
+        rows,
+        docPath,
+        fixable,
+      });
+      for (const finding of drift) {
+        findings.push(prefixFinding(finding, bundle.label, multi));
+      }
+    } catch (err) {
+      if (error === null) {
+        error = err; // first, in `targets` order; keep processing the rest so THEIR findings survive too
+      }
+    }
+  }
+  return { findings, error };
+}
+
+/** Prefix a finding's `file` with its bundle-root label in multi-root mode; unchanged for a single root. */
+function prefixFinding<T extends { readonly file: string }>(finding: T, label: string, multi: boolean): T {
+  return multi ? { ...finding, file: `${label}/${finding.file}` } : finding;
+}
+
+/**
+ * Whether a bundle root (as the user named it — or the default) IS the `docs/` bundle `lore sync`
+ * operates on, canonicalized so an equivalent-but-non-canonical spelling (`./docs`, a trailing
+ * slash OR backslash) is still recognized — a literal string-prefix match against a compound
+ * `docPath` would miss these and silently omit `reconcileDriftFindings`' "run `lore sync`" hint for
+ * a root it actually can fix. Backslashes are normalized to forward slashes FIRST (`posix.normalize`
+ * only recognizes `/` as a separator, so a Windows-idiom trailing `docs\` would otherwise survive
+ * untouched). Compared case-insensitively: on the case-insensitive filesystems most local dev
+ * happens on (macOS, Windows), a differently-cased spelling (`Docs`) resolves to the identical
+ * directory `sync` operates on, so judging it "unfixable" would be the misleading answer, not the
+ * careful one.
+ */
+export function isDocsRoot(label: string): boolean {
+  return posix.normalize(label.replace(/\\/g, "/")).replace(/\/+$/, "").toLowerCase() === DOCS_DIR.toLowerCase();
 }
 
 // ── Argument parsing ───────────────────────────────────────────────────────────
@@ -220,17 +491,14 @@ function checkBundles(bundles: readonly Bundle[]): CheckReport {
   const multi = bundles.length > 1;
   const findings: CheckFinding[] = [];
   let fileCount = 0;
-  let errorCount = 0;
-  let warningCount = 0;
   for (const bundle of bundles) {
     const report = checkBundle(bundle.files);
     fileCount += report.fileCount;
-    errorCount += report.errorCount;
-    warningCount += report.warningCount + bundle.filenameFindings.length;
     for (const finding of [...report.findings, ...bundle.filenameFindings]) {
-      findings.push(multi ? { ...finding, file: `${bundle.label}/${finding.file}` } : finding);
+      findings.push(prefixFinding(finding, bundle.label, multi));
     }
   }
+  const { errorCount, warningCount } = tallySeverity(findings);
   return { findings, errorCount, warningCount, fileCount };
 }
 
@@ -315,7 +583,7 @@ const defaultFetch: FetchLike = (url, init) => fetch(url, init);
 
 /** Prefix each external link's `file` with its bundle label in multi-bundle mode, matching the gate findings. */
 function prefixLinks(links: ExternalLink[], label: string, multi: boolean): ExternalLink[] {
-  return multi ? links.map((link) => ({ ...link, file: `${label}/${link.file}` })) : links;
+  return links.map((link) => prefixFinding(link, label, multi));
 }
 
 /**

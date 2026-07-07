@@ -24,7 +24,7 @@ import type { GitAdapter, GitCommit, GitLogRange } from "../src/core/log";
 import { EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { bunGitSpawn, type GitSpawn, type GitSpawnResult } from "../src/state";
-import { capture, fakeAdapter, gitRun, makeTask } from "./helpers";
+import { capture, fakeAdapter, gitRun, makeTask, storyDoc } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 
@@ -55,16 +55,6 @@ function docExists(rel: string): boolean {
   } catch {
     return false;
   }
-}
-
-/** A minimal Story with `tasks:` and an already-present (empty) managed task block. */
-function storyDoc(title: string, taskIds: readonly string[], status?: string): string {
-  const tasksYaml = taskIds.map((t) => `\n  - ${t}`).join("");
-  const statusLine = status !== undefined ? `status: ${status}\n` : "";
-  return (
-    `---\ntype: Story\ntitle: ${title}\n${statusLine}tasks:${tasksYaml}\n---\n` +
-    `# ${title}\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n`
-  );
 }
 
 /** A fake GitAdapter returning a fixed, empty history (log.md regenerates to just its heading). */
@@ -233,6 +223,37 @@ describe("lore sync — config is validated before spending any Backlog subproce
     const err = await expectSyncError([], adapter);
     expect(err.type).toBe("validation");
     expect(err.message).toContain("backlog/config.yml");
+  });
+
+  test("a malformed backlog/config.yml is reported before an ALSO-malformed .lore/profile.toml (LORE-27 regression)", async () => {
+    // Regression: the reconcile-shared.ts extraction must not reverse this command's own
+    // pre-existing precedence (status flow/config, THEN profile) when both happen to be broken.
+    mkdirSync(join(root, "backlog"), { recursive: true });
+    writeFileSync(join(root, "backlog", "config.yml"), "statuses: not-a-list\n");
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(join(root, ".lore", "profile.toml"), "not valid toml {{{\n");
+    writeDoc("stories/x.md", storyDoc("X", ["lore-1"], "todo"));
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+
+    const err = await expectSyncError([], adapter);
+    expect(err.message).toContain("backlog/config.yml");
+  });
+
+  test("a SEMANTICALLY-invalid backlog/config.yml is reported AFTER an also-malformed .lore/profile.toml (LORE-27 regression, round 4)", async () => {
+    // Unlike a config.yml SYNTAX error (the test above; caught by readStatusFlow's own parse, which
+    // runs before profile is loaded either way), a semantic-only problem -- a duplicate flow entry,
+    // valid YAML -- is caught only by validateReconcileInputs, which this command's ORIGINAL
+    // (pre-LORE-27) precedence ran LAST, after profile had already loaded successfully. So when
+    // profile is ALSO malformed, profile's error must win here, the mirror image of the test above.
+    mkdirSync(join(root, "backlog"), { recursive: true });
+    writeFileSync(join(root, "backlog", "config.yml"), "statuses:\n  - Todo\n  - Todo\n  - Done\n");
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(join(root, ".lore", "profile.toml"), "not valid toml {{{\n");
+    writeDoc("stories/x.md", storyDoc("X", ["lore-1"], "todo"));
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+
+    const err = await expectSyncError([], adapter);
+    expect(err.message).toContain("profile.toml");
   });
 });
 
