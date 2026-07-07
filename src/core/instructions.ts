@@ -26,25 +26,30 @@ export interface InstructionTopic {
 
 const LINKING: InstructionTopic = {
   key: "linking",
-  title: "Story <-> Task coupling (`lore link` / `lore tasks`)",
+  title: "Story <-> Task coupling (`lore link` / `lore unlink`)",
   body: `A Story concept's frontmatter \`tasks:\` list is the source of coupling to
-Backlog.md -- those are the task ids the Story owns. Use \`lore tasks <story>
---json\` for the LIVE task rollup (kind: tasks.rollup); never re-derive status
-from the Story's markdown, which only refreshes when \`lore sync\` runs.
+Backlog.md -- those are the task ids the Story owns. There is no dedicated
+live-rollup command yet (\`lore tasks\` is planned but not shipped); check
+each id's current status directly with \`backlog task view <id> --plain\`.
+Never trust the Story's own written \`status\`, which only refreshes when
+\`lore sync\` runs.
 
 To couple a new task to a Story, create it in Backlog (\`backlog task create
 ...\`) then run \`lore link <story> <taskId...>\` -- this updates both the
 Story's frontmatter \`tasks:\` list and the task's \`doc:<conceptId>\`
-back-reference label in one step. \`lore unlink <story> <taskId...>\` removes
-the coupling the same way.
+back-reference label in one step, validating every given id exists first
+and failing the whole command loud (not_found, exit 3) before writing
+anything if one doesn't. \`lore unlink <story> <taskId...>\` removes the
+coupling the same way, but is more forgiving: a task id no longer present
+in Backlog is simply skipped (exit 0), not an error.
 
-lore is the sole committer of \`backlog/\` -- let \`lore link\`/\`lore
-unlink\`/\`lore sync\` commit task-file changes; never hand-edit or \`git add\`
-files under \`backlog/tasks/\` yourself.
+\`lore link\`/\`lore unlink\` edit \`backlog/tasks/*.md\` directly but do not
+commit it -- only \`lore sync\` commits \`backlog/\` (it commits whatever
+either command left dirty). Never hand-edit or \`git add\` files under
+\`backlog/tasks/\` yourself; let \`lore sync\` commit them.
 
-A task id not found in Backlog, or a concept id lore doesn't recognize,
-surfaces as exit 3 (not_found). See ADR-0009 (Story <-> Task coupling &
-reconciliation) and ADR-0012 (Backlog coexistence & git ownership).`,
+See ADR-0009 (Story <-> Task coupling & reconciliation) and ADR-0012
+(Backlog coexistence & git ownership).`,
 };
 
 const SYNC: InstructionTopic = {
@@ -54,43 +59,51 @@ const SYNC: InstructionTopic = {
 it recomputes each Story's \`status\` from its coupled tasks' live Backlog
 state (ADR-0009's reconciliation rules), rewrites the
 \`<!-- lore:tasks:begin -->\` ... \`<!-- lore:tasks:end -->\` managed blocks from
-that live data, and regenerates the bundle's index/log.
+that live data, regenerates the bundle's index/log, and commits \`backlog/\`
+if \`lore link\`/\`lore unlink\` left it dirty.
 
 It is idempotent: run it again with no upstream change and it produces
 byte-identical output -- a clean, empty diff. The \`--json\` payload is
-\`kind: sync.summary\` and reports exactly what changed (status rewrites,
+\`kind: sync.result\` and reports exactly what changed (status rewrites,
 managed-block diffs, regenerated files).
 
-Never hand-edit inside a managed block -- those edits are silently
-overwritten on the next sync, and a targeted write to one is refused outright
-(exit 4, denied). Author prose only outside the markers; run \`lore sync\` to
-refresh the block instead.
+Never hand-edit inside a managed block: the next \`lore sync\` silently
+overwrites it, and \`lore replace\` silently skips any match inside one --
+neither errors. (Malformed markers themselves -- missing, duplicated, or
+crossed begin/end -- are a \`validation\` error, exit 6; that's a different
+failure than an ordinary hand-edit.) Author prose only outside the markers.
 
 Run \`lore sync\` after any task status change or after linking/unlinking a
 task, before \`lore check\` -- check is read-only and will only tell you sync
-is needed (exit 6, drift), not fix it for you.`,
+is needed, not fix it for you.`,
 };
 
 const CHECK: InstructionTopic = {
   key: "check",
   title: "The CI gate: drift, links, anchors, portability (`lore check`)",
-  body: `\`lore check [paths...]\` is lore's read-only CI gate. It reports: a Story
-whose written status no longer matches its live tasks (drift), a stale
-managed task block, broken internal links, missing heading anchors, and
-non-portable Markdown link syntax. It also surfaces per-doc/bundle token
-estimates.
+  body: `\`lore check [paths...]\` is lore's read-only CI gate. It always emits the
+full \`check.report\` on stdout (\`kind: check.report\` under \`--json\`) --
+findings for broken internal links, rotted heading anchors, reconciliation
+drift (a Story's written status or managed block gone stale), and, under
+\`--strict\`, portability-lint warnings. It then *returns* exit 6 when any of
+those is error-tier (or any warning exists under \`--strict\`) -- a plain
+exit code, not a thrown error: nothing throws on this path, so there is no
+\`--json\` error envelope for a failing report (the report itself, already on
+stdout, is the payload). cli-contract.md's exit table labels this condition
+\`drift\` for documentation purposes only, to distinguish it from
+\`validation\` -- \`lore validate\`'s own error_type for a different command;
+check has no error_type split of its own to branch on.
 
-On any failing condition it exits 6 (\`error_type\` \`drift\` for a stale
-status/managed block, \`validation\` for a structural non-conformance flagged
-by the same pass). The fix for drift is always \`lore sync\`, then re-run
-check and commit.
+check's \`usage\` (exit 2, a bad flag) and \`not_found\` (exit 3, a given
+bundle-root path argument that doesn't exist) are the only cases that
+actually throw and carry a \`--json\` error envelope.
 
 Because check writes nothing and lore's core has no LLM dependency, it is
 deterministic: a clean \`lore check\` locally means a clean \`lore check\` in
-CI, with no flakiness to chase. A typical loop: run check; exit 0 means done;
-exit 6 means run \`lore sync\` and re-check; any other non-zero exit (3 for a
-missing link/anchor target, or an uncaught 1) needs investigation, not a
-blind sync.
+CI, with no flakiness to chase. A typical loop: run check; exit 0 means
+done; exit 6 means read the report and run \`lore sync\` for any drift
+finding, then re-check; exit 3 means fix the path argument; an uncaught 1
+needs investigation, not a blind sync.
 
 Treat \`lore check\` exiting 0 as the actual definition of "done" for any
 docs-touching change -- not typecheck or lint alone.`,
@@ -103,11 +116,17 @@ const VALIDATION: InstructionTopic = {
 distinct from \`check\`'s cross-file drift/link/portability pass. It
 validates: OKF §9 conformance (frontmatter parses, \`type\` is present and
 non-empty) as an error if violated; per-type frontmatter shape and required
-sections against the strict Zod schema (the single source of truth,
-ADR-0006) as an error if violated for known types; an unknown \`type\` or
-extra frontmatter keys as a warning only (OKF tolerates unknown fields --
-custom frontmatter passes through untouched); and frontmatter values that
-would serialize ambiguously (ADR-0011) as a warning.
+sections against a Zod schema generated from the declarative
+\`.lore/profile.toml\` (the source of truth per ADR-0006's LORE-46 amendment)
+as an error if violated for known types; an unknown \`type\` or extra
+frontmatter keys as a warning only (OKF tolerates unknown fields -- custom
+frontmatter passes through untouched); a stale \`resource:\` value that no
+longer matches what the profile computes for the concept's current path as
+a warning (rule "resource"); and frontmatter values that would serialize
+ambiguously as quote-safety findings -- mostly errors (an unquoted YAML
+indicator char, a YAML-1.1 boolean like bare \`no\`/\`yes\`, or a
+colon-containing value all fail unconditionally), with only a bare
+\`YYYY-MM-DD\` date downgraded to a warning.
 
 With no path arguments it walks the whole bundle; pass explicit \`[paths...]\`
 to scope it (e.g. from a pre-commit hook checking only staged files).
@@ -132,11 +151,11 @@ const OVERVIEW: InstructionTopic = {
   key: "overview",
   title: "The canonical agent loop and topic index",
   body: `lore's canonical agent loop: read docs/index.md (the bundle's entry point)
--> follow a Story concept -> \`lore tasks <story> --json\` for the live task
-rollup -> do the work (author prose outside lore-managed regions) ->
-\`lore sync\` to reconcile status and regenerate managed blocks -> \`lore
-check\` as the CI gate (exit 6 on drift/broken-link/anchor/portability
-findings).
+-> follow a Story concept -> check its coupled tasks' live status (see the
+\`linking\` topic) -> do the work (author prose outside lore-managed regions)
+-> \`lore sync\` to reconcile status and regenerate managed blocks -> \`lore
+check\` as the CI gate (exit 6 on a failing report -- see the \`check\`
+topic).
 
 lore is CLI-first and deterministic: no LLM dependency, so the same inputs
 against an unchanged bundle always produce the same output and exit code.

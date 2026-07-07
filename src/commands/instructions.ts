@@ -8,14 +8,15 @@
  *
  * With no `<topic>` it prints `overview` (the canonical loop + a topic index);
  * an unrecognized `<topic>` is a `not_found` error (exit 3) whose hint lists
- * the valid keys. This command takes no flags, so any `-`-prefixed token or a
- * second positional is a `usage` error (exit 2), matching every other
- * command's strict argument parsing.
+ * the valid keys. Argument parsing goes through `args.ts`'s shared tokenizer
+ * with no known flags, so any `-`-prefixed token or a second positional is a
+ * `usage` error (exit 2), matching every other command's strict parsing.
  */
 
 import { findInstructionTopic, INSTRUCTION_TOPICS, type InstructionTopic } from "../core/instructions";
 import { ANSI, EXIT_OK, LoreError, paint, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { parseCommandArgs, usage } from "./args";
 
 /** Options for {@link runInstructions}; the streams are injectable for tests. */
 export interface InstructionsOptions {
@@ -56,20 +57,9 @@ export function runInstructions(options: InstructionsOptions): number {
   return EXIT_OK;
 }
 
-/** Parse `instructions`' tokens: at most one positional (the topic key, defaulting to `overview`); any flag or second positional is a `usage` error. */
+/** Parse `instructions`' tokens via the shared tokenizer (no known flags): at most one positional (the topic key, defaulting to `overview`); any flag or second positional is a `usage` error. */
 function parseInstructionsArgs(args: readonly string[]): string {
-  const positionals: string[] = [];
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      positionals.push(...args.slice(i + 1));
-      break;
-    }
-    if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, "`lore instructions` takes no flags; run `lore instructions [<topic>]`");
-    }
-    positionals.push(arg);
-  }
+  const { positionals } = parseCommandArgs(args, "instructions", []);
   if (positionals.length > 1) {
     throw usage(`unexpected argument "${positionals[1]}"`, "run `lore instructions [<topic>]`");
   }
@@ -98,9 +88,4 @@ function renderPretty(data: InstructionsData, opts: { color: boolean }): string 
 
 function renderPlain(data: InstructionsData): string {
   return render(data, false);
-}
-
-/** A `usage` {@link LoreError} (exit `2`) with an actionable hint. */
-function usage(message: string, hint: string): LoreError {
-  return new LoreError("usage", message, hint);
 }
