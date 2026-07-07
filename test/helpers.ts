@@ -3,6 +3,18 @@ import type { Writer } from "../src/errors";
 import { LoreError } from "../src/errors";
 
 /**
+ * Run `git <args>` in `cwd` via a real subprocess, throwing if it exits non-zero. The shared
+ * real-git test setup helper — `git-adapter.test.ts`, `state.test.ts`, and `sync.test.ts` each
+ * defined a byte-for-byte copy of this before it was hoisted here.
+ */
+export function gitRun(cwd: string, args: string[]): void {
+  const proc = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  if (proc.exitCode !== 0) {
+    throw new Error(`git ${args.join(" ")} failed: ${proc.stderr.toString("utf8")}`);
+  }
+}
+
+/**
  * A capturing {@link Writer} for tests: it records every `write` so a test can
  * assert the exact bytes a stream received without touching the real process
  * streams. Shared by the errors and output suites (and future command suites) so

@@ -27,6 +27,7 @@ import { runRename } from "./commands/rename";
 import { runReplace } from "./commands/replace";
 import { runSchema } from "./commands/schema";
 import { runSupersede } from "./commands/supersede";
+import { runSync } from "./commands/sync";
 import { runValidate } from "./commands/validate";
 import { EXIT_OK, EXIT_UNCAUGHT, LoreError, reportError, type Writer } from "./errors";
 import { VERSION } from "./meta";
@@ -47,6 +48,7 @@ Commands:
   supersede       Mark a concept superseded by another, wiring both ways (lore supersede <oldId> <newId>)
   link            Add task ids to a concept's tasks: + the doc: back-ref label (lore link <id> <taskId…>)
   unlink          Remove task ids from a concept's tasks: + the doc: back-ref label (lore unlink <id> <taskId…>)
+  sync            Reconcile status + managed task blocks, regen index/log, commit backlog/ (lore sync [paths…])
   schema          Export the profile's editor JSON Schemas to .lore/schemas/ (lore schema export)
   graph           Emit the bundle's cross-link graph as json or dot (lore graph [<id>])
   query           Full-text search the bundle with frontmatter filters (lore query ["<text>"])
@@ -193,7 +195,7 @@ export function run(argv: readonly string[], context: RunContext = {}): number |
       return emitMeta("help", { usage: USAGE }, USAGE, output, stdout);
     }
     const result = dispatch(parsed, { ...context, stdout, stderr }, output);
-    // The async command paths (`check --external`, `link`, `unlink`, `rename`) return a Promise; a
+    // The async command paths (`check --external`, `link`, `unlink`, `rename`, `sync`) return a Promise; a
     // rejection from one must funnel through the **same** error seam as a synchronous throw
     // (formatted diagnostic + the right exit code), not escape to the entrypoint's bare backstop.
     // The sync `catch` below cannot see an async rejection, so attach the seam to the promise here.
@@ -227,8 +229,8 @@ function emitMeta(
 /**
  * Route a parsed invocation to its command handler, throwing a `usage` error on bad input. Returns
  * a `number` for the synchronous commands and a `Promise<number>` for the async ones — `check
- * --external` (whose liveness probe is non-deterministic network IO) and `link`/`unlink`/`rename`
- * (which drive the Backlog adapter).
+ * --external` (whose liveness probe is non-deterministic network IO) and `link`/`unlink`/`rename`/
+ * `sync` (which drive the Backlog adapter).
  */
 function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext): number | Promise<number> {
   const root = context.cwd || process.cwd();
@@ -273,6 +275,15 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
       });
     case "unlink":
       return runUnlink({
+        root,
+        output,
+        args: parsed.commandArgs,
+        stdout: context.stdout,
+        stderr: context.stderr,
+        adapter: context.adapter,
+      });
+    case "sync":
+      return runSync({
         root,
         output,
         args: parsed.commandArgs,
@@ -346,7 +357,7 @@ function rejectCommandArgs(commandArgs: readonly string[], command: string): voi
 
 // Only drive the real process when executed directly (not when imported by tests). `run` returns a
 // number for synchronous commands and a Promise for the async ones (`check --external`, `link`,
-// `unlink`, `rename`); it funnels its own async rejections through `reportError`, so `Promise.resolve(...).then` normally
+// `unlink`, `rename`, `sync`); it funnels its own async rejections through `reportError`, so `Promise.resolve(...).then` normally
 // receives a numeric exit code. The `.catch` is a last-ditch backstop (e.g. `reportError` itself
 // throwing) — `EXIT_UNCAUGHT` (1), the uncaught-fault code, not the validation gate's `6`.
 if (import.meta.main) {

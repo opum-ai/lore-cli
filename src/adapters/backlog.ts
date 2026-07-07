@@ -18,10 +18,16 @@
  * documents disagree, the JSON schema reference — mirrored by the fork's actual output — wins: the
  * envelope carries `schemaVersion: "1"` (a string) and `kind: "taskList"` (camelCase), which is what
  * the probe asserts. (The CLI contract's prose `"task-list"` is a documentation slip, tracked in LORE-4.)
+ *
+ * This file also reads the project's ordered status flow directly from `backlog/config.yml`'s own
+ * `statuses:` key (LORE-26) — plain repo-committed YAML, not a `--json` envelope, so it is a direct
+ * file read rather than a spawn; see {@link readStatusFlow} at the bottom of this file.
  */
 
+import { join } from "node:path";
+import yaml from "js-yaml";
 import { z } from "zod";
-import { errnoCode, LoreError } from "../errors";
+import { deriveMessage, errnoCode, LoreError, readFileIfPresent, stderrHint } from "../errors";
 
 /**
  * The **binary version floor** the probe requires (`backlog --version`, contract §5 step 3). Pinned to
@@ -729,7 +735,7 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
         throw new LoreError(
           "validation",
           `\`backlog task create\` exited ${result.exitCode}`,
-          singleLineStderr(result),
+          stderrHint(result.stderr),
           {
             exitCode: result.exitCode,
           },
@@ -766,7 +772,7 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
           missing
             ? `\`backlog task edit\` could not find task ${JSON.stringify(id)}`
             : `\`backlog task edit\` exited ${result.exitCode}`,
-          singleLineStderr(result),
+          stderrHint(result.stderr),
           { id, exitCode: result.exitCode },
         );
       }
@@ -774,8 +780,89 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
   };
 }
 
-/** Collapse a failed invocation's stderr to a one-line hint for a {@link LoreError} (empty → undefined). */
-function singleLineStderr(result: SpawnResult): string | undefined {
-  const trimmed = result.stderr.trim().replace(/\s+/g, " ");
-  return trimmed === "" ? undefined : trimmed;
+// ── Status flow from `backlog/config.yml` (LORE-26, backlog-cli-contract.md §3.1) ──────
+//
+// `reconcile.ts`'s `reconcileStatus` needs the project's ordered status set — never the hardcoded
+// three defaults. This is read directly from `backlog/config.yml`'s own `statuses:` key (plain
+// repo-committed YAML Backlog.md itself owns and writes), not shelled through a `backlog` subprocess:
+// ADR-0012's future config-drift assertion (`lore check`, LORE-27) already establishes the precedent
+// of reading this same file directly, and it needs no `--json` envelope treatment (it is not a Task).
+
+/** Where Backlog.md keeps its own project config, relative to the repo root. */
+export const BACKLOG_CONFIG_REL_PATH = "backlog/config.yml";
+
+/** The status flow backlog-cli-contract.md §3.1 documents as the default, used when `backlog/config.yml` is absent or carries no `statuses:` key. */
+export const DEFAULT_STATUS_FLOW: readonly string[] = ["To Do", "In Progress", "Done"];
+
+/** The frozen js-yaml load config (matches concept.ts's ADR-0011 §2 choice): `JSON_SCHEMA` avoids implicit type coercion on plain scalar status names. */
+const CONFIG_YAML_LOAD_OPTIONS = Object.freeze({ schema: yaml.JSON_SCHEMA });
+
+/**
+ * Parse the ordered `statuses:` list out of `backlog/config.yml`'s raw YAML text. Pure — no
+ * filesystem, so tests exercise it directly rather than through a real file. An absent `statuses:`
+ * key (or an empty/`null` document, e.g. a freshly-`backlog init`ed project that has not yet touched
+ * this key) yields {@link DEFAULT_STATUS_FLOW}, matching contract §3.1's documented default; a
+ * `statuses:` key present but not a list of strings is a fail-loud `validation` error rather than a
+ * silent guess.
+ *
+ * @throws LoreError `validation` when the YAML does not parse, is not a mapping, or `statuses:` is
+ *   present but not a list of strings.
+ */
+export function parseStatusFlow(yamlText: string): string[] {
+  let parsed: unknown;
+  try {
+    parsed = yaml.load(yamlText, CONFIG_YAML_LOAD_OPTIONS);
+  } catch (cause) {
+    throw configError(`is not valid YAML${reasonSuffix(cause)}`);
+  }
+  if (parsed === null || parsed === undefined) {
+    return [...DEFAULT_STATUS_FLOW]; // an empty document — Backlog's config carries no keys yet
+  }
+  if (typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw configError("must be a YAML mapping");
+  }
+  const statuses = (parsed as Record<string, unknown>).statuses;
+  if (statuses === undefined) {
+    return [...DEFAULT_STATUS_FLOW];
+  }
+  if (!Array.isArray(statuses) || statuses.some((s) => typeof s !== "string")) {
+    throw configError("`statuses:` must be a list of strings");
+  }
+  return statuses as string[];
+}
+
+/**
+ * Read and parse the project's status flow from `backlog/config.yml` under `root` — the
+ * command-layer I/O half of {@link parseStatusFlow}, via `errors.ts`'s shared
+ * {@link readFileIfPresent} (adapters cannot import `commands/discover.ts`, which owns the
+ * analogous `readSource`). A missing file yields {@link DEFAULT_STATUS_FLOW} (mirrors `config.ts`'s
+ * own missing-file-is-zero-config policy); a permission failure is `denied` (exit 4); any other read
+ * failure propagates unclassified (there is no sensible fallback for, say, a directory sitting at
+ * the path).
+ */
+export function readStatusFlow(root: string): string[] {
+  const relPath = BACKLOG_CONFIG_REL_PATH;
+  const text = readFileIfPresent(join(root, relPath), relPath);
+  return text === undefined ? [...DEFAULT_STATUS_FLOW] : parseStatusFlow(text);
+}
+
+/** Build the fail-loud "malformed backlog/config.yml" error (`validation`, exit 6). */
+function configError(reason: string): LoreError {
+  return new LoreError(
+    "validation",
+    `cannot read the project's status flow: ${BACKLOG_CONFIG_REL_PATH} ${reason}`,
+    `fix ${BACKLOG_CONFIG_REL_PATH}'s \`statuses:\` key, or remove it to use the default flow`,
+    { path: BACKLOG_CONFIG_REL_PATH },
+  );
+}
+
+/**
+ * Append `: <reason>` when a non-empty message can be derived from a thrown cause, via the shared,
+ * guarded {@link deriveMessage} — not a hand-rolled `instanceof Error` check, which would lose the
+ * reason (or itself throw) for a non-`Error` cause carrying its own `.message`, or one with a
+ * hostile `toString`/`Symbol.toPrimitive`.
+ */
+function reasonSuffix(cause: unknown): string {
+  const message = deriveMessage(cause).trim();
+  return message === "" ? "" : `: ${message}`;
 }

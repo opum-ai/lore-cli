@@ -113,6 +113,48 @@ describe("reconcileStatus — fail-loud on an unrecognized task status", () => {
   });
 });
 
+describe("reconcileStatus — [reconcile.overrides] (LORE-26, ADR-0009 §3)", () => {
+  test("an override bypasses statusFlow position: a status outside the flow entirely still resolves", () => {
+    // "Cancelled" is not in DEFAULT_FLOW at all — without an override this would fail-loud.
+    expect(reconcileStatus(["Cancelled"], DEFAULT_FLOW, { Cancelled: "done" })).toBe("done");
+    expect(reconcileStatus(["Cancelled"], DEFAULT_FLOW, { Cancelled: "todo" })).toBe("todo");
+    expect(reconcileStatus(["Cancelled"], DEFAULT_FLOW, { Cancelled: "in-progress" })).toBe("in-progress");
+  });
+
+  test("an override takes precedence even when the status IS also present in statusFlow", () => {
+    // "Done" is the flow's terminal entry, but the override maps it to "todo" instead.
+    expect(reconcileStatus(["Done"], DEFAULT_FLOW, { Done: "todo" })).toBe("todo");
+  });
+
+  test("overrides compose with the aggregation rule across a mix of overridden and position-classified tasks", () => {
+    expect(reconcileStatus(["Cancelled", "To Do"], DEFAULT_FLOW, { Cancelled: "done" })).toBe("todo");
+    expect(reconcileStatus(["Cancelled", "In Progress"], DEFAULT_FLOW, { Cancelled: "done" })).toBe("in-progress");
+    expect(reconcileStatus(["Cancelled", "Done"], DEFAULT_FLOW, { Cancelled: "done" })).toBe("done");
+  });
+
+  test("an unrecognized override target is fail-loud, naming the status and the bad target", () => {
+    const err = loreError(() => reconcileStatus(["Cancelled"], DEFAULT_FLOW, { Cancelled: "archived" }));
+    expect(err.type).toBe("validation");
+    expect(exitCodeFor(err)).toBe(6);
+    expect(err.message).toContain("Cancelled");
+    expect(err.message).toContain("archived");
+  });
+
+  test("no overrides (default {}) behaves exactly as before", () => {
+    expect(reconcileStatus(["Done", "Done"], DEFAULT_FLOW)).toBe("done");
+  });
+
+  test("an empty taskStatuses array short-circuits before validating overrides", () => {
+    expect(reconcileStatus([], DEFAULT_FLOW, { Anything: "not-a-real-target" })).toBeNull();
+  });
+
+  test("a status literally named after an Object.prototype member is never mistaken for an override hit", () => {
+    // Regression guard: overrides lookup must not resolve inherited prototype members
+    // (constructor, toString, …) as a false override match when no such key was configured.
+    expect(() => reconcileStatus(["constructor"], DEFAULT_FLOW, {})).toThrow(LoreError);
+  });
+});
+
 describe("reconcileStatus — fail-loud on a degenerate status flow", () => {
   test("an empty status flow is a validation error (only reached once a task exists)", () => {
     const err = loreError(() => reconcileStatus(["Done"], []));

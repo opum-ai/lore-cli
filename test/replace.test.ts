@@ -1,9 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/cli";
-import { writeFileOverwriting } from "../src/commands/fswrite";
+import { writeFileAtomic, writeFileOverwriting } from "../src/commands/fswrite";
 import { type ReplaceReport, runReplace } from "../src/commands/replace";
 import { INDEX_BLOCK_BEGIN, INDEX_BLOCK_END } from "../src/core/indexes";
 import { compileReplacer, managedRanges, mergeRanges, replaceInText } from "../src/core/replace";
@@ -452,6 +461,80 @@ describe("writeFileOverwriting", () => {
     } catch (err) {
       expect(err).toBeInstanceOf(LoreError);
       expect((err as LoreError).type).toBe("conflict");
+    }
+  });
+});
+
+// ── fswrite: writeFileAtomic (LORE-26) ────────────────────────────────────────────
+
+describe("writeFileAtomic", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "lore-fswrite-atomic-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("creates a new file", () => {
+    const path = join(dir, "f.md");
+    writeFileAtomic(path, "hello", "f.md");
+    expect(readFileSync(path, "utf8")).toBe("hello");
+  });
+
+  test("overwrites an existing file, leaving no temp file behind", () => {
+    const path = join(dir, "f.md");
+    writeFileSync(path, "old");
+    writeFileAtomic(path, "new", "f.md");
+    expect(readFileSync(path, "utf8")).toBe("new");
+    expect(readdirSync(dir)).toEqual(["f.md"]); // no stray `.lore-sync-tmp-*` sibling
+  });
+
+  test("a directory at the write path fails loud (never silently corrupts), and the temp file is cleaned up", () => {
+    const path = join(dir, "adir");
+    mkdirSync(path);
+    try {
+      writeFileAtomic(path, "x", "adir");
+      throw new Error("expected a LoreError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      // POSIX's renameSync-onto-an-existing-directory raises EISDIR (-> "conflict"); Windows raises
+      // EPERM for the identical operation (-> "denied") -- a real, platform-specific errno
+      // difference for this exact case, not a lore inconsistency, so both are accepted here.
+      expect(["conflict", "denied"]).toContain((err as LoreError).type);
+    }
+    // The failed rename's temp file is removed, not left as litter -- `adir` (the pre-existing
+    // directory that caused the conflict) is the only entry left in `dir`.
+    expect(readdirSync(dir)).toEqual(["adir"]);
+  });
+
+  test("regression: a write failure BEFORE any temp file exists never claims one 'may remain'", () => {
+    // A permission-denied directory makes writeFileSync(tmpPath, ...) itself fail -- no temp file is
+    // ever created, so the cleanup unlink's inevitable ENOENT must not be misreported as a failed
+    // cleanup (which would falsely tell the user a stray temp file needs manual removal).
+    if (process.getuid?.() === 0) {
+      return; // a 0o555 directory is still writable as root -- this probe can't be set up
+    }
+    chmodSync(dir, 0o555);
+    let writable = true;
+    try {
+      writeFileSync(join(dir, "probe.md"), "x");
+    } catch {
+      writable = false;
+    }
+    if (writable) {
+      chmodSync(dir, 0o755);
+      return; // environment ignores the mode (e.g. permissive FS) -- skip
+    }
+    try {
+      writeFileAtomic(join(dir, "f.md"), "x", "f.md");
+      throw new Error("expected a LoreError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("denied");
+      expect((err as LoreError).hint ?? "").not.toContain("temp file");
+    } finally {
+      chmodSync(dir, 0o755); // restore so afterEach's rmSync can clean up
     }
   });
 });

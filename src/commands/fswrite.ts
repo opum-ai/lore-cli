@@ -16,7 +16,8 @@
  * semantics are identical across every command.
  */
 
-import { lstatSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { errnoCode, LoreError } from "../errors";
 
 /** `mkdir -p` for a scaffold directory, mapping a permission failure to a `denied` error. */
@@ -64,6 +65,53 @@ export function writeFileOverwriting(absPath: string, contents: string, relPath:
     writeFileSync(absPath, contents);
   } catch (cause) {
     throw ioError(cause, relPath, "write file");
+  }
+}
+
+/**
+ * Overwrite (or create) a file **atomically**: write the new bytes to a sibling temp file, then
+ * `renameSync` it over `absPath`. `lore sync` (LORE-26) is the one command that can write many
+ * files in a single invocation, so a crash or kill mid-run must never leave any *one* target file
+ * truncated or half-written — a plain `writeFileSync` truncates the destination before writing,
+ * which a crash between those two steps would leave corrupted; a same-directory rename is atomic
+ * (same filesystem, POSIX and NTFS both guarantee it) so the destination is always either its old
+ * complete bytes or its new complete bytes, never a partial write. Only `lore sync`'s writes use
+ * this; every other command keeps {@link writeFileOverwriting} — see that function's own doc for why
+ * a plain overwrite is the right discipline there.
+ */
+export function writeFileAtomic(absPath: string, contents: string, relPath: string): void {
+  const tmpPath = join(dirname(absPath), `.lore-sync-tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
+  let tmpFileExists = false;
+  try {
+    writeFileSync(tmpPath, contents);
+    tmpFileExists = true; // only true once the write itself has actually succeeded
+    renameSync(tmpPath, absPath);
+  } catch (cause) {
+    let cleanupFailed = false;
+    if (tmpFileExists) {
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        // The write/rename failure below is what's primarily reported; a failure here (rare — the
+        // process is already failing) is folded into that error's own hint/input rather than
+        // silently dropped, so a stray `.lore-sync-tmp-*` file is at least surfaced, not silent litter.
+        cleanupFailed = true;
+      }
+    }
+    // A `writeFileSync` failure (e.g. EACCES on a read-only directory — the most common real-world
+    // trigger) never creates `tmpPath` at all, so cleanup is skipped above rather than attempted and
+    // its inevitable ENOENT misreported as "cleanup failed": the error below must never claim a temp
+    // file remains when none was ever created.
+    const err = ioError(cause, relPath, "write file");
+    if (cleanupFailed && err instanceof LoreError) {
+      throw new LoreError(
+        err.type,
+        err.message,
+        `${err.hint ?? ""} A temp file may also remain at ${tmpPath} — remove it manually.`.trim(),
+        typeof err.input === "object" && err.input !== null ? { ...err.input, staleTempFile: tmpPath } : err.input,
+      );
+    }
+    throw err;
   }
 }
 

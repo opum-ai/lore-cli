@@ -139,6 +139,20 @@ live statuses of its owning tasks:
   CI gate. See [ADR-0007: Validation & coherence](0007-validation-and-coherence.md).
 - Reconciliation is pure and deterministic: a graph + JSON operation with no
   LLM, no heuristics, and no ranking.
+- **Per-repo overrides (LORE-26) can map a status straight to a rollup value,
+  bypassing flow position entirely.** `.lore/config.toml`'s `[reconcile.overrides]`
+  (`config.ts`'s `ReconcileConfig.overrides`, a `Backlog status → "todo"|
+  "in-progress"|"done"` map) exists precisely for a status the ordered flow
+  cannot classify unambiguously — a bespoke `Cancelled`/`Won't Fix` state, or one
+  a team added without reordering `statuses:`. When a linked task's status
+  matches an override key, that status's contribution to the rollup is the
+  override's target value directly — it is never looked up in `statusFlow`, even
+  when it also happens to appear there (an override always wins). `config.ts`
+  parses the map as opaque strings and deliberately defers validating the target
+  vocabulary to `core/reconcile.ts` ("reconcile.ts owns the rollup-status
+  vocabulary and its semantics" — `config.ts`'s own header), which rejects an
+  out-of-vocabulary target (`validation`, exit 6) the same way it rejects a
+  status absent from both the flow and the override map.
 
 The `tasks:` field shape and the `status` enum are part of the `Story` Zod
 schema and so flow into JSON Schema and editor autocomplete from one place —

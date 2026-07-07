@@ -183,20 +183,30 @@ Also surfaces per-doc and bundle **token estimates** (labeled chars/4 heuristic)
 
 ### `sync`
 
-The **write** counterpart to `check`. Recomputes `Story`/`Spec` `status` from
-linked tasks and rewrites it; regenerates each `<!-- lore:tasks -->` managed
-region from live `backlog task list --json` data; and regenerates the root
-`index.md` / sub-index listings (using each concept's `summary`). All edits are
+The **write** counterpart to `check`. For every concept whose `tasks:` links
+Backlog tasks: recomputes `status` from each linked task's live status
+(`backlog task view <id> --json` per id) — honoring any `[reconcile.overrides]`
+in `.lore/config.toml` (ADR-0009 §3) — and rewrites it when changed; regenerates
+each `<!-- lore:tasks -->` managed region from the same data. Unless
+`--no-index`, also regenerates the root `index.md` / sub-index listings (each
+concept's `title`, falling back to its file name) and the git-history-derived
+`log.md`, pinned to the current `HEAD`. All edits are
 [remark/mdast-based](../adr/0008-managed-block-remark-ast.md) and idempotent —
-no upstream change yields a byte-identical file. Touches **only** lore-managed
-regions and frontmatter fields; authored prose is never altered.
+no upstream change yields a byte-identical file, and only files that actually
+changed are written, atomically. Touches **only** lore-managed regions and
+frontmatter fields; authored prose is never altered. Finally, `lore` commits
+whatever is currently uncommitted under `backlog/` — from an earlier
+`link`/`unlink`/`rename`, or a hand edit — in one `lore`-authored commit
+([ADR-0012](../adr/0012-backlog-coexistence-git-ownership.md): lore is the sole
+committer of `backlog/`); this is independent of whether `sync` changed
+anything in `docs/`, and skipped entirely under `--dry-run`.
 
 | | |
 |---|---|
-| **Args** | optional `[paths…]` (default: whole bundle) |
-| **Key flags** | `--dry-run` (report what would change, write nothing — equivalent surface to `check` for these dimensions) · `--no-index` (skip index/log regeneration) |
-| **Output** | `kind: sync.result` — per-file diff summary of what changed |
-| **Exit** | `0` ok (changed or already clean) · `3` a linked task id no longer exists · `6` could not reconcile (e.g. Backlog probe failed) |
+| **Args** | optional `[paths…]` — scopes which concepts get status/managed-block reconciliation (default: every concept); `index.md`/`log.md` regeneration is always whole-bundle |
+| **Key flags** | `--dry-run` (report what would change, write nothing — to `docs/` or `backlog/`) · `--no-index` (skip index/log regeneration) |
+| **Output** | `kind: sync.result` — per-file diff summary of what changed, plus the `backlog/` commit outcome |
+| **Exit** | `0` ok (changed or already clean) · `3` a linked task id no longer exists · `6` could not reconcile (e.g. Backlog probe failed) or could not commit `backlog/` |
 
 ---
 

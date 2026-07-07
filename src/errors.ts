@@ -18,6 +18,8 @@
  * Rationale: docs/adr/0005-cli-contract.md.
  */
 
+import { readFileSync } from "node:fs";
+
 /**
  * The classifiable failure categories. Each maps to exactly one semantic exit
  * code via {@link EXIT_CODES}. `validation` and `drift` are distinct
@@ -142,6 +144,18 @@ export function singleLine(text: string): string {
 }
 
 /**
+ * Collapse a failed subprocess invocation's stderr to a one-line hint, or `undefined` when it
+ * carried no content — the shared policy behind every `LoreError` hint built from a subprocess
+ * failure (`adapters/backlog.ts`'s Backlog spawn, `state.ts`'s git-write seam, `adapters/git.ts`'s
+ * real `GitAdapter`), so a future change to how stderr is condensed (stripping ANSI, capping
+ * length, …) has one home instead of three independently-drifting copies.
+ */
+export function stderrHint(stderr: string): string | undefined {
+  const trimmed = stderr.trim().replace(/\s+/g, " ");
+  return trimmed === "" ? undefined : trimmed;
+}
+
+/**
  * Project a {@link LoreError} onto its `--json` error envelope. `message`/`hint`
  * are coerced to single-line strings (§5.2); `hint` is omitted when absent or
  * empty; `input` is included only when it is a non-null, non-array object
@@ -242,6 +256,35 @@ export function errnoCode(cause: unknown): string | undefined {
     return typeof code === "string" ? code : undefined;
   }
   return undefined;
+}
+
+/**
+ * Read a file if it exists, or `undefined` if it does not — the shared "optional read" primitive
+ * used directly by `commands/sync.ts` (a bundle's `log.md` may not exist yet before the first
+ * `lore sync`) and `adapters/backlog.ts`'s `readStatusFlow` (a project may not have touched
+ * `backlog/config.yml` yet). It lives here rather than in `commands/discover.ts` (which
+ * `adapters/` must never import — adapters sit below commands in lore's layering), so both layers
+ * share one implementation instead of two independently-drifting copies of the same
+ * `ENOENT → undefined` / `EACCES,EPERM → denied` / else-rethrow branching. A permission failure is
+ * `denied` (exit 4); anything else (a directory sitting at the path, …) propagates unclassified
+ * rather than being force-fit into a misleading "not found".
+ */
+export function readFileIfPresent(absPath: string, display: string): string | undefined {
+  try {
+    return readFileSync(absPath, "utf8");
+  } catch (cause) {
+    const code = errnoCode(cause);
+    if (code === "ENOENT") {
+      return undefined;
+    }
+    if (code === "EACCES" || code === "EPERM") {
+      throw new LoreError("denied", `cannot read ${display}`, `check filesystem permissions on ${display}`, {
+        path: display,
+        code,
+      });
+    }
+    throw cause;
+  }
 }
 
 /** The per-category message + hint an {@link ioError} attaches to its {@link LoreError}. */

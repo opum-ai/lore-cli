@@ -11,7 +11,9 @@
  */
 
 import { readFileSync, realpathSync } from "node:fs";
-import { isAbsolute, relative, sep } from "node:path";
+import { isAbsolute, join, posix, relative, sep } from "node:path";
+import { walkMarkdown } from "../core/bundle";
+import { DOCS_DIR } from "../core/scaffold";
 import { ioError } from "../errors";
 
 /** Read one file as UTF-8, mapping an I/O failure to a classified {@link LoreError} via the shared {@link ioError} policy. */
@@ -25,6 +27,24 @@ export function readSource(abs: string, display: string): string {
       input: { path: display },
     });
   }
+}
+
+/** The reserved index file name (mirrors `core/indexes.ts`'s own private constant of the same name). */
+const INDEX_FILE = "index.md";
+
+/**
+ * Read every existing `index.md` under the bundle as `bundle-relative-path → raw bytes` — the
+ * determinism seam `core/indexes.ts`'s `generateIndexes` splices into. Shared by `rename.ts` and
+ * `sync.ts`, both of which regenerate index hubs against whatever is currently on disk.
+ */
+export function readIndexBytes(docsRoot: string): Map<string, string> {
+  const bytes = new Map<string, string>();
+  for (const rel of walkMarkdown(docsRoot, undefined)) {
+    if (posix.basename(rel) === INDEX_FILE) {
+      bytes.set(rel, readSource(join(docsRoot, rel), `${DOCS_DIR}/${rel}`));
+    }
+  }
+  return bytes;
 }
 
 /**

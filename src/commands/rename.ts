@@ -34,7 +34,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
-import { type BundleGraph, buildGraph, loadBundle, toRefList, walkMarkdown } from "../core/bundle";
+import { type BundleGraph, buildGraph, loadBundle, toRefList } from "../core/bundle";
 import { type Concept, idFromPath, parseConcept } from "../core/concept";
 import { generateIndexes, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END, locateManagedBlock } from "../core/indexes";
 import { type RewritePlan, rewriteInbound } from "../core/rewrite";
@@ -42,7 +42,7 @@ import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_CODES, EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
-import { canonicalIdentity, readSource } from "./discover";
+import { canonicalIdentity, readIndexBytes } from "./discover";
 import { ensureDir, moveFile, writeFileOverwriting } from "./fswrite";
 import {
   assertNoCommaInId,
@@ -329,17 +329,6 @@ function spliceEmptyListing(content: string): string {
   const tail = content.slice(bounds.end);
   const spliced = content.slice(0, bounds.start) + block + tail;
   return tail === "" ? `${spliced}\n` : spliced;
-}
-
-/** Read every existing `index.md` under the bundle as `bundle-relative-path → raw bytes`. */
-function readIndexBytes(docsRoot: string): Map<string, string> {
-  const bytes = new Map<string, string>();
-  for (const rel of walkMarkdown(docsRoot, undefined)) {
-    if (posix.basename(rel) === INDEX_FILE) {
-      bytes.set(rel, readSource(join(docsRoot, rel), `${DOCS_DIR}/${rel}`));
-    }
-  }
-  return bytes;
 }
 
 /**
