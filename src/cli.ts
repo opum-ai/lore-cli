@@ -20,6 +20,7 @@ import { type FetchLike, runCheck } from "./commands/check";
 import { runContext } from "./commands/context";
 import { runGraph } from "./commands/graph";
 import { runInit } from "./commands/init";
+import { runInstructions } from "./commands/instructions";
 import { runLink, runUnlink } from "./commands/link";
 import { runNew } from "./commands/new";
 import { runQuery } from "./commands/query";
@@ -53,6 +54,7 @@ Commands:
   graph           Emit the bundle's cross-link graph as json or dot (lore graph [<id>])
   query           Full-text search the bundle with frontmatter filters (lore query ["<text>"])
   context         Assemble a concept + neighbor summaries within a token budget (lore context <id>)
+  instructions    Print task-scoped agent guidance on demand (lore instructions [<topic>])
 
 Options:
   --json          Machine-readable JSON output (the {schemaVersion, kind, data} envelope)
@@ -300,6 +302,8 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
       return runQuery({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     case "context":
       return runContext({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
+    case "instructions":
+      return runInstructions({ output, args: parsed.commandArgs, stdout: context.stdout });
     default:
       throw new LoreError("usage", `unknown command "${parsed.command}"`, "run `lore --help` to list commands", {
         command: parsed.command,
