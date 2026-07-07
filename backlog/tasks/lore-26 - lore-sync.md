@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-07 01:10'
+updated_date: '2026-07-07 01:16'
 labels:
   - cmd
 milestone: m-3
@@ -320,4 +320,21 @@ staged content, a resurrected file from a staged-rename pathspec gap, and
 finally repo-top-vs-cwd-relative path mismatch for nested bundles -- each
 verified against real git, not just reasoning about the docs). PR ready for
 user review/merge.
+
+After 5-round convergence, live CI (all 3 platforms) still failed -- exactly
+the class of gap the review workflow cannot catch (it never runs on Windows
+or a UTC-timezone runner). 3 environment-specific test bugs, no production
+code changes needed:
+- git-adapter.test.ts's timestamp regex required +HH:MM, but git's %cI
+  renders UTC as "Z" on CI's UTC-configured runners (core/log.ts's own
+  ISO_OFFSET already accepted both -- only the test was too strict).
+- replace.test.ts's writeFileAtomic directory-conflict test assumed
+  renameSync-onto-directory always raises EISDIR ("conflict"); Windows
+  raises EPERM ("denied") for the same operation -- a genuine Node/Windows
+  errno difference, now accepted as either outcome.
+- state.test.ts tried to create a real file with a literal '>' character,
+  illegal on Windows/NTFS -- skipped on win32 (the fake-based sibling test
+  already covers the parsing logic cross-platform).
+Verified: all 4 CI checks (compile smoke + lint/typecheck/test x3 platforms)
+now green on PR #36. Ready for user review/merge.
 <!-- SECTION:NOTES:END -->
