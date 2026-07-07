@@ -24,11 +24,10 @@
  * file read rather than a spawn; see {@link readStatusFlow} at the bottom of this file.
  */
 
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import yaml from "js-yaml";
 import { z } from "zod";
-import { errnoCode, LoreError, stderrHint } from "../errors";
+import { errnoCode, LoreError, readFileIfPresent, stderrHint } from "../errors";
 
 /**
  * The **binary version floor** the probe requires (`backlog --version`, contract §5 step 3). Pinned to
@@ -834,30 +833,17 @@ export function parseStatusFlow(yamlText: string): string[] {
 
 /**
  * Read and parse the project's status flow from `backlog/config.yml` under `root` — the
- * command-layer I/O half of {@link parseStatusFlow}. A missing file yields
- * {@link DEFAULT_STATUS_FLOW} (mirrors `config.ts`'s own missing-file-is-zero-config policy); a
- * permission failure is `denied` (exit 4); any other read failure propagates unclassified (there is
- * no sensible fallback for, say, a directory sitting at the path).
+ * command-layer I/O half of {@link parseStatusFlow}, via `errors.ts`'s shared
+ * {@link readFileIfPresent} (adapters cannot import `commands/discover.ts`, which owns the
+ * analogous `readSource`). A missing file yields {@link DEFAULT_STATUS_FLOW} (mirrors `config.ts`'s
+ * own missing-file-is-zero-config policy); a permission failure is `denied` (exit 4); any other read
+ * failure propagates unclassified (there is no sensible fallback for, say, a directory sitting at
+ * the path).
  */
 export function readStatusFlow(root: string): string[] {
   const relPath = BACKLOG_CONFIG_REL_PATH;
-  let text: string;
-  try {
-    text = readFileSync(join(root, relPath), "utf8");
-  } catch (cause) {
-    const code = errnoCode(cause);
-    if (code === "ENOENT") {
-      return [...DEFAULT_STATUS_FLOW];
-    }
-    if (code === "EACCES" || code === "EPERM") {
-      throw new LoreError("denied", `cannot read ${relPath}`, "check filesystem permissions on backlog/config.yml", {
-        path: relPath,
-        code,
-      });
-    }
-    throw cause; // anything else (e.g. a directory sitting at the path) surfaces as an unexpected fault
-  }
-  return parseStatusFlow(text);
+  const text = readFileIfPresent(join(root, relPath), relPath);
+  return text === undefined ? [...DEFAULT_STATUS_FLOW] : parseStatusFlow(text);
 }
 
 /** Build the fail-loud "malformed backlog/config.yml" error (`validation`, exit 6). */

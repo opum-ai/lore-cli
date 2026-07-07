@@ -1,9 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/cli";
-import { writeFileOverwriting } from "../src/commands/fswrite";
+import { writeFileAtomic, writeFileOverwriting } from "../src/commands/fswrite";
 import { type ReplaceReport, runReplace } from "../src/commands/replace";
 import { INDEX_BLOCK_BEGIN, INDEX_BLOCK_END } from "../src/core/indexes";
 import { compileReplacer, managedRanges, mergeRanges, replaceInText } from "../src/core/replace";
@@ -453,5 +462,46 @@ describe("writeFileOverwriting", () => {
       expect(err).toBeInstanceOf(LoreError);
       expect((err as LoreError).type).toBe("conflict");
     }
+  });
+});
+
+// ── fswrite: writeFileAtomic (LORE-26) ────────────────────────────────────────────
+
+describe("writeFileAtomic", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "lore-fswrite-atomic-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("creates a new file", () => {
+    const path = join(dir, "f.md");
+    writeFileAtomic(path, "hello", "f.md");
+    expect(readFileSync(path, "utf8")).toBe("hello");
+  });
+
+  test("overwrites an existing file, leaving no temp file behind", () => {
+    const path = join(dir, "f.md");
+    writeFileSync(path, "old");
+    writeFileAtomic(path, "new", "f.md");
+    expect(readFileSync(path, "utf8")).toBe("new");
+    expect(readdirSync(dir)).toEqual(["f.md"]); // no stray `.lore-sync-tmp-*` sibling
+  });
+
+  test("a directory at the write path is a conflict (exit 5), and the temp file is cleaned up", () => {
+    const path = join(dir, "adir");
+    mkdirSync(path);
+    try {
+      writeFileAtomic(path, "x", "adir");
+      throw new Error("expected a LoreError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("conflict");
+    }
+    // The failed rename's temp file is removed, not left as litter -- `adir` (the pre-existing
+    // directory that caused the conflict) is the only entry left in `dir`.
+    expect(readdirSync(dir)).toEqual(["adir"]);
   });
 });

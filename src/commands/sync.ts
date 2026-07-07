@@ -43,11 +43,11 @@ import { type ManagedTaskRow, regenerateTaskBlock } from "../core/managed-block"
 import { loadProfile } from "../core/profile";
 import { reconcileStatus } from "../core/reconcile";
 import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
-import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
+import { EXIT_OK, LoreError, readFileIfPresent, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { type BacklogCommitResult, bunGitSpawn, commitBacklogIfDirty, type GitSpawn } from "../state";
 import { parseCommandArgs } from "./args";
-import { readIfExists, readIndexBytes, readSource } from "./discover";
+import { readIndexBytes, readSource } from "./discover";
 import { ensureDir, writeFileAtomic } from "./fswrite";
 import { dedupeTaskIds, defaultAdapter } from "./link";
 
@@ -237,7 +237,7 @@ function regenerateIndexAndLog(
     headSha === null
       ? generateLog([], { root: DOCS_DIR })
       : buildLog(options.gitAdapter ?? realGitAdapter(options.root), { to: headSha }, { root: DOCS_DIR });
-  const existingLog = readIfExists(join(docsRoot, LOG_FILE), `${DOCS_DIR}/${LOG_FILE}`);
+  const existingLog = readFileIfPresent(join(docsRoot, LOG_FILE), `${DOCS_DIR}/${LOG_FILE}`);
   if (logBytes !== existingLog) {
     writes.set(LOG_FILE, logBytes);
   }
@@ -290,8 +290,32 @@ function scopeConcepts(graph: BundleGraph, paths: readonly string[]): Concept[] 
   if (paths.length === 0) {
     return all;
   }
-  const prefixes = paths.map((p) => idFromPath(p));
-  return all.filter((c) => prefixes.some((prefix) => c.id === prefix || c.id.startsWith(`${prefix}/`)));
+  // Strip a trailing slash before deriving the id: idFromPath() preserves it verbatim, and a
+  // trailing "/" (natural from shell tab-completion of a directory) would otherwise never match
+  // any concept id (`c.id === "stories/foo/"` and `c.id.startsWith("stories/foo//")` are both
+  // always false), silently scoping to nothing rather than the whole "stories/foo" directory.
+  const prefixes = paths.map((p) => idFromPath(p.replace(/\/+$/, "")));
+  for (const prefix of prefixes) {
+    if (!all.some((c) => matchesScope(c.id, prefix))) {
+      // A path/id that matches nothing (a typo, a trailing slash that still resolves to no
+      // directory, a concept that was never linked) is a fail-loud usage error, not a silent
+      // empty scope — matching link/unlink/rename's `conceptNotInBundle` precedent: a `lore sync`
+      // that quietly reconciled zero concepts and reported "0 files changed" would read as "already
+      // in sync" when it never looked at the intended target at all.
+      throw new LoreError(
+        "not_found",
+        `no concept found at or under "${prefix}"`,
+        "check the id/path and try again — run `lore check` to list concept ids",
+        { path: prefix },
+      );
+    }
+  }
+  return all.filter((c) => prefixes.some((prefix) => matchesScope(c.id, prefix)));
+}
+
+/** Whether `id` is exactly `prefix` or lives under it as a directory prefix. */
+function matchesScope(id: string, prefix: string): boolean {
+  return id === prefix || id.startsWith(`${prefix}/`);
 }
 
 // ── Argument parsing ───────────────────────────────────────────────────────────

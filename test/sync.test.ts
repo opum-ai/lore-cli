@@ -335,6 +335,28 @@ describe("lore sync — [paths…] scoping", () => {
     expect(readDoc("stories/a.md")).toContain("status: done");
     expect(readDoc("stories/b.md")).toContain("status: todo"); // untouched
   });
+
+  test("regression: a trailing slash on a directory scope still matches (not silently empty)", async () => {
+    // idFromPath() preserves a trailing slash verbatim, so the naive prefix match
+    // (`id === prefix || id.startsWith(prefix + "/")`) would otherwise never match anything for
+    // "stories/" -- silently scoping to zero concepts (0 files changed, exit 0) instead of matching
+    // every concept under stories/, exactly the natural shell-tab-completed form of the argument.
+    writeDoc("stories/a.md", storyDoc("A", ["lore-1"], "todo"));
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const { report } = await syncCmd(["stories/"], adapter, { gitSpawn: cleanGitSpawn() });
+    expect(report.files.map((f) => f.path)).toContain("docs/stories/a.md");
+    expect(readDoc("stories/a.md")).toContain("status: done");
+  });
+
+  test("regression: a path/id matching no concept is a fail-loud not_found, not a silent no-op", async () => {
+    writeDoc("stories/a.md", storyDoc("A", ["lore-1"], "todo"));
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const err = await expectSyncError(["stories/typo-does-not-exist"], adapter);
+    expect(err.type).toBe("not_found");
+    expect(err.message).toContain("stories/typo-does-not-exist");
+  });
 });
 
 // ── Real git integration + CLI router wiring ──────────────────────────────────────

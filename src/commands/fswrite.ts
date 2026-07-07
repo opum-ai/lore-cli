@@ -85,12 +85,25 @@ export function writeFileAtomic(absPath: string, contents: string, relPath: stri
     writeFileSync(tmpPath, contents);
     renameSync(tmpPath, absPath);
   } catch (cause) {
+    let cleanupFailed = false;
     try {
       unlinkSync(tmpPath);
     } catch {
-      // best-effort cleanup only — the write/rename failure below is what's actually reported
+      // The write/rename failure below is what's primarily reported; a failure here (rare — the
+      // process is already failing) is folded into that error's own hint/input rather than
+      // silently dropped, so a stray `.lore-sync-tmp-*` file is at least surfaced, not silent litter.
+      cleanupFailed = true;
     }
-    throw ioError(cause, relPath, "write file");
+    const err = ioError(cause, relPath, "write file");
+    if (cleanupFailed && err instanceof LoreError) {
+      throw new LoreError(
+        err.type,
+        err.message,
+        `${err.hint ?? ""} A temp file may also remain at ${tmpPath} — remove it manually.`.trim(),
+        typeof err.input === "object" && err.input !== null ? { ...err.input, staleTempFile: tmpPath } : err.input,
+      );
+    }
+    throw err;
   }
 }
 

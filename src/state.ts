@@ -91,9 +91,10 @@ export async function commitBacklogIfDirty(
   if (allPaths.length === 0) {
     return { committed: false, files: [] };
   }
-  if (addPaths.length > 0) {
-    await run(spawn, ["add", "--", ...addPaths], "git add");
-  }
+  // addPaths is never empty here: every entry porcelainPaths parses contributes at least one path to
+  // BOTH addPaths and allPaths (a rename/copy's old path is the only thing added to allPaths alone),
+  // so allPaths being non-empty (checked above) guarantees addPaths is too.
+  await run(spawn, ["add", "--", ...addPaths], "git add");
   // Scoped with every touched path (including a staged rename/copy's old path, never passed to
   // `add` — see porcelainPaths): `git commit -- <paths>` commits ONLY those paths' content, leaving
   // any OTHER already-staged change (e.g. in-progress work a developer staged separately) untouched

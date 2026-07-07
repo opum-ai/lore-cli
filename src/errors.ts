@@ -18,6 +18,8 @@
  * Rationale: docs/adr/0005-cli-contract.md.
  */
 
+import { readFileSync } from "node:fs";
+
 /**
  * The classifiable failure categories. Each maps to exactly one semantic exit
  * code via {@link EXIT_CODES}. `validation` and `drift` are distinct
@@ -254,6 +256,34 @@ export function errnoCode(cause: unknown): string | undefined {
     return typeof code === "string" ? code : undefined;
   }
   return undefined;
+}
+
+/**
+ * Read a file if it exists, or `undefined` if it does not — the shared "optional read" primitive
+ * behind `commands/discover.ts`'s `readIfExists` and `adapters/backlog.ts`'s `readStatusFlow`. It
+ * lives here, not in `commands/discover.ts` (which `adapters/` must never import — adapters sit
+ * below commands in lore's layering), so both layers share one implementation instead of two
+ * independently-drifting copies of the same `ENOENT → undefined` / `EACCES,EPERM → denied` /
+ * else-rethrow branching. A permission failure is `denied` (exit 4); anything else (a directory
+ * sitting at the path, …) propagates unclassified rather than being force-fit into a misleading
+ * "not found".
+ */
+export function readFileIfPresent(absPath: string, display: string): string | undefined {
+  try {
+    return readFileSync(absPath, "utf8");
+  } catch (cause) {
+    const code = errnoCode(cause);
+    if (code === "ENOENT") {
+      return undefined;
+    }
+    if (code === "EACCES" || code === "EPERM") {
+      throw new LoreError("denied", `cannot read ${display}`, `check filesystem permissions on ${display}`, {
+        path: display,
+        code,
+      });
+    }
+    throw cause;
+  }
 }
 
 /** The per-category message + hint an {@link ioError} attaches to its {@link LoreError}. */

@@ -14,7 +14,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, posix, relative, sep } from "node:path";
 import { walkMarkdown } from "../core/bundle";
 import { DOCS_DIR } from "../core/scaffold";
-import { errnoCode, ioError, LoreError } from "../errors";
+import { ioError } from "../errors";
 
 /** Read one file as UTF-8, mapping an I/O failure to a classified {@link LoreError} via the shared {@link ioError} policy. */
 export function readSource(abs: string, display: string): string {
@@ -26,30 +26,6 @@ export function readSource(abs: string, display: string): string {
       notFound: { message: `cannot read ${display}`, hint: "check the path exists and is readable" },
       input: { path: display },
     });
-  }
-}
-
-/**
- * Read a file's bytes if it exists, else `undefined` — unlike {@link readSource}, absence is not an
- * error (e.g. a bundle's `log.md` may not exist yet before the first `lore sync`). A permission
- * failure still fails loud (`denied`); anything else (a directory sitting at the path, …) propagates
- * unclassified rather than being force-fit into a misleading "not found".
- */
-export function readIfExists(abs: string, display: string): string | undefined {
-  try {
-    return readFileSync(abs, "utf8");
-  } catch (cause) {
-    const code = errnoCode(cause);
-    if (code === "ENOENT") {
-      return undefined;
-    }
-    if (code === "EACCES" || code === "EPERM") {
-      throw new LoreError("denied", `cannot read ${display}`, `check filesystem permissions on ${display}`, {
-        path: display,
-        code,
-      });
-    }
-    throw cause;
   }
 }
 
