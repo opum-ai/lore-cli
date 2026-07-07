@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-07 00:36'
+updated_date: '2026-07-07 01:10'
 labels:
   - cmd
 milestone: m-3
@@ -258,4 +258,66 @@ direct unit tests before this round -- success/overwrite/conflict+cleanup,
 mirroring the existing writeFileOverwriting block). Full suite 1218/1218,
 typecheck clean, biome clean. Starting a 4th /code-review max pass to check
 for convergence.
+
+4th /code-review max pass on PR #36 (18 agents, ~1.12M subagent tokens, ~19 min).
+9 candidates verified, 1 refuted, 7 confirmed (3 correctness, 4 cleanup).
+
+Most severe: state.ts's commitBacklogIfDirty broke entirely for a lore project
+nested below its git repository's own top level. adapters/git.ts already had
+the analogous fix for `git log` (--relative) from round 3/4's own earlier
+finding, but `git status` has NO --relative flag at all -- it always reports
+paths relative to the repo top, while `git add`/`git commit` (run in the same
+cwd) resolve pathspecs relative to cwd, so every nested-bundle sync failed
+loud with "pathspec did not match any files". Fixed with
+`git rev-parse --show-prefix` (gives exactly the top-level-to-cwd path, ""
+when not nested) stripped from every status-reported path before add/commit.
+Verified three ways: fake-based unit tests, a real-git integration test, AND
+a manual smoke test against the actual compiled CLI in a real nested checkout
+(git status/log confirmed correct at both the project and repo-top level).
+
+Also fixed:
+- fswrite.ts's writeFileAtomic misreported "a temp file may remain" even when
+  writeFileSync itself failed before any temp file was created -- the most
+  common real-world trigger (permission-denied writes) always triggered a
+  false warning, since the cleanup unlink's inevitable ENOENT was
+  misclassified as a failed cleanup. Fixed: only attempt/report cleanup once
+  the write has actually succeeded.
+- sync.ts's own "before spending any Backlog subprocess round-trip" comment
+  was only half-true: readStatusFlow/loadConfig/loadProfile catch syntactic
+  problems early, but reconcileStatus's SEMANTIC validation (degenerate flow,
+  bad override target) only ran per-concept, after every linked task was
+  already resolved. Exported reconcile.ts's validation as
+  validateReconcileInputs, called once up front -- the fail-fast claim is now
+  actually true.
+- backlog.ts's reasonSuffix hand-rolled an unguarded cause-to-message
+  extraction duplicating errors.ts's existing guarded deriveMessage --
+  switched to the shared one.
+- The "spawn git, throw on non-zero exit" test helper (copy-pasted 3x across
+  git-adapter.test.ts/state.test.ts/sync.test.ts) hoisted into
+  test/helpers.ts as gitRun.
+- A stale doc-comment reference (readFileIfPresent claiming to back a
+  discover.ts readIfExists that no longer exists, deleted in round 3's own
+  consolidation) corrected.
+
+1 refuted: porcelainPaths treating an unresolved merge-conflict entry (UU/AA/
+etc.) the same as an ordinary modification -- verified as NOT a bug; that's
+just what committing a conflicted file does, same as any tool would, not
+something lore introduces.
+
+New tests for every fix (fake + real-git where the bug only reproduces
+against real git). Full suite 1223/1223, typecheck clean, biome clean.
+Starting a 5th /code-review max pass -- 4 rounds have now each found real,
+non-overlapping bugs (most in the git-write seam this task introduced), so
+continuing to iterate until a pass comes back clean rather than assuming
+convergence early.
+
+5th /code-review max pass on PR #36: 0 findings across all 6 finder angles --
+full convergence. 5 rounds total, each of the first 4 finding real,
+non-overlapping defects (the git-write seam this task introduced was the
+hardest to get right: 3 separate rounds each caught a distinct git
+pathspec/porcelain-format subtlety -- unscoped commit sweeping unrelated
+staged content, a resurrected file from a staged-rename pathspec gap, and
+finally repo-top-vs-cwd-relative path mismatch for nested bundles -- each
+verified against real git, not just reasoning about the docs). PR ready for
+user review/merge.
 <!-- SECTION:NOTES:END -->

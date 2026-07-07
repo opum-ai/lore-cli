@@ -76,8 +76,10 @@ describe("realGitAdapter — history()", () => {
       expect(c?.hash).toBe(sha);
       expect(c?.subject).toBe("add a");
       expect(c?.files).toEqual(["docs/a.md"]);
-      // committer date is a real ISO-8601 string with an explicit offset (log.ts's contract).
-      expect(c?.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/);
+      // committer date is a real ISO-8601 string with an explicit offset (log.ts's contract) — git's
+      // `%cI` renders UTC as a bare "Z" (the common case on a UTC-configured CI runner) rather than
+      // "+00:00", and both are valid per log.ts's own ISO_OFFSET pattern.
+      expect(c?.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})$/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -490,7 +490,7 @@ describe("writeFileAtomic", () => {
     expect(readdirSync(dir)).toEqual(["f.md"]); // no stray `.lore-sync-tmp-*` sibling
   });
 
-  test("a directory at the write path is a conflict (exit 5), and the temp file is cleaned up", () => {
+  test("a directory at the write path fails loud (never silently corrupts), and the temp file is cleaned up", () => {
     const path = join(dir, "adir");
     mkdirSync(path);
     try {
@@ -498,7 +498,10 @@ describe("writeFileAtomic", () => {
       throw new Error("expected a LoreError");
     } catch (err) {
       expect(err).toBeInstanceOf(LoreError);
-      expect((err as LoreError).type).toBe("conflict");
+      // POSIX's renameSync-onto-an-existing-directory raises EISDIR (-> "conflict"); Windows raises
+      // EPERM for the identical operation (-> "denied") -- a real, platform-specific errno
+      // difference for this exact case, not a lore inconsistency, so both are accepted here.
+      expect(["conflict", "denied"]).toContain((err as LoreError).type);
     }
     // The failed rename's temp file is removed, not left as litter -- `adir` (the pre-existing
     // directory that caused the conflict) is the only entry left in `dir`.

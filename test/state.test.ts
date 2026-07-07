@@ -313,18 +313,25 @@ describe("bunGitSpawn + commitBacklogIfDirty — real git integration", () => {
     expect(status).toBe("");
   });
 
-  test("a filename containing a literal ' -> ' commits correctly (regression: no text-based rename ambiguity)", async () => {
-    mkdirSync(join(root, "backlog", "tasks"), { recursive: true });
-    const name = "lore-5 - Cache -> DB fallback.md";
-    writeFileSync(join(root, "backlog", "tasks", name), "a\n");
+  // `>` is one of Windows/NTFS's reserved filename characters (`< > : " / \ | ? *`) — this exact
+  // real-file reproduction is only possible on POSIX filesystems. The parsing logic itself (no real
+  // file needed) is covered cross-platform by the fake-GitSpawn regression test above.
+  test.skipIf(process.platform === "win32")(
+    "a filename containing a literal ' -> ' commits correctly (regression: no text-based rename ambiguity)",
+    async () => {
+      mkdirSync(join(root, "backlog", "tasks"), { recursive: true });
+      const name = "lore-5 - Cache -> DB fallback.md";
+      writeFileSync(join(root, "backlog", "tasks", name), "a\n");
 
-    const result = await commitBacklogIfDirty(bunGitSpawn(root));
-    expect(result).toEqual({ committed: true, files: [`backlog/tasks/${name}`] });
-    const status = Bun.spawnSync(["git", "status", "--porcelain"], { cwd: root, stdout: "pipe" }).stdout.toString(
-      "utf8",
-    );
-    expect(status).toBe("");
-  });
+      const result = await commitBacklogIfDirty(bunGitSpawn(root));
+      expect(result).toEqual({ committed: true, files: [`backlog/tasks/${name}`] });
+      const status = Bun.spawnSync(["git", "status", "--porcelain"], {
+        cwd: root,
+        stdout: "pipe",
+      }).stdout.toString("utf8");
+      expect(status).toBe("");
+    },
+  );
 
   test("regression: an unrelated already-staged change is never swept into lore's commit", async () => {
     mkdirSync(join(root, "src"), { recursive: true });
