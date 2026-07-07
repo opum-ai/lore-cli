@@ -84,18 +84,33 @@ describe("commitBacklogIfDirty — fake GitSpawn", () => {
     ]);
   });
 
-  test("a staged rename (porcelain 'R  new\\0old') commits only the new path, not a literal '-> '-split", async () => {
+  test("a staged rename (porcelain 'R  new\\0old') includes BOTH paths, not just the new one", async () => {
+    // Regression: `git commit -- <pathspec>` fills in any path outside the pathspec from HEAD
+    // rather than treating it as absent, so committing only the new path resurrects the old file
+    // into the tree instead of applying its staged deletion — the old path must be in the pathspec
+    // too (see the real-git test below proving this against actual git, not just parsing).
     const stdout = porcelainZ(renameEntry("R ", "backlog/tasks/lore-1 - new.md", "backlog/tasks/lore-1 - old.md"));
     const spawn = scriptedSpawn([ok(stdout), ok(""), ok("")]);
     const result = await commitBacklogIfDirty(spawn);
-    expect(result.files).toEqual(["backlog/tasks/lore-1 - new.md"]);
+    expect(result.files).toEqual(["backlog/tasks/lore-1 - new.md", "backlog/tasks/lore-1 - old.md"]);
+    // `add` gets only the new path — the old path of an already-staged rename is fully removed
+    // from the index by `git mv`, so re-adding it fails outright ("did not match any files").
+    expect(spawn.calls[1]?.args).toEqual(["add", "--", "backlog/tasks/lore-1 - new.md"]);
+    expect(spawn.calls[2]?.args).toEqual([
+      "commit",
+      "-m",
+      "chore(backlog): sync task changes",
+      "--",
+      "backlog/tasks/lore-1 - new.md",
+      "backlog/tasks/lore-1 - old.md",
+    ]);
   });
 
   test("a copy (status 'C') is treated the same two-field way as a rename", async () => {
     const stdout = porcelainZ(renameEntry("C ", "backlog/tasks/lore-2 - copy.md", "backlog/tasks/lore-1 - x.md"));
     const spawn = scriptedSpawn([ok(stdout), ok(""), ok("")]);
     const result = await commitBacklogIfDirty(spawn);
-    expect(result.files).toEqual(["backlog/tasks/lore-2 - copy.md"]);
+    expect(result.files).toEqual(["backlog/tasks/lore-2 - copy.md", "backlog/tasks/lore-1 - x.md"]);
   });
 
   test("regression: an ordinary (non-rename) entry whose filename literally contains ' -> ' is never mis-split", async () => {
@@ -312,6 +327,37 @@ describe("bunGitSpawn + commitBacklogIfDirty — real git integration", () => {
       "utf8",
     );
     expect(status).toBe(""); // both the deletion and the addition are fully committed
+  });
+
+  test("regression: a STAGED rename (both sides already git-add'ed) commits cleanly, no resurrected old file", async () => {
+    mkdirSync(join(root, "backlog", "tasks"), { recursive: true });
+    writeFileSync(join(root, "backlog", "tasks", "lore-1 - old title.md"), "a\n");
+    run(["add", "."]);
+    run(["commit", "-q", "-m", "add task"]);
+
+    // `git mv` + it already being in the index stages BOTH sides of the rename, so `git status`
+    // reports one `R` entry — the scenario the round-1 fix (commit scoped to only the new path)
+    // got wrong: it left the deletion staged-but-uncommitted and resurrected the old file into the
+    // commit's tree.
+    run(["mv", "backlog/tasks/lore-1 - old title.md", "backlog/tasks/lore-1 - new title.md"]);
+
+    const result = await commitBacklogIfDirty(bunGitSpawn(root));
+    expect(result.committed).toBe(true);
+    expect([...result.files].sort()).toEqual(
+      ["backlog/tasks/lore-1 - new title.md", "backlog/tasks/lore-1 - old title.md"].sort(),
+    );
+
+    const tree = Bun.spawnSync(["git", "ls-tree", "-r", "HEAD", "--", "backlog/"], {
+      cwd: root,
+      stdout: "pipe",
+    }).stdout.toString("utf8");
+    expect(tree).toContain("lore-1 - new title.md");
+    expect(tree).not.toContain("lore-1 - old title.md"); // not resurrected from HEAD
+
+    const status = Bun.spawnSync(["git", "status", "--porcelain"], { cwd: root, stdout: "pipe" }).stdout.toString(
+      "utf8",
+    );
+    expect(status).toBe(""); // no stranded staged deletion left behind
   });
 
   test("a change outside backlog/ is never staged or committed", async () => {

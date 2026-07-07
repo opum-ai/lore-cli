@@ -56,6 +56,18 @@ describe("resolveHeadSha", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test("regression: throws (does NOT return null) when the directory is not a git repository at all", () => {
+    // `git rev-parse HEAD` also exits non-zero for "not a git repository" — that must not collapse
+    // to the same null as "a real, merely empty repository" (the case above), or sync would
+    // silently emit an empty log.md instead of failing loud for a genuinely broken/missing repo.
+    const dir = mkdtempSync(join(tmpdir(), "lore-not-a-repo-"));
+    try {
+      expect(() => resolveHeadSha(dir)).toThrow(LoreError);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("realGitAdapter — history()", () => {

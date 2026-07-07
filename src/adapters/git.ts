@@ -54,10 +54,34 @@ export function realGitAdapter(cwd: string): GitAdapter {
  * Resolve `HEAD` to a concrete sha in `cwd`, or `null` when there is no `HEAD` yet (a freshly
  * `lore init`ed repository with no commits at all). Callers treat `null` as "no history" and skip
  * `history()` entirely, rather than pinning to a sha that does not exist.
+ *
+ * `git rev-parse HEAD` exits non-zero both for this legitimate "empty repo" case AND for a
+ * genuinely broken one (not a git repository at all, a corrupted `.git`, …) — the two are NOT the
+ * same condition and must not collapse to the same `null` result: only the first should silently
+ * skip history (there is none to skip to), while the second must fail loud, matching
+ * {@link realGitAdapter}'s own `history()` behavior for the identical condition. Disambiguated with
+ * a second, cheap check — `git rev-parse --git-dir` succeeds in ANY valid repository regardless of
+ * commit count, so it succeeding while `HEAD` still fails to resolve is the fingerprint of "a real,
+ * merely empty repository"; failing itself means "not a git repository" (or worse), which propagates.
+ *
+ * @throws LoreError `drift` (exit 6) when `HEAD` fails to resolve for any reason OTHER than the
+ *   repository being real but commit-less.
  */
 export function resolveHeadSha(cwd: string): string | null {
-  const proc = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd, stdout: "pipe", stderr: "pipe" });
-  return proc.exitCode === 0 ? proc.stdout.toString("utf8").trim() : null;
+  const head = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd, stdout: "pipe", stderr: "pipe" });
+  if (head.exitCode === 0) {
+    return head.stdout.toString("utf8").trim();
+  }
+  const isRealRepo = Bun.spawnSync(["git", "rev-parse", "--git-dir"], { cwd, stdout: "pipe", stderr: "pipe" });
+  if (isRealRepo.exitCode === 0) {
+    return null; // a real repository with no commits yet
+  }
+  throw new LoreError(
+    "drift",
+    `\`git rev-parse HEAD\` exited ${head.exitCode}: could not resolve the repository's history`,
+    stderrHint(head.stderr.toString("utf8")) ?? "check that this is a git repository",
+    { exitCode: head.exitCode },
+  );
 }
 
 /** `git log`'s range arguments: `from..to` when `from` is given, else just `to` (from repo start). */

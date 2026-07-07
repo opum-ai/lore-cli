@@ -31,7 +31,7 @@
  * {@link BacklogAdapter} is even constructed unless at least one scoped concept links a task.
  */
 
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { type BacklogAdapter, type BacklogTaskDetail, readStatusFlow } from "../adapters/backlog";
 import { realGitAdapter, resolveHeadSha } from "../adapters/git";
 import { loadConfig } from "../config";
@@ -42,7 +42,7 @@ import { buildLog, type GitAdapter, generateLog } from "../core/log";
 import { type ManagedTaskRow, regenerateTaskBlock } from "../core/managed-block";
 import { loadProfile } from "../core/profile";
 import { reconcileStatus } from "../core/reconcile";
-import { DOCS_DIR } from "../core/scaffold";
+import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { type BacklogCommitResult, bunGitSpawn, commitBacklogIfDirty, type GitSpawn } from "../state";
@@ -124,6 +124,15 @@ export async function runSync(options: SyncOptions): Promise<number> {
   const scoped = scopeConcepts(graph, parsed.paths);
   const linkedByConceptId = new Map<string, string[]>();
   for (const concept of scoped) {
+    // A reserved-stem concept (index/log) is never eligible for task reconciliation, even if its
+    // frontmatter happens to carry a `tasks:` list (tolerated by schema validation as an unknown
+    // extra key, at most a warning): index.md/log.md are regenerated wholesale by
+    // regenerateIndexAndLog below, keyed by the SAME bundle-relative path — a reconciled write here
+    // would only be silently overwritten by that regeneration, never reach disk. Mirrors
+    // `assertNotReservedStem`'s policy in `link`/`rename`/`supersede`.
+    if (RESERVED_STEMS.has(posix.basename(concept.id))) {
+      continue;
+    }
     const linked = dedupeTaskIds(toRefList(concept.frontmatter.tasks));
     if (linked.length > 0) {
       linkedByConceptId.set(concept.id, linked);
@@ -133,12 +142,16 @@ export async function runSync(options: SyncOptions): Promise<number> {
   const writes = new Map<string, string>(); // bundle-relative path -> new bytes
 
   if (linkedByConceptId.size > 0) {
-    const adapter = options.adapter ?? defaultAdapter(options.root);
-    const allTaskIds = dedupeTaskIds([...linkedByConceptId.values()].flat());
-    const details = await resolveAllTasks(adapter, allTaskIds);
+    // Fast, local, and can throw a `validation` config error: read these BEFORE spending any
+    // Backlog subprocess round-trip, so a broken backlog/config.yml or .lore/config.toml is
+    // reported immediately rather than being masked behind (and paid for after) N task resolutions.
     const flow = readStatusFlow(options.root);
     const config = loadConfig({ root: options.root });
     const profile = loadProfile({ root: options.root });
+
+    const adapter = options.adapter ?? defaultAdapter(options.root);
+    const allTaskIds = dedupeTaskIds([...linkedByConceptId.values()].flat());
+    const details = await resolveAllTasks(adapter, allTaskIds);
 
     for (const concept of scoped) {
       const linked = linkedByConceptId.get(concept.id);

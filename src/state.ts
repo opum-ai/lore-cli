@@ -87,21 +87,41 @@ export async function commitBacklogIfDirty(
   spawn: GitSpawn,
   message: string = DEFAULT_COMMIT_MESSAGE,
 ): Promise<BacklogCommitResult> {
-  const files = await porcelainPaths(spawn, BACKLOG_DIR);
-  if (files.length === 0) {
+  const { addPaths, allPaths } = await porcelainPaths(spawn, BACKLOG_DIR);
+  if (allPaths.length === 0) {
     return { committed: false, files: [] };
   }
-  await run(spawn, ["add", "--", ...files], "git add");
-  // Scoped with the same pathspec as the `add` above: `git commit -- <paths>` commits ONLY those
-  // paths' content, leaving any OTHER already-staged change (e.g. in-progress work a developer
-  // staged separately) untouched in the index rather than swept into lore's commit — a bare,
-  // unscoped `git commit` would instead commit the entire index.
-  await run(spawn, ["commit", "-m", message, "--", ...files], "git commit");
-  return { committed: true, files };
+  if (addPaths.length > 0) {
+    await run(spawn, ["add", "--", ...addPaths], "git add");
+  }
+  // Scoped with every touched path (including a staged rename/copy's old path, never passed to
+  // `add` — see porcelainPaths): `git commit -- <paths>` commits ONLY those paths' content, leaving
+  // any OTHER already-staged change (e.g. in-progress work a developer staged separately) untouched
+  // in the index rather than swept into lore's commit — a bare, unscoped `git commit` would instead
+  // commit the entire index.
+  await run(spawn, ["commit", "-m", message, "--", ...allPaths], "git commit");
+  return { committed: true, files: allPaths };
 }
 
 /** The default commit message when the caller does not supply one. */
 const DEFAULT_COMMIT_MESSAGE = "chore(backlog): sync task changes";
+
+/** {@link porcelainPaths}'s result: the paths to `git add`, and the full set to scope the commit to (and report). */
+interface PorcelainPaths {
+  /** Paths to `git add`. Excludes a staged rename/copy's OLD path — see the field below for why. */
+  readonly addPaths: string[];
+  /**
+   * Every touched path, including a staged rename/copy's OLD path. `git commit -- <pathspec>` fills
+   * in any path it does NOT see in the pathspec from `HEAD`'s tree rather than treating it as
+   * absent, so a commit scoped to only the new path would resurrect the old file (its staged
+   * deletion silently discarded, left stranded — staged and uncommitted — after the commit;
+   * verified against real git). The old path is deliberately excluded from {@link addPaths}: a
+   * `git mv`-staged rename has already fully removed the old path from the index (it is not a
+   * pending change `add` can re-apply), so re-adding it fails outright with "did not match any
+   * files" — it only ever needs to appear in the *commit's* pathspec, never `add`'s.
+   */
+  readonly allPaths: string[];
+}
 
 /**
  * The repo-relative paths `git status --porcelain -z` reports as changed under `pathspec` (staged,
@@ -111,13 +131,12 @@ const DEFAULT_COMMIT_MESSAGE = "chore(backlog): sync task changes";
  * no unescaping needed), and a rename/copy entry is two independent NUL-terminated fields
  * (`new-path\0old-path\0`, no `" -> "` text token at all) rather than one line joined by a literal
  * `" -> "` — which a text-format parser could otherwise mis-split when the path itself contains
- * that exact substring. Only the current (new) path of a rename/copy is kept; its old path is
- * already reflected by that same status line for a *staged* rename (nothing further to add), and an
- * *unstaged* rename is reported by git as two ordinary independent entries (a deletion, an
- * untracked add) rather than one `R` entry at all — both come through this parser as ordinary
- * single-field entries and are both returned, so both sides of the move get staged and committed.
+ * that exact substring. An *unstaged* rename is reported by git as two ordinary independent entries
+ * (a deletion, an untracked add) rather than one `R` entry at all — both come through as ordinary
+ * single-field entries either way, so this needs no special casing (and both belong in `addPaths`
+ * too, since neither is already-staged).
  */
-async function porcelainPaths(spawn: GitSpawn, pathspec: string): Promise<string[]> {
+async function porcelainPaths(spawn: GitSpawn, pathspec: string): Promise<PorcelainPaths> {
   // `--untracked-files=all` expands a brand-new untracked directory into its individual file paths
   // (plain `--porcelain` reports only the directory itself, e.g. `?? backlog/`) — scoped to `pathspec`
   // so, unlike a bare repo-wide `-uall`, this never walks more of the tree than lore is committing.
@@ -127,7 +146,8 @@ async function porcelainPaths(spawn: GitSpawn, pathspec: string): Promise<string
     "git status",
   );
   const tokens = result.stdout.split("\0");
-  const paths: string[] = [];
+  const addPaths: string[] = [];
+  const allPaths: string[] = [];
   for (let i = 0; i < tokens.length; i++) {
     const entry = tokens[i];
     if (entry === undefined || entry === "") {
@@ -135,12 +155,18 @@ async function porcelainPaths(spawn: GitSpawn, pathspec: string): Promise<string
     }
     const status = entry.slice(0, 2);
     const path = entry.slice(3); // "XY " is always exactly 3 chars, even in -z mode
-    paths.push(path);
+    addPaths.push(path);
+    allPaths.push(path);
     if (status.includes("R") || status.includes("C")) {
-      i++; // a rename/copy's OLD path is the next NUL-terminated field — consume it, it's not a path to add/commit
+      // The OLD path is the next NUL-terminated field — needed in the commit's pathspec (see
+      // PorcelainPaths.allPaths) but NOT `add`'s (see PorcelainPaths.addPaths).
+      const oldPath = tokens[++i];
+      if (oldPath !== undefined && oldPath !== "") {
+        allPaths.push(oldPath);
+      }
     }
   }
-  return paths;
+  return { addPaths, allPaths };
 }
 
 /** Run one `git` invocation through {@link GitSpawn}, mapping a non-zero exit to a `drift` {@link LoreError}. */

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-06 22:37'
+updated_date: '2026-07-07 00:10'
 labels:
   - cmd
 milestone: m-3
@@ -116,4 +116,108 @@ not task list --json; index listing uses title not summary).
 
 Filed LORE-49 (retrofit link/unlink/rename to call state.ts immediately) as the explicit,
 user-confirmed follow-up -- not in this task's scope.
+
+1st /code-review max pass on PR #36 (19 agents: scope + 6 finders + verify pass +
+sweep + synthesis, ~1.65M subagent tokens, ~50 min wall clock). 12 candidates
+verified, 1 refuted, 11 confirmed -> 8 distinct defects after folding 2 duplicate
+clusters (3-way arrow-parsing dup, 2-way commit-pathspec dup).
+
+Most severe, both in the new git-write seam I wrote this session:
+- state.ts:95 commitBacklogIfDirty's `git commit` had no pathspec -- committed
+  the WHOLE index, not just backlog/, silently sweeping up any unrelated
+  already-staged work. Fixed: `git commit -m <msg> -- <files>` (verified this
+  git feature actually excludes other staged content, not just assumed it).
+- state.ts:122 (reported 3x by different finders/verifiers, same root cause)
+  porcelainPaths detected a rename by blindly searching porcelain lines for
+  literal " -> ", which both mis-splits any filename containing that
+  substring (a real risk -- Backlog task titles routinely have arrows) AND
+  never matches how an UNSTAGED on-disk rename actually appears (git reports
+  two independent entries, not one R line, until both sides are staged --
+  verified empirically, this is not an edge case, it's the NORMAL case for
+  a hand-renamed task file since nothing stages backlog/ changes ahead of
+  commitBacklogIfDirty today). Root-caused and rewrote around
+  `git status --porcelain=v1 -z`: NUL-delimited output has no " -> " text
+  token at all (rename = two separate NUL fields) and disables C-quoting
+  entirely, which ALSO retired the separate finding that unquoteGitPath's
+  escape table was missing \a/\b/\f/\v -- that whole quoting-parsing
+  mechanism is gone now, not patched.
+- adapters/git.ts:31 realGitAdapter shelled `git log --name-only` without
+  --relative, so a bundle nested below the git repo's own top level got
+  every path reported relative to the repo top, not cwd -- core/log.ts's
+  isUnderRoot would never match, silently producing an empty log.md forever
+  with no error. Fixed with --relative (verified as a no-op when cwd IS the
+  top level, so every existing test's assumption still holds).
+- 3 cleanup findings: singleLineStderr triplicated (backlog.ts/state.ts/
+  git.ts) -> consolidated into errors.ts's stderrHint; readIndexBytes
+  byte-for-byte duplicated between rename.ts/sync.ts -> hoisted into
+  discover.ts; sync.ts's and backlog.ts's absent-file handling each passed
+  an unreachable notFound spec to the shared ioError -> replaced with a
+  direct EACCES/EPERM check, no dead branch.
+
+1 refuted: resolveAllTasks's per-id viewTask (vs a hypothetical bulk
+listTasks call) is LORE-22's own documented, intentional architecture, not
+a deviation this diff introduced -- verifier traced it to managed-block.ts's
+pre-existing module doc.
+
+Added real-git regression tests for every fix where the bug only reproduces
+against real git (not a hand-fed fake): arrow-in-filename (both untracked-add
+and as part of a staged rename/copy), unstaged on-disk rename committing both
+sides, unrelated-already-staged-content surviving untouched, and a nested-
+bundle log.md actually populating instead of silently staying empty. Full
+suite 1209/1209 (48 new/updated this round), typecheck clean, biome clean.
+
+2nd /code-review max pass on PR #36 (17 agents, ~1.15M subagent tokens, ~19 min).
+9 candidates verified, 0 refuted, 5 distinct defects reported. Notably: round 1's
+OWN fix for the pathspec-scoping bug introduced a new, more subtle bug -- a
+lesson in how easy git commit-pathspec semantics are to get wrong twice.
+
+- state.ts:99 (most severe) -- round 1's fix (`git commit -- <newpath>` for a
+  staged rename) resurrects the OLD file into the commit's tree: `git commit --
+  <pathspec>` fills in any path NOT in the pathspec from HEAD rather than
+  treating it as absent, so omitting the old path doesn't mean "don't commit
+  its deletion", it means "commit whatever HEAD already has for it" -- i.e.
+  the old file reappears, and the staged deletion is left stranded, uncommitted.
+  Verified directly (git ls-tree showed both old+new files after round 1's
+  fix). Real fix: porcelainPaths now returns BOTH old+new paths for a staged
+  R/C entry, and `git commit` gets both -- but `git add` must get ONLY the new
+  path, since `git mv` already fully removes the old path from the index and
+  re-adding it fails outright ("did not match any files"). Split into
+  addPaths/allPaths accordingly. Verified via a real staged-rename integration
+  test (git ls-tree confirms no resurrection, git status confirms no stranded
+  deletion).
+- sync.ts:217 -- index/log regeneration and the per-concept reconciliation
+  loop both key writes by the SAME bundle-relative path space, so a concept
+  that happens to be an index.md/log.md (a hand-added tasks: field on the
+  root index, tolerated by schema validation as an unknown-key warning, not
+  rejected) would have its reconciled status/managed-block write silently
+  discarded by the index regeneration that runs after it. Fixed by excluding
+  RESERVED_STEMS (index/log) from the reconciliation loop entirely, mirroring
+  link/rename/supersede's existing assertNotReservedStem policy.
+- adapters/git.ts:58 resolveHeadSha collapsed EVERY git rev-parse HEAD failure
+  into null ("no history yet"), not just the legitimate empty-repo case -- a
+  broken or missing git repository would silently produce an empty log.md and
+  exit 0 instead of the fail-loud drift error its sibling history() path
+  already produces for the identical condition. Fixed by disambiguating with
+  `git rev-parse --git-dir` (succeeds in any real repo regardless of commit
+  count; only a genuinely broken/missing repo fails that too) -- verified
+  both branches against real git.
+- sync.ts:148 resolveAllTasks (N Backlog subprocess calls) ran before
+  readStatusFlow/loadConfig/loadProfile (fast, local, can throw validation
+  errors), so a stale task id's not_found masked a more fundamental config
+  problem and wasted N round-trips discovering it anyway. Reordered: config
+  reads now run first.
+- reconcile.ts:152 (cleanup/perf only, not fixed) -- reconcileStatus
+  re-validates the same invariant overrides map on every per-concept call.
+  Deliberately left as-is: negligible real cost (a tiny map, parsed at most a
+  few dozen times per sync run) and consistent with the pre-existing,
+  already-shipped statusFlow re-validation pattern from LORE-23 -- fixing it
+  would mean expanding reconcileStatus's public contract for a gain that
+  doesn't matter in practice.
+
+New/updated regression tests: a real-git staged-rename integration test (the
+actual bug reproduction), a reserved-stem-with-tasks: test, a not-a-git-repo
+resolveHeadSha test, and a config-validated-before-subprocess-calls test.
+Full suite 1213/1213, typecheck clean, biome clean. Starting a 3rd
+/code-review max pass given round 2 found a bug IN round 1's own fix --
+verifying convergence before asking for merge.
 <!-- SECTION:NOTES:END -->

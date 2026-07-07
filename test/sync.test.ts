@@ -216,6 +216,41 @@ describe("lore sync — a linked task that no longer exists", () => {
   });
 });
 
+describe("lore sync — config is validated before spending any Backlog subprocess round-trip", () => {
+  test("a malformed backlog/config.yml surfaces its validation error even when a linked task is also missing", async () => {
+    // Regression: readStatusFlow/loadConfig/loadProfile must run BEFORE resolveAllTasks, so a
+    // broken config surfaces immediately rather than being masked behind (and paid for after) a
+    // wasted round-trip resolving a task id that doesn't even exist.
+    mkdirSync(join(root, "backlog"), { recursive: true });
+    writeFileSync(join(root, "backlog", "config.yml"), "statuses: not-a-list\n");
+    writeDoc("stories/x.md", storyDoc("X", ["lore-99"], "todo"));
+    const adapter = fakeAdapter([]); // lore-99 would resolve to null if ever asked -- must never be reached
+
+    const err = await expectSyncError([], adapter);
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("backlog/config.yml");
+  });
+});
+
+describe("lore sync — a reserved-stem concept (index/log) is never reconciled, even if it carries tasks:", () => {
+  test("a root index.md with a tasks: field is skipped entirely -- untouched, no Backlog calls", async () => {
+    // index.md is regenerated wholesale by generateIndexes, keyed by the SAME bundle-relative path
+    // sync's own per-concept reconciliation writes to -- treating it as a task-linked concept would
+    // have its reconciled write silently discarded by that regeneration. A `tasks:` field here is
+    // tolerated by schema validation as an unrecognized extra key (a warning at most), not rejected,
+    // so this must be guarded explicitly rather than relying on validation to prevent it.
+    writeDoc(
+      "index.md",
+      "---\ntype: Reference\ntitle: Documentation\ntasks:\n  - lore-1\n---\n# Documentation\n\n<!-- lore:index:begin -->\n<!-- lore:index:end -->\n",
+    );
+    const poison = fakeAdapter([], { poisonViews: ["lore-1"] }); // throws if sync ever tries to resolve it
+
+    const { code } = await syncCmd([], poison);
+    expect(code).toBe(EXIT_OK);
+    expect(readDoc("index.md")).toContain("tasks:\n  - lore-1"); // frontmatter untouched
+  });
+});
+
 // ── A concept with tasks: but no managed-block markers ────────────────────────────
 
 describe("lore sync — a concept with tasks: but no managed block", () => {
