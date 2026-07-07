@@ -1,11 +1,11 @@
 ---
 id: LORE-26
 title: lore sync
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-07 01:16'
+updated_date: '2026-07-07 02:13'
 labels:
   - cmd
 milestone: m-3
