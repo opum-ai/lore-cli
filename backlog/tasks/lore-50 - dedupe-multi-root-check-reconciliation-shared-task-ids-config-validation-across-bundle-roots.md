@@ -3,9 +3,11 @@ id: LORE-50
 title: >-
   dedupe multi-root check reconciliation: shared task ids + config validation
   across bundle roots
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-07 04:11'
+updated_date: '2026-07-07 14:17'
 labels:
   - cmd
 dependencies:
@@ -40,7 +42,50 @@ root's label (the existing multi-root file-labeling convention must be preserved
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Multi-root lore check resolves each distinct linked task id at most once across the whole run, not once per bundle root
-- [ ] #2 Multi-root lore check validates backlog/config.yml and .lore/config.toml at most once across the whole run
-- [ ] #3 Per-concept drift findings are still correctly attributed to their own bundle root's label
+- [x] #1 Multi-root lore check resolves each distinct linked task id at most once across the whole run, not once per bundle root
+- [x] #2 Multi-root lore check validates backlog/config.yml and .lore/config.toml at most once across the whole run
+- [x] #3 Per-concept drift findings are still correctly attributed to their own bundle root's label
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implementation: pooled reconciliation inputs in commands/check.ts's computeDriftFindings, resolved
+once per run instead of once per bundle root.
+
+- reconcile-shared.ts: new resolveTaskDetails(adapter, ids) — non-throwing, Promise.allSettled over
+  every distinct id, returns Map<id, {ok:true,detail}|{ok:false,error}>. resolveAllTasks rebuilt on
+  top of it (same throwing contract, used by sync.ts and any caller with no override). gatherReconciliation
+  gained two new optional params: detailsOverride (a pre-resolved map; looked up instead of hitting the
+  adapter) and configErrorOverride (a cached config-validation failure to re-throw at the same fail-fast
+  point a fresh resolveReconcileConfig(root) call would have hit, without re-reading disk).
+- check.ts: new resolveSharedReconciliation() pools every bundle root's eligible concepts BEFORE the
+  per-root loop, resolving config once (try/caught, never rejects) and the id union once, then threads
+  both into every root's driftFindingsForBundle -> gatherReconciliation call as overrides.
+
+Regression caught by /code-review high and fixed before landing: an early version returned immediately
+from computeDriftFindings when the pooled config resolution failed, which silently discarded every
+bundle root's OWN already-known concept-scan error (tryConceptsForBundle) in favor of the generic
+pooled config error -- breaking the documented "first error, in bundle-argument order" contract
+(DriftResult's own doc comment). Fixed by never short-circuiting computeDriftFindings on a config
+failure: the failure is now carried as PooledReconciliation.configError and only surfaces per-root,
+at the exact point (and only for the roots) where gatherReconciliation's own eligibility check would
+have hit it fresh -- so a root with no eligible concepts (like one whose only file failed to scan at
+all) never sees it, exactly as before pooling existed. Added a regression test reproducing this exact
+scenario (two roots, one with its own scan error listed first in argument order, one with a real
+eligible concept behind a broken shared config) plus tests for the dedup itself (a task id linked
+from two roots is fetched from Backlog exactly once) and for the shared config being applied
+uniformly across roots.
+
+Verification: bun run typecheck clean; full bun test suite 1282/1282 pass (8 new tests added across
+check.test.ts/reconcile-shared.test.ts); bun run lint clean (3 pre-existing infos in unrelated files,
+no new errors); each new test independently confirmed to fail against the pre-fix code before the fix
+was applied (both the initial dedup regression and the config-priority regression /code-review high
+caught).
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Pooled multi-root lore check's status/managed-block reconciliation: config (backlog/config.yml + .lore/config.toml) and every distinct linked task id are now each resolved at most once per run, not once per bundle root, while preserving the existing per-root failure isolation (a bad task id or a root's own scan error only fails that root; a shared config failure still surfaces at the same per-root fail-fast point). Verified with new tests for the dedup, the shared config, and (after /code-review high caught a real regression in an early version) a root's own scan error correctly outranking a shared config failure in argument order. Full suite 1282/1282, typecheck and lint clean.
+<!-- SECTION:FINAL_SUMMARY:END -->
