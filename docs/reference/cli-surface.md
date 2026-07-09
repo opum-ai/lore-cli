@@ -504,10 +504,10 @@ without opening files. Mirrors the `backlog instructions` idiom.
 
 | | |
 |---|---|
-| **Args** | optional `<topic>` (e.g. `overview`, `linking`, `validation`) |
+| **Args** | optional `<topic>` (`overview` default; also `linking`, `sync`, `check`, `validation`) |
 | **Key flags** | — |
-| **Output** | `kind: instructions.text` — the guidance body |
-| **Exit** | `0` ok · `3` unknown topic |
+| **Output** | `kind: instructions.text` — the guidance body, plus the full topic index for `--json` callers |
+| **Exit** | `0` ok · `2` bad usage (unknown flag/extra argument) · `3` unknown topic |
 
 ### `help`
 

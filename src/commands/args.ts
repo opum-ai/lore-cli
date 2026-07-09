@@ -1,7 +1,8 @@
 /**
  * commands/args.ts — the shared `<positional…> [--flag…]` tokenizer for `link`/`unlink`, `rename`,
- * and `supersede` (their arg shapes agree exactly: some positionals, some boolean `--flags`, a `--`
- * end-of-options marker so a positional may itself start with `-`).
+ * `supersede`, `sync`, and `instructions` (their arg shapes agree exactly: some positionals, some
+ * boolean `--flags` — `instructions` has none — a `--` end-of-options marker so a positional may
+ * itself start with `-`).
  *
  * Only the tokenizing loop and the `unknown option` / bad-single-dash errors are shared here — each
  * command still validates its own positional arity (how many ids it needs, and what hint to give)
