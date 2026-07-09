@@ -2,49 +2,48 @@
  * core/manifest.ts — the machine-readable capability manifest `lore help --json`
  * serves (cli-surface §help; cli-contract §2/§7).
  *
- * A single registry describing every **shipped** command — its name, one-line
- * summary, positional signature, flags, `--json` availability, success envelope
- * `kind`, the exit codes it can return, and runnable examples — so an agent learns
- * the whole CLI surface in one read instead of parsing prose. It is the same
- * static-registry shape as `core/instructions.ts`'s `INSTRUCTION_TOPICS`: content
- * is code-resident and root-independent (no bundle load, no config), so the
- * command layer needs no `root`.
+ * A single, self-contained registry describing every **shipped** command — its
+ * name, one-line summary, positional signature, flags, `--json` availability,
+ * success envelope `kind`, the exit codes it can return, and runnable examples —
+ * so an agent learns the whole CLI surface in one read instead of parsing prose.
+ * Content is code-resident and root-independent (no bundle load, no config), so
+ * the command layer needs no `root`.
  *
- * Each command's `name` + `summary` are taken **from** `core/agent-bridge.ts`'s
- * `LORE_COMMANDS` (the list the generated SKILL.md already curates), and this
- * module layers on the richer per-command detail. Sharing one source for the
- * name/summary pair means the two agent-facing catalogs (SKILL.md and `lore help`)
- * cannot drift.
+ * ## Exit codes are DERIVED from seams, not hand-listed
  *
- * Two invariants keep this an honest, additive-only contract (LORE-38 AC#2):
+ * `lore`'s exit codes are produced by a handful of shared "seam" helpers, and a
+ * command inherits the full code set of every seam its `runX` call chain reaches
+ * (verified against the real call chains — hand-listing per command drifted).
+ * Each command therefore declares the seams it touches and its codes are computed
+ * by {@link exitCodesFor} from one authoritative seam → code map ({@link SEAM_CODES}):
  *
- *  1. **Only shipped commands.** Every entry is a real `cli.ts` dispatch case —
- *     never an aspirational command (`tasks`/`orphans`/`scaffold` are documented
- *     in cli-surface.md but not shipped; they are absent here). The lockstep test
- *     in `test/help.test.ts` drives each entry through the real router and pins the
- *     command set against the router's own dispatch switch (both directions).
- *  2. **The exit-code taxonomy is sourced from `errors.ts`.** {@link exitCodeTaxonomy}
- *     is built from `EXIT_OK`/`EXIT_UNCAUGHT`/`EXIT_CODES` directly, so the
- *     manifest's global exit enumeration can never drift from the real mapping.
+ *   - `bundle`  (loadBundle)                    → 3 not_found, 4 denied, 6 validation
+ *   - `read`    (readSource / path stat)        → 3 not_found, 4 denied
+ *   - `profile` (loadProfile)                   → 6 validation (malformed profile)
+ *   - `write`   (fswrite: ensureDir/create/…)   → 4 denied, 5 conflict
+ *   - `backlog` (the Backlog adapter)           → 3 not_found, 6 validation/drift
+ *   - `git`     (git log / commit seams)        → 6 drift
  *
- * Per-command `exitCodes` enumerate the codes a command can return through its own
- * contract, applied uniformly so siblings stay consistent: `0`; the universal `2`
- * (usage); `not_found` (3) when the command resolves a user-named path / id /
- * template / topic / command or loads the bundle; `denied` (4) when the command
- * **writes** to the filesystem (a permission failure on its write target is a
- * first-class outcome); and any `conflict` (5) / `validation`-or-`drift` (6)
- * specific to the command. An incidental `EACCES` *reading* an input file — which
- * any filesystem read could raise — is treated like `uncaught` (1): a generic
- * condition, not enumerated per read-only command. `1` (uncaught) is global-only
- * (cli-contract §5.1); the full taxonomy is in {@link Manifest.exitCodes}. `--json`
- * availability is universal — the flag is resolved once by the router and every
- * command emits the envelope — so `json` is `true` on every entry; it is carried
- * per command so a single entry is self-describing.
+ * plus `0` (success) and the universal `2` (usage, from the router's flag parsing)
+ * on every command, and any command-specific `extra` code (e.g. a `not_found` for
+ * an unknown `instructions` topic, which reaches no filesystem seam). `1`
+ * (uncaught) is a global-only condition (cli-contract §5.1) and is never listed
+ * per command; the full taxonomy is in {@link Manifest.exitCodes}, sourced from
+ * `errors.ts` so it cannot drift. `test/help.test.ts` pins each command's derived
+ * `exitCodes` to a golden list transcribed from the call-chain trace, so a seam
+ * mis-declaration fails CI.
+ *
+ * The name+summary pairs are kept byte-identical to `core/agent-bridge.ts`'s
+ * `LORE_COMMANDS` (which the generated SKILL.md uses) — guarded by a test, not a
+ * runtime import, so the two agent catalogs can't drift while the live CLI stays
+ * decoupled from the SKILL generator. `--json` availability is universal, carried
+ * per entry so a single entry is self-describing. Every entry is a real `cli.ts`
+ * dispatch case (never an aspirational `tasks`/`orphans`/`scaffold`), pinned to the
+ * router both directions by the lockstep test.
  */
 
 import { EXIT_CODES, EXIT_OK, EXIT_UNCAUGHT } from "../errors";
 import { SCHEMA_VERSION } from "../output";
-import { LORE_COMMANDS } from "./agent-bridge";
 
 /** One flag in the manifest: the bare name (no leading `--`), whether it takes a value, and a one-liner. */
 export interface ManifestFlag {
@@ -64,7 +63,7 @@ export interface ManifestFlag {
 export interface ManifestCommand {
   /** The subcommand token, exactly as `cli.ts` dispatches it. */
   readonly name: string;
-  /** One-line description of what the command does (from `LORE_COMMANDS`). */
+  /** One-line description of what the command does (kept in sync with `LORE_COMMANDS`). */
   readonly summary: string;
   /** The positional-argument signature (e.g. `<id> <taskId…>`), or `""` when the command takes none. */
   readonly args: string;
@@ -74,7 +73,7 @@ export interface ManifestCommand {
   readonly json: boolean;
   /** The `kind` of the command's `--json` success envelope (cli-contract §2.1), matching the live `kind:` literal. */
   readonly kind: string;
-  /** The exit codes this command can return (see the module policy); `1` (uncaught) is global-only. */
+  /** The exit codes this command can return, derived from its seams (see the module docstring); `1` (uncaught) is global-only. */
   readonly exitCodes: readonly number[];
   /** One or more runnable invocations. */
   readonly examples: readonly string[];
@@ -92,8 +91,33 @@ export interface Manifest {
   readonly commands: readonly ManifestCommand[];
 }
 
-/** The per-command detail this module layers onto each `LORE_COMMANDS` `{ name, summary }` pair. */
-type CommandDetail = Omit<ManifestCommand, "name" | "summary">;
+/** A shared error "seam" a command's call chain can reach; each maps to a fixed set of exit codes. */
+type Seam = "bundle" | "read" | "profile" | "write" | "backlog" | "git";
+
+/** The non-zero exit codes each seam can produce (verified against the real call chains; see the module docstring). */
+const SEAM_CODES: Readonly<Record<Seam, readonly number[]>> = {
+  bundle: [3, 4, 6], // loadBundle: not_found/denied (unreadable root), validation (malformed concept)
+  read: [3, 4], // readSource / path stat: not_found, denied
+  profile: [6], // loadProfile: validation (malformed .lore/profile.toml)
+  write: [4, 5], // fswrite: denied (EACCES/EPERM), conflict (EEXIST/ENOTDIR/EISDIR)
+  backlog: [3, 6], // Backlog adapter: not_found (binary/task missing), validation/drift
+  git: [6], // git log / commit seams: drift
+};
+
+/**
+ * Derive a command's sorted exit-code set from the seams it reaches: `0` (success)
+ * and `2` (usage) are universal, each seam contributes {@link SEAM_CODES}, and
+ * `extra` carries any command-specific code that reaches no filesystem seam.
+ */
+function exitCodesFor(seams: readonly Seam[], extra: readonly number[] = []): readonly number[] {
+  const codes = new Set<number>([EXIT_OK, EXIT_CODES.usage, ...extra]);
+  for (const seam of seams) {
+    for (const code of SEAM_CODES[seam]) {
+      codes.add(code);
+    }
+  }
+  return [...codes].sort((a, b) => a - b);
+}
 
 /** The four global flags the router resolves for every invocation (cli-contract §1). */
 const GLOBAL_FLAGS: readonly ManifestFlag[] = [
@@ -107,28 +131,27 @@ const GLOBAL_FLAGS: readonly ManifestFlag[] = [
   { name: "help", alias: "h", takesValue: false, summary: "Show help and exit" },
 ];
 
-/** The `help` command's summary — `help` is not in `LORE_COMMANDS` (it post-dates the bridge), so it is defined here. */
-const HELP_SUMMARY = "Show help, or the machine-readable command manifest under --json";
-
 /**
- * Per-command detail keyed by dispatch name. Flags, `kind` values, and exit codes
- * are transcribed from live source (`commands/*.ts` arg parsers and `kind:`
- * literals; the `LoreError` types they and their core/shared helpers throw), not
- * from the design docs, which the manifest supersedes as the machine-readable
- * surface. `exitCodes` follow the module policy (writes → `denied` 4;
- * named-target/bundle resolution → `not_found` 3).
+ * Every shipped command, in `cli.ts` dispatch order. Flags, `kind` values, and the
+ * seam declarations behind `exitCodes` are transcribed from live source
+ * (`commands/*.ts` call chains and `kind:` literals); summaries are kept identical
+ * to `LORE_COMMANDS` (guarded by a test). The seam list passed to
+ * {@link exitCodesFor} is the exit-code rationale — no hand-listed code needs a comment.
  */
-const COMMAND_DETAILS: Readonly<Record<string, CommandDetail>> = {
-  init: {
+const LORE_MANIFEST: readonly ManifestCommand[] = [
+  {
+    name: "init",
+    summary: "Scaffold an empty, conformant OKF bundle",
     args: "",
     flags: [],
     json: true,
     kind: "init",
-    // writes the bundle (4); already-initialized (5); Backlog probe failure (6).
-    exitCodes: [0, 2, 4, 5, 6],
+    exitCodes: exitCodesFor(["profile", "write"]),
     examples: ["lore init"],
   },
-  new: {
+  {
+    name: "new",
+    summary: "Scaffold a typed concept from a template",
     args: '<type> "<title>"',
     flags: [
       { name: "var", takesValue: true, repeatable: true, summary: "Fill a `{{k}}` template placeholder (k=v)" },
@@ -139,14 +162,15 @@ const COMMAND_DETAILS: Readonly<Record<string, CommandDetail>> = {
     ],
     json: true,
     kind: "new",
-    // resolves --template (3); writes the concept (4); target path exists (5); template missing a required var (6).
-    exitCodes: [0, 2, 3, 4, 5, 6],
+    exitCodes: exitCodesFor(["profile", "read", "write"]),
     examples: [
       'lore new story "Bulk archive completed orders"',
       'lore new adr "Use soft deletes" --tags retention,orders',
     ],
   },
-  validate: {
+  {
+    name: "validate",
+    summary: "Check concept files against OKF + the lore profile (per-file)",
     args: "[paths…]",
     flags: [
       { name: "type", takesValue: true, summary: "Limit the report to one concept type" },
@@ -154,11 +178,12 @@ const COMMAND_DETAILS: Readonly<Record<string, CommandDetail>> = {
     ],
     json: true,
     kind: "validate.report",
-    // resolves path arguments (3); read-only; validation failure (6).
-    exitCodes: [0, 2, 3, 6],
+    exitCodes: exitCodesFor(["profile", "read"]),
     examples: ["lore validate", "lore validate --type ADR --strict"],
   },
-  check: {
+  {
+    name: "check",
+    summary: "Validate links/anchors + reconciliation drift across the bundle (CI gate)",
     args: "[paths…]",
     flags: [
       { name: "strict", takesValue: false, summary: "Treat portability warnings as failures for the exit code" },
@@ -166,11 +191,12 @@ const COMMAND_DETAILS: Readonly<Record<string, CommandDetail>> = {
     ],
     json: true,
     kind: "check.report",
-    // resolves path arguments / a vanished linked task (3); read-only; drift (6).
-    exitCodes: [0, 2, 3, 6],
+    exitCodes: exitCodesFor(["read", "backlog"]),
     examples: ["lore check", "lore check --external"],
   },
-  replace: {
+  {
+    name: "replace",
+    summary: "Find-and-replace across the bundle, skipping managed regions",
     args: '"<find>" "<replace>"',
     flags: [
       { name: "regex", takesValue: false, summary: "Treat <find> as a regular expression" },
@@ -179,20 +205,23 @@ const COMMAND_DETAILS: Readonly<Record<string, CommandDetail>> = {
     ],
     json: true,
     kind: "replace.result",
-    // resolves a target path (3); writes the edited files (4).
-    exitCodes: [0, 2, 3, 4],
+    // No `bundle`/`profile` seam: replace rewrites raw bytes and never parses frontmatter, so no validation(6).
+    exitCodes: exitCodesFor(["read", "write"]),
     examples: ['lore replace "soft delete" "soft-delete" --in "docs/stories/**"'],
   },
-  rename: {
+  {
+    name: "rename",
+    summary: "Move a concept and repoint every inbound link + ref",
     args: "<oldId> <newId>",
     flags: [{ name: "dry-run", takesValue: false, summary: "Report rewrites, move nothing" }],
     json: true,
     kind: "rename.result",
-    // resolves oldId (3); moves/writes files (4); newId exists or collides (5); back-reference move drift (6).
-    exitCodes: [0, 2, 3, 4, 5, 6],
+    exitCodes: exitCodesFor(["bundle", "write", "backlog"]),
     examples: ["lore rename stories/bulk-archive-orders stories/order-archival"],
   },
-  supersede: {
+  {
+    name: "supersede",
+    summary: "Mark a concept superseded by another, wiring both ways",
     args: "<oldId> <newId>",
     flags: [
       { name: "rewrite-links", takesValue: false, summary: "Repoint inbound links to the successor" },
@@ -200,20 +229,22 @@ const COMMAND_DETAILS: Readonly<Record<string, CommandDetail>> = {
     ],
     json: true,
     kind: "supersede.result",
-    // resolves both ids (3); writes frontmatter (4); already superseded (5).
-    exitCodes: [0, 2, 3, 4, 5],
+    exitCodes: exitCodesFor(["bundle", "profile", "write"]),
     examples: ["lore supersede adr/0007-old-decision adr/0012-new-decision --rewrite-links"],
   },
-  link: {
+  {
+    name: "link",
+    summary: "Add task ids to a concept's tasks: + the doc: back-ref",
     args: "<id> <taskId…>",
     flags: [{ name: "no-back-ref", takesValue: false, summary: "Skip the doc: label write to the task" }],
     json: true,
     kind: "link.result",
-    // resolves concept + task ids (3); writes frontmatter / a managed region (4); case-insensitive id collision (5); back-reference edit drift (6).
-    exitCodes: [0, 2, 3, 4, 5, 6],
+    exitCodes: exitCodesFor(["bundle", "profile", "write", "backlog"]),
     examples: ["lore link stories/bulk-archive-orders task-42 task-57"],
   },
-  unlink: {
+  {
+    name: "unlink",
+    summary: "Remove task ids from a concept's tasks: + the doc: back-ref",
     args: "<id> <taskId…>",
     flags: [
       { name: "no-back-ref", takesValue: false, summary: "Leave the doc: label on the task" },
@@ -221,14 +252,15 @@ const COMMAND_DETAILS: Readonly<Record<string, CommandDetail>> = {
     ],
     json: true,
     kind: "unlink.result",
-    // resolves the concept (3); writes frontmatter (4) via the same path as link; id collision (5); back-reference edit drift (6).
-    exitCodes: [0, 2, 3, 4, 5, 6],
+    exitCodes: exitCodesFor(["bundle", "profile", "write", "backlog"]),
     examples: [
       "lore unlink stories/bulk-archive-orders task-42",
       "lore unlink stories/bulk-archive-orders task-42 --allow-missing",
     ],
   },
-  sync: {
+  {
+    name: "sync",
+    summary: "Reconcile status + managed task blocks, regen index/log, commit backlog/",
     args: "[paths…]",
     flags: [
       { name: "dry-run", takesValue: false, summary: "Report what would change, write nothing (docs/ or backlog/)" },
@@ -236,11 +268,12 @@ const COMMAND_DETAILS: Readonly<Record<string, CommandDetail>> = {
     ],
     json: true,
     kind: "sync.result",
-    // resolves a vanished linked task (3); writes docs + commits backlog/ (4); could not reconcile/commit (6).
-    exitCodes: [0, 2, 3, 4, 6],
+    exitCodes: exitCodesFor(["bundle", "profile", "read", "write", "backlog", "git"]),
     examples: ["lore sync", "lore sync --dry-run"],
   },
-  schema: {
+  {
+    name: "schema",
+    summary: "Export the profile's editor JSON Schemas to .lore/schemas/",
     args: "export",
     flags: [
       { name: "out", takesValue: true, summary: "Output directory (default .lore/schemas/)" },
@@ -248,11 +281,13 @@ const COMMAND_DETAILS: Readonly<Record<string, CommandDetail>> = {
     ],
     json: true,
     kind: "schema.result",
-    // writes the schema files (4); no user-named input to resolve.
-    exitCodes: [0, 2, 4],
+    // No read seam / no id lookup → no not_found(3).
+    exitCodes: exitCodesFor(["profile", "write"]),
     examples: ["lore schema export"],
   },
-  graph: {
+  {
+    name: "graph",
+    summary: "Emit the bundle's cross-link graph as json or dot",
     args: "[<id>]",
     flags: [
       { name: "dot", takesValue: false, summary: "Emit Graphviz DOT (mutually exclusive with --json)" },
@@ -260,11 +295,12 @@ const COMMAND_DETAILS: Readonly<Record<string, CommandDetail>> = {
     ],
     json: true,
     kind: "graph.export",
-    // resolves the root id / loads the bundle (3); read-only.
-    exitCodes: [0, 2, 3],
+    exitCodes: exitCodesFor(["bundle"]),
     examples: ["lore graph", "lore graph stories/bulk-archive-orders --dot"],
   },
-  query: {
+  {
+    name: "query",
+    summary: "Full-text search the bundle with frontmatter filters",
     args: '["<text>"]',
     flags: [
       { name: "type", takesValue: true, summary: "Filter by concept type" },
@@ -275,11 +311,12 @@ const COMMAND_DETAILS: Readonly<Record<string, CommandDetail>> = {
     ],
     json: true,
     kind: "query.results",
-    // loads the bundle (3); read-only.
-    exitCodes: [0, 2, 3],
+    exitCodes: exitCodesFor(["bundle"]),
     examples: ['lore query "soft delete retention"', "lore query --type Story --tag orders --status in-progress"],
   },
-  context: {
+  {
+    name: "context",
+    summary: "Assemble a concept + neighbor summaries within a token budget",
     args: "<id>",
     flags: [
       { name: "max-tokens", takesValue: true, summary: "Token budget (labeled chars/4 estimate)" },
@@ -287,20 +324,23 @@ const COMMAND_DETAILS: Readonly<Record<string, CommandDetail>> = {
     ],
     json: true,
     kind: "context.export",
-    // resolves the concept id / loads the bundle (3); read-only.
-    exitCodes: [0, 2, 3],
+    exitCodes: exitCodesFor(["bundle"]),
     examples: ["lore context stories/bulk-archive-orders --max-tokens 4000 --depth 2"],
   },
-  instructions: {
+  {
+    name: "instructions",
+    summary: "Print task-scoped agent guidance on demand",
     args: "[<topic>]",
     flags: [],
     json: true,
     kind: "instructions.text",
-    // resolves the topic key (3); static, no filesystem.
-    exitCodes: [0, 2, 3],
+    // Static registry, no filesystem seam; `extra` 3 is the unknown-topic not_found.
+    exitCodes: exitCodesFor([], [3]),
     examples: ["lore instructions", "lore instructions linking"],
   },
-  agents: {
+  {
+    name: "agents",
+    summary: "Regenerate this bridge (SKILL.md + the CLAUDE.md nudge)",
     args: "",
     flags: [
       { name: "force", takesValue: false, summary: "Overwrite hand-edited generated files" },
@@ -308,38 +348,21 @@ const COMMAND_DETAILS: Readonly<Record<string, CommandDetail>> = {
     ],
     json: true,
     kind: "agents.result",
-    // writes the bridge files (4); --check found the bridge stale (6); no user-named input to resolve.
-    exitCodes: [0, 2, 4, 6],
+    // Writes the bridge (fswrite); `extra` 6 is the managed-block validation throw and the --check drift return.
+    exitCodes: exitCodesFor(["write"], [6]),
     examples: ["lore agents", "lore agents --check"],
   },
-  help: {
+  {
+    name: "help",
+    summary: "Show help, or the machine-readable command manifest under --json",
     args: "[<command>]",
     flags: [],
     json: true,
     kind: "help.manifest",
-    // resolves the command name (3); static, no filesystem.
-    exitCodes: [0, 2, 3],
+    // Static registry, no filesystem seam; `extra` 3 is the unknown-command not_found.
+    exitCodes: exitCodesFor([], [3]),
     examples: ["lore help", "lore help new", "lore help --json"],
   },
-};
-
-/** Look up a command's detail by name, throwing (at module load, via {@link LORE_MANIFEST}) if a `LORE_COMMANDS` entry has none. */
-function detailFor(name: string): CommandDetail {
-  const detail = COMMAND_DETAILS[name];
-  if (detail === undefined) {
-    throw new Error(`manifest: no COMMAND_DETAILS entry for command "${name}"`);
-  }
-  return detail;
-}
-
-/**
- * Every shipped command, in `cli.ts` dispatch order: the 16 `LORE_COMMANDS`
- * (name + summary shared with SKILL.md) enriched with per-command detail, then
- * `help` (which post-dates the bridge).
- */
-const LORE_MANIFEST: readonly ManifestCommand[] = [
-  ...LORE_COMMANDS.map((command) => ({ name: command.name, summary: command.summary, ...detailFor(command.name) })),
-  { name: "help", summary: HELP_SUMMARY, ...detailFor("help") },
 ];
 
 /**

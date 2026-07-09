@@ -111,13 +111,16 @@ is permitted; whitespace inside the JSON is not part of the contract.
 
 `kind` is a stable, enumerated string. Each command that supports `--json`
 declares one or more `kind` values; the same logical payload always carries the
-same `kind`. The **authoritative, machine-readable registry is `lore help --json`** — the
-capability manifest, which enumerates every shipped command's `kind`, flags, and
-exit codes from live source. This table mirrors it for reference and tracks the
-[CLI surface](cli-surface.md):
+same `kind`. The machine-readable registry of **command** `kind`s is `lore help
+--json` — the capability manifest, which enumerates every shipped command's
+`kind`, flags, and exit codes from live source. This table mirrors it for
+reference (and adds the two **meta** envelopes emitted by the `--version` /
+`--help` flags, which are not commands and so are not in the manifest) and tracks
+the [CLI surface](cli-surface.md):
 
 | `kind` | Emitted by | `data` shape (summary) |
 |---|---|---|
+| `version` / `help` | `lore --version` / `lore --help` (global flags) | the version string / the top-level usage text |
 | `init` | `lore init` | created/skipped paths, bundle root |
 | `new` | `lore new` | new concept id, path, applied template/vars |
 | `validate.report` | `lore validate` | tiered findings (errors/warnings), counts |

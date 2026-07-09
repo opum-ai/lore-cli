@@ -71,6 +71,37 @@ describe("core/manifest — shape and invariants", () => {
     }
   });
 
+  test("each command's exitCodes match the call-chain-traced golden set", () => {
+    // The golden set is transcribed from an authoritative trace of each command's
+    // runX call chain against the shared seams (loadBundle/readSource/loadProfile/
+    // fswrite/adapter/git). It is INDEPENDENT of manifest.ts's seam derivation, so a
+    // mis-declared seam (the recurring under/over-reporting bug) fails here.
+    const golden: Record<string, number[]> = {
+      init: [0, 2, 4, 5, 6],
+      new: [0, 2, 3, 4, 5, 6],
+      validate: [0, 2, 3, 4, 6],
+      check: [0, 2, 3, 4, 6],
+      replace: [0, 2, 3, 4, 5], // no 6: rewrites raw bytes, never parses frontmatter
+      rename: [0, 2, 3, 4, 5, 6],
+      supersede: [0, 2, 3, 4, 5, 6],
+      link: [0, 2, 3, 4, 5, 6],
+      unlink: [0, 2, 3, 4, 5, 6],
+      sync: [0, 2, 3, 4, 5, 6],
+      schema: [0, 2, 4, 5, 6], // no 3: no read seam / no id lookup
+      graph: [0, 2, 3, 4, 6],
+      query: [0, 2, 3, 4, 6],
+      context: [0, 2, 3, 4, 6],
+      instructions: [0, 2, 3],
+      agents: [0, 2, 4, 5, 6], // no 3: readFileIfPresent maps ENOENT→undefined
+      help: [0, 2, 3],
+    };
+    expect(Object.keys(golden).sort()).toEqual([...manifestCommandNames()].sort());
+    for (const command of buildManifest().commands) {
+      // Key by name so a mismatch names the offending command in the failure output.
+      expect({ [command.name]: [...command.exitCodes] }).toEqual({ [command.name]: golden[command.name] as number[] });
+    }
+  });
+
   test("--json is universally available (self-describing per entry)", () => {
     for (const command of buildManifest().commands) {
       expect(command.json).toBe(true);
@@ -120,7 +151,8 @@ describe("manifest ⇔ router — bidirectional lockstep guard", () => {
     const source = readFileSync(new URL("../src/cli.ts", import.meta.url), "utf8");
     const switchStart = source.indexOf("switch (parsed.command)");
     const dispatchBlock = source.slice(switchStart, source.indexOf("default:", switchStart));
-    const dispatched = new Set([...dispatchBlock.matchAll(/case "([a-z]+)":/g)].map((m) => m[1] as string));
+    // Capture the full quoted token (not just [a-z]+) so a hyphenated/digit command can't slip the guard.
+    const dispatched = new Set([...dispatchBlock.matchAll(/case "([^"]+)":/g)].map((m) => m[1] as string));
     expect(dispatched.size).toBeGreaterThan(10); // sanity: the switch block was located and parsed
     expect(new Set(manifestCommandNames())).toEqual(dispatched);
   });

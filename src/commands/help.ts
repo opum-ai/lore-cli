@@ -93,7 +93,9 @@ function commandHelpRenderable(manifest: Manifest, command: ManifestCommand): Re
  */
 export function renderTopLevelHelp(manifest: Manifest = buildManifest()): string {
   const nameWidth = Math.max(...manifest.commands.map((c) => c.name.length));
-  const commands = manifest.commands.map((c) => `  ${c.name.padEnd(nameWidth)}  ${c.summary}`).join("\n");
+  const commands = manifest.commands
+    .map((c) => `  ${c.name.padEnd(nameWidth)}  ${c.summary}${c.args ? ` (lore ${c.name} ${c.args})` : ""}`)
+    .join("\n");
   const optWidth = Math.max(...manifest.globalFlags.map((f) => globalFlagLabel(f).length));
   const options = manifest.globalFlags.map((f) => `  ${globalFlagLabel(f).padEnd(optWidth)}  ${f.summary}`).join("\n");
   return `lore ${VERSION} — OKF-native documentation CLI
