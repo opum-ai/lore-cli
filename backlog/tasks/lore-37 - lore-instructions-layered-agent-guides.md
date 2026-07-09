@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:27'
-updated_date: '2026-07-07 17:52'
+updated_date: '2026-07-07 22:59'
 labels:
   - cmd
   - agent-api
@@ -84,6 +84,45 @@ still exits 0 after the cli-surface.md edit.
 Out of scope (separate task): LORE-36 (generated SKILL.md + CLAUDE.md nudge)
 depends on this and is not started -- it can reuse core/instructions.ts's
 OVERVIEW content once built.
+
+/code-review max on PR #39 found 12 CONFIRMED findings, all in the new
+guide content (core/instructions.ts) -- the first-pass prose was grounded
+in aspirational docs (agent-onboarding.md describes the FULL planned agent
+loop, including `lore tasks`, which is LORE-25, still To Do) rather than
+verified against live source. All 12 fixed in commit 9612834:
+- linking/overview no longer tell agents to run the nonexistent `lore
+  tasks` command; use `backlog task view <id> --plain` instead.
+- linking: fixed link-vs-unlink not_found semantics (unlink tolerates a
+  missing id, exit 0) and the backlog/ commit claim (only sync commits,
+  not link/unlink).
+- sync: fixed kind (sync.result, not sync.summary); removed the
+  self-contradicting "silently overwritten AND refused exit 4" claim for
+  managed-block edits (no denied path exists for that at all).
+- check: removed the false claim of a drift/validation error_type split
+  within check itself (its report-failure path never throws -- plain
+  exit 6, no error envelope); fixed the exit-3 claim (bad path arg, not a
+  missing link/anchor target); dropped a nonexistent "token estimates"
+  claim (that's lore context/graph).
+- validation: fixed quote-safety severities (3 of 4 checks are
+  unconditional errors, not warnings), corrected the ADR-0006 citation to
+  reflect the LORE-46 profile.toml-source-of-truth amendment, and added
+  the omitted `resource` drift finding category.
+- cleanup: refactored commands/instructions.ts's hand-rolled arg parser
+  to reuse commands/args.ts's shared parseCommandArgs/usage (5th
+  consumer alongside link/unlink/rename/supersede/sync); updated
+  args.ts's own header comment (which also, pre-existingly, omitted
+  `sync` from its consumer list).
+
+Re-verified after fixes: bun run typecheck clean; full suite 1297/1297;
+bun run lint clean (same 3 pre-existing infos); manually re-exercised
+every corrected topic; lore check on this repo's own docs/ bundle still
+exits 0.
+
+Note for a future session: docs/runbooks/agent-onboarding.md §1 step 3
+itself instructs `lore tasks <story> --json` as if it exists today --
+same root defect as what this review caught, but in an already-shipped
+doc, out of scope for LORE-37. Flagged to the user; not fixed here
+without explicit scope approval.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
