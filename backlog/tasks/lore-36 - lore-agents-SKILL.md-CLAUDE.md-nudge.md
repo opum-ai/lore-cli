@@ -1,11 +1,11 @@
 ---
 id: LORE-36
 title: 'lore agents: SKILL.md + CLAUDE.md nudge'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:27'
-updated_date: '2026-07-09 13:15'
+updated_date: '2026-07-09 13:19'
 labels:
   - cmd
   - agent-api
@@ -52,3 +52,9 @@ Implemented lore agents (LORE-36) to the cli-surface.md contract. Two artifacts:
 
 Ran high-effort workflow-backed /code-review (16 agents). 7 findings verified, all fixed + regression-tested: (1) [correctness] --check force-planned the bridge, misreporting a hand-edited SKILL.md as 'updated'/drift with an inert 'run lore agents' remedy and a self-contradicting force:false+action:updated payload -> now plans with the real force flag; protected+force:false, --force remedy in the trailer. (2) [correctness] upsertManagedBlock insert appended at EOF, so an unterminated code fence / <!-- comment swallowed the markers -> re-run duplicated the block -> now verify-after-insert re-locates the pair and fails loud (validation/exit6). (3) [correctness] non-atomic multi-file write could truncate the user's CLAUDE.md on crash -> switched to writeFileAtomic (temp+rename). (4) [cleanup] normalizeOnDisk only mapped CRLF -> broadened to strip leading BOM + lone CR (line-ending half of concept.ts normalizeInput), fixing false drift; comment corrected. (5) [correctness] insert stripped trailing whitespace (bytes outside the block) -> now preserves existing content byte-for-byte, adding only the blank-line separation. (6) [cleanup] locateLabeledMarkers duplicated findMarkers' scan -> extracted shared collectMarkerSpans (both call it; tasks-block behavior unchanged, full suite green). (7) [cleanup] labeledMarkerError duplicated markerError -> markerError now delegates. 1 finding refuted (renderTrailer predicate recompute, no divergence). Full suite 1333 pass; each fix smoke-verified end-to-end.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped `lore agents` via PR #40 (squash-merged to dev as 75faacb, promoted to main). Generates .claude/skills/lore/SKILL.md (a small, live-source-grounded teacher that points at 'lore instructions' -- AC#2) plus a marker-delimited CLAUDE.md nudge; idempotent, byte-identical re-run with a --check drift gate (exit 6 stale / 0 current) -- AC#1. Pure core/agent-bridge.ts + thin commands/agents.ts; the nudge upserts via a net-new upsertManagedBlock sharing a new collectMarkerSpans scanner with the shipped tasks-block engine. --force overwrites a hand-edited SKILL.md, else protected; atomic multi-file writes. Ran a high-effort workflow-backed code review (16 agents); all 7 findings fixed + regression-tested. Dogfooded in-repo. Full suite 1333 green; CI green on macos/ubuntu/windows + compile smoke.
+<!-- SECTION:FINAL_SUMMARY:END -->
