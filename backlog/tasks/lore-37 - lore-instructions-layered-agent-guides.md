@@ -1,11 +1,11 @@
 ---
 id: LORE-37
 title: lore instructions (layered agent guides)
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:27'
-updated_date: '2026-07-07 22:59'
+updated_date: '2026-07-09 11:55'
 labels:
   - cmd
   - agent-api
