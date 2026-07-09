@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lore agents` — generate/refresh the Claude Code agent bridge** (LORE-36, ADR-0004). Writes a
+  generated `.claude/skills/lore/SKILL.md` (a small, grounded teacher that names the command surface,
+  the `--json`/exit-code contract, and points at `lore instructions` as the source of truth) and a
+  tiny marker-delimited `CLAUDE.md` nudge (`<!-- lore:agents:begin/end -->`) that points at the skill.
+  Idempotent: regenerating with no change is byte-identical. The nudge is a **managed block** upserted
+  via a new generic `upsertManagedBlock` engine (the insert-or-update sibling of the `lore:tasks`
+  regenerator), so it never clobbers surrounding prose or an unrelated block (e.g. Backlog.md's).
+  SKILL.md is a whole lore-owned file: the default run leaves a differing (hand-edited) one untouched
+  and reports it, while `--force` overwrites it. `--check` reports drift without writing — a CI gate
+  that exits `6` (`drift`) when the bridge is stale, `0` when current. Output is `kind: agents.result`.
+  Generated content is grounded in live source, never a runbook (it names only real commands — no
+  `lore tasks`), guarded by a lockstep test that runs each advertised command through the real router.
 - **`lore link` / `lore unlink` — wire a concept's `tasks:` frontmatter to Backlog task ids**
   (LORE-24, ADR-0009 §1–§2). `link` adds task ids to the concept's `tasks:` list and records the
   back-reference on each task: a queryable `doc:<conceptId>` label plus the concept's repo-relative

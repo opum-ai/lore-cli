@@ -51,6 +51,14 @@
  * a typed {@link LoreError} out — no filesystem, no spawn, no clock, no `process.exit`. Input is
  * expected to be LF-normalized (as every lore read path normalizes it — concept.ts `normalizeInput`).
  *
+ * ### The generic sibling ({@link upsertManagedBlock})
+ *
+ * {@link regenerateTaskBlock} owns one fixed region and *requires* an author-placed marker pair.
+ * {@link upsertManagedBlock} is the **insert-or-update** engine for lore-owned blocks that lore must
+ * be able to add to a file that has never carried them — `lore agents`'s `CLAUDE.md` nudge. It shares
+ * this module's structural, whitespace-tolerant location and fail-loud malformed-marker validation,
+ * differing only in that a total absence of markers is an insert, not an error.
+ *
  * [ADR-0008]: ../../docs/adr/0008-managed-block-remark-ast.md
  */
 
@@ -156,14 +164,20 @@ export function regenerateTaskBlock(
 }
 
 /**
- * Locate the single balanced pair of top-level marker nodes in `content`, validating ADR-0008 §2.
- * The document is parsed with `fromMarkdown` and only the root's **direct** `html` children are
- * candidates, so a sentinel nested in a code fence or blockquote is never a marker.
- *
- * @throws LoreError `validation` when there is not exactly one begin and one end marker at top level,
- *   or the end precedes the begin (missing / duplicated / unbalanced / crossed).
+ * Scan `content` for top-level `html` marker nodes, returning the source spans of those matching
+ * `beginMarker` / `endMarker`. The document is parsed with `fromMarkdown` and only the root's
+ * **direct** `html` children are candidates, so a sentinel nested in a code fence or blockquote is
+ * never a marker; the node value is trimmed before matching because mdast keeps a marker line's
+ * leading indent and trailing spaces in the `html` node's `value`. The one shared primitive behind
+ * both {@link findMarkers} (the fixed `lore:tasks` region) and {@link locateLabeledMarkers} (any
+ * labeled block), so the two never drift on how a marker is located — each applies its own validation
+ * to the spans this returns.
  */
-function findMarkers(content: string): { begin: Marker; end: Marker } {
+function collectMarkerSpans(
+  content: string,
+  beginMarker: RegExp,
+  endMarker: RegExp,
+): { begins: Marker[]; ends: Marker[] } {
   const tree: Root = fromMarkdown(content);
   const begins: Marker[] = [];
   const ends: Marker[] = [];
@@ -175,13 +189,26 @@ function findMarkers(content: string): { begin: Marker; end: Marker } {
     if (span === null) {
       continue; // defensive: a parsed html node always carries offsets
     }
-    const value = node.value.trim(); // mdast keeps a marker line's surrounding whitespace in `value`; ignore it
-    if (BEGIN_MARKER.test(value)) {
+    const value = node.value.trim();
+    if (beginMarker.test(value)) {
       begins.push(span);
-    } else if (END_MARKER.test(value)) {
+    } else if (endMarker.test(value)) {
       ends.push(span);
     }
   }
+  return { begins, ends };
+}
+
+/**
+ * Locate the single balanced pair of top-level marker nodes in `content`, validating ADR-0008 §2.
+ * The document is parsed with `fromMarkdown` and only the root's **direct** `html` children are
+ * candidates, so a sentinel nested in a code fence or blockquote is never a marker.
+ *
+ * @throws LoreError `validation` when there is not exactly one begin and one end marker at top level,
+ *   or the end precedes the begin (missing / duplicated / unbalanced / crossed).
+ */
+function findMarkers(content: string): { begin: Marker; end: Marker } {
+  const { begins, ends } = collectMarkerSpans(content, BEGIN_MARKER, END_MARKER);
 
   if (begins.length === 0 || ends.length === 0) {
     throw markerError(
@@ -209,14 +236,13 @@ function findMarkers(content: string): { begin: Marker; end: Marker } {
   return { begin, end };
 }
 
-/** Build the fail-loud "malformed managed-block markers" error (ADR-0008 §2 → `validation`, exit 6). */
+/**
+ * Build the fail-loud "malformed managed-block markers" error for the fixed `lore:tasks` region
+ * (ADR-0008 §2 → `validation`, exit 6). A thin specialization of {@link labeledMarkerError} so the
+ * tasks-block and generic-block diagnostics share one wording/shape and cannot drift.
+ */
 function markerError(reason: string, input: Record<string, unknown>): LoreError {
-  return new LoreError(
-    "validation",
-    `cannot regenerate the \`lore:tasks\` block: ${reason}`,
-    `place exactly one \`${TASK_BLOCK_BEGIN}\` and one \`${TASK_BLOCK_END}\` on their own lines, in order, at the top level of the doc`,
-    input,
-  );
+  return labeledMarkerError("lore:tasks", reason, input);
 }
 
 /**
@@ -274,4 +300,131 @@ function offsetsOf(node: Nodes): Marker | null {
     return null;
   }
   return { start: position.start.offset, end: position.end.offset };
+}
+
+/**
+ * Insert or refresh a generic lore-managed block delimited by `<!-- {label}:begin -->` …
+ * `<!-- {label}:end -->`, returning the new full file bytes.
+ *
+ * This is the **insert-or-update** sibling of {@link regenerateTaskBlock}. That engine owns the
+ * fixed `lore:tasks` region and deliberately *requires* an author-placed marker pair (a missing
+ * pair is a hard error), because a Story's task block only ever regenerates in a doc that already
+ * declares it. `lore agents`'s `CLAUDE.md` nudge is the opposite shape: lore must be able to add
+ * the block to a file that has never seen it. So this function tolerates a total absence of markers
+ * (it appends the block) while keeping every other guarantee of {@link regenerateTaskBlock} —
+ * structural, whitespace-tolerant location and fail-loud validation of a malformed pair.
+ *
+ * `label` names the region (`"lore:agents"`); `body` is the pre-rendered inner content, with no
+ * surrounding newlines (the engine adds exactly one on each side).
+ *
+ * - **No markers present** → append the block after the file's existing content, which is preserved
+ *   **byte-for-byte** (including an unrelated managed block like Backlog.md's, and any trailing
+ *   whitespace); only the separation needed to guarantee a blank line before the block is added. An
+ *   empty or whitespace-only file yields the block alone. If the existing content ends inside an
+ *   unterminated code fence or `<!--` comment — which would swallow the appended markers so they are
+ *   not at the top level — this is a fail-loud `validation` error rather than a silent, duplicating
+ *   append (a later run, finding no top-level markers, would otherwise append a *second* block).
+ * - **Exactly one balanced pair** → splice `\n{body}\n` between the markers, copying every other
+ *   byte. The insert and update forms converge on the same canonical bytes, so regenerating an
+ *   already-current block reproduces byte-identical output (idempotent) — the command layer can
+ *   treat "no byte difference" as a genuine no-op.
+ * - **Malformed** (a lone begin/end, duplicated markers, or a crossed pair) → a `validation`
+ *   {@link LoreError} (exit 6); lore refuses to guess and never writes a partial block.
+ *
+ * Input is expected LF-normalized (the caller normalizes on read, as every lore read path does).
+ */
+export function upsertManagedBlock(content: string, options: { label: string; body: string }): string {
+  const { label, body } = options;
+  const block = `<!-- ${label}:begin -->\n${body}\n<!-- ${label}:end -->`;
+  const located = locateLabeledMarkers(content, label);
+  if (located !== null) {
+    // Update: replace only the bytes strictly between the markers with `\n{body}\n` — a fixpoint over
+    // already-current bytes (the begin node ends just after its `-->`, matching the insert form below).
+    return content.slice(0, located.begin.end) + `\n${body}\n` + content.slice(located.end.start);
+  }
+  // Insert: append the block, preserving `content` verbatim (only the blank-line separation is added).
+  const inserted = appendBlock(content, block);
+  // The append must land at the document top level. If `content` ends inside an unterminated code
+  // fence or `<!--` comment, the appended markers are parsed *inside* that construct and are not
+  // top-level nodes — a re-run would find none and append again, multiplying the block. Detect that
+  // by re-locating in the result and fail loud instead of silently duplicating.
+  if (locateLabeledMarkers(inserted, label) === null) {
+    throw labeledMarkerError(
+      label,
+      "the document ends inside an unterminated code fence or `<!--` comment, so the block cannot be appended at the top level",
+      { label },
+    );
+  }
+  return inserted;
+}
+
+/**
+ * Append `block` after `content`, preserving `content` byte-for-byte and adding only the separation
+ * needed to guarantee a blank line before the block. An empty or whitespace-only `content` yields the
+ * block alone (no leading blank lines on an otherwise-empty file).
+ */
+function appendBlock(content: string, block: string): string {
+  if (!/\S/.test(content)) {
+    return `${block}\n`;
+  }
+  const separator = content.endsWith("\n\n") ? "" : content.endsWith("\n") ? "\n" : "\n\n";
+  return `${content}${separator}${block}\n`;
+}
+
+/** Escape a literal for safe embedding in a `RegExp`. The label is lore-internal, but the matcher stays robust. */
+function escapeRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Locate the balanced `<!-- {label}:begin -->` / `<!-- {label}:end -->` marker pair in `content`, or
+ * `null` when the file carries neither marker (the insert case {@link upsertManagedBlock} needs).
+ * Shares {@link collectMarkerSpans} with {@link findMarkers} (so marker *location* never drifts
+ * between the two); the one behavioral difference is that a *total* absence returns `null` instead of
+ * throwing — a marker pair present yet malformed (a lone begin/end, duplicated, or crossed) is still a
+ * fail-loud `validation` error.
+ *
+ * @throws LoreError `validation` when markers are present but malformed.
+ */
+function locateLabeledMarkers(content: string, label: string): { begin: Marker; end: Marker } | null {
+  const beginMarker = new RegExp(`^<!--\\s*${escapeRegExp(label)}:begin\\s*-->$`);
+  const endMarker = new RegExp(`^<!--\\s*${escapeRegExp(label)}:end\\s*-->$`);
+  const { begins, ends } = collectMarkerSpans(content, beginMarker, endMarker);
+
+  if (begins.length === 0 && ends.length === 0) {
+    return null; // no block yet — the caller inserts one
+  }
+  if (begins.length !== 1 || ends.length !== 1) {
+    throw labeledMarkerError(
+      label,
+      `expected exactly one \`<!-- ${label}:begin -->\` and one \`<!-- ${label}:end -->\`, found ${begins.length} begin and ${ends.length} end`,
+      { begins: begins.length, ends: ends.length },
+    );
+  }
+  const begin = begins[0];
+  const end = ends[0];
+  if (begin === undefined || end === undefined) {
+    return null; // unreachable given the counts above; narrows the element access without a non-null assertion
+  }
+  if (end.start < begin.end) {
+    throw labeledMarkerError(label, "the markers are crossed (the end marker precedes the begin marker)", {
+      begin: begin.start,
+      end: end.start,
+    });
+  }
+  return { begin, end };
+}
+
+/**
+ * Build the fail-loud "malformed managed-block markers" error for a labeled block (`validation`,
+ * exit 6). The one builder behind both the generic and `lore:tasks`-specific ({@link markerError})
+ * diagnostics, so their wording and shape stay in lockstep.
+ */
+function labeledMarkerError(label: string, reason: string, input: Record<string, unknown>): LoreError {
+  return new LoreError(
+    "validation",
+    `cannot regenerate the \`${label}\` block: ${reason}`,
+    `place exactly one \`<!-- ${label}:begin -->\` and one \`<!-- ${label}:end -->\` on their own lines, in order, at the top level of the doc`,
+    input,
+  );
 }

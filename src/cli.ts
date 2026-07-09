@@ -16,6 +16,7 @@
  */
 
 import type { BacklogAdapter } from "./adapters/backlog";
+import { runAgents } from "./commands/agents";
 import { type FetchLike, runCheck } from "./commands/check";
 import { runContext } from "./commands/context";
 import { runGraph } from "./commands/graph";
@@ -55,6 +56,7 @@ Commands:
   query           Full-text search the bundle with frontmatter filters (lore query ["<text>"])
   context         Assemble a concept + neighbor summaries within a token budget (lore context <id>)
   instructions    Print task-scoped agent guidance on demand (lore instructions [<topic>])
+  agents          Regenerate the Claude Code agent bridge — SKILL.md + a CLAUDE.md nudge (lore agents [--check] [--force])
 
 Options:
   --json          Machine-readable JSON output (the {schemaVersion, kind, data} envelope)
@@ -304,6 +306,8 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
       return runContext({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     case "instructions":
       return runInstructions({ output, args: parsed.commandArgs, stdout: context.stdout });
+    case "agents":
+      return runAgents({ root, output, args: parsed.commandArgs, stdout: context.stdout });
     default:
       throw new LoreError("usage", `unknown command "${parsed.command}"`, "run `lore --help` to list commands", {
         command: parsed.command,
