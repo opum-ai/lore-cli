@@ -13,7 +13,13 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { type ManagedTaskRow, regenerateTaskBlock, TASK_BLOCK_BEGIN, TASK_BLOCK_END } from "../src/core/managed-block";
+import {
+  type ManagedTaskRow,
+  regenerateTaskBlock,
+  TASK_BLOCK_BEGIN,
+  TASK_BLOCK_END,
+  upsertManagedBlock,
+} from "../src/core/managed-block";
 import { exitCodeFor, LoreError } from "../src/errors";
 
 const OPTS = { docPath: "docs/stories/bulk-archive.md" };
@@ -218,6 +224,121 @@ describe("regenerateTaskBlock — marker validation (ADR-0008 §2 → validation
   test("crossed markers (end before begin) are a validation error", () => {
     const crossed = `${TASK_BLOCK_END}\n\nmid\n\n${TASK_BLOCK_BEGIN}\n`;
     const err = loreError(() => regenerateTaskBlock(crossed, TASKS, OPTS));
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("crossed");
+  });
+});
+
+/**
+ * upsertManagedBlock — the generic insert-or-update sibling behind `lore agents`'s CLAUDE.md nudge
+ * (LORE-36). Unlike regenerateTaskBlock, a total absence of markers is an INSERT (append), not an
+ * error; a present-but-malformed pair is still a fail-loud validation error.
+ */
+const LABEL = "lore:agents";
+const UP = { label: LABEL, body: "hello body" };
+
+/** The canonical delimited block bytes for `body` under LABEL. */
+function agentBlock(body: string): string {
+  return `<!-- ${LABEL}:begin -->\n${body}\n<!-- ${LABEL}:end -->`;
+}
+
+describe("upsertManagedBlock — insert when absent", () => {
+  test("empty content yields the block alone with a single trailing newline", () => {
+    expect(upsertManagedBlock("", UP)).toBe(`${agentBlock("hello body")}\n`);
+  });
+
+  test("appends after existing content, separated by exactly one blank line, preserving it verbatim", () => {
+    const existing = "# Title\n\nSome prose.\n";
+    const out = upsertManagedBlock(existing, UP);
+    expect(out).toBe(`# Title\n\nSome prose.\n\n${agentBlock("hello body")}\n`);
+    // The existing content is untouched at the head.
+    expect(out.startsWith("# Title\n\nSome prose.")).toBe(true);
+  });
+
+  test("an unrelated managed block (e.g. Backlog.md's) survives insertion untouched", () => {
+    const existing = "<!-- BACKLOG.MD GUIDELINES START -->\nuse backlog\n<!-- BACKLOG.MD GUIDELINES END -->\n";
+    const out = upsertManagedBlock(existing, UP);
+    expect(out).toContain("<!-- BACKLOG.MD GUIDELINES START -->\nuse backlog\n<!-- BACKLOG.MD GUIDELINES END -->");
+    expect(out).toContain(agentBlock("hello body"));
+  });
+
+  test("existing content — including its trailing whitespace — is preserved byte-for-byte on insert", () => {
+    // A repo whose file intentionally ends with trailing spacer lines/whitespace must not have those
+    // bytes rewritten: only the block (plus a blank-line separation) is added.
+    const existing = "prose\n\n\n   \n";
+    const out = upsertManagedBlock(existing, UP);
+    expect(out.startsWith(existing)).toBe(true);
+    expect(out.endsWith(`${agentBlock("hello body")}\n`)).toBe(true);
+  });
+
+  test("an unterminated code fence at EOF fails loud rather than silently duplicating the block", () => {
+    // Appending after an open ``` fence would put the markers inside it (not top level); a later run
+    // would find none and append again. Detect it and throw instead.
+    const err = loreError(() => upsertManagedBlock("# Title\n\n```js\nconst x = 1;\n", UP));
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("unterminated");
+  });
+
+  test("an unterminated HTML comment at EOF also fails loud", () => {
+    const err = loreError(() => upsertManagedBlock("# Notes\n\n<!-- TODO finish this", UP));
+    expect(err.type).toBe("validation");
+  });
+});
+
+describe("upsertManagedBlock — update when present", () => {
+  test("replaces only the bytes between the markers, preserving surrounding content", () => {
+    const before = `head prose\n\n${agentBlock("OLD")}\n\ntail prose\n`;
+    const out = upsertManagedBlock(before, { label: LABEL, body: "NEW" });
+    expect(out).toBe(`head prose\n\n${agentBlock("NEW")}\n\ntail prose\n`);
+  });
+
+  test("is idempotent: regenerating an already-current block is byte-identical", () => {
+    const first = upsertManagedBlock("existing prose\n", UP);
+    const second = upsertManagedBlock(first, UP);
+    expect(second).toBe(first);
+  });
+
+  test("insert and update converge on the same canonical bytes (a fixpoint)", () => {
+    const inserted = upsertManagedBlock("x\n", UP);
+    const reupserted = upsertManagedBlock(inserted, UP);
+    expect(reupserted).toBe(inserted);
+  });
+
+  test("whitespace-tolerant marker match: an indented/spaced marker line is still recognized (update, not a second insert)", () => {
+    const before = `p\n\n  <!--   ${LABEL}:begin   -->  \nstale\n<!-- ${LABEL}:end -->\n`;
+    const out = upsertManagedBlock(before, { label: LABEL, body: "fresh" });
+    // Exactly one begin/end pair remains — the block was updated in place, not duplicated.
+    expect(out.match(new RegExp(`${LABEL}:begin`, "g"))?.length).toBe(1);
+    expect(out).toContain("fresh");
+    expect(out).not.toContain("stale");
+  });
+
+  test("a sentinel inside a fenced code block is not a marker (absent -> insert)", () => {
+    const fenced = "```\n<!-- lore:agents:begin -->\n<!-- lore:agents:end -->\n```\n";
+    const out = upsertManagedBlock(fenced, UP);
+    // The real block is appended after the code fence; the fenced text is left intact.
+    expect(out).toContain("```\n<!-- lore:agents:begin -->\n<!-- lore:agents:end -->\n```");
+    expect(out.endsWith(`${agentBlock("hello body")}\n`)).toBe(true);
+  });
+});
+
+describe("upsertManagedBlock — malformed markers are fail-loud (validation, exit 6)", () => {
+  test("a lone begin (no end) is a validation error", () => {
+    const err = loreError(() => upsertManagedBlock(`<!-- ${LABEL}:begin -->\nx\n`, UP));
+    expect(err.type).toBe("validation");
+    expect(exitCodeFor(err)).toBe(6);
+  });
+
+  test("duplicated begin markers are a validation error naming the label", () => {
+    const dup = `<!-- ${LABEL}:begin -->\nx\n<!-- ${LABEL}:begin -->\n<!-- ${LABEL}:end -->\n`;
+    const err = loreError(() => upsertManagedBlock(dup, UP));
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain(LABEL);
+  });
+
+  test("crossed markers (end before begin) are a validation error", () => {
+    const crossed = `<!-- ${LABEL}:end -->\nx\n<!-- ${LABEL}:begin -->\n`;
+    const err = loreError(() => upsertManagedBlock(crossed, UP));
     expect(err.type).toBe("validation");
     expect(err.message).toContain("crossed");
   });
