@@ -152,9 +152,11 @@ describe("manifest ⇔ router — bidirectional lockstep guard", () => {
     const switchStart = source.indexOf("switch (parsed.command)");
     const dispatchBlock = source.slice(switchStart, source.indexOf("default:", switchStart));
     // Capture the full quoted token (not just [a-z]+) so a hyphenated/digit command can't slip the guard.
-    const dispatched = new Set([...dispatchBlock.matchAll(/case "([^"]+)":/g)].map((m) => m[1] as string));
-    expect(dispatched.size).toBeGreaterThan(10); // sanity: the switch block was located and parsed
-    expect(new Set(manifestCommandNames())).toEqual(dispatched);
+    const dispatched = [...dispatchBlock.matchAll(/case "([^"]+)":/g)].map((m) => m[1] as string);
+    expect(dispatched.length).toBeGreaterThan(10); // sanity: the switch block was located and parsed
+    // Order-sensitive: pins both membership AND the "in cli.ts dispatch order" claim the manifest makes,
+    // which the hand-ordered self-contained array no longer guarantees mechanically.
+    expect([...manifestCommandNames()]).toEqual(dispatched);
   });
 
   test("each command's summary is sourced from LORE_COMMANDS (no re-transcription drift)", () => {

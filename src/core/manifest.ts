@@ -25,8 +25,11 @@
  *   - `git`     (git log / commit seams)        → 6 drift
  *
  * plus `0` (success) and the universal `2` (usage, from the router's flag parsing)
- * on every command, and any command-specific `extra` code (e.g. a `not_found` for
- * an unknown `instructions` topic, which reaches no filesystem seam). `1`
+ * on every command, and any command-specific `extra` code that is the command's own
+ * logic rather than an I/O seam — a `not_found` for an unknown `instructions` topic,
+ * or a gate/validation return (`validate`/`check`/`new`/`agents` all pass their
+ * principal `6` as `extra` so it survives a seam refactor, not left to a coincidental
+ * seam `6`). `1`
  * (uncaught) is a global-only condition (cli-contract §5.1) and is never listed
  * per command; the full taxonomy is in {@link Manifest.exitCodes}, sourced from
  * `errors.ts` so it cannot drift. `test/help.test.ts` pins each command's derived
@@ -162,7 +165,9 @@ const LORE_MANIFEST: readonly ManifestCommand[] = [
     ],
     json: true,
     kind: "new",
-    exitCodes: exitCodesFor(["profile", "read", "write"]),
+    // extra 6 = an unfilled template placeholder / serialize-time validation (template.ts:263) —
+    // new's own validation, modeled explicitly rather than left to the coincidental profile 6.
+    exitCodes: exitCodesFor(["profile", "read", "write"], [6]),
     examples: [
       'lore new story "Bulk archive completed orders"',
       'lore new adr "Use soft deletes" --tags retention,orders',
@@ -178,7 +183,9 @@ const LORE_MANIFEST: readonly ManifestCommand[] = [
     ],
     json: true,
     kind: "validate.report",
-    exitCodes: exitCodesFor(["profile", "read"]),
+    // extra 6 = the validation gate RETURN (validate.ts:81) — validate's principal failure, modeled
+    // explicitly so it survives a profile-seam refactor; a malformed profile also throws 6.
+    exitCodes: exitCodesFor(["profile", "read"], [6]),
     examples: ["lore validate", "lore validate --type ADR --strict"],
   },
   {
@@ -191,7 +198,9 @@ const LORE_MANIFEST: readonly ManifestCommand[] = [
     ],
     json: true,
     kind: "check.report",
-    exitCodes: exitCodesFor(["read", "backlog"]),
+    // extra 6 = the drift/link gate RETURN (check.ts:258) — check's principal failure, modeled
+    // explicitly rather than left to the coincidental adapter 6.
+    exitCodes: exitCodesFor(["read", "backlog"], [6]),
     examples: ["lore check", "lore check --external"],
   },
   {
