@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lore help` — human help plus a machine-readable capability manifest** (LORE-38). `lore help`
+  prints the command catalog and `lore help <command>` prints one command's detail (args, flags,
+  output `kind`, exit codes, examples); an unknown command exits `3`. Under `--json` it emits
+  `kind: help.manifest` — a curated manifest of every **shipped** command (name, summary, args,
+  flags, `--json` availability, `kind`, exit codes, examples) plus the global flags and the exit-code
+  taxonomy, so an agent learns the whole CLI surface in one read. `lore help <command> --json` returns
+  the same manifest shape scoped to that one command. The manifest is now the **single source** for
+  help text: the hand-kept `USAGE` literal is gone and `lore --help` renders from it too, so the two
+  are byte-identical. Flags/kinds/exit codes are transcribed from live command source (not the design
+  docs), and the exit-code taxonomy is built from `errors.ts` so it cannot drift; a bidirectional
+  lockstep test pins the manifest's command set to the real router (every advertised command
+  dispatches, and every dispatch case is advertised).
 - **`lore agents` — generate/refresh the Claude Code agent bridge** (LORE-36, ADR-0004). Writes a
   generated `.claude/skills/lore/SKILL.md` (a small, grounded teacher that names the command surface,
   the `--json`/exit-code contract, and points at `lore instructions` as the source of truth) and a

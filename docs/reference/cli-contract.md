@@ -111,25 +111,29 @@ is permitted; whitespace inside the JSON is not part of the contract.
 
 `kind` is a stable, enumerated string. Each command that supports `--json`
 declares one or more `kind` values; the same logical payload always carries the
-same `kind`. Representative values (the authoritative list ships with each
-release and tracks the [CLI surface](cli-surface.md)):
+same `kind`. The **authoritative, machine-readable registry is `lore help --json`** — the
+capability manifest, which enumerates every shipped command's `kind`, flags, and
+exit codes from live source. This table mirrors it for reference and tracks the
+[CLI surface](cli-surface.md):
 
 | `kind` | Emitted by | `data` shape (summary) |
 |---|---|---|
-| `init.result` | `lore init` | created paths, bundle root |
-| `new.result` | `lore new` | new concept id, path, applied template/vars |
+| `init` | `lore init` | created/skipped paths, bundle root |
+| `new` | `lore new` | new concept id, path, applied template/vars |
 | `validate.report` | `lore validate` | tiered findings (errors/warnings), counts |
 | `check.report` | `lore check` | drift, broken-link, anchor, portability findings; token estimates |
-| `query.results` | `lore query` | ranked hits with `total`/`shown`/`truncated` (§3) |
-| `context.export` | `lore context` | concept body + neighbor summaries; token budget accounting |
-| `graph.export` | `lore graph` | nodes, edges, per-doc/bundle token estimates |
-| `tasks.rollup` | `lore tasks` | live task status for a story (via Backlog `--json`) |
-| `orphans.report` | `lore orphans` | unlinked tasks, docs with vanished tasks |
-| `link.result` / `unlink.result` | `lore link` / `unlink` | updated frontmatter refs, task label set |
-| `sync.summary` | `lore sync` | what changed (status rewrites, managed-block diffs, regen) |
 | `replace.result` | `lore replace` | per-file match/replace counts; skipped managed regions |
 | `rename.result` / `supersede.result` | `lore rename` / `supersede` | rewritten inbound links + frontmatter refs |
-| `scaffold.result` | `lore scaffold` | consumer config files written outside `docs/` |
+| `link.result` / `unlink.result` | `lore link` / `unlink` | updated frontmatter refs, task label set |
+| `sync.result` | `lore sync` | what changed (status rewrites, managed-block diffs, regen) + the `backlog/` commit |
+| `schema.result` | `lore schema` | schema files written |
+| `graph.export` | `lore graph` | nodes, edges, per-doc/bundle token estimates |
+| `query.results` | `lore query` | ranked hits with `total`/`shown`/`truncated` (§3) |
+| `context.export` | `lore context` | concept body + neighbor summaries; token budget accounting |
+| `instructions.text` | `lore instructions` | guidance body + the full topic index |
+| `agents.result` | `lore agents` | bridge files written/updated |
+| `help.manifest` | `lore help` | the capability manifest — every command's flags, `kind`, exit codes |
+| `tasks.rollup` / `orphans.report` / `scaffold.result` | `lore tasks` / `orphans` / `scaffold` — **deferred** | designed but not yet shipped (see [CLI surface](cli-surface.md)) |
 
 A caller should branch on `kind` and tolerate **unknown** `kind` values
 gracefully — new ones may appear under the same `schemaVersion` (§7), mirroring

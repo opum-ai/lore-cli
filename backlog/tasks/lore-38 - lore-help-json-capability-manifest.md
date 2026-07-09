@@ -1,9 +1,11 @@
 ---
 id: LORE-38
 title: lore help --json capability manifest
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-06-21 06:27'
+updated_date: '2026-07-09 21:45'
 labels:
   - cmd
   - agent-api
@@ -23,6 +25,26 @@ Machine-readable manifest: command tree, flags, per-command --json availability,
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Manifest enumerates every command + exit codes
-- [ ] #2 Stable, additive-only contract
+- [x] #1 Manifest enumerates every command + exit codes
+- [x] #2 Stable, additive-only contract
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. src/core/manifest.ts (NEW): ManifestFlag/ManifestCommand/Manifest interfaces; curated LORE_MANIFEST for the SHIPPED commands only (16 dispatched + help) — each with name, summary, args signature, flags[], json:bool, kind|null, exitCodes[], examples[]; global exitCodes taxonomy (usage:2/not_found:3/denied:4/conflict:5/validation:6/drift:6) + globalFlags; buildManifest() -> Manifest; findManifestCommand(name). Mirrors the static-registry shape of core/instructions.ts (no bundle load, no root).
+2. src/commands/help.ts (NEW): thin command mirroring commands/instructions.ts. runHelp({output,args,stdout}): parse optional <command> positional via parseCommandArgs; --json emits full manifest (kind: help.manifest) or the single command entry when a positional is given; pretty/plain renders top-level help (command list from manifest) or per-command detail; unknown <command> -> LoreError('not_found') = exit 3; bad flag -> usage exit 2.
+3. src/cli.ts: import runHelp + add case 'help' to dispatch. Retire the USAGE literal: render the top-level --help / no-command text FROM the manifest via a shared renderer so --help (kind:help) and 'lore help' share one source. Keep the emitMeta seam and kind:'help' for the --help flag path; 'lore help --json' uses kind:'help.manifest'.
+4. Tests: test/help.test.ts — JSON envelope kind+shape; BIDIRECTIONAL lock-step guard (every manifest command dispatches via real router AND every dispatched command appears in the manifest); additive-only required-keys pin (removing a field fails CI); per-command --json; unknown command exit 3; pretty/plain string asserts. Update test/cli.test.ts router-wiring (lore help exit 0, lists commands; --help still kind:help).
+5. docs/reference/cli-contract.md: add help.manifest to the §2.1 kind registry and correct the stale kinds (init.result/new.result/sync.summary -> init/new/sync.result; drop phantom tasks.rollup/orphans.report/scaffold.result).
+6. Verify: bun lint/typecheck/test green; lore check clean; then PR into dev.
+Scope: Tier 2 (per user) — manifest + retire USAGE; agent-bridge LORE_COMMANDS left as a follow-up (Tier 3 deferred).
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented (Tier 2). New src/core/manifest.ts: curated LORE_MANIFEST for the 17 shipped commands (16 dispatched + help), each with name/summary/args/flags/json/kind/exitCodes/examples; global exit taxonomy built from errors.ts (EXIT_OK/EXIT_UNCAUGHT/EXIT_CODES) so it can't drift; buildManifest()/findManifestCommand()/manifestCommandNames(). New src/commands/help.ts: thin command mirroring instructions.ts; lore help [<command>] renders pretty/plain from the manifest, --json emits kind:help.manifest (full manifest, or the same Manifest shape scoped to one command for 'lore help <cmd> --json'); unknown command = not_found (exit 3). cli.ts: added case 'help'; retired the hand-kept USAGE literal — top-level --help/no-command now renders via renderTopLevelHelp(manifest), so 'lore --help' and 'lore help' are byte-identical (one source). Flags/kinds/exitCodes transcribed from LIVE command source, not the drifting docs: fixed that init takes no flags live (dispatch rejectCommandArgs), new's flags are var/template/summary/tags/out (not the doc's epic/story/resource), replace exits [0,2] (dropped the doc's phantom 6). Per-command exitCodes are curated to distinctive codes (mirroring cli-surface Exit rows) + universal 2, not exhaustive over generic EACCES denied(4). test/help.test.ts (24 tests): bidirectional lockstep guard — forward (every manifest command dispatches through the real router, no 'unknown command') + reverse (every case in cli.ts source is in the manifest) + cross-registry (manifest == LORE_COMMANDS + help); additive-only required-keys pins; router wiring incl. help/--help byte-identical. cli-contract.md §2.1 kind registry: added help.manifest, fixed stale shipped kinds (init.result->init, new.result->new, sync.summary->sync.result), added missing shipped kinds (schema.result/agents.result/instructions.text), marked tasks/orphans/scaffold kinds deferred, pointed at 'lore help --json' as authoritative. Gates: typecheck 0, biome lint 0, bun test 1357 pass, lore check 0 errors. Code-review pass running.
+
+Code-review round (high, workflow-backed: 4 finders + 10 verifiers): 9 findings, all addressed. Dominant class = per-command exitCodes UNDER-reported not_found(3)/denied(4) thrown via SHARED helpers my per-file grep missed (expandTarget/loadBundle/resolveTemplate/readSource/fswrite), and were internally inconsistent (3 on check but not sibling validate; 4 on link but not unlink). Fix: adopted a uniform, documented exit-code policy — not_found(3) on any command resolving a named target/bundle; denied(4) on any command that WRITES to disk; incidental EACCES-on-read treated like uncaught(1) (not enumerated for read-only cmds). Corrected 10 entries; siblings now consistent (validate==check==[0,2,3,6], link==unlink==[0,2,3,4,5,6], graph==query==context==[0,2,3]). Finding #8 (manifest re-transcribed LORE_COMMANDS name+summary, already drifted on agents): manifest now DERIVES name+summary from LORE_COMMANDS (COMMAND_DETAILS keyed by name, spread onto each LORE_COMMANDS entry + help) — drift impossible by construction, stays Tier 2 (no agent-bridge change). Test updated: reverse lockstep guard now scopes the cli.ts regex to the switch(parsed.command) block + non-empty sanity assert (was file-wide, fragile); added a summary-derivation guard. Finding #7 (top-level --help dropped per-command invocation hints): added a footer 'Run lore help <command> for a command's arguments, flags, output, and exit codes' so the concise catalog is intentional/discoverable. Re-verified: typecheck 0, lint 0, bun test 1357 pass, lore check 0.
+<!-- SECTION:NOTES:END -->
