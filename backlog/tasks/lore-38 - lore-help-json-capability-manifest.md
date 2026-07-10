@@ -1,11 +1,11 @@
 ---
 id: LORE-38
 title: lore help --json capability manifest
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:27'
-updated_date: '2026-07-09 22:46'
+updated_date: '2026-07-10 13:46'
 labels:
   - cmd
   - agent-api
