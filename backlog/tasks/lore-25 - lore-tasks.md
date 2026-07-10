@@ -1,11 +1,11 @@
 ---
 id: LORE-25
 title: lore tasks
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-10 16:33'
+updated_date: '2026-07-10 16:54'
 labels:
   - cmd
 milestone: m-3
