@@ -20,6 +20,7 @@ import { runAgents } from "./commands/agents";
 import { type FetchLike, runCheck } from "./commands/check";
 import { runContext } from "./commands/context";
 import { runGraph } from "./commands/graph";
+import { renderTopLevelHelp, runHelp } from "./commands/help";
 import { runInit } from "./commands/init";
 import { runInstructions } from "./commands/instructions";
 import { runLink, runUnlink } from "./commands/link";
@@ -35,36 +36,10 @@ import { EXIT_OK, EXIT_UNCAUGHT, LoreError, reportError, type Writer } from "./e
 import { VERSION } from "./meta";
 import { emit, errorRenderOpts, type OutputContext, type Renderable, resolveOutput } from "./output";
 
-const USAGE = `lore ${VERSION} — OKF-native documentation CLI
-
-Usage:
-  lore <command> [options]
-
-Commands:
-  init            Scaffold an empty, conformant OKF bundle (.lore/ + docs/index.md)
-  new             Scaffold a typed concept from a template (lore new <type> "<title>")
-  validate        Check concept files against OKF + the lore profile (lore validate [paths…])
-  check           Validate internal links/anchors + lint portability across the bundle (lore check [paths…])
-  replace         Find-and-replace across the bundle, skipping managed regions (lore replace "<find>" "<replace>")
-  rename          Move a concept and repoint every inbound link + ref (lore rename <oldId> <newId>)
-  supersede       Mark a concept superseded by another, wiring both ways (lore supersede <oldId> <newId>)
-  link            Add task ids to a concept's tasks: + the doc: back-ref label (lore link <id> <taskId…>)
-  unlink          Remove task ids from a concept's tasks: + the doc: back-ref label (lore unlink <id> <taskId…>)
-  sync            Reconcile status + managed task blocks, regen index/log, commit backlog/ (lore sync [paths…])
-  schema          Export the profile's editor JSON Schemas to .lore/schemas/ (lore schema export)
-  graph           Emit the bundle's cross-link graph as json or dot (lore graph [<id>])
-  query           Full-text search the bundle with frontmatter filters (lore query ["<text>"])
-  context         Assemble a concept + neighbor summaries within a token budget (lore context <id>)
-  instructions    Print task-scoped agent guidance on demand (lore instructions [<topic>])
-  agents          Regenerate the Claude Code agent bridge — SKILL.md + a CLAUDE.md nudge (lore agents [--check] [--force])
-
-Options:
-  --json          Machine-readable JSON output (the {schemaVersion, kind, data} envelope)
-  --plain         ANSI-free text output (auto-selected when stdout is piped)
-  -v, --version   Print the version and exit
-  -h, --help      Show this help and exit
-
-Docs: docs/index.md`;
+// The top-level help text (the `--help`/no-command catalog) is rendered from the
+// capability manifest via `renderTopLevelHelp` (commands/help.ts) — one source
+// for both `lore --help` and the `lore help` command, so no separately-maintained
+// `USAGE` literal can drift from the real command surface (LORE-38).
 
 /** The global flags, the subcommand, and the command's own argument tokens a single invocation resolves to. */
 interface ParsedArgs {
@@ -196,7 +171,8 @@ export function run(argv: readonly string[], context: RunContext = {}): number |
       if (parsed.version) {
         return emitMeta("version", { version: VERSION }, VERSION, output, stdout);
       }
-      return emitMeta("help", { usage: USAGE }, USAGE, output, stdout);
+      const helpText = renderTopLevelHelp();
+      return emitMeta("help", { usage: helpText }, helpText, output, stdout);
     }
     const result = dispatch(parsed, { ...context, stdout, stderr }, output);
     // The async command paths (`check --external`, `link`, `unlink`, `rename`, `sync`) return a Promise; a
@@ -308,6 +284,8 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
       return runInstructions({ output, args: parsed.commandArgs, stdout: context.stdout });
     case "agents":
       return runAgents({ root, output, args: parsed.commandArgs, stdout: context.stdout });
+    case "help":
+      return runHelp({ output, args: parsed.commandArgs, stdout: context.stdout });
     default:
       throw new LoreError("usage", `unknown command "${parsed.command}"`, "run `lore --help` to list commands", {
         command: parsed.command,
