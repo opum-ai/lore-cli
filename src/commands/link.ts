@@ -215,8 +215,12 @@ export async function runLink(options: LinkOptions): Promise<number> {
       }
       const desiredDocs = addDoc(detail.documentation, docPath);
       await adapter.editTask(taskId, { addLabels: [label], doc: desiredDocs });
-      if (detail.file !== null) {
-        editedFiles.push(detail.file); // only reached after editTask succeeds — this file is now dirty
+      if (detail.file) {
+        // Only after a successful editTask, and only with a usable path — a truthy guard (not just
+        // `!== null`) so a `""` filePathRelative is skipped too, never passed on as an empty git
+        // pathspec (which `git status --` rejects). No path → nothing to commit here; `lore sync`'s
+        // catch-all sweep still picks up any stray dirt later.
+        editedFiles.push(detail.file);
       }
       return "added" as const;
     });
@@ -342,7 +346,7 @@ async function removeBackRefs(
     // Backlog is left with whatever it already had (it cannot clear `--doc` via an empty value,
     // contract §2.4), so a stale annotation cosmetically lingers either way.
     await adapter.editTask(taskId, { removeLabels: [label], doc: removeDoc(detail.documentation, docPath) });
-    if (detail.file !== null) {
+    if (detail.file) {
       editedFiles.push(detail.file);
     }
     return "removed" as const;
@@ -420,7 +424,7 @@ export async function moveBackRefs(
       removeLabels: staleLabel !== undefined ? [staleLabel] : undefined,
       doc: docs,
     });
-    if (detail.file !== null) {
+    if (detail.file) {
       editedFiles.push(detail.file);
     }
     return "moved" as const;

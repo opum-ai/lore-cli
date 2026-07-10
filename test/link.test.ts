@@ -860,6 +860,21 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
     ]);
   });
 
+  test("a successfully-edited task with an empty file path is skipped, never passed as an empty git pathspec", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    // filePathRelative is nullable/possibly-empty (backlog.ts) — a "" path must not become an empty
+    // git pathspec (`git status -- ""` is a fatal error). The truthy guard skips it entirely.
+    const adapter = fakeAdapter([makeTask("LORE-1", { file: "" })]);
+    const git = dirtyGitSpawn(DIRTY);
+
+    const { code, report } = await linkCmd(["stories/x", "lore-1"], adapter, git);
+
+    expect(code).toBe(EXIT_OK); // the link itself succeeds — no drift(6) from an empty pathspec
+    expect(report.tasks[0]?.backRef).toBe("added");
+    expect(report.backlogCommit).toEqual({ committed: false, files: [] }); // no usable path → nothing committed
+    expect(git.calls).toHaveLength(0); // git is never invoked (empty editedFiles)
+  });
+
   test("plain mode appends a `committed backlog/` line when a commit was made", async () => {
     writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
     const adapter = fakeAdapter([makeTask("LORE-1")]);
