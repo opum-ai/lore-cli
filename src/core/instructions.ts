@@ -28,11 +28,11 @@ const LINKING: InstructionTopic = {
   key: "linking",
   title: "Story <-> Task coupling (`lore link` / `lore unlink`)",
   body: `A Story concept's frontmatter \`tasks:\` list is the source of coupling to
-Backlog.md -- those are the task ids the Story owns. Read their current live
-status with \`lore tasks <id>\` (the read-only rollup \`lore sync\` writes into
-the managed block); \`backlog task view <id> --plain\` shows one task in full.
-Never trust the Story's own written \`status\`, which only refreshes when
-\`lore sync\` runs.
+Backlog.md -- those are the task ids the Story owns. Roll up their current live
+status with \`lore tasks <conceptId>\` (pass the Story, not a task id -- the
+read-only rollup \`lore sync\` writes into the managed block); to inspect one
+task, use \`backlog task view <taskId> --plain\`. Never trust the Story's own
+written \`status\`, which only refreshes when \`lore sync\` runs.
 
 To couple a new task to a Story, create it in Backlog (\`backlog task create
 ...\`) then run \`lore link <story> <taskId...>\` -- this updates both the

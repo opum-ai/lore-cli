@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-10 16:17'
+updated_date: '2026-07-10 16:33'
 labels:
   - cmd
 milestone: m-3
@@ -57,4 +57,21 @@ Exit codes DERIVED from seams (LORE-38 discipline): exitCodesFor(['bundle','back
 Shipping-a-command ripples: manifest LORE_MANIFEST entry + agent-bridge LORE_COMMANDS entry (byte-identical summary 'Show the live status rollup for a concept's linked tasks') both inserted after sync (dispatch order, order-sensitive lockstep); regenerated .claude/skills/lore/SKILL.md via lore agents --force; dropped the now-invalid 'not lore tasks' assertions in agents.test.ts and the 'tasks is aspirational/unshipped' claims in manifest.ts + agent-bridge.ts docstrings; updated instructions.ts linking topic to point at lore tasks.
 
 Verify: bun lint/typecheck/test green (1380 pass incl. 22 new tasks tests); lore check clean (32 files 0/0). Drove real CLI: adr/0009 (0 real tasks — the [task-42,task-57] is a fenced example) → empty rollup exit 0 + clean JSON; temp Story linking a task vs real STOCK backlog → probe fail-fast exit 6; unknown concept → 3; missing id → 2.
+
+Code review (workflow-backed, high; 4 finders + per-location verify): 9 findings triaged.
+
+FIXED (5):
+- status case mismatch: --status matches case-insensitively but data.status echoed the RAW input, disagreeing in case with the rows it selected. Now canonicalized to the matched rows' Backlog casing (raw filter only when nothing matched); test asserts every row.status === data.status.
+- fakeAdapter probe guard regression: I'd changed probe from notImplemented(throws) to always-permissive, silently removing the guard that link/rename tests rely on (they must never probe). Restored default=throws; capable/failing behavior now opt-in via opts.probe ('ok' | Error). tasks.test.ts uses an okAdapter() helper.
+- warnDangling hand-rolled the 'warning:' prefix + painted the whole line; routed through the shared WarningCollector so it matches every other lore advisory's format/color.
+- instructions.ts LINKING topic used <id> for both 'lore tasks <id>' (concept) and 'backlog task view <id>' (task); disambiguated to <conceptId>/<taskId>.
+- cli-surface.md Exit row mis-attributed 3 solely to 'concept not found' and omitted usage-2; now: 2 usage · 3 concept-not-found-or-backlog-missing · 6 not-json-capable (house style).
+
+DECLINED (4, with rationale):
+- '-' accepted as --status value: '-' is a status string that matches nothing, identical to --status <anything-nonmatching>; rejecting only '-' would be arbitrary AND diverge tasks' value-flag reader from the 4 shared siblings (context/graph/query/schema) that all accept bare '-'.
+- dangling advisory fires regardless of --status: intentional — it's a coupling-integrity signal on stderr (out of band from the filtered stdout); a status filter scopes the display, not the coupling check. Hiding a broken link under a filter would suppress a real problem.
+- empty tasks: short-circuits before probe: correct — an uncoupled concept's rollup is legitimately empty regardless of Backlog state; probing just to report '0 tasks' is gratuitous IO. Mirrors gatherReconciliation.
+- readValue is a 5th verbatim copy (context/graph/query/schema/tasks): real DRY debt but a cross-cutting refactor of 5 shipped commands; out of scope for net-new LORE-25 (batch-isolation lesson). Candidate follow-up task.
+
+Re-verified after fixes: typecheck clean, full suite 1381 pass, lint 0, lore check 32/0/0, agent bridge up-to-date, real happy path exit 0.
 <!-- SECTION:NOTES:END -->

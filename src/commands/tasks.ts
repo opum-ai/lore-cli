@@ -73,7 +73,7 @@ export interface TaskRollupRow {
 export interface TaskRollup {
   /** The resolved concept id whose `tasks:` were rolled up. */
   readonly concept: string;
-  /** The `--status` filter that was applied, echoed back; omitted when no filter was given. */
+  /** The applied `--status` filter, canonicalized to the matched rows' Backlog casing (raw input when nothing matched); omitted when no filter was given. */
   readonly status?: string;
   /** The linked tasks' live data, in the concept's own `tasks:` order (dangling ids dropped). */
   readonly tasks: readonly TaskRollupRow[];
@@ -100,11 +100,25 @@ export async function runTasks(options: TasksOptions): Promise<number> {
 
   const linked = dedupeTaskIds(toRefList(concept.frontmatter.tasks));
   const tasks = await resolveRollup(linked, parsed.status, options);
-  const data: TaskRollup =
-    parsed.status === undefined ? { concept: parsed.id, tasks } : { concept: parsed.id, status: parsed.status, tasks };
+  const status = echoedStatus(parsed.status, tasks);
+  const data: TaskRollup = status === undefined ? { concept: parsed.id, tasks } : { concept: parsed.id, status, tasks };
 
   emit(tasksRenderable(data), options.output, options.stdout);
   return EXIT_OK;
+}
+
+/**
+ * The `--status` filter to echo on the envelope. `--status` matches case-insensitively, so echoing the
+ * user's raw input verbatim could disagree in case with every row it selected (`--status done` →
+ * `status: "done"` beside rows whose status is `"Done"`). Canonicalize it to the matched rows' actual
+ * Backlog casing so `data.status` always agrees with the tasks it produced; fall back to the raw filter
+ * only when nothing matched (no row to canonicalize against). `undefined` when no filter was given.
+ */
+function echoedStatus(filter: string | undefined, tasks: readonly TaskRollupRow[]): string | undefined {
+  if (filter === undefined) {
+    return undefined;
+  }
+  return tasks[0]?.status ?? filter;
 }
 
 /**
@@ -157,15 +171,15 @@ async function resolveRollup(
 /**
  * Advise (on stderr) that one or more `tasks:` ids no longer resolve to a live Backlog task and were
  * dropped from the rollup — a coupling gap worth surfacing without failing the read (`lore orphans`
- * is the CI-grade report). Silent when no stderr sink is wired.
+ * is the CI-grade report). Routed through the shared {@link WarningCollector} so it renders with the
+ * exact `warning:`-prefix format and coloring as this command's load advisories and every other lore
+ * warning, rather than a hand-painted line.
  */
 function warnDangling(ids: readonly string[], options: TasksOptions): void {
-  if (options.stderr === undefined) {
-    return;
-  }
   const noun = ids.length === 1 ? "task" : "tasks";
-  const message = `warning: ${ids.length} linked ${noun} not in Backlog, dropped from the rollup: ${ids.join(", ")}`;
-  options.stderr.write(`${paint(message, ANSI.yellow, options.output.color)}\n`);
+  const advisories = new WarningCollector();
+  advisories.add(`${ids.length} linked ${noun} not in Backlog, dropped from the rollup: ${ids.join(", ")}`);
+  advisories.flush({ color: options.output.color, stderr: options.stderr });
 }
 
 // ── Argument parsing ───────────────────────────────────────────────────────────

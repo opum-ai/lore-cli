@@ -281,7 +281,7 @@ lore tasks stories/bulk-archive-orders
 | **Args** | `<id>` |
 | **Key flags** | `--status <S>` (filter) |
 | **Output** | `kind: tasks.rollup` — `{ concept, status?, tasks: [{ id, title, status }] }` (object-wrapped, like every list command) |
-| **Exit** | `0` ok · `3` concept not found · `6` Backlog probe failed |
+| **Exit** | `0` ok · `2` usage (missing `<id>`, unknown/repeated flag) · `3` concept not found, or `backlog` not on PATH · `6` `backlog` present but not `--json`-capable |
 
 ### `orphans`
 

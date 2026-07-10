@@ -1,4 +1,4 @@
-import type { BacklogAdapter, BacklogTaskDetail, EditTaskPatch } from "../src/adapters/backlog";
+import type { BacklogAdapter, BacklogCapability, BacklogTaskDetail, EditTaskPatch } from "../src/adapters/backlog";
 import { type Concept, idFromPath } from "../src/core/concept";
 import type { Writer } from "../src/errors";
 import { LoreError } from "../src/errors";
@@ -107,14 +107,18 @@ export function storyDoc(title: string, taskIds: readonly string[], status?: str
 
 /**
  * An in-memory {@link BacklogAdapter} fake: `viewTask` reads a seeded map (case-insensitive),
- * `editTask` mutates it and records the call, and `probe` resolves to a `--json`-capable verdict
- * (or rejects with `opts.poisonProbe`, to exercise the capability-failure path). The remaining
- * methods throw — shared by `link.test.ts`, `rename.test.ts`, and `tasks.test.ts`, so there is one
- * fake to evolve, not a copy per file.
+ * `editTask` mutates it and records the call. `probe` is **not implemented by default** — it throws on
+ * any call, so `link.test.ts`/`rename.test.ts` keep their implicit guard that those commands never
+ * probe Backlog; only a caller that opts in (`opts.probe`) makes it resolve or fail. Shared by
+ * `link.test.ts`, `rename.test.ts`, and `tasks.test.ts`, so there is one fake to evolve, not a copy.
+ *
+ * @param opts.probe `"ok"` makes `probe` resolve to a `--json`-capable verdict (`lore tasks` probes up
+ *   front); an `Error` makes it reject (to exercise the capability-failure path). Omitted → `probe`
+ *   throws "not implemented" like the other unused methods.
  */
 export function fakeAdapter(
   seed: readonly BacklogTaskDetail[],
-  opts: { poisonEdits?: readonly string[]; poisonViews?: readonly string[]; poisonProbe?: Error } = {},
+  opts: { poisonEdits?: readonly string[]; poisonViews?: readonly string[]; probe?: "ok" | Error } = {},
 ): BacklogAdapter & { calls: EditCall[] } {
   const tasks = new Map<string, BacklogTaskDetail>();
   for (const t of seed) {
@@ -126,13 +130,17 @@ export function fakeAdapter(
   const notImplemented = (name: string) => (): never => {
     throw new Error(`fakeAdapter: ${name} is not implemented`);
   };
+  const probeOpt = opts.probe;
   return {
-    async probe() {
-      if (opts.poisonProbe !== undefined) {
-        throw opts.poisonProbe;
-      }
-      return { version: "1.47.1", schemaVersion: "1" };
-    },
+    probe:
+      probeOpt === undefined
+        ? notImplemented("probe")
+        : async (): Promise<BacklogCapability> => {
+            if (probeOpt instanceof Error) {
+              throw probeOpt;
+            }
+            return { version: "1.47.1", schemaVersion: "1" };
+          },
     listTasks: notImplemented("listTasks"),
     searchByLabel: notImplemented("searchByLabel"),
     searchTasks: notImplemented("searchTasks"),
