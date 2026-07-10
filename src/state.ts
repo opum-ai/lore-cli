@@ -3,11 +3,13 @@
  *
  * lore is the **sole committer** of `backlog/` (ADR-0012): Backlog.md itself never runs `git
  * add`/`git commit` (`auto_commit: false`), so whichever `lore` command wrote to a task through the
- * Backlog CLI (`task create`/`task edit`) leaves that write sitting uncommitted in the working tree.
- * `lore sync` is the point that closes the loop — its own writes are entirely to `docs/`, so
- * {@link commitBacklogIfDirty} instead scans `backlog/` for whatever is currently uncommitted
- * (from `link`/`unlink`/`rename`, or a human's direct `backlog task edit`) and commits exactly those
- * paths in one `lore`-authored commit, leaving anything outside `backlog/` untouched.
+ * Backlog CLI (`task create`/`task edit`) has to be committed by `lore` itself. Two shapes:
+ * {@link commitBacklogFiles} is the **per-write** commit — `link`/`unlink`/`rename` commit exactly the
+ * task file(s) they just edited, immediately, staging **only** those paths (ADR-0012 §1: never sweep an
+ * unrelated in-flight edit into the commit). {@link commitBacklogIfDirty} is the **catch-all** sweep —
+ * `lore sync` (whose own writes are entirely to `docs/`) commits whatever is *still* uncommitted under
+ * `backlog/` (a human's direct `backlog task edit`, or anything a prior command missed), leaving
+ * anything outside `backlog/` untouched. Both are one `lore`-authored commit.
  *
  * This is the **fourth** injectable determinism seam (after the clock, the Backlog subprocess, and
  * the git-history `GitAdapter` in `core/log.ts`; lore-design §8): {@link GitSpawn} mirrors
@@ -86,8 +88,15 @@ const BACKLOG_DIR = "backlog/";
 export async function commitBacklogIfDirty(
   spawn: GitSpawn,
   message: string = DEFAULT_COMMIT_MESSAGE,
+  pathspecs: readonly string[] = [BACKLOG_DIR],
 ): Promise<BacklogCommitResult> {
-  const { addPaths, allPaths } = await porcelainPaths(spawn, BACKLOG_DIR);
+  // An empty pathspec set means "commit nothing" — never a bare `git status` (which would report the
+  // WHOLE repo, not just backlog/). A caller with no files to commit ({@link commitBacklogFiles}) is
+  // a no-op here rather than a repo-wide sweep.
+  if (pathspecs.length === 0) {
+    return { committed: false, files: [] };
+  }
+  const { addPaths, allPaths } = await porcelainPaths(spawn, pathspecs);
   if (allPaths.length === 0) {
     return { committed: false, files: [] };
   }
@@ -107,6 +116,32 @@ export async function commitBacklogIfDirty(
 /** The default commit message when the caller does not supply one. */
 const DEFAULT_COMMIT_MESSAGE = "chore(backlog): sync task changes";
 
+/**
+ * Commit exactly the `backlog/` `files` a `lore` command just wrote (each repo-relative, e.g.
+ * `backlog/tasks/lore-1 - x.md`), in one `lore`-authored commit — the **per-write** commit
+ * `link`/`unlink`/`rename` use so their `doc:<conceptId>` back-reference edit is committed
+ * immediately rather than left for the next `lore sync`. Unlike {@link commitBacklogIfDirty}'s
+ * bundle-wide `backlog/` sweep (which `sync` uses as the catch-all), this stages **only** the given
+ * files as its pathspec, so an unrelated uncommitted `backlog/` edit sitting in the working tree is
+ * never swept into the commit — [ADR-0012](../docs/adr/0012-backlog-coexistence-git-ownership.md)
+ * §1's "stage only the specific task file(s) it intended to change". An empty `files` (the command
+ * wrote nothing — `--no-back-ref`, an idempotent no-op, a read-phase failure) is a pure no-op, not a
+ * repo-wide `git status`. `gitSpawn` defaults to the real `git` binary scoped to `root`; injected in
+ * tests. A failed `git add`/`commit` surfaces as a `drift` {@link LoreError} exactly like
+ * {@link commitBacklogIfDirty}.
+ */
+export async function commitBacklogFiles(
+  files: readonly string[],
+  opts: { readonly root: string; readonly gitSpawn?: GitSpawn },
+  message: string,
+): Promise<BacklogCommitResult> {
+  if (files.length === 0) {
+    return { committed: false, files: [] };
+  }
+  const gitSpawn = opts.gitSpawn ?? bunGitSpawn(opts.root);
+  return commitBacklogIfDirty(gitSpawn, message, files);
+}
+
 /** {@link porcelainPaths}'s result: the paths to `git add`, and the full set to scope the commit to (and report). */
 interface PorcelainPaths {
   /** Paths to `git add`. Excludes a staged rename/copy's OLD path — see the field below for why. */
@@ -125,7 +160,7 @@ interface PorcelainPaths {
 }
 
 /**
- * The **cwd-relative** paths `git status --porcelain -z` reports as changed under `pathspec`
+ * The **cwd-relative** paths `git status --porcelain -z` reports as changed under `pathspecs`
  * (staged, unstaged, or untracked — every porcelain status code). Parses the NUL-delimited machine
  * format (`-z`), not the human `->`-separated text format: `-z` disables git's C-style quoting
  * entirely (every path is raw bytes, even one containing a space, a literal arrow, or non-ASCII
@@ -147,18 +182,18 @@ interface PorcelainPaths {
  * translation needed — the path from the repo's top level down to `cwd` (e.g. `"project/"`, or `""`
  * when `cwd` already is the top level) — stripped from every reported path before it is used.
  */
-async function porcelainPaths(spawn: GitSpawn, pathspec: string): Promise<PorcelainPaths> {
+async function porcelainPaths(spawn: GitSpawn, pathspecs: readonly string[]): Promise<PorcelainPaths> {
   const prefixResult = await run(spawn, ["rev-parse", "--show-prefix"], "git rev-parse --show-prefix");
   const prefix = prefixResult.stdout.trim();
   const cwdRelative = (path: string): string =>
     prefix !== "" && path.startsWith(prefix) ? path.slice(prefix.length) : path;
 
   // `--untracked-files=all` expands a brand-new untracked directory into its individual file paths
-  // (plain `--porcelain` reports only the directory itself, e.g. `?? backlog/`) — scoped to `pathspec`
+  // (plain `--porcelain` reports only the directory itself, e.g. `?? backlog/`) — scoped to `pathspecs`
   // so, unlike a bare repo-wide `-uall`, this never walks more of the tree than lore is committing.
   const result = await run(
     spawn,
-    ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", pathspec],
+    ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...pathspecs],
     "git status",
   );
   const tokens = result.stdout.split("\0");

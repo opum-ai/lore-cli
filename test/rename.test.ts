@@ -848,10 +848,11 @@ describe("lore rename — Backlog back-ref move", () => {
 // ── backlog/ commit (LORE-49): rename commits its back-ref move immediately ──
 
 describe("lore rename — backlog/ commit (LORE-49)", () => {
-  const DIRTY = " M backlog/tasks/lore-1 - x.md";
-  const DIRTY_PATH = "backlog/tasks/lore-1 - x.md";
+  // makeTask("LORE-1")'s file path (helpers.ts) — the exact path the commit must scope itself to.
+  const DIRTY_PATH = "backlog/tasks/lore-1 - title.md";
+  const DIRTY = ` M ${DIRTY_PATH}`;
 
-  test("renaming a linked concept commits the moved doc: back-reference in one lore-authored commit", async () => {
+  test("renaming a linked concept commits the moved back-reference, scoped to that one task file", async () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n---\nOrders.\n");
     const adapter = fakeAdapter([
       makeTask("LORE-1", { labels: ["doc:reference/orders"], documentation: ["docs/reference/orders.md"] }),
@@ -872,6 +873,8 @@ describe("lore rename — backlog/ commit (LORE-49)", () => {
 
     expect(code).toBe(EXIT_OK);
     expect(data.backlogCommit).toEqual({ committed: true, files: [DIRTY_PATH] });
+    // SCOPED: `git status` queries only the moved task's file, never all of `backlog/` (ADR-0012 §1).
+    expect(git.calls[1]).toEqual(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", DIRTY_PATH]);
     expect(git.calls[3]).toEqual([
       "commit",
       "-m",

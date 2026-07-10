@@ -764,10 +764,11 @@ describe("lore unlink --allow-missing", () => {
 // ── backlog/ commit (LORE-49): link/unlink commit their doc: back-ref writes immediately ──
 
 describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
-  const DIRTY = " M backlog/tasks/lore-1 - x.md";
-  const DIRTY_PATH = "backlog/tasks/lore-1 - x.md";
+  // makeTask("LORE-1")'s file path (helpers.ts) — the exact path the commit must scope itself to.
+  const DIRTY_PATH = "backlog/tasks/lore-1 - title.md";
+  const DIRTY = ` M ${DIRTY_PATH}`;
 
-  test("link commits the doc: back-reference it just wrote, in one lore-authored commit", async () => {
+  test("link commits the doc: back-reference it just wrote, scoped to that one task file", async () => {
     writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
     const adapter = fakeAdapter([makeTask("LORE-1")]);
     const git = dirtyGitSpawn(DIRTY);
@@ -776,7 +777,10 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
 
     expect(code).toBe(EXIT_OK);
     expect(report.backlogCommit).toEqual({ committed: true, files: [DIRTY_PATH] });
-    // Stages exactly the dirty backlog/ path and commits it with lore's own attributable message.
+    // SCOPED: `git status` queries only the edited task file (its `detail.file`), never all of
+    // `backlog/` — so an unrelated dirty `backlog/` edit can never be swept in (ADR-0012 §1).
+    expect(git.calls[1]).toEqual(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", DIRTY_PATH]);
+    // Stages exactly that path and commits it with lore's own attributable message.
     expect(git.calls[2]).toEqual(["add", "--", DIRTY_PATH]);
     expect(git.calls[3]).toEqual([
       "commit",
@@ -822,6 +826,16 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
 
     expect(code).toBe(EXIT_CODES.drift); // lore-2's edit failed
     expect(report.backlogCommit.committed).toBe(true); // lore-1's successful write is still committed
+    // Scoped to ONLY lore-1's file — lore-2 (failed, wrote nothing) is excluded from the commit, so a
+    // read/write failure never drags an unrelated dirty backlog/ path into the commit.
+    expect(git.calls[1]).toEqual([
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--untracked-files=all",
+      "--",
+      "backlog/tasks/lore-1 - title.md",
+    ]);
     expect(git.calls[3]?.[0]).toBe("commit");
   });
 

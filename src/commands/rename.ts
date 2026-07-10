@@ -41,7 +41,7 @@ import { type RewritePlan, rewriteInbound } from "../core/rewrite";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_CODES, EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { type BacklogCommitResult, bunGitSpawn, commitBacklogIfDirty, type GitSpawn } from "../state";
+import { type BacklogCommitResult, commitBacklogFiles, type GitSpawn } from "../state";
 import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
 import { canonicalIdentity, readIndexBytes } from "./discover";
 import { ensureDir, moveFile, writeFileOverwriting } from "./fswrite";
@@ -168,13 +168,14 @@ export async function runRename(options: RenameOptions): Promise<number> {
   // unlinked doc keeps its historical zero-Backlog-dependency behavior — and under `--dry-run`,
   // which previews the file-level plan only, not a Backlog-side one.
   let backRefs: readonly MovedBackRef[] = [];
+  let editedTaskFiles: readonly string[] = [];
   // `plan.rename` is never actually `null` here — `rewriteInbound` above is always called with
   // `move: true` — but the check is kept (mirrors `assertTargetFree`'s identical guard) so this
   // stays correct by construction rather than by the caller's current behavior, should a future
   // change ever make `move` conditional in this function.
   if (plan.rename !== null && !parsed.dryRun && linkedTasks.length > 0) {
     const adapter = options.adapter ?? defaultAdapter(options.root);
-    backRefs = await moveBackRefs(
+    const moved = await moveBackRefs(
       adapter,
       linkedTasks,
       oldId,
@@ -182,14 +183,16 @@ export async function runRename(options: RenameOptions): Promise<number> {
       `${DOCS_DIR}/${plan.rename.from}`,
       `${DOCS_DIR}/${plan.rename.to}`,
     );
+    backRefs = moved.outcomes;
+    editedTaskFiles = moved.editedFiles;
   }
 
-  // Commit the back-reference edits `backlog/` now carries — lore is its sole committer (ADR-0012,
-  // design §3.6), so a `rename` no longer leaves them uncommitted until the next `lore sync`. Only
-  // fires when a move was actually attempted (a `moved`/`failed` outcome): an unlinked or `--dry-run`
-  // rename leaves `backRefs` empty and never touches git, and an all-`already-current` move wrote
-  // nothing, so both leave `backlog/` clean and no-op here.
-  const backlogCommit = await commitMovedBackRefs(options, backRefs);
+  // Commit exactly the task files the back-reference move edited — lore is the sole committer of
+  // `backlog/` (ADR-0012, design §3.6), so a `rename` no longer leaves them uncommitted until the
+  // next `lore sync`. Scoped to `editedTaskFiles`, so an unlinked/`--dry-run` rename or an
+  // all-`already-current` move (empty) commits nothing and an unrelated dirty `backlog/` edit is
+  // never swept in (ADR-0012 §1).
+  const backlogCommit = await commitBacklogFiles(editedTaskFiles, options, RENAME_COMMIT_MESSAGE);
 
   const report = buildReport(plan, writes, backRefs, backlogCommit, parsed.dryRun);
   emit(reportRenderable(report), options.output, options.stdout);
@@ -199,25 +202,6 @@ export async function runRename(options: RenameOptions): Promise<number> {
 
 /** The `git`-authored commit message for `lore rename`'s `backlog/` writes (moving each linked task's `doc:` label/`--doc` path). */
 const RENAME_COMMIT_MESSAGE = "chore(backlog): move doc back-references (lore rename)";
-
-/**
- * Commit whatever the back-reference move left dirty under `backlog/` — the "lore is the sole
- * committer of `backlog/`" mechanism (ADR-0012, design §3.6) applied to `rename`. Only runs when a
- * task was actually moved or its edit failed (a `moved`/`failed` outcome); an empty `backRefs`
- * (unlinked concept or `--dry-run`) or an all-`already-current` set wrote nothing, so `backlog/` is
- * clean and this is a no-op. A `git commit` failure surfaces loudly as `drift` (exit 6), propagated
- * to the router — never left silent (mirrors `link`/`unlink` and `sync`).
- */
-async function commitMovedBackRefs(
-  options: RenameOptions,
-  backRefs: readonly MovedBackRef[],
-): Promise<BacklogCommitResult> {
-  if (!backRefs.some((b) => b.backRef === "moved" || b.backRef === "failed")) {
-    return { committed: false, files: [] };
-  }
-  const gitSpawn = options.gitSpawn ?? bunGitSpawn(options.root);
-  return commitBacklogIfDirty(gitSpawn, RENAME_COMMIT_MESSAGE);
-}
 
 // ── Filesystem commit ──────────────────────────────────────────────────────────
 

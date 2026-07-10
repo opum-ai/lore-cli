@@ -11,7 +11,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exitCodeFor, LoreError } from "../src/errors";
-import { bunGitSpawn, commitBacklogIfDirty, type GitSpawn, type GitSpawnResult } from "../src/state";
+import {
+  bunGitSpawn,
+  commitBacklogFiles,
+  commitBacklogIfDirty,
+  type GitSpawn,
+  type GitSpawnResult,
+} from "../src/state";
 import { gitRun } from "./helpers";
 
 /** A recorded invocation, for assertions on exact argv. */
@@ -432,6 +438,66 @@ describe("bunGitSpawn + commitBacklogIfDirty — real git integration", () => {
     }).stdout.toString("utf8");
     expect(status).toContain("docs/index.md"); // still uncommitted/untracked
     expect(status).not.toContain("backlog/x.md"); // committed
+  });
+});
+
+describe("bunGitSpawn + commitBacklogFiles — scoped per-write commit (real git)", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "lore-state-scoped-"));
+    gitRun(root, ["init", "-q"]);
+    gitRun(root, ["config", "user.name", "lore test"]);
+    gitRun(root, ["config", "user.email", "lore-test@example.com"]);
+    writeFileSync(join(root, ".gitkeep"), "");
+    gitRun(root, ["add", "."]);
+    gitRun(root, ["commit", "-q", "-m", "initial"]);
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const headSha = (): string =>
+    Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: root, stdout: "pipe" }).stdout.toString("utf8").trim();
+
+  test("commits ONLY the passed task file, leaving an unrelated dirty backlog/ file untouched (ADR-0012 §1)", async () => {
+    mkdirSync(join(root, "backlog", "tasks"), { recursive: true });
+    const edited = "backlog/tasks/lore-1 - title.md"; // the file link/unlink/rename just edited
+    const unrelated = "backlog/tasks/lore-2 - hand edit.md"; // a developer's separate in-progress edit
+    writeFileSync(join(root, edited), "the back-reference edit\n");
+    writeFileSync(join(root, unrelated), "an unrelated in-progress hand-edit\n");
+
+    const result = await commitBacklogFiles([edited], { root }, "chore(backlog): add doc back-references (lore link)");
+
+    expect(result).toEqual({ committed: true, files: [edited] });
+    // The commit's tree contains ONLY the edited task file (spaces in the path handled by argv, no shell).
+    const committed = Bun.spawnSync(["git", "show", "--stat=200", "--pretty=format:", "HEAD"], {
+      cwd: root,
+      stdout: "pipe",
+    }).stdout.toString("utf8");
+    expect(committed).toContain("lore-1 - title.md");
+    expect(committed).not.toContain("lore-2 - hand edit.md");
+    // The unrelated hand-edit is STILL uncommitted — never swept into lore's commit.
+    const status = Bun.spawnSync(["git", "status", "--porcelain", "--untracked-files=all"], {
+      cwd: root,
+      stdout: "pipe",
+    }).stdout.toString("utf8");
+    expect(status).toContain("lore-2 - hand edit.md");
+    expect(status).not.toContain("lore-1 - title.md"); // committed, no longer dirty
+  });
+
+  test("empty files is a pure no-op: no commit, HEAD unmoved", async () => {
+    const before = headSha();
+    const result = await commitBacklogFiles([], { root }, "unused");
+    expect(result).toEqual({ committed: false, files: [] });
+    expect(headSha()).toBe(before);
+  });
+
+  test("a passed file that is not actually dirty commits nothing (idempotent no-op)", async () => {
+    const before = headSha();
+    const result = await commitBacklogFiles(["backlog/tasks/lore-9 - never written.md"], { root }, "unused");
+    expect(result).toEqual({ committed: false, files: [] });
+    expect(headSha()).toBe(before);
   });
 });
 

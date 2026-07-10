@@ -632,15 +632,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **`lore link` / `lore unlink` / `lore rename` now commit their `backlog/` writes immediately**
   (LORE-49): each command's `doc:<conceptId>` back-reference edit is committed in one `lore`-authored
-  commit right after it is written (reusing `state.ts`'s `commitBacklogIfDirty`), instead of being left
+  commit right after it is written (via `state.ts`'s new `commitBacklogFiles`), instead of being left
   uncommitted in the working tree until the next `lore sync` swept it up — matching design §3.6 and
   [ADR-0012](docs/adr/0012-backlog-coexistence-git-ownership.md) ("lore is the sole committer of
-  `backlog/`"). The commit fires **only when a Backlog write actually happened**: `--no-back-ref`, a
-  fully idempotent re-link/unlink, an unlinked rename, and `--dry-run` write nothing and so commit
-  nothing (never sweeping an unrelated dirty `backlog/` edit into a commit). The outcome is now
-  reported — `link.result` / `unlink.result` / `rename.result` gain a `backlogCommit: { committed,
-  files }` field, and text output appends a `committed backlog/: N files` line. A failed commit
-  surfaces loudly as `drift` (exit 6), never silently.
+  `backlog/`"). The commit is **scoped to exactly the task file(s) the command edited** (ADR-0012 §1:
+  "stage only the specific task file(s)"), so an unrelated in-flight `backlog/` edit is never swept in,
+  and `--no-back-ref`, a fully idempotent re-link/unlink, an unlinked rename, and `--dry-run` (which
+  write nothing) commit nothing. `lore sync` remains the catch-all that later commits anything still
+  uncommitted under `backlog/`. The outcome is now reported — `link.result` / `unlink.result` /
+  `rename.result` gain a `backlogCommit: { committed, files }` field, and text output appends a
+  `committed backlog/: N files` line. A failed commit surfaces loudly as `drift` (exit 6), never
+  silently.
 - **`lore check` internals** (LORE-48): the `validate`/`check` finding model is unified on a shared
   `Severity`/`Finding<Rule>` (`core/finding.ts`); the filesystem-errno→`LoreError` mapping is
   consolidated into one `ioError` policy (`errors.ts`); `bundle.ts`'s markdown walk is generalized to
