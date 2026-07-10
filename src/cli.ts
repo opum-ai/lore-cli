@@ -25,6 +25,7 @@ import { runInit } from "./commands/init";
 import { runInstructions } from "./commands/instructions";
 import { runLink, runUnlink } from "./commands/link";
 import { runNew } from "./commands/new";
+import { runOrphans } from "./commands/orphans";
 import { runQuery } from "./commands/query";
 import { runRename } from "./commands/rename";
 import { runReplace } from "./commands/replace";
@@ -275,6 +276,15 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
       });
     case "tasks":
       return runTasks({
+        root,
+        output,
+        args: parsed.commandArgs,
+        stdout: context.stdout,
+        stderr: context.stderr,
+        adapter: context.adapter,
+      });
+    case "orphans":
+      return runOrphans({
         root,
         output,
         args: parsed.commandArgs,

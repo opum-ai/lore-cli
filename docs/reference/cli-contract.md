@@ -130,6 +130,7 @@ the [CLI surface](cli-surface.md):
 | `link.result` / `unlink.result` | `lore link` / `unlink` | updated frontmatter refs, task label set |
 | `sync.result` | `lore sync` | what changed (status rewrites, managed-block diffs, regen) + the `backlog/` commit |
 | `tasks.rollup` | `lore tasks` | a concept's linked tasks' live Backlog status — `{ concept, status?, tasks: [{id,title,status}] }` |
+| `orphans.report` | `lore orphans` | coupling gaps — `{ orphanTasks[], danglingLinks[] }` (either section omitted under `--tasks-only`/`--docs-only`) |
 | `schema.result` | `lore schema` | schema files written |
 | `graph.export` | `lore graph` | nodes, edges, per-doc/bundle token estimates |
 | `query.results` | `lore query` | ranked hits with `total`/`shown`/`truncated` (§3) |
@@ -137,7 +138,7 @@ the [CLI surface](cli-surface.md):
 | `instructions.text` | `lore instructions` | guidance body + the full topic index |
 | `agents.result` | `lore agents` | bridge files written/updated |
 | `help.manifest` | `lore help` | the capability manifest — every command's flags, `kind`, exit codes |
-| `orphans.report` / `scaffold.result` | `lore orphans` / `scaffold` — **deferred** | designed but not yet shipped (see [CLI surface](cli-surface.md)) |
+| `scaffold.result` | `lore scaffold` — **deferred** | designed but not yet shipped (see [CLI surface](cli-surface.md)) |
 
 A caller should branch on `kind` and tolerate **unknown** `kind` values
 gracefully — new ones may appear under the same `schemaVersion` (§7), mirroring

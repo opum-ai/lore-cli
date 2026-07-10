@@ -41,7 +41,7 @@
  * runtime import, so the two agent catalogs can't drift while the live CLI stays
  * decoupled from the SKILL generator. `--json` availability is universal, carried
  * per entry so a single entry is self-describing. Every entry is a real `cli.ts`
- * dispatch case (never an aspirational `orphans`/`scaffold`), pinned to the
+ * dispatch case (never an aspirational `scaffold`), pinned to the
  * router both directions by the lockstep test.
  */
 
@@ -292,6 +292,21 @@ const LORE_MANIFEST: readonly ManifestCommand[] = [
       "lore tasks stories/bulk-archive-orders",
       'lore tasks stories/bulk-archive-orders --status "In Progress"',
     ],
+  },
+  {
+    name: "orphans",
+    summary: "Report tasks with no owning doc + docs whose linked task vanished",
+    args: "",
+    flags: [
+      { name: "tasks-only", takesValue: false, summary: "Report only tasks with no owning doc" },
+      { name: "docs-only", takesValue: false, summary: "Report only docs whose linked task vanished" },
+    ],
+    json: true,
+    kind: "orphans.report",
+    // Same seams as `tasks`: bundle (loadBundle) + backlog (listTasks snapshot). A report, not a gate
+    // (always exit 0 on success), so no `extra` gate-return code.
+    exitCodes: exitCodesFor(["bundle", "backlog"]),
+    examples: ["lore orphans", "lore orphans --tasks-only"],
   },
   {
     name: "schema",
