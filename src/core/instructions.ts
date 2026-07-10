@@ -28,9 +28,9 @@ const LINKING: InstructionTopic = {
   key: "linking",
   title: "Story <-> Task coupling (`lore link` / `lore unlink`)",
   body: `A Story concept's frontmatter \`tasks:\` list is the source of coupling to
-Backlog.md -- those are the task ids the Story owns. There is no dedicated
-live-rollup command yet (\`lore tasks\` is planned but not shipped); check
-each id's current status directly with \`backlog task view <id> --plain\`.
+Backlog.md -- those are the task ids the Story owns. Read their current live
+status with \`lore tasks <id>\` (the read-only rollup \`lore sync\` writes into
+the managed block); \`backlog task view <id> --plain\` shows one task in full.
 Never trust the Story's own written \`status\`, which only refreshes when
 \`lore sync\` runs.
 

@@ -18,9 +18,8 @@
  * canonical loop) is grounded in what the CLI *actually* does today — `src/cli.ts`, `src/output.ts`,
  * `src/errors.ts`, and the shipped `core/instructions.ts` OVERVIEW — never in an aspirational
  * runbook/ADR that also describes not-yet-shipped state. In particular the generated content names
- * **no** unshipped command (there is no `lore tasks` here; live task status is checked via the
- * `linking` topic / `backlog task view`), matching the correction the `instructions` OVERVIEW made.
- * The `agents.test.ts` lockstep guard re-checks {@link LORE_COMMANDS} against the real dispatcher.
+ * only **shipped** commands the real dispatcher handles (the LORE-37 phantom-command trap); the
+ * `agents.test.ts` lockstep guard re-checks {@link LORE_COMMANDS} against the real dispatcher.
  */
 
 import { upsertManagedBlock } from "./managed-block";
@@ -64,6 +63,7 @@ export const LORE_COMMANDS: readonly CommandSummary[] = [
   { name: "link", summary: "Add task ids to a concept's tasks: + the doc: back-ref" },
   { name: "unlink", summary: "Remove task ids from a concept's tasks: + the doc: back-ref" },
   { name: "sync", summary: "Reconcile status + managed task blocks, regen index/log, commit backlog/" },
+  { name: "tasks", summary: "Show the live status rollup for a concept's linked tasks" },
   { name: "schema", summary: "Export the profile's editor JSON Schemas to .lore/schemas/" },
   { name: "graph", summary: "Emit the bundle's cross-link graph as json or dot" },
   { name: "query", summary: "Full-text search the bundle with frontmatter filters" },

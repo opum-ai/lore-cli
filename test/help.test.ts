@@ -87,6 +87,7 @@ describe("core/manifest — shape and invariants", () => {
       link: [0, 2, 3, 4, 5, 6],
       unlink: [0, 2, 3, 4, 5, 6],
       sync: [0, 2, 3, 4, 5, 6],
+      tasks: [0, 2, 3, 4, 6], // bundle (3/4/6) + backlog (3/6); no write seam → no 5
       schema: [0, 2, 4, 5, 6], // no 3: no read seam / no id lookup
       graph: [0, 2, 3, 4, 6],
       query: [0, 2, 3, 4, 6],

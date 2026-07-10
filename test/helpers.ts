@@ -107,13 +107,14 @@ export function storyDoc(title: string, taskIds: readonly string[], status?: str
 
 /**
  * An in-memory {@link BacklogAdapter} fake: `viewTask` reads a seeded map (case-insensitive),
- * `editTask` mutates it and records the call. Every other method throws — shared by `link.test.ts`
- * (`runLink`/`runUnlink`) and `rename.test.ts` (`moveBackRefs`), neither of which calls them, so
- * there is one fake to evolve, not a copy per file.
+ * `editTask` mutates it and records the call, and `probe` resolves to a `--json`-capable verdict
+ * (or rejects with `opts.poisonProbe`, to exercise the capability-failure path). The remaining
+ * methods throw — shared by `link.test.ts`, `rename.test.ts`, and `tasks.test.ts`, so there is one
+ * fake to evolve, not a copy per file.
  */
 export function fakeAdapter(
   seed: readonly BacklogTaskDetail[],
-  opts: { poisonEdits?: readonly string[]; poisonViews?: readonly string[] } = {},
+  opts: { poisonEdits?: readonly string[]; poisonViews?: readonly string[]; poisonProbe?: Error } = {},
 ): BacklogAdapter & { calls: EditCall[] } {
   const tasks = new Map<string, BacklogTaskDetail>();
   for (const t of seed) {
@@ -126,7 +127,12 @@ export function fakeAdapter(
     throw new Error(`fakeAdapter: ${name} is not implemented`);
   };
   return {
-    probe: notImplemented("probe"),
+    async probe() {
+      if (opts.poisonProbe !== undefined) {
+        throw opts.poisonProbe;
+      }
+      return { version: "1.47.1", schemaVersion: "1" };
+    },
     listTasks: notImplemented("listTasks"),
     searchByLabel: notImplemented("searchByLabel"),
     searchTasks: notImplemented("searchTasks"),

@@ -41,7 +41,7 @@
  * runtime import, so the two agent catalogs can't drift while the live CLI stays
  * decoupled from the SKILL generator. `--json` availability is universal, carried
  * per entry so a single entry is self-describing. Every entry is a real `cli.ts`
- * dispatch case (never an aspirational `tasks`/`orphans`/`scaffold`), pinned to the
+ * dispatch case (never an aspirational `orphans`/`scaffold`), pinned to the
  * router both directions by the lockstep test.
  */
 
@@ -279,6 +279,19 @@ const LORE_MANIFEST: readonly ManifestCommand[] = [
     kind: "sync.result",
     exitCodes: exitCodesFor(["bundle", "profile", "read", "write", "backlog", "git"]),
     examples: ["lore sync", "lore sync --dry-run"],
+  },
+  {
+    name: "tasks",
+    summary: "Show the live status rollup for a concept's linked tasks",
+    args: "<id>",
+    flags: [{ name: "status", takesValue: true, summary: "Filter the rollup to one Backlog status" }],
+    json: true,
+    kind: "tasks.rollup",
+    exitCodes: exitCodesFor(["bundle", "backlog"]),
+    examples: [
+      "lore tasks stories/bulk-archive-orders",
+      'lore tasks stories/bulk-archive-orders --status "In Progress"',
+    ],
   },
   {
     name: "schema",

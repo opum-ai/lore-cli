@@ -1,10 +1,11 @@
 ---
 id: LORE-25
 title: lore tasks
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-06-21 06:26'
-updated_date: '2026-06-21 06:28'
+updated_date: '2026-07-10 16:17'
 labels:
   - cmd
 milestone: m-3
@@ -24,6 +25,36 @@ Print the live task rollup for a Story via the JSON adapter.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Output supports --plain and --json
-- [ ] #2 Reflects current Backlog status
+- [x] #1 Output supports --plain and --json
+- [x] #2 Reflects current Backlog status
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. src/commands/tasks.ts (NEW): thin read-only command. Options {root,output,args,stdout,stderr,adapter} modeled on context.ts. Hand-roll arg parse (value-bearing --status; accept --status=S). Flow: loadBundle(join(root,DOCS_DIR),{warnings}) -> flush advisories to stderr -> resolve concept via graph.concepts.get(idFromPath(id)); miss -> conceptNotInBundle(id) (not_found=3). dedupeTaskIds(toRefList(concept.frontmatter.tasks)). Explicit adapter.probe() up front so capability failure fails fast (missing binary=3 / not-json-capable=6). resolveTaskDetails (reuse reconcile-shared.ts) -> map found tasks to {id,title,status} rows; dangling ids (viewTask null) -> omit + stderr advisory, exit 0. Async Promise<number>.
+2. Renderer: kind 'tasks.rollup', data = ARRAY [{id,title,status}] per cli-surface contract; pretty=colorized table, plain=one row/line. --status <S> filters output rows (case-insensitive exact on configured status label).
+3. src/cli.ts: import runTasks; case 'tasks' forwarding adapter:context.adapter; position after 'unlink' matching manifest (order-sensitive test).
+4. src/core/manifest.ts: LORE_MANIFEST 'tasks' entry (same position), exitCodes: exitCodesFor(['bundle','backlog']) = [0,2,3,4,6]; drop 'tasks' from aspirational docstring.
+5. src/core/agent-bridge.ts: add 'tasks' to LORE_COMMANDS, summary byte-identical to manifest.
+6. test/help.test.ts: add golden tasks:[0,2,3,4,6]; lockstep+order tests pass once positions agree.
+7. test/tasks.test.ts (NEW): JSON envelope kind/shape; --status filter; unknown concept->3; dangling id omitted+advisory exit0; probe failure->6; plain/pretty asserts; end-to-end run([...]) with injected fakeAdapter (resolves via viewTask).
+8. Docs: promote tasks.rollup from 'deferred' row to real cli-contract.md 2.1 registry row; update core/instructions.ts 'lore tasks not shipped' -> shipped; CHANGELOG Unreleased->Added. lore check clean.
+9. Verify: bun lint/typecheck/test green; drive lore tasks against real bundle (/verify); PR into dev.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Shipped lore tasks <id> [--status <S>] on feat/lore-25-tasks.
+
+Design (approved): thin src/commands/tasks.ts over loadBundle + the Backlog JSON adapter (viewTask per id, like reconcile-shared/sync/check). Envelope kind: tasks.rollup; data is OBJECT-wrapped { concept, status?, tasks:[{id,title,status}] } — NOT a bare array. Reversed the earlier 'bare array per doc' call after verifying every sibling list command (query.results/graph.export/context.export) wraps its array for additive-safety (cli-contract §7); updated cli-surface.md:281 to match.
+
+Backlog probe runs UP FRONT (adapter.probe()) so a missing binary (3) / non-json binary (6) fails fast BEFORE per-task reads — that ordering is what lets a viewTask null AFTER a passing probe mean unambiguously 'dangling tasks: id' (dropped + stderr advisory, exit 0; orphans/LORE-32 owns the real report) rather than 'Backlog down'. Per-task reads use allSettled with first-in-order rethrow (no unhandled sibling rejection) so a genuine read drift hard-fails like check/sync. Empty tasks: short-circuits WITHOUT probing (mirrors gatherReconciliation).
+
+Exit codes DERIVED from seams (LORE-38 discipline): exitCodesFor(['bundle','backlog']) = [0,2,3,4,6]; golden row added to test/help.test.ts. --status is value-bearing so hand-rolled parse (à la context.ts), not parseCommandArgs.
+
+Shipping-a-command ripples: manifest LORE_MANIFEST entry + agent-bridge LORE_COMMANDS entry (byte-identical summary 'Show the live status rollup for a concept's linked tasks') both inserted after sync (dispatch order, order-sensitive lockstep); regenerated .claude/skills/lore/SKILL.md via lore agents --force; dropped the now-invalid 'not lore tasks' assertions in agents.test.ts and the 'tasks is aspirational/unshipped' claims in manifest.ts + agent-bridge.ts docstrings; updated instructions.ts linking topic to point at lore tasks.
+
+Verify: bun lint/typecheck/test green (1380 pass incl. 22 new tasks tests); lore check clean (32 files 0/0). Drove real CLI: adr/0009 (0 real tasks — the [task-42,task-57] is a fenced example) → empty rollup exit 0 + clean JSON; temp Story linking a task vs real STOCK backlog → probe fail-fast exit 6; unknown concept → 3; missing id → 2.
+<!-- SECTION:NOTES:END -->

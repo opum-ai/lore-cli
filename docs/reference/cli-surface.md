@@ -267,8 +267,10 @@ lore unlink stories/bulk-archive-orders task-42 --allow-missing
 ### `tasks`
 
 Show the **live status rollup** for a concept's linked tasks, pulled fresh from
-`backlog task list --json` (does not write; this is the read-only view that
-[`sync`](#sync) materializes into the managed block).
+the Backlog JSON adapter (does not write; this is the read-only view that
+[`sync`](#sync) materializes into the managed block). A `tasks:` id Backlog no
+longer knows is dropped from the rollup with a stderr advisory, not an error —
+[`orphans`](#orphans) is the dedicated dangling-link report.
 
 ```
 lore tasks stories/bulk-archive-orders
@@ -278,7 +280,7 @@ lore tasks stories/bulk-archive-orders
 |---|---|
 | **Args** | `<id>` |
 | **Key flags** | `--status <S>` (filter) |
-| **Output** | `kind: tasks.rollup` — `[{ id, title, status }]` for the concept's tasks |
+| **Output** | `kind: tasks.rollup` — `{ concept, status?, tasks: [{ id, title, status }] }` (object-wrapped, like every list command) |
 | **Exit** | `0` ok · `3` concept not found · `6` Backlog probe failed |
 
 ### `orphans`

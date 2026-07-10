@@ -129,6 +129,7 @@ the [CLI surface](cli-surface.md):
 | `rename.result` / `supersede.result` | `lore rename` / `supersede` | rewritten inbound links + frontmatter refs |
 | `link.result` / `unlink.result` | `lore link` / `unlink` | updated frontmatter refs, task label set |
 | `sync.result` | `lore sync` | what changed (status rewrites, managed-block diffs, regen) + the `backlog/` commit |
+| `tasks.rollup` | `lore tasks` | a concept's linked tasks' live Backlog status — `{ concept, status?, tasks: [{id,title,status}] }` |
 | `schema.result` | `lore schema` | schema files written |
 | `graph.export` | `lore graph` | nodes, edges, per-doc/bundle token estimates |
 | `query.results` | `lore query` | ranked hits with `total`/`shown`/`truncated` (§3) |
@@ -136,7 +137,7 @@ the [CLI surface](cli-surface.md):
 | `instructions.text` | `lore instructions` | guidance body + the full topic index |
 | `agents.result` | `lore agents` | bridge files written/updated |
 | `help.manifest` | `lore help` | the capability manifest — every command's flags, `kind`, exit codes |
-| `tasks.rollup` / `orphans.report` / `scaffold.result` | `lore tasks` / `orphans` / `scaffold` — **deferred** | designed but not yet shipped (see [CLI surface](cli-surface.md)) |
+| `orphans.report` / `scaffold.result` | `lore orphans` / `scaffold` — **deferred** | designed but not yet shipped (see [CLI surface](cli-surface.md)) |
 
 A caller should branch on `kind` and tolerate **unknown** `kind` values
 gracefully — new ones may appear under the same `schemaVersion` (§7), mirroring
