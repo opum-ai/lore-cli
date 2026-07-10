@@ -62,6 +62,7 @@ import { loadProfile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_CODES, EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { type BacklogCommitResult, bunGitSpawn, commitBacklogIfDirty, type GitSpawn } from "../state";
 import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
 import { writeFileOverwriting } from "./fswrite";
 
@@ -79,6 +80,8 @@ export interface LinkOptions {
   stderr?: Writer;
   /** The Backlog adapter; defaults to the real `backlog` binary on PATH. Injected in tests so they touch no subprocess. */
   adapter?: BacklogAdapter;
+  /** The git-write seam (`state.ts`) for committing `backlog/` after a back-reference edit; defaults to the real `git` binary. Injected in tests. */
+  gitSpawn?: GitSpawn;
 }
 
 /** The parsed form of `link`/`unlink`'s arguments. `allowMissing` is `unlink`-only (see {@link parseLinkArgs}). */
@@ -113,6 +116,8 @@ export interface LinkReport {
   readonly tasks: readonly LinkedTask[];
   /** Whether the concept file was written (false when every id was already linked). */
   readonly changed: boolean;
+  /** The `backlog/` commit outcome — `{committed: false, files: []}` when no back-reference edit was made (`--no-back-ref`, or every id already linked). */
+  readonly backlogCommit: BacklogCommitResult;
 }
 
 /** One task's outcome in an {@link UnlinkReport}. */
@@ -135,6 +140,8 @@ export interface UnlinkReport {
   readonly tasks: readonly UnlinkedTask[];
   /** Whether the concept file was written; always `false` under `--allow-missing` (no concept file exists to write). */
   readonly changed: boolean;
+  /** The `backlog/` commit outcome — `{committed: false, files: []}` when no back-reference edit was made (`--no-back-ref`, or every id already absent). */
+  readonly backlogCommit: BacklogCommitResult;
 }
 
 /**
@@ -218,7 +225,10 @@ export async function runLink(options: LinkOptions): Promise<number> {
     });
   }
 
-  const report: LinkReport = { concept: docPath, tasks, changed };
+  // Commit the back-reference edits `backlog/` now carries — lore is its sole committer (ADR-0012,
+  // design §3.6), so a `link` no longer leaves them sitting uncommitted until the next `lore sync`.
+  const backlogCommit = await commitBackRefWrites(options, tasks, LINK_COMMIT_MESSAGE);
+  const report: LinkReport = { concept: docPath, tasks, changed, backlogCommit };
   emit(reportRenderable("link.result", report, renderTaskReport), options.output, options.stdout);
   return anyBackRefFailed ? EXIT_CODES.drift : EXIT_OK;
 }
@@ -279,7 +289,8 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
     });
   }
 
-  const report: UnlinkReport = { concept: docPath, tasks, changed };
+  const backlogCommit = await commitBackRefWrites(options, tasks, UNLINK_COMMIT_MESSAGE);
+  const report: UnlinkReport = { concept: docPath, tasks, changed, backlogCommit };
   emit(reportRenderable("unlink.result", report, renderTaskReport), options.output, options.stdout);
   return anyBackRefFailed ? EXIT_CODES.drift : EXIT_OK;
 }
@@ -409,6 +420,37 @@ export async function moveBackRefs(
  */
 export function defaultAdapter(root: string): BacklogAdapter {
   return createBacklogAdapter(bunBacklogSpawn(undefined, root));
+}
+
+/** The `git`-authored commit message for `lore link`'s `backlog/` writes (its `doc:` label additions). */
+const LINK_COMMIT_MESSAGE = "chore(backlog): add doc back-references (lore link)";
+
+/** The `git`-authored commit message for `lore unlink`'s `backlog/` writes (its `doc:` label removals). */
+const UNLINK_COMMIT_MESSAGE = "chore(backlog): remove doc back-references (lore unlink)";
+
+/** The per-task `backRef` outcomes that mean an `editTask` was actually attempted — so `backlog/` may now be dirty and needs committing. A no-write outcome (`already-present`/`already-absent`/`skipped`) leaves it clean. */
+const WROTE_BACKREF: ReadonlySet<string> = new Set(["added", "removed", "failed"]);
+
+/**
+ * Commit whatever the back-reference edits left dirty under `backlog/` — the shared tail of
+ * {@link runLink}/{@link runUnlink}, and the concrete "lore is the sole committer of `backlog/`"
+ * mechanism (ADR-0012, design §3.6). Only runs when at least one task's outcome shows an `editTask`
+ * was actually attempted: `--no-back-ref` (every outcome `skipped`) and a pure idempotent no-op
+ * (every id already linked/absent) never touch Backlog, so they never commit — a `lore link` that
+ * changed nothing does not sweep an unrelated hand-edit into a commit. When a write did happen,
+ * {@link commitBacklogIfDirty} stages+commits exactly the dirty `backlog/` paths (a `git commit`
+ * failure surfaces loudly as `drift`, exit 6, propagated to the router — never left silent).
+ */
+async function commitBackRefWrites(
+  options: LinkOptions,
+  tasks: readonly { readonly backRef: string }[],
+  message: string,
+): Promise<BacklogCommitResult> {
+  if (!tasks.some((t) => WROTE_BACKREF.has(t.backRef))) {
+    return { committed: false, files: [] };
+  }
+  const gitSpawn = options.gitSpawn ?? bunGitSpawn(options.root);
+  return commitBacklogIfDirty(gitSpawn, message);
 }
 
 /**
@@ -644,6 +686,7 @@ function reportRenderable<T>(kind: string, data: T, render: (data: T) => string)
 interface TaskReportLike {
   readonly concept: string;
   readonly changed: boolean;
+  readonly backlogCommit: BacklogCommitResult;
   readonly tasks: readonly {
     readonly task: string;
     readonly status: string;
@@ -652,13 +695,17 @@ interface TaskReportLike {
   }[];
 }
 
-/** One line per task's doc-side + back-ref outcome (with its error, if any), then a summary line. Shared by `link` and `unlink` — the two reports render identically. */
+/** One line per task's doc-side + back-ref outcome (with its error, if any), the concept-write line, then the `backlog/` commit line if one was made. Shared by `link` and `unlink` — the two reports render identically. */
 function renderTaskReport(data: TaskReportLike): string {
   const lines = data.tasks.map((t) => {
     const suffix = t.error !== undefined ? ` (${t.error})` : "";
     return `${t.task}: ${t.status} (doc), back-ref ${t.backRef}${suffix}`;
   });
   lines.push(`${data.concept}: ${data.changed ? "updated" : "unchanged"}`);
+  if (data.backlogCommit.committed) {
+    const noun = data.backlogCommit.files.length === 1 ? "file" : "files";
+    lines.push(`committed backlog/: ${data.backlogCommit.files.length} ${noun}`);
+  }
   return lines.join("\n");
 }
 

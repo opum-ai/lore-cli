@@ -29,7 +29,8 @@ import { buildGraph } from "../src/core/bundle";
 import { parseConcept } from "../src/core/concept";
 import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
-import { capture, fakeAdapter, makeTask } from "./helpers";
+import type { GitSpawn } from "../src/state";
+import { capture, cleanGitSpawn, dirtyGitSpawn, fakeAdapter, makeTask } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 const PLAIN_CTX: OutputContext = { mode: "plain", color: false };
@@ -56,21 +57,32 @@ function readDoc(rel: string): string {
   return readFileSync(join(root, "docs", rel), "utf8");
 }
 
-function opts(args: string[], adapter: BacklogAdapter): LinkOptions {
-  return { root, output: JSON_CTX, args, stdout: capture(), stderr: capture(), adapter };
+// A clean fake git seam by default so the back-reference commit (`commitBacklogIfDirty`) is a no-op
+// rather than shelling a real `git` in the temp bundle; a test asserting the commit passes its own
+// `dirtyGitSpawn` and inspects its `.calls`.
+function opts(args: string[], adapter: BacklogAdapter, gitSpawn: GitSpawn = cleanGitSpawn()): LinkOptions {
+  return { root, output: JSON_CTX, args, stdout: capture(), stderr: capture(), adapter, gitSpawn };
 }
 
-async function linkCmd(args: string[], adapter: BacklogAdapter): Promise<{ code: number; report: LinkReport }> {
+async function linkCmd(
+  args: string[],
+  adapter: BacklogAdapter,
+  gitSpawn: GitSpawn = cleanGitSpawn(),
+): Promise<{ code: number; report: LinkReport }> {
   const stdout = capture();
-  const code = await runLink({ ...opts(args, adapter), stdout });
+  const code = await runLink({ ...opts(args, adapter, gitSpawn), stdout });
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: LinkReport };
   expect(envelope.kind).toBe("link.result");
   return { code, report: envelope.data };
 }
 
-async function unlinkCmd(args: string[], adapter: BacklogAdapter): Promise<{ code: number; report: UnlinkReport }> {
+async function unlinkCmd(
+  args: string[],
+  adapter: BacklogAdapter,
+  gitSpawn: GitSpawn = cleanGitSpawn(),
+): Promise<{ code: number; report: UnlinkReport }> {
   const stdout = capture();
-  const code = await runUnlink({ ...opts(args, adapter), stdout });
+  const code = await runUnlink({ ...opts(args, adapter, gitSpawn), stdout });
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: UnlinkReport };
   expect(envelope.kind).toBe("unlink.result");
   return { code, report: envelope.data };
@@ -313,7 +325,15 @@ describe("lore link/unlink — plain rendering and parser edge cases", () => {
     const adapter = fakeAdapter([makeTask("LORE-1")]);
     const stdout = capture();
 
-    await runLink({ root, output: PLAIN_CTX, args: ["stories/x", "lore-1"], stdout, stderr: capture(), adapter });
+    await runLink({
+      root,
+      output: PLAIN_CTX,
+      args: ["stories/x", "lore-1"],
+      stdout,
+      stderr: capture(),
+      adapter,
+      gitSpawn: cleanGitSpawn(),
+    });
     expect(stdout.text()).toBe("lore-1: added (doc), back-ref added\ndocs/stories/x.md: updated\n");
   });
 
@@ -322,7 +342,15 @@ describe("lore link/unlink — plain rendering and parser edge cases", () => {
     const adapter = fakeAdapter([makeTask("LORE-1")]);
     const stdout = capture();
 
-    await runUnlink({ root, output: PLAIN_CTX, args: ["stories/x", "lore-1"], stdout, stderr: capture(), adapter });
+    await runUnlink({
+      root,
+      output: PLAIN_CTX,
+      args: ["stories/x", "lore-1"],
+      stdout,
+      stderr: capture(),
+      adapter,
+      gitSpawn: cleanGitSpawn(),
+    });
     expect(stdout.text()).toBe("lore-1: removed (doc), back-ref already-absent\ndocs/stories/x.md: updated\n");
   });
 
@@ -338,6 +366,7 @@ describe("lore link/unlink — plain rendering and parser edge cases", () => {
       stdout,
       stderr: capture(),
       adapter,
+      gitSpawn: cleanGitSpawn(),
     });
     expect(stdout.text()).toBe("lore-1: added (doc), back-ref added\ndocs/stories/x.md: updated\n");
   });
@@ -427,7 +456,15 @@ describe("lore link/unlink — per-task back-ref resilience", () => {
     const adapter = fakeAdapter([makeTask("LORE-1")]);
     const stderr = capture();
 
-    await runLink({ root, output: JSON_CTX, args: ["stories/x", "lore-1"], stdout: capture(), stderr, adapter });
+    await runLink({
+      root,
+      output: JSON_CTX,
+      args: ["stories/x", "lore-1"],
+      stdout: capture(),
+      stderr,
+      adapter,
+      gitSpawn: cleanGitSpawn(),
+    });
 
     const occurrences = stderr.text().split("missing `summary`").length - 1;
     expect(occurrences).toBe(1);
@@ -721,5 +758,111 @@ describe("lore unlink --allow-missing", () => {
     const adapter = fakeAdapter([makeTask("LORE-1")]);
     const err = await expectLinkError(["stories/x", "lore-1", "--allow-missing"], adapter);
     expect(err.type).toBe("usage");
+  });
+});
+
+// ── backlog/ commit (LORE-49): link/unlink commit their doc: back-ref writes immediately ──
+
+describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
+  const DIRTY = " M backlog/tasks/lore-1 - x.md";
+  const DIRTY_PATH = "backlog/tasks/lore-1 - x.md";
+
+  test("link commits the doc: back-reference it just wrote, in one lore-authored commit", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+    const git = dirtyGitSpawn(DIRTY);
+
+    const { code, report } = await linkCmd(["stories/x", "lore-1"], adapter, git);
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.backlogCommit).toEqual({ committed: true, files: [DIRTY_PATH] });
+    // Stages exactly the dirty backlog/ path and commits it with lore's own attributable message.
+    expect(git.calls[2]).toEqual(["add", "--", DIRTY_PATH]);
+    expect(git.calls[3]).toEqual([
+      "commit",
+      "-m",
+      "chore(backlog): add doc back-references (lore link)",
+      "--",
+      DIRTY_PATH,
+    ]);
+  });
+
+  test("link --no-back-ref makes no Backlog write, so it never queries or commits backlog/", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+    const git = dirtyGitSpawn(DIRTY); // even against a dirty tree, --no-back-ref must not sweep it in
+
+    const { report } = await linkCmd(["stories/x", "lore-1", "--no-back-ref"], adapter, git);
+
+    expect(report.backlogCommit).toEqual({ committed: false, files: [] });
+    expect(git.calls).toHaveLength(0);
+  });
+
+  test("a fully idempotent link (every id already linked) writes nothing and does not commit", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    // Already carries the label + --doc, so the edit is skipped (already-present) — a true no-op.
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", { labels: ["doc:stories/x"], documentation: ["docs/stories/x.md"] }),
+    ]);
+    const git = dirtyGitSpawn(DIRTY);
+
+    const { report } = await linkCmd(["stories/x", "lore-1"], adapter, git);
+
+    expect(report.tasks[0]?.backRef).toBe("already-present");
+    expect(report.backlogCommit.committed).toBe(false);
+    expect(git.calls).toHaveLength(0); // a no-op link never sweeps an unrelated dirty backlog/ edit
+  });
+
+  test("a partial back-ref failure still commits the successful writes and exits drift (6)", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    const adapter = fakeAdapter([makeTask("LORE-1"), makeTask("LORE-2")], { poisonEdits: ["lore-2"] });
+    const git = dirtyGitSpawn(DIRTY);
+
+    const { code, report } = await linkCmd(["stories/x", "lore-1", "lore-2"], adapter, git);
+
+    expect(code).toBe(EXIT_CODES.drift); // lore-2's edit failed
+    expect(report.backlogCommit.committed).toBe(true); // lore-1's successful write is still committed
+    expect(git.calls[3]?.[0]).toBe("commit");
+  });
+
+  test("unlink commits the doc: back-reference removal it just wrote", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", { labels: ["doc:stories/x"], documentation: ["docs/stories/x.md"] }),
+    ]);
+    const git = dirtyGitSpawn(DIRTY);
+
+    const { code, report } = await unlinkCmd(["stories/x", "lore-1"], adapter, git);
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks[0]?.backRef).toBe("removed");
+    expect(report.backlogCommit).toEqual({ committed: true, files: [DIRTY_PATH] });
+    expect(git.calls[3]).toEqual([
+      "commit",
+      "-m",
+      "chore(backlog): remove doc back-references (lore unlink)",
+      "--",
+      DIRTY_PATH,
+    ]);
+  });
+
+  test("plain mode appends a `committed backlog/` line when a commit was made", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+    const stdout = capture();
+
+    await runLink({
+      root,
+      output: PLAIN_CTX,
+      args: ["stories/x", "lore-1"],
+      stdout,
+      stderr: capture(),
+      adapter,
+      gitSpawn: dirtyGitSpawn(DIRTY),
+    });
+
+    expect(stdout.text()).toBe(
+      "lore-1: added (doc), back-ref added\ndocs/stories/x.md: updated\ncommitted backlog/: 1 file\n",
+    );
   });
 });

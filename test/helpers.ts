@@ -9,6 +9,7 @@ import type {
 import { type Concept, idFromPath } from "../src/core/concept";
 import type { Writer } from "../src/errors";
 import { LoreError } from "../src/errors";
+import type { GitSpawn, GitSpawnResult } from "../src/state";
 
 /**
  * Build a minimal valid {@link Concept} at a bundle-relative path, defaulting `frontmatter.type` to
@@ -30,6 +31,45 @@ export function gitRun(cwd: string, args: string[]): void {
   if (proc.exitCode !== 0) {
     throw new Error(`git ${args.join(" ")} failed: ${proc.stderr.toString("utf8")}`);
   }
+}
+
+/** A successful {@link GitSpawnResult} (exit 0) carrying `stdout`; the building block of the scripted git fakes below. */
+export function gitOk(stdout: string): GitSpawnResult {
+  return { exitCode: 0, stdout, stderr: "" };
+}
+
+/**
+ * A scripted {@link GitSpawn} reporting a **clean** `backlog/` — every call resolves exit-0 with
+ * empty stdout, so `commitBacklogIfDirty` finds nothing dirty and never runs `add`/`commit`. Records
+ * every call's args on `.calls` for assertions. Shared by `sync`/`link`/`rename` tests, all of which
+ * inject a fake git seam rather than shelling a real subprocess.
+ */
+export function cleanGitSpawn(): GitSpawn & { calls: string[][] } {
+  const calls: string[][] = [];
+  const spawn = (async (args: readonly string[]): Promise<GitSpawnResult> => {
+    calls.push([...args]);
+    return gitOk("");
+  }) as GitSpawn & { calls: string[][] };
+  spawn.calls = calls;
+  return spawn;
+}
+
+/**
+ * A scripted {@link GitSpawn} reporting **one dirty** `backlog/` file, then succeeding `add`/`commit`.
+ * Mirrors `commitBacklogIfDirty`'s call sequence: call 1 is `git rev-parse --show-prefix` (answered
+ * `""` — not a nested bundle), call 2 is `git status` (answered with the given `-z`/NUL-terminated
+ * porcelain entry), calls 3+ (`add`, `commit`) succeed. Records every call's args on `.calls`.
+ */
+export function dirtyGitSpawn(porcelainEntry: string): GitSpawn & { calls: string[][] } {
+  const calls: string[][] = [];
+  let call = 0;
+  const spawn = (async (args: readonly string[]): Promise<GitSpawnResult> => {
+    calls.push([...args]);
+    call++;
+    return call === 2 ? gitOk(`${porcelainEntry}\0`) : gitOk("");
+  }) as GitSpawn & { calls: string[][] };
+  spawn.calls = calls;
+  return spawn;
 }
 
 /**

@@ -630,6 +630,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Build plan tracked as Backlog.md milestones and tasks.
 
 ### Changed
+- **`lore link` / `lore unlink` / `lore rename` now commit their `backlog/` writes immediately**
+  (LORE-49): each command's `doc:<conceptId>` back-reference edit is committed in one `lore`-authored
+  commit right after it is written (reusing `state.ts`'s `commitBacklogIfDirty`), instead of being left
+  uncommitted in the working tree until the next `lore sync` swept it up — matching design §3.6 and
+  [ADR-0012](docs/adr/0012-backlog-coexistence-git-ownership.md) ("lore is the sole committer of
+  `backlog/`"). The commit fires **only when a Backlog write actually happened**: `--no-back-ref`, a
+  fully idempotent re-link/unlink, an unlinked rename, and `--dry-run` write nothing and so commit
+  nothing (never sweeping an unrelated dirty `backlog/` edit into a commit). The outcome is now
+  reported — `link.result` / `unlink.result` / `rename.result` gain a `backlogCommit: { committed,
+  files }` field, and text output appends a `committed backlog/: N files` line. A failed commit
+  surfaces loudly as `drift` (exit 6), never silently.
 - **`lore check` internals** (LORE-48): the `validate`/`check` finding model is unified on a shared
   `Severity`/`Finding<Rule>` (`core/finding.ts`); the filesystem-errno→`LoreError` mapping is
   consolidated into one `ioError` policy (`errors.ts`); `bundle.ts`'s markdown walk is generalized to
