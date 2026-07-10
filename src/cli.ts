@@ -31,6 +31,7 @@ import { runReplace } from "./commands/replace";
 import { runSchema } from "./commands/schema";
 import { runSupersede } from "./commands/supersede";
 import { runSync } from "./commands/sync";
+import { runTasks } from "./commands/tasks";
 import { runValidate } from "./commands/validate";
 import { EXIT_OK, EXIT_UNCAUGHT, LoreError, reportError, type Writer } from "./errors";
 import { VERSION } from "./meta";
@@ -265,6 +266,15 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
       });
     case "sync":
       return runSync({
+        root,
+        output,
+        args: parsed.commandArgs,
+        stdout: context.stdout,
+        stderr: context.stderr,
+        adapter: context.adapter,
+      });
+    case "tasks":
+      return runTasks({
         root,
         output,
         args: parsed.commandArgs,

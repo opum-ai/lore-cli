@@ -82,9 +82,12 @@ describe("generated content (AC#2) — small, grounded, points at `lore instruct
     for (const cmd of LORE_COMMANDS) {
       expect(skill).toContain(`\`${cmd.name}\``);
     }
-    // `lore tasks` (LORE-25) is not shipped; the bridge must never teach it — neither file may mention it.
-    expect(skill).not.toContain("lore tasks");
-    expect(buildNudgeBody()).not.toContain("lore tasks");
+    // The bridge must never teach a command the router does not dispatch (the LORE-37 phantom trap).
+    const shipped = new Set(LORE_COMMANDS.map((c) => c.name));
+    for (const phantom of ["orphans", "scaffold"]) {
+      expect(shipped.has(phantom)).toBe(false);
+      expect(skill).not.toContain(`\`${phantom}\``);
+    }
   });
 });
 

@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lore tasks <id>` — a concept's live Backlog task rollup** (LORE-25). Loads the `docs/` bundle,
+  resolves the concept, and prints each `tasks:`-linked task's **current** status pulled fresh from the
+  Backlog JSON adapter — the read-only view of what `lore sync` materializes into the managed block,
+  written nowhere. `--status <S>` filters to one Backlog status (case-insensitive). Under `--json` it
+  emits `kind: tasks.rollup` — `{ concept, status?, tasks: [{ id, title, status }] }` (object-wrapped,
+  like every list command, so the contract can grow additively). Backlog capability is probed up front
+  (a missing binary exits `3`, a non-`--json` binary exits `6`), which lets a `tasks:` id Backlog no
+  longer knows be dropped from the rollup with a stderr advisory (exit `0`) rather than mistaken for an
+  outage; an `<id>` absent from the bundle exits `3`. Now advertised in `lore help`, the `lore help
+  --json` manifest, and the generated agent bridge.
 - **`lore help` — human help plus a machine-readable capability manifest** (LORE-38). `lore help`
   prints the command catalog and `lore help <command>` prints one command's detail (args, flags,
   output `kind`, exit codes, examples); an unknown command exits `3`. Under `--json` it emits
