@@ -37,6 +37,7 @@ detail with `lore instructions <topic>`:
 - `unlink`        Remove task ids from a concept's tasks: + the doc: back-ref
 - `sync`          Reconcile status + managed task blocks, regen index/log, commit backlog/
 - `tasks`         Show the live status rollup for a concept's linked tasks
+- `orphans`       Report tasks with no owning doc + docs whose linked task vanished
 - `schema`        Export the profile's editor JSON Schemas to .lore/schemas/
 - `graph`         Emit the bundle's cross-link graph as json or dot
 - `query`         Full-text search the bundle with frontmatter filters

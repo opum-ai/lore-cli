@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lore orphans` — the bidirectional doc↔task coupling report** (LORE-32). Surfaces two kinds of
+  gap in one pass: **orphan tasks** (a Backlog task no concept lists in its `tasks:` frontmatter and
+  that carries no `doc:<conceptId>` back-reference label — work documented nowhere) and **dangling
+  links** (a concept `tasks:` id the current-branch Backlog snapshot no longer knows — a doc pointing
+  at a deleted/renamed task). It reads Backlog **once** (`task list --json`, all statuses) and derives
+  both directions by set arithmetic against the loaded graph — no per-task probing. `--tasks-only` /
+  `--docs-only` narrow the report to one side. Under `--json` it emits `kind: orphans.report` —
+  `{ orphanTasks[], danglingLinks[] }` (object-wrapped for additive growth; the section a flag excludes
+  is omitted, never emitted as an empty array, so `--docs-only --json` can't be misread as "no orphan
+  tasks"). Backlog capability is probed up front (a missing binary exits `3`, a non-`--json` binary
+  exits `6`); it is a **report, not a gate** — always exit `0` on success, even when the report is
+  non-empty. Now advertised in `lore help`, the `lore help --json` manifest, and the generated agent
+  bridge.
 - **`lore tasks <id>` — a concept's live Backlog task rollup** (LORE-25). Loads the `docs/` bundle,
   resolves the concept, and prints each `tasks:`-linked task's **current** status pulled fresh from the
   Backlog JSON adapter — the read-only view of what `lore sync` materializes into the managed block,

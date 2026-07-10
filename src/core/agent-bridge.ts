@@ -64,6 +64,7 @@ export const LORE_COMMANDS: readonly CommandSummary[] = [
   { name: "unlink", summary: "Remove task ids from a concept's tasks: + the doc: back-ref" },
   { name: "sync", summary: "Reconcile status + managed task blocks, regen index/log, commit backlog/" },
   { name: "tasks", summary: "Show the live status rollup for a concept's linked tasks" },
+  { name: "orphans", summary: "Report tasks with no owning doc + docs whose linked task vanished" },
   { name: "schema", summary: "Export the profile's editor JSON Schemas to .lore/schemas/" },
   { name: "graph", summary: "Emit the bundle's cross-link graph as json or dot" },
   { name: "query", summary: "Full-text search the bundle with frontmatter filters" },

@@ -1,4 +1,11 @@
-import type { BacklogAdapter, BacklogCapability, BacklogTaskDetail, EditTaskPatch } from "../src/adapters/backlog";
+import type {
+  BacklogAdapter,
+  BacklogCapability,
+  BacklogTask,
+  BacklogTaskDetail,
+  EditTaskPatch,
+  ListTasksOptions,
+} from "../src/adapters/backlog";
 import { type Concept, idFromPath } from "../src/core/concept";
 import type { Writer } from "../src/errors";
 import { LoreError } from "../src/errors";
@@ -92,6 +99,22 @@ export function makeTask(id: string, overrides: Partial<BacklogTaskDetail> = {})
   };
 }
 
+/** Project a full {@link BacklogTaskDetail} down to the {@link BacklogTask} summary subset `listTasks` returns. */
+function toSummary(task: BacklogTaskDetail): BacklogTask {
+  return {
+    id: task.id,
+    title: task.title,
+    status: task.status,
+    priority: task.priority,
+    ordinal: task.ordinal,
+    assignees: task.assignees,
+    labels: task.labels,
+    milestone: task.milestone,
+    parentTaskId: task.parentTaskId,
+    file: task.file,
+  };
+}
+
 /**
  * A minimal Story with `tasks:` and an already-present (empty) managed task block — shared by
  * `sync.test.ts` and `check.test.ts`, which both reconcile against the exact same doc shape.
@@ -107,18 +130,30 @@ export function storyDoc(title: string, taskIds: readonly string[], status?: str
 
 /**
  * An in-memory {@link BacklogAdapter} fake: `viewTask` reads a seeded map (case-insensitive),
- * `editTask` mutates it and records the call. `probe` is **not implemented by default** — it throws on
- * any call, so `link.test.ts`/`rename.test.ts` keep their implicit guard that those commands never
- * probe Backlog; only a caller that opts in (`opts.probe`) makes it resolve or fail. Shared by
- * `link.test.ts`, `rename.test.ts`, and `tasks.test.ts`, so there is one fake to evolve, not a copy.
+ * `listTasks` returns the seed as summaries (honoring the `status`/`labels` filters like the real
+ * adapter), `editTask` mutates it and records the call. `probe` is **not implemented by default** — it
+ * throws on any call, so `link.test.ts`/`rename.test.ts` keep their implicit guard that those commands
+ * never probe Backlog; only a caller that opts in (`opts.probe`) makes it resolve or fail. Shared by
+ * `link.test.ts`, `rename.test.ts`, `tasks.test.ts`, and `orphans.test.ts`, so there is one fake to
+ * evolve, not a copy.
  *
- * @param opts.probe `"ok"` makes `probe` resolve to a `--json`-capable verdict (`lore tasks` probes up
- *   front); an `Error` makes it reject (to exercise the capability-failure path). Omitted → `probe`
- *   throws "not implemented" like the other unused methods.
+ * @param opts.probe `"ok"` makes `probe` resolve to a `--json`-capable verdict (`lore tasks`/`orphans`
+ *   probe up front); an `Error` makes it reject (to exercise the capability-failure path). Omitted →
+ *   `probe` throws "not implemented" like the other unused methods.
+ * @param opts.listTasks `"ok"` makes `listTasks` return the seeded summaries (honoring the
+ *   `status`/`labels` filters, like the real adapter); an `Error` makes it reject (the snapshot-read
+ *   drift path `lore orphans` propagates). Omitted → `listTasks` throws "not implemented", preserving
+ *   the loud guard that a command NOT expected to take a full Backlog snapshot (link/rename/tasks)
+ *   fails visibly if it ever starts.
  */
 export function fakeAdapter(
   seed: readonly BacklogTaskDetail[],
-  opts: { poisonEdits?: readonly string[]; poisonViews?: readonly string[]; probe?: "ok" | Error } = {},
+  opts: {
+    poisonEdits?: readonly string[];
+    poisonViews?: readonly string[];
+    probe?: "ok" | Error;
+    listTasks?: "ok" | Error;
+  } = {},
 ): BacklogAdapter & { calls: EditCall[] } {
   const tasks = new Map<string, BacklogTaskDetail>();
   for (const t of seed) {
@@ -141,7 +176,28 @@ export function fakeAdapter(
             }
             return { version: "1.47.1", schemaVersion: "1" };
           },
-    listTasks: notImplemented("listTasks"),
+    listTasks:
+      opts.listTasks === undefined
+        ? notImplemented("listTasks")
+        : async (listOpts?: ListTasksOptions): Promise<BacklogTask[]> => {
+            const mode = opts.listTasks;
+            if (mode instanceof Error) {
+              throw mode;
+            }
+            let out = [...tasks.values()].map(toSummary);
+            if (listOpts?.status !== undefined) {
+              const want = listOpts.status.toLowerCase();
+              out = out.filter((task) => task.status.toLowerCase() === want);
+            }
+            if (listOpts?.labels !== undefined && listOpts.labels.length > 0) {
+              const wanted = listOpts.labels.map((label) => label.toLowerCase());
+              out = out.filter((task) => {
+                const have = new Set(task.labels.map((label) => label.toLowerCase()));
+                return wanted.every((label) => have.has(label));
+              });
+            }
+            return out;
+          },
     searchByLabel: notImplemented("searchByLabel"),
     searchTasks: notImplemented("searchTasks"),
     createTask: notImplemented("createTask"),
