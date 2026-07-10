@@ -4,7 +4,7 @@ title: lore orphans
 status: In Progress
 assignee: []
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-10 17:32'
+updated_date: '2026-07-10 17:33'
 labels:
   - cmd
 milestone: m-4
@@ -62,6 +62,16 @@ Code review (workflow /code-review high): 7 findings, 0 refuted. Disposition aft
 - F7 (stray doubled JSDoc opener in helpers.ts): FIXED.
 Gates after fixes: tsc 0, biome 0, 1410 tests pass (+2 phrasing tests).
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: @claude
+created: 2026-07-10 17:33
+---
+Delivered as PR #43 (https://github.com/jeremy-newhouse/lore/pull/43), base dev. Awaiting review/merge. On merge: mark Done, ff dev→main, prune branch.
+---
+<!-- COMMENTS:END -->
 
 ## Final Summary
 
