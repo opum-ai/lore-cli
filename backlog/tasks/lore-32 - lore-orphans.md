@@ -1,10 +1,10 @@
 ---
 id: LORE-32
 title: lore orphans
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-06-21 06:26'
-updated_date: '2026-07-10 17:33'
+updated_date: '2026-07-10 18:30'
 labels:
   - cmd
 milestone: m-4
