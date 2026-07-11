@@ -16,15 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parse-to-locate-then-string-splice, never AST re-serialization — a deliberate byte-stability
   choice, not an oversight), and `remark-validate-links` (internal link/anchor validation is
   hand-rolled directly over the parsed mdast in `core/bundle.ts`/`core/check.ts`) — none of which
-  are in `package.json`. Also records a reproduced, previously-undocumented **compile-time
-  caveat**: `bun build --compile` silently emits a 0-byte binary at exit `0` (no error on either
-  stream) when `--outfile` lands on a different mounted filesystem than the source checkout
-  (`EXDEV` on the internal rename step) — reproduced by compiling this repo's own checkout to
-  same-device vs. cross-device output paths. The existing CI `compile smoke` job already avoids
-  this (single-runner filesystem) and already asserts non-empty/working output, not just exit
-  code; its comment now explains why. Confirmed none of lore's four v1 runtime dependencies
-  (`gray-matter`, `js-yaml`, `mdast-util-from-markdown`, `zod`) ship a native addon, so this
-  caveat is the only `bun build --compile` gotcha the current dependency set has.
+  are in `package.json`. Also tightens the existing `DEVELOPMENT.md` **compile-time caveat**
+  (documented in an earlier session from the "cloned onto an external volume" angle): `bun build
+  --compile` silently emits a 0-byte binary at exit `0` (no error on either stream) whenever
+  `--outfile` lands on a **different mounted filesystem** than the source checkout (`EXDEV` on the
+  internal rename step) — confirmed by compiling this repo's own checkout to same-device vs.
+  cross-device output paths, resolving that note's earlier hedge ("very likely" the volume) to a
+  precise, filesystem-boundary-agnostic root cause. The existing CI `compile smoke` job already
+  avoided this (single-runner filesystem) and already asserted non-empty/working output, not just
+  exit code; both docs' comments now explain why and cross-reference each other. Confirmed none of
+  lore's four v1 runtime dependencies (`gray-matter`, `js-yaml`, `mdast-util-from-markdown`, `zod`)
+  ship a native addon, so this caveat is the only `bun build --compile` gotcha the current
+  dependency set has.
 
 ### Added
 - **`lore orphans` — the bidirectional doc↔task coupling report** (LORE-32). Surfaces two kinds of

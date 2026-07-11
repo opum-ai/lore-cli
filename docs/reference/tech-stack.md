@@ -87,7 +87,10 @@ of which the `compile smoke` CI job already does, which is why it doesn't hit
 this), and assert the produced binary is non-empty **and** actually runs
 (`--version` prints something, not just exit `0`) rather than trusting the
 exit code alone — exactly the two checks the `compile smoke` job in `ci.yml`
-already makes.
+already makes. [`DEVELOPMENT.md`](../../DEVELOPMENT.md#local-environment-working-copies-on-an-external-volume)
+already documented this failure mode from the "cloned onto an external volume"
+angle; LORE-14 confirmed the precise trigger is **crossing any filesystem
+boundary** (not that volume specifically) and tightened both notes to match.
 
 **Native-module surface.** None of lore's v1 runtime dependencies
 (`gray-matter`, `js-yaml`, `mdast-util-from-markdown`, `zod`) ship a native

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-07-11 14:22'
+updated_date: '2026-07-11 17:10'
 labels:
   - spike
 milestone: m-1
@@ -97,4 +97,24 @@ errors (fixed a summary-length warning my own edit introduced in tech-stack.md).
    reconciling drift per the standard pre-PR gate loop, not new authored prose.
 
 Gates re-run clean after both fixes: lore check 0 errors/0 warnings.
+
+CORRECTION to earlier notes in this task: the compile-time caveat was NOT
+"previously-undocumented" as I first wrote -- DEVELOPMENT.md already covered
+this from a prior session ("Local environment: working copies on an external
+volume" section), and the auto-memory external-volume-bun-exdev-traps.md
+already recorded the same original finding. I missed grepping DEVELOPMENT.md
+before writing that claim; caught and corrected in a follow-up commit before
+merge (fixed the CHANGELOG wording too).
+
+What this session's work actually adds on top of the pre-existing note: the
+OLD framing said the 0-byte binary happens when compiling "with cwd on the
+external volume, even if --outfile points at internal disk" and hedged with
+"very likely" the same cause. Fresh, careful re-verification this session
+(compiling this exact checkout to a same-VOLUME --outfile under
+/Volumes/external/repos/lore/dist-test -- confirmed WORKING, ~60MB, vs the
+same source to /tmp (internal disk) -- confirmed 0-byte) pins the precise,
+hedge-free root cause: it is crossing ANY filesystem boundary between the
+checkout and --outfile, not "the external volume" specifically. Updated both
+DEVELOPMENT.md and tech-stack.md to state this precisely and cross-reference
+each other rather than duplicate independently.
 <!-- SECTION:NOTES:END -->
