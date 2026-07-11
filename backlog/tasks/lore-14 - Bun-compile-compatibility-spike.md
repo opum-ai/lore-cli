@@ -1,9 +1,11 @@
 ---
 id: LORE-14
 title: Bun compile compatibility spike
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-06-21 06:25'
+updated_date: '2026-07-11 14:11'
 labels:
   - spike
 milestone: m-1
