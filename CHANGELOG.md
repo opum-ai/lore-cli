@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Release pipeline mechanics: compiled binaries + dual-artifact npm packaging** (LORE-9,
+  ADR-0001). `bin/lore.cjs` is the published package's launcher — plain, dependency-free Node
+  CommonJS that resolves the current platform's compiled binary via `require.resolve` against
+  five `optionalDependencies` (`@salient-data/lore-{darwin,linux}-{arm64,x64}` and
+  `-win32-x64`, each npm `os`/`cpu`-gated) and execs it, forwarding argv/stdio/exit code
+  verbatim. A new `.github/workflows/release.yml` (`workflow_dispatch`-only — never fires on a
+  push or tag) cross-compiles all five targets from a single runner, executes the native
+  linux-x64 binary, size-checks the rest, `npm pack`s all six packages, and proves the full
+  `npx`/launcher resolution chain end-to-end via a real pack+install+run — without ever calling
+  `npm publish`. Verified locally end-to-end (compile, pack, install, run, and the
+  missing-platform-package error path) before the workflow was written; a `bun:test` suite
+  exercises the launcher itself via `NODE_PATH`-simulated installs. Publishing is a deliberate
+  follow-up gated on configuring npm's Trusted Publisher (OIDC) for all six packages — see the
+  new [release-publishing runbook](docs/runbooks/release-publishing.md) for the exact steps.
+
 - **`lore orphans` — the bidirectional doc↔task coupling report** (LORE-32). Surfaces two kinds of
   gap in one pass: **orphan tasks** (a Backlog task no concept lists in its `tasks:` frontmatter and
   that carries no `doc:<conceptId>` back-reference label — work documented nowhere) and **dangling
