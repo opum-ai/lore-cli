@@ -1,10 +1,11 @@
 ---
 id: LORE-39
 title: lore scaffold mkdocs
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-06-21 06:27'
-updated_date: '2026-06-21 06:28'
+updated_date: '2026-07-11 13:34'
 labels:
   - cmd
   - consumers
