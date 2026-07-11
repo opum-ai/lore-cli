@@ -1,9 +1,11 @@
 ---
 id: LORE-51
 title: Dedup task-summary row type + aligned-row renderer across tasks/orphans
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-07-10 17:30'
+updated_date: '2026-07-11 13:57'
 labels:
   - cmd
   - cleanup

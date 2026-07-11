@@ -54,7 +54,14 @@ import { loadBundle, toRefList } from "../core/bundle";
 import type { Concept } from "../core/concept";
 import { DOCS_DIR } from "../core/scaffold";
 import { ANSI, EXIT_OK, paint, WarningCollector, type Writer } from "../errors";
-import { emit, type OutputContext, type Renderable } from "../output";
+import {
+  emit,
+  maxLen,
+  type OutputContext,
+  type Renderable,
+  renderTaskSummaryRows,
+  type TaskSummaryRow,
+} from "../output";
 import { usage } from "./args";
 import { dedupeTaskIds, defaultAdapter } from "./link";
 
@@ -82,14 +89,8 @@ interface OrphansArgs {
   readonly docsOnly: boolean;
 }
 
-/** One task with no owning doc: its live identity + current Backlog status. */
-export interface OrphanTask {
-  /** Display-cased task id (`"LORE-21"`), from the Backlog snapshot. */
-  readonly id: string;
-  readonly title: string;
-  /** The raw configured Backlog status string (no presentation icon). */
-  readonly status: string;
-}
+/** One task with no owning doc: its live identity + current Backlog status, from the Backlog snapshot. */
+export type OrphanTask = TaskSummaryRow;
 
 /** One dangling doc→task link: a concept and the `tasks:` id Backlog no longer knows. */
 export interface DanglingLink {
@@ -268,12 +269,8 @@ function renderReport(data: OrphansReport, color: boolean): string {
   const lines = [paint(`orphans: ${counts.join(", ")}`, ANSI.green, color)];
 
   if (orphanTasks !== undefined && orphanTasks.length > 0) {
-    const idWidth = maxLen(orphanTasks, (task) => task.id.length);
-    const statusWidth = maxLen(orphanTasks, (task) => task.status.length);
     lines.push("", "tasks with no owning doc:");
-    for (const task of orphanTasks) {
-      lines.push(`  ${task.id.padEnd(idWidth)}  ${task.status.padEnd(statusWidth)}  ${task.title}`);
-    }
+    lines.push(...renderTaskSummaryRows(orphanTasks));
   }
   if (danglingLinks !== undefined && danglingLinks.length > 0) {
     const conceptWidth = maxLen(danglingLinks, (link) => link.concept.length);
@@ -288,22 +285,6 @@ function renderReport(data: OrphansReport, color: boolean): string {
     lines.push(allClear);
   }
   return lines.join("\n");
-}
-
-/**
- * The longest `length(item)` across `items` for column alignment — a loop rather than
- * `Math.max(...items.map(...))`, whose argument spread throws `RangeError` once the report is large
- * enough (a six-figure `orphanTasks` list is possible on a big Backlog). `0` for an empty list.
- */
-function maxLen<T>(items: readonly T[], length: (item: T) => number): number {
-  let max = 0;
-  for (const item of items) {
-    const n = length(item);
-    if (n > max) {
-      max = n;
-    }
-  }
-  return max;
 }
 
 /**

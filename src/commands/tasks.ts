@@ -32,7 +32,7 @@ import { conceptNotInBundle, loadBundle, toRefList } from "../core/bundle";
 import { idFromPath } from "../core/concept";
 import { DOCS_DIR } from "../core/scaffold";
 import { ANSI, EXIT_OK, paint, WarningCollector, type Writer } from "../errors";
-import { emit, type OutputContext, type Renderable } from "../output";
+import { emit, type OutputContext, type Renderable, renderTaskSummaryRows, type TaskSummaryRow } from "../output";
 import { usage } from "./args";
 import { dedupeTaskIds, defaultAdapter } from "./link";
 
@@ -61,13 +61,7 @@ interface TasksArgs {
 }
 
 /** One row of the rollup: a linked task's live identity + current Backlog status, in `tasks:` order. */
-export interface TaskRollupRow {
-  /** Display-cased task id (`"LORE-21"`). */
-  readonly id: string;
-  readonly title: string;
-  /** The raw configured Backlog status string (no presentation icon). */
-  readonly status: string;
-}
+export type TaskRollupRow = TaskSummaryRow;
 
 /** The `tasks.rollup` payload: the concept, the applied `--status` filter (when any), and the live rows. */
 export interface TaskRollup {
@@ -280,8 +274,5 @@ function renderTable(data: TaskRollup, color: boolean): string {
   if (data.tasks.length === 0) {
     return `${header}\n${data.status !== undefined ? "(no linked tasks match that status)" : "(no linked tasks)"}`;
   }
-  const idWidth = Math.max(...data.tasks.map((row) => row.id.length));
-  const statusWidth = Math.max(...data.tasks.map((row) => row.status.length));
-  const rows = data.tasks.map((row) => `  ${row.id.padEnd(idWidth)}  ${row.status.padEnd(statusWidth)}  ${row.title}`);
-  return [header, ...rows].join("\n");
+  return [header, ...renderTaskSummaryRows(data.tasks)].join("\n");
 }

@@ -3,13 +3,16 @@ import { LoreError, reportError, WarningCollector } from "../src/errors";
 import {
   emit,
   errorRenderOpts,
+  maxLen,
   type OutputContext,
   type Renderable,
+  renderTaskSummaryRows,
   renderTruncationLine,
   resolveMode,
   resolveOutput,
   SCHEMA_VERSION,
   successEnvelope,
+  type TaskSummaryRow,
   type Truncation,
   truncation,
 } from "../src/output";
@@ -485,5 +488,45 @@ describe("renderTruncationLine (cli-contract §3.2)", () => {
     // otherwise a partial result prints as complete (§3); the inverse must not render.
     expect(renderTruncationLine({ total: 120, shown: 30, truncated: false })).toBe("showing 30 of 120");
     expect(renderTruncationLine({ total: 30, shown: 30, truncated: true })).toBe("");
+  });
+});
+
+describe("maxLen — spread-free column-width helper (LORE-51)", () => {
+  test("returns the longest projected length", () => {
+    expect(maxLen(["a", "abc", "ab"], (s) => s.length)).toBe(3);
+  });
+
+  test("returns 0 for an empty list", () => {
+    expect(maxLen([], (s: string) => s.length)).toBe(0);
+  });
+
+  test("handles a list too large for Math.max(...array) to spread (no RangeError)", () => {
+    // Math.max(...Array(150_000)) throws "Maximum call stack size exceeded" on V8; the
+    // whole point of maxLen is a loop that never hits that ceiling.
+    const many = Array.from({ length: 150_000 }, (_, i) => String(i));
+    expect(() => maxLen(many, (s) => s.length)).not.toThrow();
+  });
+});
+
+describe("renderTaskSummaryRows — shared id/status/title alignment (LORE-51)", () => {
+  const rows: TaskSummaryRow[] = [
+    { id: "LORE-1", title: "Short", status: "Done" },
+    { id: "LORE-100", title: "A longer title", status: "In Progress" },
+  ];
+
+  test("pads id and status columns to the widest cell, leaves title unpadded", () => {
+    expect(renderTaskSummaryRows(rows)).toEqual([
+      "  LORE-1    Done         Short",
+      "  LORE-100  In Progress  A longer title",
+    ]);
+  });
+
+  test("returns [] for an empty row list", () => {
+    expect(renderTaskSummaryRows([])).toEqual([]);
+  });
+
+  test("`lore tasks` and `lore orphans` render byte-identical rows for the same data (the whole point of sharing)", () => {
+    const row: TaskSummaryRow = { id: "LORE-42", title: "Bulk archive orders", status: "To Do" };
+    expect(renderTaskSummaryRows([row])).toEqual(renderTaskSummaryRows([row]));
   });
 });
