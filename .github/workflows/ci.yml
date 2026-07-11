@@ -56,8 +56,9 @@ jobs:
           key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
           restore-keys: ${{ runner.os }}-bun-
       - run: bun install --frozen-lockfile --linker=isolated
-      # Lightweight buildability smoke. The release-grade -baseline per-platform
-      # matrix and npm dual-artifact packaging are LORE-9.
+      # Lightweight buildability smoke (host-native compile only). The
+      # release-grade -baseline per-platform matrix and npm dual-artifact
+      # packaging are in .github/workflows/release.yml (LORE-9).
       - name: Compile and smoke-test the binary
         shell: bash
         run: |

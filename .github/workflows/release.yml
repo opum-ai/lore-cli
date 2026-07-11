@@ -1,0 +1,149 @@
+name: Release (dry-run)
+
+# Manual-only trigger (workflow_dispatch) — never fires on a push or tag, so simply
+# committing/tagging code can never kick off a release. `publish` defaults to false
+# and, as of this workflow, publishing is not wired at all (see the TODO at the
+# bottom): this workflow only builds and packages every platform artifact and
+# proves the npx/launcher mechanism resolves the right binary end-to-end
+# (LORE-9 AC#1/AC#2). See docs/runbooks/release-publishing.md for what a maintainer
+# still needs to configure on npmjs.com before a real publish step can be added.
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Reserved for a future publish step (not implemented yet — see docs/runbooks/release-publishing.md). Has no effect today."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  # The five platform triples this release ships (ADR-0001 §"Build"), keyed by the
+  # npm/<name>/ directory + optionalDependencies package suffix. x64 targets are
+  # -baseline (avoid AVX2-only SIGILL on older/virtualized CPUs); arm64 is standard.
+  PLATFORMS: "darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64"
+
+jobs:
+  build:
+    name: "compile (${{ matrix.name }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: darwin-arm64
+            target: bun-darwin-arm64
+            binary: lore
+          - name: darwin-x64
+            target: bun-darwin-x64-baseline
+            binary: lore
+          - name: linux-arm64
+            target: bun-linux-arm64
+            binary: lore
+          - name: linux-x64
+            target: bun-linux-x64-baseline
+            binary: lore
+          - name: win32-x64
+            target: bun-windows-x64-baseline
+            binary: lore.exe
+    # Cross-compiling all five targets from one ubuntu runner (verified locally,
+    # LORE-9): Bun downloads the target runtime and compiles without needing a
+    # matching host OS/arch. Only linux-x64 matches this runner natively, so it is
+    # the one target actually executed below; the rest get a non-empty-file check.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+      - run: bun install --frozen-lockfile --linker=isolated
+      - name: Compile ${{ matrix.name }}
+        # The outfile is a subdirectory of the checkout — same filesystem as the
+        # source (see docs/reference/tech-stack.md §1 / LORE-14): a cross-device
+        # --outfile silently produces a 0-byte binary at exit 0.
+        run: |
+          mkdir -p "npm/${{ matrix.name }}/bin"
+          bun build --compile --target=${{ matrix.target }} \
+            --outfile="npm/${{ matrix.name }}/bin/${{ matrix.binary }}" src/cli.ts
+      - name: Verify (execute natively where possible, else assert non-empty)
+        shell: bash
+        run: |
+          bin="npm/${{ matrix.name }}/bin/${{ matrix.binary }}"
+          size=$(stat -c%s "$bin")
+          echo "compiled $bin: ${size} bytes"
+          if [ "$size" -lt 1000000 ]; then
+            echo "::error::binary suspiciously small (${size} bytes) — likely the EXDEV 0-byte trap"
+            exit 1
+          fi
+          if [ "${{ matrix.name }}" = "linux-x64" ]; then
+            chmod +x "$bin"
+            version="$("$bin" --version)"
+            echo "lore --version => '${version}'"
+            if [ -z "$version" ]; then
+              echo "::error::linux-x64 binary produced no --version output"
+              exit 1
+            fi
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lore-${{ matrix.name }}
+          path: npm/${{ matrix.name }}/bin/
+          if-no-files-found: error
+
+  package:
+    name: package + install-sanity (dry-run, never publishes)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile --linker=isolated
+      - uses: actions/download-artifact@v4
+        with:
+          path: npm-artifacts
+      - name: Assemble each platform package's binary
+        run: |
+          for name in $PLATFORMS; do
+            mkdir -p "npm/$name/bin"
+            cp -r "npm-artifacts/lore-$name/." "npm/$name/bin/"
+            chmod +x npm/"$name"/bin/lore* 2>/dev/null || true
+          done
+      - name: npm pack every package (LORE-9 AC#1 — produces all platform artifacts; never publishes)
+        run: |
+          mkdir -p dist-npm
+          npm pack --pack-destination "$PWD/dist-npm" .
+          for name in $PLATFORMS; do
+            (cd "npm/$name" && npm pack --pack-destination "$PWD/../../dist-npm" .)
+          done
+          ls -la dist-npm
+      - name: Install-sanity — npx-equivalent resolution through the real launcher (LORE-9 AC#2)
+        run: |
+          rm -rf /tmp/lore-install-sanity && mkdir -p /tmp/lore-install-sanity
+          cd /tmp/lore-install-sanity
+          npm init -y >/dev/null
+          npm install "$GITHUB_WORKSPACE"/dist-npm/salient-data-lore-*.tgz \
+            "$GITHUB_WORKSPACE"/dist-npm/salient-data-lore-linux-x64-*.tgz
+          version="$(node node_modules/.bin/lore --version)"
+          echo "lore --version (via bin/lore.cjs -> the linux-x64 optionalDependency) => '${version}'"
+          if [ -z "$version" ]; then
+            echo "::error::the launcher did not resolve/run the installed platform binary"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-packages-dry-run
+          path: dist-npm/
+          if-no-files-found: error
+
+# TODO(LORE-9 follow-up, not this task): add a `publish` job gated on
+# `inputs.publish == true` with `permissions: { id-token: write }`, using npm's
+# OIDC-based trusted publishing. Requires configuring the npm trusted publisher for
+# this repo + this workflow file once on npmjs.com first (a maintainer-only step —
+# see docs/runbooks/release-publishing.md for the exact steps and commands).

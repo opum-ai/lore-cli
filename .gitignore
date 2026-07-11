@@ -6,6 +6,11 @@ dist/
 build/
 *.tsbuildinfo
 
+# Per-platform compiled binaries (release build artifacts — LORE-9). Only the
+# npm/<platform>/package.json templates are committed; the release workflow
+# builds and places the actual binary at npm/<platform>/bin/lore[.exe].
+npm/*/bin/
+
 # Test / coverage
 coverage/
 .nyc_output/
