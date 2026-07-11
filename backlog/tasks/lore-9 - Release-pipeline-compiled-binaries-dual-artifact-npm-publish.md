@@ -1,10 +1,11 @@
 ---
 id: LORE-9
 title: 'Release pipeline: compiled binaries + dual-artifact npm publish'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-06-21 06:28'
+updated_date: '2026-07-11 17:08'
 labels:
   - ci
   - release
