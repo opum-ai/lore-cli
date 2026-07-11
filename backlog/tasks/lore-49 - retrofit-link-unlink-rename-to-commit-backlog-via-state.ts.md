@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-07-06 22:10'
-updated_date: '2026-07-10 19:41'
+updated_date: '2026-07-10 19:43'
 labels:
   - cmd
 dependencies:
@@ -71,3 +71,12 @@ AC#3 invariants: exits 0/2/3/5/6 unchanged; commit failure reuses 6/drift (addit
 <!-- SECTION:NOTES:BEGIN -->
 Shipped: link/unlink/rename now commit their doc:<conceptId> back-reference edits under backlog/ immediately (per design §3.6, ADR-0012), instead of leaving them uncommitted until the next lore sync. Mechanism: a new SCOPED state.ts commitBacklogFiles stages ONLY the task files each command actually edited (collected from detail.file after a successful editTask), honoring ADR-0012 §1 ('stage only the specific task file(s)') — sync keeps commitBacklogIfDirty as the bundle-wide catch-all sweep. link/unlink/rename reports gain backlogCommit:{committed,files} + a 'committed backlog/: N files' text line. Commit fires only on a real write (skipped: --no-back-ref, idempotent no-op, unlinked/--dry-run rename, null/empty file path); a failed git commit surfaces as drift(6). AC#1/#2/#3 all satisfied. Two code-review rounds (high): round 1 caught the sweep-all ADR-0012 violation (fixed via scoping); round 2 caught an empty-pathspec edge (fixed via truthy guard). Verified end-to-end against REAL git (state.test.ts) — scoped commit isolates unrelated backlog/ files incl. spaces in filenames. Gates: 1425 tests, biome 0, tsc clean, lore check 0/0. Delivered as PR (feat/lore-49-commit-backlog-writes → dev).
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-10 19:43
+---
+Delivered via PR #44 (https://github.com/jeremy-newhouse/lore/pull/44) → dev. All CI green (lint/typecheck/test on macos+ubuntu+windows, compile smoke). Open for review/merge.
+---
+<!-- COMMENTS:END -->
