@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:27'
-updated_date: '2026-07-11 13:43'
+updated_date: '2026-07-11 13:56'
 labels:
   - cmd
   - consumers
@@ -75,4 +75,31 @@ in this repo; unrelated to scaffold logic itself, just the sync gate
 reconciling bundle-wide navigation that had drifted since LORE-29).
 
 Gates: 1454 tests, biome clean, tsc clean, `lore check` 0 errors/0 warnings.
+
+/code-review high (workflow-backed) disposition: 4 findings, all fixed.
+1. [correctness] yamlScalar's unsafe-scalar blocklist missed YAML 1.1 core-schema
+   booleans (yes/no/on/off/y/n case-insensitive) -- a repo dir named e.g. "off"
+   would be emitted unquoted and coerced to a bool by mkdocs' PyYAML loader.
+   FIX: dropped the heuristic entirely, always double-quote site_name (JSON.stringify)
+   -- closes the whole class rather than extending an enumeration. Regression test
+   parses the generated YAML with js-yaml and asserts site_name stays a string for
+   off/Off/no/yes/on/y/n/2026/null/~/true-ish.
+2. [correctness] the two-file write loop wasn't atomic -- a mid-loop failure (e.g.
+   read-only docs/) could leave mkdocs.yml written with no matching docs/tags.md.
+   FIX: writeAllOrRollback captures each file's prior bytes (or absence) before
+   writing and restores/removes on any later failure in the same run. Caught a
+   real bug in the fix itself during testing (a raw EISDIR from readFileSync on a
+   directory escaping uncaught) -- now guarded. Two new regression tests: a
+   read-only docs/ (POSIX-only) and an already-overwritten file's rollback under
+   --force.
+3-4. [cleanup] scaffold.ts now reuses the shared commands/args.ts parseCommandArgs
+   + usage() instead of a private tokenizer copy, and imports DOCS_DIR from
+   core/scaffold.ts instead of a hardcoded "docs" literal.
+
+Re-verified against a real mkdocs build after the fixes (site_name now quoted,
+same clean exit 0 with only the pre-existing advisory warnings). 1456 tests,
+biome clean, tsc clean, lore check 0/0.
+
+PR: https://github.com/jeremy-newhouse/lore/pull/new/feat/lore-39-scaffold-mkdocs
+(not yet opened as of this note -- opening next)
 <!-- SECTION:NOTES:END -->
