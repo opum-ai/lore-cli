@@ -2,7 +2,7 @@
 "use strict";
 
 /**
- * bin/lore.cjs — the published package's `bin` entry (ADR-0001 §"Distribution").
+ * bin/lore.cjs — the published package's future `bin` entry (ADR-0001 §"Distribution", LORE-9).
  *
  * This is the ONLY file that runs under plain Node rather than Bun: it is what makes
  * `npx @salient-data/lore` / a global `npm install -g` work for a user who has Node
@@ -10,6 +10,12 @@
  * platform (installed as one of the package's `optionalDependencies`, gated by npm's
  * `os`/`cpu` fields so only the matching one lands in `node_modules`) and exec it,
  * forwarding argv/stdio/exit code verbatim.
+ *
+ * NOT YET the active `bin` target: `package.json`'s `bin.lore` still points at
+ * `src/cli.ts` (the pre-publish install path — git dependency, `npm`/`bun link`), because
+ * this file only works once the five platform packages it resolves are actually published.
+ * Flipping `bin.lore` to this file is the first step of cutting a real release, not a
+ * standing state — see docs/runbooks/release-publishing.md.
  *
  * Kept deliberately tiny and dependency-free plain CommonJS (`.cjs`, so it runs as
  * CJS regardless of the package's own `"type": "module"`) — per ADR-0001, "the

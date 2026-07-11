@@ -84,13 +84,22 @@ same commit/tag that triggers the release.
 
 ### 3. Cut a release
 
-1. Bump `version` in `package.json` and all five `npm/<platform>/package.json`
-   files to the same new value, in one commit.
-2. Tag it (`git tag vX.Y.Z && git push --tags`) — informational only; nothing
+1. **Flip `package.json`'s `bin.lore` from `src/cli.ts` to `bin/lore.cjs`.**
+   It is deliberately **not** flipped yet (LORE-9): `bin/lore.cjs` only works
+   once the five platform packages it `require.resolve`s are actually
+   published, and flipping it any earlier would break every pre-publish
+   install path (git dependency, `npm`/`bun link`) with no fallback to run
+   from source. This flip is the first-release trigger, not a standing state.
+2. Bump `version` in `package.json` and all five `npm/<platform>/package.json`
+   files to the same new value, in one commit — `release.yml`'s `build` job
+   asserts all six versions match before compiling anything, so a missed file
+   fails loud here rather than silently skipping an optional dependency later.
+3. Tag it (`git tag vX.Y.Z && git push --tags`) — informational only; nothing
    is triggered automatically by the tag.
-3. Run the `Release (dry-run)` workflow manually (`workflow_dispatch`) with
-   `publish: true` once the publish job from Step 2 exists.
-4. Verify: `npx @salient-data/lore@X.Y.Z --version` from a machine that has
+4. Run the `Release (dry-run)` workflow manually (`workflow_dispatch`) with
+   `publish: true` once the publish job from Step 2 (of the previous section)
+   exists.
+5. Verify: `npx @salient-data/lore@X.Y.Z --version` from a machine that has
    never installed lore before, on at least one platform other than the one
    used to test locally.
 

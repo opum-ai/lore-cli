@@ -33,9 +33,17 @@ function fakePlatformPackage(binaryScript: string): { nodePathDir: string; clean
   return { nodePathDir: root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
-/** Run the launcher with `NODE_PATH` pointed at `nodePathDir`, returning its stdout/stderr/exit code. */
+/**
+ * Run the launcher with `NODE_PATH` pointed at `nodePathDir`, returning its stdout/stderr/exit
+ * code. Spawns the literal `"node"` on `PATH` — NOT `process.execPath`, which under `bun test`
+ * *is* the Bun executable, not Node (`bun -e 'console.log(process.execPath)'` prints the bun
+ * binary). `bin/lore.cjs` is "the ONLY file that runs under plain Node rather than Bun"; spawning
+ * it via `process.execPath` would silently test it under Bun's own CJS/`NODE_PATH`/`spawnSync`
+ * semantics instead, which could diverge from real Node's without this suite ever noticing. CI
+ * (`ci.yml`) runs on GitHub-hosted runners, which ship Node preinstalled on `PATH`.
+ */
 function runLauncher(nodePathDir: string, args: readonly string[]): { stdout: string; stderr: string; code: number } {
-  const result = Bun.spawnSync([process.execPath, LAUNCHER, ...args], {
+  const result = Bun.spawnSync(["node", LAUNCHER, ...args], {
     env: { ...process.env, NODE_PATH: nodePathDir },
     stdout: "pipe",
     stderr: "pipe",

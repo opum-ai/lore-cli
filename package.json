@@ -5,7 +5,7 @@
   "type": "module",
   "module": "src/cli.ts",
   "bin": {
-    "lore": "bin/lore.cjs"
+    "lore": "src/cli.ts"
   },
   "license": "MIT",
   "author": "Jeremy Newhouse",

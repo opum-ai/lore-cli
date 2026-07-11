@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-07-11 17:22'
+updated_date: '2026-07-11 17:37'
 labels:
   - ci
   - release
@@ -102,4 +102,71 @@ LORE-14 hasn't merged).
 
 Gates: 1437 tests, biome clean, tsc clean, lore check 0/0, actionlint clean
 on both workflow files.
+
+/code-review high (workflow-backed) fold: 6 findings, all fixed, PLUS one
+additional bug I found during my own follow-up verification of finding #2.
+
+1. [correctness, SEVERE] release.yml's install-sanity glob
+   `salient-data-lore-*.tgz` matched ALL 6 packed tarballs, not just root --
+   passing mismatched-platform tarballs to `npm install` as explicit args
+   bypasses npm's lenient optionalDependency platform-skip and hard-fails
+   EBADPLATFORM. Reproduced locally. FIX: construct exact tarball filenames
+   from the version (`salient-data-lore-${version}.tgz` /
+   `-linux-x64-${version}.tgz`) instead of an ambiguous glob.
+
+2. [correctness, SEVERE] package.json's bin.lore switching from src/cli.ts
+   to bin/lore.cjs breaks every pre-publish install path (git dependency,
+   npm/bun link) since the 5 platform packages it resolves don't exist until
+   a real publish ships them, with no fallback. FIX: reverted bin.lore to
+   src/cli.ts (not yet flipped); documented in release-publishing.md that
+   flipping it is step 1 of actually cutting a release, not a standing
+   state. The workflow's install-sanity step now patches a SCRATCH copy of
+   package.json (bin -> bin/lore.cjs) before packing root, reverts the real
+   file immediately after, so the dry-run still proves the launcher exactly
+   as a real release will ship it -- verified this patch+pack+revert
+   sequence locally (packed tarball had the patched bin; real package.json
+   was byte-identical after).
+
+   FOUND DURING MY OWN FOLLOW-UP on this fix (not one of the 6 reported):
+   bun.lock was never regenerated after optionalDependencies was added to
+   package.json in the original commit -- `bun install --frozen-lockfile`
+   (which ci.yml's check job runs) would have failed on this PR's own CI.
+   Verified: `bun install` (unfrozen) updates it cleanly (also confirmed
+   nonexistent optional packages 404 gracefully, non-fatal, exactly per
+   documented optionalDependencies semantics); committed the regenerated
+   lockfile and re-verified `--frozen-lockfile` now passes.
+
+3. [correctness] test/bin-lore.test.ts spawned via `process.execPath`, which
+   under `bun test` IS the Bun binary, not Node -- the suite never actually
+   exercised bin/lore.cjs under the Node runtime it exists to support. FIX:
+   spawn literal "node" (PATH-resolved); re-ran, all 4 tests still pass, now
+   genuinely under Node.
+
+4. [correctness] no automation enforced the 6-file version lockstep
+   (root + 5 platform package.json). FIX: new `verify-versions` job in
+   release.yml, runs first (before any compile), asserts all 6 versions
+   match, fails loud naming the mismatched file(s) if not.
+
+5. [cleanup] tech-stack.md claimed the pipeline was "CI-verified" when the
+   workflow has never executed in real GitHub Actions (gh workflow run
+   404's until the file exists on the default branch -- confirmed, see
+   prior note). FIX: corrected wording to "verified by direct local
+   reproduction... not yet had a first real GitHub Actions run", both in
+   tech-stack.md and the CHANGELOG entry.
+
+6. [cleanup] the `package` job set up Bun + restored its cache + ran a full
+   `bun install` that nothing in the job used (every step after only shells
+   to cp/chmod/npm/node). FIX: removed entirely -- the job now relies solely
+   on the ubuntu runner's preinstalled node/npm.
+
+Re-verified after all fixes: 1437 tests, biome clean, tsc clean, lore check
+0/0, lore validate 0/0 on touched docs, actionlint clean on both workflow
+files, `bun install --frozen-lockfile` passes.
+
+STILL UNRESOLVED (documented, not a defect I can fix from here): the
+workflow has still never run in real GitHub Actions (same reason as before
+-- needs to exist on dev first). The fixes above are extensively verified
+via direct local reproduction of the underlying commands/logic, but the
+first real `workflow_dispatch` run remains the outstanding proof point.
+Recommend triggering it once this merges, before cutting any real release.
 <!-- SECTION:NOTES:END -->

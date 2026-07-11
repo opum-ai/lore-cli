@@ -329,9 +329,15 @@ day-to-day, and a pinned binary release for CI.
 matrix, `bin/lore.cjs`, the five `npm/<platform>/` package templates, and a
 `workflow_dispatch`-only, publish-free dry-run pipeline (`.github/workflows/
 release.yml`) that proves the `npx` resolution chain end-to-end — are
-implemented and CI-verified. The actual `npm publish` step is a deliberate
-follow-up, gated on configuring npm's Trusted Publisher (OIDC) for all six
-packages: see [release-publishing.md](../runbooks/release-publishing.md).
+implemented and verified by direct local reproduction of every step (compile,
+pack, install, run, and the missing-platform-package error path). The workflow
+itself has **not yet had a first real GitHub Actions run** — `workflow_dispatch`
+requires the file to exist on the default branch before it can be triggered, so
+this could only happen post-merge; a maintainer should trigger it once and
+confirm green before relying on it for an actual release. The `npm publish`
+step is a deliberate follow-up, gated on configuring npm's Trusted Publisher
+(OIDC) for all six packages: see
+[release-publishing.md](../runbooks/release-publishing.md).
 
 **The fork dependency.** lore requires a `--json`-capable Backlog.md, which stock
 v1.47.1 lacks. We consume our fork (`jeremy-newhouse/Backlog.md`) as a

@@ -25,8 +25,40 @@ env:
   PLATFORMS: "darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64"
 
 jobs:
+  verify-versions:
+    name: assert the six release packages are version-lockstep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Assert root + all five npm/<platform>/package.json share one version
+        # bin/lore.cjs resolves a platform optionalDependency purely by name; npm
+        # silently SKIPS it if the installed version doesn't satisfy the root's
+        # pinned range, which for an exact pin means "doesn't exactly match" — a
+        # missed version bump on one of the six files would surface as "no compiled
+        # binary found" for a fully-supported platform, indistinguishable from a
+        # genuinely unsupported one. Fail loud here, before any compile work.
+        run: |
+          # The ${...} below are JS template literals for `node -e`, not shell
+          # interpolation — single-quoting is intentional.
+          # shellcheck disable=SC2016
+          node -e '
+            const fs = require("fs");
+            const root = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const platforms = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-x64"];
+            const mismatched = platforms.filter((name) => {
+              const pkg = JSON.parse(fs.readFileSync(`npm/${name}/package.json`, "utf8"));
+              return pkg.version !== root.version;
+            });
+            if (mismatched.length > 0) {
+              console.error(`::error::version mismatch: root is ${root.version}, but npm/{${mismatched.join(",")}}/package.json do not`);
+              process.exit(1);
+            }
+            console.log(`all six release packages are at version ${root.version}`);
+          '
+
   build:
     name: "compile (${{ matrix.name }})"
+    needs: verify-versions
     strategy:
       fail-fast: false
       matrix:
@@ -101,10 +133,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: .bun-version
-      - run: bun install --frozen-lockfile --linker=isolated
       - uses: actions/download-artifact@v4
         with:
           path: npm-artifacts
@@ -116,20 +144,39 @@ jobs:
             chmod +x npm/"$name"/bin/lore* 2>/dev/null || true
           done
       - name: npm pack every package (LORE-9 AC#1 — produces all platform artifacts; never publishes)
+        # The root package's COMMITTED `bin` still points at src/cli.ts (see
+        # docs/runbooks/release-publishing.md's release procedure — flipping it to
+        # bin/lore.cjs is a first-release step, not a standing state, so pre-publish
+        # git/link installs keep working). Patch a SCRATCH copy here (reverted via
+        # `git checkout` immediately after) so this dry-run's install-sanity step
+        # proves the launcher exactly as a real release will ship it. Filenames are
+        # built from the exact version rather than a glob: `salient-data-lore-*.tgz`
+        # also matches every platform package's tarball, and passing THOSE to `npm
+        # install` explicitly (not resolved through optionalDependencies) makes npm
+        # hard-fail EBADPLATFORM on any package.json os/cpu mismatch with the runner.
         run: |
           mkdir -p dist-npm
+          version="$(node -p "require('./package.json').version")"
+          node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            pkg.bin.lore = "bin/lore.cjs";
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+          '
           npm pack --pack-destination "$PWD/dist-npm" .
+          git checkout -- package.json
           for name in $PLATFORMS; do
             (cd "npm/$name" && npm pack --pack-destination "$PWD/../../dist-npm" .)
           done
           ls -la dist-npm
+          echo "ROOT_TARBALL=dist-npm/salient-data-lore-${version}.tgz" >> "$GITHUB_ENV"
+          echo "LINUX_X64_TARBALL=dist-npm/salient-data-lore-linux-x64-${version}.tgz" >> "$GITHUB_ENV"
       - name: Install-sanity — npx-equivalent resolution through the real launcher (LORE-9 AC#2)
         run: |
           rm -rf /tmp/lore-install-sanity && mkdir -p /tmp/lore-install-sanity
           cd /tmp/lore-install-sanity
           npm init -y >/dev/null
-          npm install "$GITHUB_WORKSPACE"/dist-npm/salient-data-lore-*.tgz \
-            "$GITHUB_WORKSPACE"/dist-npm/salient-data-lore-linux-x64-*.tgz
+          npm install "$GITHUB_WORKSPACE/$ROOT_TARBALL" "$GITHUB_WORKSPACE/$LINUX_X64_TARBALL"
           version="$(node node_modules/.bin/lore --version)"
           echo "lore --version (via bin/lore.cjs -> the linux-x64 optionalDependency) => '${version}'"
           if [ -z "$version" ]; then
@@ -146,4 +193,8 @@ jobs:
 # `inputs.publish == true` with `permissions: { id-token: write }`, using npm's
 # OIDC-based trusted publishing. Requires configuring the npm trusted publisher for
 # this repo + this workflow file once on npmjs.com first (a maintainer-only step —
-# see docs/runbooks/release-publishing.md for the exact steps and commands).
+# see docs/runbooks/release-publishing.md for the exact steps and commands). Also
+# flip package.json's bin.lore to bin/lore.cjs for real as part of that same release
+# (see docs/runbooks/release-publishing.md's release procedure) — the `package` job
+# above only patches a scratch copy to dry-run-verify the launcher, never the
+# committed file.

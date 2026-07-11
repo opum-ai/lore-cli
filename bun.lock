@@ -16,6 +16,13 @@
         "@types/mdast": "4.0.4",
         "typescript": "^5",
       },
+      "optionalDependencies": {
+        "@salient-data/lore-darwin-arm64": "0.0.0",
+        "@salient-data/lore-darwin-x64": "0.0.0",
+        "@salient-data/lore-linux-arm64": "0.0.0",
+        "@salient-data/lore-linux-x64": "0.0.0",
+        "@salient-data/lore-win32-x64": "0.0.0",
+      },
     },
   },
   "packages": {
