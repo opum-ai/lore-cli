@@ -630,6 +630,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Build plan tracked as Backlog.md milestones and tasks.
 
 ### Changed
+- **Deduped the shared task-summary-row type and aligned-row renderer** (LORE-51). `lore tasks`'s
+  `TaskRollupRow` and `lore orphans`' `OrphanTask` were byte-identical `{id, title, status}`
+  redeclarations, and `orphans.ts`'s orphan-task block re-implemented `tasks.ts`'s id/status/title
+  aligned-table logic independently. Both now share `output.ts`'s new `TaskSummaryRow` type and
+  `renderTaskSummaryRows` (backed by the existing spread-free `maxLen`, which `tasks.ts`'s
+  `Math.max(...array)` now inherits too, closing the same six-figure-list `RangeError` risk
+  `orphans.ts` was already hardened against) — a column-layout change is now a one-place edit
+  instead of two independently-drifting copies. No output change (golden tests pin it byte-for-byte).
 - **`lore link` / `lore unlink` / `lore rename` now commit their `backlog/` writes immediately**
   (LORE-49): each command's `doc:<conceptId>` back-reference edit is committed in one `lore`-authored
   commit right after it is written (via `state.ts`'s new `commitBacklogFiles`), instead of being left
