@@ -16,12 +16,14 @@
  * are a `usage` error (exit 2) until their own task lands one.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { buildMkdocsScaffold } from "../core/consumer-scaffold";
+import { buildMkdocsScaffold, type ConsumerScaffoldFile } from "../core/consumer-scaffold";
 import { loadProfile } from "../core/profile";
+import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { parseCommandArgs, usage } from "./args";
 import { ensureDir, writeFileOverwriting } from "./fswrite";
 
 /** Options for {@link runScaffold}; `root`, `clock`, and the stream are injectable for tests. */
@@ -90,16 +92,53 @@ export function runScaffold(options: ScaffoldOptions): number {
     }
   }
 
-  ensureDir(join(options.root, "docs"), "docs");
-  const files: ScaffoldResultFile[] = plan.files.map((file) => {
-    const action = existsSync(join(options.root, file.path)) ? "updated" : "created";
-    writeFileOverwriting(join(options.root, file.path), file.contents, file.path);
-    return { path: file.path, action };
-  });
+  ensureDir(join(options.root, DOCS_DIR), DOCS_DIR);
+  const files = writeAllOrRollback(options.root, plan.files);
 
   const result: ScaffoldResult = { target: parsed.target, force: parsed.force, files };
   emit(scaffoldRenderable(result), options.output, options.stdout);
   return EXIT_OK;
+}
+
+/**
+ * Write every planned file, tracking an undo action per file as it succeeds. If any write throws
+ * partway through, every already-written file this call touched is rolled back — restored to its
+ * pre-call bytes, or removed if it did not exist before — before the original error is rethrown, so
+ * a mid-run I/O failure (e.g. a read-only `docs/`) can never leave one scaffolded file refreshed and
+ * its sibling stale (the all-or-nothing guarantee the never-silent-clobber pre-flight alone doesn't
+ * cover, since that check only guards against *pre-existing* files, not a failure during the write
+ * loop itself). Rollback is best-effort: a failure while undoing is swallowed so the original error —
+ * not a secondary cleanup failure — is what the caller sees.
+ */
+function writeAllOrRollback(root: string, plannedFiles: readonly ConsumerScaffoldFile[]): ScaffoldResultFile[] {
+  const undo: Array<() => void> = [];
+  try {
+    return plannedFiles.map((file) => {
+      const abs = join(root, file.path);
+      const existed = existsSync(abs);
+      // Any failure to read prior text (ENOENT, or a non-regular entry like a directory that
+      // `readFileSync` can't read as text) leaves `before` undefined; a non-regular entry then
+      // fails classified (EISDIR -> conflict) on the write below, before any undo is recorded.
+      let before: string | undefined;
+      try {
+        before = readFileSync(abs, "utf8");
+      } catch {
+        before = undefined;
+      }
+      writeFileOverwriting(abs, file.contents, file.path);
+      undo.push(() => (before === undefined ? rmSync(abs, { force: true }) : writeFileSync(abs, before)));
+      return { path: file.path, action: existed ? "updated" : "created" };
+    });
+  } catch (err) {
+    for (const step of undo.reverse()) {
+      try {
+        step();
+      } catch {
+        // Best-effort rollback; the original write failure below is what's reported.
+      }
+    }
+    throw err;
+  }
 }
 
 // ── Argument parsing ───────────────────────────────────────────────────────────
@@ -113,34 +152,12 @@ interface ScaffoldArgs {
 }
 
 /**
- * Parse `scaffold`'s tokens into the `<target>` positional and `--force`. The router has already
- * stripped lore's global flags, so a `--`-prefixed token here is a command flag: an unrecognized
- * one, a repeated/extra positional, or a missing target is a `usage` error. A `--` ends option
- * parsing (so a target could in principle begin with `-`, though no real target does).
+ * Parse `scaffold`'s tokens into the `<target>` positional and `--force`, via the shared
+ * `<positionals…> [--flags…]` tokenizer every no-value-flag command uses. An unknown flag, an
+ * extra positional, or a missing target is a `usage` error.
  */
 function parseScaffoldArgs(args: readonly string[]): ScaffoldArgs {
-  const positionals: string[] = [];
-  let force = false;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      positionals.push(...args.slice(i + 1));
-      break;
-    }
-    if (arg.startsWith("--") && arg.length > 2) {
-      const name = arg.slice(2);
-      if (name === "force") {
-        force = true;
-      } else {
-        throw usage(`unknown option "--${name}"`, "run `lore scaffold --help` to list options");
-      }
-    } else if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, "run `lore scaffold --help` to list options");
-    } else {
-      positionals.push(arg);
-    }
-  }
+  const { positionals, flags } = parseCommandArgs(args, "scaffold", ["force"]);
 
   const target = positionals[0];
   if (target === undefined) {
@@ -158,12 +175,7 @@ function parseScaffoldArgs(args: readonly string[]): ScaffoldArgs {
   if (!IMPLEMENTED_TARGETS.has(target)) {
     throw usage(`scaffold target "${target}" is not implemented yet`, "only `mkdocs` is implemented today");
   }
-  return { target, force };
-}
-
-/** A `usage` {@link LoreError} (exit `2`) with an actionable hint. */
-function usage(message: string, hint: string): LoreError {
-  return new LoreError("usage", message, hint);
+  return { target, force: flags.has("force") };
 }
 
 // ── Output ─────────────────────────────────────────────────────────────────────

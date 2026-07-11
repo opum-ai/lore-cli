@@ -11,9 +11,10 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { load as yamlLoad } from "js-yaml";
 import { runScaffold, type ScaffoldResult } from "../src/commands/scaffold";
 import { parseConcept } from "../src/core/concept";
 import { buildMkdocsScaffold, MKDOCS_CONFIG_REL_PATH, TAGS_INDEX_REL_PATH } from "../src/core/consumer-scaffold";
@@ -69,7 +70,7 @@ describe("core/consumer-scaffold — buildMkdocsScaffold (pure)", () => {
   test("mkdocs.yml carries every documented setting (consumer-compatibility.md §3.3 / ADR-0010 §2)", () => {
     const plan = buildMkdocsScaffold({ timestamp: "2026-07-11T12:00:00.000Z", siteName: "my-project" });
     const yaml = plan.files.find((f) => f.path === MKDOCS_CONFIG_REL_PATH)?.contents ?? "";
-    expect(yaml).toContain("site_name: my-project");
+    expect(yaml).toContain('site_name: "my-project"');
     expect(yaml).toContain("docs_dir: docs");
     expect(yaml).toContain("name: material");
     expect(yaml).toContain("navigation.indexes");
@@ -83,10 +84,20 @@ describe("core/consumer-scaffold — buildMkdocsScaffold (pure)", () => {
     expect(yaml).toContain("not_in_nav: |\n  /log.md");
   });
 
-  test("a site name needing escaping is rendered as a safe quoted YAML scalar", () => {
-    const plan = buildMkdocsScaffold({ timestamp: "2026-07-11T12:00:00.000Z", siteName: "true" });
-    const yaml = plan.files.find((f) => f.path === MKDOCS_CONFIG_REL_PATH)?.contents ?? "";
-    expect(yaml).toContain('site_name: "true"');
+  test("site_name is always double-quoted, so a YAML-1.1 boolean/null/numeric-looking directory name is never type-coerced", () => {
+    // Regression: an earlier "quote only if unsafe" heuristic's blocklist covered only
+    // true/false/null/~, missing the wider YAML 1.1 core-schema literals (yes/no/on/off/y/n,
+    // case-insensitive) a PyYAML-based loader (mkdocs') resolves as booleans — a repo directory
+    // named e.g. "off" would silently become a bool, failing mkdocs' `site_name: str` requirement
+    // despite `lore scaffold mkdocs` reporting success. Always double-quoting removes the whole
+    // class of YAML-implicit-typing surprises rather than trying to enumerate them.
+    for (const siteName of ["off", "Off", "no", "yes", "on", "y", "n", "2026", "null", "~", "true-ish"]) {
+      const plan = buildMkdocsScaffold({ timestamp: "2026-07-11T12:00:00.000Z", siteName });
+      const yaml = plan.files.find((f) => f.path === MKDOCS_CONFIG_REL_PATH)?.contents ?? "";
+      const parsed = yamlLoad(yaml) as { site_name: unknown };
+      expect(parsed.site_name).toBe(siteName);
+      expect(typeof parsed.site_name).toBe("string");
+    }
   });
 
   test("docs/tags.md is a valid OKF Reference concept carrying the Material tags marker", () => {
@@ -166,6 +177,39 @@ describe("lore scaffold mkdocs — never-silent-clobber (AC: user-owned, never r
   test("--force on a fresh repo still reports `created` (not `updated`)", () => {
     const { result } = scaffold(["mkdocs", "--force"]);
     expect(result.files.every((f) => f.action === "created")).toBe(true);
+  });
+
+  // POSIX-only: a read-only directory doesn't reliably block a write on Windows the same way.
+  test.skipIf(process.platform === "win32")(
+    "a write failure partway through the plan rolls back the earlier file (true all-or-nothing)",
+    () => {
+      // Regression: the write loop used to leave mkdocs.yml (planned first) behind on disk when
+      // the docs/tags.md write failed, contradicting the documented all-or-nothing guarantee.
+      mkdirSync(join(root, "docs"), { recursive: true, mode: 0o555 });
+      try {
+        const err = expectError("denied", () =>
+          runScaffold({ root, output: JSON_CTX, args: ["mkdocs"], stdout: capture() }),
+        );
+        expect(err.type).toBe("denied");
+        expect(existsSync(join(root, MKDOCS_CONFIG_REL_PATH))).toBe(false);
+      } finally {
+        chmodSync(join(root, "docs"), 0o755);
+        rmSync(join(root, "docs"), { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("--force run's rollback restores the PREVIOUS bytes of an already-overwritten file, not just a delete", () => {
+    scaffold(["mkdocs"]);
+    const yamlBefore = readFileSync(join(root, MKDOCS_CONFIG_REL_PATH), "utf8");
+    // Make the SECOND planned write (docs/tags.md) fail after the FIRST (mkdocs.yml) succeeds,
+    // by replacing tags.md with a directory (a write there throws EISDIR).
+    rmSync(join(root, TAGS_INDEX_REL_PATH));
+    mkdirSync(join(root, TAGS_INDEX_REL_PATH));
+    expectError("conflict", () =>
+      runScaffold({ root, output: JSON_CTX, args: ["mkdocs", "--force"], stdout: capture() }),
+    );
+    expect(readFileSync(join(root, MKDOCS_CONFIG_REL_PATH), "utf8")).toBe(yamlBefore);
   });
 });
 

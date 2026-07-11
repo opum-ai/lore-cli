@@ -138,7 +138,7 @@ const TAGS_INDEX_BODY = `
 function mkdocsConfigYaml(siteName: string): string {
   return `# Generated once by \`lore scaffold mkdocs\` — user-owned; re-run with --force to regenerate.
 # See docs/reference/consumer-compatibility.md §3.3 and ADR-0010 for the rationale.
-site_name: ${yamlScalar(siteName)}
+site_name: ${JSON.stringify(siteName)}
 docs_dir: docs
 theme:
   name: material
@@ -159,15 +159,4 @@ validation:
 not_in_nav: |
   /log.md
 `;
-}
-
-/**
- * Render `value` as a YAML plain scalar when safe, else a double-quoted (JSON-compatible) YAML
- * string. A directory name is virtually always plain-scalar-safe, but this guards the rare edge
- * (leading `-`, embedded `:`/`#`, a name that parses as a number/bool) so a hostile or unusual
- * repo directory name can never corrupt the generated config's YAML structure.
- */
-function yamlScalar(value: string): string {
-  const safe = /^[A-Za-z0-9_][A-Za-z0-9_.\- ]*$/.test(value) && !/^(true|false|null|~)$/i.test(value);
-  return safe ? value : JSON.stringify(value);
 }
