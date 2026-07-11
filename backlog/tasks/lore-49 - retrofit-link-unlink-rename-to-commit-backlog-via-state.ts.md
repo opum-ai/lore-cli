@@ -1,11 +1,11 @@
 ---
 id: LORE-49
 title: retrofit link/unlink/rename to commit backlog/ via state.ts
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-06 22:10'
-updated_date: '2026-07-11 13:05'
+updated_date: '2026-07-11 13:10'
 labels:
   - cmd
 dependencies:
