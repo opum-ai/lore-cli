@@ -59,16 +59,54 @@ export function bunGitSpawn(cwd: string): GitSpawn {
   };
 }
 
-/** The outcome of {@link commitBacklogIfDirty}. */
+/** The outcome of {@link commitBacklogIfDirty} / {@link commitBacklogFiles}. */
 export interface BacklogCommitResult {
-  /** Whether a commit was made (`false` when `backlog/` had no uncommitted changes). */
+  /** Whether a commit was made (`false` when there was nothing to commit, or a per-write commit failed). */
   readonly committed: boolean;
   /** The repo-relative paths committed, empty when {@link committed} is `false`. */
   readonly files: readonly string[];
+  /**
+   * Set only by {@link commitBacklogFiles} when a per-write commit was *attempted but failed* (a
+   * `drift` git error, e.g. a rejected pre-commit hook): the failure message, captured rather than
+   * thrown so the calling command can still emit its per-task report (naming every write it made)
+   * before it exits `drift`. Never set on a success or a nothing-to-commit no-op, and never set by
+   * {@link commitBacklogIfDirty} (`sync`'s catch-all sweep still throws on a git failure).
+   */
+  readonly error?: string;
 }
 
 /** Where Backlog.md's own working state lives, relative to the repo root — the one directory lore commits on its behalf. */
 const BACKLOG_DIR = "backlog/";
+
+/**
+ * Wrap a path in git's `:(literal)` pathspec magic so git matches it byte-for-byte: a filename
+ * containing a wildcard (`*`, `?`, `[`…) then matches ONLY itself, never a glob-expanded unrelated
+ * sibling. Without this the "scoped" commit could sweep in an unrelated `backlog/` file whose name
+ * happens to satisfy the glob — defeating the very ADR-0012 §1 scoping guarantee. A plain directory
+ * pathspec (`backlog/`) still recurses into everything under it: `:(literal)` disables only wildcard
+ * interpretation, not directory-prefix matching (verified against real git).
+ */
+function literalPathspec(path: string): string {
+  return `:(literal)${path}`;
+}
+
+/**
+ * The single line a command prints for its `backlog/`-commit outcome: `committed backlog/: N files`
+ * on success, `backlog/ commit failed: …` when {@link BacklogCommitResult.error} is set, or
+ * `undefined` when nothing was committed and nothing failed (a no-op the report omits entirely).
+ * Shared by `link`/`unlink`/`rename`/`sync` so the one line they all emit for the same event — its
+ * label, count, and pluralization — stays byte-identical in exactly one place.
+ */
+export function renderBacklogCommitLine(commit: BacklogCommitResult): string | undefined {
+  if (commit.error !== undefined) {
+    return `backlog/ commit failed: ${commit.error}`;
+  }
+  if (commit.committed) {
+    const noun = commit.files.length === 1 ? "file" : "files";
+    return `committed backlog/: ${commit.files.length} ${noun}`;
+  }
+  return undefined;
+}
 
 /**
  * If `backlog/` has any uncommitted changes (tracked modifications, or new/untracked files),
@@ -103,13 +141,13 @@ export async function commitBacklogIfDirty(
   // addPaths is never empty here: every entry porcelainPaths parses contributes at least one path to
   // BOTH addPaths and allPaths (a rename/copy's old path is the only thing added to allPaths alone),
   // so allPaths being non-empty (checked above) guarantees addPaths is too.
-  await run(spawn, ["add", "--", ...addPaths], "git add");
+  await run(spawn, ["add", "--", ...addPaths.map(literalPathspec)], "git add");
   // Scoped with every touched path (including a staged rename/copy's old path, never passed to
   // `add` — see porcelainPaths): `git commit -- <paths>` commits ONLY those paths' content, leaving
   // any OTHER already-staged change (e.g. in-progress work a developer staged separately) untouched
   // in the index rather than swept into lore's commit — a bare, unscoped `git commit` would instead
   // commit the entire index.
-  await run(spawn, ["commit", "-m", message, "--", ...allPaths], "git commit");
+  await run(spawn, ["commit", "-m", message, "--", ...allPaths.map(literalPathspec)], "git commit");
   return { committed: true, files: allPaths };
 }
 
@@ -122,24 +160,58 @@ const DEFAULT_COMMIT_MESSAGE = "chore(backlog): sync task changes";
  * `link`/`unlink`/`rename` use so their `doc:<conceptId>` back-reference edit is committed
  * immediately rather than left for the next `lore sync`. Unlike {@link commitBacklogIfDirty}'s
  * bundle-wide `backlog/` sweep (which `sync` uses as the catch-all), this stages **only** the given
- * files as its pathspec, so an unrelated uncommitted `backlog/` edit sitting in the working tree is
- * never swept into the commit — [ADR-0012](../docs/adr/0012-backlog-coexistence-git-ownership.md)
- * §1's "stage only the specific task file(s) it intended to change". An empty `files` (the command
- * wrote nothing — `--no-back-ref`, an idempotent no-op, a read-phase failure) is a pure no-op, not a
- * repo-wide `git status`. `gitSpawn` defaults to the real `git` binary scoped to `root`; injected in
- * tests. A failed `git add`/`commit` surfaces as a `drift` {@link LoreError} exactly like
- * {@link commitBacklogIfDirty}.
+ * files' pathspecs (each `:(literal)`-quoted so a wildcard in a filename cannot glob-match a
+ * sibling), so an unrelated uncommitted edit to a **different** `backlog/` file is never swept in —
+ * [ADR-0012](../docs/adr/0012-backlog-coexistence-git-ownership.md) §1's "stage only the specific
+ * task file(s) it intended to change".
+ *
+ * Isolation is at **file** granularity — all a `git commit -- <pathspec>` can give. An unrelated,
+ * uncommitted edit already sitting in the working tree of one of the *same* files being committed is
+ * part of that file's content and IS included (the only way to hit this is a developer hand-editing
+ * the very task file lore is about to write). Every path must be under `backlog/`: lore is the sole
+ * committer of `backlog/` and of nothing else (ADR-0012), so a path escaping it is a caller bug and
+ * throws rather than committing outside lore's domain.
+ *
+ * An empty `files` (the command wrote nothing — `--no-back-ref`, an idempotent no-op, a read-phase
+ * failure) no-ops inside {@link commitBacklogIfDirty}'s own empty-pathspec guard, never reaching
+ * `git`. `gitSpawn` defaults to the real `git` binary scoped to `root`; injected in tests. A failed
+ * `git add`/`commit` (a `drift` git error, e.g. a rejected pre-commit hook) is captured into the
+ * result's {@link BacklogCommitResult.error} rather than thrown, so the caller can still emit its
+ * per-task report before it exits `drift`; any non-`drift` error still propagates.
  */
 export async function commitBacklogFiles(
   files: readonly string[],
   opts: { readonly root: string; readonly gitSpawn?: GitSpawn },
   message: string,
 ): Promise<BacklogCommitResult> {
-  if (files.length === 0) {
-    return { committed: false, files: [] };
+  // Structural scope guard: lore commits `backlog/` and nothing else (ADR-0012). The paths come from
+  // Backlog's own `filePathRelative`, always under `backlog/` today — this defends the invariant
+  // against a future Backlog layout change (or an absolute/`../` path) rather than silently
+  // committing outside lore's domain, which the removed bundle-wide sweep made structurally
+  // impossible. An empty `files` skips the loop entirely (a no-op run).
+  for (const file of files) {
+    if (!file.startsWith(BACKLOG_DIR)) {
+      throw new LoreError(
+        "drift",
+        `refusing to commit "${file}": lore only commits ${BACKLOG_DIR}`,
+        "this is a bug — a task path outside backlog/ reached the per-write commit",
+        { file },
+      );
+    }
   }
   const gitSpawn = opts.gitSpawn ?? bunGitSpawn(opts.root);
-  return commitBacklogIfDirty(gitSpawn, message, files);
+  // Empty `files` is a no-op via commitBacklogIfDirty's own empty-pathspec guard — the single source
+  // of truth for "nothing to commit", not re-implemented here.
+  try {
+    return await commitBacklogIfDirty(gitSpawn, message, files);
+  } catch (err) {
+    // Capture a git-side `drift` failure into the result so the caller still emits its report before
+    // exiting `drift`; anything else is unexpected and propagates unchanged.
+    if (err instanceof LoreError && err.type === "drift") {
+      return { committed: false, files: [], error: err.message };
+    }
+    throw err;
+  }
 }
 
 /** {@link porcelainPaths}'s result: the paths to `git add`, and the full set to scope the commit to (and report). */
@@ -193,7 +265,7 @@ async function porcelainPaths(spawn: GitSpawn, pathspecs: readonly string[]): Pr
   // so, unlike a bare repo-wide `-uall`, this never walks more of the tree than lore is committing.
   const result = await run(
     spawn,
-    ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...pathspecs],
+    ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...pathspecs.map(literalPathspec)],
     "git status",
   );
   const tokens = result.stdout.split("\0");

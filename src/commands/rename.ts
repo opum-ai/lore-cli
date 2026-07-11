@@ -41,7 +41,7 @@ import { type RewritePlan, rewriteInbound } from "../core/rewrite";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_CODES, EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { type BacklogCommitResult, commitBacklogFiles, type GitSpawn } from "../state";
+import { type BacklogCommitResult, commitBacklogFiles, type GitSpawn, renderBacklogCommitLine } from "../state";
 import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
 import { canonicalIdentity, readIndexBytes } from "./discover";
 import { ensureDir, moveFile, writeFileOverwriting } from "./fswrite";
@@ -194,10 +194,13 @@ export async function runRename(options: RenameOptions): Promise<number> {
   // never swept in (ADR-0012 §1).
   const backlogCommit = await commitBacklogFiles(editedTaskFiles, options, RENAME_COMMIT_MESSAGE);
 
+  // commitBacklogFiles captures a commit failure into backlogCommit.error rather than throwing, so
+  // the report emit and the advisory flush below always run on the write path — a git failure no
+  // longer skips them (previously it threw here, dropping both the report and the load advisories).
   const report = buildReport(plan, writes, backRefs, backlogCommit, parsed.dryRun);
   emit(reportRenderable(report), options.output, options.stdout);
   advisories.flush({ color: options.output.color, stderr: options.stderr });
-  return backRefs.some((b) => b.backRef === "failed") ? EXIT_CODES.drift : EXIT_OK;
+  return backRefs.some((b) => b.backRef === "failed") || backlogCommit.error !== undefined ? EXIT_CODES.drift : EXIT_OK;
 }
 
 /** The `git`-authored commit message for `lore rename`'s `backlog/` writes (moving each linked task's `doc:` label/`--doc` path). */
@@ -444,9 +447,9 @@ function render(data: RenameReport): string {
     const suffix = b.error !== undefined ? ` (${b.error})` : "";
     lines.push(`back-ref ${b.task}: ${b.backRef}${suffix}`);
   }
-  if (data.backlogCommit.committed) {
-    const cnoun = data.backlogCommit.files.length === 1 ? "file" : "files";
-    lines.push(`committed backlog/: ${data.backlogCommit.files.length} ${cnoun}`);
+  const commitLine = renderBacklogCommitLine(data.backlogCommit);
+  if (commitLine !== undefined) {
+    lines.push(commitLine);
   }
   const noun = data.filesChanged === 1 ? "file" : "files";
   lines.push(`${data.filesChanged} ${noun} changed${data.dryRun ? " (dry-run)" : ""}`);

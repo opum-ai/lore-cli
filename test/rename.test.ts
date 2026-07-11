@@ -9,7 +9,7 @@ import { INDEX_BLOCK_BEGIN, INDEX_BLOCK_END } from "../src/core/indexes";
 import { type RewritePlan, rewriteInbound } from "../src/core/rewrite";
 import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
-import { capture, cleanGitSpawn, dirtyGitSpawn, fakeAdapter, makeTask } from "./helpers";
+import { capture, cleanGitSpawn, dirtyGitSpawn, failingCommitGitSpawn, fakeAdapter, makeTask } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 
@@ -874,13 +874,21 @@ describe("lore rename — backlog/ commit (LORE-49)", () => {
     expect(code).toBe(EXIT_OK);
     expect(data.backlogCommit).toEqual({ committed: true, files: [DIRTY_PATH] });
     // SCOPED: `git status` queries only the moved task's file, never all of `backlog/` (ADR-0012 §1).
-    expect(git.calls[1]).toEqual(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", DIRTY_PATH]);
+    // Each path is `:(literal)`-quoted so a wildcard in a filename can't glob-match a sibling.
+    expect(git.calls[1]).toEqual([
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--untracked-files=all",
+      "--",
+      `:(literal)${DIRTY_PATH}`,
+    ]);
     expect(git.calls[3]).toEqual([
       "commit",
       "-m",
       "chore(backlog): move doc back-references (lore rename)",
       "--",
-      DIRTY_PATH,
+      `:(literal)${DIRTY_PATH}`,
     ]);
   });
 
@@ -983,5 +991,32 @@ describe("lore rename — backlog/ commit (LORE-49)", () => {
     expect(code).toBe(EXIT_CODES.drift); // lore-2's move failed
     expect(data.backlogCommit.committed).toBe(true); // lore-1's successful move is still committed
     expect(git.calls[3]?.[0]).toBe("commit");
+  });
+
+  test("a git commit failure is captured, not thrown: the rename.result report is still emitted and exit is drift (6)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n---\nOrders.\n");
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", { labels: ["doc:reference/orders"], documentation: ["docs/reference/orders.md"] }),
+    ]);
+    const stdout = capture();
+
+    // A rejected commit previously threw HERE — after the files were moved and back-refs edited, but
+    // before emit + advisories.flush — dropping the report AND every buffered load advisory. The
+    // capture keeps both on the write path: the report is emitted (below) and drift is returned.
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/sales-orders"],
+      stdout,
+      stderr: capture(),
+      adapter,
+      gitSpawn: failingCommitGitSpawn(DIRTY),
+    });
+    const { data } = JSON.parse(stdout.text()) as { data: RenameReport };
+
+    expect(code).toBe(EXIT_CODES.drift);
+    expect(data.from).toBe("docs/reference/orders.md"); // the rename.result report survived the commit failure
+    expect(data.backlogCommit.committed).toBe(false);
+    expect(data.backlogCommit.error).toContain("could not commit backlog/");
   });
 });

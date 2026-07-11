@@ -62,7 +62,7 @@ import { loadProfile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_CODES, EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { type BacklogCommitResult, commitBacklogFiles, type GitSpawn } from "../state";
+import { type BacklogCommitResult, commitBacklogFiles, type GitSpawn, renderBacklogCommitLine } from "../state";
 import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
 import { writeFileOverwriting } from "./fswrite";
 
@@ -242,7 +242,8 @@ export async function runLink(options: LinkOptions): Promise<number> {
   const backlogCommit = await commitBacklogFiles(editedFiles, options, LINK_COMMIT_MESSAGE);
   const report: LinkReport = { concept: docPath, tasks, changed, backlogCommit };
   emit(reportRenderable("link.result", report, renderTaskReport), options.output, options.stdout);
-  return anyBackRefFailed ? EXIT_CODES.drift : EXIT_OK;
+  // A captured commit failure (backlogCommit.error) is drift too — the report above already named it.
+  return anyBackRefFailed || backlogCommit.error !== undefined ? EXIT_CODES.drift : EXIT_OK;
 }
 
 /**
@@ -306,7 +307,8 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
   const backlogCommit = await commitBacklogFiles(editedFiles, options, UNLINK_COMMIT_MESSAGE);
   const report: UnlinkReport = { concept: docPath, tasks, changed, backlogCommit };
   emit(reportRenderable("unlink.result", report, renderTaskReport), options.output, options.stdout);
-  return anyBackRefFailed ? EXIT_CODES.drift : EXIT_OK;
+  // A captured commit failure (backlogCommit.error) is drift too — the report above already named it.
+  return anyBackRefFailed || backlogCommit.error !== undefined ? EXIT_CODES.drift : EXIT_OK;
 }
 
 /**
@@ -708,9 +710,9 @@ function renderTaskReport(data: TaskReportLike): string {
     return `${t.task}: ${t.status} (doc), back-ref ${t.backRef}${suffix}`;
   });
   lines.push(`${data.concept}: ${data.changed ? "updated" : "unchanged"}`);
-  if (data.backlogCommit.committed) {
-    const noun = data.backlogCommit.files.length === 1 ? "file" : "files";
-    lines.push(`committed backlog/: ${data.backlogCommit.files.length} ${noun}`);
+  const commitLine = renderBacklogCommitLine(data.backlogCommit);
+  if (commitLine !== undefined) {
+    lines.push(commitLine);
   }
   return lines.join("\n");
 }

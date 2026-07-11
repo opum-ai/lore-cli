@@ -73,6 +73,26 @@ export function dirtyGitSpawn(porcelainEntry: string): GitSpawn & { calls: strin
 }
 
 /**
+ * Like {@link dirtyGitSpawn} but the `commit` call FAILS (exit 1, a rejected pre-commit hook) —
+ * every earlier call (`rev-parse`, `status`, `add`) still succeeds. Exercises
+ * `commitBacklogFiles`'s capture of a `drift` git failure into the report: `link`/`unlink`/`rename`
+ * still emit their per-task report and exit `drift`, rather than throwing before the report is built.
+ */
+export function failingCommitGitSpawn(porcelainEntry: string): GitSpawn & { calls: string[][] } {
+  const calls: string[][] = [];
+  let call = 0;
+  const spawn = (async (args: readonly string[]): Promise<GitSpawnResult> => {
+    calls.push([...args]);
+    call++;
+    if (call === 2) return gitOk(`${porcelainEntry}\0`);
+    if (args[0] === "commit") return { exitCode: 1, stdout: "", stderr: "hook rejected" };
+    return gitOk("");
+  }) as GitSpawn & { calls: string[][] };
+  spawn.calls = calls;
+  return spawn;
+}
+
+/**
  * A capturing {@link Writer} for tests: it records every `write` so a test can
  * assert the exact bytes a stream received without touching the real process
  * streams. Shared by the errors and output suites (and future command suites) so

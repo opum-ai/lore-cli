@@ -151,7 +151,7 @@ describe("lore sync — AC#2: sole committer of backlog/", () => {
 
     const { report } = await syncCmd([], adapter, { gitSpawn });
     expect(report.backlogCommit).toEqual({ committed: true, files: ["backlog/tasks/lore-1 - x.md"] });
-    expect(gitSpawn.calls[2]).toEqual(["add", "--", "backlog/tasks/lore-1 - x.md"]);
+    expect(gitSpawn.calls[2]).toEqual(["add", "--", ":(literal)backlog/tasks/lore-1 - x.md"]);
     expect(gitSpawn.calls[3]?.[0]).toBe("commit");
   });
 

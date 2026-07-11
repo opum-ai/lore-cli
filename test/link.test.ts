@@ -30,7 +30,7 @@ import { parseConcept } from "../src/core/concept";
 import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import type { GitSpawn } from "../src/state";
-import { capture, cleanGitSpawn, dirtyGitSpawn, fakeAdapter, makeTask } from "./helpers";
+import { capture, cleanGitSpawn, dirtyGitSpawn, failingCommitGitSpawn, fakeAdapter, makeTask } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 const PLAIN_CTX: OutputContext = { mode: "plain", color: false };
@@ -779,15 +779,23 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
     expect(report.backlogCommit).toEqual({ committed: true, files: [DIRTY_PATH] });
     // SCOPED: `git status` queries only the edited task file (its `detail.file`), never all of
     // `backlog/` — so an unrelated dirty `backlog/` edit can never be swept in (ADR-0012 §1).
-    expect(git.calls[1]).toEqual(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", DIRTY_PATH]);
+    // Each path is `:(literal)`-quoted so a wildcard in a filename can't glob-match a sibling.
+    expect(git.calls[1]).toEqual([
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--untracked-files=all",
+      "--",
+      `:(literal)${DIRTY_PATH}`,
+    ]);
     // Stages exactly that path and commits it with lore's own attributable message.
-    expect(git.calls[2]).toEqual(["add", "--", DIRTY_PATH]);
+    expect(git.calls[2]).toEqual(["add", "--", `:(literal)${DIRTY_PATH}`]);
     expect(git.calls[3]).toEqual([
       "commit",
       "-m",
       "chore(backlog): add doc back-references (lore link)",
       "--",
-      DIRTY_PATH,
+      `:(literal)${DIRTY_PATH}`,
     ]);
   });
 
@@ -834,7 +842,7 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
       "-z",
       "--untracked-files=all",
       "--",
-      "backlog/tasks/lore-1 - title.md",
+      ":(literal)backlog/tasks/lore-1 - title.md",
     ]);
     expect(git.calls[3]?.[0]).toBe("commit");
   });
@@ -856,7 +864,7 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
       "-m",
       "chore(backlog): remove doc back-references (lore unlink)",
       "--",
-      DIRTY_PATH,
+      `:(literal)${DIRTY_PATH}`,
     ]);
   });
 
@@ -893,5 +901,42 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
     expect(stdout.text()).toBe(
       "lore-1: added (doc), back-ref added\ndocs/stories/x.md: updated\ncommitted backlog/: 1 file\n",
     );
+  });
+
+  test("a git commit failure is captured, not thrown: the report still names the write and exit is drift (6)", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+
+    // The back-ref edit succeeds but `git commit` is rejected (e.g. a pre-commit hook). The old code
+    // threw before the report was built; now the failure is captured into backlogCommit.error so the
+    // per-task outcome is still reported — the report names every task's outcome on drift either way.
+    const { code, report } = await linkCmd(["stories/x", "lore-1"], adapter, failingCommitGitSpawn(DIRTY));
+
+    expect(code).toBe(EXIT_CODES.drift);
+    expect(report.tasks[0]?.backRef).toBe("added"); // the back-ref write happened and is reported
+    expect(report.backlogCommit.committed).toBe(false);
+    expect(report.backlogCommit.error).toContain("could not commit backlog/");
+  });
+
+  test("plain mode appends a `backlog/ commit failed` line on a commit failure (report still emitted)", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+    const stdout = capture();
+
+    const code = await runLink({
+      root,
+      output: PLAIN_CTX,
+      args: ["stories/x", "lore-1"],
+      stdout,
+      stderr: capture(),
+      adapter,
+      gitSpawn: failingCommitGitSpawn(DIRTY),
+    });
+
+    expect(code).toBe(EXIT_CODES.drift);
+    // The per-task report survives the commit failure, with a `backlog/ commit failed:` line in place
+    // of the `committed backlog/:` line — the caller learns both what it wrote and that the commit failed.
+    expect(stdout.text()).toContain("lore-1: added (doc), back-ref added");
+    expect(stdout.text()).toContain("backlog/ commit failed: ");
   });
 });

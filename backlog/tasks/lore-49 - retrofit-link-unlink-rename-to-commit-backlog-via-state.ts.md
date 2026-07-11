@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-07-06 22:10'
-updated_date: '2026-07-10 19:43'
+updated_date: '2026-07-11 13:05'
 labels:
   - cmd
 dependencies:
@@ -70,6 +70,19 @@ AC#3 invariants: exits 0/2/3/5/6 unchanged; commit failure reuses 6/drift (addit
 
 <!-- SECTION:NOTES:BEGIN -->
 Shipped: link/unlink/rename now commit their doc:<conceptId> back-reference edits under backlog/ immediately (per design §3.6, ADR-0012), instead of leaving them uncommitted until the next lore sync. Mechanism: a new SCOPED state.ts commitBacklogFiles stages ONLY the task files each command actually edited (collected from detail.file after a successful editTask), honoring ADR-0012 §1 ('stage only the specific task file(s)') — sync keeps commitBacklogIfDirty as the bundle-wide catch-all sweep. link/unlink/rename reports gain backlogCommit:{committed,files} + a 'committed backlog/: N files' text line. Commit fires only on a real write (skipped: --no-back-ref, idempotent no-op, unlinked/--dry-run rename, null/empty file path); a failed git commit surfaces as drift(6). AC#1/#2/#3 all satisfied. Two code-review rounds (high): round 1 caught the sweep-all ADR-0012 violation (fixed via scoping); round 2 caught an empty-pathspec edge (fixed via truthy guard). Verified end-to-end against REAL git (state.test.ts) — scoped commit isolates unrelated backlog/ files incl. spaces in filenames. Gates: 1425 tests, biome 0, tsc clean, lore check 0/0. Delivered as PR (feat/lore-49-commit-backlog-writes → dev).
+
+Post-delivery /code-review (max, PR #44): 12 verified findings → 9 distinct. Fixed on-branch (all with regression tests):
+- #1 commit-before-emit (link/unlink/rename): commitBacklogFiles now CAPTURES a drift git failure into BacklogCommitResult.error instead of throwing, so the command still emits its per-task report (naming every write) before exiting drift(6). Callers OR backlogCommit.error into the exit code.
+- #2 rename late advisory flush: resolved by #1 — commit no longer throws between the write and emit/advisories.flush, so both always run on the write path.
+- #3 same-file WIP sweep: docstring overpromise corrected — isolation is FILE-granular (git pathspec commit); an unrelated edit to the SAME file being committed is included by design. Documented, not code-changeable.
+- #4 multi-file commit untested: added real-git multi-id test (both files committed, unrelated third untouched).
+- #6 wildcard glob in pathspec: each status/add/commit pathspec is now :(literal)-quoted (state.ts literalPathspec) so a filename with [ * ? can't glob-match a sibling; verified against real git + regression test.
+- #7 no backlog/ scope assert: commitBacklogFiles now throws if any path escapes backlog/ (defense-in-depth for the removed bundle-wide sweep's structural guarantee).
+- #8 triplicated 'committed backlog/: N files' render: extracted shared state.ts renderBacklogCommitLine, now used by link/unlink/rename/sync (also renders the new 'backlog/ commit failed:' line).
+- #9 redundant empty-files guard: removed from commitBacklogFiles; commitBacklogIfDirty's empty-pathspec guard is the single source of truth.
+ACCEPTED-BY-DESIGN (no code change):
+- #5 new hard git dependency (AC#3): link/unlink/rename now shell git for any real back-ref write, so a non-git repo (or one with no user.name/email) exits 6 where it previously exited 0. This is consistent with lore sync + ADR-0012 (lore is the sole committer of backlog/, which presupposes git). AC#3 ('no regression to existing exit codes/behavior') is read as 'the documented link/unlink/rename exit contract', which is unchanged; running outside a git repo was never a supported lore workflow.
+Gates after fixes: 1433 tests (+8), biome 0, tsc clean, lore check 0/0.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
