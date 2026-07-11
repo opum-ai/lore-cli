@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-07-11 14:13'
+updated_date: '2026-07-11 14:22'
 labels:
   - spike
 milestone: m-1
@@ -73,4 +73,28 @@ follow-up task rather than silently expanding this one.
 
 Gates: 1433 tests, biome clean, tsc clean, lore check 0/0, lore validate 0
 errors (fixed a summary-length warning my own edit introduced in tech-stack.md).
+
+/code-review high (workflow-backed) fold, round 2: 3 findings, all fixed.
+1. [correctness] The note above says "Six OTHER docs" reference stale
+   remark/unified framing but actually lists eight (matching LORE-52's correct
+   count of 8). Correction: it is EIGHT docs (docs/index.md, ADR-0007, ADR-0008,
+   ADR-0010, ADR-0011, architecture.md, lore-design.md, okf-conformance.md),
+   as LORE-52 and the shipping commit message both correctly say.
+2. [cleanup] docs/adr/index.md carried a hand-written "## Index" table
+   (Status column, 16 rows) ABOVE the lore:index managed block this branch's
+   `lore sync` run added underneath it -- the same 16 ADRs listed twice, and
+   only the managed block would ever update on a future ADR. Removed the
+   hand-written table; docs/adr/index.md is now a pure managed-block file,
+   matching how docs/reference/index.md, docs/runbooks/index.md, and
+   docs/specs/index.md already ship (no parallel hand list).
+3. [cleanup/provenance] This branch's `lore sync` run also backfilled
+   docs/log.md and the reference/runbooks/specs index.md managed blocks for
+   the first time in this repo's history (unrelated to LORE-14's own EXDEV/
+   tech-stack work -- these directories existed before but a full-bundle sync
+   apparently hadn't been run since LORE-29 shipped index generation). Noting
+   it here for the record: these are lore-generated navigation hubs, not
+   hand-authored content, and their appearance in this diff is `lore sync`
+   reconciling drift per the standard pre-PR gate loop, not new authored prose.
+
+Gates re-run clean after both fixes: lore check 0 errors/0 warnings.
 <!-- SECTION:NOTES:END -->
