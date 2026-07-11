@@ -39,3 +39,22 @@ as of 2026-06-21.
 | [0014](0014-core-has-no-llm-dependency.md) | Core lore has no LLM dependency | Accepted |
 | [0015](0015-lightweight-retrieval-no-vectors.md) | Lightweight retrieval: full-text + graph context, no vectors | Accepted |
 | [0016](0016-confluence-one-way-publish-deferred.md) | Confluence publish: one-way, Cloud/ADF, deferred | Accepted |
+
+<!-- lore:index:begin -->
+- [ADR-0001: Runtime, build & distribution](0001-runtime-build-distribution.md)
+- [ADR-0002: Backlog.md integration: JSON-only via --json (fork → upstream)](0002-backlog-integration-json-only.md)
+- [ADR-0003: OKF as the documentation substrate](0003-okf-substrate.md)
+- [ADR-0004: CLI-first; reusable Core; SKILL.md agent bridge; MCP deferred](0004-cli-first-skill-bridge-mcp-deferred.md)
+- [ADR-0005: CLI contract: output modes, exit codes, error envelope](0005-cli-contract.md)
+- [ADR-0006: Schema, types & templates: Zod as source of truth](0006-schema-types-templates.md)
+- [ADR-0007: Validation & coherence checking](0007-validation-and-coherence.md)
+- [ADR-0008: Managed task block via remark/mdast AST](0008-managed-block-remark-ast.md)
+- [ADR-0009: Story↔Task coupling & status reconciliation](0009-story-task-coupling-reconciliation.md)
+- [ADR-0010: Multi-consumer docs layer & link convention](0010-multi-consumer-docs-layer.md)
+- [ADR-0011: Frontmatter serialization & diff stability](0011-frontmatter-serialization-stability.md)
+- [ADR-0012: Backlog operational coexistence & git ownership](0012-backlog-coexistence-git-ownership.md)
+- [ADR-0013: .lore/ state directory](0013-lore-state-directory.md)
+- [ADR-0014: Core lore has no LLM dependency](0014-core-has-no-llm-dependency.md)
+- [ADR-0015: Lightweight retrieval: full-text + graph context, no vectors](0015-lightweight-retrieval-no-vectors.md)
+- [ADR-0016: Confluence publish: one-way, Cloud/ADF, deferred](0016-confluence-one-way-publish-deferred.md)
+<!-- lore:index:end -->

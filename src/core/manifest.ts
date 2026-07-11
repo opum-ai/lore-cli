@@ -323,6 +323,17 @@ const LORE_MANIFEST: readonly ManifestCommand[] = [
     examples: ["lore schema export"],
   },
   {
+    name: "scaffold",
+    summary: "Generate a downstream docs consumer's config, additively outside docs/",
+    args: "<target>",
+    flags: [{ name: "force", takesValue: false, summary: "Overwrite an existing generated config" }],
+    json: true,
+    kind: "scaffold.result",
+    // An unknown/not-yet-implemented target is the universal usage(2); no command-specific extra.
+    exitCodes: exitCodesFor(["profile", "write"]),
+    examples: ["lore scaffold mkdocs", "lore scaffold mkdocs --force"],
+  },
+  {
     name: "graph",
     summary: "Emit the bundle's cross-link graph as json or dot",
     args: "[<id>]",

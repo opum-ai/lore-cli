@@ -39,6 +39,7 @@ detail with `lore instructions <topic>`:
 - `tasks`         Show the live status rollup for a concept's linked tasks
 - `orphans`       Report tasks with no owning doc + docs whose linked task vanished
 - `schema`        Export the profile's editor JSON Schemas to .lore/schemas/
+- `scaffold`      Generate a downstream docs consumer's config, additively outside docs/
 - `graph`         Emit the bundle's cross-link graph as json or dot
 - `query`         Full-text search the bundle with frontmatter filters
 - `context`       Assemble a concept + neighbor summaries within a token budget

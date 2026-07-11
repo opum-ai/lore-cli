@@ -90,6 +90,7 @@ describe("core/manifest — shape and invariants", () => {
       tasks: [0, 2, 3, 4, 6], // bundle (3/4/6) + backlog (3/6); no write seam → no 5
       orphans: [0, 2, 3, 4, 6], // same seams as tasks: bundle + backlog; a report, not a gate
       schema: [0, 2, 4, 5, 6], // no 3: no read seam / no id lookup
+      scaffold: [0, 2, 4, 5, 6], // profile (6) + write (4/5); no 3: no read seam / no id lookup
       graph: [0, 2, 3, 4, 6],
       query: [0, 2, 3, 4, 6],
       context: [0, 2, 3, 4, 6],
