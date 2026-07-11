@@ -126,8 +126,8 @@ the [CLI surface](cli-surface.md):
 | `validate.report` | `lore validate` | tiered findings (errors/warnings), counts |
 | `check.report` | `lore check` | drift, broken-link, anchor, portability findings; token estimates |
 | `replace.result` | `lore replace` | per-file match/replace counts; skipped managed regions |
-| `rename.result` / `supersede.result` | `lore rename` / `supersede` | rewritten inbound links + frontmatter refs |
-| `link.result` / `unlink.result` | `lore link` / `unlink` | updated frontmatter refs, task label set |
+| `rename.result` / `supersede.result` | `lore rename` / `supersede` | rewritten inbound links + frontmatter refs (`rename` also: moved back-refs + the `backlog/` commit) |
+| `link.result` / `unlink.result` | `lore link` / `unlink` | updated frontmatter refs, task label set + the `backlog/` commit |
 | `sync.result` | `lore sync` | what changed (status rewrites, managed-block diffs, regen) + the `backlog/` commit |
 | `tasks.rollup` | `lore tasks` | a concept's linked tasks' live Backlog status — `{ concept, status?, tasks: [{id,title,status}] }` |
 | `orphans.report` | `lore orphans` | coupling gaps — `{ orphanTasks[], danglingLinks[] }` (either section omitted under `--tasks-only`/`--docs-only`) |

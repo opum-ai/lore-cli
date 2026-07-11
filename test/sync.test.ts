@@ -23,8 +23,8 @@ import { runSync, type SyncOptions, type SyncReport } from "../src/commands/sync
 import type { GitAdapter, GitCommit, GitLogRange } from "../src/core/log";
 import { EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
-import { bunGitSpawn, type GitSpawn, type GitSpawnResult } from "../src/state";
-import { capture, fakeAdapter, gitRun, makeTask, storyDoc } from "./helpers";
+import { bunGitSpawn } from "../src/state";
+import { capture, cleanGitSpawn, dirtyGitSpawn, fakeAdapter, gitRun, makeTask, storyDoc } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 
@@ -63,38 +63,6 @@ function emptyGitAdapter(): GitAdapter {
 }
 
 const FIXED_SHA = "0000000000000000000000000000000000000000";
-
-function ok(stdout: string): GitSpawnResult {
-  return { exitCode: 0, stdout, stderr: "" };
-}
-
-/** A GitSpawn reporting a clean `backlog/` (no commit attempted). */
-function cleanGitSpawn(): GitSpawn & { calls: string[][] } {
-  const calls: string[][] = [];
-  const spawn = (async (args: readonly string[]): Promise<GitSpawnResult> => {
-    calls.push([...args]);
-    return ok("");
-  }) as GitSpawn & { calls: string[][] };
-  spawn.calls = calls;
-  return spawn;
-}
-
-/**
- * A GitSpawn reporting one dirty backlog/ file (`-z`/NUL-terminated porcelain entry), then
- * succeeding add/commit. Call 1 is always `git rev-parse --show-prefix` (answered "" — not
- * nested); call 2 is `git status`, which gets the dirty entry.
- */
-function dirtyGitSpawn(porcelainEntry: string): GitSpawn & { calls: string[][] } {
-  const calls: string[][] = [];
-  let call = 0;
-  const spawn = (async (args: readonly string[]): Promise<GitSpawnResult> => {
-    calls.push([...args]);
-    call++;
-    return call === 2 ? ok(`${porcelainEntry}\0`) : ok("");
-  }) as GitSpawn & { calls: string[][] };
-  spawn.calls = calls;
-  return spawn;
-}
 
 function baseOptions(overrides: Partial<SyncOptions> = {}): Omit<SyncOptions, "root" | "output" | "args"> {
   return {
@@ -183,7 +151,7 @@ describe("lore sync — AC#2: sole committer of backlog/", () => {
 
     const { report } = await syncCmd([], adapter, { gitSpawn });
     expect(report.backlogCommit).toEqual({ committed: true, files: ["backlog/tasks/lore-1 - x.md"] });
-    expect(gitSpawn.calls[2]).toEqual(["add", "--", "backlog/tasks/lore-1 - x.md"]);
+    expect(gitSpawn.calls[2]).toEqual(["add", "--", ":(literal)backlog/tasks/lore-1 - x.md"]);
     expect(gitSpawn.calls[3]?.[0]).toBe("commit");
   });
 

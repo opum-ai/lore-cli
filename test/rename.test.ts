@@ -9,7 +9,7 @@ import { INDEX_BLOCK_BEGIN, INDEX_BLOCK_END } from "../src/core/indexes";
 import { type RewritePlan, rewriteInbound } from "../src/core/rewrite";
 import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
-import { capture, fakeAdapter, makeTask } from "./helpers";
+import { capture, cleanGitSpawn, dirtyGitSpawn, failingCommitGitSpawn, fakeAdapter, makeTask } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 
@@ -540,6 +540,7 @@ describe("lore rename — Backlog back-ref move", () => {
       stdout,
       stderr: capture(),
       adapter,
+      gitSpawn: cleanGitSpawn(),
     });
     const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
 
@@ -592,6 +593,7 @@ describe("lore rename — Backlog back-ref move", () => {
       stdout,
       stderr: capture(),
       adapter,
+      gitSpawn: cleanGitSpawn(),
     });
     const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
 
@@ -619,6 +621,7 @@ describe("lore rename — Backlog back-ref move", () => {
       stdout,
       stderr: capture(),
       adapter,
+      gitSpawn: cleanGitSpawn(),
     });
     const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
 
@@ -641,6 +644,7 @@ describe("lore rename — Backlog back-ref move", () => {
       stdout: capture(),
       stderr: capture(),
       adapter,
+      gitSpawn: cleanGitSpawn(),
     });
 
     expect(code).toBe(EXIT_OK);
@@ -666,6 +670,7 @@ describe("lore rename — Backlog back-ref move", () => {
       stdout,
       stderr: capture(),
       adapter,
+      gitSpawn: cleanGitSpawn(),
     });
     const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
 
@@ -688,6 +693,7 @@ describe("lore rename — Backlog back-ref move", () => {
       stdout,
       stderr: capture(),
       adapter,
+      gitSpawn: cleanGitSpawn(),
     });
     const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
 
@@ -725,6 +731,7 @@ describe("lore rename — Backlog back-ref move", () => {
       stdout,
       stderr: capture(),
       adapter,
+      gitSpawn: cleanGitSpawn(),
     });
     const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
 
@@ -792,6 +799,7 @@ describe("lore rename — Backlog back-ref move", () => {
       stdout,
       stderr: capture(),
       adapter,
+      gitSpawn: cleanGitSpawn(),
     });
     const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
 
@@ -814,6 +822,7 @@ describe("lore rename — Backlog back-ref move", () => {
       stdout,
       stderr: capture(),
       adapter,
+      gitSpawn: cleanGitSpawn(),
     });
     const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
 
@@ -833,5 +842,181 @@ describe("lore rename — Backlog back-ref move", () => {
     expect(report.dryRun).toBe(true);
     expect(report.backRefs).toEqual([]); // never attempted under --dry-run
     expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true); // not moved
+  });
+});
+
+// ── backlog/ commit (LORE-49): rename commits its back-ref move immediately ──
+
+describe("lore rename — backlog/ commit (LORE-49)", () => {
+  // makeTask("LORE-1")'s file path (helpers.ts) — the exact path the commit must scope itself to.
+  const DIRTY_PATH = "backlog/tasks/lore-1 - title.md";
+  const DIRTY = ` M ${DIRTY_PATH}`;
+
+  test("renaming a linked concept commits the moved back-reference, scoped to that one task file", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n---\nOrders.\n");
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", { labels: ["doc:reference/orders"], documentation: ["docs/reference/orders.md"] }),
+    ]);
+    const git = dirtyGitSpawn(DIRTY);
+    const stdout = capture();
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/sales-orders"],
+      stdout,
+      stderr: capture(),
+      adapter,
+      gitSpawn: git,
+    });
+    const { data } = JSON.parse(stdout.text()) as { data: RenameReport };
+
+    expect(code).toBe(EXIT_OK);
+    expect(data.backlogCommit).toEqual({ committed: true, files: [DIRTY_PATH] });
+    // SCOPED: `git status` queries only the moved task's file, never all of `backlog/` (ADR-0012 §1).
+    // Each path is `:(literal)`-quoted so a wildcard in a filename can't glob-match a sibling.
+    expect(git.calls[1]).toEqual([
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--untracked-files=all",
+      "--",
+      `:(literal)${DIRTY_PATH}`,
+    ]);
+    expect(git.calls[3]).toEqual([
+      "commit",
+      "-m",
+      "chore(backlog): move doc back-references (lore rename)",
+      "--",
+      `:(literal)${DIRTY_PATH}`,
+    ]);
+  });
+
+  test("--dry-run never touches git, even for a linked concept", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n---\nOrders.\n");
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", { labels: ["doc:reference/orders"], documentation: ["docs/reference/orders.md"] }),
+    ]);
+    const git = dirtyGitSpawn(DIRTY);
+    const stdout = capture();
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/sales-orders", "--dry-run"],
+      stdout,
+      stderr: capture(),
+      adapter,
+      gitSpawn: git,
+    });
+    const { data } = JSON.parse(stdout.text()) as { data: RenameReport };
+
+    expect(code).toBe(EXIT_OK);
+    expect(data.backlogCommit).toEqual({ committed: false, files: [] });
+    expect(git.calls).toHaveLength(0);
+  });
+
+  test("renaming an unlinked concept never touches git", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    const git = dirtyGitSpawn(DIRTY);
+    const stdout = capture();
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/sales-orders"],
+      stdout,
+      stderr: capture(),
+      gitSpawn: git,
+    });
+    const { data } = JSON.parse(stdout.text()) as { data: RenameReport };
+
+    expect(code).toBe(EXIT_OK);
+    expect(data.backlogCommit).toEqual({ committed: false, files: [] });
+    expect(git.calls).toHaveLength(0);
+  });
+
+  test("an all-already-current move writes nothing to Backlog, so it does not commit", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n---\nOrders.\n");
+    // Already carries the NEW label/doc — moveBackRefs is a no-op (already-current), no editTask.
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", {
+        labels: ["doc:reference/sales-orders"],
+        documentation: ["docs/reference/sales-orders.md"],
+      }),
+    ]);
+    const git = dirtyGitSpawn(DIRTY);
+    const stdout = capture();
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/sales-orders"],
+      stdout,
+      stderr: capture(),
+      adapter,
+      gitSpawn: git,
+    });
+    const { data } = JSON.parse(stdout.text()) as { data: RenameReport };
+
+    expect(code).toBe(EXIT_OK);
+    expect(data.backRefs).toEqual([{ task: "lore-1", backRef: "already-current" }]);
+    expect(data.backlogCommit.committed).toBe(false);
+    expect(git.calls).toHaveLength(0);
+  });
+
+  test("a partial back-ref failure still commits the successful move and exits drift (6)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n  - lore-2\n---\nOrders.\n");
+    const adapter = fakeAdapter(
+      [
+        makeTask("LORE-1", { labels: ["doc:reference/orders"], documentation: ["docs/reference/orders.md"] }),
+        makeTask("LORE-2", { labels: ["doc:reference/orders"], documentation: ["docs/reference/orders.md"] }),
+      ],
+      { poisonEdits: ["lore-2"] },
+    );
+    const git = dirtyGitSpawn(DIRTY);
+    const stdout = capture();
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/sales-orders"],
+      stdout,
+      stderr: capture(),
+      adapter,
+      gitSpawn: git,
+    });
+    const { data } = JSON.parse(stdout.text()) as { data: RenameReport };
+
+    expect(code).toBe(EXIT_CODES.drift); // lore-2's move failed
+    expect(data.backlogCommit.committed).toBe(true); // lore-1's successful move is still committed
+    expect(git.calls[3]?.[0]).toBe("commit");
+  });
+
+  test("a git commit failure is captured, not thrown: the rename.result report is still emitted and exit is drift (6)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n---\nOrders.\n");
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", { labels: ["doc:reference/orders"], documentation: ["docs/reference/orders.md"] }),
+    ]);
+    const stdout = capture();
+
+    // A rejected commit previously threw HERE — after the files were moved and back-refs edited, but
+    // before emit + advisories.flush — dropping the report AND every buffered load advisory. The
+    // capture keeps both on the write path: the report is emitted (below) and drift is returned.
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/sales-orders"],
+      stdout,
+      stderr: capture(),
+      adapter,
+      gitSpawn: failingCommitGitSpawn(DIRTY),
+    });
+    const { data } = JSON.parse(stdout.text()) as { data: RenameReport };
+
+    expect(code).toBe(EXIT_CODES.drift);
+    expect(data.from).toBe("docs/reference/orders.md"); // the rename.result report survived the commit failure
+    expect(data.backlogCommit.committed).toBe(false);
+    expect(data.backlogCommit.error).toContain("could not commit backlog/");
   });
 });

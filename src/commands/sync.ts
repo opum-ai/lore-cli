@@ -44,7 +44,13 @@ import { validateReconcileInputs } from "../core/reconcile";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, readFileIfPresent, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { type BacklogCommitResult, bunGitSpawn, commitBacklogIfDirty, type GitSpawn } from "../state";
+import {
+  type BacklogCommitResult,
+  bunGitSpawn,
+  commitBacklogIfDirty,
+  type GitSpawn,
+  renderBacklogCommitLine,
+} from "../state";
 import { parseCommandArgs } from "./args";
 import { readIndexBytes, readSource } from "./discover";
 import { ensureDir, writeFileAtomic } from "./fswrite";
@@ -270,9 +276,9 @@ function reportRenderable(data: SyncReport): Renderable<SyncReport> {
 function render(data: SyncReport): string {
   const verb = data.dryRun ? "would update" : "updated";
   const lines = data.files.map((f) => `${verb} ${f.path}`);
-  if (data.backlogCommit.committed) {
-    const noun = data.backlogCommit.files.length === 1 ? "file" : "files";
-    lines.push(`committed backlog/: ${data.backlogCommit.files.length} ${noun}`);
+  const commitLine = renderBacklogCommitLine(data.backlogCommit);
+  if (commitLine !== undefined) {
+    lines.push(commitLine);
   }
   const noun = data.filesChanged === 1 ? "file" : "files";
   lines.push(`${data.filesChanged} ${noun} changed${data.dryRun ? " (dry-run)" : ""}`);

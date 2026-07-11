@@ -224,7 +224,12 @@ the [backlog JSON schema](./backlog-json-schema.md), and the
 Add one or more Backlog task ids to a concept's `tasks:` frontmatter list
 (doc → task), and record the back-reference on each task (task → doc) by adding
 the queryable label `doc:<conceptId>` via `backlog task edit` (display via
-`--doc`). Idempotent: re-linking an already-linked task is a no-op.
+`--doc`). Idempotent: re-linking an already-linked task is a no-op. After writing
+the back-reference, `lore` commits the `backlog/` change it made in one
+`lore`-authored commit ([ADR-0012](../adr/0012-backlog-coexistence-git-ownership.md):
+lore is the sole committer of `backlog/`), so it is never left uncommitted for the
+next `lore sync` to sweep up; a `--no-back-ref` link or a no-op re-link writes
+nothing to Backlog and so commits nothing.
 
 ```
 lore link stories/bulk-archive-orders task-42 task-57
@@ -234,13 +239,16 @@ lore link stories/bulk-archive-orders task-42 task-57
 |---|---|
 | **Args** | `<id>` `<taskId…>` |
 | **Key flags** | `--no-back-ref` (skip the `doc:` label write to the task) |
-| **Output** | `kind: link.result` — links added / already present |
-| **Exit** | `0` ok · `2` usage (bad flag, comma-bearing id) · `3` concept or task id not found · `4` writing into a managed region denied · `5` `<id>` collides case-insensitively with another concept · `6` a task's back-reference edit failed (drift) |
+| **Output** | `kind: link.result` — links added / already present, plus the `backlog/` commit outcome |
+| **Exit** | `0` ok · `2` usage (bad flag, comma-bearing id) · `3` concept or task id not found · `4` writing into a managed region denied · `5` `<id>` collides case-insensitively with another concept · `6` a task's back-reference edit failed, or the `backlog/` commit failed (drift) |
 
 ### `unlink`
 
 Remove task ids from a concept's `tasks:` frontmatter and remove the matching
-`doc:<conceptId>` label from each task. Idempotent.
+`doc:<conceptId>` label from each task. Idempotent. Like [`link`](#link), it
+commits the `backlog/` change it made in one `lore`-authored commit (ADR-0012),
+so a `--no-back-ref` unlink or a no-op (already-absent) removal writes and commits
+nothing.
 
 ```
 lore unlink stories/bulk-archive-orders task-42
@@ -261,8 +269,8 @@ lore unlink stories/bulk-archive-orders task-42 --allow-missing
 |---|---|
 | **Args** | `<id>` `<taskId…>` |
 | **Key flags** | `--no-back-ref` (leave the `doc:` label on the task) · `--allow-missing` (tolerate `<id>` not resolving to a live concept) |
-| **Output** | `kind: unlink.result` — links removed / already absent |
-| **Exit** | `0` ok · `2` usage (bad flag, comma-bearing id) · `3` concept not found (unless `--allow-missing`) · `5` `<id>` collides case-insensitively with a live concept · `6` a task's back-reference edit failed (drift) |
+| **Output** | `kind: unlink.result` — links removed / already absent, plus the `backlog/` commit outcome |
+| **Exit** | `0` ok · `2` usage (bad flag, comma-bearing id) · `3` concept not found (unless `--allow-missing`) · `5` `<id>` collides case-insensitively with a live concept · `6` a task's back-reference edit failed, or the `backlog/` commit failed (drift) |
 
 ### `tasks`
 
@@ -391,8 +399,10 @@ graph, then update sub-indexes. Links remain
 If the renamed concept has `tasks:` entries, every linked task's `doc:<id>`
 label and `--doc` path are moved to the new id/path too (LORE-24, ADR-0009
 §2) — the file move commits first, then the Backlog-side move runs, so a
-Backlog failure never strands an already-renamed file. Unlinked concepts
-never touch Backlog at all.
+Backlog failure never strands an already-renamed file. That Backlog-side move is
+then committed in one `lore`-authored commit (ADR-0012: lore is the sole committer
+of `backlog/`). Unlinked concepts — and `--dry-run` — never touch Backlog or
+`git` at all.
 
 ```
 lore rename stories/bulk-archive-orders stories/order-archival
@@ -401,9 +411,9 @@ lore rename stories/bulk-archive-orders stories/order-archival
 | | |
 |---|---|
 | **Args** | `<oldId>` `<newId>` |
-| **Key flags** | `--dry-run` (report rewrites, move nothing — never attempts the Backlog-side move) |
-| **Output** | `kind: rename.result` — moved path + every link rewrite applied + every linked task's back-reference move outcome |
-| **Exit** | `0` ok · `3` `<oldId>` not found · `5` `<newId>` already exists, or (a linked concept only) collides case-insensitively with another concept · `6` a linked task's back-reference move failed (drift) |
+| **Key flags** | `--dry-run` (report rewrites, move nothing — never attempts the Backlog-side move or its commit) |
+| **Output** | `kind: rename.result` — moved path + every link rewrite applied + every linked task's back-reference move outcome + the `backlog/` commit outcome |
+| **Exit** | `0` ok · `3` `<oldId>` not found · `5` `<newId>` already exists, or (a linked concept only) collides case-insensitively with another concept · `6` a linked task's back-reference move failed, or the `backlog/` commit failed (drift) |
 
 ### `supersede`
 

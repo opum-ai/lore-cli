@@ -11,7 +11,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exitCodeFor, LoreError } from "../src/errors";
-import { bunGitSpawn, commitBacklogIfDirty, type GitSpawn, type GitSpawnResult } from "../src/state";
+import {
+  bunGitSpawn,
+  commitBacklogFiles,
+  commitBacklogIfDirty,
+  type GitSpawn,
+  type GitSpawnResult,
+} from "../src/state";
 import { gitRun } from "./helpers";
 
 /** A recorded invocation, for assertions on exact argv. */
@@ -74,7 +80,14 @@ describe("commitBacklogIfDirty — fake GitSpawn", () => {
     const result = await commitBacklogIfDirty(spawn);
     expect(result).toEqual({ committed: false, files: [] });
     expect(spawn.calls).toHaveLength(2); // show-prefix + status only
-    expect(spawn.calls[1]?.args).toEqual(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "backlog/"]);
+    expect(spawn.calls[1]?.args).toEqual([
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--untracked-files=all",
+      "--",
+      ":(literal)backlog/",
+    ]);
   });
 
   test("dirty backlog/ stages exactly the reported paths and commits them, scoped to those paths", async () => {
@@ -83,16 +96,22 @@ describe("commitBacklogIfDirty — fake GitSpawn", () => {
     const result = await commitBacklogIfDirty(spawn, "chore(backlog): sync task changes");
     expect(result.committed).toBe(true);
     expect(result.files).toEqual(["backlog/tasks/lore-1 - x.md", "backlog/tasks/lore-2 - y.md"]);
-    expect(spawn.calls[2]?.args).toEqual(["add", "--", "backlog/tasks/lore-1 - x.md", "backlog/tasks/lore-2 - y.md"]);
+    expect(spawn.calls[2]?.args).toEqual([
+      "add",
+      "--",
+      ":(literal)backlog/tasks/lore-1 - x.md",
+      ":(literal)backlog/tasks/lore-2 - y.md",
+    ]);
     // The commit is scoped to the same pathspec (not a bare `git commit`) — see the real-git
-    // regression test below proving this actually excludes unrelated staged content.
+    // regression test below proving this actually excludes unrelated staged content. Each path is
+    // `:(literal)`-quoted so a wildcard in a filename can't glob-match an unrelated sibling.
     expect(spawn.calls[3]?.args).toEqual([
       "commit",
       "-m",
       "chore(backlog): sync task changes",
       "--",
-      "backlog/tasks/lore-1 - x.md",
-      "backlog/tasks/lore-2 - y.md",
+      ":(literal)backlog/tasks/lore-1 - x.md",
+      ":(literal)backlog/tasks/lore-2 - y.md",
     ]);
   });
 
@@ -107,14 +126,14 @@ describe("commitBacklogIfDirty — fake GitSpawn", () => {
     expect(result.files).toEqual(["backlog/tasks/lore-1 - new.md", "backlog/tasks/lore-1 - old.md"]);
     // `add` gets only the new path — the old path of an already-staged rename is fully removed
     // from the index by `git mv`, so re-adding it fails outright ("did not match any files").
-    expect(spawn.calls[2]?.args).toEqual(["add", "--", "backlog/tasks/lore-1 - new.md"]);
+    expect(spawn.calls[2]?.args).toEqual(["add", "--", ":(literal)backlog/tasks/lore-1 - new.md"]);
     expect(spawn.calls[3]?.args).toEqual([
       "commit",
       "-m",
       "chore(backlog): sync task changes",
       "--",
-      "backlog/tasks/lore-1 - new.md",
-      "backlog/tasks/lore-1 - old.md",
+      ":(literal)backlog/tasks/lore-1 - new.md",
+      ":(literal)backlog/tasks/lore-1 - old.md",
     ]);
   });
 
@@ -156,7 +175,7 @@ describe("commitBacklogIfDirty — fake GitSpawn", () => {
       "-m",
       "chore(backlog): sync task changes",
       "--",
-      "backlog/tasks/lore-1 - x.md",
+      ":(literal)backlog/tasks/lore-1 - x.md",
     ]);
   });
 
@@ -217,6 +236,46 @@ describe("commitBacklogIfDirty — fake GitSpawn", () => {
   });
 });
 
+describe("commitBacklogFiles — capture + scope guard (fake GitSpawn)", () => {
+  const opts = (spawn: GitSpawn) => ({ root: "/unused", gitSpawn: spawn });
+
+  test("a `git commit` failure is captured into result.error (not thrown) so the caller can still report", async () => {
+    const spawn = notNestedSpawn(
+      ok(porcelainZ(entry(" M", "backlog/tasks/lore-1 - x.md"))), // status: dirty
+      ok(""), // add
+      fail(1, "hook rejected"), // commit
+    );
+    const result = await commitBacklogFiles(["backlog/tasks/lore-1 - x.md"], opts(spawn), "msg");
+    expect(result.committed).toBe(false);
+    expect(result.files).toEqual([]);
+    expect(result.error).toContain("could not commit backlog/");
+    // It did reach `git commit` — the failure was captured after the attempt, not short-circuited.
+    expect(spawn.calls[3]?.args[0]).toBe("commit");
+  });
+
+  test("a non-drift error (a failed spawn, not a non-zero exit) still propagates — only a git failure is captured", async () => {
+    const boom: GitSpawn = async () => {
+      throw new Error("spawn failed");
+    };
+    await expect(commitBacklogFiles(["backlog/tasks/lore-1 - x.md"], opts(boom), "msg")).rejects.toThrow(
+      "spawn failed",
+    );
+  });
+
+  test("a path outside backlog/ is refused before any git call (scope guard, ADR-0012)", async () => {
+    const spawn = notNestedSpawn(ok(""));
+    let err: unknown;
+    try {
+      await commitBacklogFiles(["docs/stories/x.md"], opts(spawn), "msg");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(LoreError);
+    expect((err as LoreError).type).toBe("drift");
+    expect(spawn.calls).toHaveLength(0); // never reached git — the guard runs first
+  });
+});
+
 describe("commitBacklogIfDirty — nested-bundle cwd (fake GitSpawn)", () => {
   test("regression: a non-empty show-prefix is stripped from every reported path before add/commit", async () => {
     // Reproduces the nested-checkout bug with a fake: `git status` (repo-top-relative) reports
@@ -227,13 +286,13 @@ describe("commitBacklogIfDirty — nested-bundle cwd (fake GitSpawn)", () => {
     const result = await commitBacklogIfDirty(spawn);
     expect(result.files).toEqual(["backlog/tasks/x.md"]);
     expect(spawn.calls[0]?.args).toEqual(["rev-parse", "--show-prefix"]);
-    expect(spawn.calls[2]?.args).toEqual(["add", "--", "backlog/tasks/x.md"]);
+    expect(spawn.calls[2]?.args).toEqual(["add", "--", ":(literal)backlog/tasks/x.md"]);
     expect(spawn.calls[3]?.args).toEqual([
       "commit",
       "-m",
       "chore(backlog): sync task changes",
       "--",
-      "backlog/tasks/x.md",
+      ":(literal)backlog/tasks/x.md",
     ]);
   });
 
@@ -432,6 +491,118 @@ describe("bunGitSpawn + commitBacklogIfDirty — real git integration", () => {
     }).stdout.toString("utf8");
     expect(status).toContain("docs/index.md"); // still uncommitted/untracked
     expect(status).not.toContain("backlog/x.md"); // committed
+  });
+});
+
+describe("bunGitSpawn + commitBacklogFiles — scoped per-write commit (real git)", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "lore-state-scoped-"));
+    gitRun(root, ["init", "-q"]);
+    gitRun(root, ["config", "user.name", "lore test"]);
+    gitRun(root, ["config", "user.email", "lore-test@example.com"]);
+    writeFileSync(join(root, ".gitkeep"), "");
+    gitRun(root, ["add", "."]);
+    gitRun(root, ["commit", "-q", "-m", "initial"]);
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const headSha = (): string =>
+    Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: root, stdout: "pipe" }).stdout.toString("utf8").trim();
+
+  test("commits ONLY the passed task file, leaving an unrelated dirty backlog/ file untouched (ADR-0012 §1)", async () => {
+    mkdirSync(join(root, "backlog", "tasks"), { recursive: true });
+    const edited = "backlog/tasks/lore-1 - title.md"; // the file link/unlink/rename just edited
+    const unrelated = "backlog/tasks/lore-2 - hand edit.md"; // a developer's separate in-progress edit
+    writeFileSync(join(root, edited), "the back-reference edit\n");
+    writeFileSync(join(root, unrelated), "an unrelated in-progress hand-edit\n");
+
+    const result = await commitBacklogFiles([edited], { root }, "chore(backlog): add doc back-references (lore link)");
+
+    expect(result).toEqual({ committed: true, files: [edited] });
+    // The commit's tree contains ONLY the edited task file (spaces in the path handled by argv, no shell).
+    const committed = Bun.spawnSync(["git", "show", "--stat=200", "--pretty=format:", "HEAD"], {
+      cwd: root,
+      stdout: "pipe",
+    }).stdout.toString("utf8");
+    expect(committed).toContain("lore-1 - title.md");
+    expect(committed).not.toContain("lore-2 - hand edit.md");
+    // The unrelated hand-edit is STILL uncommitted — never swept into lore's commit.
+    const status = Bun.spawnSync(["git", "status", "--porcelain", "--untracked-files=all"], {
+      cwd: root,
+      stdout: "pipe",
+    }).stdout.toString("utf8");
+    expect(status).toContain("lore-2 - hand edit.md");
+    expect(status).not.toContain("lore-1 - title.md"); // committed, no longer dirty
+  });
+
+  test("commits EVERY passed task file (multi-id), leaving an unrelated dirty backlog/ file untouched", async () => {
+    mkdirSync(join(root, "backlog", "tasks"), { recursive: true });
+    const editedA = "backlog/tasks/lore-1 - a.md"; // two task files a single `lore link t1 t2` edited
+    const editedB = "backlog/tasks/lore-2 - b.md";
+    const unrelated = "backlog/tasks/lore-3 - hand edit.md"; // a developer's separate in-progress edit
+    writeFileSync(join(root, editedA), "edit A\n");
+    writeFileSync(join(root, editedB), "edit B\n");
+    writeFileSync(join(root, unrelated), "unrelated hand-edit\n");
+
+    const result = await commitBacklogFiles(
+      [editedA, editedB],
+      { root },
+      "chore(backlog): add doc back-references (lore link)",
+    );
+
+    expect(result.committed).toBe(true);
+    expect(new Set(result.files)).toEqual(new Set([editedA, editedB])); // BOTH committed (order is git's)
+    // The commit's tree contains both edited files and NOT the unrelated one.
+    const committed = Bun.spawnSync(["git", "show", "--stat=200", "--pretty=format:", "HEAD"], {
+      cwd: root,
+      stdout: "pipe",
+    }).stdout.toString("utf8");
+    expect(committed).toContain("lore-1 - a.md");
+    expect(committed).toContain("lore-2 - b.md");
+    expect(committed).not.toContain("lore-3 - hand edit.md");
+    // The unrelated hand-edit is STILL uncommitted — never swept into lore's multi-file commit.
+    const status = Bun.spawnSync(["git", "status", "--porcelain", "--untracked-files=all"], {
+      cwd: root,
+      stdout: "pipe",
+    }).stdout.toString("utf8");
+    expect(status).toContain("lore-3 - hand edit.md");
+  });
+
+  test("a filename containing a git wildcard ([…]) commits ONLY itself, never a glob-matched sibling", async () => {
+    mkdirSync(join(root, "backlog", "tasks"), { recursive: true });
+    const bracket = "backlog/tasks/lore-1 - Fix [urgent] bug.md"; // the edited file, name has a glob metachar
+    const sibling = "backlog/tasks/lore-1 - Fix u bug.md"; // an unquoted `[urgent]` glob ALSO matches this
+    writeFileSync(join(root, bracket), "the back-reference edit\n");
+    writeFileSync(join(root, sibling), "an unrelated in-progress hand-edit\n");
+
+    const result = await commitBacklogFiles([bracket], { root }, "chore(backlog): add doc back-references (lore link)");
+
+    // `:(literal)` scoping means only the bracket file is staged/committed; the glob-matchable sibling
+    // is untouched. Without it, `[urgent]` would expand and sweep the sibling in (the ADR-0012 §1 bug).
+    expect(result).toEqual({ committed: true, files: [bracket] });
+    const status = Bun.spawnSync(["git", "status", "--porcelain", "--untracked-files=all"], {
+      cwd: root,
+      stdout: "pipe",
+    }).stdout.toString("utf8");
+    expect(status).toContain("Fix u bug.md"); // sibling STILL uncommitted
+  });
+
+  test("empty files is a pure no-op: no commit, HEAD unmoved", async () => {
+    const before = headSha();
+    const result = await commitBacklogFiles([], { root }, "unused");
+    expect(result).toEqual({ committed: false, files: [] });
+    expect(headSha()).toBe(before);
+  });
+
+  test("a passed file that is not actually dirty commits nothing (idempotent no-op)", async () => {
+    const before = headSha();
+    const result = await commitBacklogFiles(["backlog/tasks/lore-9 - never written.md"], { root }, "unused");
+    expect(result).toEqual({ committed: false, files: [] });
+    expect(headSha()).toBe(before);
   });
 });
 
