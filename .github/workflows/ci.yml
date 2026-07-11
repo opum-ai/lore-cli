@@ -61,6 +61,10 @@ jobs:
       - name: Compile and smoke-test the binary
         shell: bash
         run: |
+          # `--outfile` inside the checkout keeps this on the runner's single filesystem —
+          # do not redirect it to a separately-mounted volume/tmpfs: a cross-device rename
+          # during `bun build --compile` can silently produce a 0-byte binary at exit 0
+          # (see docs/reference/tech-stack.md §1, LORE-14).
           bun build --compile src/cli.ts --outfile dist/lore
           # Assert the binary WORKS, not merely that it exits 0. A broken compile
           # (e.g. the 0-byte binary `bun build --compile` silently emits on some

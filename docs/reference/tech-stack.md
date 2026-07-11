@@ -4,7 +4,7 @@ type: Reference
 title: Tech Stack
 description: The libraries, runtime, and distribution model behind lore — with pinned versions, rationale, and the dependencies deliberately left out.
 tags: [tech-stack, dependencies, runtime, distribution, build]
-summary: lore runs on a pinned Bun + TypeScript stack (Commander, gray-matter, unified/remark, Zod v4, native TOML) and deliberately ships with no vector DB, no Rust runtime binary, no TOML lib, and no LLM.
+summary: lore runs on a pinned Bun + TypeScript stack (hand-rolled CLI parsing, gray-matter, mdast-util-from-markdown, Zod v4, native TOML) and ships with no vector DB, no Rust binary, no TOML lib, and no LLM.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -26,8 +26,8 @@ Guiding constraints, in priority order:
    network dependency. The same inputs always produce byte-identical outputs so
    agent loops and CI stay clean.
 3. **Match Backlog.md.** Where a choice is otherwise a wash, we pick what
-   Backlog.md uses (Bun, TypeScript, Commander) for a shared mental model and a
-   parallel distribution story.
+   Backlog.md uses (Bun, TypeScript) for a shared mental model and a parallel
+   distribution story.
 4. **Zero-config.** Defaults work in a fresh repo. No required config file, no
    required services.
 
@@ -68,6 +68,35 @@ lack newer SIMD extensions, plus the arm64 targets (macOS/Linux). Details and th
 full target matrix live in
 [ADR 0001](../adr/0001-runtime-build-distribution.md).
 
+**Compile-time caveat: `--outfile` must land on the same filesystem as the
+source tree (LORE-14).** `bun build --compile` writes the binary via a
+temp-file-then-rename step; when the temp file and the final `--outfile` path
+sit on **different mounted filesystems** (e.g. compiling a checkout on one
+volume to an `--outfile` on another), the rename hits `EXDEV`
+(cross-device link) and Bun has been observed to swallow that failure —
+producing a **0-byte binary with exit code `0`** and no error output at all,
+on either stream. This is silent and easy to miss: `--version`/`--help`
+against the broken binary also exit `0` with empty stdout, so an exit-code-only
+smoke check would pass on a completely non-functional artifact. Verified by
+reproduction: compiling this repo's checkout with `--outfile` on the same
+volume produces a working, correctly-sized binary every time; targeting a
+different mounted volume reproduces the empty-file failure reliably. **Fix:**
+always compile to an `--outfile` on the same filesystem as the checkout (a
+subdirectory of the repo, or the CI runner's single default filesystem — both
+of which the `compile smoke` CI job already does, which is why it doesn't hit
+this), and assert the produced binary is non-empty **and** actually runs
+(`--version` prints something, not just exit `0`) rather than trusting the
+exit code alone — exactly the two checks the `compile smoke` job in `ci.yml`
+already makes.
+
+**Native-module surface.** None of lore's v1 runtime dependencies
+(`gray-matter`, `js-yaml`, `mdast-util-from-markdown`, `zod`) ship a native
+addon (no `.node` binaries, no `binding.gyp`) — all pure JS/TS. A same-filesystem
+`bun build --compile` bundles and runs all four with no special handling; the
+"native modules stay optional and lazily required" policy in
+[ADR-0001](../adr/0001-runtime-build-distribution.md) is a forward-looking
+guard for a *future* native dependency, not a caveat any current one triggers.
+
 ---
 
 ## 2. Language — TypeScript
@@ -87,27 +116,30 @@ build-/dev-time concern, not a runtime one.
 
 ---
 
-## 3. CLI framework — Commander.js
+## 3. CLI framework — a hand-rolled router (Commander deferred)
 
 | | |
 |---|---|
-| **Package** | `commander` |
-| **Role** | Argument parsing, subcommand tree, help text, the entrypoint in `src/cli.ts` |
+| **Package** | *(none — hand-rolled in `src/cli.ts`)* |
+| **Role** | Argument parsing, subcommand dispatch, help text, the entrypoint in `src/cli.ts` |
 
-**Rationale.** Backlog.md uses Commander; matching it keeps flag conventions and
-UX consistent across the two tools an operator runs side by side. Commander gives
-us the subcommand structure (`lore new`, `lore validate`, `lore check`, …)
-documented in [cli-surface.md](cli-surface.md), and a stable place to enforce the
-cross-cutting output flags.
-
-What Commander does **not** decide, and lore enforces on top of it:
+**Rationale.** Backlog.md uses Commander, and it remains the **named eventual
+entrypoint** for lore too (see `src/cli.ts`'s own module docstring) — but
+adopting it is **deferred until the command count justifies the dependency**.
+While the command surface stays small, a hand-rolled parser keeps the package
+dependency-neutral with respect to the isolated-linker / EXDEV packaging
+constraints ([ADR-0001](../adr/0001-runtime-build-distribution.md)), at the
+cost of a bit more hand-written flag-splitting code per command (mitigated by
+the shared tokenizer in `commands/args.ts` most commands reuse). Every command
+still gets the subcommand structure (`lore new`, `lore validate`, `lore
+check`, …) documented in [cli-surface.md](cli-surface.md), and one stable
+seam — `src/cli.ts`'s router — enforces the cross-cutting output flags:
 
 - **Output-mode precedence** `--json > --plain > pretty`, with `--plain` forced
   automatically when stdout is non-TTY. Defined in [cli-contract.md](cli-contract.md).
 - **Semantic exit codes** (`0` ok, `2` usage, `3` not-found, `4` denied,
-  `5` conflict/exists, `6` validation-or-drift). Commander's default behavior is
-  wrapped so usage errors map to `2` and the rest are set explicitly by command
-  handlers.
+  `5` conflict/exists, `6` validation-or-drift), mapped centrally in `errors.ts`
+  so no command hand-rolls its own `process.exit`.
 - **`NO_COLOR`** honoring and TTY detection for color.
 
 ---
@@ -133,16 +165,16 @@ because "parses today" is not the same as "round-trips losslessly." See
 
 ---
 
-## 5. Markdown AST — unified / remark (mdast)
+## 5. Markdown AST — mdast-util-from-markdown (parse-only)
 
 | | |
 |---|---|
-| **Packages** | `unified`, `remark-parse`, `remark-stringify`, and the `mdast` types |
-| **Role** | A real markdown AST for managed-block surgery, link discovery, and link rewriting |
+| **Packages** | `mdast-util-from-markdown` and the `@types/mdast` types |
+| **Role** | A real markdown AST for **locating** managed blocks and links; writes are string-splice, never AST re-serialization |
 
 **Rationale.** Several lore operations are *surgical edits to existing prose* and
 must not disturb the author's content. A real AST — not regex over text — is what
-makes them safe and idempotent:
+makes *locating* the right span safe and idempotent:
 
 - **Managed blocks.** The `<!-- lore:tasks:begin -->` / `:end` region inside a
   Story is regenerated from live Backlog.md data. AST-level location of the HTML
@@ -155,30 +187,49 @@ makes them safe and idempotent:
   find/replace while **skipping lore-managed regions** — both need to operate on
   link/text nodes, not raw bytes.
 
+**Parse-only, deliberately.** lore ships **only** the parser
+(`mdast-util-from-markdown`) — not the full `unified`/`remark` pipeline and not
+`remark-stringify`/`mdast-util-to-markdown`. Every write is **parse-to-locate,
+then string-splice** the original bytes at the located offsets, never
+"re-serialize the whole AST." This is a load-bearing choice, not an oversight:
+a stringify round-trip risks reflowing or reformatting the author's untouched
+prose (width-wrapping, list-marker normalization, escaping differences), which
+would break the "unchanged input → byte-identical output" guarantee managed
+blocks and link rewrites depend on. See
+[ADR-0008](../adr/0008-managed-block-remark-ast.md) (the LORE-22 amendment
+records this shift from an originally-planned `unified().use(remarkParse)`
+pipeline to the leaner parser-only shape) and
+[ADR-0011](../adr/0011-frontmatter-serialization-stability.md) for the
+frontmatter side of the same byte-stability discipline.
+
 The link conventions these tools produce and preserve are specified in
 [portable-markdown.md](portable-markdown.md): relative, URL-encoded, `.md`-suffixed,
 no leading slash.
 
 ---
 
-## 6. Internal link & anchor validation — remark-validate-links
+## 6. Internal link & anchor validation — hand-rolled over the parsed mdast
 
 | | |
 |---|---|
-| **Package** | `remark-validate-links` (pure JS, remark/unified plugin) |
+| **Package** | *(none — no `remark-validate-links` dependency)* |
 | **Role** | Validate internal cross-links and heading-anchor targets across the whole bundle for [`lore check`](cli-surface.md) |
 
 **Rationale.** [`lore check`](cli-surface.md) must verify that every internal
 link resolves and every `#anchor` matches a real heading, across the whole bundle
-in one pass. `remark-validate-links` does exactly this in **pure JavaScript** on
-the mdast we already build — no external binary, no network, internal-by-default.
-External liveness checking is **opt-in** via `--external` and is the only mode
-that touches the network.
+in one pass. lore does this in **pure JavaScript**, hand-rolled directly over
+the mdast §5 already parses — `core/bundle.ts`'s `walkMdast`/`extractLinkTargets`
+locate every link/heading node, and `core/check.ts` cross-references them
+against the loaded bundle graph — rather than depending on the
+`remark-validate-links` plugin (which would pull in the full `unified`/`remark`
+pipeline §5 deliberately does not ship). No external binary, no network,
+internal-by-default. External liveness checking is **opt-in** via `--external`
+and is the only mode that touches the network.
 
 This is a deliberate choice over a Rust link checker (e.g. **lychee**): see §10
-and [ADR 0008 on link/anchor validation](../adr/0007-validation-and-coherence.md).
-We accept a JS dependency in-process to avoid shipping or shelling out to a native
-binary at runtime.
+and [validation & coherence (ADR-0007)](../adr/0007-validation-and-coherence.md).
+Doing it hand-rolled, in-process, over an AST we already build avoids both a
+Rust toolchain/native binary *and* an extra remark-ecosystem dependency.
 
 ---
 
@@ -260,7 +311,7 @@ surface, or a determinism/portability hazard.
 | Not used | What we'd "gain" | Why we refuse it |
 |---|---|---|
 | **Vector DB / embeddings / RAG / chunker** (e.g. a local vector store) | semantic retrieval | [`lore query`](cli-surface.md) is in-memory **BM25-style full-text + frontmatter filters**; [`lore context`](cli-surface.md) is **deterministic, depth-bounded graph expansion**. No vectors means no index to build, no model to load, reproducible results, and a deterministic core. |
-| **Rust link checker at runtime** (e.g. **lychee**) | fast external link checks | We use pure-JS `remark-validate-links` (§6) on the AST we already have. No Rust toolchain, no native binary to ship per platform, no subprocess. External liveness stays opt-in (`--external`). See [ADR 0008](../adr/0007-validation-and-coherence.md). |
+| **Rust link checker at runtime** (e.g. **lychee**) | fast external link checks | We use a pure-JS, hand-rolled validator (§6) on the AST we already have — no `remark-validate-links` dependency either. No Rust toolchain, no native binary to ship per platform, no subprocess. External liveness stays opt-in (`--external`). See [ADR-0007](../adr/0007-validation-and-coherence.md). |
 | **A TOML parsing library** (`@iarna/toml`, `smol-toml`, etc.) | TOML parsing | Bun parses TOML natively (§8). Adding a library would duplicate a runtime capability. |
 | **An LLM / model SDK in `core/`** | "smart" summaries, ranking, link suggestions | The **core is deterministic by mandate**. No network, no model, no nondeterminism. The `summary` field is author-written; the chars/4 token figure is an explicitly *labeled estimate*, not a model call. Any future LLM use lives outside `core/` and is never on the validate/check/sync path. |
 | **A separate test runner / bundler / transpiler** (Jest, Vitest, esbuild, webpack, tsup) | tests, build | Bun provides `bun test` and `bun build --compile`. `tsc` is used for type-checking only. |
@@ -341,10 +392,10 @@ upstream PR are described in
 |---|---|---|---|
 | Runtime / build / spawn / TOML / test | Bun | **pinned** (`.bun-version`) | yes |
 | Language | TypeScript | dev-/typecheck-only | yes |
-| CLI parsing | Commander.js | `^` | yes |
+| CLI parsing | *(hand-rolled; Commander deferred — §3)* | — | yes |
 | Frontmatter parse/serialize | gray-matter | `^` | yes |
-| Markdown AST surgery & links | unified / remark (mdast) | `^` | yes |
-| Internal link & anchor validation | remark-validate-links | `^` | yes |
+| Markdown AST surgery & links | mdast-util-from-markdown (mdast), parse-only | `^` | yes |
+| Internal link & anchor validation | *(hand-rolled over the parsed mdast — §6)* | — | yes |
 | Schema + JSON Schema emit | Zod **v4** | `^4` | yes |
 | Config parsing | *(Bun native TOML)* | — | yes |
 | MCP transport | @modelcontextprotocol/sdk | — | **deferred (v2)** |
