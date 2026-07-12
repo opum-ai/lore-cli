@@ -1,11 +1,11 @@
 ---
 id: LORE-39
 title: lore scaffold mkdocs
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:27'
-updated_date: '2026-07-12 19:39'
+updated_date: '2026-07-12 20:13'
 labels:
   - cmd
   - consumers
@@ -164,4 +164,6 @@ confirmed-passing against the fix, but confirmed-failing against the bug.
 Gates: 1458 tests (1456 + 2 new), biome clean (4 pre-existing infos in untouched files), tsc
 clean, `lore check` 0 errors/0 warnings. Manually smoke-tested `lore scaffold mkdocs` end-to-end
 (fresh init, first scaffold, re-run refusal, --force overwrite) in a scratch repo.
+
+Merged via PR #45 (04070c6, squash) into dev, then dev promoted to main. Post-merge /code-review max fold (2 severe correctness bugs in scaffold.ts's rollback logic + 5 cleanup findings) landed in a follow-up commit before merge — see task notes above for full disposition.
 <!-- SECTION:NOTES:END -->

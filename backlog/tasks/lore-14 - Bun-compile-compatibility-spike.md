@@ -1,11 +1,11 @@
 ---
 id: LORE-14
 title: Bun compile compatibility spike
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-07-11 17:10'
+updated_date: '2026-07-12 20:13'
 labels:
   - spike
 milestone: m-1
@@ -117,4 +117,6 @@ hedge-free root cause: it is crossing ANY filesystem boundary between the
 checkout and --outfile, not "the external volume" specifically. Updated both
 DEVELOPMENT.md and tech-stack.md to state this precisely and cross-reference
 each other rather than duplicate independently.
+
+Merged via PR #47 (46fcf1c, squash) into dev, then dev promoted to main. No findings against this branch in the /code-review max pass.
 <!-- SECTION:NOTES:END -->

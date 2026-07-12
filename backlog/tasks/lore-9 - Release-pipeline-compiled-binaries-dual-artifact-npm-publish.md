@@ -1,11 +1,11 @@
 ---
 id: LORE-9
 title: 'Release pipeline: compiled binaries + dual-artifact npm publish'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-07-12 19:28'
+updated_date: '2026-07-12 20:13'
 labels:
   - ci
   - release
@@ -236,4 +236,6 @@ Re-verified after all three fixes: 1439 tests pass, biome clean, tsc clean,
 lore check 0/0, actionlint clean on both workflow files. This is the 5th
 review pass this branch has been through; 4 of 5 caught at least one real,
 previously-undetected issue.
+
+Merged via PR #48 (a8e1cb6, squash) into dev, then dev promoted to main. This branch went through 5 total review rounds (3x /code-review high + 2x /code-review max), each catching at least one real, previously-undetected issue — see task notes above for the full disposition across all rounds. STILL OUTSTANDING (not a defect, a hard GitHub constraint): release.yml has never executed in real GitHub Actions — workflow_dispatch requires the file on the default branch to trigger. Now that this has merged to dev AND main, the next session should manually trigger it (gh workflow run release.yml --ref dev, default inputs) and watch closely before relying on it for a real release.
 <!-- SECTION:NOTES:END -->
