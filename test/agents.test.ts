@@ -84,7 +84,7 @@ describe("generated content (AC#2) — small, grounded, points at `lore instruct
     }
     // The bridge must never teach a command the router does not dispatch (the LORE-37 phantom trap).
     const shipped = new Set(LORE_COMMANDS.map((c) => c.name));
-    for (const phantom of ["scaffold"]) {
+    for (const phantom of ["obsidian-scaffold-does-not-exist"]) {
       expect(shipped.has(phantom)).toBe(false);
       expect(skill).not.toContain(`\`${phantom}\``);
     }

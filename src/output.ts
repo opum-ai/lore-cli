@@ -363,6 +363,50 @@ function assertSerializedEnvelope(serialized: string): void {
 }
 
 /**
+ * One row for the shared 3-column id/status/title alignment: `lore tasks`'s rollup rows and `lore
+ * orphans`' orphan-task block render the identical `{id, title, status}` shape through the identical
+ * `  <id>  <status>  <title>` layout, so both commands share this type and {@link renderTaskSummaryRows}
+ * rather than keeping two byte-identical redeclarations that could silently diverge (LORE-51).
+ */
+export interface TaskSummaryRow {
+  /** Display-cased task id (`"LORE-21"`). */
+  readonly id: string;
+  readonly title: string;
+  /** The raw configured Backlog status string (no presentation icon). */
+  readonly status: string;
+}
+
+/**
+ * The longest `length(item)` across `items` for column alignment — a loop rather than
+ * `Math.max(...items.map(...))`, whose argument spread throws `RangeError` once the list is large
+ * enough (a six-figure Backlog snapshot is possible). `0` for an empty list. Shared by every
+ * aligned-column renderer (task-summary rows here, `lore orphans`' dangling-link concept column).
+ */
+export function maxLen<T>(items: readonly T[], length: (item: T) => number): number {
+  let max = 0;
+  for (const item of items) {
+    const n = length(item);
+    if (n > max) {
+      max = n;
+    }
+  }
+  return max;
+}
+
+/**
+ * Render `rows` as aligned `  <id>  <status>  <title>` lines, one per row, with the id/status
+ * columns padded to the widest cell in each (via the spread-free {@link maxLen}). Shared by `lore
+ * tasks`'s rollup table and `lore orphans`' orphan-task block, so a column-layout change (an extra
+ * column, truncation, a width cap) is a one-place edit instead of two independently-drifting copies.
+ * Returns `[]` for an empty `rows` — the caller decides what an empty section renders as.
+ */
+export function renderTaskSummaryRows(rows: readonly TaskSummaryRow[]): string[] {
+  const idWidth = maxLen(rows, (row) => row.id.length);
+  const statusWidth = maxLen(rows, (row) => row.status.length);
+  return rows.map((row) => `  ${row.id.padEnd(idWidth)}  ${row.status.padEnd(statusWidth)}  ${row.title}`);
+}
+
+/**
  * Assert truncation counts are item tallies — non-negative integers with
  * `shown <= total`. Shared by {@link truncation} (build) and
  * {@link renderTruncationLine} (render) so a hand-built {@link Truncation} cannot

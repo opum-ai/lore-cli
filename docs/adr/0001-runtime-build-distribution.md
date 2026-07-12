@@ -79,9 +79,11 @@ machines through the channel they already use (npm / `npx` / `bunx`).
 **Build: `bun build --compile`, `-baseline` x64 targets.**
 
 - The CLI is compiled to a **single self-contained executable** with
-  `bun build --compile`. All JS/TS dependencies (Commander, gray-matter,
-  remark/unified, zod, the deferred MCP SDK) are bundled into the binary — no
-  `node_modules` at runtime.
+  `bun build --compile`. All JS/TS dependencies (gray-matter,
+  mdast-util-from-markdown, zod, the deferred Commander/MCP SDK) are bundled
+  into the binary — no `node_modules` at runtime. See
+  [tech-stack](../reference/tech-stack.md) for what is actually a v1 dependency
+  versus a named-but-deferred one.
 - x64 targets use the **`-baseline`** variant to avoid AVX2-only SIGILL crashes
   on older/virtualized CPUs. arm64 targets use the standard variant.
 - **Native modules stay optional and lazily required**, never eagerly imported

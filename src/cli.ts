@@ -29,6 +29,7 @@ import { runOrphans } from "./commands/orphans";
 import { runQuery } from "./commands/query";
 import { runRename } from "./commands/rename";
 import { runReplace } from "./commands/replace";
+import { runScaffold } from "./commands/scaffold";
 import { runSchema } from "./commands/schema";
 import { runSupersede } from "./commands/supersede";
 import { runSync } from "./commands/sync";
@@ -294,6 +295,8 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
       });
     case "schema":
       return runSchema({ root, output, args: parsed.commandArgs, stdout: context.stdout });
+    case "scaffold":
+      return runScaffold({ root, output, args: parsed.commandArgs, stdout: context.stdout });
     case "graph":
       return runGraph({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     case "query":

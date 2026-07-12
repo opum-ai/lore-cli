@@ -7,7 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`tech-stack.md` corrected to match the actually-shipped dependency set** (LORE-14, a Bun
+  compile-compatibility spike). The doc claimed three dependencies that were never actually
+  adopted — `commander` (CLI parsing is hand-rolled in `src/cli.ts`; Commander remains the named
+  but deferred eventual entrypoint), the full `unified`/`remark-parse`/`remark-stringify`
+  pipeline (lore ships only the parser, `mdast-util-from-markdown`; every write is
+  parse-to-locate-then-string-splice, never AST re-serialization — a deliberate byte-stability
+  choice, not an oversight), and `remark-validate-links` (internal link/anchor validation is
+  hand-rolled directly over the parsed mdast in `core/bundle.ts`/`core/check.ts`) — none of which
+  are in `package.json`. Also tightens the existing `DEVELOPMENT.md` **compile-time caveat**
+  (documented in an earlier session from the "cloned onto an external volume" angle): `bun build
+  --compile` silently emits a 0-byte binary at exit `0` (no error on either stream) whenever
+  `--outfile` lands on a **different mounted filesystem** than the source checkout (`EXDEV` on the
+  internal rename step) — confirmed by compiling this repo's own checkout to same-device vs.
+  cross-device output paths, resolving that note's earlier hedge ("very likely" the volume) to a
+  precise, filesystem-boundary-agnostic root cause. The existing CI `compile smoke` job already
+  avoided this (single-runner filesystem) and already asserted non-empty/working output, not just
+  exit code; both docs' comments now explain why and cross-reference each other. Confirmed none of
+  lore's four v1 runtime dependencies (`gray-matter`, `js-yaml`, `mdast-util-from-markdown`, `zod`)
+  ship a native addon, so this caveat is the only `bun build --compile` gotcha the current
+  dependency set has.
+
 ### Added
+- **`lore scaffold mkdocs` — the first consumer-scaffolding target** (LORE-39). Writes a repo-root
+  `mkdocs.yml` (Material theme, `navigation.indexes`, `search`/`tags` plugins, `strict: false` with
+  `not_found`/`anchors: warn` honoring OKF's broken-link tolerance, `absolute_links: relative_to_docs`)
+  plus a `docs/tags.md` tag-index page — both additive and outside `docs/`, so the OKF bundle stays the
+  single source of truth (ADR-0010). Unlike `lore init`'s silent-skip-if-present, scaffolding is
+  **never-silent-clobber**: if any planned file already exists the whole run refuses (exit `5`, naming
+  every collision) and writes nothing, until `--force` is passed. `docs/tags.md` is a normal, appendable
+  OKF `Reference` concept once scaffolded (not a reserved stem like `index`/`log`), serialized against
+  the structural default profile so a custom profile's required fields can't break the scaffold — the
+  same choice `lore init`'s root index makes and for the same reason. A real `mkdocs build` against the
+  scaffolded config and this repo's own bundle now runs as its own CI job (`scaffold-mkdocs`), mirroring
+  the existing compile-smoke job's separation of a heavyweight external toolchain from `bun test`.
+  `docusaurus`/`obsidian` remain documented targets pending their own tasks (LORE-40/41); any other
+  target string, or one not yet implemented, is a `usage` error (exit `2`). Under `--json` it emits
+  `kind: scaffold.result` — `{ target, force, files: [{ path, action }] }`. Now advertised in `lore
+  help`, the `lore help --json` manifest, and the generated agent bridge.
+
+  A `/code-review max` fold on this entry fixed two SEVERE correctness bugs found post-merge:
+  `writeAllOrRollback`'s rollback used to delete a pre-existing file it merely failed to *read*
+  (e.g. a permission error) instead of restoring it, risking real data loss on rollback; and a
+  freshly-created `docs/` directory was not tracked by the rollback undo stack, leaving a residual
+  empty directory behind on a later write failure. Both are fixed and covered by regression tests
+  that were confirmed to fail against the pre-fix code. Also closed a TOCTOU gap in the
+  never-clobber guarantee (the `!force` write path now routes through the same atomic `wx`-based
+  primitive `lore init`/`lore new` use), and promoted the rollback logic from a private
+  `scaffold.ts` function into a shared, exported `fswrite.ts` primitive for future scaffolds to
+  reuse.
 - **Release pipeline mechanics: compiled binaries + dual-artifact npm packaging** (LORE-9,
   ADR-0001). `bin/lore.cjs` is the published package's future launcher — plain, dependency-free
   Node CommonJS that resolves the current platform's compiled binary via `require.resolve`
@@ -670,6 +719,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Build plan tracked as Backlog.md milestones and tasks.
 
 ### Changed
+- **Deduped the shared task-summary-row type and aligned-row renderer** (LORE-51). `lore tasks`'s
+  `TaskRollupRow` and `lore orphans`' `OrphanTask` were byte-identical `{id, title, status}`
+  redeclarations, and `orphans.ts`'s orphan-task block re-implemented `tasks.ts`'s id/status/title
+  aligned-table logic independently. Both now share `output.ts`'s new `TaskSummaryRow` type and
+  `renderTaskSummaryRows` (backed by the existing spread-free `maxLen`, which `tasks.ts`'s
+  `Math.max(...array)` now inherits too, closing the same six-figure-list `RangeError` risk
+  `orphans.ts` was already hardened against) — a column-layout change is now a one-place edit
+  instead of two independently-drifting copies. No output change (golden tests pin it byte-for-byte).
+
+  A `/code-review max` fold found this refactor had reintroduced the same `RangeError` class at a
+  different call site: `orphans.ts`'s orphan-task block spread `renderTaskSummaryRows`'s output
+  into `lines.push(...)`, and spreading a large array into a function-call argument list has its
+  own engine argument-count ceiling — confirmed to throw at ~700,000 orphan tasks. Fixed with a
+  plain per-item loop (matching the sibling `danglingLinks` block, which was never affected); a
+  700k-scale regression test was added and confirmed to reproduce the original failure.
 - **`lore link` / `lore unlink` / `lore rename` now commit their `backlog/` writes immediately**
   (LORE-49): each command's `doc:<conceptId>` back-reference edit is committed in one `lore`-authored
   commit right after it is written (via `state.ts`'s new `commitBacklogFiles`), instead of being left

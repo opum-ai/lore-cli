@@ -298,6 +298,37 @@ describe("runOrphans — text rendering", () => {
   });
 });
 
+describe("runOrphans — orphan-task block survives a large snapshot (LORE-51 regression)", () => {
+  // `renderReport`'s orphan-task block once did `lines.push(...renderTaskSummaryRows(orphanTasks))` —
+  // spreading a large array into a function-call argument list has its own engine argument-count
+  // ceiling, the exact class of RangeError the spread-free `maxLen` refactor was meant to eliminate,
+  // just reintroduced via `Array.prototype.push` instead of `Math.max`. Empirically (this project's
+  // Bun 1.2.23), that spread throws "Maximum call stack size exceeded" well below a million rows; a
+  // per-item loop (matching the sibling `danglingLinks` block) has no such ceiling. 700_000 is chosen
+  // to comfortably clear that ceiling — this test genuinely throws against the pre-fix code — while
+  // still running well under a second, so it stays a fast, decisive regression guard rather than a
+  // slow one.
+  test("700,000 orphan tasks render without a RangeError", async () => {
+    const N = 700_000;
+    const tasks = Array.from({ length: N }, (_, i) => makeTask(`LORE-${i}`));
+    const adapter = okAdapter(tasks);
+    const stdout = capture();
+    const code = await runOrphans({
+      root,
+      output: PLAIN_CTX,
+      stdout,
+      stderr: capture(),
+      args: ["--tasks-only"],
+      adapter,
+    });
+    expect(code).toBe(0);
+    const text = stdout.text();
+    expect(text).toContain(`${N} orphan tasks`);
+    expect(text).toContain("LORE-0 "); // lowest id rendered (order is sorted, not insertion — just checking presence)
+    expect(text).toContain(`LORE-${N - 1} `); // highest id rendered too — the loop reached the end of the array
+  });
+});
+
 describe("cli — orphans wiring (end-to-end through the router)", () => {
   function argv(...args: string[]): string[] {
     return ["bun", "lore", ...args];
