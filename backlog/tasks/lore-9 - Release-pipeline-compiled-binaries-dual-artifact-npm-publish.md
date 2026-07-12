@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-07-12 13:10'
+updated_date: '2026-07-12 19:28'
 labels:
   - ci
   - release
@@ -198,4 +198,42 @@ Re-verified after these fixes: actionlint clean, full gates clean again.
 This is the 4th review round on this branch; each of the 4 caught at least
 one real, previously-undetected defect -- reinforces the "don't skip the
 review loop on CI/CD-touching work" lesson from rounds 1-3.
+
+/code-review max pass across PRs 45/46/47/48 (this session): 3 findings landed
+against this branch, all fixed:
+
+1. [PLAUSIBLE, correctness] release.yml's verify-versions compared the
+   `repository` field via JSON.stringify equality, which is key-order-fragile
+   (two semantically-identical {type,url} objects with differently-ordered
+   keys would false-positive as a mismatch). FIX: replaced with a proper
+   field-by-field shallow comparison (sameShallowObject). Verified both
+   directions by reproducing the node script standalone: a reordered-keys
+   repository object now correctly passes, and an intentionally-mismatched
+   platform set still correctly fails loud.
+
+2. [cleanup] the five-platform list was actually declared in three
+   independently-maintained, unsynced places (npm/<platform>/package.json
+   files, root's optionalDependencies, and release.yml's setup job matrix
+   literal) despite a comment claiming one source of truth -- nothing
+   cross-checked the SET itself, only per-platform field consistency. FIX:
+   verify-versions now also asserts the setup job's declared platform names
+   match root optionalDependencies' keys exactly (as sets), so a platform
+   added to one but not the other fails loud instead of silently shipping
+   an incomplete release. Reproduced the failure mode standalone (dropped
+   win32-x64 from one side, confirmed it's caught).
+
+3. [cleanup] the checkout+setup-bun+cache+frozen-install boilerplate was
+   duplicated 3x across ci.yml's two jobs and release.yml's build job. FIX:
+   extracted a new local composite action, .github/actions/setup-bun/
+   action.yml (setup-bun + cache + install only -- checkout stays explicit
+   in each caller, since a local composite action can't be resolved before
+   its own repo checkout has happened in that job). All 3 call sites now
+   `uses: ./.github/actions/setup-bun` after their checkout step. Validated
+   the new action.yml's syntax via PyYAML and confirmed actionlint stays
+   clean on both workflow files referencing it.
+
+Re-verified after all three fixes: 1439 tests pass, biome clean, tsc clean,
+lore check 0/0, actionlint clean on both workflow files. This is the 5th
+review pass this branch has been through; 4 of 5 caught at least one real,
+previously-undetected issue.
 <!-- SECTION:NOTES:END -->

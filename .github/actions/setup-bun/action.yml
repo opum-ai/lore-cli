@@ -1,0 +1,20 @@
+name: Set up Bun + install
+description: >
+  Shared setup-bun / cache-restore / frozen-install sequence, used identically by every job
+  across ci.yml and release.yml that needs a working Bun toolchain, so the version pin, cache
+  key, and install flags (--frozen-lockfile --linker=isolated) live in exactly one place
+  instead of being hand-typed in every job. Callers must `actions/checkout@v6` FIRST — a local
+  composite action can't be resolved before its own repo checkout has happened.
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version-file: .bun-version
+    - uses: actions/cache@v5
+      with:
+        path: ~/.bun/install/cache
+        key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
+        restore-keys: ${{ runner.os }}-bun-
+    - run: bun install --frozen-lockfile --linker=isolated
+      shell: bash

@@ -72,6 +72,32 @@ jobs:
             const platforms = JSON.parse(process.env.PLATFORM_NAMES);
             const fields = ["version", "license", "author"];
             const problems = [];
+
+            // Field-by-field, not JSON.stringify — stringify-equality is fragile to key
+            // order (two semantically-identical {type,url} objects with keys typed in a
+            // different order would otherwise false-positive as a mismatch).
+            function sameShallowObject(a, b) {
+              const av = a || {};
+              const bv = b || {};
+              const keys = new Set([...Object.keys(av), ...Object.keys(bv)]);
+              for (const key of keys) {
+                if (av[key] !== bv[key]) return false;
+              }
+              return true;
+            }
+
+            // Cross-check the platform SET itself, not just per-platform fields: the setup
+            // job matrix literal and the optionalDependencies keys are two independently
+            // maintained declarations of "which platforms ship" — nothing else catches them
+            // drifting apart (e.g. a 6th platform added to one but not the other).
+            const optionalDepNames = Object.keys(root.optionalDependencies || {}).sort();
+            const declaredPkgNames = platforms.map((name) => `@salient-data/lore-${name}`).sort();
+            if (JSON.stringify(optionalDepNames) !== JSON.stringify(declaredPkgNames)) {
+              problems.push(
+                `platform set mismatch: setup job declares [${declaredPkgNames.join(", ")}], but root package.json optionalDependencies has [${optionalDepNames.join(", ")}]`,
+              );
+            }
+
             for (const name of platforms) {
               const pkg = JSON.parse(fs.readFileSync(`npm/${name}/package.json`, "utf8"));
               for (const field of fields) {
@@ -79,7 +105,7 @@ jobs:
                   problems.push(`npm/${name}/package.json: ${field} is "${pkg[field]}", root is "${root[field]}"`);
                 }
               }
-              if (JSON.stringify(pkg.repository) !== JSON.stringify(root.repository)) {
+              if (!sameShallowObject(pkg.repository, root.repository)) {
                 problems.push(`npm/${name}/package.json: repository does not match root`);
               }
               const pin = root.optionalDependencies && root.optionalDependencies[pkg.name];
@@ -108,15 +134,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: .bun-version
-      - uses: actions/cache@v5
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
-          restore-keys: ${{ runner.os }}-bun-
-      - run: bun install --frozen-lockfile --linker=isolated
+      - uses: ./.github/actions/setup-bun
       - name: Compile ${{ matrix.name }}
         # The outfile is a subdirectory of the checkout — same filesystem as the
         # source (see docs/reference/tech-stack.md §1 / LORE-14): a cross-device
