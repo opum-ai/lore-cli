@@ -144,17 +144,26 @@ function rootIndexDocument(timestamp: string, profile: Profile): string {
     },
     body: ROOT_INDEX_BODY,
   };
-  // The root index is lore's OWN reserved structural file with a fixed shape, not a user concept,
-  // so it is serialized/validated against the built-in default profile — never the active one. A
-  // custom profile that retypes `Reference` (e.g. adds a required field) therefore cannot make
-  // `lore init` abort while writing docs/index.md. (Only `okf_version` above is profile-derived.)
-  // The modeline is carried only when the *active* profile defines the type, so the `$schema` it
-  // points at was actually emitted under `.lore/schemas/`.
+  // Only `okf_version` above is profile-derived; the serialization choice itself (structural
+  // profile, conditional modeline) is shared with every other reserved structural file — see
+  // {@link serializeStructuralConcept}.
+  return serializeStructuralConcept(concept, profile);
+}
+
+/**
+ * Serialize a lore-owned **reserved structural file** — one with a fixed shape that lore itself
+ * generates (the root `docs/index.md` here, `docs/tags.md` in `core/consumer-scaffold.ts`) — never
+ * a user concept. Always validated/serialized against the built-in {@link defaultProfile}, never the
+ * *active* one, so a custom profile that retypes the concept's `type` (e.g. adds a required field to
+ * `Reference`) can never make a scaffold command fail to write its own reserved file. The `$schema`
+ * editor modeline is carried only when the *active* `profile` defines `concept.type` — so the schema
+ * it points at was actually emitted under `.lore/schemas/` — via {@link serializeConceptWithModeline};
+ * otherwise a plain {@link serializeConcept} against the structural profile.
+ */
+export function serializeStructuralConcept(concept: Concept, profile: Profile): string {
   const structural = defaultProfile();
-  return profile.types.has(ROOT_INDEX_TYPE)
-    ? serializeConceptWithModeline(concept, schemaModeline(ROOT_INDEX_PATH, ROOT_INDEX_TYPE), {
-        profile: structural,
-      })
+  return profile.types.has(concept.type)
+    ? serializeConceptWithModeline(concept, schemaModeline(concept.path, concept.type), { profile: structural })
     : serializeConcept(concept, { profile: structural });
 }
 

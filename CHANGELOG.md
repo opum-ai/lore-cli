@@ -30,6 +30,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency set has.
 
 ### Added
+- **`lore scaffold mkdocs` — the first consumer-scaffolding target** (LORE-39). Writes a repo-root
+  `mkdocs.yml` (Material theme, `navigation.indexes`, `search`/`tags` plugins, `strict: false` with
+  `not_found`/`anchors: warn` honoring OKF's broken-link tolerance, `absolute_links: relative_to_docs`)
+  plus a `docs/tags.md` tag-index page — both additive and outside `docs/`, so the OKF bundle stays the
+  single source of truth (ADR-0010). Unlike `lore init`'s silent-skip-if-present, scaffolding is
+  **never-silent-clobber**: if any planned file already exists the whole run refuses (exit `5`, naming
+  every collision) and writes nothing, until `--force` is passed. `docs/tags.md` is a normal, appendable
+  OKF `Reference` concept once scaffolded (not a reserved stem like `index`/`log`), serialized against
+  the structural default profile so a custom profile's required fields can't break the scaffold — the
+  same choice `lore init`'s root index makes and for the same reason. A real `mkdocs build` against the
+  scaffolded config and this repo's own bundle now runs as its own CI job (`scaffold-mkdocs`), mirroring
+  the existing compile-smoke job's separation of a heavyweight external toolchain from `bun test`.
+  `docusaurus`/`obsidian` remain documented targets pending their own tasks (LORE-40/41); any other
+  target string, or one not yet implemented, is a `usage` error (exit `2`). Under `--json` it emits
+  `kind: scaffold.result` — `{ target, force, files: [{ path, action }] }`. Now advertised in `lore
+  help`, the `lore help --json` manifest, and the generated agent bridge.
 - **`lore orphans` — the bidirectional doc↔task coupling report** (LORE-32). Surfaces two kinds of
   gap in one pass: **orphan tasks** (a Backlog task no concept lists in its `tasks:` frontmatter and
   that carries no `doc:<conceptId>` back-reference label — work documented nowhere) and **dangling
@@ -652,6 +668,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Build plan tracked as Backlog.md milestones and tasks.
 
 ### Changed
+- **Deduped the shared task-summary-row type and aligned-row renderer** (LORE-51). `lore tasks`'s
+  `TaskRollupRow` and `lore orphans`' `OrphanTask` were byte-identical `{id, title, status}`
+  redeclarations, and `orphans.ts`'s orphan-task block re-implemented `tasks.ts`'s id/status/title
+  aligned-table logic independently. Both now share `output.ts`'s new `TaskSummaryRow` type and
+  `renderTaskSummaryRows` (backed by the existing spread-free `maxLen`, which `tasks.ts`'s
+  `Math.max(...array)` now inherits too, closing the same six-figure-list `RangeError` risk
+  `orphans.ts` was already hardened against) — a column-layout change is now a one-place edit
+  instead of two independently-drifting copies. No output change (golden tests pin it byte-for-byte).
 - **`lore link` / `lore unlink` / `lore rename` now commit their `backlog/` writes immediately**
   (LORE-49): each command's `doc:<conceptId>` back-reference edit is committed in one `lore`-authored
   commit right after it is written (via `state.ts`'s new `commitBacklogFiles`), instead of being left

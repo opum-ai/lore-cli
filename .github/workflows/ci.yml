@@ -80,3 +80,34 @@ jobs:
           fi
           # --help exercises the other output path; assert it emits the banner too.
           ./dist/lore --help | grep -q "OKF-native documentation CLI"
+
+  scaffold-mkdocs:
+    name: mkdocs scaffold smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+      - run: bun install --frozen-lockfile --linker=isolated
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - run: pip install "mkdocs>=1.6" "mkdocs-material>=9"
+      # Real end-to-end smoke (LORE-39 AC#1): scaffold against this repo's own bundle,
+      # then actually build it. A generated-bytes unit test alone can't catch a config
+      # setting that mkdocs itself rejects or a plugin that silently no-ops.
+      #
+      # No --strict: the scaffolded config deliberately tolerates broken-link/anchor
+      # WARNINGS (`not_found: warn`, OKF's broken-link tolerance, ADR-0010 §4's known
+      # cross-tree `backlog/` and doc-todo limitations) — this asserts the build the
+      # shipped config actually produces (exit 0), not a stricter one it never promised.
+      - name: Scaffold and build the live bundle
+        run: |
+          bun src/cli.ts scaffold mkdocs
+          mkdocs build --site-dir /tmp/mkdocs-site
