@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-07-10 17:30'
-updated_date: '2026-07-11 14:03'
+updated_date: '2026-07-12 19:30'
 labels:
   - cmd
   - cleanup
@@ -55,4 +55,6 @@ produces the same bytes for the same row regardless of which command calls it.
 
 Gates: 1439 tests (+6 new in output.test.ts), biome clean, tsc clean,
 lore check 0 errors/0 warnings.
+
+Post-review fix (/code-review max, PR 45/46/47/48 pass): orphans.ts:273's `lines.push(...renderTaskSummaryRows(orphanTasks))` spread a large array into a function-call argument list, which has its own engine argument-count ceiling — reintroducing the exact class of stack-overflow bug (RangeError: Maximum call stack size exceeded) this task's refactor was meant to eliminate, just via Array.prototype.push instead of Math.max. Fixed by replacing it with a per-item loop (`for (const row of renderTaskSummaryRows(orphanTasks)) lines.push(row);`), matching the sibling danglingLinks block's existing safe pattern. Re-checked tasks.ts's `[header, ...renderTaskSummaryRows(data.tasks)].join("\n")`: that spreads into an array literal, not a function call, so it has no such ceiling — confirmed empirically (array-literal spread of 1,000,000 items succeeds; push(...) of the same array throws) and left unchanged. Also grepped for any other push(...)/function-call spread this refactor touched — none found outside orphans.ts:273. Added a regression test (test/orphans.test.ts, 'orphan-task block survives a large snapshot') asserting 700,000 orphan tasks render via runOrphans without throwing; verified the test fails with the exact pre-fix RangeError against the old code and passes against the fix, and runs in well under a second. Gates: 1440 tests (+1), biome clean, tsc clean, lore check 0/0.
 <!-- SECTION:NOTES:END -->

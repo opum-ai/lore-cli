@@ -270,7 +270,12 @@ function renderReport(data: OrphansReport, color: boolean): string {
 
   if (orphanTasks !== undefined && orphanTasks.length > 0) {
     lines.push("", "tasks with no owning doc:");
-    lines.push(...renderTaskSummaryRows(orphanTasks));
+    // A per-item loop, not `lines.push(...renderTaskSummaryRows(orphanTasks))` — spreading a large
+    // array into a function-call argument list has its own engine argument-count ceiling, the same
+    // class of RangeError the spread-free `maxLen` (below and in output.ts) was written to avoid.
+    for (const row of renderTaskSummaryRows(orphanTasks)) {
+      lines.push(row);
+    }
   }
   if (danglingLinks !== undefined && danglingLinks.length > 0) {
     const conceptWidth = maxLen(danglingLinks, (link) => link.concept.length);
