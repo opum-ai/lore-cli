@@ -33,6 +33,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gated on configuring npm's Trusted Publisher (OIDC) for all six packages — see the new
   [release-publishing runbook](docs/runbooks/release-publishing.md) for the exact steps.
 
+  A third `/code-review high` fold caught two SEVERE correctness bugs plus five more: `bin/lore.cjs`
+  was masking every `require.resolve` failure (a permission error, a corrupted install,
+  `ERR_PACKAGE_PATH_NOT_EXPORTED`, …) as the generic "unsupported platform" message, hiding real,
+  fixable install problems behind a misleading one — only `MODULE_NOT_FOUND` is now treated as
+  "not installed," everything else propagates and is reported distinctly; a signal-terminated
+  child now forwards the conventional `128 + signal` exit code (e.g. `143` for `SIGTERM`) instead
+  of a flat `1`, so a caller inspecting `$?` sees the real signal. `verify-versions` now also
+  checks the root `optionalDependencies` pin and `license`/`author`/`repository` metadata across
+  all six release packages, not just the bare version number, so a missed bump anywhere in that
+  chain fails loud before any compile work instead of surfacing later as "no compiled binary found
+  for this platform." The five-platform list is now single-sourced from a new `setup` job instead
+  of being hand-typed in three places in `release.yml`. `test/bin-lore.test.ts` switched to
+  `beforeEach`/`afterEach` scratch-dir setup (matching the rest of the suite) and gained two new
+  tests covering the signal-exit-code and error-masking fixes.
+
 - **`lore orphans` — the bidirectional doc↔task coupling report** (LORE-32). Surfaces two kinds of
   gap in one pass: **orphan tasks** (a Backlog task no concept lists in its `tasks:` frontmatter and
   that carries no `doc:<conceptId>` back-reference label — work documented nowhere) and **dangling

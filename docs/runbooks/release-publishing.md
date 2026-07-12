@@ -91,9 +91,12 @@ same commit/tag that triggers the release.
    install path (git dependency, `npm`/`bun link`) with no fallback to run
    from source. This flip is the first-release trigger, not a standing state.
 2. Bump `version` in `package.json` and all five `npm/<platform>/package.json`
-   files to the same new value, in one commit — `release.yml`'s `build` job
-   asserts all six versions match before compiling anything, so a missed file
-   fails loud here rather than silently skipping an optional dependency later.
+   files to the same new value, in one commit — `release.yml`'s
+   `verify-versions` job (which `build` depends on and therefore gates)
+   asserts all six versions, plus the `optionalDependencies` pin and
+   `license`/`author`/`repository` metadata, are consistent before compiling
+   anything, so a missed file fails loud here rather than silently skipping
+   an optional dependency later.
 3. Tag it (`git tag vX.Y.Z && git push --tags`) — informational only; nothing
    is triggered automatically by the tag.
 4. Run the `Release (dry-run)` workflow manually (`workflow_dispatch`) with

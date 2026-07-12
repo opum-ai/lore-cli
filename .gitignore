@@ -10,6 +10,8 @@ build/
 # npm/<platform>/package.json templates are committed; the release workflow
 # builds and places the actual binary at npm/<platform>/bin/lore[.exe].
 npm/*/bin/
+# npm pack output from release.yml's package job (or a local reproduction of it).
+dist-npm/
 
 # Test / coverage
 coverage/

@@ -18,25 +18,50 @@ on:
 permissions:
   contents: read
 
-env:
-  # The five platform triples this release ships (ADR-0001 §"Build"), keyed by the
-  # npm/<name>/ directory + optionalDependencies package suffix. x64 targets are
-  # -baseline (avoid AVX2-only SIGILL on older/virtualized CPUs); arm64 is standard.
-  PLATFORMS: "darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64"
-
 jobs:
-  verify-versions:
-    name: assert the six release packages are version-lockstep
+  setup:
+    name: resolve the release platform matrix
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      names: ${{ steps.matrix.outputs.names }}
+      namesSpace: ${{ steps.matrix.outputs.namesSpace }}
+    steps:
+      - id: matrix
+        # The ONE place the five platform triples are declared (ADR-0001 §"Build"; x64
+        # targets are -baseline to avoid AVX2-only SIGILL on older/virtualized CPUs, arm64
+        # is standard). `build`'s matrix, `verify-versions`, and `package`'s per-platform
+        # loop all derive their platform list from this job's outputs instead of each
+        # re-typing it — a platform added/removed here propagates everywhere automatically.
+        # `namesSpace` is the same list pre-joined space-separated for `for name in ...`
+        # shell loops, computed once here rather than re-decoded from `names` (JSON) in
+        # every consuming step.
+        run: |
+          matrix='[{"name":"darwin-arm64","target":"bun-darwin-arm64","binary":"lore"},{"name":"darwin-x64","target":"bun-darwin-x64-baseline","binary":"lore"},{"name":"linux-arm64","target":"bun-linux-arm64","binary":"lore"},{"name":"linux-x64","target":"bun-linux-x64-baseline","binary":"lore"},{"name":"win32-x64","target":"bun-windows-x64-baseline","binary":"lore.exe"}]'
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          names=$(node -e "console.log(JSON.stringify(JSON.parse(process.argv[1]).map((p) => p.name)))" "$matrix")
+          echo "names=$names" >> "$GITHUB_OUTPUT"
+          namesSpace=$(node -e "console.log(JSON.parse(process.argv[1]).map((p) => p.name).join(' '))" "$matrix")
+          echo "namesSpace=$namesSpace" >> "$GITHUB_OUTPUT"
+
+  verify-versions:
+    name: assert the six release packages are version + metadata consistent
+    needs: setup
+    runs-on: ubuntu-latest
+    env:
+      PLATFORM_NAMES: ${{ needs.setup.outputs.names }}
     steps:
       - uses: actions/checkout@v6
-      - name: Assert root + all five npm/<platform>/package.json share one version
-        # bin/lore.cjs resolves a platform optionalDependency purely by name; npm
-        # silently SKIPS it if the installed version doesn't satisfy the root's
-        # pinned range, which for an exact pin means "doesn't exactly match" — a
-        # missed version bump on one of the six files would surface as "no compiled
-        # binary found" for a fully-supported platform, indistinguishable from a
-        # genuinely unsupported one. Fail loud here, before any compile work.
+      - name: Assert version, license, author, repository, and the optionalDependencies pin all match
+        # bin/lore.cjs resolves a platform optionalDependency purely by name; npm silently
+        # SKIPS it if the installed version doesn't satisfy root's pinned range — for an
+        # exact pin, "doesn't exactly match." A missed version bump on any of: the root
+        # `version`, a platform package's `version`, or root's `optionalDependencies` pin
+        # for that package, would surface as "no compiled binary found" for a fully
+        # supported platform, indistinguishable from a genuinely unsupported one. license/
+        # author/repository drift is lower-stakes (cosmetic/registry-page metadata) but
+        # checked here too since it is duplicated the same way. Fail loud, before any
+        # compile work, naming every mismatch found (not just the first).
         run: |
           # The ${...} below are JS template literals for `node -e`, not shell
           # interpolation — single-quoting is intentional.
@@ -44,40 +69,38 @@ jobs:
           node -e '
             const fs = require("fs");
             const root = JSON.parse(fs.readFileSync("package.json", "utf8"));
-            const platforms = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-x64"];
-            const mismatched = platforms.filter((name) => {
+            const platforms = JSON.parse(process.env.PLATFORM_NAMES);
+            const fields = ["version", "license", "author"];
+            const problems = [];
+            for (const name of platforms) {
               const pkg = JSON.parse(fs.readFileSync(`npm/${name}/package.json`, "utf8"));
-              return pkg.version !== root.version;
-            });
-            if (mismatched.length > 0) {
-              console.error(`::error::version mismatch: root is ${root.version}, but npm/{${mismatched.join(",")}}/package.json do not`);
+              for (const field of fields) {
+                if (pkg[field] !== root[field]) {
+                  problems.push(`npm/${name}/package.json: ${field} is "${pkg[field]}", root is "${root[field]}"`);
+                }
+              }
+              if (JSON.stringify(pkg.repository) !== JSON.stringify(root.repository)) {
+                problems.push(`npm/${name}/package.json: repository does not match root`);
+              }
+              const pin = root.optionalDependencies && root.optionalDependencies[pkg.name];
+              if (pin !== pkg.version) {
+                problems.push(`root package.json optionalDependencies["${pkg.name}"] is "${pin}", but npm/${name}/package.json version is "${pkg.version}"`);
+              }
+            }
+            if (problems.length > 0) {
+              for (const p of problems) console.error(`::error::${p}`);
               process.exit(1);
             }
-            console.log(`all six release packages are at version ${root.version}`);
+            console.log(`all six release packages are consistent (version ${root.version})`);
           '
 
   build:
     name: "compile (${{ matrix.name }})"
-    needs: verify-versions
+    needs: [setup, verify-versions]
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: darwin-arm64
-            target: bun-darwin-arm64
-            binary: lore
-          - name: darwin-x64
-            target: bun-darwin-x64-baseline
-            binary: lore
-          - name: linux-arm64
-            target: bun-linux-arm64
-            binary: lore
-          - name: linux-x64
-            target: bun-linux-x64-baseline
-            binary: lore
-          - name: win32-x64
-            target: bun-windows-x64-baseline
-            binary: lore.exe
+        include: ${{ fromJson(needs.setup.outputs.matrix) }}
     # Cross-compiling all five targets from one ubuntu runner (verified locally,
     # LORE-9): Bun downloads the target runtime and compiles without needing a
     # matching host OS/arch. Only linux-x64 matches this runner natively, so it is
@@ -129,8 +152,10 @@ jobs:
 
   package:
     name: package + install-sanity (dry-run, never publishes)
-    needs: build
+    needs: [setup, build]
     runs-on: ubuntu-latest
+    env:
+      PLATFORM_NAMES_SPACE: ${{ needs.setup.outputs.namesSpace }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v4
@@ -138,7 +163,7 @@ jobs:
           path: npm-artifacts
       - name: Assemble each platform package's binary
         run: |
-          for name in $PLATFORMS; do
+          for name in $PLATFORM_NAMES_SPACE; do
             mkdir -p "npm/$name/bin"
             cp -r "npm-artifacts/lore-$name/." "npm/$name/bin/"
             chmod +x npm/"$name"/bin/lore* 2>/dev/null || true
@@ -165,7 +190,7 @@ jobs:
           '
           npm pack --pack-destination "$PWD/dist-npm" .
           git checkout -- package.json
-          for name in $PLATFORMS; do
+          for name in $PLATFORM_NAMES_SPACE; do
             (cd "npm/$name" && npm pack --pack-destination "$PWD/../../dist-npm" .)
           done
           ls -la dist-npm

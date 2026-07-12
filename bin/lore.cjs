@@ -25,6 +25,7 @@
  */
 
 const { spawnSync } = require("node:child_process");
+const os = require("node:os");
 const path = require("node:path");
 
 /** The compiled binary's name inside its platform package (`.exe` on Windows). */
@@ -41,24 +42,51 @@ function platformPackageName() {
 }
 
 /**
- * Resolve the absolute path to the current platform's compiled binary, or `null` when
- * its optional package never installed (npm skips `optionalDependencies` whose
- * `os`/`cpu` don't match the host, or the install could have failed/been pruned) —
- * the two cases this launcher must tell apart for the user: "unsupported platform"
- * vs. "something went wrong installing it."
+ * Resolve the absolute path to the current platform's compiled binary, or `null` when its
+ * optional package genuinely never installed (npm skips `optionalDependencies` whose `os`/`cpu`
+ * don't match the host). Only `require.resolve`'s own `MODULE_NOT_FOUND` is treated as "not
+ * installed" — any other thrown error (a permission error reading the package directory, a
+ * corrupted install, `ERR_PACKAGE_PATH_NOT_EXPORTED`, …) propagates to the caller instead of
+ * being silently folded into the same "unsupported platform" message, which would misdirect a
+ * user with a real, fixable install problem.
  */
 function resolveBinaryPath() {
   const pkgName = platformPackageName();
+  let pkgJsonPath;
   try {
-    const pkgJsonPath = require.resolve(`${pkgName}/package.json`);
-    return path.join(path.dirname(pkgJsonPath), "bin", BINARY_NAME);
-  } catch {
-    return null;
+    pkgJsonPath = require.resolve(`${pkgName}/package.json`);
+  } catch (err) {
+    if (err && err.code === "MODULE_NOT_FOUND") {
+      return null;
+    }
+    throw err;
   }
+  return path.join(path.dirname(pkgJsonPath), "bin", BINARY_NAME);
+}
+
+/**
+ * The exit code to forward for a `spawnSync` result with no exit `status` (i.e. the child was
+ * terminated by a signal, `result.signal` set). Uses the conventional `128 + signal number`
+ * (matching a POSIX shell) so a caller inspecting `$?` — e.g. to tell a user's Ctrl-C (SIGINT,
+ * conventionally 130) apart from a genuine tool failure — sees the real signal, not a generic 1.
+ * Falls back to `1` only if the signal name is somehow unrecognized (`os.constants.signals` has
+ * no entry for it), which should not happen for any signal Node itself can report.
+ */
+function exitCodeForSignal(signal) {
+  const signalNumber = os.constants.signals[signal];
+  return signalNumber === undefined ? 1 : 128 + signalNumber;
 }
 
 function main() {
-  const binaryPath = resolveBinaryPath();
+  let binaryPath;
+  try {
+    binaryPath = resolveBinaryPath();
+  } catch (err) {
+    process.stderr.write(
+      `lore: unexpected error resolving the compiled binary for ${platformPackageName()}: ${err.message}\n`,
+    );
+    process.exit(1);
+  }
   if (binaryPath === null) {
     process.stderr.write(
       `lore: no compiled binary found for this platform (${process.platform}-${process.arch}).\n` +
@@ -75,10 +103,7 @@ function main() {
     process.stderr.write(`lore: failed to run the compiled binary at ${binaryPath}: ${result.error.message}\n`);
     process.exit(1);
   }
-  // A signal-terminated child (result.signal set, result.status null) has no exit
-  // code to forward; 1 reports failure rather than passing `null` to process.exit
-  // (which Node would otherwise coerce to a misleading `0`).
-  process.exit(result.status === null ? 1 : result.status);
+  process.exit(result.status === null ? exitCodeForSignal(result.signal) : result.status);
 }
 
 main();

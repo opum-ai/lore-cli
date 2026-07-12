@@ -13,7 +13,7 @@
  * step (a real `npm pack` + `npm install` + run).
  */
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,16 +21,36 @@ import { join } from "node:path";
 const LAUNCHER = join(import.meta.dir, "..", "bin", "lore.cjs");
 const PKG_NAME = `@salient-data/lore-${process.platform}-${process.arch}`;
 
-/** Build a scratch `NODE_PATH` directory containing a fake installed platform package. */
-function fakePlatformPackage(binaryScript: string): { nodePathDir: string; cleanup: () => void } {
-  const root = mkdtempSync(join(tmpdir(), "lore-launcher-"));
-  const pkgDir = join(root, PKG_NAME);
+let nodePathDir: string;
+
+beforeEach(() => {
+  nodePathDir = mkdtempSync(join(tmpdir(), "lore-launcher-"));
+});
+afterEach(() => {
+  rmSync(nodePathDir, { recursive: true, force: true });
+});
+
+/** Install a fake platform package under `nodePathDir` with the given stub "binary" script. */
+function installFakePlatformPackage(binaryScript: string): void {
+  const pkgDir = join(nodePathDir, PKG_NAME);
   mkdirSync(join(pkgDir, "bin"), { recursive: true });
   writeFileSync(join(pkgDir, "package.json"), JSON.stringify({ name: PKG_NAME, version: "0.0.0" }));
   const binPath = join(pkgDir, "bin", "lore");
   writeFileSync(binPath, binaryScript);
   chmodSync(binPath, 0o755);
-  return { nodePathDir: root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+/**
+ * Install a fake platform package whose `package.json` declares an `exports` map that does NOT
+ * include `./package.json` — `require.resolve("<pkg>/package.json")` then throws
+ * `ERR_PACKAGE_PATH_NOT_EXPORTED`, a real, distinct-from-`MODULE_NOT_FOUND` resolution failure
+ * (verified interactively), standing in for "the package is installed but something else is
+ * wrong" (a permission error, a corrupted install, …).
+ */
+function installFakePackageWithRestrictedExports(): void {
+  const pkgDir = join(nodePathDir, PKG_NAME);
+  mkdirSync(pkgDir, { recursive: true });
+  writeFileSync(join(pkgDir, "package.json"), JSON.stringify({ name: PKG_NAME, version: "0.0.0", exports: {} }));
 }
 
 /**
@@ -42,7 +62,7 @@ function fakePlatformPackage(binaryScript: string): { nodePathDir: string; clean
  * semantics instead, which could diverge from real Node's without this suite ever noticing. CI
  * (`ci.yml`) runs on GitHub-hosted runners, which ship Node preinstalled on `PATH`.
  */
-function runLauncher(nodePathDir: string, args: readonly string[]): { stdout: string; stderr: string; code: number } {
+function runLauncher(args: readonly string[]): { stdout: string; stderr: string; code: number } {
   const result = Bun.spawnSync(["node", LAUNCHER, ...args], {
     env: { ...process.env, NODE_PATH: nodePathDir },
     stdout: "pipe",
@@ -57,52 +77,53 @@ function runLauncher(nodePathDir: string, args: readonly string[]): { stdout: st
 
 describe.skipIf(process.platform === "win32")("bin/lore.cjs — resolves and execs the platform binary", () => {
   test("forwards argv to the resolved binary", () => {
-    const { nodePathDir, cleanup } = fakePlatformPackage(
-      "#!/usr/bin/env node\nconsole.log(JSON.stringify(process.argv.slice(2)));\n",
-    );
-    try {
-      const { stdout, code } = runLauncher(nodePathDir, ["check", "--plain", "--tag", "a b"]);
-      expect(JSON.parse(stdout.trim())).toEqual(["check", "--plain", "--tag", "a b"]);
-      expect(code).toBe(0);
-    } finally {
-      cleanup();
-    }
+    installFakePlatformPackage("#!/usr/bin/env node\nconsole.log(JSON.stringify(process.argv.slice(2)));\n");
+    const { stdout, code } = runLauncher(["check", "--plain", "--tag", "a b"]);
+    expect(JSON.parse(stdout.trim())).toEqual(["check", "--plain", "--tag", "a b"]);
+    expect(code).toBe(0);
   });
 
   test("forwards the binary's exit code verbatim", () => {
-    const { nodePathDir, cleanup } = fakePlatformPackage("#!/usr/bin/env node\nprocess.exit(6);\n");
-    try {
-      expect(runLauncher(nodePathDir, []).code).toBe(6);
-    } finally {
-      cleanup();
-    }
+    installFakePlatformPackage("#!/usr/bin/env node\nprocess.exit(6);\n");
+    expect(runLauncher([]).code).toBe(6);
   });
 
   test("forwards the binary's stdout/stderr (stdio: inherit)", () => {
-    const { nodePathDir, cleanup } = fakePlatformPackage(
+    installFakePlatformPackage(
       '#!/usr/bin/env node\nprocess.stdout.write("out-line\\n");\nprocess.stderr.write("err-line\\n");\n',
     );
-    try {
-      const { stdout, stderr } = runLauncher(nodePathDir, []);
-      expect(stdout).toContain("out-line");
-      expect(stderr).toContain("err-line");
-    } finally {
-      cleanup();
-    }
+    const { stdout, stderr } = runLauncher([]);
+    expect(stdout).toContain("out-line");
+    expect(stderr).toContain("err-line");
+  });
+
+  test("a signal-terminated binary reports the conventional 128+signal exit code, not a generic 1", () => {
+    // SIGTERM (15) -> 143. The binary sends itself SIGTERM and then busy-waits, so it is the
+    // signal — not a self-inflicted process.exit — that actually ends the process.
+    installFakePlatformPackage(
+      "#!/usr/bin/env node\nprocess.kill(process.pid, 'SIGTERM');\nconst start = Date.now();\nwhile (Date.now() - start < 5000) {}\n",
+    );
+    expect(runLauncher([]).code).toBe(143);
   });
 });
 
 describe("bin/lore.cjs — missing platform package", () => {
   test("exits 1 with an actionable stderr message naming the expected package", () => {
-    const root = mkdtempSync(join(tmpdir(), "lore-launcher-empty-"));
-    try {
-      const { stdout, stderr, code } = runLauncher(root, ["--version"]);
-      expect(code).toBe(1);
-      expect(stdout).toBe("");
-      expect(stderr).toContain(PKG_NAME);
-      expect(stderr).toContain(`${process.platform}-${process.arch}`);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+    const { stdout, stderr, code } = runLauncher(["--version"]);
+    expect(code).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toContain(PKG_NAME);
+    expect(stderr).toContain(`${process.platform}-${process.arch}`);
+  });
+});
+
+describe('bin/lore.cjs — a resolution error that is NOT "package missing"', () => {
+  test("surfaces distinctly from the missing-package message, not folded into 'unsupported platform'", () => {
+    installFakePackageWithRestrictedExports();
+    const { stdout, stderr, code } = runLauncher(["--version"]);
+    expect(code).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("unexpected error");
+    expect(stderr).not.toContain("not yet supported");
   });
 });

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-07-11 17:37'
+updated_date: '2026-07-12 13:10'
 labels:
   - ci
   - release
@@ -169,4 +169,33 @@ workflow has still never run in real GitHub Actions (same reason as before
 via direct local reproduction of the underlying commands/logic, but the
 first real `workflow_dispatch` run remains the outstanding proof point.
 Recommend triggering it once this merges, before cutting any real release.
+
+Round-3 fixes verified before commit (handover-restore session, 2026-07-12):
+re-ran full gates (1439 tests pass, biome clean, tsc clean, lore check 0/0,
+lore validate 0 errors) after fixing a broken node_modules/@types/bun symlink
+(stale `bun install` state, unrelated to this branch's edits) and one biome
+format violation in test/bin-lore.test.ts (escaped-quote string -> single-quoted
+literal). actionlint clean on both workflow files.
+
+Ran a 4th /code-review high pass (workflow-backed, 10 agents) specifically on
+the round-3 diff before pushing, given how much the prior 3 rounds each caught.
+It found one real bug, independently rediscovered by 4 of 4 finder angles:
+refactoring the platform list into a shared `setup` job (round-3's own change)
+silently dropped `verify-versions` from `build`'s `needs:` chain, so the
+version/metadata consistency gate no longer blocked compilation or packaging
+despite the job's own "fail loud before any compile work" comment still
+claiming it did. FIX: `build` now `needs: [setup, verify-versions]` (package
+was already transitively covered via `needs: [setup, build]`). Two more
+findings, both cleanup: docs/runbooks/release-publishing.md's release
+procedure had drifted to describe the broken (non-gating) behavior -- fixed
+to name `verify-versions` as the actual asserting job and list what it checks;
+and the JSON-platform-list-to-space-separated-string `node -e` transform was
+duplicated verbatim in two `package`-job steps -- consolidated into a new
+`setup` job output (`namesSpace`) computed once, both steps now just read
+`$PLATFORM_NAMES_SPACE`.
+
+Re-verified after these fixes: actionlint clean, full gates clean again.
+This is the 4th review round on this branch; each of the 4 caught at least
+one real, previously-undetected defect -- reinforces the "don't skip the
+review loop on CI/CD-touching work" lesson from rounds 1-3.
 <!-- SECTION:NOTES:END -->
