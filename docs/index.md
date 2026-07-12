@@ -136,3 +136,10 @@ Operational procedures for working on and with lore.
 GitHub-renderable, and consumable with or without lore installed. Cross-links
 are relative, URL-encoded, and `.md`-suffixed so they resolve identically on
 GitHub, in Obsidian, and under MkDocs/Docusaurus.*
+
+<!-- lore:index:begin -->
+- [adr](adr/index.md)
+- [reference](reference/index.md)
+- [runbooks](runbooks/index.md)
+- [specs](specs/index.md)
+<!-- lore:index:end -->

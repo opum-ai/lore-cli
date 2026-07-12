@@ -7,9 +7,8 @@ import { type GraphOptions, runGraph } from "../src/commands/graph";
 import { loadBundle } from "../src/core/bundle";
 import { buildGraphExport, type GraphExport, toDot } from "../src/core/graph";
 import { subgraph } from "../src/core/query";
-import { LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
-import { capture } from "./helpers";
+import { capture, expectError } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 const PLAIN_CTX: OutputContext = { mode: "plain", color: false };
@@ -60,18 +59,6 @@ function exportGraph(args: string[], options?: Partial<GraphOptions>): { code: n
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: GraphExport };
   expect(envelope.kind).toBe("graph.export");
   return { code, data: envelope.data };
-}
-
-/** Assert `fn` throws a {@link LoreError} of `type`, returning it for further assertions. */
-function expectError(type: LoreError["type"], fn: () => unknown): LoreError {
-  try {
-    fn();
-  } catch (err) {
-    expect(err).toBeInstanceOf(LoreError);
-    expect((err as LoreError).type).toBe(type);
-    return err as LoreError;
-  }
-  throw new Error(`expected a ${type} LoreError, but it returned`);
 }
 
 // ── core/query: subgraph traversal ───────────────────────────────────────────────

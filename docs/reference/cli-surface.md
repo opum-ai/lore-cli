@@ -451,11 +451,15 @@ lore scaffold docusaurus
 lore scaffold obsidian
 ```
 
-- **`mkdocs`** — `mkdocs.yml` pointing at `docs/`; broken-links set to warn.
-- **`docusaurus`** — Docusaurus config with `markdown.format: 'detect'` (raw
-  `<`/`{` safety) and broken-links → warn.
-- **`obsidian`** — `.obsidian/` vault config tuned for graph/backlinks over the
-  relative-link convention (no wikilinks).
+- **`mkdocs`** *(shipped, LORE-39)* — `mkdocs.yml` pointing at `docs/` plus a
+  `docs/tags.md` tag-index page; broken-links set to warn.
+- **`docusaurus`** *(pending, LORE-40)* — Docusaurus config with
+  `markdown.format: 'detect'` (raw `<`/`{` safety) and broken-links → warn.
+- **`obsidian`** *(pending, LORE-41)* — `.obsidian/` vault config tuned for
+  graph/backlinks over the relative-link convention (no wikilinks).
+
+A target with no builder yet (`docusaurus`, `obsidian`) is a `usage` error
+(exit `2`), same as any unrecognized target string, until its own task lands one.
 
 lore **detects** non-portable syntax (portability lint, in [`check`](#check))
 but does **not** guarantee cross-renderer parity — that is the consumer's job.
@@ -464,8 +468,8 @@ but does **not** guarantee cross-renderer parity — that is the consumer's job.
 |---|---|
 | **Args** | `<target>` = `mkdocs` \| `docusaurus` \| `obsidian` |
 | **Key flags** | `--force` (overwrite an existing generated config) |
-| **Output** | `kind: scaffold.result` — files written/skipped |
-| **Exit** | `0` ok · `2` unknown target · `5` config exists (without `--force`) |
+| **Output** | `kind: scaffold.result` — files written |
+| **Exit** | `0` ok · `2` unknown/unimplemented target · `5` config exists (without `--force`) |
 
 ### `schema`
 
