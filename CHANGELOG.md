@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`tech-stack.md` corrected to match the actually-shipped dependency set** (LORE-14, a Bun
+  compile-compatibility spike). The doc claimed three dependencies that were never actually
+  adopted — `commander` (CLI parsing is hand-rolled in `src/cli.ts`; Commander remains the named
+  but deferred eventual entrypoint), the full `unified`/`remark-parse`/`remark-stringify`
+  pipeline (lore ships only the parser, `mdast-util-from-markdown`; every write is
+  parse-to-locate-then-string-splice, never AST re-serialization — a deliberate byte-stability
+  choice, not an oversight), and `remark-validate-links` (internal link/anchor validation is
+  hand-rolled directly over the parsed mdast in `core/bundle.ts`/`core/check.ts`) — none of which
+  are in `package.json`. Also tightens the existing `DEVELOPMENT.md` **compile-time caveat**
+  (documented in an earlier session from the "cloned onto an external volume" angle): `bun build
+  --compile` silently emits a 0-byte binary at exit `0` (no error on either stream) whenever
+  `--outfile` lands on a **different mounted filesystem** than the source checkout (`EXDEV` on the
+  internal rename step) — confirmed by compiling this repo's own checkout to same-device vs.
+  cross-device output paths, resolving that note's earlier hedge ("very likely" the volume) to a
+  precise, filesystem-boundary-agnostic root cause. The existing CI `compile smoke` job already
+  avoided this (single-runner filesystem) and already asserted non-empty/working output, not just
+  exit code; both docs' comments now explain why and cross-reference each other. Confirmed none of
+  lore's four v1 runtime dependencies (`gray-matter`, `js-yaml`, `mdast-util-from-markdown`, `zod`)
+  ship a native addon, so this caveat is the only `bun build --compile` gotcha the current
+  dependency set has.
+
 ### Added
 - **`lore scaffold mkdocs` — the first consumer-scaffolding target** (LORE-39). Writes a repo-root
   `mkdocs.yml` (Material theme, `navigation.indexes`, `search`/`tags` plugins, `strict: false` with
