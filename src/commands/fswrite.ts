@@ -16,7 +16,17 @@
  * semantics are identical across every command.
  */
 
-import { lstatSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmdirSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { errnoCode, LoreError } from "../errors";
 
@@ -180,4 +190,121 @@ export function conflictError(relPath: string, code?: string): LoreError {
     "remove or rename the conflicting entry, then re-run the command",
     code ? { path: relPath, code } : { path: relPath },
   );
+}
+
+// ── All-or-nothing scaffold writes ─────────────────────────────────────────────
+
+/** One file {@link writeAllOrRollback} plans to write, with the exact bytes to apply. */
+export interface WriteAllOrRollbackFile {
+  /** Repo-relative POSIX path. */
+  readonly path: string;
+  /** The exact bytes to write — the caller's already-built content. */
+  readonly contents: string;
+}
+
+/** One file {@link writeAllOrRollback} wrote (or, under `force`, overwrote), for the caller's report. */
+export interface WriteAllOrRollbackResult {
+  /** Repo-relative POSIX path. */
+  readonly path: string;
+  /** Whether this call created the file fresh or overwrote a pre-existing one (`force` only). */
+  readonly action: "created" | "updated";
+}
+
+/**
+ * Ensure `dirs` exist and write every file in `files`, tracking an undo action per directory/file as
+ * it succeeds. If any step throws partway through, every already-applied step this call made is
+ * rolled back — directories removed (only if still empty; they can hold only files this same call
+ * wrote, and those are undone first by the LIFO order below) and files restored to their pre-call
+ * bytes, or removed if they did not exist before — before the original error is rethrown. This is
+ * the shared all-or-nothing write primitive `commands/scaffold.ts` needs (LORE-39); `commands/rename.ts`
+ * flags the identical need ("cross-file transactional rollback is a shared concern with `lore replace`,
+ * deferred") and can adopt this later. Factored here — rather than kept private to one command — so
+ * the filesystem-conflict semantics stay identical across every command (this module's own docstring).
+ *
+ * Two write disciplines, chosen by `opts.force`:
+ * - **not forced** — every file is expected to be absent (the caller's own preflight has typically
+ *   already confirmed this across the whole plan, so it can name every collision at once). Routed
+ *   through {@link createIfAbsent}'s atomic `wx` open rather than a plain `existsSync` + write, so a
+ *   file that appears in the TOCTOU window between the caller's preflight and this call is a loud
+ *   `conflict` — never a silent clobber.
+ * - **forced** — a file may already exist and is meant to be overwritten. Its prior bytes are read
+ *   *before* the write, so a later failure elsewhere in this call can restore them. If a pre-existing
+ *   file's bytes cannot be read (e.g. write-only permissions, or a non-regular entry occupying the
+ *   path) the call refuses **before ever writing that file** — it never proceeds to
+ *   overwrite-then-maybe-delete it, because deleting a file that existed before this call ran is never
+ *   an acceptable rollback outcome.
+ *
+ * Rollback is best-effort: a failure while undoing is swallowed so the original error — not a
+ * secondary cleanup failure — is what the caller sees.
+ */
+export function writeAllOrRollback(
+  root: string,
+  dirs: readonly string[],
+  files: readonly WriteAllOrRollbackFile[],
+  opts: { readonly force: boolean },
+): WriteAllOrRollbackResult[] {
+  const undo: Array<() => void> = [];
+  try {
+    for (const dir of dirs) {
+      const abs = join(root, dir);
+      const dirExisted = existsSync(abs);
+      ensureDir(abs, dir);
+      if (!dirExisted) {
+        undo.push(() => {
+          try {
+            // Only removes an EMPTY directory — never a recursive delete. This is a no-op if
+            // this call's own file writes into it were not already undone first (they always
+            // are, since `undo` is a single LIFO stack and every file undo below is pushed
+            // after this directory's), so a directory this call did not create is never at risk.
+            rmdirSync(abs);
+          } catch {
+            // Best-effort rollback; see the shared catch below.
+          }
+        });
+      }
+    }
+    return files.map((file) => {
+      const abs = join(root, file.path);
+      if (!opts.force) {
+        if (!createIfAbsent(abs, file.contents, file.path)) {
+          throw conflictError(file.path);
+        }
+        undo.push(() => rmSync(abs, { force: true }));
+        return { path: file.path, action: "created" as const };
+      }
+      if (existsSync(abs)) {
+        const before = readExistingOrThrow(abs, file.path);
+        writeFileOverwriting(abs, file.contents, file.path);
+        undo.push(() => writeFileSync(abs, before));
+        return { path: file.path, action: "updated" as const };
+      }
+      writeFileOverwriting(abs, file.contents, file.path);
+      undo.push(() => rmSync(abs, { force: true }));
+      return { path: file.path, action: "created" as const };
+    });
+  } catch (err) {
+    for (const step of undo.reverse()) {
+      try {
+        step();
+      } catch {
+        // Best-effort rollback; the original write failure above is what's reported.
+      }
+    }
+    throw err;
+  }
+}
+
+/**
+ * Read a pre-existing file's current bytes so {@link writeAllOrRollback} can restore them on
+ * rollback — or refuse, via the shared {@link ioError} classification, rather than ever proceeding to
+ * overwrite (and potentially later delete on rollback) a file whose original bytes could not be
+ * captured. A file that existed before a call to {@link writeAllOrRollback} must never be destroyed
+ * by that same call's own undo path.
+ */
+function readExistingOrThrow(absPath: string, relPath: string): string {
+  try {
+    return readFileSync(absPath, "utf8");
+  } catch (cause) {
+    throw ioError(cause, relPath, "read pre-existing file before overwriting");
+  }
 }

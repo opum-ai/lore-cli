@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:27'
-updated_date: '2026-07-11 13:56'
+updated_date: '2026-07-12 19:39'
 labels:
   - cmd
   - consumers
@@ -102,4 +102,66 @@ biome clean, tsc clean, lore check 0/0.
 
 PR: https://github.com/jeremy-newhouse/lore/pull/new/feat/lore-39-scaffold-mkdocs
 (not yet opened as of this note -- opening next)
+
+/code-review high fold, round 2 (7 findings, all fixed):
+
+1. [SEVERE] Rollback deleted a pre-existing-but-unreadable file instead of restoring it.
+   writeAllOrRollback's `before === undefined` conflated "never existed" with "existed but
+   readFileSync threw" (e.g. EACCES). Fix: the write loop now refuses UP FRONT -- before ever
+   writing that file -- when a pre-existing file's bytes can't be read (readExistingOrThrow,
+   classified via the shared ioError: EACCES/EPERM -> denied, EISDIR/EEXIST/ENOTDIR -> conflict).
+   A file that existed before the run is now provably never written, let alone deleted, in that
+   path. Regression test: chmod 0o200 (write-only, unreadable) pre-existing mkdocs.yml + a forced
+   later-file failure under --force; asserts the file survives untouched with its original bytes
+   (confirmed this test fails -- with an ENOENT proving the delete -- against the pre-fix code).
+
+2. Directory creation (ensureDir(docs/, ...)) ran outside the write-loop's rollback, so a freshly
+   created (still-empty) docs/ survived a later write failure. Fix: writeAllOrRollback now takes
+   `dirs` alongside `files` and registers a matching undo (rmdirSync -- empty-only, never
+   recursive) for any directory IT created, in the same LIFO undo stack as file writes, so
+   directory + file creation roll back atomically. Regression test: fresh repo (no docs/), force
+   mkdocs.yml's write to fail structurally (a directory occupying the path) under --force, assert
+   docs/ does not exist afterward (confirmed fails against pre-fix code).
+
+3. TOCTOU gap in the never-clobber guarantee (single existsSync preflight, no re-check at write
+   time). Fix: routed the !force write path through fswrite.ts's existing atomic `wx`-based
+   createIfAbsent instead of a plain existsSync+write, closing the race -- a file that appears
+   between the command's preflight and the write is now a loud conflict, never a silent clobber.
+   No new deterministic test (the race window is sub-millisecond and not constructible without a
+   fault-injection seam); the existing --force/non-force test suite covers both code paths this
+   routes through.
+
+4. Moved the corrected writeAllOrRollback out of scaffold.ts (private, unexported) into
+   fswrite.ts as an exported primitive (dirs + files + {force}), composed entirely from
+   fswrite.ts's own existing pieces (ensureDir, createIfAbsent, writeFileOverwriting, ioError,
+   conflictError). scaffold.ts now just calls it. rename.ts is untouched (its own "shared
+   concern, deferred" note stands) -- left for a future adoption pass per the review's scope.
+
+5. docs/adr/index.md carried a hand-written "## Index" table duplicating the lore:index managed
+   block underneath it (16 ADRs listed twice) -- same bug sibling branches LORE-14 and LORE-9 hit
+   on the same base file. Removed the hand table, matching their fix exactly; file is now pure
+   managed-block. `lore sync` run afterward backfilled docs/log.md with this branch's own commit
+   (first time logged) -- unrelated drift reconciliation, not a scaffold-logic change.
+
+6. Extracted the shared "serialize against the structural default profile, with a conditional
+   $schema modeline" pattern (duplicated near-verbatim between core/scaffold.ts's
+   rootIndexDocument and core/consumer-scaffold.ts's tagsIndexDocument) into one exported helper,
+   serializeStructuralConcept(concept, profile), in core/scaffold.ts (consumer-scaffold.ts already
+   depended on scaffold.ts for DOCS_DIR, so this is the natural shared home). Both call sites now
+   just build their Concept and delegate.
+
+7. Hoisted the byte-for-byte-duplicated `expectError(type, fn)` test helper (found in
+   context.test.ts, graph.test.ts, help.test.ts, instructions.test.ts, query.test.ts, and this
+   branch's new consumer-scaffold.test.ts -- 6 copies) into test/helpers.ts, exported, and updated
+   all six call sites to import it instead of redefining it. Left the differently-shaped
+   `expectError(args: string[])` helpers in new/replace/supersede/rename.test.ts alone (out of
+   scope -- different signature, different precedent).
+
+Verified: all 7 fixes' regression-worthy tests (#1, #2) confirmed to FAIL against the pre-fix
+code (temporarily restored it, re-ran, restored the fix) before finalizing -- not just
+confirmed-passing against the fix, but confirmed-failing against the bug.
+
+Gates: 1458 tests (1456 + 2 new), biome clean (4 pre-existing infos in untouched files), tsc
+clean, `lore check` 0 errors/0 warnings. Manually smoke-tested `lore scaffold mkdocs` end-to-end
+(fresh init, first scaffold, re-run refusal, --force overwrite) in a scratch repo.
 <!-- SECTION:NOTES:END -->

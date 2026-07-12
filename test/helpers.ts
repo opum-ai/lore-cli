@@ -1,3 +1,4 @@
+import { expect } from "bun:test";
 import type {
   BacklogAdapter,
   BacklogCapability,
@@ -116,6 +117,24 @@ export function capture(): Writer & { text(): string; lines(): string[] } {
       return chunks.join("").split("\n").filter(Boolean);
     },
   };
+}
+
+/**
+ * Assert `fn` throws a {@link LoreError} of `type`, returning it for further assertions (e.g. its
+ * `message`/`hint`/`input`). Throws if `fn` returns normally instead of throwing. Hoisted here after
+ * being duplicated byte-for-byte across `context.test.ts`, `graph.test.ts`, `help.test.ts`,
+ * `instructions.test.ts`, `query.test.ts`, and `consumer-scaffold.test.ts` — the same precedent as
+ * {@link gitRun}'s own hoisting.
+ */
+export function expectError(type: LoreError["type"], fn: () => unknown): LoreError {
+  try {
+    fn();
+  } catch (err) {
+    expect(err).toBeInstanceOf(LoreError);
+    expect((err as LoreError).type).toBe(type);
+    return err as LoreError;
+  }
+  throw new Error(`expected a ${type} LoreError, but it returned`);
 }
 
 /** A recorded `editTask` call, for assertions. */

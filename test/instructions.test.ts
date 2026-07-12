@@ -2,9 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { run } from "../src/cli";
 import { type InstructionsOptions, runInstructions } from "../src/commands/instructions";
 import { INSTRUCTION_TOPICS } from "../src/core/instructions";
-import { LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
-import { capture } from "./helpers";
+import { capture, expectError } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 const PLAIN_CTX: OutputContext = { mode: "plain", color: false };
@@ -26,18 +25,6 @@ function instructions(
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: InstructionsData };
   expect(envelope.kind).toBe("instructions.text");
   return { code, data: envelope.data };
-}
-
-/** Assert `fn` throws a {@link LoreError} of `type`, returning it for further assertions. */
-function expectError(type: LoreError["type"], fn: () => unknown): LoreError {
-  try {
-    fn();
-  } catch (err) {
-    expect(err).toBeInstanceOf(LoreError);
-    expect((err as LoreError).type).toBe(type);
-    return err as LoreError;
-  }
-  throw new Error(`expected a ${type} LoreError, but it returned`);
 }
 
 describe("core/instructions — topic registry", () => {

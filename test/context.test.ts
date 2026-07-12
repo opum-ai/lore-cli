@@ -6,9 +6,8 @@ import { run } from "../src/cli";
 import { type ContextOptions, runContext } from "../src/commands/context";
 import { estimateTokens, loadBundle } from "../src/core/bundle";
 import { buildContext, type ContextExport } from "../src/core/context";
-import { LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
-import { capture } from "./helpers";
+import { capture, expectError } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 const PLAIN_CTX: OutputContext = { mode: "plain", color: false };
@@ -69,18 +68,6 @@ function exportContext(args: string[], options?: Partial<ContextOptions>): { cod
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: ContextExport };
   expect(envelope.kind).toBe("context.export");
   return { code, data: envelope.data };
-}
-
-/** Assert `fn` throws a {@link LoreError} of `type`, returning it for further assertions. */
-function expectError(type: LoreError["type"], fn: () => unknown): LoreError {
-  try {
-    fn();
-  } catch (err) {
-    expect(err).toBeInstanceOf(LoreError);
-    expect((err as LoreError).type).toBe(type);
-    return err as LoreError;
-  }
-  throw new Error(`expected a ${type} LoreError, but it returned`);
 }
 
 // ── core/context: pack shaping ─────────────────────────────────────────────────────

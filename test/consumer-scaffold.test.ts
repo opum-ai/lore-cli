@@ -20,7 +20,7 @@ import { parseConcept } from "../src/core/concept";
 import { buildMkdocsScaffold, MKDOCS_CONFIG_REL_PATH, TAGS_INDEX_REL_PATH } from "../src/core/consumer-scaffold";
 import { LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
-import { capture } from "./helpers";
+import { capture, expectError } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 const PLAIN_CTX: OutputContext = { mode: "plain", color: false };
@@ -42,18 +42,6 @@ function scaffold(args: string[]): { code: number; result: ScaffoldResult } {
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: ScaffoldResult };
   expect(envelope.kind).toBe("scaffold.result");
   return { code, result: envelope.data };
-}
-
-/** Assert `fn` throws a {@link LoreError} of `type`, returning it for further assertions. */
-function expectError(type: LoreError["type"], fn: () => unknown): LoreError {
-  try {
-    fn();
-  } catch (err) {
-    expect(err).toBeInstanceOf(LoreError);
-    expect((err as LoreError).type).toBe(type);
-    return err as LoreError;
-  }
-  throw new Error(`expected a ${type} LoreError, but it returned`);
 }
 
 describe("core/consumer-scaffold — buildMkdocsScaffold (pure)", () => {
@@ -210,6 +198,63 @@ describe("lore scaffold mkdocs — never-silent-clobber (AC: user-owned, never r
       runScaffold({ root, output: JSON_CTX, args: ["mkdocs", "--force"], stdout: capture() }),
     );
     expect(readFileSync(join(root, MKDOCS_CONFIG_REL_PATH), "utf8")).toBe(yamlBefore);
+  });
+
+  test("a pre-existing file that is writable but unreadable is never deleted by a rollback (review #1)", () => {
+    if (process.getuid?.() === 0) {
+      return; // root bypasses read-permission checks, so this repro can't be set up
+    }
+    writeFileSync(join(root, MKDOCS_CONFIG_REL_PATH), "site_name: original\n");
+    chmodSync(join(root, MKDOCS_CONFIG_REL_PATH), 0o200); // write-only: unreadable, even by the owner
+    let unreadable = false;
+    try {
+      readFileSync(join(root, MKDOCS_CONFIG_REL_PATH), "utf8");
+    } catch {
+      unreadable = true;
+    }
+    if (!unreadable) {
+      chmodSync(join(root, MKDOCS_CONFIG_REL_PATH), 0o644);
+      return; // environment ignores the mode (e.g. a permissive filesystem) — skip
+    }
+    // A later planned write is ALSO forced to fail, mirroring the original bug's repro shape
+    // (the pre-fix rollback only manifested once some later step threw); the fix must refuse
+    // outright before ever reaching this, but the forced failure is left in place regardless so
+    // the assertion below holds under either fix strategy.
+    mkdirSync(join(root, TAGS_INDEX_REL_PATH), { recursive: true });
+    let thrown: unknown;
+    try {
+      runScaffold({ root, output: JSON_CTX, args: ["mkdocs", "--force"], stdout: capture() });
+    } catch (err) {
+      thrown = err;
+    } finally {
+      chmodSync(join(root, MKDOCS_CONFIG_REL_PATH), 0o644); // restore so afterEach's rmSync can clean up
+    }
+    expect(thrown).toBeInstanceOf(LoreError);
+    expect((thrown as LoreError).type).toBe("denied");
+    // Regression: the old rollback used `before === undefined` to mean "delete on rollback" — true
+    // both when a file never existed AND when it existed but couldn't be read — so this
+    // pre-existing, merely-unreadable file used to get DELETED by the rollback triggered by the
+    // later (docs/tags.md) failure. A file that existed before the command ran must never be
+    // touched, let alone deleted.
+    expect(existsSync(join(root, MKDOCS_CONFIG_REL_PATH))).toBe(true);
+    expect(readFileSync(join(root, MKDOCS_CONFIG_REL_PATH), "utf8")).toBe("site_name: original\n");
+  });
+
+  test("a run against a repo with no docs/ rolls back the freshly-created directory on a later failure (review #2)", () => {
+    expect(existsSync(join(root, "docs"))).toBe(false);
+    // Force the FIRST planned write (mkdocs.yml, at the repo root) to fail structurally — a
+    // directory sitting where the file must go — so the failure happens strictly AFTER `docs/`
+    // has already been freshly created by this same run's directory-ensure step.
+    mkdirSync(join(root, MKDOCS_CONFIG_REL_PATH), { recursive: true });
+    const err = expectError("conflict", () =>
+      runScaffold({ root, output: JSON_CTX, args: ["mkdocs", "--force"], stdout: capture() }),
+    );
+    expect(err.type).toBe("conflict");
+    // Regression: `ensureDir(docs/, …)` used to run outside the write-loop's rollback entirely, so
+    // a freshly created (and, since nothing was ever written into it, still-empty) `docs/` was left
+    // behind on disk after this failure — breaking the "writes nothing on failure" contract for the
+    // directory itself.
+    expect(existsSync(join(root, "docs"))).toBe(false);
   });
 });
 

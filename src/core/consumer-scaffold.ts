@@ -18,16 +18,16 @@
  * wholesale afterward; a user may rename or supersede it like any other doc.
  *
  * `docs/tags.md` is serialized against the **structural default profile**, never the active
- * one — the same choice `scaffold.ts`'s `rootIndexDocument` makes for `docs/index.md` and for
- * the identical reason: it is lore's own fixed-shape utility page, so a custom profile that adds
- * a required field to `Reference` must not make `lore scaffold mkdocs` fail to write it.
+ * one, via the shared {@link serializeStructuralConcept} (`scaffold.ts`) — the same helper
+ * `rootIndexDocument` uses for `docs/index.md`, and for the identical reason: it is lore's own
+ * fixed-shape utility page, so a custom profile that adds a required field to `Reference` must not
+ * make `lore scaffold mkdocs` fail to write it.
  */
 
 import type { Concept } from "./concept";
-import { idFromPath, serializeConcept, serializeConceptWithModeline } from "./concept";
+import { idFromPath } from "./concept";
 import { defaultProfile, type Profile } from "./profile";
-import { DOCS_DIR } from "./scaffold";
-import { schemaModeline } from "./schema";
+import { DOCS_DIR, serializeStructuralConcept } from "./scaffold";
 
 /** The repo-root-relative path of the scaffolded MkDocs config, sibling to `docs/` (ADR-0010 §2). */
 export const MKDOCS_CONFIG_REL_PATH = "mkdocs.yml";
@@ -90,9 +90,9 @@ const TAGS_INDEX_TYPE = "Reference";
 /**
  * The `docs/tags.md` bytes: a valid OKF `Reference` concept (so it stays lint-clean and
  * OKF-legal) whose body carries the `<!-- material/tags -->` marker the MkDocs Material `tags`
- * plugin scans to render the tag index. Serialized against the structural default profile — see
- * the module docstring for why — with the `$schema` modeline included only when the *active*
- * profile defines `Reference` (mirroring `rootIndexDocument`'s same conditional).
+ * plugin scans to render the tag index. Serialized via the shared {@link serializeStructuralConcept}
+ * — see the module docstring for why — which conditionally carries the `$schema` modeline only
+ * when the *active* profile defines `Reference`.
  */
 function tagsIndexDocument(timestamp: string, profile: Profile): string {
   const concept: Concept = {
@@ -107,12 +107,7 @@ function tagsIndexDocument(timestamp: string, profile: Profile): string {
     },
     body: TAGS_INDEX_BODY,
   };
-  const structural = defaultProfile();
-  return profile.types.has(TAGS_INDEX_TYPE)
-    ? serializeConceptWithModeline(concept, schemaModeline(TAGS_INDEX_REL_PATH, TAGS_INDEX_TYPE), {
-        profile: structural,
-      })
-    : serializeConcept(concept, { profile: structural });
+  return serializeStructuralConcept(concept, profile);
 }
 
 /** The body of the scaffolded tag-index page (after the frontmatter fence). */

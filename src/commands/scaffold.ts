@@ -4,27 +4,29 @@
  *
  * The thin, side-effecting layer over the pure {@link buildMkdocsScaffold} (`core/consumer-scaffold.ts`):
  * it resolves the repo root, the active profile, and a clock, asks core for the exact bytes, and
- * applies them to the filesystem. Unlike `lore init` (which silently skips an already-present
- * file), scaffolding is **never-silent-clobber**: if any planned file already exists, the whole
- * run refuses with a `conflict` error (exit 5) naming every collision, and writes nothing —
- * `--force` is required to overwrite. This is deliberately all-or-nothing (checked before any
- * write) rather than per-file, so a partial collision can never leave one scaffolded file
- * refreshed and its sibling stale.
+ * applies them via `fswrite.ts`'s shared {@link writeAllOrRollback}. Unlike `lore init` (which
+ * silently skips an already-present file), scaffolding is **never-silent-clobber**: if any planned
+ * file already exists, the whole run refuses with a `conflict` error (exit 5) naming every
+ * collision, and writes nothing — `--force` is required to overwrite. This is deliberately
+ * all-or-nothing (the plan-wide pre-flight below, backstopped by `writeAllOrRollback`'s own atomic
+ * per-file create and rollback) rather than per-file, so a partial collision — or a mid-run I/O
+ * failure, e.g. a read-only `docs/` — can never leave one scaffolded file refreshed and its sibling
+ * stale.
  *
  * Only `mkdocs` is implemented today; `docusaurus` (LORE-40) and `obsidian` (LORE-41) are
  * documented targets not yet wired to a builder, so they — like any other unrecognized string —
  * are a `usage` error (exit 2) until their own task lands one.
  */
 
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { buildMkdocsScaffold, type ConsumerScaffoldFile } from "../core/consumer-scaffold";
+import { buildMkdocsScaffold } from "../core/consumer-scaffold";
 import { loadProfile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { parseCommandArgs, usage } from "./args";
-import { ensureDir, writeFileOverwriting } from "./fswrite";
+import { writeAllOrRollback } from "./fswrite";
 
 /** Options for {@link runScaffold}; `root`, `clock`, and the stream are injectable for tests. */
 export interface ScaffoldOptions {
@@ -92,53 +94,11 @@ export function runScaffold(options: ScaffoldOptions): number {
     }
   }
 
-  ensureDir(join(options.root, DOCS_DIR), DOCS_DIR);
-  const files = writeAllOrRollback(options.root, plan.files);
+  const files = writeAllOrRollback(options.root, [DOCS_DIR], plan.files, { force: parsed.force });
 
   const result: ScaffoldResult = { target: parsed.target, force: parsed.force, files };
   emit(scaffoldRenderable(result), options.output, options.stdout);
   return EXIT_OK;
-}
-
-/**
- * Write every planned file, tracking an undo action per file as it succeeds. If any write throws
- * partway through, every already-written file this call touched is rolled back — restored to its
- * pre-call bytes, or removed if it did not exist before — before the original error is rethrown, so
- * a mid-run I/O failure (e.g. a read-only `docs/`) can never leave one scaffolded file refreshed and
- * its sibling stale (the all-or-nothing guarantee the never-silent-clobber pre-flight alone doesn't
- * cover, since that check only guards against *pre-existing* files, not a failure during the write
- * loop itself). Rollback is best-effort: a failure while undoing is swallowed so the original error —
- * not a secondary cleanup failure — is what the caller sees.
- */
-function writeAllOrRollback(root: string, plannedFiles: readonly ConsumerScaffoldFile[]): ScaffoldResultFile[] {
-  const undo: Array<() => void> = [];
-  try {
-    return plannedFiles.map((file) => {
-      const abs = join(root, file.path);
-      const existed = existsSync(abs);
-      // Any failure to read prior text (ENOENT, or a non-regular entry like a directory that
-      // `readFileSync` can't read as text) leaves `before` undefined; a non-regular entry then
-      // fails classified (EISDIR -> conflict) on the write below, before any undo is recorded.
-      let before: string | undefined;
-      try {
-        before = readFileSync(abs, "utf8");
-      } catch {
-        before = undefined;
-      }
-      writeFileOverwriting(abs, file.contents, file.path);
-      undo.push(() => (before === undefined ? rmSync(abs, { force: true }) : writeFileSync(abs, before)));
-      return { path: file.path, action: existed ? "updated" : "created" };
-    });
-  } catch (err) {
-    for (const step of undo.reverse()) {
-      try {
-        step();
-      } catch {
-        // Best-effort rollback; the original write failure below is what's reported.
-      }
-    }
-    throw err;
-  }
 }
 
 // ── Argument parsing ───────────────────────────────────────────────────────────

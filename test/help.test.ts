@@ -4,9 +4,9 @@ import { run } from "../src/cli";
 import { type HelpOptions, renderTopLevelHelp, runHelp } from "../src/commands/help";
 import { LORE_COMMANDS } from "../src/core/agent-bridge";
 import { buildManifest, findManifestCommand, type Manifest, manifestCommandNames } from "../src/core/manifest";
-import { EXIT_CODES, EXIT_OK, EXIT_UNCAUGHT, LoreError } from "../src/errors";
+import { EXIT_CODES, EXIT_OK, EXIT_UNCAUGHT } from "../src/errors";
 import type { OutputContext } from "../src/output";
-import { capture } from "./helpers";
+import { capture, expectError } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 const PLAIN_CTX: OutputContext = { mode: "plain", color: false };
@@ -18,18 +18,6 @@ function helpJson(args: string[], options?: Partial<HelpOptions>): { code: numbe
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: Manifest };
   expect(envelope.kind).toBe("help.manifest");
   return { code, data: envelope.data };
-}
-
-/** Assert `fn` throws a {@link LoreError} of `type`, returning it for further assertions. */
-function expectError(type: LoreError["type"], fn: () => unknown): LoreError {
-  try {
-    fn();
-  } catch (err) {
-    expect(err).toBeInstanceOf(LoreError);
-    expect((err as LoreError).type).toBe(type);
-    return err as LoreError;
-  }
-  throw new Error(`expected a ${type} LoreError, but it returned`);
 }
 
 describe("core/manifest — shape and invariants", () => {
