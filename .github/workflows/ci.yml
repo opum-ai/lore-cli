@@ -19,16 +19,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
-      - uses: oven-sh/setup-bun@v2
-        with:
-          # Single source of truth for the Bun pin (lore pins 1.2.23; see ADR-0001 / DEVELOPMENT.md).
-          bun-version-file: .bun-version
-      - uses: actions/cache@v5
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
-          restore-keys: ${{ runner.os }}-bun-
-      - run: bun install --frozen-lockfile --linker=isolated
+      - uses: ./.github/actions/setup-bun
       - run: bun run lint
       - run: bun run typecheck
       - name: Test
@@ -47,17 +38,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: .bun-version
-      - uses: actions/cache@v5
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
-          restore-keys: ${{ runner.os }}-bun-
-      - run: bun install --frozen-lockfile --linker=isolated
-      # Lightweight buildability smoke. The release-grade -baseline per-platform
-      # matrix and npm dual-artifact packaging are LORE-9.
+      - uses: ./.github/actions/setup-bun
+      # Lightweight buildability smoke (host-native compile only). The
+      # release-grade -baseline per-platform matrix and npm dual-artifact
+      # packaging are in .github/workflows/release.yml (LORE-9).
       - name: Compile and smoke-test the binary
         shell: bash
         run: |

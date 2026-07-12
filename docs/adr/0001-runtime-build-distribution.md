@@ -107,6 +107,12 @@ machines through the channel they already use (npm / `npx` / `bunx`).
 - This is the same pattern proven by esbuild / swc / Backlog.md: Node-only
   bootstrap for maximum reach, native-speed Bun binary for actual work, no
   postinstall compilation, and `npx`/`bunx` "just work".
+- The build mechanics (per-platform compile matrix, the launcher, the package
+  layout, and a dry-run pipeline that proves `npx` resolution end-to-end) are
+  implemented (LORE-9); the actual `npm publish` step — and the npm Trusted
+  Publisher (OIDC) configuration it depends on — is a deliberate follow-up. See
+  [release-publishing.md](../runbooks/release-publishing.md) for the exact
+  setup steps and the release procedure.
 
 **License & coordinates.** MIT, © Jeremy Newhouse, 2026. Repo
 `github.com/jeremy-newhouse/lore` (private; `main` + `dev`, `dev` is default).

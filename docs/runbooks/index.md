@@ -4,4 +4,5 @@
 - [Agent onboarding: how a coding agent uses lore](agent-onboarding.md)
 - [Backlog.md --json patch runbook (fork, patch, build, upstream)](backlog-json-patch.md)
 - [Developer kickoff — start building lore](dev-kickoff.md)
+- [Release publishing](release-publishing.md)
 <!-- lore:index:end -->

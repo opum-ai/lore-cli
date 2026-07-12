@@ -46,6 +46,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   target string, or one not yet implemented, is a `usage` error (exit `2`). Under `--json` it emits
   `kind: scaffold.result` — `{ target, force, files: [{ path, action }] }`. Now advertised in `lore
   help`, the `lore help --json` manifest, and the generated agent bridge.
+
+  A `/code-review max` fold on this entry fixed two SEVERE correctness bugs found post-merge:
+  `writeAllOrRollback`'s rollback used to delete a pre-existing file it merely failed to *read*
+  (e.g. a permission error) instead of restoring it, risking real data loss on rollback; and a
+  freshly-created `docs/` directory was not tracked by the rollback undo stack, leaving a residual
+  empty directory behind on a later write failure. Both are fixed and covered by regression tests
+  that were confirmed to fail against the pre-fix code. Also closed a TOCTOU gap in the
+  never-clobber guarantee (the `!force` write path now routes through the same atomic `wx`-based
+  primitive `lore init`/`lore new` use), and promoted the rollback logic from a private
+  `scaffold.ts` function into a shared, exported `fswrite.ts` primitive for future scaffolds to
+  reuse.
+- **Release pipeline mechanics: compiled binaries + dual-artifact npm packaging** (LORE-9,
+  ADR-0001). `bin/lore.cjs` is the published package's future launcher — plain, dependency-free
+  Node CommonJS that resolves the current platform's compiled binary via `require.resolve`
+  against five `optionalDependencies` (`@salient-data/lore-{darwin,linux}-{arm64,x64}` and
+  `-win32-x64`, each npm `os`/`cpu`-gated) and execs it, forwarding argv/stdio/exit code verbatim.
+  `package.json`'s `bin.lore` deliberately still points at `src/cli.ts`, not `bin/lore.cjs` —
+  flipping it any earlier would break every pre-publish install path (git dependency, `npm`/`bun
+  link`), since the platform packages it resolves don't exist until a real publish ships them;
+  the flip is the first step of actually cutting a release (see the runbook below). A new
+  `.github/workflows/release.yml` (`workflow_dispatch`-only — never fires on a push or tag) first
+  asserts all six release `package.json` versions are in lockstep, then cross-compiles all five
+  targets from a single runner, executes the native linux-x64 binary, size-checks the rest,
+  `npm pack`s all six packages (packing the root with `bin.lore` patched to `bin/lore.cjs` in a
+  scratch copy only, so the dry-run proves the launcher exactly as a real release will ship it
+  without touching the committed file), and proves the full `npx`/launcher resolution chain
+  end-to-end via a real pack+install+run — without ever calling `npm publish`. Verified locally
+  end-to-end (compile, pack, install, run, and the missing-platform-package error path); a
+  `bun:test` suite exercises the launcher itself under a real `node` subprocess via
+  `NODE_PATH`-simulated installs. The workflow file itself awaits its first real GitHub Actions
+  run (`workflow_dispatch` requires the file on the default branch to trigger, so this can only
+  happen post-merge) — actionlint-clean, but not yet CI-verified; a maintainer should trigger it
+  once and confirm green before relying on it for a release. Publishing is a deliberate follow-up
+  gated on configuring npm's Trusted Publisher (OIDC) for all six packages — see the new
+  [release-publishing runbook](docs/runbooks/release-publishing.md) for the exact steps.
+
+  A third `/code-review high` fold caught two SEVERE correctness bugs plus five more: `bin/lore.cjs`
+  was masking every `require.resolve` failure (a permission error, a corrupted install,
+  `ERR_PACKAGE_PATH_NOT_EXPORTED`, …) as the generic "unsupported platform" message, hiding real,
+  fixable install problems behind a misleading one — only `MODULE_NOT_FOUND` is now treated as
+  "not installed," everything else propagates and is reported distinctly; a signal-terminated
+  child now forwards the conventional `128 + signal` exit code (e.g. `143` for `SIGTERM`) instead
+  of a flat `1`, so a caller inspecting `$?` sees the real signal. `verify-versions` now also
+  checks the root `optionalDependencies` pin and `license`/`author`/`repository` metadata across
+  all six release packages, not just the bare version number, so a missed bump anywhere in that
+  chain fails loud before any compile work instead of surfacing later as "no compiled binary found
+  for this platform." The five-platform list is now single-sourced from a new `setup` job instead
+  of being hand-typed in three places in `release.yml`. `test/bin-lore.test.ts` switched to
+  `beforeEach`/`afterEach` scratch-dir setup (matching the rest of the suite) and gained two new
+  tests covering the signal-exit-code and error-masking fixes.
+
 - **`lore orphans` — the bidirectional doc↔task coupling report** (LORE-32). Surfaces two kinds of
   gap in one pass: **orphan tasks** (a Backlog task no concept lists in its `tasks:` frontmatter and
   that carries no `doc:<conceptId>` back-reference label — work documented nowhere) and **dangling
@@ -676,6 +727,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Math.max(...array)` now inherits too, closing the same six-figure-list `RangeError` risk
   `orphans.ts` was already hardened against) — a column-layout change is now a one-place edit
   instead of two independently-drifting copies. No output change (golden tests pin it byte-for-byte).
+
+  A `/code-review max` fold found this refactor had reintroduced the same `RangeError` class at a
+  different call site: `orphans.ts`'s orphan-task block spread `renderTaskSummaryRows`'s output
+  into `lines.push(...)`, and spreading a large array into a function-call argument list has its
+  own engine argument-count ceiling — confirmed to throw at ~700,000 orphan tasks. Fixed with a
+  plain per-item loop (matching the sibling `danglingLinks` block, which was never affected); a
+  700k-scale regression test was added and confirmed to reproduce the original failure.
 - **`lore link` / `lore unlink` / `lore rename` now commit their `backlog/` writes immediately**
   (LORE-49): each command's `doc:<conceptId>` back-reference edit is committed in one `lore`-authored
   commit right after it is written (via `state.ts`'s new `commitBacklogFiles`), instead of being left
