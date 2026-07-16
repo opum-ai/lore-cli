@@ -4,6 +4,7 @@ title: Reconcile stale remark/unified doc references across ADRs and specs
 status: To Do
 assignee: []
 created_date: '2026-07-11 14:13'
+updated_date: '2026-07-16 13:22'
 labels:
   - docs
   - cleanup
@@ -42,3 +43,9 @@ in src/) before editing.
 - [ ] #1 Every doc reference to remark/unified/remark-validate-links/Commander accurately reflects what is actually shipped (grep-verified against src/ imports and package.json), or is clearly marked as an amended/superseded historical decision
 - [ ] #2 docs/index.md and architecture.md (the most-read entry points) are corrected first
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Restore-session dedup 2026-07-16: an independent duplicate (LORE-53, filed 2026-07-12) of this same task was found via 'backlog task view LORE-52' returning an ambiguous-ID error. 'backlog doctor --fix --yes' repaired the collision (retargeted the duplicate to LORE-53) and LORE-53 was then archived as a duplicate. This file (the original, filed 2026-07-11, with the verified 8-file list) remains the authoritative LORE-52. Confirmed LORE-14's /code-review notes (lines 79/82, 'matching LORE-52's correct count of 8') already reference this task correctly -- no reference fix needed.
+<!-- SECTION:NOTES:END -->
