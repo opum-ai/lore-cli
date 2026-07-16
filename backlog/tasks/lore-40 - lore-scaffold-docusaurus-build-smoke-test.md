@@ -1,10 +1,10 @@
 ---
 id: LORE-40
 title: lore scaffold docusaurus + build smoke test
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-06-21 06:27'
-updated_date: '2026-07-16 15:17'
+updated_date: '2026-07-16 15:38'
 labels:
   - cmd
   - consumers
@@ -41,6 +41,8 @@ AC#1/AC#2 verified twice: locally (lore scaffold docusaurus + npm install + npm 
 Gates: 1483 tests, biome clean (4 pre-existing infos), tsc clean, lore check 0 errors/0 warnings.
 
 PR not yet opened.
+
+Merged via PR #49 (squash 5e0e6c8, admin) into dev; dev promoted (ff) to main, both at 5e0e6c8. Feature branch feat/lore-40-docusaurus-scaffold deleted (local + remote).
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
