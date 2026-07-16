@@ -6,6 +6,7 @@
 - 2026-06-21T01:33:34-05:00 6d9a4616532442ac469a704e1ab28b18262f27b4 docs(runbook): add developer kickoff handover
 - 2026-07-12T15:03:25-05:00 04070c650306cb37843c3828f13816b73590ae65 feat(LORE-39): lore scaffold mkdocs — additive MkDocs consumer config (#45)
 - 2026-07-12T15:13:04-05:00 a8e1cb65e9afc08e52f7a293f111e4c038ddec00 feat(LORE-9): release pipeline mechanics — compiled binaries + dual-artifact npm publish (#48)
+- 2026-07-16T09:55:34-05:00 da19ed80e6723329d13f8b044aac0f21219f6d14 feat(LORE-40): lore scaffold docusaurus — website/ + build smoke test
 
 ## docs/adr
 
@@ -42,6 +43,8 @@
 - 2026-07-12T15:03:25-05:00 04070c650306cb37843c3828f13816b73590ae65 feat(LORE-39): lore scaffold mkdocs — additive MkDocs consumer config (#45)
 - 2026-07-12T15:07:03-05:00 46fcf1c79d59e2d613cae38f79bbd9f94044f4fd docs(LORE-14): Bun compile-compatibility spike — EXDEV trap + tech-stack corrections (#47)
 - 2026-07-12T15:13:04-05:00 a8e1cb65e9afc08e52f7a293f111e4c038ddec00 feat(LORE-9): release pipeline mechanics — compiled binaries + dual-artifact npm publish (#48)
+- 2026-07-16T09:55:34-05:00 da19ed80e6723329d13f8b044aac0f21219f6d14 feat(LORE-40): lore scaffold docusaurus — website/ + build smoke test
+- 2026-07-16T10:15:44-05:00 6184ab876094524ce6195dc9aad797e56e22e085 fix(LORE-40): fold /code-review max findings
 
 ## docs/runbooks
 
