@@ -70,15 +70,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: .bun-version
-      - uses: actions/cache@v5
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
-          restore-keys: ${{ runner.os }}-bun-
-      - run: bun install --frozen-lockfile --linker=isolated
+      - uses: ./.github/actions/setup-bun
       - uses: actions/setup-python@v6
         with:
           python-version: "3.x"
@@ -95,3 +87,29 @@ jobs:
         run: |
           bun src/cli.ts scaffold mkdocs
           mkdocs build --site-dir /tmp/mkdocs-site
+
+  scaffold-docusaurus:
+    name: docusaurus scaffold smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-bun
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      # Real end-to-end smoke (LORE-40 AC#1/AC#2): scaffold against this repo's own bundle,
+      # then actually build it with real Docusaurus + webpack. A generated-bytes unit test
+      # alone can't catch a config setting Docusaurus itself rejects, or the raw `<`/`{` in
+      # OKF prose (e.g. `<!-- lore:tasks:begin -->`) being parsed as MDX/JSX and breaking the
+      # build — the exact failure mode `markdown.format: 'detect'` exists to prevent.
+      #
+      # onBrokenLinks/onBrokenAnchors stay at the scaffolded 'warn' (not a stricter override):
+      # this asserts the build the shipped config actually produces (exit 0), not one it never
+      # promised — OKF's broken-link tolerance means cross-tree `backlog/`/`../../lore-spec.md`
+      # style links are expected warnings, not failures (consumer-compatibility.md §4).
+      - name: Scaffold and build the live bundle
+        run: |
+          bun src/cli.ts scaffold docusaurus
+          cd website
+          npm install
+          npm run build
