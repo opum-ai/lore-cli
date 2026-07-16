@@ -4,7 +4,7 @@ title: lore scaffold docusaurus + build smoke test
 status: To Do
 assignee: []
 created_date: '2026-06-21 06:27'
-updated_date: '2026-06-21 06:28'
+updated_date: '2026-07-16 15:16'
 labels:
   - cmd
   - consumers
@@ -25,6 +25,20 @@ Scaffold a website/ with markdown.format detect, onBrokenLinks warn, autogenerat
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 docusaurus build succeeds with CommonMark mode
-- [ ] #2 Raw < and { in prose do not break the build
+- [x] #1 docusaurus build succeeds with CommonMark mode
+- [x] #2 Raw < and { in prose do not break the build
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented on feat/lore-40-docusaurus-scaffold: buildDocusaurusScaffold (src/core/consumer-scaffold.ts) writes website/package.json (pinning @docusaurus/core + @docusaurus/preset-classic to 3.10.2 in lockstep, react/react-dom exact-pinned to 19.2.7), website/docusaurus.config.js, website/sidebars.js -- all as CommonJS (module.exports), not the ESM export default form consumer-compatibility.md previously documented, which a real docusaurus build confirmed crashes production (require.resolveWeak is not a function, ESM/webpack-SSR interaction). Doc snippet corrected alongside. Generalized ConsumerScaffoldPlan to carry its own dirs so website/ threads through the same writeAllOrRollback plumbing docs/ already used for mkdocs.
+
+AC#1/AC#2 verified twice: locally (lore scaffold docusaurus + npm install + npm run build against this repo's own docs/ bundle, including its raw </{ prose -- exit 0, only the expected tolerated broken-link warnings) and via a new scaffold-docusaurus CI job mirroring scaffold-mkdocs's real-build-not-just-unit-test precedent.
+
+/code-review max (workflow, 15 agents) found 6 verified findings, all fixed: (1) SEVERE -- loadProfile() was called unconditionally for every target, so a malformed .lore/profile.toml blocked lore scaffold docusaurus even though it never reads profile; (2) SEVERE -- the never-silent-clobber preflight checked only plan.files not plan.dirs, so a pre-existing non-directory file named website skipped the friendly conflict message and crashed deep in writeAllOrRollback; (3) react/react-dom were on unpinned caret ranges with no lockfile, now exact-pinned; (4) buildPlan's ternary dispatch was a landmine for the next scaffold target to silently misroute -- replaced with a BUILDERS registry map that IMPLEMENTED_TARGETS is derived from; (5) the new CI job hand-typed the setup-bun sequence instead of reusing the existing composite action (fixed in both scaffold-mkdocs and scaffold-docusaurus); (6) the scaffold-header comment was copy-pasted 3x, factored into one helper. Findings 1-2 got regression tests, each confirmed to fail against the pre-fix code before the fix landed.
+
+Gates: 1483 tests, biome clean (4 pre-existing infos), tsc clean, lore check 0 errors/0 warnings.
+
+PR not yet opened.
+<!-- SECTION:NOTES:END -->
