@@ -18,9 +18,14 @@
  * until its own task lands one.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { buildDocusaurusScaffold, buildMkdocsScaffold, type ConsumerScaffoldPlan } from "../core/consumer-scaffold";
+import {
+  buildDocusaurusScaffold,
+  buildMkdocsScaffold,
+  type ConsumerScaffoldOptions,
+  type ConsumerScaffoldPlan,
+} from "../core/consumer-scaffold";
 import { loadProfile } from "../core/profile";
 import { EXIT_OK, LoreError, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
@@ -59,19 +64,23 @@ export interface ScaffoldResult {
   readonly files: readonly ScaffoldResultFile[];
 }
 
+/**
+ * Every implemented target's pure plan builder — the single source of truth for which targets
+ * `lore scaffold` can actually build. {@link IMPLEMENTED_TARGETS} is *derived* from this map's
+ * keys, so a target can never end up "implemented" (accepted by argument validation) without a
+ * registered builder to route to — the failure mode a hand-written per-target `if`/ternary chain
+ * invites the moment a third target is added.
+ */
+const BUILDERS: Record<string, (options: ConsumerScaffoldOptions) => ConsumerScaffoldPlan> = {
+  mkdocs: buildMkdocsScaffold,
+  docusaurus: buildDocusaurusScaffold,
+};
+
 /** The consumer targets `lore scaffold` recognizes as valid, even if not all are implemented yet. */
 const KNOWN_TARGETS = new Set(["mkdocs", "docusaurus", "obsidian"]);
 
-/** Targets a builder exists for today; the rest of {@link KNOWN_TARGETS} are documented but unshipped. */
-const IMPLEMENTED_TARGETS = new Set(["mkdocs", "docusaurus"]);
-
-/** Build the {@link ConsumerScaffoldPlan} for an implemented target. */
-function buildPlan(
-  target: string,
-  options: { timestamp: string; siteName: string; profile: ReturnType<typeof loadProfile> },
-): ConsumerScaffoldPlan {
-  return target === "docusaurus" ? buildDocusaurusScaffold(options) : buildMkdocsScaffold(options);
-}
+/** Targets a builder exists for today (derived from {@link BUILDERS}); the rest of {@link KNOWN_TARGETS} are documented but unshipped. */
+const IMPLEMENTED_TARGETS = new Set(Object.keys(BUILDERS));
 
 /**
  * Run `lore scaffold <target>`: parse the arguments, build the target's plan, refuse (exit `5`)
@@ -82,21 +91,36 @@ function buildPlan(
 export function runScaffold(options: ScaffoldOptions): number {
   const parsed = parseScaffoldArgs(options.args);
   const clock = options.clock ?? (() => new Date());
-  const profile = loadProfile({ root: options.root });
-  const plan = buildPlan(parsed.target, {
+  // Only mkdocs's builder reads `profile` (to decide docs/tags.md's $schema modeline) — loading
+  // it unconditionally for every target would make `lore scaffold docusaurus` fail on a malformed
+  // .lore/profile.toml/json it never reads, contradicting ConsumerScaffoldOptions.profile's own
+  // "unused by buildDocusaurusScaffold" contract.
+  const profile = parsed.target === "mkdocs" ? loadProfile({ root: options.root }) : undefined;
+  const build = BUILDERS[parsed.target];
+  if (!build) {
+    // parseScaffoldArgs already validated parsed.target against IMPLEMENTED_TARGETS, which is
+    // derived from BUILDERS' own keys — this can only fire if that invariant is ever broken.
+    throw new Error(`internal: no builder registered for implemented target "${parsed.target}"`);
+  }
+  const plan = build({
     timestamp: clock().toISOString(),
     siteName: basename(resolve(options.root)),
     profile,
   });
 
   if (!parsed.force) {
-    const existing = plan.files.filter((file) => existsSync(join(options.root, file.path)));
-    if (existing.length > 0) {
+    const blockedDirs = plan.dirs.filter((dir) => {
+      const abs = join(options.root, dir);
+      return existsSync(abs) && !statSync(abs).isDirectory();
+    });
+    const existingFiles = plan.files.filter((file) => existsSync(join(options.root, file.path))).map((f) => f.path);
+    const collisions = [...blockedDirs, ...existingFiles];
+    if (collisions.length > 0) {
       throw new LoreError(
         "conflict",
-        `${parsed.target} config already exists: ${existing.map((file) => file.path).join(", ")}`,
+        `${parsed.target} config already exists: ${collisions.join(", ")}`,
         "pass --force to overwrite, or remove the existing file(s) first",
-        { target: parsed.target, paths: existing.map((file) => file.path) },
+        { target: parsed.target, paths: collisions },
       );
     }
   }

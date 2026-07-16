@@ -371,6 +371,32 @@ describe("lore scaffold docusaurus — never-silent-clobber (AC: user-owned, nev
     expect(result.force).toBe(true);
     expect(result.files.every((f) => f.action === "updated")).toBe(true);
   });
+
+  test("a pre-existing non-directory file occupying website/ is reported as a friendly conflict, not a deep crash (review #1)", () => {
+    // Regression: the preflight used to check only plan.files, never plan.dirs, so a plain file
+    // sitting where website/ needs to be a directory skipped the plan-wide "already exists"
+    // conflict message entirely and only surfaced later as a generic ensureDir error.
+    writeFileSync(join(root, "website"), "not a directory\n");
+    const err = expectError("conflict", () =>
+      runScaffold({ root, output: JSON_CTX, args: ["docusaurus"], stdout: capture() }),
+    );
+    expect(err.message).toContain("website");
+    expect(err.hint).toContain("--force");
+    expect(readFileSync(join(root, "website"), "utf8")).toBe("not a directory\n");
+  });
+});
+
+describe("lore scaffold docusaurus — profile independence", () => {
+  test("a malformed .lore/profile.toml does NOT block it (buildDocusaurusScaffold never reads profile)", () => {
+    // Regression: runScaffold used to call loadProfile() unconditionally for every target, so a
+    // repo with a broken profile file (unrelated to Docusaurus) blocked `lore scaffold docusaurus`
+    // even though ConsumerScaffoldOptions.profile is documented as unused by this builder.
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(join(root, ".lore/profile.toml"), "not = [valid");
+    const { code, result } = scaffold(["docusaurus"]);
+    expect(code).toBe(0);
+    expect(result.target).toBe("docusaurus");
+  });
 });
 
 describe("lore scaffold docusaurus — output rendering", () => {

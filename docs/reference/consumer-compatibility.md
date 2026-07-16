@@ -194,8 +194,8 @@ project-local devDependency that resolves its preset/theme from the site's own
   "dependencies": {
     "@docusaurus/core": "3.10.2",
     "@docusaurus/preset-classic": "3.10.2",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
   }
 }
 ```
