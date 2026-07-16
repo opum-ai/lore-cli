@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-06-21 06:25'
-updated_date: '2026-07-12 20:13'
+updated_date: '2026-07-16 13:26'
 labels:
   - ci
   - release
@@ -238,4 +238,6 @@ review pass this branch has been through; 4 of 5 caught at least one real,
 previously-undetected issue.
 
 Merged via PR #48 (a8e1cb6, squash) into dev, then dev promoted to main. This branch went through 5 total review rounds (3x /code-review high + 2x /code-review max), each catching at least one real, previously-undetected issue — see task notes above for the full disposition across all rounds. STILL OUTSTANDING (not a defect, a hard GitHub constraint): release.yml has never executed in real GitHub Actions — workflow_dispatch requires the file on the default branch to trigger. Now that this has merged to dev AND main, the next session should manually trigger it (gh workflow run release.yml --ref dev, default inputs) and watch closely before relying on it for a real release.
+
+First real GitHub Actions execution of release.yml (workflow_dispatch on dev, run https://github.com/jeremy-newhouse/lore/actions/runs/29502019960, 2026-07-16): all jobs passed end-to-end on the first try — matrix setup, version/metadata consistency check, all 5 platform compiles (darwin-arm64/x64, linux-arm64/x64, win32-x64), and package+install-sanity (npm pack + npx-equivalent launcher resolution). Only annotations were benign upstream Node 20 deprecation warnings from actions/upload-artifact@v4 / download-artifact@v4, unrelated to this workflow's own code. This was previously untested in a real runner (5 local review rounds + actionlint only) -- confirms the release pipeline mechanics are sound.
 <!-- SECTION:NOTES:END -->
