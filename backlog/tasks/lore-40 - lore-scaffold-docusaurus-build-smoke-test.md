@@ -1,10 +1,10 @@
 ---
 id: LORE-40
 title: lore scaffold docusaurus + build smoke test
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-06-21 06:27'
-updated_date: '2026-07-16 15:16'
+updated_date: '2026-07-16 15:17'
 labels:
   - cmd
   - consumers
@@ -42,3 +42,9 @@ Gates: 1483 tests, biome clean (4 pre-existing infos), tsc clean, lore check 0 e
 
 PR not yet opened.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented lore scaffold docusaurus (LORE-40): a website/ directory (package.json, docusaurus.config.js, sidebars.js, all CommonJS) mirroring lore scaffold mkdocs (LORE-39). Verified with a real docusaurus build against this repo's own docs/ bundle (local scratch run + a new scaffold-docusaurus CI job), both AC#1 and AC#2 confirmed with exit 0. /code-review max fold applied (6/6 findings fixed, 2 with regression tests). Gates: 1483 tests, biome/tsc clean, lore check 0/0. PR pending.
+<!-- SECTION:FINAL_SUMMARY:END -->
