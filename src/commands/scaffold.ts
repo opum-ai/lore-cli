@@ -2,8 +2,8 @@
  * commands/scaffold.ts — `lore scaffold <target> [--force]`: generate a downstream documentation
  * consumer's config, additively and outside `docs/` (cli-surface §"Consumer scaffolding", ADR-0010).
  *
- * The thin, side-effecting layer over the pure {@link buildMkdocsScaffold} (`core/consumer-scaffold.ts`):
- * it resolves the repo root, the active profile, and a clock, asks core for the exact bytes, and
+ * The thin, side-effecting layer over the pure {@link buildMkdocsScaffold} / {@link buildDocusaurusScaffold}
+ * (`core/consumer-scaffold.ts`): it resolves the repo root, the active profile, and a clock, asks core for the exact bytes, and
  * applies them via `fswrite.ts`'s shared {@link writeAllOrRollback}. Unlike `lore init` (which
  * silently skips an already-present file), scaffolding is **never-silent-clobber**: if any planned
  * file already exists, the whole run refuses with a `conflict` error (exit 5) naming every
@@ -13,16 +13,15 @@
  * failure, e.g. a read-only `docs/` — can never leave one scaffolded file refreshed and its sibling
  * stale.
  *
- * Only `mkdocs` is implemented today; `docusaurus` (LORE-40) and `obsidian` (LORE-41) are
- * documented targets not yet wired to a builder, so they — like any other unrecognized string —
- * are a `usage` error (exit 2) until their own task lands one.
+ * `mkdocs` and `docusaurus` are implemented; `obsidian` (LORE-41) is a documented target not yet
+ * wired to a builder, so it — like any other unrecognized string — is a `usage` error (exit 2)
+ * until its own task lands one.
  */
 
 import { existsSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { buildMkdocsScaffold } from "../core/consumer-scaffold";
+import { buildDocusaurusScaffold, buildMkdocsScaffold, type ConsumerScaffoldPlan } from "../core/consumer-scaffold";
 import { loadProfile } from "../core/profile";
-import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { parseCommandArgs, usage } from "./args";
@@ -52,7 +51,7 @@ export interface ScaffoldResultFile {
 
 /** The result of a `lore scaffold` run. */
 export interface ScaffoldResult {
-  /** The target that was scaffolded (`"mkdocs"`). */
+  /** The target that was scaffolded (`"mkdocs"` or `"docusaurus"`). */
   readonly target: string;
   /** Whether `--force` was passed. */
   readonly force: boolean;
@@ -64,7 +63,15 @@ export interface ScaffoldResult {
 const KNOWN_TARGETS = new Set(["mkdocs", "docusaurus", "obsidian"]);
 
 /** Targets a builder exists for today; the rest of {@link KNOWN_TARGETS} are documented but unshipped. */
-const IMPLEMENTED_TARGETS = new Set(["mkdocs"]);
+const IMPLEMENTED_TARGETS = new Set(["mkdocs", "docusaurus"]);
+
+/** Build the {@link ConsumerScaffoldPlan} for an implemented target. */
+function buildPlan(
+  target: string,
+  options: { timestamp: string; siteName: string; profile: ReturnType<typeof loadProfile> },
+): ConsumerScaffoldPlan {
+  return target === "docusaurus" ? buildDocusaurusScaffold(options) : buildMkdocsScaffold(options);
+}
 
 /**
  * Run `lore scaffold <target>`: parse the arguments, build the target's plan, refuse (exit `5`)
@@ -76,7 +83,7 @@ export function runScaffold(options: ScaffoldOptions): number {
   const parsed = parseScaffoldArgs(options.args);
   const clock = options.clock ?? (() => new Date());
   const profile = loadProfile({ root: options.root });
-  const plan = buildMkdocsScaffold({
+  const plan = buildPlan(parsed.target, {
     timestamp: clock().toISOString(),
     siteName: basename(resolve(options.root)),
     profile,
@@ -94,7 +101,7 @@ export function runScaffold(options: ScaffoldOptions): number {
     }
   }
 
-  const files = writeAllOrRollback(options.root, [DOCS_DIR], plan.files, { force: parsed.force });
+  const files = writeAllOrRollback(options.root, plan.dirs, plan.files, { force: parsed.force });
 
   const result: ScaffoldResult = { target: parsed.target, force: parsed.force, files };
   emit(scaffoldRenderable(result), options.output, options.stdout);
@@ -105,7 +112,7 @@ export function runScaffold(options: ScaffoldOptions): number {
 
 /** The parsed form of `lore scaffold`'s arguments. */
 interface ScaffoldArgs {
-  /** The validated, implemented target (only `"mkdocs"` today). */
+  /** The validated, implemented target (`"mkdocs"` or `"docusaurus"` today). */
   target: string;
   /** `--force`: overwrite an existing generated config. */
   force: boolean;
@@ -133,7 +140,10 @@ function parseScaffoldArgs(args: readonly string[]): ScaffoldArgs {
     throw usage(`unknown scaffold target "${target}"`, "valid targets are mkdocs, docusaurus, obsidian");
   }
   if (!IMPLEMENTED_TARGETS.has(target)) {
-    throw usage(`scaffold target "${target}" is not implemented yet`, "only `mkdocs` is implemented today");
+    throw usage(
+      `scaffold target "${target}" is not implemented yet`,
+      "only `mkdocs` and `docusaurus` are implemented today",
+    );
   }
   return { target, force: flags.has("force") };
 }
