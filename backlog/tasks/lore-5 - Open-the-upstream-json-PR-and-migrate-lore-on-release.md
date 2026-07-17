@@ -4,7 +4,7 @@ title: Open the upstream --json PR and migrate lore on release
 status: In Progress
 assignee: []
 created_date: '2026-06-21 06:25'
-updated_date: '2026-07-13 12:53'
+updated_date: '2026-07-17 23:00'
 labels:
   - backlog-fork
   - upstream
@@ -60,6 +60,83 @@ https://github.com/MrLesk/Backlog.md/issues/784
 NEXT: wait for maintainer response on scope/shape before doing any rebase
 or PR work. Do not open a PR against this repo until that discussion
 resolves -- that is the whole point of asking first.
+
+DRIFT CHECK 2026-07-16 (handover restore): maintainer MrLesk responded on
+issue #784 on 2026-07-14 (before this handover was even written, but the
+response wasn't caught/flushed into this task yet). Response:
+- Confirms structured JSON output is a wanted direction, scoped upstream as
+  BACK-545.
+- Before accepting any implementation, wants the public contract settled
+  first: curated fields, versioned+discriminated envelope, JSON-only stdout,
+  error behavior, heterogeneous search results, deterministic precedence
+  over --plain and non-TTY behavior.
+- Explicitly: "please hold off on opening PRs or doing further refactors for
+  now." Still no PR.
+- Concrete ask: link our existing fork branch/commit and share representative
+  output for (1) a task list, (2) a single task, (3) a heterogeneous search
+  result, (4) an empty result and an error.
+- Another contributor (lenucksi) also has a fork implementation and was asked
+  the same thing -- maintainer wants to review both as prior art and
+  coordinate one implementation path.
+
+NEXT: task moves from "wait" to "respond with prior art" -- still gated on
+user sign-off before posting anything to the public issue (per this task's
+own established norm of not acting on upstream without explicit user
+approval first).
+
+Posted reply to issue #784 (2026-07-16): https://github.com/MrLesk/Backlog.md/issues/784#issuecomment-4998567172
+Linked fork branch tasks/back-510-json-output @ a80b7a1 and provided the 4
+requested representative outputs (task list, single task, heterogeneous
+search, empty result), generated against a clean throwaway scratch project
+(not our real lore backlog) with the local path sanitized before posting.
+Also disclosed a real gap found while generating the error-case sample:
+`task view --json` on a not-found task silently drops --json, prints plain
+text to stderr, and exits 0 -- inconsistent with `task archive`'s not-found
+handling (same message, but process.exitCode = 1). Flagged this as exactly
+the kind of "error behavior" question MrLesk asked to settle, rather than
+hiding it. Did not open a PR; explicitly deferred to the contract discussion
+and offered to align with lenucksi's fork.
+
+NEXT: wait for MrLesk (and/or lenucksi) to respond on the contract shape
+before any further fork/rebase/PR work.
+
+DRIFT CHECK 2026-07-17 (handover restore): issue #784 is now CLOSED (state_reason:
+completed), closed by MrLesk at 2026-07-16T22:05:25Z -- about 5 hours BEFORE our
+prior-art reply comment posted (2026-07-17T03:03:19Z). Our reply landed on an
+already-resolved issue with no acknowledgment yet.
+
+Root cause: MrLesk's team implemented BACK-545 themselves, independently of our
+fork or lenucksi's -- PR https://github.com/MrLesk/Backlog.md/pull/790 ("BACK-545 -
+Add stable JSON output to read commands"), authored/executed by an internal agent
+(@back545-agent per backlog/tasks/back-545 assignee), plan approved by "Alex" on
+2026-07-15, merged 2026-07-16T22:05:23Z, closing #784. This was NOT built from our
+or lenucksi's prior art -- no reference to either fork in the PR/task body.
+
+Their shipped contract differs from our fork's tasks/back-510-json-output branch:
+- Envelope: theirs is per-command-shaped -- {schemaVersion:1, kind:"task-list", tasks:[...]}
+  / {kind:"task-view", task:{...}} / {kind:"search", results:[...]}. Ours is uniform
+  {schemaVersion, kind, data}.
+- Field naming/shape differs (e.g. their compact task summary fields, path vs our
+  filePath/filePathRelative, createdAt/updatedAt naming).
+- Error handling: theirs is CORRECT per this task's own AC#2 spirit -- "errors leave
+  stdout empty, write a concise message to stderr, and exit nonzero" (explicitly
+  documented in CLI-INSTRUCTIONS.md's new "Stable JSON output" section). This closes
+  the exact gap we disclosed in our issue comment (task view --json not-found exiting
+  0) -- upstream did NOT have that gap; only our fork does.
+- Not yet released: merged to main, but the last tagged release is v1.48.0
+  (published 2026-07-12, before this merge). package.json on main still reads 1.48.0.
+  No new release/tag exists yet as of this check.
+
+Strategic implication (needs user decision, not yet acted on): LORE-5's original
+scope (open our own PR upstream) is now moot -- upstream shipped its own
+implementation independently. AC#1 ("Upstream PR opened and linked") can't be
+satisfied as originally worded since we won't be the ones opening it. AC#2 ("lore
+min-version floor documented for the --json release") becomes actionable once
+upstream cuts a release containing PR #790 -- but the contract lore's fork-based
+adapter/probe (src/adapters/backlog.ts, LORE-4/LORE-21) was built against is NOT
+the same shape as what upstream actually shipped, so adopting upstream's real
+release will need adapter changes, not just a version-floor bump. Left status
+In Progress pending user direction on how to re-scope.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
