@@ -4,7 +4,7 @@ title: Open the upstream --json PR and migrate lore on release
 status: In Progress
 assignee: []
 created_date: '2026-06-21 06:25'
-updated_date: '2026-07-17 23:00'
+updated_date: '2026-07-17 23:22'
 labels:
   - backlog-fork
   - upstream
@@ -29,6 +29,31 @@ Open a minimal PR (list/view/search) vs upstream main on branch tasks/back-XXX-j
 - [ ] #1 Upstream PR opened and linked
 - [ ] #2 lore min-version floor documented for the --json release
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Fetch upstream's actual shipped --json contract from PR #790 (merged to main,
+   unreleased): src/formatters/json-output.ts, src/utils/read-output-mode.ts, and
+   the CLI-INSTRUCTIONS.md "Stable JSON output" section it added.
+2. Read our fork's current implementation (tasks/back-510-json-output @ a80b7a1)
+   and lore's consumer of it -- src/adapters/backlog.ts (LORE-4/LORE-21) plus
+   docs/runbooks/backlog-json-patch.md -- to know what shape lore's adapter
+   currently assumes/probes for.
+3. Produce a field-by-field / envelope-by-envelope comparison: schemaVersion,
+   kind discriminators, per-command envelope keys (tasks/task/results vs our
+   uniform data), compact task projection fields, error/exit-code contract,
+   --plain/non-TTY precedence, search result discrimination shape.
+4. Record the comparison and its migration implications (what src/adapters/backlog.ts
+   would need to change once we consume the real upstream release instead of the
+   fork) in LORE-5's implementation notes, and update docs/runbooks/backlog-json-patch.md
+   via lore if it documents contract details that are now stale/superseded.
+5. Do NOT change src/adapters/backlog.ts itself yet (no release exists to consume)
+   -- this pass is evaluation/documentation only, per user direction.
+6. Leave LORE-5 In Progress; ACs are not satisfiable by this pass alone (AC#1 is
+   moot, AC#2 needs a real release) -- flag re-scoping as a follow-up decision
+   rather than checking ACs.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
@@ -137,6 +162,48 @@ adapter/probe (src/adapters/backlog.ts, LORE-4/LORE-21) was built against is NOT
 the same shape as what upstream actually shipped, so adopting upstream's real
 release will need adapter changes, not just a version-floor bump. Left status
 In Progress pending user direction on how to re-scope.
+
+CONTRACT EVALUATION 2026-07-17 (per user direction: evaluate now, don't touch
+the adapter yet since no upstream release exists). Compared upstream PR #790
+(src/formatters/json-output.ts, src/utils/read-output-mode.ts, cli.ts diff,
+CLI-INSTRUCTIONS.md's new "Stable JSON output" section, fetched at PR head
+347c0f2b) against our fork's schema (docs/reference/backlog-json-schema.md)
+and src/adapters/backlog.ts (LORE-4/LORE-21).
+
+Full comparison table recorded in docs/runbooks/backlog-json-patch.md section 8
+(a correction callout, since that section's step 3 assumed convergence -- now
+falsified). Summary:
+- Envelope shape differs entirely: ours is uniform {schemaVersion, kind, data}
+  across all 3 commands; upstream is per-command {kind: "task-list", tasks: [...]}
+  / {kind: "task-view", task: {...}} / {kind: "search", results: [...]}.
+- schemaVersion type differs: ours is the string "1"; upstream is the number 1.
+- kind spelling differs: taskList/task/searchResult (ours, camelCase-no-hyphen)
+  vs task-list/task-view/search (upstream, hyphenated).
+- Task fields differ: ours carries source/branch/onStatusChange/absolute
+  filePath+filePathRelative; upstream deliberately excludes branch/internal
+  fields (curated `path`, project-relative only) but adds type/reporter at
+  summary level.
+- Search hit shape differs: ours is {type, score, item}; upstream is {type, data}
+  with NO score (explicitly excluded from their v1 contract).
+- task view/<id> not-found: upstream now exits 1 unconditionally (any mode) --
+  this closes exactly the gap our issue #784 reply disclosed. Our fork still
+  exits 0 with empty stdout (which our adapter treats as the "missing" signal,
+  so this is not a bug in lore today, just a fork/upstream divergence).
+
+Conclusion: src/adapters/backlog.ts, as written today, would FAIL its own
+capability probe against upstream's real --json output (wrong kind strings,
+no top-level `data` key). Migrating to a real upstream release is an adapter
+rewrite against the new contract, not a version-floor bump -- LORE-5 AC#2's
+"migrate on release" framing undersells the work. Not yet actionable: PR #790
+is merged to main but NOT in a tagged release yet (latest tag v1.48.0,
+2026-07-12, predates the 2026-07-16 merge).
+
+NEXT: watch for a Backlog.md release/tag that includes PR #790's commit
+(22a091b on main). When one ships: re-scope LORE-5 (or split a follow-up task)
+to rewrite src/adapters/backlog.ts's envelope parsing, Zod schemas, and probe
+against the real upstream shape documented above, rather than assuming today's
+schema doc is correct. No code changed this pass -- evaluation/documentation
+only, per explicit user direction.
 <!-- SECTION:NOTES:END -->
 
 ## Comments

@@ -303,16 +303,50 @@ serializer, separate diff) so reviewers see the small scope is deliberate.
 
 ## 8. Migrate to upstream on release (and bump the floor)
 
+> **Correction (2026-07-17, LORE-5).** Step 3 below assumed upstream would
+> converge on *this* schema. That assumption is **falsified**: MrLesk's team
+> shipped their own independent implementation —
+> [PR #790](https://github.com/MrLesk/Backlog.md/pull/790), "BACK-545 - Add
+> stable JSON output to read commands" — merged 2026-07-16, closing
+> [issue #784](https://github.com/MrLesk/Backlog.md/issues/784) before our
+> fork's prior-art reply even posted. It was not built from our or lenucksi's
+> fork. The shipped contract differs from
+> [backlog-json-schema.md](../reference/backlog-json-schema.md) in every
+> dimension that matters for the adapter:
+>
+> | | This fork / `src/adapters/backlog.ts` | Upstream PR #790 (unreleased) |
+> |---|---|---|
+> | Envelope | uniform `{schemaVersion: "1", kind, data}` for all three commands | per-command envelope: `{schemaVersion: 1, kind: "task-list", tasks: [...]}` / `{kind: "task-view", task: {...}}` / `{kind: "search", results: [...]}` |
+> | `schemaVersion` type | string `"1"` | number `1` |
+> | `kind` spelling | `taskList` / `task` / `searchResult` | `task-list` / `task-view` / `search` |
+> | Payload key | always `data` | `tasks` / `task` / `results` per command |
+> | Task fields | includes `source`, `branch`, `onStatusChange`, `filePath` (absolute) + `filePathRelative` | excludes branch/internal fields by design (`path`, project-relative only); adds `type`, `reporter` at summary level |
+> | Search hit shape | `{type, score, item}` | `{type, data}` — **no `score`** (explicitly out of v1) |
+> | `task view`/`<id>` not-found | fork: exit 0, empty stdout, stderr message (adapter treats this as the clean "missing" signal) | exit 1 unconditionally (any output mode), matching `task archive`'s convention — closes the exact gap our LORE-5 prior-art reply flagged |
+>
+> Net effect: **`src/adapters/backlog.ts` as written would fail its own
+> capability probe against upstream's real output** (wrong `kind` strings, no
+> `data` key to read). Migrating to a real upstream release is an **adapter
+> rewrite against the new contract**, not a version-floor bump. As of this
+> writing PR #790 is merged to `main` but **not yet in a tagged release**
+> (latest tag is still v1.48.0, published 2026-07-12, predating the merge).
+> Full comparison and provenance: LORE-5 implementation notes.
+>
+> The steps below describe the *original* plan (this schema shipping
+> verbatim upstream) and are kept for history; do not follow step 3 as
+> written once a real release exists — re-derive the adapter from PR #790's
+> `src/formatters/json-output.ts` and `CLI-INSTRUCTIONS.md` instead.
+
 Once `--json` ships in a stock Backlog.md release:
 
 1. Flip `lore`'s dependency from the fork git-dep to the published package
    (`"backlog.md": "^<first-version-with-json>"`).
 2. **Bump the capability probe's minimum version** to that release, so the floor
    now points at a stock binary rather than the fork branch.
-3. Keep the canonical schema reference
+3. ~~Keep the canonical schema reference
    ([backlog-json-schema.md](../reference/backlog-json-schema.md)) as the
    contract of record; the upstream output must match it (the patch was designed
-   to produce exactly that shape).
+   to produce exactly that shape).~~ Superseded — see the correction above.
 4. Until then, **rebase the fork branch on upstream periodically** — Backlog.md
    is an active repo. Re-grep the cited line numbers after each rebase; they are
    anchors, not guarantees.
