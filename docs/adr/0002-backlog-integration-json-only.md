@@ -18,6 +18,23 @@ Supersedes the relevant parts of the spec's §3 and §10.1–10.2, which assumed
 MCP server might avoid parsing. Both assumptions were verified false (see
 [Context](#context)).
 
+**Amendment — 2026-07-17 (LORE-5).** Decision items 1 ("fork Backlog.md
+ourselves") and 4 ("upstream a minimal PR") below are **superseded**. MrLesk's
+team shipped their own independent `--json` implementation —
+[PR #790](https://github.com/MrLesk/Backlog.md/pull/790) (BACK-545), merged
+2026-07-16 — before our fork's prior-art reply on
+[issue #784](https://github.com/MrLesk/Backlog.md/issues/784) even posted. It
+was not built from our fork. `lore` now **adopts upstream's implementation
+directly** instead of maintaining its own fork: consume upstream's patched
+`main` branch (at or past the PR #790 merge commit) as an interim git
+dependency until a tagged release includes it, then switch to the published
+package. Everything else below — JSON-only reads, the canonical envelope
+pattern, the fail-loud capability probe, CLI-only writes — stands; only
+*whose* `--json` implementation is consumed changes. The concrete contract
+diff and interim plan are in
+[backlog-json-schema.md §8](../reference/backlog-json-schema.md#8-migration-target--upstream-independent-contract-adopted)
+and the [patch runbook §8](../runbooks/backlog-json-patch.md).
+
 ## Context
 
 `lore`'s differentiating feature is coupling repo-resident docs to Backlog.md

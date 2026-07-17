@@ -33,6 +33,13 @@ The shape and field names of the JSON envelope are specified in
 broader design rationale lives in the [lore design spec](../specs/lore-design.md)
 and the relevant ADRs (linked inline).
 
+> **Migration notice (2026-07-17, LORE-5).** `lore` is adopting upstream's own,
+> independently-shipped `--json` contract (PR #790 / BACK-545) instead of this
+> fork's — see [backlog-json-schema.md §8](backlog-json-schema.md#8-migration-target--upstream-independent-contract-adopted).
+> Everything below still describes what's shipped in code **today**; §2.2 and
+> §5 each have a callout marking the specific fact that changes once `lore`
+> migrates.
+
 ---
 
 ## 1. Read path (JSON-only)
@@ -138,6 +145,14 @@ probing, `lore link`, or anywhere.
 - `task list` / a successful `task view --json` parse confirm existence.
 
 Use `edit` or `list` for existence; treat `view`'s exit code as meaningless.
+
+> **This flips on migration.** Upstream's PR #790 makes `task view <missing>`
+> (and the bare `task <missing>` shortcut) exit **1 unconditionally**, in every
+> output mode — matching `task archive`'s convention. Once `lore` consumes
+> upstream's build, `view`'s exit code becomes meaningful and the adapter's
+> `viewTask` (which today treats *empty stdout* as the "missing" signal) should
+> be rewritten to check the exit code instead. See
+> [backlog-json-schema.md §8](backlog-json-schema.md#8-migration-target--upstream-independent-contract-adopted).
 
 ### 2.3 The doc back-reference — a queryable label, plus --doc for display
 
@@ -321,6 +336,17 @@ Run once at startup, cached in `.lore/cache/`. See the
 The `--json` envelope is an **additive-only versioned contract**
 ([backlog-json-schema.md](backlog-json-schema.md)); a bump in `schemaVersion`
 that `lore` does not recognize fails the probe rather than mis-reads.
+
+> **This probe targets the fork; it will be rewritten for the migration.**
+> Step 3's `MIN_BACKLOG` and step 4's `kind:"taskList"` (camelCase) assertion
+> are specific to this fork's contract. Once `lore` adopts upstream's build
+> (see [backlog-json-schema.md §8](backlog-json-schema.md#8-migration-target--upstream-independent-contract-adopted)),
+> there is no semver floor to compare against yet — the interim dependency is
+> pinned to a specific upstream commit (at or past the PR #790 merge,
+> `22a091b570d44c4f302ca47e7fd36fa28ad8bcb0`), not a version range — and step 4
+> must assert upstream's real envelope (`kind: "task-list"`, a `tasks` array,
+> not a `data` key). The probe converts to a normal semver floor once a tagged
+> Backlog.md release includes that commit.
 
 ---
 

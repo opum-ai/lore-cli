@@ -32,6 +32,14 @@ This page is the data shape only.
 > that already backs the human/`--plain` output. The shape below is the curated
 > serializer's output, not a raw `JSON.stringify(task)`.
 
+> **Migration notice (2026-07-17, LORE-5).** `lore` is **adopting upstream's
+> own, independently-shipped `--json` contract** instead of this fork's — see
+> [§8](#8-migration-target--upstream-independent-contract-adopted) for the
+> target shape and the interim consumption plan. Everything in §1–§7 below
+> still accurately describes **what the shipped adapter (`src/adapters/backlog.ts`)
+> parses today** — the code has not migrated yet, so treat this as the current,
+> not final, contract until that migration lands.
+
 ---
 
 ## 1. The envelope
@@ -412,6 +420,49 @@ The capability probe ([CLI contract](backlog-cli-contract.md)) runs once at
 startup and caches its result in `.lore/cache/` (transient, gitignored); it is
 what guarantees the binary in use actually emits this schema before any feature
 relies on it.
+
+---
+
+## 8. Migration target — upstream, independent contract (adopted)
+
+MrLesk's team shipped their own `--json` implementation upstream —
+[PR #790](https://github.com/MrLesk/Backlog.md/pull/790), "BACK-545 - Add
+stable JSON output to read commands", merged 2026-07-16 — independently of this
+fork or lenucksi's. `lore` is **adopting that contract** rather than converging
+upstream on the shape documented in §1–§7. As of this writing PR #790 is merged
+to `MrLesk/Backlog.md`'s `main` (commit `22a091b570d44c4f302ca47e7fd36fa28ad8bcb0`)
+but **not yet in a tagged release** (the latest tag, v1.48.0, predates the
+merge). **Interim plan:** consume upstream's `main` at or past that commit as a
+git dependency instead of this fork; once a tagged release includes it, switch
+to the published package and bump the capability probe's floor. See the
+[patch runbook §8](../runbooks/backlog-json-patch.md) for the step-by-step plan.
+
+Upstream's shape differs from §1–§7 above in every dimension that matters for
+the adapter — **this is not a drop-in floor bump, it is a contract migration**:
+
+| | This fork (§1–§7, shipped today) | Upstream PR #790 (adoption target) |
+|---|---|---|
+| Envelope | uniform `{schemaVersion: "1", kind, data}` for all three commands | **per-command** envelope, no shared `data` key: `{schemaVersion: 1, kind: "task-list", tasks: [...]}` / `{kind: "task-view", task: {...}}` / `{kind: "search", results: [...]}` |
+| `schemaVersion` type | **string** `"1"` | **number** `1` |
+| `kind` spelling | `taskList` / `task` / `searchResult` | `task-list` / `task-view` / `search` |
+| Payload key | always `data` | `tasks` / `task` / `results`, per command |
+| Task summary fields | `id, title, status, priority, ordinal, assignees, labels, milestone, parentTaskId, filePath, filePathRelative` | adds `type`, `reporter` at summary level; no absolute path — only project-relative `path`, and only on the view/full shape |
+| Full task fields | includes `source`, `branch`, `onStatusChange` (internal/git fields) | **excludes** branch/internal fields by design ("internal fields... branch metadata... are not exposed") |
+| Search hit shape | `{type, score, item}` | `{type, data}` — **no `score`** (explicitly out of the v1 public contract) |
+| `task view <missing>` / `task <missing>` | exits **0**, empty stdout, `Task <id> not found.` on stderr (this fork's adapter treats empty stdout as the "missing" signal — see [CLI contract §2.2](backlog-cli-contract.md#22-existence-checks--use-editlist-never-view)) | exits **1** unconditionally (every output mode, not just `--json`) — matches `task archive`'s convention. **This flips §2.2's "view always exits 0" fact once `lore` migrates** — the adapter's missing-task detection must change from "empty stdout" to "nonzero exit" |
+| Output formatting | compact (single line) | pretty-printed (`JSON.stringify(value, null, 2)`), trailing newline |
+
+Field-by-field detail for the adoption target lives in upstream's own
+source, the source of truth until this doc is rewritten in full at migration
+time: `src/formatters/json-output.ts` (serializers) and the "Stable JSON
+output" section of `CLI-INSTRUCTIONS.md`, both in `MrLesk/Backlog.md`.
+
+**Not yet done:** `src/adapters/backlog.ts`'s envelope parsing, Zod schemas
+(`EnvelopeSchema`, `TaskSchema`, `TaskSummarySchema`, `SearchHitSchema`), and
+capability probe still implement the §1–§7 fork shape and would **fail their
+own probe** against upstream's real output (wrong `kind` strings, no top-level
+`data` key). Rewriting them against the table above is the next concrete
+engineering step, tracked on LORE-5.
 
 ---
 

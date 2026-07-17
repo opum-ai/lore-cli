@@ -4,7 +4,7 @@ title: Open the upstream --json PR and migrate lore on release
 status: In Progress
 assignee: []
 created_date: '2026-06-21 06:25'
-updated_date: '2026-07-17 23:22'
+updated_date: '2026-07-17 23:45'
 labels:
   - backlog-fork
   - upstream
@@ -21,13 +21,13 @@ ordinal: 5000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Open a minimal PR (list/view/search) vs upstream main on branch tasks/back-XXX-json-output; once released, switch lore from the fork git-dep to the published backlog.md and bump the min-version floor.
+Upstream (MrLesk/Backlog.md) shipped its own --json implementation independently (PR #790, BACK-545), closing issue #784 before lore opened a PR. lore adopts that contract directly instead of upstreaming this fork's patch: consume upstream's patched main branch (pinned commit, at/past the PR #790 merge, 22a091b) as an interim git dependency, rewrite src/adapters/backlog.ts against its real contract (different envelope/kind/field shape than this fork), then switch to the published package + bump the version floor once a tagged release ships.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Upstream PR opened and linked
-- [ ] #2 lore min-version floor documented for the --json release
+- [ ] #1 lore's git dependency and capability probe target upstream's --json build (pinned commit interim; published semver package once a tagged release includes PR #790), not this fork
+- [ ] #2 src/adapters/backlog.ts (envelope parsing, Zod schemas, probe) matches upstream's actual --json contract (see backlog-json-schema.md §8), not this fork's {schemaVersion, kind, data} shape
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -204,6 +204,52 @@ to rewrite src/adapters/backlog.ts's envelope parsing, Zod schemas, and probe
 against the real upstream shape documented above, rather than assuming today's
 schema doc is correct. No code changed this pass -- evaluation/documentation
 only, per explicit user direction.
+
+DECISION 2026-07-17 (user directive): adopt upstream's independent --json
+implementation now, rather than waiting for a tagged release or reopening our
+own upstream PR. Concretely: retire this fork (jeremy-newhouse/Backlog.md) as
+the plan of record; point lore's (future) git dependency at upstream's patched
+main branch, pinned to a commit at/past the PR #790 merge (22a091b), as an
+interim measure since no tagged release contains it yet; once a real release
+ships, switch to the published package and bump the capability probe's floor.
+
+Re-scoped the task's description and both ACs to match (old AC1 "upstream PR
+opened and linked" is retired -- we are not opening one; old AC2 "min-version
+floor documented" is superseded by the two new ACs: (1) dependency/probe
+targets upstream, pinned-commit interim then real release, (2) the adapter's
+envelope parsing/Zod schemas/probe actually match upstream's shape instead of
+this fork's).
+
+Flushed the decision into every doc that described the old fork-and-upstream
+plan as current, each with a migration-notice banner plus specifics, so none
+of them silently go stale:
+- docs/adr/0002-backlog-integration-json-only.md -- amendment noting Decision
+  items 1 (fork it ourselves) and 4 (upstream a PR) are superseded; the rest
+  of the ADR (JSON-only reads, envelope pattern, fail-loud probe, CLI-only
+  writes) still stands.
+- docs/reference/backlog-json-schema.md -- new §8 with the full envelope/kind/
+  field/exit-code comparison table (this fork vs. upstream PR #790) and the
+  interim pinned-commit plan; §1-7 marked as accurately describing what's
+  shipped in code TODAY, not the adoption target.
+- docs/reference/backlog-cli-contract.md -- migration-notice banner; §2.2
+  ("task view <missing> exits 0") flagged as a fact that FLIPS once migrated
+  (upstream exits 1 unconditionally); §5's capability probe section flagged as
+  fork-specific (MIN_BACKLOG floor, kind:"taskList" assertion) with the interim
+  pinned-commit alternative spelled out.
+- docs/runbooks/backlog-json-patch.md -- top-of-file "Superseded" banner
+  (sections 1-7, the fork/patch/upstream-PR procedure, are historical record
+  only); §8 rewritten from "wait for a release" into the concrete adoption
+  plan: retire the fork, pin the git dep to upstream's commit, rewrite the
+  adapter, then switch to a real release once tagged.
+
+`lore check` clean (37 files, 0 errors/warnings) after all doc edits.
+
+NOT done this pass (docs/planning only, per explicit user scope): no code
+changed. src/adapters/backlog.ts still parses this fork's shape; no git
+dependency is wired in package.json yet (the adapter currently just shells
+`backlog` on PATH, so there's nothing to repoint yet). The adapter rewrite
+(new AC#2) and the actual git-dependency wiring (new AC#1) are the concrete
+next engineering steps, not yet started.
 <!-- SECTION:NOTES:END -->
 
 ## Comments

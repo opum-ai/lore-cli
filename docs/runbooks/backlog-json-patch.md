@@ -24,6 +24,16 @@ The output of this runbook is twofold:
    in a stock release, after which `lore` migrates to the published package and
    bumps its minimum-version probe.
 
+> **Superseded (2026-07-17, LORE-5).** Outcome 2 above didn't happen the way
+> planned: MrLesk's team shipped their **own** independent `--json`
+> implementation ([PR #790](https://github.com/MrLesk/Backlog.md/pull/790),
+> BACK-545) before we opened one. `lore` is **adopting that implementation
+> directly** instead of upstreaming this fork's patch. Sections 1–7 below are
+> kept as a historical record of what was actually built and shipped in
+> `src/adapters/backlog.ts` (LORE-2/4/21) — they are **not** the path forward.
+> Skip to [§8](#8-migrate-to-upstream-on-release-and-bump-the-floor) for the
+> current adoption plan.
+
 The shape of the JSON this patch must emit is **not** invented here — it is
 specified, field by field, in
 [the Backlog.md `--json` schema](../reference/backlog-json-schema.md). The
@@ -337,19 +347,49 @@ serializer, separate diff) so reviewers see the small scope is deliberate.
 > written once a real release exists — re-derive the adapter from PR #790's
 > `src/formatters/json-output.ts` and `CLI-INSTRUCTIONS.md` instead.
 
-Once `--json` ships in a stock Backlog.md release:
+~~Once `--json` ships in a stock Backlog.md release:~~ Superseded by the plan
+below — adopted **now**, ahead of a tagged release, per the correction above.
 
-1. Flip `lore`'s dependency from the fork git-dep to the published package
-   (`"backlog.md": "^<first-version-with-json>"`).
-2. **Bump the capability probe's minimum version** to that release, so the floor
-   now points at a stock binary rather than the fork branch.
+1. ~~Flip `lore`'s dependency from the fork git-dep to the published package
+   (`"backlog.md": "^<first-version-with-json>"`).~~
+2. ~~Bump the capability probe's minimum version to that release, so the floor
+   now points at a stock binary rather than the fork branch.~~
 3. ~~Keep the canonical schema reference
    ([backlog-json-schema.md](../reference/backlog-json-schema.md)) as the
    contract of record; the upstream output must match it (the patch was designed
-   to produce exactly that shape).~~ Superseded — see the correction above.
-4. Until then, **rebase the fork branch on upstream periodically** — Backlog.md
-   is an active repo. Re-grep the cited line numbers after each rebase; they are
-   anchors, not guarantees.
+   to produce exactly that shape).~~
+4. ~~Until then, rebase the fork branch on upstream periodically.~~
+
+### 8.1 The adoption plan (current)
+
+`lore` adopts upstream's implementation **now**, ahead of a tagged release,
+rather than waiting — same rationale as [ADR-0002's alternative
+5](../adr/0002-backlog-integration-json-only.md#alternatives-considered)
+(don't block the whole coupling feature on an external roadmap):
+
+1. **Retire this fork as the plan of record.** `jeremy-newhouse/Backlog.md`
+   (`tasks/back-510-json-output` @ `a80b7a1`) is no longer rebased or extended.
+   It remains as a historical reference for what LORE-2/4/21 originally shipped
+   against.
+2. **Point the (future) git dependency at upstream, not the fork**, pinned to a
+   commit at or past the PR #790 merge
+   (`22a091b570d44c4f302ca47e7fd36fa28ad8bcb0` on `MrLesk/Backlog.md#main`) —
+   e.g. `"backlog.md": "github:MrLesk/Backlog.md#22a091b..."` — since no tagged
+   release contains it yet.
+3. **Rewrite `src/adapters/backlog.ts`'s envelope parsing, Zod schemas, and
+   capability probe** against upstream's real contract, documented in
+   [backlog-json-schema.md §8](../reference/backlog-json-schema.md#8-migration-target--upstream-independent-contract-adopted)
+   — different envelope shape, `schemaVersion` type, `kind` spelling, task
+   fields, search hit shape, and not-found exit code than this fork emits. This
+   is a contract migration, not a floor bump — the current adapter would fail
+   its own probe against upstream's real output. **Not done yet** — tracked on
+   LORE-5.
+4. **Once a tagged `MrLesk/Backlog.md` release includes the PR #790 commit**,
+   switch from the pinned-commit git dependency to the published package
+   (`"backlog.md": "^<that-release>"`) and bump the capability probe's minimum
+   version to it — this is the only step that still matches the *original*
+   plan's shape (a normal semver floor bump), just against upstream's version
+   instead of the fork's.
 
 ---
 
