@@ -28,9 +28,12 @@ site/
 website/build/
 .docusaurus/
 
-# Obsidian per-user vault state (commit docs/.obsidian/app.json only)
-docs/.obsidian/workspace*.json
-docs/.obsidian/cache
+# Obsidian per-user vault state (commit docs/.obsidian/app.json only). Exclude-all-except,
+# not an enumerated list of known files (workspace.json, appearance.json, core-plugins.json,
+# hotkeys.json, graph.json, plugins/, snippets/, cache/, ...) -- Obsidian creates more of these
+# than any fixed list can keep up with, confirmed by a real vault open against this repo's docs/.
+docs/.obsidian/*
+!docs/.obsidian/app.json
 
 # Secrets / env
 .env

@@ -24,8 +24,11 @@ import { parseConcept } from "../src/core/concept";
 import {
   buildDocusaurusScaffold,
   buildMkdocsScaffold,
+  buildObsidianScaffold,
   DOCUSAURUS_CONFIG_REL_PATH,
   MKDOCS_CONFIG_REL_PATH,
+  OBSIDIAN_APP_JSON_REL_PATH,
+  OBSIDIAN_GUIDANCE_NOTES,
   SIDEBARS_REL_PATH,
   TAGS_INDEX_REL_PATH,
   WEBSITE_PACKAGE_JSON_REL_PATH,
@@ -411,6 +414,93 @@ describe("lore scaffold docusaurus — output rendering", () => {
   });
 });
 
+describe("core/consumer-scaffold — buildObsidianScaffold (pure)", () => {
+  test("is deterministic: identical options produce identical bytes", () => {
+    const opts = { timestamp: "2026-07-11T12:00:00.000Z", siteName: "lore" };
+    expect(buildObsidianScaffold(opts)).toEqual(buildObsidianScaffold(opts));
+  });
+
+  test("plans exactly docs/.obsidian/app.json, and carries the Files & Links guidance notes", () => {
+    const plan = buildObsidianScaffold({ timestamp: "2026-07-11T12:00:00.000Z", siteName: "lore" });
+    expect(plan.dirs).toEqual(["docs/.obsidian"]);
+    expect(plan.files.map((f) => f.path)).toEqual([OBSIDIAN_APP_JSON_REL_PATH]);
+    expect(plan.notes).toEqual(OBSIDIAN_GUIDANCE_NOTES);
+  });
+
+  test("app.json carries every documented setting (consumer-compatibility.md §3.2 / ADR-0010 §2)", () => {
+    const plan = buildObsidianScaffold({ timestamp: "2026-07-11T12:00:00.000Z", siteName: "lore" });
+    const raw = plan.files.find((f) => f.path === OBSIDIAN_APP_JSON_REL_PATH)?.contents ?? "";
+    expect(raw.endsWith("\n")).toBe(true);
+    const config = JSON.parse(raw) as Record<string, unknown>;
+    expect(config).toEqual({
+      useMarkdownLinks: true,
+      newLinkFormat: "relative",
+      alwaysUpdateLinks: true,
+    });
+  });
+});
+
+describe("lore scaffold obsidian — fresh scaffold", () => {
+  test("creates the file and exits 0", () => {
+    const { code, result } = scaffold(["obsidian"]);
+    expect(code).toBe(0);
+    expect(result.target).toBe("obsidian");
+    expect(result.force).toBe(false);
+    expect(result.files).toEqual([{ path: OBSIDIAN_APP_JSON_REL_PATH, action: "created" }]);
+    expect(existsSync(join(root, OBSIDIAN_APP_JSON_REL_PATH))).toBe(true);
+  });
+
+  test("creates the docs/.obsidian directory when the bundle was never initialized", () => {
+    expect(existsSync(join(root, "docs"))).toBe(false);
+    scaffold(["obsidian"]);
+    expect(existsSync(join(root, OBSIDIAN_APP_JSON_REL_PATH))).toBe(true);
+  });
+});
+
+describe("lore scaffold obsidian — never-silent-clobber (AC: user-owned, never re-overwritten)", () => {
+  test("a re-run without --force refuses with a conflict (exit 5) and touches nothing", () => {
+    scaffold(["obsidian"]);
+    const before = readFileSync(join(root, OBSIDIAN_APP_JSON_REL_PATH), "utf8");
+
+    const err = expectError("conflict", () =>
+      runScaffold({ root, output: JSON_CTX, args: ["obsidian"], stdout: capture() }),
+    );
+    expect(err.message).toContain(OBSIDIAN_APP_JSON_REL_PATH);
+    expect(err.hint).toContain("--force");
+    expect(readFileSync(join(root, OBSIDIAN_APP_JSON_REL_PATH), "utf8")).toBe(before);
+  });
+
+  test("--force overwrites the existing file and reports `updated`", () => {
+    scaffold(["obsidian"]);
+    const { code, result } = scaffold(["obsidian", "--force"]);
+    expect(code).toBe(0);
+    expect(result.force).toBe(true);
+    expect(result.files).toEqual([{ path: OBSIDIAN_APP_JSON_REL_PATH, action: "updated" }]);
+  });
+});
+
+describe("lore scaffold obsidian — output rendering", () => {
+  test("plain mode lists the file, a summary, then the Files & Links guidance notes", () => {
+    const stdout = capture();
+    runScaffold({ root, output: PLAIN_CTX, args: ["obsidian"], stdout, clock: FIXED_CLOCK });
+    const lines = stdout.lines();
+    expect(lines).toContain(`created ${OBSIDIAN_APP_JSON_REL_PATH}`);
+    expect(lines).toContain("scaffolded obsidian config (1 file)");
+    for (const note of OBSIDIAN_GUIDANCE_NOTES) {
+      expect(lines).toContain(note);
+    }
+  });
+
+  test("the JSON envelope carries the guidance notes verbatim", () => {
+    const { result } = scaffold(["obsidian"]);
+    expect(result.notes).toEqual(OBSIDIAN_GUIDANCE_NOTES);
+  });
+
+  test("mkdocs/docusaurus results carry an empty notes array", () => {
+    expect(scaffold(["mkdocs"]).result.notes).toEqual([]);
+  });
+});
+
 describe("lore scaffold — argument validation", () => {
   function usageError(args: string[]): LoreError {
     return expectError("usage", () => runScaffold({ root, output: JSON_CTX, args, stdout: capture() }));
@@ -422,10 +512,6 @@ describe("lore scaffold — argument validation", () => {
 
   test("an unknown target is a usage error", () => {
     expect(usageError(["hugo"]).message).toContain('unknown scaffold target "hugo"');
-  });
-
-  test("a documented-but-unimplemented target (obsidian) is a usage error, not a crash", () => {
-    expect(usageError(["obsidian"]).message).toContain("not implemented yet");
   });
 
   test("an extra positional is a usage error", () => {

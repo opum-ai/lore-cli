@@ -30,6 +30,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency set has.
 
 ### Added
+- **`lore scaffold obsidian` — the third consumer-scaffolding target** (LORE-41). Writes a single
+  `docs/.obsidian/app.json` preset (`useMarkdownLinks: true`, `newLinkFormat: "relative"`,
+  `alwaysUpdateLinks: true` — consumer-compatibility.md §3.2), plus Files & Links UI guidance
+  printed after the file summary (plain and `--json`), since Obsidian only reads `app.json` on
+  startup and some builds (mobile in particular) don't honor it at all — the Settings UI is the
+  real guarantee. Reuses the same never-silent-clobber/`--force` contract as `mkdocs`/`docusaurus`.
+  Fixed a real `.gitignore` gap found while dogfooding against a live vault: the enumerated
+  `docs/.obsidian/workspace*.json` / `docs/.obsidian/cache` patterns missed `appearance.json` and
+  `core-plugins.json` (both real files a fresh Obsidian vault-open creates); replaced with an
+  exclude-all-except pair (`docs/.obsidian/*` + `!docs/.obsidian/app.json`), which no longer
+  depends on enumerating every file Obsidian might create. Verified against a real, running
+  Obsidian instance (installed with its CLI enabled specifically for this): `docs/index.md`
+  resolves 33 real outgoing links and receives backlinks from 12 files when `docs/` is opened as
+  the vault, and `app.vault.getConfig(...)` confirmed the live app actually loaded the scaffolded
+  settings from disk, not just that the bytes looked right.
 - **`lore scaffold docusaurus` — the second consumer-scaffolding target** (LORE-40). Writes a
   `website/` directory (additive, outside `docs/`, per ADR-0010): `package.json` pinning
   `@docusaurus/core`/`@docusaurus/preset-classic` to the same exact version (Docusaurus packages
@@ -48,9 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   needed none beyond the always-present `docs/`; docusaurus needs a fresh `website/`). A real
   `docusaurus build` against the scaffolded config and this repo's own bundle — including its raw
   `<`/`{` prose — now runs as its own CI job (`scaffold-docusaurus`), mirroring `scaffold-mkdocs`'s
-  separation of a heavyweight external toolchain from `bun test`. `obsidian` remains a documented
-  target pending its own task (LORE-41); any other target string, or one not yet implemented, is a
-  `usage` error (exit `2`).
+  separation of a heavyweight external toolchain from `bun test`. Any other target string, or one
+  not yet implemented, is a `usage` error (exit `2`).
 - **`lore scaffold mkdocs` — the first consumer-scaffolding target** (LORE-39). Writes a repo-root
   `mkdocs.yml` (Material theme, `navigation.indexes`, `search`/`tags` plugins, `strict: false` with
   `not_found`/`anchors: warn` honoring OKF's broken-link tolerance, `absolute_links: relative_to_docs`)
