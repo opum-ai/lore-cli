@@ -380,14 +380,16 @@ rather than waiting — same rationale as [ADR-0002's alternative
    deferred to step 4 below, once a tagged release exists to depend on normally.
 3. **Rewrite `src/adapters/backlog.ts`'s envelope parsing, Zod schemas, and
    capability probe** against upstream's real contract, documented in
-   [backlog-json-schema.md §8](../reference/backlog-json-schema.md#8-migration-target--upstream-independent-contract-adopted)
+   [backlog-json-schema.md §8](../reference/backlog-json-schema.md#8-migration-history-complete)
    — different envelope shape, `schemaVersion` type, `kind` spelling, task
-   fields, search hit shape, and not-found exit code than this fork emits. This
-   is a contract migration, not a floor bump. **Split across two tasks:** the
-   capability probe (`probeBacklog`, `PROBE_SCHEMA_VERSION`, `TASK_LIST_KIND`)
-   is done — LORE-53; the full read adapter (`EnvelopeSchema`, `parseEnvelope`,
-   `listTasks`/`viewTask`/`searchTasks`, golden fixtures) is **not done yet** —
-   tracked on LORE-54.
+   fields, search hit shape, and not-found exit code than this fork emitted.
+   This was a contract migration, not a floor bump. **Split across two tasks,
+   both done:** the capability probe (`probeBacklog`, `EXPECTED_SCHEMA_VERSION`,
+   `TASK_LIST_KIND`) — LORE-53; the full read adapter (`EnvelopeSchema`,
+   `parseEnvelope`, `listTasks`/`viewTask`/`searchTasks`, golden fixtures) —
+   LORE-54, which also merged the probe's formerly-separate
+   `PROBE_SCHEMA_VERSION` constant back into the single `EXPECTED_SCHEMA_VERSION`
+   now that both sides target the same contract.
 4. **Once a tagged `MrLesk/Backlog.md` release includes the PR #790 commit**,
    add a real `package.json` dependency on the published package
    (`"backlog.md": "^<that-release>"`) and bump the capability probe's minimum

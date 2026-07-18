@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "kind": "search",
+  "results": [
+    {
+      "type": "task",
+      "data": {
+        "id": "LORE-38",
+        "title": "lore help --json capability manifest",
+        "status": "Done",
+        "type": null,
+        "priority": "medium",
+        "assignees": [
+          "@claude"
+        ],
+        "reporter": null,
+        "labels": [
+          "cmd",
+          "agent-api"
+        ],
+        "milestone": "m-5",
+        "parentTaskId": null,
+        "ordinal": 38000,
+        "createdAt": "2026-06-21T06:27:00Z",
+        "updatedAt": "2026-07-10T13:46:00Z"
+      }
+    },
+    {
+      "type": "task",
+      "data": {
+        "id": "LORE-54",
+        "title": "Rewrite src/adapters/backlog.ts against upstream's real --json contract",
+        "status": "In Progress",
+        "type": null,
+        "priority": "medium",
+        "assignees": [],
+        "reporter": null,
+        "labels": [
+          "core",
+          "adapter"
+        ],
+        "milestone": "m-0",
+        "parentTaskId": null,
+        "ordinal": 57000,
+        "createdAt": "2026-07-18T00:02:00Z",
+        "updatedAt": "2026-07-18T16:25:00Z"
+      }
+    },
+    {
+      "type": "task",
+      "data": {
+        "id": "LORE-6",
+        "title": "Scaffold package.json, tsconfig, and pinned Bun toolchain",
+        "status": "Done",
+        "type": null,
+        "priority": "high",
+        "assignees": [
+          "@claude"
+        ],
+        "reporter": null,
+        "labels": [
+          "tooling"
+        ],
+        "milestone": "m-1",
+        "parentTaskId": null,
+        "ordinal": 6000,
+        "createdAt": "2026-06-21T06:25:00Z",
+        "updatedAt": "2026-06-21T16:55:00Z"
+      }
+    }
+  ]
+}

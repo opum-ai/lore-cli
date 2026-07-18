@@ -17,11 +17,13 @@ governs the **adapter** (`src/adapters/backlog.ts`) and every coupling command
 Two facts shape everything below:
 
 1. **Reads are JSON-only.** `lore` reads structured data from a `--json` flag
-   that **stock Backlog.md does not have**. `lore` consumes a forked,
-   `--json`-capable build (`jeremy-newhouse/Backlog.md`); see the
-   [Backlog --json patch runbook](../runbooks/backlog-json-patch.md) and the
-   [Backlog JSON schema](backlog-json-schema.md). There is **no `--plain`
-   text-parser fallback** — that is a deliberate rejection (see
+   that **stock Backlog.md does not have**. `lore` consumes upstream
+   (`MrLesk/Backlog.md`) pinned at or past the PR #790 merge commit — a
+   manually-built binary during this interim period, since no tagged release
+   contains that commit yet; see the
+   [Backlog --json patch runbook §8](../runbooks/backlog-json-patch.md#8-migrate-to-upstream-on-release-and-bump-the-floor)
+   and the [Backlog JSON schema](backlog-json-schema.md). There is **no
+   `--plain` text-parser fallback** — that is a deliberate rejection (see
    [appendix](#appendix-rejected-fallback--why-lore-does-not-parse---plain)).
 2. **Writes go through the CLI, never file writes.** `lore` never writes
    `backlog/tasks/*.md` directly. All task mutations run `backlog task create` /
@@ -33,25 +35,21 @@ The shape and field names of the JSON envelope are specified in
 broader design rationale lives in the [lore design spec](../specs/lore-design.md)
 and the relevant ADRs (linked inline).
 
-> **Migration notice (2026-07-17, LORE-5).** `lore` is adopting upstream's own,
-> independently-shipped `--json` contract (PR #790 / BACK-545) instead of this
-> fork's — see [backlog-json-schema.md §8](backlog-json-schema.md#8-migration-target--upstream-independent-contract-adopted).
-> Everything below still describes what's shipped in code **today**; §2.2 and
-> §5 each have a callout marking the specific fact that changes once `lore`
-> migrates.
-
 ---
 
 ## 1. Read path (JSON-only)
 
-All reads request the canonical envelope from the forked binary:
+All reads request the canonical envelope from the pinned upstream binary — a
+per-command envelope, not a shared shape:
 
 ```json
-{ "schemaVersion": "1", "kind": "<task|taskList|searchResult>", "data": <payload> }
+{ "schemaVersion": 1, "kind": "task-list", "tasks": [ ] }
+{ "schemaVersion": 1, "kind": "task-view", "task": { } }
+{ "schemaVersion": 1, "kind": "search", "results": [ ] }
 ```
 
-`schemaVersion` is the **string** `"1"` and `kind` is one of `"task"`,
-`"taskList"`, `"searchResult"` (camelCase) — the exact values the fork emits and
+`schemaVersion` is the **number** `1` and `kind` is one of `"task-list"`,
+`"task-view"`, `"search"` (hyphenated) — the exact values upstream emits and
 that [backlog-json-schema.md](backlog-json-schema.md) (the schema of record)
 pins. The capability probe and the M2 adapter assert these verbatim.
 
@@ -135,24 +133,26 @@ the spec and the on-disk filename). The CLI accepts either case on **input**
 (`task view task-1` and `TASK-1` both work), but all CLI **output** is
 uppercase, so any equality check against CLI output must be **case-insensitive**.
 
-### 2.2 Existence checks — use edit/list, never view
+### 2.2 Existence checks — `task view`'s exit code is meaningful
 
-**`task view <missing>` exits 0** (it prints `Task X not found.` to stderr but
-returns success). Never use `task view`'s exit code to test existence — in
-probing, `lore link`, or anywhere.
+**`task view <missing>` (and the bare `task <missing>` shortcut) exits `1`
+unconditionally**, in every output mode — matching `task archive`'s
+convention. `lore`'s adapter (`viewTask`) checks exactly this: exit `1` (with
+empty stdout) is the "no such task" signal; any other nonzero exit is a
+fail-loud drift, never a silent "missing" guess.
 
-- `task edit <missing>` exits **1**.
-- `task list` / a successful `task view --json` parse confirm existence.
+- `task edit <missing>` also exits **1** — `editTask` disambiguates it from
+  other edit failures via its own stderr `not found` text (a separate call
+  site from `viewTask`, so the two never need to agree on a shared signal).
+- `task list` / a successful `task view --json` parse also confirm existence.
 
-Use `edit` or `list` for existence; treat `view`'s exit code as meaningless.
-
-> **This flips on migration.** Upstream's PR #790 makes `task view <missing>`
-> (and the bare `task <missing>` shortcut) exit **1 unconditionally**, in every
-> output mode — matching `task archive`'s convention. Once `lore` consumes
-> upstream's build, `view`'s exit code becomes meaningful and the adapter's
-> `viewTask` (which today treats *empty stdout* as the "missing" signal) should
-> be rewritten to check the exit code instead. See
-> [backlog-json-schema.md §8](backlog-json-schema.md#8-migration-target--upstream-independent-contract-adopted).
+> **History.** This is a migration-driven flip (LORE-54). The earlier fork
+> this project shipped against (LORE-2/4/21) had `task view <missing>` exit
+> `0` with empty stdout and a stderr message — an exit code that was *not* a
+> usable existence signal, so `lore`'s adapter used to treat empty stdout as
+> the "missing" tell instead. Upstream's PR #790 made the exit code meaningful;
+> see [backlog-json-schema.md §8](backlog-json-schema.md#8-migration-history-complete)
+> for the full migration history.
 
 ### 2.3 The doc back-reference — a queryable label, plus --doc for display
 
@@ -327,8 +327,9 @@ Run once at startup, cached in `.lore/cache/`. See the
   envelope parse is the real discriminator: a binary without `--json` support
   rejects the option and step 4 fails its parse. See the
   [Backlog --json patch runbook](../runbooks/backlog-json-patch.md).
-- **Never use `task view`'s exit code** in the probe or anywhere (it exits 0 on
-  missing in this fork; this flips on migration — [§2.2](#22-existence-checks--use-editlist-never-view)).
+- **The probe never calls `task view`** — only `--version` and `task list --json`
+  (existence/missing-task handling is `viewTask`'s own concern; see
+  [§2.2](#22-existence-checks--task-views-exit-code-is-meaningful)).
 - **Graceful failure modes:**
   - `backlog` absent from PATH (spawn `ENOENT`) → clear install hint, exit 3.
   - Version below floor / `--json` probe fails → refuse the coupling commands
@@ -340,26 +341,25 @@ The `--json` envelope is an **additive-only versioned contract**
 ([backlog-json-schema.md](backlog-json-schema.md)); a bump in `schemaVersion`
 that `lore` does not recognize fails the probe rather than mis-reads.
 
-> **Migration status (LORE-53, done): the probe now targets upstream, not this
-> fork.** Step 4 asserts upstream's real envelope (`kind: "task-list"`, a
-> `tasks` array, numeric `schemaVersion: 1`) rather than this fork's
-> `{schemaVersion: "1", kind: "taskList", data}` shape — see
-> [backlog-json-schema.md §8](backlog-json-schema.md#8-migration-target--upstream-independent-contract-adopted).
-> `MIN_BACKLOG_VERSION` is unchanged (`1.47.1`): there is still no tagged
-> upstream release containing `--json` to set a real floor against, so it
-> remains the same non-discriminating sanity check described above — no
-> version comparison can yet tell "has upstream's `--json`" apart from "does
-> not." Until a tagged `MrLesk/Backlog.md` release includes the PR #790 commit
-> (`22a091b570d44c4f302ca47e7fd36fa28ad8bcb0`), running `lore`'s coupling
-> commands requires a manually-built `backlog` binary from that pinned commit
-> on PATH (see the [patch runbook §8](../runbooks/backlog-json-patch.md)) —
-> deliberately **not** a `package.json` git dependency: `lore` has not shipped
-> yet, so this is dev/test-time-only wiring, deferred until a real release
-> exists (LORE-53 decision). **Still pending (LORE-54):** the full read
-> adapter (`EnvelopeSchema`, `parseEnvelope`, `listTasks`/`viewTask`/
-> `searchTasks`) still targets this fork's shape — the probe check above and
-> the full-adapter parse below are on two different contracts until LORE-54
-> lands.
+> **Migration status: complete (LORE-53 probe, LORE-54 full adapter).** Both
+> the probe (step 4 above) and the full read adapter (`EnvelopeSchema`,
+> `parseEnvelope`, `listTasks`/`viewTask`/`searchTasks`) now target upstream's
+> real envelope — numeric `schemaVersion: 1`, hyphenated `kind`s
+> (`task-list`/`task-view`/`search`), and a per-command payload key
+> (`tasks`/`task`/`results`), not the fork's uniform `{schemaVersion: "1",
+> kind, data}` shape. See
+> [backlog-json-schema.md §8](backlog-json-schema.md#8-migration-history-complete)
+> for the full history. `MIN_BACKLOG_VERSION` is unchanged (`1.47.1`): there is
+> still no tagged upstream release containing `--json` to set a real floor
+> against, so it remains the same non-discriminating sanity check described
+> above — no version comparison can yet tell "has upstream's `--json`" apart
+> from "does not." Until a tagged `MrLesk/Backlog.md` release includes the
+> PR #790 commit (`22a091b570d44c4f302ca47e7fd36fa28ad8bcb0`), running `lore`'s
+> coupling commands requires a manually-built `backlog` binary from that pinned
+> commit on PATH (see the [patch runbook §8](../runbooks/backlog-json-patch.md))
+> — deliberately **not** a `package.json` git dependency: `lore` has not
+> shipped yet, so this is dev/test-time-only wiring, deferred until a real
+> release exists (LORE-53 decision).
 
 ---
 
@@ -386,11 +386,13 @@ all confirmed in v1.47.1:
 
 Maintaining a parser against unstable presentation output — with golden-snapshot
 fixtures re-captured on every Backlog release — is exactly the fragility `lore`
-is built to avoid. Instead `lore` requires a **`--json`-capable fork**
-([runbook](../runbooks/backlog-json-patch.md)) and a fail-loud capability probe
-(§5). The cost is the fork dependency; the benefit is a stable, parseable,
-versioned contract and a deterministic, agent-safe core. This trade-off is
-recorded in the [read-path ADR](../adr/0002-backlog-integration-json-only.md).
+is built to avoid. Instead `lore` requires a **`--json`-capable build**
+(currently a manually-built upstream binary pinned at a specific commit; see
+the [patch runbook §8](../runbooks/backlog-json-patch.md#8-migrate-to-upstream-on-release-and-bump-the-floor))
+and a fail-loud capability probe (§5). The cost is the pinned-build dependency;
+the benefit is a stable, parseable, versioned contract and a deterministic,
+agent-safe core. This trade-off is recorded in the
+[read-path ADR](../adr/0002-backlog-integration-json-only.md).
 
 The verified facts about stock `--plain`/CLI behavior above are retained in this
 contract not as a fallback but because they are **renderer-independent operational

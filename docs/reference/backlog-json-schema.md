@@ -2,17 +2,17 @@
 # yaml-language-server: $schema=../../.lore/schemas/Reference.schema.json
 type: Reference
 title: "Backlog.md --json schema (the envelope lore consumes)"
-description: The canonical {schemaVersion, kind, data} JSON envelope and per-kind payload shapes emitted by the forked Backlog.md --json flag, which lore's M2 adapter JSON.parses. Documents the task / taskList / searchResult shapes, field-by-field, with the durability and portability caveats lore must respect.
+description: The canonical, per-command JSON envelopes and payload shapes emitted by upstream (MrLesk/Backlog.md) `--json` flag, which lore's adapter JSON.parses. Documents the task-list / task-view / search shapes, field-by-field, with the durability and portability caveats lore must respect.
 tags: [reference, backlog, json, schema, contract, adapter]
-summary: The exact JSON contract lore reads from the forked Backlog.md --json flag — a {schemaVersion, kind, data} envelope with task, taskList, and searchResult payloads.
+summary: The exact JSON contract lore reads from upstream Backlog.md's --json flag — per-command envelopes (task-list/task-view/search) with their own payload keys (tasks/task/results).
 timestamp: 2026-06-21T00:00:00Z
 ---
 
 # Backlog.md `--json` schema
 
-This is the canonical contract `lore` consumes from the forked, `--json`-capable
+This is the canonical contract `lore` consumes from upstream, `--json`-capable
 Backlog.md. It specifies the **envelope** every `--json` command prints and the
-**per-`kind` payload shapes** (`task`, `taskList`, `searchResult`), field by
+**per-`kind` payload shapes** (`task-list`, `task-view`, `search`), field by
 field, with the durability and portability caveats the adapter must honor.
 
 The decision to integrate JSON-only (no `--plain` text-parser fallback) is
@@ -20,68 +20,65 @@ recorded in
 [ADR-0002: Backlog.md integration — JSON-only](../adr/0002-backlog-integration-json-only.md).
 The commands, flags, exit codes, and write-path conventions (e.g. capturing the
 new ID from the `Created task <ID>` line) live in the companion
-[Backlog.md CLI contract](backlog-cli-contract.md). The fork/patch/rebase
-procedure is the [Backlog.md `--json` patch runbook](../runbooks/backlog-json-patch.md).
-This page is the data shape only.
+[Backlog.md CLI contract](backlog-cli-contract.md). This page is the data shape
+only.
 
-> **Provenance.** Stock Backlog.md **v1.47.1 has no `--json` flag.** This schema
-> describes the output of `jeremy-newhouse/Backlog.md`, a fork that adds `--json`
-> to three read commands by serializing Backlog.md's existing in-memory task
-> model *before* its text formatter runs (a "serialize-before-format" branch).
-> The flag adds **no new fields and no storage changes** — it exposes the model
-> that already backs the human/`--plain` output. The shape below is the curated
-> serializer's output, not a raw `JSON.stringify(task)`.
-
-> **Migration notice (2026-07-17, LORE-5).** `lore` is **adopting upstream's
-> own, independently-shipped `--json` contract** instead of this fork's — see
-> [§8](#8-migration-target--upstream-independent-contract-adopted) for the
-> target shape and the interim consumption plan. Everything in §1–§7 below
-> still accurately describes **what the shipped adapter (`src/adapters/backlog.ts`)
-> parses today** — the code has not migrated yet, so treat this as the current,
-> not final, contract until that migration lands.
+> **Provenance.** Stock Backlog.md **v1.47.1 has no `--json` flag.** MrLesk's
+> team shipped their own implementation independently —
+> [PR #790](https://github.com/MrLesk/Backlog.md/pull/790), "BACK-545 - Add
+> stable JSON output to read commands", merged 2026-07-16 to `MrLesk/Backlog.md`
+> `main` at commit `22a091b570d44c4f302ca47e7fd36fa28ad8bcb0` — and `lore`
+> adopted that contract (LORE-5) rather than upstreaming an earlier,
+> differently-shaped fork of its own (`jeremy-newhouse/Backlog.md`; see
+> [§8](#8-migration-history-complete) for that history). As of this writing
+> PR #790 is merged but **not yet in a tagged release** (the latest tag,
+> v1.48.0, predates the merge) — see the
+> [patch runbook §8](../runbooks/backlog-json-patch.md#8-migrate-to-upstream-on-release-and-bump-the-floor)
+> for the interim pinned-commit consumption plan. The shape below is upstream's
+> curated serializer output (`src/formatters/json-output.ts`), not a raw
+> `JSON.stringify(task)` — it adds no new fields and no storage changes.
 
 ---
 
 ## 1. The envelope
 
-Every `--json` command prints **exactly one** JSON object to stdout, of the form:
+Each `--json` command prints **exactly one** JSON object to stdout, pretty-printed
+(`JSON.stringify(value, null, 2)`) with a trailing newline. Unlike a uniform
+`{schemaVersion, kind, data}` shape, **each command names its own payload key**
+— there is no shared `data` key:
 
 ```json
-{
-  "schemaVersion": "1",
-  "kind": "task",
-  "data": { }
-}
+{ "schemaVersion": 1, "kind": "task-list", "tasks": [ ] }
+{ "schemaVersion": 1, "kind": "task-view", "task": { } }
+{ "schemaVersion": 1, "kind": "search", "results": [ ] }
 ```
 
 | Field | Type | Notes |
 |---|---|---|
-| `schemaVersion` | string | Currently `"1"`. **Additive-only** contract: new optional fields may appear within a version; field removals or renames bump the version. The adapter pins a minimum and tolerates unknown extra keys. |
-| `kind` | string | Discriminates the payload shape: `"task"`, `"taskList"`, or `"searchResult"`. |
-| `data` | object \| array | The payload, shaped per `kind` (§3–§5). |
+| `schemaVersion` | **number** | Currently `1`. **Additive-only** contract: "Version 1 may gain backward-compatible fields, but removing, renaming, retyping, or changing documented field semantics requires a new `schemaVersion`" (CLI-INSTRUCTIONS.md). The adapter pins a floor and tolerates unknown extra keys. |
+| `kind` | string | Discriminates the payload shape and its key: `"task-list"`, `"task-view"`, or `"search"` (hyphenated). |
+| payload | object \| array | Named per command — `tasks` (array), `task` (object), or `results` (array) — shaped per `kind` (§3–§5). |
 
 **Stream discipline.** The envelope is the **only** thing on stdout — a single
-parseable JSON object, no banner, no perf line, no trailing log. Diagnostics and
-warnings (if any) go to stderr. `lore` reads stdout, `JSON.parse`s it, asserts
-`schemaVersion` is at-or-above its floor and `kind` matches the command it ran,
-then maps `data` into typed objects. A `kind` or `schemaVersion` mismatch is a
-fail-loud error (exit `6`), never a best-effort parse — there is no text fallback
-to degrade to.
+parseable JSON object, no banner, no perf line, no trailing log. **Errors leave
+stdout empty**, write a concise message to stderr, and exit nonzero
+(CLI-INSTRUCTIONS.md) — there is no partial/best-effort envelope. `lore` reads
+stdout, `JSON.parse`s it, asserts `schemaVersion` is at-or-above its floor and
+`kind` matches the command it ran, then maps the named payload into typed
+objects. A `kind` or `schemaVersion` mismatch is a fail-loud error (exit `6`),
+never a best-effort parse — there is no text fallback to degrade to.
 
-**Command → `kind` mapping.**
+**Command → `kind` / payload key mapping.**
 
-| Command | `kind` | `data` shape | Section |
-|---|---|---|---|
-| `backlog task view <id> --json` | `task` | single task object | [§3](#3-kind-task) |
-| `backlog task list --json` | `taskList` | array of task summaries | [§4](#4-kind-tasklist) |
-| `backlog search <query> --json` | `searchResult` | array of scored hits | [§5](#5-kind-searchresult) |
+| Command | `kind` | Payload key | Payload shape | Section |
+|---|---|---|---|---|
+| `backlog task list --json` | `task-list` | `tasks` | array of task summaries | [§4](#4-kind-task-list) |
+| `backlog task view <id> --json` / bare `task <id> --json` | `task-view` | `task` | single task object | [§3](#3-kind-task-view) |
+| `backlog search [query] --json` | `search` | `results` | array of type-tagged hits (no score, §5) | [§5](#5-kind-search) |
 
-Writes (`task create --json`, `task edit --json`) are part of the fork's surface
-but `lore` does **not** parse their JSON to learn the new ID; it captures the ID
-from the `Created task <ID>` stdout line per the
-[CLI contract](backlog-cli-contract.md). Their `--json` payload, when present, is
-a `task` object (with the [`filePath` caveat](#6-field-caveats) below: it may be
-`null` on a freshly created task that has not yet been written to disk).
+Writes (`task create`, `task edit`) are **not** part of the `--json` surface —
+`lore` does not request `--json` on them; it captures the new ID from the
+`Created task <ID>` stdout line per the [CLI contract](backlog-cli-contract.md).
 
 ---
 
@@ -92,91 +89,90 @@ about Backlog.md's in-memory model; getting them wrong silently corrupts the
 coupling.
 
 - **`id` is display-cased.** Backlog.md exposes the *display* identity
-  (`"TASK-123"`, uppercase prefix), which differs from the lowercase on-disk
-  filename (`task-123 - Title.md`). **Never reconstruct a filename from `id`** —
-  prefix casing and zero-padding are configurable. Use `filePath` /
-  `filePathRelative` for the on-disk location and `id` for identity/links.
+  (`"LORE-33"`, uppercase prefix), which differs from the lowercase on-disk
+  filename (`lore-33 - Title.md`). **Never reconstruct a filename from `id`** —
+  prefix casing and zero-padding are configurable. Use `path` (task-view only;
+  §3, §6) for the on-disk location and `id` for identity/links.
 - **`status` is the raw value, no icon.** The text formatter wraps status in a
-  presentation icon (`formatStatusWithIcon`); the JSON serializer emits the raw
-  string (`"To Do"`, `"In Progress"`, `"Done"`, or any custom status configured
-  in `backlog/config.yml`). Treat `status` as an opaque configured label, not a
+  presentation icon; the JSON serializer emits the raw string (`"To Do"`,
+  `"In Progress"`, `"Done"`, or any custom status configured in
+  `backlog/config.yml`). Treat `status` as an opaque configured label, not a
   closed enum.
-- **Dates are strings, not timestamps.** `createdDate` / `updatedDate` and comment
-  dates are `"YYYY-MM-DD"` (or `"YYYY-MM-DD HH:mm"`) **strings**, matching
-  Backlog.md's on-disk convention. The serializer deliberately **omits or
-  normalizes** the in-memory `lastModified: Date` so the payload never mixes
-  ISO-8601 `T…Z` timestamps with these space-separated date strings. Do not
-  expect a `lastModified` field; if present in a future version it is normalized
-  to the same string convention.
+- **`priority` and `type` are open, config-driven labels, not a closed enum.**
+  Both come from `backlog/config.yml` (`priorities:` / `types:`) — a free
+  string or `null`, never a fixed `"high"|"medium"|"low"` set. `type` is
+  Backlog's *semantic task type* (e.g. `bug`, `feature`) — an unrelated concept
+  from the envelope's `kind`.
+- **Dates are `createdAt`/`updatedAt` strings, not timestamps.** Values are
+  normalized by `normalizePublicDate`: a pure `"YYYY-MM-DD"` source stays a bare
+  date; a source with a time component becomes RFC 3339 UTC
+  (`"YYYY-MM-DDTHH:mm:ssZ"`). A field is `null`, never absent, when the
+  underlying task carries no date. Comment dates (`createdAt` on a comment) use
+  the same normalization.
 - **List fields are always arrays** (possibly empty), never `null`:
-  `labels`, `dependencies`, `references`, `documentation`, `assignees`,
-  `modifiedFiles`, `acceptanceCriteria`, `definitionOfDone`, `comments`,
-  `subtasks`. Scalar-optional fields (`priority`, `milestone`, `parentTaskId`,
-  `updatedDate`, `branch`, …) are `null` when absent.
+  `assignees`, `labels`, `dependencies`, `references`, `documentation`,
+  `modifiedFiles`, `subtasks`, `acceptanceCriteria`, `definitionOfDone`,
+  `comments`. Scalar-optional fields (`type`, `priority`, `milestone`,
+  `parentTaskId`, `reporter`, `updatedAt`, `path`, …) are `null` when absent.
 - **Unknown keys are allowed.** Per the additive-only contract (and OKF's own
   tolerance ethos), the adapter ignores fields it does not recognize rather than
   failing on them.
+- **Internal fields are never exposed.** "Internal fields, absolute paths, raw
+  Markdown source objects, branch metadata, and search implementation details
+  are not exposed" (CLI-INSTRUCTIONS.md) — no `rawContent`, `lastModified`,
+  `source`, `branch`, `onStatusChange`, or `parentTaskTitle` field exists in
+  this contract at all (contrast the now-superseded fork shape, [§8](#8-migration-history-complete)).
 
 ---
 
-## 3. `kind: "task"`
+## 3. `kind: "task-view"`
 
-`data` is a single task object (output of `backlog task view <id> --json`). This
-is the richest shape; the [`taskList`](#4-kind-tasklist) summary is a subset.
+`task` is a single task object (output of `backlog task view <id> --json` or the
+bare `task <id> --json` shortcut). This is the richest shape; the
+[`task-list`](#4-kind-task-list) summary is a subset of its compact fields.
 
 ```jsonc
 {
-  "id": "TASK-123",                 // display-cased identity; do NOT derive filename
-  "title": "Bulk-archive completed orders",
-  "status": "In Progress",          // raw configured status, NO icon
-  "priority": "high",               // "high" | "medium" | "low" | null
-  "ordinal": 0,                     // sort ordinal within status, or null
+  "schemaVersion": 1,
+  "kind": "task-view",
+  "task": {
+    "id": "LORE-33",                  // display-cased identity; do NOT derive filename
+    "title": "lore query (full-text + frontmatter filters)",
+    "status": "Done",                 // raw configured status, NO icon
+    "type": null,                     // semantic task type (config `types:`), or null
+    "priority": "medium",             // config `priorities:` label, or null — not a closed set
+    "assignees": ["@jeremy"],         // always an array (may be empty)
+    "reporter": null,                 // or an assignee-shaped string
+    "labels": ["cmd"],                // array; see the doc: back-reference note below
+    "milestone": "m-4",               // or null
+    "parentTaskId": null,             // or a display-cased id
+    "ordinal": 33000,                 // sort ordinal within status, or null
 
-  "filePath": "/abs/repo/backlog/tasks/task-123 - Bulk-archive completed orders.md",
-  "filePathRelative": "backlog/tasks/task-123 - Bulk-archive completed orders.md",
+    "createdAt": "2026-06-21T06:26:00Z",  // RFC 3339 UTC, or bare "YYYY-MM-DD"
+    "updatedAt": "2026-06-29T17:28:00Z",  // string, or null
 
-  "assignees": ["@alice"],          // always an array (may be empty)
-  "reporter": "@bob",               // or null
+    "path": "backlog/tasks/lore-33 - lore-query-full-text-frontmatter-filters.md", // project-relative; null on a not-yet-written task
+    "description": "In-memory full-text (BM25-style) + frontmatter-field filters…",
+    "dependencies": ["LORE-16"],       // array of display-cased ids
+    "references": [],                  // array of free-form refs
+    "documentation": ["docs/adr/0015-lightweight-retrieval-no-vectors.md"], // array
+    "modifiedFiles": [],               // array
+    "subtasks": [],                    // always an array (may be empty)
 
-  "createdDate": "2026-06-20",      // "YYYY-MM-DD" string
-  "updatedDate": "2026-06-21",      // string, or null
+    "acceptanceCriteria": [            // array; index is NON-durable (see §6)
+      { "index": 1, "text": "Filter by type/tag/status/any field", "checked": true },
+      { "index": 2, "text": "Bounded output with a narrow-it hint", "checked": true }
+    ],
+    "definitionOfDone": [],            // array; index is NON-durable (see §6)
 
-  "labels": ["orders", "doc:stories/bulk-archive-orders"],  // array; see note below
-  "milestone": "M2",               // or null
-  "dependencies": ["TASK-100"],     // array of display-cased ids
-  "references": ["docs/specs/order-archival.md"],            // array of free-form refs
-  "documentation": ["docs/runbooks/archival.md"],           // array
-  "modifiedFiles": ["src/orders/archive.ts"],               // array
+    "implementationPlan": "1. core/query.ts: …",  // or null
+    "implementationNotes": "Implemented on feat/lore-33-query…", // or null
+    "finalSummary": null,              // or a string
 
-  "parentTaskId": "TASK-50",        // or null
-  "parentTaskTitle": "Orders epic", // view-path only; may be null/absent elsewhere
-  "subtasks": [                     // view-path only; array (may be empty/absent)
-    { "id": "TASK-124", "title": "Archive UI" }
-  ],
-
-  "acceptanceCriteria": [           // array; index is NON-durable (see §6)
-    { "index": 1, "text": "Orders older than 90 days can be archived", "checked": true },
-    { "index": 2, "text": "Archived orders are excluded from default list", "checked": false }
-  ],
-  "definitionOfDone": [             // array; index is NON-durable (see §6)
-    { "index": 1, "text": "Tests cover the 90-day boundary", "checked": false }
-  ],
-
-  "description": "Operators can archive orders older than 90 days in one action.",
-  "implementationPlan": "1. Add archive flag …",   // or null
-  "implementationNotes": "Used a soft-delete column …", // or null
-  "finalSummary": "Shipped behind a flag.",        // or null
-
-  "comments": [
-    { "index": 1, "author": "@alice", "createdDate": "2026-06-20", "body": "Started." }
-  ],
-
-  "source": "local",                // "local" | "remote" | "completed" | "local-branch" | null
-  "branch": "tasks/task-123",       // or null
-  "onStatusChange": null            // hook descriptor, or null
-
-  // rawContent is OMITTED by default (opt-in only; see §6)
-  // lastModified is OMITTED or normalized (see §2)
+    "comments": [
+      { "index": 1, "body": "Started.", "createdAt": "2026-06-20T00:00:00Z", "author": "@jeremy" }
+    ]
+  }
 }
 ```
 
@@ -192,45 +188,40 @@ A Backlog.md task `.md` file has free-form body sections (`## Description`,
 - `acceptanceCriteria` and `definitionOfDone` are arrays of
   `{ index, text, checked }`. `text` is the criterion's plain text; `checked` is
   the checkbox state. See the durability caveat in [§6](#6-field-caveats).
-- `comments` are `{ index, author, createdDate, body }`. `author` may be `null`.
+- `comments` are `{ index, body, createdAt, author }`. `author` may be `null`.
 - The free-form prose fields (`description`, `implementationPlan`,
   `implementationNotes`, `finalSummary`) are strings (markdown) or `null`.
 
-### 3.2 Field reference (`task`)
+### 3.2 Field reference (`task-view`'s `task`)
 
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `id` | string | yes | Display-cased. Identity, not filename. |
-| `title` | string | yes | |
-| `status` | string | yes | Raw configured status, no icon. |
-| `priority` | `"high"\|"medium"\|"low"\|null` | yes | |
-| `ordinal` | number \| null | yes | Position within status. |
-| `filePath` | string \| null | yes | **Absolute** on disk-loaded tasks; `null` on freshly created. Host-specific — see [§6](#6-field-caveats). |
-| `filePathRelative` | string \| null | yes | Repo-relative (`backlog/tasks/…`). Prefer this for portable links. |
-| `assignees` | string[] | yes | Array (renamed from the in-memory singular `assignee`). |
-| `reporter` | string \| null | yes | |
-| `createdDate` | string | yes | `"YYYY-MM-DD"`. |
-| `updatedDate` | string \| null | yes | `"YYYY-MM-DD"` or null. |
-| `labels` | string[] | yes | Includes the `doc:<conceptId>` back-reference label (see below). |
-| `milestone` | string \| null | yes | |
-| `dependencies` | string[] | yes | Display-cased ids. |
-| `references` | string[] | yes | Free-form. |
-| `documentation` | string[] | yes | Free-form. |
-| `modifiedFiles` | string[] | yes | |
-| `parentTaskId` | string \| null | yes | |
-| `parentTaskTitle` | string \| null | view-path | Set only on the `task view` enrichment path; may be `null`/absent on list/search. |
-| `subtasks` | `{id,title}[]` | view-path | Same enrichment caveat; may be empty/absent. |
-| `acceptanceCriteria` | `{index,text,checked}[]` | yes | `index` **non-durable** ([§6](#6-field-caveats)). |
-| `definitionOfDone` | `{index,text,checked}[]` | yes | `index` **non-durable**. |
-| `description` | string \| null | yes | Markdown. |
-| `implementationPlan` | string \| null | yes | Markdown. |
-| `implementationNotes` | string \| null | yes | Markdown. |
-| `finalSummary` | string \| null | yes | Markdown. |
-| `comments` | `{index,author,createdDate,body}[]` | yes | `author` may be `null`. |
-| `source` | `"local"\|"remote"\|"completed"\|"local-branch"\|null` | yes | Provenance. |
-| `branch` | string \| null | yes | |
-| `onStatusChange` | object \| string \| null | yes | Hook descriptor; opaque to `lore`. |
-| `rawContent` | string | opt-in | **Omitted by default**; emitted only with `--json-raw`. See [§6](#6-field-caveats). |
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | Display-cased. Identity, not filename. |
+| `title` | string | |
+| `status` | string | Raw configured status, no icon. |
+| `type` | string \| null | Semantic task type (config `types:`), open set. |
+| `priority` | string \| null | Config `priorities:` label, open set. |
+| `assignees` | string[] | Array. |
+| `reporter` | string \| null | |
+| `labels` | string[] | Includes the `doc:<conceptId>` back-reference label (see below). |
+| `milestone` | string \| null | |
+| `parentTaskId` | string \| null | |
+| `ordinal` | number \| null | Position within status. |
+| `createdAt` | string \| null | RFC 3339 UTC or bare `YYYY-MM-DD`. |
+| `updatedAt` | string \| null | Same format as `createdAt`. |
+| `path` | string \| null | **Project-relative** (`backlog/tasks/…`); `null` on a freshly created, not-yet-written task. Present only on this `task-view` shape — never on a `task-list`/`search` summary (§4, §6). |
+| `description` | string \| null | Markdown. |
+| `dependencies` | string[] | Display-cased ids. |
+| `references` | string[] | Free-form. |
+| `documentation` | string[] | Free-form. |
+| `modifiedFiles` | string[] | |
+| `subtasks` | `{id,title}[]` | Always an array (may be empty). |
+| `acceptanceCriteria` | `{index,text,checked}[]` | `index` **non-durable** ([§6](#6-field-caveats)). |
+| `definitionOfDone` | `{index,text,checked}[]` | `index` **non-durable**. |
+| `implementationPlan` | string \| null | Markdown. |
+| `implementationNotes` | string \| null | Markdown. |
+| `comments` | `{index,body,createdAt,author}[]` | `author` may be `null`. |
+| `finalSummary` | string \| null | Markdown. |
 
 > **The `doc:<conceptId>` label is how `lore` finds the doc → task
 > back-reference.** Per ADR-0002, `lore` never stores its own frontmatter keys on
@@ -241,31 +232,33 @@ A Backlog.md task `.md` file has free-form body sections (`## Description`,
 
 ---
 
-## 4. `kind: "taskList"`
+## 4. `kind: "task-list"`
 
-`data` is an **array of task summaries** (output of `backlog task list --json`).
-The summary is a stable subset of the [`task`](#3-kind-task) shape — enough to
-render listings and reconcile status without a `view` per task. The
-view-only enrichment fields (`parentTaskTitle`, `subtasks`) and the heavy body
-fields (`acceptanceCriteria`, `description`, `comments`, …) are **not** included.
+`tasks` is an **array of task summaries** (output of `backlog task list --json`).
+The summary is the **compact field set** — enough to render listings and
+reconcile status without a `view` per task. It carries **no path at all**
+(unlike the task-view shape) and omits the heavy body fields
+(`acceptanceCriteria`, `description`, `comments`, `implementationPlan`, …).
 
 ```jsonc
 {
-  "schemaVersion": "1",
-  "kind": "taskList",
-  "data": [
+  "schemaVersion": 1,
+  "kind": "task-list",
+  "tasks": [
     {
-      "id": "TASK-123",
-      "title": "Bulk-archive completed orders",
-      "status": "In Progress",     // raw, no icon
-      "priority": "high",          // or null
-      "ordinal": 0,                // or null
-      "assignees": ["@alice"],     // array
-      "labels": ["orders", "doc:stories/bulk-archive-orders"],
-      "milestone": "M2",           // or null
-      "parentTaskId": "TASK-50",   // or null
-      "filePath": "/abs/repo/backlog/tasks/task-123 - Bulk-archive completed orders.md",
-      "filePathRelative": "backlog/tasks/task-123 - Bulk-archive completed orders.md"
+      "id": "LORE-1",
+      "title": "Fork Backlog.md and create the --json tracking task",
+      "status": "Done",         // raw, no icon
+      "type": null,             // or a config `types:` label
+      "priority": "high",       // or null — open set
+      "assignees": ["@jeremy"], // array
+      "reporter": null,         // or a string
+      "labels": ["backlog-fork"],
+      "milestone": "m-0",       // or null
+      "parentTaskId": null,     // or a display-cased id
+      "ordinal": 1000,          // or null
+      "createdAt": "2026-06-21T06:25:00Z",
+      "updatedAt": "2026-07-01T16:37:00Z"
     }
   ]
 }
@@ -276,45 +269,45 @@ fields (`acceptanceCriteria`, `description`, `comments`, …) are **not** includ
 | `id` | string | Display-cased. |
 | `title` | string | |
 | `status` | string | Raw, no icon. |
-| `priority` | `"high"\|"medium"\|"low"\|null` | |
-| `ordinal` | number \| null | |
+| `type` | string \| null | Open set. |
+| `priority` | string \| null | Open set. |
 | `assignees` | string[] | |
+| `reporter` | string \| null | |
 | `labels` | string[] | Carries `doc:<conceptId>`. |
 | `milestone` | string \| null | |
 | `parentTaskId` | string \| null | |
-| `filePath` | string \| null | Absolute; host-specific. |
-| `filePathRelative` | string \| null | Repo-relative; prefer for links. |
+| `ordinal` | number \| null | |
+| `createdAt` | string \| null | |
+| `updatedAt` | string \| null | |
 
-**Implementation note for the fork.** `task list` builds its summary line
-*inline*, it does not call the full task-view serializer — so the fork needs a
-distinct `serializeTaskSummary` in addition to `serializeTask`. The two must stay
-field-compatible on their shared keys. `lore`'s adapter relies on that
-compatibility: a `taskList` entry's `id`/`status`/`labels` mean exactly what they
-mean on a full `task`.
+**No path field.** `task list`/`search` never carry a file path — only
+`task view` does (§3, §6). `lore` calls `task view` per linked id specifically
+because of this (see the [CLI contract §1.2](backlog-cli-contract.md#12-prefer-per-id-task-view-for-the-managed-block)).
 
 **Filtering.** `task list --json` honors the same filter flags as its text form
 (e.g. `--status`, `--label`, parent filters). `lore` passes through the filters
 it needs (notably `--label doc:<conceptId>` to find a story's tasks, and a status
-filter for reconciliation); the `data` array is the filtered set. See the
+filter for reconciliation); `tasks` is the filtered set. See the
 [CLI contract](backlog-cli-contract.md) for the exact flag list.
 
 ---
 
-## 5. `kind: "searchResult"`
+## 5. `kind: "search"`
 
-`data` is an **array of scored hits** (output of `backlog search <query> --json`).
+`results` is an **array of hits** (output of `backlog search [query] --json`).
 Backlog.md's search spans tasks, documents, and decisions, so each hit is tagged
-with its `type` and carries the matched `item`.
+with its `type` and carries the matched `data`. **Unlike the earlier fork
+shape, hits carry no relevance `score`** — "Search scores are not part of the
+version 1 public contract" (CLI-INSTRUCTIONS.md).
 
 ```jsonc
 {
-  "schemaVersion": "1",
-  "kind": "searchResult",
-  "data": [
+  "schemaVersion": 1,
+  "kind": "search",
+  "results": [
     {
       "type": "task",              // "task" | "document" | "decision"
-      "score": 0.12,               // relevance score (lower = better, Fuse.js), or null
-      "item": {  }              // shape depends on `type` (see below)
+      "data": { }                  // shape depends on `type` (see below)
     }
   ]
 }
@@ -322,25 +315,21 @@ with its `type` and carries the matched `item`.
 
 | Field | Type | Notes |
 |---|---|---|
-| `type` | `"task"\|"document"\|"decision"` | Discriminates `item`. |
-| `score` | number \| null | Fuse.js relevance (lower is a closer match). May be `null`. |
-| `item` | object | The matched entity, shaped by `type`. |
+| `type` | `"task"\|"document"\|"decision"` | Discriminates `data`. |
+| `data` | object | The matched entity, shaped by `type`. |
 
-**`item` by `type`:**
+**`data` by `type`:**
 
-- `type: "task"` → `item` is a [`task` summary](#4-kind-tasklist) (same subset as
-  a `taskList` entry: `id`, `title`, `status`, `labels`, `filePathRelative`, …).
-  This is what `lore` uses, e.g. to find tasks referencing a modified file.
-- `type: "document"` → `item` is a Backlog.md *document* (`id`, `title`,
-  `filePathRelative`, …). These are Backlog.md's own docs, distinct from `lore`'s
-  OKF bundle; `lore` generally ignores them.
-- `type: "decision"` → `item` is a Backlog.md *decision* record. Likewise
-  Backlog.md-owned.
-
-> **Dropped: Fuse `matches`.** Backlog.md's underlying search exposes per-field
-> match spans typed `unknown` (a Fuse.js passthrough). The serializer
-> **deliberately omits** `matches` from the contract — it is an unstable internal
-> shape. `lore` ranks/filters on `score` and `type`, never on match spans.
+- `type: "task"` → `data` is a [`task-list` summary](#4-kind-task-list) (the
+  same compact field set as a `task-list` entry: `id`, `title`, `status`,
+  `labels`, …). This is what `lore` uses, e.g. to find tasks referencing a
+  modified file. Only **locally editable** tasks are returned (a task from
+  another branch that Backlog cannot edit here is dropped from search).
+- `type: "document"` → `data` is a Backlog.md *document* (`id`, `title`, `type`,
+  `path`, `tags`, `createdAt`, `updatedAt`). These are Backlog.md's own docs,
+  distinct from `lore`'s OKF bundle; `lore` generally ignores them.
+- `type: "decision"` → `data` is a Backlog.md *decision* record (`id`, `title`,
+  `status`, `date`). Likewise Backlog.md-owned.
 
 ---
 
@@ -351,22 +340,27 @@ silently produce wrong results.
 
 ### `id` case ≠ filename case
 
-`id` is `TASK-123` (display, uppercase prefix); the file is
-`task-123 - Title.md` (lowercase). Prefix casing and zero-padding are
+`id` is `LORE-33` (display, uppercase prefix); the file is
+`lore-33 - Title.md` (lowercase). Prefix casing and zero-padding are
 configurable (`zeroPaddedIds`), so **reconstructing a filename from `id` is
-unsafe**. Use `filePathRelative` for the on-disk path and keep `id` only as
+unsafe**. Use `path` (task-view only) for the on-disk path and keep `id` only as
 identity. `lore` stores `id` (not a derived filename) when it records a task on a
 story's `tasks:` frontmatter.
 
-### `filePath` is absolute and host-specific
+### `path` exists only on `task-view`, and is always project-relative
 
-`filePath` is the absolute path on the machine that ran `backlog`, so it is **not
-portable** across hosts or checkouts. Anything `lore` persists (links in managed
-blocks, frontmatter) must use **`filePathRelative`** (`backlog/tasks/…`), never
-`filePath`. `filePath` is provided for local convenience/debugging only. On a
-**freshly created** task that has not yet been written to disk, both may be
-`null` — the create/edit `--json` path tolerates this; `lore` does not depend on
-it (it captures the ID from the `Created task <ID>` line instead).
+Unlike the earlier fork shape (which exposed both an absolute `filePath` and a
+relative `filePathRelative`), upstream exposes **one** path field — `path` —
+and only on the `task-view` shape. It is already project-relative
+(`backlog/tasks/…`), computed via `node:path`'s `relative()` against the
+project root before the CLI ever prints it, so there is **no absolute,
+host-specific field left in the contract to redact or avoid**. `task-list` and
+`search` summaries carry no path field at all — `lore` must call `task view`
+per id when it needs the on-disk file (see the
+[CLI contract §1.2](backlog-cli-contract.md#12-prefer-per-id-task-view-for-the-managed-block)).
+On a **freshly created** task that has not yet been written to disk, `path` may
+be `null`; `lore` does not depend on it (it captures the ID from the
+`Created task <ID>` line instead).
 
 ### `acceptanceCriteria` / `definitionOfDone` `index` is NON-durable
 
@@ -377,26 +371,28 @@ content to an AC/DoD index.** If `lore` ever needs to reference a specific
 criterion, it must match on `text`, not `index`. There is no durable criterion
 identity in Backlog.md's model.
 
-### `lastModified` is omitted or normalized
+### Internal/git fields are never exposed
 
-The in-memory model has `lastModified: Date`, which would serialize to ISO-8601
-`…T…Z` and clash with the `"YYYY-MM-DD"` string dates used everywhere else. The
-serializer **drops or normalizes** it for date-format consistency. Do not rely on
-a `lastModified` field; use `createdDate` / `updatedDate` (strings).
+Upstream deliberately excludes `source`, `branch`, `onStatusChange`, and
+`parentTaskTitle` — fields the fork used to carry — from every shape
+(CLI-INSTRUCTIONS.md: "branch metadata… are not exposed"). There is no opt-in
+flag (like the fork's `--json-raw`) to request them; they simply do not exist
+in this contract. `lore`'s adapter does not attempt to read them.
 
-### `rawContent` is opt-in
+### `priority` / `type` are open, config-driven sets
 
-`rawContent` (the entire task `.md` source) duplicates the structured fields,
-roughly doubles payload size, and can desync from the parsed fields. It is
-**omitted by default** and emitted only behind `--json-raw`. `lore`'s adapter
-does not request it; it consumes the structured fields.
+Neither field is a closed enum. A custom `priorities:`/`types:` configuration in
+`backlog/config.yml` can introduce any label; `lore`'s Zod mirror validates them
+as `string | null`, never `z.enum([...])`. Do not assume `"high"|"medium"|"low"`
+is exhaustive.
 
-### View-only enrichment fields
+### View-only fields
 
-`parentTaskTitle` and `subtasks` are populated only on the `task view` enrichment
-path (`getTaskWithSubtasks`). On `task list` / `search` they may be `null` or
-absent. Treat them as **optional**: present and meaningful on a `task` payload,
-not guaranteed on `taskList`/`searchResult` items.
+`path`, `description`, `dependencies`, `references`, `documentation`,
+`modifiedFiles`, `subtasks`, `acceptanceCriteria`, `definitionOfDone`,
+`implementationPlan`, `implementationNotes`, `comments`, and `finalSummary` are
+populated **only** on the `task-view` shape (§3) — never on a `task-list`/
+`search` summary (§4, §5).
 
 ---
 
@@ -410,11 +406,14 @@ parsed. Its contract:
 3. Assert `schemaVersion` ≥ the pinned floor and `kind` matches the command run;
    on mismatch, fail loud (exit `6`) pointing at the
    [patch runbook](../runbooks/backlog-json-patch.md) — never best-effort parse.
-4. Validate `data` against the per-`kind` shape (Zod, mirroring this page; unknown
-   keys tolerated, missing required keys rejected).
-5. Map into `lore`'s internal `BacklogTask` type, **preferring
-   `filePathRelative`**, keeping `id` as identity, reading the `doc:<conceptId>`
-   back-reference out of `labels[]`, and never anchoring to an AC/DoD `index`.
+4. Validate the named payload (`tasks`/`task`/`results`) against the per-`kind`
+   shape (Zod, mirroring this page; unknown keys tolerated, missing required
+   keys rejected).
+5. Map into `lore`'s internal `BacklogTask`/`BacklogTaskDetail` types, keeping
+   `id` as identity, reading the `doc:<conceptId>` back-reference out of
+   `labels[]`, never anchoring to an AC/DoD `index`, and populating `file` only
+   from a `task-view` read's `path` — a `task-list`/`search`-derived
+   `BacklogTask` carries no `file` at all (§6).
 
 The capability probe ([CLI contract](backlog-cli-contract.md)) runs once at
 startup and caches its result in `.lore/cache/` (transient, gitignored); it is
@@ -423,46 +422,44 @@ relies on it.
 
 ---
 
-## 8. Migration target — upstream, independent contract (adopted)
+## 8. Migration history (complete)
 
-MrLesk's team shipped their own `--json` implementation upstream —
-[PR #790](https://github.com/MrLesk/Backlog.md/pull/790), "BACK-545 - Add
-stable JSON output to read commands", merged 2026-07-16 — independently of this
-fork or lenucksi's. `lore` is **adopting that contract** rather than converging
-upstream on the shape documented in §1–§7. As of this writing PR #790 is merged
-to `MrLesk/Backlog.md`'s `main` (commit `22a091b570d44c4f302ca47e7fd36fa28ad8bcb0`)
-but **not yet in a tagged release** (the latest tag, v1.48.0, predates the
-merge). **Interim plan:** consume upstream's `main` at or past that commit as a
-git dependency instead of this fork; once a tagged release includes it, switch
-to the published package and bump the capability probe's floor. See the
-[patch runbook §8](../runbooks/backlog-json-patch.md) for the step-by-step plan.
+`lore`'s adapter originally shipped (LORE-2/4/21) against a **different, earlier
+contract**: a fork of Backlog.md (`jeremy-newhouse/Backlog.md`) that this
+project patched in to add `--json` before any independent upstream
+implementation existed. That fork's shape — a uniform
+`{schemaVersion: "1", kind, data}` envelope, camelCase `kind`s (`task`/
+`taskList`/`searchResult`), a string `schemaVersion`, an absolute `filePath` +
+relative `filePathRelative` pair, and internal fields (`source`, `branch`,
+`onStatusChange`, `parentTaskTitle`) — is **fully superseded** and no longer
+documented in §1–§7 above. It is preserved only as historical record in the
+[Backlog.md `--json` patch runbook](../runbooks/backlog-json-patch.md), which
+describes the fork/patch procedure that produced it.
 
-Upstream's shape differs from §1–§7 above in every dimension that matters for
-the adapter — **this is not a drop-in floor bump, it is a contract migration**:
+When MrLesk's team shipped their own, independent `--json` implementation
+([PR #790](https://github.com/MrLesk/Backlog.md/pull/790), merged 2026-07-16,
+closing [issue #784](https://github.com/MrLesk/Backlog.md/issues/784) before
+this project's own upstream PR was opened), `lore` adopted that contract
+instead of upstreaming its fork (LORE-5) — a genuine contract migration, not a
+version-floor bump, split across two tasks:
 
-| | This fork (§1–§7, shipped today) | Upstream PR #790 (adoption target) |
-|---|---|---|
-| Envelope | uniform `{schemaVersion: "1", kind, data}` for all three commands | **per-command** envelope, no shared `data` key: `{schemaVersion: 1, kind: "task-list", tasks: [...]}` / `{kind: "task-view", task: {...}}` / `{kind: "search", results: [...]}` |
-| `schemaVersion` type | **string** `"1"` | **number** `1` |
-| `kind` spelling | `taskList` / `task` / `searchResult` | `task-list` / `task-view` / `search` |
-| Payload key | always `data` | `tasks` / `task` / `results`, per command |
-| Task summary fields | `id, title, status, priority, ordinal, assignees, labels, milestone, parentTaskId, filePath, filePathRelative` | adds `type`, `reporter` at summary level; no absolute path — only project-relative `path`, and only on the view/full shape |
-| Full task fields | includes `source`, `branch`, `onStatusChange` (internal/git fields) | **excludes** branch/internal fields by design ("internal fields... branch metadata... are not exposed") |
-| Search hit shape | `{type, score, item}` | `{type, data}` — **no `score`** (explicitly out of the v1 public contract) |
-| `task view <missing>` / `task <missing>` | exits **0**, empty stdout, `Task <id> not found.` on stderr (this fork's adapter treats empty stdout as the "missing" signal — see [CLI contract §2.2](backlog-cli-contract.md#22-existence-checks--use-editlist-never-view)) | exits **1** unconditionally (every output mode, not just `--json`) — matches `task archive`'s convention. **This flips §2.2's "view always exits 0" fact once `lore` migrates** — the adapter's missing-task detection must change from "empty stdout" to "nonzero exit" |
-| Output formatting | compact (single line) | pretty-printed (`JSON.stringify(value, null, 2)`), trailing newline |
+- **LORE-53** — migrated the capability probe (`probeBacklog`) alone, so a
+  `--json`-incapable binary is refused against upstream's real envelope shape
+  even before the rest of the adapter caught up.
+- **LORE-54** — migrated the full read adapter (`EnvelopeSchema`,
+  `parseEnvelope`, `listTasks`/`viewTask`/`searchTasks`, and the golden
+  fixtures under `test/fixtures/backlog-json/`) onto the same contract, and
+  rewrote §1–§7 above to describe it as current. `viewTask`'s missing-task
+  detection also flipped from the fork's "exit 0, empty stdout" signal to
+  upstream's "exit 1 unconditionally" (§6; [CLI contract §2.2](backlog-cli-contract.md#22-existence-checks--task-views-exit-code-is-meaningful)).
 
-Field-by-field detail for the adoption target lives in upstream's own
-source, the source of truth until this doc is rewritten in full at migration
-time: `src/formatters/json-output.ts` (serializers) and the "Stable JSON
-output" section of `CLI-INSTRUCTIONS.md`, both in `MrLesk/Backlog.md`.
-
-**Not yet done:** `src/adapters/backlog.ts`'s envelope parsing, Zod schemas
-(`EnvelopeSchema`, `TaskSchema`, `TaskSummarySchema`, `SearchHitSchema`), and
-capability probe still implement the §1–§7 fork shape and would **fail their
-own probe** against upstream's real output (wrong `kind` strings, no top-level
-`data` key). Rewriting them against the table above is the next concrete
-engineering step, tracked on LORE-5.
+`lore` still consumes upstream via a manually-built binary pinned at commit
+`22a091b570d44c4f302ca47e7fd36fa28ad8bcb0` (no `package.json` dependency yet —
+deliberately deferred until a tagged `MrLesk/Backlog.md` release includes that
+commit; see the
+[patch runbook §8.1](../runbooks/backlog-json-patch.md#81-the-adoption-plan-current)).
+That step — adding a real semver dependency and bumping the capability probe's
+floor once a tag ships — is the only piece of this migration still ahead.
 
 ---
 
@@ -470,6 +467,6 @@ engineering step, tracked on LORE-5.
 
 - [ADR-0002: Backlog.md integration — JSON-only via `--json`](../adr/0002-backlog-integration-json-only.md) — why this contract exists and why there is no text fallback.
 - [Backlog.md CLI contract](backlog-cli-contract.md) — commands, flags, exit codes, `Created task <ID>` capture, capability probe.
-- [Backlog.md `--json` patch runbook](../runbooks/backlog-json-patch.md) — fork, patch, compile, rebase, and upstream procedure.
+- [Backlog.md `--json` patch runbook](../runbooks/backlog-json-patch.md) — the superseded fork's patch procedure (historical), and the current upstream-adoption plan (§8).
 - [Architecture](architecture.md) — where the adapter sits in `lore`'s module graph.
 - [lore design spec](../specs/lore-design.md) — the M2 coupling milestone.

@@ -31,8 +31,8 @@ dependency until a tagged release includes it, then switch to the published
 package. Everything else below — JSON-only reads, the canonical envelope
 pattern, the fail-loud capability probe, CLI-only writes — stands; only
 *whose* `--json` implementation is consumed changes. The concrete contract
-diff and interim plan are in
-[backlog-json-schema.md §8](../reference/backlog-json-schema.md#8-migration-target--upstream-independent-contract-adopted)
+diff and migration history are in
+[backlog-json-schema.md §8](../reference/backlog-json-schema.md#8-migration-history-complete)
 and the [patch runbook §8](../runbooks/backlog-json-patch.md).
 
 ## Context

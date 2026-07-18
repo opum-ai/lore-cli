@@ -5,8 +5,8 @@ import {
   type BacklogCapability,
   type BacklogSpawn,
   bunBacklogSpawn,
+  EXPECTED_SCHEMA_VERSION,
   MIN_BACKLOG_VERSION,
-  PROBE_SCHEMA_VERSION,
   probeBacklog,
   type SpawnResult,
 } from "../src/adapters/backlog";
@@ -22,7 +22,7 @@ type Outcome = SpawnResult | Error;
  * A `{schemaVersion, kind, tasks}` envelope string, matching upstream's real `task list --json` output
  * (backlog-json-schema.md §8) — a numeric `schemaVersion`, hyphenated `kind`, and a `tasks` payload key.
  */
-function envelope(kind: unknown, tasks: unknown, schemaVersion: unknown = PROBE_SCHEMA_VERSION): string {
+function envelope(kind: unknown, tasks: unknown, schemaVersion: unknown = EXPECTED_SCHEMA_VERSION): string {
   return JSON.stringify({ schemaVersion, kind, tasks });
 }
 
@@ -76,14 +76,14 @@ describe("probeBacklog — passes on a --json-capable upstream build (AC#2)", ()
 
     const capability: BacklogCapability = await probeBacklog(spawn);
 
-    expect(capability).toEqual({ version: "1.47.1", schemaVersion: PROBE_SCHEMA_VERSION });
+    expect(capability).toEqual({ version: "1.47.1", schemaVersion: EXPECTED_SCHEMA_VERSION });
     // Order and fail-forward: --version first, then the dry task list probe.
     expect(spawn.calls).toEqual([["--version"], ["task", "list", "--json"]]);
   });
 
   test("tolerates a version above the floor and an empty task list", async () => {
     const spawn = fakeSpawn({ version: ok("1.48.0\n"), list: ok(envelope("task-list", [])) });
-    expect(await probeBacklog(spawn)).toEqual({ version: "1.48.0", schemaVersion: PROBE_SCHEMA_VERSION });
+    expect(await probeBacklog(spawn)).toEqual({ version: "1.48.0", schemaVersion: EXPECTED_SCHEMA_VERSION });
   });
 
   test("drops pre-release/build metadata and extra envelope keys", async () => {
@@ -92,7 +92,7 @@ describe("probeBacklog — passes on a --json-capable upstream build (AC#2)", ()
       // A future additive key on the envelope must be tolerated, not rejected.
       list: ok(JSON.stringify({ schemaVersion: 1, kind: "task-list", tasks: [], generatedAt: "whenever" })),
     });
-    expect(await probeBacklog(spawn)).toEqual({ version: "1.47.1", schemaVersion: PROBE_SCHEMA_VERSION });
+    expect(await probeBacklog(spawn)).toEqual({ version: "1.47.1", schemaVersion: EXPECTED_SCHEMA_VERSION });
   });
 });
 

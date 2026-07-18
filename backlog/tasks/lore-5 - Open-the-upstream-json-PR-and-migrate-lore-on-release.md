@@ -4,7 +4,7 @@ title: Open the upstream --json PR and migrate lore on release
 status: In Progress
 assignee: []
 created_date: '2026-06-21 06:25'
-updated_date: '2026-07-18 00:03'
+updated_date: '2026-07-18 16:48'
 labels:
   - backlog-fork
   - upstream
@@ -28,8 +28,8 @@ Upstream (MrLesk/Backlog.md) shipped its own --json implementation independently
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 lore's git dependency and capability probe target upstream's --json build (pinned commit interim; published semver package once a tagged release includes PR #790), not this fork
-- [ ] #2 src/adapters/backlog.ts (envelope parsing, Zod schemas, probe) matches upstream's actual --json contract (see backlog-json-schema.md §8), not this fork's {schemaVersion, kind, data} shape
+- [x] #1 lore's git dependency and capability probe target upstream's --json build (pinned commit interim; published semver package once a tagged release includes PR #790), not this fork
+- [x] #2 src/adapters/backlog.ts (envelope parsing, Zod schemas, probe) matches upstream's actual --json contract (see backlog-json-schema.md §8), not this fork's {schemaVersion, kind, data} shape
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -262,6 +262,8 @@ than tracking it only as this task's ACs, and added them as LORE-5's dependencie
   (envelope/kind/schema/probe, viewTask exit-code change, golden test recapture,
   schema doc rewrite). Depends on LORE-53.
 No code changed on this task itself; it remains the umbrella decision record.
+
+Both ACs now satisfied: AC#1 since LORE-53 (probe targets upstream's pinned-commit build); AC#2 since LORE-54 (the full read adapter -- envelope parsing, Zod schemas, mapping -- now matches upstream's real contract too, not just the probe). All four listed dependencies (LORE-3, LORE-4, LORE-53, LORE-54) are Done. Left In Progress, not Done: this task's own description also covers switching from the interim pinned-commit build to a published semver package + bumping the capability probe's version floor once a tagged MrLesk/Backlog.md release includes PR #790 -- that step is still ahead, gated on an external release, and deliberately deferred (LORE-53 decision, reaffirmed on LORE-54).
 <!-- SECTION:NOTES:END -->
 
 ## Comments

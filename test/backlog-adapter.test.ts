@@ -1,9 +1,10 @@
 /**
- * backlog-adapter.test.ts — the typed JSON-only read/write adapter (LORE-21).
+ * backlog-adapter.test.ts — the typed JSON-only read/write adapter (LORE-21), migrated to upstream's
+ * real `--json` contract by LORE-54.
  *
  * Every case drives {@link createBacklogAdapter} through the injected {@link BacklogSpawn} seam (no real
  * subprocess), feeding the **committed** golden envelopes under `test/fixtures/backlog-json/` — the exact
- * real-fork output the golden test locks to the contract. The two acceptance criteria are exercised here:
+ * real upstream output the golden test locks to the contract. The two acceptance criteria are exercised here:
  *
  *   AC#1 — the adapter NEVER parses `--plain`: every read is a `--json` command whose stdout is
  *          `JSON.parse`d and contract-validated; a bad envelope fails loud rather than degrading. The
@@ -21,10 +22,10 @@ import { exitCodeFor, LoreError } from "../src/errors";
 const FIXTURES = join(import.meta.dir, "fixtures", "backlog-json");
 const readGolden = (name: string): string => readFileSync(join(FIXTURES, `${name}.json`), "utf8");
 
-/** The three committed real-fork envelopes, verbatim (the `filePath` `{REPO}` placeholder is dropped by the map). */
-const TASK = readGolden("task"); // kind "task"        — LORE-33, full view
-const TASK_LIST = readGolden("task-list"); // kind "taskList"    — 3 summaries
-const SEARCH = readGolden("search-result"); // kind "searchResult" — 3 task hits
+/** The three committed real-upstream envelopes, verbatim. */
+const TASK = readGolden("task-view"); // kind "task-view" — LORE-33, full view
+const TASK_LIST = readGolden("task-list"); // kind "task-list" — 3 summaries
+const SEARCH = readGolden("search"); // kind "search"     — 3 task hits
 
 /** A canned outcome for one invocation: the {@link SpawnResult} it produced, or an `Error` the spawn rejects with. */
 type Outcome = SpawnResult | Error;
@@ -40,22 +41,12 @@ function fail(exitCode: number, stderr: string, stdout = ""): SpawnResult {
 }
 
 /**
- * Upstream's real capability-probe envelope (backlog-json-schema.md §8) — what a `--json`-capable
- * binary's own dry `task list --json` call returns. `probeBacklog`'s dry-run and `listTasks`'s real
- * read issue the identical `["task", "list", "--json"]` argv, so a real binary would answer both with
- * upstream's shape — but this file's reads (`listTasks`/`searchByLabel` parsing, LORE-21) still target
- * this fork's `TASK_LIST` golden shape pending LORE-54's adapter rewrite. `defaultProbe` below serves
- * this envelope only to the probe's own (always-first, memoized) call, keeping the two decoupled until
- * LORE-54 migrates the real reads too.
- */
-const PROBE_ENVELOPE = JSON.stringify({ schemaVersion: 1, kind: "task-list", tasks: [] });
-
-/**
  * A {@link BacklogSpawn} driven by a per-call `script(args, callIndex)`. It records every argv so a test
  * can pin invocation order (probe first) and assert the exact flags. Returning `undefined` from the
- * script falls back to the **default probe** responses (`--version` → `1.47.1`, the dry
- * `task list --json` → {@link PROBE_ENVELOPE}, any later bare `task list --json` → the committed
- * taskList golden), so most tests only script the command under test.
+ * script falls back to the **default probe** responses (`--version` → `1.47.1`, any `task list --json`
+ * → the committed `task-list` golden), so most tests only script the command under test. The probe's own
+ * dry-run and a real `listTasks()` read issue the identical `["task", "list", "--json"]` argv AND now
+ * target the same upstream contract (LORE-54), so one shared golden answers both — no more two-tier fake.
  */
 function scriptedSpawn(
   script: (args: string[], callIndex: number) => Outcome | undefined = () => undefined,
@@ -63,7 +54,7 @@ function scriptedSpawn(
   const calls: string[][] = [];
   const spawn = (async (args: readonly string[]): Promise<SpawnResult> => {
     const argv = [...args];
-    const outcome = script(argv, calls.length) ?? defaultProbe(argv, calls);
+    const outcome = script(argv, calls.length) ?? defaultProbe(argv);
     calls.push(argv);
     if (outcome instanceof Error) {
       throw outcome;
@@ -74,19 +65,13 @@ function scriptedSpawn(
   return spawn;
 }
 
-/**
- * The default responses for the probe's two calls, plus the fork-shaped golden for any later bare
- * `task list --json` a real read issues. `priorCalls` lets the first such match (always the probe's
- * own dry-run — every adapter method runs it before its own read) answer with upstream's shape, while
- * a later match (a real `listTasks()`/`searchByLabel` read) keeps the fork's shape.
- */
-function defaultProbe(argv: string[], priorCalls: readonly string[][]): Outcome {
+/** The default responses for the probe's two calls, and any later bare `task list --json` a real read issues. */
+function defaultProbe(argv: string[]): Outcome {
   if (argv[0] === "--version") {
     return ok("1.47.1\n");
   }
   if (argv[0] === "task" && argv[1] === "list" && argv[2] === "--json") {
-    const isProbesDryRun = !priorCalls.some((c) => c[0] === "task" && c[1] === "list" && c[2] === "--json");
-    return ok(isProbesDryRun ? PROBE_ENVELOPE : TASK_LIST);
+    return ok(TASK_LIST);
   }
   return new Error(`scriptedSpawn: no scripted outcome for ${JSON.stringify(argv)}`);
 }
@@ -105,7 +90,7 @@ async function loreError(run: () => Promise<unknown>): Promise<LoreError> {
 }
 
 describe("listTasks — task list --json → mapped summaries (AC#1)", () => {
-  test("maps every taskList golden entry, preferring filePathRelative over the absolute path", async () => {
+  test("maps every task-list golden entry (upstream's summary carries no path — only task view does)", async () => {
     const adapter = createBacklogAdapter(scriptedSpawn());
     const tasks = await adapter.listTasks();
 
@@ -120,10 +105,9 @@ describe("listTasks — task list --json → mapped summaries (AC#1)", () => {
       labels: ["backlog-fork"],
       milestone: "m-0",
       parentTaskId: null,
-      file: "backlog/tasks/lore-1 - Fork-Backlog.md-and-create-the-json-tracking-task.md",
     });
-    // The absolute host-specific filePath is never surfaced.
-    expect(Object.keys(tasks[0] ?? {})).not.toContain("filePath");
+    // Upstream's summary carries no path at all (contract §1.2) — never surfaced on a list/search read.
+    expect(Object.keys(tasks[0] ?? {})).not.toContain("file");
   });
 
   test("passes --status and comma-joins multiple --labels (single-value flag, §2.4)", async () => {
@@ -150,7 +134,7 @@ describe("listTasks — task list --json → mapped summaries (AC#1)", () => {
 });
 
 describe("viewTask — task view <id> --json → full detail (AC#1)", () => {
-  test("maps the full task golden, dropping the non-durable AC index and the absolute path", async () => {
+  test("maps the full task golden, dropping the non-durable AC index", async () => {
     const spawn = scriptedSpawn((argv) => (argv[1] === "view" ? ok(TASK) : undefined));
     const adapter = createBacklogAdapter(spawn);
     const task = await adapter.viewTask("LORE-33");
@@ -173,22 +157,31 @@ describe("viewTask — task view <id> --json → full detail (AC#1)", () => {
 
   test("maps comments, dropping their positional index too", async () => {
     const withComment = JSON.parse(TASK);
-    withComment.data.comments = [{ index: 1, author: "@jeremy", createdDate: "2026-06-29", body: "Shipped." }];
+    withComment.task.comments = [{ index: 1, body: "Shipped.", createdAt: "2026-06-29T00:00:00Z", author: "@jeremy" }];
     const spawn = scriptedSpawn((argv) => (argv[1] === "view" ? ok(JSON.stringify(withComment)) : undefined));
     const task = await createBacklogAdapter(spawn).viewTask("LORE-33");
 
-    expect(task?.comments).toEqual([{ author: "@jeremy", createdDate: "2026-06-29", body: "Shipped." }]);
+    expect(task?.comments).toEqual([{ author: "@jeremy", createdAt: "2026-06-29T00:00:00Z", body: "Shipped." }]);
     expect(task?.comments[0]).not.toHaveProperty("index");
   });
 
-  test("returns null when the id has no task (empty stdout, exit 0 — never trusts the exit code)", async () => {
-    // Verified fork behavior: `task view <missing> --json` exits 0, prints nothing to stdout, and puts
-    // "Task <id> not found." on stderr.
+  test("returns null when the id has no task (exit code 1, empty stdout)", async () => {
+    // Verified upstream behavior (PR #790): `task view <missing> --json` exits 1 unconditionally,
+    // prints nothing to stdout, and puts "Task <id> not found." on stderr.
     const spawn = scriptedSpawn((argv) =>
-      argv[1] === "view" ? { exitCode: 0, stdout: "", stderr: "Task LORE-9 not found." } : undefined,
+      argv[1] === "view" ? { exitCode: 1, stdout: "", stderr: "Task LORE-9 not found." } : undefined,
     );
     const adapter = createBacklogAdapter(spawn);
     expect(await adapter.viewTask("LORE-9")).toBeNull();
+  });
+
+  test("fail-loud (drift) when exit 1 (the missing-task signal) unexpectedly printed to stdout", async () => {
+    const spawn = scriptedSpawn((argv) =>
+      argv[1] === "view" ? { exitCode: 1, stdout: "surprise", stderr: "Task LORE-9 not found." } : undefined,
+    );
+    const err = await loreError(() => createBacklogAdapter(spawn).viewTask("LORE-9"));
+    expect(err.type).toBe("drift");
+    expect(err.message).toContain("exited 1");
   });
 
   test("fail-loud (drift, exit 6) on unparseable stdout — no --plain fallback", async () => {
@@ -214,16 +207,16 @@ describe("viewTask — task view <id> --json → full detail (AC#1)", () => {
   });
 
   test("fail-loud (drift) on the wrong envelope kind", async () => {
-    // A taskList envelope where a task was expected: the read-path kind assertion catches it.
+    // A task-list envelope where a task-view was expected: the read-path kind assertion catches it.
     const spawn = scriptedSpawn((argv) => (argv[1] === "view" ? ok(TASK_LIST) : undefined));
     const err = await loreError(() => createBacklogAdapter(spawn).viewTask("LORE-33"));
     expect(err.type).toBe("drift");
     expect(err.message).toContain("expected");
-    expect(err.message).toContain("task");
+    expect(err.message).toContain("task-view");
   });
 
   test("fail-loud (drift) on an unrecognized schemaVersion", async () => {
-    const bumped = JSON.stringify({ ...JSON.parse(TASK), schemaVersion: "2" });
+    const bumped = JSON.stringify({ ...JSON.parse(TASK), schemaVersion: 2 });
     const spawn = scriptedSpawn((argv) => (argv[1] === "view" ? ok(bumped) : undefined));
     const err = await loreError(() => createBacklogAdapter(spawn).viewTask("LORE-33"));
     expect(err.type).toBe("drift");
@@ -232,7 +225,7 @@ describe("viewTask — task view <id> --json → full detail (AC#1)", () => {
 
   test("fail-loud (validation) when the payload violates the contract mirror", async () => {
     const parsed = JSON.parse(TASK);
-    delete parsed.data.title; // a required field
+    delete parsed.task.title; // a required field
     const spawn = scriptedSpawn((argv) => (argv[1] === "view" ? ok(JSON.stringify(parsed)) : undefined));
     const err = await loreError(() => createBacklogAdapter(spawn).viewTask("LORE-33"));
     expect(err.type).toBe("validation");
@@ -248,18 +241,17 @@ describe("searchTasks — search <q> --json → task hits only (§5)", () => {
     const tasks = await adapter.searchTasks("json");
 
     expect(spawn.calls.at(-1)).toEqual(["search", "json", "--json"]);
-    expect(tasks.map((t) => t.id)).toEqual(["LORE-38", "LORE-21", "LORE-6"]);
-    expect(tasks[0]?.file).toBe("backlog/tasks/lore-38 - lore-help-json-capability-manifest.md");
+    expect(tasks.map((t) => t.id)).toEqual(["LORE-38", "LORE-54", "LORE-6"]);
   });
 
   test("drops document/decision hits, keeping only tasks", async () => {
     const mixed = {
-      schemaVersion: "1",
-      kind: "searchResult",
-      data: [
-        { type: "document", score: 0.1, item: { id: "DOC-1", title: "a backlog doc" } },
-        JSON.parse(SEARCH).data[0], // a real task hit
-        { type: "decision", score: 0.2, item: { id: "DEC-1" } },
+      schemaVersion: 1,
+      kind: "search",
+      results: [
+        { type: "document", data: { id: "DOC-1", title: "a backlog doc" } },
+        JSON.parse(SEARCH).results[0], // a real task hit
+        { type: "decision", data: { id: "DEC-1" } },
       ],
     };
     const spawn = scriptedSpawn((argv) => (argv[0] === "search" ? ok(JSON.stringify(mixed)) : undefined));
@@ -274,11 +266,11 @@ describe("searchTasks — search <q> --json → task hits only (§5)", () => {
     expect(err.message).toContain("exited 1");
   });
 
-  test("fail-loud (validation) when a task hit's item violates the summary contract", async () => {
+  test("fail-loud (validation) when a task hit's data violates the summary contract", async () => {
     const bad = {
-      schemaVersion: "1",
-      kind: "searchResult",
-      data: [{ type: "task", score: 0.1, item: { title: "missing an id" } }],
+      schemaVersion: 1,
+      kind: "search",
+      results: [{ type: "task", data: { title: "missing an id" } }],
     };
     const spawn = scriptedSpawn((argv) => (argv[0] === "search" ? ok(JSON.stringify(bad)) : undefined));
     const err = await loreError(() => createBacklogAdapter(spawn).searchTasks("x"));

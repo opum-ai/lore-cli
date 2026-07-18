@@ -157,13 +157,12 @@ export function makeTask(id: string, overrides: Partial<BacklogTaskDetail> = {})
     parentTaskId: null,
     file: `backlog/tasks/${id.toLowerCase()} - title.md`,
     reporter: null,
-    createdDate: "2026-01-01T00:00:00Z",
-    updatedDate: null,
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: null,
     dependencies: [],
     references: [],
     documentation: [],
     modifiedFiles: [],
-    parentTaskTitle: null,
     subtasks: [],
     acceptanceCriteria: [],
     definitionOfDone: [],
@@ -172,13 +171,11 @@ export function makeTask(id: string, overrides: Partial<BacklogTaskDetail> = {})
     implementationNotes: null,
     finalSummary: null,
     comments: [],
-    source: null,
-    branch: null,
     ...overrides,
   };
 }
 
-/** Project a full {@link BacklogTaskDetail} down to the {@link BacklogTask} summary subset `listTasks` returns. */
+/** Project a full {@link BacklogTaskDetail} down to the {@link BacklogTask} summary subset `listTasks` returns (no `file` — upstream's summary carries no path; only `task view` does). */
 function toSummary(task: BacklogTaskDetail): BacklogTask {
   return {
     id: task.id,
@@ -190,7 +187,6 @@ function toSummary(task: BacklogTaskDetail): BacklogTask {
     labels: task.labels,
     milestone: task.milestone,
     parentTaskId: task.parentTaskId,
-    file: task.file,
   };
 }
 
