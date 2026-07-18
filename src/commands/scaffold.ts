@@ -13,9 +13,8 @@
  * failure, e.g. a read-only `docs/` — can never leave one scaffolded file refreshed and its sibling
  * stale.
  *
- * `mkdocs` and `docusaurus` are implemented; `obsidian` (LORE-41) is a documented target not yet
- * wired to a builder, so it — like any other unrecognized string — is a `usage` error (exit 2)
- * until its own task lands one.
+ * `mkdocs`, `docusaurus`, and `obsidian` are implemented; any other target string is a `usage`
+ * error (exit 2).
  */
 
 import { existsSync, statSync } from "node:fs";
@@ -23,6 +22,7 @@ import { basename, join, resolve } from "node:path";
 import {
   buildDocusaurusScaffold,
   buildMkdocsScaffold,
+  buildObsidianScaffold,
   type ConsumerScaffoldOptions,
   type ConsumerScaffoldPlan,
 } from "../core/consumer-scaffold";
@@ -56,12 +56,14 @@ export interface ScaffoldResultFile {
 
 /** The result of a `lore scaffold` run. */
 export interface ScaffoldResult {
-  /** The target that was scaffolded (`"mkdocs"` or `"docusaurus"`). */
+  /** The target that was scaffolded (`"mkdocs"`, `"docusaurus"`, or `"obsidian"`). */
   readonly target: string;
   /** Whether `--force` was passed. */
   readonly force: boolean;
   /** Every file written this run, in scaffold order. */
   readonly files: readonly ScaffoldResultFile[];
+  /** Extra guidance lines to print after the summary (empty unless the target's plan carries any — see {@link ConsumerScaffoldPlan.notes}). */
+  readonly notes: readonly string[];
 }
 
 /**
@@ -74,6 +76,7 @@ export interface ScaffoldResult {
 const BUILDERS: Record<string, (options: ConsumerScaffoldOptions) => ConsumerScaffoldPlan> = {
   mkdocs: buildMkdocsScaffold,
   docusaurus: buildDocusaurusScaffold,
+  obsidian: buildObsidianScaffold,
 };
 
 /** The consumer targets `lore scaffold` recognizes as valid, even if not all are implemented yet. */
@@ -127,7 +130,7 @@ export function runScaffold(options: ScaffoldOptions): number {
 
   const files = writeAllOrRollback(options.root, plan.dirs, plan.files, { force: parsed.force });
 
-  const result: ScaffoldResult = { target: parsed.target, force: parsed.force, files };
+  const result: ScaffoldResult = { target: parsed.target, force: parsed.force, files, notes: plan.notes ?? [] };
   emit(scaffoldRenderable(result), options.output, options.stdout);
   return EXIT_OK;
 }
@@ -166,7 +169,7 @@ function parseScaffoldArgs(args: readonly string[]): ScaffoldArgs {
   if (!IMPLEMENTED_TARGETS.has(target)) {
     throw usage(
       `scaffold target "${target}" is not implemented yet`,
-      "only `mkdocs` and `docusaurus` are implemented today",
+      "only `mkdocs`, `docusaurus`, and `obsidian` are implemented today",
     );
   }
   return { target, force: flags.has("force") };
@@ -179,9 +182,10 @@ function scaffoldRenderable(data: ScaffoldResult): Renderable<ScaffoldResult> {
   return { kind: "scaffold.result", data, pretty: render, plain: render };
 }
 
-/** One `<action> <path>` line per file, then a one-line summary. */
+/** One `<action> <path>` line per file, then a one-line summary, then any target-specific guidance notes. */
 function render(data: ScaffoldResult): string {
   const lines = data.files.map((file) => `${file.action} ${file.path}`);
   lines.push(`scaffolded ${data.target} config (${data.files.length} file${data.files.length === 1 ? "" : "s"})`);
+  lines.push(...data.notes);
   return lines.join("\n");
 }
