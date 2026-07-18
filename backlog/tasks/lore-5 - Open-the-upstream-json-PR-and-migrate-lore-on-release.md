@@ -4,7 +4,7 @@ title: Open the upstream --json PR and migrate lore on release
 status: In Progress
 assignee: []
 created_date: '2026-06-21 06:25'
-updated_date: '2026-07-17 23:45'
+updated_date: '2026-07-18 00:03'
 labels:
   - backlog-fork
   - upstream
@@ -12,6 +12,8 @@ milestone: m-0
 dependencies:
   - LORE-3
   - LORE-4
+  - LORE-53
+  - LORE-54
 documentation:
   - docs/runbooks/backlog-json-patch.md
 priority: medium
@@ -250,6 +252,16 @@ dependency is wired in package.json yet (the adapter currently just shells
 `backlog` on PATH, so there's nothing to repoint yet). The adapter rewrite
 (new AC#2) and the actual git-dependency wiring (new AC#1) are the concrete
 next engineering steps, not yet started.
+
+Opened two follow-up tasks for the concrete engineering work (2026-07-17), rather
+than tracking it only as this task's ACs, and added them as LORE-5's dependencies:
+- LORE-53: pin lore's Backlog.md dependency to upstream's --json commit (interim,
+  since no tagged release exists yet); capability probe recognizes upstream's
+  real envelope.
+- LORE-54: rewrite src/adapters/backlog.ts against upstream's real contract
+  (envelope/kind/schema/probe, viewTask exit-code change, golden test recapture,
+  schema doc rewrite). Depends on LORE-53.
+No code changed on this task itself; it remains the umbrella decision record.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
