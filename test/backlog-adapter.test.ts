@@ -40,10 +40,22 @@ function fail(exitCode: number, stderr: string, stdout = ""): SpawnResult {
 }
 
 /**
+ * Upstream's real capability-probe envelope (backlog-json-schema.md §8) — what a `--json`-capable
+ * binary's own dry `task list --json` call returns. `probeBacklog`'s dry-run and `listTasks`'s real
+ * read issue the identical `["task", "list", "--json"]` argv, so a real binary would answer both with
+ * upstream's shape — but this file's reads (`listTasks`/`searchByLabel` parsing, LORE-21) still target
+ * this fork's `TASK_LIST` golden shape pending LORE-54's adapter rewrite. `defaultProbe` below serves
+ * this envelope only to the probe's own (always-first, memoized) call, keeping the two decoupled until
+ * LORE-54 migrates the real reads too.
+ */
+const PROBE_ENVELOPE = JSON.stringify({ schemaVersion: 1, kind: "task-list", tasks: [] });
+
+/**
  * A {@link BacklogSpawn} driven by a per-call `script(args, callIndex)`. It records every argv so a test
  * can pin invocation order (probe first) and assert the exact flags. Returning `undefined` from the
  * script falls back to the **default probe** responses (`--version` → `1.47.1`, the dry
- * `task list --json` → the committed taskList golden), so most tests only script the command under test.
+ * `task list --json` → {@link PROBE_ENVELOPE}, any later bare `task list --json` → the committed
+ * taskList golden), so most tests only script the command under test.
  */
 function scriptedSpawn(
   script: (args: string[], callIndex: number) => Outcome | undefined = () => undefined,
@@ -51,7 +63,7 @@ function scriptedSpawn(
   const calls: string[][] = [];
   const spawn = (async (args: readonly string[]): Promise<SpawnResult> => {
     const argv = [...args];
-    const outcome = script(argv, calls.length) ?? defaultProbe(argv);
+    const outcome = script(argv, calls.length) ?? defaultProbe(argv, calls);
     calls.push(argv);
     if (outcome instanceof Error) {
       throw outcome;
@@ -62,13 +74,19 @@ function scriptedSpawn(
   return spawn;
 }
 
-/** The default responses for the probe's two calls; throws for anything else so a test must script it. */
-function defaultProbe(argv: string[]): Outcome {
+/**
+ * The default responses for the probe's two calls, plus the fork-shaped golden for any later bare
+ * `task list --json` a real read issues. `priorCalls` lets the first such match (always the probe's
+ * own dry-run — every adapter method runs it before its own read) answer with upstream's shape, while
+ * a later match (a real `listTasks()`/`searchByLabel` read) keeps the fork's shape.
+ */
+function defaultProbe(argv: string[], priorCalls: readonly string[][]): Outcome {
   if (argv[0] === "--version") {
     return ok("1.47.1\n");
   }
   if (argv[0] === "task" && argv[1] === "list" && argv[2] === "--json") {
-    return ok(TASK_LIST);
+    const isProbesDryRun = !priorCalls.some((c) => c[0] === "task" && c[1] === "list" && c[2] === "--json");
+    return ok(isProbesDryRun ? PROBE_ENVELOPE : TASK_LIST);
   }
   return new Error(`scriptedSpawn: no scripted outcome for ${JSON.stringify(argv)}`);
 }
@@ -399,7 +417,7 @@ describe("the capability probe is wired into every path and memoized (AC#2)", ()
     await adapter.viewTask("LORE-33");
     const cap = await adapter.probe();
 
-    expect(cap).toEqual({ version: "1.47.1", schemaVersion: "1" });
+    expect(cap).toEqual({ version: "1.47.1", schemaVersion: 1 });
     expect(spawn.calls.filter((c) => c[0] === "--version")).toHaveLength(1);
   });
 

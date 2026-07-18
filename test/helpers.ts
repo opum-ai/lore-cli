@@ -253,7 +253,7 @@ export function fakeAdapter(
             if (probeOpt instanceof Error) {
               throw probeOpt;
             }
-            return { version: "1.47.1", schemaVersion: "1" };
+            return { version: "1.47.1", schemaVersion: 1 };
           },
     listTasks:
       opts.listTasks === undefined

@@ -5,8 +5,8 @@ import {
   type BacklogCapability,
   type BacklogSpawn,
   bunBacklogSpawn,
-  EXPECTED_SCHEMA_VERSION,
   MIN_BACKLOG_VERSION,
+  PROBE_SCHEMA_VERSION,
   probeBacklog,
   type SpawnResult,
 } from "../src/adapters/backlog";
@@ -18,9 +18,12 @@ import { exitCodeFor, LoreError } from "../src/errors";
  */
 type Outcome = SpawnResult | Error;
 
-/** A `{schemaVersion, kind, data}` envelope string, matching the fork's actual `task list --json` output. */
-function envelope(kind: unknown, data: unknown, schemaVersion: unknown = EXPECTED_SCHEMA_VERSION): string {
-  return JSON.stringify({ schemaVersion, kind, data });
+/**
+ * A `{schemaVersion, kind, tasks}` envelope string, matching upstream's real `task list --json` output
+ * (backlog-json-schema.md §8) — a numeric `schemaVersion`, hyphenated `kind`, and a `tasks` payload key.
+ */
+function envelope(kind: unknown, tasks: unknown, schemaVersion: unknown = PROBE_SCHEMA_VERSION): string {
+  return JSON.stringify({ schemaVersion, kind, tasks });
 }
 
 /** Shorthand for a process that ran and exited `0` with `stdout` (and empty stderr). */
@@ -64,32 +67,32 @@ async function probeError(spawn: BacklogSpawn): Promise<LoreError> {
   throw new Error("expected probeBacklog to throw, but it resolved");
 }
 
-describe("probeBacklog — passes on a --json-capable fork (AC#2)", () => {
+describe("probeBacklog — passes on a --json-capable upstream build (AC#2)", () => {
   test("returns the version and schemaVersion when --version and task list --json both succeed", async () => {
     const spawn = fakeSpawn({
       version: ok("1.47.1\n"),
-      list: ok(envelope("taskList", [{ id: "BACK-1" }])),
+      list: ok(envelope("task-list", [{ id: "BACK-1" }])),
     });
 
     const capability: BacklogCapability = await probeBacklog(spawn);
 
-    expect(capability).toEqual({ version: "1.47.1", schemaVersion: "1" });
+    expect(capability).toEqual({ version: "1.47.1", schemaVersion: PROBE_SCHEMA_VERSION });
     // Order and fail-forward: --version first, then the dry task list probe.
     expect(spawn.calls).toEqual([["--version"], ["task", "list", "--json"]]);
   });
 
   test("tolerates a version above the floor and an empty task list", async () => {
-    const spawn = fakeSpawn({ version: ok("1.48.0\n"), list: ok(envelope("taskList", [])) });
-    expect(await probeBacklog(spawn)).toEqual({ version: "1.48.0", schemaVersion: "1" });
+    const spawn = fakeSpawn({ version: ok("1.48.0\n"), list: ok(envelope("task-list", [])) });
+    expect(await probeBacklog(spawn)).toEqual({ version: "1.48.0", schemaVersion: PROBE_SCHEMA_VERSION });
   });
 
   test("drops pre-release/build metadata and extra envelope keys", async () => {
     const spawn = fakeSpawn({
       version: ok("1.47.1-beta.2+build5\n"),
       // A future additive key on the envelope must be tolerated, not rejected.
-      list: ok(JSON.stringify({ schemaVersion: "1", kind: "taskList", data: [], generatedAt: "whenever" })),
+      list: ok(JSON.stringify({ schemaVersion: 1, kind: "task-list", tasks: [], generatedAt: "whenever" })),
     });
-    expect(await probeBacklog(spawn)).toEqual({ version: "1.47.1", schemaVersion: "1" });
+    expect(await probeBacklog(spawn)).toEqual({ version: "1.47.1", schemaVersion: PROBE_SCHEMA_VERSION });
   });
 });
 
@@ -112,8 +115,8 @@ describe("probeBacklog — fails loud on a missing binary (AC#2, exit 3)", () =>
   });
 });
 
-describe("probeBacklog — fails loud on a non-fork binary (AC#2, exit 6)", () => {
-  test("stock Backlog.md rejects --json (task list exits non-zero) → validation", async () => {
+describe("probeBacklog — fails loud on a non-json-capable binary (AC#2, exit 6)", () => {
+  test("a binary without --json support rejects it (task list exits non-zero) → validation", async () => {
     const spawn = fakeSpawn({
       version: ok("1.47.1\n"),
       list: { exitCode: 1, stdout: "", stderr: "error: unknown option '--json'" },
@@ -161,24 +164,31 @@ describe("probeBacklog — fails loud on a non-fork binary (AC#2, exit 6)", () =
     expect(err.message).toContain("envelope object");
   });
 
-  test("the wrong envelope kind is fail-loud (guards the camelCase `taskList` discriminator)", async () => {
-    // The CLI-contract prose says "task-list"; the schema-of-record and the binary emit "taskList".
-    // A hyphenated kind must be rejected — this pins the probe to the real value.
-    const spawn = fakeSpawn({ version: ok("1.47.1\n"), list: ok(envelope("task-list", [])) });
+  test("the wrong envelope kind is fail-loud (guards the hyphenated `task-list` discriminator)", async () => {
+    // Upstream emits the hyphenated "task-list"; this fork's camelCase "taskList" must be rejected —
+    // this pins the probe to the real (upstream) value, not the fork's.
+    const spawn = fakeSpawn({ version: ok("1.47.1\n"), list: ok(envelope("taskList", [])) });
     const err = await probeError(spawn);
     expect(err.type).toBe("validation");
-    expect(err.message).toContain("taskList");
+    expect(err.message).toContain("task-list");
   });
 
-  test("a non-array `data` is fail-loud", async () => {
-    const spawn = fakeSpawn({ version: ok("1.47.1\n"), list: ok(envelope("taskList", { not: "an array" })) });
+  test("a non-array `tasks` is fail-loud", async () => {
+    const spawn = fakeSpawn({ version: ok("1.47.1\n"), list: ok(envelope("task-list", { not: "an array" })) });
     const err = await probeError(spawn);
     expect(err.type).toBe("validation");
-    expect(err.message).toContain("`data` was not an array");
+    expect(err.message).toContain("`tasks` was not an array");
   });
 
   test("an unrecognized schemaVersion is fail-loud rather than mis-read", async () => {
-    const spawn = fakeSpawn({ version: ok("1.47.1\n"), list: ok(envelope("taskList", [], "2")) });
+    const spawn = fakeSpawn({ version: ok("1.47.1\n"), list: ok(envelope("task-list", [], 2)) });
+    const err = await probeError(spawn);
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("schemaVersion");
+  });
+
+  test('the fork\'s string schemaVersion "1" is also an unrecognized (non-numeric) schemaVersion', async () => {
+    const spawn = fakeSpawn({ version: ok("1.47.1\n"), list: ok(envelope("task-list", [], "1")) });
     const err = await probeError(spawn);
     expect(err.type).toBe("validation");
     expect(err.message).toContain("schemaVersion");

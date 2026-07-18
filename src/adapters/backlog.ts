@@ -14,10 +14,14 @@
  * spawning module) preserves the design-spec invariant that this is the *only* backlog subprocess seam.
  *
  * Normative contract: docs/reference/backlog-cli-contract.md §5 (capability probe) and
- * docs/reference/backlog-json-schema.md (the `{schemaVersion, kind, data}` envelope). Where those two
- * documents disagree, the JSON schema reference — mirrored by the fork's actual output — wins: the
- * envelope carries `schemaVersion: "1"` (a string) and `kind: "taskList"` (camelCase), which is what
- * the probe asserts. (The CLI contract's prose `"task-list"` is a documentation slip, tracked in LORE-4.)
+ * docs/reference/backlog-json-schema.md §8 (the migration target this probe now asserts). `lore` is
+ * adopting upstream's (MrLesk/Backlog.md) independent `--json` implementation (PR #790) rather than this
+ * fork: the probe below checks upstream's real `task list --json` envelope — `schemaVersion: 1` (a
+ * number) and `kind: "task-list"` (hyphenated) with a `tasks` array, not this fork's `{schemaVersion:
+ * "1", kind: "taskList", data}` shape. The rest of this file (`EXPECTED_SCHEMA_VERSION`, `EnvelopeSchema`,
+ * `parseEnvelope`, and the typed read functions below) still targets this fork's shape pending LORE-54's
+ * full adapter rewrite — the probe and the full adapter are intentionally on different contracts until
+ * that lands (LORE-53).
  *
  * This file also reads the project's ordered status flow directly from `backlog/config.yml`'s own
  * `statuses:` key (LORE-26) — plain repo-committed YAML, not a `--json` envelope, so it is a direct
@@ -30,22 +34,32 @@ import { z } from "zod";
 import { deriveMessage, errnoCode, LoreError, readFileIfPresent, stderrHint } from "../errors";
 
 /**
- * The **binary version floor** the probe requires (`backlog --version`, contract §5 step 3). Pinned to
- * the fork's base release — the tested floor. Note this alone cannot distinguish the fork from stock:
- * stock v1.47.1 reports the same version. The `--json` envelope parse (step 4 below) is the real
- * discriminator — stock rejects `--json` as an unknown option and exits non-zero.
+ * The **binary version floor** the probe requires (`backlog --version`, contract §5 step 3). A sanity
+ * floor only — it does not by itself distinguish a `--json`-capable binary from plain stock, since a
+ * pre-`--json` stock release can still report a version at or above this floor. The `--json` envelope
+ * parse (step 3 below) is the real discriminator — a binary without `--json` support rejects the option
+ * and exits non-zero.
  */
 export const MIN_BACKLOG_VERSION = "1.47.1";
 
 /**
- * The `schemaVersion` the probe recognizes. The envelope is an **additive-only** versioned contract
- * (backlog-json-schema.md §2): unknown *extra keys* are tolerated, but an unrecognized `schemaVersion`
- * bump fails the probe rather than risking a mis-read (contract §5).
+ * The `schemaVersion` the **full read adapter** (`parseEnvelope`, `EnvelopeSchema`, and the typed reads
+ * below) recognizes — this fork's shape (`"1"`, a string). Distinct from {@link PROBE_SCHEMA_VERSION},
+ * which the capability probe checks against upstream's real (numeric) envelope; the two diverge until
+ * LORE-54 rewrites the full adapter onto upstream's contract.
  */
 export const EXPECTED_SCHEMA_VERSION = "1";
 
-/** The `kind` a `backlog task list --json` envelope must carry (backlog-json-schema.md §4). */
-const TASK_LIST_KIND = "taskList";
+/**
+ * The `schemaVersion` the capability probe recognizes — upstream's real envelope (a number), per
+ * backlog-json-schema.md §8. Kept separate from {@link EXPECTED_SCHEMA_VERSION} (the full adapter's,
+ * still this fork's string `"1"`) so migrating the probe alone doesn't change what the rest of the
+ * adapter parses.
+ */
+export const PROBE_SCHEMA_VERSION = 1;
+
+/** The `kind` a `backlog task list --json` envelope must carry, per upstream's contract (§8). */
+const TASK_LIST_KIND = "task-list";
 
 /** The default binary name resolved from PATH. */
 const BACKLOG_BINARY = "backlog";
@@ -78,8 +92,8 @@ export type BacklogSpawn = (args: readonly string[]) => Promise<SpawnResult>;
 export interface BacklogCapability {
   /** The `major.minor.patch` the binary reported (extra pre-release/build metadata dropped). */
   readonly version: string;
-  /** The `schemaVersion` its `--json` envelope carried (always {@link EXPECTED_SCHEMA_VERSION} today). */
-  readonly schemaVersion: string;
+  /** The `schemaVersion` its `--json` envelope carried (always {@link PROBE_SCHEMA_VERSION} today). */
+  readonly schemaVersion: number;
 }
 
 /** A parsed semantic version — just the numeric release triple the floor comparison needs. */
@@ -93,7 +107,7 @@ interface Semver {
 
 /** The one hint pointing an operator at how to obtain a `--json`-capable Backlog.md. */
 const RUNBOOK_HINT =
-  "lore needs a --json-capable Backlog.md. Build the fork per docs/runbooks/backlog-json-patch.md and put its `backlog` binary on PATH.";
+  "lore needs a --json-capable Backlog.md. Build MrLesk/Backlog.md pinned at or past commit 22a091b570d44c4f302ca47e7fd36fa28ad8bcb0 (PR #790; no tagged release contains it yet) per docs/runbooks/backlog-json-patch.md and put its `backlog` binary on PATH.";
 
 /**
  * Parse the leading `major.minor.patch` from `backlog --version` output. Backlog prints a **bare**
@@ -136,9 +150,10 @@ function notJsonCapable(reason: string, input?: Record<string, unknown>): never 
  * 1. `backlog --version` — a missing binary (`ENOENT`) is `not_found` (exit 3) with an install hint;
  *    a non-zero exit or non-semver output is fail-loud.
  * 2. Compare the reported version against {@link MIN_BACKLOG_VERSION}; below the floor is fail-loud.
- * 3. `backlog task list --json` — a non-zero exit (stock rejects the unknown `--json` option),
- *    unparseable stdout, the wrong `kind`, a non-array `data`, or an unrecognized `schemaVersion` are
- *    all fail-loud "not --json-capable" (exit 6). This step, not the version, is what proves the fork.
+ * 3. `backlog task list --json` — a non-zero exit (a binary without `--json` rejects the unknown
+ *    option), unparseable stdout, the wrong `kind`, a non-array `tasks`, or an unrecognized
+ *    `schemaVersion` are all fail-loud "not --json-capable" (exit 6). This step, not the version, is
+ *    what proves `--json` support.
  *
  * The `spawn` seam is injected so tests exercise every branch without a real subprocess.
  */
@@ -162,8 +177,8 @@ export async function probeBacklog(spawn: BacklogSpawn): Promise<BacklogCapabili
     notJsonCapable("`backlog --version` did not print a bare semver");
   }
 
-  // Step 2 — version floor. Below the tested floor is fail-loud; note stock v1.47.1 passes this check
-  // (same version as the fork), so passing here does NOT yet prove --json — step 3 does.
+  // Step 2 — version floor. Below the tested floor is fail-loud; note a pre-`--json` stock release can
+  // still pass this check, so passing here does NOT yet prove --json — step 3 does.
   const floor = parseSemver(MIN_BACKLOG_VERSION);
   if (floor && compareSemver(version, floor) < 0) {
     notJsonCapable(`version ${version.raw} is below the ${MIN_BACKLOG_VERSION} floor`, {
@@ -172,11 +187,13 @@ export async function probeBacklog(spawn: BacklogSpawn): Promise<BacklogCapabili
     });
   }
 
-  // Step 3 — the dry `task list --json` probe. THIS is the real discriminator: stock Backlog.md has no
-  // `--json` option, so Commander exits non-zero here. A fork emits one parseable envelope.
+  // Step 3 — the dry `task list --json` probe. THIS is the real discriminator: a binary without --json
+  // support has no such option, so Commander exits non-zero here. A --json-capable binary emits one
+  // parseable envelope in upstream's shape (backlog-json-schema.md §8): {schemaVersion: 1, kind:
+  // "task-list", tasks: [...]}.
   const listResult = await spawn(["task", "list", "--json"]);
   if (listResult.exitCode !== 0) {
-    notJsonCapable("`task list --json` exited non-zero (stock Backlog.md rejects --json)", {
+    notJsonCapable("`task list --json` exited non-zero (binary does not support --json)", {
       exitCode: listResult.exitCode,
     });
   }
@@ -190,23 +207,23 @@ export async function probeBacklog(spawn: BacklogSpawn): Promise<BacklogCapabili
   if (typeof envelope !== "object" || envelope === null || Array.isArray(envelope)) {
     notJsonCapable("`task list --json` did not print a JSON envelope object");
   }
-  const { schemaVersion, kind, data } = envelope as { schemaVersion?: unknown; kind?: unknown; data?: unknown };
+  const { schemaVersion, kind, tasks } = envelope as { schemaVersion?: unknown; kind?: unknown; tasks?: unknown };
   if (kind !== TASK_LIST_KIND) {
     notJsonCapable(`envelope kind was ${JSON.stringify(kind)}, expected ${JSON.stringify(TASK_LIST_KIND)}`);
   }
-  if (!Array.isArray(data)) {
-    notJsonCapable("envelope `data` was not an array");
+  if (!Array.isArray(tasks)) {
+    notJsonCapable("envelope `tasks` was not an array");
   }
   // An unrecognized schemaVersion is a contract drift lore must not mis-read (§5): fail loud rather than
   // parse a shape it does not understand.
-  if (schemaVersion !== EXPECTED_SCHEMA_VERSION) {
+  if (schemaVersion !== PROBE_SCHEMA_VERSION) {
     notJsonCapable(
-      `unrecognized schemaVersion ${JSON.stringify(schemaVersion)} (this lore understands ${JSON.stringify(EXPECTED_SCHEMA_VERSION)})`,
+      `unrecognized schemaVersion ${JSON.stringify(schemaVersion)} (this lore understands ${JSON.stringify(PROBE_SCHEMA_VERSION)})`,
       { schemaVersion },
     );
   }
 
-  return { version: version.raw, schemaVersion: EXPECTED_SCHEMA_VERSION };
+  return { version: version.raw, schemaVersion: PROBE_SCHEMA_VERSION };
 }
 
 /**

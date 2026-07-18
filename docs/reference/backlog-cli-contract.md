@@ -312,20 +312,23 @@ Run once at startup, cached in `.lore/cache/`. See the
 ```
 1. spawn("backlog", "--version")          → expect exit 0; stdout is bare semver "1.47.1\n"
 2. parse version, match /^\d+\.\d+\.\d+/   → no "v" prefix, no name, no extra tokens
-3. semver-compare ver >= MIN_BACKLOG       → MIN_BACKLOG = the --json-capable fork floor
+3. semver-compare ver >= MIN_BACKLOG       → a non-discriminating sanity floor (see below)
 4. spawn("backlog", "task", "list", "--json")
-   → assert exit 0 AND stdout parses to {schemaVersion, kind, data} with the expected
-     schemaVersion "1" and kind:"taskList" (camelCase — the value the fork emits)
+   → assert exit 0 AND stdout parses to {schemaVersion, kind, tasks} with the expected
+     numeric schemaVersion 1 and kind:"task-list" (hyphenated — upstream's real value,
+     PR #790; see backlog-json-schema.md §8)
 ```
 
 - `backlog --version` (and `-v`) prints **bare semver + newline** to stdout,
   exit 0, and works outside any project (verified bytes `31 2e 34 37 2e 31 0a`).
-- The **min-version floor** is the `--json`-capable fork — stock v1.47.1 lacks
-  `--json` and the dry `task list --json` probe in step 4 will fail its parse,
-  which is the intended signal. The probe is what enforces "you must run the
-  fork." See the [Backlog --json patch runbook](../runbooks/backlog-json-patch.md).
+- The **min-version floor** (`MIN_BACKLOG_VERSION`, still `1.47.1`) does **not**
+  by itself distinguish a `--json`-capable binary from one without — a
+  pre-`--json` release can still report a version at or above it. Step 4's
+  envelope parse is the real discriminator: a binary without `--json` support
+  rejects the option and step 4 fails its parse. See the
+  [Backlog --json patch runbook](../runbooks/backlog-json-patch.md).
 - **Never use `task view`'s exit code** in the probe or anywhere (it exits 0 on
-  missing — [§2.2](#22-existence-checks--use-editlist-never-view)).
+  missing in this fork; this flips on migration — [§2.2](#22-existence-checks--use-editlist-never-view)).
 - **Graceful failure modes:**
   - `backlog` absent from PATH (spawn `ENOENT`) → clear install hint, exit 3.
   - Version below floor / `--json` probe fails → refuse the coupling commands
@@ -337,16 +340,26 @@ The `--json` envelope is an **additive-only versioned contract**
 ([backlog-json-schema.md](backlog-json-schema.md)); a bump in `schemaVersion`
 that `lore` does not recognize fails the probe rather than mis-reads.
 
-> **This probe targets the fork; it will be rewritten for the migration.**
-> Step 3's `MIN_BACKLOG` and step 4's `kind:"taskList"` (camelCase) assertion
-> are specific to this fork's contract. Once `lore` adopts upstream's build
-> (see [backlog-json-schema.md §8](backlog-json-schema.md#8-migration-target--upstream-independent-contract-adopted)),
-> there is no semver floor to compare against yet — the interim dependency is
-> pinned to a specific upstream commit (at or past the PR #790 merge,
-> `22a091b570d44c4f302ca47e7fd36fa28ad8bcb0`), not a version range — and step 4
-> must assert upstream's real envelope (`kind: "task-list"`, a `tasks` array,
-> not a `data` key). The probe converts to a normal semver floor once a tagged
-> Backlog.md release includes that commit.
+> **Migration status (LORE-53, done): the probe now targets upstream, not this
+> fork.** Step 4 asserts upstream's real envelope (`kind: "task-list"`, a
+> `tasks` array, numeric `schemaVersion: 1`) rather than this fork's
+> `{schemaVersion: "1", kind: "taskList", data}` shape — see
+> [backlog-json-schema.md §8](backlog-json-schema.md#8-migration-target--upstream-independent-contract-adopted).
+> `MIN_BACKLOG_VERSION` is unchanged (`1.47.1`): there is still no tagged
+> upstream release containing `--json` to set a real floor against, so it
+> remains the same non-discriminating sanity check described above — no
+> version comparison can yet tell "has upstream's `--json`" apart from "does
+> not." Until a tagged `MrLesk/Backlog.md` release includes the PR #790 commit
+> (`22a091b570d44c4f302ca47e7fd36fa28ad8bcb0`), running `lore`'s coupling
+> commands requires a manually-built `backlog` binary from that pinned commit
+> on PATH (see the [patch runbook §8](../runbooks/backlog-json-patch.md)) —
+> deliberately **not** a `package.json` git dependency: `lore` has not shipped
+> yet, so this is dev/test-time-only wiring, deferred until a real release
+> exists (LORE-53 decision). **Still pending (LORE-54):** the full read
+> adapter (`EnvelopeSchema`, `parseEnvelope`, `listTasks`/`viewTask`/
+> `searchTasks`) still targets this fork's shape — the probe check above and
+> the full-adapter parse below are on two different contracts until LORE-54
+> lands.
 
 ---
 

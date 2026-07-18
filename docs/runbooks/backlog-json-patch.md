@@ -371,25 +371,30 @@ rather than waiting — same rationale as [ADR-0002's alternative
    (`tasks/back-510-json-output` @ `a80b7a1`) is no longer rebased or extended.
    It remains as a historical reference for what LORE-2/4/21 originally shipped
    against.
-2. **Point the (future) git dependency at upstream, not the fork**, pinned to a
-   commit at or past the PR #790 merge
-   (`22a091b570d44c4f302ca47e7fd36fa28ad8bcb0` on `MrLesk/Backlog.md#main`) —
-   e.g. `"backlog.md": "github:MrLesk/Backlog.md#22a091b..."` — since no tagged
-   release contains it yet.
+2. **Build a `backlog` binary from upstream, not the fork, pinned to a commit
+   at or past the PR #790 merge** (`22a091b570d44c4f302ca47e7fd36fa28ad8bcb0` on
+   `MrLesk/Backlog.md#main`) — same manual clone/build/PATH convention as §6
+   above, repointed at upstream's checkout instead of the fork's. **Deliberately
+   no `package.json` dependency yet** (decided on LORE-53): `lore` has not
+   shipped, so this is dev/test-time-only wiring; a real dependency entry is
+   deferred to step 4 below, once a tagged release exists to depend on normally.
 3. **Rewrite `src/adapters/backlog.ts`'s envelope parsing, Zod schemas, and
    capability probe** against upstream's real contract, documented in
    [backlog-json-schema.md §8](../reference/backlog-json-schema.md#8-migration-target--upstream-independent-contract-adopted)
    — different envelope shape, `schemaVersion` type, `kind` spelling, task
    fields, search hit shape, and not-found exit code than this fork emits. This
-   is a contract migration, not a floor bump — the current adapter would fail
-   its own probe against upstream's real output. **Not done yet** — tracked on
-   LORE-5.
+   is a contract migration, not a floor bump. **Split across two tasks:** the
+   capability probe (`probeBacklog`, `PROBE_SCHEMA_VERSION`, `TASK_LIST_KIND`)
+   is done — LORE-53; the full read adapter (`EnvelopeSchema`, `parseEnvelope`,
+   `listTasks`/`viewTask`/`searchTasks`, golden fixtures) is **not done yet** —
+   tracked on LORE-54.
 4. **Once a tagged `MrLesk/Backlog.md` release includes the PR #790 commit**,
-   switch from the pinned-commit git dependency to the published package
+   add a real `package.json` dependency on the published package
    (`"backlog.md": "^<that-release>"`) and bump the capability probe's minimum
    version to it — this is the only step that still matches the *original*
    plan's shape (a normal semver floor bump), just against upstream's version
-   instead of the fork's.
+   instead of the fork's, and the first point a dependency entry is actually
+   added (step 2 above is manual/documented only).
 
 ---
 
