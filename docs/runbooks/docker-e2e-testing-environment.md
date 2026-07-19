@@ -69,21 +69,24 @@ JSON-only, fail-loud design. LORE-56 first ran this and found four real defects
 
 ## Known, already-filed regressions baked into the script
 
-Two findings from the same LORE-56 run are tracked but don't have a dedicated `run-e2e.sh`
-regression step (nothing in the script's own exit-code assertions currently encodes them):
+One finding from the same LORE-56 run is tracked but doesn't have a dedicated `run-e2e.sh`
+regression step (nothing in the script's own exit-code assertions currently encodes it):
 
 - **LORE-58** — `lore link`/`unlink --json` would emit a full success-shaped envelope on stdout
   even on a nonzero exit, if any per-task write fails. LORE-57 (below) removed the only trigger
   path currently exercised by this script, but the structural gap in `link.ts` remains — any
   future per-task write failure would still reproduce it.
-- **LORE-60** — a fully missing `backlog` binary is `not_found`/exit `3` (not `6` as
-  [ADR-0002](../adr/0002-backlog-integration-json-only.md) currently states) — a doc-accuracy gap,
-  not a code bug; the code's own inline comment explains the distinction is deliberate.
 
 **LORE-57 (fixed)** — `lore link`/`unlink`'s Backlog `doc:` back-ref write used to fail
 (`editTask` sent `--json` to `backlog task edit`, which doesn't support it) and exit `6`; the
 frontmatter `tasks:` list was still written correctly. Phase 4's steps now assert the fixed
 behavior (exit `0`, real `backRef` add/remove) instead of the regression baseline.
+
+**LORE-60 (fixed)** — a fully missing `backlog` binary is `not_found`/exit `3`, distinct from a
+present-but-too-old-or-non-`--json`-capable binary (`validation`/exit `6`); the code's own inline
+comment explains the split is deliberate. [ADR-0002](../adr/0002-backlog-integration-json-only.md)
+previously collapsed both cases into a single "exit `6`" claim — a doc-accuracy gap, not a code
+bug — now corrected to match the real exit codes.
 
 When any of the remaining findings are fixed, flip the corresponding `step`'s expected exit code
 (and delete the now-unneeded workaround) in the same change that fixes the underlying bug — a

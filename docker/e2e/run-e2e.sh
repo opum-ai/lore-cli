@@ -194,12 +194,12 @@ check "lore sync rendered the linked tasks' table into the managed block" \
 # list returns an empty rollup without ever shelling out to backlog at all
 # (confirmed), so hiding backlog from PATH would silently no-op the test.
 #
-# LORE-60 (doc-accuracy, filed): ADR-0002 says a missing/too-old/incapable
+# LORE-60 (doc-accuracy, fixed): ADR-0002 used to say a missing/too-old/incapable
 # backlog binary all map to exit 6 (validation). The real, deliberate code
 # (src/adapters/backlog.ts probeBacklog, its own comment: "a missing binary
 # (ENOENT) is not_found (exit 3) ... distinct from a present-but-incapable
 # binary (exit 6)") intentionally splits these: entirely MISSING is exit 3.
-# The code's distinction is reasonable; the ADR's summary is just imprecise.
+# The code's distinction is reasonable; ADR-0002 and this runbook now match it.
 mkdir -p /tmp/no-backlog-path
 for b in /usr/local/bin/*; do
   bn="$(basename "$b")"
