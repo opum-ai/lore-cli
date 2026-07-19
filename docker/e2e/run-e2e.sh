@@ -10,11 +10,9 @@
 # as one JSON line. A non-critical step failing does not abort the run; the
 # script's own exit code reflects the overall tally.
 #
-# Some steps deliberately assert the CURRENT (buggy) behavior documented in
-# LORE-59 rather than the desired one — those are marked in their step names.
-# This proves the bug is real and gives a regression baseline; it does not
-# mean the harness thinks that behavior is correct. (LORE-57 was fixed and
-# its regression step below now asserts the correct exit code.)
+# Two steps below used to deliberately assert CURRENT (buggy) behavior as a
+# regression baseline before their bugs were fixed (LORE-57, LORE-59); both
+# now assert the correct exit code.
 
 set -uo pipefail
 
@@ -164,7 +162,7 @@ done
 STORY_PATH="${DOC_PATH[Story]}"
 STORY_ID="${DOC_ID[Story]}"
 
-# ── Phase 4: link / unlink, + the LORE-59 regression ────────────────────────
+# ── Phase 4: link / unlink, + lore sync rendering the managed block ─────────
 # LORE-57 (fixed): the doc: back-ref write to Backlog used to fail (editTask
 # sent --json to `backlog task edit`, which doesn't support it). Now it
 # succeeds — verify both the frontmatter tasks: list AND the real backRef.
@@ -183,16 +181,13 @@ step_json "lore link: re-add TASK2 for downstream phases" \
   '.data.tasks[] | select(.task == "'"$TASK2"'") | .backRef == "added"' \
   -- lore link "$STORY_ID" "$TASK2" --json
 
-# LORE-59 regression: `lore sync` needs to render the Story's *linked* tasks
-# into the managed block; a Story with tasks: still empty has nothing to
-# render and sync silently no-ops (confirmed — that combination is NOT the
-# bug). The failure needs the Story to actually have linked tasks (just
-# established above) but still lack the markers.
-step "LORE-59 regression: lore sync fails once tasks are linked (missing managed block)" 6 \
+# LORE-59 (fixed): `lore new Story` now scaffolds the managed block, so
+# `lore sync` renders the Story's linked tasks into it directly — no
+# hand-authored markup step needed between `lore new` and `lore sync`.
+step "lore sync renders the managed block for newly-linked tasks (LORE-59 fixed)" 0 \
   -- lore sync "$STORY_ID"
-# Work around it so the rest of the matrix can still exercise sync/check/idempotency for real.
-printf '\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n' >>"$STORY_PATH"
-log "worked around LORE-59: appended lore:tasks markers to $STORY_PATH"
+check "lore sync rendered the linked tasks' table into the managed block" \
+  'grep -q "lore:tasks:begin" "$STORY_PATH" && grep -q "| Task | Title | Status |" "$STORY_PATH"'
 
 # ── Phase 3b (here, not earlier): capability probe negative tests. These need
 # a concept that actually has linked tasks — `lore tasks` on an empty tasks:

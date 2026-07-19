@@ -216,6 +216,11 @@ The new concept is **not** committed automatically — it is yours to edit
 ([ADR-0006](../adr/0006-schema-types-templates.md)). A missing or oversized
 `summary` is warned about, not blocked.
 
+The built-in `Story` template also ships an empty
+`<!-- lore:tasks:begin -->…<!-- lore:tasks:end -->` managed block (LORE-59), so
+a fresh Story is immediately `lore sync`-able once linked, with no
+hand-authored markup.
+
 ### 3.3 `lore validate`
 
 ```
@@ -462,6 +467,10 @@ The `<!-- lore:tasks:begin -->…<!-- lore:tasks:end -->` block is the sole regi
 lore regenerates inside a Story; everything outside is the author's and is never
 touched ([ADR-0008](../adr/0008-managed-block-remark-ast.md)). `replace` and
 `rename` skip these regions so user refactors and lore regeneration never fight.
+`lore new Story` scaffolds this region empty by default, so the first
+`lore sync` after linking a task fills it in rather than erroring; a Story that
+is missing the markers entirely (e.g. hand-deleted after creation) still fails
+loud at exit 6 (ADR-0008 §2) — lore never guesses where to insert them.
 
 ### 6.3 Golden tests pin the bytes
 

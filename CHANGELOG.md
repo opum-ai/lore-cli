@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`lore new Story` now scaffolds the `lore:tasks` managed block, so a fresh Story is `lore sync`-able
+  immediately** (LORE-59, found via the LORE-56 Docker E2E harness against a real pinned-upstream
+  `backlog` binary). `STORY_TEMPLATE` (`src/core/template.ts`) previously shipped no `<!-- lore:tasks:begin
+  -->`/`<!-- lore:tasks:end -->` markers — just `# {{title}}` / `## Goal` / `## Acceptance criteria` /
+  `## Notes` — even though Story is the one type carrying the `tasks:` coupling that `lore sync`
+  regenerates in place. Because `managed-block.ts` treats a totally-absent block as a hard validation
+  error (exit `6`) rather than something to create on first sync — a deliberate ADR-0008 §2 "never guess,
+  never write a partial block" contract, already exercised by the existing `test/sync.test.ts` fail-loud
+  test — the canonical `lore new` → `lore link` → `lore sync` → `lore check` loop documented in
+  `agent-onboarding.md` failed at the `sync` step on every freshly-created Story, requiring an undocumented
+  manual edit to hand-add the two marker lines before syncing would work. Fixed by giving `STORY_TEMPLATE`
+  a `## Tasks` section carrying the empty managed block by default, between `## Acceptance criteria` and
+  `## Notes`; `managed-block.ts`/`sync.ts` are untouched, so a Story whose markers are hand-deleted
+  entirely still fails loud at exit `6` exactly as before. `docs/runbooks/agent-onboarding.md` and
+  `docs/specs/lore-design.md` §3.2/§6.2 now document that the block ships empty from `lore new` and gets
+  filled in by the first `lore sync`. Verified with a full unit pass (`bun test`: 1500/1500) plus a real
+  pinned-upstream-binary run via `docker/e2e/` (82/82) — a freshly `lore new`-created Story now completes
+  the full `new` → `link` → `sync` → `check` loop at exit `0`, with the managed block genuinely populated
+  by rendered task content, not just empty markers. Updated `run-e2e.sh`'s LORE-59 step (flipped expected
+  exit `6`→`0`, removed the manual marker-append workaround, added a check that the rendered table is
+  present) and the E2E runbook's known-regressions list accordingly.
+
 - **`lore link`/`unlink --json` no longer leaks a success-shaped envelope on a nonzero exit**
   (LORE-58, found via the LORE-56 Docker E2E harness against a real pinned-upstream `backlog`
   binary). When a per-task Backlog back-reference write (or the `backlog/` commit) failed,

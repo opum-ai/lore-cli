@@ -69,15 +69,7 @@ JSON-only, fail-loud design. LORE-56 first ran this and found four real defects
 
 ## Known, already-filed regressions baked into the script
 
-One step in `run-e2e.sh` still deliberately asserts the *current, buggy* exit code rather than the
-desired one, so the harness both proves the bug is real on every run and still lets downstream
-phases exercise the rest of the surface via a documented workaround:
-
-- **LORE-59** — `lore new Story` doesn't scaffold the `<!-- lore:tasks:begin/end -->` managed
-  block, so `lore sync` fails once tasks are linked; the script appends the markers manually
-  afterward so sync/check/idempotency can still be exercised for real.
-
-Two more findings from the same LORE-56 run are tracked but don't have a dedicated `run-e2e.sh`
+Two findings from the same LORE-56 run are tracked but don't have a dedicated `run-e2e.sh`
 regression step (nothing in the script's own exit-code assertions currently encodes them):
 
 - **LORE-58** — `lore link`/`unlink --json` would emit a full success-shaped envelope on stdout

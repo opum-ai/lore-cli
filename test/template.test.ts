@@ -128,6 +128,12 @@ describe("buildNewConcept — frontmatter is structural, never substituted", () 
     const concept = parseConcept("docs/stories/sample.md", result.contents);
     expect(concept.frontmatter.tags).toEqual(["retention", "orders"]);
   });
+
+  test("the Story template ships the lore:tasks managed-block markers (LORE-59)", () => {
+    const body = builtinTemplateFor("Story");
+    expect(body).toContain("<!-- lore:tasks:begin -->");
+    expect(body).toContain("<!-- lore:tasks:end -->");
+  });
 });
 
 describe("buildNewConcept — unknown types are tolerated (no modeline)", () => {
