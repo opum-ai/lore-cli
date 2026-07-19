@@ -3,9 +3,11 @@ id: LORE-55.10
 title: >-
   consumer-scaffold.ts: ConsumerScaffoldOptions doc comment omits obsidian as a
   consumer
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-18 22:55'
+updated_date: '2026-07-19 00:07'
 labels:
   - docs
   - core
@@ -28,5 +30,23 @@ ConsumerScaffoldOptions's doc comment (and its timestamp/profile field docs) sti
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 ConsumerScaffoldOptions's doc comment and its timestamp/profile field docs mention buildObsidianScaffold alongside buildDocusaurusScaffold as a consumer that ignores these fields
+- [x] #1 ConsumerScaffoldOptions's doc comment and its timestamp/profile field docs mention buildObsidianScaffold alongside buildDocusaurusScaffold as a consumer that ignores these fields
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Update ConsumerScaffoldOptions's interface doc comment plus its timestamp/profile/siteName field docs (core/consumer-scaffold.ts) to name buildObsidianScaffold alongside buildDocusaurusScaffold wherever they describe which builder(s) ignore a field.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Updated the interface-level doc plus timestamp and profile field docs per the AC. Also updated siteName's field doc to note buildObsidianScaffold ignores it too (buildObsidianScaffold's own docstring already stated it ignores 'every options field'; siteName's own doc previously didn't disclaim any third builder) -- not explicitly named in the AC, but directly needed for the same interface's doc block to stay internally consistent once timestamp/profile call out obsidian and siteName silently doesn't. Verified via typecheck + full test suite (1497 pass) + lint clean.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+ConsumerScaffoldOptions's doc comment and all three field docs (timestamp, siteName, profile) now name buildObsidianScaffold alongside buildDocusaurusScaffold as builders that ignore them. Verified: typecheck, lint, and full test suite (1497 pass) all clean.
+<!-- SECTION:FINAL_SUMMARY:END -->

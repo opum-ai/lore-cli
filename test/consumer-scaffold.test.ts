@@ -12,6 +12,9 @@
  * dir, unreadable pre-existing file, a freshly-ensured directory rolled back on a later
  * failure, etc.) are not re-tested per target — both targets share the exact same
  * `writeAllOrRollback` primitive, already exercised exhaustively by the mkdocs suite below.
+ * Obsidian (LORE-41) gets its own narrow rollback/pre-flight regression tests (LORE-55) despite
+ * sharing that same primitive — its bug was in {@link buildObsidianScaffold}'s own `dirs` list,
+ * a per-target plan defect the shared-primitive tests below can't catch.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -422,7 +425,10 @@ describe("core/consumer-scaffold — buildObsidianScaffold (pure)", () => {
 
   test("plans exactly docs/.obsidian/app.json, and carries the Files & Links guidance notes", () => {
     const plan = buildObsidianScaffold({ timestamp: "2026-07-11T12:00:00.000Z", siteName: "lore" });
-    expect(plan.dirs).toEqual(["docs/.obsidian"]);
+    // dirs lists every ancestor level (parent before child), matching buildScaffold's own
+    // pattern (e.g. ".lore" and ".lore/schemas" as separate entries) — so writeAllOrRollback
+    // tracks the implicitly-created "docs" for cleanup, not just the nested ".obsidian" leaf.
+    expect(plan.dirs).toEqual(["docs", "docs/.obsidian"]);
     expect(plan.files.map((f) => f.path)).toEqual([OBSIDIAN_APP_JSON_REL_PATH]);
     expect(plan.notes).toEqual(OBSIDIAN_GUIDANCE_NOTES);
   });
@@ -437,6 +443,18 @@ describe("core/consumer-scaffold — buildObsidianScaffold (pure)", () => {
       newLinkFormat: "relative",
       alwaysUpdateLinks: true,
     });
+  });
+
+  test("notes is frozen, so a downstream mutation attempt cannot corrupt the shared constant across calls", () => {
+    // Regression: OBSIDIAN_GUIDANCE_NOTES used to be returned by reference into every plan, with
+    // no copy and no Object.freeze — a single downstream cast-and-mutate (plan.notes is only
+    // readonly at compile time) would permanently corrupt the shared constant for every
+    // subsequent call in-process (bun test runs all files in one process).
+    const first = buildObsidianScaffold({ timestamp: "2026-07-11T12:00:00.000Z", siteName: "lore" });
+    expect(Object.isFrozen(first.notes)).toBe(true);
+    expect(() => (first.notes as string[]).push("injected")).toThrow(TypeError);
+    const second = buildObsidianScaffold({ timestamp: "2026-07-11T12:00:00.000Z", siteName: "lore" });
+    expect(second.notes).toEqual(OBSIDIAN_GUIDANCE_NOTES);
   });
 });
 
@@ -477,18 +495,60 @@ describe("lore scaffold obsidian — never-silent-clobber (AC: user-owned, never
     expect(result.force).toBe(true);
     expect(result.files).toEqual([{ path: OBSIDIAN_APP_JSON_REL_PATH, action: "updated" }]);
   });
+
+  test("a pre-existing non-directory file occupying docs/ is reported as a friendly conflict, not a deep crash (review #2)", () => {
+    // Regression: the preflight's blockedDirs check walks plan.dirs, but buildObsidianScaffold
+    // used to list only the nested "docs/.obsidian" leaf, never its "docs" ancestor — and
+    // existsSync on a path that traverses a non-directory parent returns false, so a plain file
+    // sitting at docs/ never tripped the check. It fell through to writeAllOrRollback, which
+    // surfaced a lower-level error that never named docs as the blocker and never mentioned
+    // --force, unlike every other scaffold conflict (matches docusaurus's own "pre-existing
+    // non-directory file occupying website/" regression test).
+    writeFileSync(join(root, "docs"), "not a directory\n");
+    const err = expectError("conflict", () =>
+      runScaffold({ root, output: JSON_CTX, args: ["obsidian"], stdout: capture() }),
+    );
+    expect(err.message).toContain("docs");
+    expect(err.hint).toContain("--force");
+    expect(readFileSync(join(root, "docs"), "utf8")).toBe("not a directory\n");
+  });
+
+  // POSIX-only: a umask-restricted directory doesn't reliably block a nested mkdir on Windows.
+  test.skipIf(process.platform === "win32")(
+    "a run against a repo with no docs/ rolls back the freshly-created docs/ on a later failure (review #3)",
+    () => {
+      // Regression: buildObsidianScaffold's plan used to list only the nested leaf "docs/.obsidian",
+      // never its parent "docs", so writeAllOrRollback never tracked the implicitly-created docs/
+      // for cleanup. A restrictive umask makes the freshly-created docs/ read-only, so the SECOND
+      // planned dir (docs/.obsidian) fails to be created inside it — a failure strictly AFTER
+      // docs/ was freshly created by this same run — mirroring mkdocs's own "rolls back the
+      // freshly-created directory on a later failure" case (test above).
+      expect(existsSync(join(root, "docs"))).toBe(false);
+      const originalUmask = process.umask(0o222);
+      try {
+        const err = expectError("denied", () =>
+          runScaffold({ root, output: JSON_CTX, args: ["obsidian"], stdout: capture() }),
+        );
+        expect(err.type).toBe("denied");
+      } finally {
+        process.umask(originalUmask);
+      }
+      expect(existsSync(join(root, "docs"))).toBe(false);
+    },
+  );
 });
 
 describe("lore scaffold obsidian — output rendering", () => {
-  test("plain mode lists the file, a summary, then the Files & Links guidance notes", () => {
+  test("plain mode lists the file, a summary, then the Files & Links guidance notes, in that order", () => {
     const stdout = capture();
     runScaffold({ root, output: PLAIN_CTX, args: ["obsidian"], stdout, clock: FIXED_CLOCK });
-    const lines = stdout.lines();
-    expect(lines).toContain(`created ${OBSIDIAN_APP_JSON_REL_PATH}`);
-    expect(lines).toContain("scaffolded obsidian config (1 file)");
-    for (const note of OBSIDIAN_GUIDANCE_NOTES) {
-      expect(lines).toContain(note);
-    }
+    // Full-sequence equality (not just unordered containment) so a future render() change that
+    // prints the notes before or interleaved with the file/summary lines fails this test.
+    expect(stdout.lines()).toEqual([
+      `created ${OBSIDIAN_APP_JSON_REL_PATH}`,
+      "scaffolded obsidian config (1 file)",
+      ...OBSIDIAN_GUIDANCE_NOTES,
+    ]);
   });
 
   test("the JSON envelope carries the guidance notes verbatim", () => {
@@ -498,6 +558,7 @@ describe("lore scaffold obsidian — output rendering", () => {
 
   test("mkdocs/docusaurus results carry an empty notes array", () => {
     expect(scaffold(["mkdocs"]).result.notes).toEqual([]);
+    expect(scaffold(["docusaurus"]).result.notes).toEqual([]);
   });
 });
 

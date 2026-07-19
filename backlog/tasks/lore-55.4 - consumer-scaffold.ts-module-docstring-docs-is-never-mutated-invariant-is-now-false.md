@@ -3,9 +3,11 @@ id: LORE-55.4
 title: >-
   consumer-scaffold.ts module docstring: "docs/ is never mutated" invariant is
   now false
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-18 22:54'
+updated_date: '2026-07-19 00:06'
 labels:
   - docs
   - core
@@ -28,5 +30,23 @@ core/consumer-scaffold.ts's module docstring states the cross-target invariant "
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The module docstring is updated to state the obsidian exception explicitly (docs/.obsidian/app.json is the one intentional exception, and why)
+- [x] #1 The module docstring is updated to state the obsidian exception explicitly (docs/.obsidian/app.json is the one intentional exception, and why)
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Rewrite core/consumer-scaffold.ts's module docstring (the docs/ is never mutated claim) to state buildObsidianScaffold's docs/.obsidian/app.json write as the one intentional exception, and explain why (Obsidian's vault-scoping requirement needs docs/ itself to be the vault root, consumer-compatibility.md §3.2).
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Edited src/core/consumer-scaffold.ts's module docstring (lines ~5-9). Verified via typecheck + full test suite (1497 pass) + lint clean on the changed file.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+core/consumer-scaffold.ts's module docstring now names buildObsidianScaffold's docs/.obsidian/app.json write as the one intentional exception to the 'docs/ is never mutated' invariant, with the vault-scoping rationale inline. Verified: typecheck, lint, and full test suite (1497 pass) all clean.
+<!-- SECTION:FINAL_SUMMARY:END -->
