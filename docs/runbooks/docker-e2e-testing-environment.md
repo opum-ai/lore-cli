@@ -69,23 +69,33 @@ JSON-only, fail-loud design. LORE-56 first ran this and found four real defects
 
 ## Known, already-filed regressions baked into the script
 
-Three steps in `run-e2e.sh` deliberately assert the *current, buggy* exit code rather than the
+One step in `run-e2e.sh` still deliberately asserts the *current, buggy* exit code rather than the
 desired one, so the harness both proves the bug is real on every run and still lets downstream
 phases exercise the rest of the surface via a documented workaround:
 
-- **LORE-57 / LORE-58** — `lore link`/`unlink`'s Backlog `doc:` back-ref write currently fails
-  (`editTask` sends `--json` to `backlog task edit`, which doesn't support it) and exits `6`; the
-  frontmatter `tasks:` list is still written correctly.
 - **LORE-59** — `lore new Story` doesn't scaffold the `<!-- lore:tasks:begin/end -->` managed
   block, so `lore sync` fails once tasks are linked; the script appends the markers manually
   afterward so sync/check/idempotency can still be exercised for real.
+
+Two more findings from the same LORE-56 run are tracked but don't have a dedicated `run-e2e.sh`
+regression step (nothing in the script's own exit-code assertions currently encodes them):
+
+- **LORE-58** — `lore link`/`unlink --json` would emit a full success-shaped envelope on stdout
+  even on a nonzero exit, if any per-task write fails. LORE-57 (below) removed the only trigger
+  path currently exercised by this script, but the structural gap in `link.ts` remains — any
+  future per-task write failure would still reproduce it.
 - **LORE-60** — a fully missing `backlog` binary is `not_found`/exit `3` (not `6` as
   [ADR-0002](../adr/0002-backlog-integration-json-only.md) currently states) — a doc-accuracy gap,
   not a code bug; the code's own inline comment explains the distinction is deliberate.
 
-When any of these are fixed, flip the corresponding `step`'s expected exit code (and delete the
-now-unneeded workaround) in the same change that fixes the underlying bug — a passing run with the
-old expectation still in place would silently mask a regression.
+**LORE-57 (fixed)** — `lore link`/`unlink`'s Backlog `doc:` back-ref write used to fail
+(`editTask` sent `--json` to `backlog task edit`, which doesn't support it) and exit `6`; the
+frontmatter `tasks:` list was still written correctly. Phase 4's steps now assert the fixed
+behavior (exit `0`, real `backRef` add/remove) instead of the regression baseline.
+
+When any of the remaining findings are fixed, flip the corresponding `step`'s expected exit code
+(and delete the now-unneeded workaround) in the same change that fixes the underlying bug — a
+passing run with the old expectation still in place would silently mask a regression.
 
 ## Rollback
 

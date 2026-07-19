@@ -11,9 +11,10 @@
 # script's own exit code reflects the overall tally.
 #
 # Some steps deliberately assert the CURRENT (buggy) behavior documented in
-# LORE-57/58/59 rather than the desired one — those are marked in their step
-# names. This proves the bugs are real and gives a regression baseline; it
-# does not mean the harness thinks that behavior is correct.
+# LORE-59 rather than the desired one — those are marked in their step names.
+# This proves the bug is real and gives a regression baseline; it does not
+# mean the harness thinks that behavior is correct. (LORE-57 was fixed and
+# its regression step below now asserts the correct exit code.)
 
 set -uo pipefail
 
@@ -163,22 +164,23 @@ done
 STORY_PATH="${DOC_PATH[Story]}"
 STORY_ID="${DOC_ID[Story]}"
 
-# ── Phase 4: link / unlink, + the LORE-57/58/59 regressions ────────────────
-# LORE-57/58 regression: the doc: back-ref write to Backlog currently fails
-# (editTask sends --json to `backlog task edit`, which doesn't support it),
-# but the frontmatter tasks: list is still written correctly. Frontmatter
-# stores lowercased ids (task-1) even though Backlog's CLI displays/creates
-# them uppercased (TASK-1) — case-insensitive match.
-step "LORE-57/58 regression: lore link (backref write currently fails)" 6 \
+# ── Phase 4: link / unlink, + the LORE-59 regression ────────────────────────
+# LORE-57 (fixed): the doc: back-ref write to Backlog used to fail (editTask
+# sent --json to `backlog task edit`, which doesn't support it). Now it
+# succeeds — verify both the frontmatter tasks: list AND the real backRef.
+# Frontmatter stores lowercased ids (task-1) even though Backlog's CLI
+# displays/creates them uppercased (TASK-1) — case-insensitive match.
+step_json "lore link writes the doc: back-ref (LORE-57 fixed)" \
+  '.data.tasks | all(.backRef == "added" or .backRef == "already-present")' \
   -- lore link "$STORY_ID" "$TASK1" "$TASK2" --json
-check "lore link still wrote the frontmatter tasks: list despite the backref failure" \
+check "lore link also wrote the frontmatter tasks: list" \
   'grep -qi "$TASK1" "$STORY_PATH" && grep -qi "$TASK2" "$STORY_PATH"'
-# unlink does NOT hit the same bug here: since link's backref write already
-# failed, there is no doc: label to remove, so unlink's own editTask call is
-# never reached (backRef reports "already-absent") and it legitimately exits 0.
-step "lore unlink (no backref existed to remove, so this legitimately succeeds)" 0 \
+# unlink now has a real backref to remove (link's write above succeeded).
+step_json "lore unlink removes the real backref" \
+  '.data.tasks[] | select(.task == "'"$TASK2"'") | .backRef == "removed"' \
   -- lore unlink "$STORY_ID" "$TASK2" --json
-step "lore link: re-add TASK2 for downstream phases (same known-bug exit)" 6 \
+step_json "lore link: re-add TASK2 for downstream phases" \
+  '.data.tasks[] | select(.task == "'"$TASK2"'") | .backRef == "added"' \
   -- lore link "$STORY_ID" "$TASK2" --json
 
 # LORE-59 regression: `lore sync` needs to render the Story's *linked* tasks

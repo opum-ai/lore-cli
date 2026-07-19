@@ -348,7 +348,6 @@ describe("editTask — incremental patch (§2.4), meaningful exit code (§2.2)",
       "task",
       "edit",
       "LORE-1",
-      "--json",
       "--add-label",
       "doc:a,doc:b",
       "--remove-label",
@@ -358,6 +357,14 @@ describe("editTask — incremental patch (§2.4), meaningful exit code (§2.2)",
       "--doc",
       "docs/y.md",
     ]);
+  });
+
+  test("never passes --json (AC#4): `backlog task edit` doesn't support it, unlike list/view/search", async () => {
+    const spawn = scriptedSpawn((argv) => (argv[1] === "edit" ? ok("Updated task LORE-1") : undefined));
+    await createBacklogAdapter(spawn).editTask("LORE-1", { status: "Done" });
+
+    const editCall = spawn.calls.find((c) => c[1] === "edit");
+    expect(editCall).not.toContain("--json");
   });
 
   test("rejects an add-label containing a comma instead of silently splitting it into two Backlog labels", async () => {

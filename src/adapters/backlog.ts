@@ -626,7 +626,7 @@ export interface BacklogAdapter {
   searchTasks(query: string): Promise<BacklogTask[]>;
   /** `task create` (no `--plain`/`--json`) → the new display-cased id, captured from `Created task <ID>`. */
   createTask(input: CreateTaskInput): Promise<string>;
-  /** `task edit <id> --json` with an incremental patch; fail-loud on a missing task or a non-zero exit. */
+  /** `task edit <id>` (no `--json` — unsupported, LORE-57) with an incremental patch; fail-loud on a missing task or a non-zero exit. */
   editTask(id: string, patch: EditTaskPatch): Promise<void>;
 }
 
@@ -780,7 +780,7 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
 
     async editTask(id: string, patch: EditTaskPatch): Promise<void> {
       await ensureProbed();
-      const args = ["task", "edit", id, "--json"];
+      const args = ["task", "edit", id];
       if (patch.addLabels !== undefined && patch.addLabels.length > 0) {
         args.push("--add-label", commaJoin(patch.addLabels)); // single-value flag (§2.4): comma-join.
       }
