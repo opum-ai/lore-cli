@@ -35,6 +35,16 @@ diff and migration history are in
 [backlog-json-schema.md §8](../reference/backlog-json-schema.md#8-migration-history-complete)
 and the [patch runbook §8](../runbooks/backlog-json-patch.md).
 
+**Amendment — 2026-07-19 (LORE-5).** lore will not publish its first release
+until MrLesk/Backlog.md tags a release containing PR #790's merge commit. The
+interim pinned-commit build (LORE-53) is dev/test-time only — developers
+compile it themselves per `RUNBOOK_HINT` in `src/adapters/backlog.ts`; there
+is no `package.json` dependency and nothing a published lore package could
+point an end user's `backlog` install at. Shipping lore before that release
+exists would mean every real user's capability probe fails on install. See
+the [release-publishing runbook](../runbooks/release-publishing.md)'s
+prerequisite.
+
 ## Context
 
 `lore`'s differentiating feature is coupling repo-resident docs to Backlog.md

@@ -30,6 +30,15 @@ release once it's in place.
 
 ## Prerequisites
 
+- **A tagged MrLesk/Backlog.md release containing PR #790 (BACK-545, the
+  --json support lore depends on)** — see [ADR-0002's amendment](../adr/0002-backlog-integration-json-only.md).
+  lore does not cut its first release until this exists: today's adapter
+  (LORE-53/LORE-54) targets upstream's real --json contract, but only via an
+  interim pinned-commit build developers must compile themselves (RUNBOOK_HINT
+  in `src/adapters/backlog.ts`) — no package.json dependency, no tagged
+  release to point end users at. Check `gh release list --repo MrLesk/Backlog.md`
+  before starting this runbook; if the latest tag predates that PR's merge
+  commit, stop here.
 - Maintainer access to the `@salient-data` npm org (or user account, if the
   scope is personal) — required to configure Trusted Publishers; this is not
   something CI or an agent can do.
