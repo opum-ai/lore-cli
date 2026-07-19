@@ -138,7 +138,7 @@ the [CLI surface](cli-surface.md):
 | `instructions.text` | `lore instructions` | guidance body + the full topic index |
 | `agents.result` | `lore agents` | bridge files written/updated |
 | `help.manifest` | `lore help` | the capability manifest — every command's flags, `kind`, exit codes |
-| `scaffold.result` | `lore scaffold` | files written (`mkdocs` shipped; `docusaurus`/`obsidian` pending — see [CLI surface](cli-surface.md)) |
+| `scaffold.result` | `lore scaffold` | files written (`mkdocs`, `docusaurus`, `obsidian` all shipped — see [CLI surface](cli-surface.md)) |
 
 A caller should branch on `kind` and tolerate **unknown** `kind` values
 gracefully — new ones may appear under the same `schemaVersion` (§7), mirroring

@@ -3,9 +3,11 @@ id: LORE-55.8
 title: >-
   consumer-scaffold.test.ts: obsidian rendering test's ordering claim is not
   actually verified
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-18 22:54'
+updated_date: '2026-07-19 00:09'
 labels:
   - test
 dependencies: []
@@ -27,5 +29,23 @@ The obsidian plain-mode rendering test's name ("lists the file, a summary, then 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The test asserts the actual line order (file line(s), then the summary line, then each guidance note line in order), not just unordered containment
+- [x] #1 The test asserts the actual line order (file line(s), then the summary line, then each guidance note line in order), not just unordered containment
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Rewrite the obsidian plain-mode rendering test (test/consumer-scaffold.test.ts) to assert full-sequence equality (expect(stdout.lines()).toEqual([...])) against the exact expected order (file line, summary line, then each guidance note in order) instead of unordered toContain checks, so a future render() change that reorders/interleaves the notes fails the test.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Verified against render()'s actual implementation (src/commands/scaffold.ts): file lines, then the summary line, then ...data.notes, confirming the expected order used in the rewritten assertion is correct by construction, not just guessed. Full suite: 1497 pass, typecheck clean, lint clean.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Rewrote the obsidian plain-mode rendering test to assert full ordered-sequence equality (file line, summary line, then each guidance note in order) instead of unordered containment, so it actually verifies the sequencing its own name claims to check. Verified: typecheck, lint, and full test suite (1497 pass) all clean.
+<!-- SECTION:FINAL_SUMMARY:END -->

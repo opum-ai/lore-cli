@@ -3,7 +3,10 @@
  * (LORE-39/40; cli-surface §"Consumer scaffolding", ADR-0010).
  *
  * Each target's config is generated **additively, outside `docs/`** so the OKF bundle stays
- * the single source of truth (ADR-0010 §2): `docs/` is never mutated to satisfy a consumer.
+ * the single source of truth (ADR-0010 §2) — with one intentional exception: {@link buildObsidianScaffold}
+ * writes `docs/.obsidian/app.json` *inside* `docs/`, because Obsidian's vault-scoping requirement
+ * (consumer-compatibility.md §3.2) needs `docs/` itself to be the vault root. Every other target's
+ * output, and everything else under `docs/`, is never mutated to satisfy a consumer.
  * Like {@link buildScaffold} (`lore init`'s pure plan builder), these functions touch no
  * filesystem and read no clock; the side effects (never-clobber vs. `--force` overwrite) live
  * in `commands/scaffold.ts`.
@@ -69,8 +72,10 @@ export const OBSIDIAN_DIR = `${DOCS_DIR}/.obsidian`;
 
 /**
  * The repo-relative path of the scaffolded Obsidian vault config. Only this file is committed —
- * `.gitignore` already excludes the rest of `docs/.obsidian/` (`workspace*.json`, `cache`) as
- * per-user vault state.
+ * `.gitignore` excludes everything under `docs/.obsidian/` *except* it (`docs/.obsidian/*` plus
+ * a `!docs/.obsidian/app.json` negation), rather than enumerating the rest of Obsidian's per-user
+ * vault state file by file, since Obsidian creates more of those than any fixed list can keep up
+ * with. A future file scaffolded under `docs/.obsidian/` needs its own negation line to be committed.
  */
 export const OBSIDIAN_APP_JSON_REL_PATH = `${OBSIDIAN_DIR}/app.json`;
 
@@ -100,27 +105,29 @@ export interface ConsumerScaffoldPlan {
   readonly notes?: readonly string[];
 }
 
-/** Options for {@link buildMkdocsScaffold} and {@link buildDocusaurusScaffold}. */
+/** Options for {@link buildMkdocsScaffold}, {@link buildDocusaurusScaffold}, and {@link buildObsidianScaffold}. */
 export interface ConsumerScaffoldOptions {
   /**
    * ISO-8601 datetime stamped on `docs/tags.md`'s frontmatter, mirroring `buildScaffold`'s
    * injected-clock seam (lore-design §8) so the plan stays deterministic and golden-testable.
-   * Unused by {@link buildDocusaurusScaffold}, which emits no OKF concept file; kept here so
-   * both builders share one options shape and the command layer calls them uniformly.
+   * Unused by {@link buildDocusaurusScaffold} and {@link buildObsidianScaffold}, neither of which
+   * emits an OKF concept file; kept here so all three builders share one options shape and the
+   * command layer calls them uniformly.
    */
   readonly timestamp: string;
   /**
    * The MkDocs `site_name` / Docusaurus `title` (required by both; there is no sane
    * zero-config default). The command layer derives this from the repo directory name — the
    * one filesystem read these otherwise-pure builders need, kept at the boundary rather than
-   * smuggled in here.
+   * smuggled in here. Unused by {@link buildObsidianScaffold}, whose `app.json` carries no
+   * site-name-equivalent setting.
    */
   readonly siteName: string;
   /**
    * The active profile, used only to decide whether `docs/tags.md` carries the
    * `$schema` editor modeline (only when the profile actually defines `Reference`).
    * Defaults to the built-in {@link defaultProfile}. Unused by {@link buildDocusaurusScaffold}
-   * for the same reason as `timestamp`.
+   * and {@link buildObsidianScaffold}, for the same reason as `timestamp`.
    */
   readonly profile?: Profile;
 }
@@ -165,7 +172,7 @@ export function buildDocusaurusScaffold(options: ConsumerScaffoldOptions): Consu
  */
 export function buildObsidianScaffold(_options: ConsumerScaffoldOptions): ConsumerScaffoldPlan {
   return {
-    dirs: [OBSIDIAN_DIR],
+    dirs: [DOCS_DIR, OBSIDIAN_DIR],
     files: [{ path: OBSIDIAN_APP_JSON_REL_PATH, contents: obsidianAppJson() }],
     notes: OBSIDIAN_GUIDANCE_NOTES,
   };
@@ -362,13 +369,13 @@ module.exports = {
  * (mobile in particular) do not honor it at all — the UI is the real guarantee
  * (consumer-compatibility.md §3.2), so the command surfaces it instead of leaving it undocumented.
  */
-export const OBSIDIAN_GUIDANCE_NOTES: readonly string[] = [
+export const OBSIDIAN_GUIDANCE_NOTES: readonly string[] = Object.freeze([
   "Open docs/ itself as the vault (not the repo root), so only the OKF bundle is indexed.",
   "app.json is a best-effort preset — confirm Settings → Files & Links matches:",
   "  New link format = Relative path to file",
   "  Use [[Wikilinks]] = OFF",
   "  Automatically update internal links = ON",
-];
+]);
 
 /**
  * The scaffolded `docs/.obsidian/app.json` bytes (consumer-compatibility.md §3.2): plain JSON, no

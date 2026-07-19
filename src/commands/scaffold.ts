@@ -2,8 +2,8 @@
  * commands/scaffold.ts — `lore scaffold <target> [--force]`: generate a downstream documentation
  * consumer's config, additively and outside `docs/` (cli-surface §"Consumer scaffolding", ADR-0010).
  *
- * The thin, side-effecting layer over the pure {@link buildMkdocsScaffold} / {@link buildDocusaurusScaffold}
- * (`core/consumer-scaffold.ts`): it resolves the repo root, the active profile, and a clock, asks core for the exact bytes, and
+ * The thin, side-effecting layer over the pure {@link buildMkdocsScaffold} / {@link buildDocusaurusScaffold} /
+ * {@link buildObsidianScaffold} (`core/consumer-scaffold.ts`): it resolves the repo root, the active profile, and a clock, asks core for the exact bytes, and
  * applies them via `fswrite.ts`'s shared {@link writeAllOrRollback}. Unlike `lore init` (which
  * silently skips an already-present file), scaffolding is **never-silent-clobber**: if any planned
  * file already exists, the whole run refuses with a `conflict` error (exit 5) naming every
@@ -68,10 +68,10 @@ export interface ScaffoldResult {
 
 /**
  * Every implemented target's pure plan builder — the single source of truth for which targets
- * `lore scaffold` can actually build. {@link IMPLEMENTED_TARGETS} is *derived* from this map's
- * keys, so a target can never end up "implemented" (accepted by argument validation) without a
- * registered builder to route to — the failure mode a hand-written per-target `if`/ternary chain
- * invites the moment a third target is added.
+ * `lore scaffold` can actually build. {@link TARGETS} is *derived* from this map's keys, so a
+ * target can never be accepted by argument validation without a registered builder to route to —
+ * the failure mode a hand-written per-target `if`/ternary chain invites the moment a third target
+ * is added.
  */
 const BUILDERS: Record<string, (options: ConsumerScaffoldOptions) => ConsumerScaffoldPlan> = {
   mkdocs: buildMkdocsScaffold,
@@ -79,17 +79,14 @@ const BUILDERS: Record<string, (options: ConsumerScaffoldOptions) => ConsumerSca
   obsidian: buildObsidianScaffold,
 };
 
-/** The consumer targets `lore scaffold` recognizes as valid, even if not all are implemented yet. */
-const KNOWN_TARGETS = new Set(["mkdocs", "docusaurus", "obsidian"]);
-
-/** Targets a builder exists for today (derived from {@link BUILDERS}); the rest of {@link KNOWN_TARGETS} are documented but unshipped. */
-const IMPLEMENTED_TARGETS = new Set(Object.keys(BUILDERS));
+/** The consumer targets `lore scaffold` recognizes as valid (derived from {@link BUILDERS}'s own keys). */
+const TARGETS = new Set(Object.keys(BUILDERS));
 
 /**
  * Run `lore scaffold <target>`: parse the arguments, build the target's plan, refuse (exit `5`)
  * if any planned file already exists and `--force` was not given, else write every file (freshly
- * or overwriting), emit the `scaffold.result`, and return `0`. An unknown or not-yet-implemented
- * target, or a bad flag/extra argument, throws a `usage` {@link LoreError} (exit `2`).
+ * or overwriting), emit the `scaffold.result`, and return `0`. An unknown target, or a bad
+ * flag/extra argument, throws a `usage` {@link LoreError} (exit `2`).
  */
 export function runScaffold(options: ScaffoldOptions): number {
   const parsed = parseScaffoldArgs(options.args);
@@ -101,9 +98,9 @@ export function runScaffold(options: ScaffoldOptions): number {
   const profile = parsed.target === "mkdocs" ? loadProfile({ root: options.root }) : undefined;
   const build = BUILDERS[parsed.target];
   if (!build) {
-    // parseScaffoldArgs already validated parsed.target against IMPLEMENTED_TARGETS, which is
-    // derived from BUILDERS' own keys — this can only fire if that invariant is ever broken.
-    throw new Error(`internal: no builder registered for implemented target "${parsed.target}"`);
+    // parseScaffoldArgs already validated parsed.target against TARGETS, which is derived from
+    // BUILDERS' own keys — this can only fire if that invariant is ever broken.
+    throw new Error(`internal: no builder registered for target "${parsed.target}"`);
   }
   const plan = build({
     timestamp: clock().toISOString(),
@@ -163,14 +160,8 @@ function parseScaffoldArgs(args: readonly string[]): ScaffoldArgs {
   if (positionals.length > 1) {
     throw usage(`unexpected argument "${positionals[1]}"`, "run `lore scaffold <target> [--force]`");
   }
-  if (!KNOWN_TARGETS.has(target)) {
+  if (!TARGETS.has(target)) {
     throw usage(`unknown scaffold target "${target}"`, "valid targets are mkdocs, docusaurus, obsidian");
-  }
-  if (!IMPLEMENTED_TARGETS.has(target)) {
-    throw usage(
-      `scaffold target "${target}" is not implemented yet`,
-      "only `mkdocs`, `docusaurus`, and `obsidian` are implemented today",
-    );
   }
   return { target, force: flags.has("force") };
 }

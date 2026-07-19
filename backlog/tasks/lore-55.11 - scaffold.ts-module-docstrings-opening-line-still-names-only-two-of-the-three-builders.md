@@ -3,9 +3,11 @@ id: LORE-55.11
 title: >-
   scaffold.ts: module docstring's opening line still names only two of the three
   builders
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-18 22:55'
+updated_date: '2026-07-19 00:07'
 labels:
   - docs
   - cmd
@@ -28,5 +30,23 @@ commands/scaffold.ts's module docstring opening sentence still names only buildM
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The module docstring's opening sentence names all three builders (buildMkdocsScaffold, buildDocusaurusScaffold, buildObsidianScaffold), consistent with its own closing paragraph
+- [x] #1 The module docstring's opening sentence names all three builders (buildMkdocsScaffold, buildDocusaurusScaffold, buildObsidianScaffold), consistent with its own closing paragraph
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Update commands/scaffold.ts's module docstring opening sentence to name all three pure builders (buildMkdocsScaffold, buildDocusaurusScaffold, buildObsidianScaffold), matching its own closing paragraph which already says all three are implemented.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Edited src/commands/scaffold.ts's module docstring opening sentence. Verified via typecheck + full test suite (1497 pass) + lint clean.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+commands/scaffold.ts's module docstring opening sentence now names all three builders (buildMkdocsScaffold, buildDocusaurusScaffold, buildObsidianScaffold), consistent with its own closing paragraph. Verified: typecheck, lint, and full test suite (1497 pass) all clean.
+<!-- SECTION:FINAL_SUMMARY:END -->

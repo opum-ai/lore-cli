@@ -3,9 +3,11 @@ id: LORE-55.3
 title: >-
   obsidian scaffold: never-silent-clobber preflight cannot detect a conflict on
   docs/ itself
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-18 22:54'
+updated_date: '2026-07-19 00:03'
 labels:
   - cmd
   - core
@@ -28,6 +30,26 @@ runScaffold's never-silent-clobber preflight (src/commands/scaffold.ts, the bloc
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The preflight check in runScaffold detects a non-directory occupying any ancestor segment of a planned nested directory (e.g. docs occupied by a plain file), not just the exact leaf path
-- [ ] #2 A new test reproduces docs as a plain file and asserts the friendly "already exists ... --force" conflict message fires for obsidian, matching docusaurus's existing "pre-existing non-directory file occupying website/" regression test
+- [x] #1 The preflight check in runScaffold detects a non-directory occupying any ancestor segment of a planned nested directory (e.g. docs occupied by a plain file), not just the exact leaf path
+- [x] #2 A new test reproduces docs as a plain file and asserts the friendly "already exists ... --force" conflict message fires for obsidian, matching docusaurus's existing "pre-existing non-directory file occupying website/" regression test
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+The root cause is shared with LORE-55.1: runScaffold's blockedDirs preflight (src/commands/scaffold.ts) already filters plan.dirs generically for a non-directory occupying each entry's path — it never needed a code change of its own. Once buildObsidianScaffold's dirs array explicitly lists 'docs' as its own entry (LORE-55.1's fix), the SAME existing filter now checks 'docs' independently and catches a plain file sitting there, exactly matching core/scaffold.ts's own established convention (enumerate every ancestor level explicitly, rather than teach the preflight to walk ancestors dynamically). No further scaffold.ts change needed.
+1. Verify (already true post-LORE-55.1) that blockedDirs correctly flags 'docs' when it is a plain file.
+2. Add a regression test mirroring docusaurus's 'pre-existing non-directory file occupying website/' test, adapted for obsidian's docs/ ancestor.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+No scaffold.ts change was needed: LORE-55.1's fix (adding DOCS_DIR to buildObsidianScaffold's dirs array) makes runScaffold's existing blockedDirs preflight filter over plan.dirs catch 'docs' as a non-directory automatically, since it's now its own explicit entry rather than only reachable via the unresolvable nested 'docs/.obsidian' path. Added test/consumer-scaffold.test.ts: 'a pre-existing non-directory file occupying docs/ is reported as a friendly conflict, not a deep crash (review #2)', mirroring docusaurus's own website/ regression test — verified passing in isolation and as part of the full 1496-test suite.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Resolved as a direct consequence of LORE-55.1's fix: once buildObsidianScaffold's dirs array explicitly lists 'docs' (not just the nested 'docs/.obsidian' leaf), runScaffold's existing blockedDirs preflight — which already generically filters plan.dirs for a non-directory occupying each entry — catches a plain file sitting at docs/ without any change to src/commands/scaffold.ts. Verified with a new regression test mirroring docusaurus's own 'pre-existing non-directory file occupying website/' case; full suite (1496 tests), typecheck, and lint all pass.
+<!-- SECTION:FINAL_SUMMARY:END -->

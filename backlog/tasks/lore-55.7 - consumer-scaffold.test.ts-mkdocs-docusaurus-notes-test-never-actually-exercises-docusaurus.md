@@ -3,9 +3,11 @@ id: LORE-55.7
 title: >-
   consumer-scaffold.test.ts: "mkdocs/docusaurus" notes test never actually
   exercises docusaurus
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-18 22:54'
+updated_date: '2026-07-19 00:09'
 labels:
   - test
 dependencies: []
@@ -27,5 +29,23 @@ The test named "mkdocs/docusaurus results carry an empty notes array" (test/cons
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The test also calls scaffold(["docusaurus"]) and asserts its result.notes is an empty array, actually covering both targets its name claims to cover
+- [x] #1 The test also calls scaffold(["docusaurus"]) and asserts its result.notes is an empty array, actually covering both targets its name claims to cover
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Add a second scaffold(['docusaurus']) call + assertion to the 'mkdocs/docusaurus results carry an empty notes array' test (test/consumer-scaffold.test.ts) so it actually exercises both targets its name claims to cover.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Verified: full suite 1497 pass (was 1497 before too, net-zero new test count since this added an assertion to an existing test rather than a new test), typecheck and lint clean.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+The 'mkdocs/docusaurus results carry an empty notes array' test now also calls scaffold(['docusaurus']) and asserts its notes array is empty, actually covering both targets its name claims to. Verified: typecheck, lint, and full test suite (1497 pass) all clean.
+<!-- SECTION:FINAL_SUMMARY:END -->
