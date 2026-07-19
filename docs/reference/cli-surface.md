@@ -70,20 +70,20 @@ is not repeated. A concept `<id>` is a bundle path **minus** the `.md` suffix
 ### `init`
 
 Initialize a lore bundle in the current repo: create the `docs/` OKF bundle
-with a root `index.md` (the only file carrying `okf_version`), seed the
-sub-index files, create the `.lore/` [state directory](../adr/0013-lore-state-directory.md)
-(`config.toml`, `templates/`, exported JSON `schemas/`), and wire Backlog
-coexistence (set `auto_commit=false`, `check_active_branches=false`,
-`remote_operations=false`; gitignore `backlog/.locks/`). Runs the Backlog.md
-capability probe and fails loud if the installed Backlog.md lacks the required
-`--json` support (see [backlog CLI contract](./backlog-cli-contract.md)).
+with a root `index.md` (the only file carrying `okf_version`), and create the
+`.lore/` [state directory](../adr/0013-lore-state-directory.md) (`config.toml`,
+`profile.toml`, `.gitignore`, `templates/`, exported JSON `schemas/`). Runs
+**idempotently**: every file is created only when absent (an atomic write, so
+there is no clobber of a user's edits), so a re-run with no intervening change
+creates nothing and still exits `0` with everything reported `skipped`; a run
+after a partial delete fills in only the missing pieces.
 
 | | |
 |---|---|
 | **Args** | none |
-| **Key flags** | `--force` (re-seed missing scaffold without overwriting authored content) |
+| **Key flags** | none |
 | **Output** | `kind: init.result` — what was created/skipped |
-| **Exit** | `0` ok · `5` already initialized (without `--force`) · `6` Backlog.md probe failed |
+| **Exit** | `0` ok · `4` permission denied · `5` a non-regular entry (directory/symlink) blocks a scaffold path |
 
 ### `new`
 
@@ -96,7 +96,7 @@ concept id.
 ```
 lore new <type> "<title>" [flags]
 lore new story "Bulk archive completed orders"
-lore new spec  "Order archival"  --story stories/bulk-archive-orders
+lore new spec  "Order archival"
 lore new adr   "Use soft deletes" --tags retention,orders
 lore new reference "Orders table" --template reference --var owner=payments
 ```
@@ -108,7 +108,7 @@ accepted (OKF tolerance) and scaffolded with the lenient `type`-only shape.
 | | |
 |---|---|
 | **Args** | `<type>` `"<title>"` |
-| **Key flags** | `--tags a,b` · `--epic <id>` · `--story <id>` · `--resource <url>` · `--template <name>` (file under `.lore/templates/`) · `--var k=v` (repeatable; fills `{{k}}`) · `--summary "<sentence>"` |
+| **Key flags** | `--tags a,b` · `--template <name>` (file under `.lore/templates/`) · `--var k=v` (repeatable; fills `{{k}}`) · `--summary "<sentence>"` |
 | **Output** | `kind: new.result` — `{ id, path, type }` |
 | **Exit** | `0` ok · `2` bad type/var syntax · `5` target path already exists · `6` template missing required `{{var}}` |
 
@@ -173,7 +173,7 @@ Also surfaces per-doc and bundle **token estimates** (labeled chars/4 heuristic)
 | | |
 |---|---|
 | **Args** | optional `[paths…]` (default: whole bundle) |
-| **Key flags** | `--strict` (treat portability warnings as failures for the exit code) · `--external` (also probe external-URL liveness — advisory, never gates) · `--fix` (where safe, defer to `sync` for managed-block/status — `check` itself never writes) |
+| **Key flags** | `--strict` (treat portability warnings as failures for the exit code) · `--external` (also probe external-URL liveness — advisory, never gates) |
 | **Output** | `kind: check.report` — drift, broken links/anchors, portability findings, token estimates; plus advisory `externalFindings` when `--external` ran |
 | **Exit** | `0` no broken internal links/anchors, no status/managed-block drift · `3` a linked task id no longer exists · `6` any broken internal link/anchor, any status/managed-block drift (or any portability warning under `--strict`). External-liveness results never affect the exit. |
 
@@ -387,7 +387,7 @@ lore replace --regex "v0\.1" "v0.2" --dry-run
 | **Args** | `<find>` `<replace>` |
 | **Key flags** | `--regex` (treat `<find>` as a regex) · `--in <glob>` (scope; default whole bundle) · `--dry-run` (show matches, write nothing) |
 | **Output** | `kind: replace.result` — per-file match/replacement counts |
-| **Exit** | `0` ok · `2` invalid regex · `6` `--dry-run` reported changes and `--check`-style gating requested |
+| **Exit** | `0` ok (including a no-op `--dry-run`) · `2` bad flag, or an invalid/empty/zero-width pattern |
 
 ### `rename`
 
