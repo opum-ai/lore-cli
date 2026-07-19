@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`editTask()` no longer sends an unsupported `--json` flag to `backlog task edit`** (LORE-57,
+  found via the LORE-56 Docker E2E harness against a real pinned-upstream `backlog` binary). Per
+  PR #790's scope, upstream Backlog.md only added `--json` to three read commands (`task list`,
+  `task view`, `search`) — `task edit` never got one, so every real call to `backlog task edit
+  <id> --json ...` failed immediately with `error: unknown option '--json'`, before Commander
+  even parsed `--add-label`/`--remove-label`/`--status`/`--doc`. `editTask` never read any JSON
+  from the response (it only checked `exitCode`/`stderr`), so `--json` was dead weight that
+  actively broke the call. This silently broke every write that goes through `editTask`: `lore
+  link`/`unlink`'s `doc:` back-reference label write and `lore rename`'s task back-ref
+  repointing. The unit suite never caught it — it mocks `BacklogAdapter` entirely, so the fake
+  never enforced the real CLI's flag surface.
+
 - **`tech-stack.md` corrected to match the actually-shipped dependency set** (LORE-14, a Bun
   compile-compatibility spike). The doc claimed three dependencies that were never actually
   adopted — `commander` (CLI parsing is hand-rolled in `src/cli.ts`; Commander remains the named
