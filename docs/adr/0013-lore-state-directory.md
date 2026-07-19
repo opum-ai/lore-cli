@@ -102,10 +102,13 @@ three different lifecycles.
   - **Reconcile rules** — the status-rollup policy (`all tasks Done → done`,
     `any In Progress → in-progress`, …) and any per-repo overrides consumed by
     `lore sync` / `lore check`.
-  - **Link & validate options** — toggles such as portability-lint promotion,
-    whether external-link liveness is opt-in, and per-type strictness — the
-    inputs to the tiered validator and the drift gate
-    ([ADR-0007](0007-validation-and-coherence.md)).
+  - **Link & validate options** — an `[validate]` table (`external_links`,
+    `promote_portability`) is parsed and validated, but **not yet consumed by
+    any command**: `lore check`'s equivalent behavior (external-link
+    liveness, promoting portability warnings to errors) is controlled today
+    only by its own `--external`/`--strict` flags
+    ([ADR-0007](0007-validation-and-coherence.md)). Wiring the config table
+    to those defaults, or dropping it, is an open follow-up.
   - **Confluence config** — `base_url`, `space`, `parent_page_id`, and `format`
     (`storage` vs `adf`) for the one-way publish adapter.
 - **Zero-config:** lore runs with no `config.toml` at all; the file exists only to
@@ -118,6 +121,8 @@ three different lifecycles.
 mode = "task-rollup"
 
 [validate]
+# Parsed and validated, but not yet consumed by any command — `lore check`'s
+# --external/--strict flags are the actual current controls.
 external_links = false      # external liveness opt-in only
 promote_portability = false # portability lint stays a warning
 
@@ -249,7 +254,8 @@ format         = "storage"  # or "adf"
 - [ADR-0003 — OKF as the documentation substrate](0003-okf-substrate.md) — why
   lore state must live outside `docs/`.
 - [ADR-0007 — Validation & coherence checking](0007-validation-and-coherence.md)
-  — consumer of the reconcile rules and link/validate options in `config.toml`.
+  — consumer of the reconcile rules in `config.toml` (the `[validate]` table
+  is parsed but not yet consumed — see the Decision section above).
 - [Architecture](../reference/architecture.md) — how `.lore/`, the core, and the
   adapters fit together.
 - [lore design spec](../specs/lore-design.md) — overall design context.

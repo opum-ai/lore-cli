@@ -3,7 +3,7 @@ id: doc-1
 title: Backlog campaign tracker
 type: other
 created_date: '2026-07-19 23:15'
-updated_date: '2026-07-19 23:15'
+updated_date: '2026-07-19 23:23'
 ---
 # Backlog campaign tracker
 
@@ -12,7 +12,7 @@ lifecycle → advance cursor → append session log → write handover.
 
 ## Cursor
 
-**Next issue: LORE-67** — queue order confirmed by the user on 2026-07-19
+**Next issue: LORE-61** — queue order confirmed by the user on 2026-07-19
 (selected "67 first, then 61–66 (Recommended)" — LORE-67 docs-only shakes down
 the campaign loop, then LORE-61 whose `step_fail` helper LORE-62/66 depend on,
 then 62 → 63 → 64 → 65 → 66 by dependency and priority); do not re-ask before
@@ -28,18 +28,18 @@ post-merge on dev.
 
 | # | Issue | Type | One-line note |
 | --- | --- | --- | --- |
-| 1 | LORE-67 | docs | cli-surface.md claims verified absent from source (init --force/probe/exit-5, new shorthands, check --fix, replace exit-6 gate) + 2 dead validate config knobs |
-| 2 | LORE-61 | e2e | `step_fail` helper + failure-output contract (0/82 assertions inspect stderr/stdout today); incl. LORE-58 induced partial failure |
-| 3 | LORE-62 | e2e | Real-binary coupling: missing-task signatures, probe exit-6 stub binaries, linked-concept rename + F1 (depends on LORE-61) |
-| 4 | LORE-63 | e2e | Reconciliation value-assertions, managed-block body drift, custom status flows, .lore/config.toml surface |
-| 5 | LORE-64 | e2e | LORE-46 declarative profile subsystem — zero populated-profile E2E |
-| 6 | LORE-65 | e2e | Coupling mediums: field-isolated read-backs, multi-doc SET semantics, backlog-side renames/archive, commit scoping, nested checkout |
-| 7 | LORE-66 | e2e | Command-surface tail + housekeeping: vacuous replace/supersede, check --json/F2, flag long-tail, pseudo-cache step (depends on LORE-61) |
+| 1 | LORE-61 | e2e | `step_fail` helper + failure-output contract (0/82 assertions inspect stderr/stdout today); incl. LORE-58 induced partial failure |
+| 2 | LORE-62 | e2e | Real-binary coupling: missing-task signatures, probe exit-6 stub binaries, linked-concept rename + F1 (depends on LORE-61) |
+| 3 | LORE-63 | e2e | Reconciliation value-assertions, managed-block body drift, custom status flows, .lore/config.toml surface |
+| 4 | LORE-64 | e2e | LORE-46 declarative profile subsystem — zero populated-profile E2E |
+| 5 | LORE-65 | e2e | Coupling mediums: field-isolated read-backs, multi-doc SET semantics, backlog-side renames/archive, commit scoping, nested checkout |
+| 6 | LORE-66 | e2e | Command-surface tail + housekeeping: vacuous replace/supersede, check --json/F2, flag long-tail, pseudo-cache step (depends on LORE-61) |
 
 ## Resolved
 
 | # | Issue | Status/date/session | Evidence summary |
 | --- | --- | --- | --- |
+| 1 | LORE-67 | Done, 2026-07-19, session 1 | cli-surface.md init/new/check/replace sections corrected to match src/commands/{init,new,check,replace}.ts (dropped --force/exit-5/probe, --epic/--story/--resource, --fix, the fabricated replace exit-6 gate; also fixed 2 more false init claims found during re-verification and an example line using a removed flag). AC5: ADR-0013's dead `[validate]` config knobs (src/config.ts:65-70) corrected from a false "consumed by the drift gate" claim to "parsed but not wired to any command." Verified: `lore check --plain` → 38 files/0 errors/0 warnings; `bun test` → 1500 pass/0 fail. |
 
 ## Not queued — needs a human / blocked
 
@@ -72,3 +72,6 @@ post-merge on dev.
   LORE-42/43/44/45 parked as deferred-by-decision. Preconditions verified:
   `.claude/handovers/` gitignored (.gitignore:52), `archive/handovers/` exists
   and tracked, dev clean @ 305efa8, no leftover feature/* branches.
+- 2026-07-19 — session 1: resolved LORE-67 (docs-only cli-surface.md +
+  ADR-0013 fixes; see Resolved table). Branch `feature/LORE-67` off
+  `dev @ 6d7a38e`. Cursor advanced to LORE-61.
