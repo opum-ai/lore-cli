@@ -31,7 +31,7 @@ knows about a higher one.
 ```mermaid
 flowchart TD
     subgraph Surfaces["Surfaces (transports)"]
-        CLI["cli.ts — Commander entrypoint<br/>PRIMARY"]
+        CLI["cli.ts — hand-rolled CLI entrypoint<br/>PRIMARY"]
         MCP["mcp.ts — MCP server<br/>DEFERRED (v2)"]
         SKILL[".claude/skills/lore/SKILL.md<br/>+ CLAUDE.md nudge (generated)"]
     end
@@ -91,7 +91,7 @@ secondary and deferred to v2** (see §6).
 
 ## 2. The CLI is primary
 
-`cli.ts` is a [Commander](tech-stack.md) program. It owns global flags, dispatches
+`cli.ts` is a [hand-rolled CLI router](tech-stack.md) (Commander is deferred; see tech-stack.md §3). It owns global flags, dispatches
 to a `commands/*.ts` handler, and renders the handler's result in one of three
 output modes with strict precedence `--json > --plain > pretty`:
 
@@ -183,9 +183,9 @@ byte-identical outputs (the property that makes agent loops and CI gates safe).
 | `schema.ts` | **The single source of truth for types.** Per-`type` Zod schemas (strict for the known story-convention types; lenient `type`-only for unknown types, per OKF tolerance). Emits Draft-7 JSON Schema via `z.toJSONSchema()` and injects the `# yaml-language-server: $schema=…` modeline for editor autocomplete. See [ADR-0006](../adr/0006-schema-types-templates.md). |
 | `concept.ts` | Frontmatter ⇄ object. Wraps gray-matter to parse/serialize a single `.md` concept, validates frontmatter against `schema.ts`, and serializes back **stably** (quote-safety, deterministic key order) so unchanged docs round-trip byte-identically — [ADR-0011](../adr/0011-frontmatter-serialization-stability.md). User-defined types and custom keys pass through untouched. |
 | `bundle.ts` | Walks `docs/`, loads every concept, and builds the in-memory **bundle graph** (nodes = concepts, edges = cross-links + frontmatter refs). Generates the root `index.md`, sub-index files, and `log.md`. Computes per-doc / per-bundle token **estimates** (chars/4 heuristic, labeled). The graph is the substrate `query`, `context`, `graph`, `rename`, and `supersede` all reuse. |
-| `managed-block.ts` | remark/mdast-based surgery on the `<!-- lore:tasks:begin -->…<!-- lore:tasks:end -->` region of a Story. Regenerates the live task table from the Backlog adapter; **idempotent** (no upstream change → byte-identical output). Hand edits inside the markers are overwritten; everything outside is preserved. See [ADR-0008](../adr/0008-managed-block-remark-ast.md). |
+| `managed-block.ts` | mdast-based surgery (via `mdast-util-from-markdown`, never `remark`) on the `<!-- lore:tasks:begin -->…<!-- lore:tasks:end -->` region of a Story. Regenerates the live task table from the Backlog adapter; **idempotent** (no upstream change → byte-identical output). Hand edits inside the markers are overwritten; everything outside is preserved. See [ADR-0008](../adr/0008-managed-block-remark-ast.md). |
 | `reconcile.ts` | Status rules. Rolls a Story's `status` up from its tasks (all Done → `done`; any In Progress → `in-progress`; else if tasks exist → `todo`; no tasks → author's value). `sync` writes the result; `check` reports drift without writing. See [ADR-0009](../adr/0009-story-task-coupling-reconciliation.md). |
-| `links.ts` | OKF cross-link resolution and rewriting. Enforces the lore link form — **relative, URL-encoded, `.md`-suffixed, no leading slash** — resolves targets against the bundle graph, validates internal links and heading anchors (pure-JS remark-validate-links), and runs the portability lint. Powers `rename`/`supersede` inbound-link rewrites and `replace`. See [ADR-0010](../adr/0010-multi-consumer-docs-layer.md). |
+| `links.ts` | OKF cross-link resolution and rewriting. Enforces the lore link form — **relative, URL-encoded, `.md`-suffixed, no leading slash** — resolves targets against the bundle graph, validates internal links and heading anchors (hand-rolled over the shared mdast tree, not remark-validate-links), and runs the portability lint. Powers `rename`/`supersede` inbound-link rewrites and `replace`. See [ADR-0010](../adr/0010-multi-consumer-docs-layer.md). |
 | `query.ts` | In-memory full-text retrieval (BM25-style) over the loaded bundle, plus frontmatter-field filters. **No vectors, no RAG, no chunking** — [ADR-0015](../adr/0015-lightweight-retrieval-no-vectors.md). Uses each concept's `summary` for snippets. |
 | `context.ts` | Deterministic, depth-bounded **graph-expansion export** for a concept id with a `--max-tokens` budget: full body of the target concept plus one-line `summary` neighbors, walking the bundle graph. No ranking heuristics. |
 
@@ -297,7 +297,7 @@ beyond the two narrow seams it needs:
 ## See also
 
 - [lore design spec](../specs/lore-design.md) — the full design, including spec §8 structure
-- [Tech stack](tech-stack.md) — Bun, Commander, gray-matter, remark, Zod
+- [Tech stack](tech-stack.md) — Bun, a hand-rolled CLI router, gray-matter, mdast-util-from-markdown, Zod
 - [CLI surface](cli-surface.md) and [CLI contract](cli-contract.md)
 - [Backlog JSON schema](backlog-json-schema.md) and [Backlog CLI contract](backlog-cli-contract.md)
 - [Consumer compatibility](consumer-compatibility.md) and [portable markdown](portable-markdown.md)

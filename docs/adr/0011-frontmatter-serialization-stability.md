@@ -97,9 +97,10 @@ Concretely:
    place and reused by every write path. The configuration is chosen for
    stability over prettiness: a fixed indentation, `lineWidth` set so lists and
    long strings are **not** auto-wrapped/reflowed, a deterministic flow level,
-   and no key sorting. This is the frontmatter analogue of the frozen
-   `remark-stringify` config used for managed blocks
-   ([ADR-0008](0008-managed-block-remark-ast.md)).
+   and no key sorting. This is the frontmatter analogue of the frozen-format
+   string managed blocks are spliced from ([ADR-0008](0008-managed-block-remark-ast.md)) —
+   both trade a general-purpose serializer for a fixed, hand-controlled output shape;
+   lore ships no markdown serializer at all (LORE-22).
 
 3. **Key order is preserved, never sorted.** lore emits keys in the order they
    were read from disk; newly added keys (e.g. a `status` lore computes, or a
@@ -126,7 +127,8 @@ Concretely:
 
 6. **The body is left to the body.** gray-matter handles only the frontmatter
    fence; the markdown body (including lore-managed regions like
-   `<!-- lore:tasks -->`) is owned by the remark layer
+   `<!-- lore:tasks -->`) is owned by the managed-block engine (mdast to locate,
+   frozen-string splice to write — no remark package involved)
    ([ADR-0008](0008-managed-block-remark-ast.md)). The two stay cleanly
    separated, and a frontmatter-only change never reflows body prose.
 

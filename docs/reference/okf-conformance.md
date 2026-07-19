@@ -172,7 +172,7 @@ CI/agent-safe (see [CLI contract](./cli-contract.md) for exit codes):
 | Command | Scope | OKF relationship |
 |---|---|---|
 | [`lore validate`](./cli-surface.md) | Per-file frontmatter + body shape | **Tier 1 (error):** OKF §9 conformance — parseable frontmatter, non-empty `type`, reserved-file structure. **Tier 2 (error):** strict per-type shape for known types. **Tier 3 (warning):** unknown type / extra keys — preserving OKF tolerance. Plus frontmatter quote-safety. |
-| [`lore check`](./cli-surface.md) | Whole-bundle graph | Drift gate (status reconciliation, managed blocks) + **internal link & heading-anchor validation** against the OKF §5 graph (pure-JS `remark-validate-links`; internal by default, `--external` opt-in) + portability lint. Exit `6` on drift. |
+| [`lore check`](./cli-surface.md) | Whole-bundle graph | Drift gate (status reconciliation, managed blocks) + **internal link & heading-anchor validation** against the OKF §5 graph (hand-rolled over the shared mdast tree, pure JS; internal by default, `--external` opt-in) + portability lint. Exit `6` on drift. |
 
 `lore validate` answers "is this a conformant OKF bundle that also satisfies
 the lore profile?"; `lore check` answers "is the graph and its coupling

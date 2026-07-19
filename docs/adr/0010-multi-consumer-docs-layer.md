@@ -122,7 +122,8 @@ will not survive all four renderers — leading-slash links, extensionless inter
 `[[wikilinks]]`, and other non-portable constructs flagged in
 [portable Markdown](../reference/portable-markdown.md). The lint is part of the same
 whole-bundle, pure-JS pass as internal link and heading-anchor validation
-(remark-validate-links; see [validation & coherence](0007-validation-and-coherence.md)),
+(hand-rolled over the shared mdast tree, not remark-validate-links — see
+[validation & coherence](0007-validation-and-coherence.md)),
 internal-by-default with external liveness opt-in, and no Rust/lychee runtime dependency.
 
 The lint is a **portability warning, not a rendering guarantee.** lore asserts that the

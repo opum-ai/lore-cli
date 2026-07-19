@@ -54,9 +54,9 @@ How lore is built and how its pieces fit together.
 - [Architecture](reference/architecture.md) — the deterministic-core /
   thin-transport shape: `core/` library, the CLI as primary transport, the
   Backlog and Confluence adapters, and `.lore/` state.
-- [Tech stack](reference/tech-stack.md) — Bun (pinned), TypeScript,
-  Commander.js, gray-matter, unified/remark, and Zod, plus the
-  `bun build --compile` + dual-artifact npm distribution.
+- [Tech stack](reference/tech-stack.md) — Bun (pinned), TypeScript, a
+  hand-rolled CLI router, gray-matter, mdast-util-from-markdown, and Zod, plus
+  the `bun build --compile` + dual-artifact npm distribution.
 
 ## References
 

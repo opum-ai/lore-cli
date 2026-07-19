@@ -64,13 +64,13 @@ seams, the Backlog adapter); nothing lower knows about anything higher.
 
 ```
 src/
-├── cli.ts            # Commander entrypoint (PRIMARY surface)
+├── cli.ts            # hand-rolled CLI entrypoint (PRIMARY surface)
 ├── mcp.ts            # MCP server entrypoint (DEFERRED, v2)
 ├── core/             # deterministic library — returns structured objects
 │   ├── schema.ts     # Zod source of truth; emits JSON Schema + modeline
 │   ├── concept.ts    # frontmatter <-> object (gray-matter + zod), stable serialize
 │   ├── bundle.ts     # walk docs/, build graph, generate index/log, token estimates
-│   ├── managed-block.ts  # remark/mdast surgery on <!-- lore:tasks --> regions
+│   ├── managed-block.ts  # mdast surgery (mdast-util-from-markdown) on <!-- lore:tasks --> regions
 │   ├── reconcile.ts  # status roll-up rules
 │   ├── links.ts      # OKF link resolution/rewrite, link+anchor validation, portability lint
 │   ├── query.ts      # BM25-style full-text + frontmatter filters
@@ -135,7 +135,7 @@ and what exit code to map a thrown `LoreError` to.
 
 A `commands/*.ts` handler does exactly four things, in order:
 
-1. **Parse** the already-validated flags Commander hands it (no business logic).
+1. **Parse** the already-validated flags the hand-rolled router hands it (no business logic).
 2. **Call** one or more core functions (and, where needed, an adapter), passing
    injectable dependencies — the `clock`, the `BacklogAdapter`, the bundle root.
 3. **Map** the structured result, or a caught `LoreError`, to an output payload
@@ -260,7 +260,7 @@ cli → commands/check
   → bundle.ts: loadBundle(docs/)
   → backlog.ts: probe() + listTasks() (read-only)
   → run the SAME computation as sync (reconcile + managed-block) but DIFF, never write
-  → links.ts: validateLinks() — internal links + heading anchors (remark-validate-links, pure JS)
+  → links.ts: validateLinks() — internal links + heading anchors (hand-rolled over the shared mdast tree, pure JS)
        • internal-by-default; external liveness only with --external (no Rust/lychee runtime dep)
   → links.ts: portability lint (non-portable link syntax → WARNING)
   → aggregate: status drift, stale managed blocks, broken links, missing anchors, portability
@@ -608,7 +608,7 @@ This design is built in milestone order (see product spec
 
 - [Product spec — `lore-spec.md`](../../lore-spec.md) — the narrative origin this design elaborates
 - [System architecture](../reference/architecture.md) — the layered map this spec implements
-- [Tech stack](../reference/tech-stack.md) — Bun, Commander, gray-matter, remark, Zod
+- [Tech stack](../reference/tech-stack.md) — Bun, a hand-rolled CLI router, gray-matter, mdast-util-from-markdown, Zod
 - [CLI surface](../reference/cli-surface.md) and [CLI contract](../reference/cli-contract.md)
 - [Backlog JSON schema](../reference/backlog-json-schema.md) and [Backlog CLI contract](../reference/backlog-cli-contract.md)
 - [OKF conformance](../reference/okf-conformance.md) and [portable Markdown](../reference/portable-markdown.md)

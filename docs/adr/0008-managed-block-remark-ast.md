@@ -19,6 +19,14 @@ mdast is still used, but only to *locate* the markers structurally; every other
 guarantee below (structural location, marker validation, byte-identity, bounded
 blast radius) is unchanged. See `src/core/managed-block.ts`.
 
+Amended — 2026-07-19 (LORE-52): the Context/Decision/Consequences prose below also says lore
+"depends on unified / remark (mdast)" or reuses "the remark stack" for this and other mdast-based
+work. It never did — lore's only markdown dependency, then and now, is `mdast-util-from-markdown`
+(a parser only; verified against `package.json`), not the `remark` or `unified` npm packages. This
+is a separate, narrower correction than the LORE-22 amendment above (which was about the
+serializer, item 3); the parser-dependency claim was never accurate. See
+[tech-stack](../reference/tech-stack.md) (LORE-14).
+
 ## Context
 
 A `Story` (and optionally a `Spec`) owns a set of Backlog.md tasks via its

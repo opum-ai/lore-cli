@@ -31,6 +31,17 @@ and stay gated — `log.md` is derived from git commit history (via the `GitAdap
 the gate's own. Gating it would report permanent drift and break on shallow/read-only CI checkouts
 that lack full history. `lore sync` writes `log.md`; `lore check` neither regenerates nor compares it.
 
+Amended — 2026-07-19 (LORE-52): every mention below of `remark-validate-links`, `remark-lint`,
+or "the remark/mdast pipeline" describes this ADR's original 2026-06-21 plan, not what shipped.
+lore has never depended on the `remark`, `unified`, `remark-validate-links`, or `remark-lint`
+npm packages (verified against `package.json` and every `src/` import — see
+[tech-stack](../reference/tech-stack.md), LORE-14). Internal link/anchor validation and the
+portability lint are hand-rolled directly over the mdast tree `mdast-util-from-markdown` produces
+(`src/core/bundle.ts`, `src/core/check.ts`, `src/core/links.ts`), not a call into any remark
+package. The decision itself is unaffected: pure-JS, no Rust/native runtime, MDX-safe (unlike
+markdownlint), and a deterministic internal-by-default gate — only the specific tooling named
+below was never actually adopted; hand-rolled code achieves the same properties.
+
 ## Context
 
 lore must answer two distinct questions about a docs bundle, and conflating
