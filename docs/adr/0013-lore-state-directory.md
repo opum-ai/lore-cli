@@ -179,9 +179,9 @@ format         = "storage"  # or "adf"
   costs zero added packages and zero binary weight, honoring the thin-tool
   constraint of [ADR-0001](0001-runtime-build-distribution.md).
 - **Deterministic, reviewable behavior.** Because `config.toml` is committed,
-  reconcile rules and validate options are identical across every developer,
-  agent, and CI run, so `lore check` is reproducible and config changes are
-  diffable and reviewable.
+  reconcile rules are identical across every developer, agent, and CI run, so
+  `lore sync`/`lore check`'s reconciliation is reproducible and config changes
+  are diffable and reviewable.
 - **Cheap, idempotent publish.** The committed `sync-state.json` ledger lets
   publish skip unchanged docs with no API call and run safely on every merge from
   any machine.
