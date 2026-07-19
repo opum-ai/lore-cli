@@ -1,0 +1,14 @@
+# docker/e2e/docker-compose.yml — run lore's Docker E2E harness (LORE-56).
+#
+# Usage (from the repo root):
+#   docker compose -f docker/e2e/docker-compose.yml up --build
+#
+# The report lands at docker/e2e/results/report.jsonl on the host. The
+# service's own exit code reflects overall pass/fail (see run-e2e.sh).
+services:
+  e2e:
+    build:
+      context: ../..
+      dockerfile: docker/e2e/Dockerfile
+    volumes:
+      - ./results:/results

@@ -129,6 +129,9 @@ Operational procedures for working on and with lore.
 - [Developer kickoff](runbooks/dev-kickoff.md) — the handover for starting lore
   implementation in a fresh session: orientation, constraints, entry points, and
   the working agreement.
+- [Docker E2E testing environment](runbooks/docker-e2e-testing-environment.md) —
+  build real `lore`/`backlog` binaries and exercise the full command surface
+  against a real, mutating backlog project; how to run it and triage findings.
 
 ---
 
