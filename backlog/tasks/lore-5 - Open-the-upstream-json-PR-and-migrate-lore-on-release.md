@@ -1,10 +1,10 @@
 ---
 id: LORE-5
 title: Open the upstream --json PR and migrate lore on release
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-06-21 06:25'
-updated_date: '2026-07-18 16:48'
+updated_date: '2026-07-19 02:26'
 labels:
   - backlog-fork
   - upstream
@@ -264,6 +264,10 @@ than tracking it only as this task's ACs, and added them as LORE-5's dependencie
 No code changed on this task itself; it remains the umbrella decision record.
 
 Both ACs now satisfied: AC#1 since LORE-53 (probe targets upstream's pinned-commit build); AC#2 since LORE-54 (the full read adapter -- envelope parsing, Zod schemas, mapping -- now matches upstream's real contract too, not just the probe). All four listed dependencies (LORE-3, LORE-4, LORE-53, LORE-54) are Done. Left In Progress, not Done: this task's own description also covers switching from the interim pinned-commit build to a published semver package + bumping the capability probe's version floor once a tagged MrLesk/Backlog.md release includes PR #790 -- that step is still ahead, gated on an external release, and deliberately deferred (LORE-53 decision, reaffirmed on LORE-54).
+
+CLOSING 2026-07-19 (user request): re-verified upstream state before closing -- latest MrLesk/Backlog.md tag is still v1.48.0 (2026-07-12), no tag yet contains PR #790's merge commit (22a091b, 2026-07-16). No change since the 2026-07-17 drift check. Both ACs remain satisfied and all four dependencies (LORE-3, LORE-4, LORE-53, LORE-54) are Done. The sole remaining item -- swap the interim pinned-commit build for a real semver package + bump the capability probe's version floor once a tagged release ships -- was already explicitly scoped in LORE-53's own description as 'a small follow-up, not tracked separately here', not open-ended scope for LORE-5 itself to keep tracking indefinitely against an unscheduled external event. Closing now rather than leaving this open as a perpetual reminder; if/when MrLesk/Backlog.md tags a release containing PR #790, that migration becomes its own small, purpose-built task at that time.
+
+Caveat for future readers: 'adopted upstream's fix' means lore's adapter code (LORE-54) and its golden tests match upstream's real --json contract, verified against static fixtures captured once from a manually-built copy of the pinned commit -- not a live build in CI, and no package.json dependency exists. A real end user running lore today with a normally-installed Backlog.md (published v1.48.0) will still fail the --json capability probe unless they manually build MrLesk/Backlog.md from commit 22a091b themselves, per RUNBOOK_HINT in src/adapters/backlog.ts. This was already a known, accepted gap from LORE-53's own decision (dev/test-time only, deferred until a tagged release), not new information.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
@@ -274,3 +278,9 @@ created: 2026-07-01 16:37
 Parked: upstreaming deferred; durable git-dep + version-floor work moved to LORE-2/LORE-21. Re-scope recorded in notes.
 ---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Closed: adopts MrLesk/Backlog.md's independently-shipped --json implementation (PR #790) instead of upstreaming lore's own fork. Both ACs satisfied -- the capability probe and the full read adapter (LORE-53, LORE-54) target upstream's real per-command envelope contract, verified against fixtures captured from a manually-built copy of the pinned commit (22a091b). Remaining work (swap the interim pin for a real published package once MrLesk/Backlog.md tags a release containing that commit) is out of this task's scope per LORE-53's own framing and will be its own small follow-up task when that release ships -- verified no such release exists yet (latest tag v1.48.0, predates the merge).
+<!-- SECTION:FINAL_SUMMARY:END -->
