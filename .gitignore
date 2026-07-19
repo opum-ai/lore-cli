@@ -17,6 +17,11 @@ dist-npm/
 coverage/
 .nyc_output/
 
+# Docker E2E harness output (LORE-56) — the Dockerfile/compose/script are
+# committed; each run's report is generated, not durable.
+docker/e2e/results/*
+!docker/e2e/results/.gitkeep
+
 # lore CLI state (config.toml and sync-state.json ARE committed; cache is not)
 .lore/cache/
 
