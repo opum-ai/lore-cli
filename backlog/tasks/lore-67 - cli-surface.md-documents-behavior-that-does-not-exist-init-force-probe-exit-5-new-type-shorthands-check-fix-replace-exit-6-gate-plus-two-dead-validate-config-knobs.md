@@ -8,7 +8,7 @@ status: Done
 assignee:
   - '@jeremy-newhouse'
 created_date: '2026-07-19 23:00'
-updated_date: '2026-07-19 23:23'
+updated_date: '2026-07-19 23:29'
 labels:
   - docs
   - bug
@@ -59,6 +59,8 @@ Fix doc-side via the lore CLI conventions (this repo dogfoods lore for docs/ —
 
 <!-- SECTION:NOTES:BEGIN -->
 Re-verified all six claims against current source before editing (init.ts, new.ts, check.ts, replace.ts, src/config.ts:65-70 — file moved from the task's stated src/core/config.ts path). All were confirmed still false/dead; none had been implemented in the interim (AC4). Fixed cli-surface.md: init section (dropped --force/exit-5/probe; also found and dropped two more false claims in the same section not in the original audit list — 'seed sub-index files' and 'wire Backlog coexistence' auto_commit/check_active_branches/remote_operations/backlog/.locks gitignore — neither is done by init.ts/scaffold.ts; corrected exit codes to the real 4/5 paths via fswrite.ts's ioError/conflictError). new section: dropped --epic/--story/--resource (also fixed the --story usage example that referenced the removed flag). check section: dropped --fix. replace section: dropped the fabricated exit-6 gate (runReplace always returns EXIT_OK). AC5: resolved as doc-side (per the audit's expectation) — corrected ADR-0013's false claim that the [validate] table (external_links/promote_portability) feeds the tiered validator/drift gate; documented as parsed-and-validated but not consumed by any command, with check's own --external/--strict as the real current controls; annotated the config.toml example and the ADR-0007 cross-reference to match. Verified with 'lore check --plain': 38 files, 0 errors, 0 warnings.
+
+Adversarial branch review (independent subagent) confirmed all six re-verified claims correct via source reading + empirical CLI runs (bun test 1500/1500, lore check 38/0/0) and found one real defect: ADR-0013's Consequences section (line ~181) still credited committed 'validate options' with making lore check deterministic, contradicting the Decision section's own corrected claim two subsections earlier. Fixed in a follow-up commit (ed8c954) — reworded to reconcile-rules-only. Re-verified: lore check --plain still 38 files/0 errors/0 warnings.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
