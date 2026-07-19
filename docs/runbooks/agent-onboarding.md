@@ -69,6 +69,11 @@ lore sync              5. reconcile status + rewrite managed blocks + regen inde
 lore check             6. CI gate — exit 6 on drift/broken-link/anchor/portability
 ```
 
+Starting from scratch instead of an existing Story? `lore new Story "<title>"`
+scaffolds the doc — including an empty `<!-- lore:tasks:begin -->` /
+`<!-- lore:tasks:end -->` managed block — so it drops straight into step 2 with
+no hand-authored markup.
+
 Each step in detail:
 
 ### Step 1 — Read `docs/index.md`
@@ -146,8 +151,9 @@ lore sync --json
 `lore sync` is the **write** step that makes the bundle coherent: it recomputes
 each Story's `status` from its tasks (the reconciliation rules in
 [ADR-0009](../adr/0009-story-task-coupling-reconciliation.md)), rewrites the
-`<!-- lore:tasks -->` managed blocks from live Backlog data, and regenerates the
-index/log. It is **idempotent**: with no upstream change it produces
+`<!-- lore:tasks -->` managed blocks from live Backlog data — including filling
+in, for the first time, the empty block `lore new Story` scaffolds by default —
+and regenerates the index/log. It is **idempotent**: with no upstream change it produces
 byte-identical output, so running it in a loop yields clean, empty diffs. The
 `--json` payload is `kind: "sync.summary"` and reports exactly what changed
 (status rewrites, managed-block diffs, regenerated files).

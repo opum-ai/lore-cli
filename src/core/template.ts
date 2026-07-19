@@ -350,13 +350,24 @@ const EPIC_TEMPLATE = `
 ## Stories
 `;
 
-/** Story: a unit of deliverable work with acceptance criteria. */
+/**
+ * Story: a unit of deliverable work with acceptance criteria. Ships the empty
+ * `<!-- lore:tasks:begin -->`/`<!-- lore:tasks:end -->` managed block (LORE-59) so a
+ * freshly-created Story is immediately `lore sync`-able once linked to a task, with no
+ * hand-authored markup step — `lore sync`/`managed-block.ts` still fail loud (exit `6`) for
+ * any doc whose block is totally absent, e.g. one where the markers were hand-deleted.
+ */
 const STORY_TEMPLATE = `
 # {{title}}
 
 ## Goal
 
 ## Acceptance criteria
+
+## Tasks
+
+<!-- lore:tasks:begin -->
+<!-- lore:tasks:end -->
 
 ## Notes
 `;

@@ -21,6 +21,7 @@ import { realGitAdapter, resolveHeadSha } from "../src/adapters/git";
 import { run } from "../src/cli";
 import { runSync, type SyncOptions, type SyncReport } from "../src/commands/sync";
 import type { GitAdapter, GitCommit, GitLogRange } from "../src/core/log";
+import { builtinTemplateFor, renderTemplate } from "../src/core/template";
 import { EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { bunGitSpawn } from "../src/state";
@@ -253,6 +254,31 @@ describe("lore sync — a concept with tasks: but no managed block", () => {
 
     const err = await expectSyncError([], adapter);
     expect(err.type).toBe("validation");
+  });
+});
+
+// ── A freshly `lore new`-created Story (LORE-59 regression) ───────────────────────
+
+describe("lore sync — a freshly `lore new`-created Story (LORE-59 regression)", () => {
+  test("the built-in Story template already carries the managed block, so first sync succeeds", async () => {
+    // Build the body from the REAL built-in Story template -- not the storyDoc() helper above,
+    // which hardcodes the markers and would not catch a template regression -- then hand-add
+    // `tasks:` frontmatter the way `lore link` would, mirroring exactly what a fresh
+    // `lore new Story "X"; lore link stories/x LORE-1` leaves on disk.
+    const body = renderTemplate(builtinTemplateFor("Story"), {
+      type: "Story",
+      title: "X",
+      timestamp: "2026-06-25T12:00:00Z",
+      summary: "A new story.",
+    }).text;
+    writeDoc("stories/x.md", `---\ntype: Story\ntitle: X\ntasks:\n  - lore-1\n---\n${body}`);
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+
+    const { code } = await syncCmd([], adapter);
+    expect(code).toBe(EXIT_OK);
+    const after = readDoc("stories/x.md");
+    expect(after).toContain("<!-- lore:tasks:begin -->");
+    expect(after).toContain("Title for LORE-1"); // the row actually rendered, not just empty markers
   });
 });
 
