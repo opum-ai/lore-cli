@@ -139,9 +139,13 @@ Concretely:
 
 5. **Fail loud via a capability probe.** At startup `lore` probes the `backlog`
    binary for `--json` capability and enforces a minimum `--json`-capable
-   version. If `backlog` is missing, too old, or does not understand `--json`,
-   `lore` exits with a clear, actionable error (validation/drift exit code `6`)
-   pointing at the patch runbook. It never silently degrades, and there is no
+   version. If `backlog` is missing from PATH entirely, `lore` exits with a
+   clear, actionable error (`not_found`, exit code `3`) with an install hint.
+   If `backlog` is present but too old or does not understand `--json`, `lore`
+   exits with a clear, actionable error (`validation`, exit code `6`) pointing
+   at the patch runbook. The two cases are deliberately distinguished by exit
+   code so a caller can tell "install backlog" apart from "upgrade backlog"
+   without parsing the message. It never silently degrades, and there is no
    text-parsing fallback to degrade *to*. The probe result is cached in
    `.lore/cache/` (transient, gitignored).
 

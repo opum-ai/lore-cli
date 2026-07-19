@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **ADR-0002 now distinguishes a missing `backlog` binary (exit `3`) from a present-but-incapable one (exit `6`)**
+  (LORE-60, a doc-accuracy gap found via the LORE-56 Docker E2E harness against a real
+  pinned-upstream `backlog` binary). Decision point 5 of `docs/adr/0002-backlog-integration-json-only.md`
+  previously claimed that a missing, too-old, or non-`--json`-capable `backlog` binary all mapped to
+  a single "validation/drift exit code `6`" — but the real, deliberate code in
+  `src/adapters/backlog.ts` (`probeBacklog`) has always split this into two cases, with its own
+  inline comment explaining why: a fully missing binary (`ENOENT` on `backlog --version`) throws
+  `not_found` (exit `3`, with an install hint), while a present-but-too-old-or-incapable binary
+  throws `validation` (exit `6`, pointing at the patch runbook) — so a caller can tell "install
+  backlog" apart from "upgrade backlog" from the exit code alone, without parsing the message. The
+  ADR text now states both cases explicitly and names the split as intentional. Confirmed
+  `docs/reference/backlog-cli-contract.md` already documented the correct split and needed no
+  change; `docs/runbooks/agent-onboarding.md` asserts no numeric exit code for the probe and also
+  needed no change. `docs/runbooks/docker-e2e-testing-environment.md` and
+  `docker/e2e/run-e2e.sh`'s inline comments, which had flagged this as an open doc-accuracy gap,
+  are updated to reflect that it's now fixed.
+
 - **`lore new Story` now scaffolds the `lore:tasks` managed block, so a fresh Story is `lore sync`-able
   immediately** (LORE-59, found via the LORE-56 Docker E2E harness against a real pinned-upstream
   `backlog` binary). `STORY_TEMPLATE` (`src/core/template.ts`) previously shipped no `<!-- lore:tasks:begin
