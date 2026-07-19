@@ -27,7 +27,7 @@ import {
 } from "../src/commands/link";
 import { buildGraph } from "../src/core/bundle";
 import { parseConcept } from "../src/core/concept";
-import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
+import { EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import type { GitSpawn } from "../src/state";
 import { capture, cleanGitSpawn, dirtyGitSpawn, failingCommitGitSpawn, fakeAdapter, makeTask } from "./helpers";
@@ -88,14 +88,30 @@ async function unlinkCmd(
   return { code, report: envelope.data };
 }
 
-async function expectLinkError(args: string[], adapter: BacklogAdapter): Promise<LoreError> {
+async function expectLinkError(args: string[], adapter: BacklogAdapter, gitSpawn?: GitSpawn): Promise<LoreError> {
+  const stdout = capture();
   try {
-    await runLink(opts(args, adapter));
+    await runLink({ ...opts(args, adapter, gitSpawn), stdout });
   } catch (err) {
     expect(err).toBeInstanceOf(LoreError);
+    // AC#2 (LORE-58): stdout parses or stays silent — empty on every link/unlink failure, partial or otherwise.
+    expect(stdout.text()).toBe("");
     return err as LoreError;
   }
   throw new Error("expected a LoreError, but runLink returned");
+}
+
+async function expectUnlinkError(args: string[], adapter: BacklogAdapter, gitSpawn?: GitSpawn): Promise<LoreError> {
+  const stdout = capture();
+  try {
+    await runUnlink({ ...opts(args, adapter, gitSpawn), stdout });
+  } catch (err) {
+    expect(err).toBeInstanceOf(LoreError);
+    // AC#2 (LORE-58): stdout parses or stays silent — empty on every link/unlink failure, partial or otherwise.
+    expect(stdout.text()).toBe("");
+    return err as LoreError;
+  }
+  throw new Error("expected a LoreError, but runUnlink returned");
 }
 
 // ── AC#1: link wires tasks: + doc: label + --doc ──────────────────────────────────
@@ -402,14 +418,18 @@ describe("lore link/unlink — plain rendering and parser edge cases", () => {
 // ── Resilience: a per-task Backlog failure never aborts or corrupts the rest ──────
 
 describe("lore link/unlink — per-task back-ref resilience", () => {
-  test("link: one poisoned task's back-ref fails, the other still succeeds, doc-side write includes both, exit is drift (6)", async () => {
+  test("link: one poisoned task's back-ref fails, the other still succeeds, doc-side write includes both, throws drift (LORE-58)", async () => {
     writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
     const adapter = fakeAdapter([makeTask("LORE-1"), makeTask("LORE-2")], { poisonEdits: ["lore-2"] });
 
-    const { code, report } = await linkCmd(["stories/x", "lore-1", "lore-2"], adapter);
-    expect(code).toBe(EXIT_CODES.drift);
-    expect(report.changed).toBe(true);
-    expect(report.tasks).toEqual([
+    // Since LORE-58, a partial failure throws a `drift` LoreError (stdout stays empty, per
+    // expectLinkError) instead of emitting a success-shaped envelope on a nonzero exit — the
+    // same per-task detail now lives in the error's `input` instead of stdout.
+    const err = await expectLinkError(["stories/x", "lore-1", "lore-2"], adapter);
+    expect(err.type).toBe("drift");
+    const input = err.input as LinkReport;
+    expect(input.changed).toBe(true);
+    expect(input.tasks).toEqual([
       { task: "lore-1", status: "added", backRef: "added" },
       {
         task: "lore-2",
@@ -426,16 +446,17 @@ describe("lore link/unlink — per-task back-ref resilience", () => {
     expect(adapter.calls.find((c) => c.id === "lore-1")?.patch.addLabels).toEqual(["doc:stories/x"]);
   });
 
-  test("unlink: one poisoned task's back-ref fails, the other still succeeds, doc-side removal includes both, exit is drift (6)", async () => {
+  test("unlink: one poisoned task's back-ref fails, the other still succeeds, doc-side removal includes both, throws drift (LORE-58)", async () => {
     writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n  - lore-2\n---\nBody.\n");
     const adapter = fakeAdapter([makeTask("LORE-1"), makeTask("LORE-2", { labels: ["doc:stories/x"] })], {
       poisonEdits: ["lore-2"],
     });
 
-    const { code, report } = await unlinkCmd(["stories/x", "lore-1", "lore-2"], adapter);
-    expect(code).toBe(EXIT_CODES.drift);
-    expect(report.changed).toBe(true);
-    expect(report.tasks).toEqual([
+    const err = await expectUnlinkError(["stories/x", "lore-1", "lore-2"], adapter);
+    expect(err.type).toBe("drift");
+    const input = err.input as UnlinkReport;
+    expect(input.changed).toBe(true);
+    expect(input.tasks).toEqual([
       { task: "lore-1", status: "removed", backRef: "already-absent" },
       {
         task: "lore-2",
@@ -565,10 +586,11 @@ describe("lore link/unlink — 2nd-pass code-review fixes", () => {
       return viewCount === 2 ? null : originalViewTask(id);
     };
 
-    const { code, report } = await linkCmd(["stories/x", "lore-1"], adapter);
-    expect(code).toBe(EXIT_CODES.drift);
-    expect(report.tasks[0]).toMatchObject({ backRef: "failed" });
-    expect(report.tasks[0]?.error).toContain("no longer exists");
+    const err = await expectLinkError(["stories/x", "lore-1"], adapter);
+    expect(err.type).toBe("drift");
+    const input = err.input as LinkReport;
+    expect(input.tasks[0]).toMatchObject({ backRef: "failed" });
+    expect(input.tasks[0]?.error).toContain("no longer exists");
   });
 
   test("backRefLabel preserves the concept id's case instead of lowercasing it (avoids collapsing two case-distinct concepts onto one label)", async () => {
@@ -825,15 +847,16 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
     expect(git.calls).toHaveLength(0); // a no-op link never sweeps an unrelated dirty backlog/ edit
   });
 
-  test("a partial back-ref failure still commits the successful writes and exits drift (6)", async () => {
+  test("a partial back-ref failure still commits the successful writes and throws drift (LORE-58)", async () => {
     writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
     const adapter = fakeAdapter([makeTask("LORE-1"), makeTask("LORE-2")], { poisonEdits: ["lore-2"] });
     const git = dirtyGitSpawn(DIRTY);
 
-    const { code, report } = await linkCmd(["stories/x", "lore-1", "lore-2"], adapter, git);
+    const err = await expectLinkError(["stories/x", "lore-1", "lore-2"], adapter, git);
 
-    expect(code).toBe(EXIT_CODES.drift); // lore-2's edit failed
-    expect(report.backlogCommit.committed).toBe(true); // lore-1's successful write is still committed
+    expect(err.type).toBe("drift"); // lore-2's edit failed
+    const input = err.input as LinkReport;
+    expect(input.backlogCommit.committed).toBe(true); // lore-1's successful write is still committed
     // Scoped to ONLY lore-1's file — lore-2 (failed, wrote nothing) is excluded from the commit, so a
     // read/write failure never drags an unrelated dirty backlog/ path into the commit.
     expect(git.calls[1]).toEqual([
@@ -903,40 +926,48 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
     );
   });
 
-  test("a git commit failure is captured, not thrown: the report still names the write and exit is drift (6)", async () => {
+  test("a git commit failure routes through the same drift ErrorEnvelope as a failed edit (LORE-58): the successful edit's outcome survives in input.tasks", async () => {
     writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
     const adapter = fakeAdapter([makeTask("LORE-1")]);
 
-    // The back-ref edit succeeds but `git commit` is rejected (e.g. a pre-commit hook). The old code
-    // threw before the report was built; now the failure is captured into backlogCommit.error so the
-    // per-task outcome is still reported — the report names every task's outcome on drift either way.
-    const { code, report } = await linkCmd(["stories/x", "lore-1"], adapter, failingCommitGitSpawn(DIRTY));
+    // The back-ref edit succeeds but `git commit` is rejected (e.g. a pre-commit hook). The failure
+    // is captured into backlogCommit.error, and the per-task outcome is still named — but since
+    // LORE-58, both live in the thrown error's `input`, not a stdout envelope.
+    const err = await expectLinkError(["stories/x", "lore-1"], adapter, failingCommitGitSpawn(DIRTY));
 
-    expect(code).toBe(EXIT_CODES.drift);
-    expect(report.tasks[0]?.backRef).toBe("added"); // the back-ref write happened and is reported
-    expect(report.backlogCommit.committed).toBe(false);
-    expect(report.backlogCommit.error).toContain("could not commit backlog/");
+    expect(err.type).toBe("drift");
+    const input = err.input as LinkReport;
+    expect(input.tasks[0]?.backRef).toBe("added"); // the back-ref write happened and is reported
+    expect(input.backlogCommit.committed).toBe(false);
+    expect(input.backlogCommit.error).toContain("could not commit backlog/");
+    expect(err.hint).toContain("backlog/ commit:");
   });
 
-  test("plain mode appends a `backlog/ commit failed` line on a commit failure (report still emitted)", async () => {
+  test("a drift failure throws identically under plain output mode too — stdout stays empty either way (LORE-58)", async () => {
     writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
     const adapter = fakeAdapter([makeTask("LORE-1")]);
     const stdout = capture();
 
-    const code = await runLink({
-      root,
-      output: PLAIN_CTX,
-      args: ["stories/x", "lore-1"],
-      stdout,
-      stderr: capture(),
-      adapter,
-      gitSpawn: failingCommitGitSpawn(DIRTY),
-    });
+    let thrown: unknown;
+    try {
+      await runLink({
+        root,
+        output: PLAIN_CTX,
+        args: ["stories/x", "lore-1"],
+        stdout,
+        stderr: capture(),
+        adapter,
+        gitSpawn: failingCommitGitSpawn(DIRTY),
+      });
+    } catch (err) {
+      thrown = err;
+    }
 
-    expect(code).toBe(EXIT_CODES.drift);
-    // The per-task report survives the commit failure, with a `backlog/ commit failed:` line in place
-    // of the `committed backlog/:` line — the caller learns both what it wrote and that the commit failed.
-    expect(stdout.text()).toContain("lore-1: added (doc), back-ref added");
-    expect(stdout.text()).toContain("backlog/ commit failed: ");
+    // stdout parses or stays silent (cli-contract §4) regardless of output mode — no partial-success
+    // text leaks out under plain mode either. Rendering the thrown LoreError for stderr (plain text vs
+    // --json envelope) is the CLI dispatch layer's job (reportError/formatErrorText), not runLink's.
+    expect(thrown).toBeInstanceOf(LoreError);
+    expect((thrown as LoreError).type).toBe("drift");
+    expect(stdout.text()).toBe("");
   });
 });

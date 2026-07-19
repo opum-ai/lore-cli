@@ -239,7 +239,7 @@ lore link stories/bulk-archive-orders task-42 task-57
 |---|---|
 | **Args** | `<id>` `<taskId…>` |
 | **Key flags** | `--no-back-ref` (skip the `doc:` label write to the task) |
-| **Output** | `kind: link.result` — links added / already present, plus the `backlog/` commit outcome |
+| **Output** | `kind: link.result` — links added / already present, plus the `backlog/` commit outcome. Emitted **only on exit `0`**; if any task's back-reference edit (or the `backlog/` commit) fails, stdout stays empty and the same per-task detail moves into the standard `--json` error envelope's `input` on stderr (cli-contract §4/§5) — never a partial-success envelope on stdout (LORE-58). |
 | **Exit** | `0` ok · `2` usage (bad flag, comma-bearing id) · `3` concept or task id not found · `4` writing into a managed region denied · `5` `<id>` collides case-insensitively with another concept · `6` a task's back-reference edit failed, or the `backlog/` commit failed (drift) |
 
 ### `unlink`
@@ -269,7 +269,7 @@ lore unlink stories/bulk-archive-orders task-42 --allow-missing
 |---|---|
 | **Args** | `<id>` `<taskId…>` |
 | **Key flags** | `--no-back-ref` (leave the `doc:` label on the task) · `--allow-missing` (tolerate `<id>` not resolving to a live concept) |
-| **Output** | `kind: unlink.result` — links removed / already absent, plus the `backlog/` commit outcome |
+| **Output** | `kind: unlink.result` — links removed / already absent, plus the `backlog/` commit outcome. Emitted **only on exit `0`**; if any task's back-reference edit (or the `backlog/` commit) fails, stdout stays empty and the same per-task detail moves into the standard `--json` error envelope's `input` on stderr (cli-contract §4/§5) — never a partial-success envelope on stdout (LORE-58). |
 | **Exit** | `0` ok · `2` usage (bad flag, comma-bearing id) · `3` concept not found (unless `--allow-missing`) · `5` `<id>` collides case-insensitively with a live concept · `6` a task's back-reference edit failed, or the `backlog/` commit failed (drift) |
 
 ### `tasks`

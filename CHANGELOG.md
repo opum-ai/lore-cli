@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`lore link`/`unlink --json` no longer leaks a success-shaped envelope on a nonzero exit**
+  (LORE-58, found via the LORE-56 Docker E2E harness against a real pinned-upstream `backlog`
+  binary). When a per-task Backlog back-reference write (or the `backlog/` commit) failed,
+  `link`/`unlink` still printed a full, well-formed `link.result`/`unlink.result` envelope to
+  stdout despite exiting `6` (`drift`), with stderr empty — violating cli-contract §4's "stdout
+  parses or stays silent" invariant: a caller following the documented contract (nonzero exit →
+  read the `ErrorEnvelope` from stderr) found nothing there. `runLink`/`runUnlink`
+  (`src/commands/link.ts`) now throw a `drift` `LoreError` instead of emitting the report whenever
+  any per-task edit or the commit fails — uniform with every other lore command. The doc-side
+  frontmatter write and any successful per-task edits still happen and are not undone; the same
+  per-task detail (`concept`/`changed`/`tasks`/`backlogCommit`) moves from the stdout report into
+  the `ErrorEnvelope`'s `input` field on stderr instead of being lost. `docs/reference/cli-contract.md`,
+  `docs/reference/cli-surface.md`, and `docs/runbooks/agent-onboarding.md` now say explicitly that a
+  *partial* per-item failure on a multi-item command follows the same stdout/stderr rule as any other
+  failure, closing the ambiguity that let the original bug ship unnoticed.
+
 - **`editTask()` no longer sends an unsupported `--json` flag to `backlog task edit`** (LORE-57,
   found via the LORE-56 Docker E2E harness against a real pinned-upstream `backlog` binary). Per
   PR #790's scope, upstream Backlog.md only added `--json` to three read commands (`task list`,

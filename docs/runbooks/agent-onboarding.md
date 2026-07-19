@@ -275,7 +275,10 @@ captured call is never accidentally colorized.
 This separation is absolute: **stdout parses or stays silent.** On success the
 `--json` envelope is the *only* thing on stdout; on failure stdout is **empty**
 and the error goes to stderr. So `lore … --json | jq` and `lore … > out.json`
-are always safe. Never read diagnostics or progress from stdout.
+are always safe. Never read diagnostics or progress from stdout. This holds
+uniformly even for a multi-item command like `link`/`unlink`: a partial
+per-task back-reference failure still exits `6` with empty stdout, and the
+per-task detail moves into the error envelope's `input` on stderr instead.
 
 ### 3.3 Branch on the semantic exit code
 

@@ -33,10 +33,14 @@
  * **Per-task back-reference edits are independent, freshly-read, and run sequentially.** The
  * doc-side `tasks:` write never depends on any Backlog edit succeeding (existence is already
  * validated up front for `link`; `unlink`'s doc-side removal needs no Backlog round-trip at all),
- * so a single edit failure is caught and reported on that task's row (`backRef: "failed"`) rather
- * than aborting the rest or leaving an opaque, uncaught exception — the command still exits
- * non-zero (`drift`, exit 6) when any edit failed, so the failure is never silently swallowed, but
- * a transient Backlog error on one task id never blocks or corrupts the others. This is the
+ * so a single edit failure is caught and its per-task outcome recorded (`backRef: "failed"`)
+ * rather than aborting the rest or leaving an opaque, uncaught exception. When any edit (or the
+ * `backlog/` commit) failed, the command throws a `drift` (exit 6) `LoreError` instead of emitting
+ * a success-shaped envelope (LORE-58) — cli-contract §4's "stdout parses or stays silent" invariant
+ * applies to every command uniformly, including a *partial* failure here, so stdout stays empty and
+ * the per-task detail moves into the `ErrorEnvelope`'s `input` field on stderr; the failure is never
+ * silently swallowed, and a transient Backlog error on one task id never blocks or corrupts the
+ * others. This is the
  * ADR-0009 "two references can disagree" tradeoff made visible and reported rather than an
  * all-or-nothing transaction lore cannot actually provide across two independent systems (a local
  * file write and N Backlog subprocess calls). Each edit re-reads its task **fresh** right before
@@ -60,7 +64,7 @@ import { type BundleGraph, conceptNotInBundle, loadBundle, toRefList } from "../
 import { type Concept, idFromPath, serializeConcept } from "../core/concept";
 import { loadProfile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
-import { EXIT_CODES, EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
+import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { type BacklogCommitResult, commitBacklogFiles, type GitSpawn, renderBacklogCommitLine } from "../state";
 import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
@@ -153,8 +157,9 @@ export interface UnlinkReport {
  * never depends on that validation succeeding for anything BUT existence, so an individual
  * back-reference edit failing afterward cannot corrupt or block it — see the module doc.
  *
- * @returns `0` when every back-reference edit (if any ran) succeeded; `6` (`drift`) when at
- *   least one failed — the report still names every task's actual outcome either way.
+ * @returns `0` when every back-reference edit (if any ran) succeeded, after emitting the
+ *   `link.result` envelope. When at least one edit (or the `backlog/` commit) failed, throws a
+ *   `drift` (exit 6) {@link LoreError} instead — see {@link backRefFailure}.
  */
 export async function runLink(options: LinkOptions): Promise<number> {
   const { concept, id, taskIds, noBackRef, docsRoot } = await prepare(options, "link");
@@ -241,9 +246,13 @@ export async function runLink(options: LinkOptions): Promise<number> {
   // unrelated dirty `backlog/` edit is never swept in (ADR-0012 §1).
   const backlogCommit = await commitBacklogFiles(editedFiles, options, LINK_COMMIT_MESSAGE);
   const report: LinkReport = { concept: docPath, tasks, changed, backlogCommit };
+  // A captured commit failure (backlogCommit.error) is drift too — routed through the same
+  // ErrorEnvelope as a failed edit (LORE-58), never the success envelope on a nonzero exit.
+  if (anyBackRefFailed || backlogCommit.error !== undefined) {
+    throw backRefFailure("link", report);
+  }
   emit(reportRenderable("link.result", report, renderTaskReport), options.output, options.stdout);
-  // A captured commit failure (backlogCommit.error) is drift too — the report above already named it.
-  return anyBackRefFailed || backlogCommit.error !== undefined ? EXIT_CODES.drift : EXIT_OK;
+  return EXIT_OK;
 }
 
 /**
@@ -259,8 +268,9 @@ export async function runLink(options: LinkOptions): Promise<number> {
  * `false`, every task's doc-side `status` is `"not-linked"`), and only the Backlog-side label/
  * `--doc` removal runs, computed straight from `id` — see the module doc.
  *
- * @returns `0` when every back-reference edit (if any ran) succeeded; `6` (`drift`) when at
- *   least one failed — the report still names every task's actual outcome either way.
+ * @returns `0` when every back-reference edit (if any ran) succeeded, after emitting the
+ *   `unlink.result` envelope. When at least one edit (or the `backlog/` commit) failed, throws a
+ *   `drift` (exit 6) {@link LoreError} instead — see {@link backRefFailure}.
  */
 export async function runUnlink(options: LinkOptions): Promise<number> {
   const { concept, id, taskIds, noBackRef, docsRoot } = await prepare(options, "unlink");
@@ -306,9 +316,13 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
 
   const backlogCommit = await commitBacklogFiles(editedFiles, options, UNLINK_COMMIT_MESSAGE);
   const report: UnlinkReport = { concept: docPath, tasks, changed, backlogCommit };
+  // A captured commit failure (backlogCommit.error) is drift too — routed through the same
+  // ErrorEnvelope as a failed edit (LORE-58), never the success envelope on a nonzero exit.
+  if (anyBackRefFailed || backlogCommit.error !== undefined) {
+    throw backRefFailure("unlink", report);
+  }
   emit(reportRenderable("unlink.result", report, renderTaskReport), options.output, options.stdout);
-  // A captured commit failure (backlogCommit.error) is drift too — the report above already named it.
-  return anyBackRefFailed || backlogCommit.error !== undefined ? EXIT_CODES.drift : EXIT_OK;
+  return EXIT_OK;
 }
 
 /**
@@ -715,6 +729,37 @@ function renderTaskReport(data: TaskReportLike): string {
     lines.push(commitLine);
   }
   return lines.join("\n");
+}
+
+/**
+ * Build the `drift` {@link LoreError} `runLink`/`runUnlink` throw instead of emitting a
+ * success-shaped stdout envelope when any per-task back-reference edit or the `backlog/` commit
+ * failed (LORE-58). The doc-side write and any successful back-reference edits already happened
+ * and are never undone — only how the *outcome* is reported changes: routed through the standard
+ * `--json` `ErrorEnvelope` on stderr (cli-contract §5.2) with empty stdout, uniformly with every
+ * other `lore` command's nonzero exit, instead of a partial-failure envelope on stdout. `input`
+ * carries the same per-task detail the old stdout report did (`concept`/`changed`/`tasks`/
+ * `backlogCommit`), so a caller loses no diagnostic granularity, just its location.
+ */
+function backRefFailure(kind: "link" | "unlink", report: TaskReportLike): LoreError {
+  const failedTasks = report.tasks.filter((t) => t.backRef === "failed");
+  const commitFailed = report.backlogCommit.error !== undefined;
+  const summary = [
+    failedTasks.length > 0 ? `${failedTasks.length} of ${report.tasks.length} task back-reference edit(s)` : undefined,
+    commitFailed ? "the backlog/ commit" : undefined,
+  ]
+    .filter((part): part is string => part !== undefined)
+    .join(" and ");
+  const reasons = failedTasks.map((t) => `${t.task}: ${t.error ?? "unknown error"}`);
+  if (commitFailed) {
+    reasons.push(`backlog/ commit: ${report.backlogCommit.error}`);
+  }
+  return new LoreError(
+    "drift",
+    `\`lore ${kind}\`: ${summary} failed`,
+    `${reasons.join("; ")} — re-run \`lore ${kind}\` with the same arguments to retry the failure(s)`,
+    { concept: report.concept, changed: report.changed, tasks: report.tasks, backlogCommit: report.backlogCommit },
+  );
 }
 
 /**
