@@ -226,6 +226,14 @@ This separation is absolute and is what makes `lore … --json | jq` and
 `JSON.parse(stdout)` on success and expect empty stdout on failure, using the
 exit code (§5.1) and the stderr error envelope to classify what happened.
 
+This applies uniformly, including to multi-item commands (`link`/`unlink`,
+whose report names an outcome per task id): a partial per-item failure is
+still a command failure, never a special case. If any item's back-reference
+edit fails, the command exits `6` (`drift`) with stdout **empty**; the
+per-item detail that would otherwise sit in the success envelope's `data`
+moves into the standard error envelope's `input` (§5.2) instead — it is never
+emitted as a success-shaped envelope on a nonzero exit (LORE-58).
+
 ### 4.1 Warnings do not, by themselves, change the exit code
 
 Warnings (unknown OKF `type`, missing or over-long `summary`, non-portable
