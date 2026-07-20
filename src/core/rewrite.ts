@@ -80,6 +80,7 @@ import {
 import { type Concept, idFromPath, serializeConcept } from "./concept";
 import { normalizeLink } from "./links";
 import { compareCodeUnits } from "./order";
+import { DOCS_DIR } from "./scaffold";
 
 /** A half-open `[start, end)` byte range within a body, locating a link destination to splice. */
 interface ByteRange {
@@ -344,18 +345,28 @@ function newDestPathFor(url: string, conceptPath: string, ctx: RewriteContext): 
   const dir = posix.dirname(conceptPath);
   const targetId = idFromPath(posix.join(dir, decoded));
 
+  // normalizeLink's precondition is the repo-relative coordinate space (both operands rooted at
+  // the repo, `docs/…`), not the bundle-relative one `conceptPath`/`ctx.to` use as graph ids. The
+  // two coincide for a link that stays inside the bundle (a constant `docs/` prefix cancels out of
+  // a relative-path computation), which is why this only ever surfaced for a link that escapes the
+  // bundle root — e.g. a Story's managed task block linking `backlog/tasks/…` (LORE-68): resolving
+  // `decoded`/`ctx.toPath` in bundle-relative space silently drops the `docs/` hop, truncating the
+  // rewritten link by one `../` segment.
+  const repoDir = `${DOCS_DIR}/${dir}`;
+  const repoToPath = `${DOCS_DIR}/${ctx.toPath}`;
+
   if (ctx.isMoved) {
     // The file moves: recompute the link against its new directory. A self-link follows the file
     // to its new path; any other target keeps its location (pure path arithmetic, so a dangling
     // link is corrected too).
-    const targetPath = targetId === ctx.from ? ctx.toPath : posix.normalize(posix.join(dir, decoded));
-    return normalizeLink(ctx.toPath, targetPath);
+    const targetPath = targetId === ctx.from ? repoToPath : posix.normalize(posix.join(repoDir, decoded));
+    return normalizeLink(repoToPath, targetPath);
   }
   if (targetId !== ctx.from) {
     return null; // an inbound file only repoints links to the renamed concept
   }
   // An inbound link is recomputed from *this* file's location to the moved concept's new path.
-  return normalizeLink(conceptPath, ctx.toPath);
+  return normalizeLink(`${DOCS_DIR}/${conceptPath}`, repoToPath);
 }
 
 /**
