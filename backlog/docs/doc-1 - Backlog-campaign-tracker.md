@@ -3,7 +3,7 @@ id: doc-1
 title: Backlog campaign tracker
 type: other
 created_date: '2026-07-19 23:15'
-updated_date: '2026-07-19 23:23'
+updated_date: '2026-07-20 00:23'
 ---
 # Backlog campaign tracker
 
@@ -12,7 +12,7 @@ lifecycle → advance cursor → append session log → write handover.
 
 ## Cursor
 
-**Next issue: LORE-61** — queue order confirmed by the user on 2026-07-19
+**Next issue: LORE-62** — queue order confirmed by the user on 2026-07-19
 (selected "67 first, then 61–66 (Recommended)" — LORE-67 docs-only shakes down
 the campaign loop, then LORE-61 whose `step_fail` helper LORE-62/66 depend on,
 then 62 → 63 → 64 → 65 → 66 by dependency and priority); do not re-ask before
@@ -28,18 +28,18 @@ post-merge on dev.
 
 | # | Issue | Type | One-line note |
 | --- | --- | --- | --- |
-| 1 | LORE-61 | e2e | `step_fail` helper + failure-output contract (0/82 assertions inspect stderr/stdout today); incl. LORE-58 induced partial failure |
-| 2 | LORE-62 | e2e | Real-binary coupling: missing-task signatures, probe exit-6 stub binaries, linked-concept rename + F1 (depends on LORE-61) |
-| 3 | LORE-63 | e2e | Reconciliation value-assertions, managed-block body drift, custom status flows, .lore/config.toml surface |
-| 4 | LORE-64 | e2e | LORE-46 declarative profile subsystem — zero populated-profile E2E |
-| 5 | LORE-65 | e2e | Coupling mediums: field-isolated read-backs, multi-doc SET semantics, backlog-side renames/archive, commit scoping, nested checkout |
-| 6 | LORE-66 | e2e | Command-surface tail + housekeeping: vacuous replace/supersede, check --json/F2, flag long-tail, pseudo-cache step (depends on LORE-61) |
+| 1 | LORE-62 | e2e | Real-binary coupling: missing-task signatures, probe exit-6 stub binaries, linked-concept rename + F1 (depends on LORE-61, now Done) |
+| 2 | LORE-63 | e2e | Reconciliation value-assertions, managed-block body drift, custom status flows, .lore/config.toml surface |
+| 3 | LORE-64 | e2e | LORE-46 declarative profile subsystem — zero populated-profile E2E |
+| 4 | LORE-65 | e2e | Coupling mediums: field-isolated read-backs, multi-doc SET semantics, backlog-side renames/archive, commit scoping, nested checkout |
+| 5 | LORE-66 | e2e | Command-surface tail + housekeeping: vacuous replace/supersede, check --json/F2, flag long-tail, pseudo-cache step (depends on LORE-61, now Done) |
 
 ## Resolved
 
 | # | Issue | Status/date/session | Evidence summary |
 | --- | --- | --- | --- |
 | 1 | LORE-67 | Done, 2026-07-19, session 1 | cli-surface.md init/new/check/replace sections corrected to match src/commands/{init,new,check,replace}.ts (dropped --force/exit-5/probe, --epic/--story/--resource, --fix, the fabricated replace exit-6 gate; also fixed 2 more false init claims found during re-verification and an example line using a removed flag). AC5: ADR-0013's dead `[validate]` config knobs (src/config.ts:65-70) corrected from a false "consumed by the drift gate" claim to "parsed but not wired to any command." Verified: `lore check --plain` → 38 files/0 errors/0 warnings; `bun test` → 1500 pass/0 fail. |
+| 2 | LORE-61 | Done, 2026-07-19, session 2 | Added `step_fail` (exit code + empty stdout + jq filter over the LAST line of stderr) to docker/e2e/run-e2e.sh; wired into the five exit-class spot checks (error_type literals) and a new LORE-58 induced write-failure pair (link + unlink) proving validation and drift genuinely share exit 6 but distinct error_type. Two real findings surfaced by running the real binary (not doc-assumed): stderr can carry `warning: ...` advisory lines ahead of the JSON envelope (loadBundle scans); `lore validate`/`check` are gates that report findings as stdout data, never a thrown ErrorEnvelope (the filing task's own exit-6 assumption was wrong — fixed by adding a genuinely-thrown validation case via a malformed `.lore/config.toml` fed through `lore sync`). Independent adversarial review: no blocking findings, one nice-to-have applied (exact vs prefix match on the induced-failure task's file lookup). Verified: `docker compose -f docker/e2e/docker-compose.yml up --build` green twice (88 passed/0 failed, exit 0; `down -v` clean both times); `bun test` 1500 pass/0 fail. |
 
 ## Not queued — needs a human / blocked
 
@@ -63,7 +63,13 @@ post-merge on dev.
   unrelated — leave it alone.
 - All seven queue tasks originate from the 2026-07-19 multi-agent E2E coverage
   audit (filed at dev @ 305efa8); each task description is self-contained with
-  file:line evidence.
+  file:line evidence, but re-verify file:line references against current HEAD
+  before editing — LORE-61 confirmed the filing task's own line numbers stayed
+  accurate, but also found one of its own semantic assumptions (validate's
+  exit 6 being the error_type=validation ErrorEnvelope case) was wrong.
+- Don't trust an E2E task filing's proposed induction technique or exit-code
+  assumption at face value — verify against the real binary during
+  implementation, same as LORE-61 did for the validate/check gate distinction.
 
 ## Session log
 
@@ -75,3 +81,6 @@ post-merge on dev.
 - 2026-07-19 — session 1: resolved LORE-67 (docs-only cli-surface.md +
   ADR-0013 fixes; see Resolved table). Branch `feature/LORE-67` off
   `dev @ 6d7a38e`. Cursor advanced to LORE-61.
+- 2026-07-19 — session 2: resolved LORE-61 (step_fail helper + failure-output
+  contract, incl. LORE-58 induced partial failure; see Resolved table).
+  Branch `feature/LORE-61` off `dev @ b0702d8`. Cursor advanced to LORE-62.
