@@ -423,9 +423,11 @@ rm -f .lore/config.toml
 TASK4="$(backlog task create "E2E induced write-failure task" 2>&1 | grep -oE 'Created task [^ ]+' | awk '{print $3}')"
 check "seeded TASK4 for the induced write-failure probe" '[ -n "$TASK4" ]'
 # Guard the find pattern on a non-empty id: an empty $TASK4 would otherwise degrade to
-# `-iname "*.md"` and silently resolve to some OTHER (wrong) task file below.
+# `-iname "*.md"` and silently resolve to some OTHER (wrong) task file below. The
+# " - " separator (Backlog's own `saveTask` naming: "<id> - <title>.md") anchors the
+# match past the id so e.g. TASK-4 can never prefix-match a TASK-40's file.
 TASK4_FILE=""
-[ -n "$TASK4" ] && TASK4_FILE="$(find backlog/tasks -iname "${TASK4}*.md" | head -1)"
+[ -n "$TASK4" ] && TASK4_FILE="$(find backlog/tasks -iname "${TASK4} - *.md" | head -1)"
 check "found TASK4's backlog file on disk" '[ -n "${TASK4_FILE:-}" ] && [ -f "$TASK4_FILE" ]'
 
 # Strip write permission on both the file itself (blocks an in-place overwrite of an
