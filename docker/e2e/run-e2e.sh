@@ -368,9 +368,26 @@ step_json "lore unlink: detach TASK5 from the Spec (restore state)" \
 # ── Phase 6: mutate real backlog status, then sync ──────────────────────────
 backlog task edit "$TASK1" --status "In Progress" >/dev/null 2>&1
 backlog task edit "$TASK2" --status "Done" >/dev/null 2>&1
+# LORE-63 AC1: filesChanged >= 1 is asserted here (not just backlogCommit.committed, which the
+# harness's own dirty backlog/ files can satisfy even when sync writes nothing new in docs/) --
+# without it, Phase 7's idempotency check (filesChanged == 0) is trivially satisfiable regardless
+# of whether THIS sync actually did anything.
 step_json "lore sync --json reflects a real backlog mutation + commits backlog/" \
-  '.kind == "sync.result" and .data.backlogCommit.committed == true' -- lore sync --json
+  '.kind == "sync.result" and .data.backlogCommit.committed == true and (.data.filesChanged >= 1)' \
+  -- lore sync --json
 check "git log shows the lore-authored backlog/ commit" '[ "$(git log --oneline | wc -l | tr -d " ")" -gt 0 ]'
+# LORE-63 AC1: value-assert the rendered managed-block rows against concrete status literals --
+# check's clean-bundle gates alone only prove sync wrote something SELF-CONSISTENT, never that the
+# reconciled rows match real data, so a wrong-but-stable status would otherwise pass silently.
+# Anchored on "[$TASKn]" (the row's markdown link text, `managed-block.ts`'s `renderRow`) rather
+# than a bare `grep -i "$TASKn"`: the id also appears, differently-cased and bracket-free, in the
+# frontmatter `tasks:` list (one id per line, `link.ts`'s lowercased form) -- an unanchored match
+# would silently accept a hit on that unrelated line, and would also prefix-collide once any task
+# id reaches double digits (e.g. "TASK-1" inside "TASK-10"). The closing `]` rules both out.
+check "managed block renders TASK1's live status (In Progress), not just structural markers" \
+  'grep -F -- "[$TASK1]" "$STORY_PATH" | grep -q "In Progress"'
+check "managed block renders TASK2's live status (Done)" \
+  'grep -F -- "[$TASK2]" "$STORY_PATH" | grep -q "Done"'
 
 # ── Phase 7: idempotency ─────────────────────────────────────────────────────
 step_json "lore sync --json idempotent rerun (no-op)" \
@@ -403,6 +420,17 @@ sed -i 's/^status: .*/status: bogus-drifted-status/' "$STORY_PATH" || true
 step "lore check: catches real Story status drift" 6 -- lore check docs/stories
 step "lore sync: heals the drift" 0 -- lore sync "$STORY_ID"
 step "lore check: clean again after healing" 0 -- lore check docs/stories
+
+# LORE-63 AC2: managed-BLOCK BODY drift -- the other half of check's drift detection, never
+# exercised before now (the only induction above is a frontmatter sed). Corrupt a rendered status
+# cell directly: "In Progress" (capital, TASK1's live Backlog status) only ever appears inside the
+# block's own row, never in the (lowercased) frontmatter `status:` value, so this touches only the
+# block body, not the frontmatter drift check just healed above.
+sed -i 's/In Progress/CORRUPTED-STATUS/' "$STORY_PATH" || true
+step "lore check: catches managed-block BODY drift (distinct from frontmatter status drift)" 6 \
+  -- lore check docs/stories
+step "lore sync: heals the managed-block body drift" 0 -- lore sync "$STORY_ID"
+step "lore check: clean again after healing the block-body drift" 0 -- lore check docs/stories
 
 # ── Phase 10: orphans ────────────────────────────────────────────────────────
 # Per orphans.ts's documented scope: ANY doc: label exempts a task from being
@@ -489,6 +517,100 @@ check "the file STILL moved despite the induced back-ref failure (file move comm
 STORY_ID="$NEW_STORY_ID_2"
 STORY_PATH="docs/stories/e2e-renamed-story-f1.md"
 rm -f /tmp/rename-f1-out /tmp/rename-f1-err
+
+# ── Phase 15c: custom status flows + .lore/config.toml overrides (LORE-63 AC3/AC4) ──────────
+# Every reconciliation test above only ever runs against the three DEFAULT statuses seeded by
+# `backlog init` (the hardcoded-defaults trap LORE-26 exists to prevent). Backlog.md has no CLI to
+# set `statuses:` directly -- `backlog config set statuses '[...]'` refuses on the real binary,
+# invoked directly against the pinned CLI: "statuses cannot be set directly... Edit the list in the
+# project config file... directly" (exit 1; `--help` alone only shows `statuses` absent from the
+# documented settable-key list, it does not print this message) -- so a custom flow is authored the
+# same way any real team would: a direct edit to backlog/config.yml's own `statuses:` key, in the
+# exact flow-array shape `backlog init` itself writes (verified against a real `backlog init` run:
+# `statuses: ["To Do", "In Progress", "Done"]`).
+#
+# A FRESH Story, linked to exactly one task, isolates the reconciled rollup to that one task's
+# status -- the existing $STORY_ID already carries other linked tasks (TASK1/TASK2/TASK4), whose
+# own active/terminal classification would otherwise mask whatever Review's classification
+# contributes. Only Story ships the `<!-- lore:tasks -->` managed block by default (LORE-59;
+# Spec/ADR/etc. do not), so the isolated probe must itself be a Story.
+cp backlog/config.yml /tmp/config-yml-original.yml
+sed -i 's|^statuses:.*$|statuses: ["To Do", "In Progress", "Review", "Done"]|' backlog/config.yml || true
+check "backlog/config.yml now carries a custom, non-default 4-entry status flow" \
+  'grep -q "Review" backlog/config.yml'
+
+CUSTOM_STORY_OUT="$(lore new Story "E2E custom status story" --json 2>/tmp/custom-story-err)"
+CUSTOM_STORY_RC=$?
+check "lore new Story (custom-status-flow probe) succeeds" '[ "$CUSTOM_STORY_RC" -eq 0 ]'
+CUSTOM_STORY_ID=""
+CUSTOM_STORY_PATH=""
+if [ "$CUSTOM_STORY_RC" -eq 0 ]; then
+  CUSTOM_STORY_ID="$(echo "$CUSTOM_STORY_OUT" | jq -r '.data.id')"
+  CUSTOM_STORY_PATH="$(echo "$CUSTOM_STORY_OUT" | jq -r '.data.path')"
+fi
+
+TASK6="$(backlog task create "E2E custom-status-flow task" 2>&1 | grep -oE 'Created task [^ ]+' | awk '{print $3}')"
+check "seeded TASK6 for the custom-status-flow probe" '[ -n "$TASK6" ]'
+step "backlog task edit: set TASK6 to the new custom status Review (validated against backlog/config.yml)" 0 \
+  -- backlog task edit "$TASK6" --status "Review"
+step_json "lore link: attach TASK6 (status Review) to the fresh Story" \
+  '.data.tasks[] | select(.task == "'"$TASK6"'") | .status == "added"' \
+  -- lore link "$CUSTOM_STORY_ID" "$TASK6" --json
+step_json "lore sync: a non-default status (Review) flows through reconciliation end-to-end" \
+  '.kind == "sync.result"' -- lore sync "$CUSTOM_STORY_ID" --json
+check "Story status reconciled to in-progress via the custom flow (Review is active, non-terminal)" \
+  'grep -q "^status: in-progress" "$CUSTOM_STORY_PATH"'
+# Anchored on "[$TASK6]" (the row's link text) for the same reason as the Phase 6 checks above --
+# a bare `grep -i "$TASK6"` would also hit the frontmatter `tasks:` line.
+check "managed block renders the live custom status Review, not a default-flow guess" \
+  'grep -F -- "[$TASK6]" "$CUSTOM_STORY_PATH" | grep -q "Review"'
+
+# parseStatusFlow's validation-6 fail-loud branch (src/adapters/backlog.ts:841-877): a malformed
+# `statuses:` shape (not a list of strings) must fail loud rather than silently falling back to the
+# hardcoded defaults.
+cp backlog/config.yml /tmp/config-yml-good-flow.yml
+sed -i 's|^statuses:.*$|statuses: "not-a-list"|' backlog/config.yml || true
+step_fail "exit 6: malformed backlog/config.yml statuses: (not a list of strings) fails loud" 6 \
+  '.error_type == "validation"' \
+  -- lore sync "$CUSTOM_STORY_ID" --json
+cp /tmp/config-yml-good-flow.yml backlog/config.yml
+rm -f /tmp/config-yml-good-flow.yml
+
+# LORE-63 AC4: the .lore/config.toml [reconcile.overrides] surface -- documented as the recovery
+# path for a status an ordered flow cannot classify unambiguously -- has never run either. This
+# Story links only TASK6, so overriding Review -> done flips the WHOLE rollup from in-progress
+# (flow position, just asserted above) to done (override) -- a passing check can only mean the
+# override was actually read and honored, not coincidence.
+cat > .lore/config.toml <<'TOMLEOF'
+[reconcile.overrides]
+Review = "done"
+TOMLEOF
+step_json "lore sync: [reconcile.overrides] Review->done takes precedence over flow position" \
+  '.kind == "sync.result"' -- lore sync "$CUSTOM_STORY_ID" --json
+check "Story status flips to done via the override (proves overrides win over flow position)" \
+  'grep -q "^status: done" "$CUSTOM_STORY_PATH"'
+
+# A malformed override target (not one of todo/in-progress/done) is core/reconcile.ts's OWN
+# validation (validateOverrides), distinct from a bare TOML syntax error -- fails loud the same way.
+cat > .lore/config.toml <<'TOMLEOF'
+[reconcile.overrides]
+Review = "not-a-real-status"
+TOMLEOF
+step_fail "exit 6: [reconcile.overrides] target must be a valid rollup status (validation)" 6 \
+  '.error_type == "validation"' \
+  -- lore sync "$CUSTOM_STORY_ID" --json
+rm -f .lore/config.toml
+
+# Leave no induced state behind: the probe Story's on-disk status still reads "done" from the
+# override test above, which no longer matches TASK6's real "Review" status now that no override
+# is active -- re-heal it against live data, then restore backlog/config.yml's original status
+# flow so this phase's custom flow does not silently outlive it.
+step "lore sync: re-heal the probe Story back to live data now the override is gone" 0 \
+  -- lore sync "$CUSTOM_STORY_ID"
+check "probe Story re-healed to in-progress (Review's flow-position classification, no override)" \
+  'grep -q "^status: in-progress" "$CUSTOM_STORY_PATH"'
+cp /tmp/config-yml-original.yml backlog/config.yml
+rm -f /tmp/config-yml-original.yml
 
 # ── Phase 16: supersede ────────────────────────────────────────────────────────
 SUCCESSOR="$(lore new ADR "E2E successor decision" --json | jq -r '.data.id')"
