@@ -1083,6 +1083,20 @@ check "probe Story re-healed to in-progress (Review's flow-position classificati
 cp /tmp/config-yml-original.yml backlog/config.yml
 rm -f /tmp/config-yml-original.yml
 
+# TASK6's own REAL Backlog status is still "Review" -- a status the just-restored default 3-status
+# flow no longer recognizes and has no [reconcile.overrides] entry for either. Left alone, this is
+# a dormant landmine: the first full-bundle reconciliation pass to touch this Story again (Phase
+# 17a's unscoped `lore check`, LORE-68 AC3) fails loud (validation) trying to reconcile it --
+# discovered by that guard's own first real run, the same way LORE-68's original bug was. Reset
+# TASK6 to a status the default flow recognizes and re-sync so the probe Story's on-disk status
+# matches live data one final time -- completing the "leave no induced state behind" cleanup above.
+step "backlog task edit: reset TASK6 off the now-unrecognized custom status Review" 0 \
+  -- backlog task edit "$TASK6" --status "Done"
+step "lore sync: re-heal the probe Story after TASK6's status reset" 0 \
+  -- lore sync "$CUSTOM_STORY_ID"
+check "probe Story settles to done (TASK6's real, now-default-flow-recognized status)" \
+  'grep -q "^status: done" "$CUSTOM_STORY_PATH"'
+
 # ── Phase 16: supersede ────────────────────────────────────────────────────────
 # LORE-66 AC2: the OLD version of this step gave the ADR under test zero real inbound links, so
 # --rewrite-links reported rewroteLinks:false -- the inbound-repoint engine (core/rewrite.ts's
@@ -1124,6 +1138,22 @@ step_json "lore schema export" '.kind == "schema.result"' -- lore schema export 
 for T in epic story spec adr runbook reference; do
   check "schema export produced valid JSON for $T" "jq -e . .lore/schemas/${T}.schema.json >/dev/null 2>&1"
 done
+
+# ── Phase 17a: full unscoped `lore check` regression guard (LORE-68 AC3) ────────
+# Nothing before this point ever ran a full, unscoped `lore check` over the whole bundle: every
+# earlier `lore check` invocation (Phase 9's drift loop, the scoped checks elsewhere) targets a
+# narrow path or doesn't assert a clean result. That gap is exactly how LORE-68's broken-link
+# regression went undetected through the whole first campaign: Phase 15b's linked-Story rename
+# silently dropped one `../` segment from the managed task block's link to `backlog/tasks/…`
+# (src/core/rewrite.ts's outbound-link recompute resolved it in the bundle-relative coordinate
+# space instead of the repo-relative one `normalizeLink` requires -- the two only coincide for a
+# link that stays inside the bundle, so a link escaping it into `backlog/` was silently
+# truncated). A full, unscoped, zero-findings check right here -- after Phase 17's schema export
+# and before Phase 17b's profile-subsystem probe touches anything further -- is now permanent so
+# this class of regression cannot silently recur.
+step_json "full unscoped lore check is clean (Phase 15b's linked rename included)" \
+  '.data.errorCount == 0 and .data.warningCount == 0' \
+  -- lore check --json
 
 # ── Phase 17b: declarative profile subsystem (LORE-64) ──────────────────────────
 # LORE-46's populated-profile path (a real .lore/profile.toml declaring a custom type) has
@@ -1218,11 +1248,11 @@ check "AC3: the custom schema's required list includes the declared field" \
 # [base.fields] but leaving the example [[types]] commented") makes every loadProfile-bearing
 # command fail loud at exit 6, validation. `lore check` is confirmed by source (check.ts imports
 # nothing from core/profile.ts) to NOT load the profile at all. Proven by COMPARING its outcome
-# before/after the malformed profile is introduced (not by asserting a bare "exit 0", which a
-# real docker run showed is the WRONG test: this harness's bundle already carries an unrelated,
-# pre-existing `lore check` finding by this point in the script -- see LORE-68, filed separately,
-# not this task's scope) -- identical findings both times is the actual, robust proof of
-# profile-invariance, independent of whatever the bundle's own baseline state is.
+# before/after the malformed profile is introduced rather than asserting a bare "exit 0": that
+# stayed the more robust test even after LORE-68 fixed the bundle's one prior source of baseline
+# noise (a Story's managed task block losing a `../` segment across Phase 15b's rename) -- Phase
+# 17a now asserts the baseline itself is clean, but this probe's own contract is proving
+# profile-invariance, independent of whatever the bundle's baseline state happens to be.
 lore check --json >/tmp/check-baseline.json 2>/dev/null
 BASELINE_CHECK_RC=$?
 
