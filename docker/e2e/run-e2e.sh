@@ -625,6 +625,155 @@ for T in epic story spec adr runbook reference; do
   check "schema export produced valid JSON for $T" "jq -e . .lore/schemas/${T}.schema.json >/dev/null 2>&1"
 done
 
+# ── Phase 17b: declarative profile subsystem (LORE-64) ──────────────────────────
+# LORE-46's populated-profile path (a real .lore/profile.toml declaring a custom type) has
+# never run in this harness -- only the zero-config default (Phase 3/17's six built-in types).
+# Grammar re-derived directly from src/core/profile.ts + scaffold.ts's own DEFAULT_PROFILE_TOML
+# scaffold comment (not the filing task's description), confirmed by test/profile.test.ts's
+# working fixture: `fields = { ... }` is a plain inline table on the `[[types]]` entry itself.
+#
+# Confirmed by reading commands/new.ts/core/template.ts: `lore new` can NEVER satisfy a
+# profile-declared custom REQUIRED field -- buildNewConcept's frontmatter only ever carries
+# type/title/summary/timestamp/tags(+stamped resource); `--var` only fills BODY placeholders,
+# there is no `--field key=value` flag. So AC1 (lore new succeeds + custom template) and AC2 (a
+# required field fails validate) reuse ONE custom type across a MUTATED profile file, exactly
+# like Phase 15c/16 mutated backlog/config.yml / .lore/config.toml in place: declare the type
+# with no required fields first (AC1 succeeds), then add a required field to the same
+# already-written doc and validate it directly (AC2) rather than via `lore new`.
+mkdir -p .lore/templates
+cat > .lore/templates/e2e-custom-type.md <<'TPLEOF'
+# {{title}}
+
+LORE64-CUSTOM-TEMPLATE-MARKER
+
+## Rationale
+TPLEOF
+
+cat > .lore/profile.toml <<'TOMLEOF'
+[profile]
+name = "e2e-custom-profile"
+okf_version = "0.1"
+
+[base.fields]
+type = { required = true }
+title = {}
+summary = {}
+timestamp = { kind = "datetime" }
+
+[[types]]
+name = "E2E Custom Type"
+template = "e2e-custom-type.md"
+TOMLEOF
+
+# AC1: a populated profile's custom type + custom template is exercised E2E.
+CUSTOM_OUT="$(lore new "E2E Custom Type" "E2E custom type doc" --json 2>/tmp/custom-new-err)"
+CUSTOM_RC=$?
+check "AC1: lore new succeeds for a populated-profile custom type" "[ $CUSTOM_RC -eq 0 ]"
+CUSTOM_PATH=""
+if [ "$CUSTOM_RC" -eq 0 ]; then
+  CUSTOM_PATH="$(echo "$CUSTOM_OUT" | jq -r '.data.path')"
+fi
+check "AC1: custom type's file landed under its LOWER-KEBAB slug directory" \
+  '[ -f "docs/e2e-custom-type/e2e-custom-type-doc.md" ] && [ "$CUSTOM_PATH" = "docs/e2e-custom-type/e2e-custom-type-doc.md" ]'
+check "AC1: body rendered from the custom .lore/templates/ file, not the generic fallback" \
+  'grep -q "LORE64-CUSTOM-TEMPLATE-MARKER" "$CUSTOM_PATH" && ! grep -q "Describe this" "$CUSTOM_PATH"'
+
+# AC2: add a profile-declared REQUIRED field to the same type -- the existing doc (created
+# before the field existed) now fails `lore validate`; adding the field makes it pass. This is
+# the realistic workflow (a team adds a required field to an existing type), and the only way to
+# exercise a required custom field at all, since `lore new` can never stamp one (see above).
+cat > .lore/profile.toml <<'TOMLEOF'
+[profile]
+name = "e2e-custom-profile"
+okf_version = "0.1"
+
+[base.fields]
+type = { required = true }
+title = {}
+summary = {}
+timestamp = { kind = "datetime" }
+
+[[types]]
+name = "E2E Custom Type"
+template = "e2e-custom-type.md"
+fields = { owner = { required = true } }
+TOMLEOF
+
+step "AC2: lore validate fails (exit 6) once the type gains a required field the doc lacks" 6 \
+  -- lore validate "$CUSTOM_PATH"
+sed -i '/^timestamp:/a owner: jeremy' "$CUSTOM_PATH"
+step "AC2: lore validate passes once the required custom field is present" 0 \
+  -- lore validate "$CUSTOM_PATH"
+
+# AC3: lore schema export emits the custom-slug schema file (profile still v2, owner required).
+step_json "AC3: lore schema export (populated profile)" '.kind == "schema.result"' \
+  -- lore schema export --json
+check "AC3: schema export produced the custom type's schema (slug e2e-custom-type)" \
+  'jq -e . .lore/schemas/e2e-custom-type.schema.json >/dev/null 2>&1'
+check "AC3: the custom schema's required list includes the declared field" \
+  'jq -e ".required | index(\"owner\")" .lore/schemas/e2e-custom-type.schema.json >/dev/null 2>&1'
+
+# AC4: a malformed profile (here: [profile]/[base.fields] populated but zero [[types]] --
+# profile.ts's own documented fail-loud case, "the common cause is uncommenting [profile]/
+# [base.fields] but leaving the example [[types]] commented") makes every loadProfile-bearing
+# command fail loud at exit 6, validation. `lore check` is confirmed by source (check.ts imports
+# nothing from core/profile.ts) to NOT load the profile at all. Proven by COMPARING its outcome
+# before/after the malformed profile is introduced (not by asserting a bare "exit 0", which a
+# real docker run showed is the WRONG test: this harness's bundle already carries an unrelated,
+# pre-existing `lore check` finding by this point in the script -- see LORE-68, filed separately,
+# not this task's scope) -- identical findings both times is the actual, robust proof of
+# profile-invariance, independent of whatever the bundle's own baseline state is.
+lore check --json >/tmp/check-baseline.json 2>/dev/null
+BASELINE_CHECK_RC=$?
+
+cp .lore/profile.toml /tmp/profile-toml-good.toml
+cat > .lore/profile.toml <<'TOMLEOF'
+[profile]
+name = "e2e-custom-profile"
+okf_version = "0.1"
+
+[base.fields]
+type = { required = true }
+TOMLEOF
+
+step_fail "AC4: exit 6 malformed profile (zero [[types]]) via lore new" 6 \
+  '.error_type == "validation"' \
+  -- lore new "E2E Custom Type" "should fail under malformed profile" --json
+step_fail "AC4: exit 6 malformed profile (zero [[types]]) via lore validate" 6 \
+  '.error_type == "validation"' \
+  -- lore validate "$CUSTOM_PATH" --json
+step_fail "AC4: exit 6 malformed profile (zero [[types]]) via lore sync" 6 \
+  '.error_type == "validation"' \
+  -- lore sync "$STORY_ID" --json
+
+lore check --json >/tmp/check-malformed.json 2>/dev/null
+MALFORMED_CHECK_RC=$?
+check "AC4: lore check is NOT profile-bearing -- byte-identical outcome with a malformed profile" \
+  '[ "$MALFORMED_CHECK_RC" -eq "$BASELINE_CHECK_RC" ] && diff -q /tmp/check-baseline.json /tmp/check-malformed.json >/dev/null'
+rm -f /tmp/check-baseline.json /tmp/check-malformed.json
+
+cp /tmp/profile-toml-good.toml .lore/profile.toml
+rm -f /tmp/profile-toml-good.toml /tmp/custom-new-err
+step_json "profile restored: lore schema export succeeds again (loadProfile recovers)" \
+  '.kind == "schema.result"' -- lore schema export --json
+
+# Leave no induced state behind (LORE-63's convention): a custom profile.toml REPLACES the
+# default six-type vocabulary wholesale, and a full `lore schema export` PRUNES any
+# *.schema.json whose type the active profile no longer declares -- so both schema exports
+# above already pruned Phase 17's six default schema files. Deleting the custom profile and
+# re-exporting once more (now back on the zero-config default) regenerates the six defaults
+# AND prunes the orphaned custom one in the same step, leaving Phase 18+ the bundle state they
+# already expect.
+rm -f .lore/profile.toml .lore/templates/e2e-custom-type.md
+step_json "profile removed: lore schema export regenerates the six default schemas" \
+  '.kind == "schema.result"' -- lore schema export --json
+check "the orphaned custom schema was pruned on the default-profile re-export" \
+  '[ ! -f .lore/schemas/e2e-custom-type.schema.json ]'
+for T in epic story spec adr runbook reference; do
+  check "default schema for $T restored after the profile subsystem probe" \
+    "jq -e . .lore/schemas/${T}.schema.json >/dev/null 2>&1"
+done
+
 # ── Phase 18: scaffold mkdocs + a real build ────────────────────────────────────
 step "lore scaffold mkdocs" 0 -- lore scaffold mkdocs
 step "mkdocs build (real)" 0 -- mkdocs build --site-dir /tmp/mkdocs-site
