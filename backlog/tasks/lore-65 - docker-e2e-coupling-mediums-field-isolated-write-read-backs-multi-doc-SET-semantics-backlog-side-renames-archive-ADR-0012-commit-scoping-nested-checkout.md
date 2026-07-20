@@ -4,11 +4,11 @@ title: >-
   docker/e2e coupling mediums: field-isolated write read-backs, multi-doc SET
   semantics, backlog-side renames/archive, ADR-0012 commit scoping, nested
   checkout
-status: In Progress
+status: Done
 assignee:
   - '@jeremy-newhouse'
 created_date: '2026-07-19 22:59'
-updated_date: '2026-07-20 15:19'
+updated_date: '2026-07-20 15:48'
 labels:
   - e2e
   - testing
@@ -42,11 +42,11 @@ The audit produced concrete proposed steps for each — re-derive against the cu
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Write read-backs are field-isolated against the real task record (label and doc ref asserted separately), and the multi-doc SET/REPLACE case (one task linked from two docs) pins preserve-the-other-doc semantics on both link and unlink
-- [ ] #2 A backlog-side --title edit file rename is swept by sync and the managed-block href follows the renamed file; the archived-linked-task behavior is pinned (exploratory run first, then a fixed expectation)
-- [ ] #3 A lore-authored commit file list is inspected (backlog/ paths only), a pre-staged unrelated file survives unswept, and a metachar-titled task exercises the :(literal) pathspec path through real git
-- [ ] #4 A nested checkout (git root above the lore project) exercises the --show-prefix translation: link back-ref commits succeed and scope correctly
-- [ ] #5 The full harness runs green against the real pinned upstream binary, and teardown is clean
+- [x] #1 Write read-backs are field-isolated against the real task record (label and doc ref asserted separately), and the multi-doc SET/REPLACE case (one task linked from two docs) pins preserve-the-other-doc semantics on both link and unlink
+- [x] #2 A backlog-side --title edit file rename is swept by sync and the managed-block href follows the renamed file; the archived-linked-task behavior is pinned (exploratory run first, then a fixed expectation)
+- [x] #3 A lore-authored commit file list is inspected (backlog/ paths only), a pre-staged unrelated file survives unswept, and a metachar-titled task exercises the :(literal) pathspec path through real git
+- [x] #4 A nested checkout (git root above the lore project) exercises the --show-prefix translation: link back-ref commits succeed and scope correctly
+- [x] #5 The full harness runs green against the real pinned upstream binary, and teardown is clean
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -66,3 +66,18 @@ Plan (docker/e2e/run-e2e.sh, new phases only, no src/ changes expected):
 - AC5: iterate against the real docker/e2e harness (build+up, always down -v) until green; bun test unaffected (no src/ changes expected).
 - Independent adversarial review of the diff before opening the PR (established campaign practice).
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Two of the filing task's own premises were disproven against the pinned fork's real source (/Users/jdnewhouse/repos/Backlog.md checkout, close to the Dockerfile's pinned commit) before any fixture was written:
+- AC2's "--title edit renames the file" is false: file-system/operations.ts saveTask's shouldPreservePath branch reuses the task's existing filePath on any edit, confirmed by a local empirical probe too. AC2's real backlog-side file-move test instead uses `task archive` (a genuine rename() to backlog/archive/tasks/), pinning that an archived linked task mirrors LORE-62's already-established vanished-task signature (sync not_found/exit3/empty-stdout; check exits 3 but emits its report first; tasks soft-drops it). The title-edit finding is still asserted (file does NOT rename; new title flows into the managed block's Title column via the JSON title field).
+- AC3's "metachar-titled task" premise is false: Backlog's sanitizeFilename strips ()[] entirely and turns * into a hyphen, so no CLI-driven title can ever produce a backlog/ filename with a glob metachar. Tested the :(literal) pathspec guard instead via a direct on-disk rename (bypassing the CLI) -- exactly the scenario state.ts's own doc comment says the guard protects against.
+Verified: two full `docker compose -f docker/e2e/docker-compose.yml up --build` runs, both 200 passed/0 failed, exit 0, `down -v` clean both times; `bun test` 1500/1500 (no src/ changes). Independent adversarial subagent review of the branch diff found no functional test-logic defects (no vacuous assertions, no jq/quoting bugs, no state leaks affecting later phases) -- one misleading comment fixed (b4c805c).
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added four new phases to docker/e2e/run-e2e.sh (4b/4c/4d/24b) closing the four medium-tier real-binary Backlog coupling gaps the filing audit found. AC1: field-isolated label/doc read-backs + multi-doc SET/REPLACE preserve-the-other-doc semantics. AC2: documented that --title edit does NOT rename the file (the filing task's premise was wrong, verified against the pinned fork's own source); tested the REAL file-move operation (task archive) instead, pinning it mirrors LORE-62's vanished-task signature. AC3: commit-file-list inspection, unrelated-file-survives-unswept, and the :(literal) pathspec guard via a direct on-disk metachar rename (the filing task's metachar-title technique was also disproven -- Backlog's sanitizeFilename strips those chars). AC4: a wholly separate nested-checkout fixture exercising porcelainPaths' --show-prefix translation via both the per-write commit and sync's catch-all sweep. AC5: two full docker/e2e harness runs, both 200/0 failed, exit 0, down -v clean both times; bun test 1500/1500 (no src/ changes). Independent adversarial review found no functional defects (one misleading comment fixed).
+<!-- SECTION:FINAL_SUMMARY:END -->
