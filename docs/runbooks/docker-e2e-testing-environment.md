@@ -92,6 +92,21 @@ When any of the remaining findings are fixed, flip the corresponding `step`'s ex
 (and delete the now-unneeded workaround) in the same change that fixes the underlying bug — a
 passing run with the old expectation still in place would silently mask a regression.
 
+## Known not-coverable in this harness
+
+A few command-surface behaviors cannot be exercised here at all — documented so a future audit
+does not treat their absence as a gap to fill:
+
+- **Exit-1 uncaught faults** — `EXIT_UNCAUGHT` (`cli.ts`'s last-ditch backstop) fires only when
+  `reportError` itself throws; there is no supported way to induce that from outside the process.
+- **Live Obsidian consumer verification** — Obsidian has no headless mode this harness can drive.
+  `lore scaffold obsidian`'s unit tests already pin the exact `app.json`/plugin config values; the
+  documented path for a real render/link/backlink check is the `obsidian` CLI against a running
+  Obsidian.app instance, outside this container.
+- **True TTY pretty-mode rendering** — the container's stdout is always piped, so `--plain`
+  auto-selection is what this harness can prove; genuine ANSI/color output only renders at a real
+  TTY (partially closable via `script(1)` if ever worth the added complexity).
+
 ## Rollback
 
 The harness is entirely self-contained: `docker compose -f docker/e2e/docker-compose.yml down` (or
