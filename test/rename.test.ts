@@ -140,6 +140,25 @@ describe("rewriteInbound — the moved file's outbound links (move)", () => {
     const moved = writesByPath(plan).get("reference/sales-orders.md") ?? "";
     expect(moved).toContain("See [bulk](../stories/bulk.md).");
   });
+
+  // LORE-68: a link that escapes the bundle root (e.g. a Story's managed task block linking
+  // `backlog/tasks/…`, which lives one hop outside `docs/`) was silently truncated by one `../`
+  // segment on every move, because the recompute resolved it in the bundle-relative coordinate
+  // space instead of normalizeLink's required repo-relative one — the two only coincide for a
+  // link that stays inside the bundle.
+  test("an already-canonical outbound link escaping the bundle root is not truncated by a same-directory rename", () => {
+    writeDoc("stories/bulk.md", "---\ntype: Story\n---\nLinks a task file [t](../../backlog/tasks/task-1.md).\n");
+    const plan = rewriteInbound(graph(), "stories/bulk", "stories/bulk-renamed", { move: true });
+    const moved = writesByPath(plan).get("stories/bulk-renamed.md") ?? "";
+    expect(moved).toContain("[t](../../backlog/tasks/task-1.md)");
+  });
+
+  test("an outbound link escaping the bundle root gains a segment on a depth-changing move", () => {
+    writeDoc("stories/bulk.md", "---\ntype: Story\n---\nLinks a task file [t](../../backlog/tasks/task-1.md).\n");
+    const plan = rewriteInbound(graph(), "stories/bulk", "stories/nested/bulk", { move: true });
+    const moved = writesByPath(plan).get("stories/nested/bulk.md") ?? "";
+    expect(moved).toContain("[t](../../../backlog/tasks/task-1.md)");
+  });
 });
 
 // ── core: surgical splice fidelity (node.url ≠ source bytes) ───────────────────────
