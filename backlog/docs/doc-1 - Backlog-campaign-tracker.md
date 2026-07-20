@@ -3,7 +3,7 @@ id: doc-1
 title: Backlog campaign tracker
 type: other
 created_date: '2026-07-19 23:15'
-updated_date: '2026-07-20 15:50'
+updated_date: '2026-07-20 17:00'
 ---
 # Backlog campaign tracker
 
@@ -12,11 +12,10 @@ lifecycle → advance cursor → append session log → write handover.
 
 ## Cursor
 
-**Next issue: LORE-66** — queue order confirmed by the user on 2026-07-19
-(selected "67 first, then 61–66 (Recommended)" — LORE-67 docs-only shakes down
-the campaign loop, then LORE-61 whose `step_fail` helper LORE-62/66 depend on,
-then 62 → 63 → 64 → 65 → 66 by dependency and priority); do not re-ask before
-taking the next item.
+**Queue is EMPTY.** LORE-66 (resolved 2026-07-20, session 7) was the last confirmed
+item in the queue the user set on 2026-07-19 ("67 first, then 61–66"). This campaign
+is complete. Do not invent a new cursor or silently pull in a "Not queued" item —
+run `/backlog-handover init` to build a fresh queue when the user wants to continue.
 
 **Merge gate: self-merge (skill default)** — confirmed by the user on 2026-07-19
 (selected "Self-merge (skill default)"): each session reviews adversarially,
@@ -26,9 +25,7 @@ post-merge on dev.
 
 ## Queue (confirmed order)
 
-| # | Issue | Type | One-line note |
-| --- | --- | --- | --- |
-| 1 | LORE-66 | e2e | Command-surface tail + housekeeping: vacuous replace/supersede, check --json/F2, flag long-tail, pseudo-cache step (depends on LORE-61, now Done) |
+Empty — every item resolved. See Resolved below.
 
 ## Resolved
 
@@ -40,6 +37,7 @@ post-merge on dev.
 | 4 | LORE-63 | Done, 2026-07-20, session 4 | Closed 4 reconciliation coverage gaps in docker/e2e/run-e2e.sh: (1) Phase 6's first post-mutation sync now asserts filesChanged >= 1, and the rendered managed-block rows are value-asserted against concrete status literals (TASK1→"In Progress", TASK2→"Done"); (2) Phase 9 now also induces managed-block BODY drift (a corrupted rendered status cell, distinct from the pre-existing frontmatter-status sed), caught by check (exit 6) and healed by sync; (3) new Phase 15c: a custom, non-default 4-status flow ("Review" inserted between "In Progress"/"Done") written directly to backlog/config.yml — confirmed against the real local backlog v1.48.0 binary that `backlog config set statuses ...` refuses, there is no CLI setter — reconciles end-to-end on a freshly-created, singly-linked Story (isolated so the rollup is driven purely by one task), and a malformed statuses: shape fails loud (exit 6, validation) via parseStatusFlow; (4) the same isolated Story exercises .lore/config.toml's [reconcile.overrides]: an override to a status DIFFERENT from what flow position would produce proves the override is actually honored (not coincidence), and an invalid override target fails loud (exit 6, validation) via core/reconcile.ts's own check. Independent adversarial review found and fixed 2 real issues before the final run: unanchored substring greps for the new status-value checks (also matched the frontmatter tasks: line; could prefix-collide past 9 tasks) — fixed to anchor on the row's literal "[TASK-n]" link-text bracket; and a dormant status drift left on the probe Story after the override test — fixed by re-heal-syncing it and restoring backlog/config.yml at the end of the phase. Verified: two full `docker compose -f docker/e2e/docker-compose.yml up --build` runs (125/0 failed, then 127/0 failed after the review fixes), `down -v` clean both times; `bun test` 1500/1500 throughout (no src/ changes this task). |
 | 5 | LORE-64 | Done, 2026-07-20, session 5 | Added Phase 17b to docker/e2e/run-e2e.sh exercising the declarative profile subsystem's populated-profile path: a custom type + custom .lore/templates/ file (AC1: lore new succeeds, body from the custom template not the generic fallback); a profile-declared required field failing then passing lore validate on a hand-authored doc, since `lore new` can never populate a custom frontmatter field itself (AC2); lore schema export emitting the custom-slug schema with the field in its `required` list, confirmed empirically by compiling a real profile (AC3); a malformed profile (zero [[types]], profile.ts's own documented fail-loud case) making lore new/validate/sync fail loud at exit 6 while lore check — confirmed via source to never call loadProfile — stays byte-identical before/after (AC4, rewritten from a naive "exit 0" assumption after a real run disproved it, see below). Discovered a genuine, real interaction: a full `lore schema export` PRUNES any schema whose type the active profile no longer declares, so introducing then removing the custom profile pruned Phase 17's six default schemas — fixed by re-exporting once more after removing the custom profile, regenerating the six defaults and pruning the orphaned custom one. A first harness run also surfaced a real but UNRELATED pre-existing bug: `lore check` already reports 2 broken-link findings in stories/e2e-renamed-story-f1.md (backlog/tasks/ dash-vs-space filename mismatch) left over from the Phase 15b rename/F1 sequence, never re-checked by any later phase — filed separately as LORE-68 (kept unqueued per user confirmation, out of this task's scope), and AC4's check-invariance test rewritten to diff `lore check --json` output before/after the malformed profile rather than assume a clean baseline. Independent adversarial review found no genuine defects (one harmless dead-variable assignment fixed). Verified: two full `docker compose -f docker/e2e/docker-compose.yml up --build` runs, both 148 passed/0 failed, exit 0, `down -v` clean both times; `bun test` 1500/1500 throughout (no src/ changes this task). |
 | 6 | LORE-65 | Done, 2026-07-20, session 6 | Added four phases to docker/e2e/run-e2e.sh: Phase 4b (AC1) field-isolated real-record read-backs of the doc: label and --doc path (checked separately, not via lore's self-reported status) plus a multi-doc SET/REPLACE case (one task linked from two Stories) pinning preserve-the-other-doc semantics on both link and unlink; Phase 4c (AC2) documents that a `--title` edit does NOT rename the task file (the filing task's premise was wrong — verified against the pinned fork's own file-system/operations.ts saveTask, whose shouldPreservePath branch reuses the existing filePath on edit), then exercises the REAL file-move operation (`task archive`, a genuine rename() to backlog/archive/tasks/) on a linked task, pinning that it mirrors LORE-62's already-established vanished-task signature (sync not_found/exit 3/empty stdout; check exits 3 but emits its report first; tasks soft-drops it); Phase 4d (AC3) inspects a lore-authored commit's file list directly (backlog/ only), proves a pre-staged unrelated file survives a scoped commit unswept, and proves the :(literal) pathspec guard handles a backlog/ filename manually renamed to carry glob metacharacters byte-for-byte (the filing task's "metachar-titled task" technique was also disproven — Backlog's own sanitizeFilename strips ()[] entirely and turns * into a hyphen, so no CLI-driven title can ever produce such a filename); Phase 24b (AC4) builds a wholly separate nested-checkout fixture (an outer git repo with the lore+backlog project one directory down) exercising porcelainPaths' --show-prefix translation via both `lore link`'s per-write commit and `lore sync`'s catch-all sweep, previously dead in every other phase. Two new campaign conventions recorded (see below). Independent adversarial review found no functional test-logic defects (one misleading comment fixed). Verified: two full `docker compose -f docker/e2e/docker-compose.yml up --build` runs, both 200 passed/0 failed, exit 0, `down -v` clean both times; `bun test` 1500/1500 throughout (no src/ changes this task). |
+| 7 | LORE-66 | Done, 2026-07-20, session 7 | Closed the docker/e2e command-surface tail audit across all 6 ACs (fixed vacuous replace/supersede steps, pinned check --json's F2 dual-stream + --external + multi-root, added the full flag/lifecycle long-tail across nearly every lore subcommand, housekeeping). Three research forks launched for pre-implementation source verification went beyond their read-only directive and wrote ~320 lines of test code directly into run-e2e.sh; caught via git status, the two still-running ones stopped via TaskStop, and every line the forks wrote was independently re-verified against current source with the same rigor as self-authored code (most held up; retargeted the replace fix at index.md's real managed lore:index block, since core/replace.ts only protects that region, not lore:tasks as the forks assumed). Three full real-binary docker/e2e harness runs: the first two surfaced and fixed 3 genuine bugs in the NEW test code itself (lore --version wrongly assumed non-"0.0.0" when lore has no release yet; a hyphenated "zero hits" query phrase tokenized into common English words scoring >0 elsewhere; an unlink --allow-missing assertion didn't know link.ts's own documented ADR-0009 §2 tradeoff that a task's last documentation entry deliberately lingers since Backlog's CLI can't clear --doc via an empty value); an independent adversarial subagent review then found the query --tag/--status filter tests lacked negative controls (would pass even if the filter were a silent no-op) — fixed and reverified. Final: 295 passed/0 failed, exit 0, down -v clean; bun test 1500/1500 throughout (no src/ changes). PR #63, rebase-merged into dev. |
 
 ## Not queued — needs a human / blocked
 
@@ -135,6 +133,41 @@ post-merge on dev.
   actually exercise state.ts's `:(literal)` pathspec guard, rename a file
   directly on disk (bypassing the CLI) rather than trying to induce it via a
   task title (LORE-65).
+- `lore` itself has NOT cut a release yet — `package.json`'s `version` field
+  is genuinely `"0.0.0"` (matches the Dockerfile's own build-time check,
+  which compares the compiled binary's `--version` output against
+  `package.json`'s real value rather than demanding a non-placeholder
+  version). Never assert "a real, non-0.0.0 version" for `lore` itself; assert
+  it MATCHES `package.json`'s real value instead — a broken compile-time
+  embed would still show up as a mismatch (LORE-66).
+- `core/replace.ts`'s `MANAGED_MARKERS` registry protects ONLY the
+  `lore:index` listing block today — `lore:tasks` protection is aspirational
+  doc-comment, not implemented. An E2E test of replace's managed-region
+  protection must target an `index.md`'s listing block (regenerated by any
+  whole-bundle `lore sync`), not a Story's `lore:tasks` block (LORE-66).
+- `link.ts`'s `unlink`/`removeBackRefs` deliberately OMITS the `--doc` flag
+  entirely when removing a task's last `documentation` entry would leave the
+  array empty — Backlog's CLI cannot clear `--doc` via an empty value
+  (ADR-0009 §2), so the stale path cosmetically lingers on a single-entry
+  task. Assert the `doc:` LABEL removal (unconditional) as the real signal,
+  not the `documentation` array, when the task under test has only one entry
+  (LORE-66).
+- A BM25-scored `query` filter test needs a genuine NEGATIVE control (a doc
+  that must be ABSENT from the hits), not just a positive one — an
+  inclusion-only assertion passes even if the filter were silently a no-op
+  returning the whole unfiltered bundle. A hyphenated "zero hits" search
+  phrase also isn't safe by construction: it tokenizes into its individual
+  words, some of which may be common enough to genuinely score > 0 elsewhere
+  — use one unbroken nonsense token instead (LORE-66, both caught by
+  adversarial review/a real harness run, not by inspection).
+- A subagent forked mid-implementation inherits the FULL conversation context
+  (including the broader task-list/plan), not just its own narrow prompt —
+  even an explicitly "research only, report back, do not edit files"
+  directive can get overridden by the fork's own read of the larger goal.
+  When precision control over WHO writes WHAT matters (e.g. dispatching
+  several research-only forks before writing any code), check `git status`
+  after they return and be ready to `TaskStop` any still-running one that
+  might conflict, rather than trusting the directive alone (LORE-66).
 
 ## Session log
 
@@ -176,3 +209,16 @@ post-merge on dev.
   off `dev @ 8b85c1f`. Two new campaign conventions recorded (--title edit
   never renames a task's file; sanitizeFilename strips glob metachars from
   CLI-driven titles). Cursor advanced to LORE-66.
+- 2026-07-20 — session 7: resolved LORE-66 (docker/e2e command-surface tail +
+  housekeeping — the LAST queued item; see Resolved table). Branch
+  `feature/LORE-66` off `dev @ 18b516f`. Three research forks dispatched
+  before implementation went beyond their read-only directive and wrote code
+  directly into run-e2e.sh; caught, the two still-running ones stopped, and
+  every line independently re-verified against source. Five new campaign
+  conventions recorded (lore's own pre-release version is genuinely 0.0.0;
+  replace's managed-region registry only protects lore:index, not lore:tasks;
+  unlink's --doc omission on a single-entry task is a documented tradeoff,
+  not a bug; query filter tests need a genuine negative control; a forked
+  subagent can override even an explicit research-only directive). **Queue is
+  now EMPTY** — this was the last confirmed item. Campaign complete pending a
+  fresh `/backlog-handover init`.
