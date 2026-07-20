@@ -345,7 +345,7 @@ check "AC2: git status clean under backlog/ after the archive round-trip (byte-i
 # (1) Inspect a lore-authored commit's file list directly: every path it touches must be under
 # backlog/ and nothing else (state.ts's own structural guard, exercised here against real git
 # history rather than just trusting the guard never throws).
-check "AC3: the most recent lore-authored commit (Phase 4c's archive-restore relink) touches ONLY backlog/ paths" \
+check "AC3: the most recent lore-authored commit (Phase 4c's title-restore sync) touches ONLY backlog/ paths" \
   'AC3_FILES="$(git diff-tree --no-commit-id --name-only -r HEAD)"; [ -n "$AC3_FILES" ] && ! printf "%s\n" "$AC3_FILES" | grep -qv "^backlog/"'
 
 # (2) A pre-staged unrelated file (outside backlog/) must survive a scoped commit unswept.
