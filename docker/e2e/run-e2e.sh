@@ -858,15 +858,21 @@ step "lore graph --dot" 0 -- lore graph --dot
 step_json "lore query full-text" '.kind == "query.results"' -- lore query "archive" --json
 step_json "lore query --type filter" '.kind == "query.results"' -- lore query --type Story --json
 # LORE-66 AC4: --tag/--status/--field, --limit truncation, and zero-hits were never exercised.
-step_json "AC4: lore query --tag filters to the doc carrying that tag (seeded by the Phase 3d --tags probe)" \
-  '.kind == "query.results" and (.data.hits | any(.id == "specs/e2e-custom-out-path"))' \
+# Each filter test asserts BOTH a real match and a real exclusion -- a doc that must NOT appear --
+# so a silently-ignored/no-op filter (which would just return the whole unfiltered bundle) cannot
+# pass by accident the way an inclusion-only assertion would.
+step_json "AC4: lore query --tag genuinely filters (matches the tagged Spec, excludes an untagged Story)" \
+  '.kind == "query.results" and (.data.hits | any(.id == "specs/e2e-custom-out-path")) and (.data.hits | any(.id == "'"$STORY_ID"'") | not)' \
   -- lore query --tag e2e-tag-alpha --json
 step_json "AC4: lore query --field genuinely filters (matches a Spec, excludes a known Story)" \
   '.kind == "query.results" and (.data.hits | any(.id == "specs/e2e-custom-out-path")) and (.data.hits | any(.id == "'"$STORY_ID"'") | not)' \
   -- lore query --field type=Spec --json
 CURRENT_STORY_STATUS="$(grep '^status:' "$STORY_PATH" | head -1 | sed 's/^status: *//')"
-step_json "AC4: lore query --status filters by the concept's live reconciled status" \
-  '.kind == "query.results" and (.data.hits | any(.id == "'"$STORY_ID"'"))' \
+# MULTI_STORY_ID (Phase 4b) was never itself reconciled (its own tasks: link was added then
+# removed before any `lore sync` touched it), so it carries NO status: frontmatter field at all --
+# a genuine negative control that can never coincidentally match any --status value.
+step_json "AC4: lore query --status genuinely filters (matches the reconciled Story, excludes a never-reconciled one)" \
+  '.kind == "query.results" and (.data.hits | any(.id == "'"$STORY_ID"'")) and (.data.hits | any(.id == "'"$MULTI_STORY_ID"'") | not)' \
   -- lore query --status "$CURRENT_STORY_STATUS" --json
 step_json "AC4: lore query --limit truncates when more matches exist than the cap" \
   '.kind == "query.results" and .data.total >= 2 and .data.shown == 1 and .data.truncated == true' \
