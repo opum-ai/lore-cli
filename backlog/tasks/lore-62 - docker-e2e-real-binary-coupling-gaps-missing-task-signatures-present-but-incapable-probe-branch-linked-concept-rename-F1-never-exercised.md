@@ -3,9 +3,11 @@ id: LORE-62
 title: >-
   docker/e2e real-binary coupling gaps: missing-task signatures,
   present-but-incapable probe branch, linked-concept rename (F1) never exercised
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-07-19 22:59'
+updated_date: '2026-07-20 00:56'
 labels:
   - e2e
   - testing
@@ -38,9 +40,117 @@ The audit produced concrete proposed steps for each (raw-signature checks agains
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Raw-signature checks pin the pinned binary itself: task view of a nonexistent id exits 1 with empty stdout; task edit of a nonexistent id reports not-found on stderr
-- [ ] #2 lore-level consequences pinned: linking a nonexistent task id fails before writing (not_found/exit 3, frontmatter untouched); a vanished linked task makes check and sync exit 3; lore tasks soft-drops the dangling id (exit 0, warning on stderr)
-- [ ] #3 Stub binaries on a shadowed PATH exercise the probe exit-6 branch both ways: version below the floor, and version-capable but not --json-capable
-- [ ] #4 A LINKED concept rename exercises moveBackRefs and the per-write backlog commit against the real binary (envelope fields, the real task record, and a clean backlog/ tree asserted), and the F1 asymmetry — exit 6 by return with rename.result still on stdout — is pinned under an induced back-ref failure
-- [ ] #5 The full harness runs green against the real pinned upstream binary, and teardown is clean
+- [x] #1 Raw-signature checks pin the pinned binary itself: task view of a nonexistent id exits 1 with empty stdout; task edit of a nonexistent id reports not-found on stderr
+- [x] #2 lore-level consequences pinned: linking a nonexistent task id fails before writing (not_found/exit 3, frontmatter untouched); a vanished linked task makes check and sync exit 3; lore tasks soft-drops the dangling id (exit 0, warning on stderr)
+- [x] #3 Stub binaries on a shadowed PATH exercise the probe exit-6 branch both ways: version below the floor, and version-capable but not --json-capable
+- [x] #4 A LINKED concept rename exercises moveBackRefs and the per-write backlog commit against the real binary (envelope fields, the real task record, and a clean backlog/ tree asserted), and the F1 asymmetry — exit 6 by return with rename.result still on stdout — is pinned under an induced back-ref failure
+- [x] #5 The full harness runs green against the real pinned upstream binary, and teardown is clean
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. AC1/AC2 (new Phase 3c + Phase 5b in docker/e2e/run-e2e.sh):
+   - AC1: raw `backlog task view <bogus-id> --json` (exit 1, empty stdout) and
+     `backlog task edit <bogus-id> --status "In Progress"` (nonzero exit, stderr matches
+     /not found/i) against the pinned binary directly, no lore involved.
+   - AC2a: `lore link "$SPEC_ID" <bogus-id> --json` fails before any write (not_found/exit 3);
+     assert the Spec's frontmatter never got the bogus id.
+   - AC2b/c: seed a throwaway TASK5, link it to the (otherwise-idle) Spec concept, `mv` its
+     backlog/tasks/*.md file aside to simulate Backlog forgetting it, then:
+     - `lore sync "$SPEC_ID" --json` -> exit 3, EMPTY stdout (gatherReconciliation is awaited
+       before sync's emit() ever runs - verified in src/commands/sync.ts).
+     - `lore check docs/spec --json` -> ALSO exit 3, but stdout is NOT empty: check.ts emits
+       its check.report BEFORE rethrowing the reconciliation error (src/commands/check.ts
+       ~L157-164; confirmed by test/check.test.ts:887's own regression test). This is a real
+       asymmetry step_fail's "empty stdout" assumption does not cover - use a bespoke check.
+   - AC2d: `lore tasks "$SPEC_ID" --json` soft-drops the dangling id: exit 0, id absent from
+     `.data.tasks`, a stderr warning naming it (src/commands/tasks.ts resolveRollup/warnDangling).
+   - Restore: mv TASK5's file back, `lore unlink` it from the Spec to leave state clean for
+     later phases.
+
+2. AC3 (new Phase 3c in run-e2e.sh, right after the existing missing-binary probe tests):
+   Two PATH-shadowed stub `backlog` scripts (mirrors the existing /tmp/no-backlog-path
+   symlink-farm, but this time supplying a fake `backlog` instead of omitting it):
+   - stub A: `--version` always prints "1.40.0" (below the 1.47.1 floor) -> probeBacklog's
+     step 2 fails -> validation/exit 6.
+   - stub B: `--version` prints "1.47.1" (>= floor), any other args print non-JSON plain text
+     exit 0 -> probeBacklog's step 3 (`task list --json`) fails to parse -> validation/exit 6.
+   No cross-process probe cache exists today (confirmed: capability is memoized only inside
+   one in-process BacklogAdapter instance, and each `lore` CLI invocation is a fresh process),
+   so `env PATH=<stub-dir> lore tasks "$STORY_ID" --json` reliably re-runs the probe each time.
+   Assert both via step_fail: exit 6, `.error_type == "validation"`, hint contains
+   "backlog-json-patch.md".
+
+3. AC4 (new Phase 15b in run-e2e.sh, right after the existing Phase 15 Reference-doc rename):
+   Phase 15's existing rename only ever targets the unlinked Reference doc. Add two more
+   renames of the STORY (the linked concept, TASK1+TASK2 so far):
+   - Rename 1 (success path): `lore rename "$STORY_ID" stories/e2e-renamed-story --json`.
+     Assert `.data.backRefs` are all moved/already-current, `.data.backlogCommit.committed
+     == true`, the real TASK1 backlog record's documentation array now has the new path
+     (`backlog task view "$TASK1" --json`), and `git status --porcelain -- backlog/` is
+     clean afterward. Update $STORY_ID/$STORY_PATH to the new id/path.
+   - Rename 2 (F1 induced failure): chmod 444 both TASK1's and TASK2's backlog/tasks/*.md
+     files + chmod 555 backlog/tasks (mirrors LORE-58/61's induction pattern), then
+     `lore rename "$STORY_ID" stories/e2e-renamed-story-f1 --json`. Assert exit 6 BY RETURN
+     (src/commands/rename.ts:203 - a `return`, never a `throw`, confirmed in source) with
+     `rename.result` STILL on stdout and `backRefs[].backRef == "failed"`, AND that the file
+     itself still moved (rename commits the file move before attempting the Backlog side).
+     Restore permissions, update $STORY_ID/$STORY_PATH to the final id/path so every later
+     phase that references the Story keeps working.
+
+4. AC5: run `docker compose -f docker/e2e/docker-compose.yml up --build`, iterating fixes
+   against the real harness (2-3 min/cycle) rather than writing the whole diff blind; always
+   `down -v` after, including on failure.
+
+5. Adversarial review of the branch diff, then the standard finalization/PR/merge/tracker-
+   advance/handover sequence.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Extended docker/e2e/run-e2e.sh with three new phases (all against the real pinned Backlog.md
+binary, no mocks):
+
+- Phase 3c (AC3): two PATH-shadowed stub `backlog` scripts exercise probeBacklog's
+  present-but-incapable branch (exit 6, validation) that the harness never reached before —
+  one reporting a version below the 1.47.1 floor, one version-capable but returning non-JSON
+  for `task list --json`. Confirmed no cross-process probe cache exists today (memoized only
+  inside one in-process BacklogAdapter; each `lore` invocation is a fresh process), so a plain
+  `env PATH=<stub-dir>` per call is sufficient.
+
+- Phase 5b (AC1/AC2): raw `backlog task view/edit` signatures against a nonexistent id (derived
+  from a real captured id's own prefix, not a hardcoded guess, to avoid a bogus-format false
+  failure); `lore link` fail-before-write on a bad id; a linked task vanishing (its backlog file
+  mv'd aside) driving `lore sync` fail-loud (empty stdout, exit 3) and `lore check` ALSO exit 3
+  but with its check.report still emitted to stdout first — a genuine, previously undocumented
+  asymmetry confirmed against src/commands/check.ts and test/check.test.ts's own regression test
+  (check emits before rethrowing; sync's throw happens before its own emit ever runs). `lore
+  tasks` soft-drops the dangling id (exit 0 + stderr warning) as the contrasting case.
+
+- Phase 15b (AC4): renamed the STORY (the harness's one linked concept) instead of only the
+  unlinked Reference doc Phase 15 already covered — exercising moveBackRefs's real `task edit`
+  label/--doc move and rename's per-write backlog commit for the first time, then a second
+  rename with TASK1+TASK2's backlog files chmod'd read-only to induce a back-ref failure,
+  confirming the F1 asymmetry at src/commands/rename.ts:203 (exit 6 by RETURN, not throw --
+  rename.result stays on stdout, unlike link/unlink's throw).
+
+Iterated against the real Docker harness (not written blind): first run surfaced 4 failures, all
+in the new assertions, not the underlying lore behavior --
+  1. a step_json filter that spanned multiple physical lines via backslash-continuation inside a
+     single-quoted string embedded literal `\<newline>` bytes into the jq program (jq's lexer,
+     unlike bash's `eval`, does not treat that as whitespace) -- collapsed to one line;
+  2. an F1 assertion wrongly required empty stderr -- every bundle-loading command (rename
+     included) unconditionally flushes routine "skipping non-concept index.md" advisories to
+     stderr, so nonempty stderr proves nothing; the real signature (rename.result still on
+     stdout despite a nonzero exit) doesn't need it;
+  3. used "docs/spec" instead of the project's actual "docs/specs" directory;
+  4. compared a message string against the CLI-displayed uppercase task id ("TASK-4") when
+     Backlog's own error messages/frontmatter use the lowercase form ("task-4").
+Second run: 108 passed, 0 failed, exit 0.
+
+Verification: `docker compose -f docker/e2e/docker-compose.yml up --build` green (108
+passed/0 failed, exit 0; `down -v` clean both runs). `bun test`: 1500 pass/0 fail (no src/
+changes in this task -- docker/e2e/run-e2e.sh only).
+<!-- SECTION:NOTES:END -->

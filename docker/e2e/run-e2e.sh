@@ -248,9 +248,122 @@ step_fail "capability probe: stale-cache case (cached-good probe, backlog now hi
   '.error_type == "not_found" and (.hint | contains("backlog-json-patch.md"))' \
   -- env PATH=/tmp/no-backlog-path lore tasks "$STORY_ID" --json
 
+# ── Phase 3c: capability probe, PRESENT-but-incapable branch (LORE-62 AC3) ──────────────────
+# The negative tests above only ever exercise the MISSING-binary half of probeBacklog's split
+# (exit 3). The present-but-incapable half (exit 6, validation) never runs in this harness,
+# because the image ships only the capable pinned build. Two PATH-shadowed stub `backlog`
+# scripts cover both variants src/adapters/backlog.ts's probeBacklog distinguishes: a version
+# below MIN_BACKLOG_VERSION ("1.47.1"), and a version-capable binary whose `task list --json`
+# still fails to parse. No cross-process probe cache exists today (capability is memoized only
+# inside one in-process BacklogAdapter; each `lore` invocation below is a fresh process), so
+# each `env PATH=...` call below reliably re-runs the probe from scratch.
+for d in /tmp/stub-backlog-old-version /tmp/stub-backlog-not-json-capable; do
+  mkdir -p "$d"
+  for b in /usr/local/bin/*; do
+    bn="$(basename "$b")"
+    [ "$bn" = "backlog" ] && continue
+    ln -sf "$b" "$d/$bn"
+  done
+done
+cat >/tmp/stub-backlog-old-version/backlog <<'STUB'
+#!/bin/sh
+echo "1.40.0"
+STUB
+chmod +x /tmp/stub-backlog-old-version/backlog
+cat >/tmp/stub-backlog-not-json-capable/backlog <<'STUB'
+#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "1.47.1"
+else
+  echo "not json, plain stock output"
+fi
+STUB
+chmod +x /tmp/stub-backlog-not-json-capable/backlog
+
+step_fail "capability probe: version below the 1.47.1 floor drives validation (exit 6), not not_found" 6 \
+  '.error_type == "validation" and (.hint | contains("backlog-json-patch.md"))' \
+  -- env PATH=/tmp/stub-backlog-old-version lore tasks "$STORY_ID" --json
+step_fail "capability probe: version-capable but not --json-capable drives validation (exit 6)" 6 \
+  '.error_type == "validation" and (.hint | contains("backlog-json-patch.md"))' \
+  -- env PATH=/tmp/stub-backlog-not-json-capable lore tasks "$STORY_ID" --json
+
 # ── Phase 5: live task rollup ────────────────────────────────────────────────
 step_json "lore tasks --json (live rollup)" '.kind == "tasks.rollup" and (.data.tasks | length) >= 1' \
   -- lore tasks "$STORY_ID" --json
+
+# ── Phase 5b: missing-task raw signatures + lore-level consequences (LORE-62 AC1/AC2) ───────
+# A bogus id must still be SYNTACTICALLY valid (same <prefix>-<number> shape as a real id, e.g.
+# "task-1") or Backlog's CLI may reject it as malformed input rather than a genuine not-found —
+# a different failure mode than the one under test. Derive one from a real captured id's own
+# prefix instead of hardcoding a guess.
+BOGUS_TASK_ID="${TASK1%-*}-99999"
+
+# AC1: pin the pinned binary's OWN two missing-task signatures directly (no lore involved) —
+# the raw contracts src/adapters/backlog.ts's viewTask/editTask rest on.
+check "raw binary: task view of a nonexistent id exits 1 with empty stdout" \
+  'out="$(backlog task view "$BOGUS_TASK_ID" --json 2>/dev/null)"; rc=$?; [ "$rc" -eq 1 ] && [ -z "$out" ]'
+check "raw binary: task edit of a nonexistent id reports not-found on stderr" \
+  'err="$(backlog task edit "$BOGUS_TASK_ID" --status "In Progress" 2>&1 >/dev/null)"; rc=$?; [ "$rc" -ne 0 ] && printf "%s" "$err" | grep -qi "not found"'
+
+# AC2a: `lore link` validates every task id BEFORE any write — a bogus id fails loud
+# (not_found/exit 3) and the concept's frontmatter never gets touched.
+SPEC_PATH="${DOC_PATH[Spec]}"
+SPEC_ID="${DOC_ID[Spec]}"
+step_fail "lore link: a nonexistent task id fails before any write (not_found, exit 3)" 3 \
+  '.error_type == "not_found"' \
+  -- lore link "$SPEC_ID" "$BOGUS_TASK_ID" --json
+check "lore link's failed validation left the Spec's frontmatter untouched" \
+  '! grep -qi "$BOGUS_TASK_ID" "$SPEC_PATH"'
+
+# AC2b/c: a linked task VANISHING from Backlog (its file moved aside, simulating upstream
+# forgetting it) — sync fails loud (exit 3, EMPTY stdout: gatherReconciliation is awaited
+# before sync's own emit() ever runs, src/commands/sync.ts). `check` ALSO exits 3, but its
+# stdout is NOT empty: check.ts emits its check.report BEFORE rethrowing the reconciliation
+# error (src/commands/check.ts, confirmed by test/check.test.ts's own "the already-computed
+# report is still emitted when reconciliation rejects" regression test) — a real asymmetry
+# step_fail's blanket "empty stdout" assumption does not cover, so this uses a bespoke check
+# rather than step_fail (LORE-61's own lesson: verify every exit-code assumption against
+# source/tests before encoding it, don't trust a filing task's technique at face value).
+TASK5="$(backlog task create "E2E task to vanish" 2>&1 | grep -oE 'Created task [^ ]+' | awk '{print $3}')"
+check "seeded TASK5 to vanish" '[ -n "$TASK5" ]'
+# Backlog's own frontmatter/error-message representation of a task id is lowercased even
+# though the CLI displays/creates it uppercased (the "TASK-1" vs. "task-1" distinction noted
+# in Phase 4 above) — a `.message | contains(...)` check needs the lowercase form.
+TASK5_LC="$(printf '%s' "$TASK5" | tr 'A-Z' 'a-z')"
+step_json "lore link: attach TASK5 to the Spec (for the vanishing test)" \
+  '.data.tasks[] | select(.task == "'"$TASK5"'") | .status == "added"' \
+  -- lore link "$SPEC_ID" "$TASK5" --json
+TASK5_FILE=""
+[ -n "$TASK5" ] && TASK5_FILE="$(find backlog/tasks -iname "${TASK5} - *.md" | head -1)"
+check "found TASK5's backlog file on disk" '[ -n "${TASK5_FILE:-}" ] && [ -f "$TASK5_FILE" ]'
+mv "$TASK5_FILE" /tmp/vanished-task5.md
+
+step_fail "lore sync: a vanished linked task fails loud (not_found, exit 3, empty stdout)" 3 \
+  '.error_type == "not_found" and (.message | contains("'"$TASK5_LC"'"))' \
+  -- lore sync "$SPEC_ID" --json
+
+lore check docs/specs --json >/tmp/check-vanish-out 2>/tmp/check-vanish-err
+CHECK_VANISH_RC=$?
+check "lore check: a vanished linked task ALSO exits 3, but (unlike sync) still emits its check.report on stdout first" \
+  '[ "$CHECK_VANISH_RC" -eq 3 ] \
+   && jq -e ".kind == \"check.report\"" /tmp/check-vanish-out >/dev/null 2>&1 \
+   && tail -n1 /tmp/check-vanish-err | jq -e ".error_type == \"not_found\" and (.message | contains(\"$TASK5_LC\"))" >/dev/null 2>&1'
+rm -f /tmp/check-vanish-out /tmp/check-vanish-err
+
+# AC2d: `lore tasks` SOFT-drops the dangling id instead of failing: exit 0, the id absent
+# from the rollup, a stderr warning naming it.
+step "lore tasks: soft-drops a dangling linked id (exit 0)" 0 -- lore tasks "$SPEC_ID" --json
+lore tasks "$SPEC_ID" --json >/tmp/tasks-vanish-out 2>/tmp/tasks-vanish-err
+check "lore tasks: dangling id dropped from the rollup, with a stderr warning naming it" \
+  '! (jq -e ".data.tasks[]? | select(.id == \"$TASK5\")" /tmp/tasks-vanish-out >/dev/null 2>&1) \
+   && grep -qi "$TASK5" /tmp/tasks-vanish-err'
+rm -f /tmp/tasks-vanish-out /tmp/tasks-vanish-err
+
+# Restore state so later phases see a clean, unlinked Spec again.
+mv /tmp/vanished-task5.md "$TASK5_FILE"
+step_json "lore unlink: detach TASK5 from the Spec (restore state)" \
+  '.data.tasks[] | select(.task == "'"$TASK5"'") | .backRef == "removed"' \
+  -- lore unlink "$SPEC_ID" "$TASK5" --json
 
 # ── Phase 6: mutate real backlog status, then sync ──────────────────────────
 backlog task edit "$TASK1" --status "In Progress" >/dev/null 2>&1
@@ -333,6 +446,49 @@ step_json "lore rename (real move + inbound link repoint)" '.kind == "rename.res
   -- lore rename "$OLD_REF_ID" "reference/e2e-renamed" --json
 check "renamed file exists at the new path" '[ -f "docs/reference/e2e-renamed.md" ]'
 check "old path no longer exists" '[ ! -f "$OLD_REF_PATH" ]'
+
+# ── Phase 15b: LINKED-concept rename exercises Backlog coupling + F1 (LORE-62 AC4) ──────────
+# Phase 15 above only ever renames the unlinked Reference doc (no `tasks:` at all), so
+# moveBackRefs (the real `task edit` label/--doc move), rename's per-write backlog commit, and
+# its unique F1 failure asymmetry have never actually run. Rename the STORY instead — the one
+# linked concept (TASK1 + TASK2 so far).
+NEW_STORY_ID_1="stories/e2e-renamed-story"
+NEW_STORY_PATH_1="docs/stories/e2e-renamed-story.md"
+step_json "lore rename (LINKED concept, real moveBackRefs + backlog commit)" \
+  '.kind == "rename.result" and (.data.backRefs | length) >= 1 and (.data.backRefs | all(.backRef == "moved" or .backRef == "already-current")) and .data.backlogCommit.committed == true' \
+  -- lore rename "$STORY_ID" "$NEW_STORY_ID_1" --json
+STORY_ID="$NEW_STORY_ID_1"
+STORY_PATH="$NEW_STORY_PATH_1"
+check "renamed Story's back-reference really moved on the real task record (not just the report)" \
+  'backlog task view "$TASK1" --json | jq -e --arg p "$STORY_PATH" ".task.documentation | index(\$p) != null" >/dev/null 2>&1'
+check "git status clean under backlog/ after the linked rename's own commit" \
+  '[ -z "$(git status --porcelain -- backlog/)" ]'
+
+# F1 asymmetry: induce a back-ref write failure during a SECOND rename of the same linked
+# Story, mirroring LORE-58/61's chmod-induction pattern against every linked task's file.
+TASK1_FILE="$(find backlog/tasks -iname "${TASK1} - *.md" | head -1)"
+TASK2_FILE="$(find backlog/tasks -iname "${TASK2} - *.md" | head -1)"
+check "found TASK1/TASK2 backlog files for the F1 induction" '[ -n "$TASK1_FILE" ] && [ -n "$TASK2_FILE" ]'
+chmod 444 "$TASK1_FILE" "$TASK2_FILE"
+chmod 555 backlog/tasks
+NEW_STORY_ID_2="stories/e2e-renamed-story-f1"
+lore rename "$STORY_ID" "$NEW_STORY_ID_2" --json >/tmp/rename-f1-out 2>/tmp/rename-f1-err
+RENAME_F1_RC=$?
+chmod 755 backlog/tasks
+chmod 644 "$TASK1_FILE" "$TASK2_FILE"
+# Note: stderr is NOT asserted empty here — every bundle-loading command (rename included)
+# unconditionally flushes routine "skipping non-concept index.md" advisories to stderr
+# (WarningCollector), so a nonempty stderr means nothing on its own. The real F1 signature —
+# distinguishing a RETURN from link/unlink's THROW — is that rename.result (success-shaped
+# report data) still appears on stdout at all, despite the nonzero exit.
+check "F1 asymmetry: rename fails by RETURN (exit 6), not throw — rename.result STILL on stdout" \
+  '[ "$RENAME_F1_RC" -eq 6 ] \
+   && jq -e ".kind == \"rename.result\" and (.data.backRefs[]? | .backRef == \"failed\")" /tmp/rename-f1-out >/dev/null 2>&1'
+check "the file STILL moved despite the induced back-ref failure (file move commits first)" \
+  '[ -f "docs/stories/e2e-renamed-story-f1.md" ] && [ ! -f "docs/stories/e2e-renamed-story.md" ]'
+STORY_ID="$NEW_STORY_ID_2"
+STORY_PATH="docs/stories/e2e-renamed-story-f1.md"
+rm -f /tmp/rename-f1-out /tmp/rename-f1-err
 
 # ── Phase 16: supersede ────────────────────────────────────────────────────────
 SUCCESSOR="$(lore new ADR "E2E successor decision" --json | jq -r '.data.id')"
