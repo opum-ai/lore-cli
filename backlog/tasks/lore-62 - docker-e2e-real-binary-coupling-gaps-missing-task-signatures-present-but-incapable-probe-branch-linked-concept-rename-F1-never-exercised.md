@@ -3,11 +3,11 @@ id: LORE-62
 title: >-
   docker/e2e real-binary coupling gaps: missing-task signatures,
   present-but-incapable probe branch, linked-concept rename (F1) never exercised
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-19 22:59'
-updated_date: '2026-07-20 00:56'
+updated_date: '2026-07-20 01:07'
 labels:
   - e2e
   - testing
@@ -153,4 +153,22 @@ Second run: 108 passed, 0 failed, exit 0.
 Verification: `docker compose -f docker/e2e/docker-compose.yml up --build` green (108
 passed/0 failed, exit 0; `down -v` clean both runs). `bun test`: 1500 pass/0 fail (no src/
 changes in this task -- docker/e2e/run-e2e.sh only).
+
+Independent adversarial review (subagent) found one real, fixable finding: the F1 assertion's
+jq filter used \`A and (.data.backRefs[]? | .backRef == "failed")\` -- a generator inside \`and\`,
+where jq -e only inspects the LAST emitted value, not "any" element. It passed only because both
+linked tasks happened to fail identically in this harness's data shape (coincidental, not
+constructional, correctness) -- a future harness edit (e.g. a third linked task not
+permission-blocked) could silently flip the outcome without any real regression. Fixed to
+\`(.data.backRefs | any(.backRef == "failed"))\`, verified the distinction with a standalone jq
+repro, then reran the full docker/e2e harness: 108 passed/0 failed, exit 0, teardown clean.
+No other findings survived review (probe stubs, missing-task signatures, sync/check asymmetry,
+Story rename variable lifetime across later phases, and the F1 exit-code mechanism itself were
+all independently verified against source).
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Extended docker/e2e/run-e2e.sh with three real-binary E2E phases closing the LORE-62 audit's coverage gaps: (1) Phase 3c exercises probeBacklog's present-but-incapable exit-6 branch via two PATH-shadowed stub backlog binaries (below-floor version; version-capable but non-JSON); (2) Phase 5b pins the raw task view/edit missing-task signatures against the pinned binary directly, then the lore-level consequences -- link fail-before-write, sync fail-loud/empty-stdout vs check's exit-3-with-report-still-emitted asymmetry (a genuine, previously undocumented divergence confirmed against src/commands/check.ts and test/check.test.ts), and tasks' soft-drop; (3) Phase 15b renames the Story (the harness's one linked concept) instead of only the unlinked Reference doc, exercising moveBackRefs, the per-write backlog commit, and the F1 exit-6-by-return asymmetry (src/commands/rename.ts:203) under an induced back-ref failure. Verified with two full docker/e2e harness runs (108 passed/0 failed, exit 0, clean teardown each time) plus bun test (1500/1500, no src/ changes). An independent adversarial subagent review found one real issue (a jq generator/and construction in the F1 assertion that passed only by coincidence, not by correctly testing 'any backRef failed') -- fixed to use any(...), reverified with a third full harness run (108/108 again).
+<!-- SECTION:FINAL_SUMMARY:END -->

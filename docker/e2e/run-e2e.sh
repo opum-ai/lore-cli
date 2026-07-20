@@ -483,7 +483,7 @@ chmod 644 "$TASK1_FILE" "$TASK2_FILE"
 # report data) still appears on stdout at all, despite the nonzero exit.
 check "F1 asymmetry: rename fails by RETURN (exit 6), not throw — rename.result STILL on stdout" \
   '[ "$RENAME_F1_RC" -eq 6 ] \
-   && jq -e ".kind == \"rename.result\" and (.data.backRefs[]? | .backRef == \"failed\")" /tmp/rename-f1-out >/dev/null 2>&1'
+   && jq -e ".kind == \"rename.result\" and (.data.backRefs | any(.backRef == \"failed\"))" /tmp/rename-f1-out >/dev/null 2>&1'
 check "the file STILL moved despite the induced back-ref failure (file move commits first)" \
   '[ -f "docs/stories/e2e-renamed-story-f1.md" ] && [ ! -f "docs/stories/e2e-renamed-story.md" ]'
 STORY_ID="$NEW_STORY_ID_2"
