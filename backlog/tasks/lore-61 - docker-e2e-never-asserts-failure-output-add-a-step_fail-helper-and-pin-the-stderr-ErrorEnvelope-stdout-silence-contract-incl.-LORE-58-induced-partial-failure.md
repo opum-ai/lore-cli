@@ -8,7 +8,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-19 22:58'
-updated_date: '2026-07-20 00:13'
+updated_date: '2026-07-20 00:23'
 labels:
   - e2e
   - testing
@@ -139,6 +139,8 @@ run after the fixes: 88 passed, 0 failed, exit 0, report at
 docker/e2e/results/report.jsonl). `down -v` teardown clean both times. `bun test`:
 1500 pass / 0 fail (not sufficient evidence alone per campaign convention, but no
 regression). `bash -n docker/e2e/run-e2e.sh` syntax-clean.
+
+Adversarial review (independent subagent): no blocking findings; called the diff solid after tracing every jq filter's precedence and every source call site (errors.ts, backlog.ts, link.ts, sync.ts, validate.ts, config.ts). Applied its one worthwhile nice-to-have: tightened the TASK4 find pattern from a bare prefix glob to an exact "${TASK4} - *.md" match (Backlog's own naming separator) so a future TASK-4/TASK-40 collision can't silently resolve to the wrong file. Re-verified green after the change: docker compose up --build -> 88 passed, 0 failed, exit 0; down -v clean.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
