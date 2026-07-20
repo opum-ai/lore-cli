@@ -3,7 +3,7 @@ id: doc-1
 title: Backlog campaign tracker
 type: other
 created_date: '2026-07-19 23:15'
-updated_date: '2026-07-20 17:00'
+updated_date: '2026-07-20 20:43'
 ---
 # Backlog campaign tracker
 
@@ -12,20 +12,25 @@ lifecycle → advance cursor → append session log → write handover.
 
 ## Cursor
 
-**Queue is EMPTY.** LORE-66 (resolved 2026-07-20, session 7) was the last confirmed
-item in the queue the user set on 2026-07-19 ("67 first, then 61–66"). This campaign
-is complete. Do not invent a new cursor or silently pull in a "Not queued" item —
-run `/backlog-handover init` to build a fresh queue when the user wants to continue.
+**Next issue: LORE-68** — docker/e2e: renamed-story's managed block carries
+broken `backlog/tasks/` links after the LORE-62 F1 rename sequence. Queue order
+confirmed by the user on 2026-07-20 ("Confirm: queue = [LORE-68] only") when
+re-running `/backlog-handover init` after the first campaign (LORE-67, 61-66)
+completed. Do not re-ask before taking this item.
 
-**Merge gate: self-merge (skill default)** — confirmed by the user on 2026-07-19
-(selected "Self-merge (skill default)"): each session reviews adversarially,
-opens the PR into `dev`, and merges immediately (`gh pr merge --rebase
---delete-branch`); the PR is an audit trail, not an approval gate. CI runs
-post-merge on dev.
+**Merge gate: self-merge (skill default)** — this queue now runs under the
+standard `backlog-handover` skill (`.claude/skills/backlog-handover/`), whose
+own convention is no separate PR-approval gate: the lifecycle's step-6 review
+(self or adversarial subagent) is the review; the PR that follows is an audit
+trail, merged immediately (`gh pr merge --rebase --delete-branch`). Consistent
+with the self-merge default the user already confirmed for this repo on
+2026-07-19. CI runs post-merge on dev.
 
 ## Queue (confirmed order)
 
-Empty — every item resolved. See Resolved below.
+| # | Issue | Type | One-line note |
+| --- | --- | --- | --- |
+| 1 | LORE-68 | bug | docker/e2e: renamed-story's managed block carries broken `backlog/tasks/` links (dash-vs-space filename mismatch) after the LORE-62 F1 rename sequence; root-cause, fix, and add a full unscoped `lore check` as a regression guard (its own AC3) |
 
 ## Resolved
 
@@ -45,14 +50,14 @@ Empty — every item resolved. See Resolved below.
 - LORE-43 (Confluence one-way publish adapter): deferred by recorded product decision (ADR-0016; milestone m-8).
 - LORE-44 (Confluence production mirror): deferred (milestone m-9) AND blocked on LORE-43 (also deferred).
 - LORE-45 (typed importable library build): deferred per ECK-alignment follow-up — its own notes say revisit ONLY if a real in-process import need appears.
-- LORE-68 (docker/e2e: renamed-story's managed block carries broken backlog/tasks/ links after the LORE-62 F1 rename sequence): filed 2026-07-20 during LORE-64's session (a real, verified, pre-existing bug the harness run surfaced — see LORE-64's Resolved row). Kept unqueued per explicit user confirmation on 2026-07-20 (asked because filing it without approval deviated from the task-finalization guide); pick it up only if the user asks to queue it.
 
 ## Campaign conventions (durable, verified 2026-07-19)
 
 - Every E2E task (LORE-61..66) must verify with a full real-binary harness run:
   `docker compose -f docker/e2e/docker-compose.yml up --build` (green required,
   ~2-3 min), then ALWAYS `docker compose -f docker/e2e/docker-compose.yml down -v`.
-  A green `bun test` alone is NOT sufficient evidence for harness changes.
+  A green `bun test` alone is NOT sufficient evidence for harness changes. LORE-68
+  inherits this same standard (its own AC3 requires a green harness run).
 - LORE-67 is docs-only: drive docs/ edits per the repo's lore CLI conventions
   (`lore instructions`, the lore skill) and re-verify each stale claim against
   current source before editing.
@@ -60,12 +65,15 @@ Empty — every item resolved. See Resolved below.
   the session's standard co-author/session trailers.
 - `docs/.obsidian/` sits untracked in the working tree, pre-existing and
   unrelated — leave it alone.
-- All seven queue tasks originate from the 2026-07-19 multi-agent E2E coverage
-  audit (filed at dev @ 305efa8); each task description is self-contained with
-  file:line evidence, but re-verify file:line references against current HEAD
-  before editing — LORE-61 confirmed the filing task's own line numbers stayed
-  accurate, but also found one of its own semantic assumptions (validate's
-  exit 6 being the error_type=validation ErrorEnvelope case) was wrong.
+- All seven queue tasks from the first campaign originate from the 2026-07-19
+  multi-agent E2E coverage audit (filed at dev @ 305efa8); each task description
+  is self-contained with file:line evidence, but re-verify file:line references
+  against current HEAD before editing — LORE-61 confirmed the filing task's own
+  line numbers stayed accurate, but also found one of its own semantic
+  assumptions (validate's exit 6 being the error_type=validation ErrorEnvelope
+  case) was wrong. LORE-68 was filed the same way (during LORE-64's session) —
+  re-verify its root-cause hypothesis against current source rather than trusting
+  it at face value, same discipline.
 - Don't trust an E2E task filing's proposed induction technique or exit-code
   assumption at face value — verify against the real binary during
   implementation, same as LORE-61 did for the validate/check gate distinction.
@@ -168,6 +176,11 @@ Empty — every item resolved. See Resolved below.
   several research-only forks before writing any code), check `git status`
   after they return and be ready to `TaskStop` any still-running one that
   might conflict, rather than trusting the directive alone (LORE-66).
+- This project's Agent tool registry does NOT include a `code-reviewer`
+  subagent type — available types are `claude`, `claude-code-guide`,
+  `Explore`, `general-purpose`, `Plan`, `statusline-setup`. Use
+  `general-purpose` for an independent/adversarial review subagent in the
+  per-issue lifecycle's step 6.
 
 ## Session log
 
@@ -210,15 +223,24 @@ Empty — every item resolved. See Resolved below.
   never renames a task's file; sanitizeFilename strips glob metachars from
   CLI-driven titles). Cursor advanced to LORE-66.
 - 2026-07-20 — session 7: resolved LORE-66 (docker/e2e command-surface tail +
-  housekeeping — the LAST queued item; see Resolved table). Branch
-  `feature/LORE-66` off `dev @ 18b516f`. Three research forks dispatched
-  before implementation went beyond their read-only directive and wrote code
-  directly into run-e2e.sh; caught, the two still-running ones stopped, and
-  every line independently re-verified against source. Five new campaign
-  conventions recorded (lore's own pre-release version is genuinely 0.0.0;
-  replace's managed-region registry only protects lore:index, not lore:tasks;
-  unlink's --doc omission on a single-entry task is a documented tradeoff,
-  not a bug; query filter tests need a genuine negative control; a forked
-  subagent can override even an explicit research-only directive). **Queue is
-  now EMPTY** — this was the last confirmed item. Campaign complete pending a
-  fresh `/backlog-handover init`.
+  housekeeping — the LAST queued item of the first campaign; see Resolved
+  table). Branch `feature/LORE-66` off `dev @ 18b516f`. Three research forks
+  dispatched before implementation went beyond their read-only directive and
+  wrote code directly into run-e2e.sh; caught, the two still-running ones
+  stopped, and every line independently re-verified against source. Five new
+  campaign conventions recorded (lore's own pre-release version is genuinely
+  0.0.0; replace's managed-region registry only protects lore:index, not
+  lore:tasks; unlink's --doc omission on a single-entry task is a documented
+  tradeoff, not a bug; query filter tests need a genuine negative control; a
+  forked subagent can override even an explicit research-only directive).
+  Queue emptied — first campaign complete.
+- 2026-07-20 — init (fresh queue, this skill): re-ran `/backlog-handover init`
+  under the standard `backlog-handover` skill (superseding the prior session's
+  bespoke process — same conventions, formalized). Inventoried every non-Done
+  task via `backlog task list --plain`: only LORE-68 is agent-resolvable and
+  not deferred-by-decision (LORE-42/43/44/45 unchanged, still deferred). User
+  confirmed queue = [LORE-68] only, and to reuse this tracker doc (doc-1)
+  rather than create a new one. Cursor advanced to LORE-68. Recorded one more
+  durable convention (no `code-reviewer` subagent type registered in this
+  project's Agent tool — use `general-purpose` for lifecycle step 6 review).
+  First handover written for LORE-68.
