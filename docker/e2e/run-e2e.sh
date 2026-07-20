@@ -85,6 +85,35 @@ step_json() {
   [ "$status" = "PASS" ]
 }
 
+# step_fail <name> <expected_exit> <jq-filter> -- <cmd...>
+# Asserts the --json failure-output contract (cli-contract.md S5.2): the expected exit code,
+# EMPTY stdout, and a jq filter over the stderr ErrorEnvelope JSON (error_type/message/hint/input).
+# A command that scans the whole bundle (loadBundle) can print `warning: ...` advisory lines to
+# stderr AHEAD of the envelope (unrelated to the failure under test), so the ErrorEnvelope is only
+# guaranteed to be the LAST line of stderr, not the whole file -- that's what gets parsed.
+step_fail() {
+  local name="$1" expected="$2" filter="$3"
+  shift 3
+  [ "${1:-}" = "--" ] && shift
+  local out err rc status envelope
+  out="$(mktemp)"
+  err="$(mktemp)"
+  "$@" >"$out" 2>"$err"
+  rc=$?
+  envelope="$(tail -n1 "$err")"
+  if [ "$rc" -eq "$expected" ] && [ ! -s "$out" ] && printf '%s' "$envelope" | jq -e "$filter" >/dev/null 2>&1; then
+    status=PASS
+    PASS=$((PASS + 1))
+  else
+    status=FAIL
+    FAIL=$((FAIL + 1))
+  fi
+  record "$name (jq: $filter)" "$status" "$expected" "$rc" "$out" "$err"
+  log "[$status] $name (exit $rc, stdout empty: $([ -s "$out" ] && echo no || echo yes), jq: $filter)"
+  rm -f "$out" "$err"
+  [ "$status" = "PASS" ]
+}
+
 # check <name> <bash-boolean-expression-string> -- a plain assertion, not a subprocess-under-test
 check() {
   local name="$1" expr="$2" status
@@ -206,13 +235,18 @@ for b in /usr/local/bin/*; do
   [ "$bn" = "backlog" ] && continue
   ln -sf "$b" "/tmp/no-backlog-path/$bn"
 done
-step "capability probe: lore fails loud (exit 3, not_found) with no backlog on PATH" 3 \
-  -- env PATH=/tmp/no-backlog-path lore tasks "$STORY_ID"
+# RUNBOOK_HINT (src/adapters/backlog.ts) is the one documented install hint for a missing
+# backlog binary; assert its stable distinguishing substring survives onto stderr, not just
+# the bare error_type/exit code.
+step_fail "capability probe: lore fails loud (exit 3, not_found) with no backlog on PATH" 3 \
+  '.error_type == "not_found" and (.hint | contains("backlog-json-patch.md"))' \
+  -- env PATH=/tmp/no-backlog-path lore tasks "$STORY_ID" --json
 # Populate .lore/cache/ with one real, successful probe, then re-check with
 # backlog hidden again. Exploratory: log the real outcome either way.
 lore tasks "$STORY_ID" --json >/dev/null 2>&1 || true
-step "capability probe: stale-cache case (cached-good probe, backlog now hidden)" 3 \
-  -- env PATH=/tmp/no-backlog-path lore tasks "$STORY_ID"
+step_fail "capability probe: stale-cache case (cached-good probe, backlog now hidden)" 3 \
+  '.error_type == "not_found" and (.hint | contains("backlog-json-patch.md"))' \
+  -- env PATH=/tmp/no-backlog-path lore tasks "$STORY_ID" --json
 
 # ── Phase 5: live task rollup ────────────────────────────────────────────────
 step_json "lore tasks --json (live rollup)" '.kind == "tasks.rollup" and (.data.tasks | length) >= 1' \
@@ -343,18 +377,83 @@ check "help manifest mentions sync and check" \
   'lore help --json | grep -qi "\"sync\"" && lore help --json | grep -qi "\"check\""'
 
 # ── Phase 24: exit-code + output-mode spot checks ────────────────────────────────
-step "exit 2: usage error (bad flag)" 2 -- lore new --nope
-step "exit 3: not_found" 3 -- lore tasks stories/does-not-exist-at-all
+# Every exit-class check below now asserts the --json failure-output contract
+# (cli-contract.md S5.2/S5.3), not just the bare exit code (LORE-61): stdout stays EMPTY
+# and the stderr ErrorEnvelope's error_type matches the documented family.
+step_fail "exit 2: usage error (bad flag)" 2 '.error_type == "usage"' \
+  -- lore new --nope --json
+step_fail "exit 3: not_found" 3 '.error_type == "not_found"' \
+  -- lore tasks stories/does-not-exist-at-all --json
 cp "$STORY_PATH" /tmp/perm-test.md
 chmod 000 "$STORY_PATH"
-step "exit 4: denied (real EACCES on a doc lore must read)" 4 -- lore validate "$STORY_PATH"
+step_fail "exit 4: denied (real EACCES on a doc lore must read)" 4 '.error_type == "denied"' \
+  -- lore validate "$STORY_PATH" --json
 chmod 644 "$STORY_PATH"
 cp /tmp/perm-test.md "$STORY_PATH"
-step "exit 5: conflict (duplicate lore new)" 5 -- lore new Epic "E2E sample Epic" --json
+step_fail "exit 5: conflict (duplicate lore new)" 5 '.error_type == "conflict"' \
+  -- lore new Epic "E2E sample Epic" --json
+# `lore validate` (like `lore check`) is a GATE (ADR-0007): a per-file finding reports as
+# ordinary `validate.report` DATA on stdout with a nonzero exit -- NEVER the stderr
+# ErrorEnvelope -- confirmed against the real binary (src/commands/validate.ts returns
+# EXIT_CODES.validation as a plain return value, it never throws). Keep this gate contract
+# covered on stdout (stronger than the old bare-exit-code check).
 cp "$BROKEN_FIXTURES/missing-type.md" docs/reference/e2e-exit6-check.md
-step "exit 6: validation (error_type=validation, distinct from drift)" 6 \
-  -- lore validate docs/reference/e2e-exit6-check.md
-rm -f docs/reference/e2e-exit6-check.md
+lore validate docs/reference/e2e-exit6-check.md --json >/tmp/validate-gate-out 2>/tmp/validate-gate-err
+VALIDATE_GATE_RC=$?
+check "exit 6: lore validate gate reports the finding as report data on stdout, not an ErrorEnvelope" \
+  '[ "$VALIDATE_GATE_RC" -eq 6 ] && [ ! -s /tmp/validate-gate-err ] && jq -e ".kind == \"validate.report\" and .data.errorCount >= 1" /tmp/validate-gate-out >/dev/null 2>&1'
+rm -f docs/reference/e2e-exit6-check.md /tmp/validate-gate-out /tmp/validate-gate-err
+
+# A genuine error_type=validation ErrorEnvelope (cli-contract.md S5.3) needs a failure thrown
+# BEFORE any gate report is built: a malformed .lore/config.toml, which `lore sync` reads and
+# validates up front and fails loud on (src/config.ts loadConfig) -- unlike validate/check,
+# which fold a config problem into their own report instead of throwing.
+printf 'key = "unterminated\n' > .lore/config.toml
+step_fail "exit 6: validation (error_type=validation ErrorEnvelope, distinct from drift)" 6 \
+  '.error_type == "validation"' \
+  -- lore sync "$STORY_ID" --json
+rm -f .lore/config.toml
+
+# exit 6: drift half of the distinction above (LORE-58 induced back-ref write failure,
+# incl. LORE-61 AC3). A real backlog/ write failure during link/unlink routes through
+# the SAME exit-6 family as validation but a DISTINCT error_type ("drift"), carrying the
+# per-task report in .input instead of the old success-shaped stdout envelope (LORE-58's
+# own fix, src/commands/link.ts backRefFailure()) — proving this exit-6 step's name
+# ("distinct from drift") is actually true, not just asserted in prose.
+TASK4="$(backlog task create "E2E induced write-failure task" 2>&1 | grep -oE 'Created task [^ ]+' | awk '{print $3}')"
+check "seeded TASK4 for the induced write-failure probe" '[ -n "$TASK4" ]'
+# Guard the find pattern on a non-empty id: an empty $TASK4 would otherwise degrade to
+# `-iname "*.md"` and silently resolve to some OTHER (wrong) task file below.
+TASK4_FILE=""
+[ -n "$TASK4" ] && TASK4_FILE="$(find backlog/tasks -iname "${TASK4}*.md" | head -1)"
+check "found TASK4's backlog file on disk" '[ -n "${TASK4_FILE:-}" ] && [ -f "$TASK4_FILE" ]'
+
+# Strip write permission on both the file itself (blocks an in-place overwrite of an
+# existing file, governed by the file's own bits) and its containing directory (blocks any
+# temp-file+rename write strategy, governed by the directory's bits) so the induced failure
+# holds regardless of which write strategy the pinned `backlog` binary uses internally.
+chmod 444 "$TASK4_FILE"
+chmod 555 backlog/tasks
+step_fail "exit 6: drift (LORE-58 induced link write failure, distinct from validation)" 6 \
+  '.error_type == "drift" and (.input.tasks[]? | select(.task == "'"$TASK4"'") | .backRef == "failed")' \
+  -- lore link "$STORY_ID" "$TASK4" --json
+chmod 755 backlog/tasks
+chmod 644 "$TASK4_FILE"
+
+# Give TASK4 a real backref (perms restored) so the unlink induction below has something
+# real to remove — LORE-58's fix and this AC cover both link and unlink symmetrically.
+step_json "lore link: give TASK4 a real backref (for the unlink induction below)" \
+  '.data.tasks[] | select(.task == "'"$TASK4"'") | .backRef == "added" or .backRef == "already-present"' \
+  -- lore link "$STORY_ID" "$TASK4" --json
+
+chmod 444 "$TASK4_FILE"
+chmod 555 backlog/tasks
+step_fail "exit 6: drift (LORE-58 induced unlink write failure)" 6 \
+  '.error_type == "drift" and (.input.tasks[]? | select(.task == "'"$TASK4"'") | .backRef == "failed")' \
+  -- lore unlink "$STORY_ID" "$TASK4" --json
+chmod 755 backlog/tasks
+chmod 644 "$TASK4_FILE"
+
 step "output auto-selects --plain off-TTY (piped, no --plain flag)" 0 -- bash -c 'lore query "archive" | cat >/dev/null'
 step "--plain explicit flag" 0 -- lore query "archive" --plain
 
