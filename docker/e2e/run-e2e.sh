@@ -218,6 +218,172 @@ step "lore sync renders the managed block for newly-linked tasks (LORE-59 fixed)
 check "lore sync rendered the linked tasks' table into the managed block" \
   'grep -q "lore:tasks:begin" "$STORY_PATH" && grep -q "| Task | Title | Status |" "$STORY_PATH"'
 
+# ── Phase 4b: field-isolated write read-backs + multi-doc SET/REPLACE (LORE-65 AC1) ─────────
+# Phase 4's own assertions only check lore's SELF-COMPUTED backRef status ("added"/"already-present")
+# and the frontmatter tasks: list -- never the real Backlog record's label and documentation arrays
+# INDEPENDENTLY. A partial-write bug (a mangled --add-label comma-join while --doc lands, or vice
+# versa; src/adapters/backlog.ts editTask) would still report "added" either way, since editTask only
+# throws on a nonzero exit, never on a flag it silently dropped. Read the real record back and assert
+# each field on its own.
+step_json "AC1: real record carries TASK1's doc: label after Phase 4's link (isolated from the doc check)" \
+  '.task.labels | index("doc:'"$STORY_ID"'") != null' -- backlog task view "$TASK1" --json
+step_json "AC1: real record carries TASK1's doc path after Phase 4's link (isolated from the label check)" \
+  '.task.documentation | index("'"$STORY_PATH"'") != null' -- backlog task view "$TASK1" --json
+
+# Multi-doc SET/REPLACE: TASK1 linked from a SECOND, freshly-created, minimally-coupled Story too
+# (LORE-63/64 convention: isolate onto a fresh concept so $STORY_ID's other state never masks which
+# concept's unlink actually ran).
+MULTI_STORY_OUT="$(lore new Story "E2E multi-doc probe Story" --json 2>/tmp/multi-story-err)"
+MULTI_STORY_RC=$?
+check "AC1: fresh multi-doc probe Story created" '[ "$MULTI_STORY_RC" -eq 0 ]'
+MULTI_STORY_ID=""
+MULTI_STORY_PATH=""
+if [ "$MULTI_STORY_RC" -eq 0 ]; then
+  MULTI_STORY_ID="$(echo "$MULTI_STORY_OUT" | jq -r '.data.id')"
+  MULTI_STORY_PATH="$(echo "$MULTI_STORY_OUT" | jq -r '.data.path')"
+fi
+
+step_json "AC1: link TASK1 to the SECOND Story too (one task, two docs)" \
+  '.data.tasks[] | select(.task == "'"$TASK1"'") | .status == "added" and .backRef == "added"' \
+  -- lore link "$MULTI_STORY_ID" "$TASK1" --json
+step_json "AC1: real record now carries BOTH docs' labels" \
+  '(.task.labels | index("doc:'"$STORY_ID"'") != null) and (.task.labels | index("doc:'"$MULTI_STORY_ID"'") != null)' \
+  -- backlog task view "$TASK1" --json
+step_json "AC1: real record now carries BOTH docs' paths" \
+  '(.task.documentation | index("'"$STORY_PATH"'") != null) and (.task.documentation | index("'"$MULTI_STORY_PATH"'") != null)' \
+  -- backlog task view "$TASK1" --json
+
+step_json "AC1: unlink TASK1 from the SECOND Story only" \
+  '.data.tasks[] | select(.task == "'"$TASK1"'") | .backRef == "removed"' \
+  -- lore unlink "$MULTI_STORY_ID" "$TASK1" --json
+step_json "AC1: unlink preserved the FIRST Story's doc: label (SET/REPLACE, not overwrite)" \
+  '.task.labels | index("doc:'"$STORY_ID"'") != null' -- backlog task view "$TASK1" --json
+step_json "AC1: unlink preserved the FIRST Story's doc path too" \
+  '.task.documentation | index("'"$STORY_PATH"'") != null' -- backlog task view "$TASK1" --json
+step_json "AC1: unlink actually removed the SECOND Story's label" \
+  '.task.labels | index("doc:'"$MULTI_STORY_ID"'") == null' -- backlog task view "$TASK1" --json
+
+step_json "AC1: re-link TASK1 to the SECOND Story (SET/REPLACE preserving the first)" \
+  '.data.tasks[] | select(.task == "'"$TASK1"'") | .backRef == "added"' \
+  -- lore link "$MULTI_STORY_ID" "$TASK1" --json
+step_json "AC1: re-link preserved BOTH docs' labels" \
+  '(.task.labels | index("doc:'"$STORY_ID"'") != null) and (.task.labels | index("doc:'"$MULTI_STORY_ID"'") != null)' \
+  -- backlog task view "$TASK1" --json
+
+# Restore baseline: TASK1 ends this phase linked ONLY to the ORIGINAL Story (Phase 4's state),
+# matching every downstream phase's expectation.
+step_json "AC1: restore baseline -- unlink TASK1 from the multi-doc probe Story" \
+  '.data.tasks[] | select(.task == "'"$TASK1"'") | .backRef == "removed"' \
+  -- lore unlink "$MULTI_STORY_ID" "$TASK1" --json
+rm -f /tmp/multi-story-err
+
+# ── Phase 4c: backlog-side file moves via --title edit + archive (LORE-65 AC2) ──────────────
+# EXPLORATORY FINDING (re-derived against the pinned fork's own file-system/operations.ts
+# saveTask, confirmed by a local empirical probe before writing this phase): a `--title` edit does
+# NOT rename the task's file. saveTask's shouldPreservePath branch reuses the task's EXISTING
+# filePath whenever one is already set (which task edit's load-then-save round trip always
+# carries), so the filename stays anchored to the id + ORIGINAL title. The filing task's assumption
+# was wrong (same pattern as every prior E2E session in this campaign). The title still flows into
+# the managed block's Title column via the JSON title field, independent of the filename question.
+TASK1_TITLE_FILE_BEFORE="$(find backlog/tasks -iname "${TASK1} - *.md" | head -1)"
+check "AC2: found TASK1's file before the title edit" '[ -n "${TASK1_TITLE_FILE_BEFORE:-}" ]'
+step "AC2: backlog-side --title edit (real binary, not via lore)" 0 \
+  -- backlog task edit "$TASK1" --title "Design the archive endpoint (retitled)"
+TASK1_TITLE_FILE_AFTER="$(find backlog/tasks -iname "${TASK1} - *.md" | head -1)"
+check "AC2 finding: a --title edit does NOT rename the file (filePath is preserved on edit)" \
+  '[ "$TASK1_TITLE_FILE_AFTER" = "$TASK1_TITLE_FILE_BEFORE" ]'
+step_json "AC2: lore sync flows the new title into the managed block's Title column" \
+  '.kind == "sync.result"' -- lore sync "$STORY_ID" --json
+check "AC2: managed block shows TASK1's NEW title" \
+  'grep -F -- "[$TASK1]" "$STORY_PATH" | grep -q "retitled"'
+step "AC2: restore TASK1's original title" 0 -- backlog task edit "$TASK1" --title "Design the archive endpoint"
+step_json "AC2: lore sync heals the managed block's Title column back" '.kind == "sync.result"' -- lore sync "$STORY_ID" --json
+
+# The REAL backlog-side file-move operation: `task archive` (archiveTask does a real rename() to
+# backlog/archive/tasks/ -- confirmed against the pinned fork's source). getTaskPath only ever scans
+# backlog/tasks/, never the archive dir, so an archived LINKED task (TASK2, still linked from Phase
+# 4) should read as missing via the SAME exit-1/empty-stdout raw signature LORE-62 already pinned
+# for a physically-vanished file (Phase 5b above) -- exploratory-first per this campaign's own
+# convention: assert the mirrored signature, but this is the actual first real run pinning it.
+TASK2_LC="$(printf '%s' "$TASK2" | tr 'A-Z' 'a-z')"
+TASK2_FILE_BEFORE_ARCHIVE="$(find backlog/tasks -iname "${TASK2} - *.md" | head -1)"
+check "AC2: found TASK2's file before archiving" '[ -n "${TASK2_FILE_BEFORE_ARCHIVE:-}" ]'
+step "AC2: backlog task archive (real binary move backlog/tasks/ -> backlog/archive/tasks/)" 0 \
+  -- backlog task archive "$TASK2"
+check "AC2: the file physically moved to backlog/archive/tasks/" \
+  '[ ! -f "$TASK2_FILE_BEFORE_ARCHIVE" ] && [ -f "backlog/archive/tasks/$(basename "$TASK2_FILE_BEFORE_ARCHIVE")" ]'
+check "AC2: raw binary: task view of the now-archived id exits 1 with empty stdout (mirrors a vanished task)" \
+  'out="$(backlog task view "$TASK2" --json 2>/dev/null)"; rc=$?; [ "$rc" -eq 1 ] && [ -z "$out" ]'
+
+step_fail "AC2: lore sync -- an archived linked task fails loud exactly like a vanished one (not_found, exit 3, empty stdout)" 3 \
+  '.error_type == "not_found" and (.message | contains("'"$TASK2_LC"'"))' \
+  -- lore sync "$STORY_ID" --json
+
+lore check docs/stories --json >/tmp/check-archive-out 2>/tmp/check-archive-err
+CHECK_ARCHIVE_RC=$?
+check "AC2: lore check on the archived-task bundle ALSO exits 3 but still emits its check.report on stdout first (mirrors the vanished-task asymmetry)" \
+  '[ "$CHECK_ARCHIVE_RC" -eq 3 ] && jq -e ".kind == \"check.report\"" /tmp/check-archive-out >/dev/null 2>&1'
+rm -f /tmp/check-archive-out /tmp/check-archive-err
+
+step "AC2: lore tasks soft-drops the archived id (exit 0)" 0 -- lore tasks "$STORY_ID" --json
+lore tasks "$STORY_ID" --json >/tmp/tasks-archive-out 2>/tmp/tasks-archive-err
+check "AC2: archived id dropped from the rollup, with a stderr warning naming it" \
+  '! (jq -e ".data.tasks[]? | select(.id == \"$TASK2\")" /tmp/tasks-archive-out >/dev/null 2>&1) \
+   && grep -qi "$TASK2" /tmp/tasks-archive-err'
+rm -f /tmp/tasks-archive-out /tmp/tasks-archive-err
+
+# Restore: archiveTask is a pure rename() (no content rewrite, confirmed against source), so moving
+# the file back to backlog/tasks/ restores TASK2's real record byte-identically -- no re-link needed.
+mkdir -p backlog/tasks
+mv "backlog/archive/tasks/$(basename "$TASK2_FILE_BEFORE_ARCHIVE")" "$TASK2_FILE_BEFORE_ARCHIVE"
+check "AC2: TASK2 restored to backlog/tasks/, real record intact (still carries the doc: back-ref)" \
+  'backlog task view "$TASK2" --json | jq -e ".task.labels | index(\"doc:$STORY_ID\") != null" >/dev/null 2>&1'
+check "AC2: git status clean under backlog/ after the archive round-trip (byte-identical restore)" \
+  '[ -z "$(git status --porcelain -- backlog/)" ]'
+
+# ── Phase 4d: ADR-0012 commit scoping (LORE-65 AC3) ──────────────────────────────────────────
+# (1) Inspect a lore-authored commit's file list directly: every path it touches must be under
+# backlog/ and nothing else (state.ts's own structural guard, exercised here against real git
+# history rather than just trusting the guard never throws).
+check "AC3: the most recent lore-authored commit (Phase 4c's archive-restore relink) touches ONLY backlog/ paths" \
+  'AC3_FILES="$(git diff-tree --no-commit-id --name-only -r HEAD)"; [ -n "$AC3_FILES" ] && ! printf "%s\n" "$AC3_FILES" | grep -qv "^backlog/"'
+
+# (2) A pre-staged unrelated file (outside backlog/) must survive a scoped commit unswept.
+echo "unrelated in-flight work" > UNRELATED-DIRTY-MARKER.txt
+check "AC3: pre-staged unrelated file is dirty before the next lore write" \
+  '[ -n "$(git status --porcelain -- UNRELATED-DIRTY-MARKER.txt)" ]'
+TASK_SCOPE="$(backlog task create "E2E commit-scoping probe task" 2>&1 | grep -oE 'Created task [^ ]+' | awk '{print $3}')"
+check "AC3: seeded a task for the commit-scoping probe" '[ -n "$TASK_SCOPE" ]'
+step_json "AC3: lore link commits backlog/ scoped to exactly its own write" \
+  '.data.backlogCommit.committed == true' -- lore link "$STORY_ID" "$TASK_SCOPE" --json
+check "AC3: the unrelated pre-staged file survived UNSWEPT by the scoped commit" \
+  '[ -n "$(git status --porcelain -- UNRELATED-DIRTY-MARKER.txt)" ]'
+check "AC3: the lore-authored commit that just ran still touches ONLY backlog/ paths" \
+  'AC3_FILES2="$(git diff-tree --no-commit-id --name-only -r HEAD)"; [ -n "$AC3_FILES2" ] && ! printf "%s\n" "$AC3_FILES2" | grep -qv "^backlog/"'
+rm -f UNRELATED-DIRTY-MARKER.txt
+
+# (3) A backlog/ filename containing glob metacharacters must be handled byte-for-byte, never
+# shell/git-glob-expanded. Backlog's own sanitizeFilename strips ()[] entirely and turns * into a
+# hyphen (confirmed against the pinned fork's file-system/operations.ts) -- no title the real CLI
+# accepts can ever put a glob metachar in a backlog/ filename. Rename the file directly on disk
+# instead: any file that lands under backlog/ by ANY means (a hand edit, a future Backlog version, a
+# differently-behaved fork) is exactly what state.ts's :(literal) pathspec guard exists to protect,
+# regardless of how it got there.
+TASK_METACHAR="$(backlog task create "E2E metachar pathspec probe" 2>&1 | grep -oE 'Created task [^ ]+' | awk '{print $3}')"
+check "AC3: seeded the metachar-pathspec probe task" '[ -n "$TASK_METACHAR" ]'
+TASK_METACHAR_FILE="$(find backlog/tasks -iname "${TASK_METACHAR} - *.md" | head -1)"
+check "AC3: found the metachar probe task's original file" '[ -n "${TASK_METACHAR_FILE:-}" ] && [ -f "$TASK_METACHAR_FILE" ]'
+TASK_METACHAR_GLOB_FILE="$(dirname "$TASK_METACHAR_FILE")/$(basename "$TASK_METACHAR_FILE" .md) [glob-test]*weird.md"
+mv "$TASK_METACHAR_FILE" "$TASK_METACHAR_GLOB_FILE"
+check "AC3: the metachar filename now sits under backlog/tasks/, untracked" \
+  '[ -f "$TASK_METACHAR_GLOB_FILE" ] && git status --porcelain -- backlog/ | grep -qF "$(basename "$TASK_METACHAR_GLOB_FILE")"'
+step_json "AC3: lore sync's catch-all sweep commits the metachar filename via :(literal) (real git, not shell glob)" \
+  '.data.backlogCommit.committed == true' -- lore sync --json
+check "AC3: the metachar file was actually committed under its exact real name" \
+  'git diff-tree --no-commit-id --name-only -r HEAD | grep -qF "$(basename "$TASK_METACHAR_GLOB_FILE")"'
+check "AC3: git status clean under backlog/ after the metachar commit (no stranded/duplicated entry)" \
+  '[ -z "$(git status --porcelain -- backlog/)" ]'
+
 # ── Phase 3b (here, not earlier): capability probe negative tests. These need
 # a concept that actually has linked tasks — `lore tasks` on an empty tasks:
 # list returns an empty rollup without ever shelling out to backlog at all
@@ -885,6 +1051,54 @@ chmod 644 "$TASK4_FILE"
 
 step "output auto-selects --plain off-TTY (piped, no --plain flag)" 0 -- bash -c 'lore query "archive" | cat >/dev/null'
 step "--plain explicit flag" 0 -- lore query "archive" --plain
+
+# ── Phase 24b: nested checkout — the --show-prefix translation (LORE-65 AC4) ────────────────
+# porcelainPaths' `git rev-parse --show-prefix` translation (src/state.ts) is dead in every phase
+# above: /workspace is git-init'd as the top level itself (Phase 1), so cwd == the repo root and the
+# prefix is always "". Build a small, fully separate fixture: an OUTER git repo with the lore+backlog
+# project nested one directory down, so a real non-empty prefix actually exercises the translation
+# this harness would otherwise never touch. `lore`'s own root is always cwd (src/cli.ts: `root =
+# context.cwd || process.cwd()`, never a git-toplevel walk), so a project nested under a foreign git
+# root is a fully realistic, supported configuration, not an edge case lore itself creates.
+NESTED_OUTER=/tmp/nested-e2e/outer-repo
+NESTED_PROJECT="$NESTED_OUTER/nested-project"
+mkdir -p "$NESTED_PROJECT"
+(cd "$NESTED_OUTER" && git init -q && git config user.email "e2e@lore.test" && git config user.name "lore e2e")
+check "AC4: outer git repo initialized ABOVE the lore project directory" '[ -d "$NESTED_OUTER/.git" ]'
+
+step "AC4: backlog init inside the nested project dir" 0 \
+  -- bash -c "cd '$NESTED_PROJECT' && backlog init 'nested-e2e' --defaults"
+bash -c "cd '$NESTED_PROJECT' && backlog config set autoCommit false && backlog config set remoteOperations false && backlog config set checkActiveBranches false" >/dev/null 2>&1
+step "AC4: lore init inside the nested project dir" 0 \
+  -- bash -c "cd '$NESTED_PROJECT' && lore init"
+check "AC4: git rev-parse --show-prefix from inside the nested project reports a NON-EMPTY prefix" \
+  '[ "$(cd "$NESTED_PROJECT" && git rev-parse --show-prefix)" = "nested-project/" ]'
+
+NESTED_TASK="$(cd "$NESTED_PROJECT" && backlog task create "Nested checkout probe task" 2>&1 | grep -oE 'Created task [^ ]+' | awk '{print $3}')"
+check "AC4: seeded a real task inside the nested project" '[ -n "$NESTED_TASK" ]'
+NESTED_STORY_OUT="$(cd "$NESTED_PROJECT" && lore new Story "E2E nested checkout probe Story" --json)"
+NESTED_STORY_ID="$(echo "$NESTED_STORY_OUT" | jq -r '.data.id')"
+check "AC4: seeded a real Story inside the nested project" '[ -n "$NESTED_STORY_ID" ] && [ "$NESTED_STORY_ID" != "null" ]'
+
+step_json "AC4: lore link succeeds under a non-empty --show-prefix (real per-write backlog/ commit)" \
+  '.data.backlogCommit.committed == true' \
+  -- bash -c "cd '$NESTED_PROJECT' && lore link '$NESTED_STORY_ID' '$NESTED_TASK' --json"
+# This per-write commit is the OUTER repo's very first commit (no parent) -- `git diff-tree HEAD`
+# alone shows nothing for a root commit unless told to diff it against the empty tree (`--root`).
+check "AC4: the link's per-write commit landed in the OUTER repo's history, scoped to nested-project/backlog/ only" \
+  'AC4_FILES="$(cd "$NESTED_OUTER" && git diff-tree --no-commit-id --name-only -r --root HEAD)"; [ -n "$AC4_FILES" ] && ! printf "%s\n" "$AC4_FILES" | grep -qv "^nested-project/backlog/"'
+
+# The per-write commit above is deliberately scoped to only what `link` touched (ADR-0012 §1) --
+# backlog/config.yml (written earlier by `backlog init`, never swept by a per-write commit) is still
+# legitimately uncommitted at this point. `lore sync`'s CATCH-ALL sweep (commitBacklogIfDirty, the
+# OTHER call site through porcelainPaths' --show-prefix translation) is what proves the nested
+# prefix-stripping also works for the sweep path, not just the per-write one.
+step_json "AC4: lore sync's catch-all sweep also succeeds under a non-empty --show-prefix" \
+  '.data.backlogCommit.committed == true' \
+  -- bash -c "cd '$NESTED_PROJECT' && lore sync --json"
+check "AC4: git status is clean under the nested project's backlog/ after the sweep (no double-prefix pathspec miss)" \
+  '[ -z "$(cd "$NESTED_PROJECT" && git status --porcelain -- backlog/)" ]'
+rm -rf /tmp/nested-e2e
 
 # ── Phase 25: tally ───────────────────────────────────────────────────────────────
 tally
