@@ -146,9 +146,35 @@ critical() {
 cd /workspace
 
 # ── Phase 0a: binary preflight (no project needed yet) ──────────────────────
-step "lore --version prints a real version" 0 -- lore --version
+# LORE-66 AC5 (housekeeping): the old version of this check only asserted exit 0 -- a broken
+# version embed (falling back to some other hardcoded/empty string) would still pass. A bare
+# non-"0.0.0" demand (mirroring the backlog check below) does NOT apply to lore itself: lore has
+# not cut a release yet (ADR-0002's 2026-07-19 amendment; package.json's own version is
+# genuinely "0.0.0" pre-release) -- confirmed empirically by this exact harness run. Assert
+# instead that the compiled binary's --version output matches package.json's real value,
+# whatever it currently is: this still catches a genuinely broken embed (a silent fallback to
+# some OTHER default) without hardcoding a false "must not be 0.0.0" assumption.
+check "lore --version matches package.json's real embedded version (proves the compile-time embed didn't silently fall back)" \
+  'v="$(lore --version)"; pkgv="$(jq -r .version "$LORE_REPO/package.json")"; [ -n "$v" ] && [ "$v" = "$pkgv" ]'
 step "lore --help prints the banner" 0 -- bash -c 'lore --help | grep -q "OKF-native documentation CLI"'
 check "backlog --version prints a real (non-0.0.0) version" 'v="$(backlog --version)"; [ -n "$v" ] && [ "$v" != "0.0.0" ]'
+
+# LORE-66 AC4: the router's own short-circuits (src/cli.ts) -- -v/-h short flags, a bare
+# invocation with no command, and an entirely unknown top-level command -- never exercised before.
+step_json "lore -v (short flag) prints the version envelope" '.kind == "version"' -- lore -v --json
+step "lore -h (short flag) prints the banner" 0 -- bash -c 'lore -h | grep -q "OKF-native documentation CLI"'
+step "bare \`lore\` (no command) prints the banner and exits 0" 0 -- bash -c 'lore | grep -q "OKF-native documentation CLI"'
+step_fail "unknown top-level command is a usage error (exit 2)" 2 '.error_type == "usage"' \
+  -- lore frobnicate --json
+
+# LORE-66 AC4: pre-init "not a lore project" -- a fresh directory with no docs/ bundle at all
+# (before even `backlog init`/`lore init` ran) fails loud (not_found, exit 3) rather than silently
+# reporting an empty bundle. Fully isolated from /workspace's own project state.
+mkdir -p /tmp/pre-init-probe
+step_fail "pre-init: lore check in a directory with no docs/ bundle fails loud (not_found, exit 3)" 3 \
+  '.error_type == "not_found"' \
+  -- bash -c 'cd /tmp/pre-init-probe && lore check --json'
+rm -rf /tmp/pre-init-probe
 
 # ── Phase 1: bootstrap (critical — nothing downstream works without this) ───
 critical "git init" 0 -- git init -q
@@ -165,6 +191,12 @@ critical "lore init" 0 -- lore init
 # scaffolding — its mere existence isn't evidence of a cached probe result.
 check "no stale probe result in .lore/cache/ before the first real probe" \
   '[ -z "$(ls -A .lore/cache 2>/dev/null)" ]'
+
+# LORE-66 AC4: `lore init`'s idempotent re-run (init.ts's own load-bearing AC#2) was never
+# exercised E2E — a second run with no intervening change must create nothing and still exit 0,
+# with the plan's paths now reported `skipped` instead of `created`.
+step_json "lore init: idempotent re-run creates nothing (AC#2)" \
+  '(.data.created | length) == 0 and (.data.skipped | length) > 0' -- lore init --json
 
 # ── Phase 2: seed real backlog tasks ─────────────────────────────────────────
 TASK1="$(backlog task create "Design the archive endpoint" 2>&1 | grep -oE 'Created task [^ ]+' | awk '{print $3}')"
@@ -190,6 +222,47 @@ for T in Epic Story Spec ADR Runbook Reference; do
 done
 STORY_PATH="${DOC_PATH[Story]}"
 STORY_ID="${DOC_ID[Story]}"
+
+# ── Phase 3d: lore new flag long-tail -- --var/--template/--summary/--tags/--out (LORE-66 AC4) ──
+# A custom .lore/templates/spec.md exercises --var (body placeholder fill) via the DEFAULT
+# type-name template-resolution path; a second, explicitly-named template file exercises
+# --template overriding that default resolution. Spec is never `lore new`'d again anywhere else
+# in this script, so a stray custom template has no effect on any later phase; both are removed
+# immediately after anyway.
+cat > .lore/templates/spec.md <<'TPLEOF'
+# {{title}}
+
+Owner: {{owner}}
+TPLEOF
+VAR_PROBE_OUT="$(lore new Spec "E2E var template probe" --var owner=jeremy --json)"
+VAR_PROBE_RC=$?
+check "AC4: lore new --var succeeds against the default type-name template resolution" '[ "$VAR_PROBE_RC" -eq 0 ]'
+VAR_PROBE_PATH="$(echo "$VAR_PROBE_OUT" | jq -r '.data.path')"
+check "AC4: --var filled the body placeholder from the resolved .lore/templates/spec.md" \
+  'grep -q "Owner: jeremy" "$VAR_PROBE_PATH"'
+
+cat > .lore/templates/e2e-explicit-template.md <<'TPLEOF'
+# {{title}}
+
+EXPLICIT-TEMPLATE-MARKER: {{owner}}
+TPLEOF
+TEMPLATE_PROBE_OUT="$(lore new Spec "E2E explicit template probe" --template e2e-explicit-template --var owner=explicit --json)"
+TEMPLATE_PROBE_RC=$?
+check "AC4: lore new --template succeeds, overriding the default type-name resolution" '[ "$TEMPLATE_PROBE_RC" -eq 0 ]'
+TEMPLATE_PROBE_PATH="$(echo "$TEMPLATE_PROBE_OUT" | jq -r '.data.path')"
+check "AC4: --template used the EXPLICITLY named file, not the default spec.md" \
+  'grep -q "EXPLICIT-TEMPLATE-MARKER: explicit" "$TEMPLATE_PROBE_PATH" && ! grep -q "^Owner:" "$TEMPLATE_PROBE_PATH"'
+rm -f .lore/templates/spec.md .lore/templates/e2e-explicit-template.md
+
+step_json "AC4: lore new --summary/--tags/--out together" \
+  '.data.path == "docs/specs/e2e-custom-out-path.md"' \
+  -- lore new Spec "E2E summary tags out probe" --summary "AC4 custom summary marker" --tags "e2e-tag-alpha,e2e-tag-beta" --out docs/specs/e2e-custom-out-path.md --json
+check "AC4: --out landed the file at the exact given path, not the slugified default" \
+  '[ -f docs/specs/e2e-custom-out-path.md ]'
+check "AC4: --summary wrote the given summary text into frontmatter" \
+  'grep -q "AC4 custom summary marker" docs/specs/e2e-custom-out-path.md'
+check "AC4: --tags wrote both comma-split, trimmed tags into frontmatter" \
+  'grep -q "e2e-tag-alpha" docs/specs/e2e-custom-out-path.md && grep -q "e2e-tag-beta" docs/specs/e2e-custom-out-path.md'
 
 # ── Phase 4: link / unlink, + lore sync rendering the managed block ─────────
 # LORE-57 (fixed): the doc: back-ref write to Backlog used to fail (editTask
@@ -384,6 +457,56 @@ check "AC3: the metachar file was actually committed under its exact real name" 
 check "AC3: git status clean under backlog/ after the metachar commit (no stranded/duplicated entry)" \
   '[ -z "$(git status --porcelain -- backlog/)" ]'
 
+# ── Phase 4e: link --no-back-ref, unlink --allow-missing (LORE-66 AC4) ───────────────────────
+# `link --no-back-ref` (skip the Backlog-side doc: label/--doc write, only the concept's own
+# frontmatter tasks: list) was never exercised.
+TASK_NBR="$(backlog task create "E2E no-back-ref probe task" 2>&1 | grep -oE 'Created task [^ ]+' | awk '{print $3}')"
+check "AC4: seeded TASK_NBR for the --no-back-ref probe" '[ -n "$TASK_NBR" ]'
+step_json "AC4: lore link --no-back-ref skips the Backlog-side write" \
+  '.data.tasks[] | select(.task == "'"$TASK_NBR"'") | .status == "added" and .backRef == "skipped"' \
+  -- lore link "$STORY_ID" "$TASK_NBR" --no-back-ref --json
+check "AC4: --no-back-ref still wrote the concept's own tasks: frontmatter" \
+  'grep -qi "$TASK_NBR" "$STORY_PATH"'
+check "AC4: --no-back-ref left the REAL Backlog record untouched (no doc: label, no --doc path)" \
+  'backlog task view "$TASK_NBR" --json | jq -e --arg lbl "doc:$STORY_ID" --arg p "$STORY_PATH" \
+     "(.task.labels | index(\$lbl) == null) and (.task.documentation | index(\$p) == null)" >/dev/null 2>&1'
+step_json "AC4: restore baseline -- unlink TASK_NBR (nothing to remove on the Backlog side)" \
+  '.data.tasks[] | select(.task == "'"$TASK_NBR"'") | .status == "removed"' \
+  -- lore unlink "$STORY_ID" "$TASK_NBR" --json
+
+# `unlink --allow-missing` -- id itself no longer resolves to a live concept (the doc was removed
+# by a plain `rm`, never through `lore rename`). Without the flag this is a hard not_found; with
+# it, the Backlog-side label/--doc removal still runs, computed straight from the bare id string.
+GHOST_OUT="$(lore new Story "E2E ghost concept for --allow-missing" --json)"
+GHOST_ID="$(echo "$GHOST_OUT" | jq -r '.data.id')"
+GHOST_PATH="$(echo "$GHOST_OUT" | jq -r '.data.path')"
+check "AC4: seeded the ghost concept" '[ -n "$GHOST_ID" ] && [ "$GHOST_ID" != "null" ]'
+TASK_GHOST="$(backlog task create "E2E allow-missing probe task" 2>&1 | grep -oE 'Created task [^ ]+' | awk '{print $3}')"
+check "AC4: seeded TASK_GHOST for the --allow-missing probe" '[ -n "$TASK_GHOST" ]'
+step_json "AC4: link TASK_GHOST to the ghost concept (real backref)" \
+  '.data.tasks[] | select(.task == "'"$TASK_GHOST"'") | .backRef == "added"' \
+  -- lore link "$GHOST_ID" "$TASK_GHOST" --json
+rm -f "$GHOST_PATH"
+check "AC4: the ghost concept's file no longer exists (removed outside lore's tracking)" '[ ! -f "$GHOST_PATH" ]'
+step_fail "AC4: without --allow-missing, unlinking a vanished concept id fails loud (not_found, exit 3)" 3 \
+  '.error_type == "not_found"' \
+  -- lore unlink "$GHOST_ID" "$TASK_GHOST" --json
+step_json "AC4: unlink --allow-missing tolerates the vanished concept id and still removes the real backref" \
+  '.data.concept == "'"$GHOST_PATH"'" and .data.changed == false and (.data.tasks[] | select(.task == "'"$TASK_GHOST"'") | .status == "not-linked" and .backRef == "removed")' \
+  -- lore unlink "$GHOST_ID" "$TASK_GHOST" --allow-missing --json
+# EXPLORATORY FINDING (a real-record dump surfaced this): the --doc array does NOT end up
+# cleared. This is not a bug -- it is link.ts's own documented ADR-0009 SS2 tradeoff: TASK_GHOST
+# had exactly ONE documentation entry, so removing it would leave the array empty, and Backlog's
+# CLI cannot clear --doc via an empty value (SS2.4) -- removeBackRefs deliberately OMITS --doc
+# entirely in that case, so the stale path cosmetically lingers until the next `lore link`. The
+# label removal (unconditional, no such empty-array special case) is the real, always-true signal.
+check "AC4: --allow-missing actually removed the real doc: label from Backlog" \
+  'backlog task view "$TASK_GHOST" --json | jq -e --arg lbl "doc:$GHOST_ID" \
+     "(.task.labels | index(\$lbl) == null)" >/dev/null 2>&1'
+check "AC4: the stale --doc path deliberately lingers (ADR-0009's accepted single-entry tradeoff, not a bug)" \
+  'backlog task view "$TASK_GHOST" --json | jq -e --arg p "$GHOST_PATH" \
+     "(.task.documentation | index(\$p) != null)" >/dev/null 2>&1'
+
 # ── Phase 3b (here, not earlier): capability probe negative tests. These need
 # a concept that actually has linked tasks — `lore tasks` on an empty tasks:
 # list returns an empty rollup without ever shelling out to backlog at all
@@ -405,12 +528,6 @@ done
 # backlog binary; assert its stable distinguishing substring survives onto stderr, not just
 # the bare error_type/exit code.
 step_fail "capability probe: lore fails loud (exit 3, not_found) with no backlog on PATH" 3 \
-  '.error_type == "not_found" and (.hint | contains("backlog-json-patch.md"))' \
-  -- env PATH=/tmp/no-backlog-path lore tasks "$STORY_ID" --json
-# Populate .lore/cache/ with one real, successful probe, then re-check with
-# backlog hidden again. Exploratory: log the real outcome either way.
-lore tasks "$STORY_ID" --json >/dev/null 2>&1 || true
-step_fail "capability probe: stale-cache case (cached-good probe, backlog now hidden)" 3 \
   '.error_type == "not_found" and (.hint | contains("backlog-json-patch.md"))' \
   -- env PATH=/tmp/no-backlog-path lore tasks "$STORY_ID" --json
 
@@ -541,7 +658,19 @@ backlog task edit "$TASK2" --status "Done" >/dev/null 2>&1
 step_json "lore sync --json reflects a real backlog mutation + commits backlog/" \
   '.kind == "sync.result" and .data.backlogCommit.committed == true and (.data.filesChanged >= 1)' \
   -- lore sync --json
-check "git log shows the lore-authored backlog/ commit" '[ "$(git log --oneline | wc -l | tr -d " ")" -gt 0 ]'
+# LORE-66 AC5 (housekeeping): the old version of this check (`git log | wc -l > 0`) passes on ANY
+# commit ever made in the repo -- it attributes nothing to this sync. Assert the real content of
+# the commit sync just authored: its exact message (state.ts's DEFAULT_COMMIT_MESSAGE) and that its
+# file list is scoped to backlog/ only.
+check "the lore-authored backlog/ commit this sync just made has the real commit message + scoped file list" \
+  '[ "$(git log -1 --format=%s)" = "chore(backlog): sync task changes" ] \
+   && GITLOG_FILES="$(git diff-tree --no-commit-id --name-only -r HEAD)" \
+   && [ -n "$GITLOG_FILES" ] && ! printf "%s\n" "$GITLOG_FILES" | grep -qv "^backlog/"'
+# LORE-66 AC4: `tasks --status <S>` filters the rollup to one live Backlog status -- Phase 5's
+# rollup test above passes no --status at all.
+step_json "AC4: lore tasks --status filters the rollup to TASK1's live status only" \
+  '.data.status == "In Progress" and (.data.tasks | length) == 1 and (.data.tasks[0].id | ascii_downcase) == ("'"$TASK1"'" | ascii_downcase)' \
+  -- lore tasks "$STORY_ID" --status "In Progress" --json
 # LORE-63 AC1: value-assert the rendered managed-block rows against concrete status literals --
 # check's clean-bundle gates alone only prove sync wrote something SELF-CONSISTENT, never that the
 # reconciled rows match real data, so a wrong-but-stable status would otherwise pass silently.
@@ -554,6 +683,38 @@ check "managed block renders TASK1's live status (In Progress), not just structu
   'grep -F -- "[$TASK1]" "$STORY_PATH" | grep -q "In Progress"'
 check "managed block renders TASK2's live status (Done)" \
   'grep -F -- "[$TASK2]" "$STORY_PATH" | grep -q "Done"'
+
+# ── Phase 6b: sync --dry-run, sync --no-index (LORE-66 AC4) ──────────────────────────────────
+# `--dry-run` (report what would change, write nothing) was never exercised -- needs genuine
+# PENDING drift to be non-vacuous. Corrupt the frontmatter status: field directly (the same lever
+# Phase 9 below uses for its own drift-detection test) rather than touching either live task's real
+# Backlog status, which Phase 9's managed-block body-drift induction depends on staying exactly as
+# this phase left it.
+sed -i 's/^status: .*/status: bogus-drifted-status-dryrun-probe/' "$STORY_PATH" || true
+check "AC4: seeded a genuine frontmatter status drift for the dry-run probe" \
+  'grep -q "^status: bogus-drifted-status-dryrun-probe" "$STORY_PATH"'
+step_json "AC4: lore sync --dry-run reports the pending drift without writing" \
+  '.data.dryRun == true and (.data.filesChanged >= 1)' -- lore sync --dry-run --json
+check "AC4: --dry-run wrote NOTHING -- the bogus status is still on disk, untouched" \
+  'grep -q "^status: bogus-drifted-status-dryrun-probe" "$STORY_PATH"'
+step_json "AC4: the real (non-dry-run) sync now heals the same drift" \
+  '.data.dryRun == false and (.data.filesChanged >= 1)' -- lore sync --json
+check "AC4: the bogus status is gone after the real sync (healed to live data)" \
+  '! grep -q "^status: bogus-drifted-status-dryrun-probe" "$STORY_PATH"'
+
+# `--no-index` skips both index.md and log.md regeneration. Corrupt docs/log.md directly (genuine
+# staleness relative to what regeneration would produce) rather than relying on ambient drift.
+echo "BOGUS-LOG-CORRUPTION-NOINDEX-PROBE" >> docs/log.md
+check "AC4: seeded genuine log.md staleness for the --no-index probe" \
+  'grep -q "BOGUS-LOG-CORRUPTION-NOINDEX-PROBE" docs/log.md'
+step_json "AC4: sync --no-index reconciles docs/ but skips index/log regeneration" \
+  '.kind == "sync.result"' -- lore sync --no-index --json
+check "AC4: --no-index left the corrupted log.md untouched (not regenerated)" \
+  'grep -q "BOGUS-LOG-CORRUPTION-NOINDEX-PROBE" docs/log.md'
+step_json "AC4: a normal sync (no --no-index) DOES regenerate log.md, healing the corruption" \
+  '.kind == "sync.result"' -- lore sync --json
+check "AC4: log.md regenerated -- the bogus corruption is gone" \
+  '! grep -q "BOGUS-LOG-CORRUPTION-NOINDEX-PROBE" docs/log.md'
 
 # ── Phase 7: idempotency ─────────────────────────────────────────────────────
 step_json "lore sync --json idempotent rerun (no-op)" \
@@ -570,6 +731,20 @@ cp "$BROKEN_FIXTURES/missing-type.md" docs/reference/e2e-broken-missing-type.md
 step "lore validate: catches a missing type: (documented hard error)" 6 \
   -- lore validate docs/reference/e2e-broken-missing-type.md
 rm -f docs/reference/e2e-broken-missing-type.md
+
+# LORE-66 AC4: `validate --strict` (promote any warning to a gate failure) was never exercised --
+# an unrecognized frontmatter key is a tier-3 WARNING (never a bare-run error), exactly the class
+# --strict exists to promote.
+STRICT_PROBE_OUT="$(lore new Reference "E2E validate --strict probe" --json)"
+STRICT_PROBE_PATH="$(echo "$STRICT_PROBE_OUT" | jq -r '.data.path')"
+check "AC4: seeded the --strict probe doc" '[ -f "$STRICT_PROBE_PATH" ]'
+sed -i '/^timestamp:/a e2e_unknown_key: probe-value' "$STRICT_PROBE_PATH"
+step_json "AC4: bare validate reports the unknown-key warning but stays a clean run (no --strict)" \
+  '.data.warningCount >= 1 and .data.errorCount == 0' -- lore validate "$STRICT_PROBE_PATH" --json
+step "AC4: the SAME bare validate exits 0 (a warning alone never gates)" 0 \
+  -- lore validate "$STRICT_PROBE_PATH"
+step "AC4: validate --strict promotes the SAME warning to a gate failure (exit 6)" 6 \
+  -- lore validate "$STRICT_PROBE_PATH" --strict
 
 # ── Phase 9: check — the drift-gate loop ─────────────────────────────────────
 # `check`'s positional args are bundle DIRECTORIES to scope to, not individual
@@ -598,6 +773,67 @@ step "lore check: catches managed-block BODY drift (distinct from frontmatter st
 step "lore sync: heals the managed-block body drift" 0 -- lore sync "$STORY_ID"
 step "lore check: clean again after healing the block-body drift" 0 -- lore check docs/stories
 
+# ── Phase 9b: check --json F2 dual-stream (validation half), --external, multi-root (LORE-66 AC3/AC4) ──
+# AC3: the F2 dual-stream shape (check.report on stdout PLUS an ErrorEnvelope on stderr, src/commands/
+# check.ts:156-164) is already pinned for the not_found half by LORE-62/65's vanished/archived-task
+# phases above. The validation half (a deferred reconciliation config error caught mid-check) has
+# never been exercised: malform backlog/config.yml's statuses: the same way Phase 15c below does for
+# `lore sync`, but against `lore check` here instead.
+cp backlog/config.yml /tmp/config-yml-before-ac3-f2.yml
+sed -i 's|^statuses:.*$|statuses: "not-a-list"|' backlog/config.yml || true
+lore check docs/stories --json >/tmp/check-f2-out 2>/tmp/check-f2-err
+CHECK_F2_RC=$?
+check "AC3: check --json's F2 dual-stream shape on a deferred validation error: check.report still lands on stdout, AND a validation ErrorEnvelope lands on stderr, exit 6" \
+  '[ "$CHECK_F2_RC" -eq 6 ] \
+   && jq -e ".kind == \"check.report\"" /tmp/check-f2-out >/dev/null 2>&1 \
+   && tail -n1 /tmp/check-f2-err | jq -e ".error_type == \"validation\"" >/dev/null 2>&1'
+rm -f /tmp/check-f2-out /tmp/check-f2-err
+cp /tmp/config-yml-before-ac3-f2.yml backlog/config.yml
+rm -f /tmp/config-yml-before-ac3-f2.yml
+step "AC3: lore check clean again after restoring backlog/config.yml" 0 -- lore check docs/stories
+
+# AC4: `check --external` (opt-in liveness probe) -- prove failures are ALWAYS advisory and NEVER
+# gate, even when every probed URL fails (this container has no real internet egress, so a
+# deliberately-bogus .test domain deterministically fails to connect either way).
+EXTERNAL_PROBE_PATH="docs/reference/e2e-external-link-probe.md"
+cat > "$EXTERNAL_PROBE_PATH" <<'EXTEOF'
+---
+type: Reference
+title: E2E external link probe
+summary: Probe doc for the --external liveness gate contract.
+timestamp: 2024-01-01T00:00:00.000Z
+---
+# E2E external link probe
+
+See [an unreachable external link](https://e2e-lore-liveness-probe.test/does-not-exist) for details.
+EXTEOF
+lore check docs/reference --json >/tmp/check-external-off.json 2>/dev/null
+EXTERNAL_OFF_RC=$?
+lore check docs/reference --external --json >/tmp/check-external-on.json 2>/dev/null
+EXTERNAL_ON_RC=$?
+check "AC4: --external liveness never changes the gate exit code (same as without it)" \
+  '[ "$EXTERNAL_OFF_RC" -eq "$EXTERNAL_ON_RC" ]'
+check "AC4: --external reports at least one dead/unreachable finding for the deliberately-broken URL" \
+  'jq -e "(.data.externalFindings // []) | length >= 1" /tmp/check-external-on.json >/dev/null 2>&1'
+check "AC4: without --external, no externalFindings are present at all" \
+  'jq -e ".data.externalFindings == null" /tmp/check-external-off.json >/dev/null 2>&1'
+rm -f /tmp/check-external-off.json /tmp/check-external-on.json "$EXTERNAL_PROBE_PATH"
+step "AC4: lore check clean again after removing the external-link probe doc" 0 -- lore check docs/reference
+
+# AC4: multi-root check (two positional bundle roots in one invocation) -- per-root isolation +
+# bundle-label-prefixed findings, never exercised (every check call above scopes to at most one root).
+cp "$BROKEN_FIXTURES/dangling-link.md" docs/reference/e2e-multiroot-broken.md
+lore check docs/reference docs/adr --json >/tmp/check-multiroot.json 2>/dev/null
+MULTIROOT_RC=$?
+check "AC4: multi-root check exits 6 (the broken root's error still gates the whole run)" \
+  '[ "$MULTIROOT_RC" -eq 6 ]'
+check "AC4: the broken finding is attributed to the docs/reference root specifically (label-prefixed)" \
+  'jq -e "[.data.findings[] | select(.file | startswith(\"docs/reference/\"))] | length >= 1" /tmp/check-multiroot.json >/dev/null 2>&1'
+check "AC4: no finding is misattributed to the clean docs/adr root" \
+  '! jq -e "[.data.findings[] | select(.file | startswith(\"docs/adr/\"))] | length > 0" /tmp/check-multiroot.json >/dev/null 2>&1'
+rm -f docs/reference/e2e-multiroot-broken.md /tmp/check-multiroot.json
+step "AC4: lore check clean again after removing the multi-root broken-link probe" 0 -- lore check docs/reference docs/adr
+
 # ── Phase 10: orphans ────────────────────────────────────────────────────────
 # Per orphans.ts's documented scope: ANY doc: label exempts a task from being
 # reported, even one pointing at a nonexistent concept (that mismatch is
@@ -609,6 +845,9 @@ step_json "lore orphans: reports TASK3 (seeded, never linked to any doc)" \
 step "lore orphans --tasks-only runs cleanly" 0 -- lore orphans --tasks-only
 check "lore orphans surfaces the never-linked TASK3" \
   'lore orphans --json 2>/dev/null | grep -qi "$TASK3"'
+step_json "AC4: lore orphans --docs-only reports only danglingLinks (orphanTasks omitted)" \
+  '.kind == "orphans.report" and (.data | has("orphanTasks") | not) and (.data | has("danglingLinks"))' \
+  -- lore orphans --docs-only --json
 
 # ── Phase 11: graph ───────────────────────────────────────────────────────────
 step_json "lore graph (whole bundle, --json)" '.kind == "graph.export"' -- lore graph --json
@@ -618,17 +857,77 @@ step "lore graph --dot" 0 -- lore graph --dot
 # ── Phase 12: query ───────────────────────────────────────────────────────────
 step_json "lore query full-text" '.kind == "query.results"' -- lore query "archive" --json
 step_json "lore query --type filter" '.kind == "query.results"' -- lore query --type Story --json
+# LORE-66 AC4: --tag/--status/--field, --limit truncation, and zero-hits were never exercised.
+step_json "AC4: lore query --tag filters to the doc carrying that tag (seeded by the Phase 3d --tags probe)" \
+  '.kind == "query.results" and (.data.hits | any(.id == "specs/e2e-custom-out-path"))' \
+  -- lore query --tag e2e-tag-alpha --json
+step_json "AC4: lore query --field genuinely filters (matches a Spec, excludes a known Story)" \
+  '.kind == "query.results" and (.data.hits | any(.id == "specs/e2e-custom-out-path")) and (.data.hits | any(.id == "'"$STORY_ID"'") | not)' \
+  -- lore query --field type=Spec --json
+CURRENT_STORY_STATUS="$(grep '^status:' "$STORY_PATH" | head -1 | sed 's/^status: *//')"
+step_json "AC4: lore query --status filters by the concept's live reconciled status" \
+  '.kind == "query.results" and (.data.hits | any(.id == "'"$STORY_ID"'"))' \
+  -- lore query --status "$CURRENT_STORY_STATUS" --json
+step_json "AC4: lore query --limit truncates when more matches exist than the cap" \
+  '.kind == "query.results" and .data.total >= 2 and .data.shown == 1 and .data.truncated == true' \
+  -- lore query --type Story --limit 1 --json
+# A hyphenated phrase tokenizes into its individual words ("not"/"a"/"real"/"term", all common
+# English words that genuinely score > 0 against other docs) -- not a true zero-hit case. One
+# unbroken nonsense token has no common substring for the tokenizer to split on.
+step_json "AC4: lore query with zero hits is a normal exit 0, not an error" \
+  '.kind == "query.results" and .data.total == 0 and (.data.hits | length) == 0' \
+  -- lore query "zzznonexistentqqqxyzzy12345" --json
 
 # ── Phase 13: context ─────────────────────────────────────────────────────────
 step_json "lore context --max-tokens" '.kind == "context.export"' \
   -- lore context "$STORY_ID" --max-tokens 2000 --json
 
 # ── Phase 14: replace ─────────────────────────────────────────────────────────
-BEFORE_MARKERS="$(grep -c "lore:tasks" "$STORY_PATH")"
-step_json "lore replace outside managed regions" '.kind == "replace.result"' \
+# LORE-66 AC1: the OLD version of this step matched NOTHING -- "archive orders" never appeared
+# anywhere in the bundle, so totalMatches/filesChanged were both 0 and the "managed region
+# untouched" check passed trivially. It also checked `lore:tasks` markers, a region
+# core/replace.ts's MANAGED_MARKERS registry does NOT protect today (confirmed against source:
+# only the `lore:index` listing block is registered; `lore:tasks` protection is aspirational
+# doc-comment, not implemented) -- doubly vacuous. Seed a probe doc whose title IS the find
+# phrase, then `lore sync` so the phrase also lands inside docs/reference/index.md's real managed
+# lore:index block -- the one region replace actually protects -- giving this step a genuine
+# match both inside and outside a managed region.
+PHRASE_DOC_OUT="$(lore new Reference "archive orders" --json)"
+PHRASE_DOC_PATH="$(echo "$PHRASE_DOC_OUT" | jq -r '.data.path')"
+check "AC1: seeded the replace probe doc titled exactly the find phrase" '[ -f "$PHRASE_DOC_PATH" ]'
+step "AC1: lore sync renders the probe doc's title into docs/reference/index.md's managed block" 0 \
+  -- lore sync
+REFERENCE_INDEX="docs/reference/index.md"
+check "AC1: the find phrase now sits inside the reference index's managed lore:index block" \
+  'grep -q "lore:index:begin" "$REFERENCE_INDEX" && grep -q "archive orders" "$REFERENCE_INDEX"'
+BEFORE_INDEX="$(cat "$REFERENCE_INDEX")"
+step_json "lore replace outside managed regions" \
+  '.kind == "replace.result" and (.data.totalMatches >= 1) and (.data.filesChanged >= 1)' \
   -- lore replace "archive orders" "archive Orders" --json
-AFTER_MARKERS="$(grep -c "lore:tasks" "$STORY_PATH")"
-check "managed region untouched by replace" "[ $BEFORE_MARKERS -eq $AFTER_MARKERS ]"
+AFTER_INDEX="$(cat "$REFERENCE_INDEX")"
+check "AC1: the probe doc's OWN title was genuinely replaced (real match, outside any managed region)" \
+  'grep -q "archive Orders" "$PHRASE_DOC_PATH"'
+check "AC1: the reference index's managed lore:index block is BYTE-IDENTICAL after replace (genuinely protected, not coincidentally unmatched)" \
+  '[ "$BEFORE_INDEX" = "$AFTER_INDEX" ]'
+
+# --regex / --in: a capture-group substitution scoped to just the probe doc via --in.
+step_json "AC1: replace --regex --in scopes a capture-group substitution to one file" \
+  '.kind == "replace.result" and (.data.totalMatches >= 1) and (.data.files | length) == 1 and (.data.files[0].path == "'"$PHRASE_DOC_PATH"'")' \
+  -- lore replace 'archive (Orders)' 'ARCHIVE-$1-REGEX' --regex --in "$PHRASE_DOC_PATH" --json
+check "AC1: the regex substitution's capture group landed in the probe doc" \
+  'grep -q "ARCHIVE-Orders-REGEX" "$PHRASE_DOC_PATH"'
+
+# --dry-run: reports a genuine pending match without writing.
+step_json "AC1: replace --dry-run reports a genuine match without writing" \
+  '.data.dryRun == true and (.data.totalMatches >= 1)' \
+  -- lore replace "ARCHIVE-Orders-REGEX" "DRYRUN-SHOULD-NOT-LAND" --dry-run --json
+check "AC1: --dry-run wrote NOTHING -- the probe doc is unchanged" \
+  '! grep -q "DRYRUN-SHOULD-NOT-LAND" "$PHRASE_DOC_PATH" && grep -q "ARCHIVE-Orders-REGEX" "$PHRASE_DOC_PATH"'
+
+# invalid regex (usage, exit 2): an unterminated character class.
+step_fail "AC1: replace --regex with an invalid pattern is a usage error (exit 2)" 2 \
+  '.error_type == "usage"' \
+  -- lore replace 'archive[' 'x' --regex --json
 
 # ── Phase 15: rename ───────────────────────────────────────────────────────────
 OLD_REF_ID="${DOC_ID[Reference]}"
@@ -779,11 +1078,40 @@ cp /tmp/config-yml-original.yml backlog/config.yml
 rm -f /tmp/config-yml-original.yml
 
 # ── Phase 16: supersede ────────────────────────────────────────────────────────
+# LORE-66 AC2: the OLD version of this step gave the ADR under test zero real inbound links, so
+# --rewrite-links reported rewroteLinks:false -- the inbound-repoint engine (core/rewrite.ts's
+# rewriteInbound) never actually ran E2E. Seed a genuine inbound body link in the Spec's body
+# (Spec carries no managed block, LORE-59, so appending is safe) BEFORE superseding, so the
+# rewrite has something real to repoint.
+ADR_ID="${DOC_ID[ADR]}"
+printf '\nSee [the ADR under test](../%s.md) for background.\n' "$ADR_ID" >> "$SPEC_PATH"
+check "AC2: seeded a real inbound body link to the ADR in the Spec's body" \
+  'grep -qF "../$ADR_ID.md" "$SPEC_PATH"'
+
 SUCCESSOR="$(lore new ADR "E2E successor decision" --json | jq -r '.data.id')"
 step_json "lore supersede --dry-run" '.kind == "supersede.result"' \
   -- lore supersede "${DOC_ID[ADR]}" "$SUCCESSOR" --dry-run --json
-step_json "lore supersede (real, rewrite-links)" '.kind == "supersede.result"' \
+step_json "lore supersede (real, rewrite-links) genuinely rewrites the Spec's real inbound link" \
+  '.kind == "supersede.result" and .data.rewroteLinks == true' \
   -- lore supersede "${DOC_ID[ADR]}" "$SUCCESSOR" --rewrite-links --json
+check "AC2: the Spec's inbound link now points at the successor, not the old ADR" \
+  '! grep -qF "../$ADR_ID.md" "$SPEC_PATH" && grep -qF "../$SUCCESSOR.md" "$SPEC_PATH"'
+step_fail "AC2: conflict-5 -- re-superseding the same already-superseded ADR fails loud" 5 \
+  '.error_type == "conflict"' \
+  -- lore supersede "$ADR_ID" "$SUCCESSOR" --json
+
+# LORE-66 AC4: `graph --depth` was never exercised. The just-superseded ADR pair ($ADR_ID/$SUCCESSOR)
+# is now genuinely connected by a real supersedes/superseded_by frontmatter edge (core/graph.ts's
+# EdgeKind), so --depth 0 vs --depth 1 shows a real, non-coincidental radius difference.
+step_json "AC4: lore graph <id> --depth 0 returns only the root node (no edges expanded)" \
+  '.kind == "graph.export" and (.data.nodes | length) == 1 and (.data.nodes[0].id == "'"$ADR_ID"'") and (.data.edges | length) == 0' \
+  -- lore graph "$ADR_ID" --depth 0 --json
+step_json "AC4: lore graph <id> --depth 1 expands to include the successor via the supersedes/superseded_by edge" \
+  '.kind == "graph.export" and (.data.nodes | length) >= 2 and ([.data.nodes[].id] | index("'"$SUCCESSOR"'") != null)' \
+  -- lore graph "$ADR_ID" --depth 1 --json
+step_fail "AC4: --depth without a root <id> is a usage error (exit 2)" 2 \
+  '.error_type == "usage"' \
+  -- lore graph --depth 2 --json
 
 # ── Phase 17: schema export ─────────────────────────────────────────────────────
 step_json "lore schema export" '.kind == "schema.result"' -- lore schema export --json
@@ -942,6 +1270,17 @@ done
 
 # ── Phase 18: scaffold mkdocs + a real build ────────────────────────────────────
 step "lore scaffold mkdocs" 0 -- lore scaffold mkdocs
+# LORE-66 AC4: a re-run without --force is an all-or-nothing conflict (writes nothing); --force
+# overwrites, reporting the previously-existing files as "updated"; an unknown target is usage.
+step_fail "AC4: lore scaffold mkdocs re-run without --force is a conflict (exit 5)" 5 \
+  '.error_type == "conflict"' \
+  -- lore scaffold mkdocs --json
+step_json "AC4: lore scaffold mkdocs --force overwrites the existing scaffold" \
+  '.kind == "scaffold.result" and (.data.files | any(.action == "updated"))' \
+  -- lore scaffold mkdocs --force --json
+step_fail "AC4: lore scaffold with an unknown target is a usage error (exit 2)" 2 \
+  '.error_type == "usage"' \
+  -- lore scaffold bogus-target --json
 step "mkdocs build (real)" 0 -- mkdocs build --site-dir /tmp/mkdocs-site
 check "mkdocs produced index.html" '[ -f /tmp/mkdocs-site/index.html ]'
 
@@ -959,15 +1298,84 @@ check "obsidian app.json has the expected keys" \
 # ── Phase 21: instructions ───────────────────────────────────────────────────────
 step_json "lore instructions (overview)" '.kind == "instructions.text"' -- lore instructions --json
 step_json "lore instructions <topic>" '.kind == "instructions.text"' -- lore instructions linking --json
+# LORE-66 AC4: the other detail topics (sync/check/validation) were never exercised -- only linking.
+step_json "AC4: lore instructions sync" '.kind == "instructions.text" and .data.topic == "sync"' \
+  -- lore instructions sync --json
+step_json "AC4: lore instructions check" '.kind == "instructions.text" and .data.topic == "check"' \
+  -- lore instructions check --json
+step_json "AC4: lore instructions validation" '.kind == "instructions.text" and .data.topic == "validation"' \
+  -- lore instructions validation --json
+step_fail "AC4: lore instructions with an unknown topic is not_found (exit 3)" 3 \
+  '.error_type == "not_found"' \
+  -- lore instructions bogus-topic-xyz --json
 
 # ── Phase 22: agents ─────────────────────────────────────────────────────────────
 step_json "lore agents" '.kind == "agents.result"' -- lore agents --json
 check "SKILL.md regenerated" '[ -f .claude/skills/lore/SKILL.md ]'
 
+# LORE-66 AC4: --check/--force were never exercised (agents.ts's own drift gate: --check RETURNS
+# exit 6 with the report still on stdout, never throws -- a hand-edited SKILL.md is left
+# "protected" without --force).
+step_json "AC4: lore agents --check is clean right after a fresh generation" \
+  '.kind == "agents.result" and (.data.files | all(.action == "unchanged"))' \
+  -- lore agents --check --json
+
+printf '\nHAND-EDITED-MARKER\n' >> .claude/skills/lore/SKILL.md
+lore agents --check --json >/tmp/agents-check-drift.json 2>/dev/null
+AGENTS_CHECK_DRIFT_RC=$?
+check "AC4: lore agents --check detects the hand-edited SKILL.md (exit 6 by RETURN, report still on stdout)" \
+  '[ "$AGENTS_CHECK_DRIFT_RC" -eq 6 ] \
+   && jq -e ".kind == \"agents.result\"" /tmp/agents-check-drift.json >/dev/null 2>&1 \
+   && jq -e "[.data.files[] | select(.path == \".claude/skills/lore/SKILL.md\")][0].action == \"protected\"" /tmp/agents-check-drift.json >/dev/null 2>&1'
+rm -f /tmp/agents-check-drift.json
+
+step "AC4: plain lore agents (no --check, no --force) exits 0 and leaves the hand-edit untouched" 0 -- lore agents
+check "AC4: the hand-edit is STILL present after a plain (non-force) run (protected, not overwritten)" \
+  'grep -q "HAND-EDITED-MARKER" .claude/skills/lore/SKILL.md'
+
+step_json "AC4: lore agents --force overwrites the protected, hand-edited SKILL.md" \
+  '.kind == "agents.result" and ([.data.files[] | select(.path == ".claude/skills/lore/SKILL.md")][0].action == "updated")' \
+  -- lore agents --force --json
+check "AC4: the hand-edit is GONE after --force regenerated SKILL.md" \
+  '! grep -q "HAND-EDITED-MARKER" .claude/skills/lore/SKILL.md'
+step_json "AC4: lore agents --check is clean again after --force healed the drift" \
+  '.kind == "agents.result" and (.data.files | all(.action == "unchanged"))' \
+  -- lore agents --check --json
+
+# CLAUDE.md nudge-block preservation: hand-written prose OUTSIDE the <!-- lore:agents:begin/end -->
+# block must survive a heal cycle byte-for-byte, while drift INSIDE the block is regenerated. The
+# nudge is never --force-gated (only SKILL.md is), so a plain `lore agents` heals it.
+sed -i '/<!-- lore:agents:begin -->/i AC4-CUSTOM-PROSE-BEFORE-THE-BLOCK' CLAUDE.md
+sed -i '/<!-- lore:agents:end -->/a AC4-CUSTOM-PROSE-AFTER-THE-BLOCK' CLAUDE.md
+sed -i '/<!-- lore:agents:begin -->/,/<!-- lore:agents:end -->/ s/Skill:/CORRUPTED-SKILL-LABEL:/' CLAUDE.md
+check "AC4: seeded custom prose around, and corrupted a line inside, the CLAUDE.md nudge block" \
+  'grep -q "AC4-CUSTOM-PROSE-BEFORE-THE-BLOCK" CLAUDE.md && grep -q "AC4-CUSTOM-PROSE-AFTER-THE-BLOCK" CLAUDE.md && grep -q "CORRUPTED-SKILL-LABEL:" CLAUDE.md'
+lore agents --check --json >/tmp/agents-check-nudge-drift.json 2>/dev/null
+AGENTS_NUDGE_DRIFT_RC=$?
+check "AC4: lore agents --check detects the corrupted CLAUDE.md nudge block as drift (exit 6)" \
+  '[ "$AGENTS_NUDGE_DRIFT_RC" -eq 6 ] \
+   && jq -e "[.data.files[] | select(.path == \"CLAUDE.md\")][0].action != \"unchanged\"" /tmp/agents-check-nudge-drift.json >/dev/null 2>&1'
+rm -f /tmp/agents-check-nudge-drift.json
+
+step "AC4: plain lore agents heals the corrupted nudge block" 0 -- lore agents
+check "AC4: the hand-written prose BEFORE and AFTER the block survived byte-for-byte" \
+  'grep -q "AC4-CUSTOM-PROSE-BEFORE-THE-BLOCK" CLAUDE.md && grep -q "AC4-CUSTOM-PROSE-AFTER-THE-BLOCK" CLAUDE.md'
+check "AC4: the corrupted line INSIDE the block was regenerated back to the real content" \
+  '! grep -q "CORRUPTED-SKILL-LABEL:" CLAUDE.md && grep -q "Skill:" CLAUDE.md'
+step_json "AC4: lore agents --check is clean again after healing the nudge block" \
+  '.kind == "agents.result" and (.data.files | all(.action == "unchanged"))' \
+  -- lore agents --check --json
+
 # ── Phase 23: help ────────────────────────────────────────────────────────────────
 step_json "lore help --json (capability manifest)" '.kind == "help.manifest"' -- lore help --json
 check "help manifest mentions sync and check" \
   'lore help --json | grep -qi "\"sync\"" && lore help --json | grep -qi "\"check\""'
+step_json "AC4: lore help <command> (positional) scopes the manifest to one command" \
+  '.kind == "help.manifest" and (.data.commands | length) == 1 and (.data.commands[0].name == "sync")' \
+  -- lore help sync --json
+step_fail "AC4: lore help with an unknown command is not_found (exit 3)" 3 \
+  '.error_type == "not_found"' \
+  -- lore help bogus-command-xyz --json
 
 # ── Phase 24: exit-code + output-mode spot checks ────────────────────────────────
 # Every exit-class check below now asserts the --json failure-output contract
@@ -1050,6 +1458,13 @@ chmod 755 backlog/tasks
 chmod 644 "$TASK4_FILE"
 
 step "output auto-selects --plain off-TTY (piped, no --plain flag)" 0 -- bash -c 'lore query "archive" | cat >/dev/null'
+# LORE-66 AC5 (housekeeping): the OLD version of this check only asserted exit 0 -- piped output
+# could still carry raw ANSI escapes and this step would still pass. Assert the piped output is
+# genuinely escape-free (bash pattern match on a literal ESC byte, no external regex dependency).
+AUTO_PLAIN_OUT="$(lore query "archive" | cat)"
+ESC_CHAR="$(printf '\033')"
+check "AC5: piped output is genuinely ANSI-free (auto-plain), not just exit 0" \
+  '[ "${AUTO_PLAIN_OUT#*$ESC_CHAR}" = "$AUTO_PLAIN_OUT" ]'
 step "--plain explicit flag" 0 -- lore query "archive" --plain
 
 # ── Phase 24b: nested checkout — the --show-prefix translation (LORE-65 AC4) ────────────────
