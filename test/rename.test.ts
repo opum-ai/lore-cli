@@ -68,6 +68,18 @@ describe("rewriteInbound — inbound links and refs (move)", () => {
     expect(body).toContain("[dead]: ../reference/orders.md"); // orphan (unused) definition untouched
   });
 
+  test("repoints a reference definition whose label contains an escaped bracket (LORE-87)", () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    // The label `a\]x:y` decodes to identifier `a]x:y` — a naive indexOf("]", ...) scan for the
+    // label's closing bracket would match the escaped `\]` instead of the real one, and then find
+    // the wrong `:` too (the one inside "x:y"), corrupting the located destination range.
+    writeDoc("stories/bulk.md", "---\ntype: Story\n---\nSee [it][a\\]x:y].\n\n[a\\]x:y]: ../reference/orders.md\n");
+    const plan = rewriteInbound(graph(), "reference/orders", "reference/sales-orders", { move: true });
+    const body = writesByPath(plan).get("stories/bulk.md") ?? "";
+    expect(body).toContain("[a\\]x:y]: ../reference/sales-orders.md");
+    expect(body).not.toContain("]: ../reference/orders.md"); // the old destination must not linger
+  });
+
   test("rewrites a frontmatter ref (any kind) to the bare-id new form", () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
     writeDoc("stories/bulk.md", "---\ntype: Story\nspecs:\n  - ../reference/orders.md\n---\nText.\n");
