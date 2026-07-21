@@ -12,7 +12,12 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/cli";
-import { writeFileAtomic, writeFileOverwriting } from "../src/commands/fswrite";
+import {
+  assertNoSymlinkInPath,
+  writeFileAtomic,
+  writeFileNoFollow,
+  writeFileOverwriting,
+} from "../src/commands/fswrite";
 import { type ReplaceReport, runReplace } from "../src/commands/replace";
 import { INDEX_BLOCK_BEGIN, INDEX_BLOCK_END } from "../src/core/indexes";
 import { TASK_BLOCK_BEGIN, TASK_BLOCK_END } from "../src/core/managed-block";
@@ -603,4 +608,84 @@ describe("writeFileAtomic", () => {
       chmodSync(dir, 0o755); // restore so afterEach's rmSync can clean up
     }
   });
+});
+
+// ── fswrite: writeFileNoFollow TOCTOU-safe overwrite (LORE-92) ────────────────────
+
+describe("writeFileNoFollow", () => {
+  let dir: string;
+  let outside: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "lore-fswrite-nofollow-"));
+    outside = mkdtempSync(join(tmpdir(), "lore-fswrite-nofollow-outside-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  test("overwrites a genuine existing file", () => {
+    const path = join(dir, "f.md");
+    writeFileSync(path, "old");
+    writeFileNoFollow(path, "new", "f.md");
+    expect(readFileSync(path, "utf8")).toBe("new");
+  });
+
+  test("creates a fresh file when none exists yet (writeAllOrRollback's force-create branch)", () => {
+    const path = join(dir, "f.md");
+    writeFileNoFollow(path, "hello", "f.md");
+    expect(readFileSync(path, "utf8")).toBe("hello");
+  });
+
+  // POSIX-only, matching this codebase's existing symlink tests' own skip guard (e.g. init.test.ts).
+  test.skipIf(process.platform === "win32")(
+    "refuses a symlink swapped in AFTER assertNoSymlinkInPath already passed — the write-time TOCTOU window (AC#1/AC#2)",
+    () => {
+      const path = join(dir, "f.md");
+      const outsideFile = join(outside, "secret.md");
+      writeFileSync(path, "old"); // a real file when writeAllOrRollback's own guard would run
+      writeFileSync(outsideFile, "ORIGINAL");
+
+      assertNoSymlinkInPath(dir, "f.md"); // passes — the target is still a real file at this point
+
+      // Simulate a concurrent process winning the race in the window between that check and the
+      // write below: the target is swapped for a symlink pointing outside the repo, mirroring the
+      // filing task's own repro methodology (drive the real primitives in writeAllOrRollback's
+      // order, swap the target mid-sequence, rather than needing a genuine concurrent process).
+      rmSync(path);
+      symlinkSync(outsideFile, path);
+
+      let thrown: unknown;
+      try {
+        writeFileNoFollow(path, "HACKED", "f.md");
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(LoreError);
+      expect((thrown as LoreError).type).toBe("conflict");
+      // The write never followed the symlink through to the real file on the other end.
+      expect(readFileSync(outsideFile, "utf8")).toBe("ORIGINAL");
+    },
+  );
+
+  // POSIX-only, matching this codebase's existing symlink tests' own skip guard.
+  test.skipIf(process.platform === "win32")(
+    "refuses a symlink at a target that never existed as a regular file (the force-create branch's own race)",
+    () => {
+      const path = join(dir, "f.md");
+      const outsideFile = join(outside, "secret.md");
+      writeFileSync(outsideFile, "ORIGINAL");
+      symlinkSync(outsideFile, path); // planted before any write is attempted at all
+
+      let thrown: unknown;
+      try {
+        writeFileNoFollow(path, "HACKED", "f.md");
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(LoreError);
+      expect((thrown as LoreError).type).toBe("conflict");
+      expect(readFileSync(outsideFile, "utf8")).toBe("ORIGINAL");
+    },
+  );
 });
