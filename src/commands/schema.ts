@@ -7,11 +7,13 @@
  * is byte-identical to the scaffolded one — and writes each file under `--out` (default
  * `.lore/schemas/`), **overwriting** so a re-export refreshes the bytes after a profile change.
  *
- * A **full** export (no `--type`) also **prunes** any orphaned `<slug>.schema.json` left in the
- * output directory by a type that the profile no longer declares, so `.lore/schemas/` always mirrors
- * the active profile rather than drifting (a stale schema would otherwise keep driving editor
- * validation from a removed type's rules). A single-`--type` export touches only that one file and
- * prunes nothing.
+ * A **full** export (no `--type`) to the **default** `.lore/schemas/` directory also **prunes** any
+ * orphaned `<slug>.schema.json` left there by a type that the profile no longer declares, so
+ * `.lore/schemas/` always mirrors the active profile rather than drifting (a stale schema would
+ * otherwise keep driving editor validation from a removed type's rules). Pruning never runs against a
+ * non-default `--out`: that directory isn't lore-owned, so a pre-existing `*.schema.json` sitting
+ * there — including one placed by an unrelated tool — must never be silently deleted. A single-`--type`
+ * export touches only that one file and prunes nothing.
  *
  * The emitted Draft-7 schemas are what makes the `# yaml-language-server: $schema=…` modeline `lore
  * new`/`lore init` stamp resolve, driving YAML autocomplete in VS Code/Obsidian (AC#1); because the
@@ -107,9 +109,12 @@ export function runSchema(options: SchemaOptions): number {
     // and `join(root, file.path)` is its absolute target — no need to re-derive the directory.
     writeFileOverwriting(join(options.root, file.path), file.contents, file.path);
   }
-  // A full export owns the directory's schema set, so a type dropped from the profile leaves a stale
-  // schema behind; prune it. A single-`--type` export is surgical and never prunes its siblings.
-  const removed = only === undefined ? pruneOrphans(absOutDir, outArg, files) : [];
+  // A full export to the managed default directory owns its schema set, so a type dropped from the
+  // profile leaves a stale schema behind; prune it there. A single-`--type` export is surgical and
+  // never prunes its siblings, and a non-default `--out` is never lore-owned, so it is never pruned
+  // either — see `isManagedSchemasDir`.
+  const removed =
+    only === undefined && isManagedSchemasDir(absOutDir, options.root) ? pruneOrphans(absOutDir, outArg, files) : [];
 
   const result: SchemaExportResult = {
     out: outArg,
@@ -137,10 +142,22 @@ function confineOutDir(out: string, root: string): string {
 }
 
 /**
+ * Whether `absOutDir` is the managed default schema directory (`.lore/schemas/`, resolved against
+ * `root`) — the only directory lore itself owns the full contents of. Pruning is confined to this
+ * directory (see {@link pruneOrphans}'s caller): any other `--out`, including the repo root itself
+ * (`--out .`, which {@link confineOutDir} explicitly allows), may contain files lore didn't create and
+ * must never be silently deleted.
+ */
+function isManagedSchemasDir(absOutDir: string, root: string): boolean {
+  return absOutDir === resolve(root, SCHEMAS_DIR);
+}
+
+/**
  * Delete every `<name>.schema.json` in `absDir` that the just-written `files` set does not contain —
  * the orphans a removed/renamed profile type left behind — and return them for the report. Only
- * `*.schema.json` is touched (the directory is lore-owned, but other files are never removed). The
- * directory was just `ensureDir`'d, so a read failure here is a genuine IO fault, mapped via the
+ * `*.schema.json` is touched, and only ever called for the managed default directory (see
+ * {@link isManagedSchemasDir}), so every file this walks is lore-owned; other files are never removed.
+ * The directory was just `ensureDir`'d, so a read failure here is a genuine IO fault, mapped via the
  * shared {@link ioError}.
  */
 function pruneOrphans(absDir: string, displayDir: string, files: readonly SchemaFile[]): ReportFile[] {
