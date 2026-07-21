@@ -274,6 +274,46 @@ describe("commitBacklogFiles — capture + scope guard (fake GitSpawn)", () => {
     expect((err as LoreError).type).toBe("drift");
     expect(spawn.calls).toHaveLength(0); // never reached git — the guard runs first
   });
+
+  test.each([
+    ["backlog/../docs/secret.md", "the task's own repro"],
+    ["backlog/./../docs/secret.md", "a `.` segment ahead of the `..`"],
+    ["backlog//../docs/secret.md", "a doubled slash ahead of the `..`"],
+    ["backlog/tasks/../../docs/secret.md", "a deeper `..` climb"],
+    ["/etc/passwd", "an absolute path"],
+  ])("a `..`-traversal pathspec that textually starts with backlog/ is refused (%s: %s)", async (file) => {
+    const spawn = notNestedSpawn(ok(""));
+    let err: unknown;
+    try {
+      await commitBacklogFiles([file], opts(spawn), "msg");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(LoreError);
+    expect((err as LoreError).type).toBe("drift");
+    expect(spawn.calls).toHaveLength(0); // never reached git — the guard runs first
+  });
+
+  test("a sibling directory sharing the `backlog` prefix (no `..` involved) is still refused", async () => {
+    const spawn = notNestedSpawn(ok(""));
+    await expect(commitBacklogFiles(["backlog-evil/x.md"], opts(spawn), "msg")).rejects.toThrow(LoreError);
+    expect(spawn.calls).toHaveLength(0);
+  });
+
+  test("a redundant `./` segment normalizes to the plain safe path and is accepted", async () => {
+    const spawn = notNestedSpawn(ok(porcelainZ(entry(" M", "backlog/tasks/lore-1 - x.md"))), ok(""), ok(""));
+    const result = await commitBacklogFiles(["backlog/./tasks/lore-1 - x.md"], opts(spawn), "msg");
+    expect(result.committed).toBe(true);
+    // git status was scoped with the NORMALIZED path, not the raw `./`-containing one.
+    expect(spawn.calls[1]?.args).toEqual([
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--untracked-files=all",
+      "--",
+      ":(literal)backlog/tasks/lore-1 - x.md",
+    ]);
+  });
 });
 
 describe("commitBacklogIfDirty — nested-bundle cwd (fake GitSpawn)", () => {
@@ -603,6 +643,28 @@ describe("bunGitSpawn + commitBacklogFiles — scoped per-write commit (real git
     const result = await commitBacklogFiles(["backlog/tasks/lore-9 - never written.md"], { root }, "unused");
     expect(result).toEqual({ committed: false, files: [] });
     expect(headSha()).toBe(before);
+  });
+
+  test("regression (LORE-69): a `..` pathspec that resolves outside backlog/ is refused, not committed — reproduces the task's live git repro", async () => {
+    mkdirSync(join(root, "backlog"), { recursive: true });
+    mkdirSync(join(root, "docs"), { recursive: true });
+    const secret = join(root, "docs", "secret.md");
+    writeFileSync(secret, "outside backlog/, must never be committed by lore\n");
+    const before = headSha();
+
+    await expect(
+      commitBacklogFiles(["backlog/../docs/secret.md"], { root }, "chore(backlog): sync task changes"),
+    ).rejects.toThrow(LoreError);
+
+    // Confirms the guard, not git itself, is what stops this: without LORE-69's fix, real git DOES
+    // resolve and commit the outside file even through a `:(literal)`-quoted pathspec (the task's own
+    // confirmed repro). HEAD must not move, and the outside file must remain untracked.
+    expect(headSha()).toBe(before);
+    const status = Bun.spawnSync(["git", "status", "--porcelain", "--untracked-files=all"], {
+      cwd: root,
+      stdout: "pipe",
+    }).stdout.toString("utf8");
+    expect(status).toContain("docs/secret.md");
   });
 });
 
