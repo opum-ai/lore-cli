@@ -81,20 +81,21 @@ target.
 Fix: extracted the existing per-segment lstatSync walk from fswrite.ts's
 assertNoSymlinkInPath (LORE-76/77 precedent) into a new non-throwing sibling
 findSymlinkSegment(root, relPath): string | null, refactored assertNoSymlinkInPath to
-call it (no behavior change, its own tests unaffected). isManagedSchemasDir now also
-requires findSymlinkSegment(root, SCHEMAS_DIR) === null, so a symlinked default
-directory is treated as unmanaged and pruning is skipped entirely (mirrors how any
-other --out is never pruned) — writes still proceed as before, only the destructive
-prune is gated.
+call it (no behavior change — confirmed the existing LORE-76/77 message-substring tests
+in test/init.test.ts still pass unchanged). isManagedSchemasDir now also requires
+findSymlinkSegment(root, SCHEMAS_DIR) === null, so a symlinked default directory is
+treated as unmanaged and pruning is skipped entirely (mirrors how any other --out is
+never pruned) — writes still proceed as before, only the destructive prune is gated.
 
-AC1: added a parameterized test (test.each) covering .lore/schemas-extra, .lore/schema,
+AC1: parameterized test (test.each) covering .lore/schemas-extra, .lore/schema,
 .lore/schemas/sub — each pre-seeded with an unrelated *.schema.json — confirming the
-existing lexical check already handles these safely (no code change needed there, only
-test coverage was missing).
+existing lexical check already handles these safely.
 
-AC2/AC3: added a POSIX-only test (matching this codebase's existing symlink-test skip
-guard) that symlinks .lore/schemas to an outside tmp directory containing an unrelated
-file, runs a full default export, and asserts the file survives.
+AC2/AC3: POSIX-only tests symlinking .lore/schemas itself, and separately symlinking
+.lore (the parent) with schemas/ nested under it, to an outside tmp directory
+containing an unrelated file; both confirm a full default export does not prune it.
+The second case was added after an independent review noted the fix's own docstring
+claims ".lore itself symlinked" coverage that wasn't originally locked in by a test.
 
 AC4: existing "a full export removes an orphaned <slug>.schema.json" test (genuine,
 non-symlinked default directory) still passes unchanged.
@@ -103,10 +104,19 @@ Live-CLI verification (not just synthetic tests, per this campaign's standing
 discipline for destructive/security fixes): wrote .repro-scratch/lore94-symlink-verify.ts,
 a real runSchema() call against a real symlinked directory. Pre-fix (git stash on
 schema.ts/fswrite.ts): exit 0, unrelated file DELETED. Post-fix (stash pop): exit 0,
-unrelated file SURVIVES. Confirms the repro is real and the fix closes it.
+unrelated file SURVIVES.
 
-Verified: bun test -> 1663 pass/0 fail (up from 1659); bun run typecheck clean;
-bun run lint clean on all 3 changed files (fswrite.ts, schema.ts,
+Independent adversarial review (general-purpose subagent): reverted isManagedSchemasDir
+to the pre-fix lexical-only check and reran the new symlink test itself, confirming it
+fails exactly as expected pre-fix (not a tautology); manually verified the .lore-itself-
+symlinked and does-not-exist-yet edge cases; found no blocking issues. Its one
+non-blocking finding (missing .lore-itself-symlinked test coverage) was addressed by
+adding that test. It also caught that my first `backlog task edit --ac` invocation had
+appended 4 bogus AC rows instead of checking the real ones — fixed via --remove-ac/
+--check-ac.
+
+Verified: bun test -> 1664 pass/0 fail (up from 1659); bun run typecheck clean;
+bun run lint clean on all changed files (fswrite.ts, schema.ts,
 test/schema-export.test.ts) — 4 pre-existing infos remain in unrelated files
-(indexes.test.ts, supersede.test.ts), untouched by this change.
+(test/managed-block.test.ts, test/supersede.test.ts), untouched by this change.
 <!-- SECTION:NOTES:END -->

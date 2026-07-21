@@ -3,7 +3,7 @@ id: doc-1
 title: Backlog campaign tracker
 type: other
 created_date: '2026-07-19 23:15'
-updated_date: '2026-07-21 19:34'
+updated_date: '2026-07-21 19:50'
 ---
 # Backlog campaign tracker
 
@@ -12,14 +12,14 @@ lifecycle → advance cursor → append session log → write handover.
 
 ## Cursor
 
-**Next issue: LORE-94** — schema export `--out` near-miss test gaps +
-`isManagedSchemasDir` symlink bypass. Item 2 of the 8-item queue confirmed
-by the user on 2026-07-21 ("Risk-ascending, sweep last (Recommended)": small
-self-contained fixes first, then the two profile-threading fixes, then the
-well-precedented symlink guards, saving the largest-surface item (LORE-93, a
-5-command sweep) for last, mirroring how the just-finished campaign sequenced
-its own interrelated LORE-80/79/78/81 cluster). Do not re-ask before taking
-the next item.
+**Next issue: LORE-92** — `lore scaffold --force` has a narrow TOCTOU symlink
+window. Item 3 of the 8-item queue confirmed by the user on 2026-07-21
+("Risk-ascending, sweep last (Recommended)": small self-contained fixes
+first, then the two profile-threading fixes, then the well-precedented
+symlink guards, saving the largest-surface item (LORE-93, a 5-command sweep)
+for last, mirroring how the just-finished campaign sequenced its own
+interrelated LORE-80/79/78/81 cluster). Do not re-ask before taking the next
+item.
 
 **Merge gate: self-merge (skill default)** — this queue runs under the
 standard `backlog-handover` skill (`.claude/skills/backlog-handover/`), whose
@@ -33,13 +33,12 @@ CI runs post-merge on dev.
 
 | # | Issue | Type | One-line note |
 | --- | --- | --- | --- |
-| 1 | LORE-94 | bug | schema export --out near-miss test gaps + isManagedSchemasDir symlink bypass |
-| 2 | LORE-92 | bug | lore scaffold --force has a narrow TOCTOU symlink window |
-| 3 | LORE-95 | bug | escapesRoot misses a Windows drive-relative id and an empty/self-cancelling newId |
-| 4 | LORE-89 | bug | lore check's own concept scan never forwards a project's custom profile |
-| 5 | LORE-88 | bug | rewriteInbound (rename/supersede --rewrite-links) never forwards a project's custom profile |
-| 6 | LORE-91 | bug | lore new --template silently follows a symlink, reads outside the repo |
-| 7 | LORE-93 | bug | ensureDir call sites in 5 commands follow symlinks, escaping docs/ |
+| 1 | LORE-92 | bug | lore scaffold --force has a narrow TOCTOU symlink window |
+| 2 | LORE-95 | bug | escapesRoot misses a Windows drive-relative id and an empty/self-cancelling newId |
+| 3 | LORE-89 | bug | lore check's own concept scan never forwards a project's custom profile |
+| 4 | LORE-88 | bug | rewriteInbound (rename/supersede --rewrite-links) never forwards a project's custom profile |
+| 5 | LORE-91 | bug | lore new --template silently follows a symlink, reads outside the repo |
+| 6 | LORE-93 | bug | ensureDir call sites in 5 commands follow symlinks, escaping docs/ |
 
 ## Resolved
 
@@ -73,6 +72,7 @@ CI runs post-merge on dev.
 | 26 | LORE-78 | Done, 2026-07-21, session 26 | Live pre-fix repro confirmed AC#1 (reject before command execution, clear usage error) was already substantively satisfied by LORE-79's `assertDestinationConfined` call in `runRename`'s body. AC#2 asks specifically for rejection "at argument-parsing time" and names the `args.ts`/`parseRenameArgs` layer — today the check ran in `runRename`, immediately after `parseRenameArgs` returned, not inside it. Relocated the `assertDestinationConfined(newId)` call into `parseRenameArgs` itself (right after the `newId` positional is extracted, before returning), removing the now-redundant separate call from `runRename` — a confined `newId` is now `parseRenameArgs`'s own guarantee, not a caller-side follow-up check, literally realizing the third (args-parsing) layer of the review's original three-layer framing (parse → command → engine). Updated the module docstring and `assertDestinationConfined`'s own docstring to credit LORE-78 alongside LORE-79/LORE-80. Added one new test in `test/rename.test.ts` labeled LORE-78 (a `..`-segment newId rejected as usage even when `oldId` is never written, proving the check needs nothing but the raw argument tokens) — confirmed no `parseXArgs` function is exported anywhere in this codebase for direct unit testing (checked all 15+ commands), so this stays a CLI-level integration test like every other parse-layer test in the project, consistent with the established convention rather than introducing a new export just for this task. Post-change live-CLI re-verification (fresh scratch bundle): traversal newId, absolute newId, and a nonexistent-oldId+traversal-newId combination all still fail with usage/exit 2; real repo git status clean apart from pre-existing `.repro-scratch/`/`docs/.obsidian/`. Full `bun test` → 1656/1656 (up from 1655); `bun run typecheck` clean; `bun run lint` 4 pre-existing infos, all in unrelated files (`managed-block.ts`/`managed-block.test.ts`/`supersede.test.ts`). |
 | 27 | LORE-81 | Done, 2026-07-21, session 27 | Last item in the queue; a different bug class than the LORE-80/79/78 rename-destination-traversal cluster (source-id reserved-stem safety, not destination-id traversal safety). Root cause: `assertNotReservedStem` was only called on `newId` in `runRename`, never on `oldId`, unlike `supersede.ts` which checks both. Renaming FROM `docs/index.md` (the bundle's reserved, frontmatter'd root index concept) was not rejected: the regenerated index listing got written to the source path, then immediately overwritten by the moved content, then the source renamed away, leaving `docs/index.md` missing entirely. Live-CLI-verified the repro first on a scratch bundle (this campaign's standing discipline) — confirmed `lore rename index some-new-name` exited 0 pre-fix with `docs/index.md` gone afterward. Fix: added `assertNotReservedStem(oldId, "rename from")` in `runRename`, mirroring `supersede.ts`'s existing two-sided call pattern exactly, placed before any bundle load/write. Added one regression test in `test/rename.test.ts` (AC#2) asserting the usage error and that `docs/index.md` survives untouched; confirmed a normal (non-reserved) rename still works. Full `bun test` → 1657/1657 pass (up from 1656); `bun run typecheck` clean; `bunx biome check` clean on changed files. **Independent adversarial review (general-purpose subagent, run after committing the fix+tests, per this campaign's established ordering discipline): verdict "solid fix, safe to merge"** — confirmed the check sits before any bundle load/write, ordering matches `supersede.ts` exactly, no regressions (81/81 rename tests pass), and the basename-based check correctly covers a subdirectory `index`/`log` stem as `oldId` too (same code path already proven from the `newId` side). Two non-blocking test-coverage suggestions noted (an explicit `oldId === "log"` case; a subdirectory `reference/index`-as-`oldId` case) — both exercise the identical `assertNotReservedStem`/basename path already covered from the `newId` side, so left as a human-triage follow-up rather than expanded in-task; no blocking findings. This is the LAST item in the confirmed queue — the queue is now empty. |
 | 28 | LORE-90 | Done, 2026-07-21, session 29 | Item 1 of the fresh 8-item queue (session 28's re-arm). `commitBacklogFiles`'s guard (`src/state.ts`) normalized every candidate path with `node:path`'s `posix.normalize` only, then checked `startsWith(BACKLOG_DIR)` — backslash is not a POSIX separator, so a payload like `backlog/x\..\..\outside.md` (backslash-delimited `..`) survived `posix.normalize` unchanged and still passed the prefix check, though the task's own filing had already live-verified the concrete downstream effect today is a silent no-op (git's own `:(literal)` pathspec matcher also never treats `\` as a separator) rather than an actual escape. Re-verified the root cause fresh against current `dev` HEAD before implementing (line numbers matched exactly: `state.ts:29` import, guard at `state.ts:216-217`). Fix: imported `escapesRoot` from `core/rewrite.ts` (already exported for exactly this reuse — precedent: `rename.ts`'s `newId` guard, LORE-79/80) and added it to the guard, run on the path with the `backlog/` prefix already stripped (running it on the full prefixed string would let the `backlog` segment itself absorb one level of the `..` climb and miss the payload — traced both forms by hand before writing the fix). Updated the guard's doc comment to describe the backslash case and the no-op nuance. Added a `test.each` regression block in `test/state.test.ts` covering the task's own live-verified payload plus a deeper backslash climb, both asserting a thrown `drift` `LoreError` with zero git calls. Verified: `bun test test/state.test.ts` 43/43 pass; full `bun test` 1659/1659 pass; `bun run typecheck` clean; `bun run lint` (biome) 0 errors (4 pre-existing infos in an unrelated file, untouched); live-CLI run of the real fixed `commitBacklogFiles` against a real scratch git repo confirmed the `drift` throw and that nothing was staged/committed anywhere (scratch repo + script under `.repro-scratch/`, left in place per this campaign's standing convention). **Independent review (general-purpose subagent, run after committing the fix+tests, per this campaign's established ordering discipline): verdict "solid fix, safe to merge"** — hand-traced and live-CLI re-tested the payload rejection, confirmed no false positives on legitimate paths/substring-`..`-filenames/`./`-redundancy, confirmed the prefix-stripping-before-`escapesRoot` reasoning is correct, independently re-ran the full suite (1659/1659 pass). One non-blocking follow-up surfaced (see Not-queued: `commitBacklogFiles`'s guard still lacks the `win32.isAbsolute` half of `rename.ts`'s three-part pattern) — outside LORE-90's own stated ACs, not a reason to block. Cursor advanced to LORE-94 (item 2 of 8). |
+| 29 | LORE-94 | Done, 2026-07-21, session 30 | Item 2 of the 8-item queue. Root cause confirmed fresh against current `dev` HEAD before implementing (line numbers matched the filing task's ~151-153/~163-184 claims for `isManagedSchemasDir`/`pruneOrphans` in `src/commands/schema.ts`): `isManagedSchemasDir(absOutDir, root)`'s lexical `absOutDir === resolve(root, SCHEMAS_DIR)` comparison never dereferenced symlinks, so a `.lore/schemas` that was itself a symlink to an outside directory still matched, and `pruneOrphans` then `rmSync`'d through it into the real target. Fix reused the codebase's existing LORE-76/77 precedent guard (`fswrite.ts`'s `assertNoSymlinkInPath`) rather than re-deriving a new check: extracted its per-segment `lstatSync` walk into a new non-throwing sibling `findSymlinkSegment(root, relPath): string \| null` (confirmed behavior-preserving — the existing LORE-76/77 message-substring tests in `test/init.test.ts` still pass unchanged), and `isManagedSchemasDir` now also requires `findSymlinkSegment(root, SCHEMAS_DIR) === null` before pruning. AC1 (test coverage for lexical near-miss `--out` dirs — `.lore/schemas-extra`/`.lore/schema`/`.lore/schemas/sub`) added as a `test.each`, confirming the existing lexical check already handled these safely. AC2/AC3 (the symlink bypass itself) covered by two POSIX-only tests: `.lore/schemas` itself symlinked, and separately `.lore` (the parent) symlinked with `schemas/` nested under it — the second added after independent review noted the fix's own docstring claimed that coverage but no test locked it in yet. AC4 (genuine non-symlinked pruning unchanged) confirmed via the pre-existing orphan-pruning test staying green. Live-CLI-verified via `.repro-scratch/lore94-symlink-verify.ts` against a real symlinked directory (left in place per this campaign's standing convention): `git stash` on the two fix files reproduced the real deletion pre-fix (exit 0, unrelated file gone), `stash pop` restored the fix (exit 0, file survives). **Independent review (general-purpose subagent, run after committing the fix+tests, per this campaign's established ordering discipline)**: reverted `isManagedSchemasDir` to the pre-fix lexical-only check and reran the new symlink test itself to confirm it fails exactly as expected (not a tautology); manually verified the `.lore`-itself-symlinked and does-not-exist-yet edge cases; confirmed `assertNoSymlinkInPath`'s only other caller (`init.ts`) is unaffected; found no blocking issues — one non-blocking coverage gap (the `.lore`-itself-symlinked case) was closed with an added test. The review also caught that this session's first `backlog task edit --ac` invocation had appended 4 bogus acceptance-criteria rows instead of checking the real ones (a malformed flag usage — the correct flag is `--check-ac <index>`, not `--ac <index:checked>`); fixed via `--remove-ac`/`--check-ac`. Verified: `bun test` 1664/1664 pass (up from 1659); `bun run typecheck` clean; `bun run lint` 0 errors on all changed files (4 pre-existing infos remain in unrelated `test/managed-block.test.ts`/`test/supersede.test.ts`, untouched). Cursor advanced to LORE-92 (item 3 of 8). |
 
 ## Not queued — needs a human / blocked
 
@@ -1240,3 +1240,20 @@ CI runs post-merge on dev.
   confirmed live that a win32-absolute-looking suffix (e.g. `backlog/C:\Windows\evil.md`) still
   passes today, though it's not an active escape (same git `:(literal)` no-op reasoning as the
   original bug) and is outside LORE-90's own stated ACs. Cursor advanced to LORE-94, item 2 of 8.
+
+- 2026-07-21 — session 30: resolved LORE-94 (see Resolved table), item 2 of
+  the 8-item queue. Branch `feature/LORE-94` off `dev @ 2aa6a77`. Re-verified
+  the root-cause claim fresh against current `dev` HEAD before implementing
+  (line numbers matched the filing task's citations closely). Fix reused
+  `fswrite.ts`'s existing `assertNoSymlinkInPath` (LORE-76/77 precedent) —
+  extracted its walk into a non-throwing `findSymlinkSegment` sibling rather
+  than re-deriving a new symlink check from scratch. Live-CLI-verified via a
+  real `git stash`/`stash pop` comparison against a real symlinked directory,
+  not just the synthetic test suite. Independent review (general-purpose
+  subagent, run after committing the fix+tests, per this campaign's
+  established ordering discipline): no blocking findings; one non-blocking
+  coverage gap (missing test for `.lore` itself, not just `.lore/schemas`,
+  being the symlink) closed by adding that test. The review also caught a
+  malformed `backlog task edit --ac` invocation that appended 4 bogus AC rows
+  instead of checking the real ones — fixed via `--remove-ac`/`--check-ac`.
+  Cursor advanced to LORE-92, item 3 of 8.
