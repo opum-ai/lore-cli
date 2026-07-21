@@ -161,10 +161,10 @@ export function rewriteInbound(
   const move = options.move ?? false;
   const rewriteRefs = options.rewriteFrontmatterRefs ?? true;
   const exclude = options.exclude ?? NO_EXCLUDE;
+  assertConfinedToBundle(fromId, "fromId");
+  assertConfinedToBundle(toId, "toId");
   const from = idFromPath(fromId);
   const to = idFromPath(toId);
-  assertConfinedToBundle(from, "fromId");
-  assertConfinedToBundle(to, "toId");
 
   const fromConcept = graph.concepts.get(from);
   if (fromConcept === undefined) {
@@ -217,18 +217,29 @@ export function rewriteInbound(
 }
 
 /**
- * Reject a `fromId`/`toId` that resolves outside the `docs/` bundle root once normalized — closes
- * the traversal gap for every {@link rewriteInbound} caller (`lore rename`, `lore supersede`) at
- * the one shared layer both funnel through (LORE-80). `idFromPath`'s `posix.normalize` collapses
- * every `..` segment it can; one that survives at the front of the result means the id already
- * climbs above the bundle root before this function ever sees it. An absolute path is checked
- * against BOTH `posix.isAbsolute` and `win32.isAbsolute` — this ships as a compiled binary for
- * both platforms from the same source, so a Windows drive-letter id (inert POSIX-side, genuinely
- * absolute on a win32 run) must be rejected regardless of which platform is running (the LORE-69
- * cross-platform-normalize convention).
+ * Reject a `fromId`/`toId` that would resolve outside the `docs/` bundle root — closes the
+ * traversal gap for every {@link rewriteInbound} caller (`lore rename`, `lore supersede`) at the
+ * one shared layer both funnel through (LORE-80). Checked on the RAW caller-supplied value,
+ * before {@link idFromPath} ever runs.
+ *
+ * An absolute path is checked against BOTH `posix.isAbsolute` and `win32.isAbsolute` — this ships
+ * as a compiled binary for both platforms from the same source, so a Windows drive-letter id
+ * (inert POSIX-side, genuinely absolute on a win32 run) must be rejected regardless of which
+ * platform is running (the LORE-69 cross-platform-normalize convention).
+ *
+ * A relative escape is caught by {@link escapesRoot}, which walks segments split on EITHER `/` or
+ * `\` — not just `posix.normalize`'s own forward-slash-only splitting. `idFromPath`'s
+ * `posix.normalize` treats a backslash as an ordinary filename character, not a separator, so a
+ * relative traversal spelled `..\pwned` survives it completely unchanged and would trip neither
+ * `posix.isAbsolute` (it isn't) nor `win32.isAbsolute` (it's relative, not absolute — that check
+ * only matches a drive-letter/UNC/leading-separator *absolute* form). Yet the command layer's
+ * eventual write (`commands/rename.ts`, via the platform-native `path.join`) treats `\` as a
+ * separator on an actual Windows run, so `..\pwned` is exactly as real an escape there as
+ * `../pwned` is everywhere else — this check must catch it on every platform it runs on, not only
+ * the one it happens to be compiled for.
  */
 function assertConfinedToBundle(id: string, label: "fromId" | "toId"): void {
-  if (id === ".." || id.startsWith("../") || posix.isAbsolute(id) || win32.isAbsolute(id)) {
+  if (posix.isAbsolute(id) || win32.isAbsolute(id) || escapesRoot(id)) {
     throw new LoreError(
       "validation",
       `${label} "${id}" resolves outside the docs/ bundle root`,
@@ -236,6 +247,33 @@ function assertConfinedToBundle(id: string, label: "fromId" | "toId"): void {
       { id },
     );
   }
+}
+
+/**
+ * Whether walking `id`'s segments — split on a run of either `/` or `\`, since either can act as
+ * a separator depending on which platform's binary eventually resolves it (see
+ * {@link assertConfinedToBundle}) — climbs above the directory `id` starts in. A literal `..`
+ * segment always means "parent directory": no real filesystem, on either platform, permits a
+ * file or directory literally named `..`, so this can never misfire on a genuine bundle id — nor
+ * reject a real segment that merely *starts* with `..` (e.g. `..foo/bar`), since that segment
+ * does not equal `..` exactly (mirrors `new.ts`'s `resolveOutPath`'s own documented care).
+ */
+function escapesRoot(id: string): boolean {
+  let depth = 0;
+  for (const segment of id.split(/[\\/]+/)) {
+    if (segment === "" || segment === ".") {
+      continue;
+    }
+    if (segment === "..") {
+      if (depth === 0) {
+        return true;
+      }
+      depth--;
+    } else {
+      depth++;
+    }
+  }
+  return false;
 }
 
 /** The resolved coordinates one concept's rewrite needs (`from`/`to` are normalized ids). */

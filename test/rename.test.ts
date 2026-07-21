@@ -365,6 +365,36 @@ describe("rewriteInbound — modes and validation", () => {
     }
   });
 
+  test("rejects a backslash-spelled relative toId traversal (LORE-80 review fix)", () => {
+    // posix.normalize treats `\` as an ordinary character (not a separator) and win32.isAbsolute
+    // rejects only an absolute form, so `..\pwned` trips neither of the earlier, incomplete
+    // checks — yet a real Windows binary's path.join treats `\` as a separator, making this
+    // exactly as real an escape as `../pwned`.
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    try {
+      rewriteInbound(graph(), "reference/orders", "..\\pwned", { move: true });
+      throw new Error("expected a validation error");
+    } catch (err) {
+      expect((err as LoreError).type).toBe("validation");
+    }
+  });
+
+  test("rejects a mixed-separator traversal that nets outside the bundle root (LORE-80 review fix)", () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    try {
+      rewriteInbound(graph(), "reference/orders", "sub/..\\..\\pwned", { move: true });
+      throw new Error("expected a validation error");
+    } catch (err) {
+      expect((err as LoreError).type).toBe("validation");
+    }
+  });
+
+  test("does not reject a real segment that merely starts with '..' (no false positive)", () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    const plan = rewriteInbound(graph(), "reference/orders", "..foo/bar", { move: true });
+    expect(plan.rename).toEqual({ from: "reference/orders.md", to: "..foo/bar.md" });
+  });
+
   test("rejects a fromId that traverses outside the docs/ bundle root (LORE-80)", () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
     try {

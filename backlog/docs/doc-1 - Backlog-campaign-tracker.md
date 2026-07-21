@@ -3,7 +3,7 @@ id: doc-1
 title: Backlog campaign tracker
 type: other
 created_date: '2026-07-19 23:15'
-updated_date: '2026-07-21 14:31'
+updated_date: '2026-07-21 15:44'
 ---
 # Backlog campaign tracker
 
@@ -12,11 +12,11 @@ lifecycle → advance cursor → append session log → write handover.
 
 ## Cursor
 
-**Next issue: LORE-80** — queue order confirmed by the user on 2026-07-21
+**Next issue: LORE-79** — queue order confirmed by the user on 2026-07-21
 ("Use this order (Recommended)": independent fixes first, the interrelated
-rename-destination-traversal cluster (LORE-80→79→78→81) last, since LORE-80's
-shared-engine containment fix is what the other three build on). Do not re-ask
-before taking the next item.
+rename-destination-traversal cluster (LORE-80→79→78→81) last). LORE-80 (the
+shared-engine containment fix the other three build on) is now Done — see
+Resolved. Do not re-ask before taking the next item.
 
 **Merge gate: self-merge (skill default)** — this queue runs under the
 standard `backlog-handover` skill (`.claude/skills/backlog-handover/`), whose
@@ -30,10 +30,9 @@ CI runs post-merge on dev.
 
 | # | Issue | Type | One-line note |
 | --- | --- | --- | --- |
-| 1 | LORE-80 | bug | rewriteInbound shared engine does not confine fromId/toId to docs/ bundle root |
-| 2 | LORE-79 | bug | lore rename destination path is not confined to docs/ root at the command layer |
-| 3 | LORE-78 | bug | lore rename destination id is not validated for `..` traversal at the argument-parsing layer |
-| 4 | LORE-81 | bug | lore rename index <new> (renaming FROM the reserved root index) is not rejected |
+| 1 | LORE-79 | bug | lore rename destination path is not confined to docs/ root at the command layer |
+| 2 | LORE-78 | bug | lore rename destination id is not validated for `..` traversal at the argument-parsing layer |
+| 3 | LORE-81 | bug | lore rename index <new> (renaming FROM the reserved root index) is not rejected |
 
 ## Resolved
 
@@ -62,6 +61,7 @@ CI runs post-merge on dev.
 | 21 | LORE-73 | Done, 2026-07-21, session 21 | Root cause: `core/replace.ts`'s `MANAGED_MARKERS` registry only listed the `lore:index` marker pair, so `lore replace` edited/counted matches inside a live `lore:tasks` table instead of skipping it. **Round 1 fix** added `TASK_BLOCK_BEGIN`/`TASK_BLOCK_END` reusing `indexes.ts`'s `locateManagedBlock` (a literal `indexOf` scan) — passed a full test suite and a live scratch-bundle repro, but **independent review found it broke `lore replace`'s default invocation against THIS repo's own `docs/` bundle**: several real docs (ADRs, runbooks, reference docs) cite the `lore:tasks:begin`/`:end` syntax in prose and fenced code examples to document the format, and the literal scan can't distinguish a citation from a real block — false "duplicated"/"unmatched" validation errors on some files, silent false-positive protection of ordinary prose on another. Confirmed live: `lore replace "Backlog.md" "the-Backlog-fork" --dry-run` aborted exit 6 against `dev`'s real `docs/`. **Round 2 fix**: added `managed-block.ts`'s new `locateTaskBlock`, built on the module's existing structural (mdast, top-level-`html`-node-only) marker location `lore sync`/`lore check` already trust, instead of the literal scan; `replace.ts`'s registry became `MANAGED_REGION_LOCATORS` (an array of locator functions) so `lore:index` (literal scan, verified safe — that marker text never occurs as a citation anywhere in `docs/`) and `lore:tasks` (structural) each use the strategy actually correct for them. A second independent review round then verified the round-2 fix directly (traced `locateTaskBlock`'s null/throw/span semantics by hand, re-ran the live repo repro — now succeeds, 286 matches in 29 of 37 files — plus dry-runs against all 8 real docs citing the marker syntax, and built a genuine end-to-end `lore:tasks` block in a scratch bundle via `lore init`+`lore new story` to confirm protection still works, not overcorrected into a no-op) — PASS on substance, one blocking CI-lint format error in the new tests (**round 3 fix**, trivial). 12 new regression tests total across `test/replace.test.ts`/`test/managed-block.test.ts` (5 for the original bug, 7 for the round-1-review-found regression, incl. the exact 3-citation shape that broke round 1), all proven via `git stash` isolated-revert to fail pre-fix/pass post-fix. Full `bun test` → 1623 pass/0 fail (up from 1608); `bun run typecheck` clean; `bun run lint` exits 0. PR #77, rebase-merged into `dev` (one metadata-only commit landed after the actual GitHub-side merge completed — a `gh pr merge` local-checkout race, not a code issue — reconciled by cherry-picking it onto `dev` directly; see Session log). |
 | 22 | LORE-74 | Done, 2026-07-21, session 22 | Added `--limit <n>` (default 20, mirrors `query`) to `lore orphans`, applied INDEPENDENTLY to each of orphanTasks/danglingLinks since they're unrelated counts (the design question the prior handover flagged) — each section carries its own total/shown/truncated (cli-contract §3), omitted together with its array under `--tasks-only`/`--docs-only`. Header now reports each section's TOTAL (matching `query`'s header convention, not the capped shown count); each non-empty section gets its own truncation footer. Updated the LORE-51 700k-row regression test (AC#2): split into the new default-cap behavior (footer present, highest id dropped) and an explicit --limit raised past the total (preserving the original crash-safety proof that a huge array still flows through the per-item render loop without a RangeError). Updated cli-surface.md's orphans flag/output row; cli-contract.md's §3 list already named orphans (the pre-existing contract-vs-behavior gap this task closed), so it needed no change. Independent adversarial review (general-purpose subagent): re-verified cap/slice/truncation-field consistency at every boundary, --tasks-only/--docs-only omitting all four of the excluded section's fields through the REAL --json envelope (not just the pure computeOrphans function), the header/footer's use of totals vs. shown counts, argument-parsing parity with query.ts's precedent, and that the split LORE-51 test still proves both the default-cap behavior and the original crash-safety guard — no blocking or non-blocking issues found, clean on first pass. Verified: `bun test` full suite 1642/1642 (up from 1623); `bun run typecheck` clean; `bun run lint` clean on touched files (4 pre-existing infos elsewhere, untouched); `git stash` pre/post-fix discipline (new/updated orphans.test.ts assertions fail against pre-fix code); real-CLI smoke test against this repo's own `docs/` bundle (`lore orphans`, `lore check` — 0 errors/0 warnings; the Backlog-snapshot leg itself couldn't be exercised for real since PATH's `backlog` is stock v1.48.0, not the --json fork — a known, pre-existing environment gap, covered instead by 49/49 passing fakeAdapter-based tests incl. a 700k-row synthetic snapshot). |
 | 23 | LORE-75 | Done, 2026-07-21, session 23 | Root cause: `src/commands/schema.ts`'s `pruneOrphans` deleted every `<slug>.schema.json` in the resolved `--out` directory the just-written file set didn't contain, with no check the directory was lore-owned — `confineOutDir` only confines WHERE `--out` can be (rejects `..`/absolute; explicitly allows `--out .`, the repo root), not whether pruning should run there at all. Fix: chose AC#1's "restricts pruning to the default `.lore/schemas/` path" option over a marker-file scheme (simpler, matches the module's own pre-existing doc comment that a non-default `--out` is "for ad-hoc/CI use" only) — added `isManagedSchemasDir(absOutDir, root)` comparing the resolved `--out` against `resolve(root, SCHEMAS_DIR)`; `pruneOrphans` is now called only when a full export's `--out` resolves to that exact directory. A non-default `--out`, including `--out .` (the sharpest repro — the repo root, which `confineOutDir` explicitly allows), never prunes regardless of full vs. `--type` export, so a pre-existing unrelated `*.schema.json` anywhere else always survives. 2 new tests in `test/schema-export.test.ts` (a non-default relative `--out` dir, and `--out .`), each written and confirmed via `git stash` to genuinely fail pre-fix (the unrelated file was deleted) before applying the fix, then pass post-fix; the pre-existing default-directory pruning test (a genuinely orphaned type schema) still passes unchanged, confirming no regression to the legitimate case. End-to-end verified against a real scratch repo (not just the synthetic suite): `lore schema export --out .` and `--out other-out`, each with a pre-existing unrelated `*.schema.json` seeded first, both leave that file untouched after a full export; a stale `ghost.schema.json` seeded into the real default `.lore/schemas/` is still correctly pruned by a plain `lore schema export` (regression check). Full `bun test` → 1644/1644 (up from 1642); `bun run typecheck` clean; `bun run lint` exit 0 (4 pre-existing infos in unrelated test files, untouched). **Independent adversarial review: SHIP, no bypass found** — reproduced the original bug independently via a detached worktree at the pre-fix commit (confirming the new tests are non-tautological), then adversarially swept `--out` forms for a containment bypass (repo root, fresh nested dirs, near-miss names `.lore/schemas-extra`/`.lore/schema`/`.lore/schemas/sub`, a lexically-equivalent form of the default that correctly still prunes since it IS the real directory, and a case-variant form on this case-insensitive filesystem that writes into the same real directory but is treated as non-managed by the strict comparison — fails safe, not a bypass); independently reran the full test suite/typecheck/lint rather than trusting the implementer's claims. Two non-blocking observations recorded in Not-queued rather than fixed in-task (a missing regression test for the near-miss-name boundary; `isManagedSchemasDir`'s lexical-only comparison has no realpath/symlink resolution, a pre-existing characteristic outside this task's AC scope). |
+| 24 | LORE-80 | Done, 2026-07-21, session 24 | Root cause: `core/rewrite.ts`'s `rewriteInbound` (the shared engine behind both `lore rename` move mode and `lore supersede --rewrite-links`) called `idFromPath` on `fromId`/`toId` with zero containment check — `lore rename`'s `to` need not pre-exist (the exploitable path); `supersede`'s `to` must already name a real graph concept, already implicitly confined. Confirmed live pre-fix: `lore rename reference/orders ../pwned` against a scratch repo wrote `pwned.md`/`index.md` OUTSIDE `docs/` at the repo root, exit 0. **Round 1 fix** added `assertConfinedToBundle` checking the post-`idFromPath` value against `id === ".."`/`id.startsWith("../")`/`posix.isAbsolute`/`win32.isAbsolute` — passed a full test suite and live re-repro (exit 6), but **independent review found a real bypass**: a relative traversal spelled with backslashes (`..\pwned`) tripped NEITHER check — `posix.normalize` treats `\` as a literal character (not a separator), so `idFromPath` left it unchanged, and `win32.isAbsolute("..\\pwned")` is `false` (that string is relative, not absolute — the check only matches drive-letter/UNC/leading-separator absolute forms). Confirmed independently via a direct Node script (`posix.normalize`/`win32.isAbsolute`/`win32.join`, matching the reviewer's own trace exactly); since this project ships a compiled Windows binary and `commands/rename.ts` writes via the platform-native `path.join` (which treats `\` as a separator on Windows), this reproduced the identical escape class the task set out to close, just spelled with backslashes. **Round 2 fix**: `assertConfinedToBundle` now runs on the RAW `fromId`/`toId` (before `idFromPath`), and relative-escape detection uses a new separator-agnostic `escapesRoot()` — splits on either `/` or `\` and tracks directory depth — rather than relying on `posix.normalize`/`win32.isAbsolute`'s differing, incomplete semantics; absolute-path rejection (`posix.isAbsolute`/`win32.isAbsolute`) unchanged. 6 new tests in `test/rename.test.ts`'s "rewriteInbound — modes and validation" block (traversal toId, absolute toId, backslash toId, mixed-separator toId, traversal fromId, and a no-false-positive case for a real `..foo/bar`-style segment — mirrors `new.ts`'s `resolveOutPath`'s own documented care). Full `bun test` → 1650 pass/0 fail (up from 1644); `bun run typecheck` clean; `bunx biome check` on changed files: no issues. Live re-repro after round 2 (fresh scratch repo): the backslash traversal now exits 6 with no file written outside `docs/`; a legitimate rename still exits 0. **Independent adversarial review (general-purpose subagent)**: confirmed the fix's placement (runs before any graph lookup/write for both `rename.ts` move:true and `supersede.ts` move:false), no over-rejection of a real `..foo/bar`-style segment, NUL bytes don't bypass the string checks, `"validation"` → exit 6 with no collision with existing `not_found`/`conflict` paths, and the internal `idFromPath(posix.join(...))` call at rewrite.ts:370 (body-link resolution) only feeds substituted markdown text, never an fs write path — correctly out of scope; found and drove the one real (round-2-fixed) bypass above via its own confirmed Node-level trace, not speculation. One low-severity, self-identified (not reviewer-flagged) edge case noted, not fixed in-task: a Windows drive-relative id (e.g. `C:foo`, no separator after the colon) is neither `win32.isAbsolute` nor caught by `escapesRoot` — requires a compiled Windows binary invoked with its process cwd on a DIFFERENT drive than the repo, an obscure, narrow threat model distinct from the task's own traversal/absolute framing (see Not-queued). |
 
 ## Not queued — needs a human / blocked
 
@@ -180,6 +180,19 @@ CI runs post-merge on dev.
   outside LORE-75's own AC scope (which is about `--out` pointing ELSEWHERE, not the default path
   itself being tampered with), not regressions this fix introduced. Needs a human to confirm
   priority before filing either as a new task.
+
+- **Follow-up candidate, not yet filed** (self-identified during LORE-80's implementation,
+  2026-07-21, not by the independent review): `core/rewrite.ts`'s new
+  `assertConfinedToBundle`/`escapesRoot` (LORE-80) do not catch a Windows drive-relative id
+  (e.g. `toId = "C:foo"`, no separator after the colon) — `win32.isAbsolute` treats this as
+  relative, not absolute (matching real Windows semantics), and it contains no `..`/`\`/`/`
+  segment for `escapesRoot` to catch either. Exploiting it needs a compiled Windows binary
+  invoked with its process working directory on a DIFFERENT drive than the repo — an obscure,
+  narrow threat model (mirrors the ALREADY-flagged `assertTemplateNameConfined`/`resolveOutPath`
+  drive-relative caveat in `new.ts`, which closes this via a SECOND layer — real `resolve`+
+  `relative` against a real root directory — unavailable to `rewriteInbound` since it is a
+  documented pure, no-filesystem core function). Needs a human to confirm priority/scope before
+  filing.
 
 ## Campaign conventions (durable, verified 2026-07-19)
 
@@ -695,6 +708,18 @@ CI runs post-merge on dev.
   2026-07-21). Always `git status --porcelain` immediately after any live-CLI scratch-repo
   verification step, before trusting its result, to catch this class of mistake early.
 
+- A relative-traversal containment check on a bundle/concept id must NOT rely on
+  `posix.normalize` + `win32.isAbsolute` alone: `posix.normalize` treats `\` as an ordinary
+  character (not a separator), and `win32.isAbsolute` only matches an ABSOLUTE form (drive-
+  letter/UNC/leading-separator), not a RELATIVE backslash traversal like `..\pwned` — so that
+  spelling tripped neither check (LORE-80's first fix, caught only by independent review,
+  confirmed via a direct Node-level trace). The robust pattern: walk the id's own segments split
+  on EITHER `/` or `\`, tracking directory depth, since a real Windows binary's `path.join`
+  treats `\` as a separator regardless of which platform authored the check. This generalizes
+  the SAME class of gap already flagged (Not-queued, LORE-69's review) in `src/state.ts`'s
+  `commitBacklogFiles` guard — if that follow-up is ever picked up, reuse this exact segment-walk
+  technique rather than another `posix.normalize`-only patch.
+
 ## Session log
 
 - 2026-07-19 — session 0 (init): tracker created. Queue = LORE-67, 61, 62, 63,
@@ -1008,3 +1033,22 @@ CI runs post-merge on dev.
   scratch dir — caught this session by an unexpected `git status` diff at the
   real repo root; always verify with `git status --porcelain` immediately
   after any such step). Cursor advanced to LORE-80.
+
+- 2026-07-21 — session 24: resolved LORE-80 (see Resolved table). Branch
+  `feature/LORE-80` off `dev @ 11846aa`. First of the interrelated rename-
+  destination-traversal cluster (LORE-80→79→78→81); confined `rewriteInbound`'s
+  fromId/toId to the docs/ bundle root, the shared-engine layer the other
+  three build on. Live pre-fix repro against a scratch repo confirmed the
+  reported escape (`lore rename reference/orders ../pwned` wrote outside
+  docs/, exit 0). Ran the independent review ONLY after committing the fix
+  and its tests, per this campaign's now-established ordering discipline
+  (LORE-74's correction, followed cleanly again in LORE-75). The review found
+  a real, concrete bypass in the first fix (a backslash-spelled relative
+  traversal, `..\pwned`, defeated both the posix-only `../` check and
+  win32.isAbsolute) — fixed with a separator-agnostic segment walk, re-
+  verified live and via 6 new tests (up from the original 3), then the
+  review outcome written here. One new campaign convention recorded (a
+  relative-traversal containment check must split on BOTH `/` and `\`, not
+  rely on posix.normalize/win32.isAbsolute's differing semantics) and one
+  low-severity self-identified edge case (a Windows drive-relative id) noted
+  in Not-queued, not fixed in-task. Cursor advanced to LORE-79.
