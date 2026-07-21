@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BacklogAdapter } from "../src/adapters/backlog";
 import { run } from "../src/cli";
-import { type FetchLike, isDocsRoot, runCheck } from "../src/commands/check";
+import { type FetchLike, isDocsRoot, type ResolveHost, runCheck } from "../src/commands/check";
 import {
   type CheckInputFile,
   checkBundle,
@@ -19,6 +19,14 @@ import { capture, fakeAdapter, makeTask, storyDoc } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 const PLAIN_CTX: OutputContext = { mode: "plain", color: false };
+
+/**
+ * A DNS fake that resolves every hostname to one real, public, non-blocked address — the default
+ * `resolveHost` for every `--external` test that isn't itself testing LORE-71's SSRF guard (the
+ * `.example` hostnames these fixtures use are RFC 2606-reserved and never resolve for real, so
+ * without this every such test would otherwise hit — and fail against — real DNS).
+ */
+const ALLOW_ALL_HOSTS: ResolveHost = async () => ["93.184.216.34"];
 
 /** A minimal Reference concept with the given body, for membership/anchor fixtures. */
 function ref(title: string, body: string): string {
@@ -413,7 +421,7 @@ describe("runCheck — exit codes and discovery", () => {
   });
 
   function opts(args: string[], output: OutputContext = PLAIN_CTX) {
-    return { root, output, args, stdout: capture(), stderr: capture() };
+    return { root, output, args, stdout: capture(), stderr: capture(), resolveHost: ALLOW_ALL_HOSTS };
   }
 
   test("exit 0 on a coherent bundle", () => {
@@ -459,6 +467,111 @@ describe("runCheck — exit codes and discovery", () => {
     writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[down](https://down.example)."));
     const fetchFake: FetchLike = async () => ({ ok: false, status: 500 });
     expect(await runCheck({ ...opts(["--external", "--strict"]), fetch: fetchFake })).toBe(EXIT_OK);
+  });
+
+  // ── LORE-71: --external's SSRF guard ─────────────────────────────────────────
+
+  test("LORE-71 AC1/AC3: a literal cloud-metadata address is never fetched — the task's own repro", async () => {
+    // http://169.254.169.254/... is the task's own example (AWS/GCP/Azure instance metadata).
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[meta](http://169.254.169.254/latest/meta-data/)."));
+    let calls = 0;
+    const fetchFake: FetchLike = async () => {
+      calls++;
+      return { ok: true, status: 200 };
+    };
+    const o = { ...opts(["--external"]), fetch: fetchFake };
+    expect(await runCheck(o)).toBe(EXIT_OK); // liveness never gates
+    expect(calls).toBe(0); // the fetch was never issued at all
+    const out = (o.stdout as ReturnType<typeof capture>).text();
+    expect(out).toContain("[external-link]");
+    expect(out).toContain("was not probed");
+    expect(out).toContain("link-local");
+  });
+
+  test("LORE-71 AC1: loopback, private (RFC1918), and IPv4-mapped-IPv6 literal addresses are all blocked", async () => {
+    writeFileSync(
+      join(root, "docs", "adr", "x.md"),
+      ref(
+        "X",
+        [
+          "[a](http://127.0.0.1/)",
+          "[b](http://10.1.2.3/)",
+          "[c](http://192.168.1.1/)",
+          "[d](http://[::ffff:127.0.0.1]/)", // IPv4-mapped IPv6 — a classic filter-bypass encoding
+        ].join(" "),
+      ),
+    );
+    let calls = 0;
+    const fetchFake: FetchLike = async () => {
+      calls++;
+      return { ok: true, status: 200 };
+    };
+    const o = { ...opts(["--external"]), fetch: fetchFake };
+    await runCheck(o);
+    expect(calls).toBe(0);
+    const out = (o.stdout as ReturnType<typeof capture>).text();
+    expect((out.match(/was not probed/g) ?? []).length).toBe(4);
+  });
+
+  test("LORE-71 AC1: a hostname that RESOLVES to a blocked address is refused before fetching (DNS-based, not just literal-IP)", async () => {
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[internal](http://internal.example/)."));
+    let fetchCalls = 0;
+    const fetchFake: FetchLike = async () => {
+      fetchCalls++;
+      return { ok: true, status: 200 };
+    };
+    const resolveFake: ResolveHost = async (hostname) =>
+      hostname === "internal.example" ? ["169.254.169.254"] : ["93.184.216.34"];
+    const o = { ...opts(["--external"]), fetch: fetchFake, resolveHost: resolveFake };
+    await runCheck(o);
+    expect(fetchCalls).toBe(0);
+    expect((o.stdout as ReturnType<typeof capture>).text()).toContain("was not probed");
+  });
+
+  test("LORE-71 AC1: a hostname resolving to MULTIPLE addresses is blocked if ANY of them is disallowed", async () => {
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[multi](http://multi.example/)."));
+    let fetchCalls = 0;
+    const fetchFake: FetchLike = async () => {
+      fetchCalls++;
+      return { ok: true, status: 200 };
+    };
+    const resolveFake: ResolveHost = async () => ["93.184.216.34", "127.0.0.1"]; // one public, one loopback
+    const o = { ...opts(["--external"]), fetch: fetchFake, resolveHost: resolveFake };
+    await runCheck(o);
+    expect(fetchCalls).toBe(0); // blocked BEFORE any hop, since one resolved address is disallowed
+  });
+
+  test("LORE-71 AC2/AC3: a redirect to a blocked destination is rejected, not silently followed — the second (blocked) hop is never fetched", async () => {
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[r](https://redirect.example/)."));
+    const calls: string[] = [];
+    const fetchFake: FetchLike = async (url) => {
+      calls.push(url);
+      if (url === "https://redirect.example/") {
+        return { ok: false, status: 302, location: "http://169.254.169.254/latest/meta-data/" };
+      }
+      return { ok: true, status: 200 }; // would only be reached if the redirect were (wrongly) followed
+    };
+    const o = { ...opts(["--external"]), fetch: fetchFake, resolveHost: ALLOW_ALL_HOSTS };
+    await runCheck(o);
+    expect(calls).toEqual(["https://redirect.example/"]); // the blocked hop was never fetched
+    expect((o.stdout as ReturnType<typeof capture>).text()).toContain("was not probed");
+  });
+
+  test("LORE-71 AC2: a redirect to an ALLOWED destination is followed and the final response wins", async () => {
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[r](https://redirect.example/)."));
+    const calls: string[] = [];
+    const fetchFake: FetchLike = async (url) => {
+      calls.push(url);
+      if (url === "https://redirect.example/") {
+        return { ok: false, status: 302, location: "https://final.example/" };
+      }
+      return { ok: true, status: 200 };
+    };
+    const o = { ...opts(["--external"]), fetch: fetchFake, resolveHost: ALLOW_ALL_HOSTS };
+    expect(await runCheck(o)).toBe(EXIT_OK);
+    expect(calls).toEqual(["https://redirect.example/", "https://final.example/"]);
+    const out = (o.stdout as ReturnType<typeof capture>).text();
+    expect(out).not.toContain("[external-link]"); // the final hop was 200 OK — no finding
   });
 
   test("without --external no network is touched and the run stays synchronous", () => {
@@ -509,7 +622,15 @@ describe("runCheck — exit codes and discovery", () => {
   test("--external folds liveness into the --json envelope without changing the gate counts", async () => {
     writeFileSync(join(root, "docs", "adr", "a.md"), ref("A", "[d](https://d.example)"));
     const fetchFake: FetchLike = async () => ({ ok: false, status: 404 });
-    const o = { root, output: JSON_CTX, args: ["--external"], stdout: capture(), stderr: capture(), fetch: fetchFake };
+    const o = {
+      root,
+      output: JSON_CTX,
+      args: ["--external"],
+      stdout: capture(),
+      stderr: capture(),
+      fetch: fetchFake,
+      resolveHost: ALLOW_ALL_HOSTS,
+    };
     await runCheck(o);
     const env = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
     expect(env.data.errorCount).toBe(0);
@@ -693,7 +814,7 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
   }
 
   function opts(args: string[], adapter: BacklogAdapter, output: OutputContext = JSON_CTX) {
-    return { root, output, args, adapter, stdout: capture(), stderr: capture() };
+    return { root, output, args, adapter, stdout: capture(), stderr: capture(), resolveHost: ALLOW_ALL_HOSTS };
   }
 
   /** A doc-LORE-1 row for a Done task, matching `makeTask`'s defaults. */
@@ -801,6 +922,7 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
       args: ["--external"],
       adapter,
       fetch: fetchFake,
+      resolveHost: ALLOW_ALL_HOSTS,
       stdout: capture(),
       stderr: capture(),
     };
@@ -835,6 +957,7 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
       args: ["--external"],
       adapter,
       fetch: fetchFake,
+      resolveHost: ALLOW_ALL_HOSTS,
       stdout: capture(),
       stderr: capture(),
     };
@@ -1252,7 +1375,7 @@ describe("cli — check dispatch", () => {
   });
 
   function ctx() {
-    return { cwd, env: {}, isTTY: false, stdout: capture(), stderr: capture() };
+    return { cwd, env: {}, isTTY: false, stdout: capture(), stderr: capture(), resolveHost: ALLOW_ALL_HOSTS };
   }
 
   test("`lore check` on a clean bundle exits 0", () => {
