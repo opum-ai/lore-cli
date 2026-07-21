@@ -24,7 +24,7 @@ import { canonicalType, isKnownType, SCHEMAS_DIR, schemaFileName, schemaModeline
 import { buildNewConcept, builtinTemplateFor, slugify } from "../core/template";
 import { EXIT_OK, errnoCode, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { createIfAbsent, ensureDir } from "./fswrite";
+import { createIfAbsent, ensureDir, findSymlinkSegment } from "./fswrite";
 
 /** Where user templates live, relative to the repo root. */
 const TEMPLATES_DIR = ".lore/templates";
@@ -347,6 +347,7 @@ function resolveOutPath(out: string, root: string): string {
  * is rejected outright rather than spliced into `${TEMPLATES_DIR}/${base}.md` and hoped safe.
  */
 function resolveTemplate(parsed: NewArgs, type: string, root: string, profile: Profile): string {
+  const explicitTemplate = parsed.template !== undefined;
   if (parsed.template !== undefined) {
     assertTemplateNameConfined(parsed.template, root);
   }
@@ -354,7 +355,7 @@ function resolveTemplate(parsed: NewArgs, type: string, root: string, profile: P
   const base = parsed.template ?? declared ?? type;
   for (const candidate of templateCandidates(base)) {
     const relPath = `${TEMPLATES_DIR}/${candidate}.md`;
-    const text = readTemplateFile(join(root, relPath), relPath);
+    const text = readTemplateFile(join(root, relPath), relPath, root, explicitTemplate);
     if (text !== undefined) {
       return text;
     }
@@ -424,8 +425,33 @@ function templateCandidates(base: string): string[] {
  * Read a template file as UTF-8, returning `undefined` when it does not exist (`ENOENT`) so
  * the caller can fall back to a built-in. A permission failure becomes a `denied`
  * {@link LoreError}; any other read fault propagates as an uncaught error.
+ *
+ * `checkSymlink` (true only for an explicit `--template`, LORE-91) refuses — rather than
+ * silently reading through — a symlinked candidate anywhere in `relPath`'s segments, closing an
+ * information-disclosure gap `assertTemplateNameConfined`'s purely syntactic containment check
+ * cannot: a bare, unsuspicious `--template evil` whose resolved `.lore/templates/evil.md` is
+ * itself a symlink to an arbitrary file outside the repo would otherwise have that file's exact
+ * content silently embedded in the generated concept. Mirrors this codebase's established
+ * write-path precedent (`fswrite.ts`'s `assertNoSymlinkInPath`/`findSymlinkSegment`, LORE-76/77)
+ * rather than inventing a new pattern, and its own READ-path precedent (`core/bundle.ts`'s
+ * `walkMarkdown`, `commands/replace.ts`) of never following a symlink that could resolve outside
+ * the repo. Scoped to the explicit CLI flag only (AC#4) — a profile-declared `template` value
+ * (the `declared` fallback `resolveTemplate` also tries) is a separate, already-documented trust
+ * boundary (repo config, not a user-typed flag) that LORE-72's own confinement guard likewise
+ * left untouched, and this check follows that same precedent rather than widening scope.
  */
-function readTemplateFile(absPath: string, relPath: string): string | undefined {
+function readTemplateFile(absPath: string, relPath: string, root: string, checkSymlink: boolean): string | undefined {
+  if (checkSymlink) {
+    const symlink = findSymlinkSegment(root, relPath);
+    if (symlink !== null) {
+      throw new LoreError(
+        "conflict",
+        `refusing to read ${relPath}: "${symlink}" is a symlink, not a real directory or file`,
+        "lore does not read through a symlink (it may resolve outside the repo) — remove or replace it, then re-run",
+        { path: relPath, symlink },
+      );
+    }
+  }
   try {
     return readFileSync(absPath, "utf8");
   } catch (cause) {
