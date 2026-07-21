@@ -103,7 +103,7 @@ export function runSchema(options: SchemaOptions): number {
   }
 
   const files = emitSchemaFiles(profile, { dir: outArg, only });
-  ensureDir(absOutDir, outArg);
+  ensureDir(options.root, outArg);
   for (const file of files) {
     // `outArg` is confined to the repo, so `file.path` (`<outArg>/<slug>.schema.json`) is repo-relative
     // and `join(root, file.path)` is its absolute target — no need to re-derive the directory.

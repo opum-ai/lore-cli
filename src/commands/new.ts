@@ -124,7 +124,7 @@ export function runNew(options: NewOptions): number {
   if (existsSync(absPath)) {
     throw conflict(docPath);
   }
-  ensureDir(join(options.root, posix.dirname(docPath)), posix.dirname(docPath));
+  ensureDir(options.root, posix.dirname(docPath));
   if (!createIfAbsent(absPath, build.contents, docPath)) {
     throw conflict(docPath);
   }

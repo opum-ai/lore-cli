@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/cli";
@@ -821,6 +830,58 @@ describe("lore rename — errors and arg parsing", () => {
     expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true); // source unchanged
     expect(existsSync(join(root, "docs/..md"))).toBe(false);
   });
+});
+
+describe("lore rename — refuses to write through a symlinked ancestor directory (LORE-93)", () => {
+  let outsideDir: string;
+
+  beforeEach(() => {
+    outsideDir = mkdtempSync(join(tmpdir(), "lore-rename-outside-"));
+  });
+  afterEach(() => {
+    rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  // POSIX-only, matching this codebase's existing symlink tests' own skip guard (e.g. init.test.ts).
+  test.skipIf(process.platform === "win32")(
+    "regression: docs/evil symlinked outside the bundle refuses, writes nothing outside docs/, leaves the source untouched (AC#1/AC#4/AC#6)",
+    async () => {
+      // Reproduces the filing task's own live repro: docs/evil -> an outside directory.
+      writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+      symlinkSync(outsideDir, join(root, "docs/evil"));
+
+      const err = await expectError(["reference/orders", "evil/pwned"]);
+      expect(err.type).toBe("conflict");
+      expect(err.message.toLowerCase()).toContain("symlink");
+      // Nothing was ever written outside the bundle, through the symlink.
+      expect(existsSync(join(outsideDir, "pwned.md"))).toBe(false);
+      // The source concept was never relocated — it's still exactly where it started.
+      expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true);
+      expect(readDoc("reference/orders.md")).toContain("Orders.");
+      // The pre-existing symlink itself is untouched (not replaced/followed).
+      expect(existsSync(join(root, "docs/evil"))).toBe(true);
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "a symlinked destination refuses BEFORE a legitimate inbound rewrite is written — all-or-nothing, not partial (AC#5)",
+    async () => {
+      // A genuine, non-symlinked inbound file (bulk.md) has a real link to repoint, AND the move
+      // destination is symlinked. commitWrites' preflight sweep (over the WHOLE planned write set,
+      // before any single write) must refuse before bulk.md's own legitimate rewrite ever lands on
+      // disk — proving the guard isn't merely reactive to loop order (which would let bulk.md's
+      // in-place rewrite through before the loop reached the symlinked move destination).
+      writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+      writeDoc("stories/bulk.md", "---\ntype: Story\n---\nUses [orders](../reference/orders.md).\n");
+      symlinkSync(outsideDir, join(root, "docs/evil"));
+
+      const err = await expectError(["reference/orders", "evil/pwned"]);
+      expect(err.type).toBe("conflict");
+      expect(existsSync(join(outsideDir, "pwned.md"))).toBe(false);
+      // bulk.md's own legitimate, unrelated rewrite was NOT written either — all-or-nothing.
+      expect(readDoc("stories/bulk.md")).toContain("[orders](../reference/orders.md)"); // still the OLD link
+    },
+  );
 });
 
 describe("lore rename — data-loss-safe relocation (review fixes)", () => {

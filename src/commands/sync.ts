@@ -53,7 +53,7 @@ import {
 } from "../state";
 import { parseCommandArgs } from "./args";
 import { readIndexBytes, readSource } from "./discover";
-import { ensureDir, writeFileAtomic } from "./fswrite";
+import { assertNoSymlinkInAnyPath, ensureDir, writeFileAtomic } from "./fswrite";
 import { gatherReconciliation, linkedConcepts, readReconcileConfig } from "./reconcile-shared";
 
 /** The reserved log file name, excluded from concept scanning (mirrors `rename.ts`'s index handling). */
@@ -169,9 +169,18 @@ export async function runSync(options: SyncOptions): Promise<number> {
   }
 
   if (!parsed.dryRun) {
+    // Swept as a whole BEFORE any write starts (LORE-93 AC#5): ensureDir's own per-call guard
+    // below is reactive — in this loop, it would only refuse once it REACHES a bad target, by
+    // which point earlier targets in the same `writes` map may already be on disk. A single
+    // preflight over every planned path makes the write either fully proceed or refuse before
+    // touching anything.
+    assertNoSymlinkInAnyPath(
+      options.root,
+      [...writes.keys()].map((path) => `${DOCS_DIR}/${path}`),
+    );
     for (const [path, bytes] of writes) {
       const abs = join(docsRoot, path);
-      ensureDir(dirname(abs), `${DOCS_DIR}/${path}`);
+      ensureDir(options.root, dirname(`${DOCS_DIR}/${path}`));
       writeFileAtomic(abs, bytes, `${DOCS_DIR}/${path}`);
     }
   }

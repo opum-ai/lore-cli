@@ -47,7 +47,7 @@ import { emit, type OutputContext, type Renderable } from "../output";
 import { type BacklogCommitResult, commitBacklogFiles, type GitSpawn, renderBacklogCommitLine } from "../state";
 import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
 import { canonicalIdentity, readIndexBytes } from "./discover";
-import { ensureDir, moveFile, writeFileOverwriting } from "./fswrite";
+import { assertNoSymlinkInAnyPath, ensureDir, moveFile, writeFileOverwriting } from "./fswrite";
 import {
   assertNoCommaInId,
   assertNoLabelCaseCollision,
@@ -188,7 +188,7 @@ export async function runRename(options: RenameOptions): Promise<number> {
   const writes = mergeIndexWrites(plan, graph, docsRoot, profile);
 
   if (!parsed.dryRun) {
-    commitWrites(writes, plan, docsRoot);
+    commitWrites(writes, plan, docsRoot, options.root);
   }
 
   // Move every linked task's Backlog back-reference LAST — mirrors link.ts's write-order fix: the
@@ -263,27 +263,42 @@ function assertTargetFree(plan: RewritePlan, docsRoot: string): void {
 }
 
 /**
- * Commit the planned writes to disk. Parent directories are created up front (so a target in a
- * brand-new category directory does not fail with ENOENT), the in-place rewrites are written, and
- * the renamed file is relocated **last** by {@link moveFile} — its new bytes are written into the
- * source path and then the inode is renamed, which is atomic and safe even for a case-only rename
- * on a case-insensitive filesystem. (A mid-commit IO failure can still leave the bundle partially
- * rewritten — cross-file transactional rollback is a shared concern with `lore replace`, deferred.)
+ * Commit the planned writes to disk. Every target is swept for a symlinked ancestor (or, for the
+ * in-place rewrites, a symlinked final component too — {@link writeFileOverwriting} is a plain
+ * `writeFileSync`, which follows a symlink at the final path segment, unlike {@link moveFile}'s
+ * `renameSync`, which atomically replaces whatever is at the destination without ever dereferencing
+ * it) BEFORE any single write begins (LORE-93 AC#5) — `ensureDir`'s own per-call guard alone would
+ * only refuse once the loop below REACHES a bad target, by which point earlier targets in the same
+ * plan may already be on disk. Parent directories are then created (so a target in a brand-new
+ * category directory does not fail with ENOENT), the in-place rewrites are written, and the renamed
+ * file is relocated **last** by {@link moveFile} — its new bytes are written into the source path
+ * and then the inode is renamed, which is atomic and safe even for a case-only rename on a
+ * case-insensitive filesystem. (A mid-commit IO failure UNRELATED to a symlink can still leave the
+ * bundle partially rewritten — cross-file transactional rollback for that case is a shared concern
+ * with `lore replace`, deferred; the preflight sweep above only closes the symlink-specific gap.)
  */
-function commitWrites(writes: Map<string, string>, plan: RewritePlan, docsRoot: string): void {
+function commitWrites(writes: Map<string, string>, plan: RewritePlan, docsRoot: string, root: string): void {
   const movedTo = plan.rename?.to;
+  // `writes` already carries the moved file's new bytes keyed at `plan.rename.to` (RewritePlan's
+  // own contract) — only `plan.rename.from` (the source, written-then-renamed) isn't a `writes` key.
+  const targets = [...writes.keys()].map((path) => `${DOCS_DIR}/${path}`);
+  if (plan.rename !== null) {
+    targets.push(`${DOCS_DIR}/${plan.rename.from}`);
+  }
+  assertNoSymlinkInAnyPath(root, targets);
+
   for (const [path, bytes] of writes) {
     if (path === movedTo) {
       continue; // the moved file is relocated below, not written at its new path here
     }
     const abs = join(docsRoot, path);
-    ensureDir(dirname(abs), `${DOCS_DIR}/${path}`);
+    ensureDir(root, dirname(`${DOCS_DIR}/${path}`));
     writeFileOverwriting(abs, bytes, `${DOCS_DIR}/${path}`);
   }
   if (plan.rename !== null) {
     const absFrom = join(docsRoot, plan.rename.from);
     const absTo = join(docsRoot, plan.rename.to);
-    ensureDir(dirname(absTo), `${DOCS_DIR}/${plan.rename.to}`);
+    ensureDir(root, dirname(`${DOCS_DIR}/${plan.rename.to}`));
     // Write the new bytes into the source file, then rename the source to its destination — never
     // write-new-then-delete-old, which would destroy a case-only rename's single inode.
     writeFileOverwriting(absFrom, writes.get(plan.rename.to) ?? "", `${DOCS_DIR}/${plan.rename.from}`);

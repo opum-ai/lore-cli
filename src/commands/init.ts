@@ -58,11 +58,9 @@ export function runInit(options: InitOptions): number {
   const plan = buildScaffold({ timestamp: clock().toISOString(), profile });
 
   for (const dir of plan.dirs) {
-    // LORE-77: refuse a pre-existing symlink at (or above) this directory BEFORE ensureDir's
-    // mkdirSync gets a chance to transparently walk through it — matching LORE-76's identical
-    // guard on lore scaffold's own writes (fswrite.ts's shared assertNoSymlinkInPath).
-    assertNoSymlinkInPath(options.root, dir);
-    ensureDir(join(options.root, dir), dir);
+    // LORE-77/LORE-93: ensureDir itself refuses a pre-existing symlink at (or above) this
+    // directory before its mkdirSync gets a chance to transparently walk through it.
+    ensureDir(options.root, dir);
   }
 
   const created: string[] = [];
