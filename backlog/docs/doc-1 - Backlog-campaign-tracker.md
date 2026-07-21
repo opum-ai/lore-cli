@@ -3,7 +3,7 @@ id: doc-1
 title: Backlog campaign tracker
 type: other
 created_date: '2026-07-19 23:15'
-updated_date: '2026-07-21 09:48'
+updated_date: '2026-07-21 10:07'
 ---
 # Backlog campaign tracker
 
@@ -12,7 +12,7 @@ lifecycle → advance cursor → append session log → write handover.
 
 ## Cursor
 
-**Next issue: LORE-84** — queue order confirmed by the user on 2026-07-21
+**Next issue: LORE-82** — queue order confirmed by the user on 2026-07-21
 ("Use this order (Recommended)": independent fixes first, the interrelated
 rename-destination-traversal cluster (LORE-80→79→78→81) last, since LORE-80's
 shared-engine containment fix is what the other three build on). Do not re-ask
@@ -30,21 +30,20 @@ CI runs post-merge on dev.
 
 | # | Issue | Type | One-line note |
 | --- | --- | --- | --- |
-| 1 | LORE-84 | bug | loadBundle never uses a project's custom .lore/profile.toml |
-| 2 | LORE-82 | bug | loadBundle silently skips unreadable directories; mutations commit against an incomplete graph |
-| 3 | LORE-85 | bug | Frontmatter YAML anchors can be crafted to exhaust memory on serialize (anchor bomb) |
-| 4 | LORE-69 | bug | commitBacklogFiles backlog/ scope guard does not block `..` pathspec traversal |
-| 5 | LORE-72 | bug | lore new --template allows path traversal to read arbitrary files |
-| 6 | LORE-71 | bug | lore check --external is vulnerable to SSRF via unrestricted fetch() |
-| 7 | LORE-76 | bug | lore scaffold --force writes follow symlinks, escaping the repo root |
-| 8 | LORE-77 | bug | lore init follows pre-existing symlinks at scaffold paths, escaping the repo root |
-| 9 | LORE-73 | bug | lore replace can corrupt lore:tasks managed blocks (MANAGED_MARKERS gap) |
-| 10 | LORE-74 | bug | lore orphans report has no output cap, contradicting the documented truncation contract |
-| 11 | LORE-75 | bug | lore schema export --out can irreversibly delete unrelated files outside its own directory |
-| 12 | LORE-80 | bug | rewriteInbound shared engine does not confine fromId/toId to docs/ bundle root |
-| 13 | LORE-79 | bug | lore rename destination path is not confined to docs/ root at the command layer |
-| 14 | LORE-78 | bug | lore rename destination id is not validated for `..` traversal at the argument-parsing layer |
-| 15 | LORE-81 | bug | lore rename index <new> (renaming FROM the reserved root index) is not rejected |
+| 1 | LORE-82 | bug | loadBundle silently skips unreadable directories; mutations commit against an incomplete graph |
+| 2 | LORE-85 | bug | Frontmatter YAML anchors can be crafted to exhaust memory on serialize (anchor bomb) |
+| 3 | LORE-69 | bug | commitBacklogFiles backlog/ scope guard does not block `..` pathspec traversal |
+| 4 | LORE-72 | bug | lore new --template allows path traversal to read arbitrary files |
+| 5 | LORE-71 | bug | lore check --external is vulnerable to SSRF via unrestricted fetch() |
+| 6 | LORE-76 | bug | lore scaffold --force writes follow symlinks, escaping the repo root |
+| 7 | LORE-77 | bug | lore init follows pre-existing symlinks at scaffold paths, escaping the repo root |
+| 8 | LORE-73 | bug | lore replace can corrupt lore:tasks managed blocks (MANAGED_MARKERS gap) |
+| 9 | LORE-74 | bug | lore orphans report has no output cap, contradicting the documented truncation contract |
+| 10 | LORE-75 | bug | lore schema export --out can irreversibly delete unrelated files outside its own directory |
+| 11 | LORE-80 | bug | rewriteInbound shared engine does not confine fromId/toId to docs/ bundle root |
+| 12 | LORE-79 | bug | lore rename destination path is not confined to docs/ root at the command layer |
+| 13 | LORE-78 | bug | lore rename destination id is not validated for `..` traversal at the argument-parsing layer |
+| 14 | LORE-81 | bug | lore rename index <new> (renaming FROM the reserved root index) is not rejected |
 
 ## Resolved
 
@@ -62,6 +61,7 @@ CI runs post-merge on dev.
 | 10 | LORE-86 | Done, 2026-07-21, session 10 | Root cause: `src/core/indexes.ts`'s `locateManagedBlock` (a plain `indexOf`/`lastIndexOf` scan shared by index regeneration, `lore replace`, and `lore rename`) collapsed a duplicated marker pair to its first-begin→last-end span, silently deleting any hand-authored prose sitting between the two blocks — exactly the LORE-86 repro (a merge conflict/hand edit leaving duplicate `lore:index` markers). It also silently extended an unmatched begin (no end marker) to end-of-file. Fix: rewrote it to fail loud instead of guessing — 0 begins still returns `null` (unmanaged file, unchanged); >1 begins or >1 ends throws `LoreError('validation', ...)` naming the exact counts (duplicated); a single begin with 0 ends, or an end preceding the begin, throws too (unmatched/crossed). Mirrors `managed-block.ts`'s existing `findMarkers()` fail-loud pattern for the sibling `lore:tasks` block, so both managed-block engines refuse to guess in the same voice. Traced all 3 call sites (indexes.ts, replace.ts's `managedRanges`, rename.ts's `spliceEmptyListing`) to confirm no swallowing and no partial-write risk (writes only happen after the whole regenerate/rewrite step returns cleanly). Updated 4 existing tests that had pinned the old silent-collapse/truncate-to-EOF behavior as a feature; added a dedicated `locateManagedBlock` contract test plus AC2's exact scenario (duplicate pair with real prose between them → validation error, prose never touched since nothing gets written). End-to-end verified with the real CLI: a scratch bundle with duplicate `lore:index` markers and real prose between them now fails `lore sync` with exit 6 and a clear message, and the file is left completely byte-identical afterward (confirmed via diff, not just exit code). Full `bun test` → 1506 pass/0 fail (up from 1505); `bun run typecheck` clean; lint clean on changed files. |
 | 11 | LORE-87 | Done, 2026-07-21, session 11 | Root cause: `src/core/rewrite.ts`'s `destRangeForDefinition` located a reference definition's closing label bracket via a plain `body.indexOf("]", span.start)`. A label containing an escaped bracket (e.g. `[a\]x:y]: ../reference/orders.md`) matched the escaped `\]` first, and the subsequent `indexOf(":", rb)` then ALSO matched the wrong colon (one inside the label text itself, e.g. "x:y"'s colon) — a compounding double mis-location, not a single off-by-one. Confirmed via a real mdast parse that a `definition` node carries NO `children` (only decoded `identifier`/`label`/`url`/`title` strings whose lengths are not byte-equal to raw source once escapes are involved) — unlike `destRangeForLink`, which derives its label-content end from the parsed node's own children offsets and was already structurally immune. Fix: added `findLabelClose`, an escape-aware forward scan mirroring `scanDestination`'s existing backslash-escape convention (`j += 2` on an escaped char), and used it in place of the naive `indexOf`. Added a test in test/rename.test.ts via `rewriteInbound` reproducing the task's exact repro (a USED definition, referenced so it's a real graph edge); confirmed via `git stash` the pre-fix output is exactly the corruption the task describes (`[a\]x:../reference/sales-orders.md ../reference/orders.md` — label truncated mid-scan, new destination spliced into the wrong place, old destination left dangling) and the post-fix output is correct (`[a\]x:y]: ../reference/sales-orders.md`, label fully intact). End-to-end verified through the real `lore rename` CLI on a scratch bundle: the escaped-bracket label survives completely intact, only the destination updates. Full `bun test` → 1507 pass/0 fail (up from 1506); `bun run typecheck` clean; lint clean (one formatter-only fix, no logic change). |
 | 12 | LORE-83 | Done, 2026-07-21, session 12 | Root cause: `src/core/profile.ts`'s `parseFieldSpec`, `parseTypes`, and `parseItems` each read a fixed set of known attribute keys off a parsed TOML/JSON table by name with no check for keys OUTSIDE that set — a typo like `require = true` (meant `required`) was simply never read, silently leaving `required` at its `false` default; the profile loaded clean and every concept validated clean despite missing the field. Re-verified the task's scoping claim against `parseProfile`'s own docstring: the documented forward-compatible unknown-key tolerance is explicitly scoped to top-level/`[profile]` keys only (accurate) — the fix deliberately leaves that untouched. Fix: added `rejectUnknownKeys(table, allowed, where, source)`, mirroring this file's existing `asTable`/`asString`/`asBoolean`/`asEnum` validator style, wired into all 3 named functions against each table's fixed legal-key vocabulary (field spec: required/kind/enum/items/default; a `[[types]]` table: name/fields/sections/template; an items table: kind/enum) — consistent with every other structural check in this file (all fail-loud `LoreError('validation', ...)`; this module has no warning mechanism at all). Added 3 tests, one per call site, matching the existing `expectValidation` harness; confirmed via `git stash` that all 3 fixtures genuinely silently SUCCEED pre-fix (the call returns instead of throwing, matching the task's own "silently defaults... instead of erroring" framing) and correctly throw post-fix naming the exact unknown key. End-to-end verified with the real CLI: a scratch `.lore/profile.toml` with `base.fields.owner = { require = true }` (the task's exact typo example) now makes `lore new` fail at exit 6 with a message naming the bad key and a hint listing the correct legal keys. Full `bun test` → 1510 pass/0 fail (up from 1507, all pre-existing profile tests — default profile, ECK 17-type profile — unaffected); `bun run typecheck` clean; lint clean. |
+| 13 | LORE-84 | Done, 2026-07-21, session 13 | Root cause: `LoadBundleOptions` (`src/core/bundle.ts`) had no `profile` field, and `loadBundle`'s one `tryParseConcept` call never passed one, so every concept always validated against `defaultProfile()` regardless of a project's `.lore/profile.toml` — `concept.ts`'s `parseConcept`/`tryParseConcept` already accepted an optional profile; the gap was purely `loadBundle` never forwarding it. Fix: added `profile?: Profile` to `LoadBundleOptions`, forwarded to `tryParseConcept`; updated all 9 `loadBundle` callers (`context`/`supersede`/`graph`/`rename`/`tasks`/`query`/`orphans`/`sync`/`link`) to load and forward the project's profile, reusing an already-loaded profile where `sync.ts`/`supersede.ts`/`link.ts` already had one rather than double-loading. `sync.ts` needed the most care: its profile load was deliberately conditional/late to preserve a documented LORE-27 precedence contract (a malformed `backlog/config.yml` surfacing before a malformed `.lore/profile.toml`) — since `loadBundle` runs unconditionally and reconciliation-eligibility is computed FROM the loaded graph, profile now loads unconditionally before `loadBundle`, necessarily flipping that one precedence case (profile now wins) — a structurally necessary consequence, not an implementation choice; updated the one `test/sync.test.ts` precedence test that pinned the old ordering, with a comment explaining why. `link.ts`'s `writeTasksIfChanged` had a second, separate `loadProfile()` call site — threaded the same already-loaded profile through instead of double-loading. Added 2 tests to `test/bundle.test.ts` directly proving the fix (the SAME doc missing a custom-required field is silently tolerated without a profile, rejected with one) plus end-to-end verification through the real CLI (`lore query`/`lore sync` against a scratch project with a custom profile). **Flagged, deliberately left unfixed**: `core/rewrite.ts`'s `rewriteInbound` (used by `lore rename`/`supersede --rewrite-links`) has its own internal `serializeConcept` calls with no profile parameter at all — a separate, adjacent gap outside `loadBundle`'s own AC scope; documented in the task notes as a follow-up candidate (see Not-queued section) since no live user turn was available this session to confirm filing a new task the way LORE-68 was in a prior live session. Full `bun test` → 1512 pass/0 fail (up from 1510); `bun run typecheck` clean; lint clean on all 12 changed files. |
 
 ## Not queued — needs a human / blocked
 
@@ -69,6 +69,17 @@ CI runs post-merge on dev.
 - LORE-43 (Confluence one-way publish adapter): deferred by recorded product decision (ADR-0016; milestone m-8).
 - LORE-44 (Confluence production mirror): deferred (milestone m-9) AND blocked on LORE-43 (also deferred).
 - LORE-45 (typed importable library build): deferred per ECK-alignment follow-up — its own notes say revisit ONLY if a real in-process import need appears.
+- **Follow-up candidate, not yet filed** (found during LORE-84, 2026-07-21): `core/rewrite.ts`'s
+  `rewriteInbound` (used by `lore rename` and `lore supersede --rewrite-links`) calls
+  `serializeConcept()` internally with no `profile` parameter of its own, so it always
+  serializes rewritten concepts against the built-in default profile — a project's custom
+  profile is honored for `loadBundle`'s initial READ (LORE-84 fixed this) but not for
+  `rewriteInbound`'s WRITE/re-serialize path. Fixing this needs `rewriteInbound` (and
+  `rename.ts`'s `buildPostRenameGraph` re-parse, which must stay paired with whatever profile
+  `rewriteInbound` serialized with) to accept a profile too — a distinct change to
+  `core/rewrite.ts`'s public API and its own tests, not something LORE-84's AC (specifically
+  about `loadBundle`) covers. Needs a human to confirm priority/scope before filing as a new
+  backlog task — the campaign ran unattended this session with no live turn to ask.
 
 ## Campaign conventions (durable, verified 2026-07-19)
 
@@ -288,6 +299,25 @@ CI runs post-merge on dev.
   needs an explicit `rejectUnknownKeys`-style gate; don't assume "reads
   known keys" implies "rejects unknown ones" without checking (LORE-83,
   2026-07-21).
+- When a fix threads a new option through a shared function's ~9 callers,
+  check EVERY caller individually for a pre-existing, deliberately-ordered
+  side effect before mechanically repeating the same edit — one caller
+  (`sync.ts`) had a documented, test-pinned error-precedence contract
+  (LORE-27) between two failure modes that the new unconditional profile
+  load necessarily reordered; a purely mechanical "add the option
+  everywhere" pass would have silently broken that contract's own
+  regression test instead of updating it with a clear explanation
+  (LORE-84, 2026-07-21).
+- A fix can legitimately surface a SEPARATE, adjacent gap in the same
+  subsystem without that gap being in scope to also fix — `loadBundle`
+  (LORE-84) now honors a custom profile for reading concepts, but
+  `core/rewrite.ts`'s `rewriteInbound` (used by `lore rename`/`supersede`)
+  still has no profile parameter for its own internal `serializeConcept`
+  calls, so the WRITE path still uses the default profile. Document such a
+  finding clearly (task notes + tracker's Not-queued section) rather than
+  silently expanding the current task's scope or silently ignoring it; file
+  it as a real follow-up task only when a live user turn is available to
+  confirm priority (LORE-84, 2026-07-21).
 
 ## Session log
 
@@ -401,3 +431,15 @@ CI runs post-merge on dev.
   needs an explicit unknown-key rejection gate on any fixed-vocabulary
   nested table, or a typo silently no-ops instead of erroring). Cursor
   advanced to LORE-84.
+- 2026-07-21 — session 13: resolved LORE-84 (see Resolved table). Branch
+  `feature/LORE-84` off `dev @ 02d4959`. Larger than recent sessions — 9
+  `loadBundle` callers updated, plus a documented, necessary reordering of
+  `sync.ts`'s LORE-27 error-precedence contract (one existing test updated
+  with an explanation, not silently broken). Two new campaign conventions
+  recorded (check every caller individually for a pre-existing ordering
+  contract before a mechanical multi-caller edit; document — don't silently
+  fix or silently ignore — a genuinely separate adjacent gap a fix
+  surfaces). Flagged (not filed, no live user turn to confirm) a follow-up
+  candidate: `core/rewrite.ts`'s `rewriteInbound` still serializes with the
+  default profile, unlike `loadBundle`'s now-fixed read path — see the
+  Not-queued section. Cursor advanced to LORE-82.
