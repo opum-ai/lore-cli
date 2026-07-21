@@ -6,6 +6,7 @@ import { run } from "../src/cli";
 import { type RenameReport, runRename } from "../src/commands/rename";
 import { loadBundle } from "../src/core/bundle";
 import { INDEX_BLOCK_BEGIN, INDEX_BLOCK_END } from "../src/core/indexes";
+import { compileProfile, type Profile, parseProfile } from "../src/core/profile";
 import { type RewritePlan, rewriteInbound } from "../src/core/rewrite";
 import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
@@ -35,9 +36,23 @@ function readDoc(rel: string): string {
   return readFileSync(join(root, "docs", rel), "utf8");
 }
 
-/** Load the `docs/` bundle written so far into a graph. */
-function graph() {
-  return loadBundle(join(root, "docs"));
+/** Load the `docs/` bundle written so far into a graph, optionally against a custom `profile` (LORE-88). */
+function graph(profile?: Profile) {
+  return loadBundle(join(root, "docs"), { profile });
+}
+
+/** A custom profile redefining the built-in Story type's `tasks` field as a scalar string, not a list (LORE-88). */
+function customStoryScalarTasksProfile(): Profile {
+  return compileProfile(
+    parseProfile(
+      {
+        profile: { name: "custom", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "Story", fields: { tasks: { kind: "string" } } }],
+      },
+      "test-profile",
+    ),
+  );
 }
 
 /** The plan's writes as a `bundle-path → bytes` map, for terse assertions. */
@@ -469,6 +484,63 @@ describe("rewriteInbound — modes and validation", () => {
   });
 });
 
+describe("rewriteInbound — custom profile (LORE-88)", () => {
+  test("without a profile, rewriting an inbound concept shaped only by a custom profile throws (repro)", () => {
+    // reference/orders is renamed; stories/bulk links to it (an inbound edge, so rewriteInbound
+    // re-serializes stories/bulk too) and declares `tasks: T-1` as a bare scalar — invalid under the
+    // BUILT-IN default Story schema (tasks is a list there), valid ONLY under the custom profile
+    // this describe block's other tests pass explicitly. Loading the graph itself already needs the
+    // custom profile (a plain loadBundle() with no profile would fail before rewriteInbound even
+    // runs), so this test loads the graph correctly but calls rewriteInbound with NO profile — the
+    // exact LORE-88 gap: the read side is profile-aware (LORE-84), the internal serialize is not.
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    writeDoc("stories/bulk.md", "---\ntype: Story\ntasks: T-1\n---\nUses [orders](../reference/orders.md).\n");
+    const profile = customStoryScalarTasksProfile();
+    const g = graph(profile); // the read side already honors the custom profile (LORE-84)
+
+    try {
+      rewriteInbound(g, "reference/orders", "reference/sales-orders", { move: true }); // no profile passed
+      throw new Error("expected a validation error");
+    } catch (err) {
+      expect((err as LoreError).type).toBe("validation");
+      expect((err as LoreError).message).toContain("tasks");
+    }
+  });
+
+  test("with the profile forwarded, the identical rewrite succeeds and preserves the custom field shape (AC#1/AC#3)", () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    writeDoc("stories/bulk.md", "---\ntype: Story\ntasks: T-1\n---\nUses [orders](../reference/orders.md).\n");
+    const profile = customStoryScalarTasksProfile();
+    const g = graph(profile);
+
+    const plan = rewriteInbound(g, "reference/orders", "reference/sales-orders", { move: true, profile });
+    const bulk = writesByPath(plan).get("stories/bulk.md") ?? "";
+    expect(bulk).toContain("[orders](../reference/sales-orders.md)"); // the inbound link WAS repointed
+    expect(bulk).toContain("tasks: T-1"); // the custom scalar shape survived re-serialize, not coerced/dropped
+  });
+
+  test("move=false (lore supersede's engine) honors the profile too (AC#2)", () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    writeDoc("reference/orders-v2.md", "---\ntype: Reference\n---\nNewer.\n");
+    writeDoc("stories/bulk.md", "---\ntype: Story\ntasks: T-1\n---\nUses [orders](../reference/orders.md).\n");
+    const profile = customStoryScalarTasksProfile();
+    const g = graph(profile);
+
+    const plan = rewriteInbound(g, "reference/orders", "reference/orders-v2", { move: false, profile });
+    const bulk = writesByPath(plan).get("stories/bulk.md") ?? "";
+    expect(bulk).toContain("[orders](../reference/orders-v2.md)");
+    expect(bulk).toContain("tasks: T-1");
+  });
+
+  test("a bundle with no custom profile sees no change in rewriteInbound's behavior (AC#5, no regression)", () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    writeDoc("stories/bulk.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nUses [orders](../reference/orders.md).\n");
+    const plan = rewriteInbound(graph(), "reference/orders", "reference/sales-orders", { move: true }); // no profile option at all
+    const bulk = writesByPath(plan).get("stories/bulk.md") ?? "";
+    expect(bulk).toContain("[orders](../reference/sales-orders.md)");
+  });
+});
+
 // ── command: runRename ────────────────────────────────────────────────────────────
 
 /** Run `rename` in JSON mode and return the parsed `data` payload plus the exit code. */
@@ -519,6 +591,26 @@ describe("lore rename — end to end", () => {
     expect(report.filesChanged).toBeGreaterThan(0);
     expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true); // not moved
     expect(readDoc("stories/bulk.md")).toContain("[orders](../reference/orders.md)"); // not rewritten
+  });
+
+  test("honors a real .lore/profile.toml on disk when rewriting an inbound concept it reshapes (LORE-88, AC#1)", async () => {
+    // Drives the real command layer (runRename → loadProfile reading the actual file) rather than
+    // the in-memory compileProfile the "rewriteInbound — custom profile" describe block above uses —
+    // the two are complementary: that block proves the engine honors an explicitly-passed profile;
+    // this proves runRename actually loads and forwards ITS OWN project's profile end to end.
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      '[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "Story"\nfields = { tasks = { kind = "string" } }\n',
+    );
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    writeDoc("stories/bulk.md", "---\ntype: Story\ntasks: T-1\n---\nUses [orders](../reference/orders.md).\n");
+
+    const { code, report } = await renameCmd(["reference/orders", "reference/sales-orders"]);
+    expect(code).toBe(EXIT_OK);
+    expect(report.filesChanged).toBeGreaterThan(0);
+    expect(readDoc("stories/bulk.md")).toContain("[orders](../reference/sales-orders.md)");
+    expect(readDoc("stories/bulk.md")).toContain("tasks: T-1"); // custom scalar shape survived, not coerced
   });
 
   test("refuses to commit when an unreadable nested directory left the bundle graph incomplete (LORE-82)", async () => {

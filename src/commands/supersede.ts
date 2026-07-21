@@ -164,6 +164,7 @@ export function runSupersede(options: SupersedeOptions): number {
       move: false,
       rewriteFrontmatterRefs: false,
       exclude: excludedFromRewrite(graph, oldConcept.path, newConcept.path),
+      profile,
     });
     for (const w of plan.writes) {
       writes.set(w.path, w.bytes);
