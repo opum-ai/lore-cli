@@ -26,6 +26,7 @@
  * it exists specifically to shell `git`.
  */
 
+import { posix } from "node:path";
 import { LoreError, stderrHint } from "./errors";
 
 /** The result of one `git` invocation, mirroring `adapters/backlog.ts`'s `SpawnResult` shape. */
@@ -184,13 +185,21 @@ export async function commitBacklogFiles(
   opts: { readonly root: string; readonly gitSpawn?: GitSpawn },
   message: string,
 ): Promise<BacklogCommitResult> {
-  // Structural scope guard: lore commits `backlog/` and nothing else (ADR-0012). The paths come from
-  // Backlog's own `filePathRelative`, always under `backlog/` today — this defends the invariant
-  // against a future Backlog layout change (or an absolute/`../` path) rather than silently
-  // committing outside lore's domain, which the removed bundle-wide sweep made structurally
-  // impossible. An empty `files` skips the loop entirely (a no-op run).
-  for (const file of files) {
-    if (!file.startsWith(BACKLOG_DIR)) {
+  // Structural scope guard: lore commits `backlog/` and nothing else (ADR-0012). Each path is
+  // normalized (collapsing `.`/`..` segments) BEFORE the prefix check, and the NORMALIZED form —
+  // not the raw one — is what gets passed to git from here on. A raw `startsWith` check alone is
+  // fooled by a pathspec like `backlog/../docs/secret.md`: it textually starts with `backlog/` but
+  // resolves outside it once git interprets the `..` segment — confirmed live that git honors `..`
+  // even inside a `:(literal)`-quoted pathspec, so quoting alone does not neutralize it. Validating
+  // only a normalized copy while still shelling the raw string out would leave the traversal
+  // exploitable, hence normalizing in place. The paths come from Backlog's own `filePathRelative`,
+  // always under `backlog/` today — this defends the invariant against a future Backlog layout
+  // change (or an absolute/`../` path) rather than silently committing outside lore's domain, which
+  // the removed bundle-wide sweep made structurally impossible. An empty `files` skips the loop
+  // entirely (a no-op run).
+  const normalizedFiles = files.map((file) => {
+    const normalized = posix.normalize(file);
+    if (posix.isAbsolute(normalized) || !normalized.startsWith(BACKLOG_DIR)) {
       throw new LoreError(
         "drift",
         `refusing to commit "${file}": lore only commits ${BACKLOG_DIR}`,
@@ -198,12 +207,13 @@ export async function commitBacklogFiles(
         { file },
       );
     }
-  }
+    return normalized;
+  });
   const gitSpawn = opts.gitSpawn ?? bunGitSpawn(opts.root);
   // Empty `files` is a no-op via commitBacklogIfDirty's own empty-pathspec guard — the single source
   // of truth for "nothing to commit", not re-implemented here.
   try {
-    return await commitBacklogIfDirty(gitSpawn, message, files);
+    return await commitBacklogIfDirty(gitSpawn, message, normalizedFiles);
   } catch (err) {
     // Capture a git-side `drift` failure into the result so the caller still emits its report before
     // exiting `drift`; anything else is unexpected and propagates unchanged.
