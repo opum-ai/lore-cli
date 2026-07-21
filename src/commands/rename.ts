@@ -25,20 +25,22 @@
  * zero-Backlog-dependency behavior it always did. `--dry-run` skips the Backlog move entirely
  * (it previews the file-level plan only, not a Backlog-side preview).
  *
- * A bad flag or a missing/duplicate id is a `usage` error (exit 2); an absent `oldId` a
+ * A bad flag, a missing/duplicate id, or a `newId` that escapes the `docs/` bundle root (checked
+ * here, before any bundle load, as defense-in-depth alongside `rewriteInbound`'s own identical
+ * engine-layer guard — LORE-79/LORE-80) is a `usage` error (exit 2); an absent `oldId` a
  * `not_found` (exit 3, from the engine); an already-taken `newId` a `conflict` (exit 5); a failed
  * back-ref move is `drift` (exit 6, same as `link`/`unlink`) — all funnel through the router's one
  * error seam like every command.
  */
 
 import { existsSync } from "node:fs";
-import { dirname, join, posix } from "node:path";
+import { dirname, join, posix, win32 } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { type BundleGraph, buildGraph, loadBundle, toRefList, UNREADABLE_DIRECTORY_WARNING } from "../core/bundle";
 import { type Concept, idFromPath, parseConcept } from "../core/concept";
 import { generateIndexes, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END, locateManagedBlock } from "../core/indexes";
 import { loadProfile } from "../core/profile";
-import { type RewritePlan, rewriteInbound } from "../core/rewrite";
+import { escapesRoot, type RewritePlan, rewriteInbound } from "../core/rewrite";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_CODES, EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
@@ -120,6 +122,7 @@ export interface RenameReport {
  */
 export async function runRename(options: RenameOptions): Promise<number> {
   const parsed = parseRenameArgs(options.args);
+  assertDestinationConfined(parsed.newId);
   const oldId = idFromPath(parsed.oldId);
   const newId = idFromPath(parsed.newId);
   if (oldId === newId) {
@@ -400,6 +403,31 @@ function buildPostRenameGraph(graph: BundleGraph, plan: RewritePlan): BundleGrap
 }
 
 // ── Argument parsing ───────────────────────────────────────────────────────────
+
+/**
+ * Reject a `newId` that would resolve outside the `docs/` bundle root, confining the destination
+ * at the COMMAND layer — before any bundle load or write — as defense-in-depth alongside
+ * {@link rewriteInbound}'s own identical engine-layer guard (LORE-80), and with a clearer `usage`
+ * error (exit 2) here versus its `validation` (exit 6), mirroring `new.ts`'s `resolveOutPath` in
+ * spirit (fail fast at the command layer, don't rely on a downstream engine's own guard). The
+ * algorithm itself mirrors LORE-80's `escapesRoot`/`assertConfinedToBundle`, not `resolveOutPath`:
+ * `rename` operates on bundle-relative concept ids, not real filesystem paths, so there is no
+ * `resolve`+`relative`-against-a-real-directory step that fits here — `escapesRoot` is reused
+ * (not re-derived) from `core/rewrite.ts` for that reason, keeping the one security-sensitive
+ * segment walk in a single place.
+ *
+ * Checked on the RAW `newId` (before {@link idFromPath} runs), mirroring `assertConfinedToBundle`'s
+ * own documented reasoning for checking pre-normalize.
+ */
+function assertDestinationConfined(newId: string): void {
+  if (posix.isAbsolute(newId) || win32.isAbsolute(newId) || escapesRoot(newId)) {
+    throw usage(
+      `newId "${newId}" resolves outside the docs/ bundle root`,
+      "pass a destination id that stays inside docs/ (no absolute path, no `..` segments)",
+      { id: newId },
+    );
+  }
+}
 
 /**
  * Parse `rename`'s tokens into its two positionals (`<oldId> <newId>`) and `--dry-run`, via the
