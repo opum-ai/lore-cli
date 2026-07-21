@@ -224,6 +224,22 @@ function v6Range(base: string, prefixBits: number, label: string): AddressRange 
  * "this network" (`0.0.0.0/8`), RFC1918 private space, carrier-grade NAT (`100.64.0.0/10`, used
  * by some cloud metadata reachability paths), loopback, and link-local — plus their IPv6
  * counterparts (loopback, unspecified, link-local, unique-local).
+ *
+ * The last two entries block two LEGACY IPv6 forms wholesale, not by re-deriving whether their
+ * embedded IPv4 address happens to be blocked: the deprecated "IPv4-compatible" form (`::/96`,
+ * e.g. `::169.254.169.254` — textually similar to but numerically DISTINCT from the IPv4-MAPPED
+ * form `::ffff:a.b.c.d` this file already unifies into the IPv4 table) and the NAT64 well-known
+ * prefix (`64:ff9b::/96`, RFC 6052 — a NAT64 gateway on some IPv6-only networks translates any
+ * address in this range to its embedded IPv4 destination). An independent adversarial review
+ * confirmed neither form is honored as "reach the embedded IPv4 address" by a plain `fetch()` on
+ * an ordinary (non-NAT64) network — so this is defense-in-depth for an IPv6-only/NAT64-configured
+ * runner, not a fix for a demonstrated bypass on typical CI. Blocking the WHOLE `::/96` block
+ * (rather than trying to re-classify its embedded 32 bits) is deliberate: both mechanisms are
+ * deprecated/translation-only address spaces with no legitimate use for checking a documentation
+ * link, and `::/96` numerically also contains `::`/`::1` themselves (same values, different
+ * spellings) — re-deriving "is the embedded IPv4 blocked" for those two would incorrectly treat
+ * the IPv6 loopback/unspecified addresses as if they meant IPv4 `0.0.0.1`/`0.0.0.0`, which is not
+ * how either address is actually used in practice.
  */
 const BLOCKED_ADDRESS_RANGES: readonly AddressRange[] = [
   v4Range("0.0.0.0", 8, "this-network (0.0.0.0/8)"),
@@ -237,6 +253,8 @@ const BLOCKED_ADDRESS_RANGES: readonly AddressRange[] = [
   v6Range("::", 128, "unspecified (::)"),
   v6Range("fe80::", 10, "link-local (fe80::/10)"),
   v6Range("fc00::", 7, "unique-local (fc00::/7)"),
+  v6Range("::", 96, "deprecated IPv4-compatible form (::/96)"),
+  v6Range("64:ff9b::", 96, "NAT64 well-known prefix (64:ff9b::/96)"),
 ];
 
 /**
