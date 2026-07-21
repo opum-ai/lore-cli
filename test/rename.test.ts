@@ -588,6 +588,38 @@ describe("lore rename — errors and arg parsing", () => {
     expect(readDoc("reference/notes.md")).toBe(nonConcept); // untouched
     expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true); // source intact
   });
+
+  test("a traversal newId is rejected as usage (exit 2), before rewriteInbound's validation (LORE-79)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    const err = await expectError(["reference/orders", "../../../../tmp/pwned"]);
+    expect(err.type).toBe("usage");
+    expect(err.input).toEqual({ id: "../../../../tmp/pwned" });
+    expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true); // nothing moved
+  });
+
+  test("an absolute newId is rejected as usage (LORE-79)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    expect((await expectError(["reference/orders", "/etc/pwned"])).type).toBe("usage");
+  });
+
+  test("a backslash-spelled relative newId traversal is rejected as usage (LORE-79)", async () => {
+    // Mirrors LORE-80's review-caught bypass: posix.normalize treats `\` as an ordinary character,
+    // not a separator, so a naive forward-slash-only check would miss this.
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    expect((await expectError(["reference/orders", "..\\pwned"])).type).toBe("usage");
+  });
+
+  test("a mixed-separator newId traversal that nets outside the bundle root is rejected as usage (LORE-79)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    expect((await expectError(["reference/orders", "sub/..\\..\\pwned"])).type).toBe("usage");
+  });
+
+  test("does not reject a real newId segment that merely starts with '..' (no false positive, LORE-79)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    const { code } = await renameCmd(["reference/orders", "..foo/bar"]);
+    expect(code).toBe(EXIT_OK);
+    expect(existsSync(join(root, "docs/..foo/bar.md"))).toBe(true);
+  });
 });
 
 describe("lore rename — data-loss-safe relocation (review fixes)", () => {

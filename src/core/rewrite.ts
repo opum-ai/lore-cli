@@ -257,8 +257,12 @@ function assertConfinedToBundle(id: string, label: "fromId" | "toId"): void {
  * file or directory literally named `..`, so this can never misfire on a genuine bundle id — nor
  * reject a real segment that merely *starts* with `..` (e.g. `..foo/bar`), since that segment
  * does not equal `..` exactly (mirrors `new.ts`'s `resolveOutPath`'s own documented care).
+ *
+ * Exported so a command layer can reuse this exact, already-review-tested traversal check for its
+ * own defense-in-depth confinement guard (e.g. `commands/rename.ts`'s `newId`, LORE-79) instead of
+ * re-deriving the same security-sensitive segment walk a second time.
  */
-function escapesRoot(id: string): boolean {
+export function escapesRoot(id: string): boolean {
   let depth = 0;
   for (const segment of id.split(/[\\/]+/)) {
     if (segment === "" || segment === ".") {
