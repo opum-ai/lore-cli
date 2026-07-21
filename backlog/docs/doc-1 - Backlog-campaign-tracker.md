@@ -3,7 +3,7 @@ id: doc-1
 title: Backlog campaign tracker
 type: other
 created_date: '2026-07-19 23:15'
-updated_date: '2026-07-21 17:52'
+updated_date: '2026-07-21 19:04'
 ---
 # Backlog campaign tracker
 
@@ -12,14 +12,15 @@ lifecycle → advance cursor → append session log → write handover.
 
 ## Cursor
 
-**Queue exhausted (confirmed 2026-07-21, session 27)** — LORE-81 (the last
-queue item) is now Done; see Resolved. No next issue. Per the skill's own
-restore-mode instructions: the campaign is complete. A human should triage
-the Not-queued section below (LORE-42/43/44/45 plus several follow-up
-candidates surfaced across this campaign's own reviews) before running
-`/backlog-handover init` for a fresh queue.
+**Next issue: LORE-90** — queue order confirmed by the user on 2026-07-21
+("Risk-ascending, sweep last (Recommended)": small self-contained fixes
+first, then the two profile-threading fixes, then the well-precedented
+symlink guards, saving the largest-surface item (LORE-93, a 5-command
+sweep) for last, mirroring how the just-finished campaign sequenced its
+own interrelated LORE-80/79/78/81 cluster). Do not re-ask before taking
+the next item.
 
-**Merge gate: self-merge (skill default)** — this queue ran under the
+**Merge gate: self-merge (skill default)** — this queue runs under the
 standard `backlog-handover` skill (`.claude/skills/backlog-handover/`), whose
 own convention is no separate PR-approval gate: the lifecycle's step-6 review
 (self or adversarial subagent) is the review; the PR that follows is an audit
@@ -29,8 +30,16 @@ CI runs post-merge on dev.
 
 ## Queue (confirmed order)
 
-Empty — every confirmed queue item is now Done (see Resolved). No next
-cursor to invent; see the Cursor section above.
+| # | Issue | Type | One-line note |
+| --- | --- | --- | --- |
+| 1 | LORE-90 | bug | commitBacklogFiles' backlog/ containment guard is POSIX-only normalize |
+| 2 | LORE-94 | bug | schema export --out near-miss test gaps + isManagedSchemasDir symlink bypass |
+| 3 | LORE-92 | bug | lore scaffold --force has a narrow TOCTOU symlink window |
+| 4 | LORE-95 | bug | escapesRoot misses a Windows drive-relative id and an empty/self-cancelling newId |
+| 5 | LORE-89 | bug | lore check's own concept scan never forwards a project's custom profile |
+| 6 | LORE-88 | bug | rewriteInbound (rename/supersede --rewrite-links) never forwards a project's custom profile |
+| 7 | LORE-91 | bug | lore new --template silently follows a symlink, reads outside the repo |
+| 8 | LORE-93 | bug | ensureDir call sites in 5 commands follow symlinks, escaping docs/ |
 
 ## Resolved
 
@@ -1168,3 +1177,33 @@ cursor to invent; see the Cursor section above.
   (LORE-42/43/44/45) and follow-up candidates surfaced across this
   campaign's 27 sessions await a human triage decision before
   `/backlog-handover init` starts a fresh queue.
+
+- 2026-07-21 — session 28 (init): campaign re-armed with a fresh 8-item
+  queue after session 27 emptied it. Reused doc-1 rather than creating a
+  new tracker doc (continuity beats a fresh doc — this campaign has run
+  28 sessions against the same tracker; Resolved/Not-queued/Session-log/
+  Conventions history all stays intact). Source of the new queue: the 9
+  not-yet-filed follow-up candidates this campaign's own independent
+  reviews had accumulated in the Not-queued section across sessions
+  9-26 (profile-threading gaps found during LORE-84's review; a
+  POSIX-only path guard found during LORE-69's review; a template-read
+  symlink gap found during LORE-72's review; a --force TOCTOU window
+  found during LORE-76's review; an unguarded-ensureDir sweep merging
+  findings from LORE-77's and LORE-79's reviews; two schema-export test
+  gaps found during LORE-75's review; two escapesRoot edge cases found
+  during LORE-80's and LORE-79's sessions). Ran a dedicated workflow (9
+  parallel agents, one per candidate) to independently re-verify EACH
+  one against current dev HEAD (c8698a2) before filing anything - some
+  security/correctness fixes land in this repo fast enough that an
+  older finding can go stale - then a calibration pass across all nine
+  together to catch overlap and check priority consistency. All nine
+  confirmed still genuinely open; one merge (the two escapesRoot edge
+  cases, since both bypass the identical shared function through the
+  identical two guard call sites) produced 8 final tasks: LORE-88
+  through LORE-95, filed via `backlog task create` (labels
+  `backlog-campaign-followup` plus a category label each; `--ref`
+  pointing at this tracker doc). LORE-42/43/44/45 remain in Not-queued
+  unchanged - still deferred by their own recorded product decisions,
+  not something this init touches. Queue order (8 items) confirmed by
+  the user via an explicit ordering choice; recorded verbatim in Cursor
+  above. Cursor set to LORE-90, the first item.
