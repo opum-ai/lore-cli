@@ -27,6 +27,7 @@
  */
 
 import { posix } from "node:path";
+import { escapesRoot } from "./core/rewrite";
 import { LoreError, stderrHint } from "./errors";
 
 /** The result of one `git` invocation, mirroring `adapters/backlog.ts`'s `SpawnResult` shape. */
@@ -204,6 +205,22 @@ export async function commitBacklogFiles(
   // an absolute/`../`/NUL-embedded path) rather than silently committing outside lore's domain, which
   // the removed bundle-wide sweep made structurally impossible. An empty `files` skips the loop
   // entirely (a no-op run).
+  //
+  // `posix.normalize` only ever collapses `/`-delimited segments, so a BACKSLASH-delimited `..`
+  // climb (e.g. `backlog/x\..\..\outside.md` — the shape a platform-native `path.join` would resolve
+  // outside `backlog/` under win32) survives it as one opaque, unchanged segment and still passes
+  // the `startsWith` check above. `escapesRoot` (this codebase's shared, already-review-tested
+  // traversal check — see LORE-69/72/80's convention of validating against the deployment platform,
+  // not just the POSIX host running the fix) walks segments split on EITHER `/` or `\`, so it catches
+  // this shape too. It must run on the path with the `backlog/` PREFIX ALREADY STRIPPED: running it
+  // on the full, prefixed string would let the `backlog` segment itself absorb one level of the `..`
+  // climb and miss the real payload — `escapesRoot` answers "does this climb above where it starts",
+  // and the boundary that matters here is `backlog/`, not the string's own first character. Note this
+  // guard is defense-in-depth rather than a fix for an active break today: downstream, git's own
+  // `:(literal)` pathspec matching never treats `\` as a separator either, so this exact input shape
+  // was already a silent no-op (nothing committed, in or out of `backlog/`) rather than an actual
+  // escape — but the guard's own contract is a hard boundary regardless of what any current caller or
+  // downstream consumer happens to do with the string, so it is rejected outright here too.
   const normalizedFiles = files.map((file) => {
     if (file.includes("\0")) {
       throw new LoreError(
@@ -214,7 +231,11 @@ export async function commitBacklogFiles(
       );
     }
     const normalized = posix.normalize(file);
-    if (posix.isAbsolute(normalized) || !normalized.startsWith(BACKLOG_DIR)) {
+    if (
+      posix.isAbsolute(normalized) ||
+      !normalized.startsWith(BACKLOG_DIR) ||
+      escapesRoot(normalized.slice(BACKLOG_DIR.length))
+    ) {
       throw new LoreError(
         "drift",
         `refusing to commit "${file}": lore only commits ${BACKLOG_DIR}`,
