@@ -15,6 +15,7 @@ import { run } from "../src/cli";
 import { writeFileAtomic, writeFileOverwriting } from "../src/commands/fswrite";
 import { type ReplaceReport, runReplace } from "../src/commands/replace";
 import { INDEX_BLOCK_BEGIN, INDEX_BLOCK_END } from "../src/core/indexes";
+import { TASK_BLOCK_BEGIN, TASK_BLOCK_END } from "../src/core/managed-block";
 import { compileReplacer, managedRanges, mergeRanges, replaceInText } from "../src/core/replace";
 import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
@@ -25,6 +26,11 @@ const JSON_CTX: OutputContext = { mode: "json", color: false };
 /** A well-formed index managed block with the given listing line. */
 function indexBlock(line: string): string {
   return `${INDEX_BLOCK_BEGIN}\n${line}\n${INDEX_BLOCK_END}`;
+}
+
+/** A well-formed tasks managed block with the given table line. */
+function tasksBlock(line: string): string {
+  return `${TASK_BLOCK_BEGIN}\n${line}\n${TASK_BLOCK_END}`;
 }
 
 // ── core: replaceInText (the pure engine) ────────────────────────────────────────
@@ -127,6 +133,29 @@ describe("replaceInText — managed regions are never touched (AC#1)", () => {
     // since replace could never know whether "MIDDLE tok" was meant to be edited or protected.
     expect(() => replaceInText(text, "tok", "X")).toThrow(LoreError);
   });
+
+  test("a match inside a lore:tasks block is neither replaced nor counted (LORE-73)", () => {
+    const text = `intro foo\n\n${tasksBlock("| [foo](foo.md) | Foo | Done |")}\n\noutro foo`;
+    const out = replaceInText(text, "foo", "BAR");
+    expect(out.count).toBe(2); // only the two prose occurrences
+    expect(out.text).toContain(tasksBlock("| [foo](foo.md) | Foo | Done |")); // block byte-identical
+    expect(out.text.startsWith("intro BAR")).toBe(true);
+    expect(out.text.endsWith("outro BAR")).toBe(true);
+  });
+
+  test("a match that exists ONLY inside a lore:tasks block is a no-op (LORE-73)", () => {
+    const text = `prose\n\n${tasksBlock("| [foo](foo.md) | Foo | Done |")}\n\nprose`;
+    expect(replaceInText(text, "foo.md", "x.md")).toEqual({ text, count: 0 });
+  });
+
+  test("an index block and a tasks block in the same doc both protect their own matches (LORE-73)", () => {
+    const text = `${indexBlock("- [tok](tok.md)")}\nprose tok\n${tasksBlock("| [tok](tok.md) | Tok | Done |")}`;
+    const out = replaceInText(text, "tok", "X");
+    expect(out.count).toBe(1); // only the prose occurrence
+    expect(out.text).toContain(indexBlock("- [tok](tok.md)"));
+    expect(out.text).toContain(tasksBlock("| [tok](tok.md) | Tok | Done |"));
+    expect(out.text).toContain("prose X");
+  });
 });
 
 describe("managedRanges", () => {
@@ -153,6 +182,23 @@ describe("managedRanges", () => {
 
   test("no markers means no protected ranges", () => {
     expect(managedRanges("plain prose, no markers")).toEqual([]);
+  });
+
+  test("locates a well-formed tasks block including its markers (LORE-73)", () => {
+    const text = `a\n${tasksBlock("| [x](x.md) | X | Done |")}\nb`;
+    const ranges = managedRanges(text);
+    expect(ranges).toHaveLength(1);
+    const r = ranges[0];
+    if (r === undefined) {
+      throw new Error("expected one range");
+    }
+    expect(text.slice(r.start, r.end)).toBe(tasksBlock("| [x](x.md) | X | Done |"));
+  });
+
+  test("an index block and a tasks block both register as separate protected ranges (LORE-73)", () => {
+    const text = `${indexBlock("- a")}\nmid\n${tasksBlock("| [b](b.md) | B | Done |")}`;
+    const ranges = managedRanges(text);
+    expect(ranges).toHaveLength(2);
   });
 });
 
