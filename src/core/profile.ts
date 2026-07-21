@@ -343,6 +343,9 @@ export function parseProfile(doc: Record<string, unknown>, source: string): Pars
   return { name, okfVersion, case: caseStyle, resourceBase, baseFields, types };
 }
 
+/** The keys a `[[types]]` table may declare. */
+const TYPE_TABLE_KEYS = ["name", "fields", "sections", "template"] as const;
+
 /** Parse the `[[types]]` array-of-tables into {@link ParsedType}s, rejecting a duplicate type name. */
 function parseTypes(value: unknown, source: string): ParsedType[] {
   if (value === undefined) {
@@ -363,6 +366,7 @@ function parseTypes(value: unknown, source: string): ParsedType[] {
         key: `types[${i}]`,
       });
     }
+    rejectUnknownKeys(table, TYPE_TABLE_KEYS, `types[${i}]`, source);
     const name = requireString(table.name, `types[${i}].name`, source).trim();
     const slug = slugForTypeName(name);
     if (slug === "") {
@@ -431,6 +435,9 @@ function parseFieldTable(table: Record<string, unknown>, where: string, source: 
   return fields;
 }
 
+/** The attribute keys a field spec inline table (`{ required = ..., kind = ..., ... }`) may declare. */
+const FIELD_SPEC_KEYS = ["required", "kind", "enum", "items", "default"] as const;
+
 /** Parse one inline-table field spec, defaulting and cross-checking its attributes. */
 function parseFieldSpec(raw: unknown, where: string, source: string): FieldSpec {
   const table = asTable(raw, where, source);
@@ -439,6 +446,7 @@ function parseFieldSpec(raw: unknown, where: string, source: string): FieldSpec 
       key: where,
     });
   }
+  rejectUnknownKeys(table, FIELD_SPEC_KEYS, where, source);
   const required = asBoolean(table.required, `${where}.required`, source) ?? false;
   const enumValues = asStringArray(table.enum, `${where}.enum`, source);
   const declaredKind = asEnum(table.kind, `${where}.kind`, FIELD_KINDS, source);
@@ -469,6 +477,9 @@ function parseFieldSpec(raw: unknown, where: string, source: string): FieldSpec 
   return spec;
 }
 
+/** The attribute keys a list field's `items` inline table (`{ kind = ..., enum = ... }`) may declare. */
+const ITEMS_TABLE_KEYS = ["kind", "enum"] as const;
+
 /** Parse a list field's `items` element spec (default: string elements). Only `kind`/`enum` apply to an element. */
 function parseItems(raw: unknown, where: string, source: string): { kind: ScalarKind; enum?: readonly string[] } {
   if (raw === undefined) {
@@ -480,6 +491,7 @@ function parseItems(raw: unknown, where: string, source: string): { kind: Scalar
       key: where,
     });
   }
+  rejectUnknownKeys(table, ITEMS_TABLE_KEYS, where, source);
   const enumValues = asStringArray(table.enum, `${where}.enum`, source);
   const kind =
     enumValues !== undefined ? "string" : (asEnum(table.kind, `${where}.kind`, FIELD_KINDS, source) ?? "string");
@@ -769,6 +781,31 @@ function withReason(base: string, cause: unknown): string {
       ? (cause as { message: string }).message.replace(/\s*[\r\n]+\s*/g, " ").trim()
       : "";
   return reason ? `${base}: ${reason}` : base;
+}
+
+/**
+ * Fail when `table` carries a key outside `allowed` — the closed-vocabulary gate for a field
+ * spec, a `[[types]]` table, or an `items` table (LORE-83). Unlike the top-level/`[profile]`
+ * table (documented forward-compatible tolerance, {@link parseProfile}'s own docstring), these
+ * nested tables have a small, fixed attribute set with no forward-compat need — so a typo
+ * (`require` for `required`) is a `validation` error rather than a silently-ignored no-op that
+ * leaves the intended attribute at its default (every concept then validating clean despite
+ * missing a field the author believed was required).
+ */
+function rejectUnknownKeys(
+  table: Record<string, unknown>,
+  allowed: readonly string[],
+  where: string,
+  source: string,
+): void {
+  const unknown = Object.keys(table).filter((key) => !allowed.includes(key));
+  if (unknown.length > 0) {
+    fail(
+      `${source}: ${where} has unrecognized key${unknown.length === 1 ? "" : "s"} ${unknown.map((k) => `"${k}"`).join(", ")}`,
+      `${where} only accepts: ${allowed.join(", ")} — fix the typo or remove the key`,
+      { key: where, unknown },
+    );
+  }
 }
 
 /** Require a table (plain object) when present; `undefined` passes through for "absent". */
