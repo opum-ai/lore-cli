@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 18:52'
-updated_date: '2026-07-21 20:24'
+updated_date: '2026-07-21 20:31'
 labels:
   - backlog-campaign-followup
   - security
@@ -61,45 +61,45 @@ genuine climb ABOVE the start); an empty string or "sub/.." both keep the depth 
 throughout without ever going negative, so escapesRoot returns false for both. idFromPath's
 posix.normalize then folds either to ".", and rewriteInbound's `${to}.md` template produces the
 literal string "..md" -- verified the exact string concatenation in isolation before writing the
-fix (to="." + literal ".md" suffix = "..md", a hidden dotfile at the bundle root, not the "single
-dot" I initially miscalculated by hand).
+fix (to="." + literal ".md" suffix = "..md", a hidden dotfile at the bundle root).
 
 Fix: two new exported functions in core/rewrite.ts, both reusable at the assertDestinationConfined
-argument-parsing layer in rename.ts (AC#2), mirroring how escapesRoot itself is already shared
-rather than re-derived:
-- isDriveRelative(id): a regex /^[A-Za-z]:(?![\\/])/ matching a single letter, colon, and NO
-  immediately-following separator (or end of string) -- verified against win32.isAbsolute's own
-  behavior for "C:foo", "C:", and "C:\foo" to confirm the regex catches exactly the drive-relative
-  form and not the already-absolute form.
+argument-parsing layer in rename.ts (AC#2), mirroring how escapesRoot itself is already shared:
+- isDriveRelative(id): /^[A-Za-z]:(?![\\/])/ -- matches a single letter, colon, and NO
+  immediately-following separator (or end of string).
 - resolvesToRoot(id): a companion segment walk (same split-on-either-separator convention as
-  escapesRoot) that returns true when the net depth after processing every segment is 0 -- catches
-  "", ".", and "sub/.." while correctly NOT rejecting a real single-segment id ("orders") or a
-  legitimate cancel-through-a-real-directory path ("sub/../reference/sales-orders", net depth 1,
-  AC#6). Clamped at 0 internally (Math.max(0, depth-1)) so the function is correct standalone
-  regardless of call order relative to escapesRoot's own check.
+  escapesRoot) returning true when the net depth after processing every segment is 0. Clamped at 0
+  internally (Math.max(0, depth-1)) so the function is correct standalone regardless of call order.
 
-Both wired into assertConfinedToBundle (core/rewrite.ts, AC#1/AC#5 -- the shared engine layer) and
-assertDestinationConfined (commands/rename.ts, AC#2 -- the argument-parsing layer), keeping the
-existing parity between the two guards this codebase already established for LORE-78/79/80.
+Both wired into assertConfinedToBundle (core/rewrite.ts, AC#1/AC#5 -- applies symmetrically to
+BOTH fromId and toId) and assertDestinationConfined (commands/rename.ts, AC#2 -- newId only).
 
-AC#7: 8 new tests -- 5 at the engine layer (test/rename.test.ts's "rewriteInbound -- modes and
-validation" block: drive-relative toId, drive-relative fromId, empty toId, self-cancelling toId,
-plus a false-positive check for a real cancel-through path) and 3 at the argument-parsing layer
-("lore rename -- errors and arg parsing" block: drive-relative/empty/self-cancelling newId,
-following that block's existing "argument parsing alone, no write" style). AC#6's existing
-"..foo/bar" false-positive test (LORE-79) continues to pass unchanged, confirming no regression on
-segments that merely start with "..".
+AC#7: 9 tests total (after the review round) -- 6 at the engine layer (drive-relative toId,
+drive-relative fromId, empty toId, self-cancelling toId, self-cancelling fromId, plus a
+false-positive check for a real cancel-through path) and 3 at the argument-parsing layer
+(drive-relative/empty/self-cancelling newId). AC#6's existing "..foo/bar" false-positive test
+(LORE-79) continues to pass unchanged.
 
-Live-CLI verification (not just the synthetic suite, per this campaign's standing discipline):
-real scratch bundle under .repro-scratch/lore95-verify/, driving the actual `lore rename` CLI via
-`bun run src/cli.ts`. Post-fix: all three shapes (C:pwned, empty string, sub/..) correctly refused
-at exit 2, source file untouched, no docs/..md or docs/C:pwned.md ever created. Pre-fix (via `git
-stash` on the two source files, matching this campaign's now-standard comparison technique): both
-gaps reproduced for real -- "C:pwned" silently succeeded (exit 0, wrote docs/C:pwned.md), and an
-empty newId silently succeeded (exit 0, wrote docs/..md with the moved concept's exact content) --
-confirming the bugs were real and the fix closes them.
+Live-CLI verification (per this campaign's standing discipline): real scratch bundle under
+.repro-scratch/lore95-verify/, driving the actual `lore rename` CLI via `bun run src/cli.ts`.
+Post-fix: all three shapes (C:pwned, empty string, sub/..) correctly refused at exit 2, source
+file untouched, no docs/..md or docs/C:pwned.md ever created. Pre-fix (via `git stash` on the two
+source files): both gaps reproduced for real -- "C:pwned" silently succeeded (exit 0, wrote
+docs/C:pwned.md), and an empty newId silently succeeded (exit 0, wrote docs/..md with the moved
+concept's exact content).
 
-Verified: bun test -> 1679 pass/0 fail (up from 1671); bun run typecheck clean; bun run lint clean
-on all changed files (fixed one biome organizeImports ordering issue in commands/rename.ts) -- 4
-pre-existing infos remain in unrelated files, untouched.
+Independent review (general-purpose subagent, run after committing the fix+tests): no blocking
+findings. Verified the fix independently -- reverted the two source files to pre-fix and reran
+test/rename.test.ts, confirming all 7 originally-new "must reject" tests genuinely fail without the
+fix (not vacuous), then restored and reran the full suite. Traced isDriveRelative/resolvesToRoot
+against ~25 cases empirically, confirmed no false positives/negatives. Confirmed lore supersede is
+unaffected (its own conceptNotInBundle precondition means a normalized id from an already-loaded
+real concept can never hit these degenerate shapes). One non-blocking coverage gap noted: no
+dedicated empty/self-cancelling-fromId test existed (only drive-relative-fromId did) -- closed by
+adding one more engine-layer test proving resolvesToRoot applies symmetrically to fromId too via
+the shared guard (a `validation` type, not `not_found`, is what proves the guard fired before any
+concept lookup).
+
+Verified (final): bun test -> 1680 pass/0 fail (up from 1671); bun run typecheck clean; bun run
+lint clean on all changed files -- 4 pre-existing infos remain in unrelated files, untouched.
 <!-- SECTION:NOTES:END -->
