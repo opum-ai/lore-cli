@@ -64,7 +64,7 @@
  * bytes, and performs the move/delete.
  */
 
-import { posix } from "node:path";
+import { posix, win32 } from "node:path";
 import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { LoreError } from "../errors";
@@ -163,6 +163,8 @@ export function rewriteInbound(
   const exclude = options.exclude ?? NO_EXCLUDE;
   const from = idFromPath(fromId);
   const to = idFromPath(toId);
+  assertConfinedToBundle(from, "fromId");
+  assertConfinedToBundle(to, "toId");
 
   const fromConcept = graph.concepts.get(from);
   if (fromConcept === undefined) {
@@ -212,6 +214,28 @@ export function rewriteInbound(
 
   writes.sort((a, b) => compareCodeUnits(a.path, b.path));
   return { rename: move ? { from: fromPath, to: toPath } : null, writes };
+}
+
+/**
+ * Reject a `fromId`/`toId` that resolves outside the `docs/` bundle root once normalized — closes
+ * the traversal gap for every {@link rewriteInbound} caller (`lore rename`, `lore supersede`) at
+ * the one shared layer both funnel through (LORE-80). `idFromPath`'s `posix.normalize` collapses
+ * every `..` segment it can; one that survives at the front of the result means the id already
+ * climbs above the bundle root before this function ever sees it. An absolute path is checked
+ * against BOTH `posix.isAbsolute` and `win32.isAbsolute` — this ships as a compiled binary for
+ * both platforms from the same source, so a Windows drive-letter id (inert POSIX-side, genuinely
+ * absolute on a win32 run) must be rejected regardless of which platform is running (the LORE-69
+ * cross-platform-normalize convention).
+ */
+function assertConfinedToBundle(id: string, label: "fromId" | "toId"): void {
+  if (id === ".." || id.startsWith("../") || posix.isAbsolute(id) || win32.isAbsolute(id)) {
+    throw new LoreError(
+      "validation",
+      `${label} "${id}" resolves outside the docs/ bundle root`,
+      "pass an id that stays inside the docs/ bundle",
+      { id },
+    );
+  }
 }
 
 /** The resolved coordinates one concept's rewrite needs (`from`/`to` are normalized ids). */

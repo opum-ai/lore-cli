@@ -344,6 +344,36 @@ describe("rewriteInbound — modes and validation", () => {
       expect((err as LoreError).type).toBe("conflict");
     }
   });
+
+  test("rejects a toId that traverses outside the docs/ bundle root (LORE-80)", () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    try {
+      rewriteInbound(graph(), "reference/orders", "../pwned", { move: true });
+      throw new Error("expected a validation error");
+    } catch (err) {
+      expect((err as LoreError).type).toBe("validation");
+    }
+  });
+
+  test("rejects an absolute toId (LORE-80)", () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    try {
+      rewriteInbound(graph(), "reference/orders", "/etc/pwned", { move: true });
+      throw new Error("expected a validation error");
+    } catch (err) {
+      expect((err as LoreError).type).toBe("validation");
+    }
+  });
+
+  test("rejects a fromId that traverses outside the docs/ bundle root (LORE-80)", () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    try {
+      rewriteInbound(graph(), "../../etc/passwd", "reference/sales", { move: true });
+      throw new Error("expected a validation error");
+    } catch (err) {
+      expect((err as LoreError).type).toBe("validation");
+    }
+  });
 });
 
 // ── command: runRename ────────────────────────────────────────────────────────────
