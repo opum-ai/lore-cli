@@ -3,9 +3,11 @@ id: LORE-81
 title: >-
   lore rename index <new> (renaming FROM the reserved root index) is not
   rejected, corrupts docs/index.md
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-21 08:38'
+updated_date: '2026-07-21 17:48'
 labels:
   - codex-review
   - correctness
@@ -27,6 +29,12 @@ assertNotReservedStem is only called on newId in commands/rename.ts, not oldId, 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 lore rename rejects oldId == index (the bundle root index) with a clear usage error, matching supersede.ts behavior
-- [ ] #2 A test covers `lore rename index <new-name>` and asserts it is rejected rather than leaving docs/index.md missing
+- [x] #1 lore rename rejects oldId == index (the bundle root index) with a clear usage error, matching supersede.ts behavior
+- [x] #2 A test covers `lore rename index <new-name>` and asserts it is rejected rather than leaving docs/index.md missing
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed: added assertNotReservedStem(oldId, "rename from") in runRename (src/commands/rename.ts), mirroring supersede.ts's two-sided check. Live-CLI-verified the repro first on a scratch bundle: 'lore rename index some-new-name' exited 0 and left docs/index.md missing before the fix; after the fix it exits 2 (usage) with docs/index.md untouched. Added a regression test (test/rename.test.ts) covering AC#2. Confirmed a normal (non-reserved) rename still works. Full suite: 1657/1657 pass, typecheck clean, biome clean on changed files.
+<!-- SECTION:NOTES:END -->
