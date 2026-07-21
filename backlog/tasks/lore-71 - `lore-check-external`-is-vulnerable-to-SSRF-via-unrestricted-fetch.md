@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-07-21 08:38'
-updated_date: '2026-07-21 12:03'
+updated_date: '2026-07-21 12:23'
 labels:
   - codex-review
   - security
@@ -104,4 +104,54 @@ DNS query), and that a NUL byte or malformed IP literal is correctly rejected by
 
 Full bun test: 1540 pass/0 fail (up from 1534). bun run typecheck clean. bunx biome check clean
 (two formatter-only fixes applied).
+
+INDEPENDENT REVIEW: extensive differential fuzzing (a Python ipaddress-module oracle vs.
+classifyAddress, 220 random/boundary IPv6 values x up to 6 spellings + 65 hand-written targeted
+cases covering every CIDR boundary, malformed inputs, case variants, zone IDs) found ZERO
+mismatches and ZERO cross-spelling inconsistencies in the core classifier. Real end-to-end CLI
+runs also confirmed decimal/octal/short-form IPv4 tricks (2130706433, 017700000001, 127.1) are
+all correctly blocked, since new URL() normalizes them to canonical form BEFORE classifyAddress
+sees them AND before the same string is passed to fetchFn (no validate-A-use-B divergence).
+Credentials-embedded URLs, non-standard 3xx codes, malformed Location headers, and scheme-swap
+redirects (javascript:/file:) were all independently verified to behave correctly.
+
+The review DID find two genuinely-unclassified IPv6 address forms during its fuzzing (initially
+reported as a live bypass mid-review, then self-corrected after finding a bug in its own oracle
+generator): the deprecated "IPv4-compatible" form (::a.b.c.d, e.g. ::169.254.169.254 -- textually
+similar to but NUMERICALLY DISTINCT from the IPv4-mapped ::ffff:a.b.c.d form already handled) and
+the NAT64 well-known prefix (64:ff9b::/96, RFC 6052). The review empirically confirmed via a real
+local HTTP server that Bun/Node's fetch() does NOT honor either form as reaching the embedded
+IPv4 address on an ordinary (non-NAT64) network -- fetch("http://[::127.0.0.1]:PORT/") fails to
+connect outright rather than reaching loopback -- so these are NOT exploitable on typical CI
+runners, only on an IPv6-only/NAT64-configured network. Applied as defense-in-depth anyway (cheap,
+narrow, well-justified): both forms are now blocked WHOLESALE in classifyAddress's range table
+(src/core/check.ts) rather than re-deriving their embedded IPv4's own classification -- re-deriving
+would have incorrectly treated ::1/:: (IPv6 loopback/unspecified, which happen to numerically
+overlap the ::/96 block) as if they meant IPv4 0.0.0.1/0.0.0.0, which is not how either address is
+actually used.
+
+Also applied from the review's other recommendations:
+- 62 new direct unit tests for classifyAddress added to test/check.test.ts (the review's main
+  actionable finding: the classifier had ZERO direct tests, only ~5 indirect examples via
+  runCheck --external end-to-end cases) -- every CIDR boundary for all ranges, IPv4-mapped
+  bypass-technique cases, the two new legacy-form cases, malformed/fail-closed cases, and a
+  cross-spelling-agreement case. Confirmed via git stash (isolating just the 3 source files,
+  keeping only the new tests) that the 4 new legacy-form tests fail pre-fix and all pass post-fix.
+- Documented the DNS-rebinding TOCTOU limitation directly in blockedDestination's doc comment
+  (src/commands/check.ts): real, structurally confirmed by the review, but low blast-radius given
+  --external is advisory-only (never gates) and probeOne never reads/reports a response body --
+  the worst case is a bare GET landing on an internal host, not data exfiltration through the
+  report. Fully closing it would need connection-level IP pinning, materially bigger than this
+  task's AC calls for -- documented as an accepted, known limitation rather than silently absent.
+- Fixed a doc-comment off-by-one: MAX_REDIRECTS's comment said "hops before giving up" without
+  clarifying the loop actually allows MAX_REDIRECTS+1 total fetch calls (1 initial + up to 10
+  follows) -- confirmed correct/safe behavior, just an imprecise comment, now clarified.
+- Added a defensive fail-closed check: if a (hypothetical custom) ResolveHost implementation
+  returns an empty address array instead of throwing for "no records found", blockedDestination
+  now explicitly blocks rather than vacuously passing an empty for-loop and letting the fetch
+  through unvalidated. The real default resolver (node:dns) always throws in this case, so this
+  is pure defense against a different, cooperating ResolveHost contract, not a fix for a live gap.
+
+Full bun test after the review-fix round: 1602 pass/0 fail (up from 1540). bun run typecheck
+clean. bunx biome check clean (one formatter-only fix applied).
 <!-- SECTION:NOTES:END -->
