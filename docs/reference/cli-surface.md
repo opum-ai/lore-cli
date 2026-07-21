@@ -301,8 +301,8 @@ the doc↔task coupling has gaps.
 | | |
 |---|---|
 | **Args** | none |
-| **Key flags** | `--tasks-only` · `--docs-only` |
-| **Output** | `kind: orphans.report` — `{ orphanTasks[], danglingLinks[] }` |
+| **Key flags** | `--tasks-only` · `--docs-only` · `--limit <n>` (caps each requested section independently; default 20) |
+| **Output** | `kind: orphans.report` — `{ orphanTasks[], orphanTasksTotal, orphanTasksShown, orphanTasksTruncated, danglingLinks[], danglingLinksTotal, danglingLinksShown, danglingLinksTruncated }` (bounded per §3; each pair of `total`/`shown`/`truncated` fields is present only alongside its own array) |
 | **Exit** | `0` ok (report emitted even when non-empty; `orphans` is a report, not a gate) |
 
 ---
