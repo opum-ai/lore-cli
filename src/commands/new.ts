@@ -16,7 +16,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, join, posix, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, posix, relative, resolve, sep, win32 } from "node:path";
 import { idFromPath } from "../core/concept";
 import { loadProfile, type Profile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
@@ -340,8 +340,16 @@ function resolveOutPath(out: string, root: string): string {
  * the schema filenames). A present file is the user template (override, AC#2). If none exists: an
  * explicit `--template` is a `not_found` error (the caller asked for a specific template); a
  * profile-declared-but-missing template, like the default, falls back to the built-in body.
+ *
+ * An explicit `--template` is a user-facing CLI flag (unlike `declared`, a repo-config value) and
+ * is validated with {@link assertTemplateNameConfined} BEFORE it ever reaches a file path (LORE-69):
+ * `--template` is documented as a bare name, never a path, so a `..` segment or an absolute value
+ * is rejected outright rather than spliced into `${TEMPLATES_DIR}/${base}.md` and hoped safe.
  */
 function resolveTemplate(parsed: NewArgs, type: string, root: string, profile: Profile): string {
+  if (parsed.template !== undefined) {
+    assertTemplateNameConfined(parsed.template, root);
+  }
   const declared = profile.types.get(type)?.template?.replace(/\.md$/i, "");
   const base = parsed.template ?? declared ?? type;
   for (const candidate of templateCandidates(base)) {
@@ -360,6 +368,41 @@ function resolveTemplate(parsed: NewArgs, type: string, root: string, profile: P
     );
   }
   return builtinTemplateFor(type);
+}
+
+/**
+ * Reject a `--template` value that could escape `.lore/templates/` once spliced into a file
+ * path — the same containment shape as {@link resolveOutPath}'s own guard (`resolve` + `relative`,
+ * checked for a `..`-prefixed result or an absolute one), applied to the template NAME rather
+ * than a full `--out` path. An absolute value is rejected unconditionally first, checked against
+ * the host platform's own `isAbsolute` AND both `posix.isAbsolute`/`win32.isAbsolute` explicitly —
+ * this ships as a compiled binary for BOTH platforms from the same source, and the host-bound
+ * `isAbsolute` only matches the syntax of whichever platform happens to be running: a Windows
+ * drive-letter path (`C:\...`) is inert on a POSIX host (backslash is just an ordinary filename
+ * character there, so it can't actually escape `templatesRoot`) but genuinely absolute on the
+ * win32 binary — checking `win32.isAbsolute` unconditionally makes the guard's safety invariant
+ * "reject anything that looks absolute on any supported platform," not "safe as long as the host
+ * happens to match the deployment platform" (LORE-69's cross-platform-normalize lesson, applied
+ * here before an independent review had to find it). A `..`-segment escape is then caught by
+ * resolving the candidate against the real templates directory and confirming the result still
+ * lands inside it.
+ */
+function assertTemplateNameConfined(name: string, root: string): void {
+  if (isAbsolute(name) || posix.isAbsolute(name) || win32.isAbsolute(name)) {
+    throw usage(
+      `--template value "${name}" must not be an absolute path`,
+      "pass a bare template name, e.g. --template adr",
+    );
+  }
+  const templatesRoot = join(root, TEMPLATES_DIR);
+  const resolved = resolve(templatesRoot, `${name}.md`);
+  const rel = relative(templatesRoot, resolved);
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw usage(
+      `--template value "${name}" must not escape ${TEMPLATES_DIR}/`,
+      "pass a bare template name, e.g. --template adr",
+    );
+  }
 }
 
 /** The template filenames to try for a base, the name as given first then its lower-cased form (deduped). */
