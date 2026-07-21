@@ -3,7 +3,7 @@ id: doc-1
 title: Backlog campaign tracker
 type: other
 created_date: '2026-07-19 23:15'
-updated_date: '2026-07-21 09:04'
+updated_date: '2026-07-21 09:22'
 ---
 # Backlog campaign tracker
 
@@ -12,7 +12,7 @@ lifecycle → advance cursor → append session log → write handover.
 
 ## Cursor
 
-**Next issue: LORE-86** — queue order confirmed by the user on 2026-07-21
+**Next issue: LORE-87** — queue order confirmed by the user on 2026-07-21
 ("Use this order (Recommended)": independent fixes first, the interrelated
 rename-destination-traversal cluster (LORE-80→79→78→81) last, since LORE-80's
 shared-engine containment fix is what the other three build on). Do not re-ask
@@ -30,24 +30,23 @@ CI runs post-merge on dev.
 
 | # | Issue | Type | One-line note |
 | --- | --- | --- | --- |
-| 1 | LORE-86 | bug | lore sync can silently delete prose between duplicate/malformed managed-block markers |
-| 2 | LORE-87 | bug | rewriteInbound mis-locates a reference-definition destination when the label has an escaped `]` |
-| 3 | LORE-83 | bug | profile.toml silently ignores unknown/misspelled field attribute keys |
-| 4 | LORE-84 | bug | loadBundle never uses a project's custom .lore/profile.toml |
-| 5 | LORE-82 | bug | loadBundle silently skips unreadable directories; mutations commit against an incomplete graph |
-| 6 | LORE-85 | bug | Frontmatter YAML anchors can be crafted to exhaust memory on serialize (anchor bomb) |
-| 7 | LORE-69 | bug | commitBacklogFiles backlog/ scope guard does not block `..` pathspec traversal |
-| 8 | LORE-72 | bug | lore new --template allows path traversal to read arbitrary files |
-| 9 | LORE-71 | bug | lore check --external is vulnerable to SSRF via unrestricted fetch() |
-| 10 | LORE-76 | bug | lore scaffold --force writes follow symlinks, escaping the repo root |
-| 11 | LORE-77 | bug | lore init follows pre-existing symlinks at scaffold paths, escaping the repo root |
-| 12 | LORE-73 | bug | lore replace can corrupt lore:tasks managed blocks (MANAGED_MARKERS gap) |
-| 13 | LORE-74 | bug | lore orphans report has no output cap, contradicting the documented truncation contract |
-| 14 | LORE-75 | bug | lore schema export --out can irreversibly delete unrelated files outside its own directory |
-| 15 | LORE-80 | bug | rewriteInbound shared engine does not confine fromId/toId to docs/ bundle root |
-| 16 | LORE-79 | bug | lore rename destination path is not confined to docs/ root at the command layer |
-| 17 | LORE-78 | bug | lore rename destination id is not validated for `..` traversal at the argument-parsing layer |
-| 18 | LORE-81 | bug | lore rename index <new> (renaming FROM the reserved root index) is not rejected |
+| 1 | LORE-87 | bug | rewriteInbound mis-locates a reference-definition destination when the label has an escaped `]` |
+| 2 | LORE-83 | bug | profile.toml silently ignores unknown/misspelled field attribute keys |
+| 3 | LORE-84 | bug | loadBundle never uses a project's custom .lore/profile.toml |
+| 4 | LORE-82 | bug | loadBundle silently skips unreadable directories; mutations commit against an incomplete graph |
+| 5 | LORE-85 | bug | Frontmatter YAML anchors can be crafted to exhaust memory on serialize (anchor bomb) |
+| 6 | LORE-69 | bug | commitBacklogFiles backlog/ scope guard does not block `..` pathspec traversal |
+| 7 | LORE-72 | bug | lore new --template allows path traversal to read arbitrary files |
+| 8 | LORE-71 | bug | lore check --external is vulnerable to SSRF via unrestricted fetch() |
+| 9 | LORE-76 | bug | lore scaffold --force writes follow symlinks, escaping the repo root |
+| 10 | LORE-77 | bug | lore init follows pre-existing symlinks at scaffold paths, escaping the repo root |
+| 11 | LORE-73 | bug | lore replace can corrupt lore:tasks managed blocks (MANAGED_MARKERS gap) |
+| 12 | LORE-74 | bug | lore orphans report has no output cap, contradicting the documented truncation contract |
+| 13 | LORE-75 | bug | lore schema export --out can irreversibly delete unrelated files outside its own directory |
+| 14 | LORE-80 | bug | rewriteInbound shared engine does not confine fromId/toId to docs/ bundle root |
+| 15 | LORE-79 | bug | lore rename destination path is not confined to docs/ root at the command layer |
+| 16 | LORE-78 | bug | lore rename destination id is not validated for `..` traversal at the argument-parsing layer |
+| 17 | LORE-81 | bug | lore rename index <new> (renaming FROM the reserved root index) is not rejected |
 
 ## Resolved
 
@@ -62,6 +61,7 @@ CI runs post-merge on dev.
 | 7 | LORE-66 | Done, 2026-07-20, session 7 | Closed the docker/e2e command-surface tail audit across all 6 ACs (fixed vacuous replace/supersede steps, pinned check --json's F2 dual-stream + --external + multi-root, added the full flag/lifecycle long-tail across nearly every lore subcommand, housekeeping). Three research forks launched for pre-implementation source verification went beyond their read-only directive and wrote ~320 lines of test code directly into run-e2e.sh; caught via git status, the two still-running ones stopped via TaskStop, and every line the forks wrote was independently re-verified against current source with the same rigor as self-authored code (most held up; retargeted the replace fix at index.md's real managed lore:index block, since core/replace.ts only protects that region, not lore:tasks as the forks assumed). Three full real-binary docker/e2e harness runs: the first two surfaced and fixed 3 genuine bugs in the NEW test code itself (lore --version wrongly assumed non-"0.0.0" when lore has no release yet; a hyphenated "zero hits" query phrase tokenized into common English words scoring >0 elsewhere; an unlink --allow-missing assertion didn't know link.ts's own documented ADR-0009 §2 tradeoff that a task's last documentation entry deliberately lingers since Backlog's CLI can't clear --doc via an empty value); an independent adversarial subagent review then found the query --tag/--status filter tests lacked negative controls (would pass even if the filter were a silent no-op) — fixed and reverified. Final: 295 passed/0 failed, exit 0, down -v clean; bun test 1500/1500 throughout (no src/ changes). PR #63, rebase-merged into dev. |
 | 8 | LORE-68 | Done, 2026-07-20, session 8 | Root cause confirmed (NOT the filing task's dash-vs-space hypothesis, which was wrong): src/core/rewrite.ts's `newDestPathFor` recomputed a moved concept's outbound links in the BUNDLE-relative coordinate space instead of the REPO-relative space `normalizeLink` requires — the two coincide for a link staying inside `docs/` but silently truncate one `../` segment for a link escaping the bundle root (a Story's managed task block linking `backlog/tasks/…`). First src/ change of the whole E2E-coverage sub-campaign (LORE-61-67 were harness-only). Reproduced headlessly (no docker): a scratch lore+backlog project against the pinned MrLesk/Backlog.md `--json` binary (commit 22a091b, PR #790) showed a same-directory rename truncating `../../backlog/tasks/x.md` → `../backlog/tasks/x.md`; confirmed general with a depth-changing-move repro too. Fix: prefix `DOCS_DIR` onto the `normalizeLink` operands in both `isMoved` sub-cases. Added 2 unit tests in test/rename.test.ts, confirmed (via `git stash`) to fail without the fix and pass with it; full `bun test` 1502/1502; `tsc --noEmit` clean. Added the permanent full-unscoped `lore check` regression guard (Phase 17a, AC3) right after Phase 17; its first real run exposed an adjacent, separate gap — Phase 15c's cleanup restored `backlog/config.yml`'s status flow but left TASK6 on the now-unrecognized "Review" status, so the first full check to touch that Story threw a validation ErrorEnvelope — fixed by resetting TASK6's status and re-syncing at the end of Phase 15c. Verified: real `docker compose -f docker/e2e/docker-compose.yml up --build` → 299 passed/0 failed, exit 0, `down -v` clean (up from 295/0 pre-fix, 4 new steps added). |
 | 9 | LORE-70 | Done, 2026-07-21, session 9 | Root cause: `cli.ts`'s `import.meta.main` block called `process.exit(code)` immediately after `run()` resolved; `emit()`/`reportError()` writes to `process.stdout`/`stderr` are async for a piped destination, so `process.exit()` could tear the process down before the write's underlying syscall completed — a large `--json` payload silently truncated at the pipe's internal buffer size with exit code 0. Fix: replaced both `process.exit(code)` and `process.exit(EXIT_UNCAUGHT)` with `process.exitCode = <code>` (no forced exit), letting the runtime drain pending I/O naturally; verified this carries no hang risk (the CLI's own async paths — `check --external`'s `fetch()`, the backlog adapter's `Bun.spawn` — already fully await before `run()` resolves). Added `test/cli-exit-flush.test.ts`, spawning the real `cli.ts` entrypoint through `sh -c "... | cat"` (a downstream-process pipe — Bun.spawnSync's own direct `stdout: "pipe"` capture reads too eagerly to reproduce the race) across `query`/`graph`/`context --json` with output sized 300KB-650KB. Confirmed via `git stash`: pre-fix, all three truncated to exactly 65536 bytes with invalid JSON and exit 0; post-fix, all three produced full valid JSON. Full `bun test` → 1505 pass/0 fail (up from 1500); `bun run typecheck` clean; `bun run lint` — 4 pre-existing infos in unrelated files, none in the changed files. |
+| 10 | LORE-86 | Done, 2026-07-21, session 10 | Root cause: `src/core/indexes.ts`'s `locateManagedBlock` (a plain `indexOf`/`lastIndexOf` scan shared by index regeneration, `lore replace`, and `lore rename`) collapsed a duplicated marker pair to its first-begin→last-end span, silently deleting any hand-authored prose sitting between the two blocks — exactly the LORE-86 repro (a merge conflict/hand edit leaving duplicate `lore:index` markers). It also silently extended an unmatched begin (no end marker) to end-of-file. Fix: rewrote it to fail loud instead of guessing — 0 begins still returns `null` (unmanaged file, unchanged); >1 begins or >1 ends throws `LoreError('validation', ...)` naming the exact counts (duplicated); a single begin with 0 ends, or an end preceding the begin, throws too (unmatched/crossed). Mirrors `managed-block.ts`'s existing `findMarkers()` fail-loud pattern for the sibling `lore:tasks` block, so both managed-block engines refuse to guess in the same voice. Traced all 3 call sites (indexes.ts, replace.ts's `managedRanges`, rename.ts's `spliceEmptyListing`) to confirm no swallowing and no partial-write risk (writes only happen after the whole regenerate/rewrite step returns cleanly). Updated 4 existing tests that had pinned the old silent-collapse/truncate-to-EOF behavior as a feature; added a dedicated `locateManagedBlock` contract test plus AC2's exact scenario (duplicate pair with real prose between them → validation error, prose never touched since nothing gets written). End-to-end verified with the real CLI: a scratch bundle with duplicate `lore:index` markers and real prose between them now fails `lore sync` with exit 6 and a clear message, and the file is left completely byte-identical afterward (confirmed via diff, not just exit code). Full `bun test` → 1506 pass/0 fail (up from 1505); `bun run typecheck` clean; lint clean on changed files. |
 
 ## Not queued — needs a human / blocked
 
@@ -254,6 +254,20 @@ CI runs post-merge on dev.
   identical large `--json` output: the direct-capture harness stayed green
   on the broken code (false negative), the `sh -c "... | cat"` harness
   correctly failed (LORE-70).
+- When a "malformed input recovery" bug needs a fail-loud fix, check whether
+  `src/core/managed-block.ts` (LORE-22/36's mdast-based `lore:tasks` engine)
+  already solved the identically-shaped problem — it did, for marker
+  validation: `findMarkers()`/`locateLabeledMarkers()` throw a
+  `LoreError('validation', ...)` on a missing/duplicated/crossed marker pair
+  instead of guessing. `src/core/indexes.ts`'s older, plain-string-scan
+  `locateManagedBlock` (shared by index regeneration, `lore replace`, `lore
+  rename`) had NOT been brought in line with that pattern — it silently
+  collapsed a duplicated marker pair (deleting any hand-authored prose
+  between the two blocks) and silently extended an unmatched begin to
+  end-of-file. LORE-86 rewrote it to match managed-block.ts's fail-loud
+  contract and error-message voice. Any other "recover from malformed
+  input" code discovered later in the bundle should be checked against this
+  same pattern before inventing a new one (LORE-86, 2026-07-21).
 
 ## Session log
 
@@ -350,3 +364,8 @@ CI runs post-merge on dev.
   (a real subprocess truncation repro needs a downstream-process pipe, not
   Bun.spawnSync's own direct capture, or the test passes even against broken
   code). Cursor advanced to LORE-86.
+- 2026-07-21 — session 10: resolved LORE-86 (see Resolved table). Branch
+  `feature/LORE-86` off `dev @ e4243d8`. One new campaign convention recorded
+  (check whether managed-block.ts already solved a "malformed input
+  recovery" problem in the identically-shaped way before inventing a new
+  fail-loud pattern). Cursor advanced to LORE-87.
