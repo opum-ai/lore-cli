@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-07-21 08:38'
-updated_date: '2026-07-21 10:43'
+updated_date: '2026-07-21 10:51'
 labels:
   - codex-review
   - security
@@ -54,6 +54,12 @@ Verified the fix does NOT reject legitimate, harmless anchor reuse (the same anc
 Added 4 tests to test/concept.test.ts: the task's own 18-level repro (asserts clean validation error, under 1s); a much deeper 40-level chain (2^40 would be ~1 trillion naive steps without early-exit -- proves the walk's cost is bounded by the budget, not by how deep the malicious chain goes, still resolves in milliseconds); a genuinely cyclic anchor (asserts rejection naming 'cyclic', not a stack overflow); and the harmless-DAG-reuse negative control (must NOT be rejected). Confirmed via git stash that all 3 malicious-payload tests fail pre-fix (parseConcept returns successfully instead of throwing -- since parse alone doesn't trigger expansion, only downstream dump does, confirming the vulnerability is real and deferred) and pass post-fix; the negative-control test correctly passes in both states.
 
 Full bun test: 1518 pass/0 fail (up from 1514). bun run typecheck clean. bun run lint clean on both changed files.
+
+Independent ADVERSARIAL security review (general-purpose subagent) actively tried to construct a bypass rather than just re-confirming the given repro -- no bypass found across 9+ variants tested directly through parseConcept (not just yaml.dump in isolation): a wide/shallow fan-out tree (10 refs/level instead of doubling, correctly rejected once total crosses budget regardless of shape), a map/object-based bomb (not array-based), a long-string-leaf bomb (string length accounting correctly multiplies cost), a YAML merge-key disguise (<<: [*a, *a] -- confirmed JSON_SCHEMA doesn't resolve merge keys, so it's walked as a literal key like any other), a deep (3-level) cycle, a cycle through an array, and -- critically -- a deliberately cycle-shaped-but-actually-safe diamond DAG (a shared leaf reached via two different parents) which correctly was NOT rejected (no false positive). Also verified up to 8000 realistic tags (102KB source) are correctly accepted, not rejected -- no plausible legitimate frontmatter risks tripping the budget. Confirmed the units>MAX check runs at the end of EVERY walk() call (leaf and container alike), the tightest possible granularity -- worst-case overrun is bounded by a single node's own cost.
+
+One minor, non-blocking hygiene note from the review (not fixed, correctly out of scope): src/adapters/backlog.ts:844 (parseStatusFlow, parsing backlog/config.yml) has a SECOND, unguarded yaml.load call site. Traced its sole consumer (reconcile-shared.ts) -- the parsed object is only read as a shallow string array, never passed to yaml.dump anywhere, so it is NOT currently exploitable for this same DoS (load() alone is always fast regardless of anchors, the vulnerability's whole premise). Flagged as a latent risk only if future code ever adds a dump on that object -- not filed as a follow-up task since it's not a live vulnerability today, just noted here for the record. profile.ts/config.ts use Bun.TOML.parse (no anchor/alias concept in TOML), correctly out of scope entirely.
+
+Independently reproduced the pre/post-fix comparison (git-diff-swap on concept.ts) and the live CLI end-to-end check, both matching the implementer's claims almost exactly (pre-fix lore graph reported tokenEstimate: 5,242,909 for the bomb file, directly proving the ~20MB string was actually materialized internally). Full bun test 1518/1518 pass, typecheck clean, lint clean (4 pre-existing infos in an unrelated test file, not this diff). No code changes needed as a result of this review.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
