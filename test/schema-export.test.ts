@@ -210,6 +210,23 @@ describe("lore schema export — pruning stale schemas (full export)", () => {
     expect(result.removed).toEqual([]);
     expect(existsSync(join(root, ".lore/schemas/epic.schema.json"))).toBe(true);
   });
+
+  test("a full export to a non-default --out never prunes a pre-existing unrelated schema file (AC#1/AC#2)", () => {
+    const unrelated = join(root, "schemas-out/unrelated.schema.json");
+    mkdirSync(join(root, "schemas-out"), { recursive: true });
+    writeFileSync(unrelated, "{}\n");
+    const { result } = exportSchemas(["export", "--out", "schemas-out"]);
+    expect(result.removed).toEqual([]);
+    expect(existsSync(unrelated)).toBe(true);
+  });
+
+  test("a full export to --out . (the repo root) never prunes a pre-existing unrelated schema file", () => {
+    const unrelated = join(root, "root.schema.json");
+    writeFileSync(unrelated, "{}\n");
+    const { result } = exportSchemas(["export", "--out", "."]);
+    expect(result.removed).toEqual([]);
+    expect(existsSync(unrelated)).toBe(true);
+  });
 });
 
 describe("lore schema export — slug-collision guard (load-time)", () => {
