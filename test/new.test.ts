@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { runInit } from "../src/commands/init";
 import { type NewResult, runNew } from "../src/commands/new";
 import { loadBundle } from "../src/core/bundle";
@@ -227,6 +227,50 @@ describe("lore new — user templates override built-ins (AC#2)", () => {
     const err = expectError(["reference", "Orders table"]);
     expect(err.type).toBe("validation");
     expect(err.message).toContain("{{owner}}");
+  });
+});
+
+describe("lore new — --template is confined to .lore/templates/ (LORE-72)", () => {
+  test("regression: a `..`-traversal --template value is refused, never reads or embeds the outside file", () => {
+    // Reproduces the task's own live repro shape (`--template ../../../../../../tmp/outside_secret`):
+    // a relative path climbing out of .lore/templates/ to an arbitrary file elsewhere on disk.
+    const outsideDir = mkdtempSync(join(tmpdir(), "lore-new-outside-"));
+    const secretPath = join(outsideDir, "outside_secret.md");
+    writeFileSync(secretPath, "SUPER SECRET DATA — must never leak into a generated concept\n");
+    const traversal = relative(join(root, ".lore/templates"), secretPath).replace(/\.md$/, "");
+
+    const err = expectError(["adr", "Test", "--template", traversal, "--out", "docs/adr/test.md"]);
+    expect(err.type).toBe("usage");
+    expect(err.message).toContain("escape");
+    // No partial artifact was ever written — the traversal is refused before any file is created.
+    expect(existsSync(join(root, "docs/adr/test.md"))).toBe(false);
+
+    rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  test("an absolute-path --template value is refused", () => {
+    const err = expectError(["adr", "Test", "--template", "/etc/passwd"]);
+    expect(err.type).toBe("usage");
+    expect(err.message).toContain("absolute");
+  });
+
+  test("a Windows-style absolute --template value is refused regardless of host platform", () => {
+    const err = expectError(["adr", "Test", "--template", "C:\\Windows\\System32\\drivers\\etc\\hosts"]);
+    expect(err.type).toBe("usage");
+  });
+
+  test("a name merely starting with `..` (not a real `..` segment) is a legitimate template, not a false escape", () => {
+    // Mirrors the same distinction --out's own confinement guard already makes: `..custom` is one
+    // real path segment, not a parent-directory escape.
+    writeFileSync(join(root, ".lore/templates/..custom.md"), "\n# {{title}}\n\nfrom dotdot-prefixed template\n");
+    const { result } = newCmd(["adr", "Title", "--template", "..custom"]);
+    expect(readFileSync(join(root, result.path), "utf8")).toContain("from dotdot-prefixed template");
+  });
+
+  test("a nested traversal (subdir then climbing back out) is refused the same way", () => {
+    const err = expectError(["adr", "Test", "--template", "sub/../../../outside"]);
+    expect(err.type).toBe("usage");
+    expect(err.message).toContain("escape");
   });
 });
 
