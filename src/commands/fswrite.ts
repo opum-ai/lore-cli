@@ -194,6 +194,43 @@ export function conflictError(relPath: string, code?: string): LoreError {
 
 // ── All-or-nothing scaffold writes ─────────────────────────────────────────────
 
+/**
+ * Refuse if any path segment from `root` down to (and including) `relPath` already exists as a
+ * symlink (LORE-76) — `lstatSync` per segment, never following. Standard `mkdirSync`/`writeFileSync`
+ * calls always transparently resolve symlinks in the MIDDLE of a path (that's ordinary POSIX path
+ * resolution, not something an `O_CREAT`/`O_EXCL`-style flag can disable), and under `force`
+ * {@link writeAllOrRollback}'s overwrite branch follows a symlink at the FINAL component too
+ * (`existsSync`/`readFileSync`/`writeFileSync` all follow) — so a symlinked ancestor directory, or a
+ * symlinked final target, would otherwise let a scaffold write land outside the repo entirely
+ * unnoticed. Mirrors this codebase's established READ-path convention (`core/bundle.ts`,
+ * `commands/replace.ts`: explicit `lstatSync(...).isSymbolicLink()`, never a stat-follows-symlinks
+ * helper) rather than inventing a new pattern. A path segment that does not exist yet is fine —
+ * there is nothing to guard against until something is actually there to redirect through.
+ */
+function assertNoSymlinkInPath(root: string, relPath: string): void {
+  let prefix = root;
+  for (const segment of relPath.split("/")) {
+    if (segment === "") {
+      continue; // relPath is always a POSIX-relative path; never emits an empty leading segment
+    }
+    prefix = join(prefix, segment);
+    let stat: ReturnType<typeof lstatSync>;
+    try {
+      stat = lstatSync(prefix);
+    } catch {
+      continue; // does not exist yet at this segment — nothing here to redirect through
+    }
+    if (stat.isSymbolicLink()) {
+      throw new LoreError(
+        "conflict",
+        `refusing to write ${relPath}: "${segment}" is a symlink, not a real directory or file`,
+        "lore does not write through a symlink (it may resolve outside the repo) — remove or replace it, then re-run",
+        { path: relPath, symlink: segment },
+      );
+    }
+  }
+}
+
 /** One file {@link writeAllOrRollback} plans to write, with the exact bytes to apply. */
 export interface WriteAllOrRollbackFile {
   /** Repo-relative POSIX path. */
@@ -221,6 +258,12 @@ export interface WriteAllOrRollbackResult {
  * deferred") and can adopt this later. Factored here — rather than kept private to one command — so
  * the filesystem-conflict semantics stay identical across every command (this module's own docstring).
  *
+ * Every directory and file path is checked via {@link assertNoSymlinkInPath} BEFORE any mkdir/write
+ * touches it (LORE-76) — a symlinked ancestor directory or a symlinked final target refuses loudly
+ * rather than silently redirecting the write outside the repo; that check throws before this call's
+ * own undo stack has anything to roll back for the offending step, so it composes with the rollback
+ * discipline below without special-casing.
+ *
  * Two write disciplines, chosen by `opts.force`:
  * - **not forced** — every file is expected to be absent (the caller's own preflight has typically
  *   already confirmed this across the whole plan, so it can name every collision at once). Routed
@@ -246,6 +289,7 @@ export function writeAllOrRollback(
   const undo: Array<() => void> = [];
   try {
     for (const dir of dirs) {
+      assertNoSymlinkInPath(root, dir);
       const abs = join(root, dir);
       const dirExisted = existsSync(abs);
       ensureDir(abs, dir);
@@ -264,6 +308,7 @@ export function writeAllOrRollback(
       }
     }
     return files.map((file) => {
+      assertNoSymlinkInPath(root, file.path);
       const abs = join(root, file.path);
       if (!opts.force) {
         if (!createIfAbsent(abs, file.contents, file.path)) {
