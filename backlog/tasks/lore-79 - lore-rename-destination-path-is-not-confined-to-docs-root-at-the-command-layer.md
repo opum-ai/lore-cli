@@ -3,11 +3,11 @@ id: LORE-79
 title: >-
   lore rename destination path is not confined to docs/ root at the command
   layer
-status: In Progress
+status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-07-21 08:38'
-updated_date: '2026-07-21 17:04'
+updated_date: '2026-07-21 17:12'
 labels:
   - codex-review
   - security
@@ -97,4 +97,54 @@ no leakage outside docs/ or the real repo (git status --porcelain clean througho
 Verified: bun test full suite 1655/1655 pass (up from 1650); bun run typecheck clean; bun run lint
 — 4 pre-existing infos in unrelated test files (managed-block.test.ts, supersede.test.ts), none in
 changed files.
+
+Independent adversarial review (general-purpose subagent): SHIP, no bypass of the shipped fix
+found. Re-derived (not trusted) the fix-differentiating claim by tracing why the 4 new traversal
+tests assert `usage` specifically (would still hit LORE-80's engine-layer `validation` without
+this fix, just at exit 6 instead of 2). Live-CLI re-verified every claim independently plus
+additional adversarial forms beyond the 5 shipped tests: UNC (`\\server\share\pwned`), Windows
+absolute drive (`C:\foo\bar`), and a constructed `..\pwned/..` case specifically designed to test
+whether checking the RAW newId (before idFromPath) matters — confirmed it does: a post-normalize
+recheck would net this to `.` and miss it, while the raw pre-normalize escapesRoot walk (splitting
+on both `/` and `\`) catches it correctly. Confirmed `oldId` traversal is correctly left to the
+engine (validation/exit 6) — legitimately out of this task's scope. Independently reran full
+verification: bun test 1655/1655, typecheck clean, lint 4 pre-existing infos in unrelated files.
+
+Two non-blocking findings, both live-reproduced, both pre-existing (not introduced or regressed by
+this diff), both out of LORE-79's AC scope:
+1. An empty or self-cancelling newId (e.g. `""` or `sub/..`) is not rejected by escapesRoot —
+   silently succeeds, renaming to a hidden dotfile `docs/..md` at the bundle root. Stays inside
+   docs/ (no security escape), but confusing/undocumented. new.ts's resolveOutPath (this guard's
+   own stated inspiration) DOES reject this case via its `rel === ""` check; escapesRoot doesn't.
+   Pre-existing since LORE-80 (shared function), not a LORE-79 regression.
+2. MORE SEVERE, live-confirmed: a symlinked directory inside the bundle (`docs/evil -> /tmp/outside`)
+   lets `lore rename reference/orders evil/pwned` write pwned.md to /tmp/outside/pwned.md — a real
+   filesystem escape outside docs/, bypassing both this task's lexical newId check AND LORE-80's
+   engine-layer check entirely, since neither validates resolved filesystem identity, only the id
+   string. loadBundle's own symlink warning only protects graph-building, not the write path. This
+   is the SAME vulnerability class LORE-76/77 already fixed for scaffold/init (via fswrite.ts's
+   assertNoSymlinkInPath, walking every path segment via lstatSync) — commands/rename.ts (and
+   likely commands/new.ts's resolveOutPath, which has the identical purely-lexical blind spot)
+   never got the equivalent guard. Systemic, not LORE-79-specific. Recorded in the tracker's
+   Not-queued section per this campaign's convention (no live user turn this session to confirm
+   filing a new task the way LORE-68 was in a prior live session) — flagging for the user to decide
+   priority; the fix pattern already exists in the codebase (assertNoSymlinkInPath) if approved.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added command-layer confinement for lore rename's destination id: `assertDestinationConfined`
+(commands/rename.ts) rejects an absolute or `..`-escaping newId with a usage error (exit 2) before
+any bundle load or write, reusing rewrite.ts's own escapesRoot (now exported) rather than
+duplicating the security-sensitive segment-walk logic. Live-CLI-confirmed the underlying escape
+was already closed by LORE-80's engine-layer fix (exit 6 today); this adds defense-in-depth and a
+clearer command-layer error, matching new.ts's resolveOutPath in spirit. 5 new tests in
+test/rename.test.ts, 4 confirmed fix-differentiating (fail pre-fix with validation instead of
+usage). Independent adversarial review: SHIP, no bypass found; flagged two non-blocking, pre-existing
+issues out of scope (an empty/self-cancelling newId edge case, and a more significant symlink-based
+filesystem escape mirroring LORE-76/77's already-fixed vulnerability class) — both recorded in the
+tracker's Not-queued section for the user to prioritize. Verified: bun test 1655/1655 pass (up from
+1650); bun run typecheck clean; bun run lint clean on changed files (4 pre-existing infos
+elsewhere, untouched).
+<!-- SECTION:FINAL_SUMMARY:END -->
