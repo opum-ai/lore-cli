@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 18:52'
-updated_date: '2026-07-21 19:44'
+updated_date: '2026-07-21 19:48'
 labels:
   - backlog-campaign-followup
   - security
@@ -34,14 +34,10 @@ Both are pre-existing characteristics outside LORE-75's own AC scope (which addr
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A full export to each of .lore/schemas-extra, .lore/schema, and .lore/schemas/sub (each pre-seeded with an unrelated *.schema.json) leaves that unrelated file untouched, asserted by an automated test.
-- [ ] #2 The managed-directory check treats a symlinked .lore/schemas (pointing outside the repo or to an arbitrary directory) as NOT the managed directory, so pruneOrphans does not delete files through it.
-- [ ] #3 An automated test covers the symlinked-.lore/schemas case and asserts a pre-existing file in the symlink's target survives a full schema export.
-- [ ] #4 Existing pruning behavior for a genuine (non-symlinked) default .lore/schemas directory is unchanged: orphaned schema files there are still removed on a full export.
-- [ ] #5 1:checked
-- [ ] #6 2:checked
-- [ ] #7 3:checked
-- [ ] #8 4:checked
+- [x] #1 A full export to each of .lore/schemas-extra, .lore/schema, and .lore/schemas/sub (each pre-seeded with an unrelated *.schema.json) leaves that unrelated file untouched, asserted by an automated test.
+- [x] #2 The managed-directory check treats a symlinked .lore/schemas (pointing outside the repo or to an arbitrary directory) as NOT the managed directory, so pruneOrphans does not delete files through it.
+- [x] #3 An automated test covers the symlinked-.lore/schemas case and asserts a pre-existing file in the symlink's target survives a full schema export.
+- [x] #4 Existing pruning behavior for a genuine (non-symlinked) default .lore/schemas directory is unchanged: orphaned schema files there are still removed on a full export.
 <!-- AC:END -->
 
 ## Implementation Plan
