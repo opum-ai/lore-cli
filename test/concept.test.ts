@@ -139,6 +139,52 @@ describe("parseConcept — error tier (throws validation, exit 6)", () => {
   });
 });
 
+describe("parseConcept — bounded YAML anchor/alias expansion (LORE-85 anchor-bomb guard)", () => {
+  /** A frontmatter body with `levels` anchors, each aliasing the previous one TWICE (doubling chain). */
+  function doublingAnchorFrontmatter(levels: number): string {
+    const lines = ["type: Reference", 'a0: &a0 ["x"]'];
+    for (let i = 1; i <= levels; i++) {
+      lines.push(`a${i}: &a${i} [*a${i - 1}, *a${i - 1}]`);
+    }
+    return lines.join("\n");
+  }
+
+  test("a crafted doubling-anchor chain is rejected cleanly and fast, not a crash or multi-second expansion", () => {
+    // 18 levels over ~400 bytes of source is the task's own repro; it fully expands to tens of
+    // megabytes via yaml.dump({noRefs: true}) if ever allowed through unchecked.
+    const raw = `---\n${doublingAnchorFrontmatter(18)}\n---\nBody.\n`;
+    const start = performance.now();
+    const err = expectValidation(() => parseConcept("bomb.md", raw));
+    const elapsedMs = performance.now() - start;
+    expect(err.message).toContain("not valid YAML");
+    expect(elapsedMs).toBeLessThan(1000); // bounded, not the multi-second blowup AC2 rules out
+  });
+
+  test("a much deeper doubling-anchor chain (40 levels, still under 1KB of source) is rejected just as fast", () => {
+    // 2^40 would be ~1 trillion naive expansion steps if the guard didn't exit early — proves the
+    // walk's own cost is bounded by the budget, not by how deep the malicious chain goes.
+    const raw = `---\n${doublingAnchorFrontmatter(40)}\n---\nBody.\n`;
+    const start = performance.now();
+    expectValidation(() => parseConcept("deep-bomb.md", raw));
+    expect(performance.now() - start).toBeLessThan(1000);
+  });
+
+  test("a cyclic anchor (referencing its own ancestor) is rejected, not an infinite loop or stack overflow", () => {
+    const raw = "---\ntype: Reference\na: &a\n  b: *a\n---\nBody.\n";
+    const err = expectValidation(() => parseConcept("cycle.md", raw));
+    expect(err.message).toContain("cyclic");
+  });
+
+  test("ordinary, harmless anchor reuse (a DAG, not exponential) still parses normally", () => {
+    // The same anchor referenced by two unrelated siblings is a common, safe YAML pattern — the
+    // guard must not mistake this for the attack shape.
+    const raw = "---\ntype: Reference\ntags: &t\n  - a\n  - b\nmore_tags: *t\n---\nBody.\n";
+    const concept = parseConcept("dag.md", raw);
+    expect(concept.frontmatter.tags).toEqual(["a", "b"]);
+    expect(concept.frontmatter.more_tags).toEqual(["a", "b"]);
+  });
+});
+
 describe("serializeConcept — golden byte-exactness (design §9.2)", () => {
   test("a Story serializes to its exact golden bytes", () => {
     expect(serializeConcept(parseConcept("stories/bulk-archive.md", STORY_GOLDEN))).toBe(STORY_GOLDEN);
