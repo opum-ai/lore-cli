@@ -3,7 +3,7 @@ id: doc-1
 title: Backlog campaign tracker
 type: other
 created_date: '2026-07-19 23:15'
-updated_date: '2026-07-21 11:45'
+updated_date: '2026-07-21 12:05'
 ---
 # Backlog campaign tracker
 
@@ -12,7 +12,7 @@ lifecycle → advance cursor → append session log → write handover.
 
 ## Cursor
 
-**Next issue: LORE-71** — queue order confirmed by the user on 2026-07-21
+**Next issue: LORE-76** — queue order confirmed by the user on 2026-07-21
 ("Use this order (Recommended)": independent fixes first, the interrelated
 rename-destination-traversal cluster (LORE-80→79→78→81) last, since LORE-80's
 shared-engine containment fix is what the other three build on). Do not re-ask
@@ -30,16 +30,15 @@ CI runs post-merge on dev.
 
 | # | Issue | Type | One-line note |
 | --- | --- | --- | --- |
-| 1 | LORE-71 | bug | lore check --external is vulnerable to SSRF via unrestricted fetch() |
-| 2 | LORE-76 | bug | lore scaffold --force writes follow symlinks, escaping the repo root |
-| 3 | LORE-77 | bug | lore init follows pre-existing symlinks at scaffold paths, escaping the repo root |
-| 4 | LORE-73 | bug | lore replace can corrupt lore:tasks managed blocks (MANAGED_MARKERS gap) |
-| 5 | LORE-74 | bug | lore orphans report has no output cap, contradicting the documented truncation contract |
-| 6 | LORE-75 | bug | lore schema export --out can irreversibly delete unrelated files outside its own directory |
-| 7 | LORE-80 | bug | rewriteInbound shared engine does not confine fromId/toId to docs/ bundle root |
-| 8 | LORE-79 | bug | lore rename destination path is not confined to docs/ root at the command layer |
-| 9 | LORE-78 | bug | lore rename destination id is not validated for `..` traversal at the argument-parsing layer |
-| 10 | LORE-81 | bug | lore rename index <new> (renaming FROM the reserved root index) is not rejected |
+| 1 | LORE-76 | bug | lore scaffold --force writes follow symlinks, escaping the repo root |
+| 2 | LORE-77 | bug | lore init follows pre-existing symlinks at scaffold paths, escaping the repo root |
+| 3 | LORE-73 | bug | lore replace can corrupt lore:tasks managed blocks (MANAGED_MARKERS gap) |
+| 4 | LORE-74 | bug | lore orphans report has no output cap, contradicting the documented truncation contract |
+| 5 | LORE-75 | bug | lore schema export --out can irreversibly delete unrelated files outside its own directory |
+| 6 | LORE-80 | bug | rewriteInbound shared engine does not confine fromId/toId to docs/ bundle root |
+| 7 | LORE-79 | bug | lore rename destination path is not confined to docs/ root at the command layer |
+| 8 | LORE-78 | bug | lore rename destination id is not validated for `..` traversal at the argument-parsing layer |
+| 9 | LORE-81 | bug | lore rename index <new> (renaming FROM the reserved root index) is not rejected |
 
 ## Resolved
 
@@ -62,6 +61,7 @@ CI runs post-merge on dev.
 | 15 | LORE-85 | Done, 2026-07-21, session 15 | Root cause: js-yaml's `load()` never expands an alias at parse time (it points the SAME JS object reference back at its anchor, so parsing a doubling-anchor chain is always fast regardless of depth — confirmed empirically: an 18-level ~400-byte chain loads in ~1ms) — but `yaml.dump({noRefs: true})` (`YAML_DUMP_OPTIONS`, deliberately configured so a re-serialize never emits `&`/`*` anchors) walks the shared-reference graph naively, expanding the same chain to ~20MB in ~286ms; a few more levels reaches OOM or an uncaught `RangeError`. Confirmed via js-yaml 4.1.0's actual `LoadOptions` type that it has no built-in alias-count/depth limit (`maxAliasCount` is a feature of the DIFFERENT `eemeli/yaml` library, verified this distinction directly). Also confirmed js-yaml's `JSON_SCHEMA` permits a genuinely CYCLIC anchor to load (`a: &a {b: *a}` loads with `doc.a === doc.a.b`) — a second, distinct hazard (an unmemoized walk of a true cycle never terminates); `yaml.dump({noRefs:true})` on a real cyclic object throws `RangeError: Maximum call stack size exceeded` rather than hanging, matching the task's own framing. Confirmed the attack surface is broader than write paths: `bundle.ts`'s `tokenEstimate()` (used by read-only `lore graph`/`context`) also calls `serializeConcept` internally. Fix: added `assertBoundedYamlExpansion` (`src/core/concept.ts`) — a deliberately non-memoized, reference-blind walk mirroring what a real `dump` would do, but tracking a running "expanded units" total and aborting the instant it crosses a 100,000-unit budget (generous for real frontmatter, which is metadata not prose), plus path-scoped cycle detection (an ancestor `Set`, added on entering a node/removed on leaving) that correctly distinguishes a true cycle from harmless DAG-style anchor reuse (the same anchor referenced by two unrelated siblings, an ordinary safe pattern). Wired into the SINGLE gray-matter YAML parse hook every read path shares (`parseConcept`/`tryParseConcept`/`tryReadFrontmatter`), so a malicious file is rejected the moment it's first read — before validation, the bundle graph, token estimation, or a later dump can ever touch the dangerous object; a thrown error is automatically caught and path-annotated by `splitFrontmatter`'s existing `matter(...)` try/catch, exactly like a plain YAML syntax error already is. Added 4 tests (the task's 18-level repro; a 40-level chain proving the walk's own cost stays bounded regardless of attack depth; a cyclic-anchor case; a harmless-DAG-reuse negative control); confirmed via `git stash` all 3 malicious-payload tests fail pre-fix (parse alone doesn't trigger expansion — only downstream dump does — so `parseConcept` silently "succeeds" pre-fix, confirming the vulnerability is real and deferred) and pass post-fix. End-to-end verified with the real CLI: post-fix `lore query` on a malicious file exits 6 in 58ms; pre-fix `lore graph`'s CPU/timing signature (0.36s user, 133% CPU) confirms the expensive dump actually executed internally even though the tiny JSON output doesn't show it (only a computed token count is exposed, not the huge intermediate string). Full `bun test` → 1518 pass/0 fail (up from 1514); `bun run typecheck` clean; lint clean. |
 | 16 | LORE-69 | Done, 2026-07-21, session 16 | Root cause: `src/state.ts`'s `commitBacklogFiles` guard was a plain `file.startsWith("backlog/")` string check, not real path containment — a pathspec like `backlog/../docs/secret.md` textually starts with `backlog/` but resolves outside it once git interprets the `..` segment, and confirmed live that git honors `..` even inside a `:(literal)`-quoted pathspec, so quoting alone never neutralized it. Fix: each candidate path is normalized via `node:path`'s `posix.normalize` BEFORE the prefix check, and the NORMALIZED form — not the raw one — is what's passed to `git status`/`add`/`commit` downstream; rejects on `posix.isAbsolute(normalized)` or `!normalized.startsWith("backlog/")`. The pre-existing sibling-prefix protection (`backlog-evil/x.md`) was preserved and covered by a dedicated test. **Independent adversarial review then found a genuine bypass of THAT fix**: an embedded NUL byte. `posix.normalize` treats a segment like `"..\0"` as an ordinary (non-`..`) component and leaves it untouched, so `"backlog/.." + "\0" + "/x"` still starts with `backlog/` and passes — but `Bun.spawn`'s argv is a NUL-terminated C string, silently truncated at that same NUL once it crosses into the real `git` process, so git only ever received `:(literal)backlog/..`, resolving to the repo root; confirmed live end-to-end (full argv trace) that an unrelated in-flight edit at the repo root got swept into the commit, breaking BOTH ADR-0012 invariants at once. Fixed by (1) rejecting any path containing a NUL byte outright before normalize ever runs, and (2) defense-in-depth: `porcelainPaths` itself now re-validates every path `git status` reports back against `backlog/` before use in `add`/`commit`, closing the "validate one value, use a different value downstream" bug class at the actual git-boundary choke point rather than just the one instance found. Also verified by the reviewer (not exploitable): a symlink planted inside `backlog/` — git refuses to traverse a pathspec through a symlink (`fatal: pathspec '...' is beyond a symbolic link`), confirmed live; this is a DIFFERENT risk class from LORE-76/77 (those are about `lore scaffold`/`lore init` *writing through* a pre-existing destination symlink, not about what `git commit` does with one that already exists) — don't conflate the two. Flagged, not fixed (not currently reachable via any real caller — Backlog's own filename sanitizer already strips `/` and `\` from task titles): `posix.normalize` is POSIX-only, `win32.normalize` of the same string resolves differently, and this repo ships a Windows build/CI matrix — a follow-up candidate, see Not-queued. 9 new regression tests total (6 direct-fix + 3 review-fix), each confirmed via `git stash` to fail pre-fix/pass post-fix, including one real-git end-to-end test reproducing the reviewer's exact NUL-byte repro. Full `bun test` → 1529 pass/0 fail (up from 1518); `bun run typecheck` clean; lint clean. |
 | 17 | LORE-72 | Done, 2026-07-21, session 17 | Root cause: `src/commands/new.ts`'s `resolveTemplate` spliced the raw, unvalidated `--template` CLI flag value straight into `${TEMPLATES_DIR}/${candidate}.md` then `readFileSync` — no basename/traversal/absolute check at all. Fix: `assertTemplateNameConfined(name, root)`, called on `parsed.template` (the explicit flag only, not the profile-declared/type-name fallback) BEFORE it builds any candidate path — mirrors this same file's own already-proven `resolveOutPath` containment pattern (`resolve`+`relative` against the real target dir, checked for a `..`-prefixed or absolute result). Absolute-path rejection explicitly checks `isAbsolute` (host-bound) AND `posix.isAbsolute` AND `win32.isAbsolute` unconditionally — **this session proactively applied LORE-69's freshly-recorded "validate on the actual deployment platform, not just the host running the code" convention during implementation**, and it caught a real gap in the first draft: a Windows drive-letter `--template` value (`C:\Windows\...`) is inert on this session's POSIX host (backslash isn't a separator there) but genuinely absolute once compiled for the project's real `win32-x64` release target — relying only on the host-bound `isAbsolute` would have silently passed that case in every POSIX-hosted test run while remaining a live gap on the shipped Windows binary; the resulting test (deliberately run pre-fix too) confirmed the gap was real. Also explicitly checked (per the same convention) whether a NUL byte could defeat this guard the way it defeated LORE-69's first fix: it cannot — `readFileSync` is a direct fs syscall, and Bun/Node's own binding synchronously THROWS on any embedded NUL before ever reaching the OS (confirmed empirically), so there is no exec/argv boundary here for a NUL to exploit. Live pre-fix repro against the real CLI in a scratch bundle reproduced the task's exact finding (secret file content read and embedded verbatim into the generated concept, exit 0); post-fix the same command exits 2 with a clear usage error and writes nothing. 9 new tests in `test/new.test.ts` (5 for the fix, including the exact repro shape and the Windows-drive-letter case; 1 non-regression test for a legitimate `..`-PREFIXED-but-not-traversal name, mirroring `resolveOutPath`'s own existing test for the identical distinction), confirmed via `git stash` to fail pre-fix (the tell-tale `not_found` instead of `usage` — pre-fix it silently READ the outside file, found no matching name inside `.lore/templates/` after the fact, and only THEN fell through to the not-found path, meaning the read had already happened) and pass post-fix. Full `bun test` → 1534 pass/0 fail (up from 1529); `bun run typecheck` clean; lint clean (one formatter-only fix). **Independent adversarial review confirmed the direct fix has no bypass** (every traversal/absolute encoding tried against the real CLI was correctly rejected; both the NUL-byte and win32/posix cross-platform claims independently re-verified and held up) — ready to ship as scoped, one doc-comment accuracy tweak applied (no logic change: clarified that the resolve+relative containment layer, not just `win32.isAbsolute`, is what defends a drive-relative path to a DIFFERENT drive than the repo's own). **Review also found and explicitly recommended NOT blocking on** (outside this task's AC scope, documented not silently expanded): a SYMLINK gap — `assertTemplateNameConfined` is purely syntactic, so a symlink already planted inside `.lore/templates/` (repo-content-controlled, not CLI-flag-controlled) lets an innocuous bare `--template evil` read straight through it, confirmed live including a nested-subdirectory variant; this is the READ-path counterpart to the still-open LORE-76/LORE-77 (which are specifically about `scaffold`/`init`'s WRITE-path symlink-following — confirmed by reading both tasks, a different code path, NOT covering this) — see Not-queued for the follow-up candidate. Also noted (deliberately excluded, not a bug): a profile-declared `template` value in `.lore/profile.toml` is a separate, unguarded traversal primitive needing no `--template` flag at all, matching this task's AC wording which only ever covered the explicit CLI flag. |
+| 18 | LORE-71 | Done, 2026-07-21, session 18 | Root cause: `src/commands/check.ts`'s `defaultFetch` (the real network probe behind `--external`'s liveness check) called the global `fetch()` on any discovered `http(s)` URL with zero destination validation and no control over redirect-following (native `fetch`'s implicit `redirect: "follow"`). Fix, two layers: (1) `src/core/check.ts`'s new pure `classifyAddress(ip)` — a uniform 128-bit-BigInt IP-range classifier (IPv4 mapped into `::ffff:a.b.c.d`'s numeric space so an attacker can't dodge an IPv4-only blocklist via the IPv6-mapped spelling, a well-known SSRF-filter bypass) covering loopback/link-local/RFC1918-private/carrier-grade-NAT and their IPv6 counterparts — not an exhaustive IANA sweep, deliberately scoped to ranges an attacker can reach something interesting through. (2) `src/commands/check.ts`'s new injectable `ResolveHost` DNS seam (defaults to real `node:dns`) plus `blockedDestination`, which resolves a URL's hostname to EVERY address it answers to and blocks if ANY is disallowed, classified BEFORE `fetchFn` is ever called; a literal-IP hostname is classified directly, bypassing `resolveHost` entirely (so the guard's correctness never depends on an injected fake actually inspecting its input — caught and fixed a real test-authoring bug from exactly this gap during implementation). `FetchLike` gained an optional `location` field; `defaultFetch` always requests manual redirect handling from the real `fetch()`, and `probeOne` re-validates each redirect's destination itself before following it (bounded to 10 hops) — a redirect to a blocked destination is refused with the blocked hop NEVER fetched (verified via call-count assertions, not just the resulting finding). Both new `FetchLike` fields are optional so every pre-existing fake keeps compiling unchanged; only a NEW `resolveHost` fake was needed on existing `--external` tests, since DNS is a genuinely new IO touchpoint the fix introduces (existing tests use RFC 2606-reserved `.example` hostnames that never resolve for real). **Self-caught implementation bug** (not review): an early draft called the destination check OUTSIDE `probeOne`'s try/catch, so a DNS-resolution fault (which `.example`-hostname test fixtures always produce) silently crashed the whole liveness probe with zero findings emitted — every pre-existing `--external` test failed until the check was moved inside the shared try/catch so a DNS fault reports as an ordinary "is unreachable" finding, same as a fetch fault, never a security block. `resolveHost` threaded through `CheckOptions` AND `cli.ts`'s `RunContext`, mirroring `fetch`'s existing injection point exactly. 6 new tests (the task's own literal cloud-metadata repro with a 0-fetch-calls assertion; loopback/private/IPv4-mapped-IPv6-encoded literals; a DNS-resolved-to-blocked-address case; a multiple-resolved-addresses-one-blocked case; a redirect-to-blocked-destination case asserting the second hop's URL never appears in the fetch call list; a redirect-to-allowed-destination positive control), confirmed via `git stash` that all 6 fail pre-fix and all 123 pre-existing tests are unaffected either way. Live end-to-end verified against the real CLI with real DNS/network: a scratch bundle linking the cloud-metadata address, loopback, and a real live site (`example.com`) correctly blocks the first two with the matched range named and lets the real link through with no false positive. Full `bun test` → 1540 pass/0 fail (up from 1534); `bun run typecheck` clean; lint clean (two formatter-only fixes). |
 
 ## Not queued — needs a human / blocked
 
@@ -506,6 +506,39 @@ CI runs post-merge on dev.
   genuinely different code and genuinely uncovered by either queued item.
   Don't assume "sounds similar" means "already covered" without actually
   reading the other task's AC (LORE-72, 2026-07-21).
+- **When a fix adds a NEW injectable IO seam (a second `resolveHost` beside
+  an existing `fetch`, say), make the destination-check and the
+  network-call share ONE try/catch, not two separate ones** — a fault from
+  the NEW seam (DNS resolution failing) needs to be classified the SAME way
+  a fault from the OLD seam (the fetch itself failing) already is (here:
+  both become an ordinary "is unreachable" liveness finding, never a
+  security block and never an uncaught rejection). Splitting them into
+  separate try/catches (or checking the new seam outside any try/catch at
+  all) lets a fault from the new seam escape uncaught — self-caught here
+  when EVERY pre-existing `--external` test started failing with zero
+  findings emitted at all, because their `.example` test hostnames
+  genuinely fail real DNS resolution and the destination check wasn't
+  wrapped (LORE-71, 2026-07-21).
+- **A new injectable seam a fix introduces (DNS resolution, here) needs its
+  own default test double wherever the OLD seam already had one** — adding
+  `resolveHost` alongside an existing `fetch` injection point broke every
+  pre-existing test that only faked `fetch`, because those tests'
+  placeholder hostnames (`.example`, RFC 2606-reserved, never resolve for
+  real) now hit REAL DNS through the new seam and genuinely failed. Fix by
+  giving the shared test option-builder helpers (`opts()`/`ctx()`) a safe
+  default fake for the NEW seam too, so only tests that actually want to
+  exercise it opt out of the default (LORE-71, 2026-07-21).
+- **A destination/allowlist check must classify a literal IP directly,
+  never by deferring to an injectable resolver seam** — routing a literal
+  IP through `resolveHost(ip)` anyway means the guard's correctness now
+  depends on that resolver actually inspecting its input; a reasonable
+  "allow everything" test fake that ignores its argument (a common,
+  otherwise-harmless simplification) would then silently rubber-stamp a
+  literal blocked-IP URL a test meant to catch. Short-circuit: if the
+  hostname is already a valid IP literal (`node:net`'s `isIP`), classify it
+  directly and skip the resolver entirely — this also matches how a real
+  socket connection never does a DNS lookup for a literal IP (LORE-71,
+  2026-07-21).
 
 ## Session log
 
@@ -692,3 +725,18 @@ CI runs post-merge on dev.
   flagged follow-up; check a candidate follow-up against ALL nearby queued
   items' actual AC wording, not just their title, before assuming overlap
   or non-overlap). Cursor advanced to LORE-71.
+- 2026-07-21 — session 18: resolved LORE-71 (see Resolved table). Branch
+  `feature/LORE-71` off `dev @ fa3a4eb`. Fourth security-labeled task this
+  campaign, and the first genuinely new capability (an IP-range classifier
+  + a second injectable IO seam), not just a containment fix on an existing
+  path. Self-caught (not review) a real implementation bug where the new
+  destination check sat outside the existing fetch try/catch, silently
+  crashing the whole liveness probe on any DNS fault — every pre-existing
+  test failed until fixed, since their placeholder hostnames genuinely
+  don't resolve. Three new campaign conventions recorded (share one
+  try/catch between a new IO seam and the old one it sits beside, don't
+  split them; give shared test option-builders a safe default fake for
+  ANY newly-introduced injectable seam, not just the one a fix's own ACs
+  are about; classify a literal IP directly rather than routing it through
+  an injectable resolver, so the guard's correctness never depends on a
+  test fake actually inspecting its input). Cursor advanced to LORE-76.
