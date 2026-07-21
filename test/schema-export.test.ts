@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInit } from "../src/commands/init";
@@ -227,6 +227,38 @@ describe("lore schema export — pruning stale schemas (full export)", () => {
     expect(result.removed).toEqual([]);
     expect(existsSync(unrelated)).toBe(true);
   });
+
+  test.each([
+    [".lore/schemas-extra"],
+    [".lore/schema"],
+    [".lore/schemas/sub"],
+  ])("a full export to %s — a lexical near-miss of the managed directory — never prunes a pre-existing unrelated schema file (AC#1)", (out) => {
+    const unrelated = join(root, out, "unrelated.schema.json");
+    mkdirSync(join(root, out), { recursive: true });
+    writeFileSync(unrelated, "{}\n");
+    const { result } = exportSchemas(["export", "--out", out]);
+    expect(result.removed).toEqual([]);
+    expect(existsSync(unrelated)).toBe(true);
+  });
+
+  // POSIX-only, matching this codebase's existing symlink tests' own skip guard (e.g. init.test.ts).
+  test.skipIf(process.platform === "win32")(
+    "a full export to the default directory never prunes through a symlinked .lore/schemas (AC#2/AC#3)",
+    () => {
+      const outside = mkdtempSync(join(tmpdir(), "lore-schema-outside-"));
+      try {
+        const unrelated = join(outside, "unrelated.schema.json");
+        writeFileSync(unrelated, "{}\n");
+        mkdirSync(join(root, ".lore"), { recursive: true });
+        symlinkSync(outside, join(root, ".lore/schemas"));
+        const { result } = exportSchemas(["export"]);
+        expect(result.removed).toEqual([]);
+        expect(existsSync(unrelated)).toBe(true);
+      } finally {
+        rmSync(outside, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("lore schema export — slug-collision guard (load-time)", () => {
