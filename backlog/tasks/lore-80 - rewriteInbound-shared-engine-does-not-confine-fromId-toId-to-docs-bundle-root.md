@@ -1,11 +1,11 @@
 ---
 id: LORE-80
 title: rewriteInbound shared engine does not confine fromId/toId to docs/ bundle root
-status: In Progress
+status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-07-21 08:38'
-updated_date: '2026-07-21 15:33'
+updated_date: '2026-07-21 15:40'
 labels:
   - codex-review
   - security
@@ -88,4 +88,62 @@ Automated verification:
   not touched by this change).
 
 Independent review pending (lifecycle step 6) before Done/tracker write.
+
+Independent review (general-purpose subagent, adversarial pass on the branch
+diff) found one real, confirmed bypass in the first fix attempt: a relative
+traversal spelled with backslashes (e.g. "..\pwned") tripped NEITHER check --
+posix.normalize treats "\" as a literal character (not a separator), so
+idFromPath left it unchanged, and win32.isAbsolute("..\\pwned") is false
+(that string is relative, not absolute -- the check only matches drive-
+letter/UNC/leading-separator absolute forms). Verified independently via a
+direct Node script (posix.normalize/win32.isAbsolute/win32.join), matching
+the reviewer's trace exactly. Since this project ships a compiled Windows
+binary (.github/workflows/release.yml) and commands/rename.ts writes via the
+platform-native path.join (which treats "\" as a separator on Windows), this
+reproduced the same escape class the task set out to close, just spelled
+with backslashes.
+
+Fix revised: assertConfinedToBundle now runs on the RAW fromId/toId (before
+idFromPath), and relative-escape detection is done by a new separator-
+agnostic escapesRoot() that splits on either "/" or "\" and tracks directory
+depth, rather than relying on posix.normalize/win32.isAbsolute's differing,
+incomplete semantics. Absolute-path rejection (posix.isAbsolute/
+win32.isAbsolute) is unchanged.
+
+Re-verified after the revision:
+- bun test test/rename.test.ts test/supersede.test.ts: 109 pass, 0 fail
+  (6 LORE-80 tests total: traversal toId, absolute toId, backslash toId,
+  mixed-separator toId, traversal fromId, and a no-false-positive case for
+  a real "..foo/bar"-style segment).
+- bun test (full suite): 1650 pass, 0 fail, 45 files.
+- bunx tsc --noEmit: clean. bunx biome check on changed files: no issues.
+- Live re-repro (fresh scratch repo): `lore rename reference/orders
+  '..\pwned'` now exits 6 with the validation error, no file written outside
+  docs/; a legitimate rename (reference/orders -> reference/sales-orders)
+  still exits 0, 3 files changed. Real repo's own git status verified clean
+  after every scratch step.
+
+Everything else in the review came back clean: check runs before any graph
+lookup or write for both callers (rename.ts move:true, supersede.ts
+move:false); no over-rejection of a real "..foo/bar"-style segment; NUL
+bytes don't bypass the string checks; "validation" -> exit 6 with no
+collision with existing not_found/conflict paths; the internal
+idFromPath(posix.join(...)) call at rewrite.ts:370 only feeds substituted
+markdown text (never an fs write path) and is correctly out of scope.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Confined rewriteInbound's fromId/toId to the docs/ bundle root, closing the
+shared-engine layer of the rename-destination-traversal gap (rename is the
+exploitable caller; supersede's toId must already name a real graph concept,
+which is already implicitly confined). An adversarial independent review
+caught a real gap in the first attempt (a backslash-spelled relative
+traversal bypassed both the posix-only "../" check and win32.isAbsolute,
+since that string is relative not absolute) -- fixed with a separator-
+agnostic segment walk (escapesRoot) checked on the raw caller-supplied id
+before any processing. Verified live against a scratch repo both before
+(escaped) and after (rejected, exit 6) the fix, plus 1650/1650 passing tests
+(6 new), clean typecheck, and clean lint on the changed files.
+<!-- SECTION:FINAL_SUMMARY:END -->
