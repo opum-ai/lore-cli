@@ -536,9 +536,11 @@ export function reportError(err: unknown, opts: { json: boolean; color?: boolean
 /**
  * Accumulates advisory warnings (unknown OKF `type`, missing `summary`,
  * non-portable link syntax, …). Per cli-contract §4.1 warnings go to stderr and
- * **do not, by themselves, change the exit code**; gate commands
- * (`validate`/`check`) may inspect {@link count}/{@link list} to decide whether
- * to fail with exit `6`.
+ * **do not, by themselves, change the exit code** — `count`/`list` are for
+ * display only. A caller whose mutation depends on a specific advisory (e.g. a
+ * complete bundle graph) tests for it with the machine-readable {@link has}
+ * tag instead (LORE-82); as of writing, `rename`/`supersede` are the only such
+ * callers — `validate`/`check` do not currently gate on any warning.
  */
 export class WarningCollector {
   private readonly messages: string[] = [];
