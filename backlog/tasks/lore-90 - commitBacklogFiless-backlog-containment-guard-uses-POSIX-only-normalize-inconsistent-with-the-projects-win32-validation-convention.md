@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-07-21 18:52'
-updated_date: '2026-07-21 19:24'
+updated_date: '2026-07-21 19:33'
 labels:
   - backlog-campaign-followup
   - security
@@ -63,6 +63,10 @@ Verification:
 - bun run typecheck (tsc --noEmit): clean, no errors.
 - bun run lint (biome check .): 0 errors (4 pre-existing infos in an unrelated file, test/supersede.test.ts, untouched by this change).
 - Live-CLI verification (not just synthetic tests): built a real scratch git repo under .repro-scratch/, wrote a throwaway script importing the real (fixed) commitBacklogFiles from src/state.ts, and called it with the exact payload backlog/x\..\..\outside.md against that real repo. Confirmed it throws a drift LoreError with the exact message before touching git, and confirmed via git status --porcelain in both the scratch repo and the real lore repo that nothing was staged/committed anywhere. Scratch verification files left in .repro-scratch/ per this campaign's standing convention (not deleted without being asked).
+
+Independent review (general-purpose subagent, post-commit, per this campaign's established ordering discipline): verdict "solid fix, safe to merge" — no blocking findings. Confirmed by hand-tracing and live-CLI re-testing against the real fixed commitBacklogFiles: the backslash-delimited '..' payload is correctly rejected; legitimate paths, a filename merely containing '..' as a substring, and the './'-redundancy case are all correctly NOT rejected (no false positives); slicing off BACKLOG_DIR before calling escapesRoot is necessary and correct (verified by hand-tracing why running it on the full string would miss the payload). Re-ran the full suite independently: 1659/1659 pass, typecheck clean.
+
+Non-blocking follow-up identified (recorded in the tracker's Not-queued section for human triage, not added to this task's scope): commands/rename.ts's newId guard is actually a three-part check (posix.isAbsolute || win32.isAbsolute || escapesRoot), but this fix reused only escapesRoot. Confirmed live that a win32-absolute-looking suffix still passes today (e.g. backlog/C:\Windows\evil.md, backlog/\\server\share\evil.md) — neither is an active escape (same git :(literal) no-op reasoning as the original bug), and both are outside LORE-90's own stated ACs (specifically scoped to backslash-delimited '..' traversal), so this is not a reason to block the merge. Also noted (pre-existing, not introduced by this diff, not worth a task): the guard's posix.isAbsolute(normalized) disjunct is already dead code given the startsWith(BACKLOG_DIR) check.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
