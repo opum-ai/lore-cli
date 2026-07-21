@@ -200,6 +200,33 @@ describe("managedRanges", () => {
     const ranges = managedRanges(text);
     expect(ranges).toHaveLength(2);
   });
+
+  test("a doc merely citing the lore:tasks marker syntax in prose has nothing protected (LORE-73)", () => {
+    // The exact shape this project's own ADRs use to document the format — a literal indexOf scan
+    // would misfire here (false "duplicated"/"unmatched" error, or silently protect the sentence);
+    // the structural locateTaskBlock must see zero real managed regions.
+    const text = `Re-render every \`${TASK_BLOCK_BEGIN}\` … \`${TASK_BLOCK_END}\` region foo on sync.`;
+    expect(managedRanges(text)).toEqual([]);
+    const out = replaceInText(text, "foo", "BAR");
+    expect(out.count).toBe(1);
+    expect(out.text).toContain("BAR");
+  });
+
+  test("three prose/fenced citations of lore:tasks markers (no real block) does not throw (LORE-73)", () => {
+    // Reproduces the exact live regression this fix closed: docs/adr/0008-managed-block-remark-ast.md
+    // cites the marker syntax three times (a fenced example plus inline citations), with no real
+    // top-level block. A literal indexOf scan sees 3 begins/3 ends and throws "duplicated" — this
+    // must not throw, and a foo/BAR match outside the citations must still be replaced.
+    const text =
+      "```markdown\n" +
+      tasksBlock("example") +
+      "\n```\n\n" +
+      `Also written as \`${TASK_BLOCK_BEGIN}\` … \`${TASK_BLOCK_END}\`.\n\nfoo here.`;
+    expect(managedRanges(text)).toEqual([]);
+    const out = replaceInText(text, "foo", "BAR");
+    expect(out.count).toBe(1);
+    expect(out.text).toContain("BAR here");
+  });
 });
 
 describe("mergeRanges", () => {

@@ -23,32 +23,42 @@
  *
  * ### What counts as a managed region
  *
- * The bundle has two kinds of in-file managed region, both registered in {@link MANAGED_MARKERS}:
- * the `<!-- lore:index:begin -->` … `<!-- lore:index:end -->` listing block that
- * {@link generateIndexes} owns in every `index.md` (lore-design §6.2), and the
+ * The bundle has two kinds of in-file managed region, both registered in
+ * {@link MANAGED_REGION_LOCATORS}: the `<!-- lore:index:begin -->` … `<!-- lore:index:end -->`
+ * listing block that {@link generateIndexes} owns in every `index.md` (lore-design §6.2), and the
  * `<!-- lore:tasks:begin -->` … `<!-- lore:tasks:end -->` task table that `managed-block.ts` owns in
- * a `Story`/`Spec` doc (LORE-22). {@link managedRanges} locates each registered region with the
- * **same** {@link locateManagedBlock} arithmetic both owners splice with (exactly one begin, one end,
- * markers included) — so `replace` protects exactly the span `lore sync` would regenerate, and a
- * refactor can never land in bytes `sync` later reverts. A malformed layout (a duplicated marker
- * pair, or an unmatched/crossed begin) is a fail-loud `validation` error rather than a guessed span
- * (LORE-86) — `replace` never has to guess which bytes were meant to stay protected either. A future
- * managed-block kind is likewise a one-entry addition to the registry. The fully machine-generated
- * `log.md` has no in-file markers; it is excluded by the command layer's discovery, not here (this
- * engine sees only the bytes it is handed).
+ * a `Story`/`Spec` doc (LORE-22). {@link managedRanges} locates each registered region with **that
+ * region's own owner's** location logic — so `replace` protects exactly the span `lore sync` would
+ * regenerate, and a refactor can never land in bytes `sync` later reverts. Each locator is a fail-loud
+ * `validation` error on a malformed layout (a duplicated marker pair, or an unmatched/crossed begin)
+ * rather than a guessed span (LORE-86) — `replace` never has to guess which bytes were meant to stay
+ * protected either. A future managed-block kind is likewise a one-entry addition to the registry. The
+ * fully machine-generated `log.md` has no in-file markers; it is excluded by the command layer's
+ * discovery, not here (this engine sees only the bytes it is handed).
+ *
+ * Two different location strategies, deliberately not unified into one: `lore:index`'s
+ * {@link locateManagedBlock} is a literal `indexOf` scan — safe there only because that marker text
+ * never occurs outside a real index block in practice. `lore:tasks:begin`/`:end`, however, are
+ * routinely *cited* in this project's own prose and fenced code examples documenting the format, so a
+ * literal scan misfires on those (a false "duplicated"/"unmatched" error, or worse, silently
+ * protecting prose that merely mentions the syntax); {@link locateTaskBlock} instead reuses
+ * `managed-block.ts`'s structural, mdast-based marker location (the same one `lore sync`/`lore check`
+ * already trust), where a sentinel inside a code fence or blockquote is never mistaken for a real
+ * marker (LORE-73).
  *
  * Per the core contract (lore-design §2.1) everything here is pure: text in, `{ text, count }` out,
  * or a {@link LoreError} out — `usage` for an unusable pattern (empty, invalid regex, or one that
- * can match the empty string), or `validation` when a managed region's markers are malformed (LORE-86,
- * propagated from {@link locateManagedBlock}) — no filesystem, no printing, no flags, no
- * `process.exit`. The command layer ({@link commands/replace}) discovers and reads the files,
- * compiles the pattern **once**, and applies it per file; a `validation` error aborts before any
- * file is written (`commands/replace.ts` only writes after every target has been read and rewritten).
+ * can match the empty string), or `validation` when a managed region's markers are malformed
+ * (LORE-86, propagated from whichever locator owns that region) — no filesystem, no printing, no
+ * flags, no `process.exit`. The command layer ({@link commands/replace}) discovers and reads the
+ * files, compiles the pattern **once**, and applies it per file; a `validation` error aborts before
+ * any file is written (`commands/replace.ts` only writes after every target has been read and
+ * rewritten).
  */
 
 import { LoreError } from "../errors";
 import { INDEX_BLOCK_BEGIN, INDEX_BLOCK_END, locateManagedBlock } from "./indexes";
-import { TASK_BLOCK_BEGIN, TASK_BLOCK_END } from "./managed-block";
+import { locateTaskBlock } from "./managed-block";
 
 /**
  * A half-open `[start, end)` byte range within a file's text. Used for the spans
@@ -83,15 +93,16 @@ export interface ReplaceOptions {
 export type Replacer = (text: string) => ReplaceResult;
 
 /**
- * The HTML-comment marker pairs that bound a lore-managed region. The single registry every
- * managed-region consumer skips, so a new managed block is protected by adding one entry rather than
- * threading a new special case through `replace`. Each marker pair is imported from its owning
- * module ({@link indexes}, {@link managed-block}) so there is one source of truth for their exact
- * bytes.
+ * The location functions that find each kind of lore-managed region, one per marker pair. The single
+ * registry every managed-region consumer skips, so a new managed block is protected by adding one
+ * entry rather than threading a new special case through `replace`. Each locator is owned by (and
+ * imported from) the module that owns that region's markers ({@link indexes}, {@link managed-block}),
+ * so `replace` always agrees with `lore sync`/`lore check` on a region's exact extent — including
+ * which location *strategy* (literal scan vs. structural) is safe for that marker pair.
  */
-const MANAGED_MARKERS: ReadonlyArray<{ readonly begin: string; readonly end: string }> = [
-  { begin: INDEX_BLOCK_BEGIN, end: INDEX_BLOCK_END },
-  { begin: TASK_BLOCK_BEGIN, end: TASK_BLOCK_END },
+const MANAGED_REGION_LOCATORS: ReadonlyArray<(text: string) => TextRange | null> = [
+  (text) => locateManagedBlock(text, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END),
+  (text) => locateTaskBlock(text),
 ];
 
 /** A representative probe carrying word boundaries, line ends, digits, and punctuation, for the zero-width guard. */
@@ -99,19 +110,19 @@ const ZERO_WIDTH_PROBE = "a b1\n.x-_/2";
 
 /**
  * Every lore-managed region in `text`, as merged, ascending `[start, end)` ranges. Each registered
- * marker pair is located by the shared {@link locateManagedBlock} (exactly one begin, one end,
- * markers included) so `replace` and `lore sync`/`check` agree byte-for-byte on a region's extent.
- * Ranges from different marker kinds are merged so any overlap/touch collapses, leaving a clean
- * ordered partition for {@link applyReplacement}.
+ * locator finds its own region kind ({@link MANAGED_REGION_LOCATORS}) so `replace` and `lore
+ * sync`/`check` agree byte-for-byte on a region's extent. Ranges from different marker kinds are
+ * merged so any overlap/touch collapses, leaving a clean ordered partition for
+ * {@link applyReplacement}.
  *
- * @throws LoreError `validation` when a registered marker pair is malformed (duplicated, unmatched,
- *   or crossed) — propagated from {@link locateManagedBlock} rather than guessing which bytes to
- *   protect (LORE-86).
+ * @throws LoreError `validation` when a registered region's markers are malformed (duplicated,
+ *   unmatched, or crossed) — propagated from whichever locator owns that region, rather than
+ *   guessing which bytes to protect (LORE-86).
  */
 export function managedRanges(text: string): TextRange[] {
   const ranges: TextRange[] = [];
-  for (const { begin, end } of MANAGED_MARKERS) {
-    const bounds = locateManagedBlock(text, begin, end);
+  for (const locate of MANAGED_REGION_LOCATORS) {
+    const bounds = locate(text);
     if (bounds !== null) {
       ranges.push(bounds);
     }

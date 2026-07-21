@@ -246,6 +246,34 @@ function markerError(reason: string, input: Record<string, unknown>): LoreError 
 }
 
 /**
+ * The `lore:tasks` region's full `[start, end)` byte span (markers included), located
+ * **structurally** — the same {@link collectMarkerSpans} mdast scan {@link findMarkers} uses — or
+ * `null` when the document carries no `lore:tasks` markers at all (most docs; only a linked
+ * `Story`/`Spec` do). Exported for `core/replace.ts`'s managed-region registry, which must protect
+ * exactly the span {@link regenerateTaskBlock} would rewrite.
+ *
+ * Deliberately **not** `indexes.ts`'s `locateManagedBlock` literal `indexOf` scan: that scan is safe
+ * for `lore:index` only because the marker text never occurs outside a real index block in practice,
+ * but `lore:tasks:begin`/`:end` are routinely *cited* in this project's own prose and fenced code
+ * examples documenting the format — a literal scan misfires on those (a false "duplicated"/"unmatched"
+ * validation error, or worse, silently treating a prose citation as a real block) (LORE-73). The
+ * structural, top-level-`html`-node-only location this module already uses for `lore sync`/`lore
+ * check` has no such ambiguity: a sentinel inside a code fence or blockquote is never a marker.
+ *
+ * @throws LoreError `validation` when markers are present but malformed (duplicated, unmatched, or
+ *   crossed) — the same fail-loud contract {@link findMarkers} enforces. Total absence is `null`, not
+ *   an error: a file with no `lore:tasks` block has nothing to protect.
+ */
+export function locateTaskBlock(content: string): { start: number; end: number } | null {
+  const { begins, ends } = collectMarkerSpans(content, BEGIN_MARKER, END_MARKER);
+  if (begins.length === 0 && ends.length === 0) {
+    return null;
+  }
+  const { begin, end } = findMarkers(content);
+  return { start: begin.start, end: end.end };
+}
+
+/**
  * Build the frozen table string (no leading/trailing newline) for `rows`, or the "no linked tasks"
  * paragraph when there are none. The format is fixed byte-for-byte so identical input yields identical
  * output: a header row, a compact GFM delimiter, and one `| [id](link) | title | status |` row each.
