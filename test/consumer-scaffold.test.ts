@@ -18,7 +18,16 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { load as yamlLoad } from "js-yaml";
@@ -273,6 +282,59 @@ describe("lore scaffold mkdocs — never-silent-clobber (AC: user-owned, never r
     // behind on disk after this failure — breaking the "writes nothing on failure" contract for the
     // directory itself.
     expect(existsSync(join(root, "docs"))).toBe(false);
+  });
+});
+
+describe("lore scaffold mkdocs — refuses to write through a symlink (LORE-76)", () => {
+  let outside: string;
+
+  beforeEach(() => {
+    outside = mkdtempSync(join(tmpdir(), "lore-scaffold-outside-"));
+  });
+  afterEach(() => {
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  test("a symlinked docs/ ancestor directory is refused, not followed — nothing is written outside the repo", () => {
+    // docs/ doesn't need to pre-exist for buildMkdocsScaffold's plan, but the plan's OWN dirs list
+    // includes it (see the fresh-scaffold test above) — a symlink standing in for it is exactly the
+    // "symlinked ancestor" case AC1 names, since docs/tags.md's write walks through it.
+    symlinkSync(outside, join(root, "docs"));
+    const err = expectError("conflict", () =>
+      runScaffold({ root, output: JSON_CTX, args: ["mkdocs"], stdout: capture() }),
+    );
+    expect(err.message).toContain("docs");
+    expect(err.message.toLowerCase()).toContain("symlink");
+    // Confirms the guard, not a coincidental EEXIST, is what stopped this: without LORE-76's fix,
+    // `mkdirSync(docs, {recursive:true})` + a `docs/tags.md` write would transparently follow the
+    // symlink and land the generated file inside `outside` (the task's own live repro).
+    expect(existsSync(join(outside, "tags.md"))).toBe(false);
+    expect(existsSync(join(root, "mkdocs.yml"))).toBe(false); // all-or-nothing: nothing else written either
+  });
+
+  test("a symlinked mkdocs.yml final target is refused under --force — the outside file's content is untouched", () => {
+    const outsideFile = join(outside, "mkdocs.yml");
+    writeFileSync(outsideFile, "SENSITIVE PRE-EXISTING CONTENT — must never be overwritten\n");
+    symlinkSync(outsideFile, join(root, MKDOCS_CONFIG_REL_PATH));
+    const err = expectError("conflict", () =>
+      runScaffold({ root, output: JSON_CTX, args: ["mkdocs", "--force"], stdout: capture() }),
+    );
+    expect(err.message).toContain(MKDOCS_CONFIG_REL_PATH);
+    expect(err.message.toLowerCase()).toContain("symlink");
+    // The task's own live repro: without LORE-76's fix, `--force`'s overwrite branch follows the
+    // symlink (existsSync/readFileSync/writeFileSync all resolve through it) and clobbers whatever
+    // real file the symlink points at, anywhere on disk.
+    expect(readFileSync(outsideFile, "utf8")).toBe("SENSITIVE PRE-EXISTING CONTENT — must never be overwritten\n");
+    expect(existsSync(join(root, TAGS_INDEX_REL_PATH))).toBe(false); // all-or-nothing: nothing else written
+  });
+
+  test("a symlinked ancestor is refused even under --force (the guard runs regardless of the write discipline)", () => {
+    symlinkSync(outside, join(root, "docs"));
+    const err = expectError("conflict", () =>
+      runScaffold({ root, output: JSON_CTX, args: ["mkdocs", "--force"], stdout: capture() }),
+    );
+    expect(err.message.toLowerCase()).toContain("symlink");
+    expect(existsSync(join(outside, "tags.md"))).toBe(false);
   });
 });
 
