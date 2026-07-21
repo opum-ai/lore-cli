@@ -52,7 +52,7 @@
  */
 
 import { posix } from "node:path";
-import { singleLine } from "../errors";
+import { LoreError, singleLine } from "../errors";
 import type { BundleGraph } from "./bundle";
 import type { Concept } from "./concept";
 import { compareCodeUnits } from "./order";
@@ -249,50 +249,99 @@ function render(current: string | undefined, block: string, dir: string): string
 
 /**
  * Locate the managed block in `content` as a `[start, end)` byte range, or `null` when no begin
- * marker is present (an unmanaged file the caller appends to). The range runs from the **first**
- * begin marker to the **last** end marker after it, and excludes the end marker's trailing newline
- * (the caller's `slice(end)` preserves it and any prose below). Two deliberate choices make
- * regeneration converge to a byte-level fixpoint (AC#1) even from a corrupted file:
- *
- * - **first-begin → last-end** collapses *duplicate* well-formed blocks (a 3-way-merge artifact)
- *   into the single regenerated block, so a stale second block can't survive and silently pass the
- *   `lore check` drift gate.
- * - **begin with no following end → to end-of-file**: a *truncated* region (end marker lost to a
- *   merge/interrupted write) is rewritten whole rather than leaving an orphan begin that the next
- *   run would pair with the freshly-appended end (which would make one sync never converge).
- *
- * The unavoidable cost of literal markers (no AST): a begin/end the *author* wrote in prose — e.g. a
- * doc demonstrating this very format — is treated as a real boundary, so content between an authored
- * marker and a real one is collapsed. That ambiguity is what LORE-22's mdast-based managed-block
- * resolves; here it is a documented limitation of the string splice.
+ * marker is present (an unmanaged file the caller appends to). See {@link locateManagedBlock} for
+ * the full contract, including the malformed-layout cases that are a fail-loud `validation` error
+ * (LORE-86).
  */
 function blockBounds(content: string): { start: number; end: number } | null {
   return locateManagedBlock(content, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END);
 }
 
 /**
- * The generic first-begin → last-end block locator behind {@link blockBounds}, exported as the **one**
- * rule for where a lore-managed region lives in raw text — `[start, end)` spanning the first `begin`
- * marker to the last `end` marker (markers included), or to end-of-file when no `end` follows the
- * begin (a truncated region), or `null` when no `begin` is present.
+ * The generic managed-block locator behind {@link blockBounds}, exported as the **one** rule for
+ * where a lore-managed region lives in raw text — `[start, end)` spanning the `begin` marker to the
+ * `end` marker (markers included), or `null` when no `begin` is present (an unmanaged file the
+ * caller appends to).
  *
- * Exported so every consumer that must agree on a managed region's extent uses the *same* arithmetic:
- * index regeneration ({@link generateIndexes}) splices it, and `lore replace` (LORE-35) protects it.
- * Sharing this is what keeps `replace` from editing a span that `lore sync` would later regenerate —
- * the first-begin → last-end collapse (which folds a duplicated/merge-artifact block into one region)
- * must be identical on both sides, or a refactor could land in bytes `sync` silently reverts.
+ * A well-formed file carries exactly one `begin` and one `end`, with the `end` at or after the
+ * `begin`. Anything else is a **malformed layout** — a duplicated pair (both markers appear more
+ * than once, e.g. a 3-way-merge artifact) or an unmatched `begin` (no `end` after it, e.g. an
+ * interrupted write, or an `end` marker that precedes it) — and is a fail-loud `validation`
+ * {@link LoreError} (exit 6) rather than a guessed range. This module previously collapsed a
+ * duplicated pair to its first-begin→last-end span and extended an unmatched begin to end-of-file,
+ * both to keep regeneration converging to a byte-level fixpoint even from a corrupted file — but a
+ * duplicated pair's collapse silently deleted any hand-authored prose sitting between the two
+ * blocks (LORE-86), and a guessed range is exactly the ambiguity {@link findMarkers} in
+ * `managed-block.ts` already refuses for the sibling `lore:tasks` block. This function now matches
+ * that same fail-loud contract instead of guessing.
+ *
+ * Exported so every consumer that must agree on a managed region's extent (and its validation) uses
+ * the *same* rule: index regeneration ({@link generateIndexes}) splices it, and `lore replace`
+ * (LORE-35) protects it. Sharing this is what keeps `replace` from editing a span that `lore sync`
+ * would later regenerate.
+ *
+ * The unavoidable cost of literal markers (no AST): a begin/end the *author* wrote in prose — e.g. a
+ * doc demonstrating this very format — is treated as a real marker occurrence, contributing to the
+ * duplicate count above. That ambiguity is what LORE-22's mdast-based `managed-block.ts` resolves
+ * structurally; here it remains a documented limitation of the string splice.
  */
 export function locateManagedBlock(content: string, begin: string, end: string): { start: number; end: number } | null {
-  const start = content.indexOf(begin);
-  if (start === -1) {
-    return null;
+  const begins = allIndicesOf(content, begin);
+  if (begins.length === 0) {
+    return null; // no managed block yet — the caller appends one
   }
-  const lastEnd = content.lastIndexOf(end);
-  // No end marker after the begin (truncated region): the region runs to end-of-file.
-  if (lastEnd < start + begin.length) {
-    return { start, end: content.length };
+  const ends = allIndicesOf(content, end);
+  if (begins.length > 1 || ends.length > 1) {
+    throw managedBlockError(
+      begin,
+      end,
+      `the managed block is duplicated (found ${begins.length} begin and ${ends.length} end markers; expected exactly one of each)`,
+      { begins: begins.length, ends: ends.length },
+    );
   }
-  return { start, end: lastEnd + end.length };
+  const start = begins[0] as number;
+  if (ends.length === 0) {
+    throw managedBlockError(begin, end, "the begin marker has no matching end marker after it", {
+      begins: begins.length,
+      ends: ends.length,
+    });
+  }
+  const endStart = ends[0] as number;
+  if (endStart < start + begin.length) {
+    throw managedBlockError(begin, end, "the markers are crossed (the end marker precedes the begin marker)", {
+      begin: start,
+      end: endStart,
+    });
+  }
+  return { start, end: endStart + end.length };
+}
+
+/** Every (non-overlapping) occurrence of `marker` in `content`, in ascending order. */
+function allIndicesOf(content: string, marker: string): number[] {
+  const indices: number[] = [];
+  let from = 0;
+  for (;;) {
+    const at = content.indexOf(marker, from);
+    if (at === -1) {
+      return indices;
+    }
+    indices.push(at);
+    from = at + marker.length;
+  }
+}
+
+/**
+ * Build the fail-loud "malformed managed-block markers" error {@link locateManagedBlock} throws
+ * (`validation`, exit 6) — the same category and shape `managed-block.ts`'s marker validation uses
+ * for the sibling `lore:tasks` block, so both engines refuse to guess in the same voice.
+ */
+function managedBlockError(begin: string, end: string, reason: string, input: Record<string, unknown>): LoreError {
+  return new LoreError(
+    "validation",
+    `cannot locate the managed block bounded by \`${begin}\` / \`${end}\`: ${reason}`,
+    `place exactly one \`${begin}\` and one \`${end}\` on their own lines, in that order`,
+    input,
+  );
 }
 
 /** The synthesized heading for a brand-new index: the directory's base name, or `index` for the root. */

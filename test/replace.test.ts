@@ -120,15 +120,12 @@ describe("replaceInText — managed regions are never touched (AC#1)", () => {
     expect(replaceInText(text, "foo.md", "x.md")).toEqual({ text, count: 0 });
   });
 
-  test("the span between two blocks is protected, matching sync's first-begin→last-end rule (review #3)", () => {
+  test("two blocks in one file (a duplicated marker pair) is a validation error, not a silent collapse (LORE-86)", () => {
     const text = `before tok\n${indexBlock("- a")}\nMIDDLE tok\n${indexBlock("- b")}\nafter tok`;
-    const out = replaceInText(text, "tok", "X");
-    // The MIDDLE between the two blocks is inside the collapsed managed span and is protected; only
-    // the prose before the first block and after the last block is rewritten.
-    expect(out.count).toBe(2);
-    expect(out.text.startsWith("before X")).toBe(true);
-    expect(out.text).toContain("MIDDLE tok"); // protected
-    expect(out.text.endsWith("after X")).toBe(true);
+    // Previously the MIDDLE prose between the two blocks was silently swallowed into a single
+    // collapsed managed span (first-begin→last-end); LORE-86 makes this a fail-loud error instead,
+    // since replace could never know whether "MIDDLE tok" was meant to be edited or protected.
+    expect(() => replaceInText(text, "tok", "X")).toThrow(LoreError);
   });
 });
 
@@ -144,18 +141,14 @@ describe("managedRanges", () => {
     expect(text.slice(r.start, r.end)).toBe(indexBlock("x"));
   });
 
-  test("a begin with no matching end owns the rest of the file (truncated region)", () => {
+  test("a begin with no matching end is a validation error (LORE-86), not a guessed truncated-to-EOF span", () => {
     const text = `a\n${INDEX_BLOCK_BEGIN}\nx\nno end marker`;
-    const ranges = managedRanges(text);
-    expect(ranges).toHaveLength(1);
-    expect(ranges[0]?.end).toBe(text.length);
+    expect(() => managedRanges(text)).toThrow(LoreError);
   });
 
-  test("two blocks collapse to one first-begin→last-end span (matches indexes.ts)", () => {
+  test("two blocks (a duplicated marker pair) is a validation error, not a collapsed first-begin→last-end span (LORE-86)", () => {
     const text = `${indexBlock("a")}\nmid\n${indexBlock("b")}`;
-    const ranges = managedRanges(text);
-    expect(ranges).toHaveLength(1);
-    expect(text.slice(ranges[0]?.start, ranges[0]?.end)).toBe(text); // whole span, mid included
+    expect(() => managedRanges(text)).toThrow(LoreError);
   });
 
   test("no markers means no protected ranges", () => {
