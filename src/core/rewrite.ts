@@ -80,6 +80,7 @@ import {
 import { type Concept, idFromPath, serializeConcept } from "./concept";
 import { normalizeLink } from "./links";
 import { compareCodeUnits } from "./order";
+import type { Profile } from "./profile";
 import { DOCS_DIR } from "./scaffold";
 
 /** A half-open `[start, end)` byte range within a body, locating a link destination to splice. */
@@ -136,6 +137,17 @@ export interface RewriteInboundOptions {
    * everything its graph reaches).
    */
   readonly exclude?: ReadonlySet<string>;
+  /**
+   * The active profile, forwarded to every {@link serializeConcept} call this engine makes so a
+   * rewritten concept's re-emitted frontmatter validates against the SAME profile the caller's own
+   * `loadBundle` used to read the bundle in the first place — never silently falling back to the
+   * built-in default when the caller has a project-specific `.lore/profile.toml` (LORE-88). Also the
+   * profile a caller should re-parse these bytes with afterward (e.g. `rename.ts`'s
+   * `buildPostRenameGraph`), so a concept is never written under one profile and re-read under
+   * another. Defaults to {@link serializeConcept}'s own default (the built-in profile), so a caller
+   * that does not opt in is unaffected (LORE-88 AC#5).
+   */
+  readonly profile?: Profile;
 }
 
 /** The shared empty exclude set, so the common (no-exclude) path allocates nothing. */
@@ -161,6 +173,7 @@ export function rewriteInbound(
   const move = options.move ?? false;
   const rewriteRefs = options.rewriteFrontmatterRefs ?? true;
   const exclude = options.exclude ?? NO_EXCLUDE;
+  const profile = options.profile;
   assertConfinedToBundle(fromId, "fromId");
   assertConfinedToBundle(toId, "toId");
   const from = idFromPath(fromId);
@@ -204,11 +217,11 @@ export function rewriteInbound(
       continue; // an edge's `from` is always a real concept; this is unreachable belt-and-braces
     }
     const isMoved = move && id === from;
-    const rewritten = rewriteConcept(concept, graph, { from, to, fromPath, toPath, isMoved, rewriteRefs });
+    const rewritten = rewriteConcept(concept, graph, { from, to, fromPath, toPath, isMoved, rewriteRefs }, profile);
     if (rewritten === null && !isMoved) {
       continue; // nothing changed in this file and it does not move — leave it untouched
     }
-    const bytes = rewritten ?? serializeConcept(concept);
+    const bytes = rewritten ?? serializeConcept(concept, { profile });
     writes.push({ path: isMoved ? toPath : concept.path, bytes });
   }
 
@@ -342,7 +355,12 @@ interface RewriteContext {
  * changed (no body destination and no frontmatter ref needed rewriting). The moved file always
  * yields bytes from its caller even on a `null` here, because it still relocates.
  */
-function rewriteConcept(concept: Concept, graph: BundleGraph, ctx: RewriteContext): string | null {
+function rewriteConcept(
+  concept: Concept,
+  graph: BundleGraph,
+  ctx: RewriteContext,
+  profile: Profile | undefined,
+): string | null {
   const dir = posix.dirname(concept.path);
   const edits = computeBodyEdits(concept.body, concept.path, ctx);
   const newBody = applyBodyEdits(concept.body, edits);
@@ -360,7 +378,7 @@ function rewriteConcept(concept: Concept, graph: BundleGraph, ctx: RewriteContex
     frontmatter: frontmatterChanged ? newFrontmatter : concept.frontmatter,
     body: newBody,
   };
-  return serializeConcept(next);
+  return serializeConcept(next, { profile });
 }
 
 // ── Body link rewriting ──────────────────────────────────────────────────────────

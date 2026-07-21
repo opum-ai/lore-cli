@@ -361,6 +361,27 @@ describe("lore supersede — active profile", () => {
     expect(err.type).toBe("validation");
     expect(readDoc("adr/0007-old.md")).toBe(oldBytes); // failed before writing — nothing stamped
   });
+
+  test("--rewrite-links honors the project profile when re-serializing an inbound concept it reshapes (LORE-88, AC#2)", () => {
+    // A Story whose custom-profile-only scalar `tasks:` field is repointed by --rewrite-links (an
+    // INBOUND concept, not one of the two supersede principals) — before LORE-88, rewriteInbound's
+    // internal re-serialize always fell back to the built-in default profile (tasks as a list),
+    // rejecting this file even though it is fully valid per the project's own committed schema.
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      '[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "Story"\nfields = { tasks = { kind = "string" } }\n',
+    );
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
+    writeDoc("stories/bulk.md", "---\ntype: Story\ntasks: T-1\n---\nUses [old](../adr/0007-old.md).\n");
+
+    const { code, report } = supersedeCmd(["adr/0007-old", "adr/0012-new", "--rewrite-links"]);
+    expect(code).toBe(EXIT_OK);
+    expect(report.rewroteLinks).toBe(true);
+    expect(readDoc("stories/bulk.md")).toContain("[old](../adr/0012-new.md)");
+    expect(readDoc("stories/bulk.md")).toContain("tasks: T-1"); // custom scalar shape survived, not coerced
+  });
 });
 
 // ── output rendering ──────────────────────────────────────────────────────────
