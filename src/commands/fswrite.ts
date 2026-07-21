@@ -22,15 +22,19 @@
  */
 
 import {
+  closeSync,
+  constants,
   existsSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
   rmdirSync,
   rmSync,
   unlinkSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { errnoCode, LoreError } from "../errors";
@@ -224,8 +228,9 @@ function existingIsRegularFile(absPath: string): boolean {
 /**
  * Map a filesystem failure to a diagnostic. A permission error (`EACCES`/`EPERM`)
  * becomes a `denied` {@link LoreError}; a non-regular entry occupying a path lore needs — a directory
- * where a file must go (`EISDIR` on an overwrite, `EEXIST` on a never-clobber `mkdir`) or a file
- * sitting on an ancestor segment (`ENOTDIR`) — becomes a `conflict` {@link LoreError}. Both carry an
+ * where a file must go (`EISDIR` on an overwrite, `EEXIST` on a never-clobber `mkdir`), a file
+ * sitting on an ancestor segment (`ENOTDIR`), or a symlink an `O_NOFOLLOW` open refused to follow
+ * (`ELOOP`, see {@link writeFileNoFollow}) — becomes a `conflict` {@link LoreError}. Both carry an
  * actionable hint. Anything else is rethrown so a genuinely unexpected IO fault surfaces as an
  * uncaught failure (exit 1, "report this") rather than being mislabeled a user condition.
  */
@@ -239,7 +244,7 @@ export function ioError(cause: unknown, relPath: string, action: string): unknow
       { path: relPath, code },
     );
   }
-  if (code === "EEXIST" || code === "ENOTDIR" || code === "EISDIR") {
+  if (code === "EEXIST" || code === "ENOTDIR" || code === "EISDIR" || code === "ELOOP") {
     return conflictError(relPath, code);
   }
   return cause;
@@ -301,7 +306,13 @@ export interface WriteAllOrRollbackResult {
  *   file's bytes cannot be read (e.g. write-only permissions, or a non-regular entry occupying the
  *   path) the call refuses **before ever writing that file** — it never proceeds to
  *   overwrite-then-maybe-delete it, because deleting a file that existed before this call ran is never
- *   an acceptable rollback outcome.
+ *   an acceptable rollback outcome. The overwrite itself goes through {@link writeFileNoFollow}, not
+ *   the shared {@link writeFileOverwriting} (LORE-92): `assertNoSymlinkInPath` above is a
+ *   check-then-act `lstatSync` walk, which cannot itself close a race against a symlink planted in
+ *   the window between that check and this write — a concurrent process could still swap the target
+ *   for a symlink after the guard passes and before a plain `writeFileSync` (which transparently
+ *   follows symlinks) performs the overwrite. `writeFileNoFollow` closes that window structurally,
+ *   at the single `open()` call that does the write, rather than re-checking-then-still-racing.
  *
  * Rollback is best-effort: a failure while undoing is swallowed so the original error — not a
  * secondary cleanup failure — is what the caller sees.
@@ -345,11 +356,11 @@ export function writeAllOrRollback(
       }
       if (existsSync(abs)) {
         const before = readExistingOrThrow(abs, file.path);
-        writeFileOverwriting(abs, file.contents, file.path);
+        writeFileNoFollow(abs, file.contents, file.path);
         undo.push(() => writeFileSync(abs, before));
         return { path: file.path, action: "updated" as const };
       }
-      writeFileOverwriting(abs, file.contents, file.path);
+      writeFileNoFollow(abs, file.contents, file.path);
       undo.push(() => rmSync(abs, { force: true }));
       return { path: file.path, action: "created" as const };
     });
@@ -377,5 +388,38 @@ function readExistingOrThrow(absPath: string, relPath: string): string {
     return readFileSync(absPath, "utf8");
   } catch (cause) {
     throw ioError(cause, relPath, "read pre-existing file before overwriting");
+  }
+}
+
+/**
+ * Overwrite (or create) a file, refusing to follow a symlink at the final path component — even
+ * one planted *after* an earlier {@link assertNoSymlinkInPath} check on the same path already
+ * passed (LORE-92). That check is a check-then-act `lstatSync` walk; nothing stops a concurrent
+ * process from swapping the target for a symlink in the window between the check and a later
+ * plain `writeFileSync` (which transparently follows symlinks, mid-path or final component alike).
+ * `O_NOFOLLOW` closes that window structurally: the same `open()` call that performs the write is
+ * also the one that refuses the symlink, so there is no gap for a race to land in. A refused open
+ * fails `ELOOP`, mapped by {@link ioError} to the same `conflict` diagnosis a pre-existing symlink
+ * gets from `assertNoSymlinkInPath`. `writeAllOrRollback`'s `--force` branch is the only caller —
+ * every other write discipline in this module is either check-then-atomic-create
+ * ({@link createIfAbsent}'s `wx` open, independently TOCTOU-safe by POSIX `O_CREAT|O_EXCL`
+ * semantics) or doesn't need this ({@link writeFileOverwriting}'s other callers — `lore
+ * replace`/`rename`/`supersede` — write back over a concept file the bundle loader just read,
+ * and that loader already skips symlinked files during its walk, so their target was never a
+ * symlink to begin with).
+ */
+export function writeFileNoFollow(absPath: string, contents: string, relPath: string): void {
+  let fd: number;
+  try {
+    fd = openSync(absPath, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o666);
+  } catch (cause) {
+    throw ioError(cause, relPath, "write file");
+  }
+  try {
+    writeSync(fd, contents);
+  } catch (cause) {
+    throw ioError(cause, relPath, "write file");
+  } finally {
+    closeSync(fd);
   }
 }
