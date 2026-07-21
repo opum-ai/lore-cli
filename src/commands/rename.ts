@@ -40,7 +40,7 @@ import { type BundleGraph, buildGraph, loadBundle, toRefList, UNREADABLE_DIRECTO
 import { type Concept, idFromPath, parseConcept } from "../core/concept";
 import { generateIndexes, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END, locateManagedBlock } from "../core/indexes";
 import { loadProfile } from "../core/profile";
-import { escapesRoot, type RewritePlan, rewriteInbound } from "../core/rewrite";
+import { escapesRoot, isDriveRelative, type RewritePlan, resolvesToRoot, rewriteInbound } from "../core/rewrite";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_CODES, EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
@@ -424,10 +424,16 @@ function buildPostRenameGraph(graph: BundleGraph, plan: RewritePlan): BundleGrap
  * own documented reasoning for checking pre-normalize.
  */
 function assertDestinationConfined(newId: string): void {
-  if (posix.isAbsolute(newId) || win32.isAbsolute(newId) || escapesRoot(newId)) {
+  if (
+    posix.isAbsolute(newId) ||
+    win32.isAbsolute(newId) ||
+    escapesRoot(newId) ||
+    isDriveRelative(newId) ||
+    resolvesToRoot(newId)
+  ) {
     throw usage(
       `newId "${newId}" resolves outside the docs/ bundle root`,
-      "pass a destination id that stays inside docs/ (no absolute path, no `..` segments)",
+      "pass a destination id that stays inside docs/ (no absolute path, no `..` segments, not empty or self-cancelling)",
       { id: newId },
     );
   }

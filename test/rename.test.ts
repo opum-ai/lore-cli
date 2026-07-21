@@ -404,6 +404,56 @@ describe("rewriteInbound — modes and validation", () => {
       expect((err as LoreError).type).toBe("validation");
     }
   });
+
+  test("rejects a Windows drive-relative toId (LORE-95)", () => {
+    // "C:foo" is real Windows syntax for "relative to drive C's current directory" — distinct from
+    // the absolute "C:\foo" form LORE-72 already covers. win32.isAbsolute("C:foo") is false, and
+    // no earlier check in assertConfinedToBundle catches this shape.
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    try {
+      rewriteInbound(graph(), "reference/orders", "C:pwned", { move: true });
+      throw new Error("expected a validation error");
+    } catch (err) {
+      expect((err as LoreError).type).toBe("validation");
+    }
+  });
+
+  test("rejects a Windows drive-relative fromId (LORE-95)", () => {
+    try {
+      rewriteInbound(graph(), "C:pwned", "reference/sales", { move: true });
+      throw new Error("expected a validation error");
+    } catch (err) {
+      expect((err as LoreError).type).toBe("validation");
+    }
+  });
+
+  test("rejects an empty toId, which would otherwise silently resolve to the bundle root (LORE-95)", () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    try {
+      rewriteInbound(graph(), "reference/orders", "", { move: true });
+      throw new Error("expected a validation error");
+    } catch (err) {
+      expect((err as LoreError).type).toBe("validation");
+    }
+  });
+
+  test("rejects a self-cancelling toId that nets to the bundle root (LORE-95)", () => {
+    // "sub/.." never climbs ABOVE the start (escapesRoot's own concern) — it cancels to nothing,
+    // which idFromPath's posix.normalize folds to ".", producing the literal toPath "..md".
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    try {
+      rewriteInbound(graph(), "reference/orders", "sub/..", { move: true });
+      throw new Error("expected a validation error");
+    } catch (err) {
+      expect((err as LoreError).type).toBe("validation");
+    }
+  });
+
+  test("does not reject a toId that legitimately cancels through a real intermediate directory (no false positive, LORE-95)", () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    const plan = rewriteInbound(graph(), "reference/orders", "sub/../reference/sales-orders", { move: true });
+    expect(plan.rename).toEqual({ from: "reference/orders.md", to: "reference/sales-orders.md" });
+  });
 });
 
 // ── command: runRename ────────────────────────────────────────────────────────────
@@ -641,6 +691,30 @@ describe("lore rename — errors and arg parsing", () => {
     const { code } = await renameCmd(["reference/orders", "..foo/bar"]);
     expect(code).toBe(EXIT_OK);
     expect(existsSync(join(root, "docs/..foo/bar.md"))).toBe(true);
+  });
+
+  test("a Windows drive-relative newId is rejected as usage, from argument parsing alone (LORE-95)", async () => {
+    // No doc is written — mirrors LORE-78's own "argument parsing alone" test above: this shape is
+    // rejected before any bundle load, purely from the raw newId token.
+    const err = await expectError(["reference/ghost", "C:pwned"]);
+    expect(err.type).toBe("usage");
+    expect(err.input).toEqual({ id: "C:pwned" });
+  });
+
+  test("an empty newId is rejected as usage, before any file is written or moved (LORE-95)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    const err = await expectError(["reference/orders", ""]);
+    expect(err.type).toBe("usage");
+    expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true); // source unchanged
+    expect(existsSync(join(root, "docs/..md"))).toBe(false); // the hidden dotfile LORE-95 describes never appears
+  });
+
+  test("a self-cancelling newId ('sub/..') is rejected as usage, before any file is written or moved (LORE-95)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    const err = await expectError(["reference/orders", "sub/.."]);
+    expect(err.type).toBe("usage");
+    expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true); // source unchanged
+    expect(existsSync(join(root, "docs/..md"))).toBe(false);
   });
 });
 

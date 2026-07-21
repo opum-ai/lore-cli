@@ -239,7 +239,7 @@ export function rewriteInbound(
  * the one it happens to be compiled for.
  */
 function assertConfinedToBundle(id: string, label: "fromId" | "toId"): void {
-  if (posix.isAbsolute(id) || win32.isAbsolute(id) || escapesRoot(id)) {
+  if (posix.isAbsolute(id) || win32.isAbsolute(id) || escapesRoot(id) || isDriveRelative(id) || resolvesToRoot(id)) {
     throw new LoreError(
       "validation",
       `${label} "${id}" resolves outside the docs/ bundle root`,
@@ -247,6 +247,51 @@ function assertConfinedToBundle(id: string, label: "fromId" | "toId"): void {
       { id },
     );
   }
+}
+
+/**
+ * Whether `id` is a Windows drive-relative reference — a drive letter and colon with **no**
+ * following separator (e.g. `"C:foo"`, real Windows syntax meaning "relative to that drive's
+ * current directory"). Distinct from an absolute `"C:\\foo"`/`"C:/foo"` form, which
+ * `win32.isAbsolute` already rejects: `win32.isAbsolute("C:foo")` is `false` (Node correctly
+ * implements this Windows quirk), and `posix.isAbsolute("C:foo")` is also `false`, so nothing
+ * else {@link assertConfinedToBundle} already checks catches this shape (LORE-95). Exported so
+ * `commands/rename.ts`'s own argument-parsing-layer guard can reuse this exact check, mirroring
+ * how {@link escapesRoot} itself is already shared rather than re-derived per call site.
+ */
+export function isDriveRelative(id: string): boolean {
+  return /^[A-Za-z]:(?![\\/])/.test(id);
+}
+
+/**
+ * Whether `id` normalizes to the bundle root itself — an empty string, `"."`, or a self-cancelling
+ * relative path like `"sub/.."` whose segments net out to zero remaining depth. {@link escapesRoot}
+ * alone doesn't catch this: none of these ever climb *above* where they started (the property
+ * `escapesRoot` checks) — they simply cancel out to nothing. Left uncaught, `idFromPath`'s
+ * `posix.normalize` folds any of these to `"."`, and a caller building `` `${to}.md` `` from that
+ * gets the literal string `"..md"` — a hidden dotfile silently created at the bundle root instead
+ * of a rejection (LORE-95). Shares `escapesRoot`'s own segment-walk convention (split on either
+ * `/` or `\`) for the identical cross-platform reason documented there; a segment that merely
+ * *starts with* `".."` (e.g. `"..foo"`) is a real, non-cancelling segment and does not count
+ * towards depth going down, matching `escapesRoot`'s own exact-match care. Exported for reuse by
+ * `commands/rename.ts`'s own argument-parsing-layer guard, mirroring how `escapesRoot` itself is
+ * already shared.
+ */
+export function resolvesToRoot(id: string): boolean {
+  let depth = 0;
+  for (const segment of id.split(/[\\/]+/)) {
+    if (segment === "" || segment === ".") {
+      continue;
+    }
+    if (segment === "..") {
+      // A genuine climb-above-start is escapesRoot's own concern, already checked separately;
+      // clamping at 0 here keeps this function correct standalone regardless of call order.
+      depth = Math.max(0, depth - 1);
+    } else {
+      depth++;
+    }
+  }
+  return depth === 0;
 }
 
 /**
