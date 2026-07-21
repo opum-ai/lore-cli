@@ -259,6 +259,24 @@ describe("lore schema export — pruning stale schemas (full export)", () => {
       }
     },
   );
+
+  test.skipIf(process.platform === "win32")(
+    "a full export never prunes through a .lore/schemas nested under a symlinked .lore directory (AC#2)",
+    () => {
+      const outside = mkdtempSync(join(tmpdir(), "lore-schema-outside-"));
+      try {
+        symlinkSync(outside, join(root, ".lore"));
+        mkdirSync(join(outside, "schemas"), { recursive: true });
+        const unrelated = join(outside, "schemas", "unrelated.schema.json");
+        writeFileSync(unrelated, "{}\n");
+        const { result } = exportSchemas(["export"]);
+        expect(result.removed).toEqual([]);
+        expect(existsSync(unrelated)).toBe(true);
+      } finally {
+        rmSync(outside, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("lore schema export — slug-collision guard (load-time)", () => {
