@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { buildGraph } from "../src/core/bundle";
-import { generateIndexes, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END } from "../src/core/indexes";
+import { generateIndexes, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END, locateManagedBlock } from "../src/core/indexes";
+import { LoreError } from "../src/errors";
 import { concept } from "./helpers";
 
 /** Wrap listing lines in the canonical managed block. */
@@ -119,29 +120,48 @@ describe("generateIndexes — managed-region splice preserves authored bytes (lo
     expect(root).toContain(block("- [adr](adr/index.md)", "- [reference](reference/index.md)"));
   });
 
-  test("a truncated block (begin marker, no end marker) is rewritten whole and then converges (fixpoint)", () => {
+  test("a truncated block (begin marker, no end marker) is a validation error, not silently rewritten whole (LORE-86)", () => {
     const g = buildGraph([concept("adr/0001-x.md", { title: "X" })]);
     const existing = new Map([["adr/index.md", `# ADRs\n\nProse.\n\n${INDEX_BLOCK_BEGIN}\n- [stale](stale.md)\n`]]);
-    const first = generateIndexes(g, { existing }).get("adr/index.md") ?? "";
-    // The orphan begin is absorbed (region runs to EOF), leaving exactly one well-formed block...
-    expect(first).toBe(`# ADRs\n\nProse.\n\n${block("- [X](0001-x.md)")}\n`);
-    expect(first).not.toContain("stale");
-    // ...and re-running over that output is a byte-level no-op (the truncated state never recurs).
-    const second = generateIndexes(g, { existing: new Map([["adr/index.md", first]]) }).get("adr/index.md");
-    expect(second).toBe(first);
+    // Previously the orphan begin was silently absorbed (region extended to end-of-file); LORE-86
+    // makes this a fail-loud error instead of guessing that the whole tail was machine-owned.
+    expect(() => generateIndexes(g, { existing })).toThrow(LoreError);
   });
 
-  test("duplicate well-formed blocks (a merge artifact) collapse into one — no stale region survives", () => {
+  test("duplicate marker pairs with real prose between them is a validation error, not a silent collapse-and-delete (LORE-86)", () => {
     const g = buildGraph([concept("adr/0001-x.md", { title: "X" })]);
+    const proseBetween = "Hand-authored prose a merge conflict left between two duplicate blocks.";
     const existing = new Map([
-      ["adr/index.md", `# ADRs\n\n${block("- [live](live.md)")}\n\nmid\n\n${block("- [stale2](s2.md)")}\n`],
+      ["adr/index.md", `# ADRs\n\n${block("- [live](live.md)")}\n\n${proseBetween}\n\n${block("- [stale2](s2.md)")}\n`],
     ]);
-    const first = generateIndexes(g, { existing }).get("adr/index.md") ?? "";
-    expect(first).toBe(`# ADRs\n\n${block("- [X](0001-x.md)")}\n`);
-    expect(first).not.toContain("stale2");
-    // Converges.
-    const second = generateIndexes(g, { existing: new Map([["adr/index.md", first]]) }).get("adr/index.md");
-    expect(second).toBe(first);
+    // Previously first-begin→last-end collapsed both blocks AND the prose between them into one
+    // regenerated block, silently deleting `proseBetween` with no warning (LORE-86's exact repro:
+    // a merge conflict/hand edit leaving duplicate `lore:index` markers). Now it fails loud instead
+    // of ever writing over that prose.
+    expect(() => generateIndexes(g, { existing })).toThrow(LoreError);
+  });
+
+  test("locateManagedBlock: well-formed, no-markers, truncated, duplicated, and crossed-marker contracts", () => {
+    const BEGIN = "<!-- x:begin -->";
+    const END = "<!-- x:end -->";
+
+    // No markers at all: null (an unmanaged file the caller appends to).
+    expect(locateManagedBlock("plain prose", BEGIN, END)).toBeNull();
+
+    // Exactly one well-formed pair: the `[start, end)` span, markers included.
+    const wellFormed = `pre\n${BEGIN}\nbody\n${END}\npost`;
+    const bounds = locateManagedBlock(wellFormed, BEGIN, END);
+    expect(bounds).not.toBeNull();
+    expect(wellFormed.slice(bounds?.start, bounds?.end)).toBe(`${BEGIN}\nbody\n${END}`);
+
+    // A begin with no end anywhere: validation error, not a guessed to-EOF span.
+    expect(() => locateManagedBlock(`${BEGIN}\nbody, no end`, BEGIN, END)).toThrow(LoreError);
+
+    // Two begins and two ends: validation error, not a collapsed first-begin→last-end span.
+    expect(() => locateManagedBlock(`${BEGIN}\na\n${END}\nmid\n${BEGIN}\nb\n${END}`, BEGIN, END)).toThrow(LoreError);
+
+    // An end that precedes the begin (crossed): validation error.
+    expect(() => locateManagedBlock(`${END}\nmid\n${BEGIN}`, BEGIN, END)).toThrow(LoreError);
   });
 
   test("a present-but-empty index file is synthesized like an absent one (heading, no leading blanks)", () => {
