@@ -329,6 +329,44 @@ describe("parseProfile — grammar errors throw (exit 6)", () => {
       expect(err.message).toContain("reserved object key");
     }
   });
+
+  test("a misspelled field-spec attribute (`require` for `required`) is an error, not silent tolerance (LORE-83)", () => {
+    // An otherwise-complete, valid profile (a real [[types]] declared) — pre-fix this parsed
+    // clean, silently defaulting `owner.required` to `false` instead of erroring on the typo.
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true }, owner: { require: true } } },
+        types: [{ name: "T" }],
+      }),
+    );
+    expect(err.message).toContain("base.fields.owner");
+    expect(err.message).toContain('"require"');
+  });
+
+  test("an unrecognized key in a [[types]] table is an error, not silently ignored (LORE-83)", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", sction: ["Oops"] }],
+      }),
+    );
+    expect(err.message).toContain("types[0]");
+    expect(err.message).toContain('"sction"');
+  });
+
+  test("an unrecognized key in an `items` table is an error, not silently ignored (LORE-83)", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", fields: { tags: { kind: "list", items: { knd: "string" } } } }],
+      }),
+    );
+    expect(err.message).toContain("items");
+    expect(err.message).toContain('"knd"');
+  });
 });
 
 describe("compileProfile — field kinds generate the right validators", () => {
