@@ -26,18 +26,22 @@
  * Today the bundle has exactly one kind of in-file managed region: the `<!-- lore:index:begin -->` …
  * `<!-- lore:index:end -->` listing block that {@link generateIndexes} owns in every `index.md`
  * (lore-design §6.2). {@link managedRanges} locates each registered region with the **same**
- * {@link locateManagedBlock} arithmetic `generateIndexes` splices with (first-begin → last-end,
- * markers included, truncated-to-EOF) — so `replace` protects exactly the span `lore sync` would
- * regenerate, and a refactor can never land in bytes `sync` later reverts. The marker registry
- * ({@link MANAGED_MARKERS}) makes `<!-- lore:tasks -->` (LORE-22) a one-entry addition. The fully
- * machine-generated `log.md` has no in-file markers; it is excluded by the command layer's
- * discovery, not here (this engine sees only the bytes it is handed).
+ * {@link locateManagedBlock} arithmetic `generateIndexes` splices with (exactly one begin, one end,
+ * markers included) — so `replace` protects exactly the span `lore sync` would regenerate, and a
+ * refactor can never land in bytes `sync` later reverts. A malformed layout (a duplicated marker
+ * pair, or an unmatched/crossed begin) is a fail-loud `validation` error rather than a guessed span
+ * (LORE-86) — `replace` never has to guess which bytes were meant to stay protected either. The
+ * marker registry ({@link MANAGED_MARKERS}) makes `<!-- lore:tasks -->` (LORE-22) a one-entry
+ * addition. The fully machine-generated `log.md` has no in-file markers; it is excluded by the
+ * command layer's discovery, not here (this engine sees only the bytes it is handed).
  *
- * Per the core contract (lore-design §2.1) everything here is pure: text in, `{ text, count }`
- * out, or a `usage` {@link LoreError} for an unusable pattern (empty, invalid regex, or one that can
- * match the empty string) — no filesystem, no printing, no flags, no `process.exit`. The command
- * layer ({@link commands/replace}) discovers and reads the files, compiles the pattern **once**, and
- * applies it per file.
+ * Per the core contract (lore-design §2.1) everything here is pure: text in, `{ text, count }` out,
+ * or a {@link LoreError} out — `usage` for an unusable pattern (empty, invalid regex, or one that
+ * can match the empty string), or `validation` when a managed region's markers are malformed (LORE-86,
+ * propagated from {@link locateManagedBlock}) — no filesystem, no printing, no flags, no
+ * `process.exit`. The command layer ({@link commands/replace}) discovers and reads the files,
+ * compiles the pattern **once**, and applies it per file; a `validation` error aborts before any
+ * file is written (`commands/replace.ts` only writes after every target has been read and rewritten).
  */
 
 import { LoreError } from "../errors";
@@ -90,10 +94,14 @@ const ZERO_WIDTH_PROBE = "a b1\n.x-_/2";
 
 /**
  * Every lore-managed region in `text`, as merged, ascending `[start, end)` ranges. Each registered
- * marker pair is located by the shared {@link locateManagedBlock} (first-begin → last-end, markers
- * included, truncated-to-EOF) so `replace` and `lore sync`/`check` agree byte-for-byte on a region's
- * extent. Ranges from different marker kinds are merged so any overlap/touch collapses, leaving a
- * clean ordered partition for {@link applyReplacement}.
+ * marker pair is located by the shared {@link locateManagedBlock} (exactly one begin, one end,
+ * markers included) so `replace` and `lore sync`/`check` agree byte-for-byte on a region's extent.
+ * Ranges from different marker kinds are merged so any overlap/touch collapses, leaving a clean
+ * ordered partition for {@link applyReplacement}.
+ *
+ * @throws LoreError `validation` when a registered marker pair is malformed (duplicated, unmatched,
+ *   or crossed) — propagated from {@link locateManagedBlock} rather than guessing which bytes to
+ *   protect (LORE-86).
  */
 export function managedRanges(text: string): TextRange[] {
   const ranges: TextRange[] = [];
