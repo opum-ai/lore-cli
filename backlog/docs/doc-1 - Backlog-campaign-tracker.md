@@ -3,7 +3,7 @@ id: doc-1
 title: Backlog campaign tracker
 type: other
 created_date: '2026-07-19 23:15'
-updated_date: '2026-07-21 09:36'
+updated_date: '2026-07-21 09:48'
 ---
 # Backlog campaign tracker
 
@@ -12,7 +12,7 @@ lifecycle → advance cursor → append session log → write handover.
 
 ## Cursor
 
-**Next issue: LORE-83** — queue order confirmed by the user on 2026-07-21
+**Next issue: LORE-84** — queue order confirmed by the user on 2026-07-21
 ("Use this order (Recommended)": independent fixes first, the interrelated
 rename-destination-traversal cluster (LORE-80→79→78→81) last, since LORE-80's
 shared-engine containment fix is what the other three build on). Do not re-ask
@@ -30,22 +30,21 @@ CI runs post-merge on dev.
 
 | # | Issue | Type | One-line note |
 | --- | --- | --- | --- |
-| 1 | LORE-83 | bug | profile.toml silently ignores unknown/misspelled field attribute keys |
-| 2 | LORE-84 | bug | loadBundle never uses a project's custom .lore/profile.toml |
-| 3 | LORE-82 | bug | loadBundle silently skips unreadable directories; mutations commit against an incomplete graph |
-| 4 | LORE-85 | bug | Frontmatter YAML anchors can be crafted to exhaust memory on serialize (anchor bomb) |
-| 5 | LORE-69 | bug | commitBacklogFiles backlog/ scope guard does not block `..` pathspec traversal |
-| 6 | LORE-72 | bug | lore new --template allows path traversal to read arbitrary files |
-| 7 | LORE-71 | bug | lore check --external is vulnerable to SSRF via unrestricted fetch() |
-| 8 | LORE-76 | bug | lore scaffold --force writes follow symlinks, escaping the repo root |
-| 9 | LORE-77 | bug | lore init follows pre-existing symlinks at scaffold paths, escaping the repo root |
-| 10 | LORE-73 | bug | lore replace can corrupt lore:tasks managed blocks (MANAGED_MARKERS gap) |
-| 11 | LORE-74 | bug | lore orphans report has no output cap, contradicting the documented truncation contract |
-| 12 | LORE-75 | bug | lore schema export --out can irreversibly delete unrelated files outside its own directory |
-| 13 | LORE-80 | bug | rewriteInbound shared engine does not confine fromId/toId to docs/ bundle root |
-| 14 | LORE-79 | bug | lore rename destination path is not confined to docs/ root at the command layer |
-| 15 | LORE-78 | bug | lore rename destination id is not validated for `..` traversal at the argument-parsing layer |
-| 16 | LORE-81 | bug | lore rename index <new> (renaming FROM the reserved root index) is not rejected |
+| 1 | LORE-84 | bug | loadBundle never uses a project's custom .lore/profile.toml |
+| 2 | LORE-82 | bug | loadBundle silently skips unreadable directories; mutations commit against an incomplete graph |
+| 3 | LORE-85 | bug | Frontmatter YAML anchors can be crafted to exhaust memory on serialize (anchor bomb) |
+| 4 | LORE-69 | bug | commitBacklogFiles backlog/ scope guard does not block `..` pathspec traversal |
+| 5 | LORE-72 | bug | lore new --template allows path traversal to read arbitrary files |
+| 6 | LORE-71 | bug | lore check --external is vulnerable to SSRF via unrestricted fetch() |
+| 7 | LORE-76 | bug | lore scaffold --force writes follow symlinks, escaping the repo root |
+| 8 | LORE-77 | bug | lore init follows pre-existing symlinks at scaffold paths, escaping the repo root |
+| 9 | LORE-73 | bug | lore replace can corrupt lore:tasks managed blocks (MANAGED_MARKERS gap) |
+| 10 | LORE-74 | bug | lore orphans report has no output cap, contradicting the documented truncation contract |
+| 11 | LORE-75 | bug | lore schema export --out can irreversibly delete unrelated files outside its own directory |
+| 12 | LORE-80 | bug | rewriteInbound shared engine does not confine fromId/toId to docs/ bundle root |
+| 13 | LORE-79 | bug | lore rename destination path is not confined to docs/ root at the command layer |
+| 14 | LORE-78 | bug | lore rename destination id is not validated for `..` traversal at the argument-parsing layer |
+| 15 | LORE-81 | bug | lore rename index <new> (renaming FROM the reserved root index) is not rejected |
 
 ## Resolved
 
@@ -62,6 +61,7 @@ CI runs post-merge on dev.
 | 9 | LORE-70 | Done, 2026-07-21, session 9 | Root cause: `cli.ts`'s `import.meta.main` block called `process.exit(code)` immediately after `run()` resolved; `emit()`/`reportError()` writes to `process.stdout`/`stderr` are async for a piped destination, so `process.exit()` could tear the process down before the write's underlying syscall completed — a large `--json` payload silently truncated at the pipe's internal buffer size with exit code 0. Fix: replaced both `process.exit(code)` and `process.exit(EXIT_UNCAUGHT)` with `process.exitCode = <code>` (no forced exit), letting the runtime drain pending I/O naturally; verified this carries no hang risk (the CLI's own async paths — `check --external`'s `fetch()`, the backlog adapter's `Bun.spawn` — already fully await before `run()` resolves). Added `test/cli-exit-flush.test.ts`, spawning the real `cli.ts` entrypoint through `sh -c "... | cat"` (a downstream-process pipe — Bun.spawnSync's own direct `stdout: "pipe"` capture reads too eagerly to reproduce the race) across `query`/`graph`/`context --json` with output sized 300KB-650KB. Confirmed via `git stash`: pre-fix, all three truncated to exactly 65536 bytes with invalid JSON and exit 0; post-fix, all three produced full valid JSON. Full `bun test` → 1505 pass/0 fail (up from 1500); `bun run typecheck` clean; `bun run lint` — 4 pre-existing infos in unrelated files, none in the changed files. |
 | 10 | LORE-86 | Done, 2026-07-21, session 10 | Root cause: `src/core/indexes.ts`'s `locateManagedBlock` (a plain `indexOf`/`lastIndexOf` scan shared by index regeneration, `lore replace`, and `lore rename`) collapsed a duplicated marker pair to its first-begin→last-end span, silently deleting any hand-authored prose sitting between the two blocks — exactly the LORE-86 repro (a merge conflict/hand edit leaving duplicate `lore:index` markers). It also silently extended an unmatched begin (no end marker) to end-of-file. Fix: rewrote it to fail loud instead of guessing — 0 begins still returns `null` (unmanaged file, unchanged); >1 begins or >1 ends throws `LoreError('validation', ...)` naming the exact counts (duplicated); a single begin with 0 ends, or an end preceding the begin, throws too (unmatched/crossed). Mirrors `managed-block.ts`'s existing `findMarkers()` fail-loud pattern for the sibling `lore:tasks` block, so both managed-block engines refuse to guess in the same voice. Traced all 3 call sites (indexes.ts, replace.ts's `managedRanges`, rename.ts's `spliceEmptyListing`) to confirm no swallowing and no partial-write risk (writes only happen after the whole regenerate/rewrite step returns cleanly). Updated 4 existing tests that had pinned the old silent-collapse/truncate-to-EOF behavior as a feature; added a dedicated `locateManagedBlock` contract test plus AC2's exact scenario (duplicate pair with real prose between them → validation error, prose never touched since nothing gets written). End-to-end verified with the real CLI: a scratch bundle with duplicate `lore:index` markers and real prose between them now fails `lore sync` with exit 6 and a clear message, and the file is left completely byte-identical afterward (confirmed via diff, not just exit code). Full `bun test` → 1506 pass/0 fail (up from 1505); `bun run typecheck` clean; lint clean on changed files. |
 | 11 | LORE-87 | Done, 2026-07-21, session 11 | Root cause: `src/core/rewrite.ts`'s `destRangeForDefinition` located a reference definition's closing label bracket via a plain `body.indexOf("]", span.start)`. A label containing an escaped bracket (e.g. `[a\]x:y]: ../reference/orders.md`) matched the escaped `\]` first, and the subsequent `indexOf(":", rb)` then ALSO matched the wrong colon (one inside the label text itself, e.g. "x:y"'s colon) — a compounding double mis-location, not a single off-by-one. Confirmed via a real mdast parse that a `definition` node carries NO `children` (only decoded `identifier`/`label`/`url`/`title` strings whose lengths are not byte-equal to raw source once escapes are involved) — unlike `destRangeForLink`, which derives its label-content end from the parsed node's own children offsets and was already structurally immune. Fix: added `findLabelClose`, an escape-aware forward scan mirroring `scanDestination`'s existing backslash-escape convention (`j += 2` on an escaped char), and used it in place of the naive `indexOf`. Added a test in test/rename.test.ts via `rewriteInbound` reproducing the task's exact repro (a USED definition, referenced so it's a real graph edge); confirmed via `git stash` the pre-fix output is exactly the corruption the task describes (`[a\]x:../reference/sales-orders.md ../reference/orders.md` — label truncated mid-scan, new destination spliced into the wrong place, old destination left dangling) and the post-fix output is correct (`[a\]x:y]: ../reference/sales-orders.md`, label fully intact). End-to-end verified through the real `lore rename` CLI on a scratch bundle: the escaped-bracket label survives completely intact, only the destination updates. Full `bun test` → 1507 pass/0 fail (up from 1506); `bun run typecheck` clean; lint clean (one formatter-only fix, no logic change). |
+| 12 | LORE-83 | Done, 2026-07-21, session 12 | Root cause: `src/core/profile.ts`'s `parseFieldSpec`, `parseTypes`, and `parseItems` each read a fixed set of known attribute keys off a parsed TOML/JSON table by name with no check for keys OUTSIDE that set — a typo like `require = true` (meant `required`) was simply never read, silently leaving `required` at its `false` default; the profile loaded clean and every concept validated clean despite missing the field. Re-verified the task's scoping claim against `parseProfile`'s own docstring: the documented forward-compatible unknown-key tolerance is explicitly scoped to top-level/`[profile]` keys only (accurate) — the fix deliberately leaves that untouched. Fix: added `rejectUnknownKeys(table, allowed, where, source)`, mirroring this file's existing `asTable`/`asString`/`asBoolean`/`asEnum` validator style, wired into all 3 named functions against each table's fixed legal-key vocabulary (field spec: required/kind/enum/items/default; a `[[types]]` table: name/fields/sections/template; an items table: kind/enum) — consistent with every other structural check in this file (all fail-loud `LoreError('validation', ...)`; this module has no warning mechanism at all). Added 3 tests, one per call site, matching the existing `expectValidation` harness; confirmed via `git stash` that all 3 fixtures genuinely silently SUCCEED pre-fix (the call returns instead of throwing, matching the task's own "silently defaults... instead of erroring" framing) and correctly throw post-fix naming the exact unknown key. End-to-end verified with the real CLI: a scratch `.lore/profile.toml` with `base.fields.owner = { require = true }` (the task's exact typo example) now makes `lore new` fail at exit 6 with a message naming the bad key and a hint listing the correct legal keys. Full `bun test` → 1510 pass/0 fail (up from 1507, all pre-existing profile tests — default profile, ECK 17-type profile — unaffected); `bun run typecheck` clean; lint clean. |
 
 ## Not queued — needs a human / blocked
 
@@ -279,6 +279,15 @@ CI runs post-merge on dev.
   rather than assuming a `maxChildEnd`-style shortcut is available — verify
   with a real mdast parse (`fromMarkdown`) which node types actually carry
   `children` before assuming one does (LORE-87, 2026-07-21).
+- A hand-rolled TOML/JSON grammar validator (like `profile.ts`'s) that reads
+  known attribute keys off a table BY NAME with no unknown-key check will
+  silently no-op a typo (`require` for `required`) instead of erroring —
+  the value just never gets read, so the field keeps its default with no
+  signal anything was wrong. Any nested table with a small, FIXED attribute
+  vocabulary (unlike the intentionally-tolerant top-level/`[profile]` table)
+  needs an explicit `rejectUnknownKeys`-style gate; don't assume "reads
+  known keys" implies "rejects unknown ones" without checking (LORE-83,
+  2026-07-21).
 
 ## Session log
 
@@ -386,3 +395,9 @@ CI runs post-merge on dev.
   children offsets when that mdast node type actually has children —
   definition nodes don't, so they need their own escape-aware scan). Cursor
   advanced to LORE-83.
+- 2026-07-21 — session 12: resolved LORE-83 (see Resolved table). Branch
+  `feature/LORE-83` off `dev @ 8a11f2f`. One new campaign convention recorded
+  (a hand-rolled TOML/JSON grammar validator that reads known keys by name
+  needs an explicit unknown-key rejection gate on any fixed-vocabulary
+  nested table, or a typo silently no-ops instead of erroring). Cursor
+  advanced to LORE-84.
