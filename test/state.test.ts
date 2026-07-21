@@ -179,6 +179,24 @@ describe("commitBacklogIfDirty — fake GitSpawn", () => {
     ]);
   });
 
+  test("regression (LORE-69 review, defense-in-depth): a path `git status` reports outside backlog/ is refused before add/commit", async () => {
+    // Should never happen in practice (both callers only ever scope `git status` to a pathspec
+    // already confined to backlog/) — this is the last-line-of-defense layer in porcelainPaths
+    // itself, guarding against ANY future divergence between what was validated and what git
+    // actually reports, not just the one NUL-byte instance that motivated it.
+    const stdout = porcelainZ(entry("??", "docs/escaped-somehow.md"));
+    const spawn = notNestedSpawn(ok(stdout));
+    let err: unknown;
+    try {
+      await commitBacklogIfDirty(spawn);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(LoreError);
+    expect((err as LoreError).type).toBe("drift");
+    expect(spawn.calls).toHaveLength(2); // show-prefix + status only — never reached add/commit
+  });
+
   test("a failing `git rev-parse --show-prefix` throws a drift LoreError and never attempts status/add/commit", async () => {
     const spawn = scriptedSpawn([fail(128, "fatal: not a git repository")]);
     let err: unknown;
@@ -298,6 +316,25 @@ describe("commitBacklogFiles — capture + scope guard (fake GitSpawn)", () => {
     const spawn = notNestedSpawn(ok(""));
     await expect(commitBacklogFiles(["backlog-evil/x.md"], opts(spawn), "msg")).rejects.toThrow(LoreError);
     expect(spawn.calls).toHaveLength(0);
+  });
+
+  test("regression (LORE-69 review): an embedded NUL byte is refused before normalize can be fooled by it", async () => {
+    // `posix.normalize` treats a segment containing a NUL as an ordinary (non-`..`) component and
+    // leaves it untouched, so `"backlog/.." + "\0" + "/x"` normalizes to itself and still starts with
+    // `backlog/` — but a NUL truncates the string at the exec boundary once it becomes argv for the
+    // real `git` process, so git would only ever see `:(literal)backlog/..`, which resolves to the
+    // repo root. Must be refused outright, never reaching normalize's prefix check at all.
+    const payload = `backlog/..${"\0"}/x`;
+    const spawn = notNestedSpawn(ok(""));
+    let err: unknown;
+    try {
+      await commitBacklogFiles([payload], opts(spawn), "msg");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(LoreError);
+    expect((err as LoreError).type).toBe("drift");
+    expect(spawn.calls).toHaveLength(0); // never reached git — the guard runs first
   });
 
   test("a redundant `./` segment normalizes to the plain safe path and is accepted", async () => {
@@ -665,6 +702,31 @@ describe("bunGitSpawn + commitBacklogFiles — scoped per-write commit (real git
       stdout: "pipe",
     }).stdout.toString("utf8");
     expect(status).toContain("docs/secret.md");
+  });
+
+  test("regression (LORE-69 review): an embedded NUL byte cannot smuggle an out-of-scope path past the guard via argv truncation", async () => {
+    // Root cause: `posix.normalize` doesn't collapse a segment containing a NUL as `..`, so
+    // `"backlog/.." + "\0" + "/x"` normalizes to itself and passes a naive prefix check — but a NUL
+    // truncates the string at the C-string/exec boundary once it becomes argv for the real `git`
+    // process, so git would only ever receive `:(literal)backlog/..`, resolving to the repo root.
+    // Left dirty here: an unrelated in-flight edit that must NEVER be swept into lore's commit.
+    mkdirSync(join(root, "backlog"), { recursive: true });
+    mkdirSync(join(root, "docs"), { recursive: true });
+    const unrelated = join(root, "docs", "unrelated-inflight-edit.md");
+    writeFileSync(unrelated, "must never be committed by lore\n");
+    const before = headSha();
+
+    const payload = `backlog/..${"\0"}/x`;
+    await expect(commitBacklogFiles([payload], { root }, "chore(backlog): sync task changes")).rejects.toThrow(
+      LoreError,
+    );
+
+    expect(headSha()).toBe(before);
+    const status = Bun.spawnSync(["git", "status", "--porcelain", "--untracked-files=all"], {
+      cwd: root,
+      stdout: "pipe",
+    }).stdout.toString("utf8");
+    expect(status).toContain("docs/unrelated-inflight-edit.md");
   });
 });
 

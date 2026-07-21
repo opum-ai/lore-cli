@@ -192,12 +192,27 @@ export async function commitBacklogFiles(
   // resolves outside it once git interprets the `..` segment — confirmed live that git honors `..`
   // even inside a `:(literal)`-quoted pathspec, so quoting alone does not neutralize it. Validating
   // only a normalized copy while still shelling the raw string out would leave the traversal
-  // exploitable, hence normalizing in place. The paths come from Backlog's own `filePathRelative`,
-  // always under `backlog/` today — this defends the invariant against a future Backlog layout
-  // change (or an absolute/`../` path) rather than silently committing outside lore's domain, which
+  // exploitable, hence normalizing in place. A NUL byte is rejected outright, BEFORE normalizing:
+  // `posix.normalize` treats a segment like `"..\0"` as an ordinary (non-`..`) path component and
+  // leaves it untouched, so it still passes the prefix check — but `Bun.spawn`'s argv is a C string,
+  // silently truncated at that same NUL when it crosses into the actual `git` process. The two layers
+  // disagree about where the path ends: normalize validates the full JS string, git only ever sees
+  // the bytes before the NUL (confirmed live: a payload like `"backlog/.." + "\0" + "/x"` normalizes
+  // to itself, starts with `backlog/`, and passes — but git receives only `:(literal)backlog/..`,
+  // which resolves to the repo root). The paths come from Backlog's own `filePathRelative`, always
+  // under `backlog/` today — this defends the invariant against a future Backlog layout change (or
+  // an absolute/`../`/NUL-embedded path) rather than silently committing outside lore's domain, which
   // the removed bundle-wide sweep made structurally impossible. An empty `files` skips the loop
   // entirely (a no-op run).
   const normalizedFiles = files.map((file) => {
+    if (file.includes("\0")) {
+      throw new LoreError(
+        "drift",
+        `refusing to commit "${JSON.stringify(file)}": embedded NUL byte`,
+        "this is a bug — a task path with a NUL byte reached the per-write commit",
+        { file },
+      );
+    }
     const normalized = posix.normalize(file);
     if (posix.isAbsolute(normalized) || !normalized.startsWith(BACKLOG_DIR)) {
       throw new LoreError(
@@ -297,6 +312,25 @@ async function porcelainPaths(spawn: GitSpawn, pathspecs: readonly string[]): Pr
       if (oldPath !== undefined && oldPath !== "") {
         allPaths.push(cwdRelative(oldPath));
       }
+    }
+  }
+  // Last-line defense-in-depth (ADR-0012): every path `git status` reports back for a `backlog/`-
+  // scoped pathspec must genuinely be under `backlog/` — both this function's callers (the catch-all
+  // sweep's hardcoded `[BACKLOG_DIR]` default, and the per-write commit's caller-validated files)
+  // only ever pass pathspecs already confined to `backlog/`, so this should never fire in practice.
+  // It exists because the per-write caller's OWN validation (commitBacklogFiles) and what git
+  // actually resolves/reports can diverge in ways that validation alone cannot rule out (LORE-69's
+  // NUL-byte finding: a value can pass a JS-level check yet resolve differently once it crosses the
+  // exec boundary into git) — re-checking git's own reported paths here, right before they are used
+  // to `add`/`commit`, closes that whole class rather than just the one instance found.
+  for (const path of allPaths) {
+    if (!path.startsWith(BACKLOG_DIR)) {
+      throw new LoreError(
+        "drift",
+        `refusing to commit "${path}": git reported a path outside ${BACKLOG_DIR} for a backlog/-scoped status`,
+        "this is a bug — report it; lore's own scope guard did not prevent this",
+        { path },
+      );
     }
   }
   return { addPaths, allPaths };
