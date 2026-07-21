@@ -52,6 +52,7 @@ import { join } from "node:path";
 import type { BacklogAdapter, BacklogTask } from "../adapters/backlog";
 import { loadBundle, toRefList } from "../core/bundle";
 import type { Concept } from "../core/concept";
+import { loadProfile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { ANSI, EXIT_OK, paint, WarningCollector, type Writer } from "../errors";
 import {
@@ -121,7 +122,8 @@ export async function runOrphans(options: OrphansOptions): Promise<number> {
   const parsed = parseOrphansArgs(options.args);
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
-  const graph = loadBundle(docsRoot, { warnings: advisories });
+  const profile = loadProfile({ root: options.root });
+  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
   // Flush load advisories (e.g. a file skipped for a malformed header) before any Backlog I/O, so a
   // "why isn't this a concept" note survives even if the snapshot read below throws (mirrors `lore tasks`).
   advisories.flush({ color: options.output.color, stderr: options.stderr });

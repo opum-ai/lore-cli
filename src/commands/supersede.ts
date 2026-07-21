@@ -121,8 +121,8 @@ export function runSupersede(options: SupersedeOptions): number {
 
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
-  const graph = loadBundle(docsRoot, { warnings: advisories });
   const profile = loadProfile({ root: options.root });
+  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
 
   // The command owns all validation: the engine's `move:false` path checks only that `oldId` exists.
   const oldConcept = graph.concepts.get(oldId);

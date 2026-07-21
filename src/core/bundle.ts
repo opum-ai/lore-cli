@@ -63,6 +63,7 @@ import { deriveMessage, ioError, LoreError, type WarningCollector } from "../err
 import { type Concept, idFromPath, serializeConcept, tryParseConcept } from "./concept";
 import { decodeTarget, isExternalTarget, pathPart } from "./links";
 import { compareCodeUnits } from "./order";
+import type { Profile } from "./profile";
 
 /**
  * The kind of a concept→concept reference. `"link"` is a body markdown
@@ -126,6 +127,14 @@ export interface BundleGraph {
 export interface LoadBundleOptions {
   /** Sink for advisory warnings (unknown type, extra keys, skipped fence-less/symlink files). */
   warnings?: WarningCollector;
+  /**
+   * The active profile every parsed concept's frontmatter is validated against; defaults to the
+   * built-in {@link defaultProfile} (mirroring {@link ParseConceptOptions.profile}'s own default)
+   * when omitted. A project declaring a custom `.lore/profile.toml` must pass its compiled
+   * {@link Profile} here — the caller loads it (`loadProfile({ root })`) and forwards it, since this
+   * module reads only the filesystem tree under `root`, never `.lore/` itself (LORE-84).
+   */
+  profile?: Profile;
 }
 
 /**
@@ -144,7 +153,11 @@ export interface LoadBundleOptions {
  *   rather than being silently dropped.
  *
  * Drawing that line needs the YAML parsed (a prefix check cannot tell an HR from
- * real frontmatter), so each file is parsed exactly once here.
+ * real frontmatter), so each file is parsed exactly once here. "The lore profile"
+ * above is {@link LoadBundleOptions.profile} when given, else the built-in default
+ * (LORE-84) — every concept in one `loadBundle` call validates against the same
+ * profile, so a project's custom `.lore/profile.toml` types/fields/enums are
+ * honored only when the caller loads and forwards it.
  *
  * Concept ids are **bundle-root-relative** (e.g. `docs/adr/0010-x.md` →
  * `adr/0010-x`), which is the id space the relative cross-link form resolves
@@ -159,7 +172,10 @@ export function loadBundle(root: string, options: LoadBundleOptions = {}): Bundl
   const concepts: Concept[] = [];
   for (const rel of walkMarkdown(root, options.warnings)) {
     // `rel` is bundle-root-relative, so tryParseConcept derives a bundle-relative id.
-    const concept = tryParseConcept(rel, readConcept(root, rel), { warnings: options.warnings });
+    const concept = tryParseConcept(rel, readConcept(root, rel), {
+      warnings: options.warnings,
+      profile: options.profile,
+    });
     if (concept === null) {
       options.warnings?.add(`skipping ${rel}: no frontmatter mapping, treated as a non-concept file`);
       continue;

@@ -37,6 +37,7 @@ import type { BacklogAdapter } from "../adapters/backlog";
 import { type BundleGraph, buildGraph, loadBundle, toRefList } from "../core/bundle";
 import { type Concept, idFromPath, parseConcept } from "../core/concept";
 import { generateIndexes, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END, locateManagedBlock } from "../core/indexes";
+import { loadProfile } from "../core/profile";
 import { type RewritePlan, rewriteInbound } from "../core/rewrite";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_CODES, EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
@@ -132,7 +133,13 @@ export async function runRename(options: RenameOptions): Promise<number> {
 
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
-  const graph = loadBundle(docsRoot, { warnings: advisories });
+  // Only the initial load validates against the project's custom profile (LORE-84): rewriteInbound's
+  // own serialize/re-parse of moved/rewritten concepts (buildPostRenameGraph below) has no profile
+  // parameter of its own and stays on the built-in default — a separate, adjacent gap in
+  // core/rewrite.ts, not this task's scope. Passing a custom profile only into the initial load
+  // while leaving that internal round-trip on the default would risk a validation mismatch between
+  // what wrote the bytes and what re-parses them, so both sides deliberately stay paired for now.
+  const graph = loadBundle(docsRoot, { warnings: advisories, profile: loadProfile({ root: options.root }) });
 
   // Plan the move + inbound rewrite (throws not_found if oldId is absent / conflict if newId is a
   // concept), then regenerate the index hubs against the post-rename graph and merge them over the

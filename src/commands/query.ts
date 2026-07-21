@@ -25,6 +25,7 @@
 
 import { join } from "node:path";
 import { loadBundle } from "../core/bundle";
+import { loadProfile } from "../core/profile";
 import { type FieldFilter, type QueryResult, query } from "../core/query";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
@@ -72,7 +73,8 @@ export function runQuery(options: QueryCommandOptions): number {
   const parsed = parseQueryArgs(options.args);
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
-  const graph = loadBundle(docsRoot, { warnings: advisories });
+  const profile = loadProfile({ root: options.root });
+  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
   advisories.flush({ color: options.output.color, stderr: options.stderr });
 
   const data = query(graph, {

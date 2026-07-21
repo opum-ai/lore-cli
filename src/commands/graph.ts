@@ -33,6 +33,7 @@ import { join } from "node:path";
 import { loadBundle } from "../core/bundle";
 import { idFromPath } from "../core/concept";
 import { buildGraphExport, type GraphExport, toDot } from "../core/graph";
+import { loadProfile } from "../core/profile";
 import { subgraph } from "../core/query";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
@@ -76,7 +77,8 @@ export function runGraph(options: GraphOptions): number {
   }
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
-  const graph = loadBundle(docsRoot, { warnings: advisories });
+  const profile = loadProfile({ root: options.root });
+  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
   // Flush load warnings before the subgraph lookup, which throws not_found for an
   // unknown root — otherwise an advisory that explains *why* a file is not a
   // concept would be discarded on exactly the path that most needs it.

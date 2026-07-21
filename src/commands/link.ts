@@ -62,7 +62,7 @@ import {
 } from "../adapters/backlog";
 import { type BundleGraph, conceptNotInBundle, loadBundle, toRefList } from "../core/bundle";
 import { type Concept, idFromPath, serializeConcept } from "../core/concept";
-import { loadProfile } from "../core/profile";
+import { loadProfile, type Profile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
@@ -162,7 +162,7 @@ export interface UnlinkReport {
  *   `drift` (exit 6) {@link LoreError} instead — see {@link backRefFailure}.
  */
 export async function runLink(options: LinkOptions): Promise<number> {
-  const { concept, id, taskIds, noBackRef, docsRoot } = await prepare(options, "link");
+  const { concept, id, taskIds, noBackRef, docsRoot, profile } = await prepare(options, "link");
   if (concept === undefined) {
     // Unreachable: `--allow-missing` is `unlink`-only (see `parseLinkArgs`), so `prepare` always
     // resolves `id` to a live concept or throws `not_found` for `link`.
@@ -198,7 +198,7 @@ export async function runLink(options: LinkOptions): Promise<number> {
   });
   const nextTasks = [...existingTasks, ...tasks.filter((t) => t.status === "added").map((t) => t.task.toLowerCase())];
 
-  const changed = writeTasksIfChanged(options.root, docsRoot, concept, existingTasks, nextTasks);
+  const changed = writeTasksIfChanged(docsRoot, concept, existingTasks, nextTasks, profile);
 
   let anyBackRefFailed = false;
   // The `backlog/` task files this run actually edited — the exact (and only) paths its commit
@@ -273,7 +273,7 @@ export async function runLink(options: LinkOptions): Promise<number> {
  *   `drift` (exit 6) {@link LoreError} instead — see {@link backRefFailure}.
  */
 export async function runUnlink(options: LinkOptions): Promise<number> {
-  const { concept, id, taskIds, noBackRef, docsRoot } = await prepare(options, "unlink");
+  const { concept, id, taskIds, noBackRef, docsRoot, profile } = await prepare(options, "unlink");
   const adapter = options.adapter ?? defaultAdapter(options.root);
   const docPath = concept !== undefined ? repoRelativePath(concept.path) : `${DOCS_DIR}/${id}.md`;
   const label = backRefLabel(concept?.id ?? id);
@@ -292,7 +292,7 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
     // round-trip and never depends on any back-reference edit's outcome, so committing it before
     // the per-task Backlog edits means a failure on the Backlog side can never strand it (the
     // reverse order would leave already-applied Backlog mutations unreported if this write failed).
-    changed = writeTasksIfChanged(options.root, docsRoot, concept, existingTasks, nextTasks);
+    changed = writeTasksIfChanged(docsRoot, concept, existingTasks, nextTasks, profile);
   } else {
     // --allow-missing, id doesn't resolve: no concept file exists to carry a tasks: list at all.
     tasks = taskIds.map((taskId) => ({ task: taskId, status: "not-linked", backRef: "skipped" }));
@@ -486,6 +486,7 @@ interface Prepared {
   readonly taskIds: string[];
   readonly noBackRef: boolean;
   readonly docsRoot: string;
+  readonly profile: Profile;
 }
 
 /**
@@ -508,7 +509,8 @@ async function prepare(options: LinkOptions, command: "link" | "unlink"): Promis
   }
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
-  const graph = loadBundle(docsRoot, { warnings: advisories });
+  const profile = loadProfile({ root: options.root });
+  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
   advisories.flush({ color: options.output.color, stderr: options.stderr });
 
   const concept = graph.concepts.get(id);
@@ -520,14 +522,21 @@ async function prepare(options: LinkOptions, command: "link" | "unlink"): Promis
       if (!parsed.noBackRef) {
         assertNoLabelCaseCollision(graph, id, id, command);
       }
-      return { concept: undefined, id, taskIds: dedupeTaskIds(parsed.taskIds), noBackRef: parsed.noBackRef, docsRoot };
+      return {
+        concept: undefined,
+        id,
+        taskIds: dedupeTaskIds(parsed.taskIds),
+        noBackRef: parsed.noBackRef,
+        docsRoot,
+        profile,
+      };
     }
     throw conceptNotInBundle(id);
   }
   if (!parsed.noBackRef) {
     assertNoLabelCaseCollision(graph, concept.id, concept.id, command);
   }
-  return { concept, id, taskIds: dedupeTaskIds(parsed.taskIds), noBackRef: parsed.noBackRef, docsRoot };
+  return { concept, id, taskIds: dedupeTaskIds(parsed.taskIds), noBackRef: parsed.noBackRef, docsRoot, profile };
 }
 
 /**
@@ -645,16 +654,15 @@ function removeDoc(existing: readonly string[], docPath: string): string[] {
  * round-trip byte-for-byte and the `tasks:` edit is the only diff (ADR-0011).
  */
 function writeTasksIfChanged(
-  root: string,
   docsRoot: string,
   concept: Concept,
   existingTasks: readonly string[],
   nextTasks: readonly string[],
+  profile: Profile,
 ): boolean {
   if (sameList(existingTasks, nextTasks)) {
     return false;
   }
-  const profile = loadProfile({ root });
   const updated: Concept = { ...concept, frontmatter: { ...concept.frontmatter, tasks: [...nextTasks] } };
   writeFileOverwriting(
     join(docsRoot, concept.path),

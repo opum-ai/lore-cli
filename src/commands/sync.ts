@@ -39,7 +39,7 @@ import { type Concept, idFromPath, serializeConcept } from "../core/concept";
 import { generateIndexes } from "../core/indexes";
 import { buildLog, type GitAdapter, generateLog } from "../core/log";
 import { regenerateTaskBlock } from "../core/managed-block";
-import { loadProfile, type Profile } from "../core/profile";
+import { loadProfile } from "../core/profile";
 import { validateReconcileInputs } from "../core/reconcile";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, readFileIfPresent, WarningCollector, type Writer } from "../errors";
@@ -123,24 +123,28 @@ export async function runSync(options: SyncOptions): Promise<number> {
   const parsed = parseSyncArgs(options.args);
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
-  const graph = loadBundle(docsRoot, { warnings: advisories });
+  // Loaded unconditionally, before the bundle: loadBundle validates every concept's frontmatter
+  // against this profile (LORE-84), and it runs regardless of reconciliation eligibility, so the
+  // profile can no longer be deferred to the eligibility-gated block below.
+  const profile = loadProfile({ root: options.root });
+  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
   advisories.flush({ color: options.output.color, stderr: options.stderr });
 
   const scoped = scopeConcepts(graph, parsed.paths);
-  // This command's ORIGINAL (pre-LORE-27) precedence, restored exactly, for when MULTIPLE local
-  // config sources are simultaneously broken: backlog/config.yml/.lore/config.toml SYNTAX errors
-  // (readReconcileConfig, a plain read — no semantic check yet) surface first, then a malformed
-  // .lore/profile.toml, THEN validateReconcileInputs's SEMANTIC checks (a duplicate flow entry, an
-  // invalid override target) — which originally ran last, after profile had already loaded
-  // successfully. All three are local/fast and run before gatherReconciliation's Backlog round-trip;
-  // all three are conditioned on eligibility (mirrors gatherReconciliation's own check) so a bundle
-  // with nothing to reconcile never pays for any of them. The resolved, already-validated config is
-  // then passed straight into gatherReconciliation so it is never read/validated a second time.
+  // This command's precedence for when MULTIPLE local config sources are simultaneously broken:
+  // a malformed .lore/profile.toml now surfaces FIRST, unconditionally — profile loads above,
+  // before loadBundle, so its own parse failure throws before docsRoot is even walked (LORE-84
+  // superseded the pre-LORE-27 "profile loads only when reconciliation is eligible" precedence:
+  // loadBundle needs the same profile for every sync run, eligible or not). backlog/config.yml/
+  // .lore/config.toml SYNTAX errors (readReconcileConfig, a plain read — no semantic check yet)
+  // surface next, then validateReconcileInputs's SEMANTIC checks (a duplicate flow entry, an
+  // invalid override target) — both still conditioned on eligibility (mirrors gatherReconciliation's
+  // own check) so a bundle with nothing to reconcile never pays for either. The resolved,
+  // already-validated config is then passed straight into gatherReconciliation so it is never
+  // read/validated a second time.
   const eligible = linkedConcepts(scoped).length > 0;
-  let profile: Profile | undefined;
   const config = eligible ? readReconcileConfig(options.root) : undefined;
   if (config !== undefined) {
-    profile = loadProfile({ root: options.root });
     validateReconcileInputs(config.flow, config.overrides);
   }
   const targets = await gatherReconciliation(options.root, scoped, options.adapter, config);
