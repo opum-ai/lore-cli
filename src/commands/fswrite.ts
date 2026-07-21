@@ -311,8 +311,14 @@ export interface WriteAllOrRollbackResult {
  *   check-then-act `lstatSync` walk, which cannot itself close a race against a symlink planted in
  *   the window between that check and this write — a concurrent process could still swap the target
  *   for a symlink after the guard passes and before a plain `writeFileSync` (which transparently
- *   follows symlinks) performs the overwrite. `writeFileNoFollow` closes that window structurally,
- *   at the single `open()` call that does the write, rather than re-checking-then-still-racing.
+ *   follows symlinks) performs the overwrite. `writeFileNoFollow` closes that window structurally
+ *   on POSIX, at the single `open()` call that does the write, rather than re-checking-then-still-
+ *   racing — Windows lacks a POSIX-equivalent symlink-refusing open (libuv does not implement
+ *   `UV_FS_O_NOFOLLOW` there), so this specific race window remains open on that platform; see
+ *   {@link writeFileNoFollow}'s own docstring. The rollback restore below (on a *later* failure)
+ *   goes through the same {@link writeFileNoFollow}, for the identical reason — a symlink swapped in
+ *   after a successful write but before a later step's failure triggers rollback should not be
+ *   silently written through either.
  *
  * Rollback is best-effort: a failure while undoing is swallowed so the original error — not a
  * secondary cleanup failure — is what the caller sees.
@@ -357,7 +363,7 @@ export function writeAllOrRollback(
       if (existsSync(abs)) {
         const before = readExistingOrThrow(abs, file.path);
         writeFileNoFollow(abs, file.contents, file.path);
-        undo.push(() => writeFileSync(abs, before));
+        undo.push(() => writeFileNoFollow(abs, before, file.path));
         return { path: file.path, action: "updated" as const };
       }
       writeFileNoFollow(abs, file.contents, file.path);
@@ -392,34 +398,77 @@ function readExistingOrThrow(absPath: string, relPath: string): string {
 }
 
 /**
+ * Write every byte of `buf` via `write`, looping on a short write — `write` accepting fewer bytes
+ * than offered — rather than treating it as complete. Mirrors `writeFileSync`'s own internal loop
+ * for a `Buffer` input, done for the same reason: a single `write(2)` is not guaranteed to consume
+ * the whole buffer (e.g. a disk filling up mid-write returns a short, successful write, with the
+ * real `ENOSPC` only surfacing on the *next* call) — treating one `write` call as the whole file
+ * would silently truncate it with no error. `write` is injected (rather than this function calling
+ * `writeSync` directly) so the loop's own accumulation logic can be unit-tested deterministically
+ * with a fake writer that simulates short writes, since a genuine short write against a real fd
+ * isn't reliably reproducible in a test.
+ */
+export function writeAllBytes(write: (buf: Buffer, offset: number, length: number) => number, buf: Buffer): void {
+  let offset = 0;
+  while (offset < buf.length) {
+    offset += write(buf, offset, buf.length - offset);
+  }
+}
+
+/**
  * Overwrite (or create) a file, refusing to follow a symlink at the final path component — even
  * one planted *after* an earlier {@link assertNoSymlinkInPath} check on the same path already
  * passed (LORE-92). That check is a check-then-act `lstatSync` walk; nothing stops a concurrent
  * process from swapping the target for a symlink in the window between the check and a later
  * plain `writeFileSync` (which transparently follows symlinks, mid-path or final component alike).
- * `O_NOFOLLOW` closes that window structurally: the same `open()` call that performs the write is
- * also the one that refuses the symlink, so there is no gap for a race to land in. A refused open
- * fails `ELOOP`, mapped by {@link ioError} to the same `conflict` diagnosis a pre-existing symlink
- * gets from `assertNoSymlinkInPath`. `writeAllOrRollback`'s `--force` branch is the only caller —
- * every other write discipline in this module is either check-then-atomic-create
- * ({@link createIfAbsent}'s `wx` open, independently TOCTOU-safe by POSIX `O_CREAT|O_EXCL`
- * semantics) or doesn't need this ({@link writeFileOverwriting}'s other callers — `lore
- * replace`/`rename`/`supersede` — write back over a concept file the bundle loader just read,
- * and that loader already skips symlinked files during its walk, so their target was never a
- * symlink to begin with).
+ * `O_NOFOLLOW` closes that window structurally on POSIX (Linux/macOS): the same `open()` call that
+ * performs the write is also the one that refuses the symlink, so there is no gap for a race to
+ * land in. **This guarantee does not extend to Windows** — libuv does not implement
+ * `UV_FS_O_NOFOLLOW` there (no POSIX-style symlink-refusing open exists on that platform), so
+ * `openSync` silently ignores the flag and this function's write-time protection degrades to the
+ * same symlink-following behavior as the plain {@link writeFileOverwriting} it replaces. The
+ * pre-existing `assertNoSymlinkInPath` check-then-act guard still runs first regardless of
+ * platform, so Windows is no *more* exposed than it was before this fix — but the race window this
+ * function exists to close on POSIX remains open there. A refused POSIX open fails `ELOOP`, given
+ * the same explicit "is a symlink" message and `conflict` diagnosis `assertNoSymlinkInPath` uses.
+ * `writeAllOrRollback`'s `--force` branch is the only caller — every other write discipline in this
+ * module is either check-then-atomic-create ({@link createIfAbsent}'s `wx` open, independently
+ * TOCTOU-safe on every platform: `O_CREAT|O_EXCL` refuses on ANY pre-existing entry at the path,
+ * symlink or not, with no symlink-detection required) or doesn't need this
+ * ({@link writeFileOverwriting}'s other callers — `lore replace`/`rename`/`supersede` — write back
+ * over a concept file the bundle loader just read, and that loader already skips symlinked files
+ * during its walk, so their target was never a symlink to begin with). The write itself loops on a
+ * short write via {@link writeAllBytes} rather than trusting one `writeSync` call to consume the
+ * whole buffer.
  */
 export function writeFileNoFollow(absPath: string, contents: string, relPath: string): void {
   let fd: number;
   try {
     fd = openSync(absPath, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o666);
   } catch (cause) {
+    if (errnoCode(cause) === "ELOOP") {
+      throw new LoreError(
+        "conflict",
+        `refusing to write ${relPath}: it is a symlink, not a real file`,
+        "lore does not write through a symlink (it may resolve outside the repo) — remove or replace it, then re-run",
+        { path: relPath, symlink: relPath },
+      );
+    }
     throw ioError(cause, relPath, "write file");
   }
   try {
-    writeSync(fd, contents);
+    writeAllBytes((b, offset, length) => writeSync(fd, b, offset, length), Buffer.from(contents, "utf8"));
+  } catch (cause) {
+    try {
+      closeSync(fd);
+    } catch {
+      // Best-effort cleanup; the write failure below is what's reported.
+    }
+    throw ioError(cause, relPath, "write file");
+  }
+  try {
+    closeSync(fd);
   } catch (cause) {
     throw ioError(cause, relPath, "write file");
-  } finally {
-    closeSync(fd);
   }
 }
