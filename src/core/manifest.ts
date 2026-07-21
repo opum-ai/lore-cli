@@ -300,6 +300,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = [
     flags: [
       { name: "tasks-only", takesValue: false, summary: "Report only tasks with no owning doc" },
       { name: "docs-only", takesValue: false, summary: "Report only docs whose linked task vanished" },
+      { name: "limit", takesValue: true, summary: "Cap each section's rows (default 20)" },
     ],
     json: true,
     kind: "orphans.report",

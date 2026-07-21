@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/cli";
-import { computeOrphans, type OrphansReport, runOrphans } from "../src/commands/orphans";
+import { computeOrphans, DEFAULT_ORPHANS_LIMIT, type OrphansReport, runOrphans } from "../src/commands/orphans";
 import { LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture, concept, fakeAdapter, makeTask, storyDoc } from "./helpers";
@@ -159,6 +159,66 @@ describe("computeOrphans — the pure set arithmetic (AC#1)", () => {
   });
 });
 
+describe("computeOrphans — bounded output, §3 truncation (LORE-74, AC#1)", () => {
+  test("no --limit falls back to DEFAULT_ORPHANS_LIMIT, applied independently per section", () => {
+    // 25 orphan tasks (over the default cap of 20) but only 2 dangling links (under it) — each
+    // section's total/shown/truncated must reflect ONLY its own count, not the other section's.
+    const tasks = Array.from({ length: 25 }, (_, i) => makeTask(`LORE-${i}`));
+    const report = computeOrphans([concept("stories/bulk", { tasks: ["GONE-1", "GONE-2"] })], tasks, NO_FLAGS);
+    expect(report.orphanTasksTotal).toBe(25);
+    expect(report.orphanTasksShown).toBe(DEFAULT_ORPHANS_LIMIT);
+    expect(report.orphanTasksTruncated).toBe(true);
+    expect(report.orphanTasks).toHaveLength(DEFAULT_ORPHANS_LIMIT);
+
+    expect(report.danglingLinksTotal).toBe(2);
+    expect(report.danglingLinksShown).toBe(2);
+    expect(report.danglingLinksTruncated).toBe(false);
+    expect(report.danglingLinks).toHaveLength(2);
+  });
+
+  test("an explicit limit caps both sections to the same value", () => {
+    const tasks = Array.from({ length: 5 }, (_, i) => makeTask(`LORE-${i}`));
+    const report = computeOrphans([concept("stories/bulk", { tasks: ["GONE-1", "GONE-2", "GONE-3"] })], tasks, {
+      tasksOnly: false,
+      docsOnly: false,
+      limit: 2,
+    });
+    expect(report).toMatchObject({ orphanTasksTotal: 5, orphanTasksShown: 2, orphanTasksTruncated: true });
+    expect(report).toMatchObject({ danglingLinksTotal: 3, danglingLinksShown: 2, danglingLinksTruncated: true });
+  });
+
+  test("a limit at or above the total is not truncated", () => {
+    const report = computeOrphans([], [makeTask("LORE-1"), makeTask("LORE-2")], {
+      tasksOnly: false,
+      docsOnly: false,
+      limit: 2,
+    });
+    expect(report).toMatchObject({ orphanTasksTotal: 2, orphanTasksShown: 2, orphanTasksTruncated: false });
+  });
+
+  test("--tasks-only omits ALL of the dangling section's fields, not just the array", () => {
+    const report = computeOrphans([concept("stories/bulk", { tasks: ["GONE-9"] })], [makeTask("LORE-1")], {
+      tasksOnly: true,
+      docsOnly: false,
+    });
+    expect("danglingLinks" in report).toBe(false);
+    expect("danglingLinksTotal" in report).toBe(false);
+    expect("danglingLinksShown" in report).toBe(false);
+    expect("danglingLinksTruncated" in report).toBe(false);
+  });
+
+  test("--docs-only omits ALL of the orphan-task section's fields, not just the array", () => {
+    const report = computeOrphans([concept("stories/bulk", { tasks: ["GONE-9"] })], [makeTask("LORE-1")], {
+      tasksOnly: false,
+      docsOnly: true,
+    });
+    expect("orphanTasks" in report).toBe(false);
+    expect("orphanTasksTotal" in report).toBe(false);
+    expect("orphanTasksShown" in report).toBe(false);
+    expect("orphanTasksTruncated" in report).toBe(false);
+  });
+});
+
 describe("runOrphans — integration over a bundle + snapshot (AC#2)", () => {
   test("emits an orphans.report envelope with both directions", async () => {
     writeStory("bulk", ["LORE-1", "GONE-9"]); // LORE-1 live, GONE-9 vanished
@@ -243,6 +303,22 @@ describe("runOrphans — parse errors", () => {
       runOrphans({ root, output: JSON_CTX, stdout: capture(), args: ["--tasks-only", "--docs-only"] }),
     );
   });
+
+  test.each([
+    [["--limit", "1", "--limit", "2"], "--limit given more than once"],
+    [["--limit", "0"], 'invalid --limit "0"'],
+    [["--limit=0"], 'invalid --limit "0"'],
+    [["--limit", "1.5"], 'invalid --limit "1.5"'],
+    [["--limit", "abc"], 'invalid --limit "abc"'],
+    [["--limit"], "--limit needs a value"],
+    [["--limit", "99999999999999999999"], "too large"],
+    [["--tasks-only=x"], "--tasks-only takes no value"],
+    [["--docs-only=x"], "--docs-only takes no value"],
+    [["--tasks-only", "--tasks-only"], "--tasks-only given more than once"],
+  ])("rejects %j with a usage error", async (args, fragment) => {
+    const err = await expectRejection("usage", () => runOrphans({ root, output: JSON_CTX, stdout: capture(), args }));
+    expect(err.message).toContain(fragment);
+  });
 });
 
 describe("runOrphans — text rendering", () => {
@@ -296,9 +372,43 @@ describe("runOrphans — text rendering", () => {
     await runOrphans({ root, output: PRETTY_CTX, stdout, stderr: capture(), args: [], adapter });
     expect(stdout.text()).toContain("\x1b[32m"); // ANSI green on the header
   });
+
+  test("plain mode shows a §3 truncation footer after a section --limit drops rows", async () => {
+    const tasks = Array.from({ length: 4 }, (_, i) => makeTask(`LORE-${i}`));
+    const adapter = okAdapter(tasks);
+    const stdout = capture();
+    const code = await runOrphans({
+      root,
+      output: PLAIN_CTX,
+      stdout,
+      stderr: capture(),
+      args: ["--tasks-only", "--limit", "2"],
+      adapter,
+    });
+    expect(code).toBe(0);
+    const text = stdout.text();
+    expect(text).toContain("orphans: 4 orphan tasks");
+    expect(text).toContain("showing 2 of 4 — raise --limit to see more");
+  });
+
+  test("plain mode omits the footer when a section's limit does not drop anything", async () => {
+    writeStory("bulk", ["GONE-9"]);
+    const adapter = okAdapter([makeTask("LORE-7")]);
+    const stdout = capture();
+    await runOrphans({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: [], adapter });
+    expect(stdout.text()).not.toContain("showing");
+  });
+
+  test("--json carries each section's total/shown/truncated fields", async () => {
+    const tasks = Array.from({ length: 3 }, (_, i) => makeTask(`LORE-${i}`));
+    const adapter = okAdapter(tasks);
+    const { data } = await reportJson(["--tasks-only", "--limit", "1"], adapter);
+    expect(data).toMatchObject({ orphanTasksTotal: 3, orphanTasksShown: 1, orphanTasksTruncated: true });
+    expect(data.orphanTasks).toHaveLength(1);
+  });
 });
 
-describe("runOrphans — orphan-task block survives a large snapshot (LORE-51 regression)", () => {
+describe("runOrphans — orphan-task block survives a large snapshot (LORE-51 regression, updated for LORE-74)", () => {
   // `renderReport`'s orphan-task block once did `lines.push(...renderTaskSummaryRows(orphanTasks))` —
   // spreading a large array into a function-call argument list has its own engine argument-count
   // ceiling, the exact class of RangeError the spread-free `maxLen` refactor was meant to eliminate,
@@ -308,7 +418,15 @@ describe("runOrphans — orphan-task block survives a large snapshot (LORE-51 re
   // to comfortably clear that ceiling — this test genuinely throws against the pre-fix code — while
   // still running well under a second, so it stays a fast, decisive regression guard rather than a
   // slow one.
-  test("700,000 orphan tasks render without a RangeError", async () => {
+  //
+  // LORE-74 capped `orphans`' output (cli-contract §3), which changes what "700,000 tasks" means:
+  // by default only DEFAULT_ORPHANS_LIMIT render, so the ORIGINAL crash (a huge array flowing through
+  // the render loop) no longer happens on the default path — the cap structurally prevents it. Both
+  // properties still need a guard: (1) the default path truncates rather than dumping every row, and
+  // (2) an operator who explicitly raises --limit past the total still gets every row rendered without
+  // the RangeError the per-item loop was written to avoid — the fix that made this test pass in the
+  // first place must keep holding once a large array IS asked to render in full.
+  test("the default cap truncates a 700,000-task snapshot instead of dumping it", async () => {
     const N = 700_000;
     const tasks = Array.from({ length: N }, (_, i) => makeTask(`LORE-${i}`));
     const adapter = okAdapter(tasks);
@@ -323,9 +441,31 @@ describe("runOrphans — orphan-task block survives a large snapshot (LORE-51 re
     });
     expect(code).toBe(0);
     const text = stdout.text();
-    expect(text).toContain(`${N} orphan tasks`);
+    expect(text).toContain(`${N} orphan tasks`); // header states the TOTAL, not just what's shown
     expect(text).toContain("LORE-0 "); // lowest id rendered (order is sorted, not insertion — just checking presence)
+    expect(text).not.toContain(`LORE-${N - 1} `); // highest id dropped — the cap, not the loop, bounds this now
+    expect(text).toContain(`showing ${DEFAULT_ORPHANS_LIMIT} of ${N} — raise --limit to see more`);
+  });
+
+  test("a --limit raised past the total still renders all 700,000 rows without a RangeError", async () => {
+    const N = 700_000;
+    const tasks = Array.from({ length: N }, (_, i) => makeTask(`LORE-${i}`));
+    const adapter = okAdapter(tasks);
+    const stdout = capture();
+    const code = await runOrphans({
+      root,
+      output: PLAIN_CTX,
+      stdout,
+      stderr: capture(),
+      args: ["--tasks-only", "--limit", String(N)],
+      adapter,
+    });
+    expect(code).toBe(0);
+    const text = stdout.text();
+    expect(text).toContain(`${N} orphan tasks`);
+    expect(text).toContain("LORE-0 ");
     expect(text).toContain(`LORE-${N - 1} `); // highest id rendered too — the loop reached the end of the array
+    expect(text).not.toContain("showing"); // limit >= total: nothing truncated, no footer
   });
 });
 
