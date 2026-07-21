@@ -227,3 +227,65 @@ describe("lore init — filesystem conflicts (a non-regular entry blocks the sca
     },
   );
 });
+
+describe("lore init — refuses to write through a pre-existing symlinked scaffold directory (LORE-77)", () => {
+  /** Run init and assert it throws a `conflict` {@link LoreError}, returning it for further checks. */
+  function expectConflict(): LoreError {
+    try {
+      runInit({ root, output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("conflict");
+      return err as LoreError;
+    }
+    throw new Error("expected a conflict LoreError, but init returned");
+  }
+
+  let outside: string;
+
+  beforeEach(() => {
+    outside = mkdtempSync(join(tmpdir(), "lore-init-outside-"));
+  });
+  afterEach(() => {
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  // POSIX-only, matching this file's existing symlink test's own skip guard above.
+  test.skipIf(process.platform === "win32")(
+    "docs already existing as a symlink is refused, not followed — nothing is written outside the repo",
+    () => {
+      // The task's own repro: docs -> an external location, pre-existing when init runs.
+      symlinkSync(outside, join(root, "docs"));
+      const err = expectConflict();
+      expect(err.message).toContain("docs");
+      expect(err.message.toLowerCase()).toContain("symlink");
+      expect(existsSync(join(outside, "index.md"))).toBe(false);
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    ".lore already existing as a symlink is refused, not followed — nothing is written outside the repo",
+    () => {
+      symlinkSync(outside, join(root, ".lore"));
+      const err = expectConflict();
+      expect(err.message).toContain(".lore");
+      expect(err.message.toLowerCase()).toContain("symlink");
+      expect(existsSync(join(outside, "config.toml"))).toBe(false);
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    ".lore/schemas already existing as a symlink (a NESTED scaffold dir) is refused, not followed",
+    () => {
+      // Confirms the guard walks every ancestor segment, not just the top-level names the task's
+      // own description happens to list — `.lore/schemas` is itself one of `buildScaffold`'s planned
+      // directories, nested one level under `.lore`.
+      mkdirSync(join(root, ".lore"), { recursive: true });
+      symlinkSync(outside, join(root, ".lore", "schemas"));
+      const err = expectConflict();
+      expect(err.message).toContain(".lore/schemas");
+      expect(err.message.toLowerCase()).toContain("symlink");
+      expect(existsSync(join(outside, "epic.schema.json"))).toBe(false);
+    },
+  );
+});

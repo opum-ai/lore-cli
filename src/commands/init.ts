@@ -20,7 +20,7 @@ import { loadProfile } from "../core/profile";
 import { buildScaffold } from "../core/scaffold";
 import { ANSI, EXIT_OK, paint, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { createIfAbsent, ensureDir } from "./fswrite";
+import { assertNoSymlinkInPath, createIfAbsent, ensureDir } from "./fswrite";
 
 /** The result of an `init` run: what was created versus already present, and where. */
 export interface InitResult {
@@ -58,12 +58,17 @@ export function runInit(options: InitOptions): number {
   const plan = buildScaffold({ timestamp: clock().toISOString(), profile });
 
   for (const dir of plan.dirs) {
+    // LORE-77: refuse a pre-existing symlink at (or above) this directory BEFORE ensureDir's
+    // mkdirSync gets a chance to transparently walk through it — matching LORE-76's identical
+    // guard on lore scaffold's own writes (fswrite.ts's shared assertNoSymlinkInPath).
+    assertNoSymlinkInPath(options.root, dir);
     ensureDir(join(options.root, dir), dir);
   }
 
   const created: string[] = [];
   const skipped: string[] = [];
   for (const file of plan.files) {
+    assertNoSymlinkInPath(options.root, file.path);
     if (createIfAbsent(join(options.root, file.path), file.contents, file.path)) {
       created.push(file.path);
     } else {

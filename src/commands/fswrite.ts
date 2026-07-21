@@ -11,6 +11,11 @@
  *   the bytes of files that already exist ({@link writeFileOverwriting}). This is deliberately
  *   *not* never-clobber: the whole point is to edit an existing doc in place.
  *
+ * Both disciplines share one symlink guard ({@link assertNoSymlinkInPath}, LORE-76/LORE-77):
+ * `lore init`'s never-clobber loop and `lore scaffold`'s all-or-nothing `writeAllOrRollback` both
+ * call it before touching a path, so a symlinked ancestor directory or final target refuses loudly
+ * instead of silently redirecting a write outside the repo.
+ *
  * All side effects live in the command layer (lore-design §2.1); core stays pure. These
  * helpers are that side-effecting layer, factored to one module so the filesystem-conflict
  * semantics are identical across every command.
@@ -29,6 +34,46 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { errnoCode, LoreError } from "../errors";
+
+/**
+ * Refuse if any path segment from `root` down to (and including) `relPath` already exists as a
+ * symlink — `lstatSync` per segment, never following. Standard `mkdirSync`/`writeFileSync` calls
+ * always transparently resolve symlinks in the MIDDLE of a path (that's ordinary POSIX path
+ * resolution, not something an `O_CREAT`/`O_EXCL`-style flag can disable), and an unforced overwrite
+ * or a `--force` write can follow a symlink at the FINAL component too — so a symlinked ancestor
+ * directory, or a symlinked final target, would otherwise let a write land outside the repo
+ * entirely unnoticed. Shared by every write discipline this module owns: `writeAllOrRollback`'s
+ * all-or-nothing scaffold writes (LORE-76) and `lore init`'s own never-clobber `ensureDir`/
+ * `createIfAbsent` loop (LORE-77) both call this, rather than each re-deriving the same
+ * `lstatSync`-per-segment walk. Mirrors this codebase's established READ-path convention
+ * (`core/bundle.ts`, `commands/replace.ts`: explicit `lstatSync(...).isSymbolicLink()`, never a
+ * stat-follows-symlinks helper) rather than inventing a new pattern. A path segment that does not
+ * exist yet is fine — there is nothing to guard against until something is actually there to
+ * redirect through.
+ */
+export function assertNoSymlinkInPath(root: string, relPath: string): void {
+  let prefix = root;
+  for (const segment of relPath.split("/")) {
+    if (segment === "") {
+      continue; // relPath is always a POSIX-relative path; never emits an empty leading segment
+    }
+    prefix = join(prefix, segment);
+    let stat: ReturnType<typeof lstatSync>;
+    try {
+      stat = lstatSync(prefix);
+    } catch {
+      continue; // does not exist yet at this segment — nothing here to redirect through
+    }
+    if (stat.isSymbolicLink()) {
+      throw new LoreError(
+        "conflict",
+        `refusing to write ${relPath}: "${segment}" is a symlink, not a real directory or file`,
+        "lore does not write through a symlink (it may resolve outside the repo) — remove or replace it, then re-run",
+        { path: relPath, symlink: segment },
+      );
+    }
+  }
+}
 
 /** `mkdir -p` for a scaffold directory, mapping a permission failure to a `denied` error. */
 export function ensureDir(absPath: string, relPath: string): void {
@@ -193,43 +238,6 @@ export function conflictError(relPath: string, code?: string): LoreError {
 }
 
 // ── All-or-nothing scaffold writes ─────────────────────────────────────────────
-
-/**
- * Refuse if any path segment from `root` down to (and including) `relPath` already exists as a
- * symlink (LORE-76) — `lstatSync` per segment, never following. Standard `mkdirSync`/`writeFileSync`
- * calls always transparently resolve symlinks in the MIDDLE of a path (that's ordinary POSIX path
- * resolution, not something an `O_CREAT`/`O_EXCL`-style flag can disable), and under `force`
- * {@link writeAllOrRollback}'s overwrite branch follows a symlink at the FINAL component too
- * (`existsSync`/`readFileSync`/`writeFileSync` all follow) — so a symlinked ancestor directory, or a
- * symlinked final target, would otherwise let a scaffold write land outside the repo entirely
- * unnoticed. Mirrors this codebase's established READ-path convention (`core/bundle.ts`,
- * `commands/replace.ts`: explicit `lstatSync(...).isSymbolicLink()`, never a stat-follows-symlinks
- * helper) rather than inventing a new pattern. A path segment that does not exist yet is fine —
- * there is nothing to guard against until something is actually there to redirect through.
- */
-function assertNoSymlinkInPath(root: string, relPath: string): void {
-  let prefix = root;
-  for (const segment of relPath.split("/")) {
-    if (segment === "") {
-      continue; // relPath is always a POSIX-relative path; never emits an empty leading segment
-    }
-    prefix = join(prefix, segment);
-    let stat: ReturnType<typeof lstatSync>;
-    try {
-      stat = lstatSync(prefix);
-    } catch {
-      continue; // does not exist yet at this segment — nothing here to redirect through
-    }
-    if (stat.isSymbolicLink()) {
-      throw new LoreError(
-        "conflict",
-        `refusing to write ${relPath}: "${segment}" is a symlink, not a real directory or file`,
-        "lore does not write through a symlink (it may resolve outside the repo) — remove or replace it, then re-run",
-        { path: relPath, symlink: segment },
-      );
-    }
-  }
-}
 
 /** One file {@link writeAllOrRollback} plans to write, with the exact bytes to apply. */
 export interface WriteAllOrRollbackFile {
