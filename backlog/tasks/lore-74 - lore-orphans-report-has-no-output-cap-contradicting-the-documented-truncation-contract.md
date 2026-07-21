@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 08:38'
-updated_date: '2026-07-21 13:59'
+updated_date: '2026-07-21 14:00'
 labels:
   - codex-review
   - api-design
@@ -32,6 +32,34 @@ docs/reference/cli-contract.md explicitly names orphans as one of the read-heavy
 - [x] #1 lore orphans caps emitted rows and reports total/shown/truncated counts, consistent with query/graph/context
 - [x] #2 The existing LORE-51 unbounded-output test is updated to reflect the new capped, truncation-hinted behavior
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Read src/output.ts's Truncation/truncation()/renderTruncationLine primitives and src/commands/query.ts
+   as the precedent for a capped, §3-compliant command (flat total/shown/truncated fields on the result
+   type, a --limit value flag with parseCount/readValue, DEFAULT_QUERY_LIMIT=20).
+2. Resolve the open design question from the prior handover: orphans has TWO independent sections
+   (orphanTasks, danglingLinks) unlike query's one — give each its own total/shown/truncated against the
+   SAME --limit, rather than one combined cap, since the two counts are unrelated.
+3. Add --limit <n> (default DEFAULT_ORPHANS_LIMIT=20) to parseOrphansArgs; cap each requested section
+   independently in computeOrphans via .slice(0, limit); add orphanTasksTotal/Shown/Truncated and
+   danglingLinksTotal/Shown/Truncated to OrphansReport, present iff the section's array is.
+4. Update renderReport: header uses each section's TOTAL (not the capped shown count, matching query's
+   header convention); append a §3 truncation footer after each non-empty section when it was truncated.
+5. Update the LORE-51 700k-row regression test (AC#2): it currently pins unbounded output as correct.
+   Split it into (a) default-cap behavior (total shown in header, footer present, highest id dropped) and
+   (b) an explicit --limit raised past the total, preserving the original crash-safety proof (a huge array
+   still flows through the per-item render loop without a RangeError).
+6. Add new coverage: independent per-section truncation, --limit parse-error table (mirroring query's),
+   --tasks-only/--docs-only omitting ALL four fields of the excluded section, JSON envelope field shape,
+   plain-mode footer presence/absence.
+7. Update docs/reference/cli-surface.md's orphans row (flags + output shape) to match; cli-contract.md's
+   §3 list already named orphans, so no change needed there.
+8. Verify: bun test (full suite), bun run typecheck, bun run lint (scoped to touched files), git-stash
+   pre/post-fix proof that the new/updated tests actually fail against the old code, and a real-CLI smoke
+   test against this repo's own docs/ bundle.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
