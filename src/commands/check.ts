@@ -715,7 +715,7 @@ function isDocName(name: string): boolean {
 const LIVENESS_TIMEOUT_MS = 5000;
 /** How many liveness probes run at once — bounded so a large bundle does not open a socket per URL. */
 const LIVENESS_CONCURRENCY = 8;
-/** Redirect hops a single URL may follow before the probe gives up — bounds a malicious/misconfigured redirect chain, mirroring browsers' own conservative caps. */
+/** Redirects a single URL may FOLLOW before the probe gives up (so up to `MAX_REDIRECTS + 1` fetches total: the original request plus this many hops) — bounds a malicious/misconfigured redirect chain, mirroring browsers' own conservative caps. */
 const MAX_REDIRECTS = 10;
 
 /**
@@ -782,6 +782,17 @@ async function probeLiveness(
  * DNS-resolution failure is NOT blocked here — that's an ordinary liveness failure ({@link
  * probeOne}'s own catch already reports "is unreachable"), not a security refusal, so it
  * deliberately propagates rather than being swallowed into a false "blocked" verdict.
+ *
+ * **Known, accepted limitation** (confirmed by independent adversarial review, not a gap this
+ * function can close on its own): this validates the address(es) `resolveHost` returns RIGHT NOW,
+ * but the actual `fetch()` a hop later does its OWN independent DNS resolution when it connects —
+ * a classic TOCTOU/DNS-rebinding window (a short-TTL record answering safely here and differently
+ * at connect time). Accepted because `--external` is advisory-only CI liveness (never gates, and
+ * `probeOne` never reads/reports a response body — only `status`/`location`), so the worst a
+ * successful rebind achieves is a bare GET landing on an internal host, not data exfiltration
+ * through the report. Fully closing this would need pinning the actual socket connection to the
+ * validated address (e.g. a custom low-level dispatcher), which is a materially bigger change than
+ * this task's own AC calls for.
  */
 async function blockedDestination(url: string, resolveHost: ResolveHost): Promise<string | null> {
   let parsed: URL;
@@ -801,6 +812,13 @@ async function blockedDestination(url: string, resolveHost: ResolveHost): Promis
   // actually inspecting its input.
   const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
   const addresses = isIP(hostname) !== 0 ? [hostname] : await resolveHost(hostname);
+  // The real `node:dns` resolver throws (never resolves empty) when a hostname has no records, so
+  // this shouldn't fire against `defaultResolveHost` — but a custom `ResolveHost` returning `[]`
+  // for "nothing found" (a plausible alternative contract) must fail CLOSED, not vacuously pass
+  // the `for` loop below and let the fetch through unvalidated.
+  if (addresses.length === 0) {
+    return "resolved to no addresses";
+  }
   for (const address of addresses) {
     const verdict = classifyAddress(address);
     if (verdict.blocked) {
