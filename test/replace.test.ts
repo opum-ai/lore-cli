@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { run } from "../src/cli";
 import {
   assertNoSymlinkInPath,
+  writeAllBytes,
   writeFileAtomic,
   writeFileNoFollow,
   writeFileOverwriting,
@@ -607,6 +608,40 @@ describe("writeFileAtomic", () => {
     } finally {
       chmodSync(dir, 0o755); // restore so afterEach's rmSync can clean up
     }
+  });
+});
+
+// ── fswrite: writeAllBytes short-write loop (LORE-92) ──────────────────────────────
+
+describe("writeAllBytes", () => {
+  test("writes the whole buffer in one call when the writer accepts it all at once", () => {
+    const buf = Buffer.from("hello world");
+    const calls: Array<{ offset: number; length: number }> = [];
+    writeAllBytes((_b, offset, length) => {
+      calls.push({ offset, length });
+      return length;
+    }, buf);
+    expect(calls).toEqual([{ offset: 0, length: 11 }]);
+  });
+
+  test("loops when the writer returns a short write, until every byte is accounted for", () => {
+    const buf = Buffer.from("hello world"); // 11 bytes
+    const written: Buffer[] = [];
+    writeAllBytes((b, offset, length) => {
+      const n = Math.min(3, length); // simulate a short write, at most 3 bytes per call
+      written.push(Buffer.from(b.subarray(offset, offset + n)));
+      return n;
+    }, buf);
+    expect(Buffer.concat(written).toString()).toBe("hello world");
+  });
+
+  test("a zero-length buffer never calls the writer", () => {
+    let calls = 0;
+    writeAllBytes(() => {
+      calls++;
+      return 0;
+    }, Buffer.alloc(0));
+    expect(calls).toBe(0);
   });
 });
 

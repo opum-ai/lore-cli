@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 18:52'
-updated_date: '2026-07-21 19:58'
+updated_date: '2026-07-21 20:14'
 labels:
   - backlog-campaign-followup
   - security
@@ -42,7 +42,7 @@ This exact gap was identified and explicitly deferred during LORE-76 itself, doc
 
 <!-- SECTION:NOTES:BEGIN -->
 Root cause confirmed fresh against current dev HEAD before implementing: writeAllOrRollback's
---force branch (src/commands/fswrite.ts, ~lines 336-354 at pickup time — drifted from the
+--force branch (src/commands/fswrite.ts, ~lines 336-354 at pickup time -- drifted from the
 filing task's 322-337 citation because LORE-94 added ~18 lines to this same file earlier in
 the campaign) calls assertNoSymlinkInPath (a check-then-act lstatSync walk) and then, several
 syscalls later, writes via the shared writeFileOverwriting (a plain writeFileSync that
@@ -50,46 +50,68 @@ transparently follows symlinks). Nothing re-checks the target in between, so a s
 in that window is followed instead of refused.
 
 Fix (AC#1): added writeFileNoFollow, a new exported primitive in fswrite.ts that opens the
-target via openSync with O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW (verified empirically that Node
-accepts a numeric flags value built from node:fs's `constants`, not just the string-flag form),
-writes via writeSync, and closes the fd. O_NOFOLLOW makes the open() itself fail with ELOOP if
-the final path component is a symlink -- closing the race structurally, at the single syscall
-that performs the write, rather than re-checking-then-still-racing. ioError now maps ELOOP to
-the same `conflict` LoreError a pre-existing symlink already gets from assertNoSymlinkInPath.
-writeAllOrRollback's --force branch now calls writeFileNoFollow instead of writeFileOverwriting
-in both its write sites (the "file already exists" overwrite AND the "file doesn't exist yet"
-create-under-force case, since the same race class applies to both). Scope deliberately confined
-to writeAllOrRollback's --force branch only -- did NOT change the shared writeFileOverwriting
-itself, since its other callers (lore replace/rename/supersede) write back over a concept file
-the bundle loader just read, and that loader (core/bundle.ts's walkFiles) already unconditionally
-skips symlinked files during its walk (verified: `entry.isSymbolicLink()` -> warn + skip, never
-recursed/read), so their target was never a symlink to begin with -- changing that function too
-would have been unrequested scope creep with no corresponding AC.
+target via openSync with O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW, writes via a looped writeSync
+(see below), and closes the fd. O_NOFOLLOW makes the open() itself fail with ELOOP if the final
+path component is a symlink, closing the race at the single syscall that performs the write.
+writeAllOrRollback's --force branch calls writeFileNoFollow at both its write sites (overwriting
+an existing file, and creating a fresh file under --force) AND in its own rollback-restore undo
+callback (extended after review -- a symlink swapped in before a later-triggered rollback
+deserves the same refusal). Scope deliberately confined to writeAllOrRollback's --force branch --
+did NOT change the shared writeFileOverwriting itself, since its other callers (lore
+replace/rename/supersede) write back over a file the bundle loader just read, and that loader
+(core/bundle.ts's walkFiles) already unconditionally skips symlinked files during its walk
+(verified directly: entry.isSymbolicLink() -> warn + skip, never recursed/read).
 
-AC#2: added a regression test in test/replace.test.ts (colocated with this file's existing
-low-level fswrite-primitive tests, matching the established writeFileOverwriting/writeFileAtomic
-precedent there) that drives the REAL, unmodified assertNoSymlinkInPath and writeFileNoFollow
-exports in writeAllOrRollback's own order: a real file passes the guard, is then swapped for a
-symlink to an outside file (simulating the race window deterministically, mirroring the filing
-task's own repro methodology), and the subsequent writeFileNoFollow call is asserted to throw a
-`conflict` LoreError while the outside file's content stays untouched. Added a second test for
-the force-create branch's own equivalent case (symlink present from the very start, never a
-regular file). Both POSIX-only, matching this codebase's existing symlink-test skip guard.
+Independent review (general-purpose subagent, run after committing the fix+tests) found 2
+BLOCKING issues, both fixed before merge:
+1. writeSync's return value was discarded -- a short write (OS accepting fewer bytes than
+   requested; a real POSIX possibility, e.g. disk-full mid-write) would silently truncate the
+   file with no error and no rollback trigger. Fixed by extracting the accumulation loop into a
+   new pure, exported writeAllBytes(write, buf) helper (mirrors writeFileSync's own internal
+   loop) and unit-testing the loop itself deterministically with a fake writer that simulates
+   short writes -- a genuine short write against a real fd isn't reliably reproducible in a test,
+   which is exactly why the loop was extracted as an injectable-writer pure function rather than
+   tested via a real large write alone. Also live-verified with a real 8MB write
+   (.repro-scratch/lore92-large-write-verify.ts) round-tripping byte-for-byte.
+2. O_NOFOLLOW is a POSIX-only flag -- independently confirmed via libuv's own docs
+   (https://docs.libuv.org/en/v1.x/fs.html: UV_FS_O_NOFOLLOW "is not supported on Windows") that
+   this fix's write-time protection does NOT extend to Windows, which this repo explicitly ships
+   a binary for and runs in CI. This is NOT a new regression (Windows was equally exposed to this
+   race before this fix), but the original docstring overclaimed "closes the race structurally"
+   without a platform caveat. Fixed by adding an explicit Windows-gap paragraph to
+   writeFileNoFollow's and writeAllOrRollback's docstrings, and filing a Not-queued follow-up
+   candidate in the tracker (doc-1) for a human to confirm priority on a Windows-specific
+   closure, since implementing one (Windows lacks a portable open-time symlink-refusal primitive)
+   is a meaningfully bigger investigation outside this task's original scope.
+Non-blocking findings also addressed: the ELOOP path now throws an explicit "it is a symlink"
+message (mirroring assertNoSymlinkInPath's own wording) instead of routing through the generic
+conflictError message that never mentioned "symlink"; closeSync is now routed through ioError
+and structured so a close failure never masks a write failure that was already caught. Two
+non-blocking findings were left as-is per the reviewer's own assessment (both narrow/theoretical,
+pre-existing, outside this task's stated ACs): readExistingOrThrow's pre-write read still follows
+symlinks, and ioError's ELOOP mapping is technically unreachable from schema.ts's pruneOrphans
+call site (harmless).
+
+AC#2: two POSIX-only regression tests in test/replace.test.ts drive the REAL, unmodified
+assertNoSymlinkInPath and writeFileNoFollow exports in writeAllOrRollback's own order: a real
+file passes the guard, is then swapped for a symlink to an outside file (simulating the race
+window deterministically, mirroring the filing task's own repro methodology), and the subsequent
+writeFileNoFollow call is asserted to throw a conflict LoreError while the outside file's content
+stays untouched. A second test covers the force-create branch's own equivalent case (symlink
+present from the very start).
 
 AC#3: full test/consumer-scaffold.test.ts suite (52 tests, including the "never-silent-clobber"
 block's rollback-restores-previous-bytes / refuses-before-writing / removes-only-what-it-created
-cases) re-ran unchanged and green -- confirms the write-path swap didn't alter any of
-writeAllOrRollback's existing behavior for the normal (non-race) case.
+cases) re-ran unchanged and green throughout every round of fixes.
 
 Live-CLI verification (not just the synthetic-suite proof, per this campaign's standing
-discipline for destructive/security fixes): wrote .repro-scratch/lore92-toctou-verify.ts,
-driving the SAME race scenario against both the old writeFileOverwriting (still used elsewhere
-in this module, confirmed to still follow the symlink and overwrite the outside file's content
-with "HACKED" -- proving the underlying vulnerability mechanism is real, not hypothetical) and
-the new writeFileNoFollow (confirmed to throw a conflict LoreError and leave the outside file's
-content as "ORIGINAL", untouched).
+discipline for destructive/security fixes): .repro-scratch/lore92-toctou-verify.ts drives the
+same race scenario against both the old writeFileOverwriting (confirmed to still follow the
+symlink, overwriting the outside file's content with "HACKED") and the new writeFileNoFollow
+(confirmed to throw "refusing to write f.md: it is a symlink, not a real file" and leave the
+outside file's content as "ORIGINAL").
 
-Verified: bun test -> 1668 pass/0 fail (up from 1664); bun run typecheck clean; bun run lint
-clean on all changed files (fswrite.ts, test/replace.test.ts) -- 4 pre-existing infos remain in
-unrelated files (test/managed-block.test.ts, test/supersede.test.ts), untouched by this change.
+Verified (final round): bun test -> 1671 pass/0 fail (up from 1664 at session start); bun run
+typecheck clean; bun run lint clean on all changed files -- 4 pre-existing infos remain in
+unrelated files (test/managed-block.test.ts, test/supersede.test.ts), untouched.
 <!-- SECTION:NOTES:END -->
