@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { runInit } from "../src/commands/init";
@@ -272,6 +272,84 @@ describe("lore new — --template is confined to .lore/templates/ (LORE-72)", ()
     expect(err.type).toBe("usage");
     expect(err.message).toContain("escape");
   });
+});
+
+describe("lore new — --template refuses to read through a symlink (LORE-91)", () => {
+  let outsideDir: string;
+  let secretPath: string;
+
+  beforeEach(() => {
+    outsideDir = mkdtempSync(join(tmpdir(), "lore-new-outside-"));
+    secretPath = join(outsideDir, "outside_secret.md");
+    writeFileSync(secretPath, "SUPER SECRET DATA — must never leak into a generated concept\n");
+  });
+  afterEach(() => {
+    rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  // POSIX-only, matching this codebase's existing symlink tests' own skip guard (e.g. init.test.ts).
+  test.skipIf(process.platform === "win32")(
+    "regression: a symlinked template at the top level is refused, never reads or embeds the outside file (AC#1)",
+    () => {
+      symlinkSync(secretPath, join(root, ".lore/templates/evil.md"));
+      const err = expectError(["adr", "Test", "--template", "evil", "--out", "docs/adr/test-evil.md"]);
+      expect(err.type).toBe("conflict");
+      expect(err.message.toLowerCase()).toContain("symlink");
+      // No partial artifact was ever written, and the built-in template was never silently used instead (AC#3).
+      expect(existsSync(join(root, "docs/adr/test-evil.md"))).toBe(false);
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "regression: a symlinked template nested in a subdirectory is refused the same way (AC#2)",
+    () => {
+      mkdirSync(join(root, ".lore/templates/sub"), { recursive: true });
+      symlinkSync(secretPath, join(root, ".lore/templates/sub/evil.md"));
+      const err = expectError(["adr", "Test", "--template", "sub/evil", "--out", "docs/adr/test-evil.md"]);
+      expect(err.type).toBe("conflict");
+      expect(err.message.toLowerCase()).toContain("symlink");
+      expect(existsSync(join(root, "docs/adr/test-evil.md"))).toBe(false);
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "a symlinked template directory ancestor is refused too, not just the final file (AC#1/AC#2)",
+    () => {
+      symlinkSync(outsideDir, join(root, ".lore/templates/sub"));
+      const err = expectError(["adr", "Test", "--template", "sub/evil", "--out", "docs/adr/test-evil.md"]);
+      expect(err.type).toBe("conflict");
+      expect(err.message.toLowerCase()).toContain("symlink");
+      expect(existsSync(join(root, "docs/adr/test-evil.md"))).toBe(false);
+    },
+  );
+
+  test("a profile-declared template is unaffected by the symlink check's scope (AC#4)", () => {
+    // The declared (non---template) fallback path never sets `checkSymlink`, matching LORE-72's own
+    // precedent of scoping its confinement guard to the explicit CLI flag only. A symlinked
+    // profile-declared template is a separate, already out-of-scope trust boundary (repo config).
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      '[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "ADR"\ntemplate = "declared"\n',
+    );
+    writeFileSync(join(root, ".lore/templates/declared.md"), "\n# {{title}}\n\nfrom a real declared template\n");
+    const { result } = newCmd(["adr", "Title"]);
+    expect(readFileSync(join(root, result.path), "utf8")).toContain("from a real declared template");
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "a SYMLINKED profile-declared template is deliberately still followed — not this task's scope (AC#4)",
+    () => {
+      writeFileSync(
+        join(root, ".lore/profile.toml"),
+        '[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "ADR"\ntemplate = "declared"\n',
+      );
+      symlinkSync(secretPath, join(root, ".lore/templates/declared.md"));
+      const { result } = newCmd(["adr", "Title"]);
+      // Pre-existing behavior, unchanged by this fix — the profile-declared path never sets
+      // checkSymlink, so a symlink there is still silently followed, exactly as before LORE-91.
+      expect(readFileSync(join(root, result.path), "utf8")).toContain("SUPER SECRET DATA");
+    },
+  );
 });
 
 describe("lore new — unknown types are accepted (OKF tolerance)", () => {
