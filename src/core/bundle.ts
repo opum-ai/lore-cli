@@ -237,6 +237,18 @@ export function buildGraph(concepts: readonly Concept[]): BundleGraph {
 // ── Filesystem walk ────────────────────────────────────────────────────────────
 
 /**
+ * The {@link WarningCollector} `kind` tag on a "skipping unreadable directory" warning
+ * ({@link walkFiles}). A caller whose mutation depends on a **complete** view of the bundle
+ * graph — `lore rename`/`lore supersede`'s inbound-link rewrite, which can only repoint the
+ * links it can see — tests for this with `warnings.has(UNREADABLE_DIRECTORY_WARNING)` and
+ * refuses to commit rather than silently reporting success over an incomplete rewrite (LORE-82).
+ * A caller without that completeness dependency (`query`, `sync`'s per-concept reconciliation, …)
+ * has no reason to check it — the walk itself stays tolerant either way (LORE-82 doesn't change
+ * loading behavior, only what a caller may choose to do with the signal).
+ */
+export const UNREADABLE_DIRECTORY_WARNING = "unreadable-directory";
+
+/**
  * Recursively collect every `.md` file under `root`, returned as
  * bundle-root-relative POSIX paths in ascending lexicographic order. The final
  * list is sorted, so the result never depends on the filesystem's enumeration
@@ -294,7 +306,7 @@ export function walkFiles(
       }
       // A nested unreadable directory skips (with a warning), so one restricted
       // folder doesn't take the whole bundle down with it.
-      warnings?.add(`skipping unreadable directory ${relDir}: ${deriveMessage(cause)}`);
+      warnings?.add(`skipping unreadable directory ${relDir}: ${deriveMessage(cause)}`, UNREADABLE_DIRECTORY_WARNING);
       return;
     }
     for (const entry of entries) {

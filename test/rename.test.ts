@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/cli";
@@ -396,6 +396,36 @@ describe("lore rename — end to end", () => {
     expect(report.filesChanged).toBeGreaterThan(0);
     expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true); // not moved
     expect(readDoc("stories/bulk.md")).toContain("[orders](../reference/orders.md)"); // not rewritten
+  });
+
+  test("refuses to commit when an unreadable nested directory left the bundle graph incomplete (LORE-82)", async () => {
+    // A concept inside `locked/` links to the concept being renamed — rewriteInbound can never see
+    // that inbound link once `locked/` is unreadable, so committing the rename would silently leave
+    // it stale/broken while still reporting success.
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    writeDoc("locked/linker.md", "---\ntype: Story\n---\n[orders](../reference/orders.md)\n");
+    const locked = join(root, "docs", "locked");
+    try {
+      chmodSync(locked, 0o000);
+    } catch {
+      return; // chmod unavailable in this environment — skip
+    }
+    try {
+      // Running as root ignores permissions and reads the dir anyway — the load then succeeds with
+      // no skipped-directory warning, so the refusal this test targets never applies; skip rather
+      // than assert a precondition that isn't actually true in that environment.
+      if (loadBundle(join(root, "docs")).concepts.has("locked/linker")) {
+        return;
+      }
+      const err = await expectError(["reference/orders", "reference/sales-orders"]);
+      expect(err.type).toBe("validation");
+      expect(err.message).toContain("incomplete");
+      // No partial rewrite committed: the source file is untouched, no target file was created.
+      expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true);
+      expect(existsSync(join(root, "docs/reference/sales-orders.md"))).toBe(false);
+    } finally {
+      chmodSync(locked, 0o755); // restore so afterEach cleanup can remove it
+    }
   });
 
   test("an unrelated, already-canonical index hub is not rewritten", async () => {

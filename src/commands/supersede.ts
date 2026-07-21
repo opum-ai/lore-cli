@@ -38,7 +38,7 @@
  */
 
 import { join, posix } from "node:path";
-import { conceptNotInBundle, loadBundle, resolveRef } from "../core/bundle";
+import { conceptNotInBundle, loadBundle, resolveRef, UNREADABLE_DIRECTORY_WARNING } from "../core/bundle";
 import { type Concept, idFromPath, serializeConcept } from "../core/concept";
 import { loadProfile } from "../core/profile";
 import { rewriteInbound } from "../core/rewrite";
@@ -123,6 +123,11 @@ export function runSupersede(options: SupersedeOptions): number {
   const advisories = new WarningCollector();
   const profile = loadProfile({ root: options.root });
   const graph = loadBundle(docsRoot, { warnings: advisories, profile });
+  // Flushed immediately (not at the end, as this command previously did) so a skipped-directory
+  // warning naming the exact path/reason survives on the fail-loud `--rewrite-links` path below it
+  // feeds (LORE-82), mirroring how `context.ts`/`graph.ts` flush before a load-warning-explained
+  // not_found throw.
+  advisories.flush({ color: options.output.color, stderr: options.stderr });
 
   // The command owns all validation: the engine's `move:false` path checks only that `oldId` exists.
   const oldConcept = graph.concepts.get(oldId);
@@ -141,6 +146,20 @@ export function runSupersede(options: SupersedeOptions): number {
   const writes = new Map<string, string>();
   let rewroteLinks = false;
   if (parsed.rewriteLinks) {
+    // rewriteInbound can only repoint the inbound links it can SEE — a directory `loadBundle` had
+    // to skip (unreadable) may hide a concept that links to `oldId`, so committing this rewrite
+    // would silently report success while leaving that concept's link stale/broken. Refuse rather
+    // than guess: the graph is not the complete bundle, so no rewrite over it is safe to commit
+    // (LORE-82). Gated on `--rewrite-links` specifically — without it, supersede only edits the two
+    // principals' own frontmatter, which has no dependency on the rest of the bundle being visible.
+    if (advisories.has(UNREADABLE_DIRECTORY_WARNING)) {
+      throw new LoreError(
+        "validation",
+        "the bundle graph is incomplete: an unreadable directory was skipped while loading it",
+        "fix filesystem permissions on the directory named in the warning above and retry — --rewrite-links cannot safely repoint inbound links without a complete view of the bundle",
+        { docsRoot },
+      );
+    }
     const plan = rewriteInbound(graph, oldId, newId, {
       move: false,
       rewriteFrontmatterRefs: false,
@@ -171,7 +190,8 @@ export function runSupersede(options: SupersedeOptions): number {
 
   const report = buildReport(oldConcept, newConcept, sorted, { rewroteLinks, dryRun: parsed.dryRun });
   emit(reportRenderable(report), options.output, options.stdout);
-  advisories.flush({ color: options.output.color, stderr: options.stderr });
+  // Load advisories were already flushed right after loadBundle (LORE-82), not repeated here
+  // (flush is non-draining — a second call would re-print the same warnings).
   return EXIT_OK;
 }
 
