@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 18:52'
-updated_date: '2026-07-21 21:15'
+updated_date: '2026-07-21 21:20'
 labels:
   - backlog-campaign-followup
   - security
@@ -74,36 +74,51 @@ findSymlinkSegment (the same non-throwing per-segment lstatSync walk LORE-94 ext
 LORE-76/77's assertNoSymlinkInPath, reused here rather than re-derived) to refuse -- with a
 conflict LoreError naming the offending segment -- before the read ever happens. Scoped to the
 explicit --template CLI flag only (AC#4): resolveTemplate computes
-explicitTemplate = parsed.template !== undefined once (the same condition that already gates the
-existing assertTemplateNameConfined call) and threads it through as checkSymlink, so the
-profile-declared template fallback path is completely untouched by the new check, matching
-LORE-72's own precedent of scoping its confinement guard to the explicit flag and leaving the
-profile-declared path's separate trust boundary alone.
+explicitTemplate = parsed.template !== undefined once (loop-invariant, computed before the
+candidate loop, same condition that already gates assertTemplateNameConfined) and threads it
+through as checkSymlink, so the profile-declared template fallback path is completely untouched,
+matching LORE-72's own precedent of scoping its confinement guard to the explicit flag.
 
-AC#1/AC#2/AC#5: 3 new regression tests in test/new.test.ts's new "--template refuses to read
-through a symlink (LORE-91)" describe block -- top-level symlinked template, nested-subdirectory
-symlinked template, and a symlinked ANCESTOR directory (not just the final file) -- each asserting
-a conflict error, no partial artifact at the computed docPath (AC#3), and no silent fallback to
-the built-in template.
+AC#1/AC#2/AC#5: 3 regression tests -- top-level symlinked template, nested-subdirectory symlinked
+template, and a symlinked ANCESTOR directory (not just the final file, a genuinely distinct case:
+the symlinked-ancestor test's final resolved path doesn't even exist under the real target, so a
+weaker final-lstat-only implementation would have produced not_found instead of conflict --
+verified this distinction is load-bearing, not just documentation flavor).
 
-AC#4: two companion tests -- a normal (non-symlinked) profile-declared template still resolves
-correctly (baseline), and a SYMLINKED profile-declared template is deliberately still followed
-unchanged (documents the intentional, already-recorded scope boundary explicitly, not just an
-absence of a test for it).
+AC#4: two companion tests -- a normal profile-declared template still resolves correctly
+(baseline), and a SYMLINKED profile-declared template is deliberately still followed unchanged
+(documents the intentional, already-recorded scope boundary explicitly).
 
-Live-CLI verification (per this campaign's standing discipline): .repro-scratch/lore91-verify/,
-driving the real `lore new` CLI via `bun run src/cli.ts` against a real scratch bundle with an
-actual symlinked .lore/templates/evil.md. git stash comparison on src/commands/new.ts: PRE-FIX,
-the identical command exited 0 and wrote the generated concept with the linked-to file's exact
-"SUPER SECRET DATA" content as its body -- reproducing the filing task's own live repro exactly.
-POST-FIX, the same command refuses at exit 5 (conflict) naming the symlink, and no output file is
-ever created.
+Live-CLI verification: .repro-scratch/lore91-verify/, driving the real `lore new` CLI against a
+real scratch bundle with an actual symlinked .lore/templates/evil.md. git stash comparison on
+new.ts: PRE-FIX, the identical command exited 0 and wrote the generated concept with the linked-to
+file's exact "SUPER SECRET DATA" content as its body. POST-FIX, the same command refuses at exit 5
+naming the symlink, no output file ever created.
 
-Process note: branched late this session -- implemented the fix directly on `dev` before
-realizing the per-issue lifecycle's step 1 (branch) had been skipped. Caught before anything was
-committed; recovered via `git checkout -b feature/LORE-91` from the same HEAD, which carried the
-uncommitted working-tree changes over cleanly with no loss and no `dev` pollution (confirmed `dev`
-itself has no stray commits). No functional impact, but recorded so this doesn't recur.
+Independent review (general-purpose subagent, asked for complete findings in one response): no
+blocking findings. Independently traced the scoping mechanism (confirmed explicitTemplate is
+loop-invariant, no per-candidate branching gap); read findSymlinkSegment directly and confirmed it
+correctly walks every path segment including non-existent intermediate ones (graceful, no false
+positive); independently verified the ancestor-directory test is load-bearing, not redundant with
+the nested-file test, by reasoning through what a weaker final-lstat-only implementation would
+produce; ran its OWN live-CLI verification from this branch's source against fresh scratch bundles
+(top-level, nested, ancestor-symlink refusals; profile-declared-symlink pass-through), all matching
+this session's own results independently; confirmed the "conflict" error type is consistent with
+fswrite.ts's own assertNoSymlinkInPath (the identical write-path precedent) and with ioError's
+existing convention of folding ELOOP/EEXIST/ENOTDIR/EISDIR into one conflict category; confirmed
+readTemplateFile has exactly one call site so the new 4th parameter breaks nothing; confirmed no
+scope bleed from the still-To-Do sibling LORE-93. Two non-blocking notes, both judged acceptable:
+(a) no dedicated test for a symlink at the lower-cased-only candidate specifically (mechanism is
+structurally sound regardless, per source-level tracing -- macOS's case-insensitive filesystem
+makes a live differential check impractical here); (b) a check-then-act TOCTOU window between the
+lstatSync walk and the plain readFileSync, confirmed to be PARITY with this codebase's own existing
+read-path precedent elsewhere (core/bundle.ts's walkMarkdown, commands/replace.ts both have the
+identical shape), not a new or weaker gap, out of scope for this task.
+
+Process note: branched late this session -- implemented the fix directly on `dev` before realizing
+the per-issue lifecycle's step 1 (branch) had been skipped. Caught before anything was committed;
+recovered via `git checkout -b feature/LORE-91` from the same HEAD, which carried the uncommitted
+working-tree changes over cleanly with no loss and no `dev` pollution. No functional impact.
 
 Verified: bun test -> 1693 pass/0 fail (up from 1688); bun run typecheck clean; bun run lint clean
 on all changed files -- 4 pre-existing infos remain in unrelated files, untouched.
