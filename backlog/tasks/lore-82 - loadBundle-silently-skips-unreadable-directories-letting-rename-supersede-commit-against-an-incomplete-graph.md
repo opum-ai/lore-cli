@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-07-21 08:38'
-updated_date: '2026-07-21 10:25'
+updated_date: '2026-07-21 10:33'
 labels:
   - codex-review
   - correctness
@@ -58,6 +58,10 @@ End-to-end verified with the real CLI (not just unit tests): a scratch bundle wi
 Added 2 tests (rename.test.ts required by AC2, supersede.test.ts added for parity per AC1 naming both commands). Confirmed via git stash (isolating just the command file with bundle.ts/errors.ts still fixed) both fail pre-fix with 'expected a LoreError, but run<Command> returned' (a genuine silent-success reproduction, not an unrelated failure) and pass post-fix.
 
 Full bun test: 1514 pass/0 fail (up from 1512). bun run typecheck clean. bun run lint: 1 pre-existing info in supersede.test.ts (unrelated line, already present in the LORE-83 session's lint baseline), none in changed lines.
+
+Independent adversarial review (general-purpose subagent) confirmed correctness on every point: WarningCollector.has(kind) is exact-match with no false positive/negative risk (grepped all 18 .add() call sites in src/, none broken by the optional param); rename.ts's unconditional check is genuinely the only safe choice (no way to prove an unreadable subtree can't hide a link, correctly also fires under --dry-run since a misleading preview is still wrong); supersede.ts's --rewrite-links gating is sound (traced wireNew/resolveRef/assertNotAlreadySuperseded -- the non-rewrite-links path only touches the two already-validated principals, live-verified plain supersede succeeds even with the directory still locked while --rewrite-links on the same setup correctly refuses); the early-flush move is not just cosmetic but a genuine secondary bug fix -- previously ANY throw between loadBundle and the function's end (not just this new check) silently dropped load advisories entirely, since the only flush was after the final emit. Independently re-verified the git-stash-equivalent isolation and the live CLI end-to-end reproduction, all matching claims exactly.
+
+One minor, non-blocking nitpick applied: WarningCollector's class docstring (untouched by my original diff) still claimed validate/check inspect count/list for gating, which the reviewer confirmed (again) is stale/inaccurate -- doubly so now that the real gating mechanism is the new has(kind). Fixed since I was already editing this class. Re-verified after the fix: bun test 1514/1514 pass, typecheck clean, lint clean.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
