@@ -425,13 +425,20 @@ function destRangeForLink(body: string, node: Nodes): ByteRange | null {
  * "title"`), located structurally from the node's offsets. Unlike an inline link, the raw form
  * has no enclosing `()`, so the destination ends at whitespace (a following title) or the node's
  * end — not at a closing paren. `null` if the structure cannot be located.
+ *
+ * Unlike {@link destRangeForLink}, a `definition` node carries no parsed `children` to derive the
+ * label's end from structurally (mdast gives only its decoded `identifier`/`label` strings, whose
+ * lengths are not byte-equal to the raw source once escapes are involved — the same reason
+ * `node.url` can't drive a text search, see the module header) — so the closing `]` is located by
+ * an escape-aware raw scan ({@link findLabelClose}) instead of a plain `indexOf`, which would
+ * match an escaped `\]` *inside* the label rather than the real closing bracket (LORE-87).
  */
 function destRangeForDefinition(body: string, node: Nodes): ByteRange | null {
   const span = positionOf(node);
   if (span === null) {
     return null;
   }
-  const rb = body.indexOf("]", span.start); // the label's closing `]`
+  const rb = findLabelClose(body, span.start + 1, span.end); // the label's closing `]`
   if (rb === -1) {
     return null;
   }
@@ -440,6 +447,27 @@ function destRangeForDefinition(body: string, node: Nodes): ByteRange | null {
     return null;
   }
   return scanDestination(body, colon + 1, span.end, false);
+}
+
+/**
+ * The index of a reference definition's label-closing `]`, scanned from just after the opening
+ * `[` (`from`) and honoring `\` escapes — the same escape convention {@link scanDestination}
+ * applies to a destination, so `\]` inside the label is skipped rather than mistaken for the real
+ * closing bracket (LORE-87). `-1` if none is found before `end`.
+ */
+function findLabelClose(body: string, from: number, end: number): number {
+  let j = from;
+  while (j < end) {
+    if (body[j] === "\\") {
+      j += 2;
+      continue;
+    }
+    if (body[j] === "]") {
+      return j;
+    }
+    j++;
+  }
+  return -1;
 }
 
 /**
