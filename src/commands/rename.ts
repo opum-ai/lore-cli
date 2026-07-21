@@ -129,8 +129,11 @@ export async function runRename(options: RenameOptions): Promise<number> {
       id: oldId,
     });
   }
-  // A concept may not be renamed onto a reserved, machine-owned file name (index.md/log.md): those
-  // are regenerated wholesale, so the relocated content would be silently clobbered.
+  // A concept may not be renamed FROM or ONTO a reserved, machine-owned file name (index.md/log.md):
+  // those are regenerated wholesale, so renaming away from one would silently delete it (LORE-81) and
+  // renaming onto one would silently clobber the relocated content. Mirrors supersede.ts's identical
+  // two-sided check.
+  assertNotReservedStem(oldId, "rename from");
   assertNotReservedStem(newId, "rename to");
 
   const docsRoot = join(options.root, DOCS_DIR);

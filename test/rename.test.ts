@@ -580,6 +580,18 @@ describe("lore rename — errors and arg parsing", () => {
     expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true); // nothing moved
   });
 
+  test("renaming FROM the reserved root index is a usage error, docs/index.md survives (LORE-81)", async () => {
+    // Without the oldId-side check, this used to succeed: the regenerated index listing got written
+    // to the source path, then immediately overwritten by the moved content, then the source was
+    // renamed away — leaving docs/index.md missing entirely after the command completed.
+    writeDoc("index.md", "---\ntype: Reference\n---\nRoot index.\n");
+    const err = await expectError(["index", "reference/new-name"]);
+    expect(err.type).toBe("usage");
+    expect(err.input).toEqual({ id: "index" });
+    expect(existsSync(join(root, "docs/index.md"))).toBe(true); // never deleted
+    expect(existsSync(join(root, "docs/reference/new-name.md"))).toBe(false); // nothing written
+  });
+
   test("renaming onto an existing non-concept .md file is a conflict, not a clobber (#3)", async () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
     const nonConcept = "Just prose, no frontmatter — not a concept.\n";
