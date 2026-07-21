@@ -149,10 +149,108 @@ const YAML_DUMP_OPTIONS: DumpOptions = Object.freeze({
  * gray-matter options carrying the frozen parse engine. Only `parse` is used:
  * serialization composes the fence itself (see the module header), so gray-matter's
  * `stringify` is never invoked.
+ *
+ * `assertBoundedYamlExpansion` runs on every parsed document before gray-matter ever
+ * sees it — the single choke point every read path (`parseConcept`/`tryParseConcept`/
+ * `tryReadFrontmatter`, all via {@link splitFrontmatter}) shares, so a malicious file is
+ * rejected the moment it is first read, before any downstream consumer (validation, the
+ * bundle graph, a later `serializeConcept` dump) can ever touch the dangerous object
+ * (LORE-85). A thrown error here is caught and path-annotated by `splitFrontmatter`'s
+ * existing `matter(...)` try/catch, exactly like a plain YAML syntax error already is —
+ * no separate error-wrapping needed.
  */
 const MATTER_OPTIONS = {
-  engines: { yaml: { parse: (input: string): object => yaml.load(input, YAML_LOAD_OPTIONS) as object } },
+  engines: {
+    yaml: {
+      parse: (input: string): object => {
+        const parsed = yaml.load(input, YAML_LOAD_OPTIONS) as object;
+        assertBoundedYamlExpansion(parsed);
+        return parsed;
+      },
+    },
+  },
 } as const;
+
+/**
+ * The budget {@link assertBoundedYamlExpansion} enforces, in "expanded units" (roughly
+ * chars — see its own doc for the exact accounting). Frontmatter is metadata, never
+ * prose (the body carries that) — real frontmatter is at most a few KB even for a
+ * concept with a long tags/list field, so this leaves generous headroom (hundreds of
+ * KB) while still aborting a doubling-anchor attack within a couple dozen levels,
+ * almost instantly (LORE-85).
+ */
+const MAX_EXPANDED_YAML_UNITS = 100_000;
+
+/**
+ * Reject a parsed YAML document whose anchor/alias structure would expand to an
+ * unreasonable size or contains a cycle, **before** anything downstream (validation,
+ * canonicalization, a later `noRefs: true` {@link YAML_DUMP_OPTIONS} dump) ever walks it
+ * naively and pays the cost.
+ *
+ * js-yaml's `load` never expands an alias (`*a`) — it points the SAME JS object
+ * reference back at its anchor (`&a`), so parsing a doubling-anchor chain is always
+ * fast regardless of depth (LORE-85's own repro: an 18-level, ~400-byte chain loads in
+ * ~1ms). The danger is downstream: any code that walks the result treating shared
+ * references as if they were distinct subtrees — exactly what `yaml.dump({noRefs:
+ * true})` does, by design, so a re-serialize never emits `&`/`*` — re-visits each
+ * shared subtree once per incoming reference, and a chain of `n` doubling levels
+ * revisits the base subtree `2^n` times: ~400 bytes of source YAML can demand
+ * megabytes-to-gigabytes of work.
+ *
+ * This walker performs the SAME kind of naive, reference-blind traversal (deliberately
+ * NOT memoizing by object identity — a memoized walk would undercount the very
+ * blowup a real `dump` would suffer), but tracks a running total and aborts the
+ * instant it crosses {@link MAX_EXPANDED_YAML_UNITS} — since the total at least
+ * doubles every level in an exponential attack, the walk itself never runs longer
+ * than a small multiple of the budget, however deep the malicious chain goes.
+ *
+ * A **cycle** (an anchor referencing one of its own ancestors — legal under js-yaml's
+ * `JSON_SCHEMA`, confirmed empirically: `a: &a {b: *a}` loads with `doc.a === doc.a.b`)
+ * is a distinct, unbounded hazard a size budget alone cannot catch (an unmemoized walk
+ * of a true cycle never terminates) — detected via a path-scoped ancestor set (added on
+ * entering a node, removed on leaving it), which correctly tells a real cycle apart
+ * from harmless DAG-style sharing (the same anchor reused by two unrelated siblings,
+ * an ordinary and safe YAML pattern that must not be rejected).
+ *
+ * @throws Error when the budget is exceeded or a cycle is found; caught and
+ *   path-annotated by {@link splitFrontmatter}'s surrounding `matter(...)` try/catch.
+ */
+function assertBoundedYamlExpansion(value: unknown): void {
+  const ancestors = new Set<object>();
+  let units = 0;
+
+  const walk = (node: unknown): void => {
+    if (typeof node === "string") {
+      units += node.length;
+    } else if (typeof node !== "object" || node === null) {
+      units += 1; // number, boolean, null — a fixed small cost
+    } else {
+      if (ancestors.has(node)) {
+        throw new Error("frontmatter contains a cyclic YAML anchor (an anchor referencing one of its own ancestors)");
+      }
+      ancestors.add(node);
+      if (Array.isArray(node)) {
+        units += 1;
+        for (const item of node) {
+          walk(item);
+        }
+      } else {
+        units += 1;
+        for (const [key, val] of Object.entries(node)) {
+          units += key.length;
+          walk(val);
+        }
+      }
+      ancestors.delete(node);
+    }
+    if (units > MAX_EXPANDED_YAML_UNITS) {
+      throw new Error(
+        `frontmatter's YAML anchors/aliases would expand to over ${MAX_EXPANDED_YAML_UNITS.toLocaleString()} characters when fully resolved — refusing rather than risk unbounded memory/CPU use`,
+      );
+    }
+  };
+  walk(value);
+}
 
 /** Options for {@link parseConcept}. */
 export interface ParseConceptOptions {
