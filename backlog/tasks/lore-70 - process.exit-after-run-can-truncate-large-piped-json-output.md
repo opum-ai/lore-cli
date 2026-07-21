@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-07-21 08:38'
-updated_date: '2026-07-21 09:02'
+updated_date: '2026-07-21 09:10'
 labels:
   - codex-review
   - correctness
@@ -47,6 +47,8 @@ Root cause: cli.ts's import.meta.main block called process.exit(code) immediatel
 Fix: replaced both process.exit(code) and process.exit(EXIT_UNCAUGHT) with process.exitCode = <code> (no forced exit), letting the runtime drain pending I/O naturally before terminating. Verified this does not risk a hang: check --external's fetch() and the backlog adapter's Bun.spawn both already complete/await fully before run() resolves (proc.exited is awaited in adapters/backlog.ts), and an isolated fetch()-then-exit repro confirmed Bun's fetch leaves no dangling handle.
 
 Verification: bun -e 'process.stdout.write("x".repeat(200000)); process.exit(0)' | wc -c confirmed the pre-fix truncation point is exactly 65536 bytes. Built a synthetic docs/ bundle (1 concept with a 300000-char body, 80 concepts with 4000-char title/summary fields) and ran graph/query/context --json for real through sh -c "bun cli.ts ... | cat" (a downstream-process pipe, not Bun.spawnSync's own direct stdout:"pipe" capture, which reads too eagerly to reproduce the race). Confirmed via git stash: pre-fix code truncated all three commands to exactly 65536 bytes with invalid JSON, exit 0; post-fix code produced full valid JSON (326323 / 646421 / 300240 bytes respectively). Added test/cli-exit-flush.test.ts covering all three commands with this exact harness — 3/3 pass post-fix, 3/3 fail pre-fix (confirmed by temporarily reverting cli.ts). Full suite: bun test -> 1505 pass/0 fail (was 1500 before this task). bun run typecheck clean. bun run lint: 4 pre-existing infos in unrelated files, none in src/cli.ts or the new test file.
+
+Independent adversarial review (general-purpose subagent) found the fix correct with no hang risk (traced every async path reachable from run(): check --external's AbortSignal.timeout-based fetch, the backlog adapter's fully-awaited Bun.spawn, no timers/servers/stdin reads anywhere in src/) and no other truncation-risk process.exit() sites in src/ (bin/lore.cjs's 4 process.exit() calls are architecturally similar but out of scope/low-risk: its main exit follows a synchronous spawnSync with stdio:inherit, so the child writes directly to the real fd). One moderate finding: the new test/cli-exit-flush.test.ts lacked a Windows platform guard despite spawning sh/cat and depending on POSIX pipe-buffer semantics that don't apply to Windows named pipes, while CI's matrix includes windows-latest and this repo already has precedent (bin-lore.test.ts) for skipIf(win32) on POSIX-flavored subprocess tests. Fixed: added describe.skipIf(process.platform === "win32") matching that precedent. Re-verified post-fix: bun test test/cli-exit-flush.test.ts -> 3/3 pass, full bun test -> 1505/1505, typecheck clean, lint clean on the changed file.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

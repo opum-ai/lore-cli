@@ -14,6 +14,10 @@
  * built that way would pass even against the unfixed code. Verified against pre-fix `cli.ts`
  * (`git stash`): all three commands below truncated at exactly 65536 bytes with invalid JSON
  * and exit code 0 — the exact silent-corruption shape AC1 describes.
+ *
+ * POSIX-only, same as `bin-lore.test.ts`'s subprocess suite: `sh -c "... | cat"` needs a real
+ * POSIX shell/pipe, and the bug itself is a POSIX pipe-buffer/async-write race with no
+ * equivalent Windows named-pipe behavior to pin down.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -71,47 +75,50 @@ function runCliThroughPipe(args: readonly string[]): { code: number; stdout: str
   return { code: proc.exitCode, stdout: proc.stdout.toString("utf8") };
 }
 
-describe("cli entrypoint — large piped --json output is not truncated (LORE-70)", () => {
-  test("graph --json: whole-bundle export", () => {
-    const { code, stdout } = runCliThroughPipe(["graph", "--json"]);
-    expect(code).toBe(0);
-    expect(stdout.length).toBeGreaterThan(PIPE_BUFFER_BYTES);
+describe.skipIf(process.platform === "win32")(
+  "cli entrypoint — large piped --json output is not truncated (LORE-70)",
+  () => {
+    test("graph --json: whole-bundle export", () => {
+      const { code, stdout } = runCliThroughPipe(["graph", "--json"]);
+      expect(code).toBe(0);
+      expect(stdout.length).toBeGreaterThan(PIPE_BUFFER_BYTES);
 
-    const envelope = JSON.parse(stdout) as { kind: string; data: { nodes: { id: string; title?: string }[] } };
-    expect(envelope.kind).toBe("graph.export");
-    expect(envelope.data.nodes).toHaveLength(SPOKE_COUNT + 1);
-    const spokeNode = envelope.data.nodes.find((n) => n.id === "spokes/spoke-000");
-    expect(spokeNode?.title).toHaveLength(SPOKE_FIELD_LEN);
-  });
+      const envelope = JSON.parse(stdout) as { kind: string; data: { nodes: { id: string; title?: string }[] } };
+      expect(envelope.kind).toBe("graph.export");
+      expect(envelope.data.nodes).toHaveLength(SPOKE_COUNT + 1);
+      const spokeNode = envelope.data.nodes.find((n) => n.id === "spokes/spoke-000");
+      expect(spokeNode?.title).toHaveLength(SPOKE_FIELD_LEN);
+    });
 
-  test("query --json: matches exceeding the limit", () => {
-    const { code, stdout } = runCliThroughPipe(["query", "--tag", "bulk", "--limit", "1000", "--json"]);
-    expect(code).toBe(0);
-    expect(stdout.length).toBeGreaterThan(PIPE_BUFFER_BYTES);
+    test("query --json: matches exceeding the limit", () => {
+      const { code, stdout } = runCliThroughPipe(["query", "--tag", "bulk", "--limit", "1000", "--json"]);
+      expect(code).toBe(0);
+      expect(stdout.length).toBeGreaterThan(PIPE_BUFFER_BYTES);
 
-    const envelope = JSON.parse(stdout) as {
-      kind: string;
-      data: { hits: { id: string; title?: string; snippet?: string }[]; total: number; shown: number };
-    };
-    expect(envelope.kind).toBe("query.results");
-    expect(envelope.data.total).toBe(SPOKE_COUNT);
-    expect(envelope.data.shown).toBe(SPOKE_COUNT);
-    expect(envelope.data.hits).toHaveLength(SPOKE_COUNT);
-    const hit = envelope.data.hits.find((h) => h.id === "spokes/spoke-079");
-    expect(hit?.title).toHaveLength(SPOKE_FIELD_LEN);
-    expect(hit?.snippet).toHaveLength(SPOKE_FIELD_LEN);
-  });
+      const envelope = JSON.parse(stdout) as {
+        kind: string;
+        data: { hits: { id: string; title?: string; snippet?: string }[]; total: number; shown: number };
+      };
+      expect(envelope.kind).toBe("query.results");
+      expect(envelope.data.total).toBe(SPOKE_COUNT);
+      expect(envelope.data.shown).toBe(SPOKE_COUNT);
+      expect(envelope.data.hits).toHaveLength(SPOKE_COUNT);
+      const hit = envelope.data.hits.find((h) => h.id === "spokes/spoke-079");
+      expect(hit?.title).toHaveLength(SPOKE_FIELD_LEN);
+      expect(hit?.snippet).toHaveLength(SPOKE_FIELD_LEN);
+    });
 
-  test("context --json: a target whose full body alone exceeds the pipe buffer", () => {
-    const { code, stdout } = runCliThroughPipe(["context", "hub", "--depth", "0", "--json"]);
-    expect(code).toBe(0);
-    expect(stdout.length).toBeGreaterThan(HUB_BODY_LEN);
+    test("context --json: a target whose full body alone exceeds the pipe buffer", () => {
+      const { code, stdout } = runCliThroughPipe(["context", "hub", "--depth", "0", "--json"]);
+      expect(code).toBe(0);
+      expect(stdout.length).toBeGreaterThan(HUB_BODY_LEN);
 
-    const envelope = JSON.parse(stdout) as { kind: string; data: { target: { body: string } } };
-    expect(envelope.kind).toBe("context.export");
-    // The body is exactly `HUB_BODY_LEN` "h"s plus a trailing newline stripped/kept verbatim by
-    // the parser — assert the full run of "h"s survived intact rather than pinning the exact
-    // trailing-newline handling, which is a concept-body parsing concern, not this bug's.
-    expect(envelope.data.target.body.startsWith("h".repeat(HUB_BODY_LEN))).toBe(true);
-  });
-});
+      const envelope = JSON.parse(stdout) as { kind: string; data: { target: { body: string } } };
+      expect(envelope.kind).toBe("context.export");
+      // The body is exactly `HUB_BODY_LEN` "h"s plus a trailing newline stripped/kept verbatim by
+      // the parser — assert the full run of "h"s survived intact rather than pinning the exact
+      // trailing-newline handling, which is a concept-body parsing concern, not this bug's.
+      expect(envelope.data.target.body.startsWith("h".repeat(HUB_BODY_LEN))).toBe(true);
+    });
+  },
+);
