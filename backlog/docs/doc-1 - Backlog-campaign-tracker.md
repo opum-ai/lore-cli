@@ -3,7 +3,7 @@ id: doc-1
 title: Backlog campaign tracker
 type: other
 created_date: '2026-07-19 23:15'
-updated_date: '2026-07-21 10:27'
+updated_date: '2026-07-21 10:44'
 ---
 # Backlog campaign tracker
 
@@ -12,7 +12,7 @@ lifecycle → advance cursor → append session log → write handover.
 
 ## Cursor
 
-**Next issue: LORE-85** — queue order confirmed by the user on 2026-07-21
+**Next issue: LORE-69** — queue order confirmed by the user on 2026-07-21
 ("Use this order (Recommended)": independent fixes first, the interrelated
 rename-destination-traversal cluster (LORE-80→79→78→81) last, since LORE-80's
 shared-engine containment fix is what the other three build on). Do not re-ask
@@ -30,19 +30,18 @@ CI runs post-merge on dev.
 
 | # | Issue | Type | One-line note |
 | --- | --- | --- | --- |
-| 1 | LORE-85 | bug | Frontmatter YAML anchors can be crafted to exhaust memory on serialize (anchor bomb) |
-| 2 | LORE-69 | bug | commitBacklogFiles backlog/ scope guard does not block `..` pathspec traversal |
-| 3 | LORE-72 | bug | lore new --template allows path traversal to read arbitrary files |
-| 4 | LORE-71 | bug | lore check --external is vulnerable to SSRF via unrestricted fetch() |
-| 5 | LORE-76 | bug | lore scaffold --force writes follow symlinks, escaping the repo root |
-| 6 | LORE-77 | bug | lore init follows pre-existing symlinks at scaffold paths, escaping the repo root |
-| 7 | LORE-73 | bug | lore replace can corrupt lore:tasks managed blocks (MANAGED_MARKERS gap) |
-| 8 | LORE-74 | bug | lore orphans report has no output cap, contradicting the documented truncation contract |
-| 9 | LORE-75 | bug | lore schema export --out can irreversibly delete unrelated files outside its own directory |
-| 10 | LORE-80 | bug | rewriteInbound shared engine does not confine fromId/toId to docs/ bundle root |
-| 11 | LORE-79 | bug | lore rename destination path is not confined to docs/ root at the command layer |
-| 12 | LORE-78 | bug | lore rename destination id is not validated for `..` traversal at the argument-parsing layer |
-| 13 | LORE-81 | bug | lore rename index <new> (renaming FROM the reserved root index) is not rejected |
+| 1 | LORE-69 | bug | commitBacklogFiles backlog/ scope guard does not block `..` pathspec traversal |
+| 2 | LORE-72 | bug | lore new --template allows path traversal to read arbitrary files |
+| 3 | LORE-71 | bug | lore check --external is vulnerable to SSRF via unrestricted fetch() |
+| 4 | LORE-76 | bug | lore scaffold --force writes follow symlinks, escaping the repo root |
+| 5 | LORE-77 | bug | lore init follows pre-existing symlinks at scaffold paths, escaping the repo root |
+| 6 | LORE-73 | bug | lore replace can corrupt lore:tasks managed blocks (MANAGED_MARKERS gap) |
+| 7 | LORE-74 | bug | lore orphans report has no output cap, contradicting the documented truncation contract |
+| 8 | LORE-75 | bug | lore schema export --out can irreversibly delete unrelated files outside its own directory |
+| 9 | LORE-80 | bug | rewriteInbound shared engine does not confine fromId/toId to docs/ bundle root |
+| 10 | LORE-79 | bug | lore rename destination path is not confined to docs/ root at the command layer |
+| 11 | LORE-78 | bug | lore rename destination id is not validated for `..` traversal at the argument-parsing layer |
+| 12 | LORE-81 | bug | lore rename index <new> (renaming FROM the reserved root index) is not rejected |
 
 ## Resolved
 
@@ -62,6 +61,7 @@ CI runs post-merge on dev.
 | 14 | LORE-82 | Done, 2026-07-21, session 14 | Root cause: `walkFiles` (`src/core/bundle.ts`) already warns (via `WarningCollector`, purely advisory free text) when a nested directory is unreadable during the walk — tolerant by design, one restricted folder doesn't abort the whole bundle load. `rename.ts`/`supersede.ts` never inspected that warning and committed writes unconditionally, so a concept hidden inside the skipped directory that links to the renamed/superseded concept never got its link rewritten, while the command still reported success. Confirmed via grep that no existing command-layer code inspects `WarningCollector.list()`/`.count` for gating decisions — the class's own docstring claims `validate`/`check` do, but they don't; a stale claim, not real precedent — so string-matching the warning text would have been the fragile, unprecedented choice. Fix: extended `WarningCollector` (`src/errors.ts`) with an optional machine-readable `kind` tag on `add()` and a new `has(kind)` query method (fully backward compatible — every existing `.add(message)` call site untouched); exported `UNREADABLE_DIRECTORY_WARNING` from `bundle.ts` and tagged the existing warning with it. `rename.ts` now unconditionally refuses to commit when that warning fired (its inbound-link rewrite always needs a complete graph); `supersede.ts` refuses only when `--rewrite-links` is passed (without it, supersede only edits the two principals' own frontmatter, no dependency on the rest of the bundle) — verified this distinction against `supersede.ts`'s own module docstring before implementing, so the check isn't an unjustified restriction on a scenario that can't happen. Both commands previously flushed load advisories only at the very END of the function (after already committing) — moved the flush earlier (mirroring `context.ts`/`graph.ts`'s established pattern) so the specific "skipping unreadable directory X: reason" line is visible alongside the new error, and removed the now-redundant late flush (non-draining — leaving both would double-print on the success path). Added a test per command (rename required by AC2, supersede added for parity per AC1 naming both) reproducing the exact scenario; confirmed via `git stash` (isolating just the command file, keeping `bundle.ts`/`errors.ts` fixed) both fail pre-fix with "expected a LoreError, but run\<Command\> returned" and pass post-fix. End-to-end verified with the real CLI: pre-fix `lore rename` moved a file at exit 0 while permanently orphaning an inbound link inside the unreadable directory; post-fix it refuses at exit 6 with the specific warning visible and nothing written. Full `bun test` → 1514 pass/0 fail (up from 1512); `bun run typecheck` clean; lint clean (one pre-existing info elsewhere, unrelated to changed lines). |
 | 12 | LORE-83 | Done, 2026-07-21, session 12 | Root cause: `src/core/profile.ts`'s `parseFieldSpec`, `parseTypes`, and `parseItems` each read a fixed set of known attribute keys off a parsed TOML/JSON table by name with no check for keys OUTSIDE that set — a typo like `require = true` (meant `required`) was simply never read, silently leaving `required` at its `false` default; the profile loaded clean and every concept validated clean despite missing the field. Re-verified the task's scoping claim against `parseProfile`'s own docstring: the documented forward-compatible unknown-key tolerance is explicitly scoped to top-level/`[profile]` keys only (accurate) — the fix deliberately leaves that untouched. Fix: added `rejectUnknownKeys(table, allowed, where, source)`, mirroring this file's existing `asTable`/`asString`/`asBoolean`/`asEnum` validator style, wired into all 3 named functions against each table's fixed legal-key vocabulary (field spec: required/kind/enum/items/default; a `[[types]]` table: name/fields/sections/template; an items table: kind/enum) — consistent with every other structural check in this file (all fail-loud `LoreError('validation', ...)`; this module has no warning mechanism at all). Added 3 tests, one per call site, matching the existing `expectValidation` harness; confirmed via `git stash` that all 3 fixtures genuinely silently SUCCEED pre-fix (the call returns instead of throwing, matching the task's own "silently defaults... instead of erroring" framing) and correctly throw post-fix naming the exact unknown key. End-to-end verified with the real CLI: a scratch `.lore/profile.toml` with `base.fields.owner = { require = true }` (the task's exact typo example) now makes `lore new` fail at exit 6 with a message naming the bad key and a hint listing the correct legal keys. Full `bun test` → 1510 pass/0 fail (up from 1507, all pre-existing profile tests — default profile, ECK 17-type profile — unaffected); `bun run typecheck` clean; lint clean. |
 | 13 | LORE-84 | Done, 2026-07-21, session 13 | Root cause: `LoadBundleOptions` (`src/core/bundle.ts`) had no `profile` field, and `loadBundle`'s one `tryParseConcept` call never passed one, so every concept always validated against `defaultProfile()` regardless of a project's `.lore/profile.toml` — `concept.ts`'s `parseConcept`/`tryParseConcept` already accepted an optional profile; the gap was purely `loadBundle` never forwarding it. Fix: added `profile?: Profile` to `LoadBundleOptions`, forwarded to `tryParseConcept`; updated all 9 `loadBundle` callers (`context`/`supersede`/`graph`/`rename`/`tasks`/`query`/`orphans`/`sync`/`link`) to load and forward the project's profile, reusing an already-loaded profile where `sync.ts`/`supersede.ts`/`link.ts` already had one rather than double-loading. `sync.ts` needed the most care: its profile load was deliberately conditional/late to preserve a documented LORE-27 precedence contract (a malformed `backlog/config.yml` surfacing before a malformed `.lore/profile.toml`) — since `loadBundle` runs unconditionally and reconciliation-eligibility is computed FROM the loaded graph, profile now loads unconditionally before `loadBundle`, necessarily flipping that one precedence case (profile now wins) — a structurally necessary consequence, not an implementation choice; updated the one `test/sync.test.ts` precedence test that pinned the old ordering, with a comment explaining why. `link.ts`'s `writeTasksIfChanged` had a second, separate `loadProfile()` call site — threaded the same already-loaded profile through instead of double-loading. Added 2 tests to `test/bundle.test.ts` directly proving the fix (the SAME doc missing a custom-required field is silently tolerated without a profile, rejected with one) plus end-to-end verification through the real CLI (`lore query`/`lore sync` against a scratch project with a custom profile). **Flagged, deliberately left unfixed**: `core/rewrite.ts`'s `rewriteInbound` (used by `lore rename`/`supersede --rewrite-links`) has its own internal `serializeConcept` calls with no profile parameter at all — a separate, adjacent gap outside `loadBundle`'s own AC scope; documented in the task notes as a follow-up candidate (see Not-queued section) since no live user turn was available this session to confirm filing a new task the way LORE-68 was in a prior live session. Independent review sharpened this finding: the concrete risk is a custom profile REDEFINING an existing default type name (e.g. `Story`) with different required fields — post-fix, `lore rename` on such a concept can pass `loadBundle`'s initial (now-correct) validation but then throw inside `buildPostRenameGraph`'s re-parse (still default-profile), a genuinely new mid-operation failure mode this fix introduces, not present before (previously the whole chain was uniformly wrong but self-consistent). Also flagged by review: `lore check` validates via its own separate `parseConcept`/`walkFiles` path, not `loadBundle` — architecturally distinct, also never honors a custom profile, its own follow-up candidate. Full `bun test` → 1512 pass/0 fail (up from 1510); `bun run typecheck` clean; lint clean on all 12 changed files. |
+| 15 | LORE-85 | Done, 2026-07-21, session 15 | Root cause: js-yaml's `load()` never expands an alias at parse time (it points the SAME JS object reference back at its anchor, so parsing a doubling-anchor chain is always fast regardless of depth — confirmed empirically: an 18-level ~400-byte chain loads in ~1ms) — but `yaml.dump({noRefs: true})` (`YAML_DUMP_OPTIONS`, deliberately configured so a re-serialize never emits `&`/`*` anchors) walks the shared-reference graph naively, expanding the same chain to ~20MB in ~286ms; a few more levels reaches OOM or an uncaught `RangeError`. Confirmed via js-yaml 4.1.0's actual `LoadOptions` type that it has no built-in alias-count/depth limit (`maxAliasCount` is a feature of the DIFFERENT `eemeli/yaml` library, verified this distinction directly). Also confirmed js-yaml's `JSON_SCHEMA` permits a genuinely CYCLIC anchor to load (`a: &a {b: *a}` loads with `doc.a === doc.a.b`) — a second, distinct hazard (an unmemoized walk of a true cycle never terminates); `yaml.dump({noRefs:true})` on a real cyclic object throws `RangeError: Maximum call stack size exceeded` rather than hanging, matching the task's own framing. Confirmed the attack surface is broader than write paths: `bundle.ts`'s `tokenEstimate()` (used by read-only `lore graph`/`context`) also calls `serializeConcept` internally. Fix: added `assertBoundedYamlExpansion` (`src/core/concept.ts`) — a deliberately non-memoized, reference-blind walk mirroring what a real `dump` would do, but tracking a running "expanded units" total and aborting the instant it crosses a 100,000-unit budget (generous for real frontmatter, which is metadata not prose), plus path-scoped cycle detection (an ancestor `Set`, added on entering a node/removed on leaving) that correctly distinguishes a true cycle from harmless DAG-style anchor reuse (the same anchor referenced by two unrelated siblings, an ordinary safe pattern). Wired into the SINGLE gray-matter YAML parse hook every read path shares (`parseConcept`/`tryParseConcept`/`tryReadFrontmatter`), so a malicious file is rejected the moment it's first read — before validation, the bundle graph, token estimation, or a later dump can ever touch the dangerous object; a thrown error is automatically caught and path-annotated by `splitFrontmatter`'s existing `matter(...)` try/catch, exactly like a plain YAML syntax error already is. Added 4 tests (the task's 18-level repro; a 40-level chain proving the walk's own cost stays bounded regardless of attack depth; a cyclic-anchor case; a harmless-DAG-reuse negative control); confirmed via `git stash` all 3 malicious-payload tests fail pre-fix (parse alone doesn't trigger expansion — only downstream dump does — so `parseConcept` silently "succeeds" pre-fix, confirming the vulnerability is real and deferred) and pass post-fix. End-to-end verified with the real CLI: post-fix `lore query` on a malicious file exits 6 in 58ms; pre-fix `lore graph`'s CPU/timing signature (0.36s user, 133% CPU) confirms the expensive dump actually executed internally even though the tiny JSON output doesn't show it (only a computed token count is exposed, not the huge intermediate string). Full `bun test` → 1518 pass/0 fail (up from 1514); `bun run typecheck` clean; lint clean. |
 
 ## Not queued — needs a human / blocked
 
@@ -353,6 +353,31 @@ CI runs post-merge on dev.
   principal concepts' own frontmatter). Gating supersede unconditionally
   would have refused a perfectly safe operation for a scenario that can't
   actually occur (LORE-82, 2026-07-21).
+- For a resource-exhaustion (DoS-shaped) bug, verify the fix at the CHEAPEST
+  possible enforcement point, not every downstream call site — a
+  YAML anchor-bomb's real hazard is in ANY naive (non-memoized) walk of the
+  parsed object, which could be `serializeConcept`'s dump, `tokenEstimate`,
+  or any future consumer; enforcing the bound once at the shared PARSE
+  choke point (before a dangerous object can exist anywhere in the system)
+  is both simpler and strictly safer than patching every current and future
+  serialize call site individually (LORE-85, 2026-07-21).
+- Before implementing a size/depth limit against a third-party parser
+  library, check that library's ACTUAL installed version's options/types
+  directly (e.g. `node_modules/@types/<pkg>/index.d.ts`) rather than
+  assuming a feature exists by name-recognition from a similar library —
+  `maxAliasCount` is real, but on `eemeli/yaml`, not the `js-yaml` this
+  project actually pins; confusing the two would have wasted an
+  implementation attempt on an option that silently doesn't exist here
+  (LORE-85, 2026-07-21).
+- When bounding an exponential-blowup attack with an early-exit budget
+  check, the check must be a genuinely NAIVE (non-memoized) walk that
+  mirrors the real vulnerable operation's own traversal shape — a
+  memoized/DAG-aware walk would UNDERCOUNT the very blowup being guarded
+  against and let the attack through. Distinguish this deliberately from
+  true CYCLES (a node referencing its own ancestor, which IS legal under
+  js-yaml's `JSON_SCHEMA`) via separate, path-scoped ancestor tracking — a
+  budget check alone doesn't terminate on a real cycle since an unmemoized
+  walk of a cycle never returns (LORE-85, 2026-07-21).
 
 ## Session log
 
@@ -488,3 +513,13 @@ CI runs post-merge on dev.
   "it's a mutation command" assumption — `supersede`'s check is
   `--rewrite-links`-gated, `rename`'s is unconditional). Cursor advanced
   to LORE-85.
+- 2026-07-21 — session 15: resolved LORE-85 (see Resolved table). Branch
+  `feature/LORE-85` off `dev @ 01b09e0`. First security-labeled task this
+  campaign (YAML anchor-bomb DoS). Three new campaign conventions recorded
+  (enforce a resource-exhaustion bound at the cheapest/shared choke point,
+  not every downstream call site; verify a third-party library's ACTUAL
+  installed option surface directly rather than assuming a feature exists
+  by name-recognition from a similar library; an exponential-blowup budget
+  check must be a genuinely non-memoized walk, with SEPARATE path-scoped
+  cycle detection since a budget alone doesn't terminate on a true cycle).
+  Cursor advanced to LORE-69.
