@@ -597,6 +597,16 @@ describe("lore rename — errors and arg parsing", () => {
     expect(existsSync(join(root, "docs/reference/orders.md"))).toBe(true); // nothing moved
   });
 
+  test("a `..`-segment newId is rejected as usage from argument parsing alone, with no oldId ever written (LORE-78)", async () => {
+    // No doc is written at all — oldId ("reference/ghost") can never resolve. A usage error (not
+    // not_found) proves the destination-id check needs no bundle load or oldId lookup to fire: it
+    // is satisfied by parseRenameArgs (LORE-78) from the raw argument tokens alone, independent of
+    // LORE-79's own defense-in-depth coverage (the traversal newId test above).
+    const err = await expectError(["reference/ghost", "sub/../../pwned"]);
+    expect(err.type).toBe("usage");
+    expect(err.input).toEqual({ id: "sub/../../pwned" });
+  });
+
   test("an absolute newId is rejected as usage (LORE-79)", async () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
     expect((await expectError(["reference/orders", "/etc/pwned"])).type).toBe("usage");

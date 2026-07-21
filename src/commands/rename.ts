@@ -26,11 +26,11 @@
  * (it previews the file-level plan only, not a Backlog-side preview).
  *
  * A bad flag, a missing/duplicate id, or a `newId` that escapes the `docs/` bundle root (checked
- * here, before any bundle load, as defense-in-depth alongside `rewriteInbound`'s own identical
- * engine-layer guard — LORE-79/LORE-80) is a `usage` error (exit 2); an absent `oldId` a
- * `not_found` (exit 3, from the engine); an already-taken `newId` a `conflict` (exit 5); a failed
- * back-ref move is `drift` (exit 6, same as `link`/`unlink`) — all funnel through the router's one
- * error seam like every command.
+ * at argument-parsing time, before any bundle load, as defense-in-depth alongside
+ * `rewriteInbound`'s own identical engine-layer guard — LORE-78/LORE-79/LORE-80) is a `usage`
+ * error (exit 2); an absent `oldId` a `not_found` (exit 3, from the engine); an already-taken
+ * `newId` a `conflict` (exit 5); a failed back-ref move is `drift` (exit 6, same as
+ * `link`/`unlink`) — all funnel through the router's one error seam like every command.
  */
 
 import { existsSync } from "node:fs";
@@ -122,7 +122,6 @@ export interface RenameReport {
  */
 export async function runRename(options: RenameOptions): Promise<number> {
   const parsed = parseRenameArgs(options.args);
-  assertDestinationConfined(parsed.newId);
   const oldId = idFromPath(parsed.oldId);
   const newId = idFromPath(parsed.newId);
   if (oldId === newId) {
@@ -406,15 +405,17 @@ function buildPostRenameGraph(graph: BundleGraph, plan: RewritePlan): BundleGrap
 
 /**
  * Reject a `newId` that would resolve outside the `docs/` bundle root, confining the destination
- * at the COMMAND layer — before any bundle load or write — as defense-in-depth alongside
- * {@link rewriteInbound}'s own identical engine-layer guard (LORE-80), and with a clearer `usage`
- * error (exit 2) here versus its `validation` (exit 6), mirroring `new.ts`'s `resolveOutPath` in
- * spirit (fail fast at the command layer, don't rely on a downstream engine's own guard). The
- * algorithm itself mirrors LORE-80's `escapesRoot`/`assertConfinedToBundle`, not `resolveOutPath`:
- * `rename` operates on bundle-relative concept ids, not real filesystem paths, so there is no
- * `resolve`+`relative`-against-a-real-directory step that fits here — `escapesRoot` is reused
- * (not re-derived) from `core/rewrite.ts` for that reason, keeping the one security-sensitive
- * segment walk in a single place.
+ * at the ARGUMENT-PARSING layer — before {@link runRename}'s body runs at all — as defense-in-depth
+ * alongside {@link rewriteInbound}'s own identical engine-layer guard (LORE-80), and with a clearer
+ * `usage` error (exit 2) here versus its `validation` (exit 6), mirroring `new.ts`'s
+ * `resolveOutPath` in spirit (fail fast at the earliest possible point, don't rely on a downstream
+ * engine's own guard). The algorithm itself mirrors LORE-80's `escapesRoot`/`assertConfinedToBundle`,
+ * not `resolveOutPath`: `rename` operates on bundle-relative concept ids, not real filesystem paths,
+ * so there is no `resolve`+`relative`-against-a-real-directory step that fits here — `escapesRoot`
+ * is reused (not re-derived) from `core/rewrite.ts` for that reason, keeping the one
+ * security-sensitive segment walk in a single place. Called from {@link parseRenameArgs} itself
+ * (LORE-78) rather than by its caller, so a confined `newId` is `parseRenameArgs`'s own guarantee,
+ * not a follow-up check `runRename` happens to make (LORE-79's original call site).
  *
  * Checked on the RAW `newId` (before {@link idFromPath} runs), mirroring `assertConfinedToBundle`'s
  * own documented reasoning for checking pre-normalize.
@@ -432,7 +433,9 @@ function assertDestinationConfined(newId: string): void {
 /**
  * Parse `rename`'s tokens into its two positionals (`<oldId> <newId>`) and `--dry-run`, via the
  * shared {@link parseCommandArgs} tokenizer (mirrors `commands/supersede.ts`/`commands/link.ts`'s
- * parsers). Positional arity is validated here since it differs per command.
+ * parsers). Positional arity is validated here since it differs per command. `newId` is also
+ * confined to the `docs/` bundle root here (LORE-78) — before this function returns, so a
+ * traversal/absolute destination never reaches `runRename`'s body as a "parsed" value.
  */
 function parseRenameArgs(args: readonly string[]): RenameArgs {
   const { positionals, flags } = parseCommandArgs(args, "rename", ["dry-run"]);
@@ -451,6 +454,7 @@ function parseRenameArgs(args: readonly string[]): RenameArgs {
       "pass exactly an old and a new id; scope nothing else (rename rewrites the whole bundle)",
     );
   }
+  assertDestinationConfined(newId);
   return { oldId, newId, dryRun: flags.has("dry-run") };
 }
 
