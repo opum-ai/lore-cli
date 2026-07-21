@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-07-21 08:38'
-updated_date: '2026-07-21 09:19'
+updated_date: '2026-07-21 09:27'
 labels:
   - codex-review
   - error-handling
@@ -52,6 +52,12 @@ Updated 4 existing tests whose assertions pinned the OLD silent-collapse/truncat
 Traced all 3 call sites (indexes.ts's generateIndexes/render, replace.ts's managedRanges/applyReplacement, rename.ts's spliceEmptyListing) to confirm no swallowing: none wrap the call in try/catch, so a thrown LoreError propagates cleanly to each command's existing try/catch -> reportError seam (same mechanism replace.ts's compileReplacer usage errors and managed-block.ts's validation errors already use). Confirmed no partial-write risk: sync.ts's writes only happen after generateIndexes fully returns; replace.ts's Phase 1 reads+rewrites every target before Phase 2 writes anything.
 
 End-to-end verification with the real CLI (not just unit tests): built a scratch bundle with docs/index.md carrying two <!-- lore:index:begin/end --> pairs and real hand-authored prose between them, ran 'lore sync --json' -> exit 6, error_type=validation, message names the exact duplicate count (2 begin, 2 end), hint tells the user exactly what to fix; verified the file was left completely byte-identical afterward (no partial write, prose fully preserved on disk since nothing was written at all). Full bun test: 1506 pass/0 fail (up from 1505). bun run typecheck clean. Lint clean on changed files (src/core/indexes.ts, test/indexes.test.ts, test/replace.test.ts).
+
+Independent adversarial review (general-purpose subagent) found the fix correct with no bugs: traced every begin/end count combination in locateManagedBlock (confirmed no off-by-one, crossed-marker check correctly repurposes the old truncation-detection arithmetic), traced all 3 call sites for partial-write risk (none — writes only happen after the whole regenerate/rewrite step returns cleanly in both sync.ts and rename.ts), independently re-reproduced the end-to-end CLI verification from scratch (own lore init + lore new + hand-corrupted duplicate markers, confirmed exit 6/validation/exact counts/byte-identical file via SHA-256, plus independently verified the truncated-begin case and the lore replace call site too), and reviewed test quality (sound, not vacuous, crossed-marker case genuinely exercised).
+
+Two minor, non-blocking scope-discipline gaps found and fixed: (1) src/core/replace.ts's module docstring and managedRanges' docstring still described the OLD 'first-begin -> last-end ... truncated-to-EOF' arithmetic as current fact, and didn't mention managedRanges can now throw a validation LoreError -- updated both to describe the new fail-loud contract and added a @throws tag. (2) CHANGELOG.md wasn't updated -- checked the actual precedent rather than assuming: LORE-68 (the immediately preceding src/ bugfix in this same third-campaign lineage) and LORE-70 (this session's earlier merged fix) also did NOT add CHANGELOG entries, only the older LORE-58/59/60 fixes did (pre-campaign). Adding one for LORE-86 alone would be inconsistent with the campaign's actual recent practice (the tracker doc, not CHANGELOG.md, has been the record of truth for Codex-review-sourced fixes) -- skipped deliberately, not an oversight.
+
+Re-verified after the docstring fixes: bun test 1506/1506 pass, bun run typecheck clean, lint clean on src/core/replace.ts.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
