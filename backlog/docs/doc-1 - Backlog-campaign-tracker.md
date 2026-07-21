@@ -3,7 +3,7 @@ id: doc-1
 title: Backlog campaign tracker
 type: other
 created_date: '2026-07-19 23:15'
-updated_date: '2026-07-21 17:34'
+updated_date: '2026-07-21 17:52'
 ---
 # Backlog campaign tracker
 
@@ -12,14 +12,14 @@ lifecycle → advance cursor → append session log → write handover.
 
 ## Cursor
 
-**Next issue: LORE-81** — queue order confirmed by the user on 2026-07-21
-("Use this order (Recommended)": independent fixes first, the interrelated
-rename-destination-traversal cluster (LORE-80→79→78→81) last). LORE-80, LORE-79,
-and LORE-78 (the shared-engine, command-layer, and argument-parsing-layer
-confinements, respectively) are now all Done — see Resolved. LORE-81 is the
-last item in the queue. Do not re-ask before taking the next item.
+**Queue exhausted (confirmed 2026-07-21, session 27)** — LORE-81 (the last
+queue item) is now Done; see Resolved. No next issue. Per the skill's own
+restore-mode instructions: the campaign is complete. A human should triage
+the Not-queued section below (LORE-42/43/44/45 plus several follow-up
+candidates surfaced across this campaign's own reviews) before running
+`/backlog-handover init` for a fresh queue.
 
-**Merge gate: self-merge (skill default)** — this queue runs under the
+**Merge gate: self-merge (skill default)** — this queue ran under the
 standard `backlog-handover` skill (`.claude/skills/backlog-handover/`), whose
 own convention is no separate PR-approval gate: the lifecycle's step-6 review
 (self or adversarial subagent) is the review; the PR that follows is an audit
@@ -29,9 +29,8 @@ CI runs post-merge on dev.
 
 ## Queue (confirmed order)
 
-| # | Issue | Type | One-line note |
-| --- | --- | --- | --- |
-| 1 | LORE-81 | bug | lore rename index <new> (renaming FROM the reserved root index) is not rejected |
+Empty — every confirmed queue item is now Done (see Resolved). No next
+cursor to invent; see the Cursor section above.
 
 ## Resolved
 
@@ -63,6 +62,7 @@ CI runs post-merge on dev.
 | 24 | LORE-80 | Done, 2026-07-21, session 24 | Root cause: `core/rewrite.ts`'s `rewriteInbound` (the shared engine behind both `lore rename` move mode and `lore supersede --rewrite-links`) called `idFromPath` on `fromId`/`toId` with zero containment check — `lore rename`'s `to` need not pre-exist (the exploitable path); `supersede`'s `to` must already name a real graph concept, already implicitly confined. Confirmed live pre-fix: `lore rename reference/orders ../pwned` against a scratch repo wrote `pwned.md`/`index.md` OUTSIDE `docs/` at the repo root, exit 0. **Round 1 fix** added `assertConfinedToBundle` checking the post-`idFromPath` value against `id === ".."`/`id.startsWith("../")`/`posix.isAbsolute`/`win32.isAbsolute` — passed a full test suite and live re-repro (exit 6), but **independent review found a real bypass**: a relative traversal spelled with backslashes (`..\pwned`) tripped NEITHER check — `posix.normalize` treats `\` as a literal character (not a separator), so `idFromPath` left it unchanged, and `win32.isAbsolute("..\\pwned")` is `false` (that string is relative, not absolute — the check only matches drive-letter/UNC/leading-separator absolute forms). Confirmed independently via a direct Node script (`posix.normalize`/`win32.isAbsolute`/`win32.join`, matching the reviewer's own trace exactly); since this project ships a compiled Windows binary and `commands/rename.ts` writes via the platform-native `path.join` (which treats `\` as a separator on Windows), this reproduced the identical escape class the task set out to close, just spelled with backslashes. **Round 2 fix**: `assertConfinedToBundle` now runs on the RAW `fromId`/`toId` (before `idFromPath`), and relative-escape detection uses a new separator-agnostic `escapesRoot()` — splits on either `/` or `\` and tracks directory depth — rather than relying on `posix.normalize`/`win32.isAbsolute`'s differing, incomplete semantics; absolute-path rejection (`posix.isAbsolute`/`win32.isAbsolute`) unchanged. 6 new tests in `test/rename.test.ts`'s "rewriteInbound — modes and validation" block (traversal toId, absolute toId, backslash toId, mixed-separator toId, traversal fromId, and a no-false-positive case for a real `..foo/bar`-style segment — mirrors `new.ts`'s `resolveOutPath`'s own documented care). Full `bun test` → 1650 pass/0 fail (up from 1644); `bun run typecheck` clean; `bunx biome check` on changed files: no issues. Live re-repro after round 2 (fresh scratch repo): the backslash traversal now exits 6 with no file written outside `docs/`; a legitimate rename still exits 0. **Independent adversarial review (general-purpose subagent)**: confirmed the fix's placement (runs before any graph lookup/write for both `rename.ts` move:true and `supersede.ts` move:false), no over-rejection of a real `..foo/bar`-style segment, NUL bytes don't bypass the string checks, `"validation"` → exit 6 with no collision with existing `not_found`/`conflict` paths, and the internal `idFromPath(posix.join(...))` call at rewrite.ts:370 (body-link resolution) only feeds substituted markdown text, never an fs write path — correctly out of scope; found and drove the one real (round-2-fixed) bypass above via its own confirmed Node-level trace, not speculation. One low-severity, self-identified (not reviewer-flagged) edge case noted, not fixed in-task: a Windows drive-relative id (e.g. `C:foo`, no separator after the colon) is neither `win32.isAbsolute` nor caught by `escapesRoot` — requires a compiled Windows binary invoked with its process cwd on a DIFFERENT drive than the repo, an obscure, narrow threat model distinct from the task's own traversal/absolute framing (see Not-queued). |
 | 25 | LORE-79 | Done, 2026-07-21, session 25 | Live pre-fix repro confirmed the task's own escape (`lore rename reference/orders ../../../../tmp/pwned`) is ALREADY closed by LORE-80's engine-layer `assertConfinedToBundle` (exits 6/validation, nothing written) — this task's AC still asks for command-layer confinement in `commands/rename.ts` itself, so implemented as defense-in-depth plus a clearer `usage` error (exit 2) before any bundle load, matching `new.ts`'s `resolveOutPath` in spirit. Exported `escapesRoot` from `core/rewrite.ts` (was module-private) and reused it in a new `assertDestinationConfined(newId)`, checked on the RAW `parsed.newId` (before `idFromPath`) — deliberately reusing LORE-80's own already-review-tested segment walk rather than re-deriving the same security-sensitive logic a second time. Called immediately after `parseRenameArgs`, zero IO on the reject path. 5 new tests in `test/rename.test.ts` (exact task repro, absolute, backslash-spelled, mixed-separator, and a `..foo/bar` non-regression check) mirroring LORE-80's own test set; 4 confirmed fix-differentiating via `git stash` (fail pre-fix with `validation` instead of `usage`). Live-CLI re-verified post-fix: the exact repro now exits 2 instead of falling through to the engine's exit 6; a legitimate rename still exits 0. Full `bun test` → 1655/1655 (up from 1650); `bun run typecheck` clean; `bun run lint` clean on changed files (4 pre-existing infos elsewhere, untouched). **Independent adversarial review: SHIP, no bypass found** — re-derived (not trusted) the fix-differentiating claim, live-verified additional forms (UNC, Windows absolute drive, a constructed `..\pwned/..` case proving the RAW-value-before-normalize check is load-bearing not decorative), confirmed `oldId` traversal is correctly left to the engine and out of this task's scope, independently reran the full verification suite. Flagged two non-blocking, pre-existing, out-of-scope findings — both recorded in Not-queued: a minor empty/self-cancelling-newId edge case, and a more significant live-confirmed symlink-based filesystem escape (a symlinked directory inside `docs/` lets `lore rename` write outside it) mirroring LORE-76/77's already-fixed vulnerability class, affecting both this command and `new.ts`. |
 | 26 | LORE-78 | Done, 2026-07-21, session 26 | Live pre-fix repro confirmed AC#1 (reject before command execution, clear usage error) was already substantively satisfied by LORE-79's `assertDestinationConfined` call in `runRename`'s body. AC#2 asks specifically for rejection "at argument-parsing time" and names the `args.ts`/`parseRenameArgs` layer — today the check ran in `runRename`, immediately after `parseRenameArgs` returned, not inside it. Relocated the `assertDestinationConfined(newId)` call into `parseRenameArgs` itself (right after the `newId` positional is extracted, before returning), removing the now-redundant separate call from `runRename` — a confined `newId` is now `parseRenameArgs`'s own guarantee, not a caller-side follow-up check, literally realizing the third (args-parsing) layer of the review's original three-layer framing (parse → command → engine). Updated the module docstring and `assertDestinationConfined`'s own docstring to credit LORE-78 alongside LORE-79/LORE-80. Added one new test in `test/rename.test.ts` labeled LORE-78 (a `..`-segment newId rejected as usage even when `oldId` is never written, proving the check needs nothing but the raw argument tokens) — confirmed no `parseXArgs` function is exported anywhere in this codebase for direct unit testing (checked all 15+ commands), so this stays a CLI-level integration test like every other parse-layer test in the project, consistent with the established convention rather than introducing a new export just for this task. Post-change live-CLI re-verification (fresh scratch bundle): traversal newId, absolute newId, and a nonexistent-oldId+traversal-newId combination all still fail with usage/exit 2; real repo git status clean apart from pre-existing `.repro-scratch/`/`docs/.obsidian/`. Full `bun test` → 1656/1656 (up from 1655); `bun run typecheck` clean; `bun run lint` 4 pre-existing infos, all in unrelated files (`managed-block.ts`/`managed-block.test.ts`/`supersede.test.ts`). |
+| 27 | LORE-81 | Done, 2026-07-21, session 27 | Last item in the queue; a different bug class than the LORE-80/79/78 rename-destination-traversal cluster (source-id reserved-stem safety, not destination-id traversal safety). Root cause: `assertNotReservedStem` was only called on `newId` in `runRename`, never on `oldId`, unlike `supersede.ts` which checks both. Renaming FROM `docs/index.md` (the bundle's reserved, frontmatter'd root index concept) was not rejected: the regenerated index listing got written to the source path, then immediately overwritten by the moved content, then the source renamed away, leaving `docs/index.md` missing entirely. Live-CLI-verified the repro first on a scratch bundle (this campaign's standing discipline) — confirmed `lore rename index some-new-name` exited 0 pre-fix with `docs/index.md` gone afterward. Fix: added `assertNotReservedStem(oldId, "rename from")` in `runRename`, mirroring `supersede.ts`'s existing two-sided call pattern exactly, placed before any bundle load/write. Added one regression test in `test/rename.test.ts` (AC#2) asserting the usage error and that `docs/index.md` survives untouched; confirmed a normal (non-reserved) rename still works. Full `bun test` → 1657/1657 pass (up from 1656); `bun run typecheck` clean; `bunx biome check` clean on changed files. **Independent adversarial review (general-purpose subagent, run after committing the fix+tests, per this campaign's established ordering discipline): verdict "solid fix, safe to merge"** — confirmed the check sits before any bundle load/write, ordering matches `supersede.ts` exactly, no regressions (81/81 rename tests pass), and the basename-based check correctly covers a subdirectory `index`/`log` stem as `oldId` too (same code path already proven from the `newId` side). Two non-blocking test-coverage suggestions noted (an explicit `oldId === "log"` case; a subdirectory `reference/index`-as-`oldId` case) — both exercise the identical `assertNotReservedStem`/basename path already covered from the `newId` side, so left as a human-triage follow-up rather than expanded in-task; no blocking findings. This is the LAST item in the confirmed queue — the queue is now empty. |
 
 ## Not queued — needs a human / blocked
 
@@ -1143,3 +1143,28 @@ CI runs post-merge on dev.
   LORE-79 (the empty/self-cancelling-newId edge case and the symlink-based
   filesystem escape) remain open, unchanged, still awaiting a human decision.
   Cursor advanced to LORE-81 — the last item in the queue.
+
+- 2026-07-21 — session 27: resolved LORE-81 (see Resolved table). Branch
+  `feature/LORE-81` off `dev @ a787133`. The last item in the confirmed
+  queue, and a different bug class than the LORE-80/79/78 rename-destination-
+  traversal cluster: source-id (`oldId`) reserved-stem safety, not
+  destination-id traversal safety. Live-CLI-verified the repro first, per
+  this campaign's standing discipline (paid off again — confirmed the bug was
+  still live, not incidentally closed by LORE-78/79/80's own changes, which
+  all touched `newId` handling only). `lore rename index some-new-name`
+  against a scratch bundle exited 0 pre-fix and left `docs/index.md` missing
+  entirely; post-fix it exits 2 (usage) with `docs/index.md` untouched. Fix
+  mirrors `supersede.ts`'s existing two-sided `assertNotReservedStem` call
+  exactly, reusing (not re-deriving) the already-exported, already-tested
+  helper from `commands/args.ts`. Ran the independent review only after
+  committing the fix and its tests, per this campaign's now well-established
+  ordering discipline (held cleanly across LORE-74/75/80/79/78/81 in a row).
+  Review: SHIP, no bypass found, no blocking findings — two non-blocking
+  test-coverage suggestions (an explicit `oldId === "log"` case; a
+  subdirectory `reference/index`-as-`oldId` case) recorded but left
+  unexpanded since both exercise a code path already proven from the `newId`
+  side. **Queue is now exhausted — campaign complete.** Cursor updated to
+  reflect no next issue; the Not-queued section's deferred items
+  (LORE-42/43/44/45) and follow-up candidates surfaced across this
+  campaign's 27 sessions await a human triage decision before
+  `/backlog-handover init` starts a fresh queue.
