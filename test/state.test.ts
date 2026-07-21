@@ -337,6 +337,27 @@ describe("commitBacklogFiles — capture + scope guard (fake GitSpawn)", () => {
     expect(spawn.calls).toHaveLength(0); // never reached git — the guard runs first
   });
 
+  test.each([
+    ["backlog/x\\..\\..\\outside.md", "the task's own live-verified repro"],
+    ["backlog/tasks\\..\\..\\..\\outside.md", "a deeper backslash-delimited climb"],
+  ])("regression (LORE-90): a backslash-delimited `..` traversal that textually starts with backlog/ is refused (%s: %s)", async (file) => {
+    // `posix.normalize` never treats `\` as a separator, so a payload like `backlog/x\..\..\outside.md`
+    // survives it as one opaque segment and still passes the `startsWith(BACKLOG_DIR)` check — must be
+    // caught by the separator-agnostic `escapesRoot` check instead, thrown as `drift` before any git
+    // call, not silently left to downstream git pathspec matching (which happens to no-op for this
+    // shape today, but that is not a guarantee this guard's own contract relies on).
+    const spawn = notNestedSpawn(ok(""));
+    let err: unknown;
+    try {
+      await commitBacklogFiles([file], opts(spawn), "msg");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(LoreError);
+    expect((err as LoreError).type).toBe("drift");
+    expect(spawn.calls).toHaveLength(0); // never reached git — the guard runs first
+  });
+
   test("a redundant `./` segment normalizes to the plain safe path and is accepted", async () => {
     const spawn = notNestedSpawn(ok(porcelainZ(entry(" M", "backlog/tasks/lore-1 - x.md"))), ok(""), ok(""));
     const result = await commitBacklogFiles(["backlog/./tasks/lore-1 - x.md"], opts(spawn), "msg");
