@@ -39,17 +39,20 @@ import { errnoCode, LoreError } from "../errors";
  * Refuse if any path segment from `root` down to (and including) `relPath` already exists as a
  * symlink — `lstatSync` per segment, never following. Standard `mkdirSync`/`writeFileSync` calls
  * always transparently resolve symlinks in the MIDDLE of a path (that's ordinary POSIX path
- * resolution, not something an `O_CREAT`/`O_EXCL`-style flag can disable), and an unforced overwrite
- * or a `--force` write can follow a symlink at the FINAL component too — so a symlinked ancestor
- * directory, or a symlinked final target, would otherwise let a write land outside the repo
- * entirely unnoticed. Shared by every write discipline this module owns: `writeAllOrRollback`'s
- * all-or-nothing scaffold writes (LORE-76) and `lore init`'s own never-clobber `ensureDir`/
- * `createIfAbsent` loop (LORE-77) both call this, rather than each re-deriving the same
- * `lstatSync`-per-segment walk. Mirrors this codebase's established READ-path convention
- * (`core/bundle.ts`, `commands/replace.ts`: explicit `lstatSync(...).isSymbolicLink()`, never a
- * stat-follows-symlinks helper) rather than inventing a new pattern. A path segment that does not
- * exist yet is fine — there is nothing to guard against until something is actually there to
- * redirect through.
+ * resolution, not something an `O_CREAT`/`O_EXCL`-style flag can disable) — no write discipline in
+ * this module was ever safe against a symlinked ANCESTOR directory on its own. (A symlinked FINAL
+ * component is a narrower story: `createIfAbsent`'s own `wx`+`lstat` check already refused that case
+ * for `lore init`'s never-clobber writes before this guard existed, and `writeAllOrRollback`'s
+ * `--force` overwrite branch follows a symlink at the final component too — this guard closes BOTH
+ * gaps uniformly, at every segment, rather than leaving each write discipline with its own partial,
+ * differently-shaped protection.) Shared by every write discipline this module owns:
+ * `writeAllOrRollback`'s all-or-nothing scaffold writes (LORE-76) and `lore init`'s own
+ * never-clobber `ensureDir`/`createIfAbsent` loop (LORE-77) both call this, rather than each
+ * re-deriving the same `lstatSync`-per-segment walk. Mirrors this codebase's established READ-path
+ * convention (`core/bundle.ts`, `commands/replace.ts`: explicit `lstatSync(...).isSymbolicLink()`,
+ * never a stat-follows-symlinks helper) rather than inventing a new pattern. A path segment that
+ * does not exist yet is fine — there is nothing to guard against until something is actually there
+ * to redirect through.
  */
 export function assertNoSymlinkInPath(root: string, relPath: string): void {
   let prefix = root;
