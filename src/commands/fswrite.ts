@@ -55,6 +55,25 @@ import { errnoCode, LoreError } from "../errors";
  * to redirect through.
  */
 export function assertNoSymlinkInPath(root: string, relPath: string): void {
+  const segment = findSymlinkSegment(root, relPath);
+  if (segment !== null) {
+    throw new LoreError(
+      "conflict",
+      `refusing to write ${relPath}: "${segment}" is a symlink, not a real directory or file`,
+      "lore does not write through a symlink (it may resolve outside the repo) — remove or replace it, then re-run",
+      { path: relPath, symlink: segment },
+    );
+  }
+}
+
+/**
+ * The same per-segment `lstatSync` walk {@link assertNoSymlinkInPath} throws on, exposed as a
+ * non-throwing query: the first path segment (from `root` down to `relPath`) that already exists as
+ * a symlink, or `null` if none does. Lets a caller that wants to silently treat a symlinked path as
+ * "not the directory I think it is" (rather than refuse the whole operation) reuse the identical
+ * walk instead of re-deriving it — see `commands/schema.ts`'s `isManagedSchemasDir`.
+ */
+export function findSymlinkSegment(root: string, relPath: string): string | null {
   let prefix = root;
   for (const segment of relPath.split("/")) {
     if (segment === "") {
@@ -68,14 +87,10 @@ export function assertNoSymlinkInPath(root: string, relPath: string): void {
       continue; // does not exist yet at this segment — nothing here to redirect through
     }
     if (stat.isSymbolicLink()) {
-      throw new LoreError(
-        "conflict",
-        `refusing to write ${relPath}: "${segment}" is a symlink, not a real directory or file`,
-        "lore does not write through a symlink (it may resolve outside the repo) — remove or replace it, then re-run",
-        { path: relPath, symlink: segment },
-      );
+      return segment;
     }
   }
+  return null;
 }
 
 /** `mkdir -p` for a scaffold directory, mapping a permission failure to a `denied` error. */

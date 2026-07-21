@@ -35,7 +35,7 @@ import { type CompiledType, loadProfile } from "../core/profile";
 import { canonicalType, emitSchemaFiles, SCHEMAS_DIR, type SchemaFile } from "../core/schema";
 import { EXIT_OK, LoreError, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { ensureDir, ioError, writeFileOverwriting } from "./fswrite";
+import { ensureDir, findSymlinkSegment, ioError, writeFileOverwriting } from "./fswrite";
 
 /** Options for {@link runSchema}; `root` and the stream are injectable for tests. */
 export interface SchemaOptions {
@@ -147,9 +147,17 @@ function confineOutDir(out: string, root: string): string {
  * directory (see {@link pruneOrphans}'s caller): any other `--out`, including the repo root itself
  * (`--out .`, which {@link confineOutDir} explicitly allows), may contain files lore didn't create and
  * must never be silently deleted.
+ *
+ * The lexical match alone is not enough: `resolve()` never dereferences symlinks, so a `.lore/schemas`
+ * that is itself a symlink (or sits under a symlinked `.lore`) would still compare equal while actually
+ * pointing somewhere lore doesn't own — {@link pruneOrphans} would then `rmSync` through it into
+ * whatever real directory is on the other end. Reuses {@link findSymlinkSegment}'s existing
+ * per-segment `lstatSync` walk (LORE-76/LORE-77's precedent guard, `commands/fswrite.ts`) rather than
+ * a fresh check, so a symlinked default directory is treated as unmanaged — pruning is skipped, the
+ * same as any other `--out` lore doesn't own.
  */
 function isManagedSchemasDir(absOutDir: string, root: string): boolean {
-  return absOutDir === resolve(root, SCHEMAS_DIR);
+  return absOutDir === resolve(root, SCHEMAS_DIR) && findSymlinkSegment(root, SCHEMAS_DIR) === null;
 }
 
 /**
