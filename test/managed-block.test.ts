@@ -246,10 +246,10 @@ describe("locateTaskBlock", () => {
   test("locates a well-formed block, span covers both markers", () => {
     const text = `intro\n\n${block("row")}\n\noutro`;
     const span = locateTaskBlock(text);
-    expect(span).not.toBeNull();
-    expect(text.slice((span as { start: number; end: number }).start, (span as { start: number; end: number }).end)).toBe(
-      block("row"),
-    );
+    if (span === null) {
+      throw new Error("expected a located span");
+    }
+    expect(text.slice(span.start, span.end)).toBe(block("row"));
   });
 
   test("a marker pair cited inside a fenced code example is not a real block (null, no throw)", () => {
@@ -268,9 +268,10 @@ describe("locateTaskBlock", () => {
   test("a doc with a real block AND a fenced citation elsewhere locates only the real block", () => {
     const text = `${block("row")}\n\nSee the format:\n\n\`\`\`markdown\n${block("example")}\n\`\`\`\n`;
     const span = locateTaskBlock(text);
-    expect(span).not.toBeNull();
-    const { start, end } = span as { start: number; end: number };
-    expect(text.slice(start, end)).toBe(block("row")); // the real, top-level block only
+    if (span === null) {
+      throw new Error("expected a located span");
+    }
+    expect(text.slice(span.start, span.end)).toBe(block("row")); // the real, top-level block only
   });
 
   test("three prose/fenced citations of the marker text (no real block) is null, not a 'duplicated' error", () => {
