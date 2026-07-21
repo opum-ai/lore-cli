@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 08:38'
-updated_date: '2026-07-21 14:00'
+updated_date: '2026-07-21 14:07'
 labels:
   - codex-review
   - api-design
@@ -74,6 +74,8 @@ Verification:
 - `bun run lint`: clean on all touched files (4 pre-existing infos remain in unrelated test/supersede.test.ts and test/managed-block.test.ts, untouched by this change).
 - `git stash` discipline: stashed orphans.ts + manifest.ts, confirmed the new/updated orphans.test.ts assertions fail against the pre-fix code (SyntaxError: DEFAULT_ORPHANS_LIMIT not exported, and pre-stash the LORE-51 test's old assertions would fail against capped output), then popped and re-ran green.
 - Real-bundle smoke test: `bun run src/cli.ts orphans` and `lore check` against this repo's own real docs/ tree — bundle loads cleanly (only pre-existing ADR summary-length warnings, unrelated), `lore check` reports 0 errors/0 warnings. The Backlog-snapshot leg itself couldn't be exercised against the real `backlog` binary on PATH (it's the stock v1.48.0, not the --json-capable fork this repo requires — a known, pre-existing environment gap, not caused by this change); that leg is covered instead by the fakeAdapter-based unit/integration tests (49/49 pass in orphans.test.ts), including a 700,000-row synthetic snapshot exercising both the default-cap and raised-past-total-limit paths.
+
+Independent adversarial review (general-purpose subagent, lifecycle step 6): re-verified cap/slice/truncation-field consistency at every boundary (limit==total, limit==1, zero results); confirmed --tasks-only/--docs-only omit all four of the excluded section's fields through the REAL --json envelope (wrote its own standalone repro, not just trusting the pure computeOrphans unit tests); confirmed the renderer header uses totals (not shown counts) and the footer derives correctly via output.ts's shared truncation()/renderTruncationLine(); diffed parseCount/readValue against query.ts's byte-for-byte and confirmed --limit/--limit=N/repeats/-- interact identically; confirmed the split LORE-51 test still proves both the new default-cap behavior and the original crash-safety guard (the 700k-row, --limit-past-total case still forces the full per-item render loop). Independently re-ran (not on my claims): bun test test/orphans.test.ts (49 pass), bun run typecheck (clean), bun run lint (exit 0, confirmed the 4 pre-existing infos are all in files this branch never touches). No blocking or non-blocking issues found.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
