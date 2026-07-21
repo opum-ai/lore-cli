@@ -370,9 +370,20 @@ function rejectCommandArgs(commandArgs: readonly string[], command: string): voi
 // `unlink`, `rename`, `sync`); it funnels its own async rejections through `reportError`, so `Promise.resolve(...).then` normally
 // receives a numeric exit code. The `.catch` is a last-ditch backstop (e.g. `reportError` itself
 // throwing) — `EXIT_UNCAUGHT` (1), the uncaught-fault code, not the validation gate's `6`.
+//
+// Setting `process.exitCode` rather than calling `process.exit()` is deliberate (LORE-70):
+// `emit`/`reportError`'s writes to `process.stdout`/`process.stderr` are async for a piped
+// destination, and `process.exit()` tears the process down without waiting for them to
+// drain — a large `--json` payload silently truncates at the pipe's internal buffer size
+// with a misleading exit code 0. Leaving the exit to the runtime lets pending writes (and
+// any other pending I/O) finish naturally before the process ends with the recorded code.
 if (import.meta.main) {
   Promise.resolve(run(process.argv)).then(
-    (code) => process.exit(code),
-    () => process.exit(EXIT_UNCAUGHT),
+    (code) => {
+      process.exitCode = code;
+    },
+    () => {
+      process.exitCode = EXIT_UNCAUGHT;
+    },
   );
 }
