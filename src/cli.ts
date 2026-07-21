@@ -17,7 +17,7 @@
 
 import type { BacklogAdapter } from "./adapters/backlog";
 import { runAgents } from "./commands/agents";
-import { type FetchLike, runCheck } from "./commands/check";
+import { type FetchLike, type ResolveHost, runCheck } from "./commands/check";
 import { runContext } from "./commands/context";
 import { runGraph } from "./commands/graph";
 import { renderTopLevelHelp, runHelp } from "./commands/help";
@@ -134,6 +134,8 @@ export interface RunContext {
   isTTY?: boolean;
   /** The fetch `check --external` uses for liveness; defaults to the global `fetch`. Injected so a caller (or a test) controls or stubs the network. */
   fetch?: FetchLike;
+  /** DNS resolution `check --external`'s SSRF guard uses (LORE-71); defaults to real `node:dns`. Injected so a caller (or a test) controls or stubs DNS. */
+  resolveHost?: ResolveHost;
   /** The Backlog adapter `link`/`unlink` use; defaults to the real `backlog` binary on PATH. Injected so a caller (or a test) touches no subprocess. */
   adapter?: BacklogAdapter;
 }
@@ -233,6 +235,7 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
         stdout: context.stdout,
         stderr: context.stderr,
         fetch: context.fetch,
+        resolveHost: context.resolveHost,
         adapter: context.adapter,
       });
     case "replace":

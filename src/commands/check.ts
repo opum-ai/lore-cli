@@ -26,7 +26,9 @@
  * even under `--strict`, ADR-0007) with its IO living here, never in pure `core/` (ADR-0014).
  */
 
+import { lookup as dnsLookup } from "node:dns/promises";
 import { statSync } from "node:fs";
+import { isIP } from "node:net";
 import { join, posix } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { toRefList, walkFiles } from "../core/bundle";
@@ -35,6 +37,7 @@ import {
   type CheckInputFile,
   type CheckReport,
   checkBundle,
+  classifyAddress,
   collectExternalLinks,
   type ExternalLink,
   reconcileDriftFindings,
@@ -55,8 +58,26 @@ import {
   type TaskResolution,
 } from "./reconcile-shared";
 
-/** A minimal fetch — the global `fetch` satisfies it, and tests inject a deterministic fake. */
-export type FetchLike = (url: string, init?: { signal?: AbortSignal }) => Promise<{ ok: boolean; status: number }>;
+/**
+ * A minimal fetch — the global `fetch` satisfies it, and tests inject a deterministic fake.
+ * `redirect` (when passed `"manual"`) asks the implementation NOT to auto-follow a 3xx; the
+ * response then carries `location` (the raw `Location` header, if any) so the caller — LORE-71's
+ * SSRF guard — can re-validate the redirect's destination before deciding whether to follow it
+ * itself. Both are optional so every pre-existing fake (which only ever returns `{ ok, status }`
+ * and never redirects) still satisfies the type unchanged.
+ */
+export type FetchLike = (
+  url: string,
+  init?: { signal?: AbortSignal; redirect?: "manual" },
+) => Promise<{ ok: boolean; status: number; location?: string | null }>;
+
+/**
+ * Resolves a hostname to its IP address(es) — the injectable DNS seam LORE-71's SSRF guard uses
+ * to classify a URL's REAL destination before fetching it (a hostname alone reveals nothing; an
+ * attacker-controlled DNS record is exactly what needs checking). Defaults to real `node:dns`;
+ * tests inject a fake so a "this hostname resolves to a blocked address" case needs no live DNS.
+ */
+export type ResolveHost = (hostname: string) => Promise<readonly string[]>;
 
 /** Options for {@link runCheck}; `root`, the streams, and `fetch` are injectable for tests. */
 export interface CheckOptions {
@@ -72,6 +93,8 @@ export interface CheckOptions {
   stderr?: Writer;
   /** The fetch used by `--external` liveness; defaults to the global `fetch`. Injected in tests so they touch no network. */
   fetch?: FetchLike;
+  /** DNS resolution for `--external` liveness's SSRF guard (LORE-71); defaults to real `node:dns`. Injected in tests so a blocked-hostname case needs no live DNS. */
+  resolveHost?: ResolveHost;
   /** The Backlog adapter for status/managed-block reconciliation; defaults to the real `backlog` binary on PATH. Only constructed when at least one discovered concept links a task. */
   adapter?: BacklogAdapter;
 }
@@ -172,7 +195,11 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
   // so serializing them would needlessly inflate `--external`'s wall-clock time on any bundle that
   // also reconciles.
   const worklist = bundles.flatMap((bundle) => prefixLinks(collectExternalLinks(bundle.files), bundle.label, multi));
-  const livenessPromise = probeLiveness(worklist, options.fetch ?? defaultFetch).then(
+  const livenessPromise = probeLiveness(
+    worklist,
+    options.fetch ?? defaultFetch,
+    options.resolveHost ?? defaultResolveHost,
+  ).then(
     (findings): LivenessResult => ({ ok: true, findings }),
     (err: unknown): LivenessResult => ({ ok: false, err }),
   );
@@ -688,9 +715,24 @@ function isDocName(name: string): boolean {
 const LIVENESS_TIMEOUT_MS = 5000;
 /** How many liveness probes run at once — bounded so a large bundle does not open a socket per URL. */
 const LIVENESS_CONCURRENCY = 8;
+/** Redirect hops a single URL may follow before the probe gives up — bounds a malicious/misconfigured redirect chain, mirroring browsers' own conservative caps. */
+const MAX_REDIRECTS = 10;
 
-/** The real network probe: the global `fetch`, narrowed to the {@link FetchLike} the prober needs. */
-const defaultFetch: FetchLike = (url, init) => fetch(url, init);
+/**
+ * The real network probe: the global `fetch`, always requesting manual redirect handling (never
+ * `"follow"`) so LORE-71's SSRF guard in {@link probeOne} sees — and re-validates — every hop
+ * itself, rather than letting `fetch()` silently chase a redirect to a blocked destination.
+ */
+const defaultFetch: FetchLike = async (url, init) => {
+  const response = await fetch(url, { signal: init?.signal, redirect: "manual" });
+  return { ok: response.ok, status: response.status, location: response.headers.get("location") };
+};
+
+/** The real DNS resolver: `node:dns`'s `lookup`, narrowed to the {@link ResolveHost} the SSRF guard needs (every address a hostname resolves to, not just the first). */
+const defaultResolveHost: ResolveHost = async (hostname) => {
+  const records = await dnsLookup(hostname, { all: true });
+  return records.map((record) => record.address);
+};
 
 /** Prefix each external link's `file` with its bundle label in multi-bundle mode, matching the gate findings. */
 function prefixLinks(links: ExternalLink[], label: string, multi: boolean): ExternalLink[] {
@@ -699,17 +741,22 @@ function prefixLinks(links: ExternalLink[], label: string, multi: boolean): Exte
 
 /**
  * Probe every external URL in the worklist for liveness and return one advisory `external-link`
- * warning per dead/unreachable occurrence (a live URL yields none). Each **distinct** URL is
- * fetched once (deduplicated), under a bounded concurrency and a per-request timeout, then the
- * result is fanned back out to every `(file, url)` that referenced it — so a URL linked from five
- * files is fetched once but reported five times. Pure-ish: all network goes through the injected
- * `fetchFn`, and a fetch rejection becomes a finding, never a throw.
+ * warning per dead/unreachable/blocked occurrence (a live, allowed URL yields none). Each
+ * **distinct** URL is probed once (deduplicated), under a bounded concurrency and a per-request
+ * timeout, then the result is fanned back out to every `(file, url)` that referenced it — so a
+ * URL linked from five files is probed once but reported five times. Pure-ish: all network goes
+ * through the injected `fetchFn`/`resolveHost`, and a probe rejection becomes a finding, never a
+ * throw.
  */
-async function probeLiveness(links: readonly ExternalLink[], fetchFn: FetchLike): Promise<CheckFinding[]> {
+async function probeLiveness(
+  links: readonly ExternalLink[],
+  fetchFn: FetchLike,
+  resolveHost: ResolveHost,
+): Promise<CheckFinding[]> {
   const uniqueUrls = [...new Set(links.map((link) => link.url))];
   const failureByUrl = new Map<string, string | null>(); // null = alive; string = the failure reason
   await mapWithConcurrency(uniqueUrls, LIVENESS_CONCURRENCY, async (url) => {
-    failureByUrl.set(url, await probeOne(url, fetchFn));
+    failureByUrl.set(url, await probeOne(url, fetchFn, resolveHost));
   });
   const findings: CheckFinding[] = [];
   for (const link of links) {
@@ -726,17 +773,82 @@ async function probeLiveness(links: readonly ExternalLink[], fetchFn: FetchLike)
   return findings;
 }
 
-/** Probe one URL: `null` when it answers `2xx`, else a short reason (a non-OK status, a timeout, or an unreachable host). */
-async function probeOne(url: string, fetchFn: FetchLike): Promise<string | null> {
+/**
+ * Whether `url`'s destination (its hostname, resolved to every IP address it answers to) is
+ * loopback/link-local/private/reserved (LORE-71's SSRF guard) — `null` when it's allowed. An
+ * unparseable URL or a non-`http(s)` scheme is treated as blocked too (belt-and-braces: the
+ * worklist only ever contains `http(s)` links per {@link collectExternalLinks}'s own filter, so
+ * this should never actually fire, but the guard must never assume its only caller is honest). A
+ * DNS-resolution failure is NOT blocked here — that's an ordinary liveness failure ({@link
+ * probeOne}'s own catch already reports "is unreachable"), not a security refusal, so it
+ * deliberately propagates rather than being swallowed into a false "blocked" verdict.
+ */
+async function blockedDestination(url: string, resolveHost: ResolveHost): Promise<string | null> {
+  let parsed: URL;
   try {
-    const response = await fetchFn(url, { signal: AbortSignal.timeout(LIVENESS_TIMEOUT_MS) });
-    return response.ok ? null : `is dead (HTTP ${response.status})`;
-  } catch (cause) {
-    if (cause instanceof Error && cause.name === "TimeoutError") {
-      return `did not respond within ${LIVENESS_TIMEOUT_MS}ms`;
-    }
-    return `is unreachable (${cause instanceof Error ? cause.message : String(cause)})`;
+    parsed = new URL(url);
+  } catch {
+    return "has an unparseable URL";
   }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return `uses a disallowed scheme "${parsed.protocol}"`;
+  }
+  // `URL#hostname` keeps an IPv6 literal's brackets (e.g. "[::1]") — `isIP`/`classifyAddress` need
+  // the bare address. A literal IP is classified DIRECTLY, never through `resolveHost`: it isn't a
+  // name to resolve, and deferring to `resolveHost` here would let an injected DNS fake that
+  // ignores its `hostname` argument (a reasonable "allow everything" test default) accidentally
+  // paper over a literal blocked-IP URL — the guard's correctness must not depend on `resolveHost`
+  // actually inspecting its input.
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
+  const addresses = isIP(hostname) !== 0 ? [hostname] : await resolveHost(hostname);
+  for (const address of addresses) {
+    const verdict = classifyAddress(address);
+    if (verdict.blocked) {
+      return `resolves to a blocked address (${address}, ${verdict.reason})`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Probe one URL: `null` when it (or the live end of a redirect chain starting from it) answers
+ * `2xx`, else a short reason (blocked, a non-OK status, a timeout, or an unreachable host).
+ *
+ * SSRF guard (LORE-71): EVERY hop — the original URL and each redirect target — is destination-
+ * checked via {@link blockedDestination} BEFORE `fetchFn` is ever called for it. `fetchFn` is
+ * always asked for manual redirect handling ({@link FetchLike}'s `redirect: "manual"`), so a 3xx
+ * response's `Location` is inspected and re-validated by THIS function rather than silently
+ * auto-followed by the underlying HTTP client (AC2) — a blocked redirect target stops the chain
+ * immediately, with no request ever issued for it (AC1/AC3). Bounded to {@link MAX_REDIRECTS}
+ * hops so a redirect loop can't hang the probe forever.
+ */
+async function probeOne(url: string, fetchFn: FetchLike, resolveHost: ResolveHost): Promise<string | null> {
+  let current = url;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    try {
+      // The destination check and the fetch share ONE try/catch: a DNS-resolution fault (a
+      // genuinely non-existent host, a resolver timeout) is an ordinary liveness failure, not a
+      // security refusal — it must land in the same "is unreachable" bucket a fetch fault would,
+      // never escape uncaught (which would silently drop this URL's finding — see LORE-71 notes).
+      const blocked = await blockedDestination(current, resolveHost);
+      if (blocked !== null) {
+        return `was not probed: ${blocked}`;
+      }
+      const response = await fetchFn(current, { signal: AbortSignal.timeout(LIVENESS_TIMEOUT_MS), redirect: "manual" });
+      if (response.status >= 300 && response.status < 400 && response.location) {
+        // Resolve a relative Location against the CURRENT url (redirects are commonly relative).
+        current = new URL(response.location, current).toString();
+        continue;
+      }
+      return response.ok ? null : `is dead (HTTP ${response.status})`;
+    } catch (cause) {
+      if (cause instanceof Error && cause.name === "TimeoutError") {
+        return `did not respond within ${LIVENESS_TIMEOUT_MS}ms`;
+      }
+      return `is unreachable (${cause instanceof Error ? cause.message : String(cause)})`;
+    }
+  }
+  return `exceeded ${MAX_REDIRECTS} redirects`;
 }
 
 /** Run `fn` over `items` with at most `limit` in flight at once — a tiny worker-pool over a shared cursor. */
