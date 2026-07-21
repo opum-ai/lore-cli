@@ -374,18 +374,27 @@ function resolveTemplate(parsed: NewArgs, type: string, root: string, profile: P
  * Reject a `--template` value that could escape `.lore/templates/` once spliced into a file
  * path — the same containment shape as {@link resolveOutPath}'s own guard (`resolve` + `relative`,
  * checked for a `..`-prefixed result or an absolute one), applied to the template NAME rather
- * than a full `--out` path. An absolute value is rejected unconditionally first, checked against
- * the host platform's own `isAbsolute` AND both `posix.isAbsolute`/`win32.isAbsolute` explicitly —
- * this ships as a compiled binary for BOTH platforms from the same source, and the host-bound
+ * than a full `--out` path (the `rel === ""` case `resolveOutPath` also checks does not apply
+ * here: the candidate is always `${name}.md`, which can never resolve to exactly `templatesRoot`
+ * itself). An absolute value is rejected unconditionally first, checked against the host
+ * platform's own `isAbsolute` AND both `posix.isAbsolute`/`win32.isAbsolute` explicitly — this
+ * ships as a compiled binary for BOTH platforms from the same source, and the host-bound
  * `isAbsolute` only matches the syntax of whichever platform happens to be running: a Windows
  * drive-letter path (`C:\...`) is inert on a POSIX host (backslash is just an ordinary filename
  * character there, so it can't actually escape `templatesRoot`) but genuinely absolute on the
  * win32 binary — checking `win32.isAbsolute` unconditionally makes the guard's safety invariant
  * "reject anything that looks absolute on any supported platform," not "safe as long as the host
  * happens to match the deployment platform" (LORE-69's cross-platform-normalize lesson, applied
- * here before an independent review had to find it). A `..`-segment escape is then caught by
- * resolving the candidate against the real templates directory and confirming the result still
- * lands inside it.
+ * here before an independent review had to find it).
+ *
+ * A `..`-segment escape is then caught by resolving the candidate against the real templates
+ * directory and confirming the result still lands inside it — this SECOND layer is what actually
+ * defends a drive-relative path to a DIFFERENT drive than the repo's own (e.g. `--template D:foo`
+ * from a `C:`-hosted repo, on a real win32 run): per Windows semantics that's legitimately not
+ * "absolute" (none of the three `isAbsolute` checks above catch it), but `relative()` between
+ * disjoint drives returns the target path unchanged, which still fails the containment check
+ * below — confirmed via `path.win32`. Neither layer is redundant; each catches cases the other
+ * doesn't.
  */
 function assertTemplateNameConfined(name: string, root: string): void {
   if (isAbsolute(name) || posix.isAbsolute(name) || win32.isAbsolute(name)) {
