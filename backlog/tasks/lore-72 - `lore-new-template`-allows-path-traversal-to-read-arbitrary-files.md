@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-07-21 08:38'
-updated_date: '2026-07-21 11:30'
+updated_date: '2026-07-21 11:44'
 labels:
   - codex-review
   - security
@@ -82,4 +82,48 @@ after actually reading — and pass post-fix; 1 legit-name non-regression test u
 
 Full bun test: 1534 pass / 0 fail (up from 1529 baseline). bun run typecheck clean. bunx biome
 check clean (one formatter-only fix applied).
+
+INDEPENDENT REVIEW: the direct fix (traversal/absolute --template rejection, ACs 1-3) has NO
+bypass found — every encoding tried against the real CLI (the task's own repro, absolute paths,
+Windows drive-letter paths, UNC paths, doubled slashes, ./../ variants, nested subdir-then-climb,
+empty/./..-alone) was correctly rejected; the "..custom" non-regression case correctly still
+passes. NUL-byte non-applicability and the win32/posix cross-platform absolute-path handling were
+both independently re-verified and confirmed to hold. Doc comment tweaked (not a functional
+change) per the review's one nuance: the resolve+relative containment layer, not just the
+win32.isAbsolute check, is what actually defends a drive-relative path to a DIFFERENT drive than
+the repo's own (e.g. --template D:foo from a C:-hosted repo) — confirmed via path.win32 simulation
+that win32.relative() between disjoint drives returns the target unchanged, still caught by the
+containment check. Verdict: ready to ship as scoped.
+
+REVIEW ALSO FOUND (explicitly recommended NOT to block this PR on, since both are outside this
+task's AC scope — documented here per campaign convention, not silently fixed or silently
+ignored):
+
+(a) SYMLINK GAP (the more significant finding): assertTemplateNameConfined is purely syntactic
+(resolve+relative), no lstatSync/realpath check. A symlink already planted inside .lore/templates/
+(e.g. .lore/templates/evil.md -> /outside/secret.md, committed into the repo by whoever controls
+its content) makes a completely innocuous-looking bare --template evil read straight through it —
+confirmed live against the real CLI, including a nested-subdirectory variant. This requires
+attacker control of REPO CONTENT (a malicious/cloned repo), not just the --template flag, so it's
+a narrower threat model than this task's own CLI-flag-only repro and outside its AC. But it is the
+SAME escape class the codebase already has an established, precedented guard for on READ paths —
+src/core/bundle.ts's walkMarkdown and src/commands/replace.ts both use lstatSync(...).isSymbolicLink()
+and explicitly skip/warn ("a symlink could resolve outside the bundle") — new.ts's readTemplateFile
+has no equivalent check. It is the READ-path counterpart to the still-open LORE-76/LORE-77 (which
+are specifically about scaffold/init's WRITE-path symlink-following, a different code path
+entirely, confirmed by reading both tasks) — NOT covered by either. See tracker's Not-queued
+section for the follow-up candidate.
+
+(b) PROFILE-DECLARED TEMPLATE (deliberately excluded, not a bug in this PR): assertTemplateNameConfined
+only runs on parsed.template (the explicit CLI flag), not `declared` (a .lore/profile.toml type's
+own `template` field) — by design, matching this task's AC wording ("A --template value..."). The
+review confirmed a profile.toml with template = "../../../outside_secret.md" is still a live,
+unguarded arbitrary-file-read primitive with NO --template flag needed at all. Repo config is a
+trusted input elsewhere in this codebase too (see profile.ts's own trust model), so this isn't a
+regression or a gap THIS task introduces — but it means "arbitrary file read via lore new" isn't
+fully closed as a class, only narrowed to the CLI flag. Noted for awareness, not filed separately
+(same trust-boundary reasoning as the rest of profile.toml's existing attack surface).
+
+Full bun test after the doc-comment fix: 1534 pass/0 fail (unchanged, no logic change). bun run
+typecheck clean. bunx biome check clean.
 <!-- SECTION:NOTES:END -->
