@@ -427,6 +427,19 @@ describe("rewriteInbound — modes and validation", () => {
     }
   });
 
+  test("rejects a self-cancelling fromId, applied symmetrically via the shared guard (LORE-95)", () => {
+    // assertConfinedToBundle checks both fromId and toId identically — confirms resolvesToRoot
+    // isn't wired to toId alone. A `not_found` here (the id just doesn't resolve to a real concept)
+    // would NOT prove this; the validation type specifically proves the confinement guard fired
+    // before any concept lookup happened.
+    try {
+      rewriteInbound(graph(), "sub/..", "reference/sales", { move: true });
+      throw new Error("expected a validation error");
+    } catch (err) {
+      expect((err as LoreError).type).toBe("validation");
+    }
+  });
+
   test("rejects an empty toId, which would otherwise silently resolve to the bundle root (LORE-95)", () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
     try {
