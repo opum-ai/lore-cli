@@ -34,7 +34,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
-import { type BundleGraph, buildGraph, loadBundle, toRefList } from "../core/bundle";
+import { type BundleGraph, buildGraph, loadBundle, toRefList, UNREADABLE_DIRECTORY_WARNING } from "../core/bundle";
 import { type Concept, idFromPath, parseConcept } from "../core/concept";
 import { generateIndexes, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END, locateManagedBlock } from "../core/indexes";
 import { loadProfile } from "../core/profile";
@@ -140,6 +140,22 @@ export async function runRename(options: RenameOptions): Promise<number> {
   // while leaving that internal round-trip on the default would risk a validation mismatch between
   // what wrote the bytes and what re-parses them, so both sides deliberately stay paired for now.
   const graph = loadBundle(docsRoot, { warnings: advisories, profile: loadProfile({ root: options.root }) });
+  // Flushed immediately (not at the end, as this command previously did) so a skipped-directory
+  // warning naming the exact path/reason survives on the fail-loud path below it feeds (LORE-82),
+  // mirroring how `context.ts`/`graph.ts` flush before a load-warning-explained not_found throw.
+  advisories.flush({ color: options.output.color, stderr: options.stderr });
+  // rewriteInbound can only repoint the inbound links it can SEE — a directory `loadBundle` had to
+  // skip (unreadable) may hide a concept that links to `oldId`, so committing this rewrite would
+  // silently report success while leaving that concept's link stale/broken. Refuse rather than
+  // guess: the graph is not the complete bundle, so no rewrite over it is safe to commit (LORE-82).
+  if (advisories.has(UNREADABLE_DIRECTORY_WARNING)) {
+    throw new LoreError(
+      "validation",
+      "the bundle graph is incomplete: an unreadable directory was skipped while loading it",
+      "fix filesystem permissions on the directory named in the warning above and retry — rename cannot safely rewrite inbound links without a complete view of the bundle",
+      { docsRoot },
+    );
+  }
 
   // Plan the move + inbound rewrite (throws not_found if oldId is absent / conflict if newId is a
   // concept), then regenerate the index hubs against the post-rename graph and merge them over the
@@ -202,11 +218,12 @@ export async function runRename(options: RenameOptions): Promise<number> {
   const backlogCommit = await commitBacklogFiles(editedTaskFiles, options, RENAME_COMMIT_MESSAGE);
 
   // commitBacklogFiles captures a commit failure into backlogCommit.error rather than throwing, so
-  // the report emit and the advisory flush below always run on the write path — a git failure no
-  // longer skips them (previously it threw here, dropping both the report and the load advisories).
+  // the report emit below always runs on the write path — a git failure no longer skips it
+  // (previously it threw here, dropping the report). Load advisories were already flushed right
+  // after loadBundle (LORE-82), not repeated here (flush is non-draining — a second call would
+  // re-print the same warnings).
   const report = buildReport(plan, writes, backRefs, backlogCommit, parsed.dryRun);
   emit(reportRenderable(report), options.output, options.stdout);
-  advisories.flush({ color: options.output.color, stderr: options.stderr });
   return backRefs.some((b) => b.backRef === "failed") || backlogCommit.error !== undefined ? EXIT_CODES.drift : EXIT_OK;
 }
 

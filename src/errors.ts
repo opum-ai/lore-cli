@@ -542,10 +542,25 @@ export function reportError(err: unknown, opts: { json: boolean; color?: boolean
  */
 export class WarningCollector {
   private readonly messages: string[] = [];
+  /** Machine-readable tags attached to warnings via {@link add}'s optional `kind`, for {@link has}. */
+  private readonly kinds = new Set<string>();
 
-  /** Record an advisory warning. */
-  add(message: string): void {
+  /**
+   * Record an advisory warning. `kind` is an optional machine-readable tag (distinct from the
+   * human-readable `message`) a caller can later test for with {@link has} — e.g. a bundle-load
+   * caller that must refuse to proceed on an incomplete graph, not just display it. Most callers
+   * only ever need the free-text `message`; `kind` is opt-in and does not change `list()`/`flush()`.
+   */
+  add(message: string, kind?: string): void {
     this.messages.push(message);
+    if (kind !== undefined) {
+      this.kinds.add(kind);
+    }
+  }
+
+  /** Whether any warning was recorded with the given machine-readable `kind` tag. */
+  has(kind: string): boolean {
+    return this.kinds.has(kind);
   }
 
   /** How many warnings have been collected. */

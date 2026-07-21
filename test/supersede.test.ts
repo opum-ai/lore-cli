@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/cli";
 import { runSupersede, type SupersedeReport } from "../src/commands/supersede";
+import { loadBundle } from "../src/core/bundle";
 import { parseConcept, serializeConcept } from "../src/core/concept";
 import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
@@ -152,6 +153,33 @@ describe("lore supersede — --rewrite-links (AC#2)", () => {
     expect(report.rewroteLinks).toBe(false);
     expect(readDoc("stories/use.md")).toContain("[the decision](../adr/0007-old.md)"); // untouched
     expect(report.files.map((f) => f.path)).not.toContain("docs/stories/use.md");
+  });
+
+  test("--rewrite-links refuses to commit when an unreadable nested directory left the bundle graph incomplete (LORE-82)", () => {
+    // A concept inside `locked/` links to the old concept — rewriteInbound can never see that
+    // inbound link once `locked/` is unreadable, so committing --rewrite-links would silently
+    // leave it stale/broken while still reporting success.
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
+    writeDoc("locked/linker.md", "---\ntype: Story\n---\nPer [the decision](../adr/0007-old.md).\n");
+    const locked = join(root, "docs", "locked");
+    try {
+      chmodSync(locked, 0o000);
+    } catch {
+      return; // chmod unavailable in this environment — skip
+    }
+    try {
+      if (loadBundle(join(root, "docs")).concepts.has("locked/linker")) {
+        return; // running as root ignores permissions — the refusal this test targets never applies
+      }
+      const err = expectError(["adr/0007-old", "adr/0012-new", "--rewrite-links"]);
+      expect(err.type).toBe("validation");
+      expect(err.message).toContain("incomplete");
+      // No partial write: the old concept was never wired to superseded (only committed after the check).
+      expect(readDoc("adr/0007-old.md")).not.toContain("status: superseded");
+    } finally {
+      chmodSync(locked, 0o755); // restore so afterEach cleanup can remove it
+    }
   });
 
   test("does NOT self-redirect the successor's own link to its predecessor (the overlap)", () => {
