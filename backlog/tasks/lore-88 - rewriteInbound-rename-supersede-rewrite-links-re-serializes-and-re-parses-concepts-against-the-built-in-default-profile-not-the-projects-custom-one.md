@@ -8,7 +8,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 18:52'
-updated_date: '2026-07-21 21:02'
+updated_date: '2026-07-21 21:09'
 labels:
   - backlog-campaign-followup
   - correctness
@@ -46,53 +46,52 @@ Root cause confirmed fresh against current dev HEAD before implementing (line nu
 filing task's citations for rewrite.ts:211 and rename.ts:398/401/supersede.ts:163-167 exactly;
 rewrite.ts:318 had drifted to 363, since LORE-95 added ~45 lines earlier in this same file):
 core/rewrite.ts's rewriteInbound had no profile parameter -- its rewriteConcept helper's
-serializeConcept(next) call (rewrite.ts:363) and the moved-but-unchanged fallback
-serializeConcept(concept) (rewrite.ts:211) both always validated against defaultProfile().
-commands/rename.ts's buildPostRenameGraph then re-parsed those same rewritten bytes via
-parseConcept(path, rewritten) with no profile either (rename.ts:398/401) -- the same default.
-commands/supersede.ts's --rewrite-links path called the identical rewriteInbound with no profile
-(supersede.ts:163-167). A pre-existing comment at rename.ts:141-146 explicitly documented this as
-a known, deliberately-deferred gap left by LORE-84.
+serializeConcept(next) call and the moved-but-unchanged fallback serializeConcept(concept) both
+always validated against defaultProfile(). commands/rename.ts's buildPostRenameGraph then
+re-parsed those same rewritten bytes via parseConcept(path, rewritten) with no profile either --
+the same default. commands/supersede.ts's --rewrite-links path called the identical rewriteInbound
+with no profile. A pre-existing comment at rename.ts:141-146 explicitly documented this as a
+known, deliberately-deferred gap left by LORE-84.
 
-Fix: added an optional `profile?: Profile` field to RewriteInboundOptions (core/rewrite.ts),
-threaded into BOTH internal serializeConcept calls via a new profile parameter on the private
-rewriteConcept helper -- passed through undefined-safe (serializeConcept's own `options.profile ??
-defaultProfile()` fallback handles the unset case, mirroring how core/bundle.ts's loadBundle
-already threads options.profile without eagerly resolving a default itself).
+Fix: added an optional profile field to RewriteInboundOptions (core/rewrite.ts), threaded into
+BOTH internal serializeConcept calls via a new profile parameter on the private rewriteConcept
+helper -- passed through undefined-safe. commands/rename.ts: hoisted the previously-inline
+loadProfile call into a named const profile variable, then threaded that SAME value into
+rewriteInbound's new profile option, into a new profile parameter on mergeIndexWrites (where
+buildPostRenameGraph's call site actually lives, not runRename itself), and into
+buildPostRenameGraph's own two parseConcept calls. commands/supersede.ts: reused its already-
+existing named const profile variable at its own rewriteInbound call site.
 
-commands/rename.ts: hoisted the previously-inline `loadProfile({root: options.root})` into a named
-`const profile` variable (was only ever passed anonymously into loadBundle before), then threaded
-that SAME value into rewriteInbound's new profile option, into mergeIndexWrites (a new parameter,
-since buildPostRenameGraph's call site lives inside that helper, not runRename itself -- an
-implementation detail resolved by tracing the actual call chain, not assumed), and into
-buildPostRenameGraph's own two parseConcept calls (AC#4: same profile instance writes and
-re-reads). Removed the now-stale deferred-gap comment, replaced with one describing the fix.
-
-commands/supersede.ts: reused its ALREADY-existing named `const profile` variable (no hoisting
-needed there) at its own rewriteInbound call site.
-
-AC#3: 4 new tests in a new "rewriteInbound -- custom profile (LORE-88)" describe block in
-test/rename.test.ts, calling rewriteInbound directly (not through the command layer) with an
-in-memory compileProfile(parseProfile(...)) redefining Story.tasks as a scalar string instead of
-a list (the filing task's own repro shape) -- (1) confirms the bug reproduces when the graph is
-profile-aware but rewriteInbound isn't given the profile; (2) confirms passing profile through
-fixes it and the custom scalar shape survives re-serialize; (3) confirms move=false (supersede's
-mode) honors it too; (4) confirms a plain default-profile bundle is unaffected (AC#5).
-
+AC#3: 4 new tests in test/rename.test.ts's "rewriteInbound -- custom profile (LORE-88)" describe
+block calling rewriteInbound directly with an in-memory compileProfile(parseProfile(...))
+redefining Story.tasks as a scalar string instead of a list (the filing task's own repro shape).
 AC#1/AC#2: command-layer tests in test/rename.test.ts and test/supersede.test.ts driving the real
-runRename/runSupersede with an ACTUAL .lore/profile.toml written to disk (complementary to the
-engine-level tests -- these prove the command layer's own loadProfile-read-from-disk path
-threads correctly end to end, not just the in-memory engine call).
+runRename/runSupersede with an ACTUAL .lore/profile.toml written to disk.
 
-Live-CLI verification (per this campaign's standing discipline): .repro-scratch/lore88-verify/,
-driving the real `lore rename` CLI via `bun run src/cli.ts` against a real scratch bundle + real
-.lore/profile.toml on disk. git stash comparison on the three source files: PRE-FIX, the identical
+Live-CLI verification: .repro-scratch/lore88-verify/, driving the real `lore rename` CLI via
+`bun run src/cli.ts`. git stash comparison on the three source files: PRE-FIX, the identical
 fixture failed exactly as the filing task's own repro describes -- exit 6, "invalid Story
-frontmatter in stories/bulk.md: tasks: Invalid input: expected array, received string". POST-FIX
-(stash pop), the identical command succeeds (exit 0), the inbound link is repointed, and the
-custom scalar tasks: T-1 shape survives untouched in the rewritten file.
+frontmatter in stories/bulk.md: tasks: Invalid input: expected array, received string". POST-FIX,
+the identical command succeeds (exit 0), the inbound link is repointed, and the custom scalar
+shape survives untouched.
+
+Independent review (general-purpose subagent, explicitly asked for complete findings in one
+response rather than a status update, per the lesson from LORE-89's review): no blocking findings.
+Independently traced every serializeConcept/parseConcept call site in rewrite.ts/rename.ts/
+supersede.ts (confirmed none missed, confirmed supersede.ts's two PRE-EXISTING principal-document
+writes were already profile-correct and untouched by this diff -- only its rewriteInbound call
+site changed); verified AC#4's same-instance claim by tracing the actual object reference through
+the whole call chain; confirmed mergeIndexWrites's new parameter was genuinely necessary by reading
+the file directly (buildPostRenameGraph's call site lives inside mergeIndexWrites, not runRename).
+Ran a live MUTATION TEST: reverted the profile threading inside rewriteConcept's serializeConcept
+calls and reran the new tests -- 4 of 5 failed exactly as expected with the pre-fix error message,
+proving the tests are genuine, not vacuous; restored and confirmed a clean diff + full suite green
+afterward. Also ran a supplementary Codex (gpt-5.6-sol, xhigh) pass with its own independent repro
+script, reaching the same no-issues conclusion. One non-blocking, explicitly out-of-scope
+observation: core/bundle.ts's estimateConcept (used only by lore context/graph, not rename/
+supersede) still has no profile parameter -- correctly left alone, noted for a possible future
+follow-up if it ever matters.
 
 Verified: bun test -> 1688 pass/0 fail (up from 1682); bun run typecheck clean; bun run lint clean
-on all changed files (fixed one biome organizeImports ordering issue in test/rename.test.ts) -- 4
-pre-existing infos remain in unrelated files, untouched.
+on all changed files -- 4 pre-existing infos remain in unrelated files, untouched.
 <!-- SECTION:NOTES:END -->
