@@ -33,6 +33,7 @@ import { join } from "node:path";
 import { loadBundle } from "../core/bundle";
 import { idFromPath } from "../core/concept";
 import { buildContext, type ContextExport, DEFAULT_DEPTH } from "../core/context";
+import { loadProfile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable, renderTruncationLine, truncation } from "../output";
@@ -71,7 +72,8 @@ export function runContext(options: ContextOptions): number {
   const parsed = parseContextArgs(options.args);
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
-  const graph = loadBundle(docsRoot, { warnings: advisories });
+  const profile = loadProfile({ root: options.root });
+  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
   // Flush load warnings before buildContext, which throws not_found for an unknown
   // target — otherwise an advisory explaining *why* a file is not a concept would be
   // discarded on exactly the path that most needs it (mirrors `lore graph`).

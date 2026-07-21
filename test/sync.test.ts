@@ -194,9 +194,15 @@ describe("lore sync — config is validated before spending any Backlog subproce
     expect(err.message).toContain("backlog/config.yml");
   });
 
-  test("a malformed backlog/config.yml is reported before an ALSO-malformed .lore/profile.toml (LORE-27 regression)", async () => {
-    // Regression: the reconcile-shared.ts extraction must not reverse this command's own
-    // pre-existing precedence (status flow/config, THEN profile) when both happen to be broken.
+  test("an ALSO-malformed .lore/profile.toml is now reported before a malformed backlog/config.yml (LORE-84 precedence change)", async () => {
+    // Was: "a malformed backlog/config.yml is reported before an ALSO-malformed .lore/profile.toml
+    // (LORE-27 regression)" — config.yml won when both were broken, because profile only loaded
+    // (eligibility-gated) AFTER config.yml's own syntax check. LORE-84 makes loadBundle itself
+    // validate every concept's frontmatter against the profile, and loadBundle runs unconditionally
+    // (before eligibility can even be computed — eligibility is derived FROM the loaded graph), so
+    // profile now loads first, unconditionally, ahead of config.yml's syntax check. This is a
+    // deliberate, necessary consequence of LORE-84, not a reintroduced LORE-27 regression: profile
+    // loading first is now correct regardless of reconciliation eligibility.
     mkdirSync(join(root, "backlog"), { recursive: true });
     writeFileSync(join(root, "backlog", "config.yml"), "statuses: not-a-list\n");
     mkdirSync(join(root, ".lore"), { recursive: true });
@@ -205,7 +211,7 @@ describe("lore sync — config is validated before spending any Backlog subproce
     const adapter = fakeAdapter([makeTask("LORE-1")]);
 
     const err = await expectSyncError([], adapter);
-    expect(err.message).toContain("backlog/config.yml");
+    expect(err.message).toContain("profile.toml");
   });
 
   test("a SEMANTICALLY-invalid backlog/config.yml is reported AFTER an also-malformed .lore/profile.toml (LORE-27 regression, round 4)", async () => {

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildGraph, type Edge, loadBundle } from "../src/core/bundle";
 import { parseConcept } from "../src/core/concept";
+import { compileProfile, parseProfile } from "../src/core/profile";
 import { LoreError, WarningCollector } from "../src/errors";
 
 // ── Fixtures ───────────────────────────────────────────────────────────────────
@@ -491,5 +492,55 @@ describe("loadBundle — filesystem", () => {
     expect(g.concepts.size).toBeGreaterThan(10);
     expect(g.concepts.has("reference/architecture")).toBe(true);
     expect(g.tokenEstimate()).toBeGreaterThan(0);
+  });
+
+  test("validates against the passed-in custom profile, not the built-in default (LORE-84)", () => {
+    // A "Widget" concept missing its custom-required "owner" field: the built-in default profile
+    // doesn't know the "Widget" type at all, so it's tolerated (unknown-type warning only, no
+    // field check) — the very silent-pass this bug produced. Passing the custom profile that DOES
+    // declare Widget.owner as required must make the exact same file fail validation instead.
+    const root = fixture({ "widget.md": "---\ntype: Widget\n---\nbody" });
+    const profile = compileProfile(
+      parseProfile(
+        {
+          profile: { name: "custom", okf_version: "0.1" },
+          base: { fields: { type: { required: true } } },
+          types: [{ name: "Widget", fields: { owner: { required: true } } }],
+        },
+        "test-profile",
+      ),
+    );
+
+    // Without the custom profile: silently tolerated as an unknown type — the pre-fix behavior for
+    // every loadBundle caller, since loadBundle never had a way to receive a project's profile.
+    const withoutProfile = loadBundle(root);
+    expect(withoutProfile.concepts.has("widget")).toBe(true);
+
+    // With the custom profile forwarded: the now-known "Widget" type's required "owner" is enforced.
+    try {
+      loadBundle(root, { profile });
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("validation");
+      expect((err as LoreError).message).toContain("owner");
+      return;
+    }
+    throw new Error("expected a validation LoreError");
+  });
+
+  test("a concept satisfying the custom profile's required field loads cleanly", () => {
+    const root = fixture({ "widget.md": "---\ntype: Widget\nowner: alice\n---\nbody" });
+    const profile = compileProfile(
+      parseProfile(
+        {
+          profile: { name: "custom", okf_version: "0.1" },
+          base: { fields: { type: { required: true } } },
+          types: [{ name: "Widget", fields: { owner: { required: true } } }],
+        },
+        "test-profile",
+      ),
+    );
+    const g = loadBundle(root, { profile });
+    expect(g.concepts.get("widget")?.type).toBe("Widget");
   });
 });

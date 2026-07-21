@@ -30,6 +30,7 @@ import { join } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { conceptNotInBundle, loadBundle, toRefList } from "../core/bundle";
 import { idFromPath } from "../core/concept";
+import { loadProfile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { ANSI, EXIT_OK, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable, renderTaskSummaryRows, type TaskSummaryRow } from "../output";
@@ -82,7 +83,8 @@ export async function runTasks(options: TasksOptions): Promise<number> {
   const parsed = parseTasksArgs(options.args);
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
-  const graph = loadBundle(docsRoot, { warnings: advisories });
+  const profile = loadProfile({ root: options.root });
+  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
   // Flush load warnings before the not_found throw below, so an advisory explaining *why* a
   // file is not a concept survives on exactly the path that most needs it (mirrors `lore context`).
   advisories.flush({ color: options.output.color, stderr: options.stderr });
