@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-07-21 08:38'
-updated_date: '2026-07-21 10:05'
+updated_date: '2026-07-21 10:14'
 labels:
   - codex-review
   - correctness
@@ -59,6 +59,10 @@ Added 2 tests to test/bundle.test.ts directly exercising loadBundle's own profil
 End-to-end verified with the real CLI (not just unit tests): a scratch project with .lore/profile.toml declaring Widget.owner as required, and docs/widget.md missing it. Pre-fix (git stash): lore query exits 0 with 'warning: unknown type Widget... validated on type only' -- silently wrong, the exact bug. Post-fix: lore query AND lore sync both exit 6 with 'invalid Widget frontmatter... owner: Invalid input: expected string, received undefined'; fixing the doc to include owner makes lore query succeed at exit 0.
 
 Full bun test: 1512 pass/0 fail (up from 1510 -- 2 new bundle.test.ts tests; sync.test.ts's precedence test was rewritten in place, not added). bun run typecheck clean. bun run lint clean on all 12 changed files.
+
+Independent adversarial review (general-purpose subagent) confirmed: completeness (re-grepped all of src/, exactly 9 loadBundle call sites, all fixed; noted check.ts validates via a SEPARATE parseConcept/walkFiles path that also never passes a profile -- a pre-existing, architecturally distinct gap predating this PR, not a missed loadBundle caller, worth its own follow-up), the sync.ts precedence reordering is architecturally forced not a shortcut (independently confirmed eligible/scoped is derived FROM loadBundle's own graph output, so profile cannot be deferred past it; ran the full sync.test.ts, only the one intended test's expectation changed, its sibling precedence test unaffected), link.ts has exactly one loadProfile call site left (inside prepare()), the 2 new bundle.test.ts tests are genuine (independently reverted just the bundle.ts hunk via git apply -R and confirmed the differentiating test fails), and end-to-end reproduction matches (live CLI query pre/post-fix). No blocking issues.
+
+One real refinement made post-review: the reviewer traced buildPostRenameGraph (rename.ts) and found the rewriteInbound follow-up gap is MORE SPECIFIC and MORE URGENT than originally documented -- the real risk isn't just "unknown custom type names" (harmless, warning-only) but a custom profile that REDEFINES an EXISTING default-profile type name (e.g. "Story") with different required fields/enums. Pre-fix, loadBundle/rewriteInbound/buildPostRenameGraph were all uniformly wrong (always defaultProfile) but at least mutually CONSISTENT. Post-fix, loadBundle correctly uses the real profile while rewriteInbound's internal buildPostRenameGraph re-parse still defaults -- so lore rename on such a project can now pass the initial load (correctly) but THROW later inside buildPostRenameGraph against the WRONG profile: a genuinely NEW mid-operation failure mode this fix introduces, not present before (previously it failed uniformly at the first loadBundle, if at all). Sharpened the tracker's Not-queued follow-up note to name this specific type-collision scenario rather than the vaguer original wording.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
