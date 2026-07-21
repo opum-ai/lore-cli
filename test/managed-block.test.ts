@@ -14,6 +14,7 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  locateTaskBlock,
   type ManagedTaskRow,
   regenerateTaskBlock,
   TASK_BLOCK_BEGIN,
@@ -226,6 +227,74 @@ describe("regenerateTaskBlock — marker validation (ADR-0008 §2 → validation
     const err = loreError(() => regenerateTaskBlock(crossed, TASKS, OPTS));
     expect(err.type).toBe("validation");
     expect(err.message).toContain("crossed");
+  });
+});
+
+/**
+ * locateTaskBlock — the `[start, end)` span `core/replace.ts` protects (LORE-73). Exercises the
+ * exact failure modes a literal `indexOf` scan would get wrong but the structural, mdast-based
+ * location here does not: marker text cited in prose or a fenced code example (this project's own
+ * docs do both, to document the format) must never be mistaken for a real block, whether that
+ * mistake would surface as a false "duplicated" validation error or as silent false-positive
+ * protection of ordinary prose.
+ */
+describe("locateTaskBlock", () => {
+  test("no markers at all is null, not an error — most docs have no lore:tasks block", () => {
+    expect(locateTaskBlock("# Just prose, no block.\n")).toBeNull();
+  });
+
+  test("locates a well-formed block, span covers both markers", () => {
+    const text = `intro\n\n${block("row")}\n\noutro`;
+    const span = locateTaskBlock(text);
+    expect(span).not.toBeNull();
+    expect(text.slice((span as { start: number; end: number }).start, (span as { start: number; end: number }).end)).toBe(
+      block("row"),
+    );
+  });
+
+  test("a marker pair cited inside a fenced code example is not a real block (null, no throw)", () => {
+    // The exact shape docs/adr/0008-managed-block-remark-ast.md uses to document the format.
+    const text = `prose\n\n\`\`\`markdown\n${block("example")}\n\`\`\`\n`;
+    expect(locateTaskBlock(text)).toBeNull();
+  });
+
+  test("a single begin/end pair cited inline in one sentence is not a real block (null, no throw)", () => {
+    // The exact shape docs/adr/0007-validation-and-coherence.md uses: both markers as inline code
+    // spans in one sentence, not on their own line — never a top-level html node.
+    const text = `Re-render every \`${TASK_BLOCK_BEGIN}\` … \`${TASK_BLOCK_END}\` region on sync.\n`;
+    expect(locateTaskBlock(text)).toBeNull();
+  });
+
+  test("a doc with a real block AND a fenced citation elsewhere locates only the real block", () => {
+    const text = `${block("row")}\n\nSee the format:\n\n\`\`\`markdown\n${block("example")}\n\`\`\`\n`;
+    const span = locateTaskBlock(text);
+    expect(span).not.toBeNull();
+    const { start, end } = span as { start: number; end: number };
+    expect(text.slice(start, end)).toBe(block("row")); // the real, top-level block only
+  });
+
+  test("three prose/fenced citations of the marker text (no real block) is null, not a 'duplicated' error", () => {
+    // Reproduces docs/adr/0008-managed-block-remark-ast.md's exact shape: the marker syntax quoted
+    // three times (a fenced example plus inline-code citations) with no real top-level block. A
+    // literal indexOf scan sees 3 begins/3 ends and throws "duplicated"; the structural scan must not.
+    const text =
+      "```markdown\n" +
+      block("example") +
+      "\n```\n\n" +
+      `Also written as \`${TASK_BLOCK_BEGIN}\` … \`${TASK_BLOCK_END}\`.\n`;
+    expect(locateTaskBlock(text)).toBeNull();
+  });
+
+  test("markers present but malformed (duplicated, top-level) is still a fail-loud validation error", () => {
+    const dup = `${block("a")}\n\n${block("b")}`;
+    const err = loreError(() => locateTaskBlock(dup));
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("duplicated");
+  });
+
+  test("an unbalanced pair (begin without end) is still a fail-loud validation error", () => {
+    const err = loreError(() => locateTaskBlock(`${TASK_BLOCK_BEGIN}\nrows\n`));
+    expect(err.type).toBe("validation");
   });
 });
 
