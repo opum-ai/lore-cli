@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-07-21 08:38'
-updated_date: '2026-07-21 12:33'
+updated_date: '2026-07-21 12:44'
 labels:
   - codex-review
   - security
@@ -88,4 +88,72 @@ succeeded) and all 49 pre-existing tests in that file are unaffected either way.
 
 Full bun test: 1605 pass/0 fail (up from 1602). bun run typecheck clean. bunx
 biome check clean (one formatter-only fix applied).
+
+INDEPENDENT REVIEW: extensive adversarial testing against the real CLI found NO bypass.
+
+Tried and confirmed refused/safe: symlinked docs/ ancestor (no --force); symlinked mkdocs.yml
+final target (--force, outside file's exact bytes verified unchanged); symlink LOOPS (a
+self-referential docs -> docs, and a two-hop docs -> a -> b -> a) -- both refused cleanly at
+exit 5, no ELOOP crash, no swallow-as-doesn't-exist mis-catch (lstatSync never follows the FINAL
+component, so a loop's target is never traversed -- the walk stops at the first symlink segment
+before it could need to); a MID-PLAN attack (planting the symlink on a LATER file in a multi-file
+plan, e.g. website/sidebars.js under docusaurus --force while package.json/docusaurus.config.js
+come first) -- the two earlier files were genuinely created then correctly ROLLED BACK when the
+third hit the guard, and the attacker's own symlink was left completely untouched (never
+deleted/modified by the rollback, confirmed via readlink before/after); a path-normalization
+"validate A, use B" divergence class -- confirmed empirically that assertNoSymlinkInPath's
+segment-by-segment join() reconstruction and the real write's single-shot join(root, relPath)
+always produce IDENTICAL paths (verified via node -e with .., doubled slashes, normal segments),
+and separately confirmed by reading core/consumer-scaffold.ts in full that every dirs/file.path
+value reaching writeAllOrRollback is a fixed string constant, never derived from repo content or
+attacker-influenceable data -- moot in practice even before the empirical check. Hard links/bind
+mounts reasoned as out of this task's threat model (git can't ship a hard link as repo content;
+bind mounts need prior admin access). Windows junctions flagged as UNVERIFIED (no Windows box
+available) but reasoned likely safe from documented Node/libuv lstat behavior on reparse points --
+worth a real Windows-CI verification pass at some point, not blocking here.
+
+SCOPE-BOUNDARY CLAIM INDEPENDENTLY RE-VERIFIED (not just trusted from task notes): grepped every
+ensureDir( call site directly -- agents.ts/init.ts/new.ts/rename.ts/schema.ts/sync.ts all call it
+DIRECTLY, never through writeAllOrRollback; scaffold.ts's only fswrite.ts import is
+writeAllOrRollback itself. So writeAllOrRollback is confirmed the correct AND COMPLETE scope for
+this task -- LORE-77 (confirmed still To Do) correctly and exclusively owns init.ts's separate
+instance of the same bug class, no overlap, no gap.
+
+ONE REAL, NON-BLOCKING FINDING: a narrow TOCTOU window exists in ONLY the --force overwrite
+branch -- assertNoSymlinkInPath runs, THEN (a moment later) existsSync/readFileSync/
+writeFileOverwriting (a plain writeFileSync, no O_EXCL) actually writes; a symlink planted by a
+CONCURRENT process in that microsecond window would be followed. The non-force path
+(createIfAbsent's wx / O_CREAT|O_EXCL) is independently TOCTOU-safe by POSIX semantics regardless
+of this fix (O_EXCL fails EEXIST on a symlink no matter what it points to) -- this gap is
+confined to --force only. Reviewer's own assessment: "low practical severity... consistent with
+the trust model the rest of the codebase already assumes (e.g. plain writeFileSync elsewhere with
+no TOCTOU hardening)" -- explicitly framed as "worth noting, not blocking" / "I'd suggest,
+non-blocking, filing a small follow-up," not something to fix in this task.
+
+DECISION: did not fix in-task. The suggested close (swap --force's overwrite branch to this same
+file's existing writeFileAtomic -- temp-file + renameSync, which replaces a destination symlink
+via rename(2) rather than following it) is conceptually simple, but writeAllOrRollback's rollback
+correctness is ALREADY extensively tested in this exact file (unreadable-pre-existing-file
+rollback, partial-plan rollback restoring previous bytes, fresh-directory rollback, etc. -- see
+the "never-silent-clobber" describe block in test/consumer-scaffold.test.ts) -- properly verifying
+a write-mechanism swap doesn't quietly violate any of those existing guarantees is real
+additional work, not a free change, despite looking small in isolation. Given the review's own
+explicit "non-blocking" framing and this being a genuinely pre-existing class of risk (not a
+regression this fix introduces), documented as a follow-up candidate (tracker Not-queued) rather
+than expanded into this task's scope.
+
+Other minor, non-security findings noted: the non-force preflight in scaffold.ts (existsSync/
+statSync, follows symlinks) is itself symlink-blind, but doesn't matter -- assertNoSymlinkInPath
+runs unconditionally downstream inside writeAllOrRollback regardless of --force, so even a fooled
+preflight still gets caught by the real guard (confirmed live). assertNoSymlinkInPath's
+`catch { continue }` treats ANY lstatSync failure (not just ENOENT) as "doesn't exist yet" --
+imprecise (a permission-denied ancestor would silently pass the guard) but matches this file's
+own adjacent existingIsRegularFile's established convention, and the real mkdirSync/writeFileSync
+call independently surfaces the actual EACCES as denied anyway -- not a security issue, cosmetic
+only, not changed. Test quality independently re-verified: re-ran the pre-fix-fails claim via
+git-stash-equivalent isolation, confirmed all 3 new tests genuinely fail pre-fix and all 49
+pre-existing tests are unaffected either way -- matches the implementation's own claim exactly.
+
+Full bun test after review (no code changes made): 1605 pass/0 fail (unchanged). bun run
+typecheck clean. bunx biome check clean.
 <!-- SECTION:NOTES:END -->
