@@ -44,6 +44,7 @@ import {
   tallySeverity,
 } from "../core/check";
 import { type Concept, parseConcept, tryReadFrontmatter } from "../core/concept";
+import { loadProfile, type Profile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { ANSI, EXIT_CODES, EXIT_OK, ioError, LoreError, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
@@ -132,6 +133,12 @@ interface CheckArgs {
  */
 export function runCheck(options: CheckOptions): number | Promise<number> {
   const parsed = parseCheckArgs(options.args);
+  // Loaded once, up front — mirrors `context.ts`/`graph.ts`'s own LORE-84 precedent of failing
+  // loud on a malformed profile before any other work runs. `collectBundles`'s file discovery
+  // below is a single repo (`options.root`) with possibly several bundle DIRECTORIES within it
+  // (`--external`/multi-path), never several separate repos with their own profiles, so one load
+  // covers every root this command can ever scan (LORE-89).
+  const profile = loadProfile({ root: options.root });
   const advisories = new WarningCollector();
   const bundles = collectBundles(options.root, parsed.paths, advisories);
   const baseReport = checkBundles(bundles);
@@ -144,7 +151,7 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
   // isolates root failures from each other (an earlier version of this scan used a bare `.map()` that
   // let one root's throw abort every other root's scan too, discarding drift that was never even
   // computed — LORE-27 round 9). Cheap to check without any Backlog IO: `linkedConcepts` is pure.
-  const conceptBundleResults = bundles.map(tryConceptsForBundle);
+  const conceptBundleResults = bundles.map((bundle) => tryConceptsForBundle(bundle, profile));
   const needsReconciliation = conceptBundleResults.some(
     (result) => result.error !== null || linkedConcepts(result.concepts).length > 0,
   );
@@ -260,8 +267,14 @@ interface ConceptBundleResult {
  * the one case where `check` really would otherwise disagree with what `sync` does. An
  * unparseable-YAML file (`tryReadFrontmatter` itself throws — there is no mapping to peek a `tasks:`
  * field from, so it cannot be assumed innocent) is treated the same as "declares `tasks:`".
+ *
+ * `parseConcept` is given the project's own `profile` (LORE-89) so this scan validates against the
+ * SAME schema `lore query`/`validate`/`sync` already do (`loadBundle`, LORE-84) — before this fix it
+ * always fell back to the built-in default profile, so a project-defined required field could pass
+ * `check` silently while `validate`/`query`/`sync` correctly rejected the identical file, the exact
+ * three-way disagreement ADR-0007 designed `check` to never have with the rest of the toolchain.
  */
-function tryConceptsForBundle(bundle: Bundle): ConceptBundleResult {
+function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleResult {
   const concepts: Concept[] = [];
   let error: unknown | null = null;
   for (const file of bundle.files) {
@@ -270,7 +283,7 @@ function tryConceptsForBundle(bundle: Bundle): ConceptBundleResult {
       if (raw === null || toRefList(raw.tasks).length === 0) {
         continue;
       }
-      concepts.push(parseConcept(file.path, file.raw));
+      concepts.push(parseConcept(file.path, file.raw, { profile }));
     } catch (err) {
       if (error === null) {
         error = err; // first, in file order; keep scanning so later files' concepts still count too

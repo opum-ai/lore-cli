@@ -1341,6 +1341,44 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     ).toBe(true);
   });
 
+  test("a tasks:-linked concept violating a custom-profile-required field is caught by check's own scan, matching validate/query/sync (LORE-89)", async () => {
+    // The built-in default Story schema has no "owner" field at all, so this doc would otherwise
+    // pass check silently (the exact false negative LORE-89 fixes) — the project's own profile
+    // requires it, and lore query/validate/sync already correctly reject the identical file.
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      `[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "Story"\nfields = { owner = { required = true } }\n`,
+    );
+    writeDoc(
+      "stories/x.md",
+      "---\ntype: Story\ntasks:\n  - lore-1\n---\n# X\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n",
+    );
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const result = runCheck(opts([], adapter));
+    await expect(result).rejects.toThrow(LoreError);
+    await expect(result).rejects.toThrow(/owner/);
+  });
+
+  test("a tasks:-linked concept satisfying the custom profile's required field passes check cleanly (LORE-89, no regression)", async () => {
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      `[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "Story"\nfields = { owner = { required = true } }\n`,
+    );
+    const doc = regenerateTaskBlock(
+      "---\ntype: Story\ntitle: X\nowner: alice\nstatus: done\ntasks:\n  - lore-1\n---\n# X\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n",
+      [doneRow],
+      { docPath: "docs/stories/x.md" },
+    );
+    writeDoc("stories/x.md", doc);
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const code = await runCheck(opts([], adapter));
+    expect(code).toBe(EXIT_OK);
+  });
+
   test("a reserved-stem concept (index/log) is never reconciled even if it carries tasks:", async () => {
     writeFileSync(
       join(root, "docs", "index.md"),
