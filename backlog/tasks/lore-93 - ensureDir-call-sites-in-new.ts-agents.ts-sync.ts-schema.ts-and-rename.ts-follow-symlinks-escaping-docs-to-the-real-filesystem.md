@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 18:52'
-updated_date: '2026-07-21 21:40'
+updated_date: '2026-07-21 21:52'
 labels:
   - backlog-campaign-followup
   - security
@@ -57,73 +57,87 @@ ensureDir's signature from (absPath, relPath) to (root, relPath) -- it now calls
 assertNoSymlinkInPath(root, relPath) internally before mkdirSync, deriving the absolute path
 itself. This closes all 5 previously-unguarded call sites AND the 2 already-guarded ones
 (writeAllOrRollback, init.ts) in one place -- their now-redundant separate assertNoSymlinkInPath
-calls were removed. Every one of the ~8 call sites across new.ts/agents.ts/sync.ts/schema.ts/
-rename.ts(x2)/init.ts/fswrite.ts itself was updated by hand (the signature change is
+calls were removed. All 8 call sites across new.ts/agents.ts/sync.ts/schema.ts/rename.ts(x2)/
+init.ts/fswrite.ts itself were updated and individually traced (the signature change is
 string/string -> string/string, so TypeScript's own type-checker could not catch a semantic
-mismatch -- each site was individually traced and verified to pass the correct root+relPath pair,
-not just left to compile).
+mismatch -- verified by hand, not just by compiling).
 
 Caught and fixed one real bug while converting: several call sites' ORIGINAL relPath argument was
-the FULL FILE path (used only for the ioError message, decorative, since absPath was already fully
-resolved) rather than the file's DIRECTORY -- with the new signature, relPath directly determines
-the mkdir target, so passing a file path would have tried to mkdir the file itself. Fixed by
-computing dirname() at each such site (sync.ts, rename.ts) before the ensureDir call.
+the FULL FILE path (decorative before this change, only used in the ioError message, since absPath
+was already fully resolved) rather than the file's DIRECTORY -- with the new signature, relPath
+directly determines the mkdir target, so passing a file path would have tried to mkdir the file
+itself. Fixed by computing dirname() at each such site (sync.ts, rename.ts) before the ensureDir
+call.
 
 AC#5 (all-or-nothing for multi-file operations): ensureDir's own per-call guard is REACTIVE -- in
 a loop writing several files, it only refuses once the loop reaches a bad target, by which point
 earlier targets may already be on disk. Added a new exported assertNoSymlinkInAnyPath(root,
-relPaths) helper (fswrite.ts) that sweeps a WHOLE planned write set before any single write begins,
-wired into the three genuinely multi-file write loops: rename.ts's commitWrites (also swept
-plan.rename.from, and relies on writes already containing plan.rename.to per RewritePlan's own
-contract -- verified this to avoid a duplicate-check bug), sync.ts's write loop, and agents.ts's
-2-file loop (for consistency, even though its writeFileAtomic is rename()-based and thus
-final-component-safe already -- the ordering concern still applies to its own ancestor
-directories). rename.ts's commitWrites also needed its OWN targets to include the FULL file paths,
-not just their dirnames, because writeFileOverwriting (plain writeFileSync, unlike writeFileAtomic)
-DOES follow a symlink at the final path component -- confirmed this distinction by reasoning
-through POSIX rename() semantics (renameSync atomically replaces whatever is at the destination,
-never dereferencing it, so writeFileAtomic's callers were already final-component-safe;
-writeFileSync has no such guarantee).
+relPaths) helper (fswrite.ts) sweeping a WHOLE planned write set before any single write begins,
+wired into the three multi-file write loops: rename.ts's commitWrites (also swept
+plan.rename.from -- writes already contains plan.rename.to per RewritePlan's own documented
+contract, independently confirmed by the reviewer reading core/rewrite.ts's actual push() call),
+sync.ts's write loop, and agents.ts's 2-file loop. rename.ts's commitWrites sweeps FULL file paths
+(not just dirnames) because its writeFileOverwriting (plain writeFileSync) follows a symlink at
+the final path component, unlike writeFileAtomic's renameSync, which atomically replaces whatever
+is at the destination without ever dereferencing it -- this specific claim was independently
+verified by the reviewer via a standalone empirical Node repro (renameSync left an outside target
+file byte-identical; writeFileSync wrote straight through). sync.ts/agents.ts's own sweeps also
+happen to cover full paths, not just ancestor directories (my own earlier description called this
+"ancestor directories only" -- inaccurate; the code and its comments were already correct, only my
+own prose summary undersold it).
 
-Genuinely non-obvious finding, recorded for the review: sync.ts's write targets are ALWAYS derived
-from paths core/bundle.ts's loadBundle already discovered during its own walk, and that walk
-already skips symlinked directories entirely (confirmed by reading walkFiles) -- so a STATIC,
-pre-existing symlink (the task's own "docs/evil -> outside, committed into a cloned repo" threat
-model) can never actually reach sync.ts's write path for a NEW target inside it; the concept would
-simply never be discovered in the first place. sync.ts's ensureDir/preflight guard is therefore
-pure defense-in-depth against a narrower TOCTOU race (a symlink swapped in AFTER discovery, DURING
-the same runSync call, before the write phase) -- not a live-reproducible static repro the way
-rename.ts/new.ts/agents.ts's guards are (their destination paths are user-supplied strings never
-filtered through prior symlink-aware discovery). This is why AC#6 only requires regression tests
-for "at least rename and new" -- sync's own gap genuinely isn't constructible the same way. Did not
-force a misleading test for it; the fix is still correct and in place.
+Genuinely non-obvious finding: sync.ts's write targets are ALWAYS derived from paths
+core/bundle.ts's loadBundle already discovered during its own walk, and that walk unconditionally
+skips symlinked directories (independently confirmed by the reviewer reading walkFiles's exact
+isSymbolicLink() check, which runs before the isDirectory/isFile branches for every entry) -- so a
+STATIC pre-existing symlink can never reach sync.ts's write path for a new target; the concept
+would never be discovered. sync.ts's guard is pure TOCTOU-race defense-in-depth, not a
+live-reproducible static gap -- which is why AC#6 only required tests for "at least rename and
+new." No misleading test was forced for sync.ts.
 
-An unrelated interaction surfaced and was resolved: two existing LORE-94 tests
-(test/schema-export.test.ts) had pinned the NARROWER LORE-94 behavior ("skip pruning but still
-write through a symlinked .lore/schemas"). LORE-93's own AC#3 explicitly supersedes this ("lore
-schema export... refuse... rather than writing through it") -- updated both tests to assert a
-conflict refusal (writing nothing at all) instead of a silent partial success, which is the
-correct, stricter evolution AC#3 calls for, not a regression.
+An unrelated interaction was found and resolved: two existing LORE-94 tests
+(test/schema-export.test.ts) had pinned the narrower LORE-94 behavior ("skip pruning but still
+write through a symlinked .lore/schemas"). LORE-93's own AC#3 explicitly supersedes this --
+updated both tests to assert a conflict refusal instead. The reviewer independently confirmed the
+ORIGINAL LORE-94 tests never actually asserted "still writes through" as a positive claim (only
+that pruning didn't happen), so no real coverage was lost in the rewrite, though my own framing of
+"superseding a behavior" was a slight overstatement -- the corrected behavior is still strictly
+better and matches AC#3's own explicit wording.
 
 AC#1/#2/#3/#6: regression tests added -- 2 in test/rename.test.ts (the docs/evil repro exactly as
-filed, plus an AC#5 all-or-nothing test proving a legitimate unrelated inbound rewrite is NOT
-written when the move destination is symlinked), 1 in test/new.test.ts (the --out repro exactly as
-filed), 1 in test/agents.test.ts (a symlinked .claude/skills/lore refusing both bridge files), plus
-the 2 updated schema-export.test.ts tests. All POSIX-only, matching this codebase's established
-symlink-test skip guard.
+filed, plus an AC#5 all-or-nothing test -- independently verified by the reviewer via tracing
+`writes`'s ascending sort order that this test genuinely discriminates the sweep, since bulk.md's
+legitimate rewrite would otherwise land before commitWrites ever reaches the symlinked
+destination), 1 in test/new.test.ts (the --out repro exactly as filed), 1 in test/agents.test.ts
+(a symlinked .claude/skills/lore refusing both bridge files), plus the 2 updated
+schema-export.test.ts tests.
 
-Live-CLI verification (per this campaign's standing discipline): .repro-scratch/lore93-verify/ and
-.repro-scratch/lore93-agents-verify/, driving the real CLI against real scratch bundles with real
-symlinked directories. git stash comparison on the 7 changed source files: PRE-FIX, `lore rename
-reference/orders evil/pwned` reproduced the filing task's own repro exactly -- a MISLEADING
-"skipping symlink evil: symlinks are not followed" warning (describing loadBundle's unrelated
-read-path behavior) followed by exit 0 and both the renamed concept AND a regenerated index.md
-actually written into the outside directory; `lore new --out docs/evil/newevil.md` silently
-succeeded (exit 0) with the file landing outside the repo entirely, no warning at all. POST-FIX,
-both refuse at exit 5 (conflict), nothing written outside the repo, the pre-existing symlinks
-themselves untouched. Also live-verified `lore agents` post-fix (real CLI, real symlinked
-.claude/skills/lore): refuses at exit 5, neither bridge file written.
+Live-CLI verification: .repro-scratch/lore93-verify/ and .repro-scratch/lore93-agents-verify/,
+driving the real CLI against real scratch bundles with real symlinked directories. git stash
+comparison on the 7 changed source files: PRE-FIX reproduced the filing task's own repro exactly
+(misleading "skipping symlink" warning, exit 0, both the renamed concept and a regenerated
+index.md written into the outside directory for rename; silent exit-0 success with the file
+landing outside the repo for new --out). POST-FIX both refuse at exit 5, nothing written outside
+the repo. Also live-verified lore agents post-fix.
 
-Verified: bun test -> 1697 pass/0 fail (up from 1693); bun run typecheck clean; bun run lint clean
-on all changed files -- 4 pre-existing infos remain in unrelated files, untouched.
+Independent review (general-purpose subagent, asked for complete findings in one response, given
+extra time given this was the campaign's largest/final diff): NO BLOCKING FINDINGS. Independently
+re-verified every one of the 8 ensureDir call-site conversions by hand; independently confirmed
+RewritePlan.writes's toPath contract by reading core/rewrite.ts directly; independently and
+EMPIRICALLY verified the renameSync-vs-writeFileSync symlink-following claim via a standalone Node
+script; independently confirmed walkFiles's symlink-skip behavior by reading core/bundle.ts
+directly; ran its own live-CLI verification (rename/new/agents/schema export) from this branch's
+source against fresh scratch bundles, matching this session's own results; temporarily DISABLED
+the assertNoSymlinkInAnyPath call in agents.ts and reran its own new test to check whether the
+test actually discriminates the sweep -- found it does NOT (agents.ts's plan.files always orders
+SKILL.md, the symlinked target, first, so ensureDir's own reactive per-call guard already throws
+before the sweep's ordering property is ever exercised) -- a genuine, honest, non-blocking test-
+quality gap, fixed this session by rewriting the test's docstring to accurately describe what it
+does and doesn't prove (CLAUDE.md has no separate ancestor directory to symlink, and a symlinked
+CLAUDE.md FILE itself is inherently safe via renameSync regardless, so there is no black-box way to
+construct a genuinely discriminating test for agents.ts specifically -- test/rename.test.ts's own
+AC#5 test is what actually proves the sweep mechanism, confirmed independently by the reviewer).
+
+Verified (final): bun test -> 1697 pass/0 fail (up from 1693); bun run typecheck clean; bun run
+lint clean on all changed files -- 4 pre-existing infos remain in unrelated files, untouched.
 <!-- SECTION:NOTES:END -->

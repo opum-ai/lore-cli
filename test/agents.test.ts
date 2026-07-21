@@ -137,8 +137,22 @@ describe("lore agents — fresh generation (AC#1)", () => {
 describe("lore agents — refuses to write through a symlinked ancestor directory (LORE-93)", () => {
   // POSIX-only, matching this codebase's existing symlink tests' own skip guard (e.g. init.test.ts).
   test.skipIf(process.platform === "win32")(
-    "regression: a symlinked .claude/skills/lore refuses, writes neither bridge file (AC#3/AC#5)",
+    "regression: a symlinked .claude/skills/lore refuses, writes neither bridge file (AC#3)",
     () => {
+      // Note on AC#5 coverage: this does NOT independently discriminate the preflight sweep
+      // (assertNoSymlinkInAnyPath) from ensureDir's own per-call guard alone — `plan.files`
+      // (core/agent-bridge.ts) always orders SKILL.md first, and SKILL.md's own directory is the
+      // one symlinked here, so ensureDir's reactive guard already throws on the very first loop
+      // iteration regardless of whether the sweep runs at all. There is no black-box way to make
+      // agents.ts exercise the sweep's ordering property specifically: CLAUDE.md has no ancestor
+      // directory of its own to symlink (CLAUDE_MD_REL_PATH is repo-root-relative), and a
+      // symlinked CLAUDE.md FILE itself would be safe regardless (writeFileAtomic's renameSync
+      // never follows a final-component symlink) — so the only reachable vulnerable target is
+      // SKILL.md, which is always first. The sweep is still correct and still wired in (matching
+      // rename.ts's/sync.ts's own pattern for consistency and future-proofing against a reordered
+      // or expanded `plan.files`); test/rename.test.ts's own AC#5 test is what actually proves the
+      // sweep's ordering property, since rename's multi-file writes are NOT fixed-order-safe the
+      // same way.
       const outsideDir = mkdtempSync(join(tmpdir(), "lore-agents-outside-"));
       try {
         mkdirSync(join(root, ".claude/skills"), { recursive: true });
@@ -151,8 +165,6 @@ describe("lore agents — refuses to write through a symlinked ancestor director
         }
         expect(thrown).toBeInstanceOf(LoreError);
         expect((thrown as LoreError).type).toBe("conflict");
-        // Neither bridge file was written — the preflight sweep refuses before the loop starts, so
-        // CLAUDE.md (also planned in this same run) is untouched too, not just the symlinked one.
         expect(existsSync(join(outsideDir, "SKILL.md"))).toBe(false);
         expect(existsSync(claudeAbs())).toBe(false);
       } finally {
