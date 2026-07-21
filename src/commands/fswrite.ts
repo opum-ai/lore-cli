@@ -11,10 +11,14 @@
  *   the bytes of files that already exist ({@link writeFileOverwriting}). This is deliberately
  *   *not* never-clobber: the whole point is to edit an existing doc in place.
  *
- * Both disciplines share one symlink guard ({@link assertNoSymlinkInPath}, LORE-76/LORE-77):
- * `lore init`'s never-clobber loop and `lore scaffold`'s all-or-nothing `writeAllOrRollback` both
- * call it before touching a path, so a symlinked ancestor directory or final target refuses loudly
- * instead of silently redirecting a write outside the repo.
+ * Both disciplines share one symlink guard ({@link assertNoSymlinkInPath}, LORE-76/LORE-77), so a
+ * symlinked ancestor directory or final target refuses loudly instead of silently redirecting a
+ * write outside the repo. {@link ensureDir} itself calls it (LORE-93), so every caller that
+ * creates a parent directory before writing gets the guard automatically — `lore init`'s
+ * never-clobber loop and `lore scaffold`'s all-or-nothing `writeAllOrRollback` no longer need
+ * their own separate call. A multi-file caller additionally sweeps its whole planned write set
+ * with {@link assertNoSymlinkInAnyPath} before writing any single file, so a bad target refuses
+ * the operation up front rather than after some files already landed.
  *
  * All side effects live in the command layer (lore-design §2.1); core stays pure. These
  * helpers are that side-effecting layer, factored to one module so the filesystem-conflict
@@ -97,12 +101,36 @@ export function findSymlinkSegment(root: string, relPath: string): string | null
   return null;
 }
 
-/** `mkdir -p` for a scaffold directory, mapping a permission failure to a `denied` error. */
-export function ensureDir(absPath: string, relPath: string): void {
+/**
+ * `mkdir -p` for a directory a write is about to target, refusing first (via
+ * {@link assertNoSymlinkInPath}) if any segment from `root` down to `relPath` is already a
+ * symlink — every caller gets the LORE-76/77 guard for free rather than having to remember to
+ * call it separately (LORE-93: five call sites — `new.ts`, `agents.ts`, `sync.ts`, `schema.ts`,
+ * `rename.ts` — had no guard at all before this, since `mkdirSync` transparently follows a
+ * symlinked ancestor). A permission failure maps to `denied`.
+ */
+export function ensureDir(root: string, relPath: string): void {
+  assertNoSymlinkInPath(root, relPath);
   try {
-    mkdirSync(absPath, { recursive: true });
+    mkdirSync(join(root, relPath), { recursive: true });
   } catch (cause) {
     throw ioError(cause, relPath, "create directory");
+  }
+}
+
+/**
+ * Refuse (via {@link assertNoSymlinkInPath}) if ANY of `relPaths` has a symlinked ancestor —
+ * a preflight sweep across a whole planned multi-file write set, run BEFORE any single write in
+ * that set begins. `ensureDir`'s own per-call guard alone is reactive: in a loop writing several
+ * files, it would only refuse when the LOOP REACHES the bad target, by which point earlier
+ * targets in the same set may already be written — exactly the partial-write outcome LORE-93
+ * AC#5 says a multi-file operation must never produce. Calling this once, before the loop starts,
+ * makes the operation either fully proceed or refuse before touching anything. Reuses the
+ * identical per-segment walk `ensureDir` itself uses, rather than a second check pattern.
+ */
+export function assertNoSymlinkInAnyPath(root: string, relPaths: Iterable<string>): void {
+  for (const relPath of relPaths) {
+    assertNoSymlinkInPath(root, relPath);
   }
 }
 
@@ -332,10 +360,9 @@ export function writeAllOrRollback(
   const undo: Array<() => void> = [];
   try {
     for (const dir of dirs) {
-      assertNoSymlinkInPath(root, dir);
       const abs = join(root, dir);
       const dirExisted = existsSync(abs);
-      ensureDir(abs, dir);
+      ensureDir(root, dir);
       if (!dirExisted) {
         undo.push(() => {
           try {

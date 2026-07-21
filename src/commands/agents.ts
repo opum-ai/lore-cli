@@ -19,7 +19,7 @@ import { type BridgeAction, CLAUDE_MD_REL_PATH, planBridge, SKILL_REL_PATH } fro
 import { ANSI, EXIT_CODES, EXIT_OK, paint, readFileIfPresent, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { parseCommandArgs, usage } from "./args";
-import { ensureDir, writeFileAtomic } from "./fswrite";
+import { assertNoSymlinkInAnyPath, ensureDir, writeFileAtomic } from "./fswrite";
 
 /** Options for {@link runAgents}; `root` and the stdout stream are injectable for tests. */
 export interface AgentsOptions {
@@ -64,12 +64,17 @@ export function runAgents(options: AgentsOptions): number {
   const drift = plan.files.some((file) => file.action !== "unchanged");
 
   if (!check) {
+    const targets = plan.files.filter((file) => file.contents !== null).map((file) => file.path);
+    // Swept as a whole before either file is written (LORE-93 AC#5) — `lore agents` writes two
+    // files per run, and a bad target reached second in the loop must not leave the first already
+    // written; ensureDir's own per-call guard alone is reactive to loop order.
+    assertNoSymlinkInAnyPath(options.root, targets);
     for (const file of plan.files) {
       if (file.contents === null) {
         continue; // unchanged, or protected without --force — leave the file untouched
       }
       const absPath = join(options.root, file.path);
-      ensureDir(dirname(absPath), dirname(file.path));
+      ensureDir(options.root, dirname(file.path));
       // Atomic (temp-write + rename): `lore agents` writes two files per run, one of them the user's
       // hand-authored root CLAUDE.md — a crash mid-write must never leave it truncated (fswrite.ts).
       writeFileAtomic(absPath, file.contents, file.path);

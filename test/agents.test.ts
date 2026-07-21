@@ -13,7 +13,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/cli";
@@ -132,6 +132,34 @@ describe("lore agents — fresh generation (AC#1)", () => {
     expect(readFileSync(skillAbs(), "utf8")).toBe(buildSkillDoc());
     expect(readFileSync(claudeAbs(), "utf8")).toContain("<!-- lore:agents:begin -->");
   });
+});
+
+describe("lore agents — refuses to write through a symlinked ancestor directory (LORE-93)", () => {
+  // POSIX-only, matching this codebase's existing symlink tests' own skip guard (e.g. init.test.ts).
+  test.skipIf(process.platform === "win32")(
+    "regression: a symlinked .claude/skills/lore refuses, writes neither bridge file (AC#3/AC#5)",
+    () => {
+      const outsideDir = mkdtempSync(join(tmpdir(), "lore-agents-outside-"));
+      try {
+        mkdirSync(join(root, ".claude/skills"), { recursive: true });
+        symlinkSync(outsideDir, join(root, ".claude/skills/lore"));
+        let thrown: unknown;
+        try {
+          runAgents({ root, output: JSON_CTX, args: [], stdout: capture() });
+        } catch (err) {
+          thrown = err;
+        }
+        expect(thrown).toBeInstanceOf(LoreError);
+        expect((thrown as LoreError).type).toBe("conflict");
+        // Neither bridge file was written — the preflight sweep refuses before the loop starts, so
+        // CLAUDE.md (also planned in this same run) is untouched too, not just the symlinked one.
+        expect(existsSync(join(outsideDir, "SKILL.md"))).toBe(false);
+        expect(existsSync(claudeAbs())).toBe(false);
+      } finally {
+        rmSync(outsideDir, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("lore agents — idempotent re-run (AC#1)", () => {

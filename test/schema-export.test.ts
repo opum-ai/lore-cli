@@ -242,8 +242,12 @@ describe("lore schema export — pruning stale schemas (full export)", () => {
   });
 
   // POSIX-only, matching this codebase's existing symlink tests' own skip guard (e.g. init.test.ts).
+  // LORE-93 supersedes the narrower LORE-94 behavior these two tests originally pinned ("skip
+  // pruning but still write through the symlink"): ensureDir itself now refuses to write into ANY
+  // symlinked ancestor at all, so a symlinked .lore/schemas now refuses the whole export outright
+  // — never pruning AND never writing through it — rather than silently proceeding partway.
   test.skipIf(process.platform === "win32")(
-    "a full export to the default directory never prunes through a symlinked .lore/schemas (AC#2/AC#3)",
+    "a full export refuses when the default directory is a symlinked .lore/schemas, never pruning or writing through it (LORE-93)",
     () => {
       const outside = mkdtempSync(join(tmpdir(), "lore-schema-outside-"));
       try {
@@ -251,9 +255,15 @@ describe("lore schema export — pruning stale schemas (full export)", () => {
         writeFileSync(unrelated, "{}\n");
         mkdirSync(join(root, ".lore"), { recursive: true });
         symlinkSync(outside, join(root, ".lore/schemas"));
-        const { result } = exportSchemas(["export"]);
-        expect(result.removed).toEqual([]);
-        expect(existsSync(unrelated)).toBe(true);
+        let thrown: unknown;
+        try {
+          runSchema({ root, output: JSON_CTX, stdout: capture(), args: ["export"] });
+        } catch (err) {
+          thrown = err;
+        }
+        expect(thrown).toBeInstanceOf(LoreError);
+        expect((thrown as LoreError).type).toBe("conflict");
+        expect(existsSync(unrelated)).toBe(true); // the symlink and its target are untouched
       } finally {
         rmSync(outside, { recursive: true, force: true });
       }
@@ -261,7 +271,7 @@ describe("lore schema export — pruning stale schemas (full export)", () => {
   );
 
   test.skipIf(process.platform === "win32")(
-    "a full export never prunes through a .lore/schemas nested under a symlinked .lore directory (AC#2)",
+    "a full export refuses when .lore itself is a symlink, never pruning or writing through the nested schemas dir (LORE-93)",
     () => {
       const outside = mkdtempSync(join(tmpdir(), "lore-schema-outside-"));
       try {
@@ -269,8 +279,14 @@ describe("lore schema export — pruning stale schemas (full export)", () => {
         mkdirSync(join(outside, "schemas"), { recursive: true });
         const unrelated = join(outside, "schemas", "unrelated.schema.json");
         writeFileSync(unrelated, "{}\n");
-        const { result } = exportSchemas(["export"]);
-        expect(result.removed).toEqual([]);
+        let thrown: unknown;
+        try {
+          runSchema({ root, output: JSON_CTX, stdout: capture(), args: ["export"] });
+        } catch (err) {
+          thrown = err;
+        }
+        expect(thrown).toBeInstanceOf(LoreError);
+        expect((thrown as LoreError).type).toBe("conflict");
         expect(existsSync(unrelated)).toBe(true);
       } finally {
         rmSync(outside, { recursive: true, force: true });

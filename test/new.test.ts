@@ -456,6 +456,26 @@ describe("lore new — output path is confined to the bundle root", () => {
     const { result } = newCmd(["adr", "Title", "--out", "docs/..notes/x"]);
     expect(result.path).toBe("docs/..notes/x.md");
   });
+
+  // POSIX-only, matching this codebase's existing symlink tests' own skip guard (e.g. init.test.ts).
+  test.skipIf(process.platform === "win32")(
+    "regression: docs/evil symlinked outside the bundle refuses --out through it, no file appears outside docs/ (LORE-93)",
+    () => {
+      // Reproduces the filing task's own live repro: `lore new reference "New Evil Doc"
+      // --out docs/evil/newevil.md` against a docs/evil -> outside-directory symlink.
+      const outsideDir = mkdtempSync(join(tmpdir(), "lore-new-outside-"));
+      try {
+        symlinkSync(outsideDir, join(root, "docs/evil"));
+        const err = expectError(["reference", "New Evil Doc", "--out", "docs/evil/newevil.md"]);
+        expect(err.type).toBe("conflict");
+        expect(err.message.toLowerCase()).toContain("symlink");
+        expect(existsSync(join(outsideDir, "newevil.md"))).toBe(false);
+        expect(existsSync(join(root, "docs/evil"))).toBe(true); // the pre-existing symlink itself survives
+      } finally {
+        rmSync(outsideDir, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("lore new — output rendering", () => {
