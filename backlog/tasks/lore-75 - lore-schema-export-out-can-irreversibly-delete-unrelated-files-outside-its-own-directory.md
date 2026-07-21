@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 08:38'
-updated_date: '2026-07-21 14:22'
+updated_date: '2026-07-21 14:30'
 labels:
   - codex-review
   - correctness
@@ -91,6 +91,27 @@ Verification:
   default `.lore schema export` with a stale ghost.schema.json in
   .lore/schemas/ -> still correctly pruned (regression check, prune behavior
   for the managed default dir is unchanged).
+
+Independent adversarial review (general-purpose subagent): SHIP verdict, no
+blocking issues. Reproduced the original bug independently via a detached
+worktree at the pre-fix commit and confirmed the new tests genuinely fail
+there (not tautological). Adversarially swept --out forms for a bypass in the
+dangerous (deletion) direction: repo root, fresh nested dirs, near-miss names
+(.lore/schemas-extra, .lore/schema, .lore/schemas/sub), lexically-equivalent
+forms of the default (./.lore/schemas/ -- correctly still prunes, since it IS
+the real directory), and a case-variant form on this case-insensitive
+filesystem (.LORE/SCHEMAS -- writes into the same real dir but the strict
+comparison treats it as non-managed, so pruning is skipped: fails safe, not a
+bypass). None breached containment. Independently reran bun test (1644/1644),
+typecheck (clean), lint (0 errors, 4 pre-existing infos elsewhere) rather than
+trusting the implementer's claims. Two non-blocking observations, both noted
+in the tracker's Not-queued section rather than fixed in-task: (1) no
+regression test for the near-miss directory-name boundary specifically
+(covered only by the review's manual live-CLI check); (2) isManagedSchemasDir
+is a lexical path comparison with no realpath/symlink resolution, so if
+.lore/schemas itself were ever a symlink, pruning would follow it -- a
+pre-existing characteristic outside this task's AC scope (about --out
+pointing elsewhere, not the default path being tampered with).
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

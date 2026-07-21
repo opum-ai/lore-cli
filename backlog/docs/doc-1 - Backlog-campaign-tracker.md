@@ -3,7 +3,7 @@ id: doc-1
 title: Backlog campaign tracker
 type: other
 created_date: '2026-07-19 23:15'
-updated_date: '2026-07-21 14:07'
+updated_date: '2026-07-21 14:31'
 ---
 # Backlog campaign tracker
 
@@ -12,7 +12,7 @@ lifecycle → advance cursor → append session log → write handover.
 
 ## Cursor
 
-**Next issue: LORE-75** — queue order confirmed by the user on 2026-07-21
+**Next issue: LORE-80** — queue order confirmed by the user on 2026-07-21
 ("Use this order (Recommended)": independent fixes first, the interrelated
 rename-destination-traversal cluster (LORE-80→79→78→81) last, since LORE-80's
 shared-engine containment fix is what the other three build on). Do not re-ask
@@ -30,11 +30,10 @@ CI runs post-merge on dev.
 
 | # | Issue | Type | One-line note |
 | --- | --- | --- | --- |
-| 1 | LORE-75 | bug | lore schema export --out can irreversibly delete unrelated files outside its own directory |
-| 2 | LORE-80 | bug | rewriteInbound shared engine does not confine fromId/toId to docs/ bundle root |
-| 3 | LORE-79 | bug | lore rename destination path is not confined to docs/ root at the command layer |
-| 4 | LORE-78 | bug | lore rename destination id is not validated for `..` traversal at the argument-parsing layer |
-| 5 | LORE-81 | bug | lore rename index <new> (renaming FROM the reserved root index) is not rejected |
+| 1 | LORE-80 | bug | rewriteInbound shared engine does not confine fromId/toId to docs/ bundle root |
+| 2 | LORE-79 | bug | lore rename destination path is not confined to docs/ root at the command layer |
+| 3 | LORE-78 | bug | lore rename destination id is not validated for `..` traversal at the argument-parsing layer |
+| 4 | LORE-81 | bug | lore rename index <new> (renaming FROM the reserved root index) is not rejected |
 
 ## Resolved
 
@@ -62,6 +61,7 @@ CI runs post-merge on dev.
 | 20 | LORE-77 | Done, 2026-07-21, session 20 | Root cause: identical vulnerability class to LORE-76 (previous session), different call site — `src/commands/init.ts`'s `runInit` calls `ensureDir`/`createIfAbsent` DIRECTLY in its own two loops (`plan.dirs`, `plan.files`), never through `fswrite.ts`'s `writeAllOrRollback` (confirmed by LORE-76's own review, which grepped every `ensureDir` call site). `ensureDir`'s `mkdirSync(recursive:true)` transparently follows a pre-existing symlinked scaffold directory (`docs`, `.lore`, or any nested plan dir like `.lore/schemas`); `createIfAbsent`'s own `lstatSync` check already caught a symlink at a FINAL file path (pre-existing coverage), but nothing caught a symlinked ANCESTOR directory. Fix: reused LORE-76's `assertNoSymlinkInPath` rather than duplicating it — exported it from `fswrite.ts` (relocated out of the scaffold-specific section it was previously scoped under, near `ensureDir`/`createIfAbsent` instead, since it's fully generic — no scaffold-specific state), updated its doc comment plus the module's own top-level docstring to describe it as shared by both write disciplines, and called it in `init.ts`'s own two loops ahead of `ensureDir`/`createIfAbsent`, mirroring exactly how `writeAllOrRollback` already calls it. Confirmed this doesn't break `init`'s own idempotency contract (its ORIGINAL LORE-18 AC#2) — a normal re-run where `docs`/`.lore`/etc. already exist as REAL directories passes the guard cleanly (`lstatSync` on a real dir returns `isSymbolicLink()===false`), verified via the full pre-existing `init.test.ts` suite (16 tests, including the idempotent-rerun and partial-delete-refill cases) passing unchanged. Live pre-fix repro against the real CLI reproduced the task's own claim exactly (a pre-existing `docs -> outside` symlink let `lore init` write `docs/index.md` straight into the outside directory, confirmed via `git stash` watching the file appear where it had never existed); post-fix the same scenario exits 5 naming the symlinked segment, with nothing landing outside. 3 new tests in `test/init.test.ts` (a symlinked `docs/` directory, a symlinked `.lore/` directory, and a symlinked `.lore/schemas/` — a NESTED plan directory, proving the guard walks every ancestor segment rather than special-casing the task's own three named top-level examples), each asserting both the conflict error AND that nothing was written into the outside directory; confirmed via `git stash` to fail pre-fix (no exception thrown — init silently succeeded) and pass post-fix, with all 16 pre-existing tests unaffected either way. Full `bun test` → 1608 pass/0 fail (up from 1605); `bun run typecheck` clean; lint clean (no formatter changes needed). **Independent adversarial review: NO bypass found**, focused specifically on the REUSE-integration (not re-litigating `assertNoSymlinkInPath`'s own internals, already reviewed in LORE-76) — tested a symlinked `.lore/schemas` (nested, separately-planned dir) with `.lore` itself real, confirming the guard walks every segment regardless of dirs-list order; confirmed every `dirs`/`files` path is a fixed literal, and the one profile-influenced piece (schema filenames) is sanitized to `[a-z0-9-]`, unable to inject a path segment. **Idempotency genuinely preserved** (the one property specific to this reuse LORE-76's own review never had to check) — verified live: fresh init, an immediate no-op re-run (all "exists", 0 created), and a partial-delete-then-refill all behave correctly. Partial-scaffold-on-abort confirmed as PRE-EXISTING behavior (reviewer reverted to pre-fix code and reproduced the identical partial state via an unrelated conflict, unrelated to symlinks) — not a regression. Relocation of `assertNoSymlinkInPath` confirmed behavior-preserving (byte-identical function body, `writeAllOrRollback`'s existing call sites unchanged, LORE-76's own test suites re-run clean). One trivial doc-comment nit fixed (no logic change). Also noted (not a defect, already explicitly out-of-scope per LORE-76's own notes): `new.ts`/`agents.ts`/`sync.ts`/`schema.ts`/`rename.ts` remain unguarded — filed as a Not-queued follow-up candidate, not expanded into this task. |
 | 21 | LORE-73 | Done, 2026-07-21, session 21 | Root cause: `core/replace.ts`'s `MANAGED_MARKERS` registry only listed the `lore:index` marker pair, so `lore replace` edited/counted matches inside a live `lore:tasks` table instead of skipping it. **Round 1 fix** added `TASK_BLOCK_BEGIN`/`TASK_BLOCK_END` reusing `indexes.ts`'s `locateManagedBlock` (a literal `indexOf` scan) — passed a full test suite and a live scratch-bundle repro, but **independent review found it broke `lore replace`'s default invocation against THIS repo's own `docs/` bundle**: several real docs (ADRs, runbooks, reference docs) cite the `lore:tasks:begin`/`:end` syntax in prose and fenced code examples to document the format, and the literal scan can't distinguish a citation from a real block — false "duplicated"/"unmatched" validation errors on some files, silent false-positive protection of ordinary prose on another. Confirmed live: `lore replace "Backlog.md" "the-Backlog-fork" --dry-run` aborted exit 6 against `dev`'s real `docs/`. **Round 2 fix**: added `managed-block.ts`'s new `locateTaskBlock`, built on the module's existing structural (mdast, top-level-`html`-node-only) marker location `lore sync`/`lore check` already trust, instead of the literal scan; `replace.ts`'s registry became `MANAGED_REGION_LOCATORS` (an array of locator functions) so `lore:index` (literal scan, verified safe — that marker text never occurs as a citation anywhere in `docs/`) and `lore:tasks` (structural) each use the strategy actually correct for them. A second independent review round then verified the round-2 fix directly (traced `locateTaskBlock`'s null/throw/span semantics by hand, re-ran the live repo repro — now succeeds, 286 matches in 29 of 37 files — plus dry-runs against all 8 real docs citing the marker syntax, and built a genuine end-to-end `lore:tasks` block in a scratch bundle via `lore init`+`lore new story` to confirm protection still works, not overcorrected into a no-op) — PASS on substance, one blocking CI-lint format error in the new tests (**round 3 fix**, trivial). 12 new regression tests total across `test/replace.test.ts`/`test/managed-block.test.ts` (5 for the original bug, 7 for the round-1-review-found regression, incl. the exact 3-citation shape that broke round 1), all proven via `git stash` isolated-revert to fail pre-fix/pass post-fix. Full `bun test` → 1623 pass/0 fail (up from 1608); `bun run typecheck` clean; `bun run lint` exits 0. PR #77, rebase-merged into `dev` (one metadata-only commit landed after the actual GitHub-side merge completed — a `gh pr merge` local-checkout race, not a code issue — reconciled by cherry-picking it onto `dev` directly; see Session log). |
 | 22 | LORE-74 | Done, 2026-07-21, session 22 | Added `--limit <n>` (default 20, mirrors `query`) to `lore orphans`, applied INDEPENDENTLY to each of orphanTasks/danglingLinks since they're unrelated counts (the design question the prior handover flagged) — each section carries its own total/shown/truncated (cli-contract §3), omitted together with its array under `--tasks-only`/`--docs-only`. Header now reports each section's TOTAL (matching `query`'s header convention, not the capped shown count); each non-empty section gets its own truncation footer. Updated the LORE-51 700k-row regression test (AC#2): split into the new default-cap behavior (footer present, highest id dropped) and an explicit --limit raised past the total (preserving the original crash-safety proof that a huge array still flows through the per-item render loop without a RangeError). Updated cli-surface.md's orphans flag/output row; cli-contract.md's §3 list already named orphans (the pre-existing contract-vs-behavior gap this task closed), so it needed no change. Independent adversarial review (general-purpose subagent): re-verified cap/slice/truncation-field consistency at every boundary, --tasks-only/--docs-only omitting all four of the excluded section's fields through the REAL --json envelope (not just the pure computeOrphans function), the header/footer's use of totals vs. shown counts, argument-parsing parity with query.ts's precedent, and that the split LORE-51 test still proves both the default-cap behavior and the original crash-safety guard — no blocking or non-blocking issues found, clean on first pass. Verified: `bun test` full suite 1642/1642 (up from 1623); `bun run typecheck` clean; `bun run lint` clean on touched files (4 pre-existing infos elsewhere, untouched); `git stash` pre/post-fix discipline (new/updated orphans.test.ts assertions fail against pre-fix code); real-CLI smoke test against this repo's own `docs/` bundle (`lore orphans`, `lore check` — 0 errors/0 warnings; the Backlog-snapshot leg itself couldn't be exercised for real since PATH's `backlog` is stock v1.48.0, not the --json fork — a known, pre-existing environment gap, covered instead by 49/49 passing fakeAdapter-based tests incl. a 700k-row synthetic snapshot). |
+| 23 | LORE-75 | Done, 2026-07-21, session 23 | Root cause: `src/commands/schema.ts`'s `pruneOrphans` deleted every `<slug>.schema.json` in the resolved `--out` directory the just-written file set didn't contain, with no check the directory was lore-owned — `confineOutDir` only confines WHERE `--out` can be (rejects `..`/absolute; explicitly allows `--out .`, the repo root), not whether pruning should run there at all. Fix: chose AC#1's "restricts pruning to the default `.lore/schemas/` path" option over a marker-file scheme (simpler, matches the module's own pre-existing doc comment that a non-default `--out` is "for ad-hoc/CI use" only) — added `isManagedSchemasDir(absOutDir, root)` comparing the resolved `--out` against `resolve(root, SCHEMAS_DIR)`; `pruneOrphans` is now called only when a full export's `--out` resolves to that exact directory. A non-default `--out`, including `--out .` (the sharpest repro — the repo root, which `confineOutDir` explicitly allows), never prunes regardless of full vs. `--type` export, so a pre-existing unrelated `*.schema.json` anywhere else always survives. 2 new tests in `test/schema-export.test.ts` (a non-default relative `--out` dir, and `--out .`), each written and confirmed via `git stash` to genuinely fail pre-fix (the unrelated file was deleted) before applying the fix, then pass post-fix; the pre-existing default-directory pruning test (a genuinely orphaned type schema) still passes unchanged, confirming no regression to the legitimate case. End-to-end verified against a real scratch repo (not just the synthetic suite): `lore schema export --out .` and `--out other-out`, each with a pre-existing unrelated `*.schema.json` seeded first, both leave that file untouched after a full export; a stale `ghost.schema.json` seeded into the real default `.lore/schemas/` is still correctly pruned by a plain `lore schema export` (regression check). Full `bun test` → 1644/1644 (up from 1642); `bun run typecheck` clean; `bun run lint` exit 0 (4 pre-existing infos in unrelated test files, untouched). **Independent adversarial review: SHIP, no bypass found** — reproduced the original bug independently via a detached worktree at the pre-fix commit (confirming the new tests are non-tautological), then adversarially swept `--out` forms for a containment bypass (repo root, fresh nested dirs, near-miss names `.lore/schemas-extra`/`.lore/schema`/`.lore/schemas/sub`, a lexically-equivalent form of the default that correctly still prunes since it IS the real directory, and a case-variant form on this case-insensitive filesystem that writes into the same real directory but is treated as non-managed by the strict comparison — fails safe, not a bypass); independently reran the full test suite/typecheck/lint rather than trusting the implementer's claims. Two non-blocking observations recorded in Not-queued rather than fixed in-task (a missing regression test for the near-miss-name boundary; `isManagedSchemasDir`'s lexical-only comparison has no realpath/symlink resolution, a pre-existing characteristic outside this task's AC scope). |
 
 ## Not queued — needs a human / blocked
 
@@ -168,6 +168,18 @@ CI runs post-merge on dev.
   constants LORE-76/77 dealt with. Needs a human to confirm priority/scope before filing — this
   would be a SEPARATE task per command (or one task sweeping all five), not an extension of
   LORE-76/77's own now-closed scope.
+- **Two minor follow-up candidates, not yet filed** (found by independent review during LORE-75,
+  2026-07-21, both explicitly framed by the reviewer as low-priority/non-blocking): (1)
+  `test/schema-export.test.ts`'s new coverage doesn't include a regression test for the near-miss
+  directory-name boundary `isManagedSchemasDir` exists to enforce (e.g. `.lore/schemas-extra`,
+  `.lore/schema`, `.lore/schemas/sub`) — verified safe only via the reviewer's own manual live-CLI
+  check, not locked in by an automated test; (2) `isManagedSchemasDir` is a purely lexical
+  `path.resolve` comparison with no realpath/symlink resolution — if `.lore/schemas` itself were
+  ever a symlink to another directory (requires pre-existing local write access to the repo, an
+  unlikely threat model), pruning would follow it. Both are pre-existing characteristics/gaps
+  outside LORE-75's own AC scope (which is about `--out` pointing ELSEWHERE, not the default path
+  itself being tampered with), not regressions this fix introduced. Needs a human to confirm
+  priority before filing either as a new task.
 
 ## Campaign conventions (durable, verified 2026-07-19)
 
@@ -671,6 +683,17 @@ CI runs post-merge on dev.
   the flat-fields-on-the-result convention, and no code in this repo consumes the exported
   `Truncation` TYPE directly (only the `truncation()` builder + `renderTruncationLine()` functions
   are used, ephemerally, at render time) (LORE-74, 2026-07-21).
+- **`bun run --cwd <dir> <script>` sets `<dir>` as the SCRIPT's own resolution root, not just a
+  target/data directory** — when live-CLI-verifying a fix against a scratch repo, running
+  `bun run --cwd <lore-repo> src/cli.ts ...` while the shell's own `cwd` is already the scratch dir
+  overrides `process.cwd()` (and hence the CLI's own `root`) back to the lore repo itself, silently
+  writing/deleting real files in the actual working tree instead of the scratch one — caught this
+  session only by an unexpected `git status` diff at the real repo root immediately after the
+  first scratch-repo run, not by the run itself failing. The correct invocation: `cd` into the
+  scratch dir first, then invoke `bun run <absolute-path-to-cli.ts> ...` with NO `--cwd` flag at
+  all, letting the shell's own `cwd` (already the scratch dir) govern `process.cwd()` (LORE-75,
+  2026-07-21). Always `git status --porcelain` immediately after any live-CLI scratch-repo
+  verification step, before trusting its result, to catch this class of mistake early.
 
 ## Session log
 
@@ -966,3 +989,22 @@ CI runs post-merge on dev.
   multi-section bounded-output command needs a total/shown/truncated triple
   per section, flat-prefixed on the result type, not nested and not
   combined). Cursor advanced to LORE-75.
+
+- 2026-07-21 — session 23: resolved LORE-75 (see Resolved table). Branch
+  `feature/LORE-75` off `dev @ 36e0d18`. First task this session confined
+  `lore schema export`'s orphan-pruning to the managed default directory
+  (`.lore/schemas/`) only, via a new `isManagedSchemasDir` check — chose the
+  simpler of AC#1's two illustrative options (restrict to the default path)
+  over a marker-file scheme. Ran the independent review ONLY after committing
+  both the fix and its tests, then wrote the review outcome into this tracker
+  — deliberately following LORE-74's own hard-learned ordering discipline
+  (review first, THEN write about it) rather than needing a correction commit
+  this time. Review reproduced the original bug independently via a detached
+  worktree at the pre-fix commit, adversarially swept `--out` forms for a
+  containment bypass (none found), and flagged two non-blocking follow-up
+  candidates now in Not-queued. One new campaign convention recorded (`bun
+  run --cwd <dir> <script>` silently redirects a live-CLI scratch-repo
+  verification back onto the real repo if the shell's own cwd is already the
+  scratch dir — caught this session by an unexpected `git status` diff at the
+  real repo root; always verify with `git status --porcelain` immediately
+  after any such step). Cursor advanced to LORE-80.
