@@ -3,7 +3,7 @@ id: doc-1
 title: Backlog campaign tracker
 type: other
 created_date: '2026-07-19 23:15'
-updated_date: '2026-07-21 11:21'
+updated_date: '2026-07-21 11:32'
 ---
 # Backlog campaign tracker
 
@@ -12,7 +12,7 @@ lifecycle → advance cursor → append session log → write handover.
 
 ## Cursor
 
-**Next issue: LORE-72** — queue order confirmed by the user on 2026-07-21
+**Next issue: LORE-71** — queue order confirmed by the user on 2026-07-21
 ("Use this order (Recommended)": independent fixes first, the interrelated
 rename-destination-traversal cluster (LORE-80→79→78→81) last, since LORE-80's
 shared-engine containment fix is what the other three build on). Do not re-ask
@@ -30,17 +30,16 @@ CI runs post-merge on dev.
 
 | # | Issue | Type | One-line note |
 | --- | --- | --- | --- |
-| 1 | LORE-72 | bug | lore new --template allows path traversal to read arbitrary files |
-| 2 | LORE-71 | bug | lore check --external is vulnerable to SSRF via unrestricted fetch() |
-| 3 | LORE-76 | bug | lore scaffold --force writes follow symlinks, escaping the repo root |
-| 4 | LORE-77 | bug | lore init follows pre-existing symlinks at scaffold paths, escaping the repo root |
-| 5 | LORE-73 | bug | lore replace can corrupt lore:tasks managed blocks (MANAGED_MARKERS gap) |
-| 6 | LORE-74 | bug | lore orphans report has no output cap, contradicting the documented truncation contract |
-| 7 | LORE-75 | bug | lore schema export --out can irreversibly delete unrelated files outside its own directory |
-| 8 | LORE-80 | bug | rewriteInbound shared engine does not confine fromId/toId to docs/ bundle root |
-| 9 | LORE-79 | bug | lore rename destination path is not confined to docs/ root at the command layer |
-| 10 | LORE-78 | bug | lore rename destination id is not validated for `..` traversal at the argument-parsing layer |
-| 11 | LORE-81 | bug | lore rename index <new> (renaming FROM the reserved root index) is not rejected |
+| 1 | LORE-71 | bug | lore check --external is vulnerable to SSRF via unrestricted fetch() |
+| 2 | LORE-76 | bug | lore scaffold --force writes follow symlinks, escaping the repo root |
+| 3 | LORE-77 | bug | lore init follows pre-existing symlinks at scaffold paths, escaping the repo root |
+| 4 | LORE-73 | bug | lore replace can corrupt lore:tasks managed blocks (MANAGED_MARKERS gap) |
+| 5 | LORE-74 | bug | lore orphans report has no output cap, contradicting the documented truncation contract |
+| 6 | LORE-75 | bug | lore schema export --out can irreversibly delete unrelated files outside its own directory |
+| 7 | LORE-80 | bug | rewriteInbound shared engine does not confine fromId/toId to docs/ bundle root |
+| 8 | LORE-79 | bug | lore rename destination path is not confined to docs/ root at the command layer |
+| 9 | LORE-78 | bug | lore rename destination id is not validated for `..` traversal at the argument-parsing layer |
+| 10 | LORE-81 | bug | lore rename index <new> (renaming FROM the reserved root index) is not rejected |
 
 ## Resolved
 
@@ -62,6 +61,7 @@ CI runs post-merge on dev.
 | 13 | LORE-84 | Done, 2026-07-21, session 13 | Root cause: `LoadBundleOptions` (`src/core/bundle.ts`) had no `profile` field, and `loadBundle`'s one `tryParseConcept` call never passed one, so every concept always validated against `defaultProfile()` regardless of a project's `.lore/profile.toml` — `concept.ts`'s `parseConcept`/`tryParseConcept` already accepted an optional profile; the gap was purely `loadBundle` never forwarding it. Fix: added `profile?: Profile` to `LoadBundleOptions`, forwarded to `tryParseConcept`; updated all 9 `loadBundle` callers (`context`/`supersede`/`graph`/`rename`/`tasks`/`query`/`orphans`/`sync`/`link`) to load and forward the project's profile, reusing an already-loaded profile where `sync.ts`/`supersede.ts`/`link.ts` already had one rather than double-loading. `sync.ts` needed the most care: its profile load was deliberately conditional/late to preserve a documented LORE-27 precedence contract (a malformed `backlog/config.yml` surfacing before a malformed `.lore/profile.toml`) — since `loadBundle` runs unconditionally and reconciliation-eligibility is computed FROM the loaded graph, profile now loads unconditionally before `loadBundle`, necessarily flipping that one precedence case (profile now wins) — a structurally necessary consequence, not an implementation choice; updated the one `test/sync.test.ts` precedence test that pinned the old ordering, with a comment explaining why. `link.ts`'s `writeTasksIfChanged` had a second, separate `loadProfile()` call site — threaded the same already-loaded profile through instead of double-loading. Added 2 tests to `test/bundle.test.ts` directly proving the fix (the SAME doc missing a custom-required field is silently tolerated without a profile, rejected with one) plus end-to-end verification through the real CLI (`lore query`/`lore sync` against a scratch project with a custom profile). **Flagged, deliberately left unfixed**: `core/rewrite.ts`'s `rewriteInbound` (used by `lore rename`/`supersede --rewrite-links`) has its own internal `serializeConcept` calls with no profile parameter at all — a separate, adjacent gap outside `loadBundle`'s own AC scope; documented in the task notes as a follow-up candidate (see Not-queued section) since no live user turn was available this session to confirm filing a new task the way LORE-68 was in a prior live session. Independent review sharpened this finding: the concrete risk is a custom profile REDEFINING an existing default type name (e.g. `Story`) with different required fields — post-fix, `lore rename` on such a concept can pass `loadBundle`'s initial (now-correct) validation but then throw inside `buildPostRenameGraph`'s re-parse (still default-profile), a genuinely new mid-operation failure mode this fix introduces, not present before (previously the whole chain was uniformly wrong but self-consistent). Also flagged by review: `lore check` validates via its own separate `parseConcept`/`walkFiles` path, not `loadBundle` — architecturally distinct, also never honors a custom profile, its own follow-up candidate. Full `bun test` → 1512 pass/0 fail (up from 1510); `bun run typecheck` clean; lint clean on all 12 changed files. |
 | 15 | LORE-85 | Done, 2026-07-21, session 15 | Root cause: js-yaml's `load()` never expands an alias at parse time (it points the SAME JS object reference back at its anchor, so parsing a doubling-anchor chain is always fast regardless of depth — confirmed empirically: an 18-level ~400-byte chain loads in ~1ms) — but `yaml.dump({noRefs: true})` (`YAML_DUMP_OPTIONS`, deliberately configured so a re-serialize never emits `&`/`*` anchors) walks the shared-reference graph naively, expanding the same chain to ~20MB in ~286ms; a few more levels reaches OOM or an uncaught `RangeError`. Confirmed via js-yaml 4.1.0's actual `LoadOptions` type that it has no built-in alias-count/depth limit (`maxAliasCount` is a feature of the DIFFERENT `eemeli/yaml` library, verified this distinction directly). Also confirmed js-yaml's `JSON_SCHEMA` permits a genuinely CYCLIC anchor to load (`a: &a {b: *a}` loads with `doc.a === doc.a.b`) — a second, distinct hazard (an unmemoized walk of a true cycle never terminates); `yaml.dump({noRefs:true})` on a real cyclic object throws `RangeError: Maximum call stack size exceeded` rather than hanging, matching the task's own framing. Confirmed the attack surface is broader than write paths: `bundle.ts`'s `tokenEstimate()` (used by read-only `lore graph`/`context`) also calls `serializeConcept` internally. Fix: added `assertBoundedYamlExpansion` (`src/core/concept.ts`) — a deliberately non-memoized, reference-blind walk mirroring what a real `dump` would do, but tracking a running "expanded units" total and aborting the instant it crosses a 100,000-unit budget (generous for real frontmatter, which is metadata not prose), plus path-scoped cycle detection (an ancestor `Set`, added on entering a node/removed on leaving) that correctly distinguishes a true cycle from harmless DAG-style anchor reuse (the same anchor referenced by two unrelated siblings, an ordinary safe pattern). Wired into the SINGLE gray-matter YAML parse hook every read path shares (`parseConcept`/`tryParseConcept`/`tryReadFrontmatter`), so a malicious file is rejected the moment it's first read — before validation, the bundle graph, token estimation, or a later dump can ever touch the dangerous object; a thrown error is automatically caught and path-annotated by `splitFrontmatter`'s existing `matter(...)` try/catch, exactly like a plain YAML syntax error already is. Added 4 tests (the task's 18-level repro; a 40-level chain proving the walk's own cost stays bounded regardless of attack depth; a cyclic-anchor case; a harmless-DAG-reuse negative control); confirmed via `git stash` all 3 malicious-payload tests fail pre-fix (parse alone doesn't trigger expansion — only downstream dump does — so `parseConcept` silently "succeeds" pre-fix, confirming the vulnerability is real and deferred) and pass post-fix. End-to-end verified with the real CLI: post-fix `lore query` on a malicious file exits 6 in 58ms; pre-fix `lore graph`'s CPU/timing signature (0.36s user, 133% CPU) confirms the expensive dump actually executed internally even though the tiny JSON output doesn't show it (only a computed token count is exposed, not the huge intermediate string). Full `bun test` → 1518 pass/0 fail (up from 1514); `bun run typecheck` clean; lint clean. |
 | 16 | LORE-69 | Done, 2026-07-21, session 16 | Root cause: `src/state.ts`'s `commitBacklogFiles` guard was a plain `file.startsWith("backlog/")` string check, not real path containment — a pathspec like `backlog/../docs/secret.md` textually starts with `backlog/` but resolves outside it once git interprets the `..` segment, and confirmed live that git honors `..` even inside a `:(literal)`-quoted pathspec, so quoting alone never neutralized it. Fix: each candidate path is normalized via `node:path`'s `posix.normalize` BEFORE the prefix check, and the NORMALIZED form — not the raw one — is what's passed to `git status`/`add`/`commit` downstream; rejects on `posix.isAbsolute(normalized)` or `!normalized.startsWith("backlog/")`. The pre-existing sibling-prefix protection (`backlog-evil/x.md`) was preserved and covered by a dedicated test. **Independent adversarial review then found a genuine bypass of THAT fix**: an embedded NUL byte. `posix.normalize` treats a segment like `"..\0"` as an ordinary (non-`..`) component and leaves it untouched, so `"backlog/.." + "\0" + "/x"` still starts with `backlog/` and passes — but `Bun.spawn`'s argv is a NUL-terminated C string, silently truncated at that same NUL once it crosses into the real `git` process, so git only ever received `:(literal)backlog/..`, resolving to the repo root; confirmed live end-to-end (full argv trace) that an unrelated in-flight edit at the repo root got swept into the commit, breaking BOTH ADR-0012 invariants at once. Fixed by (1) rejecting any path containing a NUL byte outright before normalize ever runs, and (2) defense-in-depth: `porcelainPaths` itself now re-validates every path `git status` reports back against `backlog/` before use in `add`/`commit`, closing the "validate one value, use a different value downstream" bug class at the actual git-boundary choke point rather than just the one instance found. Also verified by the reviewer (not exploitable): a symlink planted inside `backlog/` — git refuses to traverse a pathspec through a symlink (`fatal: pathspec '...' is beyond a symbolic link`), confirmed live; this is a DIFFERENT risk class from LORE-76/77 (those are about `lore scaffold`/`lore init` *writing through* a pre-existing destination symlink, not about what `git commit` does with one that already exists) — don't conflate the two. Flagged, not fixed (not currently reachable via any real caller — Backlog's own filename sanitizer already strips `/` and `\` from task titles): `posix.normalize` is POSIX-only, `win32.normalize` of the same string resolves differently, and this repo ships a Windows build/CI matrix — a follow-up candidate, see Not-queued. 9 new regression tests total (6 direct-fix + 3 review-fix), each confirmed via `git stash` to fail pre-fix/pass post-fix, including one real-git end-to-end test reproducing the reviewer's exact NUL-byte repro. Full `bun test` → 1529 pass/0 fail (up from 1518); `bun run typecheck` clean; lint clean. |
+| 17 | LORE-72 | Done, 2026-07-21, session 17 | Root cause: `src/commands/new.ts`'s `resolveTemplate` spliced the raw, unvalidated `--template` CLI flag value straight into `${TEMPLATES_DIR}/${candidate}.md` then `readFileSync` — no basename/traversal/absolute check at all. Fix: `assertTemplateNameConfined(name, root)`, called on `parsed.template` (the explicit flag only, not the profile-declared/type-name fallback) BEFORE it builds any candidate path — mirrors this same file's own already-proven `resolveOutPath` containment pattern (`resolve`+`relative` against the real target dir, checked for a `..`-prefixed or absolute result). Absolute-path rejection explicitly checks `isAbsolute` (host-bound) AND `posix.isAbsolute` AND `win32.isAbsolute` unconditionally — **this session proactively applied LORE-69's freshly-recorded "validate on the actual deployment platform, not just the host running the code" convention during implementation**, and it caught a real gap in the first draft: a Windows drive-letter `--template` value (`C:\Windows\...`) is inert on this session's POSIX host (backslash isn't a separator there) but genuinely absolute once compiled for the project's real `win32-x64` release target — relying only on the host-bound `isAbsolute` would have silently passed that case in every POSIX-hosted test run while remaining a live gap on the shipped Windows binary; the resulting test (deliberately run pre-fix too) confirmed the gap was real. Also explicitly checked (per the same convention) whether a NUL byte could defeat this guard the way it defeated LORE-69's first fix: it cannot — `readFileSync` is a direct fs syscall, and Bun/Node's own binding synchronously THROWS on any embedded NUL before ever reaching the OS (confirmed empirically), so there is no exec/argv boundary here for a NUL to exploit. Live pre-fix repro against the real CLI in a scratch bundle reproduced the task's exact finding (secret file content read and embedded verbatim into the generated concept, exit 0); post-fix the same command exits 2 with a clear usage error and writes nothing. 9 new tests in `test/new.test.ts` (5 for the fix, including the exact repro shape and the Windows-drive-letter case; 1 non-regression test for a legitimate `..`-PREFIXED-but-not-traversal name, mirroring `resolveOutPath`'s own existing test for the identical distinction), confirmed via `git stash` to fail pre-fix (the tell-tale `not_found` instead of `usage` — pre-fix it silently READ the outside file, found no matching name inside `.lore/templates/` after the fact, and only THEN fell through to the not-found path, meaning the read had already happened) and pass post-fix. Full `bun test` → 1534 pass/0 fail (up from 1529); `bun run typecheck` clean; lint clean (one formatter-only fix). |
 
 ## Not queued — needs a human / blocked
 
@@ -432,6 +432,22 @@ CI runs post-merge on dev.
   status` itself reports, not just what the caller supplied) — the second
   layer closes the whole "validate A, use B" bug class rather than just the
   one instance found.
+- **Confirmation that the above convention works** (LORE-72, 2026-07-21):
+  applied proactively DURING implementation this time, not caught by a later
+  review. Checking `win32.isAbsolute` unconditionally (not just the
+  host-bound `isAbsolute`) caught a real gap in the first draft of LORE-72's
+  own fix — a Windows drive-letter `--template` value is inert on this
+  session's POSIX host but genuinely absolute on the project's real
+  `win32-x64` release target, and a test written specifically to probe that
+  cross-platform gap failed against the first-draft fix, confirming it was
+  real rather than theoretical. Also explicitly checked (and confirmed safe,
+  no fix needed) whether a NUL byte could defeat the new guard the same way
+  it defeated LORE-69's first attempt — it can't here, since `readFileSync`
+  is a direct fs syscall that throws synchronously on an embedded NUL rather
+  than silently truncating at an exec/argv boundary. Keep asking BOTH
+  questions (platform-binding gaps, NUL/boundary-truncation gaps) on every
+  remaining security-labeled task, even when the immediate vulnerability
+  class looks different from LORE-69's.
 
 ## Session log
 
@@ -593,3 +609,18 @@ CI runs post-merge on dev.
   symlink already inside the guarded directory does not bypass this
   specific guard, a distinct risk class from LORE-76/77's write-through-
   symlink gap). Cursor advanced to LORE-72.
+- 2026-07-21 — session 17: resolved LORE-72 (see Resolved table). Branch
+  `feature/LORE-72` off `dev @ 7692e77`. Third security-labeled task this
+  campaign. Applied LORE-69's freshly-recorded cross-platform-validation
+  convention proactively during implementation (not caught by review this
+  time) — checking `win32.isAbsolute` unconditionally caught a real gap in
+  the first-draft fix (a Windows drive-letter `--template` value, inert on
+  this POSIX host, genuinely absolute on the project's real Windows release
+  target), confirmed via a test that failed against the first draft. Also
+  explicitly verified (and confirmed not applicable, no fix needed) whether
+  LORE-69's NUL-byte exec-boundary trick applied here — it doesn't, since
+  `readFileSync` throws synchronously on an embedded NUL rather than
+  truncating at an exec/argv boundary. One new campaign convention recorded
+  (confirmation that the LORE-69 convention generalizes and pays off when
+  applied proactively, not just reactively via review). Cursor advanced to
+  LORE-71.
