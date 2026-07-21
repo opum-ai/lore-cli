@@ -23,17 +23,19 @@
  *
  * ### What counts as a managed region
  *
- * Today the bundle has exactly one kind of in-file managed region: the `<!-- lore:index:begin -->` …
- * `<!-- lore:index:end -->` listing block that {@link generateIndexes} owns in every `index.md`
- * (lore-design §6.2). {@link managedRanges} locates each registered region with the **same**
- * {@link locateManagedBlock} arithmetic `generateIndexes` splices with (exactly one begin, one end,
+ * The bundle has two kinds of in-file managed region, both registered in {@link MANAGED_MARKERS}:
+ * the `<!-- lore:index:begin -->` … `<!-- lore:index:end -->` listing block that
+ * {@link generateIndexes} owns in every `index.md` (lore-design §6.2), and the
+ * `<!-- lore:tasks:begin -->` … `<!-- lore:tasks:end -->` task table that `managed-block.ts` owns in
+ * a `Story`/`Spec` doc (LORE-22). {@link managedRanges} locates each registered region with the
+ * **same** {@link locateManagedBlock} arithmetic both owners splice with (exactly one begin, one end,
  * markers included) — so `replace` protects exactly the span `lore sync` would regenerate, and a
  * refactor can never land in bytes `sync` later reverts. A malformed layout (a duplicated marker
  * pair, or an unmatched/crossed begin) is a fail-loud `validation` error rather than a guessed span
- * (LORE-86) — `replace` never has to guess which bytes were meant to stay protected either. The
- * marker registry ({@link MANAGED_MARKERS}) makes `<!-- lore:tasks -->` (LORE-22) a one-entry
- * addition. The fully machine-generated `log.md` has no in-file markers; it is excluded by the
- * command layer's discovery, not here (this engine sees only the bytes it is handed).
+ * (LORE-86) — `replace` never has to guess which bytes were meant to stay protected either. A future
+ * managed-block kind is likewise a one-entry addition to the registry. The fully machine-generated
+ * `log.md` has no in-file markers; it is excluded by the command layer's discovery, not here (this
+ * engine sees only the bytes it is handed).
  *
  * Per the core contract (lore-design §2.1) everything here is pure: text in, `{ text, count }` out,
  * or a {@link LoreError} out — `usage` for an unusable pattern (empty, invalid regex, or one that
@@ -46,6 +48,7 @@
 
 import { LoreError } from "../errors";
 import { INDEX_BLOCK_BEGIN, INDEX_BLOCK_END, locateManagedBlock } from "./indexes";
+import { TASK_BLOCK_BEGIN, TASK_BLOCK_END } from "./managed-block";
 
 /**
  * A half-open `[start, end)` byte range within a file's text. Used for the spans
@@ -81,12 +84,14 @@ export type Replacer = (text: string) => ReplaceResult;
 
 /**
  * The HTML-comment marker pairs that bound a lore-managed region. The single registry every
- * managed-region consumer skips, so a new managed block (e.g. `lore:tasks`, LORE-22) is protected
- * by adding one entry rather than threading a new special case through `replace`. The index block's
- * markers are imported from {@link indexes} so there is one source of truth for their exact bytes.
+ * managed-region consumer skips, so a new managed block is protected by adding one entry rather than
+ * threading a new special case through `replace`. Each marker pair is imported from its owning
+ * module ({@link indexes}, {@link managed-block}) so there is one source of truth for their exact
+ * bytes.
  */
 const MANAGED_MARKERS: ReadonlyArray<{ readonly begin: string; readonly end: string }> = [
   { begin: INDEX_BLOCK_BEGIN, end: INDEX_BLOCK_END },
+  { begin: TASK_BLOCK_BEGIN, end: TASK_BLOCK_END },
 ];
 
 /** A representative probe carrying word boundaries, line ends, digits, and punctuation, for the zero-width guard. */
@@ -274,8 +279,8 @@ function escapeRegExp(literal: string): string {
 
 /**
  * Merge overlapping/touching ranges into a sorted, non-overlapping list (ascending by start).
- * Exported because it is the general invariant {@link managedRanges} relies on once the marker
- * registry holds more than one kind: two different managed blocks (e.g. a future `lore:tasks` block
+ * Exported because it is the general invariant {@link managedRanges} relies on now that the marker
+ * registry holds more than one kind: two different managed blocks (e.g. a `lore:tasks` block
  * adjacent to an `index` block) can produce ranges that touch or nest, and a clean partition for
  * {@link applyReplacement} needs them collapsed. A nested range (fully inside another) is absorbed; a
  * touching one (`start === prev.end`) is joined so no zero-width author gap is left between them.
