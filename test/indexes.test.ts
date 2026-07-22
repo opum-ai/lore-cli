@@ -76,6 +76,17 @@ describe("generateIndexes — graph-derived navigable hubs (LORE-29)", () => {
     expect(out.get("adr/index.md")).toContain("- [Plan \\[B\\] (draft)](0001-x.md)");
   });
 
+  test("a pre-existing backslash-escaped bracket is not re-escaped into a live link boundary (LORE-149)", () => {
+    const out = generateIndexes(buildGraph([concept("adr/0001-x.md", { title: "Plan \\]B\\[ (draft)" })]));
+    const line = out.get("adr/index.md") ?? "";
+    // The backslash is doubled *before* the bracket is escaped, so the title's own `\]`/`\[` render
+    // as a literal backslash (`\\`) followed by a literal, non-delimiting bracket (`\]`/`\[`) —
+    // reproducing `Plan \]B\[ (draft)` verbatim instead of shifting text into a real `](` boundary.
+    expect(line).toContain("- [Plan \\\\\\]B\\\\\\[ (draft)](0001-x.md)");
+    // Exactly one real `](` link boundary — the title's escaped brackets must not open another.
+    expect(line.split("](").length).toBe(2);
+  });
+
   test("a title is single-lined so a newline cannot split the entry out of the list", () => {
     const out = generateIndexes(buildGraph([concept("adr/0001-x.md", { title: "Line one\nline two" })]));
     expect(out.get("adr/index.md")).toContain("- [Line one line two](0001-x.md)");
