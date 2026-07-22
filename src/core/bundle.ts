@@ -455,6 +455,16 @@ export function resolveRef(ref: string, dir: string, byId: ReadonlyMap<string, C
  * agrees byte-for-byte with how the id was derived. A target that escapes the
  * bundle root (a leading `../`) simply matches nothing.
  *
+ * A **`/`-absolute** `path` (a bundle-root-absolute target, e.g. `/foo/bar.md`) is
+ * resolved against the bundle root instead of `dir`: the leading `/` is stripped and
+ * the remainder used as-is, mirroring core/check.ts's `linkFindings`, the link-check
+ * gate's own resolver. `dir` is already a bundle-root-relative path (every caller
+ * derives it as `posix.dirname(concept.path)` / `posix.dirname(file.path)`), so "the
+ * bundle root" needs no separate parameter — it is simply the empty prefix a
+ * root-relative path is already relative to. Without this special case, a
+ * `/`-absolute ref/link would join onto `dir` like any other relative segment and
+ * disagree with the link-check gate on the same input.
+ *
  * Lookup is **case-sensitive** (a plain `Map.has`), which is deliberate: it is the
  * only choice that is deterministic across platforms (a case-insensitive match
  * would resolve differently on Linux vs macOS for the same files), and the lore
@@ -463,7 +473,8 @@ export function resolveRef(ref: string, dir: string, byId: ReadonlyMap<string, C
  * case-sensitive filesystem.
  */
 export function resolvePath(path: string, dir: string, byId: ReadonlyMap<string, Concept>): string | null {
-  const id = idFromPath(posix.join(dir, path));
+  const joined = path.startsWith("/") ? path.slice(1) : posix.join(dir, path);
+  const id = idFromPath(joined);
   return byId.has(id) ? id : null;
 }
 
