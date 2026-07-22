@@ -186,7 +186,11 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
 
   if (!parsed.external) {
     return driftPromise.then(({ findings, error }) => {
-      const report = mergeFindings(baseReport, findings);
+      // `complete: false` whenever this root's (or another root's) reconciliation errored mid-run
+      // (LORE-112) — the ONLY signal in the emitted report that distinguishes a partial-failure run
+      // from a genuinely clean one, since a short-circuited failure can still leave `errorCount === 0`
+      // (the failure happened before any finding was ever produced for it).
+      const report = { ...mergeFindings(baseReport, findings), complete: error === null };
       emit(reportRenderable(report), options.output, options.stdout);
       if (error !== null) {
         throw error;
@@ -212,7 +216,9 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
     (err: unknown): LivenessResult => ({ ok: false, err }),
   );
   return Promise.all([driftPromise, livenessPromise]).then(([{ findings, error }, liveness]) => {
-    const report = mergeFindings(baseReport, findings);
+    // Same `complete: false` rule as the non-`--external` path above (LORE-112) — liveness's own
+    // best-effort outcome never affects this; only `driftPromise`'s error does.
+    const report = { ...mergeFindings(baseReport, findings), complete: error === null };
     if (liveness.ok) {
       emit(reportRenderable({ ...report, externalFindings: liveness.findings }), options.output, options.stdout);
     } else {
@@ -651,7 +657,10 @@ function checkBundles(bundles: readonly Bundle[]): CheckReport {
     }
   }
   const { errorCount, warningCount } = tallySeverity(findings);
-  return { findings, errorCount, warningCount, fileCount };
+  // No reconciliation has run yet at this point (this is `baseReport`, the link/anchor + portability
+  // pass only) — definitionally complete; `runCheck` is the only place that ever downgrades this to
+  // `false`, once `driftPromise` resolves with a non-null error (LORE-112).
+  return { findings, errorCount, warningCount, fileCount, complete: true };
 }
 
 /** Whether a discovered doc path is a content-checkable `.md` (lowercase, matching the bundle loader) rather than a `.mdx`. */

@@ -108,6 +108,18 @@ export interface CheckReport {
   /** Number of files examined. */
   readonly fileCount: number;
   /**
+   * Whether every pass that was supposed to run for this report actually finished. Always `true`
+   * from this module (`checkBundle`/`summarize` are fully synchronous and never partial) — it only
+   * ever goes `false` in `commands/check.ts`'s emitted report, when the async status/managed-block
+   * reconciliation pass (LORE-27) errors mid-run for some bundle root (a missing linked task, a bad
+   * status-flow config, a malformed managed block). That failure is a real gate error and is always
+   * re-thrown after emitting, but the findings collected up to that point can still have
+   * `errorCount === 0` (the failure short-circuited before any finding was produced) — indistinguishable
+   * from a genuinely clean, complete run without this field (LORE-112). A JSON consumer reading only
+   * stdout should treat `complete: false` the same as a non-zero exit code / a caught rejection.
+   */
+  readonly complete: boolean;
+  /**
    * Opt-in external-URL **liveness** results (`--external`), each an `external-link` warning. These
    * are **non-deterministic** (they depend on the network), so they are kept out of the gate
    * entirely: never folded into {@link errorCount}/{@link warningCount}, never affecting the exit
@@ -806,10 +818,10 @@ function clip(value: string): string {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────────
 
-/** Tally findings into the aggregate {@link CheckReport} counts. */
+/** Tally findings into the aggregate {@link CheckReport} counts. `checkBundle` is fully synchronous and never partial, so `complete` is always `true` here — only `commands/check.ts` ever sets it `false` (LORE-112). */
 function summarize(findings: readonly CheckFinding[], fileCount: number): CheckReport {
   const { errorCount, warningCount } = tallySeverity(findings);
-  return { findings, errorCount, warningCount, fileCount };
+  return { findings, errorCount, warningCount, fileCount, complete: true };
 }
 
 /**
