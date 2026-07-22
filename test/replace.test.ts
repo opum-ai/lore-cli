@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { run } from "../src/cli";
 import {
   assertNoSymlinkInPath,
@@ -427,10 +427,17 @@ describe("lore replace — commit-phase write atomicity (LORE-116)", () => {
     // SECOND file (b.md) — after a.md has already committed, before c.md is ever attempted — the
     // exact "partway through" shape AC#2 asks for. Calls that aren't the simulated failure forward to
     // the real writeFileSync, so a.md's (and, were it reached, c.md's) write still actually happens.
+    // Every call's path argument is recorded so the assertions below can pin down *which* path the
+    // commit phase actually targets — a plain writeFileOverwriting (the pre-LORE-116 code this guards
+    // against a reversion to) would also make exactly one writeFileSync call per file and would satisfy
+    // every content/tmp-file assertion here identically, since the throw happens before that call's
+    // real write; only the recorded destination path distinguishes the two implementations.
     const realWriteFileSync = fs.writeFileSync.bind(fs);
     let calls = 0;
+    const paths: string[] = [];
     const spy = spyOn(fs, "writeFileSync").mockImplementation((...args: Parameters<typeof fs.writeFileSync>) => {
       calls++;
+      paths.push(String(args[0]));
       if (calls === 2) {
         throw new Error("simulated ENOSPC");
       }
@@ -449,6 +456,14 @@ describe("lore replace — commit-phase write atomicity (LORE-116)", () => {
     expect(readFileSync(join(root, "docs/b.md"), "utf8")).toBe("x"); // temp write failed — original bytes intact, not truncated
     expect(readFileSync(join(root, "docs/c.md"), "utf8")).toBe("x"); // loop aborted before this file was ever attempted
     expect(readdirSync(join(root, "docs")).filter((f) => f.startsWith(".lore-sync-tmp"))).toEqual([]); // no stray temp file left behind
+
+    // Discriminating assertions (LORE-116 review): the commit phase must go through writeFileAtomic's
+    // temp-file+rename discipline, not a plain writeFileSync straight at the destination. Without these,
+    // the four assertions above pass identically against the pre-fix writeFileOverwriting code path too.
+    expect(paths).toHaveLength(2); // a.md's real write, then b.md's failing write — c.md never attempted
+    const failingCallPath = paths[1] as string;
+    expect(basename(failingCallPath).startsWith(".lore-sync-tmp-")).toBe(true); // b.md's write went through a temp file, proving the atomic (not plain) discipline
+    expect(paths).not.toContain(join(root, "docs/b.md")); // the destination path itself is never a direct writeFileSync target
   });
 });
 
