@@ -135,6 +135,30 @@ interface Marker {
 }
 
 /**
+ * A top-level `html` node whose (trimmed) value contains marker-like text but does not *exactly*
+ * match either the begin or end sentinel — most commonly a begin/end pair that CommonMark's HTML-block
+ * rules collapse onto a single line with no separating newline (`<!-- label:begin --><!-- label:end
+ * -->`), which `mdast-util-from-markdown` parses as ONE `html` node whose value equals neither anchored
+ * pattern (LORE-156). Surfaced distinctly from "no markers at all" so this detected-but-malformed case
+ * is never read as a genuinely absent block.
+ */
+interface MalformedMarkerNode {
+  readonly span: Marker;
+  readonly value: string;
+}
+
+/**
+ * Strip the `^`/`$` anchors from an exact marker-matching `RegExp` (as built for {@link BEGIN_MARKER}/
+ * {@link END_MARKER} or the per-label patterns in {@link locateLabeledMarkers}), returning a pattern
+ * that matches the same marker text anywhere within a string rather than requiring the whole (trimmed)
+ * string to be exactly the marker. Used by {@link collectMarkerSpans} to recognize marker text that is
+ * present but not a clean, standalone sentinel (LORE-156).
+ */
+function loosenMarkerPattern(anchored: RegExp): RegExp {
+  return new RegExp(anchored.source.replace(/^\^/, "").replace(/\$$/, ""));
+}
+
+/**
  * Regenerate the managed task region of `content` from `rows`, returning the new full file bytes.
  *
  * The document is parsed only to locate the two top-level `html` marker nodes; the frozen table is
@@ -165,22 +189,35 @@ export function regenerateTaskBlock(
 
 /**
  * Scan `content` for top-level `html` marker nodes, returning the source spans of those matching
- * `beginMarker` / `endMarker`. The document is parsed with `fromMarkdown` and only the root's
- * **direct** `html` children are candidates, so a sentinel nested in a code fence or blockquote is
- * never a marker; the node value is trimmed before matching because mdast keeps a marker line's
- * leading indent and trailing spaces in the `html` node's `value`. The one shared primitive behind
- * both {@link findMarkers} (the fixed `lore:tasks` region) and {@link locateLabeledMarkers} (any
+ * `beginMarker` / `endMarker`, plus any top-level `html` nodes that carry marker-like text without
+ * being a clean, standalone sentinel (`malformed`). The document is parsed with `fromMarkdown` and
+ * only the root's **direct** `html` children are candidates, so a sentinel nested in a code fence or
+ * blockquote is never a marker; the node value is trimmed before matching because mdast keeps a marker
+ * line's leading indent and trailing spaces in the `html` node's `value`. The one shared primitive
+ * behind both {@link findMarkers} (the fixed `lore:tasks` region) and {@link locateLabeledMarkers} (any
  * labeled block), so the two never drift on how a marker is located — each applies its own validation
  * to the spans this returns.
+ *
+ * `malformed` exists for LORE-156: when a begin and end marker sit on one line with no separating
+ * newline (`<!-- label:begin --><!-- label:end -->`), CommonMark's HTML-block rules make
+ * `fromMarkdown` collapse them into a single `html` node whose trimmed value equals neither anchored
+ * pattern — so without this check the node is silently skipped and the pair reads as "0 begins, 0
+ * ends", indistinguishable from a genuinely marker-free document. A node lands in `malformed` when its
+ * trimmed value doesn't exactly match `beginMarker`/`endMarker` but does contain one of them as a
+ * substring (a non-anchored, "loose" version of the same pattern) — callers surface this distinctly
+ * from a true absence so a detected-but-malformed pair is never mistaken for "no block yet".
  */
 function collectMarkerSpans(
   content: string,
   beginMarker: RegExp,
   endMarker: RegExp,
-): { begins: Marker[]; ends: Marker[] } {
+): { begins: Marker[]; ends: Marker[]; malformed: MalformedMarkerNode[] } {
   const tree: Root = fromMarkdown(content);
   const begins: Marker[] = [];
   const ends: Marker[] = [];
+  const malformed: MalformedMarkerNode[] = [];
+  const looseBegin = loosenMarkerPattern(beginMarker);
+  const looseEnd = loosenMarkerPattern(endMarker);
   for (const node of tree.children) {
     if (node.type !== "html") {
       continue;
@@ -194,9 +231,11 @@ function collectMarkerSpans(
       begins.push(span);
     } else if (endMarker.test(value)) {
       ends.push(span);
+    } else if (looseBegin.test(value) || looseEnd.test(value)) {
+      malformed.push({ span, value });
     }
   }
-  return { begins, ends };
+  return { begins, ends, malformed };
 }
 
 /**
@@ -208,8 +247,14 @@ function collectMarkerSpans(
  *   or the end precedes the begin (missing / duplicated / unbalanced / crossed).
  */
 function findMarkers(content: string): { begin: Marker; end: Marker } {
-  const { begins, ends } = collectMarkerSpans(content, BEGIN_MARKER, END_MARKER);
+  const { begins, ends, malformed } = collectMarkerSpans(content, BEGIN_MARKER, END_MARKER);
 
+  if (malformed.length > 0) {
+    throw markerError(
+      `found marker text that is not a clean, standalone \`${TASK_BLOCK_BEGIN}\`/\`${TASK_BLOCK_END}\` sentinel on its own line (commonly a begin/end pair placed on the same line with no separating newline): \`${malformed[0]?.value ?? ""}\``,
+      { begins: begins.length, ends: ends.length, malformed: malformed.length },
+    );
+  }
   if (begins.length === 0 || ends.length === 0) {
     throw markerError(
       `the managed task region is missing (need one \`${TASK_BLOCK_BEGIN}\` and one \`${TASK_BLOCK_END}\` at the document top level)`,
@@ -265,8 +310,8 @@ function markerError(reason: string, input: Record<string, unknown>): LoreError 
  *   an error: a file with no `lore:tasks` block has nothing to protect.
  */
 export function locateTaskBlock(content: string): { start: number; end: number } | null {
-  const { begins, ends } = collectMarkerSpans(content, BEGIN_MARKER, END_MARKER);
-  if (begins.length === 0 && ends.length === 0) {
+  const { begins, ends, malformed } = collectMarkerSpans(content, BEGIN_MARKER, END_MARKER);
+  if (begins.length === 0 && ends.length === 0 && malformed.length === 0) {
     return null;
   }
   const { begin, end } = findMarkers(content);
@@ -433,16 +478,29 @@ function escapeRegExp(literal: string): string {
  * `null` when the file carries neither marker (the insert case {@link upsertManagedBlock} needs).
  * Shares {@link collectMarkerSpans} with {@link findMarkers} (so marker *location* never drifts
  * between the two); the one behavioral difference is that a *total* absence returns `null` instead of
- * throwing — a marker pair present yet malformed (a lone begin/end, duplicated, or crossed) is still a
- * fail-loud `validation` error.
+ * throwing — a marker pair present yet malformed (a lone begin/end, duplicated, crossed, or collapsed
+ * onto one line with no separating newline — LORE-156) is still a fail-loud `validation` error, never
+ * read as "no block yet" (which would make {@link upsertManagedBlock} append a second, duplicate block
+ * alongside the untouched malformed pair).
  *
  * @throws LoreError `validation` when markers are present but malformed.
  */
 function locateLabeledMarkers(content: string, label: string): { begin: Marker; end: Marker } | null {
   const beginMarker = new RegExp(`^<!--\\s*${escapeRegExp(label)}:begin\\s*-->$`);
   const endMarker = new RegExp(`^<!--\\s*${escapeRegExp(label)}:end\\s*-->$`);
-  const { begins, ends } = collectMarkerSpans(content, beginMarker, endMarker);
+  const { begins, ends, malformed } = collectMarkerSpans(content, beginMarker, endMarker);
 
+  if (malformed.length > 0) {
+    // Marker text is present but not a clean, standalone sentinel — most commonly a begin/end pair
+    // mdast collapsed onto one line (LORE-156). This must never be read as "no block yet": returning
+    // null here would make the caller append a fresh block after the untouched malformed pair,
+    // silently duplicating it.
+    throw labeledMarkerError(
+      label,
+      `found marker text that is not a clean, standalone \`<!-- ${label}:begin -->\`/\`<!-- ${label}:end -->\` sentinel on its own line (commonly a begin/end pair placed on the same line with no separating newline): \`${malformed[0]?.value ?? ""}\``,
+      { malformed: malformed.length },
+    );
+  }
   if (begins.length === 0 && ends.length === 0) {
     return null; // no block yet — the caller inserts one
   }
