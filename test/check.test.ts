@@ -298,13 +298,25 @@ describe("checkBundle — anchor rot (AC#1)", () => {
     expect(report.findings[0]?.rule).toBe("broken-anchor");
   });
 
-  test("anchor matching is case-insensitive and decode-tolerant", () => {
+  test("anchor matching is decode-tolerant on an exact-case match", () => {
+    const orders2: CheckInputFile = { path: "reference/orders.md", raw: ref("Orders", "## Archival Policy") };
+    const adr: CheckInputFile = {
+      path: "adr/x.md",
+      // The hyphen is percent-encoded but decodes to the real, exact-case slug.
+      raw: ref("X", "See [p](../reference/orders.md#archival%2Dpolicy)."),
+    };
+    expect(checkBundle([adr, orders2]).errorCount).toBe(0);
+  });
+
+  test("AC#1/AC#2: an anchor differing only in case from the heading slug is a broken-anchor error", () => {
     const orders2: CheckInputFile = { path: "reference/orders.md", raw: ref("Orders", "## Archival Policy") };
     const adr: CheckInputFile = {
       path: "adr/x.md",
       raw: ref("X", "See [p](../reference/orders.md#Archival-Policy)."),
     };
-    expect(checkBundle([adr, orders2]).errorCount).toBe(0);
+    const report = checkBundle([adr, orders2]);
+    expect(report.errorCount).toBe(1);
+    expect(report.findings[0]?.rule).toBe("broken-anchor");
   });
 });
 
