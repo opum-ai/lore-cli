@@ -6,7 +6,7 @@
  * (LORE-47) to prove the two compose end to end.
  */
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -143,11 +143,11 @@ describe("realGitAdapter — history()", () => {
       const addDoc = commits.find((c) => c.subject === "add nested doc");
       expect(addDoc?.files).toEqual(["docs/a.md"]); // relative to projectRoot, not the repo top level
 
-      // The commit that only touched a file OUTSIDE this project's own root reports no files here at
-      // all (matching --relative's "exclude changes outside the directory" semantics) rather than a
-      // path like "../outside.txt" that isUnderRoot could never match either.
+      // The commit that only touched a file OUTSIDE this project's own root is pruned by the `-- docs`
+      // pathspec (LORE-143) before it ever reaches this process at all — it is simply absent here,
+      // not present-with-empty-files the way an unscoped `git log` plus post-filtering would report it.
       const outsideCommit = commits.find((c) => c.subject === "add file outside the nested project");
-      expect(outsideCommit?.files).toEqual([]);
+      expect(outsideCommit).toBeUndefined();
     } finally {
       rmSync(top, { recursive: true, force: true });
     }
@@ -186,6 +186,63 @@ describe("realGitAdapter — history()", () => {
       expect(md).toContain("# Change log");
       expect(md).toContain("## docs/adr");
       expect(md).toContain("add ADR");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("LORE-143: the `git log` invocation is scoped with a `-- <root>` pathspec, not left to walk the whole repository", () => {
+    const root = freshRepo();
+    try {
+      commit(root, "docs/a.md", "a\n", "add a");
+      const sha = resolveHeadSha(root) as string;
+
+      const realSpawnSync = Bun.spawnSync.bind(Bun);
+      const seenArgs: string[][] = [];
+      const spy = spyOn(Bun, "spawnSync").mockImplementation(
+        // biome-ignore lint/suspicious/noExplicitAny: Bun.spawnSync's overload set can't be named as a single call signature
+        (...args: any[]) => {
+          const cmd = args[0];
+          if (Array.isArray(cmd) && cmd[0] === "git" && cmd[1] === "log") {
+            seenArgs.push(cmd as string[]);
+          }
+          // biome-ignore lint/suspicious/noExplicitAny: forwarding to the real spawnSync overload set
+          return (realSpawnSync as any)(...args);
+        },
+      );
+      try {
+        realGitAdapter(root).history({ to: sha }, "docs");
+      } finally {
+        spy.mockRestore();
+      }
+
+      expect(seenArgs).toHaveLength(1);
+      const args = seenArgs[0] ?? [];
+      // A pathspec always comes after a `--` separator, restricting the walk to exactly `docs` —
+      // not merely narrowing `--name-only`'s per-commit file list after the fact.
+      const dashIndex = args.indexOf("--");
+      expect(dashIndex).toBeGreaterThan(-1);
+      expect(args.slice(dashIndex + 1)).toEqual(["docs"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("LORE-143: a commit touching only files outside root is excluded from history() itself, not merely from its files", () => {
+    const root = freshRepo();
+    try {
+      commit(root, "docs/a.md", "a\n", "add doc");
+      writeFileSync(join(root, "src.ts"), "code\n");
+      run(root, ["add", "src.ts"]);
+      run(root, ["commit", "-q", "-m", "add unrelated source file"]);
+      const sha = resolveHeadSha(root) as string;
+
+      const commits = realGitAdapter(root).history({ to: sha }, "docs");
+      // Not "commits with this subject report no files" — the commit is absent from the array
+      // entirely, proving the `git log` walk itself was pruned to `docs`, not post-filtered later.
+      expect(commits).toHaveLength(1);
+      expect(commits.some((c) => c.subject === "add unrelated source file")).toBe(false);
+      expect(commits[0]?.subject).toBe("add doc");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
