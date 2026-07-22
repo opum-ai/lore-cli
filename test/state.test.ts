@@ -17,6 +17,7 @@ import {
   commitBacklogIfDirty,
   type GitSpawn,
   type GitSpawnResult,
+  renderBacklogCommitLine,
 } from "../src/state";
 import { gitRun } from "./helpers";
 
@@ -269,6 +270,24 @@ describe("commitBacklogFiles — capture + scope guard (fake GitSpawn)", () => {
     expect(result.error).toContain("could not commit backlog/");
     // It did reach `git commit` — the failure was captured after the attempt, not short-circuited.
     expect(spawn.calls[3]?.args[0]).toBe("commit");
+  });
+
+  test("LORE-109 regression: a `git commit` failure's real stderr (e.g. a rejected pre-commit hook) is captured into result.hint, not discarded", async () => {
+    const spawn = notNestedSpawn(
+      ok(porcelainZ(entry(" M", "backlog/tasks/lore-1 - x.md"))), // status: dirty
+      ok(""), // add
+      fail(1, "pre-commit hook: task file missing required frontmatter"), // commit
+    );
+    const result = await commitBacklogFiles(["backlog/tasks/lore-1 - x.md"], opts(spawn), "msg");
+    expect(result.committed).toBe(false);
+    // The hint carries the actual git/hook stderr reason (via `run()`'s stderrHint), not just the
+    // generic "exited N" message that alone lands in `result.error`.
+    expect(result.hint).toContain("pre-commit hook: task file missing required frontmatter");
+    // renderBacklogCommitLine folds the hint into its single rendered line, so a caller printing that
+    // one line still sees the real cause, not only "git commit exited 1".
+    const line = renderBacklogCommitLine(result);
+    expect(line).toContain("pre-commit hook: task file missing required frontmatter");
+    expect(line).toContain("backlog/ commit failed:");
   });
 
   test("a non-drift error (a failed spawn, not a non-zero exit) still propagates — only a git failure is captured", async () => {

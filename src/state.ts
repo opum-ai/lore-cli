@@ -75,6 +75,14 @@ export interface BacklogCommitResult {
    * {@link commitBacklogIfDirty} (`sync`'s catch-all sweep still throws on a git failure).
    */
   readonly error?: string;
+  /**
+   * Set alongside {@link error} when the underlying `drift` {@link LoreError} carried a `hint` — the
+   * actual git/hook stderr reason `run()` captured via {@link stderrHint} (e.g. a rejected pre-commit
+   * hook's real output), or its generic fallback when the failing invocation produced no stderr.
+   * {@link renderBacklogCommitLine} folds this into its one output line so a caller sees the real
+   * cause rather than only a bare "`git commit` exited N". Never set without {@link error}.
+   */
+  readonly hint?: string;
 }
 
 /** Where Backlog.md's own working state lives, relative to the repo root — the one directory lore commits on its behalf. */
@@ -94,14 +102,17 @@ function literalPathspec(path: string): string {
 
 /**
  * The single line a command prints for its `backlog/`-commit outcome: `committed backlog/: N files`
- * on success, `backlog/ commit failed: …` when {@link BacklogCommitResult.error} is set, or
- * `undefined` when nothing was committed and nothing failed (a no-op the report omits entirely).
- * Shared by `link`/`unlink`/`rename`/`sync` so the one line they all emit for the same event — its
- * label, count, and pluralization — stays byte-identical in exactly one place.
+ * on success, `backlog/ commit failed: … (hint)` when {@link BacklogCommitResult.error} is set (the
+ * trailing `(hint)` present only when {@link BacklogCommitResult.hint} is too — the real git/hook
+ * stderr reason, not just the generic "exited N" message), or `undefined` when nothing was
+ * committed and nothing failed (a no-op the report omits entirely). Shared by `link`/`unlink`/
+ * `rename`/`sync` so the one line they all emit for the same event — its label, count, and
+ * pluralization — stays byte-identical in exactly one place.
  */
 export function renderBacklogCommitLine(commit: BacklogCommitResult): string | undefined {
   if (commit.error !== undefined) {
-    return `backlog/ commit failed: ${commit.error}`;
+    const hintSuffix = commit.hint !== undefined ? ` (${commit.hint})` : "";
+    return `backlog/ commit failed: ${commit.error}${hintSuffix}`;
   }
   if (commit.committed) {
     const noun = commit.files.length === 1 ? "file" : "files";
@@ -178,8 +189,9 @@ const DEFAULT_COMMIT_MESSAGE = "chore(backlog): sync task changes";
  * failure) no-ops inside {@link commitBacklogIfDirty}'s own empty-pathspec guard, never reaching
  * `git`. `gitSpawn` defaults to the real `git` binary scoped to `root`; injected in tests. A failed
  * `git add`/`commit` (a `drift` git error, e.g. a rejected pre-commit hook) is captured into the
- * result's {@link BacklogCommitResult.error} rather than thrown, so the caller can still emit its
- * per-task report before it exits `drift`; any non-`drift` error still propagates.
+ * result's {@link BacklogCommitResult.error} (with its {@link LoreError.hint} riding along in
+ * {@link BacklogCommitResult.hint}) rather than thrown, so the caller can still emit its per-task
+ * report before it exits `drift`; any non-`drift` error still propagates.
  */
 export async function commitBacklogFiles(
   files: readonly string[],
@@ -252,9 +264,11 @@ export async function commitBacklogFiles(
     return await commitBacklogIfDirty(gitSpawn, message, normalizedFiles);
   } catch (err) {
     // Capture a git-side `drift` failure into the result so the caller still emits its report before
-    // exiting `drift`; anything else is unexpected and propagates unchanged.
+    // exiting `drift`; anything else is unexpected and propagates unchanged. `err.hint` rides along
+    // (the actual git/hook stderr `run()` captured, or its generic fallback) so the rendered line
+    // below isn't left with only a bare "exited N".
     if (err instanceof LoreError && err.type === "drift") {
-      return { committed: false, files: [], error: err.message };
+      return { committed: false, files: [], error: err.message, hint: err.hint };
     }
     throw err;
   }
