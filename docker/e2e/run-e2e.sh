@@ -1263,15 +1263,14 @@ check "AC3: the custom schema's required list includes the declared field" \
 # AC4: a malformed profile (here: [profile]/[base.fields] populated but zero [[types]] --
 # profile.ts's own documented fail-loud case, "the common cause is uncommenting [profile]/
 # [base.fields] but leaving the example [[types]] commented") makes every loadProfile-bearing
-# command fail loud at exit 6, validation. `lore check` is confirmed by source (check.ts imports
-# nothing from core/profile.ts) to NOT load the profile at all. Proven by COMPARING its outcome
-# before/after the malformed profile is introduced rather than asserting a bare "exit 0": that
-# stayed the more robust test even after LORE-68 fixed the bundle's one prior source of baseline
-# noise (a Story's managed task block losing a `../` segment across Phase 15b's rename) -- Phase
-# 17a now asserts the baseline itself is clean, but this probe's own contract is proving
-# profile-invariance, independent of whatever the bundle's baseline state happens to be.
-lore check --json >/tmp/check-baseline.json 2>/dev/null
-BASELINE_CHECK_RC=$?
+# command fail loud at exit 6, validation. LORE-89 made `lore check` one of those commands too:
+# check.ts:47 imports loadProfile and runCheck (~line 142) calls it up front -- before bundle
+# discovery or any other work -- deliberately mirroring context.ts/graph.ts's own LORE-84
+# precedent of failing loud on a malformed profile before anything downstream runs. So a
+# malformed profile now makes `lore check --json` fail the same way lore new/validate/sync
+# already do below: exit 6, `.error_type == "validation"`, empty stdout -- asserted the same
+# way via step_fail so the assertion genuinely fails if this fail-loud contract ever regresses
+# to profile-blind.
 
 cp .lore/profile.toml /tmp/profile-toml-good.toml
 cat > .lore/profile.toml <<'TOMLEOF'
@@ -1292,12 +1291,9 @@ step_fail "AC4: exit 6 malformed profile (zero [[types]]) via lore validate" 6 \
 step_fail "AC4: exit 6 malformed profile (zero [[types]]) via lore sync" 6 \
   '.error_type == "validation"' \
   -- lore sync "$STORY_ID" --json
-
-lore check --json >/tmp/check-malformed.json 2>/dev/null
-MALFORMED_CHECK_RC=$?
-check "AC4: lore check is NOT profile-bearing -- byte-identical outcome with a malformed profile" \
-  '[ "$MALFORMED_CHECK_RC" -eq "$BASELINE_CHECK_RC" ] && diff -q /tmp/check-baseline.json /tmp/check-malformed.json >/dev/null'
-rm -f /tmp/check-baseline.json /tmp/check-malformed.json
+step_fail "AC4: exit 6 malformed profile (zero [[types]]) via lore check" 6 \
+  '.error_type == "validation"' \
+  -- lore check --json
 
 cp /tmp/profile-toml-good.toml .lore/profile.toml
 rm -f /tmp/profile-toml-good.toml /tmp/custom-new-err
