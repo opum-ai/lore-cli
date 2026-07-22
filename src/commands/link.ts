@@ -201,8 +201,12 @@ export async function runLink(options: LinkOptions): Promise<number> {
   const changed = writeTasksIfChanged(docsRoot, concept, existingTasks, nextTasks, profile);
 
   let anyBackRefFailed = false;
-  // The `backlog/` task files this run actually edited — the exact (and only) paths its commit
-  // stages (never a bundle-wide sweep). Populated inside the loop, right after each successful edit.
+  // The candidate `backlog/` task file paths this run's commit stages — never a bundle-wide sweep.
+  // Populated inside the loop after either a successful edit, or an "already-present" no-edit
+  // outcome whose file might still carry a prior run's uncommitted drift (LORE-121); either way,
+  // `commitBacklogFiles`'s own `git status` (scoped to exactly these paths) is what decides which
+  // of them, if any, are actually dirty and worth staging — a failed edit never reaches either push,
+  // so it stays excluded (see the "partial back-ref failure" test).
   const editedFiles: string[] = [];
   if (!noBackRef) {
     const outcomes = await runSequentially(taskIds, async (taskId) => {
@@ -216,7 +220,18 @@ export async function runLink(options: LinkOptions): Promise<number> {
       const wasPresent = hasLabel(detail, label);
       const docChanged = !detail.documentation.includes(docPath);
       if (wasPresent && !docChanged) {
-        return "already-present" as const; // both the label and --doc already reflect this link
+        // Both the label and --doc already reflect this link, so there is no Backlog edit to make
+        // — but the task's file can still be dirty and uncommitted on disk if a PRIOR `lore link`
+        // run already applied that same edit and then its own `commitBacklogFiles` call failed
+        // (e.g. a rejected pre-commit hook, LORE-121). Recording the path here, even though this
+        // run makes no edit, lets `commitBacklogFiles`'s own `git status` (scoped to exactly this
+        // path) decide whether there is real drift to stage and commit: a clean file reports
+        // nothing dirty and stays a true no-op (AC#3), while a dirty one gets picked up and
+        // committed by this retry (AC#1/#2) instead of silently no-opping forever.
+        if (detail.file) {
+          editedFiles.push(detail.file);
+        }
+        return "already-present" as const;
       }
       const desiredDocs = addDoc(detail.documentation, docPath);
       await adapter.editTask(taskId, { addLabels: [label], doc: desiredDocs });
@@ -240,10 +255,12 @@ export async function runLink(options: LinkOptions): Promise<number> {
     });
   }
 
-  // Commit exactly the task files this run edited — lore is the sole committer of `backlog/`
-  // (ADR-0012, design §3.6), so a `link` no longer leaves them uncommitted until the next `lore
-  // sync`. Scoped to `editedFiles`, so a `--no-back-ref`/no-op run (empty) commits nothing and an
-  // unrelated dirty `backlog/` edit is never swept in (ADR-0012 §1).
+  // Commit whatever of this run's candidate task files (`editedFiles`) turns out to actually be
+  // dirty — lore is the sole committer of `backlog/` (ADR-0012, design §3.6), so a `link` no longer
+  // leaves an edit (this run's, or a prior run's uncommitted drift, LORE-121) sitting uncommitted
+  // until the next `lore sync`. Scoped to `editedFiles`, so a `--no-back-ref` run (empty) commits
+  // nothing, a genuinely clean run finds nothing dirty among its candidates and stays a true no-op,
+  // and an unrelated dirty `backlog/` edit to some OTHER task's file is never swept in (ADR-0012 §1).
   const backlogCommit = await commitBacklogFiles(editedFiles, options, LINK_COMMIT_MESSAGE);
   const report: LinkReport = { concept: docPath, tasks, changed, backlogCommit };
   // A captured commit failure (backlogCommit.error) is drift too — routed through the same
