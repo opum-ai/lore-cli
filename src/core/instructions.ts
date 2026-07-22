@@ -43,10 +43,15 @@ anything if one doesn't. \`lore unlink <story> <taskId...>\` removes the
 coupling the same way, but is more forgiving: a task id no longer present
 in Backlog is simply skipped (exit 0), not an error.
 
-\`lore link\`/\`lore unlink\` edit \`backlog/tasks/*.md\` directly but do not
-commit it -- only \`lore sync\` commits \`backlog/\` (it commits whatever
-either command left dirty). Never hand-edit or \`git add\` files under
-\`backlog/tasks/\` yourself; let \`lore sync\` commit them.
+\`lore link\`/\`lore unlink\` edit \`backlog/tasks/*.md\` directly and commit
+those edits themselves -- each calls \`commitBacklogFiles\`, scoped to
+exactly the files it touched, right after writing them, so nothing is left
+pending for \`lore sync\` on their account. \`lore sync\`'s own commit step
+is now a catch-all sweep: it still commits anything left dirty under
+\`backlog/\` from another source (a human's direct \`backlog task edit\`, or
+a prior run's commit that failed). Never hand-edit or \`git add\` files
+under \`backlog/tasks/\` yourself; whichever command touches them commits
+them.
 
 See ADR-0009 (Story <-> Task coupling & reconciliation) and ADR-0012
 (Backlog coexistence & git ownership).`,
