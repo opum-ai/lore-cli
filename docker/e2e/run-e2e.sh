@@ -26,8 +26,21 @@ mkdir -p "$RESULTS_DIR"
 
 PASS=0
 FAIL=0
+REPORT_WRITE_FAILURES=0
 
 log() { printf '%s\n' "$*" >&2; }
+
+# report_write_failed <name> — record() and check() route their append failures
+# here instead of letting them pass silently: under `set -uo pipefail` (no -e)
+# a failed `>>"$REPORT"` (permission denied, disk full, ...) would otherwise
+# just vanish, since neither function's caller inspects its exit status. This
+# still lets the run continue (the harness itself stays informative on stderr
+# even if the report file is unwritable) but makes sure the failure is loud
+# and reflected in the script's own final exit code (see the Phase 25 tally).
+report_write_failed() {
+  REPORT_WRITE_FAILURES=$((REPORT_WRITE_FAILURES + 1))
+  log "REPORT WRITE FAILED: could not append '$1' to $REPORT"
+}
 
 record() {
   local name="$1" status="$2" expected="$3" actual="$4" out="$5" err="$6"
@@ -36,7 +49,7 @@ record() {
     --argjson expected "$expected" --argjson actual "$actual" \
     --rawfile stdout "$out" --rawfile stderr "$err" \
     '{name:$name,status:$status,expected_exit:$expected,actual_exit:$actual,stdout:$stdout,stderr:$stderr}' \
-    >>"$REPORT"
+    >>"$REPORT" || report_write_failed "$name"
 }
 
 # step <name> <expected_exit> -- <cmd...>
@@ -124,7 +137,8 @@ check() {
     status=FAIL
     FAIL=$((FAIL + 1))
   fi
-  jq -n --arg name "$name" --arg status "$status" '{name:$name,status:$status}' >>"$REPORT"
+  jq -n --arg name "$name" --arg status "$status" '{name:$name,status:$status}' >>"$REPORT" \
+    || report_write_failed "$name"
   log "[$status] $name"
   [ "$status" = "PASS" ]
 }
@@ -132,6 +146,9 @@ check() {
 tally() {
   log ""
   log "==== E2E summary: $PASS passed, $FAIL failed (report: $REPORT) ===="
+  if [ "$REPORT_WRITE_FAILURES" -gt 0 ]; then
+    log "==== WARNING: $REPORT_WRITE_FAILURES report write(s) to $REPORT failed (see REPORT WRITE FAILED lines above) ===="
+  fi
 }
 
 critical() {
@@ -1553,7 +1570,11 @@ rm -rf /tmp/nested-e2e
 
 # ── Phase 25: tally ───────────────────────────────────────────────────────────────
 tally
-if [ "$FAIL" -gt 0 ]; then
+# AC1: a report-write failure inside record()/check() (permission denied, disk
+# full, ...) must flip the overall exit code too, not just a failed test --
+# otherwise an all-PASS run whose report silently failed to write would still
+# report success.
+if [ "$FAIL" -gt 0 ] || [ "$REPORT_WRITE_FAILURES" -gt 0 ]; then
   exit 1
 fi
 exit 0
