@@ -87,6 +87,30 @@ describe("extractHeadingSlugs", () => {
     const slugs = extractHeadingSlugs("## The `foo` bar\n");
     expect([...slugs]).toEqual(["the-foo-bar"]);
   });
+
+  test("a heading made of an image includes its alt text (LORE-136)", () => {
+    // GitHub renders `![Alt Text](img.png)` inside a heading as visible "Alt Text" and slugs
+    // the heading from that rendered text — mdast never turns the image into a `text` node,
+    // so nodeText must read the image's `alt` field directly, matching mdast-util-to-string's
+    // default `includeImageAlt: true`.
+    const slugs = extractHeadingSlugs("## ![Alt Text](img.png)\n");
+    expect([...slugs]).toEqual(["alt-text"]);
+  });
+
+  test("an image's alt text combines with surrounding heading text", () => {
+    const slugs = extractHeadingSlugs("## Before ![Alt Text](img.png) After\n");
+    expect([...slugs]).toEqual(["before-alt-text-after"]);
+  });
+
+  test("an imageReference's alt text is included the same way", () => {
+    const slugs = extractHeadingSlugs("## ![Alt Text][ref]\n\n[ref]: img.png\n");
+    expect([...slugs]).toEqual(["alt-text"]);
+  });
+
+  test("an image with no alt text contributes nothing (not a literal 'undefined'/'null')", () => {
+    const slugs = extractHeadingSlugs("## ![](img.png)\n");
+    expect([...slugs]).toEqual([""]);
+  });
 });
 
 // ── classifyAddress: LORE-71's SSRF range classifier ──────────────────────────────
