@@ -24,6 +24,7 @@ import { canonicalType, isKnownType, SCHEMAS_DIR, schemaFileName, schemaModeline
 import { buildNewConcept, builtinTemplateFor, slugify } from "../core/template";
 import { EXIT_OK, errnoCode, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { assertNotReservedStem } from "./args";
 import { createIfAbsent, ensureDir, findSymlinkSegment } from "./fswrite";
 
 /** Where user templates live, relative to the repo root. */
@@ -305,6 +306,12 @@ function resolveDocPath(parsed: NewArgs, type: string, root: string): string {
  * can never write an orphaned file the bundle walk won't see, nor clobber the conformance root.
  * The `..` escape is matched by path **segment** (`..` exactly or a leading `../`), so a real
  * in-repo path whose first segment merely starts with `..` (e.g. `..notes/x`) is not rejected.
+ *
+ * Beyond the root index, ANY basename of `index`/`log` — at any nesting depth — is also rejected,
+ * via the same {@link assertNotReservedStem} `rename`/`supersede`/`link` share (LORE-114): those
+ * stems are lore's own generated file names wherever they sit, not just at the bundle root, so
+ * `lore new` must not let a user create a doc that collides with one. Checked AFTER the
+ * root-index-specific check above, so `docs/index.md` keeps its own message unaffected.
  */
 function resolveOutPath(out: string, root: string): string {
   const rel = relative(root, resolve(root, out));
@@ -327,6 +334,7 @@ function resolveOutPath(out: string, root: string): string {
       "choose another path; `lore init` owns the root index that carries okf_version",
     );
   }
+  assertNotReservedStem(idFromPath(posixRel), "create");
   return posixRel;
 }
 
