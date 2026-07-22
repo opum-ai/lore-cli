@@ -159,19 +159,25 @@ export function toDot(data: GraphExport): string {
 }
 
 /**
- * Quote a string as a DOT double-quoted ID. Per the DOT language grammar, a
- * quoted ID escapes exactly one thing — a literal double quote, written `\"`
- * — and leaves every other character unchanged, including a lone `\`:
- * Graphviz's parser never interprets `\\` as an escaped backslash, so
- * doubling every `\` (the previous bug here) corrupted any id, title, or edge
- * kind that happened to contain one. A raw line break, though, cannot survive
- * inside a quoted ID without splitting `toDot()`'s one-statement-per-line
- * output across two physical lines, so an embedded newline (`value` is
+ * Quote a string as a DOT double-quoted ID (an escString, per the Graphviz
+ * language spec). Graphviz's lexer (`lib/cgraph/scan.l`) recognizes exactly
+ * two escapes inside a quoted string — `\"` for a literal quote and `\\` for
+ * a literal backslash — and otherwise **drops** a backslash that precedes
+ * any other character (so an *unescaped* `\` is not safe passthrough; it is
+ * silently eaten, or worse, combines with the following character). A literal
+ * backslash therefore must be doubled to `\\` so it survives the round trip,
+ * and that doubling must happen **first**, before any escape sequence this
+ * function injects (`\"`, `\n`) — otherwise the backslash the doubling itself
+ * introduces would be doubled again. A raw line break cannot survive inside a
+ * quoted ID without splitting `toDot()`'s one-statement-per-line output
+ * across two physical lines, so an embedded newline (`value` is
  * bundle-controlled — a concept id or frontmatter scalar, either of which can
  * carry one) is rewritten to the two-character escape `\n` — the same escape
- * Graphviz itself uses to force a line break inside a label — before the
- * quote escaping is applied.
+ * Graphviz itself uses to force a line break inside a label.
  */
 function quote(value: string): string {
-  return `"${value.replace(/\r\n|\r|\n/g, "\\n").replace(/"/g, '\\"')}"`;
+  return `"${value
+    .replace(/\\/g, "\\\\")
+    .replace(/\r\n|\r|\n/g, "\\n")
+    .replace(/"/g, '\\"')}"`;
 }
