@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-22 14:28'
-updated_date: '2026-07-22 15:45'
+updated_date: '2026-07-22 15:50'
 labels:
   - codex-review-followup
   - build-runtime
@@ -26,7 +26,7 @@ The docker/e2e harness assertion at `docker/e2e/run-e2e.sh:1298` reads "AC4: lor
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The run-e2e.sh AC4 assertion is updated to encode the LORE-89 profile-aware contract: a malformed .lore/profile.toml causes `lore check` to fail loudly (non-zero exit distinct from the clean baseline), not a byte-identical outcome.
-- [ ] #2 Running the full docker/e2e harness against current dev (docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e) reports 0 failed scenarios and the harness exits 0.
+- [x] #2 Running the full docker/e2e harness against current dev (docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e) reports 0 failed scenarios and the harness exits 0.
 - [x] #3 The updated assertion still fails if `lore check` profile-aware fail-loud behavior regresses (it genuinely tests the LORE-89 contract, not a tautology).
 <!-- AC:END -->
 
