@@ -283,6 +283,55 @@ describe("lore agents — CLAUDE.md nudge is a non-clobbering managed block", ()
   });
 });
 
+describe("lore agents — preserves the on-disk BOM/EOL convention (LORE-128)", () => {
+  test("refreshing the managed block in a CRLF + BOM CLAUDE.md keeps the rest of the file CRLF + BOM", () => {
+    // A stale block (drift) so this run is a real `updated`, not a no-write `unchanged`.
+    const bodyLines = [
+      "# Project memory",
+      "",
+      "<!-- lore:agents:begin -->",
+      "stale",
+      "<!-- lore:agents:end -->",
+      "",
+      "Hand-authored prose.",
+      "",
+    ];
+    const crlf = bodyLines.join("\r\n");
+    const withBom = `﻿${crlf}`;
+    writeFileSync(claudeAbs(), withBom);
+
+    const { result } = agents();
+    expect(actionFor(result, CLAUDE_MD_REL_PATH)).toBe("updated");
+
+    const afterRaw = readFileSync(claudeAbs(), "utf8");
+    // The whole file — not just the surrounding prose — keeps the original BOM and CRLF, including
+    // the freshly-written managed block itself: no bare `\n` anywhere, and CRLF count matches `\n` count.
+    expect(afterRaw.startsWith("﻿")).toBe(true);
+    const bare = afterRaw.slice(1);
+    const lfCount = (bare.match(/\n/g) ?? []).length;
+    const crlfCount = (bare.match(/\r\n/g) ?? []).length;
+    expect(crlfCount).toBe(lfCount);
+    expect(bare.startsWith("# Project memory\r\n")).toBe(true); // sanity: still readable text
+    expect(bare).toContain("Hand-authored prose.\r\n");
+    expect(bare).toContain("<!-- lore:agents:begin -->\r\n");
+    expect(bare).not.toContain("stale");
+    // Idempotent from this refreshed state too: a second run reports unchanged and touches nothing.
+    const before = readFileSync(claudeAbs(), "utf8");
+    const second = agents();
+    expect(actionFor(second.result, CLAUDE_MD_REL_PATH)).toBe("unchanged");
+    expect(readFileSync(claudeAbs(), "utf8")).toBe(before);
+  });
+
+  test("a plain LF/no-BOM CLAUDE.md is unaffected (no spurious CRLF/BOM introduced)", () => {
+    writeFileSync(claudeAbs(), "# Project memory\n\nHand-authored prose.\n");
+    const { result } = agents();
+    expect(actionFor(result, CLAUDE_MD_REL_PATH)).toBe("updated");
+    const after = readFileSync(claudeAbs(), "utf8");
+    expect(after.startsWith("﻿")).toBe(false);
+    expect(after).not.toContain("\r\n");
+  });
+});
+
 describe("lore agents — output rendering", () => {
   test("plain mode lists one `<action> <path>` line per file", () => {
     const stdout = capture();
