@@ -91,6 +91,15 @@ every package's `version` (root `package.json` **and** all five
 `npm/<platform>/package.json` — they must stay in lockstep) as part of the
 same commit/tag that triggers the release.
 
+**Scoped-package public access:** all six `@salient-data/lore*` packages are
+scoped, and npm defaults a scoped package's first publish to
+restricted/private access — it fails with an access-denied error unless the
+publish is explicitly marked public. Root `package.json` and all five
+`npm/<platform>/package.json` manifests already carry `"publishConfig": {
+"access": "public" }` for this reason, so a plain `npm publish` (no
+`--access` flag needed) succeeds; if that key is ever removed, pass
+`--access public` explicitly to `npm publish` for all six packages instead.
+
 ### 3. Cut a release
 
 1. **Flip `package.json`'s `bin.lore` from `src/cli.ts` to `bin/lore.cjs`.**
