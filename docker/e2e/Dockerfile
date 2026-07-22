@@ -80,9 +80,22 @@ RUN bun install --frozen-lockfile --linker=isolated \
 # non-root process — root ignores Unix permission bits on Linux. The base
 # image already ships a `bun` user at uid 1000 with a usable shell; reuse it
 # instead of colliding on the uid.
-RUN usermod --shell /bin/bash bun \
+#
+# PUID/PGID (LORE-103 AC2): docker-compose.yml bind-mounts the HOST's
+# ./results directory to /results, but writes to it come from this
+# container's `bun` user. On a host whose invoking user isn't uid/gid 1000,
+# the fixed 1000:1000 `bun` user can't write $RESULTS_DIR/report.jsonl
+# (EACCES) even though root's mkdir -p above succeeds. Rebinding `bun` to
+# the host's real uid/gid (passed as build args, see docker-compose.yml)
+# makes container-side writes land as files the host user already owns.
+# Defaults (1000/1000) preserve the prior fixed-uid behavior byte-for-byte.
+ARG PUID=1000
+ARG PGID=1000
+RUN if [ "$PGID" != "1000" ]; then groupmod -o -g "$PGID" bun; fi \
+    && if [ "$PUID" != "1000" ]; then usermod -o -u "$PUID" bun; fi \
+    && usermod --shell /bin/bash bun \
     && mkdir -p /workspace /results \
-    && chown -R bun:bun /workspace /results /opt/lore
+    && chown -R bun:bun /home/bun /workspace /results /opt/lore
 
 COPY --chmod=0755 docker/e2e/run-e2e.sh /usr/local/bin/run-e2e.sh
 
