@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { BacklogAdapter, EditTaskPatch } from "../src/adapters/backlog";
+import type { BacklogAdapter, BacklogTaskDetail, EditTaskPatch } from "../src/adapters/backlog";
 import {
   assertNoLabelCaseCollision,
   type LinkOptions,
@@ -501,6 +501,83 @@ describe("lore link/unlink — per-task back-ref resilience", () => {
     expect(report.changed).toBe(true);
     const concept = parseConcept("reference/x.md", readDoc("reference/x.md"));
     expect(concept.frontmatter.tasks).toEqual(["42", "task-2", "lore-3"]);
+  });
+});
+
+// ── viewTask identity verification (LORE-177, sibling of LORE-122/125) ────────────
+
+describe("lore link/unlink — viewTask identity verification (LORE-177)", () => {
+  test("link's pre-write validation refuses a task id whose resolved detail belongs to a different task, before any write", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    const before = readDoc("stories/x.md");
+    // A stub adapter that always answers with a DIFFERENT task's detail than whatever was asked
+    // for — the exact shape `viewTask` must never be trusted blindly against (mirrors
+    // reconcile-shared.test.ts's LORE-122 coverage of the same failure mode).
+    const base = fakeAdapter([]);
+    const mismatched: typeof base = {
+      ...base,
+      async viewTask(): Promise<BacklogTaskDetail | null> {
+        return makeTask("LORE-999", { status: "Done", title: "Wrong task entirely" });
+      },
+    };
+
+    const err = await expectLinkError(["stories/x", "lore-1"], mismatched);
+    expect(err.type).toBe("not_found");
+    expect(err.message).toContain("lore-1");
+    expect(err.message).toContain("LORE-999");
+    expect(readDoc("stories/x.md")).toBe(before); // untouched — refused before any write
+    expect(mismatched.calls).toHaveLength(0); // no back-ref edit either
+  });
+
+  test("link's back-ref edit refuses a task whose fresh re-read resolves to a different task, never borrowing its documentation", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+    let viewCount = 0;
+    const originalViewTask = adapter.viewTask.bind(adapter);
+    adapter.viewTask = async (id: string) => {
+      viewCount++;
+      // 1st read: the up-front existence check — genuine. 2nd read: the back-ref edit's fresh
+      // re-read — an adapter bug/id-collision hands back an entirely different task's detail.
+      if (viewCount === 2) {
+        return makeTask("LORE-999", { status: "Done", documentation: ["docs/other/wrong.md"] });
+      }
+      return originalViewTask(id);
+    };
+
+    const err = await expectLinkError(["stories/x", "lore-1"], adapter);
+    expect(err.type).toBe("drift");
+    const input = err.input as LinkReport;
+    expect(input.tasks[0]).toMatchObject({ backRef: "failed" });
+    expect(input.tasks[0]?.error).toContain("LORE-999");
+    // Refusing the mismatched detail means no editTask call is ever made — lore-1's real
+    // documentation/labels can never be overwritten with LORE-999's borrowed data.
+    expect(adapter.calls).toHaveLength(0);
+  });
+
+  test("unlink refuses to remove a back-reference when the resolved detail belongs to a different task", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    const base = fakeAdapter([]);
+    const mismatched: typeof base = {
+      ...base,
+      async viewTask(): Promise<BacklogTaskDetail | null> {
+        return makeTask("LORE-999", {
+          status: "Done",
+          labels: ["doc:stories/x"],
+          documentation: ["docs/other/wrong.md"],
+        });
+      },
+    };
+
+    const err = await expectUnlinkError(["stories/x", "lore-1"], mismatched);
+    expect(err.type).toBe("drift");
+    const input = err.input as UnlinkReport;
+    expect(input.tasks[0]).toMatchObject({ backRef: "failed" });
+    expect(input.tasks[0]?.error).toContain("LORE-999");
+    // Refused before any editTask call — never computes a removal from LORE-999's borrowed labels/docs.
+    expect(mismatched.calls).toHaveLength(0);
+    // The doc-side tasks: removal is independent of the Backlog-side outcome and already happened.
+    const concept = parseConcept("stories/x.md", readDoc("stories/x.md"));
+    expect(concept.frontmatter.tasks).toEqual([]);
   });
 });
 
