@@ -40,7 +40,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, posix, win32 } from "node:path";
 import { z } from "zod";
 import { errnoCode, LoreError } from "../errors";
 
@@ -402,9 +402,51 @@ function parseTypes(value: unknown, source: string): ParsedType[] {
     );
     const sections = asStringArray(table.sections, `types[${i}].sections`, source) ?? [];
     const template = asString(table.template, `types[${i}].template`, source);
+    if (template !== undefined) {
+      assertTemplateConfined(template, `types[${i}].template`, source);
+    }
     types.push(template === undefined ? { name, fields, sections } : { name, fields, sections, template });
   }
   return types;
+}
+
+/**
+ * Reject a `[[types]].template` value that could escape `.lore/templates/` once `commands/new.ts`
+ * joins it into a file path (LORE-139). A profile-declared `template` is committed repo config,
+ * not a user-typed CLI flag — but the same containment invariant `commands/new.ts`'s
+ * `assertTemplateNameConfined` enforces for the analogous `--template` flag must hold here too:
+ * left unchecked, a `.lore/profile.toml` type table declaring `template = "../../../secret/leak"`
+ * would have `lore new` read and embed an arbitrary file's contents into the generated concept,
+ * exit `0`, no error — the exact live repro this task reports. Checked here, at profile PARSE
+ * time, so every current and future consumer of a compiled type's `template` is protected, not
+ * just `resolveTemplate`'s one call site.
+ *
+ * Absolute paths are rejected on the host `isAbsolute` AND both `posix.isAbsolute`/
+ * `win32.isAbsolute` explicitly, mirroring `assertTemplateNameConfined`'s own cross-platform
+ * rationale (this ships as a compiled binary for both POSIX and win32 from the same source; a
+ * Windows drive-letter path is inert syntax on a POSIX host but genuinely absolute on the win32
+ * binary). A `..`-segment escape is then caught by resolving the value (backslash segments
+ * normalized to `/` first, so a Windows-style `..\..\secret` traversal is caught even when parsed
+ * on a POSIX host) against a fixed anchor and confirming the result stays inside it — no real
+ * `root` is needed for this: the check is pure path arithmetic, identical however the anchor is
+ * spelled, so it holds regardless of where the profile is ultimately loaded from.
+ */
+function assertTemplateConfined(value: string, key: string, source: string): void {
+  if (isAbsolute(value) || posix.isAbsolute(value) || win32.isAbsolute(value)) {
+    fail(`${source}: ${key} "${value}" must not be an absolute path`, `declare a bare template name for ${key}`, {
+      key,
+    });
+  }
+  const anchor = "/.lore/templates";
+  const resolved = posix.resolve(anchor, value.replace(/\\/g, "/"));
+  const rel = posix.relative(anchor, resolved);
+  if (rel === ".." || rel.startsWith("../")) {
+    fail(
+      `${source}: ${key} "${value}" must not escape .lore/templates/`,
+      `declare a bare template name for ${key}, without any ".." segment`,
+      { key },
+    );
+  }
 }
 
 /**
