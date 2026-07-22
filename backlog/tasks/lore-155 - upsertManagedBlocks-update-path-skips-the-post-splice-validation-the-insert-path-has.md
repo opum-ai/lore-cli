@@ -3,9 +3,11 @@ id: LORE-155
 title: >-
   upsertManagedBlock's update path skips the post-splice validation the insert
   path has
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-21 22:26'
+updated_date: '2026-07-22 21:11'
 labels:
   - codex-review-followup
   - core-managed-template
@@ -27,6 +29,24 @@ In src/core/managed-block.ts, upsertManagedBlock's update branch (currently line
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The update branch of upsertManagedBlock re-locates the labeled markers in its spliced result (mirroring the insert branch's post-condition check) and throws the same labeledMarkerError-shaped validation error when the result no longer parses as a single clean top-level marker pair.
-- [ ] #2 A regression test in test/managed-block.test.ts exercises an update where the new body content disrupts top-level marker parsing and asserts upsertManagedBlock throws rather than returning corrupted content.
+- [x] #1 The update branch of upsertManagedBlock re-locates the labeled markers in its spliced result (mirroring the insert branch's post-condition check) and throws the same labeledMarkerError-shaped validation error when the result no longer parses as a single clean top-level marker pair.
+- [x] #2 A regression test in test/managed-block.test.ts exercises an update where the new body content disrupts top-level marker parsing and asserts upsertManagedBlock throws rather than returning corrupted content.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add post-splice re-validation to upsertManagedBlock's update branch: splice as before, then call locateLabeledMarkers on the result; if it returns null (markers vanished, e.g. swallowed by an unterminated fence introduced by body), throw the same labeledMarkerError the insert branch throws. 2. Update the doc comment's 'Exactly one balanced pair' bullet to describe the new guarantee. 3. Add a regression test in test/managed-block.test.ts: update with a body containing an unclosed code fence, assert upsertManagedBlock throws a validation LoreError (exit 6) naming the label, instead of returning corrupted content. 4. Verify with bun test test/managed-block.test.ts, full bun test, and bun run typecheck.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented post-splice re-validation in upsertManagedBlock's update branch (src/core/managed-block.ts ~378-393): after splicing, call locateLabeledMarkers on the result and throw labeledMarkerError if markers vanish, mirroring the insert branch's post-append guard. Added regression test 'a body that opens an unterminated code fence fails loud instead of returning corrupted content (LORE-155)' in test/managed-block.test.ts, which reproduces the failure via an unclosed code fence body swallowing the :end marker. Verified: bun test test/managed-block.test.ts -> 45 pass/0 fail; full bun test -> 1810 pass/0 fail across 47 files; bun run typecheck -> clean (tsc --noEmit, no output).
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+upsertManagedBlock's update branch now re-locates the labeled markers in its spliced result before returning, throwing the same labeledMarkerError-shaped validation error (exit 6) the insert branch throws when a body disrupts top-level marker parsing (e.g. an unterminated code fence swallowing the :end marker), instead of silently returning corrupted content. Added a regression test in test/managed-block.test.ts exercising exactly that case. Verified with bun test test/managed-block.test.ts (45 pass), full bun test (1810 pass/0 fail, 47 files), and bun run typecheck (clean).
+<!-- SECTION:FINAL_SUMMARY:END -->
