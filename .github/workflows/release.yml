@@ -51,7 +51,7 @@ jobs:
     env:
       PLATFORM_NAMES: ${{ needs.setup.outputs.names }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - name: Assert version, license, author, repository, and the optionalDependencies pin all match
         # bin/lore.cjs resolves a platform optionalDependency purely by name; npm silently
         # SKIPS it if the installed version doesn't satisfy root's pinned range — for an
@@ -133,7 +133,7 @@ jobs:
     # the one target actually executed below; the rest get a non-empty-file check.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/setup-bun
       - name: Compile ${{ matrix.name }}
         # The outfile is a subdirectory of the checkout — same filesystem as the
@@ -162,7 +162,7 @@ jobs:
               exit 1
             fi
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: lore-${{ matrix.name }}
           path: npm/${{ matrix.name }}/bin/
@@ -175,8 +175,8 @@ jobs:
     env:
       PLATFORM_NAMES_SPACE: ${{ needs.setup.outputs.namesSpace }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: npm-artifacts
       - name: Assemble each platform package's binary
@@ -226,7 +226,7 @@ jobs:
             echo "::error::the launcher did not resolve/run the installed platform binary"
             exit 1
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: npm-packages-dry-run
           path: dist-npm/

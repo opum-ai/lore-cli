@@ -18,7 +18,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/setup-bun
       - run: bun run lint
       - run: bun run typecheck
@@ -37,7 +37,7 @@ jobs:
     name: compile smoke (ubuntu)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/setup-bun
       # Lightweight buildability smoke (host-native compile only). The
       # release-grade -baseline per-platform matrix and npm dual-artifact
@@ -69,9 +69,9 @@ jobs:
     name: mkdocs scaffold smoke
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/setup-bun
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.x"
       - run: pip install "mkdocs>=1.6" "mkdocs-material>=9"
@@ -92,9 +92,9 @@ jobs:
     name: docusaurus scaffold smoke
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/setup-bun
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
       # Real end-to-end smoke (LORE-40 AC#1/AC#2): scaffold against this repo's own bundle,
