@@ -439,6 +439,56 @@ describe("upsertManagedBlock — update when present", () => {
   });
 });
 
+describe("upsertManagedBlock — a same-line marker pair is malformed, not absent (LORE-156)", () => {
+  // mdast's fromMarkdown collapses a begin+end pair with no separating newline into ONE top-level
+  // `html` node whose trimmed value matches neither the anchored begin nor end sentinel regex, so a
+  // naive scan sees 0 begins and 0 ends — the same signal as "no block yet". Confirmed via mdast
+  // directly: parsing `<!-- lore:agents:begin --><!-- lore:agents:end -->` yields a single html node
+  // with that exact combined value. Before this fix, locateLabeledMarkers returned null for that
+  // signal, so upsertManagedBlock's insert branch appended a second, well-formed block after the
+  // untouched malformed pair — leaving the file with two block instances.
+
+  test("throws a validation error identifying the malformed same-line markers, instead of returning null", () => {
+    const sameLine = `# Notes\n\n<!-- ${LABEL}:begin --><!-- ${LABEL}:end -->\n\nTrailing prose.\n`;
+    const err = loreError(() => upsertManagedBlock(sameLine, UP));
+    expect(err.type).toBe("validation");
+    expect(exitCodeFor(err)).toBe(6);
+    expect(err.message).toContain(LABEL);
+  });
+
+  test("never yields two block instances (one malformed, one freshly appended) — AC#2", () => {
+    const sameLine = `<!-- ${LABEL}:begin --><!-- ${LABEL}:end -->\n`;
+    let out: string | undefined;
+    let thrown: unknown;
+    try {
+      out = upsertManagedBlock(sameLine, UP);
+    } catch (err) {
+      thrown = err;
+    }
+    if (thrown !== undefined) {
+      // The chosen strategy: fail loud rather than guess. Nothing is written, so the file on disk
+      // (whatever the caller passed as `content`) is never touched — it cannot end up duplicated.
+      expect(thrown).toBeInstanceOf(LoreError);
+      expect((thrown as LoreError).type).toBe("validation");
+    } else {
+      // Defensive: if a future implementation instead repairs the pair in place, the result must
+      // still carry exactly one begin and one end marker for the label — never the original malformed
+      // pair PLUS a freshly appended second block.
+      expect((out as string).match(new RegExp(`<!--\\s*${LABEL}:begin\\s*-->`, "g"))?.length).toBe(1);
+      expect((out as string).match(new RegExp(`<!--\\s*${LABEL}:end\\s*-->`, "g"))?.length).toBe(1);
+    }
+  });
+
+  test("a same-line pair for an unrelated label does not block insertion of this label's block", () => {
+    // The malformed-detection is label-scoped: a same-line collision for a *different* managed block
+    // (e.g. Backlog.md's own guidelines block) must not stop `lore:agents` from being inserted.
+    const existing = "<!-- OTHER:begin --><!-- OTHER:end -->\n\nprose\n";
+    const out = upsertManagedBlock(existing, UP);
+    expect(out).toContain("<!-- OTHER:begin --><!-- OTHER:end -->");
+    expect(out).toContain(agentBlock("hello body"));
+  });
+});
+
 describe("upsertManagedBlock — malformed markers are fail-loud (validation, exit 6)", () => {
   test("a lone begin (no end) is a validation error", () => {
     const err = loreError(() => upsertManagedBlock(`<!-- ${LABEL}:begin -->\nx\n`, UP));
