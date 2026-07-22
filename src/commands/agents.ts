@@ -55,7 +55,12 @@ export function runAgents(options: AgentsOptions): number {
   const { force, check } = parseAgentsArgs(options.args);
 
   const skillOnDisk = normalizeOnDisk(readFileIfPresent(join(options.root, SKILL_REL_PATH), SKILL_REL_PATH));
-  const claudeOnDisk = normalizeOnDisk(readFileIfPresent(join(options.root, CLAUDE_MD_REL_PATH), CLAUDE_MD_REL_PATH));
+  const claudeRaw = readFileIfPresent(join(options.root, CLAUDE_MD_REL_PATH), CLAUDE_MD_REL_PATH);
+  const claudeOnDisk = normalizeOnDisk(claudeRaw);
+  // Detected from the RAW (pre-normalization) bytes, so a refresh of just the managed block can
+  // re-apply the file's own BOM/EOL convention instead of silently rewriting it to LF/no-BOM
+  // (LORE-128) — see reapplyDiskStyle below.
+  const claudeStyle = detectDiskStyle(claudeRaw);
 
   // Plan with the real `--force` flag in every mode: a differing SKILL.md is `protected` (consistent
   // with `force:false` in the payload) unless `--force` was given. --check never writes, so the
@@ -75,9 +80,13 @@ export function runAgents(options: AgentsOptions): number {
       }
       const absPath = join(options.root, file.path);
       ensureDir(options.root, dirname(file.path));
+      // CLAUDE.md is a managed-block refresh over a user's hand-authored file: re-apply its
+      // original BOM/EOL convention before writing (LORE-128). SKILL.md is wholesale-regenerated
+      // (planSkill), so no such preservation applies there.
+      const contents = file.path === CLAUDE_MD_REL_PATH ? reapplyDiskStyle(file.contents, claudeStyle) : file.contents;
       // Atomic (temp-write + rename): `lore agents` writes two files per run, one of them the user's
       // hand-authored root CLAUDE.md — a crash mid-write must never leave it truncated (fswrite.ts).
-      writeFileAtomic(absPath, file.contents, file.path);
+      writeFileAtomic(absPath, contents, file.path);
     }
   }
 
@@ -116,6 +125,46 @@ function parseAgentsArgs(args: readonly string[]): { force: boolean; check: bool
  */
 function normalizeOnDisk(raw: string | undefined): string | null {
   return raw === undefined ? null : raw.replace(/^\uFEFF+/, "").replace(/\r\n?/g, "\n");
+}
+
+/** A file's on-disk BOM presence and dominant line-ending convention, detected from its RAW bytes. */
+interface DiskStyle {
+  /** Whether the raw file began with a UTF-8 BOM (`\uFEFF`). */
+  readonly bom: boolean;
+  /** The dominant EOL sequence: `\r\n` (CRLF) or `\r` (lone CR) if either appears, else `\n` (LF). */
+  readonly eol: "\n" | "\r\n" | "\r";
+}
+
+/** The default style: no BOM, LF endings — a no-op for {@link reapplyDiskStyle}, and what a freshly-created file gets. */
+const LF_NO_BOM_STYLE: DiskStyle = { bom: false, eol: "\n" };
+
+/**
+ * Detect `raw`'s BOM + dominant EOL convention from its UN-normalized bytes (before
+ * {@link normalizeOnDisk} strips/collapses them), so a managed-block refresh can re-apply the
+ * file's own convention on write-back instead of silently rewriting it (LORE-128). An absent file
+ * reports {@link LF_NO_BOM_STYLE} — nothing to preserve, so a fresh file is written LF/no-BOM as
+ * before. CRLF is checked before lone CR since every `\r\n` also contains a `\r`.
+ */
+function detectDiskStyle(raw: string | undefined): DiskStyle {
+  if (raw === undefined) {
+    return LF_NO_BOM_STYLE;
+  }
+  const bom = raw.startsWith("\uFEFF");
+  const eol = raw.includes("\r\n") ? "\r\n" : raw.includes("\r") ? "\r" : "\n";
+  return { bom, eol };
+}
+
+/**
+ * Re-apply a detected {@link DiskStyle} to freshly-planned (LF, no-BOM) `contents` before writing
+ * it back, so refreshing just the `lore:agents` managed block does not silently rewrite a CRLF
+ * and/or BOM-prefixed CLAUDE.md to LF-only / BOM-stripped beyond the block itself (LORE-128).
+ * `contents` itself is always pure LF (built from {@link normalizeOnDisk}'d input plus template
+ * strings that only ever use `\n`), so a blanket `\n` -> `style.eol` replace is safe and exact. A
+ * no-op for {@link LF_NO_BOM_STYLE}.
+ */
+function reapplyDiskStyle(contents: string, style: DiskStyle): string {
+  const withEol = style.eol === "\n" ? contents : contents.replace(/\n/g, style.eol);
+  return style.bom ? `\uFEFF${withEol}` : withEol;
 }
 
 /** Build the `agents.result` {@link Renderable}. */
