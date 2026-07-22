@@ -36,8 +36,15 @@ import { emitSchemaFiles, schemaModeline } from "./schema";
  */
 export const DOCS_DIR = "docs";
 
-/** The reserved bundle-root index — the only file that carries `okf_version`. */
-const ROOT_INDEX_PATH = `${DOCS_DIR}/index.md`;
+/**
+ * The reserved bundle-root index — the only file that carries `okf_version`. Exported so
+ * `core/validate.ts` can recognize it as the one lore-owned reserved file whose frontmatter is
+ * always a concept (every other `RESERVED_STEMS` file — sub-directory `index.md`s, `log.md` — is
+ * frontmatter-free and so never reaches the profile-driven validator at all): `lore validate`
+ * must judge it under the same {@link defaultProfile} `serializeStructuralConcept` wrote it
+ * against, never the active project profile (LORE-144).
+ */
+export const ROOT_INDEX_PATH = `${DOCS_DIR}/index.md`;
 
 /**
  * Reserved file stems that name machine-generated hubs (`index.md`, `log.md`): regenerated

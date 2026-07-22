@@ -44,6 +44,7 @@ import { type Concept, tryParseConcept } from "./concept";
 import type { Finding as BaseFinding, Severity } from "./finding";
 import { decodeTarget } from "./links";
 import { defaultProfile, type Profile } from "./profile";
+import { ROOT_INDEX_PATH } from "./scaffold";
 import { requiredSectionsFor } from "./schema";
 import { expectedResource } from "./template";
 
@@ -92,17 +93,22 @@ export interface ValidateReport {
  * On a clean parse the two ADR-0007 additions run: {@link requiredSectionFindings} and
  * {@link quoteSafetyFindings}.
  *
+ * `path` is resolved to its **judging profile** via {@link effectiveProfileFor} before any of
+ * that runs: the bundle-root {@link ROOT_INDEX_PATH} is always judged against the built-in
+ * {@link defaultProfile}, never `profile` (LORE-144) — see that helper for why.
+ *
  * A non-{@link LoreError} (a genuine bug) is *not* swallowed — it propagates, so a crash is
  * never silently dressed up as a validation finding.
  */
 export function validateConceptText(path: string, raw: string, profile: Profile = defaultProfile()): FileReport {
+  const effective = effectiveProfileFor(path, profile);
   // Parse exactly once. tryParseConcept fills the collector with tier-3 warnings, returns null for
   // a non-concept (skip), and throws a `validation` LoreError for a real-but-malformed concept —
   // so a single call draws every distinction the reporter needs without re-parsing the same bytes.
   const warnings = new WarningCollector();
   let concept: Concept | null;
   try {
-    concept = tryParseConcept(path, raw, { warnings, profile });
+    concept = tryParseConcept(path, raw, { warnings, profile: effective });
   } catch (err) {
     // A genuine bug (a non-LoreError) must never be dressed up as a validation finding — propagate
     // it (the invariant this module states). A malformed concept becomes one error finding; its
@@ -126,11 +132,36 @@ export function validateConceptText(path: string, raw: string, profile: Profile 
   for (const message of warnings.list()) {
     findings.push({ severity: "warning", rule: "frontmatter", message });
   }
-  findings.push(...requiredSectionFindings(concept.type, concept.body, profile));
-  findings.push(...resourceDriftFindings(path, concept, profile));
+  findings.push(...requiredSectionFindings(concept.type, concept.body, effective));
+  findings.push(...resourceDriftFindings(path, concept, effective));
   findings.push(...quoteSafetyFindings(raw));
 
   return finalize(path, concept.type, findings);
+}
+
+/**
+ * The {@link Profile} `path`'s frontmatter is judged against: `defaultProfile()` for the
+ * bundle-root {@link ROOT_INDEX_PATH}, else the caller's active `profile` unchanged (LORE-144).
+ *
+ * `scaffold.ts`'s `serializeStructuralConcept` always **writes** the root index against the
+ * built-in default profile — deliberately ignoring the active one, so a custom profile can never
+ * break `lore init` (its own docstring). Before this exemption, `lore validate` re-read that same
+ * file against the *active* profile with no such carve-out: a profile that adds a required field
+ * to `Reference` made a freshly scaffolded bundle fail its own first `lore validate`, because the
+ * file lore had just written could never satisfy a schema it was never written against. Judging
+ * the root index under the identical profile it was serialized with restores the write/read
+ * symmetry every other concept already has (each is both written and read against the one active
+ * profile) — the root index is simply pinned to a fixed profile on both sides, not left
+ * inconsistent between them.
+ *
+ * Scoped to exactly {@link ROOT_INDEX_PATH}, not the whole `RESERVED_STEMS` family
+ * (`index`/`log`): every *other* reserved file — a sub-directory `index.md`, `log.md` — is
+ * generated frontmatter-free (`indexes.ts`/`log.ts`), so `tryParseConcept` already treats it as a
+ * skipped non-concept and it never reaches a profile-driven check in the first place. The root
+ * index is the only reserved file that is itself a concept.
+ */
+function effectiveProfileFor(path: string, profile: Profile): Profile {
+  return path === ROOT_INDEX_PATH ? defaultProfile() : profile;
 }
 
 /**

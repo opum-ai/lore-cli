@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { runInit } from "../src/commands/init";
 import { runNew } from "../src/commands/new";
 import { runValidate, type ValidateOptions } from "../src/commands/validate";
-import { compileProfile, defaultProfile, parseProfile } from "../src/core/profile";
+import { compileProfile, defaultProfile, parseProfile, PROFILE_REL_PATH } from "../src/core/profile";
 import { requiredSectionsFor } from "../src/core/schema";
 import { builtinTemplateFor } from "../src/core/template";
 import { quoteSafetyFindings, type ValidateReport, validateConceptText, validateFiles } from "../src/core/validate";
@@ -559,6 +559,82 @@ describe("validate (command)", () => {
     } catch (err) {
       expect((err as LoreError).type).toBe("not_found");
     }
+  });
+});
+
+// ── LORE-144: reserved root index vs. a custom profile ─────────────────────────
+
+describe("validate (command) — LORE-144 reserved root index under a custom profile", () => {
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "lore-validate-lore144-"));
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  /**
+   * A custom `.lore/profile.toml` that redefines `Reference` with an `owner` field required —
+   * the scaffolded root index (whose frontmatter carries only lore's own fixed fields) never sets
+   * it, so this is the AC's "active profile adds a required field to Reference".
+   */
+  const CUSTOM_PROFILE_TOML = [
+    "[profile]",
+    'name = "custom"',
+    'okf_version = "0.1"',
+    "",
+    "[base.fields]",
+    "type = { required = true }",
+    "",
+    "[[types]]",
+    'name = "Reference"',
+    "fields = { owner = { required = true } }",
+  ].join("\n");
+
+  test("AC#1: `lore init` then `lore validate` succeeds under a profile requiring an extra Reference field", () => {
+    // The custom profile is already active (as it would be for a real project) *before* `lore
+    // init` scaffolds the root index — mirroring `runInit`'s own `loadProfile({ root })` read.
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(join(root, PROFILE_REL_PATH), CUSTOM_PROFILE_TOML);
+
+    runInit({ root, output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
+
+    const stdout = capture();
+    const code = runValidate({ root, output: JSON_CTX, args: [], stdout } satisfies ValidateOptions);
+    const envelope = JSON.parse(stdout.text()) as { kind: string; data: ValidateReport };
+
+    expect(code).toBe(0);
+    expect(envelope.data.errorCount).toBe(0);
+    const indexReport = envelope.data.files.find((f) => f.path === "docs/index.md");
+    expect(indexReport).toBeDefined();
+    expect(indexReport?.skipped).toBe(false);
+    expect(indexReport?.ok).toBe(true);
+    expect(indexReport?.findings.some((f) => /owner/.test(f.message))).toBe(false);
+  });
+
+  test("AC#2 (core): the scaffolded root index validates clean against defaultProfile() even when handed the custom profile", () => {
+    const custom = compileProfile(parseProfile(Bun.TOML.parse(CUSTOM_PROFILE_TOML) as Record<string, unknown>, "rp"));
+    const rootIndexRaw =
+      "---\n" +
+      "type: Reference\n" +
+      "title: Documentation\n" +
+      "summary: Root index of this OKF documentation bundle, created by `lore init`.\n" +
+      `timestamp: ${FIXED_CLOCK().toISOString()}\n` +
+      'okf_version: "0.1"\n' +
+      "---\n\n# Documentation\n";
+
+    const report = validateConceptText("docs/index.md", rootIndexRaw, custom);
+    expect(report.skipped).toBe(false);
+    expect(report.ok).toBe(true);
+    expect(report.findings.filter((f) => f.severity === "error")).toEqual([]);
+  });
+
+  test("the same custom profile still enforces `owner` on an ordinary Reference concept (the exemption is root-index-only)", () => {
+    const custom = compileProfile(parseProfile(Bun.TOML.parse(CUSTOM_PROFILE_TOML) as Record<string, unknown>, "rp"));
+    const raw = "---\ntype: Reference\ntitle: Orders\nsummary: The orders.\n---\n\n# Orders\n";
+    const report = validateConceptText("docs/reference/orders.md", raw, custom);
+    expect(report.ok).toBe(false);
+    expect(report.findings.some((f) => f.severity === "error" && /owner/.test(f.message))).toBe(true);
   });
 });
 
