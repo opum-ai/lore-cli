@@ -394,26 +394,50 @@ export function maxLen<T>(items: readonly T[], length: (item: T) => number): num
 }
 
 /**
+ * Strip ANSI escape sequences and residual C0/C1 control characters from `text`. Meant to run
+ * *after* {@link singleLine}, which only collapses line terminators (CR/LF/U+2028/U+2029) — it
+ * leaves ESC (`\x1b`)-led sequences and other control bytes (BEL, backspace, …) untouched. A CSI
+ * sequence (`ESC [ … final byte`) can move the cursor or erase lines, so passing one through into
+ * `--plain` output would let a crafted/corrupted task field forge terminal rows even though the
+ * text is already single-line (LORE-115).
+ *
+ * Two passes: first drop full ANSI escape sequences — CSI (`ESC [ … @-~`), OSC (`ESC ] …`
+ * terminated by BEL or `ESC \`), and the general two-byte form (`ESC` + one printable byte, for
+ * everything else) — then drop any remaining C0 (`\x00`-`\x1f`) or C1/DEL (`\x7f`-`\x9f`) control
+ * byte that wasn't part of a recognized escape sequence (e.g. a bare BEL).
+ */
+function stripAnsiAndControls(text: string): string {
+  const withoutAnsi = text.replace(
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
+    /\x1b(?:\[[0-9;:<=>?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[ -~])/g,
+    "",
+  );
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
+  return withoutAnsi.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
+}
+
+/**
  * Render `rows` as aligned `  <id>  <status>  <title>` lines, one per row, with the id/status
  * columns padded to the widest cell in each (via the spread-free {@link maxLen}). Shared by `lore
  * tasks`'s rollup table and `lore orphans`' orphan-task block, so a column-layout change (an extra
  * column, truncation, a width cap) is a one-place edit instead of two independently-drifting copies.
  * Returns `[]` for an empty `rows` — the caller decides what an empty section renders as.
  *
- * Each field is coerced ({@link asText}) and collapsed to one line ({@link singleLine}) before
- * padding/joining, matching the sanitization every other renderer in this file applies (e.g. the
- * truncation-line hint above). `id`/`status`/`title` come from a Backlog task file, which a crafted
- * or corrupted file could load with an embedded newline, CR, or other control character — without
- * this, that would split a plain-mode row across lines or otherwise break the single-line-per-row
- * output guarantee. Sanitizing before {@link maxLen} also keeps the column widths measuring the same
- * text that is actually printed, so a stripped control character cannot desync the padding from the
+ * Each field is coerced ({@link asText}), collapsed to one line ({@link singleLine}), and stripped
+ * of ANSI escape sequences and residual control characters ({@link stripAnsiAndControls}) before
+ * padding/joining. `id`/`status`/`title` come from a Backlog task file, which a crafted or
+ * corrupted file could load with an embedded newline, CR, ANSI escape sequence, or other control
+ * character — without this, that would split a plain-mode row across lines, inject cursor-moving
+ * escape sequences, or otherwise break the single-line, ANSI-free-per-row output guarantee
+ * (cli-contract.md §6). Sanitizing before {@link maxLen} also keeps the column widths measuring the
+ * same text that is actually printed, so a stripped character cannot desync the padding from the
  * rendered length.
  */
 export function renderTaskSummaryRows(rows: readonly TaskSummaryRow[]): string[] {
   const clean = rows.map((row) => ({
-    id: singleLine(asText(row.id)),
-    status: singleLine(asText(row.status)),
-    title: singleLine(asText(row.title)),
+    id: stripAnsiAndControls(singleLine(asText(row.id))),
+    status: stripAnsiAndControls(singleLine(asText(row.status))),
+    title: stripAnsiAndControls(singleLine(asText(row.title))),
   }));
   const idWidth = maxLen(clean, (row) => row.id.length);
   const statusWidth = maxLen(clean, (row) => row.status.length);
