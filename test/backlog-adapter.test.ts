@@ -325,6 +325,22 @@ describe("createTask — CLI write, id captured from the stdout line (§2.1)", (
     expect(err.message).toContain("Created task");
   });
 
+  test("fail-loud (drift) on an unparseable id still echoes the raw stdout and title so the caller can recover the orphaned task", async () => {
+    // `task create` exited 0 — Backlog genuinely created the task — but its stdout doesn't carry a
+    // `Created task <ID>` line the CREATED_ID regex can capture. The task now exists in Backlog with
+    // no id lore parsed; the caller must not be left with zero trace of it (LORE-97).
+    const spawn = scriptedSpawn((argv) =>
+      argv[1] === "create" ? ok("Task queued for background processing.\n") : undefined,
+    );
+    const err = await loreError(() => createBacklogAdapter(spawn).createTask({ title: "orphan-prone task" }));
+
+    expect(err.type).toBe("drift");
+    expect(err.input).toMatchObject({
+      title: "orphan-prone task",
+      stdout: "Task queued for background processing.\n",
+    });
+  });
+
   test("fail-loud (validation) on a non-zero create exit, surfacing stderr as the hint", async () => {
     const spawn = scriptedSpawn((argv) => (argv[1] === "create" ? fail(1, "lock held") : undefined));
     const err = await loreError(() => createBacklogAdapter(spawn).createTask({ title: "x" }));
