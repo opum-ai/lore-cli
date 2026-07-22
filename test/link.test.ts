@@ -832,19 +832,57 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
     expect(git.calls).toHaveLength(0);
   });
 
-  test("a fully idempotent link (every id already linked) writes nothing and does not commit", async () => {
+  test("a fully idempotent link (every id already linked) against a genuinely CLEAN tree is a true no-op (LORE-121 AC#3)", async () => {
     writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
-    // Already carries the label + --doc, so the edit is skipped (already-present) — a true no-op.
+    // Already carries the label + --doc, so the edit is skipped (already-present) — a true no-op,
+    // since the file itself is also clean on disk (never touched by a prior run either).
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", { labels: ["doc:stories/x"], documentation: ["docs/stories/x.md"] }),
+    ]);
+    const git = cleanGitSpawn();
+
+    const { code, report } = await linkCmd(["stories/x", "lore-1"], adapter, git);
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks[0]?.backRef).toBe("already-present");
+    expect(report.backlogCommit).toEqual({ committed: false, files: [] });
+  });
+
+  test("a retry after a failed backlog/ commit recommits the still-dirty task file instead of silently no-opping (LORE-121 AC#1/#2)", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    // Simulates a PRIOR `lore link` run: its Backlog edit (label + --doc) already succeeded — the
+    // task already carries both — but that run's own `commitBacklogFiles` call failed (e.g. a
+    // rejected pre-commit hook), leaving `DIRTY_PATH` uncommitted on disk. `wasPresent && !docChanged`
+    // is true, so this retry skips the Backlog edit (rightly — it's already applied), but must still
+    // discover and commit the leftover drift rather than reporting a false no-op success.
     const adapter = fakeAdapter([
       makeTask("LORE-1", { labels: ["doc:stories/x"], documentation: ["docs/stories/x.md"] }),
     ]);
     const git = dirtyGitSpawn(DIRTY);
 
-    const { report } = await linkCmd(["stories/x", "lore-1"], adapter, git);
+    const { code, report } = await linkCmd(["stories/x", "lore-1"], adapter, git);
 
-    expect(report.tasks[0]?.backRef).toBe("already-present");
-    expect(report.backlogCommit.committed).toBe(false);
-    expect(git.calls).toHaveLength(0); // a no-op link never sweeps an unrelated dirty backlog/ edit
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks[0]?.backRef).toBe("already-present"); // no Backlog edit was needed or made
+    expect(adapter.calls).toHaveLength(0); // confirms no editTask call — the drift is purely git-side
+    expect(report.backlogCommit).toEqual({ committed: true, files: [DIRTY_PATH] }); // but it IS committed
+    // Scoped to exactly lore-1's own file, same as a normal edit's commit — never a bundle-wide sweep.
+    expect(git.calls[1]).toEqual([
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--untracked-files=all",
+      "--",
+      `:(literal)${DIRTY_PATH}`,
+    ]);
+    expect(git.calls[2]).toEqual(["add", "--", `:(literal)${DIRTY_PATH}`]);
+    expect(git.calls[3]).toEqual([
+      "commit",
+      "-m",
+      "chore(backlog): add doc back-references (lore link)",
+      "--",
+      `:(literal)${DIRTY_PATH}`,
+    ]);
   });
 
   test("a partial back-ref failure still commits the successful writes and throws drift (LORE-58)", async () => {
