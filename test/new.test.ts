@@ -461,6 +461,18 @@ describe("lore new — output path is confined to the bundle root", () => {
     expect(existsSync(join(root, "docs/sub/log.md"))).toBe(false);
   });
 
+  test("regression: a default-path (no --out) title slugifying to index or log is a usage error, matching assertNotReservedStem (LORE-174)", () => {
+    const indexErr = expectError(["reference", "Index"]);
+    expect(indexErr.type).toBe("usage");
+    expect(indexErr.message).toContain("reserved, machine-generated file name");
+    expect(existsSync(join(root, "docs/reference/index.md"))).toBe(false);
+
+    const logErr = expectError(["reference", "Log"]);
+    expect(logErr.type).toBe("usage");
+    expect(logErr.message).toContain("reserved, machine-generated file name");
+    expect(existsSync(join(root, "docs/reference/log.md"))).toBe(false);
+  });
+
   test("a path segment merely starting with `..` is confined by docs/, not the escape guard", () => {
     // `..notes` is a real segment, not a `..` parent escape: outside docs/ it fails the bundle
     // check (not a false 'escapes the repo'), and under docs/ it is a legitimate directory name.
