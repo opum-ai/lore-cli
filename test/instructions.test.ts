@@ -76,6 +76,24 @@ describe("core/instructions — topic registry", () => {
     expect(normalized).toContain("exit 4");
     expect(normalized).toContain("exit 6");
   });
+
+  test("check topic's validation cause names corrupted managed-block markers, not just reconcile-config timing", () => {
+    const check = INSTRUCTION_TOPICS.find((t) => t.key === "check");
+    const normalized = check?.body.replace(/\s+/g, " ") ?? "";
+    // LORE-190: reconcileDriftFindings (core/check.ts's regenerateTaskBlock call) also throws
+    // `validation` when a concept's managed-block markers are corrupted -- per-concept, AFTER that
+    // concept's own tasks are already resolved. The old prose attributed `validation` solely to "a
+    // malformed status flow or override in the reconcile config, thrown before any task
+    // resolution", omitting the marker-corruption cause and wrongly implying that timing holds for
+    // every `validation` throw check can raise.
+    expect(normalized).not.toContain(
+      "a malformed status flow or override in the reconcile config, thrown before any task resolution",
+    );
+    // The replacement prose must name the marker-corruption cause explicitly, and must place its
+    // timing AFTER task resolution (the opposite of the old blanket claim).
+    expect(normalized).toContain("managed-block markers");
+    expect(normalized).toContain("already resolved");
+  });
 });
 
 describe("runInstructions — topic resolution", () => {

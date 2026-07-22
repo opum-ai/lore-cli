@@ -451,9 +451,9 @@ export interface ReconcileDriftInput {
  * {@link regenerateTaskBlock}) so drift can never differ from what a `sync` run would fix.
  *
  * @throws LoreError `validation` (exit 6) — {@link regenerateTaskBlock}'s own contract — when the
- *   concept's managed-block markers are missing, duplicated, or crossed; `check` refuses to guess
- *   at a corrupted region rather than reporting a soft finding for it, the read-time mirror of
- *   `sync`'s "never writes a partial block."
+ *   concept's managed-block markers are missing, duplicated, crossed, or a collapsed same-line
+ *   begin/end pair; `check` refuses to guess at a corrupted region rather than reporting a soft
+ *   finding for it, the read-time mirror of `sync`'s "never writes a partial block."
  */
 export function reconcileDriftFindings(input: ReconcileDriftInput): CheckFinding[] {
   if (input.newStatus === null) {
