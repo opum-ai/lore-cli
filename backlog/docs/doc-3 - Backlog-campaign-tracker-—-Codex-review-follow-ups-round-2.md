@@ -3,7 +3,7 @@ id: doc-3
 title: Backlog campaign tracker — Codex review follow-ups (round 2)
 type: other
 created_date: '2026-07-21 22:27'
-updated_date: '2026-07-22 20:52'
+updated_date: '2026-07-22 21:04'
 ---
 Round 2 of the Codex-review follow-up campaign (see [[Backlog campaign tracker]] / doc-1 for
 round 1, LORE-69..95, which closed all 20 high-severity findings from doc-2). Re-initialised on
@@ -121,28 +121,28 @@ asserts `lore query --help` byte-identical to `lore help query`). No further act
 | 39 | LORE-134 | core-bundle-check | — | Done | 8 | resolveRef tries frontmatter ref as a root id before trying it as a relative path |
 | 40 | LORE-135 | core-bundle-check | — | Done | 8 | Anchor-link check lower-cases fragments, masking case-mismatched broken anchors |
 | 41 | LORE-136 | core-bundle-check | — | Done | 9 | Heading slug computation ignores image alt text in headings |
-| 42 | LORE-137 | core-bundle-check | — | To Do | — | reconcileDriftFindings ignores its own newStatus:null contract for managed-block drift |
+| 42 | LORE-137 | core-bundle-check | — | Dispatched | 10 | reconcileDriftFindings ignores its own newStatus:null contract for managed-block drift |
 | 43 | LORE-138 | core-bundle-check | — | To Do | — | bodyText's catch-all swallows any gray-matter exception, not just YAML parse errors |
 | 44 | LORE-139 | core-bundle-check | — | Done | 8 | Profile-declared type `template` path allows reading files outside .lore/templates/ via traversal |
 | 45 | LORE-140 | core-bundle-check | — | To Do | — | parseFieldSpec accepts an empty `enum = []`, making the field impossible to satisfy |
 | 46 | LORE-141 | core-concept-manifest | — | Done | 8 | Malformed closing frontmatter fence bleeds bytes into concept body |
 | 47 | LORE-142 | core-engine-a | — | Done | 9 | Add missing `help` entry to LORE_COMMANDS in agent-bridge.ts |
-| 48 | LORE-143 | core-engine-a | — | To Do | — | Scope `git log` in GitAdapter.history to the docs root instead of the whole repo |
+| 48 | LORE-143 | core-engine-a | — | Dispatched | 10 | Scope `git log` in GitAdapter.history to the docs root instead of the whole repo |
 | 49 | LORE-144 | core-engine-a | — | To Do | — | serializeStructuralConcept's fixed default-profile write breaks `lore validate` under a custom Reference profile |
 | 50 | LORE-145 | core-engine-b | — | Done | 9 | Fix DOT quote() to not double-escape backslashes; escape newlines |
-| 51 | LORE-146 | core-engine-b | — | To Do | — | Fix `linking` instructions: link/unlink now commit backlog/tasks themselves |
+| 51 | LORE-146 | core-engine-b | — | Dispatched | 10 | Fix `linking` instructions: link/unlink now commit backlog/tasks themselves |
 | 52 | LORE-147 | core-engine-b | — | To Do | — | Fix `check` instructions: expandRoot/reconciliation throws besides usage/not_found |
 | 53 | LORE-148 | core-index-context | — | Done | 9 | context export tokenEstimate ignores title field and JSON overhead |
-| 54 | LORE-149 | core-index-context | — | To Do | — | linkText re-escapes already-escaped brackets, enabling injected markdown links |
+| 54 | LORE-149 | core-index-context | — | Dispatched | 10 | linkText re-escapes already-escaped brackets, enabling injected markdown links |
 | 55 | LORE-150 | core-index-context | — | To Do | — | generateIndexes never detects or removes an orphaned sub-index directory |
 | 56 | LORE-151 | core-links-resolution | — | To Do | — | decodeTarget whole-path decode lets %2F forge a structural slash in link targets |
 | 57 | LORE-152 | core-links-resolution | — | To Do | — | Dotted extensionless links (e.g. orders.v2) skip both portability lint and broken-link check |
 | 58 | LORE-153 | core-links-resolution | — | To Do | — | LinkFinding.message interpolates raw link target unescaped into terminal-rendered text |
 | 59 | LORE-154 | core-managed-template | — | Done | 9 | cell() escapes pipes without escaping pre-existing backslashes first |
-| 60 | LORE-155 | core-managed-template | — | To Do | — | upsertManagedBlock's update path skips the post-splice validation the insert path has |
+| 60 | LORE-155 | core-managed-template | — | Dispatched | 10 | upsertManagedBlock's update path skips the post-splice validation the insert path has |
 | 61 | LORE-156 | core-managed-template | — | To Do | — | Same-line marker pair collapses into one mdast node and is invisible to locateLabeledMarkers |
 | 62 | LORE-157 | core-managed-template | — | To Do | — | PLACEHOLDER regex silently passes through malformed {{...}} tokens instead of flagging them unresolved |
-| 63 | LORE-158 | core-query-validate | — | To Do | — | Strip ANSI/control characters from query text output for id, type, and query text |
+| 63 | LORE-158 | core-query-validate | — | Dispatched | 10 | Strip ANSI/control characters from query text output for id, type, and query text |
 | 64 | LORE-159 | core-query-validate | — | To Do | — | h2Headings() counts nested headings (inside blockquotes/list items) as top-level sections |
 | 65 | LORE-160 | core-query-validate | — | To Do | — | Quote-safety check omits leading colon `:` from INDICATOR_CHARS despite ADR-0007 |
 | 66 | LORE-161 | core-query-validate | — | To Do | — | Resource-drift finding message embeds raw frontmatter value unsanitized in CLI output |
@@ -337,3 +337,5 @@ fallback.)
   - **Low finding → filed [[LORE-187]] (cmd-meta-c):** LORE-130 removed the O_NOFOLLOW open but left two comments naming it (schema.ts:115 + fswrite.ts:419 ioError docstring). Verdict: PURE comment inaccuracy — the symlink-refusal guarantee is intact (up-front lstat + rename-never-follows-destination). Comment-only reword.
   - **Info (not filed):** (a) context `~tokens` now charges title but the plain-text renderer omits title, so plain output slightly over-counts (deliberate, documented, matches --json). (b) LORE-145's quote() escapes \r\n|\r|\n but not U+2028/U+2029 — harmless (no 0x0A byte, so DOT's one-statement-per-line output can't split).
   - **Session STOPS after wave 9** (clean between-wave context checkpoint per R4j — no escalations, no human_needed). **Two full waves (12 tasks) drained this session: wave 8 (LORE-120,129,134,135,139,141) + wave 9 (LORE-130,136,142,145,148,154)**, plus 4 follow-ups filed from the integration reviews (LORE-184/185 wave-8, LORE-186/187 wave-9). The 40 remaining To-Do items are recomputed live at the next restore.
+
+- 2026-07-22 — **wave 10 DISPATCHED** (issues: LORE-137, 143, 146, 149, 155, 158; workers: Sonnet 5, reviewer: Fable 5). File-disjoint across 6 clusters (core-bundle-check, core-engine-a, core-engine-b, core-index-context, core-managed-template, core-query-validate). Live YAML re-parse: all 40 To-Do carry zero formal deps (only deferred LORE-42..45 carry deps). R4b file-citation edit targets: check.ts+test/check.test.ts (137), core/log.ts+adapters/git.ts (143), core/instructions.ts (146), core/indexes.ts (149), core/managed-block.ts (155), commands/query.ts (158) — six disjoint file-sets. Deferred this wave on cluster/file-conflict: LORE-138/140 (↔137 core-bundle-check), 151/152/153 (cite check.ts owned by 137), same-cluster siblings. Worktrees @ base (pinned dev incl. this dispatch mark) under lore.worktrees/. Settlement entry to follow.
