@@ -245,6 +245,12 @@ const RENAME_COMMIT_MESSAGE = "chore(backlog): move doc back-references (lore re
  * closes the two gaps it leaves on a case-insensitive filesystem and against non-concept files. A
  * destination that resolves to the **same physical file** as the source is a case-only rename and
  * is permitted (the relocation renames the inode rather than clobbering it).
+ *
+ * This is a PLAN-TIME check only — it runs once, well before `commitWrites` below actually moves
+ * anything, so it cannot see a destination created during that (potentially I/O-heavy) window
+ * (LORE-132). It still fires early for the common case (fail fast, before any write), but the
+ * guarantee that a raced-in destination is never silently clobbered comes from `moveFile`
+ * (`fswrite.ts`)'s own immediately-before-the-syscall re-check, not from this function.
  */
 function assertTargetFree(plan: RewritePlan, docsRoot: string): void {
   if (plan.rename === null) {
@@ -273,9 +279,12 @@ function assertTargetFree(plan: RewritePlan, docsRoot: string): void {
  * category directory does not fail with ENOENT), the in-place rewrites are written, and the renamed
  * file is relocated **last** by {@link moveFile} — its new bytes are written into the source path
  * and then the inode is renamed, which is atomic and safe even for a case-only rename on a
- * case-insensitive filesystem. (A mid-commit IO failure UNRELATED to a symlink can still leave the
- * bundle partially rewritten — cross-file transactional rollback for that case is a shared concern
- * with `lore replace`, deferred; the preflight sweep above only closes the symlink-specific gap.)
+ * case-insensitive filesystem. {@link moveFile} itself re-verifies the destination immediately
+ * before that rename (LORE-132), so a destination that appeared after {@link assertTargetFree}'s
+ * earlier plan-time check runs is refused with the same `conflict` rather than silently replaced.
+ * (A mid-commit IO failure UNRELATED to a symlink can still leave the bundle partially rewritten —
+ * cross-file transactional rollback for that case is a shared concern with `lore replace`, deferred;
+ * the preflight sweep above only closes the symlink-specific gap.)
  */
 function commitWrites(writes: Map<string, string>, plan: RewritePlan, docsRoot: string, root: string): void {
   const movedTo = plan.rename?.to;
