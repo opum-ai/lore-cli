@@ -548,8 +548,11 @@ function linkFindings(
 /**
  * The broken-anchor finding (if any) for a resolved target: an **error** when a non-empty
  * `fragment` resolves to no heading slug in the target file (`targetId`). An empty fragment
- * (a plain file link) is clean. The fragment is decoded and lower-cased before the compare,
- * matching the lower-cased GitHub-style slugs {@link slugify} produces.
+ * (a plain file link) is clean. The fragment is only percent-decoded before the compare — it
+ * is **not** lower-cased. {@link slugify} already produces lower-case GitHub-style slugs, so a
+ * fragment that differs from the real anchor only in case (`#My-Section` vs. slug
+ * `my-section`) must still miss: GitHub (and every other case-sensitive anchor consumer) never
+ * normalizes the href fragment, so a case mismatch is a real broken anchor, not a cosmetic one.
  */
 function anchorFindings(
   target: string,
@@ -558,7 +561,7 @@ function anchorFindings(
   fragment: string,
   slugsById: ReadonlyMap<string, ReadonlySet<string>>,
 ): CheckFinding[] {
-  const anchor = decodeTarget(fragment).toLowerCase();
+  const anchor = decodeTarget(fragment);
   if (anchor === "") {
     return [];
   }
