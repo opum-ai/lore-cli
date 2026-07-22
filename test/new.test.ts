@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { runInit } from "../src/commands/init";
 import { type NewResult, runNew } from "../src/commands/new";
 import { loadBundle } from "../src/core/bundle";
@@ -350,6 +350,60 @@ describe("lore new — --template refuses to read through a symlink (LORE-91)", 
       expect(readFileSync(join(root, result.path), "utf8")).toContain("SUPER SECRET DATA");
     },
   );
+});
+
+describe("lore new — a profile-declared `template` traversal is rejected (LORE-139)", () => {
+  test("regression: a profile type whose declared template contains `../` fails, never reads or embeds the outside file", () => {
+    // Reproduces the task's own live repro: a .lore/profile.toml type declaring a `template`
+    // that climbs out of `.lore/templates/` to an arbitrary file elsewhere on disk. Unlike the
+    // explicit --template flag, this is repo config lore.ts previously trusted with no
+    // confinement check at all — profile.ts now rejects it at profile PARSE time.
+    const outsideDir = mkdtempSync(join(tmpdir(), "lore-new-outside-"));
+    const secretPath = join(outsideDir, "leak.md");
+    writeFileSync(secretPath, "SUPER SECRET DATA — must never leak into a generated concept\n");
+    // Normalize to `/` before writing it into the TOML: `relative()` returns `\`-separated
+    // segments on Windows, and splicing THOSE raw into a TOML basic (double-quoted) string would
+    // have the TOML parser itself consume the backslashes as escapes (e.g. `\.` -> `.`), silently
+    // mangling the value into a harmless non-traversal string — a test-harness-only bug (caught by
+    // an independent review) that would falsely mask this test's own regression coverage on CI's
+    // windows-latest leg, NOT a gap in `assertTemplateConfined` itself (which already normalizes
+    // `\` to `/` on the production side before checking).
+    const traversal = relative(join(root, ".lore/templates"), secretPath).replace(/\.md$/, "").split(sep).join("/");
+
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      [
+        "[profile]",
+        'name = "custom"',
+        'okf_version = "0.1"',
+        "",
+        "[base.fields]",
+        "type = { required = true }",
+        "",
+        "[[types]]",
+        'name = "ADR"',
+        `template = "${traversal}"`,
+      ].join("\n"),
+    );
+
+    const err = expectError(["adr", "Test", "--out", "docs/adr/test.md"]);
+    expect(err.type).toBe("validation");
+    expect(err.message.toLowerCase()).toContain("escape");
+    // No partial artifact was ever written — the traversal is refused before any file is created.
+    expect(existsSync(join(root, "docs/adr/test.md"))).toBe(false);
+
+    rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  test("regression: a profile type whose declared template is an absolute path fails the same way", () => {
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      '[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "ADR"\ntemplate = "/etc/passwd"\n',
+    );
+    const err = expectError(["adr", "Test"]);
+    expect(err.type).toBe("validation");
+    expect(err.message.toLowerCase()).toContain("absolute");
+  });
 });
 
 describe("lore new — unknown types are accepted (OKF tolerance)", () => {

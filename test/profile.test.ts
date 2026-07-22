@@ -369,6 +369,76 @@ describe("parseProfile — grammar errors throw (exit 6)", () => {
   });
 });
 
+describe("parseProfile — a [[types]].template value is confined to .lore/templates/ (LORE-139)", () => {
+  function parse(doc: Record<string, unknown>): unknown {
+    return parseProfile(doc, "test-profile");
+  }
+
+  test("a `..`-traversal template value is rejected at parse time, not read later", () => {
+    // Reproduces the task's own live repro shape: a profile type declaring a `template` that
+    // climbs out of `.lore/templates/` to an arbitrary file elsewhere on disk. Rejected here
+    // (profile PARSE time) means `lore new` can never reach `resolveTemplate` with it at all.
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", template: "../../../secret_outside/leak" }],
+      }),
+    );
+    expect(err.message).toContain("types[0].template");
+    expect(err.message.toLowerCase()).toContain("escape");
+  });
+
+  test("a template value nested under a subdirectory that then traverses out is rejected", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", template: "sub/../../../outside" }],
+      }),
+    );
+    expect(err.message.toLowerCase()).toContain("escape");
+  });
+
+  test("an absolute-path template value is rejected", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", template: "/etc/passwd" }],
+      }),
+    );
+    expect(err.message.toLowerCase()).toContain("absolute");
+  });
+
+  test("a Windows-style absolute template value is rejected regardless of host platform", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", template: "C:\\Windows\\System32\\drivers\\etc\\hosts" }],
+      }),
+    );
+    expect(err.message.toLowerCase()).toContain("absolute");
+  });
+
+  test("a name merely starting with `..` (not a real `..` segment) is still a legitimate template", () => {
+    // Mirrors commands/new.ts's own --template precedent: `..custom` is one path component, not
+    // an escape, so it must not be a false positive.
+    const profile = compileProfile(
+      parseProfile(
+        {
+          profile: { name: "x", okf_version: "0.1" },
+          base: { fields: { type: { required: true } } },
+          types: [{ name: "T", template: "..custom" }],
+        },
+        "test-profile",
+      ),
+    );
+    expect(profile.types.get("T")?.template).toBe("..custom");
+  });
+});
+
 describe("compileProfile — field kinds generate the right validators", () => {
   const profile = compileProfile(
     parseProfile(
