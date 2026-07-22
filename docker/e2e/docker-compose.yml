@@ -5,10 +5,22 @@
 #
 # The report lands at docker/e2e/results/report.jsonl on the host. The
 # service's own exit code reflects overall pass/fail (see run-e2e.sh).
+#
+# ./results is a bind mount written from inside the container by the
+# fixed-name `bun` user (Dockerfile). If your host user's uid/gid isn't
+# 1000:1000, the plain command above still works — Compose defaults
+# PUID/PGID to 1000 below — but writes to ./results/report.jsonl fail with
+# permission denied whenever the mounted directory ends up owned by some
+# other uid (e.g. an existing ./results owned by your own host user). Pass
+# your real ids to build a container-side `bun` user that matches:
+#   PUID=$(id -u) PGID=$(id -g) docker compose -f docker/e2e/docker-compose.yml up --build
 services:
   e2e:
     build:
       context: ../..
       dockerfile: docker/e2e/Dockerfile
+      args:
+        PUID: ${PUID:-1000}
+        PGID: ${PGID:-1000}
     volumes:
       - ./results:/results
