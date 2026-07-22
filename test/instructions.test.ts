@@ -55,6 +55,27 @@ describe("core/instructions — topic registry", () => {
     expect(normalized).toContain("commitBacklogFiles");
     expect(normalized).toContain("catch-all sweep");
   });
+
+  test("check topic enumerates all of check's throw cases, not just usage/not_found", () => {
+    const check = INSTRUCTION_TOPICS.find((t) => t.key === "check");
+    const normalized = check?.body.replace(/\s+/g, " ") ?? "";
+    // LORE-147: expandRoot (src/commands/check.ts) also throws `denied` for an unreadable
+    // bundle root, and reconciliation (reconcile-shared.ts's resolveReconcileConfig /
+    // gatherReconciliation) can throw `validation` for a malformed status flow/overrides and
+    // `not_found` for a linked task id that no longer exists. The old claim that usage/not_found
+    // are the ONLY throwing cases must be gone.
+    expect(normalized).not.toContain("are the only cases that");
+    // The replacement prose must name every throw case lore check can actually raise.
+    expect(normalized).toContain("`usage`");
+    expect(normalized).toContain("`not_found`");
+    expect(normalized).toContain("`denied`");
+    expect(normalized).toContain("`validation`");
+    // ...with the exit codes that back cli-contract.md's exit table (errors.ts's EXIT_CODES).
+    expect(normalized).toContain("exit 2");
+    expect(normalized).toContain("exit 3");
+    expect(normalized).toContain("exit 4");
+    expect(normalized).toContain("exit 6");
+  });
 });
 
 describe("runInstructions — topic resolution", () => {

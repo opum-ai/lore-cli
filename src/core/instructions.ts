@@ -99,9 +99,17 @@ stdout, is the payload). cli-contract.md's exit table labels this condition
 \`validation\` -- \`lore validate\`'s own error_type for a different command;
 check has no error_type split of its own to branch on.
 
-check's \`usage\` (exit 2, a bad flag) and \`not_found\` (exit 3, a given
-bundle-root path argument that doesn't exist) are the only cases that
-actually throw and carry a \`--json\` error envelope.
+check's throws (each carries a \`--json\` error envelope) are \`usage\`
+(exit 2, a bad flag, or a bundle-root path argument that exists but isn't a
+directory), \`not_found\` (exit 3, a given bundle-root path that doesn't
+exist, or, when a discovered concept links a Backlog task, that task's id no
+longer existing), \`denied\` (exit 4, a bundle-root path that exists but
+can't be read), and \`validation\` (exit 6, a malformed status flow or
+override in the reconcile config, thrown before any task resolution when
+reconciliation applies). \`validation\`'s exit code coincides with the
+drift-tier report's exit 6 above, but the two are distinct: \`validation\` is
+a thrown error with a \`--json\` envelope; the report's exit 6 is a plain
+returned code with no throw.
 
 Because check writes nothing and lore's core has no LLM dependency, it is
 deterministic: a clean \`lore check\` locally means a clean \`lore check\` in
