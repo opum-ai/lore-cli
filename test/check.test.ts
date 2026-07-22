@@ -713,6 +713,32 @@ describe("runCheck — exit codes and discovery", () => {
     expect((out.match(/\[external-link\]/g) ?? []).length).toBe(2); // reported per file
   });
 
+  test("LORE-110: probeLiveness caps the number of distinct URLs it probes and reports the rest as skipped (AC#1-3)", async () => {
+    // Comfortably more distinct URLs than any reasonable cap — proves a bound is enforced without
+    // the test needing to know (and duplicate) the exact cap value baked into check.ts.
+    const total = 800;
+    const links = Array.from({ length: total }, (_, i) => `[l${i}](https://host${i}.example/)`).join(" ");
+    writeFileSync(join(root, "docs", "adr", "many.md"), ref("Many", links));
+    let fetchCalls = 0;
+    const fetchFake: FetchLike = async () => {
+      fetchCalls++;
+      return { ok: true, status: 200 }; // every PROBED url is alive — any finding must come from a skip
+    };
+    const o = { ...opts(["--external"]), fetch: fetchFake };
+    const start = performance.now();
+    await runCheck(o);
+    const elapsedMs = performance.now() - start;
+
+    expect(fetchCalls).toBeGreaterThan(0); // the cap still lets some URLs through
+    expect(fetchCalls).toBeLessThan(total); // but not all `total` distinct URLs were probed
+    expect(elapsedMs).toBeLessThan(5000); // bounded — not one 5s-timeout-per-URL blowup
+
+    const out = (o.stdout as ReturnType<typeof capture>).text();
+    const skippedCount = (out.match(/was not probed: exceeded the liveness cap/g) ?? []).length;
+    expect(skippedCount).toBe(total - fetchCalls); // every un-probed URL surfaces its own advisory finding
+    expect((out.match(/\[external-link\]/g) ?? []).length).toBe(skippedCount); // no OTHER findings (all probed URLs were "alive")
+  });
+
   test("--external classifies a timeout and an unreachable host", async () => {
     writeFileSync(join(root, "docs", "adr", "a.md"), ref("A", "[t](https://slow.example) [u](https://gone.example)"));
     const fetchFake: FetchLike = async (url) => {
