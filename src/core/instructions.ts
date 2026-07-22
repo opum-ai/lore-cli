@@ -109,13 +109,18 @@ check's throws (each carries a \`--json\` error envelope) are \`usage\`
 directory), \`not_found\` (exit 3, a given bundle-root path that doesn't
 exist, or, when a discovered concept links a Backlog task, that task's id no
 longer existing), \`denied\` (exit 4, a bundle-root path that exists but
-can't be read), and \`validation\` (exit 6, two distinct causes with two
-different timings: a malformed status flow or override in the reconcile
-config, validated up front before any task resolution; or corrupted
-managed-block markers, hit per-concept while regenerating that concept's
+can't be read), and \`validation\` (exit 6; its causes include a malformed
+status flow or override in the reconcile config, validated up front before
+any task resolution; malformed frontmatter on a \`tasks:\`-linked concept,
+caught per-file while scanning for reconciliation eligibility -- before any
+task resolution runs, but not re-thrown until after the report has already
+emitted; a resolved task whose live status is in neither the configured
+status flow nor its \`[reconcile.overrides]\`, discovered only once that
+task's own detail has already been resolved; and corrupted managed-block
+markers, hit per-concept while regenerating that concept's
 \`<!-- lore:tasks -->\` region during drift detection -- i.e. *after* that
-concept's own tasks are already resolved, not before). \`validation\`'s exit
-code coincides with the drift-tier report's exit 6 above, but the two are
+concept's own tasks are already resolved). \`validation\`'s exit code
+coincides with the drift-tier report's exit 6 above, but the two are
 distinct: \`validation\` is a thrown error with a \`--json\` envelope; the
 report's exit 6 is a plain returned code with no throw.
 
