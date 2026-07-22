@@ -634,12 +634,40 @@ export interface BacklogAdapter {
 const CREATED_ID = /^Created (?:task|draft) (\S+)$/m;
 
 /**
+ * Reject a caller-controlled value that begins with `-` before it reaches a `spawn` argv position.
+ * Backlog's own CLI parses argv positionally: an id, title, label, status, milestone, description, doc
+ * ref, or search query beginning with `-` is read by Backlog's flag parser as an option rather than the
+ * literal data lore intends — with no `--` option-terminator inserted at each call site (several push a
+ * real flag like `--json` immediately after the data position, which a terminator would itself swallow),
+ * a dash-prefixed value could alter or hijack the invoked Backlog command. There is no per-value escape
+ * for this (Backlog looks only at the leading character), so — matching {@link commaJoin}'s existing
+ * policy for an unescapable embedded comma — a dash-prefixed value is rejected outright rather than risking
+ * misinterpretation.
+ */
+function rejectFlagLike(value: string): string {
+  if (value.startsWith("-")) {
+    throw new LoreError(
+      "validation",
+      `cannot send "${value}" to Backlog: a value beginning with "-" would be parsed as a flag, not literal data`,
+      "rename the value so it does not begin with '-'",
+      { value },
+    );
+  }
+  return value;
+}
+
+/**
  * Join multiple values for a single-value, last-wins flag into one comma-separated argument (§2.4).
  * Backlog's CLI has no escape for an embedded comma — the comma **is** the delimiter — so a value
  * containing one cannot be sent safely: it would silently split into two (or more) unrelated
- * Backlog-side values instead of the one lore intends. Reject it instead.
+ * Backlog-side values instead of the one lore intends. Reject it instead. Each value is also run
+ * through {@link rejectFlagLike} — the comma-join happens after the flag itself (e.g. `--labels`), but a
+ * leading `-` on any individual label is still ambiguous flag-like data, so it is rejected the same way.
  */
 function commaJoin(values: readonly string[]): string {
+  for (const value of values) {
+    rejectFlagLike(value);
+  }
   const offender = values.find((v) => v.includes(","));
   if (offender !== undefined) {
     throw new LoreError(
@@ -684,7 +712,7 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
     async listTasks(opts?: ListTasksOptions): Promise<BacklogTask[]> {
       const args = ["task", "list", "--json"];
       if (opts?.status !== undefined) {
-        args.push("--status", opts.status);
+        args.push("--status", rejectFlagLike(opts.status));
       }
       if (opts?.labels !== undefined && opts.labels.length > 0) {
         args.push("--labels", commaJoin(opts.labels));
@@ -695,7 +723,7 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
 
     async viewTask(id: string): Promise<BacklogTaskDetail | null> {
       await ensureProbed();
-      const result = await spawn(["task", "view", id, "--json"]);
+      const result = await spawn(["task", "view", rejectFlagLike(id), "--json"]);
       // A missing task exits 1 unconditionally, in every output mode (upstream, PR #790; contract
       // §2.2's migration note) — the fork's old "exit 0, empty stdout" signal no longer applies. Any
       // other nonzero exit, or a 1 that unexpectedly printed something, is a fail-loud drift. This is
@@ -720,7 +748,7 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
     },
 
     async searchTasks(query: string): Promise<BacklogTask[]> {
-      const result = await read(["search", query, "--json"], "search --json");
+      const result = await read(["search", rejectFlagLike(query), "--json"], "search --json");
       const hits = parseEnvelope(result.stdout, SEARCH_KIND, "results", SearchResultData, "search --json");
       // lore consumes only task hits (§5); document/decision hits are Backlog-owned. Re-validate each
       // task hit's loosely-typed `data` against the summary contract before mapping.
@@ -747,18 +775,18 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
       await ensureProbed();
       // Create runs WITHOUT --plain and WITHOUT --json (contract §2.1): --plain suppresses the
       // `Created task <ID>` line lore captures, and create emits no JSON envelope.
-      const args = ["task", "create", input.title];
+      const args = ["task", "create", rejectFlagLike(input.title)];
       if (input.description !== undefined) {
-        args.push("--description", input.description);
+        args.push("--description", rejectFlagLike(input.description));
       }
       if (input.labels !== undefined && input.labels.length > 0) {
         args.push("--labels", commaJoin(input.labels));
       }
       if (input.milestone !== undefined) {
-        args.push("--milestone", input.milestone);
+        args.push("--milestone", rejectFlagLike(input.milestone));
       }
       for (const doc of input.doc ?? []) {
-        args.push("--doc", doc); // --doc is an accumulator (§2.4): repeat, don't comma-join.
+        args.push("--doc", rejectFlagLike(doc)); // --doc is an accumulator (§2.4): repeat, don't comma-join.
       }
       const result = await spawn(args);
       if (result.exitCode !== 0) {
@@ -780,7 +808,7 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
 
     async editTask(id: string, patch: EditTaskPatch): Promise<void> {
       await ensureProbed();
-      const args = ["task", "edit", id];
+      const args = ["task", "edit", rejectFlagLike(id)];
       if (patch.addLabels !== undefined && patch.addLabels.length > 0) {
         args.push("--add-label", commaJoin(patch.addLabels)); // single-value flag (§2.4): comma-join.
       }
@@ -788,10 +816,10 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
         args.push("--remove-label", commaJoin(patch.removeLabels));
       }
       if (patch.status !== undefined) {
-        args.push("--status", patch.status);
+        args.push("--status", rejectFlagLike(patch.status));
       }
       for (const doc of patch.doc ?? []) {
-        args.push("--doc", doc); // accumulator, SET/REPLACE the whole array (§2.4).
+        args.push("--doc", rejectFlagLike(doc)); // accumulator, SET/REPLACE the whole array (§2.4).
       }
       const result = await spawn(args);
       // `task edit <missing>` exits 1 (contract §2.2) — the one write whose exit code IS meaningful.
