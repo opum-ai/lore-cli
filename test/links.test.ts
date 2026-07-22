@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { idFromPath } from "../src/core/concept";
 import {
   decodeTarget,
   isExternalTarget,
@@ -343,5 +344,34 @@ describe("decodeTarget", () => {
 
   test("degrades to the raw text on malformed encoding", () => {
     expect(decodeTarget("%2")).toBe("%2");
+  });
+
+  // ── LORE-151: %2F must not forge a structural / boundary ──────────────────────
+
+  test("an encoded slash within a single segment is not decoded into a literal /", () => {
+    expect(decodeTarget("orders%2Fv2.md")).toBe("orders%2Fv2.md");
+  });
+
+  test("a literal orders%2Fv2.md target does not resolve to the concept id orders/v2 (AC#2)", () => {
+    // Mirrors how bundle.ts/check.ts turn a decoded destination into a concept id:
+    // idFromPath(decodeTarget(target)). Before the fix, decodeTarget whole-string-decoded
+    // "orders%2Fv2.md" into "orders/v2.md", so this id came out "orders/v2" — a two-segment
+    // id the link's literal, single-segment text never named.
+    const id = idFromPath(decodeTarget("orders%2Fv2.md"));
+    expect(id).not.toBe("orders/v2");
+  });
+
+  test("an encoded slash does not merge with a real neighboring segment", () => {
+    // Raw target has exactly one *literal* / (between "a%2Fb" and "c.md"); the decoded
+    // result must still have exactly one, not two.
+    expect(decodeTarget("a%2Fb/c.md")).toBe("a%2Fb/c.md");
+  });
+
+  test("real segments on either side of an encoded slash still decode normally", () => {
+    expect(decodeTarget("order%20a/b%2Fc/order%20d.md")).toBe("order a/b%2Fc/order d.md");
+  });
+
+  test("a lowercase %2f is folded back the same way as %2F", () => {
+    expect(decodeTarget("orders%2fv2.md")).toBe("orders%2Fv2.md");
   });
 });
