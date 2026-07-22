@@ -118,10 +118,13 @@ jobs:
     name: docker e2e harness (real lore + backlog binaries)
     runs-on: ubuntu-latest
     # A full cold build (Backlog.md clone + build, lore compile, apt/pip/npm installs) plus
-    # ~300 real-binary assertions comfortably fits in 30m; bound it well below the 360m
-    # default so a genuinely hung step (e.g. a stalled network fetch) fails fast instead of
-    # silently eating the whole job-timeout budget.
-    timeout-minutes: 30
+    # ~300 real-binary assertions is bounded well below the 360m default so a genuinely hung
+    # step (e.g. a stalled network fetch) fails fast instead of silently eating the whole
+    # job-timeout budget. 45m (not 30m): this has never been measured on an actual GH-hosted
+    # 2-core ubuntu runner -- every run here is a full cold build with no docker layer cache,
+    # so local/dev-machine timing doesn't transfer. Re-tighten once real runner timing is
+    # observed.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       # The ~1500-line hermetic E2E harness under docker/e2e/ (LORE-56..68) builds real `lore`
@@ -132,8 +135,15 @@ jobs:
       # (LORE-100). `--exit-code-from e2e` is required, not cosmetic: plain `docker compose
       # up` always exits 0 regardless of the service's own exit code (LORE-104), which would
       # silently turn this into a no-op smoke test that never fails the job.
+      # PUID/PGID must match the runner's real uid/gid: ubuntu-latest runs as 1001:1001,
+      # not the container's default 1000:1000 (docker-compose.yml's own header documents
+      # this exact invocation). Without it, every write to the bind-mounted
+      # docker/e2e/results/report.jsonl EACCESes (that dir is tracked via .gitkeep and
+      # checked out owned by the runner's uid), and run-e2e.sh Phase 25 deliberately exits
+      # 1 whenever REPORT_WRITE_FAILURES>0 (LORE-103 AC1) — so the job fails even when
+      # every scenario passes, and the report artifact never exists on the host.
       - name: Build and run the E2E harness
-        run: docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e
+        run: PUID="$(id -u)" PGID="$(id -g)" docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e
       # Always attempt this (even after a failing run above) — the structured
       # docker/e2e/results/report.jsonl (one JSON object per step) is the fastest way to see
       # which scenario(s) failed without re-running the whole harness locally. Best-effort:
