@@ -16,7 +16,6 @@
  * **included** nodes, so a subgraph reports the budget of exactly what it shows.
  */
 
-import { singleLine } from "../errors";
 import { type BundleGraph, type EdgeKind, frontmatterScalar } from "./bundle";
 import { compareCodeUnits } from "./order";
 
@@ -160,12 +159,19 @@ export function toDot(data: GraphExport): string {
 }
 
 /**
- * Quote a string as a DOT double-quoted ID: {@link singleLine} collapses any embedded
- * newline/control line-break first — `value` is bundle-controlled (a concept id or
- * frontmatter title), and a raw line break inside a DOT quoted string produces a
- * malformed or misleading label — then backslashes and quotes are escaped (the only
- * two characters DOT itself requires escaped in a quoted ID).
+ * Quote a string as a DOT double-quoted ID. Per the DOT language grammar, a
+ * quoted ID escapes exactly one thing — a literal double quote, written `\"`
+ * — and leaves every other character unchanged, including a lone `\`:
+ * Graphviz's parser never interprets `\\` as an escaped backslash, so
+ * doubling every `\` (the previous bug here) corrupted any id, title, or edge
+ * kind that happened to contain one. A raw line break, though, cannot survive
+ * inside a quoted ID without splitting `toDot()`'s one-statement-per-line
+ * output across two physical lines, so an embedded newline (`value` is
+ * bundle-controlled — a concept id or frontmatter scalar, either of which can
+ * carry one) is rewritten to the two-character escape `\n` — the same escape
+ * Graphviz itself uses to force a line break inside a label — before the
+ * quote escaping is applied.
  */
 function quote(value: string): string {
-  return `"${singleLine(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  return `"${value.replace(/\r\n|\r|\n/g, "\\n").replace(/"/g, '\\"')}"`;
 }

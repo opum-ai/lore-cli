@@ -176,18 +176,31 @@ describe("toDot — Graphviz serialization", () => {
     expect(dot).not.toContain("missing"); // dangling edge omitted
   });
 
-  test("escapes quotes and backslashes in labels", () => {
+  test("escapes quotes but leaves a lone backslash unchanged in labels (LORE-145)", () => {
+    // DOT's quoted-ID grammar escapes only a literal double quote (`\"`); a bare
+    // `\` is left unchanged by Graphviz's parser (it never interprets `\\` as an
+    // escaped backslash), so doubling it — the previous bug — would corrupt this.
     writeDoc("weird.md", '---\ntype: Story\ntitle: a"b\\c\n---\nText.\n');
     const dot = toDot(buildGraphExport(graph()));
-    expect(dot).toContain('[label="a\\"b\\\\c"];');
+    expect(dot).toContain('[label="a\\"b\\c"];');
   });
 
-  test("collapses an embedded newline in a title so the label stays one quoted DOT statement (LORE-126)", () => {
+  test("a value containing a backslash round-trips through toDot() unchanged except for the required quote escaping (LORE-145)", () => {
+    // A Windows-style path fragment is the canonical real-world case: none of its
+    // backslashes are special to DOT and must survive untouched.
+    writeDoc("weird-path.md", '---\ntype: Story\ntitle: "C:\\\\Users\\\\name"\n---\nText.\n');
+    const dot = toDot(buildGraphExport(graph()));
+    expect(dot).toContain('[label="C:\\Users\\name"];');
+  });
+
+  test("escapes an embedded newline in a title so the label stays one quoted DOT statement (LORE-145)", () => {
     writeDoc("weird-nl.md", '---\ntype: Story\ntitle: "Line one\\nline two"\n---\nText.\n');
     const dot = toDot(buildGraphExport(graph()));
     // The whole node statement — id and label — lands on exactly one physical line;
-    // a raw newline surviving inside the quoted label would split it across two.
-    expect(dot.split("\n")).toContain('  "weird-nl" [label="Line one line two"];');
+    // a raw newline surviving inside the quoted label would split it across two. The
+    // newline is preserved as the `\n` escape (the same one Graphviz itself uses to
+    // force a line break inside a label) rather than lost to a collapsed space.
+    expect(dot.split("\n")).toContain('  "weird-nl" [label="Line one\\nline two"];');
   });
 });
 
