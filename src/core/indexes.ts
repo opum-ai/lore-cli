@@ -183,6 +183,12 @@ function buildListing(concepts: readonly Concept[], childDirSet: readonly string
  *
  * - **Single-line** ({@link singleLine}, as `log.ts` does for commit subjects) — a title carrying a
  *   newline (a YAML block scalar) would otherwise split the entry out of the list.
+ * - **Escape `\`** — done *first*, before the `[`/`]` escape below. A pre-existing literal backslash
+ *   immediately before a bracket (e.g. a title `Plan \]B\[`) would otherwise combine with the
+ *   bracket-escape's inserted backslash into CommonMark's `\\` (an escaped backslash) followed by a
+ *   live, link-syntax bracket — shifting text into a real `[text](link)` boundary (same class of bug
+ *   as {@link cell}, LORE-154). Doubling backslashes first means the later step's own backslashes are
+ *   never mistaken for source content and never re-escaped.
  * - **Escape `[` / `]`** — an unbalanced bracket would truncate or break the `[text](link)` syntax,
  *   leaving the entry as literal text that links nowhere.
  * - **Neutralize HTML-comment sentinels** (`<!--` / `-->` → entities) — a title literally containing
@@ -193,6 +199,7 @@ function buildListing(concepts: readonly Concept[], childDirSet: readonly string
  */
 function linkText(title: string): string {
   return singleLine(title)
+    .replace(/\\/g, "\\\\")
     .replace(/[[\]]/g, (c) => `\\${c}`)
     .replace(/<!--/g, "&lt;!--")
     .replace(/-->/g, "--&gt;");
