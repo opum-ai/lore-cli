@@ -2,7 +2,8 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildGraph, type Edge, loadBundle } from "../src/core/bundle";
+import { buildGraph, type Edge, loadBundle, resolvePath } from "../src/core/bundle";
+import { type CheckInputFile, checkBundle } from "../src/core/check";
 import { parseConcept } from "../src/core/concept";
 import { compileProfile, parseProfile } from "../src/core/profile";
 import { LoreError, WarningCollector } from "../src/errors";
@@ -276,6 +277,62 @@ describe("buildGraph — path normalization", () => {
     const g = buildGraph([ref("adr/a", "[x](x.md)"), target]);
     expect(g.concepts.has("adr/x")).toBe(true);
     expect(edgesFrom(g.edges, "adr/a")[0]?.to).toBe("adr/x");
+  });
+});
+
+// ── resolvePath: leading-`/` bundle-root resolution (LORE-133) ───────────────────
+
+describe("resolvePath — leading-`/` targets resolve against the bundle root", () => {
+  test("a /-absolute path resolves against the bundle root, not `dir`", () => {
+    const byId = buildGraph([ref("reference/orders")]).concepts;
+    expect(resolvePath("/reference/orders.md", "adr", byId)).toBe("reference/orders");
+  });
+
+  test("a plain relative path still resolves against `dir` unchanged (non-slash targets are unaffected)", () => {
+    const byId = buildGraph([ref("adr/orders")]).concepts;
+    expect(resolvePath("orders.md", "adr", byId)).toBe("adr/orders");
+  });
+
+  test("a /-absolute target is NOT the dir-joined concept, even when that concept also exists", () => {
+    // Without the leading-`/` special case, resolvePath would join "adr" + "/reference/orders.md"
+    // via posix.join — which does not treat an embedded leading slash as root-absolute — into
+    // "adr/reference/orders.md", a real, *different* concept that also exists in this bundle. The
+    // fix must resolve to the bundle-root concept instead of this dir-joined decoy.
+    const g = buildGraph([
+      ref("adr/x", "See [o](/reference/orders.md)."),
+      ref("reference/orders"),
+      ref("adr/reference/orders"), // the decoy a naive dir-join would hit
+    ]);
+    expect(edgesFrom(g.edges, "adr/x")).toEqual([
+      { from: "adr/x", to: "reference/orders", target: "/reference/orders.md", kind: "link" },
+    ]);
+  });
+
+  test("resolvePath (bundle.ts) and the check.ts link-check gate agree on the same concept for a /-absolute target", () => {
+    // Same directory shape as above: a linking file two directories deep, a bundle-root concept
+    // named by the /-absolute target, and a decoy at the dir-joined path — root-relative and
+    // dir-relative resolution disagree here (they name two different, both-real concepts). The
+    // fingerprint for "which concept did check.ts's gate resolve to" is the heading anchor: checkBundle
+    // never exposes a resolved id directly, but a broken-anchor finding reveals a wrong resolution
+    // (the decoy's heading slug does not match "root-heading").
+    const linkBody = "See [o](/reference/orders.md#root-heading).";
+    const rootFile: CheckInputFile = {
+      path: "reference/orders.md",
+      raw: "---\ntype: Reference\n---\n\n## Root Heading\n",
+    };
+    const decoyFile: CheckInputFile = {
+      path: "adr/reference/orders.md",
+      raw: "---\ntype: Reference\n---\n\n## Decoy Heading\n",
+    };
+    const linkingFile: CheckInputFile = { path: "adr/x.md", raw: `---\ntype: Reference\n---\n\n${linkBody}\n` };
+
+    // check.ts's own gate: resolves cleanly, anchored against the root concept's heading.
+    expect(checkBundle([linkingFile, rootFile, decoyFile]).errorCount).toBe(0);
+
+    // bundle.ts's resolver, over the identical directory shape: lands on the same
+    // "reference/orders" concept — not the decoy at the dir-joined path.
+    const g = buildGraph([ref("adr/x", linkBody), ref("reference/orders"), ref("adr/reference/orders")]);
+    expect(edgesFrom(g.edges, "adr/x")[0]?.to).toBe("reference/orders");
   });
 });
 
