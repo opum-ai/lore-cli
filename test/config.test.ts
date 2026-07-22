@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { defaultConfig, loadConfig } from "../src/config";
+import { CONFIG_REL_PATH, defaultConfig, loadConfig } from "../src/config";
 import { EXIT_CODES, exitCodeFor, LoreError } from "../src/errors";
 
 // The zero-config defaults `loadConfig` returns when nothing overrides them —
@@ -263,6 +263,12 @@ describe("loadConfig — malformed input and out-of-contract values", () => {
       expect(thrown).toBeInstanceOf(LoreError);
       expect((thrown as LoreError).type).toBe("denied");
       expect(exitCodeFor(thrown)).toBe(EXIT_CODES.denied);
+      // LORE-175: the denied error's structured input must carry the errno
+      // `code`, matching the shape errors.ts's ioError/readFileIfPresent emit
+      // for every other denied-read site.
+      const input = (thrown as LoreError).input as { path?: string; code?: string };
+      expect(input.path).toBe(CONFIG_REL_PATH);
+      expect(input.code === "EACCES" || input.code === "EPERM").toBe(true);
     } finally {
       chmodSync(path, 0o644); // restore so afterAll's rmSync can clean up
     }

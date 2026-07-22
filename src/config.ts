@@ -106,7 +106,9 @@ export interface LoadConfigOptions {
  * Load and validate `.lore/config.toml` under `root` (default cwd), overlaying
  * the Confluence token from `env` (default `process.env`). A missing file yields
  * the zero-config {@link defaultConfig}; malformed TOML or an out-of-contract
- * value throws a {@link LoreError} of type `"validation"`.
+ * value throws a {@link LoreError} of type `"validation"`; a file that exists
+ * but cannot be read (`EACCES`/`EPERM`) throws a `"denied"` {@link LoreError}
+ * instead (see {@link readConfigText}).
  */
 export function loadConfig(options: LoadConfigOptions = {}): LoreConfig {
   const root = options.root ?? process.cwd();
@@ -154,7 +156,9 @@ function readConfigText(path: string): string | undefined {
         "denied",
         withReason(`${CONFIG_REL_PATH} could not be read`, cause),
         `check filesystem permissions on ${CONFIG_REL_PATH}`,
-        { path: CONFIG_REL_PATH },
+        // Attach the errno `code` (matching errors.ts's ioError/readFileIfPresent),
+        // so a --json consumer reading envelope.input.code gets it here too.
+        { path: CONFIG_REL_PATH, code: errnoCode(cause) },
       );
     }
     return fail(
