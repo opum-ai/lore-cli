@@ -217,16 +217,19 @@ function graphRenderable(data: GraphExport, dot: boolean): Renderable<GraphExpor
  * per node, then one `<from> -<kind>-> <to>` line per edge (`(dangling: <target>)`
  * for a broken reference). ANSI-free and deterministic.
  *
- * `node.id`/`node.title`/edge endpoints all come from bundle-controlled
+ * `node.id`/`node.type`/`node.title`/edge endpoints all come from bundle-controlled
  * frontmatter (an edge's `from`/`to` are concept ids; `target` is the reference
  * as parsed, which for a dangling `specs`/frontmatter edge can carry whatever a
- * YAML scalar allows — including an embedded newline), so each is run through
- * {@link singleLine} before it lands in a line — the same guard every other
- * bundle-text renderer applies (managed-block.ts, indexes.ts, context.ts,
- * query.ts, log.ts) — so an embedded newline/control character cannot split one
- * node or edge into extra physical lines. `data.root` is included for the same
- * reason: though only reachable via a concept id that itself embeds a newline,
- * guarding it keeps the header consistent with every id printed below it.
+ * YAML scalar allows — including an embedded newline; `node.type` mirrors
+ * `frontmatter.type`, and `requireType` (schema.ts) only trims the *ends* of the
+ * value while unknown types are warn-only, so an interior newline in `type:`
+ * survives bundle load unchanged), so each is run through {@link singleLine}
+ * before it lands in a line — the same guard every other bundle-text renderer
+ * applies (managed-block.ts, indexes.ts, context.ts, query.ts, log.ts) — so an
+ * embedded newline/control character cannot split one node or edge into extra
+ * physical lines. `data.root` is included for the same reason: though only
+ * reachable via a concept id that itself embeds a newline, guarding it keeps
+ * the header consistent with every id printed below it.
  */
 function renderText(data: GraphExport): string {
   const root = data.root !== undefined ? singleLine(data.root) : undefined;
@@ -237,7 +240,7 @@ function renderText(data: GraphExport): string {
   ];
   for (const node of data.nodes) {
     const title = node.title !== undefined ? `  ${singleLine(node.title)}` : "";
-    lines.push(`  ${singleLine(node.id)}  [${node.type}]  ~${node.tokenEstimate}${title}`);
+    lines.push(`  ${singleLine(node.id)}  [${singleLine(node.type)}]  ~${node.tokenEstimate}${title}`);
   }
   for (const edge of data.edges) {
     const dest = edge.to !== null ? singleLine(edge.to) : `(dangling: ${singleLine(edge.target)})`;
