@@ -247,6 +247,22 @@ describe("lore graph — command", () => {
     expect(nodeLine).toMatch(/^ {2}weird-nl {2}\[Story\] {2}~\d+ {2}Line one line two$/);
   });
 
+  test("an embedded newline in a dangling ref cannot split an edge into two plain-output lines (LORE-126)", () => {
+    // scalarToRef (core/bundle.ts) only trims the ends of a frontmatter ref, so a
+    // double-quoted YAML scalar's escaped `\n` survives as a literal newline into
+    // the dangling edge's `target` — the edge-line analog of the node-line title case above.
+    writeDoc("stories/bulk.md", '---\ntype: Story\nspecs:\n  - "evil\\ninjected line"\n---\nText.\n');
+    const stdout = capture();
+    runGraph({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: [] });
+    // 1 header + 1 node + 1 edge = 3 content lines; a smuggled newline in the
+    // dangling target would add a 4th.
+    const lines = stdout.text().split("\n");
+    expect(lines.at(-1)).toBe("");
+    expect(lines.slice(0, -1)).toHaveLength(3);
+    const edgeLine = lines.find((line) => line.includes("-specs->"));
+    expect(edgeLine).toBe("  stories/bulk -specs-> (dangling: evil injected line)");
+  });
+
   test("--dot combined with --json is a usage error (DOT has no envelope)", () => {
     writeStandardBundle();
     const err = expectError("usage", () =>

@@ -217,15 +217,21 @@ function graphRenderable(data: GraphExport, dot: boolean): Renderable<GraphExpor
  * per node, then one `<from> -<kind>-> <to>` line per edge (`(dangling: <target>)`
  * for a broken reference). ANSI-free and deterministic.
  *
- * `node.id`/`node.title` come from bundle-controlled frontmatter, so each is run
- * through {@link singleLine} before it lands in a line — the same guard every
- * other bundle-text renderer applies (managed-block.ts, indexes.ts, context.ts,
- * query.ts, log.ts) — so an embedded newline/control character in a multiline
- * title cannot split one node into extra physical lines.
+ * `node.id`/`node.title`/edge endpoints all come from bundle-controlled
+ * frontmatter (an edge's `from`/`to` are concept ids; `target` is the reference
+ * as parsed, which for a dangling `specs`/frontmatter edge can carry whatever a
+ * YAML scalar allows — including an embedded newline), so each is run through
+ * {@link singleLine} before it lands in a line — the same guard every other
+ * bundle-text renderer applies (managed-block.ts, indexes.ts, context.ts,
+ * query.ts, log.ts) — so an embedded newline/control character cannot split one
+ * node or edge into extra physical lines. `data.root` is included for the same
+ * reason: though only reachable via a concept id that itself embeds a newline,
+ * guarding it keeps the header consistent with every id printed below it.
  */
 function renderText(data: GraphExport): string {
+  const root = data.root !== undefined ? singleLine(data.root) : undefined;
   const scope =
-    data.root !== undefined ? ` rooted at ${data.root}${data.depth !== undefined ? ` (depth ${data.depth})` : ""}` : "";
+    root !== undefined ? ` rooted at ${root}${data.depth !== undefined ? ` (depth ${data.depth})` : ""}` : "";
   const lines = [
     `${data.nodes.length} ${plural(data.nodes.length, "concept")}, ${data.edges.length} ${plural(data.edges.length, "edge")}, ~${data.tokenEstimate} tokens (chars/4)${scope}`,
   ];
@@ -234,8 +240,8 @@ function renderText(data: GraphExport): string {
     lines.push(`  ${singleLine(node.id)}  [${node.type}]  ~${node.tokenEstimate}${title}`);
   }
   for (const edge of data.edges) {
-    const dest = edge.to !== null ? edge.to : `(dangling: ${edge.target})`;
-    lines.push(`  ${edge.from} -${edge.kind}-> ${dest}`);
+    const dest = edge.to !== null ? singleLine(edge.to) : `(dangling: ${singleLine(edge.target)})`;
+    lines.push(`  ${singleLine(edge.from)} -${edge.kind}-> ${dest}`);
   }
   return lines.join("\n");
 }
