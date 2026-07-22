@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { type Concept, parseConcept, serializeConcept, serializeConceptWithModeline } from "../src/core/concept";
+import {
+  type Concept,
+  parseConcept,
+  serializeConcept,
+  serializeConceptWithModeline,
+  tryParseConcept,
+} from "../src/core/concept";
 import { LoreError, WarningCollector } from "../src/errors";
 
 /** A leading UTF-8 BOM, built ASCII-safely so there is no literal U+FEFF in source. */
@@ -136,6 +142,51 @@ describe("parseConcept — error tier (throws validation, exit 6)", () => {
 
   test("a missing type throws even when other keys are present", () => {
     expectValidation(() => parseConcept("x.md", "---\ntitle: No type here\n---\nB\n"));
+  });
+});
+
+describe("parseConcept — malformed closing fence (LORE-141)", () => {
+  // gray-matter's closing-delimiter search is a plain `str.indexOf('\n---')` substring
+  // match, not an exact-line match, so a closing fence with extra trailing characters
+  // (e.g. `----` instead of `---`) is silently accepted and a few stray bytes from the
+  // fence bleed into the parsed body instead of raising an error. Live repro from the
+  // task: parsing `---\ntype: Reference\n----\nbody text here\n` used to yield
+  // `body: "-\nbody text here\n"` — a leaked leading `-`. These pin that the malformed
+  // fence is now rejected outright (never both a false-success AND a corrupted body).
+
+  test("a closing fence with extra trailing dashes (----) throws instead of leaking a stray '-' into the body", () => {
+    const raw = "---\ntype: Reference\n----\nbody text here\n";
+    const err = expectValidation(() => parseConcept("x.md", raw));
+    expect(err.message).toContain("malformed closing fence");
+    expect(err.message).toContain("x.md");
+  });
+
+  test("tryParseConcept also throws (not swallowed as a non-concept) for the same malformed fence", () => {
+    const raw = "---\ntype: Reference\n----\nbody text here\n";
+    expectValidation(() => tryParseConcept("x.md", raw));
+  });
+
+  test("a closing fence with other trailing junk (not just dashes) is rejected the same way", () => {
+    const raw = "---\ntype: Reference\n---junk\nbody text here\n";
+    const err = expectValidation(() => parseConcept("x.md", raw));
+    expect(err.message).toContain("malformed closing fence");
+  });
+
+  test("a well-formed bare closing fence still parses normally — no regression (AC#3)", () => {
+    const raw = "---\ntype: Reference\n---\nbody text here\n";
+    const concept = parseConcept("x.md", raw);
+    expect(concept.frontmatter.type).toBe("Reference");
+    expect(concept.body).toBe("body text here\n");
+  });
+
+  test("a body that legitimately opens with a dash (a markdown list) is left untouched", () => {
+    const raw = "---\ntype: Reference\n---\n- item one\n- item two\n";
+    expect(parseConcept("x.md", raw).body).toBe("- item one\n- item two\n");
+  });
+
+  test("an unterminated fence (no closing --- at all) is unaffected — pre-existing behavior, not this bug", () => {
+    const raw = "---\ntype: Reference\n";
+    expect(parseConcept("x.md", raw).body).toBe("");
   });
 });
 
