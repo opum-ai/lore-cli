@@ -713,21 +713,21 @@ export function extractLinkTargets(tree: Nodes): string[] {
 
 /**
  * The literal text content of an mdast node — every `text` and `inlineCode` value
- * concatenated in document order, plus an `image`/`imageReference` node's non-empty `alt`
- * text, via the stack-safe {@link walkMdast}. Including image `alt` text matches
- * `mdast-util-to-string`'s default (`includeImageAlt: true`), the reference implementation,
- * so a heading composed of or containing `![Alt Text](img.png)` contributes "Alt Text" —
- * the same text GitHub renders into the heading and slugs into its anchor. Exported as the
- * one "what text does this node render" rule so heading-anchor slugging (`lore check`) and
+ * concatenated in document order, via the stack-safe {@link walkMdast}. Exported as the one
+ * "what text does this node render" rule so heading-anchor slugging (`lore check`) and
  * required-section matching (`lore validate`) cannot drift apart on what a heading *says*.
+ *
+ * Deliberately excludes `image`/`imageReference` `alt` text: GitHub — lore's reference
+ * renderer (portable-markdown.md) — renders an `<img>` with empty `textContent` no matter
+ * its `alt`, so an image contributes nothing to the *visible* heading text GitHub slugs from
+ * (verified empirically against GitHub's rendered output; `mdast-util-to-string`'s
+ * `includeImageAlt: true` default diverges from GitHub here and does not apply).
  */
 export function nodeText(node: Nodes): string {
   let text = "";
   walkMdast(node, (current) => {
     if (current.type === "text" || current.type === "inlineCode") {
       text += current.value;
-    } else if ((current.type === "image" || current.type === "imageReference") && current.alt) {
-      text += current.alt;
     }
   });
   return text;
