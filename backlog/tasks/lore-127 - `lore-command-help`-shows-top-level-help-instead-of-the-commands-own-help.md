@@ -1,9 +1,10 @@
 ---
 id: LORE-127
 title: '`lore <command> --help` shows top-level help instead of the command''s own help'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-21 22:26'
+updated_date: '2026-07-22 13:15'
 labels:
   - codex-review-followup
   - cmd-meta-c
@@ -29,3 +30,9 @@ In `run()` (src/cli.ts:170), the check `if (parsed.version || parsed.help || par
 - [ ] #2 `lore <command> --help` output is byte-identical to `lore help <command>` output, for at least one representative command.
 - [ ] #3 `lore --help` with no command token still renders the existing top-level help, and `lore --version`/no-command behavior is unchanged.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Resolved-by-merge by LORE-107 (PR #95, wave 1). Verified against merged dev: run() in src/cli.ts now routes 'lore <command> --help'/'-h' to runHelp (the command's own help), not renderTopLevelHelp — see cli.ts:154 and the guard at line 111. test/help.test.ts:271 asserts 'lore query --help' output is byte-identical to 'lore help query' (.toBe), covering AC#1/#2; the no-command top-level catalog is preserved (help.test.ts:293), covering AC#3. No separate code change needed.
+<!-- SECTION:NOTES:END -->

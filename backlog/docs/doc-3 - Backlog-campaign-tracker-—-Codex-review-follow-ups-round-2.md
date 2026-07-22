@@ -3,7 +3,7 @@ id: doc-3
 title: Backlog campaign tracker — Codex review follow-ups (round 2)
 type: other
 created_date: '2026-07-21 22:27'
-updated_date: '2026-07-22 12:55'
+updated_date: '2026-07-22 13:21'
 ---
 Round 2 of the Codex-review follow-up campaign (see [[Backlog campaign tracker]] / doc-1 for
 round 1, LORE-69..95, which closed all 20 high-severity findings from doc-2). Re-initialised on
@@ -47,52 +47,54 @@ section if/when this round completes.
 
 The "ready now" set is **always recomputed live** from `backlog/tasks/*.md` + this table at the
 start of every restore/wave — never trust a persisted "next wave" plan; it can go stale the
-moment a conflict changes. Informational hint only: as of 2026-07-22 after **wave 1 merged**, 6
-tasks are Done (LORE-96, 98, 102, 107, 110, 114) and **72 remain open** (LORE-97, 99–101, 103–106,
-108–109, 111–113, 115–173) plus **1 new follow-up LORE-174** = 73 open. **Wave 2 is now dispatched**
-(LORE-97, 99, 103, 108, 111, 115 — one per distinct cluster, file-disjoint), leaving 67 To Do. All
-are dependency-ready; actual wave membership is bounded by the 6-worker cap and the live pairwise
-file-conflict graph (same-cluster items serialize).
+moment a conflict changes. Informational hint only: as of 2026-07-22 after **waves 1 and 2 merged**, **15 tasks are Done** —
+wave 1 (LORE-96, 98, 102, 107, 110, 114), wave 2 (LORE-97, 99, 103, 108, 111, 115), and 3
+resolved-by-merge duplicates (LORE-127, 131 by LORE-107; LORE-173 by LORE-115). **65 tasks remain
+open**: the original medium queue minus those, plus 2 mid-campaign follow-ups (LORE-174 from wave 1,
+LORE-175 from wave 2). All are dependency-ready; actual wave membership is bounded by the 6-worker
+cap and the live pairwise file-conflict graph (same-cluster items serialize). Recompute the ready
+set live at next restore — do NOT hardcode a next-wave list.
 
-**Cross-cluster duplicate (RE-CHECK next wave):** LORE-107 (cli-entry-state) merged in wave 1,
+**Cross-cluster duplicate (RESOLVED):** LORE-107 (cli-entry-state) merged in wave 1,
 fixing the `lore <command> --help` bug in src/cli.ts + test/help.test.ts and adding a `lore <cmd>
 --help` == `lore help <cmd>` regression assertion. LORE-127 (cmd-meta-c, "`lore <command> --help`
 shows top-level help") and LORE-131 (cmd-meta-c, "Add regression test asserting `lore <command>
 --help` matches `lore help <command>`") describe the SAME bug/test — they are very likely now
-resolved-by-merge or reducible to no-ops. Re-read their task bodies against merged dev before
-dispatching either; if already satisfied, mark Done with an evidence note rather than re-fixing.
+the SAME bug/test — **both verified resolved-by-merge by LORE-107 and marked Done 2026-07-22** (help.test.ts:271
+asserts `lore query --help` byte-identical to `lore help query`). No further action.
 
-**Second cross-cluster duplicate (watch):** LORE-115 (cmd-crud-a, dispatched wave 2) and LORE-173
+**Second cross-cluster duplicate (RESOLVED):** LORE-115 (cmd-crud-a, dispatched wave 2) and LORE-173
 (errors-output-git, still To Do) both target `renderTaskSummaryRows` in `src/output.ts` (control-char
 / line normalization of Backlog id/status/title). They must never share a wave; once LORE-115 merges,
-re-read LORE-173 against merged dev — it is likely resolved-by-merge or reducible to a smaller residual.
+**LORE-173 verified resolved-by-merge by LORE-115 and marked Done 2026-07-22** — output.test.ts covers the newline/control-char row. No further action.
 
 ## Queue (confirmed order)
 
 | # | Issue | Cluster | Formal deps | Status | Wave | Note |
 |---|---|---|---|---|---|---|
 | 1 | LORE-96 | adapter-backlog | — | Done | 1 | Validate/escape argv values passed to backlog CLI to prevent flag injection |
-| 2 | LORE-97 | adapter-backlog | — | Dispatched | 2 | createTask discards the new task id when the 'Created task <ID>' line fails to parse |
+| 2 | LORE-97 | adapter-backlog | — | Done | 2 | createTask discards the new task id when the 'Created task <ID>' line fails to parse |
 | 3 | LORE-98 | build-ci-config | — | Done | 1 | Pin third-party GitHub Actions to commit SHAs instead of mutable tags |
-| 4 | LORE-99 | build-ci-config | — | Dispatched | 2 | verify-versions job doesn't check os/cpu fields or binary filenames; only linux-x64 build is executed |
+| 4 | LORE-99 | build-ci-config | — | Done | 2 | verify-versions job doesn't check os/cpu fields or binary filenames; only linux-x64 build is executed |
 | 5 | LORE-100 | build-ci-config | — | To Do | — | Docker e2e harness is never invoked by CI or release workflows |
 | 6 | LORE-101 | build-ci-config | — | To Do | — | Scoped release packages missing publishConfig.access:public, will fail first npm publish |
 | 7 | LORE-102 | build-runtime | — | Done | 1 | Harden e2e Dockerfile: digest-pin base image, avoid root curl\|bash, pin mkdocs |
-| 8 | LORE-103 | build-runtime | — | Dispatched | 2 | Surface report-write failures and fixed-UID bind-mount permission risk in e2e run |
+| 8 | LORE-103 | build-runtime | — | Done | 2 | Surface report-write failures and fixed-UID bind-mount permission risk in e2e run |
 | 9 | LORE-104 | build-runtime | — | To Do | — | Documented `docker compose up --build` invocation doesn't propagate e2e exit code |
 | 10 | LORE-105 | build-runtime | — | To Do | — | record()/check() write pretty-printed JSON, breaking report.jsonl's JSONL format |
 | 11 | LORE-106 | build-runtime | — | To Do | — | Golden recorder trusts a live mutable task and an unverified upstream CLI path |
 | 12 | LORE-107 | cli-entry-state | — | Done | 1 | lore <command> --help shows generic help instead of the command's own help |
-| 13 | LORE-108 | cli-entry-state | — | Dispatched | 2 | readConfigText maps EACCES/EPERM config read failures to 'validation' not 'denied' |
+| 13 | LORE-108 | cli-entry-state | — | Done | 2 | readConfigText maps EACCES/EPERM config read failures to 'validation' not 'denied' |
 | 14 | LORE-109 | cli-entry-state | — | To Do | — | commitBacklogFiles discards LoreError.hint (real git/hook stderr) on commit failure |
 | 15 | LORE-110 | cmd-check | — | Done | 1 | Cap probeLiveness's total URL count and wall-clock time, not just per-URL concurrency |
-| 16 | LORE-111 | cmd-check | — | Dispatched | 2 | Bound resolveTaskDetails's per-task adapter.viewTask fan-out with a concurrency limit |
+| 16 | LORE-111 | cmd-check | — | Done | 2 | Bound resolveTaskDetails's per-task adapter.viewTask fan-out with a concurrency limit |
 | 17 | LORE-112 | cmd-check | — | To Do | — | check's JSON report doesn't mark itself incomplete when reconciliation errors mid-run |
 | 18 | LORE-113 | cmd-check | — | To Do | — | docPath uses raw bundle.label while isDocsRoot normalizes it, so the two disagree on non-canonical labels |
 | 19 | LORE-114 | cmd-crud-a | — | Done | 1 | lore new --out bypasses reserved index/log stem policy |
-| 20 | LORE-115 | cmd-crud-a | — | Dispatched | 2 | orphans table rows skip control-character sanitization on task fields (renderTaskSummaryRows in src/output.ts) |
+| 20 | LORE-115 | cmd-crud-a | — | Done | 2 | orphans table rows skip control-character sanitization on task fields (renderTaskSummaryRows in src/output.ts) |
 | 21 | LORE-116 | cmd-crud-a | — | To Do | — | lore replace commit phase has no atomic write or rollback on partial failure |
 | 79 | LORE-174 | cmd-crud-a | — | To Do | — | lore new default title-slug path bypasses reserved index/log stem policy (wave-1 integration follow-up of LORE-114; touches src/commands/new.ts + test/new.test.ts, conflicts with LORE-115/116) |
+| 80 | LORE-175 | cli-entry-state | — | To Do | — | readConfigText denied error omits errno code field (wave-2 integration follow-up of LORE-108, low; touches src/config.ts + test/config.test.ts, conflicts with LORE-108-area) |
 | 22 | LORE-117 | cmd-crud-b | — | To Do | — | writeFileAtomic drops destination's file mode/ownership on overwrite |
 | 23 | LORE-118 | cmd-crud-b | — | To Do | — | query renderText interpolates unsanitized hit id/type/snippet and query text into terminal output |
 | 24 | LORE-119 | cmd-crud-b | — | To Do | — | sync overwrites a status-changed doc using stale in-memory frontmatter, discarding concurrent on-disk edits |
@@ -103,11 +105,11 @@ re-read LORE-173 against merged dev — it is likely resolved-by-merge or reduci
 | 29 | LORE-124 | cmd-meta-a | — | To Do | — | Absolute --out inside the repo crashes schema export with an unhandled ENOENT |
 | 30 | LORE-125 | cmd-meta-a | — | To Do | — | resolveRollup doesn't verify viewTask's returned id matches the requested id |
 | 31 | LORE-126 | cmd-meta-b | — | To Do | — | Collapse embedded newlines in graph node id/title before rendering |
-| 32 | LORE-127 | cmd-meta-c | — | To Do | — | `lore <command> --help` shows top-level help instead of the command's own help — **likely resolved by LORE-107 (wave 1); re-check before dispatch** |
+| 32 | LORE-127 | cmd-meta-c | — | Done | 1 | RESOLVED-BY-MERGE by LORE-107 (PR #95): cli.ts routes `lore <cmd> --help` to runHelp; help.test.ts:271 asserts byte-identical to `lore help <cmd>` |
 | 33 | LORE-128 | cmd-meta-c | — | To Do | — | CLAUDE.md nudge update silently rewrites CRLF/BOM line endings on every managed-block sync |
 | 34 | LORE-129 | cmd-meta-c | — | To Do | — | `lore agents --check --force` mislabels a stale hand-edited SKILL.md and prints a remedy that won't fix it |
 | 35 | LORE-130 | cmd-meta-c | — | To Do | — | writeAllOrRollback's --force overwrite is not crash-safe against a mid-write kill |
-| 36 | LORE-131 | cmd-meta-c | — | To Do | — | Add regression test asserting `lore <command> --help` matches `lore help <command>` — **likely satisfied by LORE-107's added test (wave 1); re-check before dispatch** |
+| 36 | LORE-131 | cmd-meta-c | — | Done | 1 | RESOLVED-BY-MERGE by LORE-107 (PR #95): help.test.ts:271 is the byte-identical `lore <cmd> --help` == `lore help <cmd>` regression test |
 | 37 | LORE-132 | cmd-rename-supersede | — | To Do | — | Close TOCTOU window in rename between target-free check and file move |
 | 38 | LORE-133 | core-bundle-check | — | To Do | — | resolvePath does not special-case a leading-slash link target |
 | 39 | LORE-134 | core-bundle-check | — | To Do | — | resolveRef tries frontmatter ref as a root id before trying it as a relative path |
@@ -149,7 +151,7 @@ re-read LORE-173 against merged dev — it is likely resolved-by-merge or reduci
 | 75 | LORE-170 | errors-output-git | — | To Do | — | resolveHeadSha can't tell an unborn branch from a corrupted-but-present .git |
 | 76 | LORE-171 | errors-output-git | — | To Do | — | asText can return runtime undefined for Symbol/function input despite its string type |
 | 77 | LORE-172 | errors-output-git | — | To Do | — | WarningCollector.flush writes raw multi-line/control-char warnings to stderr unnormalized |
-| 78 | LORE-173 | errors-output-git | — | To Do | — | renderTaskSummaryRows prints raw Backlog id/status/title with no line normalization |
+| 78 | LORE-173 | errors-output-git | — | Done | 2 | RESOLVED-BY-MERGE by LORE-115 (PR #103): renderTaskSummaryRows now singleLine+stripAnsiAndControls id/status/title; output.test.ts covers newline/control-char rows |
 
 ## Resolved
 
@@ -161,6 +163,15 @@ re-read LORE-173 against merged dev — it is likely resolved-by-merge or reduci
 | 4 | LORE-107 | Done 2026-07-22 / wave 1 | PR #95, merged into dev @ `4df15fc`. Fable verdict **approve** (0 fix). src/cli.ts run() now renders a command's own help for `lore <cmd> --help`/`-h`; `lore --help`/`lore help` unchanged; 3 regression tests in test/help.test.ts incl. `lore <cmd> --help` == `lore help <cmd>`. Reviewer re-ran full suite 1710/0. **Note:** likely also resolves LORE-127 and LORE-131 (see queue re-check note). |
 | 5 | LORE-110 | Done 2026-07-22 / wave 1 | PR #96, merged into dev @ `92e5f56`. Fable verdict **approve** (0 fix). Added `LIVENESS_MAX_URLS=500` ceiling on probeLiveness's distinct-URL worklist (src/commands/check.ts); excess URLs skipped (never fetched) and surfaced as an advisory external-link finding; new bounding test in test/check.test.ts. Reviewer re-ran full suite 1711/0. |
 | 6 | LORE-114 | Done 2026-07-22 / wave 1 | PR #97, merged into dev @ `5476b15`. Fable verdict **approve** (0 fix). resolveOutPath() in src/commands/new.ts now calls shared assertNotReservedStem() on the extension-stripped `--out` path; nested index/log basenames throw the usage error rename/supersede/link already produce; root index keeps its own message. Reviewer re-ran full suite 1712/0. **Integration review found a sibling gap → filed LORE-174** (default title-slug path still bypasses the policy). |
+| 7 | LORE-97 | Done 2026-07-22 / wave 2 | PR #98, merged into dev @ `cfa82a4`. Fable **approve** (0 fix). createTask now passes {title, stdout} as the drift LoreError's `input` when the `Created task <ID>` line fails to parse, so a caller can recover an orphaned Backlog task; regression test in test/backlog-adapter.test.ts. Reviewer re-ran full suite 1713/0. |
+| 8 | LORE-99 | Done 2026-07-22 / wave 2 | PR #99, merged into dev @ `c044788`. Fable **approve** (0 fix). verify-versions in release.yml now validates each platform's os/cpu fields + binary filename (derived from platform name); build Verify step asserts the compiled-binary path exists for every platform, not just linux-x64. Reviewer executed the extracted node/shell steps against real + mutated fixtures. |
+| 9 | LORE-103 | Done 2026-07-22 / wave 2 | PR #100, merged into dev @ `ff9e760`. Fable **approve** (0 fix). run-e2e.sh record()/check() now detect a failed $REPORT append (REPORT_WRITE_FAILURES counter → nonzero exit); Dockerfile/docker-compose.yml gained PUID/PGID build args to rebind the `bun` user to the host uid/gid. Reviewer bash -n + logic-traced exit propagation. |
+| 10 | LORE-108 | Done 2026-07-22 / wave 2 | PR #101, merged into dev @ `2ee01ae`. Fable **approve** (0 fix). readConfigText throws `denied` on EACCES/EPERM (was `validation`), matching the shared contract; test in test/config.test.ts. Reviewer re-ran full suite 1714/0. **Integration review noted the denied `input` omits errno `code` → filed LORE-175.** |
+| 11 | LORE-111 | Done 2026-07-22 / wave 2 | PR #102, merged into dev @ `a8f7554`. Fable **approve** (0 fix). Moved private mapWithConcurrency helper from check.ts into reconcile-shared.ts (exported) and capped resolveTaskDetails's viewTask fan-out at TASK_DETAILS_CONCURRENCY=8; test in test/reconcile-shared.test.ts. Integration review verified single definition, all callers updated, no import cycle. Full suite 1716/0. |
+| 12 | LORE-115 | Done 2026-07-22 / wave 2 | PR #103, merged into dev @ `aff6f95`. Fable **approve** (1 fix round). renderTaskSummaryRows (src/output.ts, shared by lore tasks/orphans) now singleLine+stripAnsiAndControls id/status/title before formatting; test in test/output.test.ts. Reviewer re-ran full suite 1718/0. **Also resolves LORE-173.** |
+| 13 | LORE-127 | Done 2026-07-22 / resolved-by-merge (wave 1) | Resolved-by-merge by LORE-107 (PR #95). Verified: cli.ts routes `lore <cmd> --help`/`-h` to runHelp; test/help.test.ts:271 asserts `lore query --help` byte-identical to `lore help query`; no-command top-level catalog preserved. Marked Done with evidence note (no re-fix). |
+| 14 | LORE-131 | Done 2026-07-22 / resolved-by-merge (wave 1) | Resolved-by-merge by LORE-107 (PR #95). Verified: test/help.test.ts:271 is exactly the byte-identical `lore <cmd> --help` == `lore help <cmd>` regression test for `query`, and fails against the pre-LORE-107 short-circuit. Marked Done with evidence note (no re-fix). |
+| 15 | LORE-173 | Done 2026-07-22 / resolved-by-merge (wave 2) | Resolved-by-merge by LORE-115 (PR #103). Verified: renderTaskSummaryRows applies stripAnsiAndControls(singleLine(asText(...))) to id/status/title; test/output.test.ts covers a newline/control-char title → single sanitized line. Marked Done with evidence note (no re-fix). |
 
 ## Not queued — needs a human / blocked
 
@@ -199,3 +210,18 @@ fallback.)
   reviewer: Fable 5). One per distinct cluster, file-disjoint (adapter-backlog, build-ci-config,
   build-runtime, cli-entry-state, cmd-check, cmd-crud-a). Worktrees created @ base `19a3705` under
   lore.worktrees/. Settlement entry to follow.
+- 2026-07-22 — **wave 2 COMPLETE** (issues: LORE-97, 99, 103, 108, 111, 115; workers: Sonnet 5,
+  reviewer: Fable 5). One per distinct cluster, file-disjoint. Worktrees @ base `19a3705`; dispatch
+  marked at `f78bb32`. **All 6 approved by Fable** (LORE-115 after 1 fix round; the rest 0). Merged
+  serially as PRs #98–#103 (rebase onto moving dev, mandatory re-verify each: typecheck + full
+  `bun test`, all clean; bash -n for LORE-103's shell). Base `19a3705` → dev `aff6f95`; final
+  integrated suite **1718 pass / 0 fail**, typecheck clean.
+  - **Resolved-by-merge duplicates closed this session** (orchestrator verified against merged dev,
+    marked Done with evidence, no re-fix): LORE-127 + LORE-131 (by LORE-107, wave 1) and LORE-173
+    (by LORE-115, wave 2). See Resolved rows 13–15.
+  - **Wave-level integration review (Fable):** overall SAFE, no blocking/major cross-task defects;
+    the LORE-111 mapWithConcurrency relocation verified clean (one definition, all callers updated,
+    no import cycle). Findings: (1) *minor* — LORE-108's denied error omits errno `code` from its
+    structured `input` (diverges from errors.ts's denied contract) + stale loadConfig docstring →
+    **filed LORE-175** (cli-entry-state, low). (2) *nit* — LORE-99 left a dead `names` setup output
+    in release.yml (zero consumers, harmless); not tasked — recorded here for a future cleanup.

@@ -3,9 +3,10 @@ id: LORE-173
 title: >-
   renderTaskSummaryRows prints raw Backlog id/status/title with no line
   normalization
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-21 22:26'
+updated_date: '2026-07-22 13:15'
 labels:
   - codex-review-followup
   - errors-output-git
@@ -30,3 +31,9 @@ renderTaskSummaryRows (src/output.ts:403-407) interpolates `row.id`, `row.status
 - [ ] #1 A TaskSummaryRow with a title containing an embedded newline or control character renders as a single, correctly-aligned output line from renderTaskSummaryRows, verified by a new test in test/output.test.ts.
 - [ ] #2 renderTaskSummaryRows applies single-line normalization to id/status/title before formatting each row.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Resolved-by-merge by LORE-115 (PR #103, wave 2). Verified against merged dev: renderTaskSummaryRows in src/output.ts now applies stripAnsiAndControls(singleLine(asText(...))) to id/status/title before column-width measurement and joining (AC#2). test/output.test.ts (added by LORE-115) covers a row whose title contains a newline/control char, asserting a single correctly-aligned control-char-free line (AC#1). No separate code change needed.
+<!-- SECTION:NOTES:END -->

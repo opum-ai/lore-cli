@@ -3,9 +3,10 @@ id: LORE-131
 title: >-
   Add regression test asserting `lore <command> --help` matches `lore help
   <command>`
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-21 22:26'
+updated_date: '2026-07-22 13:15'
 labels:
   - codex-review-followup
   - cmd-meta-c
@@ -30,3 +31,9 @@ test/help.test.ts:263-268 only tests that `lore help` (no command) and `lore --h
 - [ ] #1 A new test in test/help.test.ts asserts `lore <command> --help` output is byte-identical to `lore help <command>` output for at least one representative command (e.g. `query`).
 - [ ] #2 The new test fails against the current (unfixed) cli.ts:168 short-circuit behavior and passes once that behavior is corrected, confirming it actually exercises the routing gap.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Resolved-by-merge by LORE-107 (PR #95, wave 1). Verified against merged dev: test/help.test.ts:271 ('lore <command> --help' renders the command's own help, LORE-107) asserts run('query','--help') output .toBe run('help','query') output — a byte-identical equivalence test for a representative command (AC#1). It also asserts the output does NOT contain the top-level catalog usage line, so it fails against the pre-LORE-107 short-circuit and passes after the fix (AC#2). No separate test change needed.
+<!-- SECTION:NOTES:END -->
