@@ -494,21 +494,28 @@ export interface WriteAllOrRollbackResult {
  *   path) the call refuses **before ever writing that file** — it never proceeds to
  *   overwrite-then-maybe-delete it, because deleting a file that existed before this call ran is never
  *   an acceptable rollback outcome. The overwrite itself goes through {@link writeFileNoFollow}, not
- *   the shared {@link writeFileOverwriting} (LORE-92): `assertNoSymlinkInPath` above is a
- *   check-then-act `lstatSync` walk, which cannot itself close a race against a symlink planted in
- *   the window between that check and this write — a concurrent process could still swap the target
- *   for a symlink after the guard passes and before a plain `writeFileSync` (which transparently
- *   follows symlinks) performs the overwrite. `writeFileNoFollow` closes that window structurally
- *   on POSIX, at the single `open()` call that does the write, rather than re-checking-then-still-
- *   racing — Windows lacks a POSIX-equivalent symlink-refusing open (libuv does not implement
- *   `UV_FS_O_NOFOLLOW` there), so this specific race window remains open on that platform; see
- *   {@link writeFileNoFollow}'s own docstring. The rollback restore below (on a *later* failure)
- *   goes through the same {@link writeFileNoFollow}, for the identical reason — a symlink swapped in
- *   after a successful write but before a later step's failure triggers rollback should not be
- *   silently written through either.
+ *   the shared {@link writeFileOverwriting} (LORE-92) or the in-place {@link writeFileAtomic} — a
+ *   symlink-safe **and** crash-safe write-to-temp-then-`renameSync` (LORE-130): a symlink swapped
+ *   into the destination's path in the TOCTOU window between `assertNoSymlinkInPath` above and this
+ *   write cannot be written through, because `writeFileNoFollow` both refuses a symlinked destination
+ *   up front AND, even if one raced in after that check, `renameSync` never follows a symlink at its
+ *   destination in the first place (POSIX replaces the link itself, never whatever it points to) — see
+ *   {@link writeFileNoFollow}'s own docstring for both properties in full. Layered on top of that,
+ *   the write itself is now crash-safe against a kill or process crash mid-write, not just against a
+ *   thrown JS exception: the destination is never opened/truncated in place, so a kill at any point
+ *   before the commit `renameSync` leaves it holding its complete prior bytes untouched, and a kill
+ *   after that single atomic rename leaves it holding the complete new bytes — never the partially
+ *   overwritten state an in-place `O_TRUNC` write could leave behind. The rollback restore below (on
+ *   a *later* failure) goes through the same {@link writeFileNoFollow}, for the identical reason — a
+ *   symlink swapped in after a successful write, or a kill during the restore write itself, should
+ *   get the same protection the forward write gets.
  *
  * Rollback is best-effort: a failure while undoing is swallowed so the original error — not a
- * secondary cleanup failure — is what the caller sees.
+ * secondary cleanup failure — is what the caller sees. A kill signal during the *undo* write itself
+ * carries the same per-file crash-safety {@link writeFileNoFollow} now provides for the forward
+ * write — see its own docstring — but a kill between two undo steps in this call's LIFO stack still
+ * leaves whichever earlier steps hadn't run yet un-rolled-back, exactly as a thrown exception would;
+ * this function's rollback was never, and still isn't, a transaction across the *whole* undo stack.
  */
 export function writeAllOrRollback(
   root: string,
@@ -604,19 +611,40 @@ export function writeAllBytes(write: (buf: Buffer, offset: number, length: numbe
 /**
  * Overwrite (or create) a file, refusing to follow a symlink at the final path component — even
  * one planted *after* an earlier {@link assertNoSymlinkInPath} check on the same path already
- * passed (LORE-92). That check is a check-then-act `lstatSync` walk; nothing stops a concurrent
- * process from swapping the target for a symlink in the window between the check and a later
- * plain `writeFileSync` (which transparently follows symlinks, mid-path or final component alike).
- * `O_NOFOLLOW` closes that window structurally on POSIX (Linux/macOS): the same `open()` call that
- * performs the write is also the one that refuses the symlink, so there is no gap for a race to
- * land in. **This guarantee does not extend to Windows** — libuv does not implement
- * `UV_FS_O_NOFOLLOW` there (no POSIX-style symlink-refusing open exists on that platform), so
- * `openSync` silently ignores the flag and this function's write-time protection degrades to the
- * same symlink-following behavior as the plain {@link writeFileOverwriting} it replaces. The
- * pre-existing `assertNoSymlinkInPath` check-then-act guard still runs first regardless of
- * platform, so Windows is no *more* exposed than it was before this fix — but the race window this
- * function exists to close on POSIX remains open there. A refused POSIX open fails `ELOOP`, given
- * the same explicit "is a symlink" message and `conflict` diagnosis `assertNoSymlinkInPath` uses.
+ * passed (LORE-92) — via a **write-to-temp-then-`renameSync`** commit, which doubles as the fix
+ * for a second, distinct hazard (LORE-130): the destination is never opened/truncated in place, so
+ * a process kill or crash *mid-write* can never leave it holding a partially-overwritten mix of old
+ * and new bytes — a kill before the commit rename leaves it holding its complete prior content
+ * untouched, and a kill after that single rename leaves it holding the complete new content. (An
+ * earlier version of this function opened the destination directly with `O_TRUNC | O_NOFOLLOW` and
+ * wrote in place with a `writeSync` loop — TOCTOU-safe against the symlink race, per below, but not
+ * safe against this separate crash-mid-write data-loss risk, since `O_TRUNC` discards the old bytes
+ * before the new ones are durably in place.)
+ *
+ * The symlink refusal itself: an `lstatSync` on `absPath`, checked *before* any temp-file I/O
+ * begins, refuses (the same `conflict`/"is a symlink" diagnosis `assertNoSymlinkInPath` uses) if a
+ * symlink already occupies the destination. That check-then-act `lstatSync` cannot, on its own,
+ * close a race against a symlink planted in the (now slightly wider, since a temp file is written
+ * first) window between it and the commit `renameSync` — but unlike a plain `writeFileSync`
+ * (which transparently follows a symlink at open time, mid-path or final component alike),
+ * `renameSync` structurally **never** follows a symlink at its destination on POSIX: `rename(2)`
+ * always replaces the directory entry itself, never whatever a symlink there points to. So even a
+ * symlink that races in after the `lstatSync` check and before the rename can never cause a write
+ * to land outside the repo — the only thing that residual race can change is whether this call
+ * throws `conflict` (the common case: the up-front check already caught it) or the rename silently
+ * replaces the racing symlink with the new file (never dereferencing it either way). This is a
+ * strictly stronger guarantee against the write-outside-the-repo hazard than the previous
+ * `O_NOFOLLOW`-at-open-time design had, not a weaker one, even though the *refusal* itself is no
+ * longer a single atomic syscall. **Windows** is not characterized here beyond what the existing
+ * test suite already scopes to (every symlink-specific test in this codebase is POSIX-only) — see
+ * the historical note above for what the prior, Windows-non-guaranteeing design looked like.
+ *
+ * Mode and ownership are carried from the pre-existing destination onto the temp file (best-effort
+ * for ownership, matching {@link writeFileAtomic}'s own LORE-117 discipline) before the commit
+ * rename, since the old in-place `O_TRUNC` write never re-created the inode and so never reset
+ * these — a fresh temp file otherwise lands with the process's default umask, silently dropping
+ * e.g. a `0600` lockdown the destination had before this call.
+ *
  * `writeAllOrRollback`'s `--force` branch and `lore schema export`'s per-file write loop
  * ({@link runSchema} in `commands/schema.ts`, LORE-123) are the callers — both write to leaf paths
  * that no bundle-loader walk vetted for symlinks first. Every other write discipline in this
@@ -626,38 +654,73 @@ export function writeAllBytes(write: (buf: Buffer, offset: number, length: numbe
  * ({@link writeFileOverwriting}'s other callers, e.g. `lore rename`/`supersede` (and `lore replace`,
  * via {@link writeFileAtomic}), write back over a concept file the bundle loader just read, and
  * that loader already skips symlinked files during its walk, so their target was never a symlink to
- * begin with). The write itself loops on a
- * short write via {@link writeAllBytes} rather than trusting one `writeSync` call to consume the
- * whole buffer.
+ * begin with). The temp file's own write loops on a short write via {@link writeAllBytes} rather
+ * than trusting one `writeSync` call to consume the whole buffer.
  */
 export function writeFileNoFollow(absPath: string, contents: string, relPath: string): void {
-  let fd: number;
+  let destStat: ReturnType<typeof lstatSync> | undefined;
   try {
-    fd = openSync(absPath, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o666);
-  } catch (cause) {
-    if (errnoCode(cause) === "ELOOP") {
-      throw new LoreError(
-        "conflict",
-        `refusing to write ${relPath}: it is a symlink, not a real file`,
-        "lore does not write through a symlink (it may resolve outside the repo) — remove or replace it, then re-run",
-        { path: relPath, symlink: relPath },
-      );
-    }
-    throw ioError(cause, relPath, "write file");
+    destStat = lstatSync(absPath);
+  } catch {
+    destStat = undefined; // no pre-existing entry (or an unreadable ancestor) -- nothing to refuse or preserve
   }
+  if (destStat?.isSymbolicLink()) {
+    throw new LoreError(
+      "conflict",
+      `refusing to write ${relPath}: it is a symlink, not a real file`,
+      "lore does not write through a symlink (it may resolve outside the repo) — remove or replace it, then re-run",
+      { path: relPath, symlink: relPath },
+    );
+  }
+
+  const tmpPath = join(dirname(absPath), `.lore-nofollow-tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
+  let tmpFileExists = false;
   try {
-    writeAllBytes((b, offset, length) => writeSync(fd, b, offset, length), Buffer.from(contents, "utf8"));
-  } catch (cause) {
+    let fd: number;
+    try {
+      fd = openSync(tmpPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o666);
+    } catch (cause) {
+      throw ioError(cause, relPath, "write file");
+    }
+    tmpFileExists = true;
+    try {
+      writeAllBytes((b, offset, length) => writeSync(fd, b, offset, length), Buffer.from(contents, "utf8"));
+    } catch (cause) {
+      try {
+        closeSync(fd);
+      } catch {
+        // Best-effort cleanup; the write failure below is what's reported.
+      }
+      throw ioError(cause, relPath, "write file");
+    }
     try {
       closeSync(fd);
-    } catch {
-      // Best-effort cleanup; the write failure below is what's reported.
+    } catch (cause) {
+      throw ioError(cause, relPath, "write file");
     }
-    throw ioError(cause, relPath, "write file");
-  }
-  try {
-    closeSync(fd);
+    if (destStat !== undefined) {
+      // Mode preservation is not best-effort, matching writeFileAtomic's own discipline: a failure
+      // here means the file is about to land with the wrong permissions, so it's surfaced as a
+      // write failure rather than silently swallowed.
+      chmodSync(tmpPath, destStat.mode & 0o7777);
+      try {
+        // Ownership IS best-effort: an unprivileged process cannot `chown` to an arbitrary uid/gid
+        // (EPERM is the expected outcome on every non-root run), and this must not fail a write
+        // that has already correctly preserved mode.
+        chownSync(tmpPath, destStat.uid, destStat.gid);
+      } catch {
+        // Swallowed: see above.
+      }
+    }
+    renameSync(tmpPath, absPath);
   } catch (cause) {
-    throw ioError(cause, relPath, "write file");
+    if (tmpFileExists) {
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        // Best-effort cleanup; the failure below is what's primarily reported.
+      }
+    }
+    throw cause instanceof LoreError ? cause : ioError(cause, relPath, "write file");
   }
 }
