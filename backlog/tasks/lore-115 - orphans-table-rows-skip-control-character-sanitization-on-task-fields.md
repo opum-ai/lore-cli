@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 22:26'
-updated_date: '2026-07-22 12:59'
+updated_date: '2026-07-22 13:06'
 labels:
   - codex-review-followup
   - cmd-crud-a
@@ -41,11 +41,11 @@ renderTaskSummaryRows() in src/output.ts (shared by `lore orphans` and `lore tas
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Sanitized renderTaskSummaryRows() in src/output.ts: id/status/title now go through singleLine(asText(...)) (matching the existing pattern used for the truncation-line hint) before column-width measurement and joining, so widths are computed against the same sanitized text that is printed. Shared by both lore tasks and lore orphans callers (single function, no per-caller change needed). Added a regression test in test/output.test.ts asserting a row with embedded newline/CR in id/status/title renders as one control-character-free line with the expected collapsed text. Verified: bun test test/output.test.ts (61 tests, 0 fail), bun run typecheck (clean), full bun test suite (1713 pass, 0 fail, no new failures).
+Sanitized renderTaskSummaryRows() in src/output.ts: id/status/title go through singleLine(asText(...)) (collapsing embedded newlines/CR/U+2028/U+2029 to a space) and then through a new stripAnsiAndControls() helper (also in output.ts) that strips ANSI escape sequences (CSI, OSC, and general ESC+byte forms) and any residual C0/C1 control bytes (BEL, backspace, etc.), before column-width measurement and joining — so widths are computed against the same sanitized text that is printed. Shared by both lore tasks and lore orphans callers (single function, no per-caller change needed). Fixes a Fable review finding on the first pass: singleLine() alone only collapses line terminators and left ESC/BEL/other C0 controls (e.g. a crafted \x1b[31m...\x1b[0m CSI sequence or a bare \x07) passing through verbatim, which could forge terminal rows in --plain output — closing the doc-2 finding (orphans.ts:276, cli-contract.md §6's plain-is-always-ANSI-free guarantee) completely. Added a regression test in test/output.test.ts asserting a row with an embedded ANSI CSI sequence and a bare BEL renders as one line with no ESC/control bytes and the expected stripped text, alongside the existing newline/CR regression test. Verified: bun test test/output.test.ts (61 tests, 0 fail), bun run typecheck (clean), bun run lint (no new findings — the 4 pre-existing infos are all in files this change does not touch), full bun test suite (1714 pass, 0 fail, no new failures).
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-renderTaskSummaryRows() (src/output.ts) now sanitizes row.id/status/title via singleLine(asText(...)) before padding/joining, same treatment as the truncation-line hint renderer elsewhere in the file; widths are measured on the sanitized text so padding stays consistent with what is printed. Shared by lore tasks and lore orphans, so both benefit from one change. Verified: bun test test/output.test.ts (61 tests incl. new LORE-115 regression test, 0 fail), bun run typecheck (clean), full bun test suite (1713 pass, 0 fail, no new failures).
+renderTaskSummaryRows() (src/output.ts) now sanitizes row.id/status/title via singleLine(asText(...)) followed by a new stripAnsiAndControls() helper before padding/joining, so an embedded newline, CR, ANSI escape sequence (e.g. a CSI color code), or other C0/C1 control byte can no longer split a plain-mode row across lines or inject escape sequences into it; widths are measured on the fully sanitized text so padding stays consistent with what is printed. Shared by lore tasks and lore orphans, so both benefit from one change. Verified: bun test test/output.test.ts (61 tests incl. the LORE-115 newline and ANSI/control-character regression tests, 0 fail), bun run typecheck (clean), bun run lint (clean of new findings), full bun test suite (1714 pass, 0 fail, no new failures).
 <!-- SECTION:FINAL_SUMMARY:END -->

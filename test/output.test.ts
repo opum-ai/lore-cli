@@ -530,7 +530,7 @@ describe("renderTaskSummaryRows — shared id/status/title alignment (LORE-51)",
     expect(renderTaskSummaryRows([row])).toEqual(renderTaskSummaryRows([row]));
   });
 
-  test("collapses an embedded newline/control character in id, status, or title to one sanitized line (LORE-115)", () => {
+  test("collapses an embedded newline in id, status, or title to one sanitized line (LORE-115)", () => {
     const row: TaskSummaryRow = {
       id: "LORE-1\n99",
       title: "Evil title\r\nwith a fake second line",
@@ -543,5 +543,22 @@ describe("renderTaskSummaryRows — shared id/status/title alignment (LORE-51)",
     // Matches the same singleLine(asText(...)) collapse used elsewhere in output.ts —
     // the run of line breaks becomes a single space, not silently dropped.
     expect(line).toBe("  LORE-1 99  In Progress  Evil title with a fake second line");
+  });
+
+  test("strips ANSI escape sequences and bare C0 control characters from id, status, or title (LORE-115)", () => {
+    const row: TaskSummaryRow = {
+      id: "LORE-1",
+      title: "evil \x1b[31mred\x1b[0m title \x07bell",
+      status: "To Do",
+    };
+    const [line] = renderTaskSummaryRows([row]);
+    expect(line).toBeDefined();
+    // No ESC byte and no other C0/C1 control byte survives — a CSI sequence can move the
+    // cursor or erase lines, and a bare BEL/backspace is still a forged-row vector even
+    // without ESC, so both must be gone from the rendered row.
+    expect(line?.includes("\x1b")).toBe(false);
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting control bytes are absent.
+    expect(line).not.toMatch(/[\x00-\x1f\x7f-\x9f]/);
+    expect(line).toBe("  LORE-1  To Do  evil red title bell");
   });
 });
