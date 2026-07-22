@@ -23,10 +23,10 @@
  * use — it will not drive the autocomplete of an already-scaffolded bundle.
  *
  * Validation lives here: the sole subcommand is `export` (anything else is a `usage` error, exit 2);
- * a repeated or value-less `--out`/`--type`, an unknown `--type`, or an `--out` that escapes the repo
- * is a `usage` error; a non-writable output directory surfaces as a `denied` error (exit 4) from the
- * shared write seam. All file I/O is here ({@link ensureDir}/{@link writeFileNoFollow}/prune); the
- * byte computation stays pure in `core/schema.ts`.
+ * a repeated or value-less `--out`/`--type`, an unknown `--type`, or an `--out` that is absolute or
+ * escapes the repo is a `usage` error; a non-writable output directory surfaces as a `denied` error
+ * (exit 4) from the shared write seam. All file I/O is here ({@link ensureDir}/{@link writeFileNoFollow}/prune);
+ * the byte computation stays pure in `core/schema.ts`.
  */
 
 import { readdirSync, rmSync } from "node:fs";
@@ -138,11 +138,22 @@ export function runSchema(options: SchemaOptions): number {
  * `resolveOutPath`): an absolute path or one escaping the root via `..` is a `usage` error, because
  * the writes overwrite-truncate and a typo'd/hostile `--out ../../etc` would otherwise clobber files
  * anywhere on disk. The repo root itself (`--out .`) is allowed.
+ *
+ * Checks `isAbsolute(out)` on the **raw argument**, not `isAbsolute(rel)` on the post-`relative()`
+ * result (LORE-124): `node:path`'s `relative()` only ever returns a relative-looking path (`""`, a
+ * `..`-prefixed climb, or a plain relative path) on POSIX, so `isAbsolute(rel)` can never be true there
+ * — it's dead code that let an absolute `--out` resolving *inside* the repo slip past silently. Callers
+ * downstream (`runSchema`) still pass the caller's raw `outArg`, not this function's resolved `abs`,
+ * into `emitSchemaFiles`/`ensureDir`/`join(root, file.path)`; if a same-inside absolute path were let
+ * through, `path.join(root, absOutDir)` would blindly concatenate rather than collapse, double-prefixing
+ * the root and creating a bogus directory instead of the real `.lore/schemas` (the unhandled ENOENT
+ * `pruneOrphans` then hit). Rejecting every absolute `--out` up front — inside the repo or not — closes
+ * that off at the source rather than trying to make every downstream `join` absolute-safe.
  */
 function confineOutDir(out: string, root: string): string {
   const abs = resolve(root, out);
   const rel = relative(root, abs);
-  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+  if (isAbsolute(out) || rel === ".." || rel.startsWith(`..${sep}`)) {
     throw usage(`--out path "${out}" must be inside the repo`, "give a directory path relative to the repo root");
   }
   return abs;

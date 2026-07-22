@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInit } from "../src/commands/init";
@@ -417,6 +426,26 @@ describe("lore schema export — argument errors", () => {
     expectUsage(() =>
       runSchema({ root, output: JSON_CTX, stdout: capture(), args: ["export", "--out", "/tmp/lore-abs"] }),
     );
+  });
+
+  // Regression (LORE-124): an absolute --out that happens to resolve INSIDE the repo used to slip past
+  // confineOutDir's escape check (only `..`-climbs were rejected), then double-prefix the root when the
+  // raw absolute outArg was joined onto it downstream — creating a bogus directory instead of the real
+  // one and crashing pruneOrphans with an unhandled ENOENT. It must now be a clean usage error instead.
+  test("an absolute --out that resolves inside the repo is rejected, not an unhandled ENOENT (LORE-124)", () => {
+    const err = expectUsage(() =>
+      runSchema({
+        root,
+        output: JSON_CTX,
+        stdout: capture(),
+        args: ["export", "--out", join(root, ".lore/schemas")],
+      }),
+    );
+    expect(err.message).toContain("inside the repo");
+    // Nothing was written at all: no real export, and no bogus double-prefixed directory either — the
+    // freshly-created empty temp root stays completely empty.
+    expect(existsSync(join(root, ".lore/schemas"))).toBe(false);
+    expect(readdirSync(root)).toEqual([]);
   });
 });
 
