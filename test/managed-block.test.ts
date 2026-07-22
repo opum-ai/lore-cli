@@ -425,6 +425,18 @@ describe("upsertManagedBlock — update when present", () => {
     expect(out).toContain("```\n<!-- lore:agents:begin -->\n<!-- lore:agents:end -->\n```");
     expect(out.endsWith(`${agentBlock("hello body")}\n`)).toBe(true);
   });
+
+  test("a body that opens an unterminated code fence fails loud instead of returning corrupted content (LORE-155)", () => {
+    // The new body's unclosed ``` fence swallows everything after it — including the `:end` marker and
+    // the trailing prose — into a single code node, so the result no longer parses as a clean top-level
+    // marker pair. The update branch must re-locate and throw, mirroring the insert branch's guard,
+    // rather than silently splicing and returning a document whose managed block is now unbalanced.
+    const before = `head prose\n\n${agentBlock("OLD")}\n\ntail prose\n`;
+    const err = loreError(() => upsertManagedBlock(before, { label: LABEL, body: "```js\nconst x = 1;" }));
+    expect(err.type).toBe("validation");
+    expect(exitCodeFor(err)).toBe(6);
+    expect(err.message).toContain(LABEL);
+  });
 });
 
 describe("upsertManagedBlock — malformed markers are fail-loud (validation, exit 6)", () => {

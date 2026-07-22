@@ -365,7 +365,9 @@ function offsetsOf(node: Nodes): Marker | null {
  * - **Exactly one balanced pair** → splice `\n{body}\n` between the markers, copying every other
  *   byte. The insert and update forms converge on the same canonical bytes, so regenerating an
  *   already-current block reproduces byte-identical output (idempotent) — the command layer can
- *   treat "no byte difference" as a genuine no-op.
+ *   treat "no byte difference" as a genuine no-op. The result is re-located the same way the insert
+ *   form is: a `body` that itself contains marker-like text, or disrupts top-level parsing (e.g. an
+ *   unterminated code fence), is a fail-loud `validation` error rather than silently corrupted content.
  * - **Malformed** (a lone begin/end, duplicated markers, or a crossed pair) → a `validation`
  *   {@link LoreError} (exit 6); lore refuses to guess and never writes a partial block.
  *
@@ -378,7 +380,19 @@ export function upsertManagedBlock(content: string, options: { label: string; bo
   if (located !== null) {
     // Update: replace only the bytes strictly between the markers with `\n{body}\n` — a fixpoint over
     // already-current bytes (the begin node ends just after its `-->`, matching the insert form below).
-    return content.slice(0, located.begin.end) + `\n${body}\n` + content.slice(located.end.start);
+    const updated = content.slice(0, located.begin.end) + `\n${body}\n` + content.slice(located.end.start);
+    // The splice must still parse as a single clean top-level marker pair. If `body` itself contains
+    // marker-like text, or opens an unterminated code fence/comment that swallows a marker, the
+    // structure breaks — re-locate in the result and fail loud instead of silently returning corrupted
+    // content (mirrors the insert branch's post-condition check below).
+    if (locateLabeledMarkers(updated, label) === null) {
+      throw labeledMarkerError(
+        label,
+        "the updated body disrupts the document's top-level marker structure, so the block can no longer be located",
+        { label },
+      );
+    }
+    return updated;
   }
   // Insert: append the block, preserving `content` verbatim (only the blank-line separation is added).
   const inserted = appendBlock(content, block);
