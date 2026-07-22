@@ -135,7 +135,8 @@ export function resolveReconcileConfig(root: string): ReconcileConfig {
  *   reconcile) or when `configOverride` is given (a caller with a genuinely resolved config, like
  *   `lore sync`, never also carries a cached failure).
  * @throws LoreError `validation` if the status flow/overrides are malformed (before any task
- *   resolution); `not_found` (exit 3) naming the first linked task id that no longer exists.
+ *   resolution); `not_found` (exit 3) naming the first linked task id that no longer exists, OR
+ *   whose resolved detail's `id` does not case-insensitively match the requested id.
  */
 export async function gatherReconciliation(
   root: string,
@@ -208,13 +209,20 @@ export async function mapWithConcurrency<T>(
 }
 
 /**
- * Resolve every task id to a {@link TaskResolution}, keyed by lowercase id — a not-found or
- * rejected `viewTask` becomes an `ok: false` entry rather than a thrown error, so a caller
- * resolving ids shared across several independent groups (bundle roots, in `lore check`'s
- * multi-root drift pass) can fetch each distinct id exactly once and let EACH group decide for
- * itself whether ids IT needs failed, instead of one failing id aborting every group's resolution.
- * Reads run concurrently, bounded to {@link TASK_DETAILS_CONCURRENCY} in flight at once (via
- * {@link mapWithConcurrency}); this never throws.
+ * Resolve every task id to a {@link TaskResolution}, keyed by lowercase id — a not-found, an
+ * identity-mismatched, or a rejected `viewTask` all become an `ok: false` entry rather than a
+ * thrown error, so a caller resolving ids shared across several independent groups (bundle roots,
+ * in `lore check`'s multi-root drift pass) can fetch each distinct id exactly once and let EACH
+ * group decide for itself whether ids IT needs failed, instead of one failing id aborting every
+ * group's resolution. Reads run concurrently, bounded to {@link TASK_DETAILS_CONCURRENCY} in
+ * flight at once (via {@link mapWithConcurrency}); this never throws.
+ *
+ * Every resolved detail's own `id` is checked (case-insensitively) against the requested `taskId`
+ * — a mismatch is treated exactly like a not-found rather than stored as `ok: true`. Nothing
+ * downstream (`gatherReconciliation`'s `details.get(id.toLowerCase())` lookup keys purely on the
+ * REQUESTED id) would otherwise notice an adapter handing back the wrong task's detail, and a
+ * mismatch here would silently attribute another task's title/status to this concept's managed
+ * `tasks:` block.
  */
 export async function resolveTaskDetails(
   adapter: BacklogAdapter,
@@ -232,6 +240,16 @@ export async function resolveTaskDetails(
             `task "${taskId}" does not exist`,
             "a linked concept's tasks: list must reference only live Backlog tasks — check the id, or unlink it",
             { taskId },
+          ),
+        });
+      } else if (detail.id.toLowerCase() !== taskId.toLowerCase()) {
+        resolved.set(taskId.toLowerCase(), {
+          ok: false,
+          error: new LoreError(
+            "not_found",
+            `task "${taskId}" resolved to a different task ("${detail.id}") — refusing to use it`,
+            "this points at a Backlog adapter bug or an id collision, not a missing task — verify the task id with `backlog task view` and report the mismatch",
+            { taskId, resolvedId: detail.id },
           ),
         });
       } else {
