@@ -503,12 +503,14 @@ export function writeAllBytes(write: (buf: Buffer, offset: number, length: numbe
  * platform, so Windows is no *more* exposed than it was before this fix — but the race window this
  * function exists to close on POSIX remains open there. A refused POSIX open fails `ELOOP`, given
  * the same explicit "is a symlink" message and `conflict` diagnosis `assertNoSymlinkInPath` uses.
- * `writeAllOrRollback`'s `--force` branch is the only caller — every other write discipline in this
+ * `writeAllOrRollback`'s `--force` branch and `lore schema export`'s per-file write loop
+ * ({@link runSchema} in `commands/schema.ts`, LORE-123) are the callers — both write to leaf paths
+ * that no bundle-loader walk vetted for symlinks first. Every other write discipline in this
  * module is either check-then-atomic-create ({@link createIfAbsent}'s `wx` open, independently
  * TOCTOU-safe on every platform: `O_CREAT|O_EXCL` refuses on ANY pre-existing entry at the path,
  * symlink or not, with no symlink-detection required) or doesn't need this
- * ({@link writeFileOverwriting}'s other callers — `lore rename`/`supersede` (and `lore replace`,
- * via {@link writeFileAtomic}) — write back over a concept file the bundle loader just read, and
+ * ({@link writeFileOverwriting}'s other callers, e.g. `lore rename`/`supersede` (and `lore replace`,
+ * via {@link writeFileAtomic}), write back over a concept file the bundle loader just read, and
  * that loader already skips symlinked files during its walk, so their target was never a symlink to
  * begin with). The write itself loops on a
  * short write via {@link writeAllBytes} rather than trusting one `writeSync` call to consume the
