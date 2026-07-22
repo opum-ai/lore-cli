@@ -486,7 +486,7 @@ async function computeDriftFindings(
  * throws it immediately — the same fail-fast point a fresh config read would have hit for this root,
  * without a second read; a root with no eligible concept never reaches that check regardless.
  */
-async function driftFindingsForBundle(
+export async function driftFindingsForBundle(
   root: string,
   bundle: Bundle,
   concepts: readonly Concept[],
@@ -504,10 +504,16 @@ async function driftFindingsForBundle(
   );
   const rawByPath = new Map(bundle.files.map((f) => [f.path, f.raw]));
   const fixable = isDocsRoot(bundle.label);
+  // Built from the SAME normalized form `isDocsRoot` compared against `DOCS_DIR` (LORE-113) — not
+  // the raw `bundle.label` — so a non-canonical-but-equivalent label (a trailing slash, a
+  // backslash, or a different case) can never yield a `docPath` at odds with the `fixable` verdict
+  // just computed from that identical label, two treatments of one string diverging within this
+  // same function.
+  const normalizedLabel = normalizeBundleLabel(bundle.label);
   const findings: CheckFinding[] = [];
   let error: unknown | null = null;
   for (const { concept, newStatus, rows } of targets) {
-    const docPath = `${bundle.label}/${concept.path}`;
+    const docPath = `${normalizedLabel}/${concept.path}`;
     const original = rawByPath.get(concept.path) as string;
     try {
       const drift = reconcileDriftFindings({
@@ -537,19 +543,32 @@ function prefixFinding<T extends { readonly file: string }>(finding: T, label: s
 }
 
 /**
+ * Canonicalize a bundle root label so an equivalent-but-non-canonical spelling (`./docs`, a
+ * trailing slash OR backslash, a different case) collapses to the same string as any other
+ * spelling of the identical root: backslashes to forward slashes FIRST (`posix.normalize` only
+ * recognizes `/` as a separator, so a Windows-idiom trailing `docs\` would otherwise survive
+ * untouched), redundant segments collapsed, any trailing slash(es) stripped, then lowercased — on
+ * the case-insensitive filesystems most local dev happens on (macOS, Windows), a differently-cased
+ * spelling (`Docs`) resolves to the identical directory as `docs`, so treating it as a *different*
+ * root would be the misleading answer, not the careful one.
+ *
+ * Shared by {@link isDocsRoot}'s comparison against `DOCS_DIR` and `driftFindingsForBundle`'s
+ * `docPath` construction (LORE-113) — both read `bundle.label`, and must agree on what it
+ * canonicalizes to, or `docPath` could embed a spelling `isDocsRoot`/`fixable` disagrees with.
+ */
+function normalizeBundleLabel(label: string): string {
+  return posix.normalize(label.replace(/\\/g, "/")).replace(/\/+$/, "").toLowerCase();
+}
+
+/**
  * Whether a bundle root (as the user named it — or the default) IS the `docs/` bundle `lore sync`
- * operates on, canonicalized so an equivalent-but-non-canonical spelling (`./docs`, a trailing
- * slash OR backslash) is still recognized — a literal string-prefix match against a compound
- * `docPath` would miss these and silently omit `reconcileDriftFindings`' "run `lore sync`" hint for
- * a root it actually can fix. Backslashes are normalized to forward slashes FIRST (`posix.normalize`
- * only recognizes `/` as a separator, so a Windows-idiom trailing `docs\` would otherwise survive
- * untouched). Compared case-insensitively: on the case-insensitive filesystems most local dev
- * happens on (macOS, Windows), a differently-cased spelling (`Docs`) resolves to the identical
- * directory `sync` operates on, so judging it "unfixable" would be the misleading answer, not the
- * careful one.
+ * operates on, canonicalized ({@link normalizeBundleLabel}) so an equivalent-but-non-canonical
+ * spelling is still recognized — a literal string-prefix match against a compound `docPath` would
+ * miss these and silently omit `reconcileDriftFindings`' "run `lore sync`" hint for a root it
+ * actually can fix.
  */
 export function isDocsRoot(label: string): boolean {
-  return posix.normalize(label.replace(/\\/g, "/")).replace(/\/+$/, "").toLowerCase() === DOCS_DIR.toLowerCase();
+  return normalizeBundleLabel(label) === DOCS_DIR.toLowerCase();
 }
 
 // ── Argument parsing ───────────────────────────────────────────────────────────
