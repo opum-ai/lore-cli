@@ -3,7 +3,7 @@ id: doc-3
 title: Backlog campaign tracker — Codex review follow-ups (round 2)
 type: other
 created_date: '2026-07-21 22:27'
-updated_date: '2026-07-22 16:52'
+updated_date: '2026-07-22 16:55'
 ---
 Round 2 of the Codex-review follow-up campaign (see [[Backlog campaign tracker]] / doc-1 for
 round 1, LORE-69..95, which closed all 20 high-severity findings from doc-2). Re-initialised on
@@ -75,7 +75,7 @@ asserts `lore query --help` byte-identical to `lore help query`). No further act
 | 7 | LORE-102 | build-runtime | — | Done | 1 | Harden e2e Dockerfile: digest-pin base image, avoid root curl\|bash, pin mkdocs |
 | 8 | LORE-103 | build-runtime | — | Done | 2 | Surface report-write failures and fixed-UID bind-mount permission risk in e2e run |
 | 9 | LORE-104 | build-runtime | — | Done | 5 | MERGED wave 5 (PR #112, dev @ `c98471a`). `--exit-code-from e2e` added to both documented docker-compose usage invocations (comment-only). |
-| 10 | LORE-105 | build-runtime | — | To Do | — | record()/check() write pretty-printed JSON, breaking report.jsonl's JSONL format |
+| 10 | LORE-105 | build-runtime | — | Dispatched | 6 | record()/check() write pretty-printed JSON, breaking report.jsonl's JSONL format |
 | 11 | LORE-106 | build-runtime | — | To Do | — | Golden recorder trusts a live mutable task and an unverified upstream CLI path |
 | 12 | LORE-107 | cli-entry-state | — | Done | 1 | lore <command> --help shows generic help instead of the command's own help |
 | 13 | LORE-108 | cli-entry-state | — | Done | 2 | readConfigText maps EACCES/EPERM config read failures to 'validation' not 'denied' |
@@ -94,22 +94,22 @@ asserts `lore query --help` byte-identical to `lore help query`). No further act
 | 83 | LORE-178 | build-ci-config | — | To Do | — | Runbook docs/runbooks/docker-e2e-testing-environment.md doesn't mention the harness now runs as the docker-e2e CI gate (post-LORE-100); filed from the wave-4 integration review. Docs-only via lore — touches docs/runbooks/, no code conflict. |
 | 84 | LORE-179 | cmd-link | — | To Do | — | lore unlink/rename retry after a failed backlog commit silently no-ops on the leftover dirty file (same-class sibling of LORE-121; wave-5 review finding). Touches src/commands/link.ts (runUnlink/moveBackRefs) + test/link.test.ts — conflicts with LORE-121-area / LORE-177. |
 | 22 | LORE-117 | cmd-crud-b | — | Done | 5 | MERGED wave 5 (PR #114, dev @ `c819458`). writeFileAtomic preserves dest mode (masked 0o7777) + best-effort chown; first-write falls back cleanly. |
-| 23 | LORE-118 | cmd-crud-b | — | To Do | — | query renderText interpolates unsanitized hit id/type/snippet and query text into terminal output |
+| 23 | LORE-118 | cmd-crud-b | — | Dispatched | 6 | query renderText interpolates unsanitized hit id/type/snippet and query text into terminal output |
 | 24 | LORE-119 | cmd-crud-b | — | To Do | — | sync overwrites a status-changed doc using stale in-memory frontmatter, discarding concurrent on-disk edits |
 | 25 | LORE-120 | cmd-crud-b | — | To Do | — | sync's multi-file write loop has no cross-file rollback on mid-loop failure |
 | 26 | LORE-121 | cmd-link | — | Done | 5 | MERGED wave 5 (PR #115, dev @ `2e2ac8c`). link.ts already-present branch includes task file as commit candidate → retry recommits drift; clean tree still no-ops. |
 | 27 | LORE-122 | cmd-meta-a | — | Done | 3 | resolveTaskDetails doesn't verify viewTask's returned id matches the requested id |
 | 28 | LORE-123 | cmd-meta-a | — | Done | 5 | MERGED wave 5 (PR #116, dev @ `52e3368`). schema.ts write loop uses existing writeFileNoFollow → leaf symlink refused with conflict LoreError (exit 5). |
-| 29 | LORE-124 | cmd-meta-a | — | To Do | — | Absolute --out inside the repo crashes schema export with an unhandled ENOENT |
+| 29 | LORE-124 | cmd-meta-a | — | Dispatched | 6 | Absolute --out inside the repo crashes schema export with an unhandled ENOENT |
 | 30 | LORE-125 | cmd-meta-a | — | To Do | — | resolveRollup doesn't verify viewTask's returned id matches the requested id |
 | 31 | LORE-126 | cmd-meta-b | — | Done | 3 | Collapse embedded newlines in graph node id/title before rendering |
 | 32 | LORE-127 | cmd-meta-c | — | Done | 1 | RESOLVED-BY-MERGE by LORE-107 (PR #95): cli.ts routes `lore <cmd> --help` to runHelp; help.test.ts:271 asserts byte-identical to `lore help <cmd>` |
-| 33 | LORE-128 | cmd-meta-c | — | To Do | — | CLAUDE.md nudge update silently rewrites CRLF/BOM line endings on every managed-block sync |
+| 33 | LORE-128 | cmd-meta-c | — | Dispatched | 6 | CLAUDE.md nudge update silently rewrites CRLF/BOM line endings on every managed-block sync |
 | 34 | LORE-129 | cmd-meta-c | — | To Do | — | `lore agents --check --force` mislabels a stale hand-edited SKILL.md and prints a remedy that won't fix it |
 | 35 | LORE-130 | cmd-meta-c | — | To Do | — | writeAllOrRollback's --force overwrite is not crash-safe against a mid-write kill |
 | 36 | LORE-131 | cmd-meta-c | — | Done | 1 | RESOLVED-BY-MERGE by LORE-107 (PR #95): help.test.ts:271 is the byte-identical `lore <cmd> --help` == `lore help <cmd>` regression test |
-| 37 | LORE-132 | cmd-rename-supersede | — | To Do | — | Close TOCTOU window in rename between target-free check and file move |
-| 38 | LORE-133 | core-bundle-check | — | To Do | — | resolvePath does not special-case a leading-slash link target |
+| 37 | LORE-132 | cmd-rename-supersede | — | Dispatched | 6 | Close TOCTOU window in rename between target-free check and file move |
+| 38 | LORE-133 | core-bundle-check | — | Dispatched | 6 | resolvePath does not special-case a leading-slash link target |
 | 39 | LORE-134 | core-bundle-check | — | To Do | — | resolveRef tries frontmatter ref as a root id before trying it as a relative path |
 | 40 | LORE-135 | core-bundle-check | — | To Do | — | Anchor-link check lower-cases fragments, masking case-mismatched broken anchors |
 | 41 | LORE-136 | core-bundle-check | — | To Do | — | Heading slug computation ignores image alt text in headings |
@@ -278,3 +278,5 @@ fallback.)
   - **Wave-level integration review (Fable): SAFE**, independently re-ran dev HEAD **1738 pass / 0 fail**, typecheck + biome clean (4 pre-existing info diagnostics in untouched files). The fswrite.ts↔schema.ts seam **composes cleanly** — writeFileNoFollow byte-identical to base (LORE-117 confined to writeFileAtomic), the schema.ts swap a true drop-in, error contracts (EACCES→denied exit 4; ELOOP→conflict exit 5) intact. Cross-task hazard sweep clean (no stale caller of a renamed path; normalizeBundleLabel the sole label normalizer; link.ts detail.file push type-safe with the LORE-49 `:(literal)` invariant). Scope confirmed — exactly the six file-sets + campaign bookkeeping, no drive-bys. Findings: (1) *low, doc-only* — writeFileNoFollow's docstring still named writeAllOrRollback its only caller → **fixed directly** as wave-5 housekeeping (dev `41cf7d8`, comment-only). (2) *nit* — check.ts test-exports driftFindingsForBundle (matches the existing isDocsRoot test-export pattern; acceptable).
   - **Per-task low findings recorded (non-blocking):** LORE-117 chmod-then-chown can clear setuid/setgid on a successful chown (exotic for a docs bundle; ACs cover permission bits only). LORE-123 leaf-symlink refusal is **exit 5 (conflict)**, not the AC parenthetical's "denied" — reviewer judged exit 5 the codebase-consistent choice (matches LORE-93). LORE-121's same-class no-op-on-dirty gap in runUnlink/moveBackRefs → **filed LORE-179** (cmd-link).
   - **Session continues** past wave 5 (clean between-wave checkpoint per R4j — no escalations, no human_needed).
+
+- 2026-07-22 — wave 6 dispatched (issues: LORE-105, 118, 124, 128, 132, 133; workers: Sonnet 5, reviewer: Fable 5). One per distinct cluster, file-disjoint (build-runtime, cmd-crud-b, cmd-meta-a, cmd-meta-c, cmd-rename-supersede, core-bundle-check). File-citation R4b: LORE-105 → docker/e2e/run-e2e.sh (jq -c in record()/check()); LORE-118 → src/commands/query.ts (+test); LORE-124 → src/commands/schema.ts (confineOutDir absolute --out; +test); LORE-128 → src/commands/agents.ts + src/core/agent-bridge.ts (CRLF/BOM preservation; +test); LORE-132 → src/commands/rename.ts (+ possibly src/commands/fswrite.ts moveFile; +test); LORE-133 → src/core/bundle.ts resolvePath (+ possibly src/core/check.ts read; +test). All pairwise disjoint. Worktrees created @ base `811c513` under lore.worktrees/. Settlement entry to follow.
