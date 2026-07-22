@@ -243,6 +243,33 @@ describe("buildGraph — frontmatter refs", () => {
   });
 });
 
+// ── resolveRef: dir-relative path wins over a same-string root id (LORE-134) ─────
+
+describe("resolveRef — dir-relative path is tried before the bundle-root id", () => {
+  test("a relative/.md-suffixed ref resolves dir-relative even when the same string also names a distinct root id", () => {
+    // "sibling.md" is authored as a path relative to "notes/". Read bare (stripped of
+    // its ".md"), it also equals the *different*, unrelated root concept "sibling".
+    // Both concepts exist here: the intended dir-relative target "notes/sibling" must win.
+    const g = buildGraph([
+      concept("notes/x", "type: ADR\nsupersedes: sibling.md"),
+      ref("notes/sibling"), // the intended dir-relative target
+      ref("sibling"), // the decoy root id an id-first lookup would wrongly hit
+    ]);
+    expect(edgesFrom(g.edges, "notes/x")).toEqual([
+      { from: "notes/x", to: "notes/sibling", target: "sibling.md", kind: "supersedes" },
+    ]);
+  });
+
+  test("a bundle-relative id ref with no dir-relative match still falls back to id-form resolution", () => {
+    // Regression guard: reordering must not break the legitimate id-authored form (what
+    // `lore supersede` itself writes) when dir-joining the ref produces no real concept.
+    const g = buildGraph([concept("notes/x", "type: ADR\nsupersedes: adr/old"), ref("adr/old")]);
+    expect(edgesFrom(g.edges, "notes/x")).toEqual([
+      { from: "notes/x", to: "adr/old", target: "adr/old", kind: "supersedes" },
+    ]);
+  });
+});
+
 // ── Cycle tolerance ──────────────────────────────────────────────────────────────
 
 describe("buildGraph — cycle tolerance", () => {
