@@ -70,13 +70,18 @@ if \`lore link\`/\`lore unlink\` left it dirty.
 It is idempotent: run it again with no upstream change and it produces
 byte-identical output -- a clean, empty diff. The \`--json\` payload is
 \`kind: sync.result\` and reports exactly what changed (status rewrites,
-managed-block diffs, regenerated files).
+managed-block diffs, regenerated files), plus \`orphanedIndexes\`:
+repo-relative paths of on-disk \`index.md\` files whose directory no longer
+holds any concept (e.g. after a manual \`rm\`/\`mv\` outside \`lore rename\`) --
+reported so they're never silently unmentioned, but left untouched on disk,
+not auto-written or removed.
 
 Never hand-edit inside a managed block: the next \`lore sync\` silently
 overwrites it, and \`lore replace\` silently skips any match inside one --
-neither errors. (Malformed markers themselves -- missing, duplicated, or
-crossed begin/end -- are a \`validation\` error, exit 6; that's a different
-failure than an ordinary hand-edit.) Author prose only outside the markers.
+neither errors. (Malformed markers themselves -- missing, duplicated,
+crossed, or a collapsed same-line begin/end pair -- are a \`validation\`
+error, exit 6; that's a different failure than an ordinary hand-edit.)
+Author prose only outside the markers.
 
 Run \`lore sync\` after any task status change or after linking/unlinking a
 task, before \`lore check\` -- check is read-only and will only tell you sync
@@ -104,12 +109,15 @@ check's throws (each carries a \`--json\` error envelope) are \`usage\`
 directory), \`not_found\` (exit 3, a given bundle-root path that doesn't
 exist, or, when a discovered concept links a Backlog task, that task's id no
 longer existing), \`denied\` (exit 4, a bundle-root path that exists but
-can't be read), and \`validation\` (exit 6, a malformed status flow or
-override in the reconcile config, thrown before any task resolution when
-reconciliation applies). \`validation\`'s exit code coincides with the
-drift-tier report's exit 6 above, but the two are distinct: \`validation\` is
-a thrown error with a \`--json\` envelope; the report's exit 6 is a plain
-returned code with no throw.
+can't be read), and \`validation\` (exit 6, two distinct causes with two
+different timings: a malformed status flow or override in the reconcile
+config, validated up front before any task resolution; or corrupted
+managed-block markers, hit per-concept while regenerating that concept's
+\`<!-- lore:tasks -->\` region during drift detection -- i.e. *after* that
+concept's own tasks are already resolved, not before). \`validation\`'s exit
+code coincides with the drift-tier report's exit 6 above, but the two are
+distinct: \`validation\` is a thrown error with a \`--json\` envelope; the
+report's exit 6 is a plain returned code with no throw.
 
 Because check writes nothing and lore's core has no LLM dependency, it is
 deterministic: a clean \`lore check\` locally means a clean \`lore check\` in
