@@ -36,7 +36,7 @@ import { buildGraphExport, type GraphExport, toDot } from "../core/graph";
 import { loadProfile } from "../core/profile";
 import { subgraph } from "../core/query";
 import { DOCS_DIR } from "../core/scaffold";
-import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
+import { EXIT_OK, LoreError, singleLine, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 
 /** Options for {@link runGraph}; `root` and the streams are injectable for tests. */
@@ -216,6 +216,12 @@ function graphRenderable(data: GraphExport, dot: boolean): Renderable<GraphExpor
  * (annotating the scope when it is a subgraph), one `<id>  [type]  ~<tok>` line
  * per node, then one `<from> -<kind>-> <to>` line per edge (`(dangling: <target>)`
  * for a broken reference). ANSI-free and deterministic.
+ *
+ * `node.id`/`node.title` come from bundle-controlled frontmatter, so each is run
+ * through {@link singleLine} before it lands in a line — the same guard every
+ * other bundle-text renderer applies (managed-block.ts, indexes.ts, context.ts,
+ * query.ts, log.ts) — so an embedded newline/control character in a multiline
+ * title cannot split one node into extra physical lines.
  */
 function renderText(data: GraphExport): string {
   const scope =
@@ -224,8 +230,8 @@ function renderText(data: GraphExport): string {
     `${data.nodes.length} ${plural(data.nodes.length, "concept")}, ${data.edges.length} ${plural(data.edges.length, "edge")}, ~${data.tokenEstimate} tokens (chars/4)${scope}`,
   ];
   for (const node of data.nodes) {
-    const title = node.title !== undefined ? `  ${node.title}` : "";
-    lines.push(`  ${node.id}  [${node.type}]  ~${node.tokenEstimate}${title}`);
+    const title = node.title !== undefined ? `  ${singleLine(node.title)}` : "";
+    lines.push(`  ${singleLine(node.id)}  [${node.type}]  ~${node.tokenEstimate}${title}`);
   }
   for (const edge of data.edges) {
     const dest = edge.to !== null ? edge.to : `(dangling: ${edge.target})`;

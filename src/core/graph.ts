@@ -16,6 +16,7 @@
  * **included** nodes, so a subgraph reports the budget of exactly what it shows.
  */
 
+import { singleLine } from "../errors";
 import { type BundleGraph, type EdgeKind, frontmatterScalar } from "./bundle";
 import { compareCodeUnits } from "./order";
 
@@ -158,7 +159,13 @@ export function toDot(data: GraphExport): string {
   return lines.join("\n");
 }
 
-/** Quote a string as a DOT double-quoted ID, escaping backslashes and quotes (the only two DOT requires). */
+/**
+ * Quote a string as a DOT double-quoted ID: {@link singleLine} collapses any embedded
+ * newline/control line-break first — `value` is bundle-controlled (a concept id or
+ * frontmatter title), and a raw line break inside a DOT quoted string produces a
+ * malformed or misleading label — then backslashes and quotes are escaped (the only
+ * two characters DOT itself requires escaped in a quoted ID).
+ */
 function quote(value: string): string {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  return `"${singleLine(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
