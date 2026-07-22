@@ -62,10 +62,12 @@ export function runAgents(options: AgentsOptions): number {
   // (LORE-128) — see reapplyDiskStyle below.
   const claudeStyle = detectDiskStyle(claudeRaw);
 
-  // Plan with the real `--force` flag in every mode: a differing SKILL.md is `protected` (consistent
-  // with `force:false` in the payload) unless `--force` was given. --check never writes, so the
-  // protection has no write to gate — it only affects the reported action.
-  const plan = planBridge({ skillOnDisk, claudeOnDisk, force });
+  // Pass both flags through: a differing SKILL.md is `protected` unless `--force` was given, AND
+  // `--check` is not in effect. `--check` never writes, so `--force` cannot actually take effect
+  // during one — `planBridge` must not report `updated` (a claimed write) for a run that performs
+  // none, or the printed trailer falls through to the inert plain-`lore agents` remedy, which
+  // leaves the file `protected` again and CI stays red (LORE-129).
+  const plan = planBridge({ skillOnDisk, claudeOnDisk, force, check });
   const drift = plan.files.some((file) => file.action !== "unchanged");
 
   if (!check) {

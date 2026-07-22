@@ -169,7 +169,11 @@ export type BridgeAction =
   | "updated"
   /** The on-disk bytes already match — nothing to write. */
   | "unchanged"
-  /** A whole lore-owned file (SKILL.md) differs but was left untouched: it looks hand-edited and `--force` was not given. */
+  /**
+   * A whole lore-owned file (SKILL.md) differs but was left untouched: either it looks hand-edited
+   * and `--force` was not given, or this is a `--check` run — which never writes, so `--force`
+   * cannot actually take effect and must not be reported as if it had (LORE-129).
+   */
   | "protected";
 
 /** One file's entry in a {@link BridgePlan}. */
@@ -187,7 +191,7 @@ export interface BridgePlan {
   readonly files: readonly BridgeFilePlan[];
 }
 
-/** The current on-disk bytes of each bridge file (LF-normalized), or `null` when the file is absent, plus `--force`. */
+/** The current on-disk bytes of each bridge file (LF-normalized), or `null` when the file is absent, plus `--force`/`--check`. */
 export interface PlanBridgeInput {
   /** Current `SKILL.md` bytes, or `null` if it does not exist. */
   readonly skillOnDisk: string | null;
@@ -195,6 +199,13 @@ export interface PlanBridgeInput {
   readonly claudeOnDisk: string | null;
   /** Whether `--force` was given (permits overwriting a differing, possibly hand-edited SKILL.md). */
   readonly force: boolean;
+  /**
+   * Whether this is a `--check` (report-only) run. `--check` never writes, so `force` must not be
+   * honored while planning: a `--check --force` run against a differing SKILL.md still reports
+   * `protected` (never `updated`, which would claim a write that never happens) — see
+   * {@link planSkill} (LORE-129).
+   */
+  readonly check: boolean;
 }
 
 /**
@@ -202,10 +213,11 @@ export interface PlanBridgeInput {
  * different write disciplines:
  *
  * - **SKILL.md is a whole lore-owned file.** Absent → `created`. Byte-equal to the generated
- *   content → `unchanged`. Differs → `updated` only under `--force`, else `protected` (left
- *   untouched — a differing generated file may be a hand-edit, and lore never silently clobbers it;
- *   the command reports "run with --force"). This is exactly the "overwrite hand-edited generated
- *   files" role cli-surface pins on `--force`.
+ *   content → `unchanged`. Differs → `updated` only under `--force` *and not* `--check` (a
+ *   `--check` run never writes, so `--force` cannot take effect and must not be reported as if it
+ *   had — LORE-129), else `protected` (left untouched — a differing generated file may be a
+ *   hand-edit, and lore never silently clobbers it; the command reports "run with --force"). This
+ *   is exactly the "overwrite hand-edited generated files" role cli-surface pins on `--force`.
  * - **The CLAUDE.md nudge is a managed block**, so lore only ever rewrites the bytes between its own
  *   markers. Refreshing that block is by-design and needs no `--force`: absent file → `created`;
  *   block absent or stale → `updated` (the surrounding prose and any unrelated block, e.g.
@@ -218,7 +230,13 @@ export function planBridge(input: PlanBridgeInput): BridgePlan {
   return { files: [planSkill(input), planNudge(input)] };
 }
 
-/** Plan the SKILL.md file (whole-file, `--force`-protected discipline). */
+/**
+ * Plan the SKILL.md file (whole-file, `--force`-protected discipline). `--force` only ever permits
+ * an actual write, so it only ever yields `updated` on a real (non-`--check`) run: `--check` is
+ * read-only by contract, and `--check --force` against a differing file must still report
+ * `protected` — the check-safe, non-mutating label — never `updated`, which would falsely claim a
+ * write that this run never performs (LORE-129).
+ */
 function planSkill(input: PlanBridgeInput): BridgeFilePlan {
   const desired = buildSkillDoc();
   if (input.skillOnDisk === null) {
@@ -227,7 +245,7 @@ function planSkill(input: PlanBridgeInput): BridgeFilePlan {
   if (input.skillOnDisk === desired) {
     return { path: SKILL_REL_PATH, action: "unchanged", contents: null };
   }
-  if (input.force) {
+  if (input.force && !input.check) {
     return { path: SKILL_REL_PATH, action: "updated", contents: desired };
   }
   return { path: SKILL_REL_PATH, action: "protected", contents: null };
