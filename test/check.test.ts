@@ -548,6 +548,23 @@ describe("checkBundle — clean bundle and aggregation", () => {
     expect(report.errorCount).toBe(1);
     expect(report.findings[0]?.rule).toBe("broken-link");
   });
+
+  // LORE-138: bodyText's catch must only fall back for gray-matter's own unparseable-YAML
+  // failure (a `YAMLException`), not swallow any exception the `matter()` call raises. A fence
+  // whose language annotation names an engine gray-matter has no parser for (e.g. `---toml`)
+  // is a real, unmocked way to drive a *different* error class out of `matter()`: gray-matter's
+  // engine lookup throws a plain `Error` ('gray-matter engine "toml" is not registered') before
+  // it ever reaches YAML parsing. That must propagate, not be absorbed as if it were malformed
+  // YAML.
+  test("a non-YAML-parse-error from gray-matter propagates instead of being swallowed", () => {
+    const doc: CheckInputFile = { path: "x.md", raw: '---toml\nfoo = "bar"\n---\nSee [ghost](ghost.md).\n' };
+    expect(() => checkBundle([doc])).toThrow(/gray-matter engine "toml" is not registered/);
+  });
+
+  test("a non-YAML-parse-error from gray-matter propagates out of collectExternalLinks too", () => {
+    const doc: CheckInputFile = { path: "x.md", raw: '---toml\nfoo = "bar"\n---\nSee https://example.com.\n' };
+    expect(() => collectExternalLinks([doc])).toThrow(/gray-matter engine "toml" is not registered/);
+  });
 });
 
 // ── Command layer: runCheck ──────────────────────────────────────────────────────
