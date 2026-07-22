@@ -529,11 +529,28 @@ export function stripQuery(target: string): string {
   return question === -1 ? target : target.slice(0, question);
 }
 
-/** URL-decode a destination, degrading to the raw text if it is not valid percent-encoding. */
+/**
+ * URL-decode a destination **per path segment**, degrading a segment to its raw text
+ * if it is not valid percent-encoding. Splitting on the *literal* `/` first (the only
+ * structural separators the raw target actually has) and decoding each piece in
+ * isolation stops an *encoded* separator — `%2F`/`%2f` — from ever surfacing as a bare
+ * `/` in the result: {@link decodeURIComponent} would otherwise turn a single-segment
+ * target like `orders%2Fv2.md` into `orders/v2.md`, forging a second path segment the
+ * link's literal text never named and letting it resolve to an unrelated concept
+ * (`orders/v2`) the author never linked to. A `/` a segment's decode *does* produce is
+ * re-escaped back to `%2F` before rejoining, so the output always has exactly as many
+ * structural `/` boundaries as the input — legitimately-encoded characters within a
+ * segment (a space, `%23`) still decode normally either way.
+ */
 export function decodeTarget(target: string): string {
+  return target.split("/").map(decodeSegmentKeepingSlash).join("/");
+}
+
+/** Decode one `/`-free destination segment, folding any decoded `/` back to `%2F` so it cannot pass as a structural separator; degrades to the raw segment on malformed percent-encoding. */
+function decodeSegmentKeepingSlash(segment: string): string {
   try {
-    return decodeURIComponent(target);
+    return decodeURIComponent(segment).replace(/\//g, "%2F");
   } catch {
-    return target;
+    return segment;
   }
 }
