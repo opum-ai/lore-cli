@@ -286,6 +286,15 @@ function parseTags(tags: string | undefined): string[] | undefined {
  * (resolved and confined to the repo by {@link resolveOutPath}); otherwise it is the
  * conventional `docs/<typeDirectory>/<slug-of-title>.md`. A title with no slug-able content
  * and no `--out` is a `usage` error rather than a `-.md` file.
+ *
+ * The default path is checked against the same {@link assertNotReservedStem} guard
+ * {@link resolveOutPath} applies (LORE-174): a title that slugifies to `index` or `log` (e.g.
+ * `lore new reference "Index"`) would otherwise land on a stem `rename`/`supersede`/`link` treat
+ * as lore-generated and refuse to touch, bypassing the policy LORE-114 added only on the `--out`
+ * path. The default path always carries a non-empty type-directory segment (every known
+ * {@link typeDirectory} maps to a non-empty string, and every ad-hoc type's slug is non-empty
+ * since `VALID_TYPE` requires a leading letter), so it can never collide with the bundle-root
+ * index `resolveOutPath` guards separately — no `RESERVED_ROOT_INDEX` check is needed here.
  */
 function resolveDocPath(parsed: NewArgs, type: string, root: string): string {
   if (parsed.out !== undefined) {
@@ -295,7 +304,9 @@ function resolveDocPath(parsed: NewArgs, type: string, root: string): string {
   if (slug === "") {
     throw usage(`could not derive a filename from title "${parsed.title}"`, "pass an explicit path with --out <path>");
   }
-  return posix.join(DOCS_DIR, typeDirectory(type), `${slug}.md`);
+  const docPath = posix.join(DOCS_DIR, typeDirectory(type), `${slug}.md`);
+  assertNotReservedStem(idFromPath(docPath), "create");
+  return docPath;
 }
 
 /**
