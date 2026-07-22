@@ -40,6 +40,21 @@ describe("core/instructions — topic registry", () => {
       expect(overview?.body).toContain(topic.key);
     }
   });
+
+  test("linking topic no longer claims link/unlink leave backlog/tasks uncommitted for sync", () => {
+    const linking = INSTRUCTION_TOPICS.find((t) => t.key === "linking");
+    const normalized = linking?.body.replace(/\s+/g, " ") ?? "";
+    // LORE-146: link.ts's runLink/runUnlink now call `commitBacklogFiles` themselves, so the old
+    // "edit but do not commit; only `lore sync` commits it" claim must be gone.
+    expect(normalized).not.toContain("do not commit it");
+    expect(normalized).not.toContain("let `lore sync` commit them");
+    // The replacement prose must say link/unlink commit their own edits (scoped to the touched
+    // files, via `commitBacklogFiles`) and that `lore sync`'s commit step is now just a catch-all
+    // sweep for anything else left dirty under `backlog/`.
+    expect(normalized).toContain("commit those edits themselves");
+    expect(normalized).toContain("commitBacklogFiles");
+    expect(normalized).toContain("catch-all sweep");
+  });
 });
 
 describe("runInstructions — topic resolution", () => {
