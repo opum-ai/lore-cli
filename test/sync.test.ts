@@ -13,7 +13,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BacklogAdapter } from "../src/adapters/backlog";
@@ -378,6 +378,56 @@ describe("lore sync — LORE-119: a concurrent on-disk edit survives a status-ch
     const final = readDoc(path);
     expect(final).toContain("status: done"); // the status change itself still landed
     expect(final).toContain("A concurrently-added paragraph."); // the concurrent edit was NOT discarded
+  });
+});
+
+// ── LORE-120: cross-file rollback on a mid-loop write failure ────────────────────
+
+describe("lore sync — LORE-120: no file is left in a mixed state after a mid-loop write failure", () => {
+  test("a real IO failure partway through the multi-file write loop rolls back everything already written in this run", async () => {
+    if (process.getuid?.() === 0) {
+      return; // root bypasses a read-only directory -- this probe can't be set up
+    }
+    const originalDoc = storyDoc("X", ["lore-1"], "todo");
+    writeDoc("stories/x.md", originalDoc);
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    // `writes` is populated in a fixed order: every per-concept status/managed-block entry first
+    // (only "stories/x.md" here), THEN index.md/log.md (regenerateIndexAndLog runs after). Locking
+    // docs/ (the ROOT dir) read-only blocks index.md/log.md, which live directly in it, WITHOUT
+    // blocking docs/stories/ (a sibling directory, unaffected by its parent's own mode) -- so the
+    // concept write below succeeds first, exactly like a real crash landing after some, but not all,
+    // of a multi-file sync's writes.
+    const docsAbs = join(root, "docs");
+    chmodSync(docsAbs, 0o555);
+    let blocked = true;
+    try {
+      writeFileSync(join(docsAbs, "probe.md"), "x");
+      blocked = false;
+      rmSync(join(docsAbs, "probe.md"), { force: true });
+    } catch {
+      // expected: docs/ is read-only, so creating a file directly in it fails.
+    }
+    if (!blocked) {
+      chmodSync(docsAbs, 0o755);
+      return; // environment ignores the mode (e.g. permissive FS) -- skip, can't force the failure
+    }
+
+    try {
+      const err = await expectSyncError([], adapter, { gitSpawn: cleanGitSpawn() });
+      expect(["denied", "conflict"]).toContain(err.type); // the real EACCES, mapped by ioError
+    } finally {
+      chmodSync(docsAbs, 0o755); // restore so afterEach's rmSync can clean up
+    }
+
+    // The concept write landed first (a different, still-writable directory), then rolled back to
+    // its ORIGINAL bytes when the index.md/log.md write that came later in the same run threw --
+    // never left holding the new "status: done" bytes with no corresponding index/log update.
+    expect(readDoc("stories/x.md")).toBe(originalDoc);
+    // Neither of the root-level files this run would have created ever survives -- either never
+    // attempted (the loop stopped at the first failure) or written-then-rolled-back.
+    expect(docExists("index.md")).toBe(false);
+    expect(docExists("log.md")).toBe(false);
   });
 });
 

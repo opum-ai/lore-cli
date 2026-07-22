@@ -187,9 +187,12 @@ export function writeFileOverwriting(absPath: string, contents: string, relPath:
  * destination before writing, which a crash between those two steps would leave corrupted; a
  * same-directory rename is atomic (same filesystem, POSIX and NTFS both guarantee it) so the
  * destination is always either its old complete bytes or its new complete bytes, never a partial
- * write. This is per-file atomicity only — a failure partway through a multi-file commit loop still
- * leaves files already written in that same run committed, with no cross-file rollback (both
- * commands' own callers document that as a separate, deferred concern). Every other command keeps
+ * write. This is per-file atomicity only — a bare loop calling this directly still leaves files
+ * already written in that same run committed if a later write throws, with no cross-file rollback;
+ * `lore replace`'s own caller documents that as a separate, deferred concern (`lore rename`'s
+ * `writeFileOverwriting` loop carries the identical note). `lore sync` (LORE-120) instead routes its
+ * whole write set through {@link writeManyAtomicOrRollback}, which adds that cross-file undo on top
+ * of this function's own per-file atomicity — see its own doc. Every other command keeps
  * {@link writeFileOverwriting} — see that function's own doc for why a plain overwrite is the right
  * discipline there.
  *
@@ -260,6 +263,70 @@ export function writeFileAtomic(absPath: string, contents: string, relPath: stri
         `${err.hint ?? ""} A temp file may also remain at ${tmpPath} — remove it manually.`.trim(),
         typeof err.input === "object" && err.input !== null ? { ...err.input, staleTempFile: tmpPath } : err.input,
       );
+    }
+    throw err;
+  }
+}
+
+// ── Atomic multi-file writes with rollback ─────────────────────────────────────
+
+/** One file {@link writeManyAtomicOrRollback} plans to write, with enough state to undo it. */
+export interface AtomicRollbackWrite {
+  /** Absolute filesystem path to write. */
+  readonly abs: string;
+  /** Repo-relative path, for error messages (mirrors every other write helper's `relPath`). */
+  readonly relPath: string;
+  /** The file's bytes immediately before this write, or `undefined` if it did not exist yet — the
+   *  state rollback restores it to. Callers must capture this from disk *before* the write phase
+   *  starts (`lore sync`'s own re-read-then-diff loop already does, per-file, for exactly this
+   *  reason — see LORE-119). */
+  readonly before: string | undefined;
+  /** The new bytes to write. */
+  readonly after: string;
+}
+
+/**
+ * Write every entry in `writes` via {@link writeFileAtomic} (each individual write keeping its own
+ * per-file atomicity — a crash mid-write never truncates a single target), and if any write in the
+ * list throws, undo every write this call already applied — in reverse order — before rethrowing:
+ * a file that had prior content is restored to its `before` bytes; a file that did not exist before
+ * this call (`before: undefined`) is removed. This closes the gap {@link writeFileAtomic}'s own
+ * docstring flags ("a failure partway through a multi-file commit loop still leaves files already
+ * written in that same run committed, with no cross-file rollback") for callers that opt in by
+ * routing their whole write set through here instead of a bare loop (`lore sync`, LORE-120).
+ *
+ * `writeAtomic` is injectable (defaulting to the real {@link writeFileAtomic}) so a test can force a
+ * failure on a specific write deterministically, mirroring {@link writeAllBytes}'s own injected
+ * `write` — the same reason applies: a real disk failure at an exact, chosen point in a multi-file
+ * loop is not reliably reproducible against a real filesystem.
+ *
+ * Rollback is best-effort, matching {@link writeAllOrRollback}'s own discipline: a failure while
+ * undoing one entry is swallowed (rather than thrown) so the original write failure — not a
+ * secondary cleanup failure — is what the caller ultimately sees, and every other already-applied
+ * entry still gets its own undo attempt rather than the whole rollback aborting on the first one
+ * that fails.
+ */
+export function writeManyAtomicOrRollback(
+  writes: readonly AtomicRollbackWrite[],
+  writeAtomic: (absPath: string, contents: string, relPath: string) => void = writeFileAtomic,
+): void {
+  const applied: AtomicRollbackWrite[] = [];
+  try {
+    for (const write of writes) {
+      writeAtomic(write.abs, write.after, write.relPath);
+      applied.push(write);
+    }
+  } catch (err) {
+    for (const write of applied.reverse()) {
+      try {
+        if (write.before === undefined) {
+          rmSync(write.abs, { force: true });
+        } else {
+          writeAtomic(write.abs, write.before, write.relPath);
+        }
+      } catch {
+        // Best-effort rollback; see the shared discipline note above.
+      }
     }
     throw err;
   }
