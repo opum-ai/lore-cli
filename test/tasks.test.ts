@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { BacklogTaskDetail } from "../src/adapters/backlog";
 import { run } from "../src/cli";
 import { runTasks, type TaskRollup, type TasksOptions } from "../src/commands/tasks";
 import { LoreError } from "../src/errors";
@@ -154,6 +155,25 @@ describe("runTasks — dangling links (soft) vs failures (hard)", () => {
     await expectRejection("drift", () =>
       runTasks({ root, output: JSON_CTX, stdout: capture(), stderr: capture(), args: ["stories/bulk"], adapter }),
     );
+  });
+
+  test("LORE-125: a viewTask detail whose id disagrees with the requested id is a hard not_found error, never a silently wrong row", async () => {
+    // A stub adapter that always answers with SOME OTHER task's detail, regardless of what id was
+    // requested — resolveRollup must not trust `result.value.id` blindly, or this concept's rollup
+    // would silently attribute "Wrong task entirely" / "Done" to lore-1's own row.
+    writeStory("bulk", ["LORE-1"]);
+    const base = okAdapter([]);
+    const adapter = {
+      ...base,
+      async viewTask(): Promise<BacklogTaskDetail | null> {
+        return makeTask("LORE-999", { status: "Done", title: "Wrong task entirely" });
+      },
+    };
+    const err = await expectRejection("not_found", () =>
+      runTasks({ root, output: JSON_CTX, stdout: capture(), stderr: capture(), args: ["stories/bulk"], adapter }),
+    );
+    expect(err.message).toContain("LORE-1");
+    expect(err.message).toContain("LORE-999");
   });
 });
 

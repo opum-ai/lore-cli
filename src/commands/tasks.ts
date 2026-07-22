@@ -23,7 +23,10 @@
  *   probe mean, unambiguously, "this linked id is a dangling reference" — dropped from the
  *   rollup with a stderr advisory, exit 0 — rather than "Backlog is broken". `orphans`
  *   (LORE-32) is the dedicated dangling-link report; `tasks` only notes them so its rollup
- *   shows just the live tasks. A per-task read that *fails* (Backlog drift) still propagates.
+ *   shows just the live tasks. A per-task read that *fails* (Backlog drift) still propagates;
+ *   a per-task read that *succeeds* but answers with a DIFFERENT task's id than requested is
+ *   also a hard `not_found` error (exit 3), never silently attributed to the requested row
+ *   (mirrors `reconcile-shared.ts`'s `resolveTaskDetails`, LORE-122).
  */
 
 import { join } from "node:path";
@@ -32,7 +35,7 @@ import { conceptNotInBundle, loadBundle, toRefList } from "../core/bundle";
 import { idFromPath } from "../core/concept";
 import { loadProfile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
-import { ANSI, EXIT_OK, paint, WarningCollector, type Writer } from "../errors";
+import { ANSI, EXIT_OK, LoreError, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable, renderTaskSummaryRows, type TaskSummaryRow } from "../output";
 import { usage } from "./args";
 import { dedupeTaskIds, defaultAdapter } from "./link";
@@ -128,7 +131,15 @@ function echoedStatus(filter: string | undefined, tasks: readonly TaskRollupRow[
  * escapes as an unhandled rejection): the FIRST read that *fails* — in `tasks:` order — is rethrown
  * as a hard error (Backlog drift), exactly as `lore check`/`sync` treat it, while a clean `null` — a
  * task Backlog does not know — is soft: dropped from the rollup with a stderr advisory (`orphans`
- * owns the dangling-link report). The `--status` filter is applied last, to the live rows only.
+ * owns the dangling-link report).
+ *
+ * A fulfilled result is ALSO checked against the id that was actually requested at that position
+ * (`linked[i]`, case-insensitively): `viewTask` is keyed by id, but nothing enforces that the detail
+ * it returns actually carries that id back. Trusting it blindly would let a mismatched detail
+ * silently attribute another task's title/status to this row — the exact bug `resolveTaskDetails`
+ * (`reconcile-shared.ts`) guards `sync`/`check` against (LORE-122). A mismatch is therefore a hard
+ * `not_found` failure, thrown immediately rather than pushed into `rows`. The `--status` filter is
+ * applied last, to the live rows only.
  */
 async function resolveRollup(
   linked: readonly string[],
@@ -154,6 +165,15 @@ async function resolveRollup(
     if (result.value === null) {
       dangling.push(linked[i] as string);
       continue;
+    }
+    const requestedId = linked[i] as string;
+    if (result.value.id.toLowerCase() !== requestedId.toLowerCase()) {
+      throw new LoreError(
+        "not_found",
+        `task "${requestedId}" resolved to a different task ("${result.value.id}") — refusing to use it`,
+        "this points at a Backlog adapter bug or an id collision, not a missing task — verify the task id with `backlog task view` and report the mismatch",
+        { taskId: requestedId, resolvedId: result.value.id },
+      );
     }
     rows.push({ id: result.value.id, title: result.value.title, status: result.value.status });
   }
