@@ -863,16 +863,25 @@ export function tallySeverity(findings: readonly CheckFinding[]): { errorCount: 
  * Reuses the canonical parse boundary rather than re-rolling one: normalizeInput (the concept
  * parser's BOM/CRLF/leading-whitespace normalization) then gray-matter — the same fence split
  * concept.ts uses — so `lore check` and the parser cannot disagree on where a body begins.
- * gray-matter throws only on unparseable YAML; there the gate degrades to scanning the whole
- * (normalized) file rather than crashing — a genuinely malformed concept is `lore validate`'s
- * error to report, not `check`'s to die on. A file with no frontmatter (or no closing fence)
- * yields its whole content as the body.
+ * gray-matter's bundled js-yaml raises a `YAMLException` (`error.name === "YAMLException"`,
+ * checked structurally rather than via `instanceof` — gray-matter vendors its own js-yaml
+ * major version, a separate module instance from this codebase's pinned one, so an
+ * `instanceof` check against an imported class would never match) for unparseable YAML;
+ * only that specific, documented failure degrades the gate to scanning the whole (normalized)
+ * file rather than crashing — a genuinely malformed concept is `lore validate`'s error to
+ * report, not `check`'s to die on. Any other exception (e.g. an unrecognized fence-language
+ * engine, a future gray-matter behavior change) is a real bug or unexpected input and must
+ * surface, not be silently absorbed as if it were ordinary malformed YAML (LORE-138). A file
+ * with no frontmatter (or no closing fence) yields its whole content as the body.
  */
 function bodyText(raw: string): string {
   const normalized = normalizeInput(raw);
   try {
     return matter(normalized).content;
-  } catch {
-    return normalized;
+  } catch (error) {
+    if (error instanceof Error && error.name === "YAMLException") {
+      return normalized;
+    }
+    throw error;
   }
 }
