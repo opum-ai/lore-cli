@@ -247,6 +247,23 @@ describe("lore graph — command", () => {
     expect(nodeLine).toMatch(/^ {2}weird-nl {2}\[Story\] {2}~\d+ {2}Line one line two$/);
   });
 
+  test("an embedded newline in an unknown type cannot split a node into two plain-output lines (LORE-126)", () => {
+    // requireType (core/schema.ts) only trims the ends of `type`, and an unknown type is
+    // warn-only (validateFrontmatter never rejects it), so a multiline `type:` scalar
+    // survives bundle load unchanged — the node.type analog of the title case above.
+    writeStandardBundle();
+    writeDoc("weird-type.md", '---\ntype: "Story\\nEVIL INJECTED TYPE LINE"\n---\nText.\n');
+    const stdout = capture();
+    runGraph({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: [] });
+    // 1 header + 5 nodes + 3 edges = 9 physical lines (plus the trailing newline `emit`
+    // always appends); a smuggled newline in the type would add a 10th content line.
+    const lines = stdout.text().split("\n");
+    expect(lines.at(-1)).toBe("");
+    expect(lines.slice(0, -1)).toHaveLength(9);
+    const nodeLine = lines.find((line) => line.includes("weird-type"));
+    expect(nodeLine).toMatch(/^ {2}weird-type {2}\[Story EVIL INJECTED TYPE LINE\] {2}~\d+$/);
+  });
+
   test("an embedded newline in a dangling ref cannot split an edge into two plain-output lines (LORE-126)", () => {
     // scalarToRef (core/bundle.ts) only trims the ends of a frontmatter ref, so a
     // double-quoted YAML scalar's escaped `\n` survives as a literal newline into
