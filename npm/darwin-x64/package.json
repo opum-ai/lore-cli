@@ -2,6 +2,9 @@
   "name": "@salient-data/lore-darwin-x64",
   "version": "0.0.0",
   "description": "lore compiled binary for macOS (Intel, x64, baseline). Do not depend on this directly — install @salient-data/lore.",
+  "publishConfig": {
+    "access": "public"
+  },
   "os": ["darwin"],
   "cpu": ["x64"],
   "license": "MIT",

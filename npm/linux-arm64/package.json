@@ -2,6 +2,9 @@
   "name": "@salient-data/lore-linux-arm64",
   "version": "0.0.0",
   "description": "lore compiled binary for Linux (arm64). Do not depend on this directly — install @salient-data/lore.",
+  "publishConfig": {
+    "access": "public"
+  },
   "os": ["linux"],
   "cpu": ["arm64"],
   "license": "MIT",
