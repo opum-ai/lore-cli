@@ -399,11 +399,25 @@ export function maxLen<T>(items: readonly T[], length: (item: T) => number): num
  * tasks`'s rollup table and `lore orphans`' orphan-task block, so a column-layout change (an extra
  * column, truncation, a width cap) is a one-place edit instead of two independently-drifting copies.
  * Returns `[]` for an empty `rows` — the caller decides what an empty section renders as.
+ *
+ * Each field is coerced ({@link asText}) and collapsed to one line ({@link singleLine}) before
+ * padding/joining, matching the sanitization every other renderer in this file applies (e.g. the
+ * truncation-line hint above). `id`/`status`/`title` come from a Backlog task file, which a crafted
+ * or corrupted file could load with an embedded newline, CR, or other control character — without
+ * this, that would split a plain-mode row across lines or otherwise break the single-line-per-row
+ * output guarantee. Sanitizing before {@link maxLen} also keeps the column widths measuring the same
+ * text that is actually printed, so a stripped control character cannot desync the padding from the
+ * rendered length.
  */
 export function renderTaskSummaryRows(rows: readonly TaskSummaryRow[]): string[] {
-  const idWidth = maxLen(rows, (row) => row.id.length);
-  const statusWidth = maxLen(rows, (row) => row.status.length);
-  return rows.map((row) => `  ${row.id.padEnd(idWidth)}  ${row.status.padEnd(statusWidth)}  ${row.title}`);
+  const clean = rows.map((row) => ({
+    id: singleLine(asText(row.id)),
+    status: singleLine(asText(row.status)),
+    title: singleLine(asText(row.title)),
+  }));
+  const idWidth = maxLen(clean, (row) => row.id.length);
+  const statusWidth = maxLen(clean, (row) => row.status.length);
+  return clean.map((row) => `  ${row.id.padEnd(idWidth)}  ${row.status.padEnd(statusWidth)}  ${row.title}`);
 }
 
 /**

@@ -529,4 +529,19 @@ describe("renderTaskSummaryRows — shared id/status/title alignment (LORE-51)",
     const row: TaskSummaryRow = { id: "LORE-42", title: "Bulk archive orders", status: "To Do" };
     expect(renderTaskSummaryRows([row])).toEqual(renderTaskSummaryRows([row]));
   });
+
+  test("collapses an embedded newline/control character in id, status, or title to one sanitized line (LORE-115)", () => {
+    const row: TaskSummaryRow = {
+      id: "LORE-1\n99",
+      title: "Evil title\r\nwith a fake second line",
+      status: "In\nProgress",
+    };
+    const [line] = renderTaskSummaryRows([row]);
+    expect(line).toBeDefined();
+    // Single physical line: no line terminator survives the sanitization.
+    expect(line).not.toMatch(/[\r\n]/);
+    // Matches the same singleLine(asText(...)) collapse used elsewhere in output.ts —
+    // the run of line breaks becomes a single space, not silently dropped.
+    expect(line).toBe("  LORE-1 99  In Progress  Evil title with a fake second line");
+  });
 });
