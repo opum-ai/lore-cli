@@ -3,9 +3,11 @@ id: LORE-147
 title: >-
   Fix `check` instructions: expandRoot/reconciliation throws besides
   usage/not_found
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-21 22:26'
+updated_date: '2026-07-22 22:56'
 labels:
   - codex-review-followup
   - core-engine-b
@@ -27,7 +29,25 @@ The `check` instructions topic (src/core/instructions.ts:97-99) states that `usa
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The `check` instructions body in src/core/instructions.ts accurately enumerates all throw cases for `lore check` (`usage`, `not_found`, `denied`, and `validation` where reconciliation applies) instead of claiming only `usage`/`not_found` throw
-- [ ] #2 The updated text is consistent with check.ts's own module docstring (line 127) and with reconcile-shared.ts's documented `@throws` cases, so the two sources of truth no longer contradict each other
-- [ ] #3 test/instructions.test.ts (or equivalent) is updated/added to assert the `check` topic body reflects the full set of throwing error types
+- [x] #1 The `check` instructions body in src/core/instructions.ts accurately enumerates all throw cases for `lore check` (`usage`, `not_found`, `denied`, and `validation` where reconciliation applies) instead of claiming only `usage`/`not_found` throw
+- [x] #2 The updated text is consistent with check.ts's own module docstring (line 127) and with reconcile-shared.ts's documented `@throws` cases, so the two sources of truth no longer contradict each other
+- [x] #3 test/instructions.test.ts (or equivalent) is updated/added to assert the `check` topic body reflects the full set of throwing error types
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. In src/core/instructions.ts CHECK topic body, replace the incorrect 'usage and not_found are the only cases that actually throw' paragraph with accurate prose enumerating usage (exit 2: bad flag or non-directory bundle-root), not_found (exit 3: missing bundle-root path, or a linked task id that no longer exists during reconciliation), denied (exit 4: unreadable bundle-root), and validation (exit 6: malformed reconcile status-flow/overrides, thrown before task resolution) as the throwing cases -- consistent with check.ts's module docstring (usage/not_found/denied/validation) and reconcile-shared.ts's @throws (validation, not_found). 2. Add a regression test in test/instructions.test.ts (same style as the LORE-146 linking-topic test) asserting the check topic body no longer claims usage/not_found are the ONLY throwing cases and does mention denied and validation. 3. Run bun test and bun run typecheck.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Rewrote the check topic's throw-cases paragraph in src/core/instructions.ts to enumerate usage (exit 2: bad flag or non-directory bundle-root), not_found (exit 3: missing bundle-root OR a linked task id no longer existing during reconciliation), denied (exit 4: unreadable bundle-root), and validation (exit 6: malformed reconcile status-flow/overrides, thrown before task resolution) -- matching check.ts's module docstring (usage/not_found/denied/validation) and reconcile-shared.ts's @throws on resolveReconcileConfig/gatherReconciliation. Added a regression test in test/instructions.test.ts (mirrors the LORE-146 linking-topic pattern) asserting the old 'are the only cases that' claim is gone and that usage/not_found/denied/validation plus exit 2/3/4/6 all appear in the body. Confirmed the test discriminates: reverted instructions.ts via git stash and reran -- test failed against the old prose, then restored and it passed. Verification: bun test test/instructions.test.ts (15 pass/0 fail), full bun test (1819 pass/0 fail), bun run typecheck (clean).
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Fixed the check instructions topic in src/core/instructions.ts, which incorrectly claimed usage/not_found were the only throw cases for lore check. Replaced with accurate prose covering usage (exit 2), not_found (exit 3, including a missing linked task id), denied (exit 4, unreadable bundle root), and validation (exit 6, malformed reconcile config) -- consistent with check.ts's module docstring and reconcile-shared.ts's documented @throws. Added a discriminating regression test in test/instructions.test.ts. Verified with bun test (1819 pass/0 fail) and bun run typecheck (clean).
+<!-- SECTION:FINAL_SUMMARY:END -->
