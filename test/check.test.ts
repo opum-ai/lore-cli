@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BacklogAdapter } from "../src/adapters/backlog";
 import { run } from "../src/cli";
-import { type FetchLike, isDocsRoot, type ResolveHost, runCheck } from "../src/commands/check";
+import { driftFindingsForBundle, type FetchLike, isDocsRoot, type ResolveHost, runCheck } from "../src/commands/check";
 import {
   type CheckInputFile,
   checkBundle,
@@ -16,7 +16,7 @@ import {
 import { type ManagedTaskRow, regenerateTaskBlock } from "../src/core/managed-block";
 import { EXIT_CODES, EXIT_OK, EXIT_UNCAUGHT, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
-import { capture, fakeAdapter, makeTask, storyDoc } from "./helpers";
+import { capture, concept, fakeAdapter, makeTask, storyDoc } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 const PLAIN_CTX: OutputContext = { mode: "plain", color: false };
@@ -926,6 +926,70 @@ describe("isDocsRoot", () => {
     ["adocs", false],
   ])("isDocsRoot(%p) === %p", (label, expected) => {
     expect(isDocsRoot(label)).toBe(expected);
+  });
+});
+
+// ── driftFindingsForBundle: docPath/fixable consistency on a non-canonical label (LORE-113) ──────
+
+describe("driftFindingsForBundle — docPath agrees with the fixable/isDocsRoot verdict on a non-canonical label (LORE-113)", () => {
+  /**
+   * One `LORE-1` task whose `file` is deliberately placed INSIDE `docs/` — a real linked task's
+   * `file` never is (it always points at `backlog/tasks/…`), but a docs-relative target is what
+   * makes the managed block's rendered link SENSITIVE to `docPath`'s own directory prefix: with a
+   * canonical `docs/stories/x.md` docPath the link collapses to `../other-task-ref.md`, but a
+   * case-mismatched or literal-backslash-carrying docPath (the pre-fix bug: the raw, un-normalized
+   * `bundle.label`) fails to collapse the shared `docs` prefix and renders a longer, DIFFERENT
+   * link — the only way this internal, never-returned `docPath` value's correctness is observable
+   * from `driftFindingsForBundle`'s own findings.
+   */
+  const row: ManagedTaskRow = {
+    id: "LORE-1",
+    title: "Title for LORE-1",
+    status: "Done",
+    file: "docs/other-task-ref.md",
+  };
+
+  /** Everything one `driftFindingsForBundle` call needs for `stories/x.md`, keyed off `label`. */
+  function fixtureFor(label: string) {
+    // The doc's persisted `status: todo` deliberately disagrees with the `Done` task's reconciled
+    // "done" rollup (a status-drift finding, whose hint text reveals `fixable`), while its managed
+    // block is pre-rendered against the CANONICAL docPath — exactly what a correctly-normalized
+    // `label` must resolve to for the block comparison to see no drift.
+    const original = regenerateTaskBlock(storyDoc("X", ["lore-1"], "todo"), [row], { docPath: "docs/stories/x.md" });
+    const bundle = { label, files: [{ path: "stories/x.md", raw: original }], filenameFindings: [] };
+    const concepts = [concept("stories/x.md", { type: "Story", status: "todo", tasks: ["lore-1"] })];
+    const pooled = {
+      config: { flow: ["To Do", "In Progress", "Done"], overrides: {} },
+      details: new Map([
+        ["lore-1", { ok: true as const, detail: makeTask("LORE-1", { status: row.status, file: row.file }) }],
+      ]),
+      configError: null,
+    };
+    return { bundle, concepts, pooled };
+  }
+
+  test.each([
+    ["Docs", "a different-case spelling"],
+    ["docs\\", "a Windows trailing-backslash idiom"],
+  ])("%p (%s): docPath and fixable are mutually consistent", async (label) => {
+    // Ground truth: this non-canonical label IS the docs root `isDocsRoot` (and so `fixable`)
+    // judges it against.
+    expect(isDocsRoot(label)).toBe(true);
+
+    const { bundle, concepts, pooled } = fixtureFor(label);
+    const result = await driftFindingsForBundle("/fake-root", bundle, concepts, false, fakeAdapter([]), pooled);
+
+    expect(result.error).toBeNull();
+    // Exactly the one expected status-drift finding, carrying the "run `lore sync`" hint that
+    // only appears when `fixable` is true — proving `fixable` was correctly computed for this
+    // label. Critically, there is no SECOND "managed-block-drift" finding alongside it: before
+    // the LORE-113 fix, `docPath` embedded the raw (non-canonical) `label`, so the block's
+    // re-rendered link diverged from the one pre-rendered against the canonical spelling, and a
+    // spurious drift finding appeared here even though `fixable` correctly said this root could be
+    // `sync`'d — the exact inconsistency this test guards against.
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0]?.rule).toBe("status-drift");
+    expect(result.findings[0]?.message).toContain("run `lore sync`");
   });
 });
 
