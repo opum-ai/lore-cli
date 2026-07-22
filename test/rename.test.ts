@@ -1,4 +1,8 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+// A namespace import alongside the named one below: `spyOn` (LORE-132's TOCTOU-race regression test)
+// needs the module object itself to patch `writeFileSync` in place, not the already-bound named export
+// (mirrors replace.test.ts's identical LORE-116 commit-phase-atomicity test).
+import * as fs from "node:fs";
 import {
   chmodSync,
   existsSync,
@@ -892,6 +896,52 @@ describe("lore rename — data-loss-safe relocation (review fixes)", () => {
     // On any filesystem the lowercase target exists with the content preserved (never deleted).
     expect(existsSync(join(root, "docs/stories/foo.md"))).toBe(true);
     expect(readDoc("stories/foo.md")).toContain("Body of Foo.");
+  });
+
+  test("a file created at the destination after the plan-time precheck but before the move is never clobbered (LORE-132, AC#1/#2)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    const destAbs = join(root, "docs/reference/sales-orders.md");
+    const srcAbs = join(root, "docs/reference/orders.md");
+    const raceContents = "RACE: concurrently created between precheck and move\n";
+
+    // rewriteInbound's `assertTargetFree`-satisfying precheck already ran clean (the destination did
+    // not exist at plan time) by the time commitWrites reaches the moved file's own write — the LAST
+    // writeFileSync `moveFile`'s renameSync follows is the one writing the file's new bytes into its
+    // OLD path (rename.ts's commitWrites: `writeFileOverwriting(absFrom, ...)` immediately before
+    // `moveFile(absFrom, absTo, ...)`). Hooking exactly that call — identified by its unique
+    // destination path, not by ordinal, so this survives an unrelated reordering of the other writes
+    // in the same commit — and creating the destination file there simulates a concurrent writer (or
+    // a second `lore` invocation) landing in the race window between the precheck and the real move,
+    // deterministically, without any actual concurrency.
+    const realWriteFileSync = fs.writeFileSync.bind(fs);
+    const spy = spyOn(fs, "writeFileSync").mockImplementation((...args: Parameters<typeof fs.writeFileSync>) => {
+      if (String(args[0]) === srcAbs) {
+        realWriteFileSync(destAbs, raceContents);
+      }
+      // biome-ignore lint/suspicious/noExplicitAny: forwarding to the real writeFileSync overload set
+      return (realWriteFileSync as any)(...args);
+    });
+
+    let thrown: unknown;
+    try {
+      await runRename({
+        root,
+        output: JSON_CTX,
+        args: ["reference/orders", "reference/sales-orders"],
+        stdout: capture(),
+        stderr: capture(),
+      });
+    } catch (err) {
+      thrown = err;
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(thrown).toBeInstanceOf(LoreError);
+    expect((thrown as LoreError).type).toBe("conflict"); // the SAME conflict type assertTargetFree raises
+    // The concurrently created file at the destination survives byte-for-byte — never silently
+    // replaced by the renamed content.
+    expect(readFileSync(destAbs, "utf8")).toBe(raceContents);
   });
 
   test("renames into a not-yet-existing directory (creates it) (#5)", async () => {
