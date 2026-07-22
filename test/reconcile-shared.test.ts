@@ -92,6 +92,26 @@ describe("gatherReconciliation", () => {
     await expect(gatherReconciliation(root, [doc], adapter)).rejects.toThrow(/lore-99/);
   });
 
+  test("LORE-122: an adapter returning a mismatched-id detail surfaces as an error, never a silently wrong row", async () => {
+    // A stub adapter whose viewTask always answers with SOME OTHER task's detail, regardless of
+    // what id was requested — the exact failure mode this task guards against: without the
+    // identity check, this concept's managed tasks: block would silently render "Wrong task
+    // entirely" / "Done" under lore-1's own id.
+    const base = fakeAdapter([]);
+    const mismatched = {
+      ...base,
+      async viewTask(): Promise<BacklogTaskDetail | null> {
+        return makeTask("LORE-999", { status: "Done", title: "Wrong task entirely" });
+      },
+    };
+    const doc = concept("stories/x.md", { tasks: ["lore-1"], status: "todo" });
+
+    const err = await gatherReconciliation(root, [doc], mismatched).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LoreError);
+    expect((err as LoreError).message).toContain("lore-1");
+    expect((err as LoreError).message).toContain("LORE-999");
+  });
+
   test("configOverride bypasses disk entirely — a broken on-disk config never surfaces", async () => {
     // The mechanism `lore check`'s multi-root pooling (LORE-50) depends on: a caller that already
     // resolved-and-validated its own config never pays for (or is exposed to) a second, independent
@@ -185,6 +205,46 @@ describe("resolveTaskDetails", () => {
     const resolved = await resolveTaskDetails(adapter, ["lore-1"]);
     const entry = resolved.get("lore-1");
     expect(entry?.ok).toBe(false);
+  });
+
+  // ── LORE-122: viewTask's returned id must match the requested id ──────────────────────────────
+
+  test("a detail whose id does not match the requested taskId becomes ok:false, not ok:true", async () => {
+    // A stub adapter that always answers with a DIFFERENT task's detail than whatever was asked
+    // for — the exact shape `viewTask` must never be trusted blindly against.
+    const base = fakeAdapter([]);
+    const mismatched: typeof base = {
+      ...base,
+      async viewTask(): Promise<BacklogTaskDetail | null> {
+        return makeTask("LORE-999", { status: "Done", title: "Wrong task entirely" });
+      },
+    };
+
+    const resolved = await resolveTaskDetails(mismatched, ["lore-1"]);
+    const entry = resolved.get("lore-1");
+
+    expect(entry?.ok).toBe(false);
+    expect(entry?.ok === false && entry.error).toBeInstanceOf(LoreError);
+    const err = entry?.ok === false ? (entry.error as LoreError) : undefined;
+    expect(err?.type).toBe("not_found");
+    expect(err?.message).toContain("lore-1");
+    expect(err?.message).toContain("LORE-999");
+  });
+
+  test("an id that matches only case-insensitively is still accepted as ok:true", async () => {
+    // The requested id and the resolved detail's id may legitimately differ in case (Backlog
+    // normalizes casing on write) — only a genuine identity mismatch is a failure.
+    const base = fakeAdapter([]);
+    const differentCase: typeof base = {
+      ...base,
+      async viewTask(): Promise<BacklogTaskDetail | null> {
+        return makeTask("LORE-1", { status: "Done" });
+      },
+    };
+
+    const resolved = await resolveTaskDetails(differentCase, ["lore-1"]);
+    const entry = resolved.get("lore-1");
+    expect(entry?.ok).toBe(true);
   });
 
   test("calls the adapter exactly once for a single id", async () => {
