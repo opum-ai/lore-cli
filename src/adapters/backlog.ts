@@ -801,7 +801,14 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
       }
       const newId = CREATED_ID.exec(result.stdout)?.[1];
       if (newId === undefined) {
-        readDrift("`task create` did not print a `Created task <ID>` line to capture the new id");
+        // `task create` already exited 0 — Backlog genuinely created the task — so failing loud with
+        // no context would leave it orphaned and unreferenceable: the caller has no id to look it up
+        // by. Echo the raw stdout (and the title Backlog was given) in the error's `input` so a caller
+        // can still recover the new task, e.g. via `backlog task list --search "<title>"`.
+        readDrift("`task create` exited 0 but did not print a `Created task <ID>` line to capture the new id", {
+          title: input.title,
+          stdout: result.stdout,
+        });
       }
       return newId;
     },
