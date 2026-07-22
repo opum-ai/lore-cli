@@ -181,6 +181,14 @@ describe("toDot — Graphviz serialization", () => {
     const dot = toDot(buildGraphExport(graph()));
     expect(dot).toContain('[label="a\\"b\\\\c"];');
   });
+
+  test("collapses an embedded newline in a title so the label stays one quoted DOT statement (LORE-126)", () => {
+    writeDoc("weird-nl.md", '---\ntype: Story\ntitle: "Line one\\nline two"\n---\nText.\n');
+    const dot = toDot(buildGraphExport(graph()));
+    // The whole node statement — id and label — lands on exactly one physical line;
+    // a raw newline surviving inside the quoted label would split it across two.
+    expect(dot.split("\n")).toContain('  "weird-nl" [label="Line one line two"];');
+  });
 });
 
 // ── command: runGraph ────────────────────────────────────────────────────────────
@@ -223,6 +231,20 @@ describe("lore graph — command", () => {
     const stdout = capture();
     runGraph({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: ["--dot"] });
     expect(stdout.text().startsWith("digraph lore {")).toBe(true);
+  });
+
+  test("an embedded newline in a title cannot split a node into two plain-output lines (LORE-126)", () => {
+    writeStandardBundle();
+    writeDoc("weird-nl.md", '---\ntype: Story\ntitle: "Line one\\nline two"\n---\nText.\n');
+    const stdout = capture();
+    runGraph({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: [] });
+    // 1 header + 5 nodes + 3 edges = 9 physical lines (plus the trailing newline `emit`
+    // always appends); a smuggled newline in the title would add a 10th content line.
+    const lines = stdout.text().split("\n");
+    expect(lines.at(-1)).toBe("");
+    expect(lines.slice(0, -1)).toHaveLength(9);
+    const nodeLine = lines.find((line) => line.includes("weird-nl"));
+    expect(nodeLine).toMatch(/^ {2}weird-nl {2}\[Story\] {2}~\d+ {2}Line one line two$/);
   });
 
   test("--dot combined with --json is a usage error (DOT has no envelope)", () => {
