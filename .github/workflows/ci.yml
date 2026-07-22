@@ -113,3 +113,36 @@ jobs:
           cd website
           npm install
           npm run build
+
+  docker-e2e:
+    name: docker e2e harness (real lore + backlog binaries)
+    runs-on: ubuntu-latest
+    # A full cold build (Backlog.md clone + build, lore compile, apt/pip/npm installs) plus
+    # ~300 real-binary assertions comfortably fits in 30m; bound it well below the 360m
+    # default so a genuinely hung step (e.g. a stalled network fetch) fails fast instead of
+    # silently eating the whole job-timeout budget.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      # The ~1500-line hermetic E2E harness under docker/e2e/ (LORE-56..68) builds real `lore`
+      # and `backlog` binaries and drives the full `lore` command surface against a real,
+      # mutating backlog project — no mocked adapter (ADR-0002). It was previously runnable
+      # only by hand (docs/runbooks/docker-e2e-testing-environment.md) and never wired into
+      # any workflow, so a regression anywhere it covers (LORE-61..68) could merge cleanly
+      # (LORE-100). `--exit-code-from e2e` is required, not cosmetic: plain `docker compose
+      # up` always exits 0 regardless of the service's own exit code (LORE-104), which would
+      # silently turn this into a no-op smoke test that never fails the job.
+      - name: Build and run the E2E harness
+        run: docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e
+      # Always attempt this (even after a failing run above) — the structured
+      # docker/e2e/results/report.jsonl (one JSON object per step) is the fastest way to see
+      # which scenario(s) failed without re-running the whole harness locally. Best-effort:
+      # a build-time failure (before run-e2e.sh's entrypoint ever executes) leaves no report
+      # file, so a missing file here is expected, not itself a workflow failure.
+      - name: Upload E2E report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: docker-e2e-report
+          path: docker/e2e/results/report.jsonl
+          if-no-files-found: warn
