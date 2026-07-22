@@ -303,17 +303,27 @@ function renderRow(row: ManagedTaskRow, docPath: string): string {
 }
 
 /**
- * Normalize one JSON value into safe GFM **table-cell** text. Three deterministic defenses keep the
+ * Normalize one JSON value into safe GFM **table-cell** text. Four deterministic defenses keep the
  * table well-formed and byte-stable regardless of the source string:
  *
  * - **single-line** ({@link singleLine}) — a title carrying a newline would otherwise split the row;
+ * - **escape `\`** — done *first*, before the `|` escape below. A pre-existing literal backslash
+ *   immediately before a pipe (e.g. a title `x\|y`) would otherwise combine with the pipe-escape's
+ *   inserted backslash into CommonMark's `\\` (an escaped backslash) followed by a live, cell-splitting
+ *   `|` — silently adding a column. Doubling backslashes first, before any escaping backslashes are
+ *   introduced, means the later steps' own backslashes are never mistaken for source content and never
+ *   re-escaped.
  * - **escape `|`** — an unescaped pipe would open a spurious extra column;
  * - **neutralize the comment sentinels** (`<!--`/`-->` → entities) — a value literally containing an
  *   end marker cannot then be mistaken for the region boundary (defense-in-depth beyond the structural
  *   location; matches {@link generateIndexes}'s `linkText`). The entities render identically.
  */
 function cell(text: string): string {
-  return singleLine(text).replace(/\|/g, "\\|").replace(/<!--/g, "&lt;!--").replace(/-->/g, "--&gt;");
+  return singleLine(text)
+    .replace(/\\/g, "\\\\")
+    .replace(/\|/g, "\\|")
+    .replace(/<!--/g, "&lt;!--")
+    .replace(/-->/g, "--&gt;");
 }
 
 /** Cell text for the id used as link **text**: additionally escape `[`/`]` so they cannot break the `[text](…)` syntax. */

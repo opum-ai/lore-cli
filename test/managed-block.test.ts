@@ -41,6 +41,29 @@ function doc(inner = ""): string {
   return `---\ntype: Story\ntitle: Bulk archive\n---\n\n# Bulk archive\n\nIntro prose.\n\n${region}\n\nOutro prose.\n`;
 }
 
+/**
+ * Count the real, cell-delimiting `|` characters in a GFM table row: a `|` is a delimiter unless an
+ * *odd* number of consecutive backslashes immediately precede it (CommonMark escape semantics — `\|`
+ * is a literal pipe, `\\|` is a literal backslash followed by a live delimiter, `\\\|` is a literal
+ * backslash followed by a literal pipe, and so on).
+ */
+function countUnescapedPipes(line: string): number {
+  let count = 0;
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] !== "|") {
+      continue;
+    }
+    let backslashes = 0;
+    for (let j = i - 1; j >= 0 && line[j] === "\\"; j--) {
+      backslashes++;
+    }
+    if (backslashes % 2 === 0) {
+      count++;
+    }
+  }
+  return count;
+}
+
 /** Run the thunk and return the {@link LoreError} it throws, failing the test if it does not throw. */
 function loreError(run: () => unknown): LoreError {
   try {
@@ -118,6 +141,18 @@ describe("regenerateTaskBlock — tolerance and cell hardening", () => {
   test("a pipe in a cell is escaped so it cannot open a spurious column", () => {
     const out = regenerateTaskBlock(doc(), [row("LORE-1", "a | b", "Done", "backlog/tasks/lore-1 - x.md")], OPTS);
     expect(out).toContain("| a \\| b | Done |");
+  });
+
+  test("a pre-existing backslash immediately before a pipe does not combine with the pipe-escape into a live delimiter (LORE-154)", () => {
+    const out = regenerateTaskBlock(doc(), [row("LORE-1", "x\\|y", "Done", "backlog/tasks/lore-1 - x.md")], OPTS);
+    const line = out.split("\n").find((l) => l.includes("LORE-1"));
+    expect(line).toBeDefined();
+    // Row shape is `| [id](link) | title | status |` — exactly 4 real, cell-delimiting pipes; the
+    // title's own escaped `\|` must not count as a 5th.
+    expect(countUnescapedPipes(line as string)).toBe(4);
+    // The backslash is doubled *before* the pipe is escaped, so the cell renders as a literal
+    // backslash (`\\`) followed by a literal, non-delimiting pipe (`\|`) — reproducing `x\|y` verbatim.
+    expect(out).toContain("| x\\\\\\|y | Done |");
   });
 
   test("brackets in the link-text id are escaped so they cannot break the `[text](…)` syntax", () => {
