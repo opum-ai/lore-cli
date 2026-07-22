@@ -346,6 +346,41 @@ describe("lore sync — [reconcile.overrides] (LORE-26, ADR-0009 §3)", () => {
   });
 });
 
+// ── LORE-119: a concurrent on-disk edit survives a status-changing write ─────────
+
+describe("lore sync — LORE-119: a concurrent on-disk edit survives a status-changing write", () => {
+  test("a doc edited on disk during the Backlog round-trip keeps that edit after its status is reconciled", async () => {
+    const path = "stories/x.md";
+    writeDoc(path, storyDoc("X", ["lore-1"], "todo"));
+
+    // gatherReconciliation resolves every linked task id via adapter.viewTask AFTER the bundle has
+    // already been loaded (and the pre-round-trip `concept` snapshot captured) — the exact async gap
+    // LORE-119 describes. This adapter simulates a concurrent edit (e.g. a human's direct edit, or
+    // another `lore` invocation) landing on `path` during that gap, on the first `viewTask` call.
+    const inner = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+    let mutated = false;
+    const adapter: BacklogAdapter = {
+      ...inner,
+      async viewTask(id: string) {
+        if (!mutated) {
+          mutated = true;
+          const abs = join(root, "docs", path);
+          const onDisk = readFileSync(abs, "utf8");
+          writeFileSync(abs, onDisk.replace("# X\n", "# X\n\nA concurrently-added paragraph.\n"));
+        }
+        return inner.viewTask(id);
+      },
+    };
+
+    const { code } = await syncCmd([], adapter, { gitSpawn: cleanGitSpawn() });
+    expect(code).toBe(EXIT_OK);
+
+    const final = readDoc(path);
+    expect(final).toContain("status: done"); // the status change itself still landed
+    expect(final).toContain("A concurrently-added paragraph."); // the concurrent edit was NOT discarded
+  });
+});
+
 // ── [paths…] scoping ─────────────────────────────────────────────────────────────
 
 describe("lore sync — [paths…] scoping", () => {
