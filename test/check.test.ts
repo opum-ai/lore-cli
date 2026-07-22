@@ -88,27 +88,26 @@ describe("extractHeadingSlugs", () => {
     expect([...slugs]).toEqual(["the-foo-bar"]);
   });
 
-  test("a heading made of an image includes its alt text (LORE-136)", () => {
-    // GitHub renders `![Alt Text](img.png)` inside a heading as visible "Alt Text" and slugs
-    // the heading from that rendered text — mdast never turns the image into a `text` node,
-    // so nodeText must read the image's `alt` field directly, matching mdast-util-to-string's
-    // default `includeImageAlt: true`.
+  test("a heading made of only an image contributes no text (LORE-136)", () => {
+    // GitHub renders an <img> with empty textContent regardless of its `alt` attribute, so
+    // an image-only heading gets no visible text and no anchor at all (verified empirically
+    // against GitHub's production renderer on 2026-07-22). mdast-util-to-string's
+    // `includeImageAlt: true` default does NOT apply here — that is a remark-ecosystem
+    // convention, not GitHub's actual slugging behavior.
     const slugs = extractHeadingSlugs("## ![Alt Text](img.png)\n");
-    expect([...slugs]).toEqual(["alt-text"]);
+    expect([...slugs]).toEqual([""]);
   });
 
-  test("an image's alt text combines with surrounding heading text", () => {
+  test("an image's alt text does not combine with surrounding heading text (matches GitHub)", () => {
+    // "Before ![Alt Text](img.png) After" renders as "Before  After" (the image contributes
+    // nothing between the two spaces), which GitHub slugs to "before--after" — a double
+    // hyphen from the two adjacent spaces, not "before-alt-text-after".
     const slugs = extractHeadingSlugs("## Before ![Alt Text](img.png) After\n");
-    expect([...slugs]).toEqual(["before-alt-text-after"]);
+    expect([...slugs]).toEqual(["before--after"]);
   });
 
-  test("an imageReference's alt text is included the same way", () => {
+  test("an imageReference contributes no text the same way", () => {
     const slugs = extractHeadingSlugs("## ![Alt Text][ref]\n\n[ref]: img.png\n");
-    expect([...slugs]).toEqual(["alt-text"]);
-  });
-
-  test("an image with no alt text contributes nothing (not a literal 'undefined'/'null')", () => {
-    const slugs = extractHeadingSlugs("## ![](img.png)\n");
     expect([...slugs]).toEqual([""]);
   });
 });
