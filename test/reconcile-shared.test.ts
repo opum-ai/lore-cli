@@ -14,6 +14,7 @@ import {
   gatherReconciliation,
   linkedConcepts,
   resolveTaskDetails,
+  TASK_DETAILS_CONCURRENCY,
   type TaskResolution,
 } from "../src/commands/reconcile-shared";
 import { LoreError } from "../src/errors";
@@ -214,5 +215,69 @@ describe("resolveTaskDetails", () => {
     };
     await resolveTaskDetails(counting, ["lore-1", "LORE-1"]);
     expect(calls).toBe(2);
+  });
+
+  // ── LORE-111: bounded concurrency ──────────────────────────────────────────────────────────
+
+  test("never runs more than TASK_DETAILS_CONCURRENCY viewTask calls in flight at once", async () => {
+    // Comfortably more distinct ids than the cap, so the pool must refill at least twice — a
+    // single un-bounded burst (the pre-fix Promise.allSettled(...map(...)) behavior) would let
+    // `active` climb past the cap immediately.
+    const total = TASK_DETAILS_CONCURRENCY * 3 + 2;
+    const ids = Array.from({ length: total }, (_, i) => `lore-${i}`);
+    let active = 0;
+    let peak = 0;
+    const base = fakeAdapter([]);
+    const instrumented = {
+      ...base,
+      async viewTask(id: string): Promise<BacklogTaskDetail | null> {
+        active++;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        active--;
+        return makeTask(id.toUpperCase());
+      },
+    };
+
+    const resolved = await resolveTaskDetails(instrumented, ids);
+
+    expect(peak).toBeLessThanOrEqual(TASK_DETAILS_CONCURRENCY);
+    expect(peak).toBe(TASK_DETAILS_CONCURRENCY); // the pool saturates — this isn't just trivially bounded
+    expect(active).toBe(0); // every worker settled
+    expect(resolved.size).toBe(total);
+    for (const id of ids) {
+      expect(resolved.get(id)?.ok).toBe(true);
+    }
+  });
+
+  test("preserves no-throw / per-id ok:false-on-rejection under the concurrency cap", async () => {
+    // A mix of rejected, not-found (null), and successful viewTask calls, at a volume larger than
+    // the cap — resolveTaskDetails must still never throw/reject, and every id must land in the
+    // returned map with the right ok:true/false outcome, regardless of pool scheduling.
+    const total = TASK_DETAILS_CONCURRENCY * 2 + 3;
+    const ids = Array.from({ length: total }, (_, i) => `lore-${i}`);
+    const base = fakeAdapter([]);
+    const instrumented = {
+      ...base,
+      async viewTask(id: string): Promise<BacklogTaskDetail | null> {
+        const i = Number(id.split("-")[1]);
+        if (i % 3 === 0) {
+          throw new Error(`boom for ${id}`); // rejected promise
+        }
+        if (i % 3 === 1) {
+          return null; // not-found
+        }
+        return makeTask(id.toUpperCase());
+      },
+    };
+
+    const resolved = await resolveTaskDetails(instrumented, ids);
+
+    expect(resolved.size).toBe(total);
+    for (const id of ids) {
+      const i = Number(id.split("-")[1]);
+      const entry = resolved.get(id);
+      expect(entry?.ok).toBe(i % 3 === 2);
+    }
   });
 });
