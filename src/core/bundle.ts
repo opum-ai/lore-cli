@@ -412,8 +412,17 @@ export function conceptNotInBundle(id: string): LoreError {
  * Resolve a frontmatter concept reference to a concept id, or `null` if it
  * dangles. A ref may be authored as a **bundle-relative id** (how `lore supersede`
  * writes it, e.g. `adr/0009-x`) or as a **relative path** (e.g. `../adr/0009-x.md`);
- * the id form is tried first, then the path form resolved against the referring
- * file's directory.
+ * the path form is tried first (joined against the referring file's directory via
+ * {@link resolvePath}), and only if that fails to name a concept is the raw ref
+ * tried as a bundle-relative id.
+ *
+ * The path form is tried first because it is the more specific interpretation: it is
+ * anchored to *this* referring file's directory, so when it resolves to a real
+ * concept that is almost certainly the concept the author meant — even if the same
+ * ref string, read bare, also happens to equal some unrelated concept's bundle-root
+ * id (LORE-134). The bare-id form is a fallback for exactly the refs that are *not*
+ * dir-joinable to anything real, which is what `lore supersede` writes (a full id
+ * from the bundle root, not relative to the referring file).
  *
  * Unlike a body link ({@link internalTarget}), a ref is **not** required to carry a
  * `.md` suffix — the bare-id form is exactly what lore writes — which is why the
@@ -440,11 +449,12 @@ export function resolveRef(ref: string, dir: string, byId: ReadonlyMap<string, C
   if (decoded === "") {
     return null;
   }
-  const asId = idFromPath(decoded);
-  if (byId.has(asId)) {
-    return asId; // bundle-relative id form
+  const asPath = resolvePath(decoded, dir, byId);
+  if (asPath !== null) {
+    return asPath; // relative-path form, dir-joined — wins over a same-string root id
   }
-  return resolvePath(decoded, dir, byId); // relative-path form
+  const asId = idFromPath(decoded);
+  return byId.has(asId) ? asId : null; // bundle-relative id form
 }
 
 /**
