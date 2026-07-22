@@ -16,6 +16,7 @@
  */
 
 import type { GitAdapter, GitCommit, GitLogRange } from "../core/log";
+import { DOCS_DIR } from "../core/scaffold";
 import { LoreError, stderrHint } from "../errors";
 
 /** A control-character line prefixing every commit's formatted header — never a legitimate subject or file path. */
@@ -27,14 +28,28 @@ const PRETTY_FORMAT = `${SENTINEL}%n%H%n%cI%n%s`;
 /** Build the real {@link GitAdapter}, shelling `git` in `cwd` (the repo root). */
 export function realGitAdapter(cwd: string): GitAdapter {
   return {
-    history(range: GitLogRange): readonly GitCommit[] {
+    history(range: GitLogRange, root: string = DOCS_DIR): readonly GitCommit[] {
       // `--relative` (a no-op when `cwd` is the git repository's own top level) makes `--name-only`
       // report paths relative to `cwd` instead of git's default of always relative to the repo's
       // top level: without it, a bundle nested below the repo root (docs/backlog not at the git
       // top level) would get every file path prefixed with that nesting, which core/log.ts's
       // `isUnderRoot` (matched against the bundle-relative `docs` root) would never recognize as
       // under the bundle -- silently producing an empty log.md forever.
-      const args = ["log", "--name-only", "--relative", `--pretty=format:${PRETTY_FORMAT}`, ...rangeArgs(range)];
+      //
+      // The trailing `-- <root>` pathspec (LORE-143) is what actually scopes the walk: git prunes
+      // any commit whose diff touches nothing under `root` *before* it ever reaches this process,
+      // rather than this adapter buffering the entire repository's history for `core/log.ts` to
+      // discard commit-by-commit. Interpreted relative to `cwd`, exactly like `--relative` above, so
+      // the same nested-bundle case still scopes to `<cwd>/<root>`, not the repo top level's.
+      const args = [
+        "log",
+        "--name-only",
+        "--relative",
+        `--pretty=format:${PRETTY_FORMAT}`,
+        ...rangeArgs(range),
+        "--",
+        root,
+      ];
       const proc = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
       if (proc.exitCode !== 0) {
         throw new LoreError(
