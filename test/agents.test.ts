@@ -431,4 +431,21 @@ describe("command-surface lockstep — the bridge names only real commands", () 
       expect(stderr).not.toContain("unknown command");
     }
   });
+
+  test("every real dispatch case in cli.ts's router is advertised by the bridge (not omitted, LORE-142)", () => {
+    // Grounded in the router source, scoped to the `switch (parsed.command)` block (so an
+    // unrelated switch/case elsewhere in cli.ts can't pollute the set) — the reverse of the
+    // "not a phantom" test above. Without this direction, a command added to (or kept in) the
+    // router but never added to LORE_COMMANDS silently never reaches the generated SKILL.md.
+    const source = readFileSync(new URL("../src/cli.ts", import.meta.url), "utf8");
+    const switchStart = source.indexOf("switch (parsed.command)");
+    const dispatchBlock = source.slice(switchStart, source.indexOf("default:", switchStart));
+    // Capture the full quoted token (not just [a-z]+) so a hyphenated/digit command can't slip the guard.
+    const dispatched = [...dispatchBlock.matchAll(/case "([^"]+)":/g)].map((m) => m[1] as string);
+    expect(dispatched.length).toBeGreaterThan(10); // sanity: the switch block was located and parsed
+    const advertised = new Set(LORE_COMMANDS.map((c) => c.name));
+    for (const name of dispatched) {
+      expect(advertised.has(name)).toBe(true);
+    }
+  });
 });

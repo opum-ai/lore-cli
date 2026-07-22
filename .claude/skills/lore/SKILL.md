@@ -45,6 +45,7 @@ detail with `lore instructions <topic>`:
 - `context`       Assemble a concept + neighbor summaries within a token budget
 - `instructions`  Print task-scoped agent guidance on demand
 - `agents`        Regenerate this bridge (SKILL.md + the CLAUDE.md nudge)
+- `help`          Show help, or the machine-readable command manifest under --json
 
 ## Machine contract
 

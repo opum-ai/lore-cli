@@ -72,6 +72,7 @@ export const LORE_COMMANDS: readonly CommandSummary[] = [
   { name: "context", summary: "Assemble a concept + neighbor summaries within a token budget" },
   { name: "instructions", summary: "Print task-scoped agent guidance on demand" },
   { name: "agents", summary: "Regenerate this bridge (SKILL.md + the CLAUDE.md nudge)" },
+  { name: "help", summary: "Show help, or the machine-readable command manifest under --json" },
 ];
 
 /** The four detail topics `lore instructions <topic>` serves, mirrored (not restated) by the bridge. */
