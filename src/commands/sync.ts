@@ -9,9 +9,14 @@
  * bundle `index.md` (`core/indexes.ts`) and the git-history-derived `log.md` (`core/log.ts`, via the
  * real `git log`-shelling adapter in `adapters/git.ts`). Every write is a byte-diff against the
  * current on-disk content first, so a clean tree is a true no-op (AC#1) — and, unless `--dry-run`,
- * each changed file is written atomically ({@link writeFileAtomic}), since this is the one command
- * that can write many files in a single invocation.
+ * the whole write set is committed **all-or-nothing** via {@link writeManyAtomicOrRollback}
+ * (LORE-120): each file is still written atomically ({@link writeFileAtomic}), but if any write in
+ * the set throws partway through, every file already written *in that same run* is rolled back to
+ * its pre-run bytes (or removed, if it did not exist before) rather than left in a mixed old/new
+ * state. Since this is the one command that can write many files in a single invocation, it is also
+ * the one that needs this cross-file guarantee, on top of `writeFileAtomic`'s own per-file one.
  *
+
  * **A linked task id that no longer resolves aborts the whole run before any write** (`not_found`,
  * exit 3) — every linked task, across every scoped concept, is resolved up front, mirroring
  * `commands/link.ts`'s "validate before write" precedent: a doc's `status` and managed block must
@@ -53,7 +58,7 @@ import {
 } from "../state";
 import { parseCommandArgs } from "./args";
 import { readIndexBytes, readSource } from "./discover";
-import { assertNoSymlinkInAnyPath, ensureDir, writeFileAtomic } from "./fswrite";
+import { type AtomicRollbackWrite, assertNoSymlinkInAnyPath, ensureDir, writeManyAtomicOrRollback } from "./fswrite";
 import { gatherReconciliation, linkedConcepts, readReconcileConfig } from "./reconcile-shared";
 
 /** The reserved log file name, excluded from concept scanning (mirrors `rename.ts`'s index handling). */
@@ -149,7 +154,11 @@ export async function runSync(options: SyncOptions): Promise<number> {
   }
   const targets = await gatherReconciliation(options.root, scoped, options.adapter, config);
 
-  const writes = new Map<string, string>(); // bundle-relative path -> new bytes
+  // bundle-relative path -> { before: pre-run bytes (undefined if the file didn't exist), after: new
+  // bytes }. `before` is captured here, at diff time, alongside `after` — never re-derived later —
+  // so a mid-run rollback (LORE-120) always restores exactly what was actually on disk before this
+  // run touched it, not a re-read that could itself race against a concurrent edit.
+  const writes = new Map<string, { before: string | undefined; after: string }>();
   for (const { concept, newStatus, rows } of targets) {
     const docPath = `${DOCS_DIR}/${concept.path}`;
     const original = readSource(join(docsRoot, concept.path), docPath);
@@ -165,7 +174,7 @@ export async function runSync(options: SyncOptions): Promise<number> {
 
     const final = regenerateTaskBlock(base, rows, { docPath });
     if (final !== original) {
-      writes.set(concept.path, final);
+      writes.set(concept.path, { before: original, after: final });
     }
   }
 
@@ -183,11 +192,17 @@ export async function runSync(options: SyncOptions): Promise<number> {
       options.root,
       [...writes.keys()].map((path) => `${DOCS_DIR}/${path}`),
     );
-    for (const [path, bytes] of writes) {
-      const abs = join(docsRoot, path);
+    // All-or-nothing across the whole set (LORE-120): every parent directory is created up front
+    // (mkdir -p is itself idempotent — nothing to roll back there), then the actual byte writes go
+    // through writeManyAtomicOrRollback, which undoes every write already applied in this same run
+    // if a later one throws, rather than leaving an arbitrary prefix of `writes` committed and the
+    // rest not.
+    const rollbackWrites: AtomicRollbackWrite[] = [];
+    for (const [path, { before, after }] of writes) {
       ensureDir(options.root, dirname(`${DOCS_DIR}/${path}`));
-      writeFileAtomic(abs, bytes, `${DOCS_DIR}/${path}`);
+      rollbackWrites.push({ abs: join(docsRoot, path), relPath: `${DOCS_DIR}/${path}`, before, after });
     }
+    writeManyAtomicOrRollback(rollbackWrites);
   }
 
   let backlogCommit: BacklogCommitResult = { committed: false, files: [] };
@@ -227,13 +242,14 @@ function regenerateIndexAndLog(
   options: SyncOptions,
   docsRoot: string,
   graph: BundleGraph,
-  writes: Map<string, string>,
+  writes: Map<string, { before: string | undefined; after: string }>,
 ): void {
   const diskIndexBytes = readIndexBytes(docsRoot);
   const regeneratedIndexes = generateIndexes(graph, { existing: diskIndexBytes });
   for (const [path, bytes] of regeneratedIndexes) {
-    if (bytes !== diskIndexBytes.get(path)) {
-      writes.set(path, bytes);
+    const before = diskIndexBytes.get(path);
+    if (bytes !== before) {
+      writes.set(path, { before, after: bytes });
     }
   }
 
@@ -245,7 +261,7 @@ function regenerateIndexAndLog(
       : buildLog(options.gitAdapter ?? realGitAdapter(options.root), { to: headSha }, { root: DOCS_DIR });
   const existingLog = readFileIfPresent(join(docsRoot, LOG_FILE), `${DOCS_DIR}/${LOG_FILE}`);
   if (logBytes !== existingLog) {
-    writes.set(LOG_FILE, logBytes);
+    writes.set(LOG_FILE, { before: existingLog, after: logBytes });
   }
 }
 
