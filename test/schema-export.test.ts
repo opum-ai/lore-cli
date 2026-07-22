@@ -295,6 +295,41 @@ describe("lore schema export — pruning stale schemas (full export)", () => {
   );
 });
 
+describe("lore schema export — leaf-symlink guard on the written file itself (LORE-123)", () => {
+  // POSIX-only, matching this codebase's existing symlink tests' own skip guard (e.g. init.test.ts).
+  test.skipIf(process.platform === "win32")(
+    "refuses to write through a symlink planted at a schema file's own path, and leaves the external target untouched",
+    () => {
+      const outside = mkdtempSync(join(tmpdir(), "lore-schema-outside-"));
+      try {
+        const external = join(outside, "external.txt");
+        writeFileSync(external, "ORIGINAL EXTERNAL CONTENTS");
+
+        // Seed a normal export first so `.lore/schemas/` exists, then swap one of its files for a
+        // symlink pointing outside the repo — the exact reproduction from the task description.
+        exportSchemas(["export"]);
+        const target = join(root, ".lore/schemas/story.schema.json");
+        rmSync(target);
+        symlinkSync(external, target);
+
+        let thrown: unknown;
+        try {
+          runSchema({ root, output: JSON_CTX, stdout: capture(), args: ["export"] });
+        } catch (err) {
+          thrown = err;
+        }
+        expect(thrown).toBeInstanceOf(LoreError);
+        expect((thrown as LoreError).type).toBe("conflict");
+        // The symlink itself is never followed for the write, and the file it points at keeps its
+        // original bytes — no silent overwrite of something outside the repo.
+        expect(readFileSync(external, "utf8")).toBe("ORIGINAL EXTERNAL CONTENTS");
+      } finally {
+        rmSync(outside, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
 describe("lore schema export — slug-collision guard (load-time)", () => {
   test("a profile whose two type names share a schema slug fails loudly", () => {
     mkdirSync(join(root, ".lore"), { recursive: true });
