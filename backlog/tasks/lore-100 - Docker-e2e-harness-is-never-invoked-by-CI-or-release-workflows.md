@@ -4,7 +4,7 @@ title: Docker e2e harness is never invoked by CI or release workflows
 status: In Progress
 assignee: []
 created_date: '2026-07-21 22:26'
-updated_date: '2026-07-22 14:30'
+updated_date: '2026-07-22 15:14'
 labels:
   - codex-review-followup
   - build-ci-config
@@ -35,5 +35,5 @@ The ~1500-line Docker e2e test harness under docker/e2e/ (docker-compose.yml, Do
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-HELD pre-merge (wave 3, 2026-07-22). Implementation is complete and Fable-APPROVED (all 3 ACs independently confirmed; PUID/PGID + timeout fixes verified end-to-end; scope exact; local Docker run reproduced the gate wiring). Branch feature/LORE-100 @ 89f8133 is pushed and its worktree is preserved at /Volumes/external/repos/lore.worktrees/LORE-100 — do NOT re-implement; MERGE it once unblocked. Fable ESCALATED merge only: the new required docker-e2e CI gate is red-at-birth because docker/e2e/run-e2e.sh:1298 asserts lore check is NOT profile-bearing, contradicting LORE-89 (check.ts:47,142 loadProfile). Blocked on LORE-176 (fix the stale assertion) AND a user decision on whether to wire a Docker CI gate at all. See tracker doc-3 wave-3 log.
+HELD pre-merge (wave 3, 2026-07-22). Impl complete + Fable-APPROVED (all 3 ACs confirmed; PUID/PGID + timeout fixes verified end-to-end via a real local Docker run; scope exact). Branch feature/LORE-100 @ 89f8133 pushed; worktree kept at /Volumes/external/repos/lore.worktrees/LORE-100 — do NOT re-implement; MERGE once unblocked. USER DECISION 2026-07-22: WIRE THE GATE. Next restore: (1) land LORE-176 (fix stale run-e2e.sh:1298 assertion vs LORE-89), (2) verify the full harness green via a real `docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e` run (0 failed scenarios), (3) rebase + re-verify + merge this held branch. Dep LORE-176. See tracker doc-3 wave-3 log.
 <!-- SECTION:NOTES:END -->

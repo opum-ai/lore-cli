@@ -3,7 +3,7 @@ id: doc-3
 title: Backlog campaign tracker — Codex review follow-ups (round 2)
 type: other
 created_date: '2026-07-21 22:27'
-updated_date: '2026-07-22 14:32'
+updated_date: '2026-07-22 15:14'
 ---
 Round 2 of the Codex-review follow-up campaign (see [[Backlog campaign tracker]] / doc-1 for
 round 1, LORE-69..95, which closed all 20 high-severity findings from doc-2). Re-initialised on
@@ -256,3 +256,4 @@ fallback.)
     resolveRollup (already queued as LORE-125) and lore link (link.ts:180/212/346) → **filed LORE-177** for
     the link.ts half. (2) *info* — LORE-116's fswrite.ts hunks are docstring-only (benign; no conflict for
     deferred LORE-117).
+  - **USER DECISION (2026-07-22): WIRE THE GATE.** The user approved making docker/e2e a CI gate. Plan for the next restore: (1) land LORE-176 (fix the run-e2e.sh:1298 stale assertion), (2) verify the full harness green via a real `docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e` run (0 failed scenarios), (3) rebase + re-verify + merge the held `feature/LORE-100`; then branch protection can mark docker-e2e a required check. Do NOT re-ask this decision.
