@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 22:26'
-updated_date: '2026-07-22 14:02'
+updated_date: '2026-07-22 14:09'
 labels:
   - codex-review-followup
   - build-ci-config
@@ -55,10 +55,19 @@ Verification evidence:
 - bash -n docker/e2e/run-e2e.sh -> OK (file unchanged by this task; sanity-checked since the plan mentions shell scripts, though this task's diff never touches it).
 
 Pre-existing, OUT-OF-SCOPE finding (not fixed, not in cited files): the baseline run's 1 persistent failure is docker/e2e/run-e2e.sh's 'AC4: lore check is NOT profile-bearing -- byte-identical outcome with a malformed profile' (written for LORE-64, asserting lore check does NOT load .lore/profile.toml). LORE-89 (Done) later made check.ts's tryConceptsForBundle intentionally profile-aware (imports loadProfile) so a malformed profile now correctly makes 'lore check' fail loud (exit 6) -- this is LORE-89's INTENDED behavior, not a src/ regression. The e2e assertion is simply stale relative to LORE-89 and needs its own follow-up to update/remove it (confirmed via a temporary, reverted debug diff dump: baseline exit 0 w/ a check.report body vs malformed exit 6 w/ empty stdout -- exactly the fail-loud contract LORE-89 introduced). Left as-is per this task's scope (.github/workflows/* only, no docker/e2e edits) -- surfaced for the campaign orchestrator/user to file as separate follow-up work.
+
+Fable review (request_changes) follow-up fixes applied to .github/workflows/ci.yml:
+- HIGH (fixed): docker-e2e's compose invocation now passes PUID="$(id -u)" PGID="$(id -g)" (the exact invocation docker-compose.yml's own header documents). Without it, ubuntu-latest's runner uid (1001) mismatches the container's default bun user (1000:1000), so every append to the bind-mounted docker/e2e/results/report.jsonl EACCESes and run-e2e.sh Phase 25 (LORE-103 AC1) exits 1 even on an all-PASS harness, with the artifact upload always empty. Not catchable from macOS Docker Desktop (VirtioFS uid-maps bind mounts). Re-verified with actionlint (clean).
+- HIGH (not fixed, out of this task's scope): the harness baseline is genuinely red -- run-e2e.sh's LORE-64 'lore check is NOT profile-bearing' assertion contradicts LORE-89's intentional check.ts profile-awareness (src/commands/check.ts:47,142). Fix lives in docker/e2e/run-e2e.sh, which this task is scoped to leave untouched, and this fix-pass is likewise scoped to .github/workflows/* only (no tracker-edit/mint-ID permission). Flagging again for the orchestrator: file the run-e2e.sh follow-up and land it before/with this wiring, or get explicit sign-off for a temporarily-red required gate.
+- MEDIUM (mitigated): timeout-minutes raised 30 -> 45 since real ubuntu-latest runner timing for this job has never been measured (full cold docker build, no layer cache). Comment updated accordingly; still worth re-tightening once real timing is observed.
+- LOW (documented, no diff change possible): AC2's 'required check' in the branch-protection sense is a repo-settings change outside any workflow file's reach -- the diff satisfies the AC's own gloss (a failing scenario fails the workflow run). Branch protection must be updated separately by the orchestrator/user once the gate is green, or docker-e2e remains advisory.
+- LOW (positive, re-confirmed): tsc --noEmit clean; bun test --isolate --timeout=10000 -> 1718 pass / 0 fail / 4839 expect() / 45 files; actionlint clean on ci.yml + release.yml.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
 Added a new 'docker-e2e' job to .github/workflows/ci.yml that builds and runs the docker/e2e/ hermetic harness (docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e) on every push (dev/main) and pull_request the workflow already triggers on, uploading docker/e2e/results/report.jsonl as a build artifact for triage. --exit-code-from e2e is load-bearing: plain 'docker compose up' always exits 0 regardless of the service's own tally (LORE-104), so without it the job would be a no-op. No docker/e2e/* source files were touched (out of task scope). Verified: actionlint + yaml parse clean; real local Docker run confirms the job command's exit code reflects the harness's real pass/fail count (AC1/AC2); a temporarily-reverted (then restored, git-clean) LORE-61 assertion proved a deliberately broken scenario flips the job to failing (AC3); bun run typecheck clean; bun test --isolate --timeout=10000 -> 1718 pass/0 fail across 45 files. Noted for follow-up (not fixed, out of scope): one pre-existing e2e assertion ('lore check is NOT profile-bearing') is now stale against LORE-89's intentional check.ts profile-awareness change and needs its own fix in docker/e2e/run-e2e.sh.
+
+Fable review round: fixed the PUID/PGID compose-invocation gap (would have EACCESed report writes and failed the job on every real ubuntu-latest run despite an all-PASS harness) and raised timeout-minutes 30->45 (unmeasured on real runners). The LORE-64-vs-LORE-89 stale e2e assertion and the branch-protection 'required check' repo-setting remain open, out-of-scope items for the orchestrator to sequence separately.
 <!-- SECTION:FINAL_SUMMARY:END -->
