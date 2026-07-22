@@ -25,7 +25,7 @@
  * Validation lives here: the sole subcommand is `export` (anything else is a `usage` error, exit 2);
  * a repeated or value-less `--out`/`--type`, an unknown `--type`, or an `--out` that escapes the repo
  * is a `usage` error; a non-writable output directory surfaces as a `denied` error (exit 4) from the
- * shared write seam. All file I/O is here ({@link ensureDir}/{@link writeFileOverwriting}/prune); the
+ * shared write seam. All file I/O is here ({@link ensureDir}/{@link writeFileNoFollow}/prune); the
  * byte computation stays pure in `core/schema.ts`.
  */
 
@@ -35,7 +35,7 @@ import { type CompiledType, loadProfile } from "../core/profile";
 import { canonicalType, emitSchemaFiles, SCHEMAS_DIR, type SchemaFile } from "../core/schema";
 import { EXIT_OK, LoreError, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { ensureDir, findSymlinkSegment, ioError, writeFileOverwriting } from "./fswrite";
+import { ensureDir, findSymlinkSegment, ioError, writeFileNoFollow } from "./fswrite";
 
 /** Options for {@link runSchema}; `root` and the stream are injectable for tests. */
 export interface SchemaOptions {
@@ -106,8 +106,15 @@ export function runSchema(options: SchemaOptions): number {
   ensureDir(options.root, outArg);
   for (const file of files) {
     // `outArg` is confined to the repo, so `file.path` (`<outArg>/<slug>.schema.json`) is repo-relative
-    // and `join(root, file.path)` is its absolute target — no need to re-derive the directory.
-    writeFileOverwriting(join(options.root, file.path), file.contents, file.path);
+    // and `join(root, file.path)` is its absolute target — no need to re-derive the directory. Uses
+    // `writeFileNoFollow`, not the plain `writeFileOverwriting`, because `emitSchemaFiles`'s output paths
+    // are computed from the profile, not read from an existing file lore just walked — unlike
+    // `writeFileOverwriting`'s other callers (`rename`/`supersede`), nothing upstream has ever confirmed
+    // `file.path`'s leaf isn't a symlink. A leaf symlink at e.g. `.lore/schemas/story.schema.json`
+    // pointing outside the repo would otherwise have a plain `writeFileSync` follow it and silently
+    // overwrite whatever it points to (LORE-123); `writeFileNoFollow`'s `O_NOFOLLOW` open refuses that
+    // with the same `conflict` `LoreError` the ancestor-symlink guard (LORE-93) already throws.
+    writeFileNoFollow(join(options.root, file.path), file.contents, file.path);
   }
   // A full export to the managed default directory owns its schema set, so a type dropped from the
   // profile leaves a stale schema behind; prune it there. A single-`--type` export is surgical and
