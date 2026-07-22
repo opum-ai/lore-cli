@@ -44,7 +44,7 @@ report_write_failed() {
 
 record() {
   local name="$1" status="$2" expected="$3" actual="$4" out="$5" err="$6"
-  jq -n \
+  jq -nc \
     --arg name "$name" --arg status "$status" \
     --argjson expected "$expected" --argjson actual "$actual" \
     --rawfile stdout "$out" --rawfile stderr "$err" \
@@ -137,7 +137,7 @@ check() {
     status=FAIL
     FAIL=$((FAIL + 1))
   fi
-  jq -n --arg name "$name" --arg status "$status" '{name:$name,status:$status}' >>"$REPORT" \
+  jq -nc --arg name "$name" --arg status "$status" '{name:$name,status:$status}' >>"$REPORT" \
     || report_write_failed "$name"
   log "[$status] $name"
   [ "$status" = "PASS" ]
