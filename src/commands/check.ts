@@ -730,6 +730,16 @@ const LIVENESS_TIMEOUT_MS = 5000;
 const LIVENESS_CONCURRENCY = 8;
 /** Redirects a single URL may FOLLOW before the probe gives up (so up to `MAX_REDIRECTS + 1` fetches total: the original request plus this many hops) — bounds a malicious/misconfigured redirect chain, mirroring browsers' own conservative caps. */
 const MAX_REDIRECTS = 10;
+/**
+ * The most DISTINCT URLs a single `--external` pass will actually probe. `LIVENESS_CONCURRENCY`
+ * and `LIVENESS_TIMEOUT_MS` only bound how FAST the worklist drains, not how BIG it may be — a
+ * bundle with tens of thousands of external links would still enqueue and probe every one of
+ * them, so the whole pass's wall-clock time (and open-socket count) would scale unboundedly with
+ * the bundle's size. URLs beyond this cap are never probed; each is instead reported as its own
+ * advisory `external-link` finding ({@link probeLiveness}) so an oversized worklist degrades
+ * visibly rather than just running for an unbounded amount of time.
+ */
+const LIVENESS_MAX_URLS = 500;
 
 /**
  * The real network probe: the global `fetch`, always requesting manual redirect handling (never
@@ -754,12 +764,18 @@ function prefixLinks(links: ExternalLink[], label: string, multi: boolean): Exte
 
 /**
  * Probe every external URL in the worklist for liveness and return one advisory `external-link`
- * warning per dead/unreachable/blocked occurrence (a live, allowed URL yields none). Each
- * **distinct** URL is probed once (deduplicated), under a bounded concurrency and a per-request
- * timeout, then the result is fanned back out to every `(file, url)` that referenced it — so a
- * URL linked from five files is probed once but reported five times. Pure-ish: all network goes
- * through the injected `fetchFn`/`resolveHost`, and a probe rejection becomes a finding, never a
- * throw.
+ * warning per dead/unreachable/blocked/skipped occurrence (a live, allowed URL yields none). Each
+ * **distinct** URL is probed at most once (deduplicated), under a bounded concurrency and a
+ * per-request timeout, then the result is fanned back out to every `(file, url)` that referenced
+ * it — so a URL linked from five files is probed once but reported five times. Pure-ish: all
+ * network goes through the injected `fetchFn`/`resolveHost`, and a probe rejection becomes a
+ * finding, never a throw.
+ *
+ * The worklist's distinct URLs are capped at {@link LIVENESS_MAX_URLS}: anything beyond the first
+ * `LIVENESS_MAX_URLS` (in first-seen order) is never probed at all — it is reported directly as a
+ * "was not probed: exceeded the liveness cap" finding, the same way a blocked or dead URL is
+ * reported, so an oversized worklist is visible in the report rather than just making the whole
+ * pass run for an unbounded amount of time.
  */
 async function probeLiveness(
   links: readonly ExternalLink[],
@@ -767,13 +783,17 @@ async function probeLiveness(
   resolveHost: ResolveHost,
 ): Promise<CheckFinding[]> {
   const uniqueUrls = [...new Set(links.map((link) => link.url))];
+  const probedUrls = uniqueUrls.slice(0, LIVENESS_MAX_URLS);
+  const skippedUrls = new Set(uniqueUrls.slice(LIVENESS_MAX_URLS));
   const failureByUrl = new Map<string, string | null>(); // null = alive; string = the failure reason
-  await mapWithConcurrency(uniqueUrls, LIVENESS_CONCURRENCY, async (url) => {
+  await mapWithConcurrency(probedUrls, LIVENESS_CONCURRENCY, async (url) => {
     failureByUrl.set(url, await probeOne(url, fetchFn, resolveHost));
   });
   const findings: CheckFinding[] = [];
   for (const link of links) {
-    const failure = failureByUrl.get(link.url);
+    const failure = skippedUrls.has(link.url)
+      ? `was not probed: exceeded the liveness cap of ${LIVENESS_MAX_URLS} distinct URLs`
+      : failureByUrl.get(link.url);
     if (failure != null) {
       findings.push({
         severity: "warning",
