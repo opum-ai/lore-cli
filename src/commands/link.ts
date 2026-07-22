@@ -176,8 +176,10 @@ export async function runLink(options: LinkOptions): Promise<number> {
   // rather than leaving the doc half-linked. Reads are independent so they run concurrently
   // (`allSettled`, not `all`: a rejection must not race ahead of an earlier id's not-found), but the
   // FIRST invalid id in argument order — not-found or a genuine read failure — is what gets
-  // reported, decided by an in-order scan after every read has settled.
-  const detailResults = await Promise.allSettled(taskIds.map((taskId) => adapter.viewTask(taskId)));
+  // reported, decided by an in-order scan after every read has settled. `verifiedViewTask` (LORE-177)
+  // also rejects a detail whose own `id` doesn't match the requested `taskId` — surfaced here as a
+  // rejected settle, reported identically to a genuine read failure.
+  const detailResults = await Promise.allSettled(taskIds.map((taskId) => verifiedViewTask(adapter, taskId)));
   for (let i = 0; i < taskIds.length; i++) {
     const taskId = taskIds[i] as string;
     const result = detailResults[i] as PromiseSettledResult<BacklogTaskDetail | null>;
@@ -212,8 +214,10 @@ export async function runLink(options: LinkOptions): Promise<number> {
     const outcomes = await runSequentially(taskIds, async (taskId) => {
       // Re-read fresh right before editing (not the up-front validation snapshot): matches
       // runUnlink's freshness and closes a narrow race where the task changed out-of-band
-      // between the existence check above and this edit.
-      const detail = await adapter.viewTask(taskId);
+      // between the existence check above and this edit. `verifiedViewTask` (LORE-177) also
+      // refuses a detail whose own `id` doesn't match `taskId` — never used to compute
+      // `desiredDocs`/labels below, which would otherwise borrow another task's data.
+      const detail = await verifiedViewTask(adapter, taskId);
       if (detail === null) {
         throw new Error(`task "${taskId}" no longer exists in Backlog`);
       }
@@ -360,7 +364,10 @@ async function removeBackRefs(
   // successful `editTask`, so a skip/no-op contributes nothing (mirrors runLink's editedFiles).
   const editedFiles: string[] = [];
   const outcomes = await runSequentially(taskIds, async (taskId) => {
-    const detail = await adapter.viewTask(taskId);
+    // `verifiedViewTask` (LORE-177) refuses a detail whose own `id` doesn't match `taskId` — never
+    // used below to decide `hadLabel`/`hadDoc` or compute `removeDoc`'s result, which would
+    // otherwise borrow (and remove from) another task's documentation entirely.
+    const detail = await verifiedViewTask(adapter, taskId);
     if (detail === null) {
       return "skipped" as const; // the task no longer exists in Backlog — nothing to clean up
     }
@@ -484,6 +491,37 @@ export async function moveBackRefs(
  */
 export function defaultAdapter(root: string): BacklogAdapter {
   return createBacklogAdapter(bunBacklogSpawn(undefined, root));
+}
+
+/**
+ * Call `adapter.viewTask(taskId)` and verify the returned detail's own `id` matches the requested
+ * `taskId` case-insensitively before trusting it — mirrors `reconcile-shared.ts`'s
+ * `resolveTaskDetails` (LORE-122). A misbehaving or ambiguous adapter handing back a DIFFERENT
+ * task's detail must never be trusted to decide a label/`--doc` edit or the `tasks:` pre-write
+ * check: every one of this module's `viewTask` consumers (the pre-write existence check, the
+ * back-reference edit's fresh re-read, and `unlink`'s removal read) uses the RETURNED detail's own
+ * `title`/`status`/`labels`/`documentation` to decide what to write, so a mismatch left unchecked
+ * would silently borrow another task's data while still writing under the REQUESTED `taskId`.
+ *
+ * Returns the verified detail, or `null` when the task genuinely doesn't exist (unchanged from
+ * `adapter.viewTask`'s own contract) — a mismatch is a THIRD outcome, always a thrown `LoreError`
+ * `not_found`, never folded into the `null` case (so a caller can't mistake "wrong task" for
+ * "no task" and silently skip a back-reference cleanup it should have refused outright instead).
+ */
+async function verifiedViewTask(adapter: BacklogAdapter, taskId: string): Promise<BacklogTaskDetail | null> {
+  const detail = await adapter.viewTask(taskId);
+  if (detail === null) {
+    return null;
+  }
+  if (detail.id.toLowerCase() !== taskId.toLowerCase()) {
+    throw new LoreError(
+      "not_found",
+      `task "${taskId}" resolved to a different task ("${detail.id}") — refusing to use it`,
+      "this points at a Backlog adapter bug or an id collision, not a missing task — verify the task id with `backlog task view` and report the mismatch",
+      { taskId, resolvedId: detail.id },
+    );
+  }
+  return detail;
 }
 
 /** The `git`-authored commit message for `lore link`'s `backlog/` writes (its `doc:` label additions). */
