@@ -49,10 +49,10 @@ jobs:
     needs: setup
     runs-on: ubuntu-latest
     env:
-      PLATFORM_NAMES: ${{ needs.setup.outputs.names }}
+      PLATFORM_MATRIX: ${{ needs.setup.outputs.matrix }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - name: Assert version, license, author, repository, and the optionalDependencies pin all match
+      - name: Assert version, license, author, repository, os/cpu, binary filename, and the optionalDependencies pin all match
         # bin/lore.cjs resolves a platform optionalDependency purely by name; npm silently
         # SKIPS it if the installed version doesn't satisfy root's pinned range — for an
         # exact pin, "doesn't exactly match." A missed version bump on any of: the root
@@ -60,8 +60,11 @@ jobs:
         # for that package, would surface as "no compiled binary found" for a fully
         # supported platform, indistinguishable from a genuinely unsupported one. license/
         # author/repository drift is lower-stakes (cosmetic/registry-page metadata) but
-        # checked here too since it is duplicated the same way. Fail loud, before any
-        # compile work, naming every mismatch found (not just the first).
+        # checked here too since it is duplicated the same way. os/cpu drift is higher-stakes
+        # again: it is what gates npm's optionalDependencies install decision, so a wrong
+        # value either silently skip-installs a platform package on its own matching host or
+        # wrongly installs it elsewhere. Fail loud, before any compile work, naming every
+        # mismatch found (not just the first).
         run: |
           # The ${...} below are JS template literals for `node -e`, not shell
           # interpolation — single-quoting is intentional.
@@ -69,7 +72,8 @@ jobs:
           node -e '
             const fs = require("fs");
             const root = JSON.parse(fs.readFileSync("package.json", "utf8"));
-            const platforms = JSON.parse(process.env.PLATFORM_NAMES);
+            const matrix = JSON.parse(process.env.PLATFORM_MATRIX);
+            const platforms = matrix.map((p) => p.name);
             const fields = ["version", "license", "author"];
             const problems = [];
 
@@ -86,6 +90,24 @@ jobs:
               return true;
             }
 
+            function sameStringArray(actual, expected) {
+              return (
+                Array.isArray(actual) &&
+                actual.length === expected.length &&
+                expected.every((value, i) => actual[i] === value)
+              );
+            }
+
+            // The platform name is the single source of truth for its npm os/cpu gate and
+            // its compiled binary filename: the segment before/after the first "-" (e.g.
+            // "darwin-arm64" -> os "darwin", cpu "arm64"; "win32-x64" -> os "win32", cpu
+            // "x64") already uses the npm-style os token ("win32", not "windows"), matching
+            // what npm/<name>/package.json declares.
+            function expectedOsCpu(name) {
+              const dash = name.indexOf("-");
+              return { os: name.slice(0, dash), cpu: name.slice(dash + 1) };
+            }
+
             // Cross-check the platform SET itself, not just per-platform fields: the setup
             // job matrix literal and the optionalDependencies keys are two independently
             // maintained declarations of "which platforms ship" — nothing else catches them
@@ -98,7 +120,7 @@ jobs:
               );
             }
 
-            for (const name of platforms) {
+            for (const { name, binary } of matrix) {
               const pkg = JSON.parse(fs.readFileSync(`npm/${name}/package.json`, "utf8"));
               for (const field of fields) {
                 if (pkg[field] !== root[field]) {
@@ -111,6 +133,24 @@ jobs:
               const pin = root.optionalDependencies && root.optionalDependencies[pkg.name];
               if (pin !== pkg.version) {
                 problems.push(`root package.json optionalDependencies["${pkg.name}"] is "${pin}", but npm/${name}/package.json version is "${pkg.version}"`);
+              }
+
+              const { os: expectedOs, cpu: expectedCpu } = expectedOsCpu(name);
+              if (!sameStringArray(pkg.os, [expectedOs])) {
+                problems.push(`npm/${name}/package.json: os is ${JSON.stringify(pkg.os)}, expected ["${expectedOs}"] (derived from platform name "${name}")`);
+              }
+              if (!sameStringArray(pkg.cpu, [expectedCpu])) {
+                problems.push(`npm/${name}/package.json: cpu is ${JSON.stringify(pkg.cpu)}, expected ["${expectedCpu}"] (derived from platform name "${name}")`);
+              }
+
+              // The setup job per-entry `binary` is what the build job --outfile AND
+              // bin/lore.cjs own hardcoded BINARY_NAME must agree on ("lore.exe" only for
+              // win32, "lore" everywhere else) — assert it here, before any compile work,
+              // rather than only implicitly via the build job writing to whatever path it
+              // was given.
+              const expectedBinary = expectedOs === "win32" ? "lore.exe" : "lore";
+              if (binary !== expectedBinary) {
+                problems.push(`setup job matrix entry "${name}": binary is "${binary}", expected "${expectedBinary}" for os "${expectedOs}"`);
               }
             }
             if (problems.length > 0) {
@@ -147,6 +187,16 @@ jobs:
         shell: bash
         run: |
           bin="npm/${{ matrix.name }}/bin/${{ matrix.binary }}"
+          # Asserted for every platform, not just linux-x64: the compile step above writes
+          # directly to this path, so a missing file here means bun produced a
+          # differently-named (or no) output for the `binary` value declared in the setup
+          # job matrix — surface that explicitly rather than letting the `stat` below fail
+          # with a generic "no such file" trace.
+          if [ ! -f "$bin" ]; then
+            echo "::error::expected compiled binary at $bin (matrix.binary=\"${{ matrix.binary }}\") but no file exists there"
+            ls -la "npm/${{ matrix.name }}/bin/" || true
+            exit 1
+          fi
           size=$(stat -c%s "$bin")
           echo "compiled $bin: ${size} bytes"
           if [ "$size" -lt 1000000 ]; then
