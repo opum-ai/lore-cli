@@ -3,10 +3,8 @@ id: doc-3
 title: Backlog campaign tracker — Codex review follow-ups (round 2)
 type: other
 created_date: '2026-07-21 22:27'
-updated_date: '2026-07-22 12:07'
+updated_date: '2026-07-22 12:23'
 ---
-# Backlog campaign tracker — Codex review follow-ups (round 2)
-
 Round 2 of the Codex-review follow-up campaign (see [[Backlog campaign tracker]] / doc-1 for
 round 1, LORE-69..95, which closed all 20 high-severity findings from doc-2). Re-initialised on
 2026-07-22 for the **wave-parallel** `/backlog-handover` driver (Opus orchestrator + parallel
@@ -47,34 +45,39 @@ low-severity section if/when this round completes.
 
 The "ready now" set is **always recomputed live** from `backlog/tasks/*.md` + this table at the
 start of every restore/wave — never trust a persisted "next wave" plan; it can go stale the
-moment a conflict changes. Informational hint only: as of 2026-07-22 (re-init, 0 waves run), all
-78 tasks are To Do with no formal deps, so all 78 are dependency-ready. Actual wave membership is
-bounded by the 6-worker cap and the live pairwise file-conflict graph (same-cluster items are
-treated as conflicting and will serialize across waves).
+moment a conflict changes. Informational hint only: as of 2026-07-22 (wave 1 dispatched), 6 tasks
+are in flight (LORE-96, 98, 102, 107, 110, 114 — one per distinct cluster, file-disjoint); the
+remaining 72 are To Do and dependency-ready, bounded across future waves by the 6-worker cap and
+the live pairwise file-conflict graph (same-cluster items serialize).
+
+**Known cross-cluster duplicate (watch):** LORE-107 (cli-entry-state), LORE-127 and LORE-131
+(cmd-meta-c) all describe the same `lore <command> --help` bug / its regression test in
+`src/cli.ts` + `test/help.test.ts`. They must never share a wave; LORE-127/131 may be resolved or
+reduced to a no-op once LORE-107 merges — re-evaluate their file citations after wave 1 settles.
 
 ## Queue (confirmed order)
 
 | # | Issue | Cluster | Formal deps | Status | Wave | Note |
 |---|---|---|---|---|---|---|
-| 1 | LORE-96 | adapter-backlog | — | To Do | — | Validate/escape argv values passed to backlog CLI to prevent flag injection |
+| 1 | LORE-96 | adapter-backlog | — | Dispatched | 1 | Validate/escape argv values passed to backlog CLI to prevent flag injection |
 | 2 | LORE-97 | adapter-backlog | — | To Do | — | createTask discards the new task id when the 'Created task <ID>' line fails to parse |
-| 3 | LORE-98 | build-ci-config | — | To Do | — | Pin third-party GitHub Actions to commit SHAs instead of mutable tags |
+| 3 | LORE-98 | build-ci-config | — | Dispatched | 1 | Pin third-party GitHub Actions to commit SHAs instead of mutable tags |
 | 4 | LORE-99 | build-ci-config | — | To Do | — | verify-versions job doesn't check os/cpu fields or binary filenames; only linux-x64 build is executed |
 | 5 | LORE-100 | build-ci-config | — | To Do | — | Docker e2e harness is never invoked by CI or release workflows |
 | 6 | LORE-101 | build-ci-config | — | To Do | — | Scoped release packages missing publishConfig.access:public, will fail first npm publish |
-| 7 | LORE-102 | build-runtime | — | To Do | — | Harden e2e Dockerfile: digest-pin base image, avoid root curl\|bash, pin mkdocs |
+| 7 | LORE-102 | build-runtime | — | Dispatched | 1 | Harden e2e Dockerfile: digest-pin base image, avoid root curl\|bash, pin mkdocs |
 | 8 | LORE-103 | build-runtime | — | To Do | — | Surface report-write failures and fixed-UID bind-mount permission risk in e2e run |
 | 9 | LORE-104 | build-runtime | — | To Do | — | Documented `docker compose up --build` invocation doesn't propagate e2e exit code |
 | 10 | LORE-105 | build-runtime | — | To Do | — | record()/check() write pretty-printed JSON, breaking report.jsonl's JSONL format |
 | 11 | LORE-106 | build-runtime | — | To Do | — | Golden recorder trusts a live mutable task and an unverified upstream CLI path |
-| 12 | LORE-107 | cli-entry-state | — | To Do | — | lore <command> --help shows generic help instead of the command's own help |
+| 12 | LORE-107 | cli-entry-state | — | Dispatched | 1 | lore <command> --help shows generic help instead of the command's own help |
 | 13 | LORE-108 | cli-entry-state | — | To Do | — | readConfigText maps EACCES/EPERM config read failures to 'validation' not 'denied' |
 | 14 | LORE-109 | cli-entry-state | — | To Do | — | commitBacklogFiles discards LoreError.hint (real git/hook stderr) on commit failure |
-| 15 | LORE-110 | cmd-check | — | To Do | — | Cap probeLiveness's total URL count and wall-clock time, not just per-URL concurrency |
+| 15 | LORE-110 | cmd-check | — | Dispatched | 1 | Cap probeLiveness's total URL count and wall-clock time, not just per-URL concurrency |
 | 16 | LORE-111 | cmd-check | — | To Do | — | Bound resolveTaskDetails's per-task adapter.viewTask fan-out with a concurrency limit |
 | 17 | LORE-112 | cmd-check | — | To Do | — | check's JSON report doesn't mark itself incomplete when reconciliation errors mid-run |
 | 18 | LORE-113 | cmd-check | — | To Do | — | docPath uses raw bundle.label while isDocsRoot normalizes it, so the two disagree on non-canonical labels |
-| 19 | LORE-114 | cmd-crud-a | — | To Do | — | lore new --out bypasses reserved index/log stem policy |
+| 19 | LORE-114 | cmd-crud-a | — | Dispatched | 1 | lore new --out bypasses reserved index/log stem policy |
 | 20 | LORE-115 | cmd-crud-a | — | To Do | — | orphans table rows skip control-character sanitization on task fields |
 | 21 | LORE-116 | cmd-crud-a | — | To Do | — | lore replace commit phase has no atomic write or rollback on partial failure |
 | 22 | LORE-117 | cmd-crud-b | — | To Do | — | writeFileAtomic drops destination's file mode/ownership on overwrite |
@@ -156,3 +159,7 @@ fallback.)
 - 2026-07-22 — re-init (wave 0, no code): migrated this tracker from the round-1 cursor format to
   the wave-parallel skeleton (Frontier + Status/Wave columns + Wave log). No tasks worked; queue
   unchanged (78 To Do, LORE-96..173). Verified zero formal deps across all 78 via YAML parse.
+- 2026-07-22 — wave 1 dispatched (issues: LORE-96, 98, 102, 107, 110, 114; workers: sonnet,
+  reviewer: fable). One per distinct cluster, file-disjoint (adapter-backlog, build-ci-config,
+  build-runtime, cli-entry-state, cmd-check, cmd-crud-a). Worktrees created @ d6abe3b under
+  lore.worktrees/. Settlement entry to follow.
