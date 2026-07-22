@@ -8,20 +8,28 @@
 #
 # Single stage: this is a disposable local/CI test image, not a shipped
 # artifact, so there's nothing multi-stage buys here.
-FROM oven/bun:1.2.23
+FROM oven/bun:1.2.23@sha256:6ebf306367da43ad75c4d5119563e24de9b66372929ad4fa31546be053a16f74
 
 # git: clone the pinned upstream Backlog.md commit.
 # python3/pip: `lore scaffold mkdocs` + a real `mkdocs build` (mirrors
-#   .github/workflows/ci.yml's scaffold-mkdocs job exactly).
+#   .github/workflows/ci.yml's scaffold-mkdocs job; pinned to exact versions
+#   here for byte-for-byte reproducibility of this image).
 # nodejs/npm (NodeSource, v22 to match ci.yml's actions/setup-node):
-#   `lore scaffold docusaurus` + a real `npm install && npm run build`.
-# jq: JSON-envelope assertions in run-e2e.sh. curl: NodeSource setup script.
+#   `lore scaffold docusaurus` + a real `npm install && npm run build`. The
+#   setup script is downloaded, verified against a pinned sha256 (not piped
+#   straight into a root shell), and only then executed.
+# jq: JSON-envelope assertions in run-e2e.sh. curl: fetches the (verified)
+#   NodeSource setup script.
+ARG NODESOURCE_SETUP_SHA256=575583bbac2fccc0b5edd0dbc03e222d9f9dc8d724da996d22754d6411104fd1
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        git python3 python3-pip curl jq ca-certificates \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && curl -fsSL -o /tmp/nodesource-setup.sh https://deb.nodesource.com/setup_22.x \
+    && echo "${NODESOURCE_SETUP_SHA256}  /tmp/nodesource-setup.sh" | sha256sum -c - \
+    && bash /tmp/nodesource-setup.sh \
+    && rm -f /tmp/nodesource-setup.sh \
     && apt-get install -y --no-install-recommends nodejs \
-    && pip install --no-cache-dir --break-system-packages "mkdocs>=1.6" "mkdocs-material>=9" \
+    && pip install --no-cache-dir --break-system-packages "mkdocs==1.6.1" "mkdocs-material==9.7.7" \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Build `backlog`: upstream MrLesk/Backlog.md pinned at the --json PR #790 ──
