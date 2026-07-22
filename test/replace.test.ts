@@ -1,4 +1,7 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+// A namespace import alongside the named one above: `spyOn` (LORE-116's commit-phase-atomicity test)
+// needs the module object itself to patch `writeFileSync` in place, not the already-bound named export.
+import * as fs from "node:fs";
 import {
   chmodSync,
   mkdirSync,
@@ -411,6 +414,41 @@ describe("lore replace — scoping, dedup, and safety", () => {
     ).toThrow(LoreError);
     expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("x"); // a.md not written — atomic abort
     chmodSync(join(root, "docs/zz.md"), 0o644); // restore for cleanup
+  });
+});
+
+describe("lore replace — commit-phase write atomicity (LORE-116)", () => {
+  test("a write failure partway through the commit loop leaves the earlier file intact, the failing file untruncated, later files untouched, and the error surfaces", () => {
+    writeDoc("docs/a.md", "x");
+    writeDoc("docs/b.md", "x");
+    writeDoc("docs/c.md", "x"); // sorted after b.md — must never be reached once b.md's write throws
+
+    // Stub the write call the commit phase's writeFileAtomic ultimately makes, so it throws on the
+    // SECOND file (b.md) — after a.md has already committed, before c.md is ever attempted — the
+    // exact "partway through" shape AC#2 asks for. Calls that aren't the simulated failure forward to
+    // the real writeFileSync, so a.md's (and, were it reached, c.md's) write still actually happens.
+    const realWriteFileSync = fs.writeFileSync.bind(fs);
+    let calls = 0;
+    const spy = spyOn(fs, "writeFileSync").mockImplementation((...args: Parameters<typeof fs.writeFileSync>) => {
+      calls++;
+      if (calls === 2) {
+        throw new Error("simulated ENOSPC");
+      }
+      // biome-ignore lint/suspicious/noExplicitAny: forwarding to the real writeFileSync overload set
+      return (realWriteFileSync as any)(...args);
+    });
+    try {
+      expect(() =>
+        runReplace({ root, output: JSON_CTX, args: ["x", "y"], stdout: capture(), stderr: capture() }),
+      ).toThrow(); // the failure surfaces rather than being silently swallowed
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("y"); // committed before the failure
+    expect(readFileSync(join(root, "docs/b.md"), "utf8")).toBe("x"); // temp write failed — original bytes intact, not truncated
+    expect(readFileSync(join(root, "docs/c.md"), "utf8")).toBe("x"); // loop aborted before this file was ever attempted
+    expect(readdirSync(join(root, "docs")).filter((f) => f.startsWith(".lore-sync-tmp"))).toEqual([]); // no stray temp file left behind
   });
 });
 
