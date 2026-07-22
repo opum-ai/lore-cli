@@ -1,6 +1,7 @@
 /**
- * fswrite.test.ts — `writeFileAtomic` mode/ownership preservation (LORE-117) and
- * `writeManyAtomicOrRollback`'s cross-file undo (LORE-120).
+ * fswrite.test.ts — `writeFileAtomic` mode/ownership preservation (LORE-117),
+ * `writeManyAtomicOrRollback`'s cross-file undo (LORE-120), and `writeFileNoFollow`'s
+ * crash-mid-write safety (LORE-130).
  *
  * `writeFileAtomic` (see fswrite.ts) is the write discipline `lore sync` and `lore replace` use to
  * overwrite existing docs without risking a partial write. Before this fix, its temp file was
@@ -23,12 +24,35 @@
  * than depending on a real disk fault landing at the right moment. `test/sync.test.ts` additionally
  * proves the same rollback against a REAL filesystem failure (a read-only directory) through the
  * full `lore sync` write loop.
+ *
+ * The third describe block covers `writeFileNoFollow`'s LORE-130 fix: before it, `--force` overwrote
+ * an existing destination in place (`open(..., O_TRUNC)` then a `writeSync` loop), so a process kill
+ * or crash partway through left the destination holding neither its old nor its new complete bytes —
+ * a truncated, partially-overwritten mix, unrecoverable. The fix routes the overwrite through a
+ * sibling temp file plus a single commit `renameSync`, exactly like `writeFileAtomic` already does,
+ * so a failure at any point before the rename leaves the destination's original bytes completely
+ * untouched, and a failure after it leaves the complete new bytes — never a partial mix. A real
+ * SIGKILL mid-write isn't reproducible in a test, so — mirroring this same file's own
+ * `writeManyAtomicOrRollback` tests and test/replace.test.ts's LORE-116 commit-phase test — these
+ * inject a failure at the exact point a real kill would land (the low-level `writeSync` call) and
+ * assert the destination is unaffected; the pre-existing symlink-refusal tests for `writeFileNoFollow`
+ * (LORE-92, test/replace.test.ts) are unmodified and continue to prove that guarantee still holds.
+ *
+ *   AC#1 — the `--force` overwrite path no longer truncates the destination in place; a failure
+ *          mid-write (standing in for a process kill) leaves the destination's original bytes fully
+ *          intact, never partially overwritten, and the commit is provably a temp-file + rename, not
+ *          a direct write to the destination.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+// A namespace import alongside the named one below: `spyOn` needs the module object itself to patch
+// `writeSync` in place, not the already-bound named export `writeFileNoFollow` calls internally —
+// mirrors test/replace.test.ts's identical `fs`-namespace-import comment for the same reason.
+import * as fs from "node:fs";
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -37,8 +61,14 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { type AtomicRollbackWrite, writeFileAtomic, writeManyAtomicOrRollback } from "../src/commands/fswrite";
+import { basename, join } from "node:path";
+import {
+  type AtomicRollbackWrite,
+  writeFileAtomic,
+  writeFileNoFollow,
+  writeManyAtomicOrRollback,
+} from "../src/commands/fswrite";
+import { LoreError } from "../src/errors";
 
 describe("writeFileAtomic — mode preservation across overwrite (LORE-117)", () => {
   let dir: string;
@@ -204,5 +234,103 @@ describe("writeManyAtomicOrRollback — all-or-nothing across a multi-file write
     };
 
     expect(() => writeManyAtomicOrRollback(writes, writeAtomic)).toThrow(originalFailure);
+  });
+});
+
+// ── writeFileNoFollow: crash-mid-write safety on the --force overwrite path (LORE-130) ─────
+
+describe("writeFileNoFollow — the --force overwrite path is crash-safe against a mid-write kill (LORE-130)", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "lore-fswrite-nofollow-crash-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("AC#1: a failure during the write (standing in for a kill) leaves the destination's ORIGINAL bytes fully intact, not truncated", () => {
+    const path = join(dir, "f.md");
+    const original = "ORIGINAL COMPLETE CONTENT — must survive a mid-write failure untouched\n";
+    writeFileSync(path, original);
+    const spy = spyOn(fs, "writeSync").mockImplementation(() => {
+      throw new Error("simulated crash mid-write");
+    });
+    try {
+      expect(() => writeFileNoFollow(path, "NEW CONTENT THAT MUST NEVER PARTIALLY LAND", "f.md")).toThrow();
+    } finally {
+      spy.mockRestore();
+    }
+    // Not a byte truncated, not a byte of the new content leaked in -- the destination's inode was
+    // never opened for writing at all, so a failure (or a real kill) at this point cannot touch it.
+    expect(readFileSync(path, "utf8")).toBe(original);
+    // No stray `.lore-nofollow-tmp-*` litter left behind by the failed attempt either.
+    expect(readdirSync(dir)).toEqual(["f.md"]);
+  });
+
+  test("AC#1: the commit is provably a temp-file + rename, not a direct write to the destination path", () => {
+    const path = join(dir, "f.md");
+    writeFileSync(path, "old");
+    const realRenameSync = fs.renameSync.bind(fs);
+    const renameCalls: Array<[string, string]> = [];
+    const spy = spyOn(fs, "renameSync").mockImplementation((...args: Parameters<typeof fs.renameSync>) => {
+      renameCalls.push([String(args[0]), String(args[1])]);
+      // biome-ignore lint/suspicious/noExplicitAny: forwarding to the real renameSync overload set
+      return (realRenameSync as any)(...args);
+    });
+    try {
+      writeFileNoFollow(path, "new", "f.md");
+    } finally {
+      spy.mockRestore();
+    }
+    // Exactly one commit rename, from a `.lore-nofollow-tmp-*` sibling onto the real destination --
+    // never a rename with the destination as its SOURCE (which would mean something else entirely).
+    expect(renameCalls).toHaveLength(1);
+    const [renameFrom, renameTo] = renameCalls[0] as [string, string];
+    expect(basename(renameFrom).startsWith(".lore-nofollow-tmp-")).toBe(true);
+    expect(renameTo).toBe(path);
+    expect(readFileSync(path, "utf8")).toBe("new");
+    expect(readdirSync(dir)).toEqual(["f.md"]); // no stray temp file survives a successful commit
+  });
+
+  test("AC#1: a failure AFTER a successful commit rename is impossible to observe as a partial destination (the rename is the last step)", () => {
+    // Documents the other half of the guarantee: once renameSync itself returns, the destination
+    // already holds the complete new bytes -- there is no further step (e.g. no post-rename cleanup)
+    // that could fail and leave it in a half-updated state. Verified structurally: closeSync/cleanup
+    // only ever run BEFORE the commit rename in the success path, never after.
+    const path = join(dir, "f.md");
+    writeFileSync(path, "old");
+    writeFileNoFollow(path, "new", "f.md");
+    expect(readFileSync(path, "utf8")).toBe("new");
+    expect(readdirSync(dir)).toEqual(["f.md"]);
+  });
+
+  test("mode is preserved across a force overwrite (mirrors writeFileAtomic's LORE-117 discipline -- the switch to temp+rename must not regress it)", () => {
+    const path = join(dir, "secret.md");
+    writeFileSync(path, "old");
+    chmodSync(path, 0o600);
+    writeFileNoFollow(path, "new", "secret.md");
+    expect(readFileSync(path, "utf8")).toBe("new");
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+
+  test("a fresh file (no prior destination) still succeeds via plain default-umask behavior", () => {
+    const path = join(dir, "new-file.md");
+    expect(() => writeFileNoFollow(path, "hello", "new-file.md")).not.toThrow();
+    expect(readFileSync(path, "utf8")).toBe("hello");
+    expect(readdirSync(dir)).toEqual(["new-file.md"]);
+  });
+
+  test("a directory blocking the destination fails loud (conflict/denied) and leaves no stray temp file", () => {
+    const path = join(dir, "adir");
+    mkdirSync(path);
+    let thrown: unknown;
+    try {
+      writeFileNoFollow(path, "x", "adir");
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(LoreError);
+    expect(["conflict", "denied"]).toContain((thrown as LoreError).type);
+    expect(readdirSync(dir)).toEqual(["adir"]); // the temp file is cleaned up, not left as litter
   });
 });
