@@ -3,7 +3,7 @@ id: doc-3
 title: Backlog campaign tracker — Codex review follow-ups (round 2)
 type: other
 created_date: '2026-07-21 22:27'
-updated_date: '2026-07-22 19:03'
+updated_date: '2026-07-22 19:28'
 ---
 Round 2 of the Codex-review follow-up campaign (see [[Backlog campaign tracker]] / doc-1 for
 round 1, LORE-69..95, which closed all 20 high-severity findings from doc-2). Re-initialised on
@@ -100,7 +100,7 @@ asserts `lore query --help` byte-identical to `lore help query`). No further act
 | 22 | LORE-117 | cmd-crud-b | — | Done | 5 | MERGED wave 5 (PR #114, dev @ `c819458`). writeFileAtomic preserves dest mode (masked 0o7777) + best-effort chown; first-write falls back cleanly. |
 | 23 | LORE-118 | cmd-crud-b | — | Done | 6 | MERGED wave 6 (PR #118, dev @ `ca0f112`). renderText sanitizes 4 fields via stripAnsiAndControls(singleLine). |
 | 24 | LORE-119 | cmd-crud-b | — | Done | 7 | MERGED wave 7 (PR #127, dev @ `f3b87a0`). sync status-change write now derives body from freshly re-read on-disk bytes, not the stale pre-round-trip concept → concurrent on-disk edit survives. Fable approve, 0 fix. See Resolved 39. |
-| 25 | LORE-120 | cmd-crud-b | — | To Do | — | sync's multi-file write loop has no cross-file rollback on mid-loop failure |
+| 25 | LORE-120 | cmd-crud-b | — | Dispatched | 8 | sync's multi-file write loop has no cross-file rollback on mid-loop failure |
 | 26 | LORE-121 | cmd-link | — | Done | 5 | MERGED wave 5 (PR #115, dev @ `2e2ac8c`). link.ts already-present branch includes task file as commit candidate → retry recommits drift; clean tree still no-ops. |
 | 27 | LORE-122 | cmd-meta-a | — | Done | 3 | resolveTaskDetails doesn't verify viewTask's returned id matches the requested id |
 | 28 | LORE-123 | cmd-meta-a | — | Done | 5 | MERGED wave 5 (PR #116, dev @ `52e3368`). schema.ts write loop uses existing writeFileNoFollow → leaf symlink refused with conflict LoreError (exit 5). |
@@ -109,19 +109,19 @@ asserts `lore query --help` byte-identical to `lore help query`). No further act
 | 31 | LORE-126 | cmd-meta-b | — | Done | 3 | Collapse embedded newlines in graph node id/title before rendering |
 | 32 | LORE-127 | cmd-meta-c | — | Done | 1 | RESOLVED-BY-MERGE by LORE-107 (PR #95): cli.ts routes `lore <cmd> --help` to runHelp; help.test.ts:271 asserts byte-identical to `lore help <cmd>` |
 | 33 | LORE-128 | cmd-meta-c | — | Done | 6 | MERGED wave 6 (PR #120, dev @ `12f5b7c`). detectDiskStyle/reapplyDiskStyle preserve BOM + EOL (agents.ts only). |
-| 34 | LORE-129 | cmd-meta-c | — | To Do | — | `lore agents --check --force` mislabels a stale hand-edited SKILL.md and prints a remedy that won't fix it |
+| 34 | LORE-129 | cmd-meta-c | — | Dispatched | 8 | `lore agents --check --force` mislabels a stale hand-edited SKILL.md and prints a remedy that won't fix it |
 | 35 | LORE-130 | cmd-meta-c | — | To Do | — | writeAllOrRollback's --force overwrite is not crash-safe against a mid-write kill |
 | 36 | LORE-131 | cmd-meta-c | — | Done | 1 | RESOLVED-BY-MERGE by LORE-107 (PR #95): help.test.ts:271 is the byte-identical `lore <cmd> --help` == `lore help <cmd>` regression test |
 | 37 | LORE-132 | cmd-rename-supersede | — | Done | 6 | MERGED wave 6 (PR #121, dev @ `f5c8230`). moveFile re-stats dest (dev/ino) before rename → conflict on raced-in file; case-only safe. |
 | 38 | LORE-133 | core-bundle-check | — | Done | 6 | MERGED wave 6 (PR #122, dev @ `b67b273`). resolvePath special-cases leading-/ (matches check.ts). Follow-up LORE-180 (rewrite.ts). |
-| 39 | LORE-134 | core-bundle-check | — | To Do | — | resolveRef tries frontmatter ref as a root id before trying it as a relative path |
-| 40 | LORE-135 | core-bundle-check | — | To Do | — | Anchor-link check lower-cases fragments, masking case-mismatched broken anchors |
+| 39 | LORE-134 | core-bundle-check | — | Dispatched | 8 | resolveRef tries frontmatter ref as a root id before trying it as a relative path |
+| 40 | LORE-135 | core-bundle-check | — | Dispatched | 8 | Anchor-link check lower-cases fragments, masking case-mismatched broken anchors |
 | 41 | LORE-136 | core-bundle-check | — | To Do | — | Heading slug computation ignores image alt text in headings |
 | 42 | LORE-137 | core-bundle-check | — | To Do | — | reconcileDriftFindings ignores its own newStatus:null contract for managed-block drift |
 | 43 | LORE-138 | core-bundle-check | — | To Do | — | bodyText's catch-all swallows any gray-matter exception, not just YAML parse errors |
-| 44 | LORE-139 | core-bundle-check | — | To Do | — | Profile-declared type `template` path allows reading files outside .lore/templates/ via traversal |
+| 44 | LORE-139 | core-bundle-check | — | Dispatched | 8 | Profile-declared type `template` path allows reading files outside .lore/templates/ via traversal |
 | 45 | LORE-140 | core-bundle-check | — | To Do | — | parseFieldSpec accepts an empty `enum = []`, making the field impossible to satisfy |
-| 46 | LORE-141 | core-concept-manifest | — | To Do | — | Malformed closing frontmatter fence bleeds bytes into concept body |
+| 46 | LORE-141 | core-concept-manifest | — | Dispatched | 8 | Malformed closing frontmatter fence bleeds bytes into concept body |
 | 47 | LORE-142 | core-engine-a | — | To Do | — | Add missing `help` entry to LORE_COMMANDS in agent-bridge.ts |
 | 48 | LORE-143 | core-engine-a | — | To Do | — | Scope `git log` in GitAdapter.history to the docs root instead of the whole repo |
 | 49 | LORE-144 | core-engine-a | — | To Do | — | serializeStructuralConcept's fixed default-profile write breaks `lore validate` under a custom Reference profile |
