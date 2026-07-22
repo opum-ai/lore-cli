@@ -267,4 +267,34 @@ describe("cli — help wiring", () => {
     run(argv("--help"), { stdout: viaFlag, stderr: capture(), isTTY: false, env: {} });
     expect(viaCommand.text()).toBe(viaFlag.text());
   });
+
+  test("`lore <command> --help` renders that command's own help, not the top-level catalog (LORE-107)", () => {
+    const viaFlag = capture();
+    const code = run(argv("query", "--help"), { stdout: viaFlag, stderr: capture(), isTTY: false, env: {} });
+    expect(code).toBe(0);
+    const viaHelpCommand = capture();
+    run(argv("help", "query"), { stdout: viaHelpCommand, stderr: capture(), isTTY: false, env: {} });
+    expect(viaFlag.text()).toBe(viaHelpCommand.text());
+    // Guard against the regression: the generic catalog's usage line must not appear.
+    expect(viaFlag.text()).not.toContain("lore <command> [options]");
+    expect(viaFlag.text()).toContain("lore query");
+  });
+
+  test("`lore <command> -h` behaves the same as `lore <command> --help`", () => {
+    const viaShort = capture();
+    const code = run(argv("query", "-h"), { stdout: viaShort, stderr: capture(), isTTY: false, env: {} });
+    expect(code).toBe(0);
+    const viaLong = capture();
+    run(argv("query", "--help"), { stdout: viaLong, stderr: capture(), isTTY: false, env: {} });
+    expect(viaShort.text()).toBe(viaLong.text());
+  });
+
+  test("`lore --help` and `lore help` (no command token) keep rendering the top-level catalog unchanged", () => {
+    const viaFlag = capture();
+    run(argv("--help"), { stdout: viaFlag, stderr: capture(), isTTY: false, env: {} });
+    const viaCommand = capture();
+    run(argv("help"), { stdout: viaCommand, stderr: capture(), isTTY: false, env: {} });
+    expect(viaFlag.text()).toContain("lore <command> [options]");
+    expect(viaCommand.text()).toContain("lore <command> [options]");
+  });
 });

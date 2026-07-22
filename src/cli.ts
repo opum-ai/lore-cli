@@ -150,7 +150,10 @@ export interface RunContext {
  * slips through `--version`/`--help`/no-command to a silent exit 0), and `--version`/
  * `--help` render through the same {@link emit} seam as a command — a
  * `{schemaVersion, kind, data}` envelope under `--json`, plain text otherwise — so a
- * machine consumer that always pipes `--json` can decode their output too.
+ * machine consumer that always pipes `--json` can decode their output too. `--help`/`-h`
+ * given *with* a command (e.g. `lore query --help`) renders that command's own detailed
+ * help via {@link runHelp} rather than the top-level catalog — only a bare `--help`/no
+ * command falls through to {@link renderTopLevelHelp} (LORE-107).
  */
 export function run(argv: readonly string[], context: RunContext = {}): number | Promise<number> {
   const stdout = context.stdout ?? process.stdout;
@@ -167,8 +170,8 @@ export function run(argv: readonly string[], context: RunContext = {}): number |
   });
   try {
     rejectUnknownFlags(parsed.leadingUnknownFlags);
-    if (parsed.version || parsed.help || parsed.command === undefined) {
-      // The version/help/no-command paths short-circuit before any command runs, so no command
+    if (parsed.version || parsed.command === undefined) {
+      // The version/no-command paths short-circuit before any command runs, so no command
       // will validate the tail. A stray non-global flag here (e.g. `lore init --bogus --version`)
       // would otherwise slip through to a silent exit 0 — reject it, preserving the invariant
       // that a typo'd flag is never swallowed by `--version`/`--help`.
@@ -178,6 +181,16 @@ export function run(argv: readonly string[], context: RunContext = {}): number |
       }
       const helpText = renderTopLevelHelp();
       return emitMeta("help", { usage: helpText }, helpText, output, stdout);
+    }
+    if (parsed.help) {
+      // A command was given alongside `--help`/`-h` (in any position): render that
+      // command's own detailed help — the same as `lore help <command>` — instead of
+      // the generic top-level catalog, so `lore <cmd> --help` describes the command the
+      // user actually typed (LORE-107). Still reject a stray unrecognized flag first (same
+      // invariant as the `--version`/no-command paths above): a typo'd flag must never be
+      // swallowed just because `--help` also appears on the line.
+      rejectStrayCommandFlags(parsed.commandArgs);
+      return runHelp({ output, args: [parsed.command], stdout });
     }
     const result = dispatch(parsed, { ...context, stdout, stderr }, output);
     // The async command paths (`check --external`, `link`, `unlink`, `rename`, `sync`) return a Promise; a
