@@ -309,6 +309,38 @@ describe("lore query — command", () => {
     expect(stdout.text()).toContain("query (filters): 1 match");
   });
 
+  // ── LORE-118: renderText sanitizes ANSI/control bytes before interpolation ──────
+
+  test("plain mode strips an ANSI escape sequence embedded in the raw --query text", () => {
+    writeMixedBundle();
+    const stdout = capture();
+    // The header echoes `data.query` verbatim (the trimmed --query text) — an ANSI
+    // escape sequence smuggled in via the CLI argument must not survive into the
+    // rendered header line.
+    runQuery({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: ["\x1b[31marchive\x1b[0m"] });
+    const text = stdout.text();
+    expect(text).not.toContain("\x1b");
+    expect(text).toContain('query "archive": ');
+  });
+
+  test("plain mode strips ANSI escape sequences embedded in a hit's type and snippet", () => {
+    // `type` and `summary` are passthrough frontmatter scalars (LORE-118) — a crafted
+    // bundle file can carry raw control bytes in either; writeDoc below embeds one via a
+    // YAML double-quoted unicode escape, so js-yaml parses it into a literal ESC control
+    // byte, exercising the same attacker-influenced-bytes path a real malicious file would.
+    writeDoc(
+      "ansi/hack.md",
+      '---\ntype: "Widget\\u001b[31m"\nsummary: "note \\u001b[31mred\\u001b[0m end"\n---\nBody mentions archive.\n',
+    );
+    const stdout = capture();
+    runQuery({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: ["archive"] });
+    const text = stdout.text();
+    expect(text).not.toContain("\x1b");
+    expect(text).toContain("ansi/hack");
+    expect(text).toContain("[Widget]");
+    expect(text).toContain("note red end");
+  });
+
   test("`--` ends option parsing so a following dash-token is the search text", () => {
     writeMixedBundle();
     const { data } = exportQuery(["--", "archive"]);

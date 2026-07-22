@@ -28,7 +28,7 @@ import { loadBundle } from "../core/bundle";
 import { loadProfile } from "../core/profile";
 import { type FieldFilter, type QueryResult, query } from "../core/query";
 import { DOCS_DIR } from "../core/scaffold";
-import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
+import { EXIT_OK, LoreError, singleLine, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable, renderTruncationLine, truncation } from "../output";
 
 /** Options for {@link runQuery}; `root` and the streams are injectable for tests. */
@@ -261,21 +261,57 @@ function queryRenderable(data: QueryResult): Renderable<QueryResult> {
  * (<score>)  — <snippet>` line per hit (the `(<score>)` shown only under a text query;
  * the `— <snippet>` dropped when the concept has neither summary nor title), and the
  * trailing §3 truncation footer when the `--limit` cap dropped matches. ANSI-free and
- * deterministic.
+ * deterministic: the query text and every hit's `id`/`type`/`snippet` are sanitized
+ * ({@link sanitizeField}) before interpolation, so a crafted concept file (an id, a
+ * `type`/`summary` frontmatter scalar) or the raw `--query` argument cannot smuggle an
+ * ANSI escape sequence or other control byte into the rendered line (LORE-118).
  */
 function renderText(data: QueryResult): string {
-  const head = data.query !== undefined ? `query "${data.query}"` : "query (filters)";
+  const queryText = data.query !== undefined ? sanitizeField(data.query) : undefined;
+  const head = queryText !== undefined ? `query "${queryText}"` : "query (filters)";
   const lines = [`${head}: ${data.total} ${data.total === 1 ? "match" : "matches"}`];
   for (const hit of data.hits) {
-    const score = data.query !== undefined ? `  (${formatScore(hit.score)})` : "";
-    const snippet = hit.snippet !== undefined ? `  — ${hit.snippet}` : "";
-    lines.push(`  ${hit.id}  [${hit.type}]${score}${snippet}`);
+    const score = queryText !== undefined ? `  (${formatScore(hit.score)})` : "";
+    const id = sanitizeField(hit.id);
+    const type = sanitizeField(hit.type);
+    const snippet = hit.snippet !== undefined ? `  — ${sanitizeField(hit.snippet)}` : "";
+    lines.push(`  ${id}  [${type}]${score}${snippet}`);
   }
   const footer = renderTruncationLine(truncation(data.total, data.shown, NARROW_HINT));
   if (footer !== "") {
     lines.push(footer);
   }
   return lines.join("\n");
+}
+
+/**
+ * Sanitize a field before it is interpolated into the plain/pretty listing: collapse
+ * it to one line ({@link singleLine}) and strip ANSI escape sequences plus residual C0/C1
+ * control bytes ({@link stripAnsiAndControls}) — every source here (a concept `id`, its
+ * `type`/`summary` frontmatter, or the raw `--query` text) can carry attacker-influenced
+ * bytes (a crafted bundle file, or the CLI argument itself), and without this a CSI
+ * sequence could rewrite terminal state or forge output (LORE-118).
+ */
+function sanitizeField(text: string): string {
+  return stripAnsiAndControls(singleLine(text));
+}
+
+/**
+ * Strip ANSI escape sequences and residual C0/C1 control characters from `text`. A
+ * local twin of `output.ts`'s `stripAnsiAndControls` (LORE-115, `renderTaskSummaryRows`)
+ * — that helper is private to its module, and this fix's scope is `commands/query.ts`
+ * only, so the two-pass regex (drop full escape sequences, then any stray control
+ * byte) is duplicated here rather than exported and imported. Keep the two in sync if
+ * either changes.
+ */
+function stripAnsiAndControls(text: string): string {
+  const withoutAnsi = text.replace(
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
+    /\x1b(?:\[[0-9;:<=>?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[ -~])/g,
+    "",
+  );
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
+  return withoutAnsi.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
 }
 
 /**
