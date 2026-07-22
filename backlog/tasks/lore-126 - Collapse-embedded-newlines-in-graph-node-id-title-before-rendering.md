@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@sonnet'
 created_date: '2026-07-21 22:26'
-updated_date: '2026-07-22 13:50'
+updated_date: '2026-07-22 13:58'
 labels:
   - codex-review-followup
   - cmd-meta-b
@@ -45,10 +45,14 @@ In `renderText()` (src/commands/graph.ts:220-235) and `toDot()`/`quote()` (src/c
 
 <!-- SECTION:NOTES:BEGIN -->
 Verification: bun run typecheck passes clean (tsc --noEmit, no errors). Full suite bun test: 1720 pass, 0 fail, 4843 expect() calls across 45 files, including test/graph.test.ts: 37 pass, 0 fail (was 35 before the 2 new regression tests). bun run lint: only 4 pre-existing 'info' findings in unrelated files (managed-block.ts/test, supersede.test.ts) — none in the touched files.
+
+Fable review round: request_changes — renderText's edge loop (src/commands/graph.ts) still interpolated edge.from/edge.to/edge.target raw, so a dangling ref with an embedded newline (e.g. a double-quoted YAML specs: value) split the plain listing across two physical lines, breaking the exact invariant AC#1 restores. Fixed by running edge.from, the resolved edge.to, and the dangling edge.target through singleLine() before the edge line is built; data.root in the header is now guarded the same way for id-guard consistency. Added a regression test (dangling specs: ref with an escaped \n) asserting the plain listing stays at 3 content lines (header+node+edge), not 4, and the edge line reads '  stories/bulk -specs-> (dangling: evil injected line)'. Re-verified: bun run typecheck clean; bun test 1721 pass/0 fail (graph.test.ts 38 pass/0 fail); bun run lint clean on the touched files (src/commands/graph.ts, src/core/graph.ts, test/graph.test.ts) via biome format --write on graph.ts for a line-length wrap.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
 renderText() (src/commands/graph.ts) and quote() (src/core/graph.ts) now run node.id/node.title (and any value quote() receives) through the existing singleLine() helper (src/errors.ts) before building each line/DOT label, matching the guard every other bundle-text renderer already applies. quote()'s JSDoc documents the collapse. Added 2 regression tests in test/graph.test.ts covering a concept with an embedded-newline title: one asserts lore graph plain output keeps exactly one physical line per node (9 lines, not 10), the other asserts lore graph --dot emits the whole quoted node statement on one physical line. Verified: bun run typecheck clean; bun test 1720 pass/0 fail (graph.test.ts 37 pass/0 fail); bun run lint shows only pre-existing infos in untouched files.
+
+Follow-up fix round: renderText's edge lines (src/commands/graph.ts) now run edge.from, the resolved edge.to, and the dangling edge.target through singleLine() before building each edge line, closing the gap the Fable reviewer found (an embedded newline in a dangling frontmatter ref could still split the plain listing across two physical lines). data.root in the header is guarded the same way for consistency. New regression test covers a dangling specs: ref with an embedded newline. bun run typecheck clean; bun test 1721 pass/0 fail.
 <!-- SECTION:FINAL_SUMMARY:END -->
