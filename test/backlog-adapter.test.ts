@@ -428,3 +428,86 @@ describe("the capability probe is wired into every path and memoized (AC#2)", ()
     expect(exitCodeFor(err)).toBe(3);
   });
 });
+
+describe("flag injection (LORE-96): a dash-prefixed value is rejected before it reaches spawn's argv", () => {
+  test("viewTask rejects a dash-prefixed id and never spawns `task view`", async () => {
+    const spawn = scriptedSpawn((argv) => (argv[1] === "view" ? ok(TASK) : undefined));
+    const err = await loreError(() => createBacklogAdapter(spawn).viewTask("--force"));
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("--force");
+    expect(spawn.calls.some((c) => c[0] === "task" && c[1] === "view")).toBe(false);
+  });
+
+  test("listTasks rejects a dash-prefixed --status value before any spawn call", async () => {
+    const spawn = scriptedSpawn();
+    const err = await loreError(() => createBacklogAdapter(spawn).listTasks({ status: "-x" }));
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("-x");
+    expect(spawn.calls).toHaveLength(0); // rejected while building argv, before even the probe
+  });
+
+  test("listTasks/searchByLabel reject a dash-prefixed label before any spawn call", async () => {
+    const spawn = scriptedSpawn();
+    const err = await loreError(() => createBacklogAdapter(spawn).searchByLabel("--force"));
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("--force");
+    expect(spawn.calls).toHaveLength(0);
+  });
+
+  test("searchTasks rejects a dash-prefixed query before any spawn call", async () => {
+    const spawn = scriptedSpawn((argv) => (argv[0] === "search" ? ok(SEARCH) : undefined));
+    const err = await loreError(() => createBacklogAdapter(spawn).searchTasks("--force"));
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("--force");
+    expect(spawn.calls.some((c) => c[0] === "search")).toBe(false);
+  });
+
+  test("createTask rejects a dash-prefixed title and never spawns `task create`", async () => {
+    const spawn = scriptedSpawn((argv) => (argv[1] === "create" ? ok("Created task LORE-99\n") : undefined));
+    const err = await loreError(() => createBacklogAdapter(spawn).createTask({ title: "-x" }));
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("-x");
+    expect(spawn.calls.some((c) => c[0] === "task" && c[1] === "create")).toBe(false);
+  });
+
+  test("createTask rejects a dash-prefixed label passed via commaJoin", async () => {
+    const spawn = scriptedSpawn((argv) => (argv[1] === "create" ? ok("Created task LORE-99\n") : undefined));
+    const err = await loreError(() =>
+      createBacklogAdapter(spawn).createTask({ title: "fine", labels: ["ok", "--force"] }),
+    );
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("--force");
+    expect(spawn.calls.some((c) => c[0] === "task" && c[1] === "create")).toBe(false);
+  });
+
+  test("editTask rejects a dash-prefixed id and never spawns `task edit`", async () => {
+    const spawn = scriptedSpawn((argv) => (argv[1] === "edit" ? ok("Updated task LORE-1") : undefined));
+    const err = await loreError(() => createBacklogAdapter(spawn).editTask("--force", { status: "Done" }));
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("--force");
+    expect(spawn.calls.some((c) => c[0] === "task" && c[1] === "edit")).toBe(false);
+  });
+
+  test("editTask rejects a dash-prefixed --status value and never spawns `task edit`", async () => {
+    const spawn = scriptedSpawn((argv) => (argv[1] === "edit" ? ok("Updated task LORE-1") : undefined));
+    const err = await loreError(() => createBacklogAdapter(spawn).editTask("LORE-1", { status: "--force" }));
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("--force");
+    expect(spawn.calls.some((c) => c[0] === "task" && c[1] === "edit")).toBe(false);
+  });
+
+  test("editTask rejects a dash-prefixed --add-label value and never spawns `task edit`", async () => {
+    const spawn = scriptedSpawn((argv) => (argv[1] === "edit" ? ok("Updated task LORE-1") : undefined));
+    const err = await loreError(() => createBacklogAdapter(spawn).editTask("LORE-1", { addLabels: ["-x"] }));
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("-x");
+    expect(spawn.calls.some((c) => c[0] === "task" && c[1] === "edit")).toBe(false);
+  });
+
+  test("no regression: valid, non-dash-prefixed values still spawn unchanged", async () => {
+    const spawn = scriptedSpawn((argv) => (argv[1] === "view" ? ok(TASK) : undefined));
+    const task = await createBacklogAdapter(spawn).viewTask("LORE-33");
+    expect(task?.id).toBe("LORE-33");
+    expect(spawn.calls.at(-1)).toEqual(["task", "view", "LORE-33", "--json"]);
+  });
+});
