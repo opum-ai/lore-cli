@@ -29,6 +29,8 @@
  */
 
 import {
+  chmodSync,
+  chownSync,
   closeSync,
   constants,
   existsSync,
@@ -39,6 +41,7 @@ import {
   renameSync,
   rmdirSync,
   rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
   writeSync,
@@ -189,13 +192,49 @@ export function writeFileOverwriting(absPath: string, contents: string, relPath:
  * commands' own callers document that as a separate, deferred concern). Every other command keeps
  * {@link writeFileOverwriting} — see that function's own doc for why a plain overwrite is the right
  * discipline there.
+ *
+ * The temp file is otherwise created with the process's default umask, which would silently
+ * replace any non-default mode (or ownership) the destination already had — a doc made
+ * group-writable, or locked down to `0600`, would flip back to the umask default on every sync
+ * write. To avoid that (LORE-117), the destination's existing mode/ownership is `statSync`'d
+ * *before* the temp write and, when present, carried onto the temp file (mode via `chmodSync`,
+ * ownership best-effort via `chownSync`) before the rename replaces it — so the destination's
+ * permissions/ownership survive the swap instead of reverting to whatever the umask would produce.
+ * A destination that doesn't exist yet (first write) has nothing to preserve: the stat is only
+ * ever used to conditionally apply preservation, never to gate or fail the write itself, so that
+ * case falls through to plain default-umask behavior exactly as before this fix.
  */
 export function writeFileAtomic(absPath: string, contents: string, relPath: string): void {
   const tmpPath = join(dirname(absPath), `.lore-sync-tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
   let tmpFileExists = false;
   try {
+    // Capture the destination's current mode/ownership, if it exists, BEFORE writing the temp
+    // file, so there's something to carry over once the write succeeds. Any stat failure (no
+    // prior file at all -- the common `ENOENT` first-write case -- or something else transient)
+    // is treated identically: there's nothing to preserve, so the write proceeds with plain
+    // default-umask behavior rather than erroring on what is not actually a failure condition.
+    let destStat: ReturnType<typeof statSync> | null = null;
+    try {
+      destStat = statSync(absPath);
+    } catch {
+      destStat = null;
+    }
     writeFileSync(tmpPath, contents);
     tmpFileExists = true; // only true once the write itself has actually succeeded
+    if (destStat !== null) {
+      // Mode preservation is not best-effort: a failure here means the file is about to land with
+      // the wrong permissions, so it's surfaced as a write failure (below) like any other step in
+      // this sequence, rather than silently swallowed.
+      chmodSync(tmpPath, destStat.mode & 0o7777);
+      try {
+        // Ownership IS best-effort: an unprivileged process cannot `chown` to an arbitrary uid/gid
+        // (EPERM is the expected outcome on every non-root run) and some platforms don't support
+        // `chown` at all -- neither should fail a write that has already correctly preserved mode.
+        chownSync(tmpPath, destStat.uid, destStat.gid);
+      } catch {
+        // Swallowed: see above.
+      }
+    }
     renameSync(tmpPath, absPath);
   } catch (cause) {
     let cleanupFailed = false;
