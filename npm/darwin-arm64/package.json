@@ -2,6 +2,9 @@
   "name": "@salient-data/lore-darwin-arm64",
   "version": "0.0.0",
   "description": "lore compiled binary for macOS (Apple Silicon, arm64). Do not depend on this directly — install @salient-data/lore.",
+  "publishConfig": {
+    "access": "public"
+  },
   "os": ["darwin"],
   "cpu": ["arm64"],
   "license": "MIT",

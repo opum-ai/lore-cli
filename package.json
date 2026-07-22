@@ -2,6 +2,9 @@
   "name": "@salient-data/lore",
   "version": "0.0.0",
   "description": "Thin, OKF-native documentation CLI that couples repo-resident docs to Backlog.md and serves them to agents and humans.",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "module": "src/cli.ts",
   "bin": {
