@@ -34,6 +34,14 @@
  * (`core/managed-block.ts`'s own contract, ADR-0008) — `sync` never guesses or writes a partial
  * block. A concept with no `tasks:` at all is never touched, and (mirroring `rename.ts`) no
  * {@link BacklogAdapter} is even constructed unless at least one scoped concept links a task.
+ *
+ * An on-disk `index.md` whose directory no longer holds any concept — directly or via any
+ * descendant, e.g. after a manual `rm`/`mv` outside `lore rename` — is an **orphan**
+ * (`core/indexes.ts`'s {@link orphanedIndexPaths}, LORE-150): `generateIndexes` never emits an entry
+ * for it (only live directories are regenerated), so unlike every other stale file it is never
+ * written. It is still surfaced, distinctly from an "updated" file, in `SyncReport.orphanedIndexes`
+ * and the rendered report — left untouched on disk (deleting a hand-authored file is not this
+ * command's call to make unprompted) but no longer silently unmentioned.
  */
 
 import { dirname, join } from "node:path";
@@ -41,7 +49,7 @@ import type { BacklogAdapter } from "../adapters/backlog";
 import { realGitAdapter, resolveHeadSha } from "../adapters/git";
 import { type BundleGraph, loadBundle } from "../core/bundle";
 import { type Concept, idFromPath, parseConcept, serializeConcept } from "../core/concept";
-import { generateIndexes } from "../core/indexes";
+import { generateIndexes, orphanedIndexPaths } from "../core/indexes";
 import { buildLog, type GitAdapter, generateLog } from "../core/log";
 import { regenerateTaskBlock } from "../core/managed-block";
 import { loadProfile, type Profile } from "../core/profile";
@@ -112,6 +120,15 @@ export interface SyncReport {
   readonly backlogCommit: BacklogCommitResult;
   /** Whether this was a `--dry-run` (nothing was written). */
   readonly dryRun: boolean;
+  /**
+   * Repo-relative paths of on-disk `index.md` files whose directory no longer holds any concept,
+   * directly or via any descendant (LORE-150) — e.g. after a manual `rm`/`mv` outside `lore rename`.
+   * Reported distinctly from `files` (not counted in `filesChanged`): the file is left untouched on
+   * disk, since deleting a hand-authored file is not this command's call to make unprompted, but it
+   * is no longer silently unmentioned either. Always `[]` when `--no-index` skipped index regen.
+   * Ascending.
+   */
+  readonly orphanedIndexes: readonly string[];
 }
 
 /**
@@ -178,9 +195,7 @@ export async function runSync(options: SyncOptions): Promise<number> {
     }
   }
 
-  if (!parsed.noIndex) {
-    regenerateIndexAndLog(options, docsRoot, graph, writes);
-  }
+  const orphanedIndexes = parsed.noIndex ? [] : regenerateIndexAndLog(options, docsRoot, graph, writes);
 
   if (!parsed.dryRun) {
     // Swept as a whole BEFORE any write starts (LORE-93 AC#5): ensureDir's own per-call guard
@@ -212,7 +227,13 @@ export async function runSync(options: SyncOptions): Promise<number> {
   }
 
   const files = [...writes.keys()].sort().map((path) => ({ path: `${DOCS_DIR}/${path}` }));
-  const report: SyncReport = { files, filesChanged: files.length, backlogCommit, dryRun: parsed.dryRun };
+  const report: SyncReport = {
+    files,
+    filesChanged: files.length,
+    backlogCommit,
+    dryRun: parsed.dryRun,
+    orphanedIndexes: orphanedIndexes.map((path) => `${DOCS_DIR}/${path}`),
+  };
   emit(reportRenderable(report), options.output, options.stdout);
   return EXIT_OK;
 }
@@ -235,15 +256,21 @@ function withUpdatedStatus(path: string, raw: string, status: ReconciledStatus, 
 
 /**
  * Regenerate every `index.md` and `log.md`, adding an entry to `writes` for each one whose bytes
- * actually changed. Always whole-bundle, regardless of `[paths…]` scoping — both are inherently
- * global artifacts (a hub lists its whole directory; the log is derived from all of git history).
+ * actually changed, and return the bundle-relative paths of any **orphaned** on-disk `index.md`
+ * files — one whose directory no longer holds a concept, directly or via any descendant (LORE-150) —
+ * so the caller can report them distinctly instead of `generateIndexes` silently never mentioning
+ * them (it only ever emits entries for live directories; a stale disk entry outside that set is
+ * simply absent from its returned map, indistinguishable from "unchanged" without this comparison).
+ * Always whole-bundle, regardless of `[paths…]` scoping — both index regeneration and orphan
+ * detection are inherently global (a hub lists its whole directory; the log is derived from all of
+ * git history).
  */
 function regenerateIndexAndLog(
   options: SyncOptions,
   docsRoot: string,
   graph: BundleGraph,
   writes: Map<string, { before: string | undefined; after: string }>,
-): void {
+): readonly string[] {
   const diskIndexBytes = readIndexBytes(docsRoot);
   const regeneratedIndexes = generateIndexes(graph, { existing: diskIndexBytes });
   for (const [path, bytes] of regeneratedIndexes) {
@@ -252,6 +279,7 @@ function regenerateIndexAndLog(
       writes.set(path, { before, after: bytes });
     }
   }
+  const orphaned = orphanedIndexPaths(graph, diskIndexBytes);
 
   const resolveHead = options.resolveHead ?? resolveHeadSha;
   const headSha = resolveHead(options.root);
@@ -263,6 +291,7 @@ function regenerateIndexAndLog(
   if (logBytes !== existingLog) {
     writes.set(LOG_FILE, { before: existingLog, after: logBytes });
   }
+  return orphaned;
 }
 
 // ── Scoping ────────────────────────────────────────────────────────────────────
@@ -320,10 +349,17 @@ function reportRenderable(data: SyncReport): Renderable<SyncReport> {
   return { kind: "sync.result", data, pretty: render, plain: render };
 }
 
-/** One line per changed file, the backlog-commit outcome (if any), then a summary line. (No color: no severities.) */
+/**
+ * One line per changed file, one line per orphaned index (distinct from "updated": the file is
+ * reported but not written, LORE-150), the backlog-commit outcome (if any), then a summary line.
+ * (No color: no severities.)
+ */
 function render(data: SyncReport): string {
   const verb = data.dryRun ? "would update" : "updated";
   const lines = data.files.map((f) => `${verb} ${f.path}`);
+  for (const path of data.orphanedIndexes) {
+    lines.push(`orphaned index ${path} (no concepts remain under this directory; left untouched)`);
+  }
   const commitLine = renderBacklogCommitLine(data.backlogCommit);
   if (commitLine !== undefined) {
     lines.push(commitLine);

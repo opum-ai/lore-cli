@@ -121,12 +121,7 @@ export function generateIndexes(g: BundleGraph, options: GenerateIndexesOptions 
 
   // Every directory that needs an index: each dir holding a concept, plus all of its ancestors up
   // to the root (so an intermediate dir with concepts only deeper still gets a hub that links down).
-  const indexDirs = new Set<string>([""]);
-  for (const dir of conceptsByDir.keys()) {
-    for (const ancestor of ancestorsInclusive(dir)) {
-      indexDirs.add(ancestor);
-    }
-  }
+  const indexDirs = liveIndexDirs(g);
 
   // Immediate child directories of each index dir (only dirs that themselves get an index).
   const childDirs = new Map<string, string[]>();
@@ -151,6 +146,57 @@ export function generateIndexes(g: BundleGraph, options: GenerateIndexesOptions 
     result.set(indexPath, render(existing.get(indexPath), block, dir));
   }
   return result;
+}
+
+/**
+ * Every directory that needs a **live** index for `g`: the bundle root, every directory holding a
+ * concept directly (excluding the reserved `index.md`/`log.md`), plus each such directory's
+ * ancestors up to the root — so an intermediate directory with concepts only deeper still counts as
+ * live (it gets a hub that links down to them). This is exactly {@link generateIndexes}'s own
+ * `indexDirs` derivation, factored out so {@link orphanedIndexPaths} can compare against the same
+ * live set without duplicating (and risking drift from) the ancestor-walk logic.
+ */
+function liveIndexDirs(g: BundleGraph): Set<string> {
+  const dirs = new Set<string>([""]);
+  for (const concept of g.concepts.values()) {
+    if (RESERVED_FILES.has(posix.basename(concept.path))) {
+      continue;
+    }
+    for (const ancestor of ancestorsInclusive(dirOf(concept.path))) {
+      dirs.add(ancestor);
+    }
+  }
+  return dirs;
+}
+
+/**
+ * The bundle-relative paths of every `index.md` present in `existing` whose directory {@link
+ * generateIndexes} did **not** regenerate for `g` — a directory holding no concept, directly or via
+ * any descendant (LORE-150). This is the stale-index detection `generateIndexes` itself never
+ * performed: it derives `indexDirs` solely from the live graph and simply never emits an entry for a
+ * directory outside that set, so a caller iterating only its *returned* map has no way to tell "this
+ * on-disk index was never regenerated because its directory is orphaned" apart from "this on-disk
+ * index was never regenerated because nothing has changed" — both look identical from that map
+ * alone. Diffing `existing`'s keys against the live set here makes that distinction explicit and
+ * queryable, so `lore sync` (the one caller with a `existing` map sourced from disk) can report an
+ * orphan instead of silently leaving it untouched and unmentioned.
+ *
+ * `generateIndexes`'s own signature and behavior are deliberately unchanged (its returned map is
+ * still keyed only by live directories, exactly as before) — this is a separate, additive query so
+ * every existing caller (`lore rename`'s `mergeIndexWrites`, which has its own established
+ * empty-listing strategy for a directory a rename itself empties) keeps compiling and behaving
+ * identically; only `lore sync` needs to ask this new question.
+ *
+ * Pure and total, sorted with {@link compareCodeUnits} (matching {@link generateIndexes}'s own
+ * ordering) so a caller's report is byte-stable regardless of `existing`'s iteration order.
+ */
+export function orphanedIndexPaths(g: BundleGraph, existing: ReadonlyMap<string, string>): string[] {
+  const live = liveIndexDirs(g);
+  const livePaths = new Set<string>();
+  for (const dir of live) {
+    livePaths.add(dir === "" ? INDEX_FILE : `${dir}/${INDEX_FILE}`);
+  }
+  return [...existing.keys()].filter((path) => !livePaths.has(path)).sort(compareCodeUnits);
 }
 
 /**
