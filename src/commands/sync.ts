@@ -35,12 +35,12 @@ import { dirname, join } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { realGitAdapter, resolveHeadSha } from "../adapters/git";
 import { type BundleGraph, loadBundle } from "../core/bundle";
-import { type Concept, idFromPath, serializeConcept } from "../core/concept";
+import { type Concept, idFromPath, parseConcept, serializeConcept } from "../core/concept";
 import { generateIndexes } from "../core/indexes";
 import { buildLog, type GitAdapter, generateLog } from "../core/log";
 import { regenerateTaskBlock } from "../core/managed-block";
-import { loadProfile } from "../core/profile";
-import { validateReconcileInputs } from "../core/reconcile";
+import { loadProfile, type Profile } from "../core/profile";
+import { type ReconciledStatus, validateReconcileInputs } from "../core/reconcile";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, readFileIfPresent, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
@@ -153,10 +153,15 @@ export async function runSync(options: SyncOptions): Promise<number> {
   for (const { concept, newStatus, rows } of targets) {
     const docPath = `${DOCS_DIR}/${concept.path}`;
     const original = readSource(join(docsRoot, concept.path), docPath);
-    const statusChanged = newStatus !== null && newStatus !== concept.frontmatter.status;
-    const base = statusChanged
-      ? serializeConcept({ ...concept, frontmatter: { ...concept.frontmatter, status: newStatus } }, { profile })
-      : original;
+    // Derived from the FRESHLY re-read `original` bytes, not the stale in-memory `concept` object
+    // captured (in `targets`, via `gatherReconciliation`) before the async Backlog round-trip: a
+    // concurrent on-disk edit landing on this doc during that round-trip must survive a
+    // status-changing sync write, not be silently discarded in favor of a pre-round-trip snapshot
+    // (LORE-119).
+    const base =
+      newStatus !== null && newStatus !== concept.frontmatter.status
+        ? withUpdatedStatus(concept.path, original, newStatus, profile)
+        : original;
 
     const final = regenerateTaskBlock(base, rows, { docPath });
     if (final !== original) {
@@ -195,6 +200,20 @@ export async function runSync(options: SyncOptions): Promise<number> {
   const report: SyncReport = { files, filesChanged: files.length, backlogCommit, dryRun: parsed.dryRun };
   emit(reportRenderable(report), options.output, options.stdout);
   return EXIT_OK;
+}
+
+/**
+ * Re-parse `raw` — the freshly re-read on-disk bytes for the concept at `path` — and re-serialize it
+ * with `status` applied to its frontmatter. Every other frontmatter key and the body come straight
+ * from `raw` itself, never from an earlier in-memory snapshot, so a concurrent on-disk edit made to
+ * the doc between the initial bundle load and this status-changing write survives it (LORE-119). Only
+ * `status` is overwritten — sync's `newStatus` is always the authoritative, live-reconciled value, so
+ * a concurrent edit to `status` itself (were one to land) is still resolved to what Backlog reports,
+ * exactly as an uncontended sync would resolve it.
+ */
+function withUpdatedStatus(path: string, raw: string, status: ReconciledStatus, profile: Profile): string {
+  const fresh = parseConcept(path, raw, { profile });
+  return serializeConcept({ ...fresh, frontmatter: { ...fresh.frontmatter, status } }, { profile });
 }
 
 // ── Index + log regeneration ────────────────────────────────────────────────────
