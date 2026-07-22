@@ -1,10 +1,14 @@
 # docker/e2e/docker-compose.yml — run lore's Docker E2E harness (LORE-56).
 #
 # Usage (from the repo root):
-#   docker compose -f docker/e2e/docker-compose.yml up --build
+#   docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e
 #
 # The report lands at docker/e2e/results/report.jsonl on the host. The
 # service's own exit code reflects overall pass/fail (see run-e2e.sh).
+# --exit-code-from e2e makes `docker compose up`'s own exit code mirror
+# that pass/fail tally — plain `up` always exits 0 regardless of the
+# e2e service's result, which would let a scripted caller checking $?
+# treat a failing run as a success.
 #
 # ./results is a bind mount written from inside the container by the
 # fixed-name `bun` user (Dockerfile). If your host user's uid/gid isn't
@@ -13,7 +17,7 @@
 # permission denied whenever the mounted directory ends up owned by some
 # other uid (e.g. an existing ./results owned by your own host user). Pass
 # your real ids to build a container-side `bun` user that matches:
-#   PUID=$(id -u) PGID=$(id -g) docker compose -f docker/e2e/docker-compose.yml up --build
+#   PUID=$(id -u) PGID=$(id -g) docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e
 services:
   e2e:
     build:
