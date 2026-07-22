@@ -136,9 +136,11 @@ function parseConfigFile(path: string): LoreConfig {
 /**
  * Read the config file as UTF-8. One read is the sole source of truth for
  * absent-vs-unreadable: `ENOENT` → `undefined` (the zero-config case — no
- * separate `existsSync`, so no time-of-check/time-of-use window), while any
- * other failure (a directory at the path, a permissions error, …) is surfaced
- * with its OS reason instead of a blanket "check file permissions".
+ * separate `existsSync`, so no time-of-check/time-of-use window); `EACCES`/`EPERM`
+ * → a `denied` {@link LoreError} (the codebase-wide permissions contract — see
+ * `errors.ts`'s `ioError`/`readFileIfPresent`); any other failure (a directory
+ * at the path, …) is a `validation` error surfaced with its OS reason instead
+ * of a blanket "check file permissions".
  */
 function readConfigText(path: string): string | undefined {
   try {
@@ -146,6 +148,14 @@ function readConfigText(path: string): string | undefined {
   } catch (cause) {
     if (isErrnoCode(cause, "ENOENT")) {
       return undefined;
+    }
+    if (isErrnoCode(cause, "EACCES") || isErrnoCode(cause, "EPERM")) {
+      throw new LoreError(
+        "denied",
+        withReason(`${CONFIG_REL_PATH} could not be read`, cause),
+        `check filesystem permissions on ${CONFIG_REL_PATH}`,
+        { path: CONFIG_REL_PATH },
+      );
     }
     return fail(
       withReason(`${CONFIG_REL_PATH} could not be read`, cause),

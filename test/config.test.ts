@@ -1,9 +1,9 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defaultConfig, loadConfig } from "../src/config";
-import { LoreError } from "../src/errors";
+import { EXIT_CODES, exitCodeFor, LoreError } from "../src/errors";
 
 // The zero-config defaults `loadConfig` returns when nothing overrides them —
 // the production source of truth, not a hand-copied literal, so these tests keep
@@ -234,6 +234,38 @@ describe("loadConfig — malformed input and out-of-contract values", () => {
     const err = expectValidationError(() => loadConfig({ root, env: {} }));
     expect(err.message).toContain("could not be read");
     expect(err.message).toMatch(/EISDIR|directory/i);
+  });
+
+  test("an unreadable (permission-denied) config.toml is a denied error, not validation (LORE-108)", () => {
+    if (process.getuid?.() === 0) {
+      return; // root bypasses read-permission checks, so this repro can't be set up
+    }
+    const root = repoRoot("[validate]\nexternal_links = true\n");
+    const path = join(root, ".lore", "config.toml");
+    chmodSync(path, 0o000);
+    let unreadable = false;
+    try {
+      readFileSync(path, "utf8");
+    } catch {
+      unreadable = true;
+    }
+    if (!unreadable) {
+      chmodSync(path, 0o644); // environment ignores the mode (e.g. permissive FS, or root) — skip
+      return;
+    }
+    try {
+      let thrown: unknown;
+      try {
+        loadConfig({ root, env: {} });
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(LoreError);
+      expect((thrown as LoreError).type).toBe("denied");
+      expect(exitCodeFor(thrown)).toBe(EXIT_CODES.denied);
+    } finally {
+      chmodSync(path, 0o644); // restore so afterAll's rmSync can clean up
+    }
   });
 
   test("an unknown confluence.format is a validation error listing the allowed values", () => {
