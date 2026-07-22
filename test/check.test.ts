@@ -1130,6 +1130,34 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     await expect(result).rejects.toThrow(/lore-99/);
   });
 
+  test("a driftPromise error marks the emitted report complete: false, even with errorCount 0 (LORE-112)", async () => {
+    // The missing linked task makes `gatherReconciliation` throw before any drift finding is ever
+    // produced for this root, so `errorCount` stays 0 -- `complete` is the ONLY signal in the emitted
+    // JSON that distinguishes this partial-failure run from a genuinely clean one.
+    writeDoc("stories/x.md", storyDoc("X", ["lore-99"], "todo"));
+    const adapter = fakeAdapter([]); // lore-99 resolves to null -- rejects with not_found
+
+    const o = opts([], adapter);
+    await expect(runCheck(o)).rejects.toThrow(/lore-99/);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(parsed.data.errorCount).toBe(0);
+    expect(parsed.data.complete).toBe(false);
+  });
+
+  test("a clean, fully reconciled run's emitted report is complete: true (LORE-112)", async () => {
+    const reconciled = regenerateTaskBlock(storyDoc("X", ["lore-1"], "done"), [doneRow], {
+      docPath: "docs/stories/x.md",
+    });
+    writeDoc("stories/x.md", reconciled);
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const o = opts([], adapter);
+    const code = await runCheck(o);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(code).toBe(EXIT_OK);
+    expect(parsed.data.complete).toBe(true);
+  });
+
   test("discovery advisories are not lost when reconciliation rejects (LORE-27 regression)", async () => {
     // A symlink advisory is collected during discovery; a missing linked task rejects afterward.
     // Advisories must flush regardless — before the fix they were only flushed in the fulfillment
