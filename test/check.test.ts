@@ -11,6 +11,7 @@ import {
   classifyAddress,
   collectExternalLinks,
   extractHeadingSlugs,
+  reconcileDriftFindings,
   slugify,
 } from "../src/core/check";
 import { type ManagedTaskRow, regenerateTaskBlock } from "../src/core/managed-block";
@@ -1025,6 +1026,37 @@ describe("driftFindingsForBundle — docPath agrees with the fixable/isDocsRoot 
     expect(result.findings).toHaveLength(1);
     expect(result.findings[0]?.rule).toBe("status-drift");
     expect(result.findings[0]?.message).toContain("run `lore sync`");
+  });
+});
+
+describe("reconcileDriftFindings — newStatus: null never drifts either way (LORE-137 regression)", () => {
+  test("returns no findings for a stale managed block AND a disagreeing status once newStatus is null", () => {
+    const row: ManagedTaskRow = {
+      id: "LORE-1",
+      title: "Title for LORE-1",
+      status: "Done",
+      file: "backlog/tasks/lore-1 - title.md",
+    };
+    // The block is the storyDoc default (empty) -- `regenerateTaskBlock` would rewrite it from
+    // `rows` below, which is exactly the condition that otherwise produces a managed-block-drift
+    // finding (see the "a stale managed block is a managed-block-drift error" test above). The
+    // persisted `currentStatus` also disagrees with what a real reconciliation would compute, so
+    // BOTH checks have something to fire on -- proving `newStatus === null` (the interface's own
+    // "the concept has no linked tasks -- never drift either way" contract) suppresses both, not
+    // just the status-drift half the pre-fix code already gated correctly.
+    const original = storyDoc("X", ["lore-1"], "todo");
+
+    const findings = reconcileDriftFindings({
+      path: "stories/x.md",
+      currentStatus: "todo",
+      newStatus: null,
+      original,
+      rows: [row],
+      docPath: "docs/stories/x.md",
+      fixable: true,
+    });
+
+    expect(findings).toEqual([]);
   });
 });
 
