@@ -323,6 +323,80 @@ describe("lore sync — --no-index", () => {
   });
 });
 
+// ── Orphaned index detection (LORE-150) ────────────────────────────────────────────
+
+describe("lore sync — orphaned index detection (LORE-150)", () => {
+  test("AC#1/#2: an on-disk index.md for a directory with no concepts is reported, not silently left untouched", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntitle: X\n---\nBody.\n"); // no tasks: — no Backlog dependency
+    const stale = "# gone\n\n<!-- lore:index:begin -->\n- [gone](gone.md)\n<!-- lore:index:end -->\n";
+    writeDoc("gone/index.md", stale); // "gone/" holds no concept in the graph at all
+
+    const { report } = await syncCmd([], fakeAdapter([]));
+
+    expect(report.orphanedIndexes).toEqual(["docs/gone/index.md"]);
+    // Reported, not written: absent from `files`/`filesChanged`, and byte-identical on disk.
+    expect(report.files.map((f) => f.path)).not.toContain("docs/gone/index.md");
+    expect(readDoc("gone/index.md")).toBe(stale);
+  });
+
+  test("AC#3: a directory that still holds a live concept regenerates exactly as before, unaffected by an orphan elsewhere", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntitle: X\n---\nBody.\n");
+    writeDoc("gone/index.md", "# gone\n\n<!-- lore:index:begin -->\n<!-- lore:index:end -->\n");
+
+    const { report } = await syncCmd([], fakeAdapter([]));
+
+    expect(report.files.map((f) => f.path)).toContain("docs/index.md");
+    expect(readDoc("index.md")).toContain("[stories](stories/index.md)");
+    expect(report.files.map((f) => f.path)).toContain("docs/stories/index.md");
+    expect(readDoc("stories/index.md")).toContain("[X](x.md)");
+  });
+
+  test("the plain-text report renders the orphan distinctly from an updated file", async () => {
+    writeDoc("gone/index.md", "# gone\n\n<!-- lore:index:begin -->\n<!-- lore:index:end -->\n");
+    const stdout = capture();
+    const code = await runSync({
+      root,
+      output: { mode: "plain", color: false },
+      args: [],
+      adapter: fakeAdapter([]),
+      ...baseOptions(),
+      stdout,
+    });
+    expect(code).toBe(EXIT_OK);
+    const text = stdout.text();
+    expect(text).toContain("orphaned index docs/gone/index.md");
+    expect(text).not.toContain("updated docs/gone/index.md");
+  });
+
+  test("an orphan already reported stays reported on a second run (it is never auto-deleted)", async () => {
+    const stale = "# gone\n\n<!-- lore:index:begin -->\n<!-- lore:index:end -->\n";
+    writeDoc("gone/index.md", stale);
+    const adapter = fakeAdapter([]);
+
+    const first = await syncCmd([], adapter);
+    expect(first.report.orphanedIndexes).toEqual(["docs/gone/index.md"]);
+
+    const second = await syncCmd([], adapter, { gitSpawn: cleanGitSpawn() });
+    expect(second.report.orphanedIndexes).toEqual(["docs/gone/index.md"]);
+    expect(second.report.files).toEqual([]); // still not written — a report-only signal
+    expect(readDoc("gone/index.md")).toBe(stale);
+  });
+
+  test("--no-index skips orphan detection along with index/log regeneration", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntitle: X\n---\nBody.\n");
+    writeDoc("gone/index.md", "# gone\n\n<!-- lore:index:begin -->\n<!-- lore:index:end -->\n");
+
+    const { report } = await syncCmd(["--no-index"], fakeAdapter([]));
+    expect(report.orphanedIndexes).toEqual([]);
+  });
+
+  test("a clean bundle with no stale index files reports no orphans", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntitle: X\n---\nBody.\n");
+    const { report } = await syncCmd([], fakeAdapter([]));
+    expect(report.orphanedIndexes).toEqual([]);
+  });
+});
+
 // ── [reconcile.overrides] wiring ──────────────────────────────────────────────────
 
 describe("lore sync — [reconcile.overrides] (LORE-26, ADR-0009 §3)", () => {

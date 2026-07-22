@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { buildGraph } from "../src/core/bundle";
-import { generateIndexes, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END, locateManagedBlock } from "../src/core/indexes";
+import {
+  generateIndexes,
+  INDEX_BLOCK_BEGIN,
+  INDEX_BLOCK_END,
+  locateManagedBlock,
+  orphanedIndexPaths,
+} from "../src/core/indexes";
 import { LoreError } from "../src/errors";
 import { concept } from "./helpers";
 
@@ -207,5 +213,61 @@ describe("generateIndexes — determinism (AC#1)", () => {
     const first = generateIndexes(g, { existing: new Map([["index.md", ROOT_AUTHORED]]) });
     const second = generateIndexes(g, { existing: first });
     expect([...second.entries()]).toEqual([...first.entries()]);
+  });
+});
+
+describe("orphanedIndexPaths — stale on-disk index detection (LORE-150)", () => {
+  test("AC#2: an index.md whose directory holds no concept at all is flagged as orphaned", () => {
+    const g = buildGraph(SAMPLE); // no concepts anywhere under "orphan/"
+    const existing = new Map([
+      ["index.md", ROOT_AUTHORED],
+      ["adr/index.md", generateIndexes(g).get("adr/index.md") as string],
+      ["orphan/index.md", `# orphan\n\n${block("- [stale](stale.md)")}\n`],
+    ]);
+    expect(orphanedIndexPaths(g, existing)).toEqual(["orphan/index.md"]);
+  });
+
+  test("an index.md orphaned only via its descendants (a deeper dir lost its last concept) is flagged too", () => {
+    // "a" still holds a concept directly ("a/keep.md"); "a/b" holds none, directly or via any
+    // descendant of ITS OWN — even though "a/b" is nested under the still-live "a".
+    const g = buildGraph([concept("a/keep.md", { title: "Keep" })]);
+    const existing = new Map([
+      ["index.md", ROOT_AUTHORED],
+      ["a/index.md", generateIndexes(g).get("a/index.md") as string],
+      ["a/b/index.md", `# b\n\n${block("- [gone](gone.md)")}\n`],
+    ]);
+    expect(orphanedIndexPaths(g, existing)).toEqual(["a/b/index.md"]);
+  });
+
+  test("a directory that still holds a concept only via a descendant (an intermediate hub) is never flagged", () => {
+    const g = buildGraph([concept("a/b/c/deep.md", { title: "Deep" })]);
+    const out = generateIndexes(g);
+    const existing = new Map([
+      ["index.md", out.get("index.md") as string],
+      ["a/index.md", out.get("a/index.md") as string],
+      ["a/b/index.md", out.get("a/b/index.md") as string],
+      ["a/b/c/index.md", out.get("a/b/c/index.md") as string],
+    ]);
+    expect(orphanedIndexPaths(g, existing)).toEqual([]);
+  });
+
+  test("an existing map with no stale entries reports no orphans", () => {
+    const g = buildGraph(SAMPLE);
+    const out = generateIndexes(g);
+    expect(orphanedIndexPaths(g, out)).toEqual([]);
+  });
+
+  test("multiple orphans are reported sorted by path, matching generateIndexes's own ordering", () => {
+    const g = buildGraph(SAMPLE);
+    const existing = new Map([
+      ["zzz/index.md", `# zzz\n\n${block()}\n`],
+      ["aaa/index.md", `# aaa\n\n${block()}\n`],
+      ["adr/index.md", generateIndexes(g).get("adr/index.md") as string], // still live, never flagged
+    ]);
+    expect(orphanedIndexPaths(g, existing)).toEqual(["aaa/index.md", "zzz/index.md"]);
+  });
+
+  test("an empty existing map has nothing to flag", () => {
+    expect(orphanedIndexPaths(buildGraph(SAMPLE), new Map())).toEqual([]);
   });
 });
