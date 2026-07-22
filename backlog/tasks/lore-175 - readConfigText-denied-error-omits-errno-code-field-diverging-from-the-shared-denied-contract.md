@@ -3,9 +3,10 @@ id: LORE-175
 title: >-
   readConfigText denied error omits errno code field, diverging from the shared
   denied contract
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-22 13:19'
+updated_date: '2026-07-22 18:04'
 labels:
   - codex-review-followup
   - cli-entry-state
@@ -23,7 +24,29 @@ Wave-2 integration-review follow-up of LORE-108. LORE-108 correctly made readCon
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 readConfigText's denied LoreError includes the errno `code` (e.g. 'EACCES'/'EPERM') in its structured `input`, matching the shape emitted by errors.ts's ioError/readFileIfPresent for denied errors
-- [ ] #2 loadConfig's docstring is updated to reflect that a denied error type is now possible (no longer only 'validation')
-- [ ] #3 A test asserts the denied error's input.code is populated for an EACCES/EPERM config read; existing LORE-108 denied-type/exit-code assertions still pass
+- [x] #1 readConfigText's denied LoreError includes the errno `code` (e.g. 'EACCES'/'EPERM') in its structured `input`, matching the shape emitted by errors.ts's ioError/readFileIfPresent for denied errors
+- [x] #2 loadConfig's docstring is updated to reflect that a denied error type is now possible (no longer only 'validation')
+- [x] #3 A test asserts the denied error's input.code is populated for an EACCES/EPERM config read; existing LORE-108 denied-type/exit-code assertions still pass
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. In readConfigText's denied throw (src/config.ts), add the errno code to the structured input: { path: CONFIG_REL_PATH, code: errnoCode(cause) }, matching errors.ts's ioError/readFileIfPresent shape.
+2. Update loadConfig's docstring (~line 105-110) to note that an unreadable file (EACCES/EPERM) throws a denied LoreError, not only validation.
+3. Extend the existing LORE-108 permission-denied test in test/config.test.ts to also assert (thrown as LoreError).input has code EACCES/EPERM (whichever the OS reports), keeping the existing denied-type/exit-code assertions.
+4. Mutation-check: temporarily revert the code field, confirm new assertion fails, restore.
+5. Run bun test + bun run typecheck; verify green.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed: readConfigText's denied LoreError now attaches { path, code: errnoCode(cause) } to input (src/config.ts), matching errors.ts's ioError/readFileIfPresent shape. loadConfig's docstring updated to document the denied path. Extended the existing LORE-108 permission-denied test (test/config.test.ts) to assert input.path and input.code (EACCES/EPERM). Mutation-checked: reverted the code:errnoCode(cause) hunk, reran bun test test/config.test.ts -> new assertion failed as expected (input.code was undefined), then restored and reran -> 37/37 pass. Full suite: bun test -> 1748 pass / 0 fail across 46 files. bun run typecheck -> clean (tsc --noEmit, no errors). Manual CLI-path repro (temp script exercising loadConfig -> LoreError -> toErrorEnvelope, the same seam cli.ts's reportError uses) confirmed the real --json envelope: {"error_type":"denied",...,"input":{"path":".lore/config.toml","code":"EACCES"}}. Scope stayed to src/config.ts + test/config.test.ts as directed.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+readConfigText's denied LoreError now carries the errno code in input (matching errors.ts's ioError/readFileIfPresent), and loadConfig's docstring documents the denied path. Verified: bun test 1748 pass/0 fail (incl. new LORE-175 assertion, mutation-checked to fail without the fix); bun run typecheck clean; manual repro of the real loadConfig->toErrorEnvelope seam shows input.code:"EACCES" in the --json envelope.
+<!-- SECTION:FINAL_SUMMARY:END -->
