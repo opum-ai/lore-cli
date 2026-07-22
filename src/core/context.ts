@@ -27,10 +27,11 @@
  *   the *same* `~tokens` `lore graph` reports for that concept (cross-command
  *   consistency, and a reuse of the one memoized estimator).
  * - A **neighbor** is compacted to a one-line entry, so it is charged the chars/4 of
- *   that entry's content — its `id`, `type`, and `summary` — not the whole concept
- *   (which would defeat the compaction) and not the summary alone (which would
- *   under-count the always-present id/type, letting a wide neighborhood overrun the
- *   budget).
+ *   that entry's content — its `id`, `type`, `title` (when present), and `summary`
+ *   (when present) — not the whole concept (which would defeat the compaction) and
+ *   not the summary alone (which would under-count the always-present id/type, or a
+ *   long `title` sitting behind a short/absent `summary`, letting a wide
+ *   neighborhood overrun the budget).
  *
  * The export's `tokenEstimate` is the target's estimate plus every **included**
  * neighbor's — the size of the pack actually emitted. Neighbors are added in
@@ -82,7 +83,13 @@ export interface ContextNeighbor {
    * sentence to show.
    */
   readonly summary?: string;
-  /** The chars/4 estimate of the emitted entry (`id` + `type` + `summary`) — what this neighbor costs the budget. */
+  /**
+   * The chars/4 estimate of the emitted entry — `id` + `type` + `title` (when
+   * present) + `summary` (when present) — what this neighbor costs the budget.
+   * `title` and `summary` are charged independently even when `summary` is the
+   * `title` fallback (the neighbor object emits both fields under `--json`), so a
+   * long `title` behind a short/absent `summary` is never undercounted.
+   */
   readonly tokenEstimate: number;
 }
 
@@ -199,19 +206,23 @@ export function buildContext(graph: BundleGraph, root: string, options: BuildCon
 /**
  * Shape one neighbor concept into its compacted {@link ContextNeighbor}: its `type`,
  * optional `title`, the one-line summary (its `summary`, falling back to its
- * `title`), and the chars/4 cost of the emitted entry (`id` + `type` + `summary`).
- * The `title` scalar is coerced once and reused for both the `title` field and the
- * summary fallback.
+ * `title`), and the chars/4 cost of the emitted entry (`id` + `type` + `title` +
+ * `summary`). The `title` scalar is coerced once and reused for both the `title`
+ * field and the summary fallback; it is charged in the cost even when `summary`
+ * duplicates it via that fallback, so a long `title` behind a short/absent
+ * `summary` is never undercounted.
  */
 function neighborOf(concept: Concept, id: string): ContextNeighbor {
   const title = frontmatterScalar(concept.frontmatter.title);
   const summary = oneLine(frontmatterScalar(concept.frontmatter.summary) ?? title);
+  const titlePart = title !== undefined ? ` ${title}` : "";
+  const summaryPart = summary !== undefined ? ` ${summary}` : "";
   return {
     id,
     type: concept.type,
     ...(title !== undefined ? { title } : {}),
     ...(summary !== undefined ? { summary } : {}),
-    tokenEstimate: estimateTokens(`${id} ${concept.type} ${summary ?? ""}`),
+    tokenEstimate: estimateTokens(`${id} ${concept.type}${titlePart}${summaryPart}`),
   };
 }
 

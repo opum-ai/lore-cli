@@ -114,8 +114,8 @@ describe("buildContext — neighbor compaction", () => {
     writeChainBundle();
     const data = buildContext(graph(), "stories/bulk", { depth: 2 });
     const adr = data.neighbors.find((n) => n.id === "adr/0001-x");
-    // No summary, but the always-emitted id + type still carry a (charged) cost.
-    expect(adr).toMatchObject({ type: "Adr", tokenEstimate: estimateTokens("adr/0001-x Adr ") });
+    // No title, no summary, but the always-emitted id + type still carry a (charged) cost.
+    expect(adr).toMatchObject({ type: "Adr", tokenEstimate: estimateTokens("adr/0001-x Adr") });
     expect(adr).not.toHaveProperty("summary");
   });
 
@@ -130,15 +130,45 @@ describe("buildContext — neighbor compaction", () => {
     expect(data.neighbors.find((n) => n.id === "flag")?.summary).toBe("2024");
   });
 
-  test("each neighbor's estimate is chars/4 of its id+type+summary, and the total sums target + included", () => {
+  test("each neighbor's estimate is chars/4 of its id+type+title+summary, and the total sums target + included", () => {
     writeChainBundle();
     const data = buildContext(graph(), "stories/bulk", { depth: 2 });
     const ref = data.neighbors.find((n) => n.id === "reference/orders");
-    // The whole emitted entry (id, type, summary) is charged — not the summary alone —
-    // so a wide neighborhood of short summaries can't silently overrun the budget.
-    expect(ref?.tokenEstimate).toBe(estimateTokens("reference/orders Reference The orders domain reference."));
+    // The whole emitted entry (id, type, title, summary) is charged — not the summary
+    // alone — so a wide neighborhood of short summaries (behind long titles) can't
+    // silently overrun the budget.
+    expect(ref?.tokenEstimate).toBe(
+      estimateTokens("reference/orders Reference Orders The orders domain reference."),
+    );
     const sum = data.target.tokenEstimate + data.neighbors.reduce((acc, n) => acc + n.tokenEstimate, 0);
     expect(data.tokenEstimate).toBe(sum);
+  });
+
+  test("a neighbor's tokenEstimate includes its title even behind a short summary (LORE-148)", () => {
+    // Two otherwise-identical neighbors (same short summary), differing only in
+    // whether they carry a long title. Before the fix, tokenEstimate was computed
+    // from id+type+summary only, so a long title contributed nothing and both
+    // neighbors cost the same — letting a bundle of long-titled, short-summarized
+    // concepts blow well past --max-tokens without the accounting ever noticing.
+    writeDoc("hub.md", "---\ntype: Story\n---\nTo [titled](./titled.md) and [bare](./bare.md).\n");
+    writeDoc(
+      "titled.md",
+      '---\ntype: Widget\ntitle: "A Very Long Title That Should Count Toward The Token Budget"\nsummary: "Short."\n---\nText.\n',
+    );
+    writeDoc("bare.md", '---\ntype: Widget\nsummary: "Short."\n---\nText.\n');
+    const data = buildContext(graph(), "hub", { depth: 1 });
+    const titled = data.neighbors.find((n) => n.id === "titled");
+    const bare = data.neighbors.find((n) => n.id === "bare");
+    expect(titled?.title).toBe("A Very Long Title That Should Count Toward The Token Budget");
+    expect(titled?.summary).toBe("Short.");
+    expect(bare?.title).toBeUndefined();
+    expect(bare?.summary).toBe("Short.");
+    // Same id length ("titled" vs "bare" differ by 2 chars) and identical summary,
+    // yet the titled neighbor's cost must be substantially higher — the title's
+    // bytes are actually counted, not silently dropped.
+    expect(titled?.tokenEstimate).toBeGreaterThan((bare?.tokenEstimate as number) + 10);
+    expect(titled?.tokenEstimate).toBe(estimateTokens(`titled Widget ${titled?.title} Short.`));
+    expect(bare?.tokenEstimate).toBe(estimateTokens("bare Widget Short."));
   });
 
   test("the target's and a neighbor's `title` are kept verbatim, matching `lore graph`", () => {
