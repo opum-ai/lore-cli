@@ -16,7 +16,9 @@
  * the fully-generated `log.md` is excluded (it is regenerated wholesale, so editing it is futile); and
  * an absolute `--in` glob resolves correctly. Reads and replacements for **all** files complete before
  * **any** write, so a bad pattern or an unreadable file aborts the run before it has changed a single
- * file on disk.
+ * file on disk. Each individual write in that commit phase is itself atomic (LORE-116,
+ * `writeFileAtomic`'s temp-file+rename discipline), so a crash or I/O error partway through a single
+ * file's write can never leave that file truncated or half-written.
  *
  * A bad flag, an invalid/empty/zero-width pattern is a `usage` error (exit 2); an unreadable path an
  * I/O failure — both funnel through the router's one error seam like every command.
@@ -30,7 +32,7 @@ import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { canonicalIdentity, readSource, toRepoRelative, withinRepo } from "./discover";
-import { writeFileOverwriting } from "./fswrite";
+import { writeFileAtomic } from "./fswrite";
 
 /** The reserved, fully git-derived file `lore` regenerates wholesale; editing it via `replace` is futile. */
 const GENERATED_FILE = "log.md";
@@ -129,10 +131,18 @@ export function runReplace(options: ReplaceOptions): number {
     planned.push({ display: target.display, abs: target.abs, text, count });
   }
 
-  // Phase 2 — commit the writes (unless dry-run).
+  // Phase 2 — commit the writes (unless dry-run). Each file goes through writeFileAtomic (LORE-116)
+  // rather than the plain writeFileOverwriting: a crash, kill, or I/O error (e.g. disk full) partway
+  // through a single file's write must never leave that target truncated or half-written — the same
+  // temp-file+rename discipline `lore sync` already relies on for the identical reason. This is
+  // per-file atomicity only, not a whole-run transaction: a failure partway through this loop still
+  // leaves earlier files in this run already committed (by design — there is no cross-file rollback
+  // here, matching `writeAllOrRollback`'s docstring, which notes that broader transactional rollback
+  // for `lore replace` is a separate, deferred concern) and the loop's own error propagates uncaught
+  // so the failure is never silently swallowed.
   if (!parsed.dryRun) {
     for (const change of planned) {
-      writeFileOverwriting(change.abs, change.text, change.display);
+      writeFileAtomic(change.abs, change.text, change.display);
     }
   }
 

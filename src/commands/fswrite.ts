@@ -8,8 +8,11 @@
  *   A directory or symlink sitting where a file must go is a `conflict` {@link LoreError}
  *   (exit 5) for both, instead of each command re-deriving the `wx`/`EEXIST`/`lstat` dance.
  * - **overwrite** — the refactoring commands (`lore replace`/`rename`/`supersede`) rewrite
- *   the bytes of files that already exist ({@link writeFileOverwriting}). This is deliberately
- *   *not* never-clobber: the whole point is to edit an existing doc in place.
+ *   the bytes of files that already exist. This is deliberately *not* never-clobber: the whole
+ *   point is to edit an existing doc in place. Most of these write a single file (or a handful) per
+ *   run and use the plain {@link writeFileOverwriting}; `lore replace` can rewrite many files in one
+ *   invocation, like `lore sync` below, so it uses the atomic {@link writeFileAtomic} instead
+ *   (LORE-116) — a crash or I/O error partway through must never leave one of those files truncated.
  *
  * Both disciplines share one symlink guard ({@link assertNoSymlinkInPath}, LORE-76/LORE-77), so a
  * symlinked ancestor directory or final target refuses loudly instead of silently redirecting a
@@ -175,14 +178,17 @@ export function writeFileOverwriting(absPath: string, contents: string, relPath:
 
 /**
  * Overwrite (or create) a file **atomically**: write the new bytes to a sibling temp file, then
- * `renameSync` it over `absPath`. `lore sync` (LORE-26) is the one command that can write many
- * files in a single invocation, so a crash or kill mid-run must never leave any *one* target file
- * truncated or half-written — a plain `writeFileSync` truncates the destination before writing,
- * which a crash between those two steps would leave corrupted; a same-directory rename is atomic
- * (same filesystem, POSIX and NTFS both guarantee it) so the destination is always either its old
- * complete bytes or its new complete bytes, never a partial write. Only `lore sync`'s writes use
- * this; every other command keeps {@link writeFileOverwriting} — see that function's own doc for why
- * a plain overwrite is the right discipline there.
+ * `renameSync` it over `absPath`. `lore sync` (LORE-26) and `lore replace` (LORE-116) are the
+ * commands that can write many files in a single invocation, so a crash or kill mid-run must never
+ * leave any *one* target file truncated or half-written — a plain `writeFileSync` truncates the
+ * destination before writing, which a crash between those two steps would leave corrupted; a
+ * same-directory rename is atomic (same filesystem, POSIX and NTFS both guarantee it) so the
+ * destination is always either its old complete bytes or its new complete bytes, never a partial
+ * write. This is per-file atomicity only — a failure partway through a multi-file commit loop still
+ * leaves files already written in that same run committed, with no cross-file rollback (both
+ * commands' own callers document that as a separate, deferred concern). Every other command keeps
+ * {@link writeFileOverwriting} — see that function's own doc for why a plain overwrite is the right
+ * discipline there.
  */
 export function writeFileAtomic(absPath: string, contents: string, relPath: string): void {
   const tmpPath = join(dirname(absPath), `.lore-sync-tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
@@ -462,9 +468,10 @@ export function writeAllBytes(write: (buf: Buffer, offset: number, length: numbe
  * module is either check-then-atomic-create ({@link createIfAbsent}'s `wx` open, independently
  * TOCTOU-safe on every platform: `O_CREAT|O_EXCL` refuses on ANY pre-existing entry at the path,
  * symlink or not, with no symlink-detection required) or doesn't need this
- * ({@link writeFileOverwriting}'s other callers — `lore replace`/`rename`/`supersede` — write back
- * over a concept file the bundle loader just read, and that loader already skips symlinked files
- * during its walk, so their target was never a symlink to begin with). The write itself loops on a
+ * ({@link writeFileOverwriting}'s other callers — `lore rename`/`supersede` (and `lore replace`,
+ * via {@link writeFileAtomic}) — write back over a concept file the bundle loader just read, and
+ * that loader already skips symlinked files during its walk, so their target was never a symlink to
+ * begin with). The write itself loops on a
  * short write via {@link writeAllBytes} rather than trusting one `writeSync` call to consume the
  * whole buffer.
  */
