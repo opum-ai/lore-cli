@@ -3,7 +3,7 @@ id: doc-3
 title: Backlog campaign tracker — Codex review follow-ups (round 2)
 type: other
 created_date: '2026-07-21 22:27'
-updated_date: '2026-07-22 20:07'
+updated_date: '2026-07-22 20:08'
 ---
 Round 2 of the Codex-review follow-up campaign (see [[Backlog campaign tracker]] / doc-1 for
 round 1, LORE-69..95, which closed all 20 high-severity findings from doc-2). Re-initialised on
@@ -112,31 +112,31 @@ asserts `lore query --help` byte-identical to `lore help query`). No further act
 | 32 | LORE-127 | cmd-meta-c | — | Done | 1 | RESOLVED-BY-MERGE by LORE-107 (PR #95): cli.ts routes `lore <cmd> --help` to runHelp; help.test.ts:271 asserts byte-identical to `lore help <cmd>` |
 | 33 | LORE-128 | cmd-meta-c | — | Done | 6 | MERGED wave 6 (PR #120, dev @ `12f5b7c`). detectDiskStyle/reapplyDiskStyle preserve BOM + EOL (agents.ts only). |
 | 34 | LORE-129 | cmd-meta-c | — | Done | 8 | `lore agents --check --force` mislabels a stale hand-edited SKILL.md and prints a remedy that won't fix it |
-| 35 | LORE-130 | cmd-meta-c | — | To Do | — | writeAllOrRollback's --force overwrite is not crash-safe against a mid-write kill |
+| 35 | LORE-130 | cmd-meta-c | — | Dispatched | 9 | writeAllOrRollback's --force overwrite is not crash-safe against a mid-write kill |
 | 36 | LORE-131 | cmd-meta-c | — | Done | 1 | RESOLVED-BY-MERGE by LORE-107 (PR #95): help.test.ts:271 is the byte-identical `lore <cmd> --help` == `lore help <cmd>` regression test |
 | 37 | LORE-132 | cmd-rename-supersede | — | Done | 6 | MERGED wave 6 (PR #121, dev @ `f5c8230`). moveFile re-stats dest (dev/ino) before rename → conflict on raced-in file; case-only safe. |
 | 38 | LORE-133 | core-bundle-check | — | Done | 6 | MERGED wave 6 (PR #122, dev @ `b67b273`). resolvePath special-cases leading-/ (matches check.ts). Follow-up LORE-180 (rewrite.ts). |
 | 39 | LORE-134 | core-bundle-check | — | Done | 8 | resolveRef tries frontmatter ref as a root id before trying it as a relative path |
 | 40 | LORE-135 | core-bundle-check | — | Done | 8 | Anchor-link check lower-cases fragments, masking case-mismatched broken anchors |
-| 41 | LORE-136 | core-bundle-check | — | To Do | — | Heading slug computation ignores image alt text in headings |
+| 41 | LORE-136 | core-bundle-check | — | Dispatched | 9 | Heading slug computation ignores image alt text in headings |
 | 42 | LORE-137 | core-bundle-check | — | To Do | — | reconcileDriftFindings ignores its own newStatus:null contract for managed-block drift |
 | 43 | LORE-138 | core-bundle-check | — | To Do | — | bodyText's catch-all swallows any gray-matter exception, not just YAML parse errors |
 | 44 | LORE-139 | core-bundle-check | — | Done | 8 | Profile-declared type `template` path allows reading files outside .lore/templates/ via traversal |
 | 45 | LORE-140 | core-bundle-check | — | To Do | — | parseFieldSpec accepts an empty `enum = []`, making the field impossible to satisfy |
 | 46 | LORE-141 | core-concept-manifest | — | Done | 8 | Malformed closing frontmatter fence bleeds bytes into concept body |
-| 47 | LORE-142 | core-engine-a | — | To Do | — | Add missing `help` entry to LORE_COMMANDS in agent-bridge.ts |
+| 47 | LORE-142 | core-engine-a | — | Dispatched | 9 | Add missing `help` entry to LORE_COMMANDS in agent-bridge.ts |
 | 48 | LORE-143 | core-engine-a | — | To Do | — | Scope `git log` in GitAdapter.history to the docs root instead of the whole repo |
 | 49 | LORE-144 | core-engine-a | — | To Do | — | serializeStructuralConcept's fixed default-profile write breaks `lore validate` under a custom Reference profile |
-| 50 | LORE-145 | core-engine-b | — | To Do | — | Fix DOT quote() to not double-escape backslashes; escape newlines |
+| 50 | LORE-145 | core-engine-b | — | Dispatched | 9 | Fix DOT quote() to not double-escape backslashes; escape newlines |
 | 51 | LORE-146 | core-engine-b | — | To Do | — | Fix `linking` instructions: link/unlink now commit backlog/tasks themselves |
 | 52 | LORE-147 | core-engine-b | — | To Do | — | Fix `check` instructions: expandRoot/reconciliation throws besides usage/not_found |
-| 53 | LORE-148 | core-index-context | — | To Do | — | context export tokenEstimate ignores title field and JSON overhead |
+| 53 | LORE-148 | core-index-context | — | Dispatched | 9 | context export tokenEstimate ignores title field and JSON overhead |
 | 54 | LORE-149 | core-index-context | — | To Do | — | linkText re-escapes already-escaped brackets, enabling injected markdown links |
 | 55 | LORE-150 | core-index-context | — | To Do | — | generateIndexes never detects or removes an orphaned sub-index directory |
 | 56 | LORE-151 | core-links-resolution | — | To Do | — | decodeTarget whole-path decode lets %2F forge a structural slash in link targets |
 | 57 | LORE-152 | core-links-resolution | — | To Do | — | Dotted extensionless links (e.g. orders.v2) skip both portability lint and broken-link check |
 | 58 | LORE-153 | core-links-resolution | — | To Do | — | LinkFinding.message interpolates raw link target unescaped into terminal-rendered text |
-| 59 | LORE-154 | core-managed-template | — | To Do | — | cell() escapes pipes without escaping pre-existing backslashes first |
+| 59 | LORE-154 | core-managed-template | — | Dispatched | 9 | cell() escapes pipes without escaping pre-existing backslashes first |
 | 60 | LORE-155 | core-managed-template | — | To Do | — | upsertManagedBlock's update path skips the post-splice validation the insert path has |
 | 61 | LORE-156 | core-managed-template | — | To Do | — | Same-line marker pair collapses into one mdast node and is invisible to locateLabeledMarkers |
 | 62 | LORE-157 | core-managed-template | — | To Do | — | PLACEHOLDER regex silently passes through malformed {{...}} tokens instead of flagging them unresolved |
