@@ -53,6 +53,7 @@ import { dedupeTaskIds, defaultAdapter } from "./link";
 import {
   gatherReconciliation,
   linkedConcepts,
+  mapWithConcurrency,
   type ReconcileConfig,
   resolveReconcileConfig,
   resolveTaskDetails,
@@ -900,22 +901,6 @@ async function probeOne(url: string, fetchFn: FetchLike, resolveHost: ResolveHos
     }
   }
   return `exceeded ${MAX_REDIRECTS} redirects`;
-}
-
-/** Run `fn` over `items` with at most `limit` in flight at once — a tiny worker-pool over a shared cursor. */
-async function mapWithConcurrency<T>(
-  items: readonly T[],
-  limit: number,
-  fn: (item: T) => Promise<void>,
-): Promise<void> {
-  let cursor = 0;
-  const worker = async (): Promise<void> => {
-    while (cursor < items.length) {
-      const item = items[cursor++] as T;
-      await fn(item);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
 // ── Output ─────────────────────────────────────────────────────────────────────

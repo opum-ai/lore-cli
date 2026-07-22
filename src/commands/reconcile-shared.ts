@@ -178,41 +178,72 @@ export async function gatherReconciliation(
 }
 
 /**
+ * How many `adapter.viewTask` calls {@link resolveTaskDetails} runs at once — bounded so a bundle
+ * linking a large number of distinct task ids does not spawn one Backlog CLI subprocess per id
+ * fully concurrently (which can exhaust process/file-descriptor limits or overwhelm the Backlog
+ * CLI). Mirrors `check.ts`'s own `LIVENESS_CONCURRENCY` cap on external-URL liveness probes —
+ * same shape of problem (unbounded subprocess/socket fan-out), same fix. Exported so tests can
+ * assert against the real cap rather than duplicating (and risking drift from) a hardcoded copy.
+ */
+export const TASK_DETAILS_CONCURRENCY = 8;
+
+/**
+ * Run `fn` over `items` with at most `limit` in flight at once — a tiny worker-pool over a shared
+ * cursor. Shared by {@link resolveTaskDetails} (bounding concurrent `adapter.viewTask` Backlog
+ * subprocess spawns) and `check.ts`'s `probeLiveness` (bounding concurrent external-URL fetches).
+ */
+export async function mapWithConcurrency<T>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  let cursor = 0;
+  const worker = async (): Promise<void> => {
+    while (cursor < items.length) {
+      const item = items[cursor++] as T;
+      await fn(item);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
+/**
  * Resolve every task id to a {@link TaskResolution}, keyed by lowercase id — a not-found or
  * rejected `viewTask` becomes an `ok: false` entry rather than a thrown error, so a caller
  * resolving ids shared across several independent groups (bundle roots, in `lore check`'s
  * multi-root drift pass) can fetch each distinct id exactly once and let EACH group decide for
  * itself whether ids IT needs failed, instead of one failing id aborting every group's resolution.
- * Reads run concurrently (`allSettled`); this never throws.
+ * Reads run concurrently, bounded to {@link TASK_DETAILS_CONCURRENCY} in flight at once (via
+ * {@link mapWithConcurrency}); this never throws.
  */
 export async function resolveTaskDetails(
   adapter: BacklogAdapter,
   taskIds: readonly string[],
 ): Promise<Map<string, TaskResolution>> {
-  const results = await Promise.allSettled(taskIds.map((id) => adapter.viewTask(id)));
   const resolved = new Map<string, TaskResolution>();
-  for (let i = 0; i < taskIds.length; i++) {
-    const taskId = taskIds[i] as string;
-    const result = results[i] as PromiseSettledResult<BacklogTaskDetail | null>;
-    if (result.status === "rejected") {
+  await mapWithConcurrency(taskIds, TASK_DETAILS_CONCURRENCY, async (taskId) => {
+    try {
+      const detail = await adapter.viewTask(taskId);
+      if (detail === null) {
+        resolved.set(taskId.toLowerCase(), {
+          ok: false,
+          error: new LoreError(
+            "not_found",
+            `task "${taskId}" does not exist`,
+            "a linked concept's tasks: list must reference only live Backlog tasks — check the id, or unlink it",
+            { taskId },
+          ),
+        });
+      } else {
+        resolved.set(taskId.toLowerCase(), { ok: true, detail });
+      }
+    } catch (cause) {
       resolved.set(taskId.toLowerCase(), {
         ok: false,
-        error: result.reason instanceof Error ? result.reason : new Error(String(result.reason)),
+        error: cause instanceof Error ? cause : new Error(String(cause)),
       });
-    } else if (result.value === null) {
-      resolved.set(taskId.toLowerCase(), {
-        ok: false,
-        error: new LoreError(
-          "not_found",
-          `task "${taskId}" does not exist`,
-          "a linked concept's tasks: list must reference only live Backlog tasks — check the id, or unlink it",
-          { taskId },
-        ),
-      });
-    } else {
-      resolved.set(taskId.toLowerCase(), { ok: true, detail: result.value });
     }
-  }
+  });
   return resolved;
 }
 
