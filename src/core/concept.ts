@@ -435,10 +435,50 @@ interface PresentSplit {
 type FrontmatterSplit = PresentSplit | { readonly present: false; readonly reason: "non-mapping" | "missing" };
 
 /**
+ * Guard against gray-matter's loose closing-delimiter search (LORE-141):
+ * `lib/index.js` locates the close with `str.indexOf('\n' + '---')`, a plain
+ * substring search that matches the FIRST four characters of a longer run (e.g. a
+ * closing fence hand-authored as `----`, or one with any other trailing junk like
+ * `---x`) and then slices off only those four characters — leaking the rest of
+ * that malformed delimiter line into `file.content` (the parsed body) as silent
+ * corruption instead of a parse error.
+ *
+ * This recomputes, independently of gray-matter's internals, the exact byte index
+ * in `raw` immediately after the delimiter gray-matter matched (`file.matter`'s
+ * length tells us where that match starts: gray-matter strips exactly the 3-byte
+ * open delimiter — `"---".length` — before searching, and never touches `raw`
+ * itself), and returns whether the very next byte is a newline or end-of-file (a
+ * clean fence line) or something else (a malformed one).
+ *
+ * Only called when `raw` starts with the exact bare fence lore itself ever emits
+ * ({@link FENCE}, `"---\n"` — see the caller), which rules out gray-matter's
+ * language-tag feature ever having consumed extra bytes after the open delimiter
+ * (a tag needs a non-newline character right after the dashes; `FENCE` guarantees
+ * a newline is there instead) — so the recomputed offset always lines up with
+ * gray-matter's own, and this only ever tightens an already bare-fenced, plain-YAML
+ * document; it never changes whether a fence is considered present in the first
+ * place.
+ *
+ * When gray-matter's search found no closing delimiter at all (an unterminated
+ * fence — pre-existing, untouched behavior: the whole rest of the file becomes
+ * frontmatter with an empty body), the recomputed offset lands past the end of
+ * `raw`; `String.charAt` returns `""` for any out-of-range index, which this
+ * treats as clean — so that pre-existing case is deliberately left alone.
+ */
+function closingFenceIsClean(raw: string, file: matter.GrayMatterFile<string>): boolean {
+  const openDelimiterLength = 3; // "---", not counting the newline FENCE also guarantees follows it
+  const closeDelimiterStart = openDelimiterLength + file.matter.length; // index of the `\n` starting `\n---`, in raw
+  const afterCloseDelimiter = closeDelimiterStart + "\n---".length;
+  const next = raw.charAt(afterCloseDelimiter);
+  return next === "" || next === "\n";
+}
+
+/**
  * Split normalized bytes into a frontmatter mapping + body via gray-matter.
  *
- * It **throws** a `validation` {@link LoreError} only for genuinely malformed YAML
- * inside a fence. The two *not-a-concept* shapes — a non-mapping fence (a bare
+ * It **throws** a `validation` {@link LoreError} for genuinely malformed YAML
+ * inside a fence, or for a malformed *closing* fence ({@link closingFenceIsClean},
+ * LORE-141). The two *not-a-concept* shapes — a non-mapping fence (a bare
  * scalar/list, which is what a leading `---` thematic break parses to) and a
  * missing/empty/`null` fence — are returned as `present: false`, **not** thrown, so
  * a caller can decide: {@link parseConcept} turns them into the matching error,
@@ -454,6 +494,15 @@ function splitFrontmatter(path: string, raw: string): FrontmatterSplit {
       "validation",
       `frontmatter in ${path} is not valid YAML: ${singleLine(deriveMessage(cause))}`,
       "fix the YAML syntax inside the --- frontmatter fences",
+      { path },
+    );
+  }
+
+  if (raw.startsWith(FENCE) && !closingFenceIsClean(raw, file)) {
+    throw new LoreError(
+      "validation",
+      `frontmatter in ${path} has a malformed closing fence (extra characters after the closing ---)`,
+      "close the frontmatter with a line containing exactly `---` and nothing else",
       { path },
     );
   }
