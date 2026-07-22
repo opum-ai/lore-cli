@@ -271,16 +271,63 @@ export function writeFileAtomic(absPath: string, contents: string, relPath: stri
  * reason: on a case-insensitive filesystem a case-only rename (`Foo.md` → `foo.md`) targets the
  * **same inode**, where a write-new-then-delete-old sequence would delete the very file it just
  * wrote — silent data loss. `renameSync` instead atomically changes the name (including its case)
- * and is crash-safe: the old path is never gone before the new one exists. The caller guarantees
- * the destination directory exists and is unoccupied (the never-clobber pre-flight). A permission
- * failure maps to `denied` and a non-regular blocker to `conflict` via the shared {@link ioError}.
+ * and is crash-safe: the old path is never gone before the new one exists.
+ *
+ * The caller's own precheck (`rename.ts`'s `assertTargetFree`) only proves the destination was free
+ * at PLAN time — an I/O-heavy window (rewriting every inbound file, regenerating indexes) can
+ * separate that check from this function actually running, during which another process (or a
+ * concurrent `lore` invocation) may create a file at `toAbs`. Without a fresh check here,
+ * `renameSync` would atomically replace it without a trace (LORE-132). {@link assertMoveTargetSafe}
+ * re-verifies immediately before the syscall, closing that window down to this one call — a
+ * destination that appeared in the meantime and differs from the source is reported the same
+ * `conflict` `assertTargetFree` raises, while a destination resolving to the source's own inode (the
+ * case-only-rename case above) is let through unchanged. A permission failure maps to `denied` and a
+ * non-regular blocker to `conflict` via the shared {@link ioError}.
  */
 export function moveFile(fromAbs: string, toAbs: string, relPath: string): void {
+  assertMoveTargetSafe(fromAbs, toAbs, relPath);
   try {
     renameSync(fromAbs, toAbs);
   } catch (cause) {
     throw ioError(cause, relPath, "move file");
   }
+}
+
+/**
+ * The last-mile half of {@link moveFile}'s TOCTOU close (LORE-132): re-stat the destination
+ * immediately before the rename syscall and refuse if it is now occupied by anything other than the
+ * source's own inode. Identity is compared via `statSync`'s `dev`/`ino` (not a path/byte comparison,
+ * and not `lstatSync` — this deliberately mirrors `canonicalIdentity`'s follow-symlinks semantics, so
+ * a destination that is a symlink resolving to the source is treated the same "already the source"
+ * way a real case-only rename is) — the ONLY way to tell "this is the same physical file under a
+ * different spelling" (a legitimate case-only rename, which must still succeed) apart from "this is
+ * really a different file that raced in after the plan-time check" (a genuine collision, which must
+ * fail loudly rather than being silently replaced). Either stat failing (destination genuinely
+ * absent, or a transient error) is treated as nothing to guard against — `renameSync` itself raises
+ * the real error if something is actually wrong.
+ */
+function assertMoveTargetSafe(fromAbs: string, toAbs: string, relPath: string): void {
+  let destStat: ReturnType<typeof statSync>;
+  try {
+    destStat = statSync(toAbs);
+  } catch {
+    return; // destination doesn't exist (or isn't stat-able) — nothing occupies it, proceed
+  }
+  let srcStat: ReturnType<typeof statSync>;
+  try {
+    srcStat = statSync(fromAbs);
+  } catch {
+    return; // can't identify the source here — fall through to renameSync, which raises the real error
+  }
+  if (destStat.dev === srcStat.dev && destStat.ino === srcStat.ino) {
+    return; // same physical file (a case-only rename) — not a collision
+  }
+  throw new LoreError(
+    "conflict",
+    `cannot move to ${relPath}: a file already exists at that path`,
+    "choose a target path that is not already taken (concept or not), or remove the conflicting file",
+    { path: relPath },
+  );
 }
 
 /**
