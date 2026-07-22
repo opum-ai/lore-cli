@@ -24,11 +24,25 @@
  * spawns upstream (CI has no upstream binary). The captured goldens are a frozen snapshot of real
  * upstream output; re-running here against a changed backlog will legitimately produce different
  * bytes.
+ *
+ * Two guards run BEFORE any golden is written to disk (LORE-106 — a Codex-review follow-up on this
+ * script trusting inputs it never verified):
+ *
+ * 1. **Commit pin** ({@link assertUpstreamCommitPinned}) — `UPSTREAM_CLI` is an arbitrary,
+ *    env-overridable path with no default check that its checkout actually sits at the commit
+ *    `docker/e2e/Dockerfile` pins (`BACKLOG_COMMIT`). Regenerating against an unpinned/mismatched
+ *    revision would silently bake an unreviewed upstream change into the committed goldens.
+ * 2. **Specimen shape** ({@link assertTaskViewSpecimenShape}) — `TASK_VIEW_ID` defaults to `LORE-33`,
+ *    a real, mutable task in this repo's own `backlog/`. If its fields ever drift for reasons
+ *    unrelated to the upstream contract, a golden-regeneration run would bake that drift into
+ *    `task-view.json` and misattribute it to an upstream change. This re-checks the specimen still
+ *    has the documented shape (Done, plan, notes, exactly two acceptance criteria, at least one
+ *    dependency, at least one documentation link, null `finalSummary`) before trusting it.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { canonicalize, type EnvelopeKind } from "./backlog-golden";
 
 /** How many entries to keep in the `task-list` / `search` payloads — enough to prove shape, small enough to read. */
@@ -52,6 +66,9 @@ const UPSTREAM_CLI =
 
 /** Where the committed goldens live, resolved relative to this script. */
 const FIXTURES_DIR = join(import.meta.dir, "..", "fixtures", "backlog-json");
+
+/** The Dockerfile that pins the upstream commit goldens must be regenerated against (read-only — never written by this script). */
+const DOCKERFILE_PATH = join(import.meta.dir, "..", "..", "docker", "e2e", "Dockerfile");
 
 /** The file each kind is written to, matching upstream's own hyphenated `kind` spelling. */
 const GOLDEN_FILES: Record<EnvelopeKind, string> = {
@@ -86,13 +103,122 @@ function trimSample(
   return Array.isArray(arr) ? { ...envelope, [arrayKey]: arr.slice(0, SAMPLE_SIZE) } : envelope;
 }
 
-/** Capture one kind, trim + canonicalize, and write its golden file. */
+/**
+ * Extract the pinned `BACKLOG_COMMIT` sha from a `docker/e2e/Dockerfile`-shaped file's
+ * `ARG BACKLOG_COMMIT=<sha>` line. `dockerfilePath` is a parameter (not a bare closure over
+ * {@link DOCKERFILE_PATH}) so the malformed/missing-pin case is unit-testable against a fixture
+ * file, without touching the real Dockerfile.
+ */
+export function readPinnedBacklogCommit(dockerfilePath: string): string {
+  const text = readFileSync(dockerfilePath, "utf8");
+  const match = text.match(/^ARG BACKLOG_COMMIT=([0-9a-f]{40})$/m);
+  if (match?.[1] === undefined) {
+    throw new Error(
+      `could not find a pinned commit in ${dockerfilePath} (expected a line matching ` +
+        "`ARG BACKLOG_COMMIT=<40-hex-char sha>`)",
+    );
+  }
+  return match[1];
+}
+
+/**
+ * Resolve the git commit `dir`'s checkout currently has checked out (`git rev-parse HEAD`),
+ * throwing with the captured stderr if `dir` isn't inside a git checkout (e.g. `UPSTREAM_CLI`
+ * pointing at a plain, non-cloned directory).
+ */
+export function resolveGitCommit(dir: string): string {
+  const proc = Bun.spawnSync(["git", "-C", dir, "rev-parse", "HEAD"], { stdout: "pipe", stderr: "pipe" });
+  if (proc.exitCode !== 0) {
+    throw new Error(
+      `could not resolve the checked-out git commit in ${dir}: \`git rev-parse HEAD\` exited ${proc.exitCode}: ${proc.stderr.toString("utf8").trim()}`,
+    );
+  }
+  return proc.stdout.toString("utf8").trim();
+}
+
+/**
+ * Pure comparison half of the commit-pin guard (LORE-106 AC#1): throws a clear, actionable error
+ * when `actual` (what `cliPath`'s checkout really has checked out) doesn't match `pinned` (what
+ * `docker/e2e/Dockerfile`'s `BACKLOG_COMMIT` documents). Split from I/O so the guard's own
+ * decision logic is directly unit-testable with fabricated shas.
+ */
+export function assertCommitPinned(actual: string, pinned: string, cliPath: string): void {
+  if (actual !== pinned) {
+    throw new Error(
+      `UPSTREAM_CLI (${cliPath}) is checked out at ${actual}, but docker/e2e/Dockerfile pins ` +
+        `BACKLOG_COMMIT=${pinned}. Check out the pinned commit before regenerating goldens against it ` +
+        "(or update the Dockerfile's pin deliberately, as its own change).",
+    );
+  }
+}
+
+/** AC#1: abort — writing no golden — unless `UPSTREAM_CLI`'s checkout matches the Dockerfile-pinned commit. */
+function assertUpstreamCommitPinned(): void {
+  const pinned = readPinnedBacklogCommit(DOCKERFILE_PATH);
+  const actual = resolveGitCommit(dirname(UPSTREAM_CLI));
+  assertCommitPinned(actual, pinned, UPSTREAM_CLI);
+}
+
+/**
+ * AC#2: validate that a fetched `task-view` envelope's `task` still matches the shape this
+ * script's goldens document (see the {@link TASK_VIEW_ID} doc comment): `Done` status, a
+ * non-empty plan, non-empty notes, exactly two acceptance criteria, at least one dependency, at
+ * least one documentation link, and a **null** `finalSummary`. Throws — collecting every mismatch
+ * rather than stopping at the first — instead of letting a drifted live task silently get baked
+ * into the committed golden.
+ */
+export function assertTaskViewSpecimenShape(envelope: Record<string, unknown>, taskId: string): void {
+  const task = envelope.task as Record<string, unknown> | undefined;
+  if (task === undefined || task === null || typeof task !== "object") {
+    throw new Error(
+      `task-view specimen ${taskId}: envelope has no \`task\` object (got ${JSON.stringify(envelope.task)})`,
+    );
+  }
+  const problems: string[] = [];
+  if (task.status !== "Done") {
+    problems.push(`status: expected "Done", got ${JSON.stringify(task.status)}`);
+  }
+  if (typeof task.implementationPlan !== "string" || task.implementationPlan.trim() === "") {
+    problems.push("implementationPlan: expected a non-empty plan");
+  }
+  if (typeof task.implementationNotes !== "string" || task.implementationNotes.trim() === "") {
+    problems.push("implementationNotes: expected non-empty notes");
+  }
+  const ac = task.acceptanceCriteria;
+  if (!Array.isArray(ac) || ac.length !== 2) {
+    problems.push(`acceptanceCriteria: expected exactly 2 entries, got ${Array.isArray(ac) ? ac.length : typeof ac}`);
+  }
+  const deps = task.dependencies;
+  if (!Array.isArray(deps) || deps.length === 0) {
+    problems.push("dependencies: expected at least one dependency");
+  }
+  const docs = task.documentation;
+  if (!Array.isArray(docs) || docs.length === 0) {
+    problems.push("documentation: expected at least one documentation link");
+  }
+  if (task.finalSummary !== null) {
+    problems.push(`finalSummary: expected null, got ${JSON.stringify(task.finalSummary)}`);
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `task-view specimen ${taskId} no longer matches the documented golden shape (Done status, plan, ` +
+        "notes, 2 acceptance criteria, dependencies, documentation, null finalSummary):\n" +
+        problems.map((p) => `  - ${p}`).join("\n") +
+        "\nPick a different LORE_GOLDEN_TASK_ID specimen, or update this shape check deliberately if the " +
+        "documented contract itself changed.",
+    );
+  }
+}
+
+/** Capture one kind, trim + canonicalize, and write its golden file. `validate`, when given, runs on the raw envelope BEFORE anything is written. */
 async function record(
   kind: EnvelopeKind,
   args: readonly string[],
   arrayKey: "tasks" | "results" | undefined,
+  validate?: (raw: Record<string, unknown>) => void,
 ): Promise<void> {
   const raw = await upstreamJson(args);
+  validate?.(raw);
   const golden = trimSample(raw, arrayKey);
   const path = join(FIXTURES_DIR, GOLDEN_FILES[kind]);
   writeFileSync(path, canonicalize(golden));
@@ -100,10 +226,19 @@ async function record(
 }
 
 async function main(): Promise<void> {
+  // Guard FIRST, before any golden (or even the fixtures directory) is touched.
+  assertUpstreamCommitPinned();
   mkdirSync(FIXTURES_DIR, { recursive: true });
-  await record("task-view", ["task", "view", TASK_VIEW_ID, "--json"], undefined);
+  await record("task-view", ["task", "view", TASK_VIEW_ID, "--json"], undefined, (raw) =>
+    assertTaskViewSpecimenShape(raw, TASK_VIEW_ID),
+  );
   await record("task-list", ["task", "list", "--json"], "tasks");
   await record("search", ["search", SEARCH_QUERY, "--json"], "results");
 }
 
-await main();
+// Only run the full regeneration when executed directly (`bun test/support/record-backlog-goldens.ts`),
+// never when imported — the guard functions above are unit-tested by importing this module, and
+// importing it must not shell an upstream CLI or touch the fixtures directory as a side effect.
+if (import.meta.main) {
+  await main();
+}
