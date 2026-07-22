@@ -176,21 +176,43 @@ describe("toDot — Graphviz serialization", () => {
     expect(dot).not.toContain("missing"); // dangling edge omitted
   });
 
-  test("escapes quotes but leaves a lone backslash unchanged in labels (LORE-145)", () => {
-    // DOT's quoted-ID grammar escapes only a literal double quote (`\"`); a bare
-    // `\` is left unchanged by Graphviz's parser (it never interprets `\\` as an
-    // escaped backslash), so doubling it — the previous bug — would corrupt this.
+  test("escapes quotes and doubles a lone backslash in labels (LORE-145)", () => {
+    // Graphviz's quoted-ID lexer (lib/cgraph/scan.l) recognizes exactly two
+    // escapes — `\"` and `\\` — and otherwise drops a backslash that precedes
+    // any other character, so a literal `\` must be doubled to survive; leaving
+    // it unchanged (the previous bug here) corrupts the label and can even
+    // produce DOT `dot` rejects outright.
     writeDoc("weird.md", '---\ntype: Story\ntitle: a"b\\c\n---\nText.\n');
     const dot = toDot(buildGraphExport(graph()));
-    expect(dot).toContain('[label="a\\"b\\c"];');
+    expect(dot).toContain('[label="a\\"b\\\\c"];');
   });
 
-  test("a value containing a backslash round-trips through toDot() unchanged except for the required quote escaping (LORE-145)", () => {
-    // A Windows-style path fragment is the canonical real-world case: none of its
-    // backslashes are special to DOT and must survive untouched.
+  test("a value containing a backslash is doubled in toDot() output so it renders as a literal backslash (LORE-145)", () => {
+    // A Windows-style path fragment is the canonical real-world case: doubling
+    // is the escString encoding for "one literal backslash", not corruption.
     writeDoc("weird-path.md", '---\ntype: Story\ntitle: "C:\\\\Users\\\\name"\n---\nText.\n');
     const dot = toDot(buildGraphExport(graph()));
-    expect(dot).toContain('[label="C:\\Users\\name"];');
+    expect(dot).toContain('[label="C:\\\\Users\\\\name"];');
+  });
+
+  test("a title ending in a literal backslash still produces well-formed DOT (LORE-145)", () => {
+    // Regression for the worse-than-original bug: an unescaped trailing `\`
+    // escapes the appended closing quote and dot rejects the whole file with a
+    // syntax error. Verified with real graphviz 15.1.0 (`dot -Tcanon`): parses
+    // clean and renders the label as `abc\` unchanged.
+    writeDoc("weird-trailing.md", "---\ntype: Story\ntitle: abc\\\n---\nText.\n");
+    const dot = toDot(buildGraphExport(graph()));
+    expect(dot).toContain('[label="abc\\\\"];');
+  });
+
+  test("a backslash immediately before a quote still produces well-formed DOT (LORE-145)", () => {
+    // Regression: `[\\][\\]` is a lexer rule of its own in scan.l, so an
+    // unescaped `\"` combination reads as backslash-pair-then-terminate,
+    // spilling the rest of the label outside the quoted ID. Verified with real
+    // graphviz 15.1.0 (`dot -Tcanon`): parses clean and renders `a\"b` unchanged.
+    writeDoc("weird-bq.md", '---\ntype: Story\ntitle: a\\"b\n---\nText.\n');
+    const dot = toDot(buildGraphExport(graph()));
+    expect(dot).toContain('[label="a\\\\\\"b"];');
   });
 
   test("escapes an embedded newline in a title so the label stays one quoted DOT statement (LORE-145)", () => {
