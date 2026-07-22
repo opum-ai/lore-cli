@@ -3,7 +3,7 @@ id: doc-3
 title: Backlog campaign tracker — Codex review follow-ups (round 2)
 type: other
 created_date: '2026-07-21 22:27'
-updated_date: '2026-07-22 13:21'
+updated_date: '2026-07-22 13:42'
 ---
 Round 2 of the Codex-review follow-up campaign (see [[Backlog campaign tracker]] / doc-1 for
 round 1, LORE-69..95, which closed all 20 high-severity findings from doc-2). Re-initialised on
@@ -76,7 +76,7 @@ asserts `lore query --help` byte-identical to `lore help query`). No further act
 | 2 | LORE-97 | adapter-backlog | — | Done | 2 | createTask discards the new task id when the 'Created task <ID>' line fails to parse |
 | 3 | LORE-98 | build-ci-config | — | Done | 1 | Pin third-party GitHub Actions to commit SHAs instead of mutable tags |
 | 4 | LORE-99 | build-ci-config | — | Done | 2 | verify-versions job doesn't check os/cpu fields or binary filenames; only linux-x64 build is executed |
-| 5 | LORE-100 | build-ci-config | — | To Do | — | Docker e2e harness is never invoked by CI or release workflows |
+| 5 | LORE-100 | build-ci-config | — | Dispatched | 3 | Docker e2e harness is never invoked by CI or release workflows |
 | 6 | LORE-101 | build-ci-config | — | To Do | — | Scoped release packages missing publishConfig.access:public, will fail first npm publish |
 | 7 | LORE-102 | build-runtime | — | Done | 1 | Harden e2e Dockerfile: digest-pin base image, avoid root curl\|bash, pin mkdocs |
 | 8 | LORE-103 | build-runtime | — | Done | 2 | Surface report-write failures and fixed-UID bind-mount permission risk in e2e run |
@@ -85,14 +85,14 @@ asserts `lore query --help` byte-identical to `lore help query`). No further act
 | 11 | LORE-106 | build-runtime | — | To Do | — | Golden recorder trusts a live mutable task and an unverified upstream CLI path |
 | 12 | LORE-107 | cli-entry-state | — | Done | 1 | lore <command> --help shows generic help instead of the command's own help |
 | 13 | LORE-108 | cli-entry-state | — | Done | 2 | readConfigText maps EACCES/EPERM config read failures to 'validation' not 'denied' |
-| 14 | LORE-109 | cli-entry-state | — | To Do | — | commitBacklogFiles discards LoreError.hint (real git/hook stderr) on commit failure |
+| 14 | LORE-109 | cli-entry-state | — | Dispatched | 3 | commitBacklogFiles discards LoreError.hint (real git/hook stderr) on commit failure |
 | 15 | LORE-110 | cmd-check | — | Done | 1 | Cap probeLiveness's total URL count and wall-clock time, not just per-URL concurrency |
 | 16 | LORE-111 | cmd-check | — | Done | 2 | Bound resolveTaskDetails's per-task adapter.viewTask fan-out with a concurrency limit |
-| 17 | LORE-112 | cmd-check | — | To Do | — | check's JSON report doesn't mark itself incomplete when reconciliation errors mid-run |
+| 17 | LORE-112 | cmd-check | — | Dispatched | 3 | check's JSON report doesn't mark itself incomplete when reconciliation errors mid-run |
 | 18 | LORE-113 | cmd-check | — | To Do | — | docPath uses raw bundle.label while isDocsRoot normalizes it, so the two disagree on non-canonical labels |
 | 19 | LORE-114 | cmd-crud-a | — | Done | 1 | lore new --out bypasses reserved index/log stem policy |
 | 20 | LORE-115 | cmd-crud-a | — | Done | 2 | orphans table rows skip control-character sanitization on task fields (renderTaskSummaryRows in src/output.ts) |
-| 21 | LORE-116 | cmd-crud-a | — | To Do | — | lore replace commit phase has no atomic write or rollback on partial failure |
+| 21 | LORE-116 | cmd-crud-a | — | Dispatched | 3 | lore replace commit phase has no atomic write or rollback on partial failure |
 | 79 | LORE-174 | cmd-crud-a | — | To Do | — | lore new default title-slug path bypasses reserved index/log stem policy (wave-1 integration follow-up of LORE-114; touches src/commands/new.ts + test/new.test.ts, conflicts with LORE-115/116) |
 | 80 | LORE-175 | cli-entry-state | — | To Do | — | readConfigText denied error omits errno code field (wave-2 integration follow-up of LORE-108, low; touches src/config.ts + test/config.test.ts, conflicts with LORE-108-area) |
 | 22 | LORE-117 | cmd-crud-b | — | To Do | — | writeFileAtomic drops destination's file mode/ownership on overwrite |
@@ -100,11 +100,11 @@ asserts `lore query --help` byte-identical to `lore help query`). No further act
 | 24 | LORE-119 | cmd-crud-b | — | To Do | — | sync overwrites a status-changed doc using stale in-memory frontmatter, discarding concurrent on-disk edits |
 | 25 | LORE-120 | cmd-crud-b | — | To Do | — | sync's multi-file write loop has no cross-file rollback on mid-loop failure |
 | 26 | LORE-121 | cmd-link | — | To Do | — | lore link retry after failed backlog commit silently no-ops instead of recommitting |
-| 27 | LORE-122 | cmd-meta-a | — | To Do | — | resolveTaskDetails doesn't verify viewTask's returned id matches the requested id |
+| 27 | LORE-122 | cmd-meta-a | — | Dispatched | 3 | resolveTaskDetails doesn't verify viewTask's returned id matches the requested id |
 | 28 | LORE-123 | cmd-meta-a | — | To Do | — | schema export follows a symlink planted at a schema file's leaf path |
 | 29 | LORE-124 | cmd-meta-a | — | To Do | — | Absolute --out inside the repo crashes schema export with an unhandled ENOENT |
 | 30 | LORE-125 | cmd-meta-a | — | To Do | — | resolveRollup doesn't verify viewTask's returned id matches the requested id |
-| 31 | LORE-126 | cmd-meta-b | — | To Do | — | Collapse embedded newlines in graph node id/title before rendering |
+| 31 | LORE-126 | cmd-meta-b | — | Dispatched | 3 | Collapse embedded newlines in graph node id/title before rendering |
 | 32 | LORE-127 | cmd-meta-c | — | Done | 1 | RESOLVED-BY-MERGE by LORE-107 (PR #95): cli.ts routes `lore <cmd> --help` to runHelp; help.test.ts:271 asserts byte-identical to `lore help <cmd>` |
 | 33 | LORE-128 | cmd-meta-c | — | To Do | — | CLAUDE.md nudge update silently rewrites CRLF/BOM line endings on every managed-block sync |
 | 34 | LORE-129 | cmd-meta-c | — | To Do | — | `lore agents --check --force` mislabels a stale hand-edited SKILL.md and prints a remedy that won't fix it |
@@ -225,3 +225,8 @@ fallback.)
     structured `input` (diverges from errors.ts's denied contract) + stale loadConfig docstring →
     **filed LORE-175** (cli-entry-state, low). (2) *nit* — LORE-99 left a dead `names` setup output
     in release.yml (zero consumers, harmless); not tasked — recorded here for a future cleanup.
+- 2026-07-22 — wave 3 dispatched (issues: LORE-100, 109, 112, 116, 122, 126; workers: Sonnet 5,
+  reviewer: Fable 5). One per distinct cluster, file-disjoint (build-ci-config, cli-entry-state,
+  cmd-check, cmd-crud-a, cmd-meta-a, cmd-meta-b). Deferred this wave on file-conflict: LORE-104 (↔100,
+  docker/e2e exit-code story), LORE-117 (↔116, src/commands/fswrite.ts), LORE-121 (↔109, src/state.ts).
+  Worktrees created @ base `dda01bb` under lore.worktrees/. Settlement entry to follow.
