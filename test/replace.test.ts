@@ -634,6 +634,40 @@ describe("lore replace — command-level suites (root fixture)", () => {
       const { report } = replaceCmd(["x", "y", "--in", "nope/**"]);
       expect(report).toMatchObject({ filesScanned: 0, filesChanged: 0, totalMatches: 0 });
     });
+
+    test("plain/pretty mode sanitizes a discovered path carrying a newline and an ANSI escape (LORE-229)", () => {
+      // A discovered display path is derived from a real filesystem name — on POSIX that name may
+      // itself carry a newline or ESC byte. Both text renderers must neutralize it before
+      // interpolating, mirroring query.ts's sanitizeField (LORE-118).
+      const evilName = "evil\n\x1b[31mline.md";
+      writeFileSync(join(root, "docs", evilName), "x");
+      for (const mode of ["plain", "pretty"] as const) {
+        const stdout = capture();
+        runReplace({
+          root,
+          output: { mode, color: false },
+          args: ["x", "y", "--dry-run"],
+          stdout,
+          stderr: capture(),
+        });
+        const text = stdout.text();
+        expect(text).not.toContain("\x1b"); // no raw ESC byte reaches the rendered report
+        // The exact rendered text: one sanitized per-file line + one trailing summary line — the
+        // embedded newline in the filename must not have smuggled an extra line break into the
+        // report, and the ANSI escape must be gone entirely (not merely defanged).
+        expect(text).toBe("would replace 1 in docs/evil line.md\n1 match in 1 of 1 file (dry-run)\n");
+      }
+    });
+
+    test("the --json envelope carries the raw, unsanitized path unchanged (LORE-229)", () => {
+      // JSON string serialization already escapes control characters, so the raw discovered path
+      // (newline and ESC intact) is the correct, unsanitized payload here — only the text
+      // renderers sanitize.
+      const evilName = "evil\n\x1b[31mline.md";
+      writeFileSync(join(root, "docs", evilName), "x");
+      const { report } = replaceCmd(["x", "y", "--dry-run"]);
+      expect(report.files).toEqual([{ path: `docs/${evilName}`, count: 1 }]);
+    });
   });
 
   describe("lore replace — usage errors", () => {
