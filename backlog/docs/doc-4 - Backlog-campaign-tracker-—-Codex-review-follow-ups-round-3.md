@@ -3,7 +3,7 @@ id: doc-4
 title: Backlog campaign tracker — Codex review follow-ups (round 3)
 type: other
 created_date: '2026-07-23 16:05'
-updated_date: '2026-07-23 16:07'
+updated_date: '2026-07-23 16:23'
 ---
 Round 3 of the Codex-review follow-up campaign (see [[Backlog campaign tracker — Codex review follow-ups (round 2)]] / doc-3 for round 2, LORE-96..194, which closed all 78 medium findings; doc-1 for round 1, LORE-69..95, all 20 high). This round covers the **low-severity** findings from doc-2 ("Codex second-opinion review — lore codebase (2026-07-20)").
 
@@ -33,18 +33,18 @@ The "ready now" set is **always recomputed live** from `backlog/tasks/*.md` + th
 ## Queue (confirmed order)
 | # | Issue | Cluster | Formal deps | Status | Wave | Note |
 |---|---|---|---|---|---|---|
-| 1 | LORE-198 | build-runtime | — | To Do | — | docs. Update test/fixtures/README.md backlog-json section to match the upstream recorder. [test/fixtures/README.md] |
-| 2 | LORE-199 | cmd-check | — | To Do | — | docs. Correct check's cli-surface docs: it does not surface token estimates. [docs/reference/cli-surface.md] |
-| 3 | LORE-200 | core-engine-b | — | To Do | — | docs. Correct GraphNode.title JSDoc to reflect frontmatterScalar's number/boolean coercion. [src/core/graph.ts] |
+| 1 | LORE-198 | build-runtime | — | Dispatched | 19 | docs. Update test/fixtures/README.md backlog-json section to match the upstream recorder. [test/fixtures/README.md] |
+| 2 | LORE-199 | cmd-check | — | Dispatched | 19 | docs. Correct check's cli-surface docs: it does not surface token estimates. [docs/reference/cli-surface.md] |
+| 3 | LORE-200 | core-engine-b | — | Dispatched | 19 | docs. Correct GraphNode.title JSDoc to reflect frontmatterScalar's number/boolean coercion. [src/core/graph.ts] |
 | 4 | LORE-201 | core-engine-b | — | To Do | — | docs. Fix the `validation` instructions topic's overstated colon quote-safety claim and add a regression test. [src/core/instructions.ts] |
 | 5 | LORE-202 | core-engine-b | — | To Do | — | docs. Correct order.ts module-doc rationale: default Array.prototype.sort is code-unit-ordered and stable, not locale/engine-dependent. [src/core/order.ts] |
 | 6 | LORE-203 | core-index-context | — | To Do | — | docs. Clarify `lore context` --max-tokens docs: omitting it applies no token cap (bounded only by --depth). [src/core/context.ts] |
-| 7 | LORE-204 | build-ci-config | — | To Do | — | chore. release.yml: assert the compiled binary --version matches package.json exactly, not just non-empty (mirror ci.yml). [.github/workflows/release.yml] |
+| 7 | LORE-204 | build-ci-config | — | Dispatched | 19 | chore. release.yml: assert the compiled binary --version matches package.json exactly, not just non-empty (mirror ci.yml). [.github/workflows/release.yml] |
 | 8 | LORE-205 | build-ci-config | — | To Do | — | chore. Test fakes dirtyGitSpawn/failingCommitGitSpawn: dispatch the dirty status on the git subcommand, not on call index. [test/helpers.ts] |
 | 9 | LORE-206 | build-runtime | — | To Do | — | chore. Make scripted git-spawn test fakes dispatch by observed command, not call index. [test/helpers.ts] |
 | 10 | LORE-207 | cmd-check | — | To Do | — | chore. Release the response body in check's --external liveness fetch. [src/commands/check.ts] |
-| 11 | LORE-208 | cmd-meta-d | — | To Do | — | chore. Export InstructionsData and drop the duplicated test-side declaration. [src/commands/instructions.ts] |
-| 12 | LORE-209 | cmd-rename-supersede | — | To Do | — | chore. Correct the inaccurate comment and strengthen rename's "never constructs a Backlog adapter" test. [test/rename.test.ts] |
+| 11 | LORE-208 | cmd-meta-d | — | Dispatched | 19 | chore. Export InstructionsData and drop the duplicated test-side declaration. [src/commands/instructions.ts] |
+| 12 | LORE-209 | cmd-rename-supersede | — | Dispatched | 19 | chore. Correct the inaccurate comment and strengthen rename's "never constructs a Backlog adapter" test. [test/rename.test.ts] |
 | 13 | LORE-210 | core-index-context | — | To Do | — | chore. Remove indexes.ts's duplicate encodePathSegments; import the canonical encoder from links.ts (LORE-28 landed). [src/core/indexes.ts] |
 | 14 | LORE-195 | cmd-crud-b/tooling | — | To Do | — | chore. Restore biome lint baseline to green (biome check . -> 0 errors/0 infos). Filed 2026-07-23. [test/context.test.ts, test/replace.test.ts, test/validate.test.ts, src/core/managed-block.ts] |
 | 15 | LORE-211 | cmd-meta-a | — | To Do | — | task. Strengthen the tasks drift test: mix a dangling id with a failing read and assert empty streams. [test/tasks.test.ts] |
