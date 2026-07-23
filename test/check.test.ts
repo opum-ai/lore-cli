@@ -400,6 +400,39 @@ describe("checkBundle — portability warnings (AC#2)", () => {
     expect(checkBundle([doc]).warningCount).toBe(0);
   });
 
+  // ── LORE-239: callout detection must be structural (blockquote-leading), not per-text-node ──
+
+  test("LORE-239 AC#1: inline formatting before [!type] in ordinary (non-blockquote) prose is NOT a callout", () => {
+    // mdast splits this paragraph into text("ordinary "), strong("bold"), text(" [!note] prose"),
+    // so a per-text-node regex anchored to `^` wrongly matched the trailing text node's start.
+    const doc: CheckInputFile = { path: "x.md", raw: ref("X", "ordinary **bold** [!note] prose") };
+    const report = checkBundle([doc]);
+    expect(report.findings.some((f) => f.message.includes("callout"))).toBe(false);
+    expect(report.warningCount).toBe(0);
+  });
+
+  test("LORE-239 AC#2: a genuine `> [!note]` blockquote-leading callout still warns (no regression)", () => {
+    const doc: CheckInputFile = { path: "x.md", raw: ref("X", "> [!note]\n> body") };
+    const finding = checkBundle([doc]).findings.find((f) => f.message.includes("callout"));
+    expect(finding?.severity).toBe("warning");
+    expect(finding?.message).toContain("[!note]");
+  });
+
+  test("LORE-239 AC#3: a blockquote-leading [!type] followed by more content is still flagged", () => {
+    const doc: CheckInputFile = { path: "x.md", raw: ref("X", "> [!warning] Heads up, this changed.\n> more.") };
+    const finding = checkBundle([doc]).findings.find((f) => f.message.includes("callout"));
+    expect(finding?.severity).toBe("warning");
+    expect(finding?.message).toContain("[!warning]");
+  });
+
+  test("LORE-239 AC#4: a literal [!important] mid-sentence prose stays unflagged (no regression)", () => {
+    const doc: CheckInputFile = {
+      path: "x.md",
+      raw: ref("X", "Some **bold** text with [!important] mid-sentence, not a callout."),
+    };
+    expect(checkBundle([doc]).findings.some((f) => f.message.includes("callout"))).toBe(false);
+  });
+
   test("a wikilink inside an inline code span is NOT flagged (code is excluded)", () => {
     const doc: CheckInputFile = { path: "x.md", raw: ref("X", "Use `[[orders]]` syntax in code.") };
     expect(checkBundle([doc]).warningCount).toBe(0);
@@ -629,6 +662,11 @@ describe("runCheck — exit codes and discovery", () => {
   test("--strict promotes a portability warning to exit 6", () => {
     writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "A [[wikilink]] only."));
     expect(runCheck(opts(["--strict"]))).toBe(EXIT_CODES.validation);
+  });
+
+  test("LORE-239 AC#1: inline formatting before [!type] in ordinary prose does not gate, even under --strict", () => {
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "ordinary **bold** [!note] prose"));
+    expect(runCheck(opts(["--strict"]))).toBe(EXIT_OK);
   });
 
   test("--external reports a dead link as an advisory but keeps the gate exit (AC#1/#2)", async () => {
