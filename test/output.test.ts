@@ -6,6 +6,7 @@ import { runOrphans } from "../src/commands/orphans";
 import { runTasks } from "../src/commands/tasks";
 import { LoreError, reportError, WarningCollector } from "../src/errors";
 import {
+  displayWidth,
   emit,
   errorRenderOpts,
   maxLen,
@@ -625,5 +626,75 @@ describe("renderTaskSummaryRows — shared id/status/title alignment (LORE-51)",
     // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting control bytes are absent.
     expect(line).not.toMatch(/[\x00-\x1f\x7f-\x9f]/);
     expect(line).toBe("  LORE-1  To Do  evil red title bell");
+  });
+
+  test("aligns the title column when a status contains a full-width CJK character (LORE-221)", () => {
+    // "処理中" is 3 code points / 3 UTF-16 units but 6 terminal columns (each is East Asian Wide).
+    // A UTF-16-length-based pad (the old `.length`/`padEnd`) would treat it as narrower than
+    // "In Progress"-length statuses and under-pad it, desyncing the title column.
+    const rows: TaskSummaryRow[] = [
+      { id: "LORE-1", title: "Short", status: "処理中" },
+      { id: "LORE-100", title: "A longer title", status: "Done" },
+    ];
+    const lines = renderTaskSummaryRows(rows);
+    expect(lines).toHaveLength(2);
+    // Terminal display width of everything before the (unpadded) title column must match across
+    // rows — that IS "the title column begins at the same offset" in terminal columns, not JS
+    // string-index units, which a full-width character makes different from display columns.
+    const prefixWidths = lines.map((line, i) =>
+      displayWidth(line.slice(0, line.length - (rows[i]?.title.length ?? 0))),
+    );
+    expect(prefixWidths[0]).toBe(prefixWidths[1]);
+    // Pin the exact bytes too, not just the derived equality.
+    expect(lines).toEqual(["  LORE-1    処理中  Short", "  LORE-100  Done    A longer title"]);
+  });
+
+  test("aligns the title column when a status contains a combining mark (LORE-221)", () => {
+    // "Cafe" + U+0301 (combining acute accent) — 5 code points/UTF-16 units but 4 terminal
+    // columns, since the combining mark stacks on the preceding "e" instead of advancing the
+    // cursor. A UTF-16-length-based pad would treat this as *wider* than its true display width
+    // and over-pad it relative to a same-display-width ASCII status.
+    const combiningStatus = `Cafe${"́"}`;
+    expect(combiningStatus.length).toBe(5); // UTF-16 length: 4 base chars + 1 combining mark.
+    const rows: TaskSummaryRow[] = [
+      { id: "LORE-1", title: "Short", status: combiningStatus },
+      { id: "LORE-100", title: "A longer title", status: "In Progress" },
+    ];
+    const lines = renderTaskSummaryRows(rows);
+    expect(lines).toHaveLength(2);
+    const prefixWidths = lines.map((line, i) =>
+      displayWidth(line.slice(0, line.length - (rows[i]?.title.length ?? 0))),
+    );
+    expect(prefixWidths[0]).toBe(prefixWidths[1]);
+    expect(lines).toEqual(["  LORE-1    Café         Short", "  LORE-100  In Progress  A longer title"]);
+  });
+});
+
+describe("displayWidth — terminal column count, not UTF-16 length (LORE-221)", () => {
+  test("counts ASCII text at 1 column per character, matching .length", () => {
+    expect(displayWidth("LORE-100")).toBe("LORE-100".length);
+    expect(displayWidth("")).toBe(0);
+  });
+
+  test("counts each East Asian Wide/Fullwidth code point as 2 columns", () => {
+    expect(displayWidth("処理中")).toBe(6); // 3 code points x 2 columns
+    expect(displayWidth("Ａ")).toBe(2); // fullwidth Latin "A" (U+FF21)
+  });
+
+  test("counts a combining mark as 0 columns, not 1", () => {
+    expect(displayWidth(`e${"́"}`)).toBe(1); // base "e" (1) + combining acute (0)
+  });
+
+  test("counts a zero-width joiner as 0 columns", () => {
+    expect(displayWidth(`a${"‍"}b`)).toBe(2); // "a" (1) + ZWJ (0) + "b" (1)
+  });
+
+  test("does not double-count a supplementary-plane (surrogate-pair) code point", () => {
+    // U+1F600 (😀) is one code point represented as a UTF-16 surrogate pair (.length === 2);
+    // displayWidth must iterate code points, not UTF-16 units, to avoid counting it as 2 chars.
+    const emoji = "\u{1F600}";
+    expect(emoji.length).toBe(2);
+    expect(displayWidth(emoji)).toBeGreaterThan(0);
+    expect(displayWidth(emoji)).toBeLessThan(emoji.length + 1);
   });
 });
