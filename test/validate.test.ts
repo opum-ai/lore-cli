@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { runInit } from "../src/commands/init";
 import { runNew } from "../src/commands/new";
 import { runValidate, type ValidateOptions } from "../src/commands/validate";
-import { compileProfile, defaultProfile, parseProfile, PROFILE_REL_PATH } from "../src/core/profile";
+import { compileProfile, defaultProfile, PROFILE_REL_PATH, parseProfile } from "../src/core/profile";
 import { requiredSectionsFor } from "../src/core/schema";
 import { builtinTemplateFor } from "../src/core/template";
 import { quoteSafetyFindings, type ValidateReport, validateConceptText, validateFiles } from "../src/core/validate";

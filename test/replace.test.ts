@@ -29,8 +29,8 @@ import type { TextRange } from "../src/core/replace";
 import {
   compileReplacer,
   locatorThrowsOnDuplicate,
-  managedRanges,
   MANAGED_REGION_LOCATORS,
+  managedRanges,
   mergeRanges,
   replaceInText,
 } from "../src/core/replace";
