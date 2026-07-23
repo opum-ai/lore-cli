@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  asText,
   type ErrorType,
   EXIT_CODES,
   EXIT_OK,
@@ -70,6 +71,35 @@ describe("LoreError", () => {
     const err = new LoreError("usage", "unknown flag --frob");
     expect(err.hint).toBeUndefined();
     expect(err.input).toBeUndefined();
+  });
+});
+
+describe("asText", () => {
+  // LORE-171: JSON.stringify returns runtime `undefined` (not a thrown error)
+  // for a bare Symbol or bare function, so the safeStringify fast path used to
+  // pass that undefined straight through — asText silently broke its own
+  // `string`-returning contract for exactly these input types.
+  test("a Symbol input returns an actual string, never runtime undefined", () => {
+    const result = asText(Symbol("x"));
+    expect(typeof result).toBe("string");
+    expect(result).not.toBeUndefined();
+  });
+
+  test("a bare function input returns an actual string, never runtime undefined", () => {
+    const result = asText(() => {});
+    expect(typeof result).toBe("string");
+    expect(result).not.toBeUndefined();
+  });
+
+  test("still passes through ordinary strings and coerces nullish to empty", () => {
+    expect(asText("already a string")).toBe("already a string");
+    expect(asText(undefined)).toBe("");
+    expect(asText(null)).toBe("");
+  });
+
+  test("still stringifies ordinary JSON-safe values (numbers, objects)", () => {
+    expect(asText(42)).toBe("42");
+    expect(asText({ a: 1 })).toBe('{"a":1}');
   });
 });
 

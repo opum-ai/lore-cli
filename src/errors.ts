@@ -439,13 +439,30 @@ function toJsonSafe(value: unknown, ancestors: Set<object>, key = ""): unknown {
  * (`error_type`/`message`/`hint`) intact. Callers pass an object envelope, whose
  * own keys are enumerable, so the walk cannot throw and the result is a string;
  * the inner guard is an absolute last resort for a hostile top-level value.
+ *
+ * `JSON.stringify` doesn't only fail by throwing — for a bare `Symbol`, a bare
+ * function, or a value whose `toJSON` returns one of those, it silently returns
+ * runtime `undefined` instead of a string (its documented behavior for values it
+ * cannot encode). A caller here always expects a real string back — `asText`
+ * exists specifically to guarantee that — so an `undefined` result for a
+ * non-nullish `value` is treated as a failure too, routed through the same
+ * degrade-to-`toJsonSafe` fallback as a thrown error. That fallback can itself
+ * still bottom out at `undefined` (a *top-level* Symbol/function degrades to
+ * `undefined` by design, mirroring `JSON.stringify`'s own semantics — see
+ * {@link toJsonSafe}), so the final `"[unserializable]"` string is the backstop
+ * for that case too.
  */
 function safeStringify(value: unknown): string {
   try {
-    return JSON.stringify(value);
+    const result = JSON.stringify(value);
+    if (result === undefined) {
+      throw new Error("JSON.stringify produced no output for a non-nullish value");
+    }
+    return result;
   } catch {
     try {
-      return JSON.stringify(toJsonSafe(value, new Set()));
+      const degraded = JSON.stringify(toJsonSafe(value, new Set()));
+      return degraded === undefined ? JSON.stringify("[unserializable]") : degraded;
     } catch {
       return JSON.stringify("[unserializable]");
     }
