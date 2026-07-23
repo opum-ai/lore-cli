@@ -132,6 +132,15 @@ export interface RunContext {
   env?: Record<string, string | undefined>;
   cwd?: string;
   isTTY?: boolean;
+  /**
+   * Whether **stderr** (not stdout) is a TTY, used only to gate ANSI color on the
+   * stderr diagnostic path (`reportError`, cli-contract §6) independent of `isTTY`
+   * (stdout's own TTY state, which alone drives `mode`/stdout's pretty color).
+   * Defaults the same way `isTTY` does: an injected `stderr` sink with no explicit
+   * hint here is treated as non-TTY; only the real-process path (no injected sink)
+   * reads the actual `process.stderr.isTTY` (LORE-250).
+   */
+  stderrIsTTY?: boolean;
   /** The fetch `check --external` uses for liveness; defaults to the global `fetch`. Injected so a caller (or a test) controls or stubs the network. */
   fetch?: FetchLike;
   /** DNS resolution `check --external`'s SSRF guard uses (LORE-71); defaults to real `node:dns`. Injected so a caller (or a test) controls or stubs DNS. */
@@ -168,6 +177,11 @@ export function run(argv: readonly string[], context: RunContext = {}): number |
     isTTY: context.isTTY ?? (context.stdout ? false : process.stdout.isTTY),
     env: context.env ?? process.env,
   });
+  // Stderr's own TTY state, independent of stdout's — same injected-sink-defaults-
+  // non-TTY / real-process-defaults-real-TTY shape as `isTTY` above, but read from
+  // `stderr` so a redirected `2>` is never mistaken for a terminal just because
+  // stdout is one (LORE-250, cli-contract §6).
+  const stderrIsTTY = context.stderrIsTTY ?? (context.stderr ? false : process.stderr.isTTY);
   try {
     rejectUnknownFlags(parsed.leadingUnknownFlags);
     if (parsed.version || parsed.command === undefined) {
@@ -198,11 +212,11 @@ export function run(argv: readonly string[], context: RunContext = {}): number |
     // (formatted diagnostic + the right exit code), not escape to the entrypoint's bare backstop.
     // The sync `catch` below cannot see an async rejection, so attach the seam to the promise here.
     if (result instanceof Promise) {
-      return result.catch((err: unknown) => reportError(err, { ...errorRenderOpts(output), stderr }));
+      return result.catch((err: unknown) => reportError(err, { ...errorRenderOpts(output, stderrIsTTY), stderr }));
     }
     return result;
   } catch (err) {
-    return reportError(err, { ...errorRenderOpts(output), stderr });
+    return reportError(err, { ...errorRenderOpts(output, stderrIsTTY), stderr });
   }
 }
 

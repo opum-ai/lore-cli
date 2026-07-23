@@ -18,7 +18,11 @@
  *   when `NO_COLOR` is unset (§6). This module reads the TTY and `NO_COLOR`;
  *   {@link errors} deliberately does not — it takes an already-resolved
  *   `{ json, color }`, which {@link errorRenderOpts} derives from an
- *   {@link OutputContext} for `reportError`/`WarningCollector.flush`.
+ *   {@link OutputContext} for `reportError`/`WarningCollector.flush`. Because
+ *   that pair writes to **stderr**, `errorRenderOpts` additionally gates on
+ *   stderr's own TTY state (independent of the stdout TTY state `mode` was
+ *   resolved from), so a redirected `2>` never receives ANSI just because
+ *   stdout happens to be a terminal (LORE-250).
  * - **Emit the success envelope** `{ schemaVersion, kind, data }` on stdout in
  *   `--json` mode (§2), and the pretty/plain text otherwise.
  * - **Keep the streams disciplined.** Only the payload goes to stdout; all
@@ -136,11 +140,30 @@ export function resolveOutput(inputs: ResolveInputs): OutputContext {
  * `WarningCollector.flush` consume from a resolved {@link OutputContext}. `json`
  * is computed from `mode` here rather than stored on the context, so the success
  * path (routed by `mode`) and the error path (routed by `json`) cannot disagree.
- * Usage in a command's catch block: `reportError(err, { ...errorRenderOpts(ctx),
- * stderr })` (or `flush` likewise).
+ *
+ * `color` here is deliberately **not** simply `ctx.color`. `ctx.color` is
+ * stdout's own color decision (§6, gated on stdout's TTY state via `mode`) and
+ * must stay exactly that — {@link emit}'s pretty branch paints stdout from
+ * `ctx.color` alone, and a still-TTY, still-colored stdout must not go dim just
+ * because stderr happens to be redirected. But `reportError`/`flush` write to
+ * **stderr**, a separate stream with its own TTY state that `mode` never
+ * consulted (`mode` is derived from stdout only, see {@link resolveMode}); a
+ * `lore <cmd> 2>err.log` invocation from a terminal has a TTY stdout but a
+ * redirected stderr, and painting ANSI into that file/pipe would leak escapes
+ * §6 forbids (LORE-250). `stderrIsTTY` supplies that second, independent gate —
+ * the returned `color` is `true` only when stdout would already show color
+ * *and* the stderr sink itself is a TTY.
+ *
+ * `stderrIsTTY` defaults to `true` — a no-op gate — so every call site that
+ * predates this parameter (and any test that only cares about `ctx.color`)
+ * keeps its exact prior behavior; only cli.ts's real dispatch passes the
+ * actual stderr TTY state.
+ *
+ * Usage in a command's catch block: `reportError(err, { ...errorRenderOpts(ctx,
+ * stderrIsTTY), stderr })` (or `flush` likewise).
  */
-export function errorRenderOpts(ctx: OutputContext): { json: boolean; color: boolean } {
-  return { json: ctx.mode === "json", color: ctx.color };
+export function errorRenderOpts(ctx: OutputContext, stderrIsTTY = true): { json: boolean; color: boolean } {
+  return { json: ctx.mode === "json", color: ctx.color && stderrIsTTY };
 }
 
 /**

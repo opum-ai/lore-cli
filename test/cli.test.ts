@@ -299,6 +299,46 @@ describe("cli — post-`--` tokens are positionals, not re-scanned flags (LORE-2
   });
 });
 
+describe("cli — stderr diagnostic color is independent of stdout's TTY state (LORE-250)", () => {
+  test("AC#4: stdout TTY + non-TTY stderr + NO_COLOR unset → a reported LoreError writes no ESC byte to stderr", () => {
+    const c = ctx({ isTTY: true, stderrIsTTY: false });
+    expect(run(argv("frobnicate"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).not.toContain("\x1b");
+    expect(c.stderr.text()).toContain("unknown command");
+  });
+
+  test("AC#5: both stdout and stderr TTYs + NO_COLOR unset → the stderr error head is still colored", () => {
+    const c = ctx({ isTTY: true, stderrIsTTY: true });
+    expect(run(argv("frobnicate"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).toContain("\x1b[31m"); // red error head
+  });
+
+  test("AC#2 (independence direction): stdout's own output is byte-identical regardless of stderrIsTTY — stdout's mode/color resolution never consults stderr's TTY state at all", () => {
+    // The direct AC#2 claim (stdout at a TTY with NO_COLOR unset still emits color
+    // to stdout) is `resolveOutput`'s pre-existing, untouched-by-LORE-250 contract
+    // (see "pretty on a TTY with NO_COLOR unset enables color (§6)" in
+    // output.test.ts); this end-to-end check adds the router-level guarantee that
+    // varying stderrIsTTY cannot perturb stdout's bytes in either direction.
+    const withTtyStderr = ctx({ isTTY: true, stderrIsTTY: true });
+    const withoutTtyStderr = ctx({ isTTY: true, stderrIsTTY: false });
+    expect(run(argv("--version"), withTtyStderr)).toBe(0);
+    expect(run(argv("--version"), withoutTtyStderr)).toBe(0);
+    expect(withTtyStderr.stdout.text()).toBe(withoutTtyStderr.stdout.text());
+  });
+
+  test("AC#3: NO_COLOR (including empty string) suppresses stderr color even with both streams at a TTY", () => {
+    const c = ctx({ isTTY: true, stderrIsTTY: true, env: { NO_COLOR: "" } });
+    expect(run(argv("frobnicate"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).not.toContain("\x1b");
+  });
+
+  test("omitting stderrIsTTY with an injected stderr sink defaults to non-TTY (no color leak by surprise)", () => {
+    const c = ctx({ isTTY: true }); // no stderrIsTTY override; ctx() always injects a stderr sink
+    expect(run(argv("frobnicate"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).not.toContain("\x1b");
+  });
+});
+
 describe("cli — schema dispatch", () => {
   let cwd: string;
   beforeEach(() => {

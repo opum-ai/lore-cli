@@ -153,6 +153,57 @@ describe("errorRenderOpts bridges a context to errors.ts", () => {
     expect(n).toBe(1);
     expect(cap.text()).toBe("warning: heads up\n"); // plain context → no ANSI
   });
+
+  // LORE-250: a colored (pretty) context must not paint stderr when the stderr
+  // sink itself is not a TTY, independent of the stdout TTY state `ctx.color` was
+  // derived from — and `stderrIsTTY` defaults to `true` so every call site above
+  // (predating this parameter) keeps its exact prior behavior.
+  describe("stderr's own TTY state gates the derived color independently of stdout's (LORE-250)", () => {
+    test("omitting stderrIsTTY is a no-op gate: behavior matches the pre-LORE-250 default", () => {
+      expect(errorRenderOpts(PRETTY_CTX)).toEqual({ json: false, color: true });
+      expect(errorRenderOpts(PLAIN_CTX)).toEqual({ json: false, color: false });
+    });
+
+    test("a pretty (stdout-colored) context with a non-TTY stderr suppresses color", () => {
+      expect(errorRenderOpts(PRETTY_CTX, false)).toEqual({ json: false, color: false });
+    });
+
+    test("a pretty context with a TTY stderr keeps color", () => {
+      expect(errorRenderOpts(PRETTY_CTX, true)).toEqual({ json: false, color: true });
+    });
+
+    test("a non-pretty context stays color-free regardless of stderrIsTTY", () => {
+      expect(errorRenderOpts(PLAIN_CTX, true).color).toBe(false);
+      expect(errorRenderOpts(JSON_CTX, true).color).toBe(false);
+    });
+
+    test("reportError writes no ESC byte to stderr when stdout is colored but stderr is not a TTY", () => {
+      const cap = capture();
+      reportError(new LoreError("usage", "bad flag"), { ...errorRenderOpts(PRETTY_CTX, false), stderr: cap });
+      expect(cap.text()).not.toContain("\x1b");
+      expect(cap.text()).toContain("bad flag");
+    });
+
+    test("reportError still colors the error head when both stdout and stderr are TTYs", () => {
+      const cap = capture();
+      reportError(new LoreError("usage", "bad flag"), { ...errorRenderOpts(PRETTY_CTX, true), stderr: cap });
+      expect(cap.text()).toContain("\x1b[31m");
+    });
+
+    test("WarningCollector.flush honors the same stderr-TTY-gated color", () => {
+      const wc = new WarningCollector();
+      wc.add("heads up");
+      const capNoTty = capture();
+      wc.flush({ ...errorRenderOpts(PRETTY_CTX, false), stderr: capNoTty });
+      expect(capNoTty.text()).not.toContain("\x1b");
+
+      const wc2 = new WarningCollector();
+      wc2.add("heads up");
+      const capTty = capture();
+      wc2.flush({ ...errorRenderOpts(PRETTY_CTX, true), stderr: capTty });
+      expect(capTty.text()).toContain("\x1b");
+    });
+  });
 });
 
 describe("success envelope (cli-contract §2)", () => {
