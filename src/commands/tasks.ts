@@ -27,8 +27,9 @@
  *   a per-task read that *succeeds* but answers with a DIFFERENT task's id than requested is
  *   also a hard `not_found` error (exit 3), never silently attributed to the requested row —
  *   via the same shared guard `commands/link.ts`'s `verifiedViewTask` exports (LORE-183; this
- *   module no longer hand-maintains its own copy, LORE-125), which itself mirrors
- *   `reconcile-shared.ts`'s `resolveTaskDetails` (LORE-122).
+ *   module no longer hand-maintains its own copy, LORE-125) — the SAME guard `reconcile-shared.ts`'s
+ *   `resolveTaskDetails` (originally LORE-122) now also delegates to (LORE-183), so the
+ *   comparison/`LoreError` lives in exactly one place across `link.ts`/`tasks.ts`/`reconcile-shared.ts`.
  */
 
 import { join } from "node:path";

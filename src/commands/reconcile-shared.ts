@@ -20,7 +20,7 @@ import type { ManagedTaskRow } from "../core/managed-block";
 import { type ReconciledStatus, reconcileStatus, validateReconcileInputs } from "../core/reconcile";
 import { RESERVED_STEMS } from "../core/scaffold";
 import { LoreError } from "../errors";
-import { dedupeTaskIds, defaultAdapter } from "./link";
+import { dedupeTaskIds, defaultAdapter, verifiedViewTask } from "./link";
 
 /** The outcome of resolving one task id: its live detail, or the error resolving it hit. */
 export type TaskResolution =
@@ -218,11 +218,14 @@ export async function mapWithConcurrency<T>(
  * flight at once (via {@link mapWithConcurrency}); this never throws.
  *
  * Every resolved detail's own `id` is checked (case-insensitively) against the requested `taskId`
- * — a mismatch is treated exactly like a not-found rather than stored as `ok: true`. Nothing
- * downstream (`gatherReconciliation`'s `details.get(id.toLowerCase())` lookup keys purely on the
- * REQUESTED id) would otherwise notice an adapter handing back the wrong task's detail, and a
- * mismatch here would silently attribute another task's title/status to this concept's managed
- * `tasks:` block.
+ * via `link.ts`'s shared {@link verifiedViewTask} — a mismatch is treated exactly like a not-found
+ * rather than stored as `ok: true` (it throws a `LoreError`, caught below and stored verbatim, same
+ * as any other `viewTask` rejection). Nothing downstream (`gatherReconciliation`'s
+ * `details.get(id.toLowerCase())` lookup keys purely on the REQUESTED id) would otherwise notice an
+ * adapter handing back the wrong task's detail, and a mismatch here would silently attribute
+ * another task's title/status to this concept's managed `tasks:` block. This is the ONE place the
+ * check lives — `verifiedViewTask` — shared with `link.ts`'s own `viewTask` consumers and
+ * `tasks.ts`'s `resolveRollup` (LORE-125), so the comparison/`LoreError` never drifts between sites.
  */
 export async function resolveTaskDetails(
   adapter: BacklogAdapter,
@@ -231,7 +234,7 @@ export async function resolveTaskDetails(
   const resolved = new Map<string, TaskResolution>();
   await mapWithConcurrency(taskIds, TASK_DETAILS_CONCURRENCY, async (taskId) => {
     try {
-      const detail = await adapter.viewTask(taskId);
+      const detail = await verifiedViewTask(adapter, taskId);
       if (detail === null) {
         resolved.set(taskId.toLowerCase(), {
           ok: false,
@@ -240,16 +243,6 @@ export async function resolveTaskDetails(
             `task "${taskId}" does not exist`,
             "a linked concept's tasks: list must reference only live Backlog tasks — check the id, or unlink it",
             { taskId },
-          ),
-        });
-      } else if (detail.id.toLowerCase() !== taskId.toLowerCase()) {
-        resolved.set(taskId.toLowerCase(), {
-          ok: false,
-          error: new LoreError(
-            "not_found",
-            `task "${taskId}" resolved to a different task ("${detail.id}") — refusing to use it`,
-            "this points at a Backlog adapter bug or an id collision, not a missing task — verify the task id with `backlog task view` and report the mismatch",
-            { taskId, resolvedId: detail.id },
           ),
         });
       } else {
