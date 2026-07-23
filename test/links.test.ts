@@ -310,6 +310,38 @@ describe("validateLink — malformed percent-escape gets its own message", () =>
   });
 });
 
+// ── validateLink: message sanitization (LORE-153) ──────────────────────────────────
+// A finding `message` embeds the raw, bundle-authored `target` verbatim; these messages are
+// printed straight to a terminal by `lore check`/`lore validate`. A control byte or ANSI/OSC
+// escape sequence in a link destination must not survive into `message` — it would otherwise
+// let a crafted file inject terminal escape sequences into the reviewer's session.
+
+describe("validateLink — sanitizes control/ANSI bytes before building the message", () => {
+  test("strips a raw ANSI escape from a leading-slash finding's message", () => {
+    const target = "/\x1b[31mreference/orders.md";
+    const findings = validateLink(target);
+    const finding = findings.find((f) => f.issue === "leading-slash");
+    expect(finding).toBeDefined();
+    expect(finding?.message).not.toContain("\x1b");
+    expect(finding?.message).not.toContain("[31m");
+  });
+
+  test("strips a raw control byte from a missing-extension finding's message", () => {
+    const target = "reference/\x07orders";
+    const findings = validateLink(target);
+    const finding = findings.find((f) => f.issue === "missing-extension");
+    expect(finding).toBeDefined();
+    expect(finding?.message).not.toContain("\x07");
+  });
+
+  test("leaves LinkFinding.target itself raw — only the printable message is sanitized", () => {
+    const target = "/\x1b[31mreference/orders.md";
+    const findings = validateLink(target);
+    const finding = findings.find((f) => f.issue === "leading-slash");
+    expect(finding?.target).toBe(target);
+  });
+});
+
 // ── Shared destination classifiers (the bundle graph reuses these) ────────────────
 
 describe("isExternalTarget", () => {

@@ -47,6 +47,7 @@
  */
 
 import { posix } from "node:path";
+import { singleLine } from "../errors";
 import { idFromPath } from "./concept";
 
 // ── Shared patterns ───────────────────────────────────────────────────────────
@@ -286,7 +287,7 @@ export function validateLink(target: string): LinkFinding[] {
       findings.push({
         target,
         issue: "accidental-colon",
-        message: `link "${target}" looks like a relative file whose name contains a ":"; it is read as a "scheme:" URL and skipped by link resolution — remove the colon (lore filenames never contain one)`,
+        message: `link "${sanitizeForMessage(target)}" looks like a relative file whose name contains a ":"; it is read as a "scheme:" URL and skipped by link resolution — remove the colon (lore filenames never contain one)`,
       });
     }
     return findings;
@@ -296,7 +297,7 @@ export function validateLink(target: string): LinkFinding[] {
     findings.push({
       target,
       issue: "leading-slash",
-      message: `link "${target}" is /-absolute; use a relative path (it resolves against each consumer's differing root)`,
+      message: `link "${sanitizeForMessage(target)}" is /-absolute; use a relative path (it resolves against each consumer's differing root)`,
     });
   }
 
@@ -311,13 +312,13 @@ export function validateLink(target: string): LinkFinding[] {
     findings.push({
       target,
       issue: "directory-link",
-      message: `link "${target}" points at a directory (a trailing "/"); name the .md file instead (a directory link resolves on no renderer — likely a dropped filename)`,
+      message: `link "${sanitizeForMessage(target)}" points at a directory (a trailing "/"); name the .md file instead (a directory link resolves on no renderer — likely a dropped filename)`,
     });
   } else if (lacksMarkdownSuffix(path)) {
     findings.push({
       target,
       issue: "missing-extension",
-      message: `link "${target}" is missing the .md suffix; GitHub and Obsidian link to the file and need the lowercase .md extension`,
+      message: `link "${sanitizeForMessage(target)}" is missing the .md suffix; GitHub and Obsidian link to the file and need the lowercase .md extension`,
     });
   }
 
@@ -551,14 +552,45 @@ function encodingProblem(rawPath: string, suffix: string): "empty-segment" | "ma
 
 /** The human-readable message for an {@link encodingProblem} kind, naming the offending `target`. */
 function encodingMessage(target: string, problem: "empty-segment" | "malformed" | "raw"): string {
+  const clean = sanitizeForMessage(target);
   switch (problem) {
     case "empty-segment":
-      return `link "${target}" has an empty path segment ("//"); use a single "/" separator`;
+      return `link "${clean}" has an empty path segment ("//"); use a single "/" separator`;
     case "malformed":
-      return `link "${target}" has a malformed percent-escape (a "%" not followed by two hex digits); fix or remove it`;
+      return `link "${clean}" has a malformed percent-escape (a "%" not followed by two hex digits); fix or remove it`;
     case "raw":
-      return `link "${target}" has an unencoded character; percent-encode reserved characters (e.g. space -> %20)`;
+      return `link "${clean}" has an unencoded character; percent-encode reserved characters (e.g. space -> %20)`;
   }
+}
+
+/**
+ * Collapse a bundle-authored link `target` to a single line with no ANSI escape sequences or
+ * other control bytes, for safe embedding into a {@link LinkFinding} `message`. `target` is a
+ * raw destination string lifted verbatim from a markdown link — `[text](target)` — so nothing
+ * about the bundle guarantees it is display-safe: a crafted or corrupted file can carry an
+ * ESC-led ANSI/OSC sequence or a stray C0/C1/DEL control byte in the destination text, and
+ * `message` is documented as a plain human-readable one-liner for the warning stream, not a
+ * raw byte passthrough. {@link LinkFinding.target} itself is left untouched — it is the
+ * destination *as authored*, for a caller that wants to act on the exact bytes — only the
+ * printable `message` is sanitized (LORE-153).
+ *
+ * Runs {@link singleLine} first (folds line terminators), then strips what it leaves — the
+ * same two-pass shape `output.ts`'s `stripAnsiAndControls` uses for the identical reason
+ * (LORE-115), reimplemented locally rather than imported: this module stays filesystem/output-
+ * layer-free by design (module doc above — pure, no printing), so it cannot reach into the
+ * command-layer `output.ts` for a helper that isn't part of its exported contract. `validate.ts`
+ * faced the same constraint for its `resource` finding and took the same local-twin approach
+ * (LORE-161's `sanitizeForMessage`); this is that pattern's second application.
+ */
+function sanitizeForMessage(text: string): string {
+  const collapsed = singleLine(text);
+  const withoutAnsi = collapsed.replace(
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
+    /\x1b(?:\[[0-9;:<=>?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[ -~])/g,
+    "",
+  );
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
+  return withoutAnsi.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
 }
 
 /** Whether a string carries a `%` that is not the start of a valid two-hex-digit escape. */
