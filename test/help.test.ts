@@ -136,6 +136,88 @@ describe("core/manifest — shape and invariants", () => {
   });
 });
 
+describe("core/manifest — deep immutability (LORE-220 AC#1/#2)", () => {
+  // These tests exercise the exact hazard the task describes: a type-bypassing
+  // (`as any`) or plain-JS consumer mutating the singleton the `readonly` TS
+  // modifiers alone can't stop. `bun test` runs ESM, which is strict-mode by
+  // default, so a mutation on a frozen object throws a TypeError rather than
+  // silently no-op'ing.
+
+  test("mutating the top-level envelope throws and leaves it unaffected", () => {
+    const m = buildManifest();
+    expect(() => {
+      (m as unknown as { schemaVersion: number }).schemaVersion = 999;
+    }).toThrow(TypeError);
+    expect(m.schemaVersion).toBe(1);
+  });
+
+  test("pushing onto the commands array throws and leaves the array unaffected", () => {
+    const m = buildManifest();
+    const before = m.commands.length;
+    expect(() => {
+      (m.commands as unknown[]).push({ ...m.commands[0] });
+    }).toThrow(TypeError);
+    expect(m.commands.length).toBe(before);
+  });
+
+  test("reassigning a command's kind throws and leaves it unaffected", () => {
+    const m = buildManifest();
+    const command = m.commands.find((c) => c.name === "new");
+    expect(command).toBeDefined();
+    expect(() => {
+      (command as unknown as { kind: string }).kind = "poisoned";
+    }).toThrow(TypeError);
+    expect(command?.kind).toBe("new");
+  });
+
+  test("mutating a command's flags array/entry throws and leaves it unaffected", () => {
+    const m = buildManifest();
+    const command = m.commands.find((c) => c.name === "new");
+    expect(command?.flags.length).toBeGreaterThan(0);
+    const flagsBefore = command?.flags.length;
+    expect(() => {
+      (command?.flags as unknown[] | undefined)?.push({ name: "bogus", takesValue: false, summary: "x" });
+    }).toThrow(TypeError);
+    expect(command?.flags.length).toBe(flagsBefore);
+
+    const flag = command?.flags[0];
+    expect(() => {
+      (flag as unknown as { name: string }).name = "poisoned";
+    }).toThrow(TypeError);
+    expect(flag?.name).not.toBe("poisoned");
+  });
+
+  test("mutating globalFlags array/entry throws and leaves it unaffected", () => {
+    const m = buildManifest();
+    const before = m.globalFlags.length;
+    expect(() => {
+      (m.globalFlags as unknown[]).push({ name: "bogus", takesValue: false, summary: "x" });
+    }).toThrow(TypeError);
+    expect(m.globalFlags.length).toBe(before);
+
+    const flag = m.globalFlags[0];
+    expect(() => {
+      (flag as unknown as { takesValue: boolean }).takesValue = true;
+    }).toThrow(TypeError);
+    expect(flag?.takesValue).toBe(false);
+  });
+
+  test("a mutation attempt on one buildManifest() call cannot poison a subsequent call", () => {
+    const first = buildManifest();
+    expect(() => {
+      (first.commands as unknown[]).push({ ...first.commands[0], name: "poisoned" });
+    }).toThrow(TypeError);
+    expect(() => {
+      (first.commands[0] as unknown as { kind: string }).kind = "poisoned";
+    }).toThrow(TypeError);
+
+    const second = buildManifest();
+    expect(second.commands.map((c) => c.name)).toEqual(manifestCommandNames() as string[]);
+    expect(second.commands.find((c) => c.name === first.commands[0]?.name)?.kind).toBe(first.commands[0]?.kind);
+    expect(second.commands.some((c) => c.name === "poisoned")).toBe(false);
+  });
+});
+
 describe("core/manifest — additive-only contract (AC#2)", () => {
   test("the manifest carries its required top-level keys", () => {
     const keys = Object.keys(buildManifest());
