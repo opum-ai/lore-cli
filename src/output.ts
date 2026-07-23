@@ -33,7 +33,7 @@
  * Design: docs/specs/lore-design.md §5. Rationale: docs/adr/0005-cli-contract.md.
  */
 
-import { asText, singleLine, type Writer } from "./errors";
+import { asText, singleLine, stripAnsiAndControls, type Writer } from "./errors";
 
 // Re-exported so a command author gets the write sink type from the rendering
 // seam itself, without a second import from errors.ts.
@@ -391,29 +391,6 @@ export function maxLen<T>(items: readonly T[], length: (item: T) => number): num
     }
   }
   return max;
-}
-
-/**
- * Strip ANSI escape sequences and residual C0/C1 control characters from `text`. Meant to run
- * *after* {@link singleLine}, which only collapses line terminators (CR/LF/U+2028/U+2029) — it
- * leaves ESC (`\x1b`)-led sequences and other control bytes (BEL, backspace, …) untouched. A CSI
- * sequence (`ESC [ … final byte`) can move the cursor or erase lines, so passing one through into
- * `--plain` output would let a crafted/corrupted task field forge terminal rows even though the
- * text is already single-line (LORE-115).
- *
- * Two passes: first drop full ANSI escape sequences — CSI (`ESC [ … @-~`), OSC (`ESC ] …`
- * terminated by BEL or `ESC \`), and the general two-byte form (`ESC` + one printable byte, for
- * everything else) — then drop any remaining C0 (`\x00`-`\x1f`) or C1/DEL (`\x7f`-`\x9f`) control
- * byte that wasn't part of a recognized escape sequence (e.g. a bare BEL).
- */
-function stripAnsiAndControls(text: string): string {
-  const withoutAnsi = text.replace(
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
-    /\x1b(?:\[[0-9;:<=>?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[ -~])/g,
-    "",
-  );
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
-  return withoutAnsi.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
 }
 
 /**

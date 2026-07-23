@@ -47,7 +47,7 @@
  */
 
 import { posix } from "node:path";
-import { singleLine } from "../errors";
+import { singleLine, stripAnsiAndControls } from "../errors";
 import { idFromPath } from "./concept";
 
 // ── Shared patterns ───────────────────────────────────────────────────────────
@@ -574,23 +574,14 @@ function encodingMessage(target: string, problem: "empty-segment" | "malformed" 
  * destination *as authored*, for a caller that wants to act on the exact bytes — only the
  * printable `message` is sanitized (LORE-153).
  *
- * Runs {@link singleLine} first (folds line terminators), then strips what it leaves — the
- * same two-pass shape `output.ts`'s `stripAnsiAndControls` uses for the identical reason
- * (LORE-115), reimplemented locally rather than imported: this module stays filesystem/output-
- * layer-free by design (module doc above — pure, no printing), so it cannot reach into the
- * command-layer `output.ts` for a helper that isn't part of its exported contract. `validate.ts`
- * faced the same constraint for its `resource` finding and took the same local-twin approach
- * (LORE-161's `sanitizeForMessage`); this is that pattern's second application.
+ * Runs {@link singleLine} first (folds line terminators), then strips what it leaves via the
+ * shared {@link stripAnsiAndControls} (LORE-181) — the single home for that two-pass strip,
+ * also used by `output.ts`, `commands/query.ts`, and `core/validate.ts` — imported from
+ * `errors.ts` rather than `output.ts`: this module stays filesystem/output-layer-free by design
+ * (module doc above — pure, no printing), and `errors.ts` is layer-neutral.
  */
 function sanitizeForMessage(text: string): string {
-  const collapsed = singleLine(text);
-  const withoutAnsi = collapsed.replace(
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
-    /\x1b(?:\[[0-9;:<=>?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[ -~])/g,
-    "",
-  );
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
-  return withoutAnsi.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
+  return stripAnsiAndControls(singleLine(text));
 }
 
 /** Whether a string carries a `%` that is not the start of a valid two-hex-digit escape. */
