@@ -137,9 +137,7 @@ describe("buildContext — neighbor compaction", () => {
     // The whole emitted entry (id, type, title, summary) is charged — not the summary
     // alone — so a wide neighborhood of short summaries (behind long titles) can't
     // silently overrun the budget.
-    expect(ref?.tokenEstimate).toBe(
-      estimateTokens("reference/orders Reference Orders The orders domain reference."),
-    );
+    expect(ref?.tokenEstimate).toBe(estimateTokens("reference/orders Reference Orders The orders domain reference."));
     const sum = data.target.tokenEstimate + data.neighbors.reduce((acc, n) => acc + n.tokenEstimate, 0);
     expect(data.tokenEstimate).toBe(sum);
   });
