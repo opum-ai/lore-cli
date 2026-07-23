@@ -282,14 +282,9 @@ function isEmptyDoc(doc: Record<string, unknown>): boolean {
 
 /** Parse the JSON profile form, surfacing the parser's message on failure. */
 function parseJson(raw: string): Record<string, unknown> {
+  let value: unknown;
   try {
-    const value = JSON.parse(raw) as unknown;
-    if (typeof value !== "object" || value === null || Array.isArray(value)) {
-      return fail(`${PROFILE_JSON_REL_PATH} must be a JSON object`, `make ${PROFILE_JSON_REL_PATH} a JSON object`, {
-        path: PROFILE_JSON_REL_PATH,
-      });
-    }
-    return value as Record<string, unknown>;
+    value = JSON.parse(raw);
   } catch (cause) {
     return fail(
       withReason(`${PROFILE_JSON_REL_PATH} is not valid JSON`, cause),
@@ -297,6 +292,12 @@ function parseJson(raw: string): Record<string, unknown> {
       { path: PROFILE_JSON_REL_PATH },
     );
   }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return fail(`${PROFILE_JSON_REL_PATH} must be a JSON object`, `make ${PROFILE_JSON_REL_PATH} a JSON object`, {
+      path: PROFILE_JSON_REL_PATH,
+    });
+  }
+  return value as Record<string, unknown>;
 }
 
 // ── Parse (grammar → ParsedProfile) ───────────────────────────────────────────—
