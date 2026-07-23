@@ -17,6 +17,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BacklogAdapter, BacklogTaskDetail, EditTaskPatch } from "../src/adapters/backlog";
+import { TASK_DETAILS_CONCURRENCY } from "../src/commands/concurrency";
 import {
   assertNoLabelCaseCollision,
   type LinkOptions,
@@ -757,6 +758,68 @@ describe("lore link/unlink — 2nd-pass code-review fixes", () => {
       expect(err).toBeInstanceOf(LoreError);
       expect((err as LoreError).type).toBe("conflict");
     }
+  });
+});
+
+// ── runLink's up-front existence check: bounded concurrency (LORE-233) ────────────
+
+describe("lore link — up-front existence check runs bounded, not fully unbounded (LORE-233)", () => {
+  test("never runs more than TASK_DETAILS_CONCURRENCY viewTask calls in flight, saturates the cap, and a valid multi-id link still writes every back-reference (AC#1/#3/#4)", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    // Comfortably more distinct ids than the cap, so the pool must refill at least twice — a
+    // single unbounded burst (the pre-fix `Promise.allSettled(taskIds.map(...))` behavior) would
+    // let `active` climb past the cap immediately instead of ever waiting on the gate below.
+    const total = TASK_DETAILS_CONCURRENCY * 3 + 2;
+    const ids = Array.from({ length: total }, (_, i) => `lore-${i}`);
+    const adapter = fakeAdapter(ids.map((id) => makeTask(id.toUpperCase())));
+
+    let active = 0;
+    let peak = 0;
+    let started = 0;
+    // Every in-flight call blocks on this single shared gate, released only once the pool has
+    // saturated at the cap — proving the pool actually overlaps that many calls, rather than
+    // merely never happening (by luck of scheduling) to exceed the cap.
+    let releaseGate: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    const originalViewTask = adapter.viewTask.bind(adapter);
+    adapter.viewTask = async (id: string) => {
+      active++;
+      peak = Math.max(peak, active);
+      started++;
+      if (started === TASK_DETAILS_CONCURRENCY) {
+        releaseGate();
+      }
+      await gate;
+      active--;
+      return originalViewTask(id);
+    };
+
+    const { report } = await linkCmd(["stories/x", ...ids], adapter);
+
+    expect(peak).toBeLessThanOrEqual(TASK_DETAILS_CONCURRENCY);
+    expect(peak).toBe(TASK_DETAILS_CONCURRENCY); // the pool saturates — this isn't just trivially bounded
+    expect(active).toBe(0); // every worker settled
+    expect(report.tasks).toHaveLength(total);
+    expect(report.tasks.every((t) => t.status === "added" && t.backRef === "added")).toBe(true);
+    expect(adapter.calls).toHaveLength(total); // every task's back-reference was actually written
+  });
+
+  test("still reports the first invalid id in argument order under a fan-out larger than the cap", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    const total = TASK_DETAILS_CONCURRENCY * 2 + 3;
+    const ids = Array.from({ length: total }, (_, i) => `lore-${i}`);
+    // Seed every id EXCEPT "lore-1" (the second in argument order), which stays not-found — the
+    // first invalid id must still be reported even though it resolves well after the pool has
+    // already moved past the first worker batch.
+    const seeded = ids.filter((id) => id !== "lore-1");
+    const adapter = fakeAdapter(seeded.map((id) => makeTask(id.toUpperCase())));
+
+    const err = await expectLinkError(["stories/x", ...ids], adapter);
+    expect(err.type).toBe("not_found");
+    expect(err.message).toContain("lore-1");
+    expect(adapter.calls).toHaveLength(0); // no back-reference was ever written on a failed pre-check
   });
 });
 

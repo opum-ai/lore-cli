@@ -3,9 +3,11 @@ id: LORE-233
 title: >-
   Bound runLink's up-front viewTask existence-check fan-out with a concurrency
   limit
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@sonnet-worker'
 created_date: '2026-07-23 16:04'
+updated_date: '2026-07-23 19:21'
 labels:
   - cmd-link
   - codex-review-followup
@@ -37,9 +39,27 @@ Low priority because `lore link`'s task-id count is bounded by CLI arguments (hu
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 runLink's up-front task-existence validation (currently `Promise.allSettled(taskIds.map((taskId) => verifiedViewTask(adapter, taskId)))` at src/commands/link.ts:182) caps the number of concurrent verifiedViewTask/adapter.viewTask calls in flight (e.g. via the existing mapWithConcurrency helper + a shared concurrency cap) instead of firing the entire task-id list at once.
-- [ ] #2 The mapWithConcurrency helper is shared without introducing a link.ts -> reconcile-shared.ts import cycle (relocate the pure helper to a neutral module, or use an equivalent bounded loop), since reconcile-shared.ts already imports verifiedViewTask/dedupeTaskIds/defaultAdapter from link.ts.
-- [ ] #3 A test with an instrumented adapter (peak-in-flight counter + a released gate) and a task-id list larger than the cap asserts peak concurrent in-flight viewTask calls never exceeds the cap.
-- [ ] #4 runLink's existing behavior is preserved: the FIRST invalid id in argument order is still what gets reported (a not-found id throws LoreError not_found / exit 3; a rejected or id-mismatched read is reported identically), and a valid multi-id `lore link` still succeeds and writes all back-references.
-- [ ] #5 Verify: bun test test/link.test.ts, bun run typecheck, and the full bun test suite all pass.
+- [x] #1 runLink's up-front task-existence validation (currently `Promise.allSettled(taskIds.map((taskId) => verifiedViewTask(adapter, taskId)))` at src/commands/link.ts:182) caps the number of concurrent verifiedViewTask/adapter.viewTask calls in flight (e.g. via the existing mapWithConcurrency helper + a shared concurrency cap) instead of firing the entire task-id list at once.
+- [x] #2 The mapWithConcurrency helper is shared without introducing a link.ts -> reconcile-shared.ts import cycle (relocate the pure helper to a neutral module, or use an equivalent bounded loop), since reconcile-shared.ts already imports verifiedViewTask/dedupeTaskIds/defaultAdapter from link.ts.
+- [x] #3 A test with an instrumented adapter (peak-in-flight counter + a released gate) and a task-id list larger than the cap asserts peak concurrent in-flight viewTask calls never exceeds the cap.
+- [x] #4 runLink's existing behavior is preserved: the FIRST invalid id in argument order is still what gets reported (a not-found id throws LoreError not_found / exit 3; a rejected or id-mismatched read is reported identically), and a valid multi-id `lore link` still succeeds and writes all back-references.
+- [x] #5 Verify: bun test test/link.test.ts, bun run typecheck, and the full bun test suite all pass.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Relocate the pure mapWithConcurrency helper + TASK_DETAILS_CONCURRENCY (=8) cap from reconcile-shared.ts into a new neutral module src/commands/concurrency.ts (no imports from link.ts or reconcile-shared.ts, avoiding the link<->reconcile-shared cycle). 2. reconcile-shared.ts imports both from ./concurrency and re-exports them unchanged so check.ts and reconcile-shared.test.ts (existing importers) keep working with zero code changes elsewhere -- resolveTaskDetails's body is untouched. 3. link.ts imports mapWithConcurrency + TASK_DETAILS_CONCURRENCY from ./concurrency and replaces runLink's Promise.allSettled(taskIds.map(...)) up-front existence-check fan-out with a bounded mapWithConcurrency call over {taskId,index} pairs, writing each PromiseSettledResult into detailResults by ORIGINAL index (not push order) so the existing in-order first-invalid-id scan is untouched and behaves identically. 4. Add tests to test/link.test.ts: an instrumented-adapter peak-in-flight/gate test proving the pool caps at and saturates TASK_DETAILS_CONCURRENCY while a valid multi-id link still writes every back-reference, plus a first-invalid-id-in-argument-order regression test at a fan-out larger than the cap. 5. Verify with bun test test/link.test.ts, whole-repo bun run typecheck, and the full bun test suite.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented. Verified: bun test test/link.test.ts -> 69 pass/0 fail; whole-repo bun test -> 1961 pass/0 fail (47 files); bun run typecheck -> clean (tsc --noEmit, no output); bunx biome check on the 4 changed files -> no errors. New test 'never runs more than TASK_DETAILS_CONCURRENCY viewTask calls in flight, saturates the cap, and a valid multi-id link still writes every back-reference (AC#1/#3/#4)' uses an instrumented adapter with a peak-in-flight counter + a manually-released gate over TASK_DETAILS_CONCURRENCY*3+2=26 ids: asserts peak<=cap AND peak===cap (saturates), then asserts the link succeeds with all 26 tasks 'added'/'added' and adapter.calls.length===26 (every back-reference written). A second new test confirms the first-invalid-id-in-argument-order contract still holds under a fan-out (19 ids) larger than the cap. reconcile-shared.ts's own resolveTaskDetails/gatherReconciliation logic is byte-identical (only its mapWithConcurrency/TASK_DETAILS_CONCURRENCY import source changed, both re-exported for check.ts and reconcile-shared.test.ts); ran test/reconcile-shared.test.ts + test/check.test.ts explicitly alongside test/link.test.ts (302 pass/0 fail) to confirm no regression. No link<->reconcile-shared import cycle: verified via tsc --noEmit succeeding and by inspection (src/commands/concurrency.ts has zero imports from either file).
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+runLink's up-front task-existence check (src/commands/link.ts) no longer fires one verifiedViewTask/adapter.viewTask call per task id via an unbounded Promise.allSettled(taskIds.map(...)); it now runs through mapWithConcurrency bounded to TASK_DETAILS_CONCURRENCY (=8) in flight at once, writing each settled outcome into detailResults by original index so the existing in-order first-invalid-id-in-argument-order scan (and its behavior) is unchanged. The pure mapWithConcurrency helper and TASK_DETAILS_CONCURRENCY cap were relocated out of reconcile-shared.ts into a new neutral module, src/commands/concurrency.ts (zero imports from link.ts or reconcile-shared.ts), avoiding a link -> reconcile-shared -> link import cycle since reconcile-shared.ts already imports verifiedViewTask/dedupeTaskIds/defaultAdapter from link.ts. reconcile-shared.ts now just imports both symbols from ./concurrency and re-exports them unchanged, so check.ts and reconcile-shared.test.ts (its existing importers) needed zero changes and resolveTaskDetails's own logic is untouched. Verified: bun test test/link.test.ts (69 pass/0 fail), the full bun test suite (1961 pass/0 fail across 47 files), whole-repo bun run typecheck (clean), and bunx biome check on all four changed files (no errors). New tests in test/link.test.ts prove the pool caps at and saturates TASK_DETAILS_CONCURRENCY (instrumented-adapter peak-in-flight counter + a manually-released gate, 26 ids) while a valid multi-id lore link still writes every back-reference, and that the first-invalid-id-in-argument-order contract holds at a fan-out (19 ids) larger than the cap.
+<!-- SECTION:FINAL_SUMMARY:END -->

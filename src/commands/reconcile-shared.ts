@@ -20,7 +20,15 @@ import type { ManagedTaskRow } from "../core/managed-block";
 import { type ReconciledStatus, reconcileStatus, validateReconcileInputs } from "../core/reconcile";
 import { RESERVED_STEMS } from "../core/scaffold";
 import { LoreError } from "../errors";
+// `mapWithConcurrency`/`TASK_DETAILS_CONCURRENCY` moved to the neutral `./concurrency` module
+// (LORE-233) so `link.ts` can share them too without a `link -> reconcile-shared -> link` import
+// cycle (this file already imports `dedupeTaskIds`/`defaultAdapter`/`verifiedViewTask` FROM
+// `link.ts`). Re-exported here so `check.ts` and `reconcile-shared.test.ts`, which import both
+// from this module, keep working unchanged.
+import { mapWithConcurrency, TASK_DETAILS_CONCURRENCY } from "./concurrency";
 import { dedupeTaskIds, defaultAdapter, verifiedViewTask } from "./link";
+
+export { mapWithConcurrency, TASK_DETAILS_CONCURRENCY };
 
 /** The outcome of resolving one task id: its live detail, or the error resolving it hit. */
 export type TaskResolution =
@@ -176,36 +184,6 @@ export async function gatherReconciliation(
     }));
     return { concept, newStatus, rows };
   });
-}
-
-/**
- * How many `adapter.viewTask` calls {@link resolveTaskDetails} runs at once — bounded so a bundle
- * linking a large number of distinct task ids does not spawn one Backlog CLI subprocess per id
- * fully concurrently (which can exhaust process/file-descriptor limits or overwhelm the Backlog
- * CLI). Mirrors `check.ts`'s own `LIVENESS_CONCURRENCY` cap on external-URL liveness probes —
- * same shape of problem (unbounded subprocess/socket fan-out), same fix. Exported so tests can
- * assert against the real cap rather than duplicating (and risking drift from) a hardcoded copy.
- */
-export const TASK_DETAILS_CONCURRENCY = 8;
-
-/**
- * Run `fn` over `items` with at most `limit` in flight at once — a tiny worker-pool over a shared
- * cursor. Shared by {@link resolveTaskDetails} (bounding concurrent `adapter.viewTask` Backlog
- * subprocess spawns) and `check.ts`'s `probeLiveness` (bounding concurrent external-URL fetches).
- */
-export async function mapWithConcurrency<T>(
-  items: readonly T[],
-  limit: number,
-  fn: (item: T) => Promise<void>,
-): Promise<void> {
-  let cursor = 0;
-  const worker = async (): Promise<void> => {
-    while (cursor < items.length) {
-      const item = items[cursor++] as T;
-      await fn(item);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
 /**

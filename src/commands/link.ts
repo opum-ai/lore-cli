@@ -68,6 +68,11 @@ import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { type BacklogCommitResult, commitBacklogFiles, type GitSpawn, renderBacklogCommitLine } from "../state";
 import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
+// The pure worker-pool + shared cap live in the neutral `./concurrency` module (LORE-233), not
+// `./reconcile-shared` — `reconcile-shared.ts` already imports `verifiedViewTask`/`dedupeTaskIds`/
+// `defaultAdapter` FROM this file, so importing back from it here would create a
+// `link -> reconcile-shared -> link` cycle.
+import { mapWithConcurrency, TASK_DETAILS_CONCURRENCY } from "./concurrency";
 import { writeFileOverwriting } from "./fswrite";
 
 /** Options shared by {@link runLink} and {@link runUnlink}; `root`, the streams, and `adapter` are injectable for tests. */
@@ -173,13 +178,30 @@ export async function runLink(options: LinkOptions): Promise<number> {
   const label = backRefLabel(concept.id);
 
   // Validate every task exists BEFORE any write — a missing id fails the whole command loud,
-  // rather than leaving the doc half-linked. Reads are independent so they run concurrently
-  // (`allSettled`, not `all`: a rejection must not race ahead of an earlier id's not-found), but the
-  // FIRST invalid id in argument order — not-found or a genuine read failure — is what gets
-  // reported, decided by an in-order scan after every read has settled. `verifiedViewTask` (LORE-177)
-  // also rejects a detail whose own `id` doesn't match the requested `taskId` — surfaced here as a
-  // rejected settle, reported identically to a genuine read failure.
-  const detailResults = await Promise.allSettled(taskIds.map((taskId) => verifiedViewTask(adapter, taskId)));
+  // rather than leaving the doc half-linked. Reads are independent so they run concurrently, but
+  // bounded to TASK_DETAILS_CONCURRENCY in flight at once (`mapWithConcurrency`, LORE-233) rather
+  // than firing the entire task-id list as one `Promise.allSettled(...map(...))` burst — a large
+  // id list would otherwise spawn that many `backlog task view` subprocesses simultaneously
+  // (process/file-descriptor exhaustion). Each outcome is written into `detailResults` by its
+  // ORIGINAL index (never push order, which would follow completion order under the pool), so a
+  // rejection never races ahead of an earlier id's not-found: the FIRST invalid id in argument
+  // order — not-found or a genuine read failure — is still what gets reported, decided by the same
+  // in-order scan below after every read has settled, byte-for-byte the same contract
+  // `Promise.allSettled` gave. `verifiedViewTask` (LORE-177) also rejects a detail whose own `id`
+  // doesn't match the requested `taskId` — surfaced here as a rejected settle, reported identically
+  // to a genuine read failure.
+  const detailResults: PromiseSettledResult<BacklogTaskDetail | null>[] = new Array(taskIds.length);
+  await mapWithConcurrency(
+    taskIds.map((taskId, index) => ({ taskId, index })),
+    TASK_DETAILS_CONCURRENCY,
+    async ({ taskId, index }) => {
+      try {
+        detailResults[index] = { status: "fulfilled", value: await verifiedViewTask(adapter, taskId) };
+      } catch (reason) {
+        detailResults[index] = { status: "rejected", reason };
+      }
+    },
+  );
   for (let i = 0; i < taskIds.length; i++) {
     const taskId = taskIds[i] as string;
     const result = detailResults[i] as PromiseSettledResult<BacklogTaskDetail | null>;
