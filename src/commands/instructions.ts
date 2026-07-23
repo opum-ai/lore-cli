@@ -29,7 +29,7 @@ export interface InstructionsOptions {
 }
 
 /** The `instructions.text` payload: the requested topic plus the full topic index, so a `--json` caller can discover the other keys without a second request. */
-interface InstructionsData {
+export interface InstructionsData {
   /** The topic actually served (`overview` when no `<topic>` was given). */
   topic: string;
   /** The topic's one-line heading. */

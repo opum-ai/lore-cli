@@ -1,19 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { run } from "../src/cli";
-import { type InstructionsOptions, runInstructions } from "../src/commands/instructions";
+import { type InstructionsData, type InstructionsOptions, runInstructions } from "../src/commands/instructions";
 import { INSTRUCTION_TOPICS } from "../src/core/instructions";
 import type { OutputContext } from "../src/output";
 import { capture, expectError } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 const PLAIN_CTX: OutputContext = { mode: "plain", color: false };
-
-interface InstructionsData {
-  topic: string;
-  title: string;
-  body: string;
-  topics: ReadonlyArray<{ key: string; title: string }>;
-}
 
 /** Run `instructions` in JSON mode and return the parsed `data` payload plus the exit code. */
 function instructions(
