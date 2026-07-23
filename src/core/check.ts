@@ -917,11 +917,33 @@ export function tallySeverity(findings: readonly CheckFinding[]): { errorCount: 
  * file rather than crashing — a genuinely malformed concept is `lore validate`'s error to
  * report, not `check`'s to die on. Any other exception (e.g. an unrecognized fence-language
  * engine, a future gray-matter behavior change) is a real bug or unexpected input and must
- * surface, not be silently absorbed as if it were ordinary malformed YAML (LORE-138). A file
- * with no frontmatter (or no closing fence) yields its whole content as the body.
+ * surface, not be silently absorbed as if it were ordinary malformed YAML (LORE-138).
+ *
+ * A file with **no** frontmatter fence at all is detected up front via `matter.test` (gray-matter's
+ * own, documented "does this open with the delimiter?" check, so this cannot disagree with what
+ * `matter()` itself would do) and takes a separate path that skips normalizeInput's leading-`\s+`
+ * strip: that strip exists only so a *whitespace-padded fence* (blank lines before `---`) still
+ * parses, but applied to a body that never has a fence at all it deletes the body's own first-line
+ * indentation — an indented (4-space/tab) code block opening a frontmatter-free file would lose its
+ * indentation and get reparsed as a lazy-continuation prose paragraph, exposing any `{`/`[[…]]`/etc.
+ * inside it to the portability scan as if it were prose (LORE-240). BOM-strip and CRLF/CR
+ * normalization still apply on this path — only the leading-whitespace strip is skipped. A file
+ * that *does* open with the fence delimiter (including a malformed, empty, or non-mapping one) is
+ * unaffected by this branch and keeps the exact behavior above.
+ *
+ * Exported (alongside this module's other internals such as {@link slugify} and
+ * {@link extractHeadingSlugs}) so the normalization contract itself — leading indentation
+ * preserved, BOM/CRLF still stripped, frontmatter path untouched — has a direct unit-level
+ * regression test, not only an indirect one through {@link checkBundle}'s findings.
  */
-function bodyText(raw: string): string {
+export function bodyText(raw: string): string {
   const normalized = normalizeInput(raw);
+  if (!matter.test(normalized)) {
+    // No frontmatter fence attempted anywhere in this file: normalize BOM and line endings only
+    // (normalizeInput's other two steps), and deliberately skip its leading-whitespace strip so a
+    // leading indented code block keeps the indentation that makes it parse as code, not prose.
+    return raw.replace(/^\uFEFF+/, "").replace(/\r\n?/g, "\n");
+  }
   try {
     return matter(normalized).content;
   } catch (error) {
