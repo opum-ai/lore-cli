@@ -29,7 +29,7 @@ import { basename, join, resolve } from "node:path";
 import { walkMarkdown } from "../core/bundle";
 import { compileReplacer, type Replacer } from "../core/replace";
 import { DOCS_DIR } from "../core/scaffold";
-import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
+import { EXIT_OK, LoreError, singleLine, stripAnsiAndControls, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { canonicalIdentity, readSource, toRepoRelative, withinRepo } from "./discover";
 import { writeFileAtomic } from "./fswrite";
@@ -319,12 +319,27 @@ function reportRenderable(data: ReplaceReport): Renderable<ReplaceReport> {
   };
 }
 
-/** One line per changed file, then a summary line. (No color: the report carries no severities.) */
+/**
+ * One line per changed file, then a summary line. (No color: the report carries no severities.)
+ * Each file's `path` is sanitized ({@link sanitizeField}) before interpolation — it is a discovered
+ * display path derived from real filesystem entries, so a crafted/unusual filename could otherwise
+ * smuggle an ANSI escape sequence or an embedded newline into the rendered report (LORE-229).
+ */
 function render(data: ReplaceReport): string {
   const verb = data.dryRun ? "would replace" : "replaced";
-  const lines = data.files.map((f) => `${verb} ${f.count} in ${f.path}`);
+  const lines = data.files.map((f) => `${verb} ${f.count} in ${sanitizeField(f.path)}`);
   lines.push(summaryLine(data));
   return lines.join("\n");
+}
+
+/**
+ * Sanitize a discovered file path before it is interpolated into the plain/pretty report: collapse
+ * it to one line ({@link singleLine}) and strip ANSI escape sequences plus residual C0/C1 control
+ * bytes ({@link stripAnsiAndControls}) — mirrors `query.ts`'s `sanitizeField` (LORE-118), for the
+ * same reason: an untrusted, filesystem-derived path can carry attacker-influenced bytes.
+ */
+function sanitizeField(text: string): string {
+  return stripAnsiAndControls(singleLine(text));
 }
 
 /** The trailing summary: total matches, files changed of scanned, and a `(dry-run)` marker. */
