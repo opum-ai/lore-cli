@@ -1,4 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runOrphans } from "../src/commands/orphans";
+import { runTasks } from "../src/commands/tasks";
 import { LoreError, reportError, WarningCollector } from "../src/errors";
 import {
   emit,
@@ -16,7 +21,7 @@ import {
   type Truncation,
   truncation,
 } from "../src/output";
-import { capture } from "./helpers";
+import { capture, fakeAdapter, makeTask, storyDoc } from "./helpers";
 
 // Build a Renderable with default text renderers; override per test as needed.
 function renderable<T>(kind: string, data: T, over: Partial<Renderable<T>> = {}): Renderable<T> {
@@ -525,9 +530,69 @@ describe("renderTaskSummaryRows — shared id/status/title alignment (LORE-51)",
     expect(renderTaskSummaryRows([])).toEqual([]);
   });
 
-  test("`lore tasks` and `lore orphans` render byte-identical rows for the same data (the whole point of sharing)", () => {
-    const row: TaskSummaryRow = { id: "LORE-42", title: "Bulk archive orders", status: "To Do" };
-    expect(renderTaskSummaryRows([row])).toEqual(renderTaskSummaryRows([row]));
+  test("`lore tasks` and `lore orphans` render byte-identical rows for the same data (the whole point of sharing)", async () => {
+    // Not renderTaskSummaryRows(x) === renderTaskSummaryRows(x) (an f(x)===f(x) tautology that can
+    // never catch a command whose OWN render path stopped routing through the shared helper). This
+    // drives the two commands' actual entry points — runTasks' renderTable (tasks.ts:296) and
+    // runOrphans' renderReport (orphans.ts:406) — end to end against equivalent {id,status,title}
+    // data, then also pins each extracted row against renderTaskSummaryRows itself, so the test
+    // fails if either command's path drifts from the shared `  <id>  <status>  <title>` layout.
+    const id = "LORE-42";
+    const title = "Bulk archive orders";
+    const status = "To Do";
+    const plain: OutputContext = { mode: "plain", color: false };
+
+    // `lore tasks <concept>`: the id is linked from a Story's `tasks:` frontmatter, so its row comes
+    // from tasks.ts's renderTable, not orphans.ts.
+    const tasksRoot = mkdtempSync(join(tmpdir(), "lore-output-tasks-"));
+    let tasksLine: string | undefined;
+    try {
+      mkdirSync(join(tasksRoot, "docs", "stories"), { recursive: true });
+      writeFileSync(join(tasksRoot, "docs", "stories", "bulk.md"), storyDoc("bulk", [id]));
+      const stdout = capture();
+      const code = await runTasks({
+        root: tasksRoot,
+        output: plain,
+        stdout,
+        stderr: capture(),
+        args: ["stories/bulk"],
+        adapter: fakeAdapter([makeTask(id, { title, status })], { probe: "ok" }),
+      });
+      expect(code).toBe(0);
+      tasksLine = stdout.lines().find((l) => l.includes(id));
+    } finally {
+      rmSync(tasksRoot, { recursive: true, force: true });
+    }
+
+    // `lore orphans --tasks-only`: the SAME id, but linked from no doc, so it surfaces as an orphan
+    // task and its row comes from orphans.ts's renderReport, a genuinely different render path.
+    const orphansRoot = mkdtempSync(join(tmpdir(), "lore-output-orphans-"));
+    let orphansLine: string | undefined;
+    try {
+      mkdirSync(join(orphansRoot, "docs"), { recursive: true });
+      const stdout = capture();
+      const code = await runOrphans({
+        root: orphansRoot,
+        output: plain,
+        stdout,
+        stderr: capture(),
+        args: ["--tasks-only"],
+        adapter: fakeAdapter([makeTask(id, { title, status })], { probe: "ok", listTasks: "ok" }),
+      });
+      expect(code).toBe(0);
+      orphansLine = stdout.lines().find((l) => l.includes(id));
+    } finally {
+      rmSync(orphansRoot, { recursive: true, force: true });
+    }
+
+    expect(tasksLine).toBeDefined();
+    expect(orphansLine).toBeDefined();
+    const row: TaskSummaryRow = { id, title, status };
+    const [sharedRow] = renderTaskSummaryRows([row]);
+    // Byte-identical to each other AND to the shared helper's own output — a command that inlined a
+    // divergent row formatter would break this even if it happened to still match the other command.
+    expect(tasksLine).toBe(sharedRow);
+    expect(orphansLine).toBe(sharedRow);
   });
 
   test("collapses an embedded newline in id, status, or title to one sanitized line (LORE-115)", () => {
