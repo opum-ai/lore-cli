@@ -117,11 +117,17 @@ function parseValidateArgs(args: readonly string[]): ValidateArgs {
       };
       switch (name) {
         case "type":
+          if (type !== undefined) {
+            throw usage("--type given more than once", "pass --type at most once");
+          }
           type = takeValue();
           break;
         case "strict":
           if (eq >= 0) {
             throw usage("--strict takes no value", "pass --strict on its own");
+          }
+          if (strict) {
+            throw usage("--strict given more than once", "pass --strict at most once");
           }
           strict = true;
           break;

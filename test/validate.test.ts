@@ -671,6 +671,36 @@ describe("validate (command)", () => {
     }
   });
 
+  test("repeated `--strict` (LORE-237) is a usage error", () => {
+    try {
+      runValidate({ root, output: JSON_CTX, args: ["--strict", "--strict"], stdout: capture() });
+      throw new Error("expected a LoreError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("usage");
+      expect((err as LoreError).message).toContain("--strict given more than once");
+    }
+  });
+
+  test("repeated `--type` (LORE-237) is a usage error, not last-value-wins", () => {
+    try {
+      runValidate({ root, output: JSON_CTX, args: ["--type", "ADR", "--type", "Story"], stdout: capture() });
+      throw new Error("expected a LoreError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("usage");
+      expect((err as LoreError).message).toContain("--type given more than once");
+    }
+  });
+
+  test("a single `--strict` and a single `--type ADR` are still accepted (LORE-237)", () => {
+    mkdirSync(join(root, "docs/adr"), { recursive: true });
+    writeFileSync(join(root, "docs/adr/x.md"), CLEAN_ADR);
+    expect(validateCmd(["--strict"]).code).toBe(0);
+    const { report } = validateCmd(["--type", "ADR"]);
+    expect(report.files.every((f) => f.type === "ADR")).toBe(true);
+  });
+
   test("`--` ends option parsing so a dash-leading path is a positional", () => {
     // After `--`, `--strict` would be a path; it does not exist, so discovery fails not_found
     // (proving it was treated as a path, not the flag).
