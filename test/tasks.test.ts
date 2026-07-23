@@ -196,6 +196,31 @@ describe("runTasks — dangling links (soft) vs failures (hard)", () => {
     expect(stderr.startsWith("warning:")).toBe(true); // routed through the shared WarningCollector
   });
 
+  test("a dangling id containing embedded ANSI/control bytes emits the stripped advisory (LORE-236, AC#3)", async () => {
+    // The second `tasks:` id is written as a double-quoted YAML scalar using the `\e` escape
+    // (ESC, 0x1b) — a RAW control byte in a plain or double-quoted scalar is rejected outright by
+    // the YAML parser (verified empirically), but this JSON-style escape survives it, so it is a
+    // realistic vector for a crafted/corrupted `tasks:` id to carry a CSI "erase screen" sequence
+    // (`\x1b[2J`) through frontmatter parsing intact and into `warnDangling`'s interpolated message.
+    writeDoc(
+      "stories/bulk.md",
+      '---\ntype: Story\ntitle: bulk\nsummary: A summary for bulk.\ntasks:\n  - LORE-1\n  - "LORE\\e[2J-9"\n---\n' +
+        "# bulk\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n",
+    );
+    const adapter = okAdapter([makeTask("LORE-1", { status: "Done" })]); // the escaped id is unseeded → dangling
+    const { code, data, stderr } = await rollupJson(["stories/bulk"], { adapter });
+    expect(code).toBe(0);
+    expect(data.tasks.map((t) => t.id)).toEqual(["LORE-1"]);
+    expect(stderr.startsWith("warning:")).toBe(true);
+    // The CSI sequence is stripped (WarningCollector.flush, errors.ts), leaving the surrounding
+    // text joined rather than the raw escape bytes reaching stderr.
+    expect(stderr).toBe("warning: 1 linked task not in Backlog, dropped from the rollup: LORE-9\n");
+    // Excludes the trailing `\n` line terminator `flush` itself appends, which is expected and
+    // not part of the sanitized message body.
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting the ABSENCE of control bytes.
+    expect(/[\x00-\x09\x0b-\x1f\x7f-\x9f]/.test(stderr)).toBe(false);
+  });
+
   test("a Backlog READ failure (drift) propagates as a hard error, never a dangling advisory", async () => {
     writeStory("bulk", ["LORE-1"]);
     const base = okAdapter([makeTask("LORE-1")]);

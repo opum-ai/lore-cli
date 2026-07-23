@@ -617,6 +617,31 @@ describe("WarningCollector", () => {
     // LoreError's message/hint (§5.2/§5.4): one warning → exactly one stderr line.
     expect(stderr.lines()).toEqual(["warning: first line second line"]);
   });
+
+  test("flush strips embedded ANSI/OSC/control bytes from the message body (LORE-236)", () => {
+    const warnings = new WarningCollector();
+    // A CSI "erase screen" sequence, an OSC hyperlink sequence (BEL-terminated), and a bare
+    // BEL — none of these are line terminators, so singleLine alone would let them through;
+    // flush must also route the body through the shared stripAnsiAndControls (errors.ts:168).
+    warnings.add("before\x1b[2Jmid\x1b]8;;http://evil\x07link\x07after");
+    const stderr = capture();
+    expect(warnings.flush({ stderr })).toBe(1);
+    expect(stderr.lines()).toEqual(["warning: beforemidlinkafter"]);
+    // No raw escape/control byte survived into the emitted line — exclude the trailing `\n`
+    // line terminator `write` itself appends, which is expected and not part of the message body.
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting the ABSENCE of control bytes.
+    expect(/[\x00-\x09\x0b-\x1f\x7f-\x9f]/.test(stderr.text())).toBe(false);
+  });
+
+  test("flush sanitizes the message body but leaves the painted warning: prefix and its color intact (LORE-236, AC#2)", () => {
+    const warnings = new WarningCollector();
+    warnings.add("danger\x1b[2Jzone");
+    const colored = capture();
+    expect(warnings.flush({ stderr: colored, color: true })).toBe(1);
+    // The prefix keeps its yellow SGR sequence and reset — sanitization never touches it,
+    // only the message body that follows it.
+    expect(colored.text()).toBe("\x1b[33mwarning:\x1b[0m dangerzone\n");
+  });
 });
 
 describe("stdout discipline", () => {
