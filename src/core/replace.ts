@@ -170,6 +170,17 @@ export function replaceInText(
  * byte span does **not** overlap a managed region and leaving every other byte verbatim. Because the
  * matcher runs over the full document, anchors/assertions bind to the real document; because skipped
  * matches simply fall inside the verbatim slices, managed regions pass through untouched.
+ *
+ * `overlapsManaged` only screens the ORIGINAL matched span, before `expand` runs — in regex mode the
+ * `` $` ``/`$'` template tokens ({@link expandTemplate}) copy the document's own prefix/suffix
+ * verbatim, so a match sitting entirely outside a managed region can still expand into a splice that
+ * carries an existing managed-block marker into its result. That would leave two copies of the marker
+ * in the rewritten document with no owner able to agree on the region's extent (LORE-86's invariant,
+ * broken from the other direction). So once the full `result` is assembled, it is re-validated with
+ * {@link managedRanges} — the same locators every managed region already trusts — before being
+ * returned (LORE-162); a violation there is surfaced as a `usage` error (this replacement's pattern is
+ * unusable against this document) rather than the `validation` error `managedRanges` would normally
+ * throw for a document that was ALREADY malformed on disk.
  */
 function applyReplacement(
   text: string,
@@ -199,7 +210,36 @@ function applyReplacement(
     count++;
   }
   result += text.slice(last);
-  return count === 0 ? { text, count } : { text: result, count };
+  if (count === 0) {
+    return { text, count };
+  }
+  assertNoInjectedMarker(result);
+  return { text: result, count };
+}
+
+/**
+ * Re-validate a rewritten document against {@link managedRanges} — the same structural/literal
+ * locators {@link MANAGED_REGION_LOCATORS} registers everywhere else — to catch a `` $` ``/`$'`
+ * expansion that spliced a managed-block marker into the result, duplicating (or otherwise
+ * malforming) it (LORE-162). `text` was already validated once, before the replacement loop ran, so
+ * any failure here was newly introduced by splicing `expand`'s output in, never a pre-existing
+ * condition of the input document — re-thrown as a `usage` error (this replacement is what's
+ * unusable) instead of `managedRanges`' own `validation` error (which reads as "the input document is
+ * malformed").
+ */
+function assertNoInjectedMarker(result: string): void {
+  try {
+    managedRanges(result);
+  } catch (cause) {
+    if (cause instanceof LoreError) {
+      throw new LoreError(
+        "usage",
+        `this replacement would leave a lore-managed block marker duplicated or malformed in the result: ${cause.message}`,
+        "rewrite the pattern/replacement so it cannot copy a managed-block marker into the output (e.g. keep $` /$' from spanning a managed region), or narrow --in to skip the affected file",
+      );
+    }
+    throw cause;
+  }
 }
 
 /** Compile a user regex as global, mapping a syntax error to a `usage` {@link LoreError} (exit 2). */
