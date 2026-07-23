@@ -131,6 +131,15 @@ describe("listTasks — task list --json → mapped summaries (AC#1)", () => {
     expect(spawn.calls.at(-1)).toEqual(["task", "list", "--json", "--labels", "doc:stories/x"]);
     expect(tasks).toHaveLength(3);
   });
+
+  test("searchByLabel works destructured off the adapter (no `this` dependency, LORE-218)", async () => {
+    const spawn = scriptedSpawn((argv) => (argv.includes("--labels") ? ok(TASK_LIST) : undefined));
+    const { searchByLabel } = createBacklogAdapter(spawn);
+    const tasks = await searchByLabel("doc:stories/x");
+
+    expect(spawn.calls.at(-1)).toEqual(["task", "list", "--json", "--labels", "doc:stories/x"]);
+    expect(tasks).toHaveLength(3);
+  });
 });
 
 describe("viewTask — task view <id> --json → full detail (AC#1)", () => {
