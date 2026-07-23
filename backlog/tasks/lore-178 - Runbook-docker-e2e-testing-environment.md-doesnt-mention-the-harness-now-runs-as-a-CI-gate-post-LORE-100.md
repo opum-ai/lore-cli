@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@sonnet-worker'
 created_date: '2026-07-22 16:01'
-updated_date: '2026-07-23 09:16'
+updated_date: '2026-07-23 09:22'
 labels:
   - codex-review-followup
   - build-ci-config
@@ -38,10 +38,14 @@ Wave-4 integration review (LORE-100 wiring docker/e2e into CI) found docs/runboo
 
 <!-- SECTION:NOTES:BEGIN -->
 Added a 'CI gate (required, since LORE-100)' section to docs/runbooks/docker-e2e-testing-environment.md (prose only; file has no managed-block sentinels and none were touched; frontmatter untouched). States the harness runs as the docker-e2e CI job on ci.yml PR/push triggers (AC1), and that the job uploads docker/e2e/results/report.jsonl as the docker-e2e-report artifact (AC2). Edit driven via Read/Edit and verified through the lore CLI per repo convention (AC3): 'bun run src/cli.ts check' -> 38 files, 0 errors, 0 warnings (both before and after the edit). Full verification: bun test -> 1887 pass, 0 fail, 5323 expect() calls across 47 files; bun run typecheck (tsc --noEmit) -> clean, no output; bun run lint (biome check .) -> 3 pre-existing errors / 4 infos in src/core/managed-block.ts, test/managed-block.test.ts, test/replace.test.ts, test/supersede.test.ts, test/validate.test.ts -- confirmed byte-identical on the unedited /Volumes/external/repos/lore dev checkout (same 3 errors, 4 infos), i.e. pre-existing on dev and unrelated to this docs-only change; none of those files were touched by this task and they are out of LORE-178's pinned scope (docs/runbooks + backlog/tasks only) per hard rules, so left as-is.
+
+Fable review round (request_changes) fixed: the 'CI gate' section's claim of an 'exact same' invocation as Step 1 was inaccurate — Step 1 (line 57) runs plain 'docker compose ... up --build' with no --exit-code-from, while ci.yml:146 runs 'PUID="$(id -u)" PGID="$(id -g)" docker compose ... up --build --exit-code-from e2e'. Reworded the section to state CI 'invokes the same compose file and harness' (not the exact same invocation), quote ci.yml's real command verbatim, and explain the CI-specific --exit-code-from/PUID/PGID additions per ci.yml's own inline comments. Also fixed 'on every PR and push' -> 'on every PR and on pushes to dev/main' to match ci.yml's push trigger filter (branches: [dev, main]; pull_request unfiltered). The 'required' heading wording and task-hygiene items were info-only per Fable, no change needed. Re-verified: 'bun run src/cli.ts check docs/runbooks' -> 6 files, 0 errors, 0 warnings; bun test -> 1887 pass, 0 fail; bun run typecheck -> clean; bun run lint -> same 3 pre-existing errors/4 infos in files untouched by this task (test/validate.test.ts et al.), confirmed unrelated to this docs-only change.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
 Documented that docker/e2e now runs as a required CI gate (docker-e2e job, ci.yml, established by LORE-100) in docs/runbooks/docker-e2e-testing-environment.md: added a 'CI gate (required, since LORE-100)' section noting the job runs on every PR/push using the same compose invocation as the manual steps, and that it uploads docker/e2e/results/report.jsonl as the docker-e2e-report artifact; also clarified the Prerequisites apply to manual/local runs only. Edit is prose-only (no frontmatter or managed-block changes; the file has no managed blocks). Verified via 'bun run src/cli.ts check' (38 files, 0 errors, 0 warnings, unchanged before/after), full 'bun test' (1887 pass, 0 fail), and 'bun run typecheck' (clean). 'bun run lint' shows 3 pre-existing errors in src/core/managed-block.ts and 4 test files untouched by this task, confirmed identical on the unedited dev checkout -- pre-existing and out of this docs-only task's pinned scope.
+
+Follow-up: addressed Fable's request_changes by rewording the CI-gate section to stop claiming byte-identity with Step 1's manual invocation (it lacks --exit-code-from and PUID/PGID, which are CI-specific) and to say 'PR and pushes to dev/main' instead of the inaccurate 'every PR and push'. Re-verified lore check, bun test, typecheck, lint all green (lint's 3 pre-existing failures are in unrelated files outside this task's scope).
 <!-- SECTION:FINAL_SUMMARY:END -->

@@ -31,10 +31,15 @@ JSON-only, fail-loud design. LORE-56 first ran this and found four real defects
 ## CI gate (required, since LORE-100)
 
 This harness is no longer local-only. `.github/workflows/ci.yml` runs it as the `docker-e2e` job
-on every PR and push, using the exact same `docker compose -f docker/e2e/docker-compose.yml up
---build --exit-code-from e2e` invocation described below — a regression anywhere the harness
-covers now fails CI instead of merging silently. The steps in this runbook remain the way to
-reproduce and triage a failure by hand; they are no longer the only way the harness gets run.
+on every PR and on pushes to `dev`/`main`, invoking the same compose file and harness as the
+manual steps below as `PUID="$(id -u)" PGID="$(id -g)" docker compose -f
+docker/e2e/docker-compose.yml up --build --exit-code-from e2e` — the extra `--exit-code-from e2e`
+and `PUID`/`PGID` are CI-specific (see `ci.yml`'s inline comments: `--exit-code-from` is required
+because plain `up` always exits 0 regardless of the service's own exit code, and `PUID`/`PGID`
+must match the runner's real uid/gid so writes to the bind-mounted report file don't EACCES). A
+regression anywhere the harness covers now fails CI instead of merging silently. The steps in this
+runbook remain the way to reproduce and triage a failure by hand; they are no longer the only way
+the harness gets run.
 
 The CI job always uploads `docker/e2e/results/report.jsonl` (when it exists) as the
 `docker-e2e-report` build artifact, so a CI failure can be triaged from the workflow run's
