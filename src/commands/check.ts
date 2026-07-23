@@ -46,7 +46,17 @@ import {
 import { type Concept, parseConcept, tryReadFrontmatter } from "../core/concept";
 import { loadProfile, type Profile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
-import { ANSI, EXIT_CODES, EXIT_OK, ioError, LoreError, paint, WarningCollector, type Writer } from "../errors";
+import {
+  ANSI,
+  EXIT_CODES,
+  EXIT_OK,
+  ioError,
+  LoreError,
+  paint,
+  stripAnsiAndControls,
+  WarningCollector,
+  type Writer,
+} from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { canonicalIdentity, readSource } from "./discover";
 import { dedupeTaskIds, defaultAdapter } from "./link";
@@ -980,10 +990,23 @@ function renderReport(data: CheckReport, color: boolean): string {
   return lines.join("\n");
 }
 
-/** One finding line: `<severity> <file> [<rule>]: <message>`. */
+/**
+ * One finding line: `<severity> <file> [<rule>]: <message>`.
+ *
+ * `finding.file` and `finding.message` are untrusted: `message` embeds a raw link target or
+ * fragment lifted verbatim from authored markdown (`core/check.ts`'s broken-link/broken-anchor
+ * findings), so either field can carry an ANSI escape sequence or an embedded newline. Left
+ * unstripped, an escape sequence could repaint or move the cursor, and a newline would forge an
+ * extra finding row once `renderReport` joins lines with `\n`. Both fields are run through the
+ * shared {@link stripAnsiAndControls} (LORE-181's single home for this strip) before
+ * interpolation, matching every sibling surface (`output.ts`, `commands/query.ts`,
+ * `core/validate.ts`, `core/links.ts`).
+ */
 function findingLine(finding: CheckFinding, color: boolean): string {
   const tone = finding.severity === "error" ? ANSI.red : ANSI.yellow;
-  return `${paint(finding.severity, tone, color)} ${finding.file} [${finding.rule}]: ${finding.message}`;
+  const file = stripAnsiAndControls(finding.file);
+  const message = stripAnsiAndControls(finding.message);
+  return `${paint(finding.severity, tone, color)} ${file} [${finding.rule}]: ${message}`;
 }
 
 /**
