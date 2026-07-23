@@ -53,7 +53,7 @@
 
 import { posix } from "node:path";
 import { LoreError, singleLine } from "../errors";
-import type { BundleGraph } from "./bundle";
+import { type BundleGraph, frontmatterScalar } from "./bundle";
 import type { Concept } from "./concept";
 import { encodePathSegments } from "./links";
 import { compareCodeUnits } from "./order";
@@ -253,16 +253,16 @@ function linkText(title: string): string {
 }
 
 /**
- * A concept's display title: its frontmatter `title` when that is a non-empty string, else the
- * file's base name (the id's last segment). Falling back to the file name keeps the listing total
- * for a title-less or unknown-type concept (OKF tolerance) without inventing prose.
+ * A concept's display title: its frontmatter `title` via the shared {@link frontmatterScalar}
+ * (a non-empty string verbatim, or a finite number/boolean coerced to its string form) when that
+ * yields a value, else the file's base name (the id's last segment). Falling back to the file
+ * name keeps the listing total for a title-less or unknown-type concept (OKF tolerance) without
+ * inventing prose. Sharing `frontmatterScalar` keeps this in lockstep with `graph.ts`/`query.ts`/
+ * `context.ts`, so the same concept never shows one title in the generated index and another
+ * everywhere else (LORE-244).
  */
 function conceptTitle(concept: Concept): string {
-  const title = concept.frontmatter.title;
-  if (typeof title === "string" && title.trim() !== "") {
-    return title.trim();
-  }
-  return posix.basename(concept.path, ".md");
+  return frontmatterScalar(concept.frontmatter.title) ?? posix.basename(concept.path, ".md");
 }
 
 /**

@@ -59,6 +59,27 @@ describe("generateIndexes — graph-derived navigable hubs (LORE-29)", () => {
     expect(out.get("notes/index.md")).toContain("- [raw-note](raw-note.md)");
   });
 
+  test("title also falls back for a non-scalar frontmatter title (null/list/object), matching frontmatterScalar", () => {
+    const out = generateIndexes(
+      buildGraph([
+        concept("notes/null-title.md", { title: null }),
+        concept("notes/list-title.md", { title: ["a", "b"] }),
+      ]),
+    );
+    expect(out.get("notes/index.md")).toContain("- [list-title](list-title.md)");
+    expect(out.get("notes/index.md")).toContain("- [null-title](null-title.md)");
+  });
+
+  test("LORE-244: an unquoted numeric frontmatter title (js-yaml → number) coerces to its string form via frontmatterScalar, matching graph/query/context", () => {
+    const out = generateIndexes(buildGraph([concept("notes/dated.md", { title: 2024 })]));
+    expect(out.get("notes/index.md")).toContain("- [2024](dated.md)");
+  });
+
+  test("LORE-244: a boolean frontmatter title coerces to its string form via frontmatterScalar", () => {
+    const out = generateIndexes(buildGraph([concept("notes/flag.md", { title: true })]));
+    expect(out.get("notes/index.md")).toContain("- [true](flag.md)");
+  });
+
   test("link path segments are percent-encoded (portable markdown form)", () => {
     const out = generateIndexes(buildGraph([concept("guides/getting started.md", { title: "Getting started" })]));
     expect(out.get("guides/index.md")).toContain("- [Getting started](getting%20started.md)");
