@@ -352,6 +352,18 @@ describe("rewriteInbound — modes and validation", () => {
     expect(paths).not.toContain("stories/heir.md"); // excluded — engine never touches it
   });
 
+  test("move=true with the move source itself excluded reports no rename (LORE-164)", () => {
+    // Excluding `from` skips it before it ever reaches `writes` (the exclude contract), so `rename`
+    // must not claim a move whose destination bytes were never planned — the two stay consistent.
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    const plan = rewriteInbound(graph(), "reference/orders", "reference/sales-orders", {
+      move: true,
+      exclude: new Set(["reference/orders"]),
+    });
+    expect(plan.rename).toBeNull();
+    expect(plan.writes).toEqual([]);
+  });
+
   test("throws not_found when the old id is not a concept", () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
     expect(() => rewriteInbound(graph(), "reference/ghost", "reference/x", { move: true })).toThrow(LoreError);
