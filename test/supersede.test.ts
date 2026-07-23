@@ -82,7 +82,7 @@ describe("lore supersede — frontmatter wiring (AC#1)", () => {
 
   test("the body is preserved verbatim; only frontmatter changes", () => {
     const body = "# Old decision\n\nA *careful*  paragraph with  double  spaces.\n\n- one\n- two\n";
-    writeDoc("adr/0007-old.md", "---\ntype: ADR\ntitle: Old\n---\n" + body);
+    writeDoc("adr/0007-old.md", `---\ntype: ADR\ntitle: Old\n---\n${body}`);
     writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
     supersedeCmd(["adr/0007-old", "adr/0012-new"]);
     expect(readDoc("adr/0007-old.md").endsWith(body)).toBe(true);

@@ -213,7 +213,7 @@ describe("regenerateTaskBlock — idempotency and boundary safety (AC#1)", () =>
       "```\n";
     const out = regenerateTaskBlock(withFence, [], OPTS);
     // Only the real top-level block was regenerated; the fenced example survives byte-for-byte.
-    expect(out).toContain("```markdown\n" + `${TASK_BLOCK_BEGIN}\nexample in a doc\n${TASK_BLOCK_END}\n` + "```");
+    expect(out).toContain(`\`\`\`markdown\n${TASK_BLOCK_BEGIN}\nexample in a doc\n${TASK_BLOCK_END}\n\`\`\``);
     expect(out).toContain(block("_No linked tasks._"));
     expect(regenerateTaskBlock(out, [], OPTS)).toBe(out); // still a fixpoint with the fence present
   });
