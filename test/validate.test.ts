@@ -828,6 +828,22 @@ describe("validate (command) — discovery hardening", () => {
     expect(report.files).toHaveLength(1);
   });
 
+  // POSIX-only, matching this codebase's existing symlink tests' own skip guard (e.g. init.test.ts).
+  test.skipIf(process.platform === "win32")(
+    "a real file and a symlink alias to it are validated once (realpath de-dup folds through canonicalIdentity)",
+    () => {
+      writeFileSync(join(root, "docs/real.md"), "---\ntype: Reference\nsummary: A short summary.\n---\n\n# R\n");
+      symlinkSync(join(root, "docs/real.md"), join(root, "docs/link.md"));
+      const stdout = capture();
+      // Two distinct paths named explicitly — resolve() alone would NOT collapse these; only
+      // canonicalIdentity's realpath fold (discover.ts:56) does, so this kills the mutant where
+      // canonicalIdentity is degraded to return its input unchanged.
+      runValidate({ root, output: JSON_CTX, args: ["docs/real.md", "docs/link.md"], stdout });
+      const report = (JSON.parse(stdout.text()) as { data: ValidateReport }).data;
+      expect(report.files).toHaveLength(1);
+    },
+  );
+
   test("a `.md` concept skipped behind a symlink is surfaced on stderr, not silently dropped", () => {
     writeFileSync(join(root, "docs/real.md"), "---\ntype: Reference\nsummary: A short summary.\n---\n\n# R\n");
     symlinkSync(join(root, "docs/real.md"), join(root, "docs/link.md"));
