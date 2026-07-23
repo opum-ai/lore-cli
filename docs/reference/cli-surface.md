@@ -168,13 +168,11 @@ The **drift gate** — read-only, never writes. Aggregates:
   trailing-slash directory links); and MDX hazards (raw `<`/`{` in prose, raw
   HTML, leading-underscore and `.mdx` file names).
 
-Also surfaces per-doc and bundle **token estimates** (labeled chars/4 heuristic).
-
 | | |
 |---|---|
 | **Args** | optional `[paths…]` (default: whole bundle) |
 | **Key flags** | `--strict` (treat portability warnings as failures for the exit code) · `--external` (also probe external-URL liveness — advisory, never gates) |
-| **Output** | `kind: check.report` — drift, broken links/anchors, portability findings, token estimates; plus advisory `externalFindings` when `--external` ran |
+| **Output** | `kind: check.report` — `findings`, `errorCount`, `warningCount`, `fileCount`, `complete`; plus optional `externalFindings` when `--external` ran |
 | **Exit** | `0` no broken internal links/anchors, no status/managed-block drift · `3` a linked task id no longer exists · `6` any broken internal link/anchor, any status/managed-block drift (or any portability warning under `--strict`). External-liveness results never affect the exit. |
 
 ---
