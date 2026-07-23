@@ -3,9 +3,11 @@ id: LORE-160
 title: >-
   Quote-safety check omits leading colon `:` from INDICATOR_CHARS despite
   ADR-0007
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-21 22:26'
+updated_date: '2026-07-23 03:33'
 labels:
   - codex-review-followup
   - core-query-validate
@@ -27,6 +29,24 @@ ordinal: 174000
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An unquoted frontmatter scalar value beginning with `:` (e.g. `label: :foo`) is reported as a quote-safety finding, consistent with ADR-0007's listed indicator characters.
-- [ ] #2 A regression test in test/validate.test.ts asserts `quoteSafetyFindings()` flags a leading-colon value like `:foo` as an error, distinguishing it from the existing `": "` mid-value colon-space test at line 258.
+- [x] #1 An unquoted frontmatter scalar value beginning with `:` (e.g. `label: :foo`) is reported as a quote-safety finding, consistent with ADR-0007's listed indicator characters.
+- [x] #2 A regression test in test/validate.test.ts asserts `quoteSafetyFindings()` flags a leading-colon value like `:foo` as an error, distinguishing it from the existing `": "` mid-value colon-space test at line 258.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. In src/core/validate.ts, add ':' to the INDICATOR_CHARS set (line ~373) so a value beginning with a bare leading colon (e.g. ':foo') is flagged by the existing INDICATOR_CHARS branch of quoteSafetyForValue, consistent with ADR-0007's documented list of leading indicator chars. 2. Leave the separate mid-value ': ' (colon-space) check untouched -- it covers a different hazard (colon+space anywhere in the value) and AC#2 explicitly asks the new test to be distinguished from it. 3. Add a regression test in test/validate.test.ts (in the 'quote-safety' describe block) asserting quoteSafetyFindings(block('label: :foo')) flags an error, placed near/adjacent to the existing 'a value starting with a YAML indicator is an error' test. 4. Mutation-check: revert validate.ts change via git diff/apply (no stash), confirm new test fails, reapply, confirm it passes. 5. Run bun test and bun run typecheck full suite, both green.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Verified via mutation-check + full suite: bun test (1860/1860 pass, 47 files), bun test test/validate.test.ts (59/59 pass), bun run typecheck (clean).
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added ':' to INDICATOR_CHARS in src/core/validate.ts so an unquoted frontmatter scalar with a leading bare colon (e.g. 'label: :foo') is flagged as a quote-safety error, matching ADR-0007's documented indicator-char list. Added a regression test in test/validate.test.ts distinguishing this from the existing mid-value ': ' colon-space check. Verified: mutation-checked (test fails on pre-fix code, passes post-fix, revert/reapply via git apply, no stash); bun test test/validate.test.ts 59/59 pass; full bun test 1860/1860 pass across 47 files; bun run typecheck clean.
+<!-- SECTION:FINAL_SUMMARY:END -->

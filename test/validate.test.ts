@@ -298,6 +298,16 @@ describe("validate (core) — quote-safety", () => {
     expect(quoteSafetyFindings(block("ref: *anchor"))[0]?.severity).toBe("error");
   });
 
+  test("a value starting with a bare leading colon is an error (ADR-0007)", () => {
+    // Distinct from the ": " mid-value colon-space check below: here the colon is the value's
+    // *first* character with no trailing space (e.g. `label: :foo`), which only the
+    // INDICATOR_CHARS branch catches.
+    expect(quoteSafetyFindings(block("label: :foo"))[0]).toMatchObject({
+      severity: "error",
+      rule: "quote-safety",
+    });
+  });
+
   test("a colon-space inside an unquoted value is an error", () => {
     expect(quoteSafetyFindings(block("note: a: b"))[0]).toMatchObject({ severity: "error", rule: "quote-safety" });
   });
