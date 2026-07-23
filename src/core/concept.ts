@@ -386,12 +386,27 @@ export interface SerializeConceptOptions {
  *
  * Round-trip caveat (ADR-0011 §2): js-yaml drops the in-fence comment if the file is
  * ever re-serialized, so a doc written this way is emitted once, not rewritten in place.
+ *
+ * `modeline` must be a single line: it is spliced in verbatim (never content-searched
+ * or escaped), so a `modeline` containing a line break would inject arbitrary extra
+ * lines inside/after the opening fence and corrupt the emitted document. Every caller
+ * today passes `schema.schemaModeline` output, which is single-line by construction —
+ * this check is fail-loud contract enforcement for a case no current caller can
+ * reach, matching the rest of this module's throw-before-corrupt invariants.
  */
 export function serializeConceptWithModeline(
   concept: Concept,
   modeline: string,
   options: SerializeConceptOptions = {},
 ): string {
+  if (/[\r\n\u2028\u2029]/.test(modeline)) {
+    throw new LoreError(
+      "validation",
+      `modeline must be a single line, but contained a line break: ${singleLine(modeline)}`,
+      "pass a one-line modeline (e.g. schema.schemaModeline output) with no embedded line break",
+      { modeline },
+    );
+  }
   const serialized = serializeConcept(concept, options);
   return `${FENCE}${modeline}\n${serialized.slice(FENCE.length)}`;
 }
