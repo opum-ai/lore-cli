@@ -24,11 +24,12 @@
  *
  * **`lore` is the sole committer of `backlog/`** (ADR-0012, design §2.4): after its own `docs/`
  * writes, `sync` calls `state.ts`'s {@link commitBacklogIfDirty} to commit whatever is currently
- * uncommitted under `backlog/` — from an earlier `link`/`unlink`/`rename`, or a human's direct
- * `backlog task edit` — in one `lore`-authored commit. This is independent of whether `sync` itself
- * changed anything in `docs/`, and (like every write here) is skipped entirely under `--dry-run`.
- * `link`/`unlink`/`rename` do not yet call `state.ts` themselves (LORE-49 follow-up) — `sync` is what
- * satisfies AC#2 for now, by picking up whatever is sitting dirty regardless of source.
+ * uncommitted under `backlog/`. This is independent of whether `sync` itself changed anything in
+ * `docs/`, and (like every write here) is skipped entirely under `--dry-run`. `link`/`unlink`/
+ * `rename` already commit their own touched files via `commitBacklogFiles` right after writing them
+ * (LORE-49) — nothing is left pending for `sync` on their account. `sync`'s commit step is a
+ * catch-all sweep: it picks up whatever is still dirty under `backlog/` from another source (a
+ * human's direct `backlog task edit`, or a prior run's commit that failed).
  *
  * A concept with `tasks:` but no managed-block markers is a fail-loud `validation` error
  * (`core/managed-block.ts`'s own contract, ADR-0008) — `sync` never guesses or writes a partial
