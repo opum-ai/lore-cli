@@ -122,8 +122,34 @@ function exitCodesFor(seams: readonly Seam[], extra: readonly number[] = []): re
   return [...codes].sort((a, b) => a - b);
 }
 
+/**
+ * Recursively `Object.freeze`s an array/object graph — the container itself plus
+ * every nested array/object it holds — so no level of the structure can be
+ * mutated after construction (a mutation attempt throws in strict-mode JS/TS,
+ * the module default, instead of silently corrupting the shared singleton).
+ * Mirrors the codebase's own `Object.freeze` convention (YAML_LOAD_OPTIONS /
+ * YAML_DUMP_OPTIONS in core/concept.ts, L124/L138) extended to nested structures,
+ * since the manifest's `readonly` TS modifiers are compile-time-only and don't
+ * stop an `as any`/plain-JS caller from mutating the singleton in place.
+ */
+function deepFreeze<T>(value: T): T {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      deepFreeze(item);
+    }
+    return Object.freeze(value) as T;
+  }
+  if (value !== null && typeof value === "object") {
+    for (const key of Object.keys(value)) {
+      deepFreeze((value as Record<string, unknown>)[key]);
+    }
+    return Object.freeze(value) as T;
+  }
+  return value;
+}
+
 /** The four global flags the router resolves for every invocation (cli-contract §1). */
-const GLOBAL_FLAGS: readonly ManifestFlag[] = [
+const GLOBAL_FLAGS: readonly ManifestFlag[] = deepFreeze([
   {
     name: "json",
     takesValue: false,
@@ -132,7 +158,7 @@ const GLOBAL_FLAGS: readonly ManifestFlag[] = [
   { name: "plain", takesValue: false, summary: "ANSI-free text output (auto-selected when stdout is piped)" },
   { name: "version", alias: "v", takesValue: false, summary: "Print the version and exit" },
   { name: "help", alias: "h", takesValue: false, summary: "Show help and exit" },
-];
+]);
 
 /**
  * Every shipped command, in `cli.ts` dispatch order. Flags, `kind` values, and the
@@ -141,7 +167,7 @@ const GLOBAL_FLAGS: readonly ManifestFlag[] = [
  * to `LORE_COMMANDS` (guarded by a test). The seam list passed to
  * {@link exitCodesFor} is the exit-code rationale — no hand-listed code needs a comment.
  */
-const LORE_MANIFEST: readonly ManifestCommand[] = [
+const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
   {
     name: "init",
     summary: "Scaffold an empty, conformant OKF bundle",
@@ -412,7 +438,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = [
     exitCodes: exitCodesFor([], [3]),
     examples: ["lore help", "lore help new", "lore help --json"],
   },
-];
+]);
 
 /**
  * The semantic exit-code taxonomy, name → code, built from the `errors.ts`
@@ -423,14 +449,21 @@ export function exitCodeTaxonomy(): Record<string, number> {
   return { ok: EXIT_OK, uncaught: EXIT_UNCAUGHT, ...EXIT_CODES };
 }
 
-/** Build the full {@link Manifest} for `lore help --json`. */
+/**
+ * Build the full {@link Manifest} for `lore help --json`. The returned envelope is
+ * deeply frozen (AC#1): `globalFlags`/`commands` are the already-frozen module
+ * singletons ({@link GLOBAL_FLAGS}/{@link LORE_MANIFEST}), `exitCodes` is a fresh
+ * object frozen here, and the envelope itself is frozen last — so no caller,
+ * however it bypasses the compile-time `readonly` modifiers, can mutate a manifest
+ * returned by this function or poison a later call's read.
+ */
 export function buildManifest(): Manifest {
-  return {
+  return deepFreeze({
     schemaVersion: SCHEMA_VERSION,
     exitCodes: exitCodeTaxonomy(),
     globalFlags: GLOBAL_FLAGS,
     commands: LORE_MANIFEST,
-  };
+  });
 }
 
 /** Look up one command by its exact dispatch name (case-sensitive), or `undefined` if unknown. */
