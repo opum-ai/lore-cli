@@ -93,6 +93,42 @@ describe("core/manifest — shape and invariants", () => {
     }
   });
 
+  test("each command's declared kind matches the live handler's emitted kind (golden cross-check)", () => {
+    // The golden set is transcribed directly from each command handler's own `kind: "…"`
+    // literal (e.g. src/commands/check.ts's `kind: "check.report"`, src/commands/link.ts's
+    // `reportRenderable("link.result", …)` call site). It is INDEPENDENT of manifest.ts's
+    // `kind` field — mirroring the exitCodes golden cross-check above — so a manifest entry
+    // hand-edited (or left stale) to a `kind` the handler doesn't actually emit fails here,
+    // where test/help.test.ts:45-51 only ever checked `kind.length > 0`.
+    const golden: Record<string, string> = {
+      init: "init",
+      new: "new",
+      validate: "validate.report",
+      check: "check.report",
+      replace: "replace.result",
+      rename: "rename.result",
+      supersede: "supersede.result",
+      link: "link.result",
+      unlink: "unlink.result",
+      sync: "sync.result",
+      tasks: "tasks.rollup",
+      orphans: "orphans.report",
+      schema: "schema.result",
+      scaffold: "scaffold.result",
+      graph: "graph.export",
+      query: "query.results",
+      context: "context.export",
+      instructions: "instructions.text",
+      agents: "agents.result",
+      help: "help.manifest",
+    };
+    expect(Object.keys(golden).sort()).toEqual([...manifestCommandNames()].sort());
+    for (const command of buildManifest().commands) {
+      // Key by name so a mismatch names the offending command in the failure output.
+      expect({ [command.name]: command.kind }).toEqual({ [command.name]: golden[command.name] as string });
+    }
+  });
+
   test("--json is universally available (self-describing per entry)", () => {
     for (const command of buildManifest().commands) {
       expect(command.json).toBe(true);
