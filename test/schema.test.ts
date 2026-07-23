@@ -110,6 +110,18 @@ describe("schema — the warning tier (never throws)", () => {
     expect(err.message).toContain("Story");
   });
 
+  test("a differently-cased known type classifies on its canonical value, not as unknown (LORE-167)", () => {
+    // `type: story` must resolve to Story's real schema (case-insensitive classification),
+    // not fall into the unknown-type branch and skip validation entirely.
+    const warnings = new WarningCollector();
+    const err = expectValidation(() => validateFrontmatter({ type: "story", tags: "orders" }, { warnings }));
+    // It classified as Story (not "unknown type") and ran Story's schema, surfacing the
+    // real field mismatch (`tags` must be a list) rather than silently letting it through.
+    expect(err.message).toContain("Story");
+    expect(err.message).toContain("tags");
+    expect(warnings.list().some((w) => w.includes("unknown type"))).toBe(false);
+  });
+
   test("validateFrontmatter returns the resolved, trimmed type", () => {
     expect(validateFrontmatter({ type: "Reference", summary: "s" })).toBe("Reference");
     expect(validateFrontmatter({ type: " Glossary " })).toBe("Glossary");

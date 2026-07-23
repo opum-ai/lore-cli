@@ -57,7 +57,7 @@ function writeChainBundle(): void {
     "---\ntype: Reference\ntitle: Orders\nsummary: The orders domain reference.\n---\nOrders reference body.\n",
   );
   writeDoc("specs/archive.md", "---\ntype: Spec\ntitle: Archive\n---\nArchive spec. See [adr](../adr/0001-x.md).\n");
-  writeDoc("adr/0001-x.md", "---\ntype: Adr\n---\nADR body.\n");
+  writeDoc("adr/0001-x.md", "---\ntype: ADR\n---\nADR body.\n");
 }
 
 /** Run `context` in JSON mode and return the parsed `data` payload plus the exit code. */
@@ -115,7 +115,7 @@ describe("buildContext — neighbor compaction", () => {
     const data = buildContext(graph(), "stories/bulk", { depth: 2 });
     const adr = data.neighbors.find((n) => n.id === "adr/0001-x");
     // No title, no summary, but the always-emitted id + type still carry a (charged) cost.
-    expect(adr).toMatchObject({ type: "Adr", tokenEstimate: estimateTokens("adr/0001-x Adr") });
+    expect(adr).toMatchObject({ type: "ADR", tokenEstimate: estimateTokens("adr/0001-x ADR") });
     expect(adr).not.toHaveProperty("summary");
   });
 
