@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { BacklogTaskDetail } from "../src/adapters/backlog";
 import { run } from "../src/cli";
 import { type RenameReport, runRename } from "../src/commands/rename";
 import { loadBundle } from "../src/core/bundle";
@@ -1374,6 +1375,46 @@ describe("lore rename — Backlog back-ref move", () => {
     expect(code).toBe(EXIT_OK);
     expect(envelope.data.backRefs).toEqual([{ task: "lore-1", backRef: "moved" }]); // one row, not two
     expect(adapter.calls).toHaveLength(1); // one Backlog round trip, not two
+  });
+
+  test("moveBackRefs refuses a mismatched adapter detail rather than borrowing its data into the edit (LORE-183)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n---\nOrders.\n");
+    // A stub adapter that always answers with a DIFFERENT task's detail, regardless of what id was
+    // requested — carrying the OLD label/doc so an unguarded moveBackRefs would happily compute a
+    // migrating edit from this borrowed data and write it under the REQUESTED id ("lore-1"). Mirrors
+    // link.test.ts's LORE-177 mismatch fixtures for `link`/`unlink`'s own guarded viewTask reads.
+    const base = fakeAdapter([]);
+    const mismatched: typeof base = {
+      ...base,
+      async viewTask(): Promise<BacklogTaskDetail | null> {
+        return makeTask("LORE-999", {
+          labels: ["doc:reference/orders"],
+          documentation: ["docs/reference/orders.md"],
+        });
+      },
+    };
+    const stdout = capture();
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/sales-orders"],
+      stdout,
+      stderr: capture(),
+      adapter: mismatched,
+      gitSpawn: cleanGitSpawn(),
+    });
+    const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
+
+    expect(code).toBe(EXIT_CODES.drift);
+    expect(existsSync(join(root, "docs/reference/sales-orders.md"))).toBe(true); // the file still moved
+    expect(envelope.data.backRefs).toHaveLength(1);
+    expect(envelope.data.backRefs[0]).toMatchObject({ task: "lore-1", backRef: "failed" });
+    expect(envelope.data.backRefs[0]?.error).toContain("lore-1");
+    expect(envelope.data.backRefs[0]?.error).toContain("LORE-999");
+    // Refused before any editTask call — never borrows LORE-999's labels/documentation into an
+    // edit written under the requested "lore-1" id, which would corrupt LORE-999's own back-ref.
+    expect(mismatched.calls).toHaveLength(0);
   });
 
   test("--dry-run previews a rename to a comma-bearing new id instead of throwing, even when linked (9th-pass fix)", async () => {

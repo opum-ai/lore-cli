@@ -428,6 +428,13 @@ export interface MovedBackRef {
  * old id, so *moving* one never introduces a new one it didn't already have. Otherwise mirrors
  * `runLink`/`runUnlink`'s per-task resilience: edits run sequentially, never concurrently
  * (ADR-0012 §5), and a single task's failure is caught and reported without blocking the rest.
+ *
+ * Reads through {@link verifiedViewTask} (LORE-183), never a raw `adapter.viewTask` call: a
+ * mismatched/ambiguous adapter detail is refused rather than trusted to compute the `editTask`
+ * write below, which would otherwise borrow another task's labels/documentation while still
+ * writing under the REQUESTED `taskId` — the same hazard class this function already guards
+ * against for a genuinely-missing task. The refusal surfaces through the same per-task `"failed"`
+ * outcome as any other rejected edit, degrading gracefully rather than corrupting the doc list.
  */
 export async function moveBackRefs(
   adapter: BacklogAdapter,
@@ -449,7 +456,7 @@ export async function moveBackRefs(
   // drift of this kind for it to hide. A `failed` edit likewise contributes nothing.
   const editedFiles: string[] = [];
   const settled = await runSequentially(taskIds, async (taskId) => {
-    const detail = await adapter.viewTask(taskId);
+    const detail = await verifiedViewTask(adapter, taskId);
     if (detail === null) {
       return "already-current" as const; // the task no longer exists in Backlog — nothing to move
     }
@@ -529,17 +536,20 @@ export function defaultAdapter(root: string): BacklogAdapter {
  * `taskId` case-insensitively before trusting it — mirrors `reconcile-shared.ts`'s
  * `resolveTaskDetails` (LORE-122). A misbehaving or ambiguous adapter handing back a DIFFERENT
  * task's detail must never be trusted to decide a label/`--doc` edit or the `tasks:` pre-write
- * check: every one of this module's `viewTask` consumers (the pre-write existence check, the
- * back-reference edit's fresh re-read, and `unlink`'s removal read) uses the RETURNED detail's own
+ * check: every one of this module's `viewTask` consumers — the pre-write existence check, the
+ * back-reference edit's fresh re-read, `unlink`'s removal read, and `moveBackRefs`'s move read
+ * (LORE-183; the last of these was an unguarded gap until then) — uses the RETURNED detail's own
  * `title`/`status`/`labels`/`documentation` to decide what to write, so a mismatch left unchecked
  * would silently borrow another task's data while still writing under the REQUESTED `taskId`.
+ * Exported so `commands/tasks.ts`'s `resolveRollup` (LORE-125) shares this exact guard instead of
+ * hand-maintaining its own byte-identical copy of the comparison/`LoreError`.
  *
  * Returns the verified detail, or `null` when the task genuinely doesn't exist (unchanged from
  * `adapter.viewTask`'s own contract) — a mismatch is a THIRD outcome, always a thrown `LoreError`
  * `not_found`, never folded into the `null` case (so a caller can't mistake "wrong task" for
  * "no task" and silently skip a back-reference cleanup it should have refused outright instead).
  */
-async function verifiedViewTask(adapter: BacklogAdapter, taskId: string): Promise<BacklogTaskDetail | null> {
+export async function verifiedViewTask(adapter: BacklogAdapter, taskId: string): Promise<BacklogTaskDetail | null> {
   const detail = await adapter.viewTask(taskId);
   if (detail === null) {
     return null;
