@@ -316,7 +316,11 @@ interface PorcelainPaths {
  */
 async function porcelainPaths(spawn: GitSpawn, pathspecs: readonly string[]): Promise<PorcelainPaths> {
   const prefixResult = await run(spawn, ["rev-parse", "--show-prefix"], "git rev-parse --show-prefix");
-  const prefix = prefixResult.stdout.trim();
+  // `.trim()` would also strip LEADING whitespace, corrupting the prefix when the bundle sits under
+  // a directory whose name begins with whitespace (e.g. " proj/\n" -> "proj/", losing the leading
+  // space that `git status` still reports). Strip only the single trailing newline git terminates
+  // `--show-prefix` output with.
+  const prefix = prefixResult.stdout.replace(/\r?\n$/, "");
   const cwdRelative = (path: string): string =>
     prefix !== "" && path.startsWith(prefix) ? path.slice(prefix.length) : path;
 

@@ -419,6 +419,27 @@ describe("commitBacklogIfDirty — nested-bundle cwd (fake GitSpawn)", () => {
     const result = await commitBacklogIfDirty(spawn);
     expect(result.files).toEqual(["backlog/tasks/new.md", "backlog/tasks/old.md"]);
   });
+
+  test("regression (LORE-224): a leading-whitespace prefix is preserved, not corrupted by .trim()", async () => {
+    // A bundle nested under a directory whose name begins with a space (" proj") — git emits the raw
+    // bytes " proj/\n" for --show-prefix and " proj/backlog/tasks/x.md" for status, leading space
+    // intact on both. A naive `.trim()` on the prefix would strip that leading space too, corrupting
+    // it to "proj/" — the prefix would then never match the reported path, the still-prefixed path
+    // would fail the BACKLOG_DIR guard, and commitBacklogIfDirty would throw a "drift" LoreError
+    // instead of reaching git add/commit. Only the trailing newline should be stripped.
+    const stdout = porcelainZ(entry("??", " proj/backlog/tasks/x.md"));
+    const spawn = scriptedSpawn([ok(" proj/\n"), ok(stdout), ok(""), ok("")]);
+    const result = await commitBacklogIfDirty(spawn);
+    expect(result.files).toEqual(["backlog/tasks/x.md"]);
+    expect(spawn.calls[2]?.args).toEqual(["add", "--", ":(literal)backlog/tasks/x.md"]);
+    expect(spawn.calls[3]?.args).toEqual([
+      "commit",
+      "-m",
+      "chore(backlog): sync task changes",
+      "--",
+      ":(literal)backlog/tasks/x.md",
+    ]);
+  });
 });
 
 describe("bunGitSpawn + commitBacklogIfDirty — real git integration", () => {
