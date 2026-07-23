@@ -35,6 +35,23 @@ function writeStory(stem: string, taskIds: string[]): void {
   writeDoc(`stories/${stem}.md`, storyDoc(stem, taskIds));
 }
 
+/**
+ * Like {@link writeStory}, but with a `summary:` present in the frontmatter — {@link storyDoc}
+ * omits one, which is fine for every other test here, but it makes `loadBundle` add its own
+ * unrelated "missing `summary`" advisory to stderr (schema.ts's `warnSummary`). The two
+ * empty-stderr tests below (LORE-211) need stderr to carry ONLY what the assertion is about —
+ * whether a dangling advisory leaked — so they use this instead of picking that load-time noise
+ * apart from the thing under test.
+ */
+function writeStoryWithSummary(stem: string, taskIds: string[]): void {
+  const tasksYaml = taskIds.map((t) => `\n  - ${t}`).join("");
+  writeDoc(
+    `stories/${stem}.md`,
+    `---\ntype: Story\ntitle: ${stem}\nsummary: A summary for ${stem}.\ntasks:${tasksYaml}\n---\n` +
+      `# ${stem}\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n`,
+  );
+}
+
 /** A {@link fakeAdapter} whose capability probe passes — `lore tasks` probes Backlog up front. */
 function okAdapter(seed: Parameters<typeof fakeAdapter>[0]): ReturnType<typeof fakeAdapter> {
   return fakeAdapter(seed, { probe: "ok" });
@@ -155,6 +172,55 @@ describe("runTasks — dangling links (soft) vs failures (hard)", () => {
     await expectRejection("drift", () =>
       runTasks({ root, output: JSON_CTX, stdout: capture(), stderr: capture(), args: ["stories/bulk"], adapter }),
     );
+  });
+
+  test("LORE-211: a failing id BEFORE a co-present dangling id still hard-fails, with NO dangling advisory leaked (AC#1, AC#2)", async () => {
+    // tasks: order is [LORE-1 (fails), GONE-9 (dangling, unseeded)]. resolveRollup's in-order scan
+    // must hit the LORE-1 rejection at i=0 and throw immediately — never reaching GONE-9's dangling
+    // branch or the post-loop warnDangling call — so nothing is ever written to either stream.
+    writeStoryWithSummary("bulk", ["LORE-1", "GONE-9"]);
+    const base = okAdapter([]); // GONE-9 stays dangling via the base's unseeded viewTask (-> null)
+    const adapter = {
+      ...base,
+      async viewTask(id: string): Promise<BacklogTaskDetail | null> {
+        if (id.toLowerCase() === "lore-1") {
+          throw new LoreError("drift", "backlog read drift", "");
+        }
+        return base.viewTask(id);
+      },
+    };
+    const stdout = capture();
+    const stderr = capture();
+    await expectRejection("drift", () =>
+      runTasks({ root, output: JSON_CTX, stdout, stderr, args: ["stories/bulk"], adapter }),
+    );
+    expect(stdout.text()).toBe("");
+    expect(stderr.text()).toBe("");
+  });
+
+  test("LORE-211: a dangling id BEFORE a co-present failing id STILL hard-fails (order-independent), with NO dangling advisory leaked (AC#1, AC#2)", async () => {
+    // Same pair, reversed tasks: order: [GONE-9 (dangling, unseeded), LORE-1 (fails)]. The in-order
+    // scan pushes GONE-9 onto the dangling list at i=0 (a fulfilled null, not a rejection) and only
+    // THEN reaches LORE-1's rejection at i=1 and throws — proving warnDangling (which runs only
+    // after the whole loop completes) never fires, regardless of which side of the pair fails.
+    writeStoryWithSummary("bulk", ["GONE-9", "LORE-1"]);
+    const base = okAdapter([]);
+    const adapter = {
+      ...base,
+      async viewTask(id: string): Promise<BacklogTaskDetail | null> {
+        if (id.toLowerCase() === "lore-1") {
+          throw new LoreError("drift", "backlog read drift", "");
+        }
+        return base.viewTask(id);
+      },
+    };
+    const stdout = capture();
+    const stderr = capture();
+    await expectRejection("drift", () =>
+      runTasks({ root, output: JSON_CTX, stdout, stderr, args: ["stories/bulk"], adapter }),
+    );
+    expect(stdout.text()).toBe("");
+    expect(stderr.text()).toBe("");
   });
 
   test("LORE-125: a viewTask detail whose id disagrees with the requested id is a hard not_found error, never a silently wrong row", async () => {
