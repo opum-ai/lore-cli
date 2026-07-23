@@ -3,7 +3,7 @@ id: doc-4
 title: Backlog campaign tracker — Codex review follow-ups (round 3)
 type: other
 created_date: '2026-07-23 16:05'
-updated_date: '2026-07-23 21:35'
+updated_date: '2026-07-23 21:36'
 ---
 Round 3 of the Codex-review follow-up campaign (see [[Backlog campaign tracker — Codex review follow-ups (round 2)]] / doc-3 for round 2, LORE-96..194, which closed all 78 medium findings; doc-1 for round 1, LORE-69..95, all 20 high). This round covers the **low-severity** findings from doc-2 ("Codex second-opinion review — lore codebase (2026-07-20)").
 
@@ -79,7 +79,7 @@ The "ready now" set is **always recomputed live** from `backlog/tasks/*.md` + th
 | 44 | LORE-239 | core-bundle-check | — | Done | 25 | bug. callout portability detector false-positives on inline formatting before [!type] in ordinary prose. [src/core/check.ts] |
 | 45 | LORE-240 | core-bundle-check | — | Done | 26 | bug. check portability lint mis-parses a leading indented code block in frontmatter-free files. [src/core/check.ts] |
 | 46 | LORE-241 | core-bundle-check | — | Done | 27 | bug. parseJson rewrites a valid-but-non-object profile.json into a misleading 'is not valid JSON' error. [src/core/profile.ts] |
-| 47 | LORE-242 | core-bundle-check | — | To Do | — | bug. profile does not validate a field's `default` against its declared kind/enum. [src/core/profile.ts] |
+| 47 | LORE-242 | core-bundle-check | — | Dispatched | 28 | bug. profile does not validate a field's `default` against its declared kind/enum. [src/core/profile.ts] |
 | 48 | LORE-243 | core-engine-a | — | Done | 25 | bug. Harden log.ts resolveRoot against equivalent-but-differently-spelled bundle roots. [src/core/log.ts] |
 | 49 | LORE-244 | core-index-context | — | Done | 26 | bug. index.md conceptTitle: coerce numeric/boolean titles via frontmatterScalar (match graph/query/context). [src/core/indexes.ts] |
 | 50 | LORE-245 | core-links-resolution | — | Done | 26 | bug. validateLink: flag bare '.'/'..' navigation destinations instead of exempting them as dotfiles. [src/core/links.ts] |
@@ -87,7 +87,7 @@ The "ready now" set is **always recomputed live** from `backlog/tasks/*.md` + th
 | 52 | LORE-247 | core-rewrite-engine | — | Done | 26 | bug. Preserve above-repo-root outbound links during rename instead of silently clamp-retargeting them. [src/core/rewrite.ts] |
 | 53 | LORE-248 | core-scaffold-consumer | — | Done | 27 | bug. warnSummary counts UTF-16 code units but reports "chars" — non-BMP summaries warn prematurely. [src/core/schema.ts] |
 | 54 | LORE-249 | errors-output-git | — | Done | 27 | bug. Harden stderrHint: strip terminal control sequences and cap length. [src/errors.ts] |
-| 55 | LORE-250 | errors-output-git | — | To Do | — | bug. Suppress ANSI color on stderr diagnostics when stderr is not a TTY. [src/output.ts] |
+| 55 | LORE-250 | errors-output-git | — | Dispatched | 28 | bug. Suppress ANSI color on stderr diagnostics when stderr is not a TTY. [src/output.ts] |
 
 ## Resolved
 | # | Issue | Status/date/wave | Evidence summary |
