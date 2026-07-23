@@ -236,6 +236,17 @@ describe("parseProfile — grammar errors throw (exit 6)", () => {
     expect(err.message).toContain("enum");
   });
 
+  test("an empty enum (`enum = []`) is a parse-time error naming the offending field (LORE-140)", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", fields: { status: { enum: [] } } }],
+      }),
+    );
+    expect(err.message).toContain("types[0].fields.status.enum");
+  });
+
   test("a type name with no slug-able characters is an error", () => {
     expectValidation(() =>
       parse({

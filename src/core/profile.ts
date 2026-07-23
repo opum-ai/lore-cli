@@ -491,6 +491,7 @@ function parseFieldSpec(raw: unknown, where: string, source: string): FieldSpec 
   rejectUnknownKeys(table, FIELD_SPEC_KEYS, where, source);
   const required = asBoolean(table.required, `${where}.required`, source) ?? false;
   const enumValues = asStringArray(table.enum, `${where}.enum`, source);
+  assertNonEmptyEnum(enumValues, where, source);
   const declaredKind = asEnum(table.kind, `${where}.kind`, FIELD_KINDS, source);
   if (enumValues !== undefined && declaredKind !== undefined && declaredKind !== "string") {
     fail(
@@ -517,6 +518,25 @@ function parseFieldSpec(raw: unknown, where: string, source: string): FieldSpec 
     spec.default = table.default;
   }
   return spec;
+}
+
+/**
+ * Reject an `enum` attribute that parsed to a zero-length array (LORE-140). `baseKindToZod`
+ * passes `spec.enum` straight to `z.enum([...spec.enum])`; Zod's `z.enum([])` rejects every
+ * possible value, so `enum = []` would otherwise compile cleanly here and only surface later as
+ * a field (required or not) that can never validate, with no error pointing at the actual
+ * mistake. Checked at parse time, right where `where` still names the offending field, so the
+ * error lands where the author can fix it instead of at some unrelated concept's validation
+ * failure.
+ */
+function assertNonEmptyEnum(enumValues: readonly string[] | undefined, where: string, source: string): void {
+  if (enumValues !== undefined && enumValues.length === 0) {
+    fail(
+      `${source}: ${where}.enum must not be empty`,
+      `declare at least one allowed value for ${where}.enum, or remove the enum attribute`,
+      { key: `${where}.enum` },
+    );
+  }
 }
 
 /** The attribute keys a list field's `items` inline table (`{ kind = ..., enum = ... }`) may declare. */
