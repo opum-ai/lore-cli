@@ -309,6 +309,15 @@ describe("serializeConceptWithModeline — modeline spliced inside the opening f
     expect(out.split("\n")[1]).toBe(MODELINE);
     expect(out.endsWith("a thematic break in the body\n")).toBe(true);
   });
+
+  test("rejects a multi-line modeline instead of splicing it verbatim", () => {
+    // A modeline containing a newline would inject arbitrary extra lines inside/after
+    // the opening fence if spliced verbatim — reject it before splicing (LORE-219).
+    const concept = parseConcept("reference/x.md", MINIMAL_GOLDEN);
+    const evilModeline = `${MODELINE}\ntype: Injected`;
+    const err = expectValidation(() => serializeConceptWithModeline(concept, evilModeline));
+    expect(err.message).toContain("single line");
+  });
 });
 
 describe("serializeConcept — quote-safety (stable, minimal quoting)", () => {
