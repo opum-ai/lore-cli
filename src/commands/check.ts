@@ -48,7 +48,7 @@ import { loadProfile, type Profile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { ANSI, EXIT_CODES, EXIT_OK, ioError, LoreError, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { readSource } from "./discover";
+import { canonicalIdentity, readSource } from "./discover";
 import { dedupeTaskIds, defaultAdapter } from "./link";
 import {
   gatherReconciliation,
@@ -643,6 +643,14 @@ interface Bundle {
  * Each root is a separate bundle with its **own id namespace** — so two roots that share a
  * relative path (e.g. a per-bundle `index.md`) never collide or shadow one another, and each is
  * checked in full. Cross-root links are out of scope, the same as any bundle-escaping link.
+ *
+ * Roots are de-duplicated by {@link canonicalIdentity} (the same realpath-fold `replace.ts`,
+ * `validate.ts`, and `rename.ts` already dedup file paths with) — not by the raw joined string —
+ * so a symlink alias or a case-variant spelling on a case-insensitive filesystem (`check docs
+ * Docs`) that reaches the same physical directory is walked once, not twice. `canonicalIdentity`
+ * swallows its own `realpath` failure and falls back to the path verbatim, so a **nonexistent**
+ * root's identity is just its own joined path (never collides with anything else already seen)
+ * and dedup never short-circuits {@link expandRoot}'s `not_found`/`denied` classification below.
  */
 function collectBundles(root: string, paths: readonly string[], warnings: WarningCollector): Bundle[] {
   const roots = paths.length > 0 ? paths : [DOCS_DIR];
@@ -650,10 +658,11 @@ function collectBundles(root: string, paths: readonly string[], warnings: Warnin
   const seenRoots = new Set<string>();
   for (const bundleRoot of roots) {
     const absRoot = join(root, bundleRoot);
-    if (seenRoots.has(absRoot)) {
-      continue; // the same root named twice is one bundle, not two
+    const identity = canonicalIdentity(absRoot);
+    if (seenRoots.has(identity)) {
+      continue; // the same physical root named twice (directly, via symlink, or case) is one bundle
     }
-    seenRoots.add(absRoot);
+    seenRoots.add(identity);
     const docFiles = expandRoot(absRoot, bundleRoot, warnings);
     const files = docFiles
       .filter(isMarkdownPath)
