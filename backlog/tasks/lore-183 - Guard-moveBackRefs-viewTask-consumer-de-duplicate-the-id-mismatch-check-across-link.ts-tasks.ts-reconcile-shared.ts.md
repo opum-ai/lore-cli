@@ -3,9 +3,11 @@ id: LORE-183
 title: >-
   Guard moveBackRefs viewTask consumer + de-duplicate the id-mismatch check
   across link.ts/tasks.ts/reconcile-shared.ts
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@sonnet-worker'
 created_date: '2026-07-22 19:02'
+updated_date: '2026-07-23 09:21'
 labels:
   - codex-review-followup
   - cmd-link
@@ -31,8 +33,26 @@ Found by the wave-7 integration review (2026-07-22); see doc-3 wave log. Not a r
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 moveBackRefs (link.ts) routes its adapter.viewTask result through the same id-mismatch guard as verifiedViewTask (case-insensitive id match; a mismatched detail is refused rather than used to compute the editTask write), and 'lore rename' surfaces the mismatch as a per-task failure instead of corrupting the doc list
-- [ ] #2 The id-mismatch check (comparison + LoreError type + message + hint + {taskId,resolvedId} input) exists in ONE shared place, consumed by link.ts's viewTask consumers and by resolveRollup in tasks.ts; the inline duplicate in tasks.ts is replaced by the shared helper with no behavior change (existing LORE-125 tasks.test.ts assertions still pass)
-- [ ] #3 The verifiedViewTask (or shared helper) doc comment accurately describes which consumers it covers (no longer claims 'every viewTask consumer' while omitting moveBackRefs)
-- [ ] #4 A regression test drives the rename/moveBackRefs path with a stubbed adapter returning a mismatched id and asserts the operation refuses rather than writing the wrong task's documentation into the back-ref; full suite + typecheck + biome remain green
+- [x] #1 moveBackRefs (link.ts) routes its adapter.viewTask result through the same id-mismatch guard as verifiedViewTask (case-insensitive id match; a mismatched detail is refused rather than used to compute the editTask write), and 'lore rename' surfaces the mismatch as a per-task failure instead of corrupting the doc list
+- [x] #2 The id-mismatch check (comparison + LoreError type + message + hint + {taskId,resolvedId} input) exists in ONE shared place, consumed by link.ts's viewTask consumers and by resolveRollup in tasks.ts; the inline duplicate in tasks.ts is replaced by the shared helper with no behavior change (existing LORE-125 tasks.test.ts assertions still pass)
+- [x] #3 The verifiedViewTask (or shared helper) doc comment accurately describes which consumers it covers (no longer claims 'every viewTask consumer' while omitting moveBackRefs)
+- [x] #4 A regression test drives the rename/moveBackRefs path with a stubbed adapter returning a mismatched id and asserts the operation refuses rather than writing the wrong task's documentation into the back-ref; full suite + typecheck + biome remain green
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. link.ts: export verifiedViewTask; route moveBackRefs through it instead of a raw adapter.viewTask call (AC#1). 2. tasks.ts: import verifiedViewTask from link.ts; replace resolveRollup's inline id-mismatch check with it, removing the LORE-125 duplicate (AC#2). 3. Fix verifiedViewTask's doc comment to list moveBackRefs and resolveRollup among its consumers instead of the stale 'every viewTask consumer' claim omitting moveBackRefs (AC#3). 4. Add a regression test in test/rename.test.ts driving runRename with a stubbed adapter whose viewTask always answers a mismatched task id carrying the old label/doc, asserting a per-task 'failed' outcome and zero editTask calls (AC#4). Verify with full bun test + typecheck + biome lint.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Verified: bun test → 1888 pass / 0 fail across 47 files (5330 expect() calls), including new AC#4 regression test in test/rename.test.ts and existing tasks.test.ts LORE-125 assertions (unchanged, still pass). bun run typecheck (tsc --noEmit) → clean, no errors. bun run lint (biome check) → 3 pre-existing errors in test/supersede.test.ts, test/context.test.ts, test/replace.test.ts (unrelated files, confirmed identical to dev@ba2c12e via empty git diff — not touched by this task and out of my pinned scope); the files this task edited (src/commands/link.ts, src/commands/tasks.ts, test/rename.test.ts) have zero lint findings.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Closed the genuine 4th unguarded viewTask consumer and de-duplicated the id-mismatch guard. link.ts: moveBackRefs now reads through the exported verifiedViewTask (was a raw adapter.viewTask call), so an adapter returning a mismatched-id detail is refused rather than used to compute the editTask write during lore rename — it surfaces as a per-task 'failed' outcome (drift exit 6), never a wrong-task documentation write. tasks.ts: resolveRollup's inline LORE-125 copy of the comparison/LoreError('not_found')/message/hint/{taskId,resolvedId} check is replaced by the same shared verifiedViewTask export from link.ts (tasks.ts already imported dedupeTaskIds/defaultAdapter from it) — no behavior change, same exit code, same message shape. verifiedViewTask's doc comment no longer claims to cover 'every one of this module's viewTask consumers' while omitting moveBackRefs; it now names all four (link's pre-write check, the back-ref edit's fresh re-read, unlink's removal read, moveBackRefs's move read) plus its cross-module reuse by tasks.ts. Added a regression test in test/rename.test.ts driving runRename/moveBackRefs with a stubbed adapter that always answers a different task's detail (carrying the OLD label/doc, the shape an unguarded read would borrow) and asserts a 'failed' backRef outcome with zero editTask calls. Verified: bun test 1888 pass/0 fail (47 files); bun run typecheck clean; bun run lint clean on every file this task touched (3 unrelated pre-existing failures elsewhere, confirmed identical to dev@ba2c12e, out of scope).
+<!-- SECTION:FINAL_SUMMARY:END -->
