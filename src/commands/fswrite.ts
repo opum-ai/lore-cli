@@ -220,6 +220,17 @@ export function writeFileOverwriting(absPath: string, contents: string, relPath:
  * A destination that doesn't exist yet (first write) has nothing to preserve: the stat is only
  * ever used to conditionally apply preservation, never to gate or fail the write itself, so that
  * case falls through to plain default-umask behavior exactly as before this fix.
+ *
+ * The temp file itself is created via an `O_CREAT | O_EXCL` `openSync` — rather than a single
+ * `writeFileSync(tmpPath, contents)` call — with `tmpFileExists` set to `true` the instant that
+ * open returns, mirroring {@link writeFileNoFollow}'s identical discipline (LORE-231). A plain
+ * `writeFileSync` both creates AND writes the temp file in one call, so a failure partway through
+ * that single call (e.g. `ENOSPC`/`EDQUOT`/`EIO` after the directory entry is allocated but before
+ * every byte lands) left the file on disk with `tmpFileExists` still `false` — the catch block's
+ * cleanup below was skipped, leaking a stray `.lore-sync-tmp-*` file. Splitting create-then-write
+ * into two steps means the guard is set the moment the temp file provably exists, so a failure
+ * during the write step (via {@link writeAllBytes}'s `writeSync` loop) is now cleaned up exactly
+ * like a failure anywhere else after that point already was.
  */
 export function writeFileAtomic(absPath: string, contents: string, relPath: string): void {
   const tmpPath = join(dirname(absPath), `.lore-sync-tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
@@ -236,8 +247,30 @@ export function writeFileAtomic(absPath: string, contents: string, relPath: stri
     } catch {
       destStat = null;
     }
-    writeFileSync(tmpPath, contents);
-    tmpFileExists = true; // only true once the write itself has actually succeeded
+    let fd: number;
+    try {
+      // 0o666 matches writeFileSync's own default creation mode -- unchanged from the prior
+      // single-call behavior, subject to the process umask exactly as before.
+      fd = openSync(tmpPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o666);
+    } catch (cause) {
+      throw ioError(cause, relPath, "write file");
+    }
+    tmpFileExists = true; // true the instant the temp file provably exists -- the open above created it
+    try {
+      writeAllBytes((b, offset, length) => writeSync(fd, b, offset, length), Buffer.from(contents, "utf8"));
+    } catch (cause) {
+      try {
+        closeSync(fd);
+      } catch {
+        // Best-effort cleanup; the write failure below is what's reported.
+      }
+      throw ioError(cause, relPath, "write file");
+    }
+    try {
+      closeSync(fd);
+    } catch (cause) {
+      throw ioError(cause, relPath, "write file");
+    }
     if (destStat !== null) {
       // Mode preservation is not best-effort: a failure here means the file is about to land with
       // the wrong permissions, so it's surfaced as a write failure (below) like any other step in
@@ -265,11 +298,13 @@ export function writeFileAtomic(absPath: string, contents: string, relPath: stri
         cleanupFailed = true;
       }
     }
-    // A `writeFileSync` failure (e.g. EACCES on a read-only directory — the most common real-world
+    // An `openSync` failure (e.g. EACCES on a read-only directory — the most common real-world
     // trigger) never creates `tmpPath` at all, so cleanup is skipped above rather than attempted and
     // its inevitable ENOENT misreported as "cleanup failed": the error below must never claim a temp
-    // file remains when none was ever created.
-    const err = ioError(cause, relPath, "write file");
+    // file remains when none was ever created. `cause` may already be a LoreError here (the inner
+    // catches above already classified it via `ioError`) -- reclassifying it a second time is a no-op
+    // (`ioError` returns non-errno causes unchanged), matching `writeFileNoFollow`'s identical guard.
+    const err = cause instanceof LoreError ? cause : ioError(cause, relPath, "write file");
     if (cleanupFailed && err instanceof LoreError) {
       throw new LoreError(
         err.type,
