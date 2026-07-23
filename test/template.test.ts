@@ -289,6 +289,25 @@ describe("resourceFor — base + repo-rel path, one slash, URL-encoded segments 
   test("trims surrounding whitespace on the base so no space is embedded at the seam", () => {
     expect(resourceFor("  https://x.dev/  ", "docs/a.md")).toBe("https://x.dev/docs/a.md");
   });
+
+  test("a base carrying a query string is joined verbatim, not re-parsed as a query (opaque-prefix contract)", () => {
+    // No trailing slash to trim and no URL parsing: `?lang=en` is just trailing characters of the
+    // string, so the doc path is appended straight after it — the caller's problem if that yields
+    // an unintended URL, per the deferred validation question at src/core/template.ts:66.
+    expect(resourceFor("https://x/base?lang=en", "docs/a.md")).toBe("https://x/base?lang=en/docs/a.md");
+  });
+
+  test("a base carrying a fragment is joined verbatim, not re-parsed as a fragment", () => {
+    expect(resourceFor("https://x/base#section", "docs/a.md")).toBe("https://x/base#section/docs/a.md");
+  });
+
+  test("a non-https / non-hierarchical scheme base is joined verbatim with exactly one seam slash, no scheme validation", () => {
+    // `mailto:`/`urn:` have no authority or hierarchical path (no `//`), so there is no trailing
+    // slash for the trim step to find; the join still contributes exactly one `/` at the seam,
+    // producing a string that is not a well-formed URL of any kind — resourceFor does not care.
+    expect(resourceFor("mailto:docs@example.com", "docs/a.md")).toBe("mailto:docs@example.com/docs/a.md");
+    expect(resourceFor("urn:isbn:0451450523", "docs/a.md")).toBe("urn:isbn:0451450523/docs/a.md");
+  });
 });
 
 describe("buildNewConcept — resource stamping is profile-gated (AC#4)", () => {
@@ -396,6 +415,31 @@ describe("buildNewConcept — resource stamping is profile-gated (AC#4)", () => 
     const result = build("docs/reference/orders.md", profileWithResourceBase("  https://docs.example.com/  "));
     const concept = parseConcept("docs/reference/orders.md", result.contents);
     expect(concept.frontmatter.resource).toBe("https://docs.example.com/docs/reference/orders.md");
+  });
+});
+
+describe("buildNewConcept — the new-path section boundary", () => {
+  test("a custom bodyTemplate that omits a type's required section renders without throwing (section enforcement is `lore check`'s job, not `new`'s — validate.ts:requiredSectionFindings)", () => {
+    // ADR's required sections (src/core/profile.ts) are Status/Context/Decision/Consequences; this
+    // template supplies only Status and Context, entirely omitting Decision and Consequences. Do
+    // NOT re-assert that the *built-in* ADR template carries all four — that invariant is already
+    // pinned by test/validate.test.ts:452-460. This test is about the `new` path tolerating a
+    // caller-supplied template that does not, since `buildNewConcept` has no notion of "required
+    // section" at all — that check lives only in `lore validate`/`lore check`.
+    const result = buildNewConcept({
+      docPath: "docs/adr/sample.md",
+      type: "ADR",
+      title: "Pick a queue",
+      summary: "Which queue to use.",
+      timestamp: TIMESTAMP,
+      bodyTemplate: "\n# {{title}}\n\n## Status\n\nProposed\n\n## Context\n",
+      vars: Object.create(null),
+    });
+    expect(result.type).toBe("ADR");
+    expect(result.contents).toContain("## Status");
+    expect(result.contents).toContain("## Context");
+    expect(result.contents).not.toContain("## Decision");
+    expect(result.contents).not.toContain("## Consequences");
   });
 });
 
