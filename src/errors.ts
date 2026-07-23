@@ -176,15 +176,40 @@ export function stripAnsiAndControls(text: string): string {
 }
 
 /**
+ * The maximum length {@link stderrHint} returns (truncation indicator included). A crashing or
+ * hostile subprocess can write an unbounded amount to stderr; without a cap that entire blob
+ * becomes a single unbounded `LoreError.hint` line (LORE-249).
+ */
+const STDERR_HINT_MAX_LENGTH = 500;
+
+/** Appended to a {@link stderrHint} result cut short by {@link STDERR_HINT_MAX_LENGTH}. */
+const STDERR_HINT_TRUNCATION_INDICATOR = "…";
+
+/**
  * Collapse a failed subprocess invocation's stderr to a one-line hint, or `undefined` when it
  * carried no content — the shared policy behind every `LoreError` hint built from a subprocess
  * failure (`adapters/backlog.ts`'s Backlog spawn, `state.ts`'s git-write seam, `adapters/git.ts`'s
  * real `GitAdapter`), so a future change to how stderr is condensed (stripping ANSI, capping
  * length, …) has one home instead of three independently-drifting copies.
+ *
+ * Whitespace (including line breaks) is collapsed to single spaces *before* the ANSI/control-byte
+ * strip, not after: {@link stripAnsiAndControls} deletes C0 bytes outright — including `\n`/`\t`,
+ * which are also C0 bytes — so stripping first would glue words that were separated only by a
+ * line break (`"foo\nbar"` → `"foobar"`) instead of the space the previous behavior preserved. A
+ * second collapse+trim pass afterward mops up any doubled space left where an excised escape
+ * sequence had sat between two words (LORE-181's {@link stripAnsiAndControls} was never applied
+ * here — LORE-249). The result is then capped to {@link STDERR_HINT_MAX_LENGTH}, so an unbounded
+ * subprocess stderr cannot produce an unbounded hint.
  */
 export function stderrHint(stderr: string): string | undefined {
-  const trimmed = stderr.trim().replace(/\s+/g, " ");
-  return trimmed === "" ? undefined : trimmed;
+  const collapsed = stderr.trim().replace(/\s+/g, " ");
+  const cleaned = stripAnsiAndControls(collapsed).trim().replace(/\s+/g, " ");
+  if (cleaned === "") {
+    return undefined;
+  }
+  return cleaned.length > STDERR_HINT_MAX_LENGTH
+    ? `${cleaned.slice(0, STDERR_HINT_MAX_LENGTH)}${STDERR_HINT_TRUNCATION_INDICATOR}`
+    : cleaned;
 }
 
 /**
