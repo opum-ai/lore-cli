@@ -206,9 +206,14 @@ jobs:
           if [ "${{ matrix.name }}" = "linux-x64" ]; then
             chmod +x "$bin"
             version="$("$bin" --version)"
-            echo "lore --version => '${version}'"
+            expected="$(bun -e 'console.log(require("./package.json").version)')"
+            echo "lore --version => '${version}' (package.json: '${expected}')"
             if [ -z "$version" ]; then
               echo "::error::linux-x64 binary produced no --version output"
+              exit 1
+            fi
+            if [ "${version}" != "${expected}" ]; then
+              echo "::error::version mismatch: binary='${version}' package.json='${expected}'"
               exit 1
             fi
           fi
@@ -266,14 +271,25 @@ jobs:
           echo "LINUX_X64_TARBALL=dist-npm/salient-data-lore-linux-x64-${version}.tgz" >> "$GITHUB_ENV"
       - name: Install-sanity — npx-equivalent resolution through the real launcher (LORE-9 AC#2)
         run: |
+          # Same comparison mechanism as ci.yml's compile-smoke job (ci.yml:56-64):
+          # read package.json's version, compare strictly, hard-fail naming both
+          # values on mismatch. This job has no bun toolchain (no setup-bun step),
+          # so `node -p` reads package.json here — matching the `node -p` already
+          # used earlier in this same job — rather than the `bun -e` the build job
+          # uses (which does have bun via setup-bun).
+          expected="$(node -p "require('./package.json').version")"
           rm -rf /tmp/lore-install-sanity && mkdir -p /tmp/lore-install-sanity
           cd /tmp/lore-install-sanity
           npm init -y >/dev/null
           npm install "$GITHUB_WORKSPACE/$ROOT_TARBALL" "$GITHUB_WORKSPACE/$LINUX_X64_TARBALL"
           version="$(node node_modules/.bin/lore --version)"
-          echo "lore --version (via bin/lore.cjs -> the linux-x64 optionalDependency) => '${version}'"
+          echo "lore --version (via bin/lore.cjs -> the linux-x64 optionalDependency) => '${version}' (package.json: '${expected}')"
           if [ -z "$version" ]; then
             echo "::error::the launcher did not resolve/run the installed platform binary"
+            exit 1
+          fi
+          if [ "${version}" != "${expected}" ]; then
+            echo "::error::version mismatch: binary='${version}' package.json='${expected}'"
             exit 1
           fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
