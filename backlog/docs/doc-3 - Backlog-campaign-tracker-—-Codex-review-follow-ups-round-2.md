@@ -3,7 +3,7 @@ id: doc-3
 title: Backlog campaign tracker — Codex review follow-ups (round 2)
 type: other
 created_date: '2026-07-21 22:27'
-updated_date: '2026-07-23 04:29'
+updated_date: '2026-07-23 09:10'
 ---
 Round 2 of the Codex-review follow-up campaign (see [[Backlog campaign tracker]] / doc-1 for
 round 1, LORE-69..95, which closed all 20 high-severity findings from doc-2). Re-initialised on
@@ -91,12 +91,12 @@ asserts `lore query --help` byte-identical to `lore help query`). No further act
 | 80 | LORE-175 | cli-entry-state | — | Done | 7 | MERGED wave 7 (PR #124, dev @ `829cf9d`). readConfigText denied LoreError now carries errno `code` in input (matches errors.ts ioError/readFileIfPresent); loadConfig docstring updated. Fable approve, 0 fix. See Resolved 36. |
 | 81 | LORE-176 | build-runtime | — | Done | 4 | MERGED wave 4 (PR #109, dev @ `0fd3a98`). Rewrote the stale run-e2e.sh AC4 assertion as a `step_fail … 6 '.error_type=="validation"' -- lore check --json` encoding LORE-89's profile-aware fail-loud contract; harness 299/0. Unblocked LORE-100. |
 | 82 | LORE-177 | cmd-link | — | Done | 7 | MERGED wave 7 (PR #126, dev @ `92971d4`). verifiedViewTask() (mirrors LORE-122) wired into 3 link.ts viewTask consumers; mismatched id refused. Fable approve, 0 fix. Low nit: moveBackRefs (link.ts:~432) is a 4th consumer still unverified — see Resolved 38 / wave-7 log. |
-| 83 | LORE-178 | build-ci-config | — | To Do | — | Runbook docs/runbooks/docker-e2e-testing-environment.md doesn't mention the harness now runs as the docker-e2e CI gate (post-LORE-100); filed from the wave-4 integration review. Docs-only via lore — touches docs/runbooks/, no code conflict. |
+| 83 | LORE-178 | build-ci-config | — | Dispatched | 15 | Runbook docs/runbooks/docker-e2e-testing-environment.md doesn't mention the harness now runs as the docker-e2e CI gate (post-LORE-100); filed from the wave-4 integration review. Docs-only via lore — touches docs/runbooks/, no code conflict. |
 | 84 | LORE-179 | cmd-link | — | Done | 14 | lore unlink/rename retry after a failed backlog commit silently no-ops on the leftover dirty file (same-class sibling of LORE-121; wave-5 review finding). Touches src/commands/link.ts (runUnlink/moveBackRefs) + test/link.test.ts — conflicts with LORE-121-area / LORE-177. |
 | 85 | LORE-180 | core-rewrite-engine | — | Done | 13 | rewrite.ts newDestPathFor ignores leading-slash link targets, diverging from resolvePath — lore rename mis-derives /-absolute links (rot/hijack). Pre-existing; surfaced by LORE-133 (wave-6). Touches src/core/rewrite.ts — conflicts with LORE-164/165. **Medium.** |
 | 86 | LORE-181 | cmd-crud-b | — | To Do | — | Export one shared stripAnsiAndControls seam + de-dup query.ts's local copy (wave-6 LORE-118 finding). Touches src/commands/query.ts + src/output.ts — conflicts with LORE-118-area / output.ts tasks. Low. |
-| 87 | LORE-182 | cmd-meta-a | — | To Do | — | schema confineOutDir: retain isAbsolute(rel) belt-and-suspenders for win32 cross-drive --out (wave-6 LORE-124 finding). Touches src/commands/schema.ts — conflicts with LORE-124-area schema tasks. Low. |
-| 88 | LORE-183 | cmd-link | — | To Do | — | **Medium.** Guard moveBackRefs (link.ts:~432) — a genuine 4th, unguarded viewTask consumer (write-path gap in `lore rename`) — + de-duplicate the id-mismatch check now triplicated across link.ts/tasks.ts/reconcile-shared.ts + fix the stale verifiedViewTask doc comment. Wave-7 integration finding. Touches src/commands/link.ts + src/commands/tasks.ts (+ rename path) — conflicts with LORE-177-area / LORE-125 / LORE-179. |
+| 87 | LORE-182 | cmd-meta-a | — | Dispatched | 15 | schema confineOutDir: retain isAbsolute(rel) belt-and-suspenders for win32 cross-drive --out (wave-6 LORE-124 finding). Touches src/commands/schema.ts — conflicts with LORE-124-area schema tasks. Low. |
+| 88 | LORE-183 | cmd-link | — | Dispatched | 15 | **Medium.** Guard moveBackRefs (link.ts:~432) — a genuine 4th, unguarded viewTask consumer (write-path gap in `lore rename`) — + de-duplicate the id-mismatch check now triplicated across link.ts/tasks.ts/reconcile-shared.ts + fix the stale verifiedViewTask doc comment. Wave-7 integration finding. Touches src/commands/link.ts + src/commands/tasks.ts (+ rename path) — conflicts with LORE-177-area / LORE-125 / LORE-179. |
 | 89 | LORE-184 | core-bundle-check | — | Done | 14 | **Medium.** resolveRef path-first precedence (from LORE-134) lets a mirroring directory shadow lore's OWN canonical bare-id refs — silent ref-text corruption on `lore rename`, missed supersede dedup, wrong graph edges. Wave-8 integration finding; needs ref-shape disambiguation (design decision), not a revert. Touches src/core/bundle.ts + src/core/rewrite.ts + src/commands/supersede.ts — conflicts with core-bundle-check + core-rewrite-engine (LORE-164/165/180) + LORE-183-area. |
 | 90 | LORE-185 | core-bundle-check | — | To Do | — | Low. Consolidate the two template-path confinement guards (LORE-139's profile.ts assertTemplateConfined vs pre-existing new.ts assertTemplateNameConfined) into one shared helper + fix the stale readTemplateFile comment + profile-path symlink asymmetry. Wave-8 integration finding. Touches src/core/profile.ts + src/commands/new.ts — conflicts with core-bundle-check profile/new tasks (LORE-140). |
 | 91 | LORE-186 | core-index-context | — | Done | 13 | **Medium.** linkText (indexes.ts) inserts bracket escapes without doubling pre-existing backslashes first — a title like `a\[b` yields a live `[` that can break a generated index entry (exact class LORE-154 fixed in cell()). Wave-9 integration finding; pre-existing latent bug, now documented drift. Touches src/core/indexes.ts (+ cross-ref managed-block.ts) — conflicts with core-index-context (LORE-149/150/162-area) + core-managed-template. |
@@ -144,7 +144,7 @@ asserts `lore query --help` byte-identical to `lore help query`). No further act
 | 55 | LORE-150 | core-index-context | — | Done | 11 | generateIndexes never detects or removes an orphaned sub-index directory |
 | 56 | LORE-151 | core-links-resolution | — | Done | 11 | decodeTarget whole-path decode lets %2F forge a structural slash in link targets |
 | 57 | LORE-152 | core-links-resolution | — | Done | 12 | Dotted extensionless links (e.g. orders.v2) skip both portability lint and broken-link check |
-| 58 | LORE-153 | core-links-resolution | — | To Do | — | LinkFinding.message interpolates raw link target unescaped into terminal-rendered text |
+| 58 | LORE-153 | core-links-resolution | — | Dispatched | 15 | LinkFinding.message interpolates raw link target unescaped into terminal-rendered text |
 | 59 | LORE-154 | core-managed-template | — | Done | 9 | cell() escapes pipes without escaping pre-existing backslashes first |
 | 60 | LORE-155 | core-managed-template | — | Done | 10 | upsertManagedBlock's update path skips the post-splice validation the insert path has |
 | 61 | LORE-156 | core-managed-template | — | Done | 11 | Same-line marker pair collapses into one mdast node and is invisible to locateLabeledMarkers |
@@ -159,10 +159,10 @@ asserts `lore query --help` byte-identical to `lore help query`). No further act
 | 70 | LORE-165 | core-rewrite-engine | — | Done | 12 | Add regression test for rewriteInbound's move + excluded-source-id combination — resolved-by-merge by LORE-164 (wave 12) |
 | 71 | LORE-166 | core-scaffold-consumer | — | Done | 13 | buildObsidianScaffold never emits the .gitignore entry the docs promise |
 | 72 | LORE-167 | core-scaffold-consumer | — | Done | 14 | validateFrontmatter misclassifies differently-cased known types as unknown |
-| 73 | LORE-168 | core-scaffold-consumer | — | To Do | — | okf_version extra-key warning is exempted on every file, not just the root index |
+| 73 | LORE-168 | core-scaffold-consumer | — | Dispatched | 15 | okf_version extra-key warning is exempted on every file, not just the root index |
 | 74 | LORE-169 | errors-output-git | — | Done | 13 | Harden realGitAdapter.history against quoted non-ASCII paths and sentinel collision |
 | 75 | LORE-170 | errors-output-git | — | Done | 14 | resolveHeadSha can't tell an unborn branch from a corrupted-but-present .git |
-| 76 | LORE-171 | errors-output-git | — | To Do | — | asText can return runtime undefined for Symbol/function input despite its string type |
+| 76 | LORE-171 | errors-output-git | — | Dispatched | 15 | asText can return runtime undefined for Symbol/function input despite its string type |
 | 77 | LORE-172 | errors-output-git | — | To Do | — | WarningCollector.flush writes raw multi-line/control-char warnings to stderr unnormalized |
 | 78 | LORE-173 | errors-output-git | — | Done | 2 | RESOLVED-BY-MERGE by LORE-115 (PR #103): renderTaskSummaryRows now singleLine+stripAnsiAndControls id/status/title; output.test.ts covers newline/control-char rows |
 
