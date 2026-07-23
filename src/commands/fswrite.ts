@@ -147,6 +147,14 @@ export function assertNoSymlinkInAnyPath(root: string, relPaths: Iterable<string
  * contract: a concurrent or pre-existing file is left exactly as it was. A **non-regular**
  * entry (directory, symlink, …) occupying the path is a structural `conflict`, not a benign
  * skip — surfaced so a malformed bundle never reads as a clean re-run.
+ *
+ * The classifying {@link existingIsRegularFile} stat itself can fail two different ways
+ * (LORE-230): the documented raced-away case (the entry vanished again after `wx` just proved
+ * it was there — `ENOENT`) degrades to that same benign skip, but any OTHER failure (`EACCES`,
+ * `EIO`, …) is a genuine fault on an entry that demonstrably exists, not a benign condition —
+ * it propagates out of {@link existingIsRegularFile} and is classified here via the shared
+ * {@link ioError}, exactly like the `wx` write's own failures below, rather than being
+ * misreported as "already exists, skipped".
  */
 export function createIfAbsent(absPath: string, contents: string, relPath: string): boolean {
   try {
@@ -154,7 +162,13 @@ export function createIfAbsent(absPath: string, contents: string, relPath: strin
     return true;
   } catch (cause) {
     if (errnoCode(cause) === "EEXIST") {
-      if (existingIsRegularFile(absPath)) {
+      let isRegular: boolean;
+      try {
+        isRegular = existingIsRegularFile(absPath);
+      } catch (statCause) {
+        throw ioError(statCause, relPath, "check existing file");
+      }
+      if (isRegular) {
         return false;
       }
       throw conflictError(relPath);
@@ -400,16 +414,25 @@ function assertMoveTargetSafe(fromAbs: string, toAbs: string, relPath: string): 
 /**
  * Whether the entry already at `absPath` is a regular file. Uses `lstat` (does not
  * follow symlinks), so a symlink occupying a path is treated as the non-regular conflict
- * it is rather than silently honored via its target. A failing stat — the entry vanished
- * in a concurrent race after the `wx` EEXIST — degrades to `true` so the caller reports a
- * benign skip instead of crashing on a self-resolving race.
+ * it is rather than silently honored via its target. Only the one DOCUMENTED failure mode
+ * degrades to a benign `true`: the entry vanished in a concurrent race after the `wx`
+ * EEXIST that led here, so `lstat` now fails with `ENOENT` — a self-resolving race, not a
+ * real problem. Any OTHER `lstat` failure (`EACCES`, `EIO`, …) is a genuine fault on an
+ * entry `wx`'s own `EEXIST` just proved is actually there (LORE-230) — it propagates to
+ * {@link createIfAbsent}, which classifies and surfaces it, rather than being folded into
+ * the same benign-skip outcome as the raced-away case.
  */
 function existingIsRegularFile(absPath: string): boolean {
+  let stat: ReturnType<typeof lstatSync>;
   try {
-    return lstatSync(absPath).isFile();
-  } catch {
-    return true;
+    stat = lstatSync(absPath);
+  } catch (cause) {
+    if (errnoCode(cause) === "ENOENT") {
+      return true;
+    }
+    throw cause;
   }
+  return stat.isFile();
 }
 
 /**
