@@ -247,6 +247,58 @@ describe("cli — option terminator and bare dash", () => {
   });
 });
 
+describe("cli — post-`--` tokens are positionals, not re-scanned flags (LORE-223)", () => {
+  test("`--version <command> -- -x` still prints the version: a `-`-prefixed token after `--` is a positional", () => {
+    const c = ctx();
+    expect(run(argv("--version", "tasks", "--", "-x"), c)).toBe(0);
+    expect(c.stdout.text()).toBe(`${VERSION}\n`);
+  });
+
+  test("`--help <command> -- -x` still renders that command's help: a `-`-prefixed token after `--` is a positional", () => {
+    const c = ctx();
+    expect(run(argv("--help", "tasks", "--", "-x"), c)).toBe(0);
+    // Command-specific help (not the top-level catalog): has the command's own usage/flags.
+    expect(c.stdout.text()).toContain("lore tasks <id>");
+    expect(c.stdout.text()).toContain("--status");
+    expect(c.stdout.text()).not.toContain("Commands:");
+  });
+
+  test("`init -- -bar` still errors, but classifies `-bar` as an unexpected argument, not an unknown option", () => {
+    const c = ctx();
+    expect(run(argv("init", "--", "-bar"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).toContain("takes no arguments");
+    expect(c.stderr.text()).not.toContain("unknown option");
+  });
+
+  test("`init --json -- -bar` reports the same classification under the `--json` error envelope's `unexpected` key", () => {
+    const c = ctx();
+    expect(run(argv("init", "--json", "--", "-bar"), c)).toBe(EXIT_CODES.usage);
+    const envelope = JSON.parse(c.stderr.text()) as { message: string; input: Record<string, unknown> };
+    expect(envelope.message).toContain("takes no arguments");
+    expect(envelope.input).toEqual({ command: "init", unexpected: ["-bar"] });
+    expect(envelope.input.options).toBeUndefined();
+  });
+
+  test("regression guard: a stray flag BEFORE any `--` is still rejected on the version path", () => {
+    const c = ctx();
+    expect(run(argv("--version", "--bogus"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).toContain('unknown option "--bogus"');
+  });
+
+  test("regression guard: a stray flag BEFORE any `--`, after a command, is still rejected on the version path", () => {
+    const c = ctx();
+    expect(run(argv("--version", "tasks", "--bogus"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).toContain('unknown option "--bogus"');
+  });
+
+  test("regression guard: a stray flag BEFORE any `--` is still rejected on init as an unknown option", () => {
+    const c = ctx();
+    expect(run(argv("init", "--bogus"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).toContain('unknown option "--bogus"');
+    expect(c.stderr.text()).not.toContain("takes no arguments");
+  });
+});
+
 describe("cli — schema dispatch", () => {
   let cwd: string;
   beforeEach(() => {

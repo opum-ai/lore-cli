@@ -346,9 +346,14 @@ function rejectUnknownFlags(unknownFlags: readonly string[]): void {
  * (version/help/no-command). Positionals and the `--` terminator are ignored — a leftover
  * positional that `--version` simply overrides is not an error; only an unrecognized `-`-flag
  * is, preserving the invariant that a typo'd flag is never swallowed by `--version`/`--help`.
+ * Only tokens **before** the first `--` are scanned: per the parser's contract (line 78 above),
+ * a token after the terminator is a positional, never re-interpreted as a flag, so
+ * `lore --version tasks -- -x` must print the version rather than error (LORE-223).
  */
 function rejectStrayCommandFlags(commandArgs: readonly string[]): void {
-  const stray = commandArgs.find((token) => token.startsWith("-") && token !== "-" && token !== "--");
+  const dashDashIndex = commandArgs.indexOf("--");
+  const scanned = dashDashIndex === -1 ? commandArgs : commandArgs.slice(0, dashDashIndex);
+  const stray = scanned.find((token) => token.startsWith("-") && token !== "-");
   if (stray !== undefined) {
     throw new LoreError("usage", `unknown option "${stray}"`, "run `lore --help` to list options", {
       options: [stray],
@@ -358,21 +363,28 @@ function rejectStrayCommandFlags(commandArgs: readonly string[]): void {
 
 /**
  * Throw a `usage` {@link LoreError} when a command that takes no arguments got any. The `--`
- * end-of-options marker is a no-op and skipped (so `lore init --` still scaffolds); a leftover
- * `-`-flag is reported as an unknown option, a leftover positional as an unexpected argument,
- * so the diagnostic matches what the user actually mistyped.
+ * end-of-options marker is a no-op and skipped (so `lore init --` still scaffolds). Only tokens
+ * **before** the first `--` can be classified as an unrecognized `-`-flag ("unknown option"),
+ * matching the parser's contract that a token after the terminator is never re-interpreted as a
+ * flag; a leftover positional — before the terminator, or any token at/after it regardless of a
+ * leading `-` — is an "unexpected argument" instead (LORE-223), so `lore init -- -bar` reports
+ * `-bar` as unexpected rather than as an unknown option.
  */
 function rejectCommandArgs(commandArgs: readonly string[], command: string): void {
-  const leftover = commandArgs.filter((token) => token !== "--");
-  if (leftover.length === 0) {
+  const dashDashIndex = commandArgs.indexOf("--");
+  const before = dashDashIndex === -1 ? commandArgs : commandArgs.slice(0, dashDashIndex);
+  const after = dashDashIndex === -1 ? [] : commandArgs.slice(dashDashIndex + 1);
+  if (before.length === 0 && after.length === 0) {
     return;
   }
-  const first = leftover[0] as string;
-  if (first.startsWith("-") && first !== "-") {
-    throw new LoreError("usage", `unknown option "${first}"`, "run `lore --help` to list options", {
-      options: [...leftover],
+  const firstBefore = before[0];
+  if (firstBefore?.startsWith("-") && firstBefore !== "-") {
+    throw new LoreError("usage", `unknown option "${firstBefore}"`, "run `lore --help` to list options", {
+      options: [...before],
     });
   }
+  const leftover = [...before, ...after];
+  const first = leftover[0] as string;
   throw new LoreError(
     "usage",
     `\`lore ${command}\` takes no arguments, got "${first}"`,
