@@ -40,6 +40,7 @@ import {
   DOCUSAURUS_CONFIG_REL_PATH,
   MKDOCS_CONFIG_REL_PATH,
   OBSIDIAN_APP_JSON_REL_PATH,
+  OBSIDIAN_GITIGNORE_REL_PATH,
   OBSIDIAN_GUIDANCE_NOTES,
   SIDEBARS_REL_PATH,
   TAGS_INDEX_REL_PATH,
@@ -485,13 +486,13 @@ describe("core/consumer-scaffold — buildObsidianScaffold (pure)", () => {
     expect(buildObsidianScaffold(opts)).toEqual(buildObsidianScaffold(opts));
   });
 
-  test("plans exactly docs/.obsidian/app.json, and carries the Files & Links guidance notes", () => {
+  test("plans exactly docs/.obsidian/app.json and docs/.obsidian/.gitignore, and carries the Files & Links guidance notes", () => {
     const plan = buildObsidianScaffold({ timestamp: "2026-07-11T12:00:00.000Z", siteName: "lore" });
     // dirs lists every ancestor level (parent before child), matching buildScaffold's own
     // pattern (e.g. ".lore" and ".lore/schemas" as separate entries) — so writeAllOrRollback
     // tracks the implicitly-created "docs" for cleanup, not just the nested ".obsidian" leaf.
     expect(plan.dirs).toEqual(["docs", "docs/.obsidian"]);
-    expect(plan.files.map((f) => f.path)).toEqual([OBSIDIAN_APP_JSON_REL_PATH]);
+    expect(plan.files.map((f) => f.path)).toEqual([OBSIDIAN_APP_JSON_REL_PATH, OBSIDIAN_GITIGNORE_REL_PATH]);
     expect(plan.notes).toEqual(OBSIDIAN_GUIDANCE_NOTES);
   });
 
@@ -505,6 +506,20 @@ describe("core/consumer-scaffold — buildObsidianScaffold (pure)", () => {
       newLinkFormat: "relative",
       alwaysUpdateLinks: true,
     });
+  });
+
+  test("gitignore excludes everything under docs/.obsidian/ except itself and app.json (LORE-166; consumer-compatibility.md §3.2)", () => {
+    // Regression: buildObsidianScaffold used to emit no `.gitignore` at all, despite
+    // consumer-compatibility.md §3.2 documenting one — Obsidian's `workspace*.json`/cache files
+    // were left untracked-but-not-ignored in a consumer's project. The exclude-all-except pattern
+    // (not an enumerated `workspace*.json`/cache list) is a strict superset of that literal
+    // wording, matching the pattern this repo's own root .gitignore hand-maintains for its
+    // own docs/.obsidian/.
+    const plan = buildObsidianScaffold({ timestamp: "2026-07-11T12:00:00.000Z", siteName: "lore" });
+    const raw = plan.files.find((f) => f.path === OBSIDIAN_GITIGNORE_REL_PATH)?.contents ?? "";
+    expect(raw.endsWith("\n")).toBe(true);
+    const patternLines = raw.split("\n").filter((line) => line !== "" && !line.startsWith("#"));
+    expect(patternLines).toEqual(["*", "!.gitignore", "!app.json"]);
   });
 
   test("notes is frozen, so a downstream mutation attempt cannot corrupt the shared constant across calls", () => {
@@ -521,41 +536,52 @@ describe("core/consumer-scaffold — buildObsidianScaffold (pure)", () => {
 });
 
 describe("lore scaffold obsidian — fresh scaffold", () => {
-  test("creates the file and exits 0", () => {
+  test("creates both files and exits 0", () => {
     const { code, result } = scaffold(["obsidian"]);
     expect(code).toBe(0);
     expect(result.target).toBe("obsidian");
     expect(result.force).toBe(false);
-    expect(result.files).toEqual([{ path: OBSIDIAN_APP_JSON_REL_PATH, action: "created" }]);
+    expect(result.files).toEqual([
+      { path: OBSIDIAN_APP_JSON_REL_PATH, action: "created" },
+      { path: OBSIDIAN_GITIGNORE_REL_PATH, action: "created" },
+    ]);
     expect(existsSync(join(root, OBSIDIAN_APP_JSON_REL_PATH))).toBe(true);
+    expect(existsSync(join(root, OBSIDIAN_GITIGNORE_REL_PATH))).toBe(true);
   });
 
   test("creates the docs/.obsidian directory when the bundle was never initialized", () => {
     expect(existsSync(join(root, "docs"))).toBe(false);
     scaffold(["obsidian"]);
     expect(existsSync(join(root, OBSIDIAN_APP_JSON_REL_PATH))).toBe(true);
+    expect(existsSync(join(root, OBSIDIAN_GITIGNORE_REL_PATH))).toBe(true);
   });
 });
 
 describe("lore scaffold obsidian — never-silent-clobber (AC: user-owned, never re-overwritten)", () => {
   test("a re-run without --force refuses with a conflict (exit 5) and touches nothing", () => {
     scaffold(["obsidian"]);
-    const before = readFileSync(join(root, OBSIDIAN_APP_JSON_REL_PATH), "utf8");
+    const beforeAppJson = readFileSync(join(root, OBSIDIAN_APP_JSON_REL_PATH), "utf8");
+    const beforeGitignore = readFileSync(join(root, OBSIDIAN_GITIGNORE_REL_PATH), "utf8");
 
     const err = expectError("conflict", () =>
       runScaffold({ root, output: JSON_CTX, args: ["obsidian"], stdout: capture() }),
     );
     expect(err.message).toContain(OBSIDIAN_APP_JSON_REL_PATH);
+    expect(err.message).toContain(OBSIDIAN_GITIGNORE_REL_PATH);
     expect(err.hint).toContain("--force");
-    expect(readFileSync(join(root, OBSIDIAN_APP_JSON_REL_PATH), "utf8")).toBe(before);
+    expect(readFileSync(join(root, OBSIDIAN_APP_JSON_REL_PATH), "utf8")).toBe(beforeAppJson);
+    expect(readFileSync(join(root, OBSIDIAN_GITIGNORE_REL_PATH), "utf8")).toBe(beforeGitignore);
   });
 
-  test("--force overwrites the existing file and reports `updated`", () => {
+  test("--force overwrites both existing files and reports `updated`", () => {
     scaffold(["obsidian"]);
     const { code, result } = scaffold(["obsidian", "--force"]);
     expect(code).toBe(0);
     expect(result.force).toBe(true);
-    expect(result.files).toEqual([{ path: OBSIDIAN_APP_JSON_REL_PATH, action: "updated" }]);
+    expect(result.files).toEqual([
+      { path: OBSIDIAN_APP_JSON_REL_PATH, action: "updated" },
+      { path: OBSIDIAN_GITIGNORE_REL_PATH, action: "updated" },
+    ]);
   });
 
   test("a pre-existing non-directory file occupying docs/ is reported as a friendly conflict, not a deep crash (review #2)", () => {
@@ -608,7 +634,8 @@ describe("lore scaffold obsidian — output rendering", () => {
     // prints the notes before or interleaved with the file/summary lines fails this test.
     expect(stdout.lines()).toEqual([
       `created ${OBSIDIAN_APP_JSON_REL_PATH}`,
-      "scaffolded obsidian config (1 file)",
+      `created ${OBSIDIAN_GITIGNORE_REL_PATH}`,
+      "scaffolded obsidian config (2 files)",
       ...OBSIDIAN_GUIDANCE_NOTES,
     ]);
   });
