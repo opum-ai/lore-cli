@@ -55,6 +55,7 @@ import { posix } from "node:path";
 import { LoreError, singleLine } from "../errors";
 import type { BundleGraph } from "./bundle";
 import type { Concept } from "./concept";
+import { encodePathSegments } from "./links";
 import { compareCodeUnits } from "./order";
 
 /** The reserved index file name — the per-directory navigable hub (one per dir, plus the bundle root). */
@@ -432,27 +433,4 @@ function ancestorsInclusive(dir: string): string[] {
   }
   chain.push("");
   return chain;
-}
-
-/**
- * Percent-encode each `/`-separated segment of a relative path for a portable markdown link
- * destination (relative, URL-encoded, `.md`-suffixed, no leading slash — ADR-0010).
- * `encodeURIComponent` leaves `! ' ( ) *` raw, and a raw `)` would truncate the destination on
- * CommonMark/MkDocs, so those five are additionally escaped — matching links.ts's `encodePathSegments`
- * exactly (LORE-28).
- *
- * TODO(LORE-28): once PR #19 lands on `dev`, delete this and import `encodePathSegments` from
- * `./links` so the encoder has a single home and can never drift. Kept as a faithful copy here only
- * because `links.ts` is not yet on `dev` and this module must build off `dev` (LORE-29 branch).
- */
-function encodePathSegments(path: string): string {
-  return path
-    .split("/")
-    .map((segment) => encodeURIComponent(segment).replace(/[!'()*]/g, escapePercent))
-    .join("/");
-}
-
-/** Percent-escape one character left raw by `encodeURIComponent` (`! ' ( ) *`), uppercase hex. */
-function escapePercent(c: string): string {
-  return `%${c.charCodeAt(0).toString(16).toUpperCase()}`;
 }
