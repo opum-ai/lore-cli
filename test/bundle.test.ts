@@ -270,6 +270,34 @@ describe("resolveRef — dir-relative path is tried before the bundle-root id", 
   });
 });
 
+// ── resolveRef: a bare bundle-root id is not shadowed by a mirroring dir (LORE-184) ─
+
+describe("resolveRef — a suffix-less bare id wins over a dir-joined shadow", () => {
+  test("a bare id ref resolves to the bundle-root concept even when a mirroring directory shadows it", () => {
+    // "adr/old" is authored bare (the canonical `lore supersede`/rename form) by a concept
+    // living in "notes/". Dir-joining it against "notes/" lands on "notes/adr/old", which
+    // ALSO happens to be a real concept here (e.g. an archive/ tree mirroring the live one).
+    // The bare id must still win — the shadow must not silently steal the ref.
+    const g = buildGraph([
+      concept("notes/x", "type: ADR\nsupersedes: adr/old"),
+      ref("adr/old"), // the true, intended target of the bare id
+      ref("notes/adr/old"), // the shadow at the dir-joined location
+    ]);
+    expect(edgesFrom(g.edges, "notes/x")).toEqual([
+      { from: "notes/x", to: "adr/old", target: "adr/old", kind: "supersedes" },
+    ]);
+  });
+
+  test("a dir-relative bare id with no root-id match still falls back to the dir-joined concept", () => {
+    // Regression guard: the shape-first classifier must still resolve a bare ref that has
+    // no matching root id but genuinely does dir-join to a real concept.
+    const g = buildGraph([concept("notes/x", "type: ADR\nsupersedes: sibling"), ref("notes/sibling")]);
+    expect(edgesFrom(g.edges, "notes/x")).toEqual([
+      { from: "notes/x", to: "notes/sibling", target: "sibling", kind: "supersedes" },
+    ]);
+  });
+});
+
 // ── Cycle tolerance ──────────────────────────────────────────────────────────────
 
 describe("buildGraph — cycle tolerance", () => {

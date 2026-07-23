@@ -411,18 +411,21 @@ export function conceptNotInBundle(id: string): LoreError {
 /**
  * Resolve a frontmatter concept reference to a concept id, or `null` if it
  * dangles. A ref may be authored as a **bundle-relative id** (how `lore supersede`
- * writes it, e.g. `adr/0009-x`) or as a **relative path** (e.g. `../adr/0009-x.md`);
- * the path form is tried first (joined against the referring file's directory via
- * {@link resolvePath}), and only if that fails to name a concept is the raw ref
- * tried as a bundle-relative id.
- *
- * The path form is tried first because it is the more specific interpretation: it is
- * anchored to *this* referring file's directory, so when it resolves to a real
- * concept that is almost certainly the concept the author meant — even if the same
- * ref string, read bare, also happens to equal some unrelated concept's bundle-root
- * id (LORE-134). The bare-id form is a fallback for exactly the refs that are *not*
- * dir-joinable to anything real, which is what `lore supersede` writes (a full id
- * from the bundle root, not relative to the referring file).
+ * writes it, and what `lore rename`'s rewrite engine (rewrite.ts's `remapRefItem`)
+ * canonicalizes every moved ref to, e.g. `adr/0009-x`) or as a **relative path**
+ * (e.g. `../adr/0009-x.md`). Which interpretation is tried first is decided by the ref's
+ * own **shape** ({@link isPathShapedRef}), not a blanket precedence — trying one
+ * fixed order first for every ref shape cannot be correct for both forms at once
+ * (LORE-184): a bare id is dir-joinable (`resolvePath` will happily join it to
+ * `dir` and `idFromPath` tolerates its missing suffix), so path-first would let a
+ * concept that merely happens to sit at the dir-joined location shadow the bare id
+ * `lore` itself writes; conversely a `.md`-suffixed/`./`-relative ref that
+ * coincidentally also equals some unrelated concept's bundle-root id must not
+ * resolve to that decoy (LORE-134). Shape removes the ambiguity: only a path-shaped
+ * ref is dir-joined first, only a bare ref is looked up as a root id first — each
+ * form still falls back to the other interpretation if its primary one misses, so
+ * a legitimately dir-relative bare ref (or a `.md` ref that happens to equal a root
+ * id with no dir-relative match) still resolves.
  *
  * Unlike a body link ({@link internalTarget}), a ref is **not** required to carry a
  * `.md` suffix — the bare-id form is exactly what lore writes — which is why the
@@ -449,12 +452,37 @@ export function resolveRef(ref: string, dir: string, byId: ReadonlyMap<string, C
   if (decoded === "") {
     return null;
   }
-  const asPath = resolvePath(decoded, dir, byId);
-  if (asPath !== null) {
-    return asPath; // relative-path form, dir-joined — wins over a same-string root id
+  if (isPathShapedRef(decoded)) {
+    const asPath = resolvePath(decoded, dir, byId);
+    if (asPath !== null) {
+      return asPath; // relative-path form, dir-joined — wins over a same-string root id (LORE-134)
+    }
+    const asId = idFromPath(decoded);
+    return byId.has(asId) ? asId : null;
   }
+  // Bare (suffix-less, non-`./`/`../`-prefixed) ref: this is the canonical id form
+  // `lore` itself writes, so try it as a bundle-root id FIRST — a concept that
+  // merely happens to live at the dir-joined location must not shadow it (LORE-184).
   const asId = idFromPath(decoded);
-  return byId.has(asId) ? asId : null; // bundle-relative id form
+  if (byId.has(asId)) {
+    return asId;
+  }
+  return resolvePath(decoded, dir, byId); // fallback: a dir-relative bare ref with no root-id match
+}
+
+/**
+ * Whether a decoded ref string is unambiguously a **path** form — a `.md` suffix
+ * (case-insensitive, matching {@link idFromPath}'s own suffix test) or a `./`/`../`
+ * relative-segment prefix — as opposed to the bare bundle-root **id** form `lore`
+ * itself writes (`adr/0009-x`, no suffix, no leading dot-segment). Every id in
+ * {@link BundleGraph.concepts} is derived through {@link idFromPath}'s
+ * `posix.normalize`, which collapses `..`/`.` segments, so a real id can never
+ * itself start with `./` or `../` — classifying such a ref as path-shaped costs
+ * nothing on the id side and correctly prioritizes the dir-relative interpretation
+ * for the form a human author would actually write that way.
+ */
+function isPathShapedRef(ref: string): boolean {
+  return /\.md$/i.test(ref) || ref.startsWith("./") || ref.startsWith("../");
 }
 
 /**

@@ -176,6 +176,22 @@ describe("rewriteInbound — inbound links and refs (move)", () => {
     // The genuine relative edge to the decoy is correctly repointed.
     expect(body).toContain("[rel](renamed-decoy.md)");
   });
+
+  test("a bare-id frontmatter ref is repointed to the renamed true target, not a mirroring-directory shadow (LORE-184)", () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n"); // the true target
+    // A shadow that sits exactly at the dir-joined path a path-first resolver would (wrongly)
+    // compute for the bare ref "reference/orders" authored from "stories/" (e.g. an archive/
+    // tree mirroring the live one one directory down).
+    writeDoc("stories/reference/orders.md", "---\ntype: Reference\n---\nShadow at the dir-joined path.\n");
+    writeDoc("stories/bulk.md", "---\ntype: Story\nspecs:\n  - reference/orders\n---\nText.\n");
+    const plan = rewriteInbound(graph(), "reference/orders", "reference/sales-orders", { move: true });
+    const body = writesByPath(plan).get("stories/bulk.md") ?? "";
+    // The bare ref names the bundle-root concept, not the shadow — it is repointed.
+    expect(body).toContain("- reference/sales-orders");
+    expect(body).not.toContain("stories/reference/orders");
+    // The shadow itself is untouched — it was never part of this rename.
+    expect(writesByPath(plan).has("stories/reference/orders.md")).toBe(false);
+  });
 });
 
 // ── core: rewriteInbound — the moved file's own links ─────────────────────────────

@@ -3,9 +3,11 @@ id: LORE-184
 title: >-
   resolveRef path-first precedence lets a mirroring directory shadow lore's own
   canonical bare-id refs (rewrite/supersede/rename)
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-22 20:02'
+updated_date: '2026-07-23 04:07'
 labels:
   - codex-review-followup
   - core-bundle-check
@@ -33,8 +35,26 @@ Files: src/core/bundle.ts (resolveRef/resolvePath ~438-490, idFromPath), src/cor
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 resolveRef resolves a suffix-less bare bundle-root id to that root id even when a shadow concept at <dir>/<id> exists (no silent dir-join shadowing of lore's own written refs)
-- [ ] #2 LORE-134's original fix still holds: a '.md'-suffixed or './'-prefixed relative ref that dir-joins to a real concept still resolves to the dir-relative target, not a coincidental root id
-- [ ] #3 lore rename of a referring file no longer rewrites a canonical bare-id ref to a shadow concept's id (consequence (c) above cannot reproduce); regression test added
-- [ ] #4 supersede dedup and rename inbound-repointing behave correctly in the presence of a mirroring/shadow directory; regression tests cover the shadow scenario
+- [x] #1 resolveRef resolves a suffix-less bare bundle-root id to that root id even when a shadow concept at <dir>/<id> exists (no silent dir-join shadowing of lore's own written refs)
+- [x] #2 LORE-134's original fix still holds: a '.md'-suffixed or './'-prefixed relative ref that dir-joins to a real concept still resolves to the dir-relative target, not a coincidental root id
+- [x] #3 lore rename of a referring file no longer rewrites a canonical bare-id ref to a shadow concept's id (consequence (c) above cannot reproduce); regression test added
+- [x] #4 supersede dedup and rename inbound-repointing behave correctly in the presence of a mirroring/shadow directory; regression tests cover the shadow scenario
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. In src/core/bundle.ts, replace resolveRef's blanket path-first precedence with a shape-based classifier: add isPathShapedRef(ref) = ref ends with .md (case-insensitive) OR starts with './' or '../'. 2. If path-shaped: try resolvePath (dir-join) first, fall back to bundle-root id (preserves LORE-134). 3. If bare (id-shaped): try bundle-root id first via idFromPath, fall back to resolvePath dir-join (fixes LORE-184 — a bare canonical id like lore supersede/rename writes is no longer shadowed by a same-relative-path concept). 4. rewrite.ts's remapRefItem and supersede.ts's appendSupersedes both call resolveRef directly, so no code changes needed there — only add regression tests to their test files. 5. Add regression tests: test/bundle.test.ts (resolveRef unit-level shadow case + dir-relative-bare-id fallback case), test/rename.test.ts (rename of a referring file no longer rewrites a canonical bare-id ref to a shadow's id), test/supersede.test.ts (dedup check not fooled by a shadow). 6. Mutation-check via git diff/apply -R (not stash) on bundle.ts alone: confirm all 3 new tests fail pre-fix, pass post-fix. 7. bun test + bun run typecheck full green.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Root cause confirmed: resolveRef's blanket path-first precedence (LORE-134) let resolvePath's dir-join steal a suffix-less bare bundle-root id (the exact form lore supersede writes and rewrite.ts's remapRefItem canonicalizes to) whenever a same-relative-path concept existed. Fix: classify the ref by shape (isPathShapedRef — .md suffix or ./../ prefix = path form, tried dir-join-first; else = bare id form, tried root-id-first), each falling back to the other interpretation on miss. Verified via mutation-check: reverted bundle.ts only (git diff -- src/core/bundle.ts > patch; git apply -R patch), reran the 3 new regression tests — all 3 FAILED reproducing consequences (a)/(b) graph-edge-shadowed, (c) rename-corrupts-referring-ref, (d) supersede-dedup-miss exactly as described in the task repro; re-applied the patch (git apply patch), all 3 PASS. Full suite: bun test = 1876 pass / 0 fail (5283 expect calls, 47 files); bun run typecheck clean. Edits confined to src/core/bundle.ts (resolveRef + new isPathShapedRef helper), test/bundle.test.ts, test/rename.test.ts, test/supersede.test.ts — no changes needed in rewrite.ts or supersede.ts source since both already funnel through bundle.ts's resolveRef. Task marked Done.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Fixed resolveRef (src/core/bundle.ts) to disambiguate frontmatter-ref precedence by ref SHAPE instead of a blanket path-first order: a .md-suffixed or ./../-prefixed ref is path-shaped (dir-join tried first, LORE-134 preserved); a suffix-less bare ref (the canonical form lore supersede writes and rewrite.ts canonicalizes moved refs to) is id-shaped (bundle-root id tried first), each falling back to the other form on a miss. This stops a mirroring/shadow directory from silently stealing lore's own canonical bare-id refs in the graph, lore rename's inbound repointing, and lore supersede's dedup check. rewrite.ts and supersede.ts needed no source changes (both already call resolveRef directly) — only new regression tests. Verified: 3 new regression tests (test/bundle.test.ts, test/rename.test.ts, test/supersede.test.ts) reproduce the exact shadow scenario from the task repro; mutation-checked by reverting only src/core/bundle.ts via git diff/apply -R (no stash) — all 3 failed pre-fix, all 3 passed post-fix. Full suite green: bun test = 1876 pass/0 fail; bun run typecheck clean.
+<!-- SECTION:FINAL_SUMMARY:END -->

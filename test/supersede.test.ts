@@ -131,6 +131,22 @@ describe("lore supersede — supersedes append (don't clobber)", () => {
     expect(report.files.map((f) => f.path)).toEqual(["docs/adr/0007-old.md"]);
     expect(report.filesChanged).toBe(1);
   });
+
+  test("does not duplicate an old id already referenced bare, even when a mirroring directory shadows it (LORE-184)", () => {
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n"); // the true target
+    // A shadow sitting exactly at the dir-joined path a path-first resolver would (wrongly)
+    // compute for the bare ref "adr/0007-old" authored from "adr/" itself.
+    writeDoc("adr/adr/0007-old.md", "---\ntype: ADR\n---\nShadow at the dir-joined path.\n");
+    // the new doc already references the old one in the canonical bare-id form
+    const newBytes = "---\ntype: ADR\nsupersedes: adr/0007-old\n---\nNew.\n";
+    writeDoc("adr/0012-new.md", newBytes);
+    const { report } = supersedeCmd(["adr/0007-old", "adr/0012-new"]);
+    // The bare ref already names the true old concept — wireNew must recognize that (not the
+    // shadow) and treat this as a no-op, not append a duplicate "adr/0007-old" entry.
+    expect(readDoc("adr/0012-new.md")).toBe(newBytes); // byte-identical, not even re-canonicalized
+    expect(report.files.map((f) => f.path)).toEqual(["docs/adr/0007-old.md"]);
+    expect(report.filesChanged).toBe(1);
+  });
 });
 
 // ── AC#2: --rewrite-links repoints inbound references to the successor ─────────────
