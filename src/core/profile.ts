@@ -87,7 +87,15 @@ export interface FieldSpec {
   readonly enum?: readonly string[];
   /** For a `list`, the element kind/enum (default: string elements; no nested lists). */
   readonly items?: { readonly kind: ScalarKind; readonly enum?: readonly string[] };
-  /** Editor-advertised default surfaced in the JSON Schema — **never** stamped onto a concept (byte-stability). */
+  /**
+   * Editor-advertised default surfaced in the JSON Schema — **never** stamped onto a concept
+   * (byte-stability). Validated at PARSE time ({@link assertDefaultMatchesShape}, LORE-242)
+   * against this same spec's `kind`/`enum`/`items` — a `default` that contradicts its own
+   * field's declared shape is a load-time `validation` error, not a silently-emitted lie in the
+   * editor schema. For a `list` field the whole-list shape is checked (an array whose elements
+   * satisfy `items`), not merely "is it an array" — the same {@link baseKindToZod} an element/
+   * scalar field's own default is checked against, so list and scalar defaults share one rule.
+   */
   readonly default?: unknown;
 }
 
@@ -542,6 +550,7 @@ function parseFieldSpec(raw: unknown, where: string, source: string): FieldSpec 
     spec.items = parseItems(table.items, `${where}.items`, source);
   }
   if ("default" in table) {
+    assertDefaultMatchesShape(spec as FieldSpec, table.default, where, source);
     spec.default = table.default;
   }
   return spec;
@@ -563,6 +572,35 @@ function assertNonEmptyEnum(enumValues: readonly string[] | undefined, where: st
       `${source}: ${where}.enum must not be empty`,
       `declare at least one allowed value for ${where}.enum, or remove the enum attribute`,
       { key: `${where}.enum` },
+    );
+  }
+}
+
+/**
+ * Reject a `default` attribute whose value contradicts the field's own declared `kind`/`enum`/
+ * `items` shape (LORE-242) — same class of author-mistake cross-check as
+ * {@link assertNonEmptyEnum}, the enum-implies-kind-"string" check, and
+ * {@link assertTemplateConfined}, each raising a `validation` {@link LoreError} that names the
+ * offending field. Without this, `{ kind = "integer", default = "x" }` or
+ * `{ enum = ["red","green"], default = "purple" }` loaded clean and `buildJsonSchema` emitted the
+ * bad `default` verbatim into the editor-facing JSON Schema — an internally-inconsistent schema
+ * that misleads autocompletion.
+ *
+ * Judges the default with {@link baseKindToZod} — the SAME kind→Zod predicates
+ * {@link buildJsonSchema}'s emitted `type`/`enum`/`items` ultimately derive from (via
+ * `z.toJSONSchema`) — rather than a second, hand-rolled kind→JS-type mapping that could drift
+ * from it. This one call also covers AC#4 for free: `baseKindToZod` returns `z.array(itemToZod(…))`
+ * for a `kind: "list"` field, so a list's `default` is validated as a WHOLE LIST (every element
+ * checked against `items`), not merely checked for being an array.
+ */
+function assertDefaultMatchesShape(spec: FieldSpec, defaultValue: unknown, where: string, source: string): void {
+  const result = baseKindToZod(spec).safeParse(defaultValue);
+  if (!result.success) {
+    const shape = spec.enum !== undefined ? "enum" : spec.kind;
+    fail(
+      `${source}: ${where}.default (${JSON.stringify(defaultValue)}) does not match its declared ${shape}`,
+      `set ${where}.default to a value valid for its ${shape}, or remove the default attribute`,
+      { key: `${where}.default` },
     );
   }
 }
