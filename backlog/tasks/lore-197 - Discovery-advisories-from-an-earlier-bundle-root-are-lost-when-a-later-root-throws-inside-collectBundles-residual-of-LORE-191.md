@@ -3,9 +3,11 @@ id: LORE-197
 title: >-
   Discovery advisories from an earlier bundle root are lost when a later root
   throws inside collectBundles (residual of LORE-191)
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@sonnet-worker'
 created_date: '2026-07-23 14:08'
+updated_date: '2026-07-23 19:18'
 labels:
   - cmd-check
   - codex-review-followup
@@ -44,7 +46,25 @@ Wave-16 integration-review follow-up of **LORE-191** (Done). LORE-191 strictly s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Advisories collected from an EARLIER bundle root survive a throw raised while processing a LATER root inside collectBundles (surfaced to the user on stderr, not silently dropped); the original throw still propagates through the router's one error seam with its unchanged exit code (e.g. exit 3 for a not_found bundle root).
-- [ ] #2 A regression test in test/check.test.ts simulates a multi-root scan where an earlier root produces a discovery advisory (e.g. a skipped symlink) and a later root throws (e.g. a nonexistent bundle root -> not_found), asserting runCheck still throws that error AND the earlier root's advisory is present on stderr.
-- [ ] #3 Existing single-root behavior is unchanged: the advisory collector is still flushed exactly once (no double-flush / no re-emitted lines, since WarningCollector.flush is non-draining), and the LORE-191 single-root scan-phase-throw regression plus the clean-bundle no-advisory-noise tests still pass.
+- [x] #1 Advisories collected from an EARLIER bundle root survive a throw raised while processing a LATER root inside collectBundles (surfaced to the user on stderr, not silently dropped); the original throw still propagates through the router's one error seam with its unchanged exit code (e.g. exit 3 for a not_found bundle root).
+- [x] #2 A regression test in test/check.test.ts simulates a multi-root scan where an earlier root produces a discovery advisory (e.g. a skipped symlink) and a later root throws (e.g. a nonexistent bundle root -> not_found), asserting runCheck still throws that error AND the earlier root's advisory is present on stderr.
+- [x] #3 Existing single-root behavior is unchanged: the advisory collector is still flushed exactly once (no double-flush / no re-emitted lines, since WarningCollector.flush is non-draining), and the LORE-191 single-root scan-phase-throw regression plus the clean-bundle no-advisory-noise tests still pass.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Wrap the collectBundles(...) call + the single advisories.flush(...) in runCheck (src/commands/check.ts) in try { ... } finally { advisories.flush(...) } (shape (a) from the task). This keeps the flush the ONLY flush site (no second/re-emitting flush) while guaranteeing it runs on both the normal return path and any throw path out of collectBundles (a later root's not_found/denied/usage failure, or a late readSource throw), so an earlier root's already-collected advisories are never silently dropped when a later root fails. Add a regression test in test/check.test.ts: two roots, an earlier real root with a symlinked file (produces a skipped-symlink advisory) and a later nonexistent root (not_found), asserting runCheck still throws that LoreError (type not_found, unchanged exit code 3) AND the earlier root's advisory is present on stderr exactly once. Re-run the existing LORE-191 scan-phase-throw test and the clean-bundle no-advisory-noise test to confirm single-root behavior (flush exactly once) is unchanged.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented shape (a): in runCheck, collectBundles(...) is now called inside try { bundles = collectBundles(...) } finally { advisories.flush(...) }, so the single, non-draining flush runs on both the return path and any throw path out of collectBundles. No second flush site was added. Verified with: full 'bun test' = 1960 pass / 0 fail (bun test v1.2.23); 'bun run typecheck' clean (tsc --noEmit, no output); 'bunx biome check src/commands/check.ts test/check.test.ts' = Checked 2 files, no fixes applied (no new lint issues on the changed files). Targeted evidence: new test 'discovery advisories from an earlier root survive a later root's throw inside collectBundles (LORE-197 regression)' passes — asserts the thrown LoreError has type 'not_found' (unchanged exit code 3) and the earlier root's symlink advisory appears on stderr exactly once. Re-ran in isolation and confirmed still green: 'discovery advisories survive a scan-phase throw in checkBundles (LORE-191 regression)', 'a frontmatter-free doc produces no advisory noise (LORE-27 regression)', and 'skips a symlinked file with an advisory (does not follow it), emitted exactly once' (single-root flush-exactly-once guard).
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Fixed the discovery-advisory loss window inside collectBundles: in runCheck (src/commands/check.ts), the collectBundles(...) call and its single advisories.flush(...) are now wrapped in try { ... } finally { advisories.flush(...) }, so the one non-draining flush runs whether collectBundles returns normally OR throws (a later bundle root's not_found/denied/usage failure, or a late readSource throw). An earlier root's already-collected advisories (e.g. a skipped symlink) can no longer be silently dropped by a later root's throw, and the throw still propagates unchanged through the router's one error seam with its original exit code. No second flush site was introduced. Added a regression test in test/check.test.ts covering a two-root scan where the earlier root produces a symlink advisory and the later (nonexistent) root throws not_found, asserting both the LoreError (type + message) and the surviving, exactly-once advisory line on stderr. Verified: full 'bun test' = 1960 pass / 0 fail; 'bun run typecheck' clean; 'bunx biome check' clean on both changed files; the pre-existing LORE-191 scan-phase-throw regression, the clean-bundle no-advisory-noise test, and the single-root emitted-exactly-once test all still pass, confirming single-root behavior (exactly one flush) is unchanged.
+<!-- SECTION:FINAL_SUMMARY:END -->
