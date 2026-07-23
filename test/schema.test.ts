@@ -238,6 +238,18 @@ describe("schema — the warning tier (never throws)", () => {
     expect(warnings.list().some((w) => w.includes("250 chars"))).toBe(true);
   });
 
+  test("a summary of 150 non-BMP emoji (300 UTF-16 code units, 150 code points) does not warn", () => {
+    const warnings = new WarningCollector();
+    validateFrontmatter({ type: "Reference", summary: "😀".repeat(150) }, { warnings });
+    expect(warnings.list().some((w) => w.includes("chars"))).toBe(false);
+  });
+
+  test("a summary of 250 non-BMP emoji (250 code points) warns and reports 250 chars, not 500", () => {
+    const warnings = new WarningCollector();
+    validateFrontmatter({ type: "Reference", summary: "😀".repeat(250) }, { warnings });
+    expect(warnings.list().some((w) => w.includes("250 chars"))).toBe(true);
+  });
+
   test("warnings are dropped silently when no collector is passed (core stays pure)", () => {
     expect(() => validateFrontmatter({ type: "Glossary", extra: 1 })).not.toThrow();
   });
