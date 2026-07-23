@@ -3,7 +3,7 @@ id: doc-4
 title: Backlog campaign tracker — Codex review follow-ups (round 3)
 type: other
 created_date: '2026-07-23 16:05'
-updated_date: '2026-07-23 17:02'
+updated_date: '2026-07-23 17:05'
 ---
 Round 3 of the Codex-review follow-up campaign (see [[Backlog campaign tracker — Codex review follow-ups (round 2)]] / doc-3 for round 2, LORE-96..194, which closed all 78 medium findings; doc-1 for round 1, LORE-69..95, all 20 high). This round covers the **low-severity** findings from doc-2 ("Codex second-opinion review — lore codebase (2026-07-20)").
 
@@ -37,7 +37,7 @@ The "ready now" set is **always recomputed live** from `backlog/tasks/*.md` + th
 | 2 | LORE-199 | cmd-check | — | Done | 19 | docs. Correct check's cli-surface docs: it does not surface token estimates. [docs/reference/cli-surface.md] |
 | 3 | LORE-200 | core-engine-b | — | Done | 19 | docs. Correct GraphNode.title JSDoc to reflect frontmatterScalar's number/boolean coercion. [src/core/graph.ts] |
 | 4 | LORE-201 | core-engine-b | — | Done | 20 | docs. Fix the `validation` instructions topic's overstated colon quote-safety claim and add a regression test. [src/core/instructions.ts] |
-| 5 | LORE-202 | core-engine-b | — | To Do | — | docs. Correct order.ts module-doc rationale: default Array.prototype.sort is code-unit-ordered and stable, not locale/engine-dependent. [src/core/order.ts] |
+| 5 | LORE-202 | core-engine-b | — | Dispatched | 21 | docs. Correct order.ts module-doc rationale: default Array.prototype.sort is code-unit-ordered and stable, not locale/engine-dependent. [src/core/order.ts] |
 | 6 | LORE-203 | core-index-context | — | Done | 20 | docs. Clarify `lore context` --max-tokens docs: omitting it applies no token cap (bounded only by --depth). [src/core/context.ts] |
 | 7 | LORE-204 | build-ci-config | — | Done | 19 | chore. release.yml: assert the compiled binary --version matches package.json exactly, not just non-empty (mirror ci.yml). [.github/workflows/release.yml] |
 | 8 | LORE-205 | build-ci-config | — | Done | 20 | chore. Test fakes dirtyGitSpawn/failingCommitGitSpawn: dispatch the dirty status on the git subcommand, not on call index. [test/helpers.ts] |
@@ -45,13 +45,13 @@ The "ready now" set is **always recomputed live** from `backlog/tasks/*.md` + th
 | 10 | LORE-207 | cmd-check | — | Done | 20 | chore. Release the response body in check's --external liveness fetch. [src/commands/check.ts] |
 | 11 | LORE-208 | cmd-meta-d | — | Done | 19 | chore. Export InstructionsData and drop the duplicated test-side declaration. [src/commands/instructions.ts] |
 | 12 | LORE-209 | cmd-rename-supersede | — | Done | 19 | chore. Correct the inaccurate comment and strengthen rename's "never constructs a Backlog adapter" test. [test/rename.test.ts] |
-| 13 | LORE-210 | core-index-context | — | To Do | — | chore. Remove indexes.ts's duplicate encodePathSegments; import the canonical encoder from links.ts (LORE-28 landed). [src/core/indexes.ts] |
+| 13 | LORE-210 | core-index-context | — | Dispatched | 21 | chore. Remove indexes.ts's duplicate encodePathSegments; import the canonical encoder from links.ts (LORE-28 landed). [src/core/indexes.ts] |
 | 14 | LORE-195 | cmd-crud-b/tooling | — | Done | 20 | chore. Restore biome lint baseline to green (biome check . -> 0 errors/0 infos). Filed 2026-07-23. [test/context.test.ts, test/replace.test.ts, test/validate.test.ts, src/core/managed-block.ts] |
 | 15 | LORE-211 | cmd-meta-a | — | Done | 20 | task. Strengthen the tasks drift test: mix a dangling id with a failing read and assert empty streams. [test/tasks.test.ts] |
-| 16 | LORE-212 | cmd-meta-d | — | To Do | — | task. Strengthen validate's realpath de-dup test with a genuine symlink alias. [test/validate.test.ts] |
-| 17 | LORE-213 | core-concept-manifest | — | To Do | — | task. Guard manifest `kind` against drift from each command's emitted `kind:`. [test/help.test.ts] |
-| 18 | LORE-214 | core-managed-template | — | To Do | — | task. Cover edge-case resource bases (and the new-path section boundary) in template.test.ts. [test/template.test.ts] |
-| 19 | LORE-215 | core-replace | — | To Do | — | task. Scope replace.test.ts temp-dir hooks to the command suites and guard their cleanup. [test/replace.test.ts] |
+| 16 | LORE-212 | cmd-meta-d | — | Dispatched | 21 | task. Strengthen validate's realpath de-dup test with a genuine symlink alias. [test/validate.test.ts] |
+| 17 | LORE-213 | core-concept-manifest | — | Dispatched | 21 | task. Guard manifest `kind` against drift from each command's emitted `kind:`. [test/help.test.ts] |
+| 18 | LORE-214 | core-managed-template | — | Dispatched | 21 | task. Cover edge-case resource bases (and the new-path section boundary) in template.test.ts. [test/template.test.ts] |
+| 19 | LORE-215 | core-replace | — | Dispatched | 21 | task. Scope replace.test.ts temp-dir hooks to the command suites and guard their cleanup. [test/replace.test.ts] |
 | 20 | LORE-216 | errors-output-git | — | To Do | — | task. Replace tautological tasks/orphans byte-identity test with one exercising both command render paths. [test/output.test.ts] |
 | 21 | LORE-217 | adapter-backlog | — | To Do | — | enhancement. Bound the real backlog subprocess spawn (bunBacklogSpawn) with a timeout. [src/adapters/backlog.ts] |
 | 22 | LORE-218 | adapter-backlog | — | To Do | — | enhancement. Remove the lone `this` binding in the backlog adapter's searchByLabel. [src/adapters/backlog.ts] |

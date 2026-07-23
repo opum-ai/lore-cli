@@ -3,9 +3,11 @@ id: LORE-206
 title: >-
   Make scripted git-spawn test fakes dispatch by observed command, not call
   index
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@orchestrator'
 created_date: '2026-07-23 16:04'
+updated_date: '2026-07-23 17:05'
 labels:
   - build-runtime
   - codex-review-followup
@@ -24,8 +26,20 @@ In test/helpers.ts, the scripted GitSpawn fakes choose their response by call nu
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `dirtyGitSpawn` and `failingCommitGitSpawn` return the injected porcelain entry when the observed command is the `git status` read (keyed on the args, e.g. `args[0] === "status"`), not on a `call === 2` counter.
-- [ ] #2 `failingCommitGitSpawn` fails only the `commit` call (`args[0] === "commit"`) and returns exit-0 for every other observed command (rev-parse, status returns the porcelain, add).
-- [ ] #3 `cleanGitSpawn` is left unchanged (it already answers every call uniformly and does not dispatch by index).
-- [ ] #4 The full `bun test` suite passes — in particular the only three suites that inject these shared fakes and assert on `.calls`: test/sync.test.ts, test/link.test.ts, and test/rename.test.ts (test/state.test.ts is unaffected, as it uses its own local scriptedSpawn).
+- [x] #1 `dirtyGitSpawn` and `failingCommitGitSpawn` return the injected porcelain entry when the observed command is the `git status` read (keyed on the args, e.g. `args[0] === "status"`), not on a `call === 2` counter.
+- [x] #2 `failingCommitGitSpawn` fails only the `commit` call (`args[0] === "commit"`) and returns exit-0 for every other observed command (rev-parse, status returns the porcelain, add).
+- [x] #3 `cleanGitSpawn` is left unchanged (it already answers every call uniformly and does not dispatch by index).
+- [x] #4 The full `bun test` suite passes — in particular the only three suites that inject these shared fakes and assert on `.calls`: test/sync.test.ts, test/link.test.ts, and test/rename.test.ts (test/state.test.ts is unaffected, as it uses its own local scriptedSpawn).
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Reconciled Done as a DUPLICATE finding. LORE-206 (build-runtime finding [2]) and LORE-205 (build-ci-config finding) describe the SAME issue in the SAME two fakes in test/helpers.ts. LORE-205 merged in wave 20 (PR#195, commit 1cc7275) already implemented exactly this: dirtyGitSpawn returns the porcelain on args[0]==='status' (test/helpers.ts:69), failingCommitGitSpawn returns porcelain on args[0]==='status' and fails only args[0]==='commit' (test/helpers.ts:85-86), cleanGitSpawn left unchanged, and the full suite (incl. sync/link/rename consumers) is green at 1917 pass on dev. All 4 ACs verified satisfied on dev @ 3e31292; no separate code change needed.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Duplicate of LORE-205; resolved-by-merge in wave 20 (PR#195, 1cc7275). test/helpers.ts already dispatches dirtyGitSpawn/failingCommitGitSpawn on the observed git subcommand, not call index; cleanGitSpawn unchanged; suite green. No separate change.
+<!-- SECTION:FINAL_SUMMARY:END -->
