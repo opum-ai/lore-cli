@@ -62,6 +62,22 @@ describe("resolveHeadSha", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test("regression: LORE-170 — throws (does NOT return null) when .git/HEAD is corrupted inside an otherwise-valid .git directory", () => {
+    // Corrupt `HEAD` with a syntactically invalid ref name (`..` is disallowed by
+    // git-check-ref-format) — this is the exact fingerprint the previous `git rev-parse --git-dir`
+    // disambiguator could not tell apart from a genuine unborn branch: `--git-dir` still succeeds
+    // (the `.git` directory itself is entirely intact and readable) even though `HEAD` cannot
+    // resolve, so the old check misclassified this corruption as "real repo, no commits yet" and
+    // returned null instead of failing loud, contradicting this function's own documented contract.
+    const root = freshRepo();
+    try {
+      writeFileSync(join(root, ".git", "HEAD"), "ref: refs/heads/..bad..name\n");
+      expect(() => resolveHeadSha(root)).toThrow(LoreError);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("realGitAdapter — history()", () => {
