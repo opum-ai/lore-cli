@@ -672,13 +672,16 @@ interface Detector {
  *
  * The patterns are tuned to flag the real syntax without crying wolf on ordinary prose:
  * wikilinks/embeds (`[[…]]`/`![[…]]`), highlights (`==…==`), and `%%`-comments are
- * distinctive enough to match anywhere in a text node, but a **callout** (`[!type]`) is only
- * a callout at the **start** of a blockquote line, so its pattern is anchored to the start of
- * the text node — a literal `[!important]` mid-sentence is left alone (it renders portably). (The
- * Obsidian **block-reference** `^id`, the MDX raw-`<`/`{` hazard, and the `_`-prefix/`.mdx`
- * filename rules are handled separately — {@link blockReferenceFinding}, {@link mdxHazardFindings},
- * and the command layer — not as body-text regexes, because each needs structural context a
- * per-text-node regex cannot see.)
+ * distinctive enough to match anywhere in a text node. A **callout** (`[!type]`) is *not*
+ * in this list — unlike those, it is only a callout at the structural **start of a
+ * blockquote**, not merely at the start of some text node (inline formatting earlier in an
+ * ordinary paragraph — `ordinary **bold** [!note] prose` — splits the paragraph so `[!note]`
+ * would start a later text node and a per-text-node regex would wrongly flag it, LORE-239) —
+ * so it is judged structurally by {@link calloutFinding} instead, the same way the Obsidian
+ * **block-reference** `^id`, the MDX raw-`<`/`{` hazard, and the `_`-prefix/`.mdx` filename
+ * rules are handled separately — {@link blockReferenceFinding}, {@link mdxHazardFindings}, and
+ * the command layer — not as body-text regexes, because each needs structural context a
+ * per-text-node regex cannot see.
  */
 const DETECTORS: readonly Detector[] = [
   {
@@ -688,12 +691,6 @@ const DETECTORS: readonly Detector[] = [
       m[1] === "!"
         ? `non-portable embed "${m[0]}"; use a normal markdown link or image (renders literally off Obsidian)`
         : `non-portable wikilink "${m[0]}"; use the relative .md link form (renders literally off Obsidian)`,
-  },
-  {
-    // Anchored to the start of the text node: a real callout is `> [!type]`, where the
-    // blockquote marker is stripped and the paragraph's first text starts with `[!type]`.
-    re: /^\s*\[!([A-Za-z][\w-]*)\]/g,
-    describe: (m) => `non-portable callout "[!${m[1]}]"; GitHub shows it as a plain blockquote with literal text`,
   },
   {
     re: /==[^=\n]+==/g,
@@ -716,12 +713,20 @@ const DETECTORS: readonly Detector[] = [
 const BLOCK_REFERENCE = /(?:^|\s)\^([A-Za-z0-9][A-Za-z0-9-]*)$/;
 
 /**
+ * An Obsidian callout marker `[!type]`, matched only when it **leads a blockquote paragraph**
+ * (see {@link calloutFinding}) — the structural position Obsidian requires for `> [!type]` to
+ * render as a callout rather than a plain blockquote. Optional leading whitespace tolerates a
+ * blockquote line like `>  [!note]` (extra space after the `>` marker).
+ */
+const CALLOUT = /^\s*\[!([A-Za-z][\w-]*)\]/;
+
+/**
  * The portability warnings for a body's prose: the {@link DETECTORS Obsidian-ism detectors} plus
- * the {@link mdxHazardFindings MDX-safety} scan, over the parsed tree. The Obsidian detectors run
- * over **text nodes only** — scanning text (never `inlineCode`/`code`) excludes fenced and inline
- * code for free, so a `[[x]]` inside a code span is correctly left alone — while the MDX scan also
- * inspects raw-`html` nodes (the form CommonMark pulls a `<tag>` out of the text as), skipping
- * HTML comments.
+ * the {@link calloutFinding callout} and {@link mdxHazardFindings MDX-safety} scans, over the
+ * parsed tree. The Obsidian detectors run over **text nodes only** — scanning text (never
+ * `inlineCode`/`code`) excludes fenced and inline code for free, so a `[[x]]` inside a code span
+ * is correctly left alone — while the MDX scan also inspects raw-`html` nodes (the form
+ * CommonMark pulls a `<tag>` out of the text as), skipping HTML comments.
  */
 function portabilityScan(tree: Nodes, file: string): CheckFinding[] {
   const findings: CheckFinding[] = [];
@@ -737,6 +742,7 @@ function portabilityScan(tree: Nodes, file: string): CheckFinding[] {
       }
     }
     findings.push(...blockReferenceFinding(node, file));
+    findings.push(...calloutFinding(node, file));
     findings.push(...mdxHazardFindings(node, file));
   });
   return findings;
@@ -768,6 +774,46 @@ function blockReferenceFinding(node: Nodes, file: string): CheckFinding[] {
       rule: "portability",
       file,
       message: `non-portable Obsidian block reference "^${match[1]}"; renders literally off Obsidian — link to a heading anchor instead`,
+    },
+  ];
+}
+
+/**
+ * The Obsidian callout warning for a block, judged from a **blockquote's first child**
+ * ({@link CALLOUT}) — mirroring {@link blockReferenceFinding}'s structural approach — so
+ * `[!type]` is only flagged when it genuinely **leads a blockquote**, the position Obsidian
+ * requires for `> [!type]` to render as a callout, never merely because it starts some
+ * arbitrary text node. Only a `blockquote` is inspected, and only when its first child is a
+ * `paragraph` whose own first child is a text node starting with `[!type]`. This is why inline
+ * formatting earlier in an *ordinary* (non-blockquote) paragraph — `ordinary **bold** [!note]
+ * prose` — is not a false positive even though mdast splits that paragraph into a `strong` node
+ * followed by a text node starting with `[!note]` (LORE-239): the paragraph is never a
+ * blockquote's first child, so it's never inspected here at all. A blockquote-leading `[!type]`
+ * followed by more content on the same line (`> [!note] more text`) is still flagged, since only
+ * the paragraph's *first* child needs to start with the marker.
+ */
+function calloutFinding(node: Nodes, file: string): CheckFinding[] {
+  if (node.type !== "blockquote") {
+    return [];
+  }
+  const firstBlock = node.children[0];
+  if (firstBlock?.type !== "paragraph") {
+    return [];
+  }
+  const firstInline = firstBlock.children[0];
+  if (firstInline?.type !== "text") {
+    return [];
+  }
+  const match = CALLOUT.exec(firstInline.value);
+  if (match === null) {
+    return [];
+  }
+  return [
+    {
+      severity: "warning",
+      rule: "portability",
+      file,
+      message: `non-portable callout "[!${match[1]}]"; GitHub shows it as a plain blockquote with literal text`,
     },
   ];
 }
