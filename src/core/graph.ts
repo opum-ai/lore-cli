@@ -25,7 +25,11 @@ export interface GraphNode {
   readonly id: string;
   /** The concept's resolved `type` (mirrors `frontmatter.type`). */
   readonly type: string;
-  /** The concept's `title` frontmatter, when present and a string; omitted otherwise. */
+  /**
+   * The concept's optional `title` frontmatter, via {@link frontmatterScalar}: a
+   * finite number or boolean value is coerced to its string form, and the field
+   * is omitted only for a missing/empty/whitespace/non-scalar value.
+   */
   readonly title?: string;
   /** This concept's chars/4 token estimate over its canonical serialized bytes. */
   readonly tokenEstimate: number;
