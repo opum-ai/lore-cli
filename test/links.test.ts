@@ -251,6 +251,34 @@ describe("validateLink — dotfile and directory links", () => {
   test("a /-absolute directory link is both leading-slash and directory-link", () => {
     expect(issues("/reference/").sort()).toEqual(["directory-link", "leading-slash"]);
   });
+
+  test("flags a bare '.' destination as a directory link, not exempted as a dotfile", () => {
+    expect(validateLink(".")).not.toEqual([]);
+    expect(issues(".")).toEqual(["directory-link"]);
+  });
+
+  test("flags a bare '..' destination as a directory link, not exempted as a dotfile", () => {
+    expect(validateLink("..")).not.toEqual([]);
+    expect(issues("..")).toEqual(["directory-link"]);
+  });
+
+  test.each([
+    "../..",
+    "foo/..",
+    "foo/.",
+  ])("flags a destination whose final segment is bare '.'/'..' navigation (%s)", (target) => {
+    expect(validateLink(target)).not.toEqual([]);
+    expect(issues(target)).toEqual(["directory-link"]);
+  });
+
+  test("still does NOT flag a genuine dotfile link (../config/.gitignore) — dotfile exemption intact", () => {
+    expect(validateLink("../config/.gitignore")).toEqual([]);
+  });
+
+  test("still does NOT flag a canonical .md link or a recognized asset link", () => {
+    expect(validateLink("../reference/orders.md")).toEqual([]);
+    expect(validateLink("../img/x.png")).toEqual([]);
+  });
 });
 
 describe("validateLink — destination-breaking chars in the fragment/query", () => {
