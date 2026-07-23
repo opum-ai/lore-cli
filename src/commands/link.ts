@@ -360,8 +360,11 @@ async function removeBackRefs(
   readonly outcomes: readonly PromiseSettledResult<"removed" | "already-absent" | "skipped">[];
   readonly editedFiles: readonly string[];
 }> {
-  // The task files actually edited, for the caller's scoped commit — populated only after a
-  // successful `editTask`, so a skip/no-op contributes nothing (mirrors runLink's editedFiles).
+  // The candidate task files for the caller's scoped commit — populated after either a successful
+  // `editTask`, or an "already-absent" no-edit outcome whose file might still carry a prior run's
+  // uncommitted drift (LORE-121's pattern, applied here per LORE-179); either way,
+  // `commitBacklogFiles`'s own `git status` (scoped to exactly these paths) is what decides which
+  // of them, if any, are actually dirty and worth staging (mirrors runLink's editedFiles).
   const editedFiles: string[] = [];
   const outcomes = await runSequentially(taskIds, async (taskId) => {
     // `verifiedViewTask` (LORE-177) refuses a detail whose own `id` doesn't match `taskId` — never
@@ -379,6 +382,17 @@ async function removeBackRefs(
     // case-collide, so a case-insensitive match here can't strip a different concept's real entry.
     const hadDoc = containsCaseInsensitive(detail.documentation, docPath);
     if (!hadLabel && !hadDoc) {
+      // Neither the label nor the doc entry is present, so there is no Backlog edit to make — but
+      // the task's file can still be dirty and uncommitted on disk if a PRIOR `lore unlink` run
+      // already applied this exact removal and then its own `commitBacklogFiles` call failed (e.g.
+      // a rejected pre-commit hook — LORE-121's pattern, LORE-179). Recording the path here, even
+      // though this run makes no edit, lets `commitBacklogFiles`'s own `git status` (scoped to
+      // exactly this path) decide whether there is real drift to stage and commit: a clean file
+      // reports nothing dirty and stays a true no-op (AC#3), while a dirty one gets picked up and
+      // committed by this retry (AC#1) instead of silently no-opping forever.
+      if (detail.file) {
+        editedFiles.push(detail.file);
+      }
       return "already-absent" as const; // nothing to remove — skip the edit entirely
     }
     // An empty `desiredDocs` is not special-cased: the real adapter's `--doc` accumulator
@@ -425,8 +439,14 @@ export async function moveBackRefs(
 ): Promise<{ readonly outcomes: readonly MovedBackRef[]; readonly editedFiles: readonly string[] }> {
   const oldLabel = backRefLabel(oldConceptId);
   const newLabel = backRefLabel(newConceptId);
-  // The task files actually edited, for the caller's scoped commit — populated only after a
-  // successful `editTask` (a `"moved"` outcome), so `already-current`/failed contribute nothing.
+  // The candidate task files for the caller's scoped commit — populated after a successful
+  // `editTask` (a `"moved"` outcome), AND after the "already fully migrated" no-edit outcome below
+  // whose file might still carry a prior run's uncommitted drift (LORE-121's pattern, applied here
+  // per LORE-179); `commitBacklogFiles`'s own `git status` (scoped to exactly these paths) is what
+  // decides which of them, if any, are actually dirty and worth staging. The OTHER `already-current`
+  // outcome (no trace of a back-ref at all — never linked) contributes nothing: unlike a completed
+  // migration, no prior run of *this* move could ever have applied an edit here, so there is no
+  // drift of this kind for it to hide. A `failed` edit likewise contributes nothing.
   const editedFiles: string[] = [];
   const settled = await runSequentially(taskIds, async (taskId) => {
     const detail = await adapter.viewTask(taskId);
@@ -453,6 +473,17 @@ export async function moveBackRefs(
       return "already-current" as const;
     }
     if (hasExactNewLabel && staleLabel === undefined && hasNewDoc && !hasOldDoc) {
+      // Already fully migrated to the new label/doc, so there is no Backlog edit to make — but the
+      // task's file can still be dirty and uncommitted on disk if a PRIOR `lore rename` run already
+      // applied this exact move and then its own `commitBacklogFiles` call failed (e.g. a rejected
+      // pre-commit hook — LORE-121's pattern, LORE-179). Recording the path here, even though this
+      // run makes no edit, lets `commitBacklogFiles`'s own `git status` (scoped to exactly this
+      // path) decide whether there is real drift to stage and commit: a clean file reports nothing
+      // dirty and stays a true no-op (AC#3), while a dirty one gets picked up and committed by this
+      // retry (AC#2) instead of silently no-opping forever.
+      if (detail.file) {
+        editedFiles.push(detail.file);
+      }
       return "already-current" as const; // already fully migrated — nothing to move
     }
     const docs = detail.documentation.filter((d) => d !== oldDocPath);
