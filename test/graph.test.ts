@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/cli";
 import { type GraphOptions, runGraph } from "../src/commands/graph";
+import { runInit } from "../src/commands/init";
 import { loadBundle } from "../src/core/bundle";
 import { buildGraphExport, type GraphExport, toDot } from "../src/core/graph";
+import { compileProfile, PROFILE_REL_PATH, parseProfile } from "../src/core/profile";
 import { subgraph } from "../src/core/query";
 import type { OutputContext } from "../src/output";
 import { capture, expectError } from "./helpers";
@@ -60,6 +62,61 @@ function exportGraph(args: string[], options?: Partial<GraphOptions>): { code: n
   expect(envelope.kind).toBe("graph.export");
   return { code, data: envelope.data };
 }
+
+// ── LORE-192: loadBundle profile asymmetry — the root index vs. a custom profile ──
+//
+// Sibling of LORE-144 (`validate.test.ts`), one seam lower: `loadBundle` (not just `lore
+// validate`) must exempt the reserved root index from a custom profile's required fields — and
+// in loadBundle's own **bundle-relative** path space ("index.md", never "docs/index.md").
+
+describe("loadBundle — LORE-192 reserved root index under a custom profile", () => {
+  const FIXED_CLOCK = (): Date => new Date("2026-06-25T12:00:00Z");
+
+  /**
+   * A custom `.lore/profile.toml` that redefines `Reference` with an `owner` field required —
+   * mirrors `validate.test.ts`'s LORE-144 fixture: the scaffolded root index (whose frontmatter
+   * carries only lore's own fixed fields) never sets `owner`, so this is the AC's "active profile
+   * adds a required field to the Reference type".
+   */
+  const CUSTOM_PROFILE_TOML = [
+    "[profile]",
+    'name = "custom"',
+    'okf_version = "0.1"',
+    "",
+    "[base.fields]",
+    "type = { required = true }",
+    "",
+    "[[types]]",
+    'name = "Reference"',
+    "fields = { owner = { required = true } }",
+  ].join("\n");
+
+  test("AC#1: `lore init` then `lore graph` succeeds under a profile requiring an extra Reference field", () => {
+    // The custom profile is already active (as it would be for a real project) *before* `lore
+    // init` scaffolds the root index — mirroring `runInit`'s own `loadProfile({ root })` read.
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(join(root, PROFILE_REL_PATH), CUSTOM_PROFILE_TOML);
+    runInit({ root, output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
+
+    // Before LORE-192 this threw a `validation` LoreError (exit 6) — "invalid Reference
+    // frontmatter in index.md: owner: expected string, received undefined" — on the very file
+    // `lore init` had just scaffolded, even though `lore validate` (LORE-144) already passed it:
+    // loadBundle's path space is bundle-relative ("index.md"), so validate.ts's own
+    // repo-relative ("docs/index.md") carve-out never matched it.
+    const { code, data } = exportGraph([]);
+    expect(code).toBe(0);
+    const indexNode = data.nodes.find((n) => n.id === "index");
+    expect(indexNode).toBeDefined();
+    expect(indexNode?.type).toBe("Reference");
+  });
+
+  test("a non-root Reference concept still fails the required `owner` field under that profile (root-index-only exemption)", () => {
+    const custom = compileProfile(parseProfile(Bun.TOML.parse(CUSTOM_PROFILE_TOML) as Record<string, unknown>, "rp"));
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntitle: Orders\n---\nOrders reference.\n");
+    const err = expectError("validation", () => loadBundle(join(root, "docs"), { profile: custom }));
+    expect(err.message).toContain("owner");
+  });
+});
 
 // ── core/query: subgraph traversal ───────────────────────────────────────────────
 

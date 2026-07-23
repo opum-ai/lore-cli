@@ -39,7 +39,7 @@
 
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { LoreError, singleLine, stripAnsiAndControls, WarningCollector } from "../errors";
-import { nodeText } from "./bundle";
+import { effectiveProfileFor, nodeText } from "./bundle";
 import { type Concept, tryParseConcept } from "./concept";
 import type { Finding as BaseFinding, Severity } from "./finding";
 import { decodeTarget } from "./links";
@@ -93,15 +93,18 @@ export interface ValidateReport {
  * On a clean parse the two ADR-0007 additions run: {@link requiredSectionFindings} and
  * {@link quoteSafetyFindings}.
  *
- * `path` is resolved to its **judging profile** via {@link effectiveProfileFor} before any of
- * that runs: the bundle-root {@link ROOT_INDEX_PATH} is always judged against the built-in
- * {@link defaultProfile}, never `profile` (LORE-144) — see that helper for why.
+ * `path` is resolved to its **judging profile** via {@link import("./bundle").effectiveProfileFor}
+ * before any of that runs: the bundle-root {@link ROOT_INDEX_PATH} (this module's repo-relative
+ * spelling) is always judged against the built-in {@link defaultProfile}, never `profile`
+ * (LORE-144) — see that helper for why, and for why it lives in `bundle.ts` rather than here
+ * (LORE-192: this module already imports {@link nodeText} from `bundle.ts`, so the reverse import
+ * would cycle).
  *
  * A non-{@link LoreError} (a genuine bug) is *not* swallowed — it propagates, so a crash is
  * never silently dressed up as a validation finding.
  */
 export function validateConceptText(path: string, raw: string, profile: Profile = defaultProfile()): FileReport {
-  const effective = effectiveProfileFor(path, profile);
+  const effective = effectiveProfileFor(path, ROOT_INDEX_PATH, profile);
   // Parse exactly once. tryParseConcept fills the collector with tier-3 warnings, returns null for
   // a non-concept (skip), and throws a `validation` LoreError for a real-but-malformed concept —
   // so a single call draws every distinction the reporter needs without re-parsing the same bytes.
@@ -137,31 +140,6 @@ export function validateConceptText(path: string, raw: string, profile: Profile 
   findings.push(...quoteSafetyFindings(raw));
 
   return finalize(path, concept.type, findings);
-}
-
-/**
- * The {@link Profile} `path`'s frontmatter is judged against: `defaultProfile()` for the
- * bundle-root {@link ROOT_INDEX_PATH}, else the caller's active `profile` unchanged (LORE-144).
- *
- * `scaffold.ts`'s `serializeStructuralConcept` always **writes** the root index against the
- * built-in default profile — deliberately ignoring the active one, so a custom profile can never
- * break `lore init` (its own docstring). Before this exemption, `lore validate` re-read that same
- * file against the *active* profile with no such carve-out: a profile that adds a required field
- * to `Reference` made a freshly scaffolded bundle fail its own first `lore validate`, because the
- * file lore had just written could never satisfy a schema it was never written against. Judging
- * the root index under the identical profile it was serialized with restores the write/read
- * symmetry every other concept already has (each is both written and read against the one active
- * profile) — the root index is simply pinned to a fixed profile on both sides, not left
- * inconsistent between them.
- *
- * Scoped to exactly {@link ROOT_INDEX_PATH}, not the whole `RESERVED_STEMS` family
- * (`index`/`log`): every *other* reserved file — a sub-directory `index.md`, `log.md` — is
- * generated frontmatter-free (`indexes.ts`/`log.ts`), so `tryParseConcept` already treats it as a
- * skipped non-concept and it never reaches a profile-driven check in the first place. The root
- * index is the only reserved file that is itself a concept.
- */
-function effectiveProfileFor(path: string, profile: Profile): Profile {
-  return path === ROOT_INDEX_PATH ? defaultProfile() : profile;
 }
 
 /**
