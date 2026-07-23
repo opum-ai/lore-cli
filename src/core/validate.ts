@@ -39,7 +39,7 @@
 
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { LoreError, WarningCollector } from "../errors";
-import { nodeText, walkMdast } from "./bundle";
+import { nodeText } from "./bundle";
 import { type Concept, tryParseConcept } from "./concept";
 import type { Finding as BaseFinding, Severity } from "./finding";
 import { decodeTarget } from "./links";
@@ -347,19 +347,23 @@ function normalizeHeading(text: string): string {
 }
 
 /**
- * The text of every depth-2 (`##`) heading in a markdown body, in document order. Extraction
- * defers to a CommonMark parser (`mdast-util-from-markdown`) so a `## ` that appears inside a
- * fenced/indented code block is **not** mistaken for a heading — matching how {@link loadBundle}
- * extracts links. The traversal reuses bundle.ts's stack-safe {@link walkMdast}, so a
- * pathologically deep body cannot overflow the call stack.
+ * The text of every depth-2 (`##`) heading that is a **direct, top-level child of the document
+ * root** — i.e. a genuine section heading, not one nested inside a blockquote or list item —
+ * in document order. Extraction defers to a CommonMark parser (`mdast-util-from-markdown`) so a
+ * `## ` that appears inside a fenced/indented code block is **not** mistaken for a heading —
+ * matching how {@link loadBundle} extracts links. Unlike {@link nodeText}'s own traversal (which
+ * still walks a matched heading's inline children to assemble its text), this only iterates the
+ * root's immediate `children` — it does not recurse into container nodes — so `> ## Status`
+ * (inside a blockquote) or a `## `-looking line inside a list item never counts as a top-level
+ * section, even though both nest a real `heading` node somewhere in the tree.
  */
 function h2Headings(body: string): string[] {
   const headings: string[] = [];
-  walkMdast(fromMarkdown(body), (node) => {
+  for (const node of fromMarkdown(body).children) {
     if (node.type === "heading" && node.depth === 2) {
       headings.push(nodeText(node));
     }
-  });
+  }
   return headings;
 }
 
