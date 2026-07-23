@@ -398,6 +398,25 @@ describe("validate (core) — resource drift", () => {
     const raw = conceptWith("https://docs.example.com/docs/STALE.md");
     expect(resourceFindings("docs/index.md", raw)).toEqual([]);
   });
+
+  test("a stale `resource` carrying an embedded newline/ANSI escape yields a single-line, control-byte-free message (LORE-161)", () => {
+    // A YAML double-quoted scalar can smuggle a real newline (`\n`) and ESC-led ANSI sequence
+    // (`\x1b[...`) without breaking the frontmatter's own line structure — an author-controlled
+    // `resource` is not trustworthy input for a `Finding.message`, which the type documents as
+    // "a single-line, actionable description".
+    const raw = conceptWith('"https://docs.example.com/docs/reference/orders.md\\nEvil\\x1b[31m: injected\\x1b[0m"');
+    const findings = resourceFindings("docs/reference/orders.md", raw);
+    expect(findings).toHaveLength(1);
+    const message = findings[0]?.message ?? "";
+    // The offending bytes are gone...
+    expect(message).not.toContain("\n");
+    expect(message).not.toContain("\x1b");
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting control bytes are absent.
+    expect(message).not.toMatch(/[\x00-\x1f\x7f-\x9f]/);
+    // ...but the finding is still legible and identifies the stale resource.
+    expect(message).toContain("https://docs.example.com/docs/reference/orders.md");
+    expect(message).toContain("is stale");
+  });
 });
 
 // ── Core engine: aggregation + --type filter ───────────────────────────────────
@@ -485,6 +504,43 @@ describe("validate (command) — rendering", () => {
     writeFileSync(join(root, "docs/adr/bad.md"), "---\ntype: ADR\nsummary: A short summary.\n---\n\n# X\n");
     const { text } = render(["docs/adr/bad.md"], { mode: "pretty", color: true });
     expect(text).toContain("\x1b[31m"); // red error token
+  });
+
+  test("a `resource` finding carrying an embedded newline/ANSI escape stays one line in plain-mode text output (LORE-161)", () => {
+    // A `resource_base`-bearing profile so `resourceDriftFindings` actually judges the value.
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      [
+        "[profile]",
+        'name = "rp"',
+        'okf_version = "0.1"',
+        'resource_base = "https://docs.example.com/"',
+        "[base.fields]",
+        "type = { required = true }",
+        "title = {}",
+        "summary = {}",
+        "[[types]]",
+        'name = "Reference"',
+      ].join("\n"),
+    );
+    // Same YAML double-quoted-scalar trick as the core test: `\n` and `\x1b[...` decode to a real
+    // newline and ANSI escape in the parsed `resource` string, though the frontmatter itself is
+    // still one line on disk.
+    writeFileSync(
+      join(root, "docs/adr/orders.md"),
+      '---\ntype: Reference\ntitle: Orders\nsummary: The orders.\nresource: "https://docs.example.com/docs/adr/orders.md\\nEvil\\x1b[31m: injected\\x1b[0m"\n---\n\n# Orders\n',
+    );
+    const { text } = render([], { mode: "plain", color: false });
+    const lines = text.split("\n").filter((line) => line.length > 0);
+    // One line per file's finding (the resource-drift warning) plus one summary line — an embedded
+    // newline in the finding's message would inflate this count and split the finding mid-line.
+    expect(lines).toHaveLength(2);
+    const findingLine = lines[0] ?? "";
+    expect(findingLine).toMatch(/^warning docs\/adr\/orders\.md \[resource\]: resource ".*" is stale/);
+    expect(findingLine).not.toContain("\x1b["); // no ANSI smuggled through in plain mode
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting control bytes are absent.
+    expect(findingLine).not.toMatch(/[\x00-\x1f\x7f-\x9f]/);
   });
 });
 

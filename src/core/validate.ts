@@ -38,7 +38,7 @@
  */
 
 import { fromMarkdown } from "mdast-util-from-markdown";
-import { LoreError, WarningCollector } from "../errors";
+import { LoreError, singleLine, WarningCollector } from "../errors";
 import { nodeText } from "./bundle";
 import { type Concept, tryParseConcept } from "./concept";
 import type { Finding as BaseFinding, Severity } from "./finding";
@@ -336,9 +336,40 @@ function resourceDriftFindings(path: string, concept: Concept, profile: Profile)
     {
       severity: "warning",
       rule: "resource",
-      message: `resource "${actual}" is stale; this path under the profile's resource_base is "${expected}" — update it or remove the \`resource\` key`,
+      // `actual` is sanitized here, not above: the drift comparisons must judge the *raw*
+      // bundle-authored value (sanitizing first could mask real drift or falsely collapse two
+      // distinct URLs into one), but `Finding.message` is documented as "a single-line, actionable
+      // description" and every other finding builder only ever interpolates lore-computed values
+      // (`type`, `expected`) — `resource` is the one message that embeds an author-controlled raw
+      // string straight from frontmatter. Sanitizing once here, at the only place that string
+      // reaches a message, keeps that contract for every consumer (CLI text, `--json`, a future
+      // renderer) instead of trusting each print site to re-derive the same defense (LORE-161).
+      message: `resource "${sanitizeForMessage(actual)}" is stale; this path under the profile's resource_base is "${expected}" — update it or remove the \`resource\` key`,
     },
   ];
+}
+
+/**
+ * Collapse an author-controlled frontmatter string to a single line with no ANSI escape sequences
+ * or other control bytes, for safe embedding into a {@link Finding} `message`. {@link singleLine}
+ * (cli-contract §5.2's own single-line discipline) only folds line *terminators* (CR/LF/U+2028/
+ * U+2029); a YAML double-quoted scalar can also smuggle an ESC-led ANSI sequence or another C0/C1/
+ * DEL control byte (e.g. `resource: "…\x1b[31m…"`), which `singleLine` leaves untouched. Runs
+ * `singleLine` first, then strips what it leaves — the same two-pass shape `output.ts`'s
+ * `stripAnsiAndControls` uses for the identical reason (LORE-115), reimplemented locally rather
+ * than imported: this module must stay filesystem/output-layer-free (module doc above), so it
+ * cannot reach into the command-layer `output.ts` for a helper that isn't part of its exported
+ * contract.
+ */
+function sanitizeForMessage(text: string): string {
+  const collapsed = singleLine(text);
+  const withoutAnsi = collapsed.replace(
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
+    /\x1b(?:\[[0-9;:<=>?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[ -~])/g,
+    "",
+  );
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
+  return withoutAnsi.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
 }
 
 /** Normalize a heading or section name for comparison: trim, collapse interior whitespace, lower-case. */
