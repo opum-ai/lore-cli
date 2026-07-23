@@ -3,9 +3,11 @@ id: LORE-195
 title: >-
   Restore biome lint baseline to green on dev (bun run lint: 3 errors + 4 infos,
   all pre-existing)
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@sonnet-worker'
 created_date: '2026-07-23 14:08'
+updated_date: '2026-07-23 16:50'
 labels:
   - hygiene
   - lint
@@ -60,11 +62,29 @@ Note: applying only the safe autofixes (default `bun run lint:fix`) makes `bun r
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `bun run lint` (which runs `biome check .`) exits 0 on the `dev` branch, and its final summary reports 0 errors and 0 infos (the 3 current errors and 4 current infos are all resolved).
-- [ ] #2 The three error findings are gone: `test/context.test.ts` formatter reflow (~line 140), and the `assist/source/organizeImports` findings at `test/replace.test.ts:1` and `test/validate.test.ts:1`.
-- [ ] #3 The four `lint/style/useTemplate` info findings are gone: `src/core/managed-block.ts:187`, `src/core/managed-block.ts:428`, `test/managed-block.test.ts:216`, and `test/supersede.test.ts:85` — each resolved either by a byte-identical template-literal rewrite or a justified `// biome-ignore lint/style/useTemplate: <reason>` comment.
-- [ ] #4 `bun test` full suite still passes with 0 failures (baseline at spec time: 1913 pass / 0 fail across 47 files); the managed-block fixpoint assertions in `test/managed-block.test.ts` in particular still pass.
-- [ ] #5 `bun run typecheck` (`tsc --noEmit`) still exits 0 with no errors.
-- [ ] #6 No runtime/behavioral or public-surface change: edits are limited to import ordering, whitespace/formatting, and string-concatenation-to-template-literal conversions that produce byte-identical output (plus any justified `biome-ignore` comments); no function's observable behavior or exported signature changes.
-- [ ] #7 No rule in `biome.json` was disabled, downgraded, or scoped away to mask a finding — the green result comes from cleaned code / justified per-line ignores only.
+- [x] #1 `bun run lint` (which runs `biome check .`) exits 0 on the `dev` branch, and its final summary reports 0 errors and 0 infos (the 3 current errors and 4 current infos are all resolved).
+- [x] #2 The three error findings are gone: `test/context.test.ts` formatter reflow (~line 140), and the `assist/source/organizeImports` findings at `test/replace.test.ts:1` and `test/validate.test.ts:1`.
+- [x] #3 The four `lint/style/useTemplate` info findings are gone: `src/core/managed-block.ts:187`, `src/core/managed-block.ts:428`, `test/managed-block.test.ts:216`, and `test/supersede.test.ts:85` — each resolved either by a byte-identical template-literal rewrite or a justified `// biome-ignore lint/style/useTemplate: <reason>` comment.
+- [x] #4 `bun test` full suite still passes with 0 failures (baseline at spec time: 1913 pass / 0 fail across 47 files); the managed-block fixpoint assertions in `test/managed-block.test.ts` in particular still pass.
+- [x] #5 `bun run typecheck` (`tsc --noEmit`) still exits 0 with no errors.
+- [x] #6 No runtime/behavioral or public-surface change: edits are limited to import ordering, whitespace/formatting, and string-concatenation-to-template-literal conversions that produce byte-identical output (plus any justified `biome-ignore` comments); no function's observable behavior or exported signature changes.
+- [x] #7 No rule in `biome.json` was disabled, downgraded, or scoped away to mask a finding — the green result comes from cleaned code / justified per-line ignores only.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Run bun run lint:fix (biome check --write .) to auto-fix the 3 safe errors (formatter reflow in test/context.test.ts, organizeImports in test/replace.test.ts and test/validate.test.ts). 2. Manually rewrite the 4 useTemplate infos (src/core/managed-block.ts:187,428; test/managed-block.test.ts:216; test/supersede.test.ts:85) as byte-identical template literals. 3. Verify git diff --name-only touches only the 6 named files + backlog task file. 4. Run bun run lint (expect 0 errors/infos), bun test (expect 1913+ pass/0 fail, esp managed-block fixpoint), bun run typecheck (clean). 5. Finalize task.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Applied bun run lint:fix (biome check --write .) which auto-fixed the 3 safe errors: test/context.test.ts (formatter reflow ~line 140), test/replace.test.ts:1 and test/validate.test.ts:1 (organizeImports sort). Then ran bunx biome check --write --unsafe scoped to the 3 remaining files (src/core/managed-block.ts, test/managed-block.test.ts, test/supersede.test.ts) to apply Biome's own suggested useTemplate rewrites at lines 187/428/216/85 — confirmed each is a byte-identical string-concat-to-template-literal conversion (verified via git diff before finalizing). Verification: bun run lint now exits 0 with 'Checked 108 files ... No fixes applied' (0 errors, 0 infos). bun test: 1913 pass / 0 fail across 47 files (matches spec-time baseline exactly, managed-block fixpoint tests included). bun run typecheck (tsc --noEmit): clean, no output. git diff --name-only shows exactly the 6 named files plus the backlog task file — no scope creep. git diff biome.json is empty (unchanged).
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Restored bun run lint (biome check .) to a green baseline: exit 0, 0 errors, 0 infos. Fixed the 3 Biome-safe errors via bun run lint:fix (formatter reflow in test/context.test.ts; organizeImports sorting in test/replace.test.ts and test/validate.test.ts). Resolved the 4 lint/style/useTemplate infos in src/core/managed-block.ts (lines 187, 428), test/managed-block.test.ts (line 216), and test/supersede.test.ts (line 85) via byte-identical string-concatenation-to-template-literal rewrites (Biome's own unsafe-fix suggestion, applied per-file and diff-verified). No behavior changed, no biome.json rule touched. Verified: bun run lint exits 0 with 0 errors/0 infos; bun test 1913 pass / 0 fail across 47 files (matches spec-time baseline); bun run typecheck clean; git diff --name-only limited to the 6 pinned files plus the backlog task file.
+<!-- SECTION:FINAL_SUMMARY:END -->
