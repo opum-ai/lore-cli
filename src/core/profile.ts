@@ -547,13 +547,14 @@ function parseFieldSpec(raw: unknown, where: string, source: string): FieldSpec 
 }
 
 /**
- * Reject an `enum` attribute that parsed to a zero-length array (LORE-140). `baseKindToZod`
- * passes `spec.enum` straight to `z.enum([...spec.enum])`; Zod's `z.enum([])` rejects every
- * possible value, so `enum = []` would otherwise compile cleanly here and only surface later as
- * a field (required or not) that can never validate, with no error pointing at the actual
- * mistake. Checked at parse time, right where `where` still names the offending field, so the
- * error lands where the author can fix it instead of at some unrelated concept's validation
- * failure.
+ * Reject an `enum` attribute that parsed to a zero-length array (LORE-140), shared by both
+ * {@link parseFieldSpec} (a scalar field's own `enum`) and {@link parseItems} (a list field's
+ * `items.enum`, LORE-193) — `baseKindToZod`/`itemToZod` pass the value straight to
+ * `z.enum([...enumValues])`; Zod's `z.enum([])` rejects every possible value, so `enum = []`
+ * would otherwise compile cleanly here and only surface later as a field or list element
+ * (required or not) that can never validate, with no error pointing at the actual mistake.
+ * Checked at parse time, right where `where` still names the offending field, so the error
+ * lands where the author can fix it instead of at some unrelated concept's validation failure.
  */
 function assertNonEmptyEnum(enumValues: readonly string[] | undefined, where: string, source: string): void {
   if (enumValues !== undefined && enumValues.length === 0) {
@@ -581,6 +582,7 @@ function parseItems(raw: unknown, where: string, source: string): { kind: Scalar
   }
   rejectUnknownKeys(table, ITEMS_TABLE_KEYS, where, source);
   const enumValues = asStringArray(table.enum, `${where}.enum`, source);
+  assertNonEmptyEnum(enumValues, where, source);
   const kind =
     enumValues !== undefined ? "string" : (asEnum(table.kind, `${where}.kind`, FIELD_KINDS, source) ?? "string");
   if (kind === "list") {
