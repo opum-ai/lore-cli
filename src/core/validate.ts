@@ -370,7 +370,7 @@ function h2Headings(body: string): string[] {
 // ── Cross-cutting: frontmatter quote-safety ────────────────────────────────────—
 
 /** YAML indicator characters that make an unquoted scalar parser-dependent or reserved. */
-const INDICATOR_CHARS: ReadonlySet<string> = new Set(["@", "`", "!", "&", "*", "|", ">"]);
+const INDICATOR_CHARS: ReadonlySet<string> = new Set(["@", "`", "!", "&", "*", "|", ">", ":"]);
 
 /** A bare YAML-1.1 boolean alias a non-1.2 consumer coerces away from a string. */
 const YAML11_BOOLEAN = /^(yes|no|on|off|y|n)$/i;
