@@ -93,6 +93,30 @@ describe("generateIndexes — graph-derived navigable hubs (LORE-29)", () => {
     expect(line.split("](").length).toBe(2);
   });
 
+  test("a minimal backslash-before-bracket title doubles the backslash before escaping the bracket (LORE-186)", () => {
+    const out = generateIndexes(buildGraph([concept("adr/0001-x.md", { title: "a\\[b" })]));
+    const line = out.get("adr/index.md") ?? "";
+    // Source is `a` + one backslash + `[` + `b`. Doubling first turns the one backslash into two,
+    // *then* the bracket-escape inserts its own backslash before `[` — three backslashes total,
+    // an odd count, so the trailing backslash correctly escapes the bracket into literal text
+    // rather than leaving it live (which a doubling-less escaper would do: two backslashes, an
+    // even/cancelling count, leaving `[` live).
+    expect(line).toContain("- [a\\\\\\[b](0001-x.md)");
+    expect(line.split("](").length).toBe(2);
+  });
+
+  test("a title ending in a lone backslash does not escape away the template's own closing bracket (LORE-186)", () => {
+    const out = generateIndexes(buildGraph([concept("adr/0001-x.md", { title: "trailing\\" })]));
+    const line = out.get("adr/index.md") ?? "";
+    // The title's single trailing backslash sits immediately before the `]` that `buildListing`'s
+    // own `- [${linkText(title)}](${link})` template inserts — not one the escaper itself adds. If
+    // linkText didn't double pre-existing backslashes first, that lone backslash would escape the
+    // template's `]` into literal text, corrupting the entry's link boundary. Doubled, it becomes a
+    // complete escaped-backslash pair, leaving the template's `]` live and the link intact.
+    expect(line).toContain("- [trailing\\\\](0001-x.md)");
+    expect(line.split("](").length).toBe(2);
+  });
+
   test("a title is single-lined so a newline cannot split the entry out of the list", () => {
     const out = generateIndexes(buildGraph([concept("adr/0001-x.md", { title: "Line one\nline two" })]));
     expect(out.get("adr/index.md")).toContain("- [Line one line two](0001-x.md)");
