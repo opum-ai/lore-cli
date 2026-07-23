@@ -120,6 +120,9 @@ function parseValidateArgs(args: readonly string[]): ValidateArgs {
           type = takeValue();
           break;
         case "strict":
+          if (eq >= 0) {
+            throw usage("--strict takes no value", "pass --strict on its own");
+          }
           strict = true;
           break;
         default:
