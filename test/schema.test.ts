@@ -153,13 +153,53 @@ describe("schema — the warning tier (never throws)", () => {
     expect(warnings.list().some((w) => w.includes('unknown key "custom_key"'))).toBe(true);
   });
 
-  test("okf_version is an OKF-reserved key, not flagged as unknown (the root index carries it)", () => {
+  test("okf_version is exempt on the root index (repo-relative `docs/index.md` path form, LORE-168 AC#2)", () => {
+    const warnings = new WarningCollector();
+    validateFrontmatter(
+      { type: "Reference", title: "T", summary: "s", okf_version: defaultProfile().okfVersion },
+      { warnings, path: "docs/index.md" },
+    );
+    expect(warnings.list().some((w) => w.includes("okf_version"))).toBe(false);
+  });
+
+  test("okf_version is exempt on the root index (bundle-root-relative `index.md` path form, LORE-168 AC#2)", () => {
+    // `loadBundle`-backed commands (sync/query/graph/...) reach validateFrontmatter with the root
+    // index's path as bare "index.md" (no `docs/` prefix) — both spellings must recognize the root.
+    const warnings = new WarningCollector();
+    validateFrontmatter(
+      { type: "Reference", title: "T", summary: "s", okf_version: defaultProfile().okfVersion },
+      { warnings, path: "index.md" },
+    );
+    expect(warnings.list().some((w) => w.includes("okf_version"))).toBe(false);
+  });
+
+  test("okf_version on a non-root concept surfaces the extra-key conformance warning (LORE-168 AC#1)", () => {
+    const warnings = new WarningCollector();
+    validateFrontmatter(
+      { type: "Reference", title: "T", summary: "s", okf_version: defaultProfile().okfVersion },
+      { warnings, path: "docs/reference/r.md" },
+    );
+    expect(
+      warnings.list().some((w) => w.includes('unknown key "okf_version"') && w.includes("docs/reference/r.md")),
+    ).toBe(true);
+  });
+
+  test("okf_version on a sub-index (e.g. docs/adr/index.md) also surfaces the warning, not just an ordinary concept (LORE-168 AC#1)", () => {
+    const warnings = new WarningCollector();
+    validateFrontmatter(
+      { type: "Reference", title: "T", summary: "s", okf_version: defaultProfile().okfVersion },
+      { warnings, path: "docs/adr/index.md" },
+    );
+    expect(warnings.list().some((w) => w.includes('unknown key "okf_version"'))).toBe(true);
+  });
+
+  test("okf_version is flagged when no path is given (cannot be proven root, so no longer unconditionally exempt)", () => {
     const warnings = new WarningCollector();
     validateFrontmatter(
       { type: "Reference", title: "T", summary: "s", okf_version: defaultProfile().okfVersion },
       { warnings },
     );
-    expect(warnings.list().some((w) => w.includes("okf_version"))).toBe(false);
+    expect(warnings.list().some((w) => w.includes('unknown key "okf_version"'))).toBe(true);
   });
 
   test("`resource` is OKF-reserved on an ordinary concept (the stamped canonical link)", () => {
