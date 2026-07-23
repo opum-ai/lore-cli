@@ -549,47 +549,54 @@ describe("lore replace — command-level suites (root fixture)", () => {
       writeDoc("docs/b.md", "x");
       writeDoc("docs/c.md", "x"); // sorted after b.md — must never be reached once b.md's write throws
 
-      // Stub the write call the commit phase's writeFileAtomic ultimately makes, so it throws on the
-      // SECOND file (b.md) — after a.md has already committed, before c.md is ever attempted — the
-      // exact "partway through" shape AC#2 asks for. Calls that aren't the simulated failure forward to
-      // the real writeFileSync, so a.md's (and, were it reached, c.md's) write still actually happens.
-      // Every call's path argument is recorded so the assertions below can pin down *which* path the
-      // commit phase actually targets — a plain writeFileOverwriting (the pre-LORE-116 code this guards
-      // against a reversion to) would also make exactly one writeFileSync call per file and would satisfy
-      // every content/tmp-file assertion here identically, since the throw happens before that call's
-      // real write; only the recorded destination path distinguishes the two implementations.
-      const realWriteFileSync = fs.writeFileSync.bind(fs);
-      let calls = 0;
-      const paths: string[] = [];
-      const spy = spyOn(fs, "writeFileSync").mockImplementation((...args: Parameters<typeof fs.writeFileSync>) => {
-        calls++;
-        paths.push(String(args[0]));
-        if (calls === 2) {
+      // Stub the low-level write call the commit phase's writeFileAtomic ultimately makes, so it
+      // throws on the SECOND file's (b.md's) write — after a.md has already committed, before c.md
+      // is ever attempted — the exact "partway through" shape AC#2 asks for. writeFileAtomic now
+      // creates its temp file via `openSync` and writes its bytes via a `writeSync` loop (LORE-231),
+      // rather than a single `writeFileSync` call, so the write itself is stubbed at `writeSync`;
+      // `openSync` is spied alongside it purely to record which temp path each write belongs to
+      // (`writeSync` only carries an fd, not a path) — both always forward to the real implementation
+      // except the one simulated failure. Calls that aren't the simulated failure forward to the real
+      // syscalls, so a.md's (and, were it reached, c.md's) write still actually happens.
+      const realOpenSync = fs.openSync.bind(fs);
+      const realWriteSync = fs.writeSync.bind(fs);
+      const openedPaths: string[] = [];
+      const openSpy = spyOn(fs, "openSync").mockImplementation((...args: Parameters<typeof fs.openSync>) => {
+        openedPaths.push(String(args[0]));
+        // biome-ignore lint/suspicious/noExplicitAny: forwarding to the real openSync overload set
+        return (realOpenSync as any)(...args);
+      });
+      let writeCalls = 0;
+      // biome-ignore lint/suspicious/noExplicitAny: writeSync's overload set collapses to `any[]` under mockImplementation's contravariant param check
+      const writeSpy = spyOn(fs, "writeSync").mockImplementation((...args: any[]) => {
+        writeCalls++;
+        if (writeCalls === 2) {
           throw new Error("simulated ENOSPC");
         }
-        // biome-ignore lint/suspicious/noExplicitAny: forwarding to the real writeFileSync overload set
-        return (realWriteFileSync as any)(...args);
+        // biome-ignore lint/suspicious/noExplicitAny: forwarding to the real writeSync overload set
+        return (realWriteSync as any)(...args);
       });
       try {
         expect(() =>
           runReplace({ root, output: JSON_CTX, args: ["x", "y"], stdout: capture(), stderr: capture() }),
         ).toThrow(); // the failure surfaces rather than being silently swallowed
       } finally {
-        spy.mockRestore();
+        writeSpy.mockRestore();
+        openSpy.mockRestore();
       }
 
       expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("y"); // committed before the failure
       expect(readFileSync(join(root, "docs/b.md"), "utf8")).toBe("x"); // temp write failed — original bytes intact, not truncated
       expect(readFileSync(join(root, "docs/c.md"), "utf8")).toBe("x"); // loop aborted before this file was ever attempted
-      expect(readdirSync(join(root, "docs")).filter((f) => f.startsWith(".lore-sync-tmp"))).toEqual([]); // no stray temp file left behind
+      expect(readdirSync(join(root, "docs")).filter((f) => f.startsWith(".lore-sync-tmp"))).toEqual([]); // no stray temp file left behind (LORE-231: the mid-write failure still cleans up)
 
       // Discriminating assertions (LORE-116 review): the commit phase must go through writeFileAtomic's
       // temp-file+rename discipline, not a plain writeFileSync straight at the destination. Without these,
       // the four assertions above pass identically against the pre-fix writeFileOverwriting code path too.
-      expect(paths).toHaveLength(2); // a.md's real write, then b.md's failing write — c.md never attempted
-      const failingCallPath = paths[1] as string;
+      expect(openedPaths).toHaveLength(2); // a.md's temp open, then b.md's temp open — c.md never attempted
+      const failingCallPath = openedPaths[1] as string;
       expect(basename(failingCallPath).startsWith(".lore-sync-tmp-")).toBe(true); // b.md's write went through a temp file, proving the atomic (not plain) discipline
-      expect(paths).not.toContain(join(root, "docs/b.md")); // the destination path itself is never a direct writeFileSync target
+      expect(openedPaths).not.toContain(join(root, "docs/b.md")); // the destination path itself is never a direct open target
     });
   });
 
@@ -841,6 +848,26 @@ describe("writeFileAtomic", () => {
     } finally {
       chmodSync(dir, 0o755); // restore so afterEach's rmSync can clean up
     }
+  });
+
+  test("LORE-231: a mid-write failure AFTER the temp file was created leaves no `.lore-sync-tmp-*` litter", () => {
+    // Unlike the regression test above (a write failure BEFORE any temp file exists), this simulates
+    // the disk-full/EIO shape: the temp file's `openSync` succeeds (the directory entry is genuinely
+    // allocated), and the failure happens on the write that follows -- standing in for `writeFileSync`
+    // creating the file and then failing partway through (ENOSPC/EDQUOT/EIO), which the pre-fix code
+    // left as a stray `.lore-sync-tmp-*` file because its cleanup guard was only set after the whole
+    // write returned. Mirrors test/fswrite.test.ts's identical `writeFileNoFollow` mid-write probe.
+    const spy = spyOn(fs, "writeSync").mockImplementation(() => {
+      throw new Error("simulated mid-write ENOSPC");
+    });
+    try {
+      expect(() => writeFileAtomic(join(dir, "f.md"), "hello", "f.md")).toThrow(); // the failure surfaces rather than being silently swallowed
+    } finally {
+      spy.mockRestore();
+    }
+    // The temp file the (real) openSync created is cleaned up -- the directory is left exactly as
+    // it was before the call, no `.lore-sync-tmp-*` litter survives the failure.
+    expect(readdirSync(dir).filter((f) => f.startsWith(".lore-sync-tmp"))).toEqual([]);
   });
 });
 
