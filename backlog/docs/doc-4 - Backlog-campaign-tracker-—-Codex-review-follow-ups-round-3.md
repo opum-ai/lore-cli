@@ -3,7 +3,7 @@ id: doc-4
 title: Backlog campaign tracker — Codex review follow-ups (round 3)
 type: other
 created_date: '2026-07-23 16:05'
-updated_date: '2026-07-23 19:37'
+updated_date: '2026-07-23 19:49'
 ---
 Round 3 of the Codex-review follow-up campaign (see [[Backlog campaign tracker — Codex review follow-ups (round 2)]] / doc-3 for round 2, LORE-96..194, which closed all 78 medium findings; doc-1 for round 1, LORE-69..95, all 20 high). This round covers the **low-severity** findings from doc-2 ("Codex second-opinion review — lore codebase (2026-07-20)").
 
@@ -68,19 +68,19 @@ The "ready now" set is **always recomputed live** from `backlog/tasks/*.md` + th
 | 33 | LORE-228 | cmd-crud-a | — | Done | 23 | bug. replace.ts / validate.ts: reject an inline =value on boolean flags (--regex, --dry-run, --strict). [src/commands/replace.ts] |
 | 34 | LORE-229 | cmd-crud-a | — | Done | 24 | bug. replace.ts: sanitize discovered file paths in the report (strip ANSI/control chars) to prevent output forging. [src/commands/replace.ts] |
 | 35 | LORE-230 | cmd-crud-b | — | Done | 24 | bug. existingIsRegularFile masks non-ENOENT lstat failures as a benign 'already exists' skip. [src/commands/fswrite.ts] |
-| 36 | LORE-231 | cmd-crud-b | — | To Do | — | bug. writeFileAtomic leaks an uncleaned temp file when writeFileSync fails mid-write. [src/commands/fswrite.ts] |
+| 36 | LORE-231 | cmd-crud-b | — | Dispatched | 25 | bug. writeFileAtomic leaks an uncleaned temp file when writeFileSync fails mid-write. [src/commands/fswrite.ts] |
 | 37 | LORE-232 | cmd-crud-b | — | To Do | — | bug. lore query --type/--status/--tag values are not trimmed, inconsistent with --field. [src/commands/query.ts] |
 | 38 | LORE-233 | cmd-link | — | Done | 24 | bug. Bound runLink's up-front viewTask existence-check fan-out with a concurrency limit. [src/commands/link.ts] |
-| 39 | LORE-234 | cmd-link | — | To Do | — | bug. runLink's doc-membership check is exact-case while unlink's is case-insensitive — a casing-variant documentation entry duplicates instead of dedups. [src/commands/link.ts] |
-| 40 | LORE-235 | cmd-meta-a | — | To Do | — | bug. Bound resolveRollup's viewTask fan-out with the shared concurrency cap. [src/commands/reconcile-shared.ts] |
+| 39 | LORE-234 | cmd-link | — | Dispatched | 25 | bug. runLink's doc-membership check is exact-case while unlink's is case-insensitive — a casing-variant documentation entry duplicates instead of dedups. [src/commands/link.ts] |
+| 40 | LORE-235 | cmd-meta-a | — | Dispatched | 25 | bug. Bound resolveRollup's viewTask fan-out with the shared concurrency cap. [src/commands/reconcile-shared.ts] |
 | 41 | LORE-236 | cmd-meta-a | — | To Do | — | bug. Strip ANSI/control/OSC escapes on the stderr warning path (WarningCollector.flush). [src/commands/tasks.ts] |
-| 42 | LORE-237 | cmd-meta-b | — | To Do | — | bug. Harden `validate` arg parser: reject `--strict=<value>`, repeated `--strict`, and repeated `--type`. [src/commands/validate.ts] |
+| 42 | LORE-237 | cmd-meta-b | — | Dispatched | 25 | bug. Harden `validate` arg parser: reject `--strict=<value>`, repeated `--strict`, and repeated `--type`. [src/commands/validate.ts] |
 | 43 | LORE-238 | cmd-meta-c | — | Done | 24 | bug. scaffold: differentiate the conflict hint for structural directory blockers (--force cannot replace a file with a directory). [src/commands/scaffold.ts] |
-| 44 | LORE-239 | core-bundle-check | — | To Do | — | bug. callout portability detector false-positives on inline formatting before [!type] in ordinary prose. [src/core/check.ts] |
+| 44 | LORE-239 | core-bundle-check | — | Dispatched | 25 | bug. callout portability detector false-positives on inline formatting before [!type] in ordinary prose. [src/core/check.ts] |
 | 45 | LORE-240 | core-bundle-check | — | To Do | — | bug. check portability lint mis-parses a leading indented code block in frontmatter-free files. [src/core/check.ts] |
 | 46 | LORE-241 | core-bundle-check | — | To Do | — | bug. parseJson rewrites a valid-but-non-object profile.json into a misleading 'is not valid JSON' error. [src/core/profile.ts] |
 | 47 | LORE-242 | core-bundle-check | — | To Do | — | bug. profile does not validate a field's `default` against its declared kind/enum. [src/core/profile.ts] |
-| 48 | LORE-243 | core-engine-a | — | To Do | — | bug. Harden log.ts resolveRoot against equivalent-but-differently-spelled bundle roots. [src/core/log.ts] |
+| 48 | LORE-243 | core-engine-a | — | Dispatched | 25 | bug. Harden log.ts resolveRoot against equivalent-but-differently-spelled bundle roots. [src/core/log.ts] |
 | 49 | LORE-244 | core-index-context | — | To Do | — | bug. index.md conceptTitle: coerce numeric/boolean titles via frontmatterScalar (match graph/query/context). [src/core/indexes.ts] |
 | 50 | LORE-245 | core-links-resolution | — | To Do | — | bug. validateLink: flag bare '.'/'..' navigation destinations instead of exempting them as dotfiles. [src/core/links.ts] |
 | 51 | LORE-246 | core-query-validate | — | To Do | — | bug. matchesField: resolve case-insensitive field key across ALL case-variant spellings, not just the first. [src/core/query.ts] |
