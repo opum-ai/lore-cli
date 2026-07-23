@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type RunContext, run } from "../src/cli";
+import { coerceRealTTY, type RunContext, run } from "../src/cli";
 import { EXIT_CODES } from "../src/errors";
 import { VERSION } from "../src/meta";
 import { capture } from "./helpers";
@@ -375,6 +375,93 @@ describe("cli — WarningCollector.flush through a real command honors the stder
     expect(run(argv("graph"), c)).toBe(0);
     expect(c.stderr.text()).toContain("\x1b[33m"); // yellow "warning:" prefix
     expect(c.stderr.text()).toContain("skipping stray.md");
+  });
+});
+
+describe("cli — real-process stderrIsTTY fallback coerces an absent .isTTY to false (LORE-250, round 3)", () => {
+  // Round 2's fallback — `context.stderrIsTTY ?? (context.stderr ? false : process.stderr.isTTY)`
+  // — leaked in the one code path no other test in this file reaches: an *uninjected*
+  // context, where the real `process.stderr.isTTY` is read directly. Node/Bun leave that
+  // property `undefined` (not `false`) on a non-TTY stream, and `resolveOutput`'s/
+  // `errorRenderOpts`'s `?? true` back-compat defaults treat an absent value as "omitted",
+  // not "false" — so the uncoerced `undefined` silently re-enabled color on a redirected
+  // stderr in the shipped binary even though every test here (which always injects a
+  // `stderr` capture sink via `ctx()`) stayed green. This block exercises the real,
+  // uninjected path directly.
+
+  /** Monkeypatch a stream's `.isTTY` to `value`, returning a restorer to call in `finally`. */
+  function stubIsTTY(stream: NodeJS.WriteStream, value: boolean | undefined): () => void {
+    const original = Object.getOwnPropertyDescriptor(stream, "isTTY");
+    Object.defineProperty(stream, "isTTY", { value, configurable: true });
+    return () => {
+      if (original) {
+        Object.defineProperty(stream, "isTTY", original);
+      } else {
+        delete (stream as { isTTY?: boolean }).isTTY;
+      }
+    };
+  }
+
+  test("coerceRealTTY: only a literal `true` reading is a TTY — an absent (undefined) or `false` reading is not", () => {
+    // The unit-level guarantee the production fallback depends on: `undefined` (what
+    // Node/Bun actually leave on a non-TTY `process.stderr.isTTY`) must coerce to `false`,
+    // never fall through to a `?? true` default further down the pipeline.
+    expect(coerceRealTTY(undefined)).toBe(false);
+    expect(coerceRealTTY(false)).toBe(false);
+    expect(coerceRealTTY(true)).toBe(true);
+  });
+
+  test("production leak repro: stdout TTY + stderr's real .isTTY absent (a redirected 2>) writes no ESC byte to stderr with NO injected context", () => {
+    const restoreStdout = stubIsTTY(process.stdout, true);
+    // `undefined` (a genuinely absent property), not `false` — this is exactly what
+    // Node/Bun leave on `process.stderr.isTTY` when stderr is piped or redirected, and is
+    // the reading round 2's fallback failed to coerce.
+    const restoreStderr = stubIsTTY(process.stderr, undefined);
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    let captured = "";
+    // biome-ignore lint/suspicious/noExplicitAny: matching Node's overloaded WriteStream#write signature for a test-only stub.
+    (process.stderr as any).write = (chunk: unknown, ...rest: unknown[]) => {
+      captured += typeof chunk === "string" ? chunk : String(chunk);
+      const cb = rest.find((a) => typeof a === "function") as (() => void) | undefined;
+      cb?.();
+      return true;
+    };
+    try {
+      // No `context` at all: exercises `run(process.argv)`'s exact real-process seam
+      // (cli.ts:429), only with a controlled `env` so a stray `NO_COLOR` in the ambient
+      // test environment cannot make this test flaky in either direction.
+      const code = run(argv("frobnicate"), { env: {} });
+      expect(code).toBe(EXIT_CODES.usage);
+      expect(captured).toContain("unknown command"); // the warning was actually emitted...
+      expect(captured).not.toContain("\x1b"); // ...and carries no ANSI byte.
+    } finally {
+      process.stderr.write = originalWrite;
+      restoreStderr();
+      restoreStdout();
+    }
+  });
+
+  test("production, both real TTYs: stdout TTY + stderr's real .isTTY true still colors the stderr error head", () => {
+    const restoreStdout = stubIsTTY(process.stdout, true);
+    const restoreStderr = stubIsTTY(process.stderr, true);
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    let captured = "";
+    // biome-ignore lint/suspicious/noExplicitAny: matching Node's overloaded WriteStream#write signature for a test-only stub.
+    (process.stderr as any).write = (chunk: unknown, ...rest: unknown[]) => {
+      captured += typeof chunk === "string" ? chunk : String(chunk);
+      const cb = rest.find((a) => typeof a === "function") as (() => void) | undefined;
+      cb?.();
+      return true;
+    };
+    try {
+      const code = run(argv("frobnicate"), { env: {} });
+      expect(code).toBe(EXIT_CODES.usage);
+      expect(captured).toContain("\x1b[31m"); // red error head, proving this isn't a blanket suppression
+    } finally {
+      process.stderr.write = originalWrite;
+      restoreStderr();
+      restoreStdout();
+    }
   });
 });
 

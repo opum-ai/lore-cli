@@ -31,7 +31,14 @@
  *   own pretty rendering ({@link emit}) is provably unaffected by stderr's TTY
  *   state (§6, AC#2). `errorRenderOpts` still exists for a caller that holds a
  *   hand-built (not `resolveOutput`-derived) context and needs the gate applied
- *   explicitly.
+ *   explicitly. Both `stderrIsTTY` inputs default an *absent* value to `true`
+ *   (a no-op, for a caller that never passes the field at all) — a caller that
+ *   *does* source it from a real stream must hand in an already-coerced
+ *   boolean (cli.ts's `coerceRealTTY`), never a bare `.isTTY` read: Node/Bun
+ *   leave that property `undefined` (not `false`) on a non-TTY stream, and an
+ *   uncoerced `undefined` is indistinguishable from "omitted", silently
+ *   re-triggering the `?? true` default and reopening the leak (LORE-250,
+ *   round 3).
  * - **Emit the success envelope** `{ schemaVersion, kind, data }` on stdout in
  *   `--json` mode (§2), and the pretty/plain text otherwise.
  * - **Keep the streams disciplined.** Only the payload goes to stdout; all
@@ -164,6 +171,18 @@ export interface ResolveInputs extends ModeInputs {
    * `stdoutColor` exactly — every caller that predates this field (and any test
    * that only ever inspects `.color`) keeps its exact prior behavior. Only
    * cli.ts's real dispatch passes the actual stderr TTY state (LORE-250 AC#1).
+   *
+   * Danger for any future caller: the `true` default is a "field omitted"
+   * no-op, not a safety fallback — it is the **unsafe** direction (assume TTY,
+   * allow color) precisely because omitting the field is the common case. A
+   * caller that *does* source this from a real stream must pass an
+   * already-coerced boolean (cli.ts's `coerceRealTTY`), never a bare
+   * `process.stderr.isTTY` read: Node/Bun leave that property `undefined` —
+   * not `false` — on a non-TTY stream, and an uncoerced `undefined` is
+   * indistinguishable from "the field was never passed", silently
+   * re-triggering this default and reopening the leak this field exists to
+   * close (LORE-250, round 3 — confirmed live under a real pty; see
+   * `coerceRealTTY`'s doc in cli.ts).
    */
   stderrIsTTY?: boolean;
 }
@@ -218,7 +237,12 @@ export function resolveOutput(inputs: ResolveInputs): OutputContext {
  *
  * `stderrIsTTY` defaults to `true` — a no-op gate — so every call site that
  * predates this parameter (and any test that only cares about `ctx.color`)
- * keeps its exact prior behavior.
+ * keeps its exact prior behavior. As with {@link ResolveInputs.stderrIsTTY},
+ * that default is a "parameter omitted" no-op, not a safe fallback: a caller
+ * passing a real stream's `.isTTY` must coerce it first (cli.ts's
+ * `coerceRealTTY`) — an uncoerced `undefined` (Node/Bun's non-TTY reading) is
+ * indistinguishable from an omitted argument and silently re-enables color
+ * (LORE-250, round 3).
  *
  * Usage: `reportError(err, { ...errorRenderOpts(ctx, stderrIsTTY), stderr })`
  * (or `flush` likewise).

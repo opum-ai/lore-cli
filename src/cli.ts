@@ -138,7 +138,10 @@ export interface RunContext {
    * (stdout's own TTY state, which alone drives `mode`/stdout's pretty color).
    * Defaults the same way `isTTY` does: an injected `stderr` sink with no explicit
    * hint here is treated as non-TTY; only the real-process path (no injected sink)
-   * reads the actual `process.stderr.isTTY` (LORE-250).
+   * reads the actual `process.stderr.isTTY`, coerced to a strict boolean via
+   * {@link coerceRealTTY} (LORE-250; a raw, uncoerced read is `undefined` — not
+   * `false` — on a non-TTY stream and re-leaks color downstream, see that
+   * function's doc).
    */
   stderrIsTTY?: boolean;
   /** The fetch `check --external` uses for liveness; defaults to the global `fetch`. Injected so a caller (or a test) controls or stubs the network. */
@@ -147,6 +150,39 @@ export interface RunContext {
   resolveHost?: ResolveHost;
   /** The Backlog adapter `link`/`unlink` use; defaults to the real `backlog` binary on PATH. Injected so a caller (or a test) touches no subprocess. */
   adapter?: BacklogAdapter;
+}
+
+/**
+ * Coerce a real (uninjected) stream's `.isTTY` reading to a strict boolean.
+ *
+ * Node/Bun leave `process.stdout.isTTY` / `process.stderr.isTTY` **unset** —
+ * `undefined`, not `false` — on a non-TTY stream (a pipe, or a `>`/`2>`
+ * redirect); @types/node's `boolean | undefined` typing on the property does
+ * not make this visible at the type level. `resolveOutput`'s `stderrIsTTY`
+ * input (output.ts) and `errorRenderOpts`'s `stderrIsTTY` parameter both
+ * default an *absent* value to `true` — a deliberate no-op for callers that
+ * never pass the field at all, so every pre-LORE-250 call site keeps its exact
+ * prior behavior. That default cannot distinguish "the caller didn't pass
+ * this" from "the real stream's `.isTTY` happened to read as `undefined`
+ * because it isn't a terminal" — so handing either of those functions an
+ * uncoerced `.isTTY` read is indistinguishable from omitting the field
+ * entirely, and silently falls back to "assume TTY", reopening the exact
+ * color leak this coercion exists to close.
+ *
+ * Confirmed live at HEAD under a real pty before this fix (LORE-250, round
+ * 3 review): `script -q /dev/null zsh -c 'bun src/cli.ts <cmd> 2>err.log'`
+ * painted ANSI into `err.log` even though stderr was plainly redirected,
+ * because the uncoerced real-process read reached `resolveOutput`/
+ * `errorRenderOpts` as `undefined` and both `?? true` defaults swallowed it.
+ *
+ * `=== true` has no such ambiguity: every non-`true` reading (`undefined` or
+ * `false`) coerces to `false`, so the value `run()` computes from a real
+ * stream is always a genuine boolean, never `undefined` — the `?? true`
+ * defaults downstream are only ever reached by a caller that omitted the
+ * field outright.
+ */
+export function coerceRealTTY(isTTY: boolean | undefined): boolean {
+  return isTTY === true;
 }
 
 /**
@@ -177,7 +213,15 @@ export function run(argv: readonly string[], context: RunContext = {}): number |
   // reads, including the `WarningCollector.flush({ color: options.output.color,
   // ... })` call sites in `commands/*.ts`, which never receive `stderrIsTTY`
   // directly and would otherwise leak stdout's color onto a redirected stderr.
-  const stderrIsTTY = context.stderrIsTTY ?? (context.stderr ? false : process.stderr.isTTY);
+  //
+  // The real-process branch reads `process.stderr.isTTY` through
+  // `coerceRealTTY`, NOT bare — Node/Bun leave that property `undefined` (not
+  // `false`) on a non-TTY stream, and an uncoerced `undefined` here is
+  // indistinguishable from "the field was never passed", which silently
+  // re-triggers `resolveOutput`'s/`errorRenderOpts`'s `?? true` back-compat
+  // defaults and reopens the leak this line exists to close (LORE-250, round
+  // 3 — see {@link coerceRealTTY}'s doc for the confirmed real-pty repro).
+  const stderrIsTTY = context.stderrIsTTY ?? (context.stderr ? false : coerceRealTTY(process.stderr.isTTY));
   const output = resolveOutput({
     json: parsed.json,
     plain: parsed.plain,
