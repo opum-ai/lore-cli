@@ -134,26 +134,48 @@ export function runSchema(options: SchemaOptions): number {
 }
 
 /**
+ * The subset of `node:path` {@link confineOutDir} resolves through, injectable so its win32-specific
+ * cross-drive check (see below, LORE-182) can be exercised with real Windows path semantics from a
+ * unit test running on any host platform — production call sites never pass this and get the host's
+ * own native functions (`HOST_PATH`) unconditionally.
+ */
+type PathOps = Pick<typeof import("node:path"), "resolve" | "relative" | "isAbsolute" | "sep">;
+
+/** The host platform's real `node:path` primitives — {@link confineOutDir}'s production default. */
+const HOST_PATH: PathOps = { resolve, relative, isAbsolute, sep };
+
+/**
  * Resolve `--out` to an absolute directory, **confined to the repo** (mirroring `lore new`'s
  * `resolveOutPath`): an absolute path or one escaping the root via `..` is a `usage` error, because
  * the writes overwrite-truncate and a typo'd/hostile `--out ../../etc` would otherwise clobber files
  * anywhere on disk. The repo root itself (`--out .`) is allowed.
  *
- * Checks `isAbsolute(out)` on the **raw argument**, not `isAbsolute(rel)` on the post-`relative()`
- * result (LORE-124): `node:path`'s `relative()` only ever returns a relative-looking path (`""`, a
- * `..`-prefixed climb, or a plain relative path) on POSIX, so `isAbsolute(rel)` can never be true there
- * — it's dead code that let an absolute `--out` resolving *inside* the repo slip past silently. Callers
+ * Checks `isAbsolute(out)` on the **raw argument** (LORE-124): `node:path`'s `relative()` only ever
+ * returns a relative-looking path (`""`, a `..`-prefixed climb, or a plain relative path) on POSIX, so
+ * `isAbsolute(rel)` alone can never be true there — checking the raw argument closes the gap LORE-124
+ * found, where an absolute `--out` resolving *inside* the repo slipped past silently. Callers
  * downstream (`runSchema`) still pass the caller's raw `outArg`, not this function's resolved `abs`,
  * into `emitSchemaFiles`/`ensureDir`/`join(root, file.path)`; if a same-inside absolute path were let
  * through, `path.join(root, absOutDir)` would blindly concatenate rather than collapse, double-prefixing
  * the root and creating a bogus directory instead of the real `.lore/schemas` (the unhandled ENOENT
  * `pruneOrphans` then hit). Rejecting every absolute `--out` up front — inside the repo or not — closes
  * that off at the source rather than trying to make every downstream `join` absolute-safe.
+ *
+ * `isAbsolute(rel)` is ALSO still checked, belt-and-suspenders (restored, LORE-182, after LORE-124
+ * called it dead code and dropped it): dead on POSIX per the paragraph above, but very much alive on
+ * win32 for a cross-drive **drive-relative** `--out` (Windows syntax like `"C:foo"` — relative to
+ * drive C's current directory, distinct from the absolute `"C:\\foo"` form `isAbsolute(out)` already
+ * catches). When the repo root is on a different drive (e.g. `"D:\\repo"`), neither `isAbsolute(out)`
+ * nor a `".."`-climb check catches `"C:foo"` — but `win32.relative("D:\\repo", "C:\\foo")` returns the
+ * target path unchanged (`"C:\\foo"`), which IS absolute, so `isAbsolute(rel)` catches what the other
+ * two checks miss. Without this clause the confused input still can't escape (writes stay lexically
+ * inside the repo and NTFS rejects the `:` in the eventual filename), so the blast radius is a
+ * confusing IO error instead of a clean usage one — this restores the clean error.
  */
-function confineOutDir(out: string, root: string): string {
-  const abs = resolve(root, out);
-  const rel = relative(root, abs);
-  if (isAbsolute(out) || rel === ".." || rel.startsWith(`..${sep}`)) {
+export function confineOutDir(out: string, root: string, path: PathOps = HOST_PATH): string {
+  const abs = path.resolve(root, out);
+  const rel = path.relative(root, abs);
+  if (path.isAbsolute(out) || rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
     throw usage(`--out path "${out}" must be inside the repo`, "give a directory path relative to the repo root");
   }
   return abs;
