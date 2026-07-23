@@ -990,6 +990,68 @@ describe("runCheck — exit codes and discovery", () => {
     expect(text).toContain("error");
   });
 
+  // ── LORE-226: control-character sanitization in finding output ────────────────
+
+  test("LORE-226 AC#1/#2: an OSC escape smuggled into a broken-link target is stripped, plain and pretty", () => {
+    // The angle-bracket link-destination form (`<...>`) is the one CommonMark syntax that lets a
+    // raw control byte survive parsing into the link's `url` untouched (a bare, unbracketed
+    // destination rejects ASCII control characters outright) — exactly the vector `core/check.ts`'s
+    // broken-link finding (`message: \`link "${target}" …\``) interpolates verbatim. An OSC
+    // set-title sequence is used (not an SGR color code) so it is unambiguously distinct from the
+    // legitimate `paint()` coloring pretty mode itself emits for the severity token.
+    const payload = "\x1b]0;INJECTED\x07";
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", `See [ghost](<ghost${payload}.md>).`));
+
+    for (const ctx of [PLAIN_CTX, { mode: "pretty", color: true } as OutputContext]) {
+      const o = opts([], ctx);
+      expect(runCheck(o)).toBe(EXIT_CODES.validation);
+      const text = (o.stdout as ReturnType<typeof capture>).text();
+      expect(text).not.toContain("INJECTED"); // the whole OSC sequence, payload included, is gone
+      expect(text).not.toContain("\x1b]"); // no raw OSC introducer survives either
+      expect(text).toContain('link "ghost.md" points at "adr/ghost.md", which is not in the bundle');
+    }
+  });
+
+  test("LORE-226 AC#1: a literal ESC byte via angle-bracket link syntax never reaches plain-mode stdout", () => {
+    // Plain mode never emits ANSI itself (LORE-115's invariant, reused here), so ANY ESC byte
+    // surviving into its stdout is unambiguously an injection, not legitimate coloring.
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "See [ghost](<ghost\x1b[31m.md>)."));
+    const o = opts([]);
+    expect(runCheck(o)).toBe(EXIT_CODES.validation);
+    const text = (o.stdout as ReturnType<typeof capture>).text();
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting the byte is ABSENT from output.
+    expect(text).not.toMatch(/\x1b/);
+    expect(text).toContain('link "ghost.md" points at "adr/ghost.md", which is not in the bundle');
+  });
+
+  test("LORE-226 AC#1: a newline smuggled into a broken-link target via &#10; does not forge a phantom finding row", () => {
+    // CommonMark decodes numeric character references in link destinations — `&#10;` becomes a
+    // literal LF in the parsed target — even though the raw markdown source carries no literal
+    // control byte at all. Unsanitized, that LF would split the ONE broken-link finding (whose
+    // message embeds the raw target twice: once directly, once via the derived target id) into
+    // extra physical lines once `renderReport` joins findings with "\n".
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "See [ghost](x&#10;y.md)."));
+
+    for (const ctx of [PLAIN_CTX, { mode: "pretty", color: true } as OutputContext]) {
+      const o = opts([], ctx);
+      expect(runCheck(o)).toBe(EXIT_CODES.validation);
+      const c = o.stdout as ReturnType<typeof capture>;
+      // 1 broken-link line + 1 portability line + 1 summary line — no extra rows from the embedded LF.
+      expect(c.lines()).toHaveLength(3);
+      expect(c.text()).toContain('link "xy.md" points at "adr/xy.md", which is not in the bundle');
+    }
+  });
+
+  test("LORE-226 AC#3: an ordinary control-character-free finding renders unchanged", () => {
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[ghost](../reference/ghost.md)."));
+    const o = opts([]);
+    expect(runCheck(o)).toBe(EXIT_CODES.validation);
+    const text = (o.stdout as ReturnType<typeof capture>).text();
+    expect(text).toContain(
+      'error adr/x.md [broken-link]: link "../reference/ghost.md" points at "reference/ghost.md", which is not in the bundle',
+    );
+  });
+
   test("--json emits the check.report envelope", () => {
     writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[ghost](../reference/ghost.md)."));
     const o = opts([], JSON_CTX);

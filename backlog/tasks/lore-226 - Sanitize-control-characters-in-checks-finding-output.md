@@ -1,9 +1,11 @@
 ---
 id: LORE-226
 title: Sanitize control characters in check's finding output
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@sonnet-worker'
 created_date: '2026-07-23 16:04'
+updated_date: '2026-07-23 18:39'
 labels:
   - cmd-check
   - codex-review-followup
@@ -27,8 +29,26 @@ ordinal: 328000
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A broken-link/broken-anchor finding whose link target or filename contains an ESC/CSI sequence or a newline renders with those control characters stripped in both plain and pretty modes (no raw ESC bytes, no phantom finding lines).
-- [ ] #2 The fix reuses the shared `stripAnsiAndControls` helper (src/errors.ts) rather than a new copy of the regexes.
-- [ ] #3 Ordinary finding output (paths, rules, messages without control characters) is unchanged.
-- [ ] #4 Existing check tests continue to pass.
+- [x] #1 A broken-link/broken-anchor finding whose link target or filename contains an ESC/CSI sequence or a newline renders with those control characters stripped in both plain and pretty modes (no raw ESC bytes, no phantom finding lines).
+- [x] #2 The fix reuses the shared `stripAnsiAndControls` helper (src/errors.ts) rather than a new copy of the regexes.
+- [x] #3 Ordinary finding output (paths, rules, messages without control characters) is unchanged.
+- [x] #4 Existing check tests continue to pass.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Import stripAnsiAndControls from ../errors in src/commands/check.ts. 2. In findingLine (~line 984), sanitize finding.file and finding.message via stripAnsiAndControls before interpolation, so ESC/CSI/newlines from untrusted link targets can't inject terminal escapes or forge phantom finding rows in plain or pretty mode. 3. Add a test in test/check.test.ts: a broken-link/broken-anchor finding whose target contains ESC+newline renders sanitized in both plain and pretty modes; assert no raw ESC byte and no extra line count from an injected newline. 4. Confirm ordinary findings unchanged (existing tests). 5. Run bun test + bun run typecheck + biome check on changed files.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fix: findingLine (src/commands/check.ts) now sanitizes finding.file and finding.message via the shared stripAnsiAndControls (../errors) before interpolation. Verified via new tests in test/check.test.ts: (1) an OSC set-title payload (\x1b]0;INJECTED\x07) smuggled into a broken-link target via CommonMark angle-bracket link-destination syntax is fully stripped in both plain and pretty stdout (no 'INJECTED', no raw OSC introducer); (2) a raw ESC+CSI byte via the same angle-bracket vector never reaches plain-mode stdout at all; (3) a newline smuggled via a numeric char-reference (&#10;, which CommonMark decodes to a literal LF inside a bare link destination) no longer forges a phantom finding row — asserted via exact line count (3: broken-link + portability + summary) in both plain and pretty modes; (4) an ordinary control-char-free finding renders its exact prior text unchanged. Full bun test: 1940 pass / 0 fail (was 214/0 for check.test.ts alone). bun run typecheck: clean. bunx biome check on both changed files: clean, no new findings.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+findingLine in src/commands/check.ts sanitizes finding.file and finding.message via the shared stripAnsiAndControls (src/errors.ts) before interpolation, closing check's remaining terminal/log-injection gap: an ESC/CSI or OSC sequence, or a newline, smuggled into a link target (via CommonMark's angle-bracket link-destination syntax or a numeric character reference) is now stripped from both plain and pretty stdout, with no phantom finding rows. Ordinary control-char-free findings render unchanged. New tests added to test/check.test.ts covering all four ACs; full bun test 1940/0, typecheck clean, biome clean on changed files.
+<!-- SECTION:FINAL_SUMMARY:END -->
