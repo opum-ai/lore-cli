@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-22 17:14'
-updated_date: '2026-07-23 04:26'
+updated_date: '2026-07-23 09:49'
 labels:
   - cmd-crud-b
   - codex-review-followup
@@ -28,4 +28,11 @@ LORE-118 sanitized lore query's renderText output using stripAnsiAndControls, bu
 - [ ] #3 Typecheck and the full bun test suite are green
 - [ ] #4 src/core/validate.ts sanitizeForMessage (added by LORE-161) also delegates to the shared sanitizer — no third copy of the ANSI/control regex remains in src/
 - [ ] #5 The stale "keep the two in sync" comments in query.ts / validate.ts are removed or corrected
+- [ ] #6 The core/links.ts sanitizeForMessage copy (added by LORE-153, wave 15) also delegates to the shared sanitizer — no ANSI/control-strip regex copy remains in src/core/links.ts either
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Wave-15 integration review (2026-07-23): LORE-153 added a fourth byte-identical local copy of the ANSI/control-strip regex in src/core/links.ts (alongside src/output.ts, src/commands/query.ts, and the LORE-161 copy in src/core/validate.ts). Widened this consolidation task with AC #6 to also fold links.ts into the single shared sanitizer, so the dedupe covers every current copy. All three core-layer copies already import singleLine from src/errors.ts, which is layer-neutral — hoisting the two-regex strip beside singleLine in errors.ts collapses all copies with no command-layer import.
+<!-- SECTION:NOTES:END -->
