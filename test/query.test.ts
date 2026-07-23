@@ -375,6 +375,12 @@ describe("lore query — command", () => {
     [["--limit", "abc"], 'invalid --limit "abc"'],
     [["--limit"], "--limit needs a value"],
     [["--limit", "99999999999999999999"], "too large"],
+    // AC#4: --limit's space-padded rejection is unchanged (readValue is not trimmed).
+    [["--limit", " 2 "], 'invalid --limit " 2 "'],
+    // AC#2: a whitespace-only --status/--tag is rejected like an empty one (trimmed).
+    [["--status", "  "], "--status needs a value"],
+    [["--status", "   "], "--status needs a value"],
+    [["--tag", "  "], "--tag needs a value"],
     [["--tag"], "--tag needs a value"],
     [["--field"], "--field needs a value"],
     [["--field", "novalue"], 'invalid --field "novalue"'],
@@ -399,6 +405,24 @@ describe("lore query — command", () => {
     writeMixedBundle();
     const { data } = exportQuery(["--field", "status=  In Progress  "]);
     expect(data.hits.map((h) => h.id)).toEqual(["stories/bulk-archive"]);
+  });
+
+  // ── LORE-232: --type/--status/--tag trim like --field does ─────────────────────
+
+  test("--type/--status/--tag trim a space-padded value so it still matches (LORE-232)", () => {
+    writeMixedBundle();
+    // AC#1: a padded --type selects the same concepts as the untrimmed value.
+    expect(exportQuery(["--type", " Story "]).data.hits.map((h) => h.id)).toEqual(
+      exportQuery(["--type", "Story"]).data.hits.map((h) => h.id),
+    );
+    // A padded --status likewise still matches.
+    expect(exportQuery(["--status", "  In Progress  "]).data.hits.map((h) => h.id)).toEqual(
+      exportQuery(["--status", "In Progress"]).data.hits.map((h) => h.id),
+    );
+    // AC#3: a padded --tag matches the same concepts as the untrimmed value.
+    expect(exportQuery(["--tag", "  archive  "]).data.hits.map((h) => h.id)).toEqual(
+      exportQuery(["--tag", "archive"]).data.hits.map((h) => h.id),
+    );
   });
 });
 

@@ -124,7 +124,7 @@ function parseQueryArgs(args: readonly string[]): QueryArgs {
           if (type !== undefined) {
             throw usage("--type given more than once", "pass --type at most once");
           }
-          type = readValue("--type", inline, args, i);
+          type = readTrimmedValue("--type", inline, args, i);
           if (inline === undefined) {
             i++;
           }
@@ -133,7 +133,7 @@ function parseQueryArgs(args: readonly string[]): QueryArgs {
           if (status !== undefined) {
             throw usage("--status given more than once", "pass --status at most once");
           }
-          status = readValue("--status", inline, args, i);
+          status = readTrimmedValue("--status", inline, args, i);
           if (inline === undefined) {
             i++;
           }
@@ -148,7 +148,7 @@ function parseQueryArgs(args: readonly string[]): QueryArgs {
           }
           break;
         case "tag":
-          tags.push(readValue("--tag", inline, args, i));
+          tags.push(readTrimmedValue("--tag", inline, args, i));
           if (inline === undefined) {
             i++;
           }
@@ -241,6 +241,23 @@ function readValue(flag: string, inline: string | undefined, args: readonly stri
     throw usage(`${flag} needs a value`, `pass a value, e.g. \`${flag} orders\``);
   }
   return next;
+}
+
+/**
+ * Read a **string-filter** flag's value (`--type`/`--status`/`--tag`): delegates to
+ * {@link readValue} for the raw token, then trims surrounding whitespace and rejects a
+ * whitespace-only result as the same `usage` error `readValue` gives an empty one —
+ * matching `parseFieldFilter`'s empty-after-trim rejection so a padded value (`--type "
+ * Story "`) is never silently mismatched against the case-folding-but-not-trimming
+ * engine comparator (LORE-232). Deliberately not used for `--limit`, whose `parseCount`
+ * rejects a space-padded run and must stay that strict.
+ */
+function readTrimmedValue(flag: string, inline: string | undefined, args: readonly string[], i: number): string {
+  const value = readValue(flag, inline, args, i).trim();
+  if (value === "") {
+    throw usage(`${flag} needs a value`, `pass a value, e.g. \`${flag} orders\``);
+  }
+  return value;
 }
 
 // ── Output ─────────────────────────────────────────────────────────────────────
