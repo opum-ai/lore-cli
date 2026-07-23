@@ -635,9 +635,17 @@ export class WarningCollector {
    *
    * Each message is coerced and single-lined via {@link asText}/{@link singleLine} —
    * the same normalization `formatErrorText`/`toErrorEnvelope` apply to a
-   * `LoreError`'s message/hint — so a warning containing embedded newlines or
-   * control characters still emits as exactly one stderr line, preserving the
-   * one-warning-per-line contract.
+   * `LoreError`'s message/hint — and then run through the shared
+   * {@link stripAnsiAndControls}, the same ANSI/OSC/control-byte strip `output.ts`'s
+   * `renderTaskSummaryRows` applies to table fields (LORE-115/LORE-181). So a warning
+   * containing embedded newlines, ESC-led CSI/OSC sequences, or bare control bytes
+   * (e.g. `\x1b[2J`, BEL) still emits as exactly one plain stderr line, preserving
+   * the one-warning-per-line contract and closing — centrally, for every caller of
+   * this collector (dangling task ids, Backlog titles/statuses, …) — the escape
+   * forgery a crafted/corrupted source field could otherwise smuggle onto stderr.
+   * Sanitization runs on the message body only: the painted `warning:` prefix is
+   * built once below, from a fixed literal, and never passed through the strip, so
+   * its color/escape sequence is unaffected.
    *
    * This is **non-draining**: it does not clear the collected warnings, so a
    * second `flush` re-emits them and {@link list}/{@link count} stay valid
@@ -650,7 +658,8 @@ export class WarningCollector {
     // The painted prefix is loop-invariant — build it once, not once per warning.
     const prefix = paint("warning:", ANSI.yellow, color);
     for (const message of this.messages) {
-      stderr.write(`${prefix} ${singleLine(asText(message))}\n`);
+      const body = stripAnsiAndControls(singleLine(asText(message)));
+      stderr.write(`${prefix} ${body}\n`);
     }
     return this.messages.length;
   }
