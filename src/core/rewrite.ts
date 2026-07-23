@@ -38,9 +38,11 @@
  *   arithmetic, so it corrects even links that dangle (resolve to no concept).
  *
  * Resolution mirrors the bundle graph's own rules byte-for-byte ({@link bundle}'s
- * `internalTarget` + path-join + {@link idFromPath}, and `resolveRef` for frontmatter), so this
- * engine rewrites exactly the edges the graph counts — case-sensitively, leading-slash absorbed,
- * no `/`-absolute special case (unlike `lore check`'s portability view).
+ * `internalTarget` + {@link resolvePath} for a body link, `resolveRef` for frontmatter), so this
+ * engine rewrites exactly the edges the graph counts — case-sensitively, and including
+ * `resolvePath`'s `/`-absolute special case (a leading `/` resolves against the bundle root,
+ * stripped, instead of joining onto the referring file's directory — the same rule `check.ts`'s
+ * link gate applies, LORE-180).
  *
  * The rewritten bytes are produced by {@link serializeConcept} (frontmatter in canonical,
  * byte-stable form; body verbatim with the splices applied), so an already-canonical concept's
@@ -369,7 +371,7 @@ function rewriteConcept(
   profile: Profile | undefined,
 ): string | null {
   const dir = posix.dirname(concept.path);
-  const edits = computeBodyEdits(concept.body, concept.path, ctx);
+  const edits = computeBodyEdits(concept.body, concept.path, ctx, graph.concepts);
   const newBody = applyBodyEdits(concept.body, edits);
 
   // `lore supersede` (rewriteRefs=false) preserves the old file, so a third party's frontmatter ref
@@ -404,7 +406,12 @@ interface BodyEdit extends ByteRange {
  * the new destination differs from the authored bytes, so a canonical link the move leaves in
  * place produces no churn.
  */
-function computeBodyEdits(body: string, conceptPath: string, ctx: RewriteContext): BodyEdit[] {
+function computeBodyEdits(
+  body: string,
+  conceptPath: string,
+  ctx: RewriteContext,
+  byId: ReadonlyMap<string, Concept>,
+): BodyEdit[] {
   const tree = fromMarkdown(body);
   const links: Nodes[] = [];
   const usedIdentifiers = new Set<string>();
@@ -446,7 +453,7 @@ function computeBodyEdits(body: string, conceptPath: string, ctx: RewriteContext
 
   const edits: BodyEdit[] = [];
   for (const { node, isDefinition } of candidates) {
-    const newPath = newDestPathFor((node as { url: string }).url, conceptPath, ctx);
+    const newPath = newDestPathFor((node as { url: string }).url, conceptPath, ctx, byId);
     if (newPath === null) {
       continue; // external/non-.md, or (inbound) not a link to the renamed concept
     }
@@ -471,15 +478,24 @@ function computeBodyEdits(body: string, conceptPath: string, ctx: RewriteContext
  * The canonical **path** (no `#fragment`/`?query`) one link should point at after the rename, or
  * `null` when the link is not a target: external, non-`.md`, or — for an inbound file — not a link
  * to the renamed concept. Classification and id derivation reuse the bundle graph's own
- * {@link internalTarget}/{@link resolvePath}, so it rewrites exactly the edges the graph counts.
+ * {@link internalTarget}/{@link resolvePath} — including `resolvePath`'s `/`-absolute special
+ * case (leading `/` strips and resolves against the bundle root, rather than joining onto `dir`
+ * like a relative segment) — so this rewrites exactly the edges the graph counts, and a `/`-absolute
+ * link is never mis-classified against a same-string decoy that merely happens to sit at the
+ * dir-joined path (LORE-180).
  */
-function newDestPathFor(url: string, conceptPath: string, ctx: RewriteContext): string | null {
+function newDestPathFor(
+  url: string,
+  conceptPath: string,
+  ctx: RewriteContext,
+  byId: ReadonlyMap<string, Concept>,
+): string | null {
   const decoded = internalTarget(url);
   if (decoded === null) {
     return null; // external, anchor-only, or non-.md — not an internal concept link
   }
   const dir = posix.dirname(conceptPath);
-  const targetId = idFromPath(posix.join(dir, decoded));
+  const targetId = resolvePath(decoded, dir, byId);
 
   // normalizeLink's precondition is the repo-relative coordinate space (both operands rooted at
   // the repo, `docs/…`), not the bundle-relative one `conceptPath`/`ctx.to` use as graph ids. The
@@ -494,8 +510,14 @@ function newDestPathFor(url: string, conceptPath: string, ctx: RewriteContext): 
   if (ctx.isMoved) {
     // The file moves: recompute the link against its new directory. A self-link follows the file
     // to its new path; any other target keeps its location (pure path arithmetic, so a dangling
-    // link is corrected too).
-    const targetPath = targetId === ctx.from ? repoToPath : posix.normalize(posix.join(repoDir, decoded));
+    // link is corrected too) — joined with the same leading-`/`-aware rule as `targetId` above, so
+    // a `/`-absolute sibling link isn't mis-resolved into the file's old directory (LORE-180: plain
+    // `posix.join(repoDir, decoded)` does NOT treat an absolute second segment specially — it just
+    // concatenates — so this must special-case it explicitly rather than lean on `posix.join`).
+    const targetPath =
+      targetId === ctx.from
+        ? repoToPath
+        : posix.normalize(decoded.startsWith("/") ? `${DOCS_DIR}/${decoded.slice(1)}` : posix.join(repoDir, decoded));
     return normalizeLink(repoToPath, targetPath);
   }
   if (targetId !== ctx.from) {
