@@ -59,6 +59,51 @@ const SEARCH_KIND = "search";
 const BACKLOG_BINARY = "backlog";
 
 /**
+ * The environment variable an operator overrides {@link DEFAULT_BACKLOG_TIMEOUT_MS} with (LORE-217
+ * AC #2). Exported so a test can target the exact name {@link bunBacklogSpawn} reads rather than
+ * duplicating the string literal.
+ */
+export const BACKLOG_TIMEOUT_ENV_VAR = "LORE_BACKLOG_TIMEOUT_MS";
+
+/**
+ * The default wall-clock bound, in milliseconds, on one real `backlog` subprocess invocation
+ * (LORE-217 AC #2) — generous enough that a legitimately slow `backlog task list --json` on a large
+ * project never trips it in normal use, while still recovering a wedged/non-terminating process
+ * well within a human agent's patience rather than hanging lore forever.
+ */
+export const DEFAULT_BACKLOG_TIMEOUT_MS = 30_000;
+
+/**
+ * Resolve the timeout bound {@link bunBacklogSpawn} enforces, re-read from
+ * {@link BACKLOG_TIMEOUT_ENV_VAR} on every call (not cached at import time) so an operator — or a
+ * test — can change it between invocations. Unset, blank, non-numeric, or non-positive falls back to
+ * {@link DEFAULT_BACKLOG_TIMEOUT_MS} rather than silently disabling the guard.
+ */
+function resolveBacklogTimeoutMs(): number {
+  const raw = process.env[BACKLOG_TIMEOUT_ENV_VAR];
+  if (raw === undefined || raw.trim() === "") {
+    return DEFAULT_BACKLOG_TIMEOUT_MS;
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_BACKLOG_TIMEOUT_MS;
+}
+
+/**
+ * Build the fail-loud "the real `backlog` subprocess did not exit in time" error (`validation`, exit
+ * 6) — LORE-217 AC #1. Mirrors the wording style of this file's other environment-diagnosis errors
+ * ({@link notJsonCapable}, `configError`): a single-line message plus an actionable hint naming the
+ * override knob.
+ */
+function timeoutError(binary: string, args: readonly string[], timeoutMs: number): LoreError {
+  return new LoreError(
+    "validation",
+    `\`${binary} ${args.join(" ")}\` did not exit within ${timeoutMs}ms and was killed`,
+    `the \`backlog\` process appears wedged; if this is a legitimately slow invocation, raise ${BACKLOG_TIMEOUT_ENV_VAR} (currently ${timeoutMs}ms) — otherwise investigate why \`${binary}\` hung`,
+    { binary, args: [...args], timeoutMs },
+  );
+}
+
+/**
  * The result of one `backlog` invocation as the {@link BacklogSpawn} seam surfaces it. The minimal,
  * deterministic projection the probe needs: an exit code plus captured streams. A fake returns a fixed
  * one; the real {@link bunBacklogSpawn} builds it from `Bun.spawn`.
@@ -78,7 +123,11 @@ export interface SpawnResult {
  * (or throwing an `ENOENT`-coded error to simulate a missing binary). `args` are the arguments after
  * the binary name — e.g. `["--version"]` or `["task", "list", "--json"]`; the binary itself is bound
  * inside the implementation. The returned promise **rejects** only when the process could not be
- * spawned at all (e.g. `ENOENT`); a process that ran and failed resolves with a non-zero `exitCode`.
+ * spawned at all (e.g. `ENOENT`) — a process that ran and failed resolves with a non-zero `exitCode`.
+ * The one further rejection case is specific to the real {@link bunBacklogSpawn} implementation, not
+ * this contract in general: a subprocess that runs but does not exit within the operator-overridable
+ * wall-clock bound (LORE-217) is killed and rejects with a typed {@link LoreError} instead of hanging
+ * — fakes are free to ignore this case entirely, since they never spawn a real process.
  */
 export type BacklogSpawn = (args: readonly string[]) => Promise<SpawnResult>;
 
@@ -231,16 +280,43 @@ export async function probeBacklog(spawn: BacklogSpawn): Promise<BacklogCapabili
  * install can point at an explicit path. `cwd` defaults to the current process's working directory
  * (`Bun.spawn`'s own default); a caller working against a non-default `root` must pass it explicitly,
  * or the subprocess resolves Backlog's project files against the wrong directory.
+ *
+ * **Wall-clock bound (LORE-217).** Every lore coupling command (link/unlink/rename/sync/reconcile)
+ * ultimately flows through this seam, so a `backlog` invocation that wedges — never printing on
+ * either stream and never exiting — would otherwise leave lore blocked forever with no diagnostic.
+ * A timer armed for {@link resolveBacklogTimeoutMs}'s bound kills the process (`SIGKILL`, so a
+ * process ignoring `SIGTERM` still terminates) and the call rejects with a typed
+ * {@link LoreError} ({@link timeoutError}) instead of awaiting `proc.exited` indefinitely. The
+ * buffered-stream `Promise.all` is otherwise unchanged — a normal exit within the bound clears the
+ * timer and resolves exactly as before.
  */
 export function bunBacklogSpawn(binary: string = BACKLOG_BINARY, cwd?: string): BacklogSpawn {
   return async (args: readonly string[]): Promise<SpawnResult> => {
+    const timeoutMs = resolveBacklogTimeoutMs();
     const proc = Bun.spawn([binary, ...args], { stdout: "pipe", stderr: "pipe", cwd });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    return { exitCode, stdout, stderr };
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      // SIGKILL, not the default SIGTERM: a wedged process may be ignoring or unable to act on
+      // SIGTERM (the very reason it never exited on its own), so only an unmaskable signal
+      // guarantees `proc.exited` below actually resolves instead of also hanging past the bound.
+      proc.kill("SIGKILL");
+    }, timeoutMs);
+    try {
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      if (timedOut) {
+        throw timeoutError(binary, args, timeoutMs);
+      }
+      return { exitCode, stdout, stderr };
+    } finally {
+      // Always disarm: on the normal-exit path this prevents a stray kill() firing after the
+      // process (and possibly its pid, reused by the OS) has already exited.
+      clearTimeout(timer);
+    }
   };
 }
 
