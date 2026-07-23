@@ -150,9 +150,12 @@ frontmatter passes through untouched); a stale \`resource:\` value that no
 longer matches what the profile computes for the concept's current path as
 a warning (rule "resource"); and frontmatter values that would serialize
 ambiguously as quote-safety findings -- mostly errors (an unquoted YAML
-indicator char, a YAML-1.1 boolean like bare \`no\`/\`yes\`, or a
-colon-containing value all fail unconditionally), with only a bare
-\`YYYY-MM-DD\` date downgraded to a warning.
+indicator char, a YAML-1.1 boolean like bare \`no\`/\`yes\`, or a colon
+followed by a space, which YAML would otherwise misread as a nested
+mapping), with only a bare \`YYYY-MM-DD\` date downgraded to a warning. A
+colon with no trailing space is not flagged -- a URL like \`https://...\`
+or an ISO timestamp like \`2024-01-01T00:00:00\` is accepted even though
+it contains a colon.
 
 With no path arguments it walks the whole bundle; pass explicit \`[paths...]\`
 to scope it (e.g. from a pre-commit hook checking only staged files).
