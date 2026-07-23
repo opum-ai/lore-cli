@@ -809,6 +809,40 @@ describe("runCheck — exit codes and discovery", () => {
     expect(out).toContain("is unreachable");
   });
 
+  test("LORE-207: the real-fetch path cancels (never reads) the response body once headers are captured", async () => {
+    // No `fetch` override in `opts(...)` below — this exercises `defaultFetch` itself (the ONLY
+    // path with a real, cancellable `response.body`; every `FetchLike` test fake elsewhere in this
+    // file returns a plain `{ ok, status, location }` object with no body to release).
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[x](https://cancel-body.example)."));
+    let cancelCalls = 0;
+    let bodyRead = false;
+    const fakeResponse = {
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      body: {
+        cancel: () => {
+          cancelCalls++;
+          return Promise.resolve();
+        },
+      },
+      // Present so a regression that starts READING instead of cancelling would be caught too.
+      text: async () => {
+        bodyRead = true;
+        return "";
+      },
+    };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => fakeResponse) as unknown as typeof fetch;
+    try {
+      await runCheck(opts(["--external"]));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(cancelCalls).toBe(1); // the body was released...
+    expect(bodyRead).toBe(false); // ...never read (LORE-71's SSRF invariant: no body content is ever inspected)
+  });
+
   test("--external folds liveness into the --json envelope without changing the gate counts", async () => {
     writeFileSync(join(root, "docs", "adr", "a.md"), ref("A", "[d](https://d.example)"));
     const fetchFake: FetchLike = async () => ({ ok: false, status: 404 });

@@ -784,7 +784,16 @@ const LIVENESS_MAX_URLS = 500;
  */
 const defaultFetch: FetchLike = async (url, init) => {
   const response = await fetch(url, { signal: init?.signal, redirect: "manual" });
-  return { ok: response.ok, status: response.status, location: response.headers.get("location") };
+  const result = { ok: response.ok, status: response.status, location: response.headers.get("location") };
+  // Release the underlying socket WITHOUT reading it, once headers/status/location are captured.
+  // This function is called once per hop (`probeOne` re-invokes it for a followed 3xx redirect and
+  // again for the terminal response), so this single, unconditional cancel covers BOTH paths —
+  // there's no separate "redirect" vs. "terminal" branch here to duplicate it into. Left undrained,
+  // each of up to `LIVENESS_MAX_URLS` responses per `--external` pass would retain its connection
+  // until GC. Cancelling (not reading) preserves LORE-71's SSRF invariant (`probeOne`'s own docs,
+  // above): the probe still never reads or reports a byte of body content.
+  await response.body?.cancel().catch(() => {});
+  return result;
 };
 
 /** The real DNS resolver: `node:dns`'s `lookup`, narrowed to the {@link ResolveHost} the SSRF guard needs (every address a hostname resolves to, not just the first). */
