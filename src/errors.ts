@@ -144,6 +144,38 @@ export function singleLine(text: string): string {
 }
 
 /**
+ * Strip ANSI escape sequences and residual C0/C1 control characters from `text`. Meant to run
+ * *after* {@link singleLine}, which only collapses line terminators (CR/LF/U+2028/U+2029) — it
+ * leaves ESC (`\x1b`)-led sequences and other control bytes (BEL, backspace, …) untouched. A CSI
+ * sequence (`ESC [ … final byte`) can move the cursor or erase lines, so passing one through into
+ * rendered output would let a crafted/corrupted source field forge terminal rows even though the
+ * text is already single-line (LORE-115).
+ *
+ * Two passes: first drop full ANSI escape sequences — CSI (`ESC [ … @-~`), OSC (`ESC ] …`
+ * terminated by BEL or `ESC \`), and the general two-byte form (`ESC` + one printable byte, for
+ * everything else) — then drop any remaining C0 (`\x00`-`\x1f`) or C1/DEL (`\x7f`-`\x9f`) control
+ * byte that wasn't part of a recognized escape sequence (e.g. a bare BEL).
+ *
+ * The single shared home for this strip (LORE-181): it used to be reimplemented byte-identically
+ * in `output.ts` (`renderTaskSummaryRows`, LORE-115), `commands/query.ts` (`sanitizeField`,
+ * LORE-118), `core/validate.ts` (`sanitizeForMessage`, LORE-161), and `core/links.ts`
+ * (`sanitizeForMessage`, LORE-153) — four independently-drifting copies of the same two regexes.
+ * It lives here, layer-neutral beside {@link singleLine}, rather than in `output.ts`, so
+ * `core/`-layer callers (which must stay filesystem/output-layer-free) can import it too. Callers
+ * that need `singleLine` composed with the strip do so at the call site — this function is the raw
+ * primitive only, so a caller that must NOT single-line first (none currently do) still can.
+ */
+export function stripAnsiAndControls(text: string): string {
+  const withoutAnsi = text.replace(
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
+    /\x1b(?:\[[0-9;:<=>?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[ -~])/g,
+    "",
+  );
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
+  return withoutAnsi.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
+}
+
+/**
  * Collapse a failed subprocess invocation's stderr to a one-line hint, or `undefined` when it
  * carried no content — the shared policy behind every `LoreError` hint built from a subprocess
  * failure (`adapters/backlog.ts`'s Backlog spawn, `state.ts`'s git-write seam, `adapters/git.ts`'s

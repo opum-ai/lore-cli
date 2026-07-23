@@ -28,7 +28,7 @@ import { loadBundle } from "../core/bundle";
 import { loadProfile } from "../core/profile";
 import { type FieldFilter, type QueryResult, query } from "../core/query";
 import { DOCS_DIR } from "../core/scaffold";
-import { EXIT_OK, LoreError, singleLine, WarningCollector, type Writer } from "../errors";
+import { EXIT_OK, LoreError, singleLine, stripAnsiAndControls, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable, renderTruncationLine, truncation } from "../output";
 
 /** Options for {@link runQuery}; `root` and the streams are injectable for tests. */
@@ -294,24 +294,6 @@ function renderText(data: QueryResult): string {
  */
 function sanitizeField(text: string): string {
   return stripAnsiAndControls(singleLine(text));
-}
-
-/**
- * Strip ANSI escape sequences and residual C0/C1 control characters from `text`. A
- * local twin of `output.ts`'s `stripAnsiAndControls` (LORE-115, `renderTaskSummaryRows`)
- * — that helper is private to its module, and this fix's scope is `commands/query.ts`
- * only, so the two-pass regex (drop full escape sequences, then any stray control
- * byte) is duplicated here rather than exported and imported. Keep the two in sync if
- * either changes.
- */
-function stripAnsiAndControls(text: string): string {
-  const withoutAnsi = text.replace(
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
-    /\x1b(?:\[[0-9;:<=>?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[ -~])/g,
-    "",
-  );
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
-  return withoutAnsi.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
 }
 
 /**

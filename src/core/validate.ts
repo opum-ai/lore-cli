@@ -38,7 +38,7 @@
  */
 
 import { fromMarkdown } from "mdast-util-from-markdown";
-import { LoreError, singleLine, WarningCollector } from "../errors";
+import { LoreError, singleLine, stripAnsiAndControls, WarningCollector } from "../errors";
 import { nodeText } from "./bundle";
 import { type Concept, tryParseConcept } from "./concept";
 import type { Finding as BaseFinding, Severity } from "./finding";
@@ -355,21 +355,14 @@ function resourceDriftFindings(path: string, concept: Concept, profile: Profile)
  * (cli-contract §5.2's own single-line discipline) only folds line *terminators* (CR/LF/U+2028/
  * U+2029); a YAML double-quoted scalar can also smuggle an ESC-led ANSI sequence or another C0/C1/
  * DEL control byte (e.g. `resource: "…\x1b[31m…"`), which `singleLine` leaves untouched. Runs
- * `singleLine` first, then strips what it leaves — the same two-pass shape `output.ts`'s
- * `stripAnsiAndControls` uses for the identical reason (LORE-115), reimplemented locally rather
- * than imported: this module must stay filesystem/output-layer-free (module doc above), so it
- * cannot reach into the command-layer `output.ts` for a helper that isn't part of its exported
- * contract.
+ * `singleLine` first, then strips what it leaves via the shared {@link stripAnsiAndControls}
+ * (LORE-181) — the single home for that two-pass strip, also used by `output.ts`,
+ * `commands/query.ts`, and `core/links.ts` — imported from `errors.ts` rather than `output.ts`:
+ * this module must stay filesystem/output-layer-free (module doc above), and `errors.ts` is
+ * layer-neutral.
  */
 function sanitizeForMessage(text: string): string {
-  const collapsed = singleLine(text);
-  const withoutAnsi = collapsed.replace(
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
-    /\x1b(?:\[[0-9;:<=>?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[ -~])/g,
-    "",
-  );
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
-  return withoutAnsi.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
+  return stripAnsiAndControls(singleLine(text));
 }
 
 /** Normalize a heading or section name for comparison: trim, collapse interior whitespace, lower-case. */
