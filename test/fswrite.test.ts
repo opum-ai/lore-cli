@@ -42,6 +42,19 @@
  *          mid-write (standing in for a process kill) leaves the destination's original bytes fully
  *          intact, never partially overwritten, and the commit is provably a temp-file + rename, not
  *          a direct write to the destination.
+ *
+ * The fourth describe block covers `createIfAbsent`'s LORE-230 fix: `existingIsRegularFile` (the
+ * helper that classifies a `wx` write's `EEXIST` as "a regular file already exists, benign skip" vs
+ * "something non-regular blocks the path, conflict") used to catch EVERY `lstatSync` failure and
+ * treat it as the benign skip — including a genuine permission/I-O fault (EACCES/EIO) on an entry the
+ * `wx` write just proved exists, not just the documented raced-away `ENOENT` case. The fix narrows the
+ * degrade-to-benign-skip path to `ENOENT` only; any other classifying-stat failure now propagates and
+ * is surfaced by `createIfAbsent` as a `LoreError` via the shared `ioError`, exactly like the `wx`
+ * write's own failures.
+ *
+ *   AC#1 — a non-ENOENT classifying lstat failure (e.g. EACCES) surfaces a `LoreError`, not a benign skip.
+ *   AC#2 — the documented raced-away ENOENT case is unchanged: still a benign skip (`createIfAbsent`
+ *          returns `false`).
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
@@ -64,6 +77,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import {
   type AtomicRollbackWrite,
+  createIfAbsent,
   writeFileAtomic,
   writeFileNoFollow,
   writeManyAtomicOrRollback,
@@ -332,5 +346,83 @@ describe("writeFileNoFollow — the --force overwrite path is crash-safe against
     expect(thrown).toBeInstanceOf(LoreError);
     expect(["conflict", "denied"]).toContain((thrown as LoreError).type);
     expect(readdirSync(dir)).toEqual(["adir"]); // the temp file is cleaned up, not left as litter
+  });
+});
+
+// ── createIfAbsent: a non-ENOENT classifying lstat failure must surface, not masquerade as a
+// benign "already exists" skip (LORE-230) ──────────────────────────────────────────────────────
+
+describe("createIfAbsent — a non-ENOENT lstat failure while classifying a wx EEXIST surfaces instead of a silent skip (LORE-230)", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "lore-fswrite-createifabsent-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("AC#1/#3: a non-ENOENT lstat failure (EACCES) while classifying a wx EEXIST surfaces a LoreError, not a benign skip", () => {
+    const path = join(dir, "f.md");
+    // Simulate the exact sequence createIfAbsent drives: the `wx` write hits EEXIST (something
+    // demonstrably exists), then the classifying `lstatSync` fails with a genuine, non-ENOENT
+    // permission/I-O error rather than the documented raced-away ENOENT.
+    const writeSpy = spyOn(fs, "writeFileSync").mockImplementation(() => {
+      throw Object.assign(new Error("EEXIST: file already exists, open 'f.md'"), { code: "EEXIST" });
+    });
+    const lstatSpy = spyOn(fs, "lstatSync").mockImplementation(() => {
+      throw Object.assign(new Error("EACCES: permission denied, lstat 'f.md'"), { code: "EACCES" });
+    });
+    try {
+      let thrown: unknown;
+      try {
+        createIfAbsent(path, "contents", "f.md");
+      } catch (err) {
+        thrown = err;
+      }
+      // The error surfaces (never a silent skip) as a classified LoreError, mirroring how every
+      // other filesystem failure in this module is reported -- not a raw/uncaught Error and not a
+      // return value of `false`.
+      expect(thrown).toBeInstanceOf(LoreError);
+      expect((thrown as LoreError).type).toBe("denied");
+    } finally {
+      writeSpy.mockRestore();
+      lstatSpy.mockRestore();
+    }
+  });
+
+  test("AC#2: the documented raced-away case (lstat fails with ENOENT after the wx EEXIST) still degrades to a benign skip, unchanged", () => {
+    const path = join(dir, "f.md");
+    const writeSpy = spyOn(fs, "writeFileSync").mockImplementation(() => {
+      throw Object.assign(new Error("EEXIST: file already exists, open 'f.md'"), { code: "EEXIST" });
+    });
+    const lstatSpy = spyOn(fs, "lstatSync").mockImplementation(() => {
+      throw Object.assign(new Error("ENOENT: no such file or directory, lstat 'f.md'"), { code: "ENOENT" });
+    });
+    try {
+      expect(createIfAbsent(path, "contents", "f.md")).toBe(false);
+    } finally {
+      writeSpy.mockRestore();
+      lstatSpy.mockRestore();
+    }
+  });
+
+  test("the common case is unaffected: a real pre-existing regular file is still reported as a benign skip, left untouched", () => {
+    const path = join(dir, "f.md");
+    writeFileSync(path, "original");
+    expect(createIfAbsent(path, "new contents", "f.md")).toBe(false);
+    expect(readFileSync(path, "utf8")).toBe("original");
+  });
+
+  test("a non-regular entry (a directory) at the path is still reported as a structural conflict, not swallowed by this fix", () => {
+    const path = join(dir, "adir");
+    mkdirSync(path);
+    let thrown: unknown;
+    try {
+      createIfAbsent(path, "contents", "adir");
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(LoreError);
+    expect((thrown as LoreError).type).toBe("conflict");
   });
 });
