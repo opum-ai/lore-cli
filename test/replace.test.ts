@@ -25,7 +25,15 @@ import {
 import { type ReplaceReport, runReplace } from "../src/commands/replace";
 import { INDEX_BLOCK_BEGIN, INDEX_BLOCK_END } from "../src/core/indexes";
 import { TASK_BLOCK_BEGIN, TASK_BLOCK_END } from "../src/core/managed-block";
-import { compileReplacer, managedRanges, mergeRanges, replaceInText } from "../src/core/replace";
+import type { TextRange } from "../src/core/replace";
+import {
+  compileReplacer,
+  locatorThrowsOnDuplicate,
+  managedRanges,
+  MANAGED_REGION_LOCATORS,
+  mergeRanges,
+  replaceInText,
+} from "../src/core/replace";
 import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
@@ -314,6 +322,42 @@ describe("managedRanges", () => {
     const out = replaceInText(text, "foo", "BAR");
     expect(out.count).toBe(1);
     expect(out.text).toContain("BAR here");
+  });
+});
+
+describe("MANAGED_REGION_LOCATORS — throw-on-duplicate contract (LORE-194)", () => {
+  // assertNoInjectedMarker's LORE-162 guarantee (a `$`/$'` expansion that copies an existing marker
+  // into the rewritten result is rejected) holds only because every registered locator THROWS when
+  // its marker occurs more than once, even when both copies are individually well-formed blocks — a
+  // locator that instead returned the first span would let re-validation pass silently, reopening
+  // LORE-162 for that marker kind with no existing test failing. These pin that requirement
+  // explicitly rather than leaving it an incidental property of the two locators that happen to
+  // exist today.
+
+  test("every currently-registered locator throws (not first-span) on its own well-formed duplicated marker", () => {
+    expect(MANAGED_REGION_LOCATORS.length).toBeGreaterThan(0); // guard against an accidentally-emptied registry
+    for (const { locate, duplicateProbe } of MANAGED_REGION_LOCATORS) {
+      expect(locatorThrowsOnDuplicate(locate, duplicateProbe)).toBe(true);
+    }
+  });
+
+  test("the guard itself flags a locator that returns the first span on a well-formed duplicate — the exact regression this pins", () => {
+    // A synthetic locator mimicking the bug this task guards against: given a well-formed duplicated
+    // marker, it returns the FIRST span instead of throwing. If a future locator were registered with
+    // this shape, the test above would fail — this test proves the detection logic itself works,
+    // rather than only exercising it indirectly through the two locators that already pass.
+    const firstSpanOnDuplicate = (text: string): TextRange | null => {
+      const start = text.indexOf(INDEX_BLOCK_BEGIN);
+      if (start === -1) {
+        return null;
+      }
+      const endAt = text.indexOf(INDEX_BLOCK_END, start);
+      return endAt === -1 ? null : { start, end: endAt + INDEX_BLOCK_END.length };
+    };
+    const duplicateProbe = `${indexBlock("a")}\n${indexBlock("b")}`;
+    // Sanity: the synthetic locator really is well-formed enough to find a span (not vacuously null).
+    expect(firstSpanOnDuplicate(duplicateProbe)).not.toBeNull();
+    expect(locatorThrowsOnDuplicate(firstSpanOnDuplicate, duplicateProbe)).toBe(false);
   });
 });
 

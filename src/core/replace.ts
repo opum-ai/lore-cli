@@ -58,7 +58,7 @@
 
 import { LoreError } from "../errors";
 import { INDEX_BLOCK_BEGIN, INDEX_BLOCK_END, locateManagedBlock } from "./indexes";
-import { locateTaskBlock } from "./managed-block";
+import { locateTaskBlock, TASK_BLOCK_BEGIN, TASK_BLOCK_END } from "./managed-block";
 
 /**
  * A half-open `[start, end)` byte range within a file's text. Used for the spans
@@ -93,17 +93,63 @@ export interface ReplaceOptions {
 export type Replacer = (text: string) => ReplaceResult;
 
 /**
+ * One entry in {@link MANAGED_REGION_LOCATORS}: the location function for one managed-region kind,
+ * paired with `duplicateProbe` — a synthetic, individually-well-formed *duplicated* instance of that
+ * region (its marker pair written out twice) used only by the LORE-194 regression test
+ * (`replace.test.ts`) to pin the throw-on-duplicate contract documented below. Requiring a probe on
+ * every entry is what makes a new registration prove the contract rather than merely promise it.
+ */
+interface ManagedRegionLocator {
+  readonly locate: (text: string) => TextRange | null;
+  readonly duplicateProbe: string;
+}
+
+/**
  * The location functions that find each kind of lore-managed region, one per marker pair. The single
  * registry every managed-region consumer skips, so a new managed block is protected by adding one
  * entry rather than threading a new special case through `replace`. Each locator is owned by (and
  * imported from) the module that owns that region's markers ({@link indexes}, {@link managed-block}),
  * so `replace` always agrees with `lore sync`/`lore check` on a region's exact extent — including
  * which location *strategy* (literal scan vs. structural) is safe for that marker pair.
+ *
+ * **Contract (LORE-194): every locator MUST throw a {@link LoreError} — never return the first
+ * span — when its marker occurs more than once, even when each occurrence is individually a
+ * well-formed block.** {@link assertNoInjectedMarker}'s LORE-162 guarantee (a `` $` ``/`$'` expansion
+ * that copies an existing marker into the rewritten result is rejected, not silently written) depends
+ * entirely on this: it re-runs {@link managedRanges} — i.e. every locator here — over the *rewritten*
+ * text and trusts that a newly-duplicated marker surfaces as a thrown error. A locator that instead
+ * returned the first span on duplication would make that re-validation pass silently, reopening
+ * LORE-162 for that marker kind with no existing test failing. {@link locateManagedBlock} and
+ * {@link locateTaskBlock} both satisfy this today; a new entry must too, proven by its
+ * `duplicateProbe` (see `locatorThrowsOnDuplicate` and the registry-iterating test in
+ * `replace.test.ts`) rather than left as an incidental property nothing checks.
  */
-const MANAGED_REGION_LOCATORS: ReadonlyArray<(text: string) => TextRange | null> = [
-  (text) => locateManagedBlock(text, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END),
-  (text) => locateTaskBlock(text),
+export const MANAGED_REGION_LOCATORS: ReadonlyArray<ManagedRegionLocator> = [
+  {
+    locate: (text) => locateManagedBlock(text, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END),
+    duplicateProbe: `${INDEX_BLOCK_BEGIN}\na\n${INDEX_BLOCK_END}\n${INDEX_BLOCK_BEGIN}\nb\n${INDEX_BLOCK_END}`,
+  },
+  {
+    locate: (text) => locateTaskBlock(text),
+    duplicateProbe: `${TASK_BLOCK_BEGIN}\na\n${TASK_BLOCK_END}\n${TASK_BLOCK_BEGIN}\nb\n${TASK_BLOCK_END}`,
+  },
 ];
+
+/**
+ * Whether `locate` obeys the throw-on-duplicate contract documented on {@link MANAGED_REGION_LOCATORS}
+ * for its own `duplicateProbe`: throwing a {@link LoreError} (not returning a span, and not returning
+ * `null`) when the probe's marker occurs twice. Exported only for the LORE-194 regression test in
+ * `replace.test.ts` — both to pin the two current registry entries and to prove the check itself flags
+ * a first-span-on-duplicate violation, via a synthetic locator that deliberately breaks the contract.
+ */
+export function locatorThrowsOnDuplicate(locate: (text: string) => TextRange | null, duplicateProbe: string): boolean {
+  try {
+    locate(duplicateProbe);
+  } catch (cause) {
+    return cause instanceof LoreError;
+  }
+  return false; // returned a span (or null) instead of throwing — contract violated
+}
 
 /** A representative probe carrying word boundaries, line ends, digits, and punctuation, for the zero-width guard. */
 const ZERO_WIDTH_PROBE = "a b1\n.x-_/2";
@@ -121,7 +167,7 @@ const ZERO_WIDTH_PROBE = "a b1\n.x-_/2";
  */
 export function managedRanges(text: string): TextRange[] {
   const ranges: TextRange[] = [];
-  for (const locate of MANAGED_REGION_LOCATORS) {
+  for (const { locate } of MANAGED_REGION_LOCATORS) {
     const bounds = locate(text);
     if (bounds !== null) {
       ranges.push(bounds);
