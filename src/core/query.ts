@@ -312,21 +312,26 @@ function matchesFilters(concept: Concept, options: QueryOptions): boolean {
  * missing. Only **own** enumerable keys are scanned (`Object.keys`), so an inherited
  * `constructor`/`toString` can never satisfy a filter. A field with no scalar/list
  * value, or no matching key, never matches.
+ *
+ * YAML keys are case-sensitive, so a concept can carry more than one case-variant of
+ * the same logical key (`Status: draft` alongside `status: done` — both survive
+ * frontmatter parsing as distinct own keys). Every such candidate key is checked, not
+ * only the first one enumeration happens to reach, so a match under *any*
+ * case-variant key succeeds regardless of author insertion order.
  */
 function matchesField(concept: Concept, filter: FieldFilter): boolean {
-  const key = Object.keys(concept.frontmatter).find((candidate) => equalsFold(candidate, filter.key));
-  if (key === undefined) {
-    return false;
-  }
-  const raw = concept.frontmatter[key];
-  if (Array.isArray(raw)) {
-    return raw.some((item) => {
-      const value = frontmatterScalar(item);
-      return value !== undefined && equalsFold(value, filter.value);
-    });
-  }
-  const value = frontmatterScalar(raw);
-  return value !== undefined && equalsFold(value, filter.value);
+  const keys = Object.keys(concept.frontmatter).filter((candidate) => equalsFold(candidate, filter.key));
+  return keys.some((key) => {
+    const raw = concept.frontmatter[key];
+    if (Array.isArray(raw)) {
+      return raw.some((item) => {
+        const value = frontmatterScalar(item);
+        return value !== undefined && equalsFold(value, filter.value);
+      });
+    }
+    const value = frontmatterScalar(raw);
+    return value !== undefined && equalsFold(value, filter.value);
+  });
 }
 
 /** A concept's `tags` as a list of scalar strings (a bare string tag is treated as a one-element list; anything else is empty). */

@@ -3,9 +3,11 @@ id: LORE-246
 title: >-
   matchesField: resolve case-insensitive field key across ALL case-variant
   spellings, not just the first
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@sonnet-worker'
 created_date: '2026-07-23 16:04'
+updated_date: '2026-07-23 21:26'
 labels:
   - core-query-validate
   - codex-review-followup
@@ -31,9 +33,27 @@ No implementation plan is prescribed; any approach that satisfies the acceptance
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A concept whose frontmatter carries two case-variant keys (e.g. `Status: draft` and `status: done`) matches `query(graph, { fields: [{ key: 'status', value: 'done' }] })` regardless of which case-variant key enumerates first (add a regression test covering both frontmatter orderings, so the result does not depend on author key order).
-- [ ] #2 The all-case-variants semantics apply identically through the `--status` and `--tag` filter paths (which delegate to matchesField), matching when any case-variant key satisfies the value.
-- [ ] #3 Scalar-value and list-element matching, and the case-insensitive value fold, are preserved: a match succeeds when any case-variant key holds a scalar equal to the value case-insensitively, or a list containing such an element.
-- [ ] #4 All existing test/query.test.ts cases still pass (single-case-variant key resolution at lines 197-203; scalar/number/list/absent-key at lines 179-195).
-- [ ] #5 `bun test`, `tsc`, and biome are green; core/query.ts function+line coverage is not regressed.
+- [x] #1 A concept whose frontmatter carries two case-variant keys (e.g. `Status: draft` and `status: done`) matches `query(graph, { fields: [{ key: 'status', value: 'done' }] })` regardless of which case-variant key enumerates first (add a regression test covering both frontmatter orderings, so the result does not depend on author key order).
+- [x] #2 The all-case-variants semantics apply identically through the `--status` and `--tag` filter paths (which delegate to matchesField), matching when any case-variant key satisfies the value.
+- [x] #3 Scalar-value and list-element matching, and the case-insensitive value fold, are preserved: a match succeeds when any case-variant key holds a scalar equal to the value case-insensitively, or a list containing such an element.
+- [x] #4 All existing test/query.test.ts cases still pass (single-case-variant key resolution at lines 197-203; scalar/number/list/absent-key at lines 179-195).
+- [x] #5 `bun test`, `tsc`, and biome are green; core/query.ts function+line coverage is not regressed.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. In matchesField (src/core/query.ts), replace the single Object.keys(...).find(...) key lookup with a filter over ALL keys equalsFold-matching filter.key. 2. Match when ANY of those candidate keys' values (scalar equalsFold or list element equalsFold) satisfies filter.value, using the existing frontmatterScalar/equalsFold helpers unchanged. 3. Add a regression test in test/query.test.ts with a concept carrying two case-variant keys (e.g. Status: draft + status: done) verified in BOTH key orderings, matching via --field; confirm --status delegates through the same fix. 4. Run bun test, tsc, and biome on changed files; verify existing tests (lines ~179-203) still pass unchanged.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed matchesField (src/core/query.ts): resolve ALL frontmatter keys equalsFold-matching filter.key (Object.keys().filter, not .find()), then match when ANY candidate key's value (scalar or list element) equalsFold the filter value. Mutation-check performed: reverted the fix and reran test/query.test.ts — the base (pre-fix) code failed exactly the new regression test's second-ordering assertion (Status enumerating before status), confirming the test is load-bearing. Verification: bun test test/query.test.ts = 57 pass/0 fail; full bun test = 2016 pass/0 fail; bun run typecheck clean; bunx biome check src/core/query.ts test/query.test.ts clean (0 errors after a formatting fix). Diff confined to src/core/query.ts + test/query.test.ts + this task file.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+matchesField (src/core/query.ts) now resolves EVERY frontmatter key that equalsFold-matches the filter key (Object.keys().filter, replacing the old .find() that stopped at the first case-variant), and matches when ANY of those candidate keys' scalar or list-element value equalsFold the filter value. --field/--status/--tag all route through this one matcher (matchesFilters), so the all-case-variants fix applies identically everywhere. Added a regression test in test/query.test.ts covering a concept with two case-variant keys (Status/status) in BOTH insertion orders via --field and --status, plus a case-variant match hiding inside a list via --field/--tag. Verified: bun test test/query.test.ts 57/57 pass; full bun test 2016/2016 pass; bun run typecheck clean; bunx biome check on both changed files clean. Mutation-checked by reverting the fix: the pre-fix code failed the new test (missed the Status-enumerates-first ordering), confirming the regression test is load-bearing. All existing single-variant/scalar/number/list/absent-key cases (lines ~179-203 pre-change) pass unchanged.
+<!-- SECTION:FINAL_SUMMARY:END -->
