@@ -3,9 +3,11 @@ id: LORE-187
 title: >-
   Refresh two stale O_NOFOLLOW comments left by LORE-130 (schema.ts + fswrite.ts
   ioError docstring)
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@sonnet-worker'
 created_date: '2026-07-22 20:49'
+updated_date: '2026-07-23 10:03'
 labels:
   - codex-review-followup
   - cmd-meta-c
@@ -33,7 +35,25 @@ Files: src/commands/schema.ts (~115), src/commands/fswrite.ts (~419-420). Confli
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 src/commands/schema.ts comment no longer references a non-existent O_NOFOLLOW open; it describes the current up-front lstat + rename-never-follows refusal accurately
-- [ ] #2 src/commands/fswrite.ts ioError docstring no longer attributes the ELOOP branch to writeFileNoFollow's (removed) O_NOFOLLOW open; the ELOOP→conflict classification is retained and correctly sourced (path-resolution symlink loop)
-- [ ] #3 No behavioral change; existing symlink-refusal tests still pass unmodified
+- [x] #1 src/commands/schema.ts comment no longer references a non-existent O_NOFOLLOW open; it describes the current up-front lstat + rename-never-follows refusal accurately
+- [x] #2 src/commands/fswrite.ts ioError docstring no longer attributes the ELOOP branch to writeFileNoFollow's (removed) O_NOFOLLOW open; the ELOOP→conflict classification is retained and correctly sourced (path-resolution symlink loop)
+- [x] #3 No behavioral change; existing symlink-refusal tests still pass unmodified
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reword schema.ts ~line 115 comment to describe current lstat+rename refusal (no O_NOFOLLOW mention). 2. Reword fswrite.ts ioError docstring ~419-420 to repoint ELOOP provenance to path-resolution symlink loop, keeping ELOOP->conflict mapping. 3. Leave deliberate O_NOFOLLOW historical notes at ~619/621/637/644 untouched. 4. Run bun test + bun run typecheck as merge gate.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Verified: bun test -> 1900 pass, 0 fail (5353 expect() calls); bun run typecheck (tsc --noEmit) -> clean, no errors. bun run lint on changed files (schema.ts, fswrite.ts) -> no new findings. Symlink-refusal tests unmodified and still passing (AC#3).
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Reworded schema.ts:~115 comment to describe the current up-front lstatSync + temp-file/renameSync-never-follows refusal mechanism instead of the removed O_NOFOLLOW open. Reworded fswrite.ts ioError docstring (~419-420) to source the ELOOP branch from a path-resolution symlink loop rather than the removed writeFileNoFollow O_NOFOLLOW open, while retaining the ELOOP->conflict classification unchanged. Deliberate historical O_NOFOLLOW notes at fswrite.ts ~619/621/637/644 left untouched. Comment-only change; verified with full bun test suite (1900 pass, 0 fail) and bun run typecheck (clean).
+<!-- SECTION:FINAL_SUMMARY:END -->

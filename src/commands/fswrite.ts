@@ -416,8 +416,8 @@ function existingIsRegularFile(absPath: string): boolean {
  * Map a filesystem failure to a diagnostic. A permission error (`EACCES`/`EPERM`)
  * becomes a `denied` {@link LoreError}; a non-regular entry occupying a path lore needs — a directory
  * where a file must go (`EISDIR` on an overwrite, `EEXIST` on a never-clobber `mkdir`), a file
- * sitting on an ancestor segment (`ENOTDIR`), or a symlink an `O_NOFOLLOW` open refused to follow
- * (`ELOOP`, see {@link writeFileNoFollow}) — becomes a `conflict` {@link LoreError}. Both carry an
+ * sitting on an ancestor segment (`ENOTDIR`), or a symlink loop encountered while the kernel
+ * resolves the path (`ELOOP`) — becomes a `conflict` {@link LoreError}. Both carry an
  * actionable hint. Anything else is rethrown so a genuinely unexpected IO fault surfaces as an
  * uncaught failure (exit 1, "report this") rather than being mislabeled a user condition.
  */
