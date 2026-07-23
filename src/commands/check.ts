@@ -130,7 +130,9 @@ interface CheckArgs {
  * error seam still catches them either way.
  *
  * Discovery advisories (a `.md` skipped behind a symlink, an unreadable sub-directory) are flushed
- * to stderr — never silently swallowed — but, like every advisory, do not change the exit code.
+ * to stderr immediately after discovery — before the scan phase even runs — so they survive even
+ * when `checkBundles` throws in the scan phase or reconciliation later rejects (LORE-191); never
+ * silently swallowed, but, like every advisory, do not change the exit code.
  */
 export function runCheck(options: CheckOptions): number | Promise<number> {
   const parsed = parseCheckArgs(options.args);
@@ -142,6 +144,22 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
   const profile = loadProfile({ root: options.root });
   const advisories = new WarningCollector();
   const bundles = collectBundles(options.root, parsed.paths, advisories);
+
+  // Every discovery-time advisory is known by now — `collectBundles`'s own walk is the only source
+  // that ever feeds `advisories` (nothing past this point adds to it) — so flush once, immediately,
+  // right here, BEFORE the scan phase below runs: `checkBundles` is NOT guaranteed non-throwing
+  // (post-LORE-138 a real input — e.g. a `---toml` frontmatter fence — makes `bodyText` re-throw a
+  // plain `Error` out of the scan), and reconciliation further below can reject too, so deferring
+  // this flush past either point would risk losing every discovery advisory entirely (LORE-191).
+  // `advisories.flush` is non-draining, so this must be the ONLY flush site for `advisories` —
+  // flushing it again later would re-emit the same lines. This means stderr (advisories) is written
+  // BEFORE stdout (the report) — the opposite of this command's pre-LORE-27 order — deliberately:
+  // mirrors `sync.ts`'s own precedent (it flushes right after `loadBundle`, well before its own final
+  // `emit`), and "advisories survive a later throw" is a stronger guarantee to keep than "stdout
+  // precedes stderr" (already an unreliable assumption for any CLI merging two independently-
+  // buffered streams).
+  advisories.flush({ color: options.output.color, stderr: options.stderr });
+
   const baseReport = checkBundles(bundles);
 
   // Reuse the SAME already-read files (no second directory walk, no second read) to find which are
@@ -156,17 +174,6 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
   const needsReconciliation = conceptBundleResults.some(
     (result) => result.error !== null || linkedConcepts(result.concepts).length > 0,
   );
-
-  // Every discovery-time advisory is known by now — flush once, immediately, for every path
-  // uniformly (the scan above can no longer throw, so there is no special-cased branch to keep this
-  // in sync with): `advisories.flush` is non-draining, so flushing more than once would re-emit the
-  // same lines, and deferring risks losing them entirely if reconciliation later rejects. This means
-  // stderr (advisories) is now written BEFORE stdout (the report) — the opposite of this command's
-  // pre-LORE-27 order — deliberately: mirrors `sync.ts`'s own precedent (it flushes right after
-  // `loadBundle`, well before its own final `emit`), and "advisories survive a later rejection" is a
-  // stronger guarantee to keep than "stdout precedes stderr" (already an unreliable assumption for
-  // any CLI merging two independently-buffered streams).
-  advisories.flush({ color: options.output.color, stderr: options.stderr });
 
   if (!needsReconciliation && !parsed.external) {
     emit(reportRenderable(baseReport), options.output, options.stdout);
