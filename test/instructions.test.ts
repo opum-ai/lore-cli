@@ -87,6 +87,23 @@ describe("core/instructions — topic registry", () => {
     expect(normalized).toContain("managed-block markers");
     expect(normalized).toContain("already resolved");
   });
+
+  test("validation topic describes the quote-safety colon hazard as colon-plus-space, not a blanket colon ban", () => {
+    const validation = INSTRUCTION_TOPICS.find((t) => t.key === "validation");
+    const normalized = validation?.body.replace(/\s+/g, " ") ?? "";
+    // LORE-201: quoteSafetyForValue (src/core/validate.ts:429) only flags a colon followed by a
+    // space (`value.includes(": ")`); a bare colon with no trailing space -- as in a URL or an
+    // ISO timestamp -- is accepted. The old prose claimed "a colon-containing value all fail
+    // unconditionally", which is wrong and could mislead an agent. That blanket claim must be gone.
+    expect(normalized).not.toContain("colon-containing value all fail unconditionally");
+    // The replacement prose must name the actual hazard (colon followed by a space) and call out
+    // that colon-carrying values without a following space -- URLs and ISO timestamps -- are
+    // accepted.
+    expect(normalized).toContain("colon followed by a space");
+    expect(normalized).toContain("URL");
+    expect(normalized).toContain("ISO timestamp");
+    expect(normalized).toContain("accepted");
+  });
 });
 
 describe("runInstructions — topic resolution", () => {
