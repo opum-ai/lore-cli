@@ -3,7 +3,7 @@ id: doc-4
 title: Backlog campaign tracker — Codex review follow-ups (round 3)
 type: other
 created_date: '2026-07-23 16:05'
-updated_date: '2026-07-23 17:22'
+updated_date: '2026-07-23 18:01'
 ---
 Round 3 of the Codex-review follow-up campaign (see [[Backlog campaign tracker — Codex review follow-ups (round 2)]] / doc-3 for round 2, LORE-96..194, which closed all 78 medium findings; doc-1 for round 1, LORE-69..95, all 20 high). This round covers the **low-severity** findings from doc-2 ("Codex second-opinion review — lore codebase (2026-07-20)").
 
@@ -52,19 +52,19 @@ The "ready now" set is **always recomputed live** from `backlog/tasks/*.md` + th
 | 17 | LORE-213 | core-concept-manifest | — | Done | 21 | task. Guard manifest `kind` against drift from each command's emitted `kind:`. [test/help.test.ts] |
 | 18 | LORE-214 | core-managed-template | — | Done | 21 | task. Cover edge-case resource bases (and the new-path section boundary) in template.test.ts. [test/template.test.ts] |
 | 19 | LORE-215 | core-replace | — | Done | 21 | task. Scope replace.test.ts temp-dir hooks to the command suites and guard their cleanup. [test/replace.test.ts] |
-| 20 | LORE-216 | errors-output-git | — | To Do | — | task. Replace tautological tasks/orphans byte-identity test with one exercising both command render paths. [test/output.test.ts] |
-| 21 | LORE-217 | adapter-backlog | — | To Do | — | enhancement. Bound the real backlog subprocess spawn (bunBacklogSpawn) with a timeout. [src/adapters/backlog.ts] |
+| 20 | LORE-216 | errors-output-git | — | Dispatched | 22 | task. Replace tautological tasks/orphans byte-identity test with one exercising both command render paths. [test/output.test.ts] |
+| 21 | LORE-217 | adapter-backlog | — | Dispatched | 22 | enhancement. Bound the real backlog subprocess spawn (bunBacklogSpawn) with a timeout. [src/adapters/backlog.ts] |
 | 22 | LORE-218 | adapter-backlog | — | To Do | — | enhancement. Remove the lone `this` binding in the backlog adapter's searchByLabel. [src/adapters/backlog.ts] |
-| 23 | LORE-219 | core-concept-manifest | — | To Do | — | enhancement. Enforce the single-line modeline contract in serializeConceptWithModeline. [src/core/concept.ts] |
+| 23 | LORE-219 | core-concept-manifest | — | Dispatched | 22 | enhancement. Enforce the single-line modeline contract in serializeConceptWithModeline. [src/core/concept.ts] |
 | 24 | LORE-220 | core-concept-manifest | — | To Do | — | enhancement. Freeze the manifest singletons returned by buildManifest(). [src/core/manifest.ts] |
 | 25 | LORE-221 | errors-output-git | — | To Do | — | enhancement. Align id/status columns by terminal display width, not UTF-16 length. [src/output.ts] |
 | 26 | LORE-222 | adapter-backlog | — | To Do | — | bug. Map spawn-rejections on all backlog calls (not just the probe's --version) to typed LoreErrors. [src/adapters/backlog.ts] |
-| 27 | LORE-223 | cli-entry-state | — | To Do | — | bug. cli.ts: rejectStrayCommandFlags/rejectCommandArgs re-scan post-`--` tokens as flags. [src/cli.ts] |
+| 27 | LORE-223 | cli-entry-state | — | Dispatched | 22 | bug. cli.ts: rejectStrayCommandFlags/rejectCommandArgs re-scan post-`--` tokens as flags. [src/cli.ts] |
 | 28 | LORE-224 | cli-entry-state | — | To Do | — | bug. state.ts: `.trim()` on git show-prefix corrupts a whitespace-leading bundle prefix. [src/state.ts] |
-| 29 | LORE-225 | cmd-check | — | To Do | — | bug. De-duplicate check's bundle roots by canonical filesystem identity. [src/commands/check.ts] |
+| 29 | LORE-225 | cmd-check | — | Dispatched | 22 | bug. De-duplicate check's bundle roots by canonical filesystem identity. [src/commands/check.ts] |
 | 30 | LORE-226 | cmd-check | — | To Do | — | bug. Sanitize control characters in check's finding output. [src/commands/check.ts] |
 | 31 | LORE-197 | cmd-check | — | To Do | — | bug. Discovery advisories from an earlier bundle root lost when a later root throws inside collectBundles (LORE-191 residual). [src/commands/check.ts] |
-| 32 | LORE-227 | cmd-crud-a | — | To Do | — | bug. new.ts: parse arguments before loading the profile so a malformed profile.toml can't mask a usage error. [src/commands/new.ts] |
+| 32 | LORE-227 | cmd-crud-a | — | Dispatched | 22 | bug. new.ts: parse arguments before loading the profile so a malformed profile.toml can't mask a usage error. [src/commands/new.ts] |
 | 33 | LORE-228 | cmd-crud-a | — | To Do | — | bug. replace.ts / validate.ts: reject an inline =value on boolean flags (--regex, --dry-run, --strict). [src/commands/replace.ts] |
 | 34 | LORE-229 | cmd-crud-a | — | To Do | — | bug. replace.ts: sanitize discovered file paths in the report (strip ANSI/control chars) to prevent output forging. [src/commands/replace.ts] |
 | 35 | LORE-230 | cmd-crud-b | — | To Do | — | bug. existingIsRegularFile masks non-ENOENT lstat failures as a benign 'already exists' skip. [src/commands/fswrite.ts] |
