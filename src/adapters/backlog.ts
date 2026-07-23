@@ -131,6 +131,55 @@ export interface SpawnResult {
  */
 export type BacklogSpawn = (args: readonly string[]) => Promise<SpawnResult>;
 
+/**
+ * Wrap a single `spawn(args)` invocation so a **spawn-level** rejection — the process could not be
+ * started at all, as opposed to a process that ran and exited non-zero — always surfaces as a typed
+ * {@link LoreError} instead of an untyped throw (LORE-222). Every call site in this file that invokes
+ * `spawn` directly — the probe's `--version` and dry `task list --json` steps, the `read` helper, and
+ * `viewTask`/`createTask`/`editTask` — routes through this one wrapper, so a `backlog` binary that
+ * disappears mid-run, or a resource-limit/permission spawn failure, maps the same way no matter which
+ * command triggered it, rather than only the probe's very first spawn being covered.
+ *
+ * - An `ENOENT`-coded rejection (the binary is absent from PATH) is `not_found` (exit 3) with the
+ *   install hint — the same mapping the probe's `--version` step already applied.
+ * - An `EACCES`/`EPERM`-coded rejection (present but not executable) is `denied` (exit 4), mirroring
+ *   {@link readFileIfPresent}'s filesystem-errno policy.
+ * - Any other errno-coded rejection (`EMFILE`, `EAGAIN`, …) is `validation` (exit 6), naming the code.
+ * - A rejection carrying no errno `code` at all is not a recognized spawn failure and propagates
+ *   unchanged — including the typed {@link LoreError} {@link bunBacklogSpawn}'s own wall-clock timeout
+ *   already constructs (LORE-217), which carries no `.code` and must not be re-wrapped.
+ *
+ * Every mapped message embeds {@link deriveMessage}'s rendering of the original `cause`, so the
+ * underlying OS diagnostic is never lost — only reclassified from an untyped throw to a typed one.
+ */
+async function spawnOrThrow(spawn: BacklogSpawn, args: readonly string[]): Promise<SpawnResult> {
+  try {
+    return await spawn(args);
+  } catch (cause) {
+    const code = errnoCode(cause);
+    if (code === "ENOENT") {
+      throw new LoreError("not_found", "`backlog` was not found on PATH.", RUNBOOK_HINT, { binary: BACKLOG_BINARY });
+    }
+    if (code === "EACCES" || code === "EPERM") {
+      throw new LoreError(
+        "denied",
+        `spawning \`backlog ${args.join(" ")}\` failed: ${deriveMessage(cause)}`,
+        "check execute permissions on the `backlog` binary",
+        { binary: BACKLOG_BINARY, args: [...args], code },
+      );
+    }
+    if (code !== undefined) {
+      throw new LoreError(
+        "validation",
+        `spawning \`backlog ${args.join(" ")}\` failed (${code}): ${deriveMessage(cause)}`,
+        "check that `backlog` can be spawned in this environment (process/file-descriptor limits, resource availability)",
+        { binary: BACKLOG_BINARY, args: [...args], code },
+      );
+    }
+    throw cause;
+  }
+}
+
 /** What the probe learned about the `backlog` binary once it passes — cached by the caller (§5). */
 export interface BacklogCapability {
   /** The `major.minor.patch` the binary reported (extra pre-release/build metadata dropped). */
@@ -203,15 +252,9 @@ function notJsonCapable(reason: string, input?: Record<string, unknown>): never 
 export async function probeBacklog(spawn: BacklogSpawn): Promise<BacklogCapability> {
   // Step 1 — version. A spawn rejection with an ENOENT code means the binary is absent from PATH; that
   // is `not_found` (exit 3) with an install hint, distinct from a present-but-incapable binary (exit 6).
-  let versionResult: SpawnResult;
-  try {
-    versionResult = await spawn(["--version"]);
-  } catch (cause) {
-    if (errnoCode(cause) === "ENOENT") {
-      throw new LoreError("not_found", "`backlog` was not found on PATH.", RUNBOOK_HINT, { binary: BACKLOG_BINARY });
-    }
-    throw cause;
-  }
+  // Routed through spawnOrThrow (LORE-222) so a non-ENOENT-coded rejection is a typed LoreError too,
+  // not an untyped throw.
+  const versionResult = await spawnOrThrow(spawn, ["--version"]);
   if (versionResult.exitCode !== 0) {
     notJsonCapable("`backlog --version` exited non-zero", { exitCode: versionResult.exitCode });
   }
@@ -234,7 +277,7 @@ export async function probeBacklog(spawn: BacklogSpawn): Promise<BacklogCapabili
   // support has no such option, so Commander exits non-zero here. A --json-capable binary emits one
   // parseable envelope in upstream's shape (backlog-json-schema.md §8): {schemaVersion: 1, kind:
   // "task-list", tasks: [...]}.
-  const listResult = await spawn(["task", "list", "--json"]);
+  const listResult = await spawnOrThrow(spawn, ["task", "list", "--json"]);
   if (listResult.exitCode !== 0) {
     notJsonCapable("`task list --json` exited non-zero (binary does not support --json)", {
       exitCode: listResult.exitCode,
@@ -775,7 +818,7 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
   /** Run a read command through the probe gate and return its captured {@link SpawnResult}. */
   async function read(args: readonly string[], command: string): Promise<SpawnResult> {
     await ensureProbed();
-    const result = await spawn(args);
+    const result = await spawnOrThrow(spawn, args);
     if (result.exitCode !== 0) {
       readDrift(`\`${command}\` exited ${result.exitCode}`, { exitCode: result.exitCode });
     }
@@ -806,7 +849,7 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
 
     async viewTask(id: string): Promise<BacklogTaskDetail | null> {
       await ensureProbed();
-      const result = await spawn(["task", "view", rejectFlagLike(id), "--json"]);
+      const result = await spawnOrThrow(spawn, ["task", "view", rejectFlagLike(id), "--json"]);
       // A missing task exits 1 unconditionally, in every output mode (upstream, PR #790; contract
       // §2.2's migration note) — the fork's old "exit 0, empty stdout" signal no longer applies. Any
       // other nonzero exit, or a 1 that unexpectedly printed something, is a fail-loud drift. This is
@@ -871,7 +914,7 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
       for (const doc of input.doc ?? []) {
         args.push("--doc", rejectFlagLike(doc)); // --doc is an accumulator (§2.4): repeat, don't comma-join.
       }
-      const result = await spawn(args);
+      const result = await spawnOrThrow(spawn, args);
       if (result.exitCode !== 0) {
         throw new LoreError(
           "validation",
@@ -911,7 +954,7 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
       for (const doc of patch.doc ?? []) {
         args.push("--doc", rejectFlagLike(doc)); // accumulator, SET/REPLACE the whole array (§2.4).
       }
-      const result = await spawn(args);
+      const result = await spawnOrThrow(spawn, args);
       // `task edit <missing>` exits 1 (contract §2.2) — the one write whose exit code IS meaningful.
       if (result.exitCode !== 0) {
         const missing = /not found/i.test(result.stderr);
