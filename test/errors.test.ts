@@ -10,6 +10,7 @@ import {
   ioError,
   LoreError,
   reportError,
+  stderrHint,
   toErrorEnvelope,
   WarningCollector,
 } from "../src/errors";
@@ -544,6 +545,62 @@ describe("ioError — the shared fs-errno policy (LORE-48)", () => {
     } catch (err) {
       expect((err as LoreError).type).toBe("not_found");
     }
+  });
+});
+
+describe("stderrHint — ANSI/control-byte stripping and length cap (LORE-249)", () => {
+  test("returns undefined for empty stderr", () => {
+    expect(stderrHint("")).toBeUndefined();
+  });
+
+  test("returns undefined for whitespace-only stderr, including newlines/tabs (existing contract preserved)", () => {
+    expect(stderrHint("   ")).toBeUndefined();
+    expect(stderrHint("\n\t \r\n")).toBeUndefined();
+  });
+
+  test("trims and collapses internal whitespace runs to a single space", () => {
+    expect(stderrHint("  fatal:   not a git   repository  \n")).toBe("fatal: not a git repository");
+  });
+
+  test("collapses a line break into a single space, not a glued word (whitespace collapses before the control-byte strip)", () => {
+    expect(stderrHint("first line\nsecond line")).toBe("first line second line");
+  });
+
+  test("strips ANSI CSI/SGR sequences and a bare BEL, leaving no control byte behind (AC#1/AC#4)", () => {
+    const stderr = "fatal: \x1b[31mrejected\x1b[0m\x07 push";
+    const hint = stderrHint(stderr);
+    expect(hint).toBeDefined();
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting the ABSENCE of control bytes.
+    expect(/[\x00-\x1f\x7f-\x9f]/.test(hint as string)).toBe(false);
+    expect(hint).not.toContain("\x1b");
+    expect(hint).toBe("fatal: rejected push");
+  });
+
+  test("strips an OSC hyperlink sequence terminated by BEL", () => {
+    const hint = stderrHint("see \x1b]8;;http://evil\x07link\x07 for detail");
+    expect(hint).toBeDefined();
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting the ABSENCE of control bytes.
+    expect(/[\x00-\x1f\x7f-\x9f]/.test(hint as string)).toBe(false);
+  });
+
+  test("returns undefined when the stderr is control bytes/ANSI only (nothing survives the strip)", () => {
+    expect(stderrHint("\x1b[31m\x1b[0m")).toBeUndefined();
+    expect(stderrHint("\x07")).toBeUndefined();
+  });
+
+  test("caps an over-length stderr to the bounded max, with a truncation indicator (AC#2/AC#5)", () => {
+    const huge = "x".repeat(5000);
+    const hint = stderrHint(huge) as string;
+    expect(hint).toBeDefined();
+    expect(hint.length).toBeLessThanOrEqual(501); // cap + 1-char truncation indicator
+    expect(hint.length).toBeLessThan(huge.length);
+    expect(hint.endsWith("…")).toBe(true);
+  });
+
+  test("does not add a truncation indicator when stderr is within the cap", () => {
+    const short = "fatal: something went wrong";
+    expect(stderrHint(short)).toBe(short);
+    expect((stderrHint(short) as string).endsWith("…")).toBe(false);
   });
 });
 
