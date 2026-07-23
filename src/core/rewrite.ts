@@ -518,6 +518,16 @@ function newDestPathFor(
       targetId === ctx.from
         ? repoToPath
         : posix.normalize(decoded.startsWith("/") ? `${DOCS_DIR}/${decoded.slice(1)}` : posix.join(repoDir, decoded));
+    // A link authored with more `../` segments than the file's depth resolves ABOVE the repo
+    // root: `targetPath` (already normalized, repo-relative) equals `..` or starts with `../`.
+    // normalizeLink roots both operands at a fixed virtual `/` (links.ts) and would silently
+    // clamp that surplus `..`, quietly retargeting an already-non-portable link rather than
+    // preserving it. Bail out with no edit instead, so the original authored bytes survive the
+    // move verbatim (the `decoded.startsWith("/")` sub-branch above always yields a `docs/…`
+    // path and can never trigger this).
+    if (targetPath === ".." || targetPath.startsWith("../")) {
+      return null;
+    }
     return normalizeLink(repoToPath, targetPath);
   }
   if (targetId !== ctx.from) {
