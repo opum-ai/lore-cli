@@ -119,7 +119,7 @@ export function runScaffold(options: ScaffoldOptions): number {
       throw new LoreError(
         "conflict",
         `${parsed.target} config already exists: ${collisions.join(", ")}`,
-        "pass --force to overwrite, or remove the existing file(s) first",
+        conflictHint(blockedDirs.length > 0, existingFiles.length > 0),
         { target: parsed.target, paths: collisions },
       );
     }
@@ -130,6 +130,28 @@ export function runScaffold(options: ScaffoldOptions): number {
   const result: ScaffoldResult = { target: parsed.target, force: parsed.force, files, notes: plan.notes ?? [] };
   emit(scaffoldRenderable(result), options.output, options.stdout);
   return EXIT_OK;
+}
+
+/**
+ * Build the preflight `conflict` error's remedy hint, differentiated by which kind(s) of
+ * collision were found. A structural directory blocker — a plain (non-directory) file occupying
+ * a path the plan needs to be a directory — is NOT fixed by `--force`: under `--force` this same
+ * preflight is skipped entirely and the run reaches `writeAllOrRollback` -> `ensureDir`
+ * (fswrite.ts) -> `mkdirSync(dir, { recursive: true })`, which throws `EEXIST` on the same
+ * non-directory entry, remapped by `ioError` to a second `conflict` (fswrite.ts's own
+ * `conflictError`). So the hint must never tell the user `--force` will overwrite a dir-blocker —
+ * only removing/renaming the blocking entry does. A pre-existing regular file at a planned file
+ * path is genuinely fixed by `--force` (writeAllOrRollback overwrites it in place), so that
+ * remedy is preserved whenever at least one file collision is present.
+ */
+function conflictHint(hasDirBlocker: boolean, hasFileCollision: boolean): string {
+  if (hasDirBlocker && hasFileCollision) {
+    return "pass --force to overwrite the existing file(s); separately, remove or rename the non-directory entry blocking the planned directory (--force cannot fix that one)";
+  }
+  if (hasDirBlocker) {
+    return "remove or rename the non-directory entry that is blocking the planned directory, then re-run";
+  }
+  return "pass --force to overwrite, or remove the existing file(s) first";
 }
 
 // ── Argument parsing ───────────────────────────────────────────────────────────
