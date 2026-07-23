@@ -193,6 +193,22 @@ describe("generateLog — determinism edge cases", () => {
     expect(generateLog(FAKE_HISTORY, { root: "docs///" })).toBe(generateLog(FAKE_HISTORY));
   });
 
+  test("LORE-243: equivalent spellings of the root — './docs', 'docs/.', './docs/' — canonicalize identically to 'docs' (none silently empty)", () => {
+    const canonical = generateLog(FAKE_HISTORY);
+    expect(generateLog(FAKE_HISTORY, { root: "./docs" })).toBe(canonical);
+    expect(generateLog(FAKE_HISTORY, { root: "docs/." })).toBe(canonical);
+    expect(generateLog(FAKE_HISTORY, { root: "./docs/" })).toBe(canonical);
+  });
+
+  test("LORE-243: internal redundant separators — 'docs//adr' and 'docs/./adr' — resolve to the same bundle root as 'docs/adr'", () => {
+    const canonical = generateLog(FAKE_HISTORY, { root: "docs/adr" });
+    // Sanity: the canonical root actually scopes to a non-empty section, so the equality below is
+    // meaningful (not two empty logs agreeing vacuously).
+    expect(canonical).toContain("## docs/adr");
+    expect(generateLog(FAKE_HISTORY, { root: "docs//adr" })).toBe(canonical);
+    expect(generateLog(FAKE_HISTORY, { root: "docs/./adr" })).toBe(canonical);
+  });
+
   test("offset-less timestamps order by text, not a host-local-TZ parse (machine-independent)", () => {
     // Neither carries an offset, so neither is trusted as an absolute instant; they order by
     // deterministic code-unit text, identically on every machine and time zone.
@@ -237,5 +253,13 @@ describe("buildLog — the GitAdapter seam is exercised (AC#1)", () => {
     // on which root scopes a given `log.md`, or the pathspec would prune commits generateLog still
     // expected to see.
     expect(adapter.seenRoots).toEqual(["wiki"]);
+  });
+
+  test("LORE-243: an equivalent-spelling root resolves to the same canonicalized pathspec generateLog's post-filter uses", () => {
+    const adapter = fakeAdapter();
+    buildLog(adapter, { to: "HEADSHA" }, { root: "./docs/" });
+    // './docs/' must canonicalize to exactly 'docs' — the same root generateLog resolves it to — so
+    // the adapter's pathspec-scoped walk and generateLog's post-filter never disagree on scope.
+    expect(adapter.seenRoots).toEqual(["docs"]);
   });
 });

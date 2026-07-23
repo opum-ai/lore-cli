@@ -169,15 +169,20 @@ export function generateLog(commits: readonly GitCommit[], options: GenerateLogO
 
 /**
  * Normalize a {@link GenerateLogOptions.root}/{@link GitAdapter.history} root to the bundle root it
- * denotes: strip trailing slash(es) so a root authored as `docs/` matches `docs/x.md` (the
- * `${root}/` probe in {@link isUnderRoot} would otherwise compare against `docs//` and match
- * nothing — a silently empty log), and fall back to {@link DOCS_DIR} for an absent or all-slashes
- * root (an empty root would match nothing). Shared by {@link generateLog} (post-filtering) and
+ * denotes, so equivalent spellings of the same root canonicalize identically (LORE-243): a leading
+ * `./`, a trailing `/.`, and internal redundant separators (`//`, `/./`) are all collapsed via
+ * {@link posix.normalize} before the trailing slash(es) are stripped — so `./docs`, `docs/.`,
+ * `./docs/`, and `docs//adr`/`docs/./adr` all resolve exactly like `docs`/`docs/adr`. Without the
+ * `posix.normalize` pass, the `${root}/` probe in {@link isUnderRoot} would compare against the
+ * un-normalized root and match nothing — a silently empty log. Falls back to {@link DOCS_DIR} for an
+ * absent, empty, or all-slashes root (`normalize` reduces those to `"."` or `"/"`, neither of which
+ * would match anything as a bundle root). Shared by {@link generateLog} (post-filtering) and
  * {@link buildLog} (the pathspec handed to {@link GitAdapter.history}) so the two always agree on
  * exactly which root scopes a given `log.md`.
  */
 function resolveRoot(root: string | undefined): string {
-  return (root || DOCS_DIR).replace(/\/+$/, "") || DOCS_DIR;
+  const normalized = posix.normalize(root || DOCS_DIR).replace(/\/+$/, "");
+  return normalized === "" || normalized === "." ? DOCS_DIR : normalized;
 }
 
 /**
