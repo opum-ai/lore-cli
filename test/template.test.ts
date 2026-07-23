@@ -86,6 +86,35 @@ describe("renderTemplate", () => {
   test("an inherited key (e.g. __proto__) is treated as unresolved, not silently resolved", () => {
     expect(renderTemplate("{{__proto__}}", {}).unresolved).toEqual(["__proto__"]);
   });
+
+  test("a malformed brace-shaped token is reported unresolved and left verbatim, never silently passed through (LORE-157)", () => {
+    // Internal whitespace: not a legal `[A-Za-z0-9_.-]+` name even though the strict grammar's
+    // own `\s*` padding is optional whitespace only at the boundaries.
+    const owner = renderTemplate("Owner: {{owner name}}", { "owner name": "ignored" });
+    expect(owner.unresolved).toEqual(["owner name"]);
+    expect(owner.text).toBe("Owner: {{owner name}}");
+
+    // Empty: no name at all.
+    const empty = renderTemplate("[{{}}]", {});
+    expect(empty.unresolved).toEqual([""]);
+    expect(empty.text).toBe("[{{}}]");
+
+    // A disallowed character (`/`) even after trimming the padding.
+    const slash = renderTemplate("{{ owner/name }}", {});
+    expect(slash.unresolved).toEqual(["owner/name"]);
+    expect(slash.text).toBe("{{ owner/name }}");
+  });
+
+  test("a malformed token is reported even when vars happens to hold a matching raw key", () => {
+    // Providing vars["owner name"] must not resolve it — the grammar rejects the shape outright,
+    // independent of what `vars` holds.
+    expect(renderTemplate("{{owner name}}", { "owner name": "Payments" }).unresolved).toEqual(["owner name"]);
+  });
+
+  test("a malformed token is deduped like a legitimate unresolved key, in first-seen order", () => {
+    const result = renderTemplate("{{owner name}} {{owner name}} {{b}}", {});
+    expect(result.unresolved).toEqual(["owner name", "b"]);
+  });
 });
 
 describe("buildNewConcept — known types validate clean by construction (AC#1)", () => {
@@ -173,6 +202,30 @@ describe("buildNewConcept — unfilled body placeholders fail loud (exit 6)", ()
       return;
     }
     throw new Error("expected an unfilled-placeholder LoreError, but build returned");
+  });
+
+  test.each([
+    ["internal whitespace", "\n# {{title}}\n\nOwner: {{owner name}}\n", "{{owner name}}"],
+    ["empty", "\n# {{title}}\n\n{{}}\n", "{{}}"],
+    ["a disallowed character", "\n# {{title}}\n\nOwner: {{ owner/name }}\n", "{{owner/name}}"],
+  ])("a malformed brace-shaped token (%s) fails loud exactly like an unresolved placeholder, not written verbatim (LORE-157 AC#1)", (_label, bodyTemplate, expectedToken) => {
+    try {
+      buildNewConcept({
+        docPath: "docs/reference/sample.md",
+        type: "Reference",
+        title: "Orders table",
+        summary: "The orders table.",
+        timestamp: TIMESTAMP,
+        bodyTemplate,
+        vars: Object.create(null),
+      });
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("validation");
+      expect((err as LoreError).message).toContain(expectedToken);
+      return;
+    }
+    throw new Error(`expected a malformed-placeholder LoreError for ${expectedToken}, but build returned`);
   });
 
   test("the auto tokens (title/type/timestamp/summary) override a same-named --var", () => {
