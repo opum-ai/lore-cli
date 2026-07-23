@@ -25,8 +25,10 @@
  *   (LORE-32) is the dedicated dangling-link report; `tasks` only notes them so its rollup
  *   shows just the live tasks. A per-task read that *fails* (Backlog drift) still propagates;
  *   a per-task read that *succeeds* but answers with a DIFFERENT task's id than requested is
- *   also a hard `not_found` error (exit 3), never silently attributed to the requested row
- *   (mirrors `reconcile-shared.ts`'s `resolveTaskDetails`, LORE-122).
+ *   also a hard `not_found` error (exit 3), never silently attributed to the requested row —
+ *   via the same shared guard `commands/link.ts`'s `verifiedViewTask` exports (LORE-183; this
+ *   module no longer hand-maintains its own copy, LORE-125), which itself mirrors
+ *   `reconcile-shared.ts`'s `resolveTaskDetails` (LORE-122).
  */
 
 import { join } from "node:path";
@@ -35,10 +37,10 @@ import { conceptNotInBundle, loadBundle, toRefList } from "../core/bundle";
 import { idFromPath } from "../core/concept";
 import { loadProfile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
-import { ANSI, EXIT_OK, LoreError, paint, WarningCollector, type Writer } from "../errors";
+import { ANSI, EXIT_OK, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable, renderTaskSummaryRows, type TaskSummaryRow } from "../output";
 import { usage } from "./args";
-import { dedupeTaskIds, defaultAdapter } from "./link";
+import { dedupeTaskIds, defaultAdapter, verifiedViewTask } from "./link";
 
 /** Options for {@link runTasks}; `root`, the streams, and the adapter are injectable for tests. */
 export interface TasksOptions {
@@ -133,13 +135,15 @@ function echoedStatus(filter: string | undefined, tasks: readonly TaskRollupRow[
  * task Backlog does not know — is soft: dropped from the rollup with a stderr advisory (`orphans`
  * owns the dangling-link report).
  *
- * A fulfilled result is ALSO checked against the id that was actually requested at that position
- * (`linked[i]`, case-insensitively): `viewTask` is keyed by id, but nothing enforces that the detail
- * it returns actually carries that id back. Trusting it blindly would let a mismatched detail
- * silently attribute another task's title/status to this row — the exact bug `resolveTaskDetails`
- * (`reconcile-shared.ts`) guards `sync`/`check` against (LORE-122). A mismatch is therefore a hard
- * `not_found` failure, thrown immediately rather than pushed into `rows`. The `--status` filter is
- * applied last, to the live rows only.
+ * Each read goes through `commands/link.ts`'s exported {@link verifiedViewTask} (LORE-183), not a
+ * raw `adapter.viewTask` call: it checks the returned detail's own `id` against the id actually
+ * requested at that position (case-insensitively) and throws before this function ever sees a
+ * mismatched detail — `viewTask` is keyed by id, but nothing enforces that the detail it returns
+ * actually carries that id back, and trusting it blindly would let a mismatch silently attribute
+ * another task's title/status to this row. That thrown `LoreError` surfaces here as an ordinary
+ * rejected settle, handled identically to any other failed read (a hard `not_found` failure,
+ * exactly as before LORE-125 folded this module's own copy of the check into the shared helper).
+ * The `--status` filter is applied last, to the live rows only.
  */
 async function resolveRollup(
   linked: readonly string[],
@@ -152,28 +156,20 @@ async function resolveRollup(
   const adapter = options.adapter ?? defaultAdapter(options.root);
   await adapter.probe();
 
-  const settled = await Promise.allSettled(linked.map((id) => adapter.viewTask(id)));
+  const settled = await Promise.allSettled(linked.map((id) => verifiedViewTask(adapter, id)));
   const dangling: string[] = [];
   const rows: TaskRollupRow[] = [];
   for (let i = 0; i < linked.length; i++) {
-    const result = settled[i] as PromiseSettledResult<Awaited<ReturnType<BacklogAdapter["viewTask"]>>>;
+    const result = settled[i] as PromiseSettledResult<Awaited<ReturnType<typeof verifiedViewTask>>>;
     if (result.status === "rejected") {
-      // A read that FAILED (not a clean not-found null) is Backlog drift — hard-fail on the first,
+      // A read that FAILED — Backlog drift, or `verifiedViewTask`'s own id-mismatch guard refusing
+      // an adapter detail that doesn't belong to the requested task — is hard-failed on the first,
       // in tasks: order, before any partial rollup or advisory is emitted.
       throw result.reason;
     }
     if (result.value === null) {
       dangling.push(linked[i] as string);
       continue;
-    }
-    const requestedId = linked[i] as string;
-    if (result.value.id.toLowerCase() !== requestedId.toLowerCase()) {
-      throw new LoreError(
-        "not_found",
-        `task "${requestedId}" resolved to a different task ("${result.value.id}") — refusing to use it`,
-        "this points at a Backlog adapter bug or an id collision, not a missing task — verify the task id with `backlog task view` and report the mismatch",
-        { taskId: requestedId, resolvedId: result.value.id },
-      );
     }
     rows.push({ id: result.value.id, title: result.value.title, status: result.value.status });
   }
