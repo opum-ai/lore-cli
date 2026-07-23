@@ -185,6 +185,41 @@ describe("lore link — wiring (AC#1)", () => {
     expect(adapter.calls[0]?.patch.doc).toEqual(["docs/stories/x.md"]); // --doc silently repaired
   });
 
+  test("a casing-variant --doc entry is recognized, not duplicated, when the doc: label is already present (LORE-234)", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - task-42\n---\nBody.\n");
+    const before = readDoc("stories/x.md");
+    // The label is present and --doc already carries a case-variant of the computed docPath
+    // (docs/stories/x.md) — this must be recognized as already-current, not forced through an
+    // unnecessary edit that would append a second, differently-cased entry.
+    const adapter = fakeAdapter([
+      makeTask("TASK-42", { labels: ["doc:stories/x"], documentation: ["docs/Stories/X.md"] }),
+    ]);
+
+    const { report } = await linkCmd(["stories/x", "task-42"], adapter);
+    expect(report.changed).toBe(false);
+    expect(report.tasks).toEqual([{ task: "task-42", status: "already-linked", backRef: "already-present" }]);
+    expect(readDoc("stories/x.md")).toBe(before);
+    expect(adapter.calls).toHaveLength(0); // no edit at all — the casing variant already covers it
+  });
+
+  test("a casing-variant --doc entry is recognized, not duplicated, when the doc: label is absent (LORE-234)", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - task-42\n---\nBody.\n");
+    const before = readDoc("stories/x.md");
+    // The label is missing (so the label side still needs repair), but --doc already carries a
+    // case-variant of the computed docPath. Before the fix, addDoc's exact-case `includes` would
+    // append a second, differently-cased documentation entry alongside the repaired label.
+    const adapter = fakeAdapter([makeTask("TASK-42", { documentation: ["docs/Stories/X.md"] })]);
+
+    const { report } = await linkCmd(["stories/x", "task-42"], adapter);
+    expect(report.changed).toBe(false);
+    expect(report.tasks).toEqual([{ task: "task-42", status: "already-linked", backRef: "added" }]);
+    expect(readDoc("stories/x.md")).toBe(before);
+    // The label is repaired, but --doc carries exactly one entry for the doc — the pre-existing
+    // casing variant is preserved as-is, not duplicated with a freshly-cased second entry.
+    expect(adapter.calls).toHaveLength(1);
+    expect(adapter.calls[0]?.patch.doc).toEqual(["docs/Stories/X.md"]);
+  });
+
   test("matches an existing id case-insensitively (ADR-0009: ids compared case-insensitively)", async () => {
     writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - task-42\n---\nBody.\n");
     const adapter = fakeAdapter([makeTask("TASK-42")]);

@@ -244,7 +244,11 @@ export async function runLink(options: LinkOptions): Promise<number> {
         throw new Error(`task "${taskId}" no longer exists in Backlog`);
       }
       const wasPresent = hasLabel(detail, label);
-      const docChanged = !detail.documentation.includes(docPath);
+      // Matched case-insensitively, like `hasLabel` and `removeBackRefs`'s `hadDoc` — an existing
+      // documentation entry that differs from `docPath` only by case (a hand-edit or out-of-band
+      // move) already reflects this link, so it must not be treated as changed (which would force
+      // an unnecessary edit) nor fall through to `addDoc` appending a casing-variant duplicate.
+      const docChanged = !containsCaseInsensitive(detail.documentation, docPath);
       if (wasPresent && !docChanged) {
         // Both the label and --doc already reflect this link, so there is no Backlog edit to make
         // — but the task's file can still be dirty and uncommitted on disk if a PRIOR `lore link`
@@ -753,9 +757,13 @@ function hasLabel(detail: BacklogTaskDetail, label: string): boolean {
   return containsCaseInsensitive(detail.labels, label);
 }
 
-/** The desired full `documentation` array after adding `docPath` (SET/REPLACE-safe: preserves every other entry). */
+/**
+ * The desired full `documentation` array after adding `docPath` (SET/REPLACE-safe: preserves every
+ * other entry). Matched case-insensitively, like `removeDoc` — an existing entry differing from
+ * `docPath` only by case already covers it, so it is left as-is rather than gaining a duplicate.
+ */
 function addDoc(existing: readonly string[], docPath: string): string[] {
-  return existing.includes(docPath) ? [...existing] : [...existing, docPath];
+  return containsCaseInsensitive(existing, docPath) ? [...existing] : [...existing, docPath];
 }
 
 /**
