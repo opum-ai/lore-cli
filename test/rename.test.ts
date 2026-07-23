@@ -17,6 +17,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BacklogTaskDetail } from "../src/adapters/backlog";
 import { run } from "../src/cli";
+// A namespace import so `spyOn` can patch `defaultAdapter` in place (LORE-209): `rename.ts` reads
+// it off this same module object internally, so patching the object here is observed by its call
+// inside `runRename` — mirrors the `fs`/`spyOn` pattern above, but across a same-repo module rather
+// than a Node built-in.
+import * as linkModule from "../src/commands/link";
 import { type RenameReport, runRename } from "../src/commands/rename";
 import { loadBundle } from "../src/core/bundle";
 import { INDEX_BLOCK_BEGIN, INDEX_BLOCK_END } from "../src/core/indexes";
@@ -1108,9 +1113,19 @@ describe("lore rename — Backlog back-ref move", () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
     const stdout = capture();
 
-    // No `adapter` option passed — if the code tried to construct the real default adapter (which
-    // spawns a subprocess), this would either hang or throw in a sandboxed test run. Succeeding
-    // here proves the no-tasks: early-exit skips Backlog entirely.
+    // No `adapter` option passed — this only proves anything if the real default adapter is never
+    // even CONSTRUCTED. `defaultAdapter` (src/commands/link.ts:530) returns
+    // `createBacklogAdapter(bunBacklogSpawn(...))`: both `createBacklogAdapter`
+    // (src/adapters/backlog.ts:690) and `bunBacklogSpawn` (src/adapters/backlog.ts:235) only
+    // allocate closures — `Bun.spawn` (src/adapters/backlog.ts:237) runs only once a method
+    // (`probe`/`listTasks`/etc.) is actually invoked. So construction alone is inert; it would
+    // neither hang nor throw here even if reached. What the test title claims — and what the spy
+    // below enforces — is the stronger, separate fact that an unlinked rename never reaches the
+    // Backlog branch at all (`options.adapter ?? defaultAdapter(options.root)`,
+    // src/commands/rename.ts:206-207), so `defaultAdapter` is never even called and no subprocess
+    // is ever spawned.
+    const defaultAdapterSpy = spyOn(linkModule, "defaultAdapter");
+
     const code = await runRename({
       root,
       output: JSON_CTX,
@@ -1123,6 +1138,13 @@ describe("lore rename — Backlog back-ref move", () => {
     expect(code).toBe(EXIT_OK);
     expect(envelope.data.backRefs).toEqual([]);
     expect(existsSync(join(root, "docs/reference/sales-orders.md"))).toBe(true);
+    // The enforcement: zero calls proves `defaultAdapter` itself was never invoked — not merely
+    // that no Backlog *method* ran. A regression that unconditionally constructed (or invoked) the
+    // default adapter during an unlinked rename would fail this line even though every assertion
+    // above it still passes.
+    expect(defaultAdapterSpy).toHaveBeenCalledTimes(0);
+
+    defaultAdapterSpy.mockRestore();
   });
 
   test("--dry-run skips the Backlog move entirely, even for a linked concept", async () => {
