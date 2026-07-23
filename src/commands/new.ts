@@ -16,9 +16,9 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, join, posix, relative, resolve, sep, win32 } from "node:path";
+import { isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { idFromPath } from "../core/concept";
-import { loadProfile, type Profile } from "../core/profile";
+import { loadProfile, type Profile, templateConfinementViolation } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { canonicalType, isKnownType, SCHEMAS_DIR, schemaFileName, schemaModeline, typeDirectory } from "../core/schema";
 import { buildNewConcept, builtinTemplateFor, slugify } from "../core/template";
@@ -363,18 +363,26 @@ function resolveOutPath(out: string, root: string): string {
  * An explicit `--template` is a user-facing CLI flag (unlike `declared`, a repo-config value) and
  * is validated with {@link assertTemplateNameConfined} BEFORE it ever reaches a file path (LORE-69):
  * `--template` is documented as a bare name, never a path, so a `..` segment or an absolute value
- * is rejected outright rather than spliced into `${TEMPLATES_DIR}/${base}.md` and hoped safe.
+ * is rejected outright rather than spliced into `${TEMPLATES_DIR}/${base}.md` and hoped safe. The
+ * profile-declared `template` went through the analogous {@link templateConfinementViolation}
+ * check already, at profile PARSE time (LORE-139), so it is not re-checked for confinement here —
+ * only the two named-by-user-or-repo-config sources (`--template`, `declared`) get the symlink
+ * refusal below; the bare-type-name convention lookup (neither given) does not (LORE-91 scope).
  */
 function resolveTemplate(parsed: NewArgs, type: string, root: string, profile: Profile): string {
   const explicitTemplate = parsed.template !== undefined;
   if (parsed.template !== undefined) {
-    assertTemplateNameConfined(parsed.template, root);
+    assertTemplateNameConfined(parsed.template);
   }
   const declared = profile.types.get(type)?.template?.replace(/\.md$/i, "");
   const base = parsed.template ?? declared ?? type;
+  // A named template source — the CLI flag or a profile's own declared filename — is refused if
+  // it resolves through a symlink (LORE-91, widened to `declared` by LORE-185's AC#2); the bare
+  // type-name convention lookup below carries no such refusal, matching the pre-LORE-185 scope.
+  const checkSymlink = explicitTemplate || declared !== undefined;
   for (const candidate of templateCandidates(base)) {
     const relPath = `${TEMPLATES_DIR}/${candidate}.md`;
-    const text = readTemplateFile(join(root, relPath), relPath, root, explicitTemplate);
+    const text = readTemplateFile(join(root, relPath), relPath, root, checkSymlink);
     if (text !== undefined) {
       return text;
     }
@@ -392,41 +400,24 @@ function resolveTemplate(parsed: NewArgs, type: string, root: string, profile: P
 
 /**
  * Reject a `--template` value that could escape `.lore/templates/` once spliced into a file
- * path — the same containment shape as {@link resolveOutPath}'s own guard (`resolve` + `relative`,
- * checked for a `..`-prefixed result or an absolute one), applied to the template NAME rather
- * than a full `--out` path (the `rel === ""` case `resolveOutPath` also checks does not apply
- * here: the candidate is always `${name}.md`, which can never resolve to exactly `templatesRoot`
- * itself). An absolute value is rejected unconditionally first, checked against the host
- * platform's own `isAbsolute` AND both `posix.isAbsolute`/`win32.isAbsolute` explicitly — this
- * ships as a compiled binary for BOTH platforms from the same source, and the host-bound
- * `isAbsolute` only matches the syntax of whichever platform happens to be running: a Windows
- * drive-letter path (`C:\...`) is inert on a POSIX host (backslash is just an ordinary filename
- * character there, so it can't actually escape `templatesRoot`) but genuinely absolute on the
- * win32 binary — checking `win32.isAbsolute` unconditionally makes the guard's safety invariant
- * "reject anything that looks absolute on any supported platform," not "safe as long as the host
- * happens to match the deployment platform" (LORE-69's cross-platform-normalize lesson, applied
- * here before an independent review had to find it).
- *
- * A `..`-segment escape is then caught by resolving the candidate against the real templates
- * directory and confirming the result still lands inside it — this SECOND layer is what actually
- * defends a drive-relative path to a DIFFERENT drive than the repo's own (e.g. `--template D:foo`
- * from a `C:`-hosted repo, on a real win32 run): per Windows semantics that's legitimately not
- * "absolute" (none of the three `isAbsolute` checks above catch it), but `relative()` between
- * disjoint drives returns the target path unchanged, which still fails the containment check
- * below — confirmed via `path.win32`. Neither layer is redundant; each catches cases the other
- * doesn't.
+ * path, via the shared {@link templateConfinementViolation} predicate `core/profile.ts` also uses
+ * for the profile-declared `[[types]].template` value (LORE-139) — LORE-185 consolidated what
+ * used to be this function's own host-`resolve()`/`relative()` arithmetic (no backslash
+ * normalization) onto that one pure-posix, backslash-aware implementation, closing a cross-host
+ * drift: a Windows-style `--template ..\..\secret` escape was only ever caught on an actual win32
+ * run before — a POSIX test/CI run saw it as one inert, non-escaping filename segment — and is now
+ * rejected identically on every host. See {@link templateConfinementViolation}'s own docstring for
+ * the absolute-path and `..`-escape rationale in full (both apply unchanged here).
  */
-function assertTemplateNameConfined(name: string, root: string): void {
-  if (isAbsolute(name) || posix.isAbsolute(name) || win32.isAbsolute(name)) {
+function assertTemplateNameConfined(name: string): void {
+  const violation = templateConfinementViolation(name);
+  if (violation === "absolute") {
     throw usage(
       `--template value "${name}" must not be an absolute path`,
       "pass a bare template name, e.g. --template adr",
     );
   }
-  const templatesRoot = join(root, TEMPLATES_DIR);
-  const resolved = resolve(templatesRoot, `${name}.md`);
-  const rel = relative(templatesRoot, resolved);
-  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+  if (violation === "escape") {
     throw usage(
       `--template value "${name}" must not escape ${TEMPLATES_DIR}/`,
       "pass a bare template name, e.g. --template adr",
@@ -445,19 +436,23 @@ function templateCandidates(base: string): string[] {
  * the caller can fall back to a built-in. A permission failure becomes a `denied`
  * {@link LoreError}; any other read fault propagates as an uncaught error.
  *
- * `checkSymlink` (true only for an explicit `--template`, LORE-91) refuses — rather than
+ * `checkSymlink` (true for an explicit `--template` (LORE-91) AND, as of LORE-185's AC#2, a
+ * profile-declared `template` — `resolveTemplate`'s `declared` fallback) refuses — rather than
  * silently reading through — a symlinked candidate anywhere in `relPath`'s segments, closing an
- * information-disclosure gap `assertTemplateNameConfined`'s purely syntactic containment check
- * cannot: a bare, unsuspicious `--template evil` whose resolved `.lore/templates/evil.md` is
- * itself a symlink to an arbitrary file outside the repo would otherwise have that file's exact
- * content silently embedded in the generated concept. Mirrors this codebase's established
- * write-path precedent (`fswrite.ts`'s `assertNoSymlinkInPath`/`findSymlinkSegment`, LORE-76/77)
- * rather than inventing a new pattern, and its own READ-path precedent (`core/bundle.ts`'s
- * `walkMarkdown`, `commands/replace.ts`) of never following a symlink that could resolve outside
- * the repo. Scoped to the explicit CLI flag only (AC#4) — a profile-declared `template` value
- * (the `declared` fallback `resolveTemplate` also tries) is a separate, already-documented trust
- * boundary (repo config, not a user-typed flag) that LORE-72's own confinement guard likewise
- * left untouched, and this check follows that same precedent rather than widening scope.
+ * information-disclosure gap the purely syntactic {@link templateConfinementViolation} containment
+ * check cannot: a bare, unsuspicious `--template evil` (or a profile declaring `template = "evil"`)
+ * whose resolved `.lore/templates/evil.md` is itself a symlink to an arbitrary file outside the
+ * repo would otherwise have that file's exact content silently embedded in the generated concept.
+ * Mirrors this codebase's established write-path precedent (`fswrite.ts`'s
+ * `assertNoSymlinkInPath`/`findSymlinkSegment`, LORE-76/77) rather than inventing a new pattern,
+ * and its own READ-path precedent (`core/bundle.ts`'s `walkMarkdown`, `commands/replace.ts`) of
+ * never following a symlink that could resolve outside the repo. `checkSymlink` is still `false`
+ * for the bare-type-name convention lookup (neither `--template` nor a profile `declared` value) —
+ * LORE-139 hardened that path's PARSE-time traversal check (via the profile's own compiled
+ * `template`, confined before `resolveTemplate` ever sees it) but, unlike the two named sources
+ * above, that implicit lookup names no untrusted value at all, so it was intentionally left out of
+ * this task's AC#2 scope rather than "left untouched" wholesale, as an earlier draft of this
+ * comment (pre-LORE-185) claimed.
  */
 function readTemplateFile(absPath: string, relPath: string, root: string, checkSymlink: boolean): string | undefined {
   if (checkSymlink) {
