@@ -393,292 +393,296 @@ describe("mergeRanges", () => {
 
 // ── command: runReplace ──────────────────────────────────────────────────────────
 
-let root: string;
+describe("lore replace — command-level suites (root fixture)", () => {
+  let root = "";
 
-beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "lore-replace-"));
-  mkdirSync(join(root, "docs/stories"), { recursive: true });
-});
-afterEach(() => {
-  rmSync(root, { recursive: true, force: true });
-});
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "lore-replace-"));
+    mkdirSync(join(root, "docs/stories"), { recursive: true });
+  });
+  afterEach(() => {
+    if (root) {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 
-/** Write a repo-relative file under the temp root. */
-function writeDoc(rel: string, contents: string): void {
-  const abs = join(root, rel);
-  mkdirSync(join(abs, ".."), { recursive: true });
-  writeFileSync(abs, contents);
-}
-
-/** Run `replace` in JSON mode and return the parsed `data` payload plus the exit code. */
-function replaceCmd(args: string[]): { code: number; report: ReplaceReport } {
-  const stdout = capture();
-  const code = runReplace({ root, output: JSON_CTX, args, stdout, stderr: capture() });
-  const envelope = JSON.parse(stdout.text()) as { kind: string; data: ReplaceReport };
-  expect(envelope.kind).toBe("replace.result");
-  return { code, report: envelope.data };
-}
-
-/** Run `replace` expecting a thrown {@link LoreError}, returned for assertions. */
-function expectError(args: string[]): LoreError {
-  try {
-    runReplace({ root, output: JSON_CTX, args, stdout: capture(), stderr: capture() });
-  } catch (err) {
-    expect(err).toBeInstanceOf(LoreError);
-    return err as LoreError;
+  /** Write a repo-relative file under the temp root. */
+  function writeDoc(rel: string, contents: string): void {
+    const abs = join(root, rel);
+    mkdirSync(join(abs, ".."), { recursive: true });
+    writeFileSync(abs, contents);
   }
-  throw new Error("expected a LoreError, but runReplace returned");
-}
 
-describe("lore replace — whole-bundle default", () => {
-  test("rewrites every docs/ markdown file and reports per-file counts", () => {
-    writeDoc("docs/a.md", "alpha alpha");
-    writeDoc("docs/stories/b.md", "alpha beta");
-    const { code, report } = replaceCmd(["alpha", "ALPHA"]);
-    expect(code).toBe(EXIT_OK);
-    expect(report.totalMatches).toBe(3);
-    expect(report.filesChanged).toBe(2);
-    expect(report.filesScanned).toBe(2);
-    expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("ALPHA ALPHA");
-    expect(report.files.map((f) => f.path)).toEqual(["docs/a.md", "docs/stories/b.md"]);
-  });
+  /** Run `replace` in JSON mode and return the parsed `data` payload plus the exit code. */
+  function replaceCmd(args: string[]): { code: number; report: ReplaceReport } {
+    const stdout = capture();
+    const code = runReplace({ root, output: JSON_CTX, args, stdout, stderr: capture() });
+    const envelope = JSON.parse(stdout.text()) as { kind: string; data: ReplaceReport };
+    expect(envelope.kind).toBe("replace.result");
+    return { code, report: envelope.data };
+  }
 
-  test("--dry-run reports changes but writes nothing", () => {
-    writeDoc("docs/a.md", "keep me");
-    const { report } = replaceCmd(["keep", "drop", "--dry-run"]);
-    expect(report.dryRun).toBe(true);
-    expect(report.totalMatches).toBe(1);
-    expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("keep me");
-  });
-
-  test("an index.md managed block is never edited (AC#1)", () => {
-    const block = indexBlock("- [foo](foo.md)");
-    writeDoc("docs/index.md", `# index\n\nfoo here\n\n${block}\n`);
-    const { report } = replaceCmd(["foo", "BAR"]);
-    expect(report.totalMatches).toBe(1);
-    const after = readFileSync(join(root, "docs/index.md"), "utf8");
-    expect(after).toContain(block);
-    expect(after).toContain("BAR here");
-  });
-
-  test("a no-op replacement (find === replace) changes and reports nothing (review #5)", () => {
-    writeDoc("docs/a.md", "foo foo");
-    const { report } = replaceCmd(["foo", "foo"]);
-    expect(report).toMatchObject({ filesChanged: 0, totalMatches: 0 });
-    expect(report.files).toEqual([]);
-  });
-
-  test("the generated log.md is excluded from the default walk (review #8)", () => {
-    writeDoc("docs/a.md", "token");
-    writeDoc("docs/log.md", "token");
-    const { report } = replaceCmd(["token", "X"]);
-    expect(report.files.map((f) => f.path)).toEqual(["docs/a.md"]);
-    expect(readFileSync(join(root, "docs/log.md"), "utf8")).toBe("token"); // untouched
-  });
-});
-
-describe("lore replace — scoping, dedup, and safety", () => {
-  test("--in scopes to the matched glob only", () => {
-    writeDoc("docs/a.md", "x");
-    writeDoc("docs/stories/b.md", "x");
-    const { report } = replaceCmd(["x", "y", "--in", "docs/stories/**"]);
-    expect(report.files.map((f) => f.path)).toEqual(["docs/stories/b.md"]);
-    expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("x");
-  });
-
-  test("--in skips non-markdown matches", () => {
-    writeDoc("docs/a.md", "x");
-    writeDoc("mkdocs.yml", "x");
-    replaceCmd(["x", "y", "--in", "**/*"]);
-    expect(readFileSync(join(root, "mkdocs.yml"), "utf8")).toBe("x");
-  });
-
-  test("an absolute --in glob resolves correctly (review #11)", () => {
-    writeDoc("docs/a.md", "x");
-    const { report } = replaceCmd(["x", "y", "--in", join(root, "docs", "**")]);
-    expect(report.filesChanged).toBe(1);
-    expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("y");
-  });
-
-  test("the same file named by two globs is rewritten once (review #6)", () => {
-    writeDoc("docs/a.md", "a");
-    const { report } = replaceCmd(["a", "aa", "--in", "docs/a.md", "--in", "docs/a.md"]);
-    expect(report.filesScanned).toBe(1);
-    expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("aa"); // applied once, not "aaaa"
-  });
-
-  test("a symlinked .md is skipped, so a write can't escape and isn't double-applied (review #1/#6)", () => {
-    writeDoc("docs/a.md", "a");
-    symlinkSync(join(root, "docs/a.md"), join(root, "docs/link.md"));
-    const { report } = replaceCmd(["a", "aa", "--in", "docs/**"]);
-    expect(report.files.map((f) => f.path)).toEqual(["docs/a.md"]); // link.md skipped
-    expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("aa"); // once
-  });
-
-  test("a read error aborts before any file is written (review #7)", () => {
-    if (process.getuid?.() === 0) {
-      return; // a 000-mode file is still readable as root, so this atomicity probe can't be set up
-    }
-    writeDoc("docs/a.md", "x");
-    writeDoc("docs/zz.md", "x"); // sorts after a.md, so a.md is read+planned before zz.md fails
-    chmodSync(join(root, "docs/zz.md"), 0o000);
-    let unreadable = false;
+  /** Run `replace` expecting a thrown {@link LoreError}, returned for assertions. */
+  function expectError(args: string[]): LoreError {
     try {
-      readFileSync(join(root, "docs/zz.md"), "utf8");
-    } catch {
-      unreadable = true;
+      runReplace({ root, output: JSON_CTX, args, stdout: capture(), stderr: capture() });
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      return err as LoreError;
     }
-    if (!unreadable) {
-      chmodSync(join(root, "docs/zz.md"), 0o644);
-      return; // environment ignores the mode (e.g. permissive FS) — skip
-    }
-    expect(() =>
-      runReplace({ root, output: JSON_CTX, args: ["x", "y"], stdout: capture(), stderr: capture() }),
-    ).toThrow(LoreError);
-    expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("x"); // a.md not written — atomic abort
-    chmodSync(join(root, "docs/zz.md"), 0o644); // restore for cleanup
-  });
-});
+    throw new Error("expected a LoreError, but runReplace returned");
+  }
 
-describe("lore replace — commit-phase write atomicity (LORE-116)", () => {
-  test("a write failure partway through the commit loop leaves the earlier file intact, the failing file untruncated, later files untouched, and the error surfaces", () => {
-    writeDoc("docs/a.md", "x");
-    writeDoc("docs/b.md", "x");
-    writeDoc("docs/c.md", "x"); // sorted after b.md — must never be reached once b.md's write throws
-
-    // Stub the write call the commit phase's writeFileAtomic ultimately makes, so it throws on the
-    // SECOND file (b.md) — after a.md has already committed, before c.md is ever attempted — the
-    // exact "partway through" shape AC#2 asks for. Calls that aren't the simulated failure forward to
-    // the real writeFileSync, so a.md's (and, were it reached, c.md's) write still actually happens.
-    // Every call's path argument is recorded so the assertions below can pin down *which* path the
-    // commit phase actually targets — a plain writeFileOverwriting (the pre-LORE-116 code this guards
-    // against a reversion to) would also make exactly one writeFileSync call per file and would satisfy
-    // every content/tmp-file assertion here identically, since the throw happens before that call's
-    // real write; only the recorded destination path distinguishes the two implementations.
-    const realWriteFileSync = fs.writeFileSync.bind(fs);
-    let calls = 0;
-    const paths: string[] = [];
-    const spy = spyOn(fs, "writeFileSync").mockImplementation((...args: Parameters<typeof fs.writeFileSync>) => {
-      calls++;
-      paths.push(String(args[0]));
-      if (calls === 2) {
-        throw new Error("simulated ENOSPC");
-      }
-      // biome-ignore lint/suspicious/noExplicitAny: forwarding to the real writeFileSync overload set
-      return (realWriteFileSync as any)(...args);
+  describe("lore replace — whole-bundle default", () => {
+    test("rewrites every docs/ markdown file and reports per-file counts", () => {
+      writeDoc("docs/a.md", "alpha alpha");
+      writeDoc("docs/stories/b.md", "alpha beta");
+      const { code, report } = replaceCmd(["alpha", "ALPHA"]);
+      expect(code).toBe(EXIT_OK);
+      expect(report.totalMatches).toBe(3);
+      expect(report.filesChanged).toBe(2);
+      expect(report.filesScanned).toBe(2);
+      expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("ALPHA ALPHA");
+      expect(report.files.map((f) => f.path)).toEqual(["docs/a.md", "docs/stories/b.md"]);
     });
-    try {
+
+    test("--dry-run reports changes but writes nothing", () => {
+      writeDoc("docs/a.md", "keep me");
+      const { report } = replaceCmd(["keep", "drop", "--dry-run"]);
+      expect(report.dryRun).toBe(true);
+      expect(report.totalMatches).toBe(1);
+      expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("keep me");
+    });
+
+    test("an index.md managed block is never edited (AC#1)", () => {
+      const block = indexBlock("- [foo](foo.md)");
+      writeDoc("docs/index.md", `# index\n\nfoo here\n\n${block}\n`);
+      const { report } = replaceCmd(["foo", "BAR"]);
+      expect(report.totalMatches).toBe(1);
+      const after = readFileSync(join(root, "docs/index.md"), "utf8");
+      expect(after).toContain(block);
+      expect(after).toContain("BAR here");
+    });
+
+    test("a no-op replacement (find === replace) changes and reports nothing (review #5)", () => {
+      writeDoc("docs/a.md", "foo foo");
+      const { report } = replaceCmd(["foo", "foo"]);
+      expect(report).toMatchObject({ filesChanged: 0, totalMatches: 0 });
+      expect(report.files).toEqual([]);
+    });
+
+    test("the generated log.md is excluded from the default walk (review #8)", () => {
+      writeDoc("docs/a.md", "token");
+      writeDoc("docs/log.md", "token");
+      const { report } = replaceCmd(["token", "X"]);
+      expect(report.files.map((f) => f.path)).toEqual(["docs/a.md"]);
+      expect(readFileSync(join(root, "docs/log.md"), "utf8")).toBe("token"); // untouched
+    });
+  });
+
+  describe("lore replace — scoping, dedup, and safety", () => {
+    test("--in scopes to the matched glob only", () => {
+      writeDoc("docs/a.md", "x");
+      writeDoc("docs/stories/b.md", "x");
+      const { report } = replaceCmd(["x", "y", "--in", "docs/stories/**"]);
+      expect(report.files.map((f) => f.path)).toEqual(["docs/stories/b.md"]);
+      expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("x");
+    });
+
+    test("--in skips non-markdown matches", () => {
+      writeDoc("docs/a.md", "x");
+      writeDoc("mkdocs.yml", "x");
+      replaceCmd(["x", "y", "--in", "**/*"]);
+      expect(readFileSync(join(root, "mkdocs.yml"), "utf8")).toBe("x");
+    });
+
+    test("an absolute --in glob resolves correctly (review #11)", () => {
+      writeDoc("docs/a.md", "x");
+      const { report } = replaceCmd(["x", "y", "--in", join(root, "docs", "**")]);
+      expect(report.filesChanged).toBe(1);
+      expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("y");
+    });
+
+    test("the same file named by two globs is rewritten once (review #6)", () => {
+      writeDoc("docs/a.md", "a");
+      const { report } = replaceCmd(["a", "aa", "--in", "docs/a.md", "--in", "docs/a.md"]);
+      expect(report.filesScanned).toBe(1);
+      expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("aa"); // applied once, not "aaaa"
+    });
+
+    test("a symlinked .md is skipped, so a write can't escape and isn't double-applied (review #1/#6)", () => {
+      writeDoc("docs/a.md", "a");
+      symlinkSync(join(root, "docs/a.md"), join(root, "docs/link.md"));
+      const { report } = replaceCmd(["a", "aa", "--in", "docs/**"]);
+      expect(report.files.map((f) => f.path)).toEqual(["docs/a.md"]); // link.md skipped
+      expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("aa"); // once
+    });
+
+    test("a read error aborts before any file is written (review #7)", () => {
+      if (process.getuid?.() === 0) {
+        return; // a 000-mode file is still readable as root, so this atomicity probe can't be set up
+      }
+      writeDoc("docs/a.md", "x");
+      writeDoc("docs/zz.md", "x"); // sorts after a.md, so a.md is read+planned before zz.md fails
+      chmodSync(join(root, "docs/zz.md"), 0o000);
+      let unreadable = false;
+      try {
+        readFileSync(join(root, "docs/zz.md"), "utf8");
+      } catch {
+        unreadable = true;
+      }
+      if (!unreadable) {
+        chmodSync(join(root, "docs/zz.md"), 0o644);
+        return; // environment ignores the mode (e.g. permissive FS) — skip
+      }
       expect(() =>
         runReplace({ root, output: JSON_CTX, args: ["x", "y"], stdout: capture(), stderr: capture() }),
-      ).toThrow(); // the failure surfaces rather than being silently swallowed
-    } finally {
-      spy.mockRestore();
-    }
-
-    expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("y"); // committed before the failure
-    expect(readFileSync(join(root, "docs/b.md"), "utf8")).toBe("x"); // temp write failed — original bytes intact, not truncated
-    expect(readFileSync(join(root, "docs/c.md"), "utf8")).toBe("x"); // loop aborted before this file was ever attempted
-    expect(readdirSync(join(root, "docs")).filter((f) => f.startsWith(".lore-sync-tmp"))).toEqual([]); // no stray temp file left behind
-
-    // Discriminating assertions (LORE-116 review): the commit phase must go through writeFileAtomic's
-    // temp-file+rename discipline, not a plain writeFileSync straight at the destination. Without these,
-    // the four assertions above pass identically against the pre-fix writeFileOverwriting code path too.
-    expect(paths).toHaveLength(2); // a.md's real write, then b.md's failing write — c.md never attempted
-    const failingCallPath = paths[1] as string;
-    expect(basename(failingCallPath).startsWith(".lore-sync-tmp-")).toBe(true); // b.md's write went through a temp file, proving the atomic (not plain) discipline
-    expect(paths).not.toContain(join(root, "docs/b.md")); // the destination path itself is never a direct writeFileSync target
-  });
-});
-
-describe("lore replace — rendering and arg parsing", () => {
-  test("plain mode renders a per-file line and a summary", () => {
-    writeDoc("docs/a.md", "x x");
-    const stdout = capture();
-    runReplace({ root, output: { mode: "plain", color: false }, args: ["x", "y"], stdout, stderr: capture() });
-    expect(stdout.text()).toContain("replaced 2 in docs/a.md");
-    expect(stdout.text()).toContain("2 matches in 1 of 1 file");
-  });
-
-  test("dry-run summary is marked and uses singular nouns at count 1", () => {
-    writeDoc("docs/a.md", "x");
-    const stdout = capture();
-    runReplace({
-      root,
-      output: { mode: "plain", color: false },
-      args: ["x", "y", "--dry-run"],
-      stdout,
-      stderr: capture(),
+      ).toThrow(LoreError);
+      expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("x"); // a.md not written — atomic abort
+      chmodSync(join(root, "docs/zz.md"), 0o644); // restore for cleanup
     });
-    expect(stdout.text()).toContain("would replace 1 in docs/a.md");
-    expect(stdout.text()).toContain("1 match in 1 of 1 file (dry-run)");
   });
 
-  test("accepts the --in=value inline form and a -- options terminator", () => {
-    writeDoc("docs/a.md", "-lead");
-    const { report } = replaceCmd(["--in=docs/**", "--", "-lead", "head"]);
-    expect(report.files.map((f) => f.path)).toEqual(["docs/a.md"]);
-    expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("head");
-  });
+  describe("lore replace — commit-phase write atomicity (LORE-116)", () => {
+    test("a write failure partway through the commit loop leaves the earlier file intact, the failing file untruncated, later files untouched, and the error surfaces", () => {
+      writeDoc("docs/a.md", "x");
+      writeDoc("docs/b.md", "x");
+      writeDoc("docs/c.md", "x"); // sorted after b.md — must never be reached once b.md's write throws
 
-  test("a glob matching nothing scans zero files", () => {
-    const { report } = replaceCmd(["x", "y", "--in", "nope/**"]);
-    expect(report).toMatchObject({ filesScanned: 0, filesChanged: 0, totalMatches: 0 });
-  });
-});
+      // Stub the write call the commit phase's writeFileAtomic ultimately makes, so it throws on the
+      // SECOND file (b.md) — after a.md has already committed, before c.md is ever attempted — the
+      // exact "partway through" shape AC#2 asks for. Calls that aren't the simulated failure forward to
+      // the real writeFileSync, so a.md's (and, were it reached, c.md's) write still actually happens.
+      // Every call's path argument is recorded so the assertions below can pin down *which* path the
+      // commit phase actually targets — a plain writeFileOverwriting (the pre-LORE-116 code this guards
+      // against a reversion to) would also make exactly one writeFileSync call per file and would satisfy
+      // every content/tmp-file assertion here identically, since the throw happens before that call's
+      // real write; only the recorded destination path distinguishes the two implementations.
+      const realWriteFileSync = fs.writeFileSync.bind(fs);
+      let calls = 0;
+      const paths: string[] = [];
+      const spy = spyOn(fs, "writeFileSync").mockImplementation((...args: Parameters<typeof fs.writeFileSync>) => {
+        calls++;
+        paths.push(String(args[0]));
+        if (calls === 2) {
+          throw new Error("simulated ENOSPC");
+        }
+        // biome-ignore lint/suspicious/noExplicitAny: forwarding to the real writeFileSync overload set
+        return (realWriteFileSync as any)(...args);
+      });
+      try {
+        expect(() =>
+          runReplace({ root, output: JSON_CTX, args: ["x", "y"], stdout: capture(), stderr: capture() }),
+        ).toThrow(); // the failure surfaces rather than being silently swallowed
+      } finally {
+        spy.mockRestore();
+      }
 
-describe("lore replace — usage errors", () => {
-  test("a missing replacement argument is a usage error", () => {
-    expect(expectError(["onlyfind"]).type).toBe("usage");
-  });
+      expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("y"); // committed before the failure
+      expect(readFileSync(join(root, "docs/b.md"), "utf8")).toBe("x"); // temp write failed — original bytes intact, not truncated
+      expect(readFileSync(join(root, "docs/c.md"), "utf8")).toBe("x"); // loop aborted before this file was ever attempted
+      expect(readdirSync(join(root, "docs")).filter((f) => f.startsWith(".lore-sync-tmp"))).toEqual([]); // no stray temp file left behind
 
-  test("an unknown flag is a usage error", () => {
-    expect(expectError(["a", "b", "--bogus"]).type).toBe("usage");
-  });
-
-  test("an invalid regex is a usage error (exit 2)", () => {
-    writeDoc("docs/a.md", "x");
-    expect(expectError(["(", "x", "--regex"]).type).toBe("usage");
-  });
-
-  test("the pattern is validated even when discovery finds zero files (review #9)", () => {
-    // Empty docs/ → zero targets; an invalid regex must still fail loud, not exit 0.
-    expect(expectError(["(", "x", "--regex"]).type).toBe("usage");
-    expect(expectError(["x*", "y", "--regex"]).type).toBe("usage"); // empty-matching too
-  });
-
-  test("--in with no value is a usage error", () => {
-    expect(expectError(["a", "b", "--in"]).type).toBe("usage");
-  });
-
-  test("a single-dash unknown flag is a usage error", () => {
-    expect(expectError(["a", "b", "-x"]).type).toBe("usage");
-  });
-
-  test("a third positional is a usage error", () => {
-    expect(expectError(["a", "b", "c"]).type).toBe("usage");
-  });
-});
-
-describe("lore replace — router integration", () => {
-  test("`lore replace` is dispatched and writes through the router", () => {
-    writeDoc("docs/a.md", "old");
-    const code = run(["bun", "lore", "replace", "old", "new", "--json"], {
-      cwd: root,
-      stdout: capture(),
-      stderr: capture(),
+      // Discriminating assertions (LORE-116 review): the commit phase must go through writeFileAtomic's
+      // temp-file+rename discipline, not a plain writeFileSync straight at the destination. Without these,
+      // the four assertions above pass identically against the pre-fix writeFileOverwriting code path too.
+      expect(paths).toHaveLength(2); // a.md's real write, then b.md's failing write — c.md never attempted
+      const failingCallPath = paths[1] as string;
+      expect(basename(failingCallPath).startsWith(".lore-sync-tmp-")).toBe(true); // b.md's write went through a temp file, proving the atomic (not plain) discipline
+      expect(paths).not.toContain(join(root, "docs/b.md")); // the destination path itself is never a direct writeFileSync target
     });
-    expect(code).toBe(EXIT_OK);
-    expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("new");
   });
 
-  test("a bad regex surfaces the usage exit code through the router", () => {
-    writeDoc("docs/a.md", "x");
-    const code = run(["bun", "lore", "replace", "(", "x", "--regex"], {
-      cwd: root,
-      stdout: capture(),
-      stderr: capture(),
+  describe("lore replace — rendering and arg parsing", () => {
+    test("plain mode renders a per-file line and a summary", () => {
+      writeDoc("docs/a.md", "x x");
+      const stdout = capture();
+      runReplace({ root, output: { mode: "plain", color: false }, args: ["x", "y"], stdout, stderr: capture() });
+      expect(stdout.text()).toContain("replaced 2 in docs/a.md");
+      expect(stdout.text()).toContain("2 matches in 1 of 1 file");
     });
-    expect(code).toBe(EXIT_CODES.usage);
+
+    test("dry-run summary is marked and uses singular nouns at count 1", () => {
+      writeDoc("docs/a.md", "x");
+      const stdout = capture();
+      runReplace({
+        root,
+        output: { mode: "plain", color: false },
+        args: ["x", "y", "--dry-run"],
+        stdout,
+        stderr: capture(),
+      });
+      expect(stdout.text()).toContain("would replace 1 in docs/a.md");
+      expect(stdout.text()).toContain("1 match in 1 of 1 file (dry-run)");
+    });
+
+    test("accepts the --in=value inline form and a -- options terminator", () => {
+      writeDoc("docs/a.md", "-lead");
+      const { report } = replaceCmd(["--in=docs/**", "--", "-lead", "head"]);
+      expect(report.files.map((f) => f.path)).toEqual(["docs/a.md"]);
+      expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("head");
+    });
+
+    test("a glob matching nothing scans zero files", () => {
+      const { report } = replaceCmd(["x", "y", "--in", "nope/**"]);
+      expect(report).toMatchObject({ filesScanned: 0, filesChanged: 0, totalMatches: 0 });
+    });
+  });
+
+  describe("lore replace — usage errors", () => {
+    test("a missing replacement argument is a usage error", () => {
+      expect(expectError(["onlyfind"]).type).toBe("usage");
+    });
+
+    test("an unknown flag is a usage error", () => {
+      expect(expectError(["a", "b", "--bogus"]).type).toBe("usage");
+    });
+
+    test("an invalid regex is a usage error (exit 2)", () => {
+      writeDoc("docs/a.md", "x");
+      expect(expectError(["(", "x", "--regex"]).type).toBe("usage");
+    });
+
+    test("the pattern is validated even when discovery finds zero files (review #9)", () => {
+      // Empty docs/ → zero targets; an invalid regex must still fail loud, not exit 0.
+      expect(expectError(["(", "x", "--regex"]).type).toBe("usage");
+      expect(expectError(["x*", "y", "--regex"]).type).toBe("usage"); // empty-matching too
+    });
+
+    test("--in with no value is a usage error", () => {
+      expect(expectError(["a", "b", "--in"]).type).toBe("usage");
+    });
+
+    test("a single-dash unknown flag is a usage error", () => {
+      expect(expectError(["a", "b", "-x"]).type).toBe("usage");
+    });
+
+    test("a third positional is a usage error", () => {
+      expect(expectError(["a", "b", "c"]).type).toBe("usage");
+    });
+  });
+
+  describe("lore replace — router integration", () => {
+    test("`lore replace` is dispatched and writes through the router", () => {
+      writeDoc("docs/a.md", "old");
+      const code = run(["bun", "lore", "replace", "old", "new", "--json"], {
+        cwd: root,
+        stdout: capture(),
+        stderr: capture(),
+      });
+      expect(code).toBe(EXIT_OK);
+      expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("new");
+    });
+
+    test("a bad regex surfaces the usage exit code through the router", () => {
+      writeDoc("docs/a.md", "x");
+      const code = run(["bun", "lore", "replace", "(", "x", "--regex"], {
+        cwd: root,
+        stdout: capture(),
+        stderr: capture(),
+      });
+      expect(code).toBe(EXIT_CODES.usage);
+    });
   });
 });
 
