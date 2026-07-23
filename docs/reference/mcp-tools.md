@@ -202,7 +202,7 @@ read over the same `bundle.ts` graph the CLI commands use; none performs a write
 | `lore://bundle/index` | The rendered root `docs/index.md` — the OKF entry point and progressive-disclosure starting node. | `bundle.ts` (root index) |
 | `lore://concept/{id}` | A single concept's frontmatter + body, by concept id (path minus `.md`, e.g. `stories/bulk-archive`). | `concept.ts` |
 | `lore://graph` | The full cross-link graph (nodes, edges, token estimates) — the same payload as the `lore_graph` tool / `graph.export` kind. | `bundle.ts` |
-| `lore://context/{id}` | The deterministic, depth-bounded graph-expansion export for a concept id — the same payload as `lore_context` / `context.export`, at default budget. | `context.ts` |
+| `lore://context/{id}` | The deterministic, depth-bounded graph-expansion export for a concept id — the same payload as `lore_context` / `context.export`, at the default depth with no token cap (resources take no parameters, so `--max-tokens` is never applied). | `context.ts` |
 
 Notes:
 
