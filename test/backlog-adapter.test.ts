@@ -452,6 +452,23 @@ describe("the capability probe is wired into every path and memoized (AC#2)", ()
     expect(err.type).toBe("not_found");
     expect(exitCodeFor(err)).toBe(3);
   });
+
+  // LORE-222: previously only the probe's own `--version` spawn wrapped a rejection into a typed
+  // LoreError — a rejection on any LATER spawn (once the probe had already passed) escaped untyped.
+  // Here the probe passes cleanly (both `--version` and `task list --json` succeed) and only the
+  // subsequent `task view` spawn — issued well after `ensureProbed()` already resolved — rejects.
+  test("an ENOENT rejection on a call AFTER the probe already passed still maps to not_found (not just the probe's own spawn)", async () => {
+    const enoent = Object.assign(new Error("spawn backlog ENOENT"), { code: "ENOENT" });
+    const spawn = scriptedSpawn((argv) => (argv[0] === "task" && argv[1] === "view" ? enoent : undefined));
+
+    const err = await loreError(() => createBacklogAdapter(spawn).viewTask("LORE-1"));
+
+    expect(err.type).toBe("not_found");
+    expect(exitCodeFor(err)).toBe(3);
+    // Proves the probe itself ran to completion (both its calls) BEFORE the later, distinct `task
+    // view` spawn rejected — so this exercises the read-adapter's own wrapping, not the probe's.
+    expect(spawn.calls).toEqual([["--version"], ["task", "list", "--json"], ["task", "view", "LORE-1", "--json"]]);
+  });
 });
 
 describe("flag injection (LORE-96): a dash-prefixed value is rejected before it reaches spawn's argv", () => {
