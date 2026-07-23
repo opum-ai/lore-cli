@@ -112,8 +112,10 @@ export function runSchema(options: SchemaOptions): number {
     // `writeFileOverwriting`'s other callers (`rename`/`supersede`), nothing upstream has ever confirmed
     // `file.path`'s leaf isn't a symlink. A leaf symlink at e.g. `.lore/schemas/story.schema.json`
     // pointing outside the repo would otherwise have a plain `writeFileSync` follow it and silently
-    // overwrite whatever it points to (LORE-123); `writeFileNoFollow`'s `O_NOFOLLOW` open refuses that
-    // with the same `conflict` `LoreError` the ancestor-symlink guard (LORE-93) already throws.
+    // overwrite whatever it points to (LORE-123); `writeFileNoFollow`'s up-front `lstatSync` refuses
+    // that — and its temp-file-then-`renameSync` commit never dereferences a destination symlink
+    // either, even one raced in after that check (LORE-130) — with the same `conflict` `LoreError`
+    // the ancestor-symlink guard (LORE-93) already throws.
     writeFileNoFollow(join(options.root, file.path), file.contents, file.path);
   }
   // A full export to the managed default directory owns its schema set, so a type dropped from the
