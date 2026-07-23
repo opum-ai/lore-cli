@@ -283,11 +283,17 @@ function zeroWidthError(): LoreError {
 }
 
 /**
- * Expand a regex replacement `template` against one `match` exactly as `String.prototype.replace`
+ * Expand a regex replacement `template` against one `match` mostly as `String.prototype.replace`
  * does: `$$`→`$`, `$&`→the match, `` $` ``→the prefix, `$'`→the suffix, `$<name>`→a named group, and
  * `$n`/`$nn`→a numbered group (greedy two digits when that group exists, else one digit plus the
  * literal digit; an out-of-range number is left literal). This is what lets the single whole-document
  * pass keep native substitution semantics while still skipping managed regions.
+ *
+ * One deliberate divergence: `$<name>` for a name the regex never declares is left as the literal
+ * token `$<name>`, whether the regex has no named groups at all (this matches native behavior) or has
+ * *other* named groups but not this one (native silently substitutes `""` there; this engine does not,
+ * because an unresolvable token silently deleting document text is worse than leaving it visibly
+ * unresolved — LORE-163).
  */
 function expandTemplate(template: string, match: RegExpMatchArray, source: string): string {
   const groups = match.length - 1;
@@ -306,7 +312,18 @@ function expandTemplate(template: string, match: RegExpMatchArray, source: strin
       return source.slice(index + match[0].length);
     }
     if (selector.startsWith("<")) {
-      return match.groups?.[selector.slice(1, -1)] ?? "";
+      const name = selector.slice(1, -1);
+      // Only substitute when this regex actually declares a named group of this name — whether it
+      // participated in the match or not. `match.groups` carries a key for every named group the
+      // *pattern* declares (undefined when that particular group didn't participate), so `in` tells
+      // "declared" apart from "declared but empty". An undeclared name (no named groups at all, or
+      // named groups that don't include this one) leaves the token as literal text, matching what
+      // `String.prototype.replace` does when the regex has zero named groups — and, by design, also
+      // when it has some but not this one, so an unresolvable `$<name>` is never silently deleted.
+      if (match.groups !== undefined && name in match.groups) {
+        return match.groups[name] ?? "";
+      }
+      return whole;
     }
     // Numeric: greedily prefer the two-digit group, then fall back to one digit + the literal digit.
     const n = Number.parseInt(selector, 10);

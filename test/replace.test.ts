@@ -118,6 +118,37 @@ describe("replaceInText — regex mode matches String.replace semantics", () => 
     expect(out.text.startsWith("foo\n")).toBe(true); // leading foo untouched
     expect(out.text.endsWith("\nBAR")).toBe(true); // trailing foo replaced
   });
+
+  // LORE-163: `$<name>` must stay a literal token when it can't be resolved, never silently vanish.
+  describe("`$<name>` with no matching named group is left literal, not deleted (LORE-163)", () => {
+    test("AC#1 — the regex has no named groups at all", () => {
+      // Native `String.prototype.replace` leaves an unresolvable $<name> as a literal substring when
+      // the regex declares zero named groups; this must not silently delete it from the output.
+      const out = replaceInText("abc", "b", "[$<name>]", { regex: true });
+      expect(out).toEqual({ text: "a[$<name>]c", count: 1 });
+      expect(out.text).toBe("abc".replace(/b/g, "[$<name>]")); // pins it to native semantics
+    });
+
+    test("AC#2 — a template referencing a named group that IS present still substitutes the capture", () => {
+      const out = replaceInText("abc", "(?<name>b)", "[$<name>]", { regex: true });
+      expect(out).toEqual({ text: "a[b]c", count: 1 });
+    });
+
+    test("AC#3 — the regex has named groups, but not this one, still falls back to the literal token", () => {
+      // Native String.replace substitutes "" here (it only special-cases zero named groups); this
+      // engine deliberately leaves $<name> literal in both cases so an unresolvable token is never
+      // silently deleted from the document.
+      const out = replaceInText("abc", "(?<x>b)", "[$<name>]", { regex: true });
+      expect(out).toEqual({ text: "a[$<name>]c", count: 1 });
+    });
+
+    test("AC#3 — a declared-but-non-participating named group substitutes empty, not the literal token", () => {
+      // The name IS declared on the pattern (so `in match.groups` is true) — it just didn't match this
+      // time. That is a resolved reference to an empty capture, distinct from an unresolvable name.
+      const out = replaceInText("bc", "(?<name>a)?(?<mid>b)", "[$<name>]", { regex: true });
+      expect(out).toEqual({ text: "[]c", count: 1 });
+    });
+  });
 });
 
 describe("replaceInText — managed regions are never touched (AC#1)", () => {
