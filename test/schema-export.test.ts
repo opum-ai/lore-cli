@@ -10,9 +10,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { runInit } from "../src/commands/init";
-import { runSchema, type SchemaExportResult } from "../src/commands/schema";
+import { confineOutDir, runSchema, type SchemaExportResult } from "../src/commands/schema";
 import { LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
@@ -446,6 +446,34 @@ describe("lore schema export — argument errors", () => {
     // freshly-created empty temp root stays completely empty.
     expect(existsSync(join(root, ".lore/schemas"))).toBe(false);
     expect(readdirSync(root)).toEqual([]);
+  });
+
+  // Regression (LORE-182): LORE-124 called confineOutDir's `isAbsolute(rel)` clause dead code on
+  // POSIX and replaced it with `isAbsolute(out)` — true on POSIX, but it left a win32-only gap: a
+  // cross-drive DRIVE-RELATIVE --out (Windows syntax like "C:foo" — relative to drive C's own
+  // current directory, distinct from the absolute "C:\foo" form isAbsolute(out) already rejects)
+  // isn't absolute per isAbsolute(out), and doesn't ".."-climb either, so it used to slip past both
+  // checks and surface as a confusing IO error downstream instead of a clean usage one. Exercised
+  // directly against confineOutDir with `path.win32` injected (see PathOps) rather than via
+  // `runSchema`/`process.platform`, so the real Windows-relative()-across-drives semantics this
+  // guards against are proven deterministically on every CI platform (not just an actual win32
+  // runner) — matching this codebase's convention of checking `win32`-namespace semantics
+  // explicitly rather than relying on the host platform to happen to match (see e.g.
+  // `assertConfinedToBundle`/`assertTemplateNameConfined`'s own `win32.isAbsolute` checks).
+  test("rejects a win32 cross-drive drive-relative --out with a clean usage error (LORE-182)", () => {
+    // With the repo root on D: and --out "C:foo", win32.relative's cross-device case returns the
+    // resolved target unchanged — which win32.resolve() guarantees is absolute — so isAbsolute(rel)
+    // is what catches it; neither isAbsolute(out) nor a ".."-climb check does.
+    expect(win32.isAbsolute("C:foo")).toBe(false);
+    let thrown: unknown;
+    try {
+      confineOutDir("C:foo", "D:\\repo", win32);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(LoreError);
+    expect((thrown as LoreError).type).toBe("usage");
+    expect((thrown as LoreError).message).toContain("inside the repo");
   });
 });
 
