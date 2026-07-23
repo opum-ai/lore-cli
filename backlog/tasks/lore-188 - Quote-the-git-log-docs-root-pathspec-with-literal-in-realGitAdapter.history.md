@@ -1,9 +1,11 @@
 ---
 id: LORE-188
 title: 'Quote the git-log docs-root pathspec with :(literal) in realGitAdapter.history'
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@sonnet-worker'
 created_date: '2026-07-22 21:29'
+updated_date: '2026-07-23 10:05'
 labels:
   - codex-review-followup
   - core-engine-a
@@ -21,6 +23,24 @@ Wave-10 integration finding (from LORE-143). LORE-143 scoped `git log` to the do
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 realGitAdapter.history in src/adapters/git.ts passes the docs-root pathspec as `:(literal)<root>` (matching the LORE-49 :(literal) convention in state.ts), so a root containing pathspec-magic (`*`, `?`, `[`, or a leading `:`) is treated as a literal path, not magic.
-- [ ] #2 A test asserts the spawned `git log` args include the `:(literal)`-prefixed docs-root pathspec after `--`, and confirms `:(literal)` composes correctly with the existing `--relative` flag (docs-scoped commits still returned; out-of-docs commits still excluded).
+- [x] #1 realGitAdapter.history in src/adapters/git.ts passes the docs-root pathspec as `:(literal)<root>` (matching the LORE-49 :(literal) convention in state.ts), so a root containing pathspec-magic (`*`, `?`, `[`, or a leading `:`) is treated as a literal path, not magic.
+- [x] #2 A test asserts the spawned `git log` args include the `:(literal)`-prefixed docs-root pathspec after `--`, and confirms `:(literal)` composes correctly with the existing `--relative` flag (docs-scoped commits still returned; out-of-docs commits still excluded).
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. In src/adapters/git.ts, add a local literalPathspec(path) helper mirroring state.ts's LORE-49 :(literal) convention. 2. Apply it to the trailing pathspec in realGitAdapter.history's git-log args (after --), and to countCommits' git rev-list --count pathspec (kept identical to history()'s so the drift cross-check stays consistent for a magic-character root). 3. Update the existing LORE-143 spawnSync-args test in test/git-adapter.test.ts to expect the :(literal)-quoted pathspec instead of the raw root. 4. Add a new LORE-188 test asserting the spawned git log args contain the :(literal)-prefixed docs-root pathspec after --, composing correctly with --relative (docs-scoped commit still returned with correct relative file path; out-of-docs commit still excluded). 5. Verify with bun test (full suite) + bun run typecheck + biome check on touched files.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented: added literalPathspec() helper in src/adapters/git.ts, applied to both the git-log trailing pathspec in realGitAdapter.history and the git rev-list --count cross-check in countCommits (kept identical so the SENTINEL-collision drift check stays correct for a magic-character root). Updated the existing LORE-143 spawnSync-args test to expect the :(literal)-quoted pathspec, and added a new test asserting the spawned git log args include the :(literal)-prefixed docs-root pathspec after --, composing correctly with --relative (docs-scoped commit still returned with the correct relative file path; out-of-docs commit still excluded).
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Fixed realGitAdapter.history in src/adapters/git.ts to pass the docs-root pathspec as :(literal)<root> (matching the LORE-49 :(literal) convention in state.ts), closing the magic-in-pathspec gap for a future profile-configurable docs root. Also applied the same quoting to countCommits' git rev-list --count cross-check so it stays consistent with history()'s git log pathspec. Verified with the full bun test suite (1901 pass, 0 fail, including the updated + new git-adapter.test.ts cases) and bun run typecheck (tsc --noEmit, clean); biome check on the two touched files is clean (auto-fixed formatting/import-order, no residual errors).
+<!-- SECTION:FINAL_SUMMARY:END -->
