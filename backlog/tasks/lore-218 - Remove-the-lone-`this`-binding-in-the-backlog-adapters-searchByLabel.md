@@ -1,9 +1,11 @@
 ---
 id: LORE-218
 title: Remove the lone `this` binding in the backlog adapter's searchByLabel
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@sonnet-worker'
 created_date: '2026-07-23 16:04'
+updated_date: '2026-07-23 18:32'
 labels:
   - adapter-backlog
   - codex-review-followup
@@ -27,7 +29,28 @@ ordinal: 320000
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `searchByLabel` no longer references `this`; it invokes the shared `listTasks` implementation directly (e.g. a closed-over local function), matching how the rest of the adapter closes over `read`/`ensureProbed`. A grep for `this.` in src/adapters/backlog.ts returns no matches inside createBacklogAdapter.
-- [ ] #2 A test destructures the method off the adapter (`const { searchByLabel } = createBacklogAdapter(spawn)`) and calls it standalone, asserting it still delegates to the exact `--labels` AND-match — proving the `this`-fragility is gone.
-- [ ] #3 The existing searchByLabel tests (test/backlog-adapter.test.ts:126 and :465) stay green and `bun test` passes.
+- [x] #1 `searchByLabel` no longer references `this`; it invokes the shared `listTasks` implementation directly (e.g. a closed-over local function), matching how the rest of the adapter closes over `read`/`ensureProbed`. A grep for `this.` in src/adapters/backlog.ts returns no matches inside createBacklogAdapter.
+- [x] #2 A test destructures the method off the adapter (`const { searchByLabel } = createBacklogAdapter(spawn)`) and calls it standalone, asserting it still delegates to the exact `--labels` AND-match — proving the `this`-fragility is gone.
+- [x] #3 The existing searchByLabel tests (test/backlog-adapter.test.ts:126 and :465) stay green and `bun test` passes.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Extract a closed-over local async function listTasks(opts) inside createBacklogAdapter (alongside read/ensureProbed), moving the existing implementation body verbatim.
+2. Change the returned object's listTasks property to reference the closed-over function directly (listTasks,), and change searchByLabel to call listTasks(...) instead of this.listTasks(...).
+3. Add a new test in test/backlog-adapter.test.ts that does const { searchByLabel } = createBacklogAdapter(spawn) and calls it standalone, asserting the same --labels AND-match argv and result shape as the existing adapter.searchByLabel test.
+4. Verify: grep for 'this.' in src/adapters/backlog.ts has no code matches inside createBacklogAdapter; bun test full suite 0 failures; bun run typecheck clean; bunx biome check on the two changed files clean.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Extracted a closed-over local async function listTasks(opts) inside createBacklogAdapter (same pattern as read/ensureProbed); the returned object now exposes it via 'listTasks,' and searchByLabel calls listTasks(...) directly, no this. remaining. Verification: grep -n 'this\.' src/adapters/backlog.ts shows only an unrelated doc-comment sentence, zero matches inside createBacklogAdapter (AC#1). Added a test destructuring const { searchByLabel } = createBacklogAdapter(spawn) and calling it standalone, asserting the same ['task','list','--json','--labels','doc:stories/x'] argv and 3-item result as the adapter-bound call (AC#2). Full bun test: 1937 pass / 0 fail across 47 files, including the pre-existing :126 adapter-bound searchByLabel test and the :465 dash-prefixed-label rejection test both still green (AC#3). bun run typecheck clean. bunx biome check on both changed files: no issues.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Removed the sole this-binding in the backlog adapter: listTasks is now a closed-over local async function inside createBacklogAdapter (alongside read/ensureProbed), and both the returned listTasks method and searchByLabel invoke it directly. searchByLabel's --labels AND-match delegation is unchanged. Added a test proving searchByLabel works when destructured off the adapter and called standalone. Verified: bun test 1937 pass/0 fail (incl. backlog-adapter.test.ts 41/41, the :126 and :465 pre-existing searchByLabel cases green); bun run typecheck clean; grep for this. in src/adapters/backlog.ts has no code matches inside createBacklogAdapter; bunx biome check clean on both changed files.
+<!-- SECTION:FINAL_SUMMARY:END -->

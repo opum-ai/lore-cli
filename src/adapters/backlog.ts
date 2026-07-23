@@ -782,20 +782,27 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
     return result;
   }
 
+  /**
+   * `task list --json` → the summaries on the current branch, optionally filtered by status/labels.
+   * Closed-over (like {@link read}/{@link ensureProbed}) so {@link BacklogAdapter.searchByLabel} can
+   * invoke it directly instead of going through `this` on the returned object.
+   */
+  async function listTasks(opts?: ListTasksOptions): Promise<BacklogTask[]> {
+    const args = ["task", "list", "--json"];
+    if (opts?.status !== undefined) {
+      args.push("--status", rejectFlagLike(opts.status));
+    }
+    if (opts?.labels !== undefined && opts.labels.length > 0) {
+      args.push("--labels", commaJoin(opts.labels));
+    }
+    const result = await read(args, "task list --json");
+    return parseEnvelope(result.stdout, TASK_LIST_KIND, "tasks", TaskListData, "task list --json").map(mapSummary);
+  }
+
   return {
     probe: ensureProbed,
 
-    async listTasks(opts?: ListTasksOptions): Promise<BacklogTask[]> {
-      const args = ["task", "list", "--json"];
-      if (opts?.status !== undefined) {
-        args.push("--status", rejectFlagLike(opts.status));
-      }
-      if (opts?.labels !== undefined && opts.labels.length > 0) {
-        args.push("--labels", commaJoin(opts.labels));
-      }
-      const result = await read(args, "task list --json");
-      return parseEnvelope(result.stdout, TASK_LIST_KIND, "tasks", TaskListData, "task list --json").map(mapSummary);
-    },
+    listTasks,
 
     async viewTask(id: string): Promise<BacklogTaskDetail | null> {
       await ensureProbed();
@@ -820,7 +827,7 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
     },
 
     async searchByLabel(label: string): Promise<BacklogTask[]> {
-      return this.listTasks({ labels: [label] });
+      return listTasks({ labels: [label] });
     },
 
     async searchTasks(query: string): Promise<BacklogTask[]> {
