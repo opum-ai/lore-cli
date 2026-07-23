@@ -63,7 +63,7 @@ import { deriveMessage, ioError, LoreError, type WarningCollector } from "../err
 import { type Concept, idFromPath, serializeConcept, tryParseConcept } from "./concept";
 import { decodeTarget, isExternalTarget, pathPart } from "./links";
 import { compareCodeUnits } from "./order";
-import type { Profile } from "./profile";
+import { defaultProfile, type Profile } from "./profile";
 
 /**
  * The kind of a concept→concept reference. `"link"` is a body markdown
@@ -169,12 +169,14 @@ export interface LoadBundleOptions {
  *   a fenced concept is malformed.
  */
 export function loadBundle(root: string, options: LoadBundleOptions = {}): BundleGraph {
+  const profile = options.profile ?? defaultProfile();
   const concepts: Concept[] = [];
   for (const rel of walkMarkdown(root, options.warnings)) {
-    // `rel` is bundle-root-relative, so tryParseConcept derives a bundle-relative id.
+    // `rel` is bundle-root-relative, so tryParseConcept derives a bundle-relative id — and so is
+    // the reserved root index it is judged against (LORE-192): see effectiveProfileFor.
     const concept = tryParseConcept(rel, readConcept(root, rel), {
       warnings: options.warnings,
-      profile: options.profile,
+      profile: effectiveProfileFor(rel, BUNDLE_ROOT_INDEX_PATH, profile),
     });
     if (concept === null) {
       options.warnings?.add(`skipping ${rel}: no frontmatter mapping, treated as a non-concept file`);
@@ -183,6 +185,52 @@ export function loadBundle(root: string, options: LoadBundleOptions = {}): Bundl
     concepts.push(concept);
   }
   return buildGraph(concepts);
+}
+
+/**
+ * {@link loadBundle}'s own spelling of the reserved bundle-root index, in **its** path space:
+ * bundle-root-relative (`"index.md"`), not `scaffold.ts`'s repo-relative {@link
+ * import("./scaffold").ROOT_INDEX_PATH} (`"docs/index.md"`, threaded by `core/validate.ts`
+ * instead — LORE-144). Every `loadBundle`-backed command (`graph`/`query`/`sync`/`link`/`context`/…)
+ * joins its `root` argument from `DOCS_DIR` before calling in (e.g. `commands/graph.ts`), so
+ * {@link walkMarkdown}'s own relative-path space always yields this bare stem for the one file
+ * `scaffold.ts`'s `serializeStructuralConcept` ever writes there.
+ */
+const BUNDLE_ROOT_INDEX_PATH = "index.md";
+
+/**
+ * The {@link Profile} a concept at `path` is validated against while loading: `defaultProfile()`
+ * when `path` names `rootIndexPath` — the bundle's one reserved, always-scaffolded structural
+ * concept — else `profile` (the caller's active one) unchanged.
+ *
+ * `scaffold.ts`'s `serializeStructuralConcept` always **writes** the root index against the
+ * built-in default profile — deliberately ignoring the active one, so a custom profile can never
+ * break `lore init` (its own docstring). Judging that same file on **read** against the active
+ * profile with no carve-out reintroduces the write/read asymmetry LORE-144 fixed for `lore
+ * validate`: a profile that adds a required field to `Reference` makes a freshly scaffolded
+ * bundle fail its very first `loadBundle`-backed command (`lore graph` et al., LORE-192), because
+ * the file lore just wrote could never satisfy a schema it was never written against. Judging the
+ * root index under the identical profile it was serialized with restores the write/read symmetry
+ * every other concept already has (each is both written and read against the one active profile) —
+ * the root index is simply pinned to a fixed profile on both sides, not left inconsistent between
+ * them.
+ *
+ * Exported (and generalized over `rootIndexPath`, rather than hardcoding one spelling) so this one
+ * algorithm serves both reserved-root carve-outs without letting them drift apart: `core/
+ * validate.ts`'s `validateConceptText` threads its own **repo-relative** constant (`"docs/
+ * index.md"`), while this module's {@link loadBundle} threads its own **bundle-relative** one
+ * ({@link BUNDLE_ROOT_INDEX_PATH}, `"index.md"`) — `validate.ts` cannot spell `loadBundle`'s form
+ * itself (it already imports {@link nodeText} from here, so the reverse import would cycle), so it
+ * imports this function instead and supplies its own path-space constant.
+ *
+ * Scoped to exactly one path, not the whole `RESERVED_STEMS` family (`index`/`log`): every *other*
+ * reserved file — a sub-directory `index.md`, `log.md` — is generated frontmatter-free
+ * (`indexes.ts`/`log.ts`), so `tryParseConcept` already treats it as a skipped non-concept and it
+ * never reaches a profile-driven check in the first place. The bundle-root index is the only
+ * reserved file that is itself a concept.
+ */
+export function effectiveProfileFor(path: string, rootIndexPath: string, profile: Profile): Profile {
+  return path === rootIndexPath ? defaultProfile() : profile;
 }
 
 /**
