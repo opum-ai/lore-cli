@@ -3,9 +3,11 @@ id: LORE-241
 title: >-
   parseJson rewrites a valid-but-non-object profile.json into a misleading 'is
   not valid JSON' error
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@sonnet-worker'
 created_date: '2026-07-23 16:04'
+updated_date: '2026-07-23 21:25'
 labels:
   - core-bundle-check
   - codex-review-followup
@@ -30,8 +32,26 @@ Provenance: doc-2 Codex second-opinion review, low-severity finding (cluster cor
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A syntactically valid but non-object `.lore/profile.json` (e.g. `[1,2,3]`, `"hello"`, `42`, `true`, `null`) fails with the message `.lore/profile.json must be a JSON object` and hint `make .lore/profile.json a JSON object` — NOT the `is not valid JSON` / `fix the JSON syntax` form.
-- [ ] #2 A genuinely malformed `.lore/profile.json` (e.g. `{ not json`) still fails with the `.lore/profile.json is not valid JSON: <parser message>` form and the `fix the JSON syntax` hint — no regression.
-- [ ] #3 A valid JSON-object profile still loads and compiles unchanged.
-- [ ] #4 Regression tests in test/profile.test.ts cover the array case and at least one scalar (string/number) case for the object-shape message, plus a malformed-syntax case for the syntax message.
+- [x] #1 A syntactically valid but non-object `.lore/profile.json` (e.g. `[1,2,3]`, `"hello"`, `42`, `true`, `null`) fails with the message `.lore/profile.json must be a JSON object` and hint `make .lore/profile.json a JSON object` — NOT the `is not valid JSON` / `fix the JSON syntax` form.
+- [x] #2 A genuinely malformed `.lore/profile.json` (e.g. `{ not json`) still fails with the `.lore/profile.json is not valid JSON: <parser message>` form and the `fix the JSON syntax` hint — no regression.
+- [x] #3 A valid JSON-object profile still loads and compiles unchanged.
+- [x] #4 Regression tests in test/profile.test.ts cover the array case and at least one scalar (string/number) case for the object-shape message, plus a malformed-syntax case for the syntax message.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Move the object-shape check in parseJson (src/core/profile.ts) out of the try block that wraps JSON.parse, so the shape-check LoreError thrown by fail() is no longer caught by the surrounding catch and rewritten as a syntax error. Add regression tests in test/profile.test.ts: array, string, number, boolean, null non-object cases assert the object-shape message+hint; malformed-syntax case asserts the syntax message+hint is unchanged.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fix: parseJson now runs JSON.parse alone inside the try; the object-shape check runs after success, outside the catch, so its fail() throw is no longer rewritten into an 'is not valid JSON' message. Verified: bun test test/profile.test.ts -> 70 pass/0 fail (added 5 new cases: array/string/number/boolean/null all assert exact message '.lore/profile.json must be a JSON object' + hint 'make .lore/profile.json a JSON object', and LoreError type via expectValidation helper). Anti-regression: malformed '{ not json' still asserts exact message '.lore/profile.json is not valid JSON: JSON Parse error: Expected '\''}'\''' + hint 'fix the JSON syntax in .lore/profile.json'. Full bun test: 2019 pass/0 fail across 47 files. bun run typecheck: clean (tsc --noEmit, no output). bunx biome check src/core/profile.ts test/profile.test.ts: no new issues. AC#3 covered by pre-existing passing tests (profile.json is read.../profile.toml wins over profile.json.../an empty/commented profile.toml does NOT shadow...) which load valid object profiles end-to-end unchanged.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Fixed parseJson (src/core/profile.ts) so JSON.parse is the only statement inside the try block; the object-shape check (non-object/array/null) now runs after a successful parse, outside the catch, so its LoreError is no longer swallowed and rewritten into a syntax-error message. A valid-but-non-object profile.json (array/string/number/boolean/null) now reports '.lore/profile.json must be a JSON object' + hint 'make .lore/profile.json a JSON object'; a genuinely malformed file still reports '.lore/profile.json is not valid JSON: <parser message>' + hint 'fix the JSON syntax in .lore/profile.json'. Added 5 regression tests in test/profile.test.ts (array/string/number/boolean/null) asserting exact message+hint+LoreError type, tightened the malformed-JSON test to assert exact message+hint, kept the pre-existing valid-object-profile tests as the AC#3 regression guard. Verified: bun test test/profile.test.ts (70 pass/0 fail), full bun test (2019 pass/0 fail, 47 files), bun run typecheck (clean), bunx biome check on both changed files (no new issues).
+<!-- SECTION:FINAL_SUMMARY:END -->

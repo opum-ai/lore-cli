@@ -559,15 +559,46 @@ describe("loadProfile — JSON form errors", () => {
   });
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-  test("malformed JSON throws a validation error naming the file", () => {
+  test("malformed JSON throws the 'is not valid JSON' diagnostic naming the file, with a syntax hint (LORE-241 AC#2)", () => {
     writeFileSync(join(root, PROFILE_JSON_REL_PATH), "{ not json");
     const err = expectValidation(() => loadProfile({ root }));
-    expect(err.message).toContain(PROFILE_JSON_REL_PATH);
+    expect(err.message).toBe(`${PROFILE_JSON_REL_PATH} is not valid JSON: JSON Parse error: Expected '}'`);
+    expect(err.hint).toBe(`fix the JSON syntax in ${PROFILE_JSON_REL_PATH}`);
   });
 
-  test("a JSON profile that is not an object is an error", () => {
+  test("a JSON array profile is the object-shape error, not a syntax error (LORE-241 AC#1)", () => {
     writeFileSync(join(root, PROFILE_JSON_REL_PATH), "[1, 2, 3]");
-    expectValidation(() => loadProfile({ root }));
+    const err = expectValidation(() => loadProfile({ root }));
+    expect(err.message).toBe(`${PROFILE_JSON_REL_PATH} must be a JSON object`);
+    expect(err.hint).toBe(`make ${PROFILE_JSON_REL_PATH} a JSON object`);
+  });
+
+  test("a JSON string profile is the object-shape error, not a syntax error (LORE-241 AC#1)", () => {
+    writeFileSync(join(root, PROFILE_JSON_REL_PATH), '"hello"');
+    const err = expectValidation(() => loadProfile({ root }));
+    expect(err.message).toBe(`${PROFILE_JSON_REL_PATH} must be a JSON object`);
+    expect(err.hint).toBe(`make ${PROFILE_JSON_REL_PATH} a JSON object`);
+  });
+
+  test("a JSON number profile is the object-shape error, not a syntax error (LORE-241 AC#1)", () => {
+    writeFileSync(join(root, PROFILE_JSON_REL_PATH), "42");
+    const err = expectValidation(() => loadProfile({ root }));
+    expect(err.message).toBe(`${PROFILE_JSON_REL_PATH} must be a JSON object`);
+    expect(err.hint).toBe(`make ${PROFILE_JSON_REL_PATH} a JSON object`);
+  });
+
+  test("a JSON boolean profile is the object-shape error, not a syntax error (LORE-241 AC#1)", () => {
+    writeFileSync(join(root, PROFILE_JSON_REL_PATH), "true");
+    const err = expectValidation(() => loadProfile({ root }));
+    expect(err.message).toBe(`${PROFILE_JSON_REL_PATH} must be a JSON object`);
+    expect(err.hint).toBe(`make ${PROFILE_JSON_REL_PATH} a JSON object`);
+  });
+
+  test("a JSON null profile is the object-shape error, not a syntax error (LORE-241 AC#1)", () => {
+    writeFileSync(join(root, PROFILE_JSON_REL_PATH), "null");
+    const err = expectValidation(() => loadProfile({ root }));
+    expect(err.message).toBe(`${PROFILE_JSON_REL_PATH} must be a JSON object`);
+    expect(err.hint).toBe(`make ${PROFILE_JSON_REL_PATH} a JSON object`);
   });
 });
 
