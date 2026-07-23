@@ -20,18 +20,21 @@ the repo never scan them.
 
 ## `backlog-json/` — Backlog.md `--json` goldens (AC#2)
 
-Real `{schemaVersion, kind, data}` envelopes captured from the forked, `--json`-capable Backlog.md
-(`jeremy-newhouse/Backlog.md@tasks/back-510-json-output`) — one per kind (`task`, `taskList`,
-`searchResult`). `test/backlog-json-golden.test.ts` locks them to the schema of record
+Real `{schemaVersion, kind, data}` envelopes captured from upstream, `--json`-capable Backlog.md
+(`MrLesk/Backlog.md`, PR #790, the pinned commit recorded in `docker/e2e/Dockerfile`'s
+`BACKLOG_COMMIT`) — one per kind (`task-view`, `task-list`, `search`). `test/backlog-json-golden.test.ts`
+locks them to the schema of record
 ([`docs/reference/backlog-json-schema.md`](../../docs/reference/backlog-json-schema.md)) and asserts
 they stay in canonical form.
 
-**Do not hand-edit.** Regenerate with the recorder (which needs the fork CLI, not a compiled
-binary — `bun <fork>/src/cli.ts` works even on the external volume):
+**Do not hand-edit.** Regenerate with the recorder (which needs a local clone of the upstream CLI at
+or past the pinned commit, not a compiled binary — `bun <upstream>/src/cli.ts` works even on the
+external volume):
 
 ```sh
-LORE_BACKLOG_FORK_CLI=~/repos/Backlog.md/src/cli.ts bun test/support/record-backlog-goldens.ts
+LORE_BACKLOG_UPSTREAM_CLI=~/repos/Backlog.md-upstream/src/cli.ts bun test/support/record-backlog-goldens.ts
 ```
 
-The recorder redacts the host-specific absolute `filePath` to `{REPO}` and canonicalizes to 2-space
-JSON, so regeneration against the same backlog state is byte-identical.
+No redaction step is needed: unlike the retired fork's shape, upstream's envelope carries no
+absolute, host-specific field — `task view`'s `path` is already project-relative. The recorder
+canonicalizes to 2-space JSON, so regeneration against the same backlog state is byte-identical.
