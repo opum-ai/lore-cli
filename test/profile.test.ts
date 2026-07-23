@@ -10,6 +10,7 @@ import {
   PROFILE_REL_PATH,
   parseProfile,
   slugForTypeName,
+  templateConfinementViolation,
 } from "../src/core/profile";
 import { validateFrontmatter } from "../src/core/schema";
 import { LoreError, WarningCollector } from "../src/errors";
@@ -447,6 +448,42 @@ describe("parseProfile — a [[types]].template value is confined to .lore/templ
       ),
     );
     expect(profile.types.get("T")?.template).toBe("..custom");
+  });
+});
+
+describe("templateConfinementViolation — the shared guard both new.ts and profile.ts consume (LORE-185)", () => {
+  // Direct unit coverage of the pure predicate itself, consolidated out of the two edge-case-
+  // divergent implementations `assertTemplateConfined` (here) and `commands/new.ts`'s
+  // `assertTemplateNameConfined` used to each carry. `commands/new.ts`'s own describe blocks
+  // ("--template is confined to .lore/templates/", "--template refuses to read through a
+  // symlink") exercise the SAME function through the `--template` flag call path; this block
+  // exercises it directly, and through the profile-declared call path above.
+
+  test("a bare name is confined (no violation)", () => {
+    expect(templateConfinementViolation("adr")).toBeUndefined();
+  });
+
+  test("a `..`-prefixed but non-escaping segment is confined (no false positive)", () => {
+    expect(templateConfinementViolation("..custom")).toBeUndefined();
+  });
+
+  test("a `..` traversal is an escape violation", () => {
+    expect(templateConfinementViolation("../../../secret")).toBe("escape");
+  });
+
+  test("a backslash-separated (Windows-style) traversal is an escape violation on every host", () => {
+    // The property that used to differ between the two implementations: profile.ts always
+    // normalized backslashes to `/` before resolving; new.ts's old `assertTemplateNameConfined`
+    // used the host path module and did not, so this input only escaped on an actual win32 run.
+    expect(templateConfinementViolation("..\\..\\secret")).toBe("escape");
+  });
+
+  test("a POSIX absolute path is an absolute violation", () => {
+    expect(templateConfinementViolation("/etc/passwd")).toBe("absolute");
+  });
+
+  test("a Windows drive-letter absolute path is an absolute violation regardless of host", () => {
+    expect(templateConfinementViolation("C:\\Windows\\System32\\drivers\\etc\\hosts")).toBe("absolute");
   });
 });
 

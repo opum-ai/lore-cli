@@ -272,6 +272,17 @@ describe("lore new — --template is confined to .lore/templates/ (LORE-72)", ()
     expect(err.type).toBe("usage");
     expect(err.message).toContain("escape");
   });
+
+  test("regression: a Windows-style backslash traversal is refused on every host, not just win32 (LORE-185)", () => {
+    // Before LORE-185, this function resolved with the host path module and never normalized
+    // backslashes, so `--template ..\\..\\secret` only actually escaped on a real win32 run — a
+    // POSIX host (like this test, CI's default) saw one inert, non-traversing filename segment
+    // and let it through. The shared `templateConfinementViolation` predicate (moved from
+    // `core/profile.ts`'s own backslash-normalizing implementation) now catches it everywhere.
+    const err = expectError(["adr", "Test", "--template", "..\\..\\secret"]);
+    expect(err.type).toBe("usage");
+    expect(err.message).toContain("escape");
+  });
 });
 
 describe("lore new — --template refuses to read through a symlink (LORE-91)", () => {
@@ -323,10 +334,9 @@ describe("lore new — --template refuses to read through a symlink (LORE-91)", 
     },
   );
 
-  test("a profile-declared template is unaffected by the symlink check's scope (AC#4)", () => {
-    // The declared (non---template) fallback path never sets `checkSymlink`, matching LORE-72's own
-    // precedent of scoping its confinement guard to the explicit CLI flag only. A symlinked
-    // profile-declared template is a separate, already out-of-scope trust boundary (repo config).
+  test("a profile-declared template that is a real file is read normally (AC#2/AC#4)", () => {
+    // A non-symlinked declared template is unaffected by LORE-185's AC#2 widening — the check only
+    // ever refuses an actual symlink, never a real file.
     writeFileSync(
       join(root, ".lore/profile.toml"),
       '[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "ADR"\ntemplate = "declared"\n',
@@ -337,17 +347,19 @@ describe("lore new — --template refuses to read through a symlink (LORE-91)", 
   });
 
   test.skipIf(process.platform === "win32")(
-    "a SYMLINKED profile-declared template is deliberately still followed — not this task's scope (AC#4)",
+    "regression: a SYMLINKED profile-declared template is now refused too (LORE-185 AC#2)",
     () => {
+      // Before LORE-185, `checkSymlink` was scoped to the explicit --template flag only (LORE-91
+      // AC#4) and a profile-declared template's symlink was silently followed. LORE-185 widens the
+      // refusal to the declared source too, closing that asymmetry.
       writeFileSync(
         join(root, ".lore/profile.toml"),
         '[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "ADR"\ntemplate = "declared"\n',
       );
       symlinkSync(secretPath, join(root, ".lore/templates/declared.md"));
-      const { result } = newCmd(["adr", "Title"]);
-      // Pre-existing behavior, unchanged by this fix — the profile-declared path never sets
-      // checkSymlink, so a symlink there is still silently followed, exactly as before LORE-91.
-      expect(readFileSync(join(root, result.path), "utf8")).toContain("SUPER SECRET DATA");
+      const err = expectError(["adr", "Title"]);
+      expect(err.type).toBe("conflict");
+      expect(err.message.toLowerCase()).toContain("symlink");
     },
   );
 });

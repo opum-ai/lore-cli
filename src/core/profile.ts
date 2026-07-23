@@ -411,36 +411,62 @@ function parseTypes(value: unknown, source: string): ParsedType[] {
 }
 
 /**
- * Reject a `[[types]].template` value that could escape `.lore/templates/` once `commands/new.ts`
- * joins it into a file path (LORE-139). A profile-declared `template` is committed repo config,
- * not a user-typed CLI flag — but the same containment invariant `commands/new.ts`'s
- * `assertTemplateNameConfined` enforces for the analogous `--template` flag must hold here too:
- * left unchecked, a `.lore/profile.toml` type table declaring `template = "../../../secret/leak"`
- * would have `lore new` read and embed an arbitrary file's contents into the generated concept,
- * exit `0`, no error — the exact live repro this task reports. Checked here, at profile PARSE
- * time, so every current and future consumer of a compiled type's `template` is protected, not
- * just `resolveTemplate`'s one call site.
+ * The way a template name/path value can fail {@link templateConfinementViolation}'s containment
+ * check: an absolute path, or a value that resolves outside `.lore/templates/` via a `..` escape.
+ */
+export type TemplateConfinementViolation = "absolute" | "escape";
+
+/**
+ * The single containment check shared by every place lore resolves a template name/path into a
+ * file under `.lore/templates/` — the profile-declared `[[types]].template` value (LORE-139) and
+ * `commands/new.ts`'s `--template` CLI flag (LORE-69). Both used to run their own edge-case-
+ * divergent copy of this arithmetic (one normalized backslashes and needed no real `root`, the
+ * other used the host `resolve()`/`relative()` and did not); LORE-185 consolidates them onto this
+ * one pure predicate so the invariant can never again drift between call sites. Left unchecked, a
+ * `.lore/profile.toml` type table declaring `template = "../../../secret/leak"` — or a
+ * `lore new --template ../../../secret/leak` — would have `lore new` read and embed an arbitrary
+ * file's contents into the generated concept, exit `0`, no error.
  *
  * Absolute paths are rejected on the host `isAbsolute` AND both `posix.isAbsolute`/
- * `win32.isAbsolute` explicitly, mirroring `assertTemplateNameConfined`'s own cross-platform
- * rationale (this ships as a compiled binary for both POSIX and win32 from the same source; a
- * Windows drive-letter path is inert syntax on a POSIX host but genuinely absolute on the win32
- * binary). A `..`-segment escape is then caught by resolving the value (backslash segments
- * normalized to `/` first, so a Windows-style `..\..\secret` traversal is caught even when parsed
- * on a POSIX host) against a fixed anchor and confirming the result stays inside it — no real
- * `root` is needed for this: the check is pure path arithmetic, identical however the anchor is
- * spelled, so it holds regardless of where the profile is ultimately loaded from.
+ * `win32.isAbsolute` explicitly: lore ships as a compiled binary for both POSIX and win32 from the
+ * same source, so a Windows drive-letter path must be caught even when this runs on a POSIX host
+ * (it is otherwise inert syntax there), and a POSIX-style absolute path must be caught even when
+ * this runs on the win32 binary. A `..`-segment escape is then caught by resolving the value
+ * (backslash segments normalized to `/` first, so a Windows-style `..\..\secret` traversal is
+ * caught even when parsed on a POSIX host — the cross-host drift LORE-69's own host-`resolve()`
+ * implementation had) against a fixed anchor and confirming the result stays inside it — no real
+ * `root` is needed: the check is pure path arithmetic, identical however the anchor is spelled, so
+ * it holds regardless of where the caller's templates directory is ultimately loaded from.
+ *
+ * Returns the violation kind rather than throwing, so each call site can raise its own typed
+ * error: a profile-declared value is a `validation` {@link LoreError} at profile PARSE time
+ * (repo config, wrong exit code for a CLI mistake), while a `--template` flag value is a `usage`
+ * error (a user-typed CLI argument) — those exit codes are part of each command's own observable
+ * contract and must not collapse into one just because the underlying arithmetic is now shared.
  */
-function assertTemplateConfined(value: string, key: string, source: string): void {
+export function templateConfinementViolation(value: string): TemplateConfinementViolation | undefined {
   if (isAbsolute(value) || posix.isAbsolute(value) || win32.isAbsolute(value)) {
-    fail(`${source}: ${key} "${value}" must not be an absolute path`, `declare a bare template name for ${key}`, {
-      key,
-    });
+    return "absolute";
   }
   const anchor = "/.lore/templates";
   const resolved = posix.resolve(anchor, value.replace(/\\/g, "/"));
   const rel = posix.relative(anchor, resolved);
-  if (rel === ".." || rel.startsWith("../")) {
+  return rel === ".." || rel.startsWith("../") ? "escape" : undefined;
+}
+
+/**
+ * Reject a `[[types]].template` value that could escape `.lore/templates/` once `commands/new.ts`
+ * joins it into a file path (LORE-139), via the shared {@link templateConfinementViolation}
+ * predicate. Checked here, at profile PARSE time, so every current and future consumer of a
+ * compiled type's `template` is protected, not just `resolveTemplate`'s one call site.
+ */
+function assertTemplateConfined(value: string, key: string, source: string): void {
+  const violation = templateConfinementViolation(value);
+  if (violation === "absolute") {
+    fail(`${source}: ${key} "${value}" must not be an absolute path`, `declare a bare template name for ${key}`, {
+      key,
+    });
+  } else if (violation === "escape") {
     fail(
       `${source}: ${key} "${value}" must not escape .lore/templates/`,
       `declare a bare template name for ${key}, without any ".." segment`,
