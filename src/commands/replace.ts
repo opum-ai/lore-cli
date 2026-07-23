@@ -194,9 +194,15 @@ function parseReplaceArgs(args: readonly string[]): ReplaceArgs {
       };
       switch (name) {
         case "regex":
+          if (eq >= 0) {
+            throw usage("--regex takes no value", "pass --regex on its own");
+          }
           regex = true;
           break;
         case "dry-run":
+          if (eq >= 0) {
+            throw usage("--dry-run takes no value", "pass --dry-run on its own");
+          }
           dryRun = true;
           break;
         case "in":

@@ -660,6 +660,17 @@ describe("validate (command)", () => {
     }
   });
 
+  test("--strict=<value> (an inline value on a boolean flag) is a usage error (LORE-228)", () => {
+    try {
+      runValidate({ root, output: JSON_CTX, args: ["--strict=false"], stdout: capture() });
+      throw new Error("expected a LoreError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("usage");
+      expect((err as LoreError).message).toContain("--strict takes no value");
+    }
+  });
+
   test("`--` ends option parsing so a dash-leading path is a positional", () => {
     // After `--`, `--strict` would be a path; it does not exist, so discovery fails not_found
     // (proving it was treated as a path, not the flag).

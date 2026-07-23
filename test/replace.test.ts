@@ -616,6 +616,13 @@ describe("lore replace — command-level suites (root fixture)", () => {
       expect(stdout.text()).toContain("1 match in 1 of 1 file (dry-run)");
     });
 
+    test("bare --regex still enables regex mode (LORE-228)", () => {
+      writeDoc("docs/a.md", "cat bat rat");
+      const { report } = replaceCmd([".at", "X", "--regex"]);
+      expect(report.totalMatches).toBe(3);
+      expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("X X X");
+    });
+
     test("accepts the --in=value inline form and a -- options terminator", () => {
       writeDoc("docs/a.md", "-lead");
       const { report } = replaceCmd(["--in=docs/**", "--", "-lead", "head"]);
@@ -659,6 +666,18 @@ describe("lore replace — command-level suites (root fixture)", () => {
 
     test("a third positional is a usage error", () => {
       expect(expectError(["a", "b", "c"]).type).toBe("usage");
+    });
+
+    test("--regex=<value> (an inline value on a boolean flag) is a usage error (LORE-228)", () => {
+      const err = expectError(["a", "b", "--regex=false"]);
+      expect(err.type).toBe("usage");
+      expect(err.message).toContain("--regex takes no value");
+    });
+
+    test("--dry-run=<value> (an inline value on a boolean flag) is a usage error (LORE-228)", () => {
+      const err = expectError(["a", "b", "--dry-run=false"]);
+      expect(err.type).toBe("usage");
+      expect(err.message).toContain("--dry-run takes no value");
     });
   });
 
