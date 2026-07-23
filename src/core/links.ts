@@ -247,7 +247,8 @@ export interface LinkFinding {
  *   consumer's differing server root.
  * - **`accidental-colon`** — a relative file whose first segment carries a colon
  *   ({@link accidentalColonFile}), read as a `scheme:` URL and otherwise unlinted.
- * - **`directory-link`** — a non-external destination ending in `/` (`../reference/`):
+ * - **`directory-link`** — a non-external destination ending in `/` (`../reference/`), or
+ *   whose final path segment is bare `.`/`..` navigation (`.`, `..`, `../..`, `foo/..`):
  *   it resolves to a file on no renderer and is almost always a dropped filename.
  * - **`missing-extension`** — an internal target missing the canonical **lowercase**
  *   `.md` suffix ({@link lacksMarkdownSuffix}): no extension at all
@@ -312,7 +313,7 @@ export function validateLink(target: string): LinkFinding[] {
     findings.push({
       target,
       issue: "directory-link",
-      message: `link "${sanitizeForMessage(target)}" points at a directory (a trailing "/"); name the .md file instead (a directory link resolves on no renderer — likely a dropped filename)`,
+      message: `link "${sanitizeForMessage(target)}" points at a directory (a trailing "/", or a bare "."/".." navigation segment); name the .md file instead (a directory link resolves on no renderer — likely a dropped filename)`,
     });
   } else if (lacksMarkdownSuffix(path)) {
     findings.push({
@@ -416,7 +417,9 @@ const KNOWN_ASSET_EXTENSIONS = new Set([
  * non-concept link:
  *
  * - an empty path (a pure `#fragment`/`?query` destination), or a **directory** link
- *   (a trailing `/`, e.g. `../reference/`);
+ *   (a trailing `/`, e.g. `../reference/`, or a bare `.`/`..` navigation segment —
+ *   {@link isDirectoryLink} — which is why this function's own dotfile check below
+ *   never has to tell `.`/`..` apart from a real dotfile: it never sees them);
  * - a **dotfile** (`../config/.gitignore`) or a recognized **asset** extension
  *   (`../img/x.png`, {@link KNOWN_ASSET_EXTENSIONS}) — a real non-concept link, not a
  *   dropped suffix.
@@ -501,13 +504,29 @@ function accidentalColonFile(target: string): boolean {
 
 /**
  * Whether a (non-external) destination's path part names a **directory** — a trailing `/` after
- * decoding (`../reference/`). Such a link resolves to a file on no renderer and is almost always
- * a dropped filename, so it warns. The pure leading-slash `/` (already flagged `leading-slash`)
- * and an empty path (a bare fragment) are excluded so neither double-reports.
+ * decoding (`../reference/`), *or* a final path segment that is bare navigation, exactly `.` or
+ * `..` (`.`, `..`, `../..`, `foo/..`, `foo/.`). Both shapes name a directory, not the canonical
+ * `.md` file the link form requires, and resolve inconsistently across consumers (GitHub browses
+ * to the directory; Obsidian will not resolve a `..` to a note) — so both warn. The pure
+ * leading-slash `/` (already flagged `leading-slash`) and an empty path (a bare fragment) are
+ * excluded so neither double-reports.
+ *
+ * A bare/trailing `.`/`..` segment is deliberately checked **here**, not left for
+ * {@link lacksMarkdownSuffix}'s dotfile exemption to (mis)judge: that exemption tests
+ * `startsWith(".")`, which would otherwise read a final segment of exactly `.`/`..` as a genuine
+ * dotfile like `.gitignore` and wave it through. Catching it in this earlier check keeps the
+ * dotfile exemption itself unchanged and correct for real dotfiles.
  */
 function isDirectoryLink(rawPath: string): boolean {
   const path = decodeTarget(rawPath);
-  return path !== "" && path !== "/" && path.endsWith("/");
+  if (path === "" || path === "/") {
+    return false;
+  }
+  if (path.endsWith("/")) {
+    return true;
+  }
+  const last = path.slice(path.lastIndexOf("/") + 1);
+  return last === "." || last === "..";
 }
 
 /**
