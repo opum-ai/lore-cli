@@ -34,6 +34,18 @@ const SENTINEL = "\x01lore:log-entry\x01";
 /** `git log --pretty=format:` string: one sentinel line, then hash/committer-date/subject each on their own line. */
 const PRETTY_FORMAT = `${SENTINEL}%n%H%n%cI%n%s`;
 
+/**
+ * Wrap a path in git's `:(literal)` pathspec magic so git matches it byte-for-byte, mirroring the
+ * `:(literal)` convention `state.ts` adopted in LORE-49: a root containing pathspec-magic characters
+ * (`*`, `?`, `[`, or a leading `:`) would otherwise be silently reinterpreted as pathspec magic
+ * instead of a literal directory name. Production only ever passes the constant "docs" today, so
+ * this is currently a no-op in practice — but `GenerateLogOptions.root` and this module's `history()`
+ * seam are exported, and a profile-configurable docs root is a plausible future.
+ */
+function literalPathspec(path: string): string {
+  return `:(literal)${path}`;
+}
+
 /** Build the real {@link GitAdapter}, shelling `git` in `cwd` (the repo root). */
 export function realGitAdapter(cwd: string): GitAdapter {
   return {
@@ -64,7 +76,7 @@ export function realGitAdapter(cwd: string): GitAdapter {
         `--pretty=format:${PRETTY_FORMAT}`,
         ...rangeArgs(range),
         "--",
-        root,
+        literalPathspec(root),
       ];
       const proc = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
       if (proc.exitCode !== 0) {
@@ -159,7 +171,7 @@ function rangeArgs(range: GitLogRange): string[] {
  * is the identical class of failure (git itself rejecting the range/repository).
  */
 function countCommits(cwd: string, range: GitLogRange, root: string): number {
-  const proc = Bun.spawnSync(["git", "rev-list", "--count", ...rangeArgs(range), "--", root], {
+  const proc = Bun.spawnSync(["git", "rev-list", "--count", ...rangeArgs(range), "--", literalPathspec(root)], {
     cwd,
     stdout: "pipe",
     stderr: "pipe",
