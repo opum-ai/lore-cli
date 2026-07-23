@@ -3,9 +3,11 @@ id: LORE-231
 title: >-
   writeFileAtomic leaks an uncleaned temp file when writeFileSync fails
   mid-write
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@sonnet-worker'
 created_date: '2026-07-23 16:04'
+updated_date: '2026-07-23 20:00'
 labels:
   - cmd-crud-b
   - codex-review-followup
@@ -28,7 +30,27 @@ Provenance: Codex second-opinion review (backlog doc-2, low-severity section), c
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A `writeFileAtomic` call whose temp `writeFileSync` creates the file and then throws leaves no `.lore-sync-tmp-*` file behind in the destination directory.
-- [ ] #2 The pre-existing 'a write failure BEFORE any temp file exists never claims one may remain' behavior is preserved: when no temp file was ever created (e.g. EACCES on a read-only directory), the surfaced error's hint must still not mention a stray temp file (regression guard: test/replace.test.ts around the 'never claims one may remain' test).
-- [ ] #3 A new test injects a mid-write failure that leaves the temp file on disk (e.g. a spied `writeFileSync` that creates the file then throws) and asserts the destination directory is free of `.lore-sync-tmp-*` litter afterward.
+- [x] #1 A `writeFileAtomic` call whose temp `writeFileSync` creates the file and then throws leaves no `.lore-sync-tmp-*` file behind in the destination directory.
+- [x] #2 The pre-existing 'a write failure BEFORE any temp file exists never claims one may remain' behavior is preserved: when no temp file was ever created (e.g. EACCES on a read-only directory), the surfaced error's hint must still not mention a stray temp file (regression guard: test/replace.test.ts around the 'never claims one may remain' test).
+- [x] #3 A new test injects a mid-write failure that leaves the temp file on disk (e.g. a spied `writeFileSync` that creates the file then throws) and asserts the destination directory is free of `.lore-sync-tmp-*` litter afterward.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Restructure writeFileAtomic's temp-file creation to open the temp file via openSync(O_CREAT|O_EXCL) and set tmpFileExists=true immediately after the open succeeds, mirroring writeFileNoFollow's discipline. 2. Write the content bytes via writeAllBytes's writeSync loop instead of a single writeFileSync call, so a mid-write failure (after the temp file provably exists) still hits the catch block's unlinkSync cleanup. 3. Keep the existing 'no temp ever created' (EACCES on open) hint-suppression behavior intact (AC#2). 4. Update test/replace.test.ts's LORE-116 commit-phase spy (previously on writeFileSync) to spy on openSync+writeSync instead, since writeFileAtomic no longer calls writeFileSync. 5. Add a new regression test (AC#3) that spies on writeSync to fail after the real openSync creates the temp file, asserting no .lore-sync-tmp-* litter remains.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Restructured writeFileAtomic (src/commands/fswrite.ts) to create its temp file via openSync(O_WRONLY|O_CREAT|O_EXCL, 0o666) and set tmpFileExists=true the instant that open returns, then write bytes through writeAllBytes's writeSync loop (mirrors writeFileNoFollow's existing discipline exactly) -- a mid-write failure now hits the catch block's unlinkSync cleanup instead of leaving a stray .lore-sync-tmp-* file. Updated test/replace.test.ts's LORE-116 commit-phase atomicity test to spy on openSync+writeSync (writeFileAtomic no longer calls writeFileSync at all) instead of writeFileSync, preserving its discriminating assertions. Added a new test 'LORE-231: a mid-write failure AFTER the temp file was created leaves no .lore-sync-tmp-* litter' (spies writeSync to throw after the real openSync creates the file) directly proving AC#1/AC#3. Verified AC#2 is untouched: the pre-existing 'never claims one may remain' regression test (EACCES on a read-only dir, so openSync itself fails and no temp is ever created) still passes unmodified -- its hint still omits 'temp file'.
+
+Verification: full 'bun test' = 1973 pass / 0 fail across 47 files; 'bun run typecheck' clean (tsc --noEmit, no errors); targeted run of test/replace.test.ts + test/fswrite.test.ts = 110 pass / 0 fail; 'bunx biome check src/commands/fswrite.ts test/replace.test.ts' reports no issues. Diff is scoped to src/commands/fswrite.ts + test/replace.test.ts + this task file only.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Fixed writeFileAtomic's tmpFileExists cleanup-guard timing gap (src/commands/fswrite.ts): it now creates its temp file via an O_CREAT|O_EXCL openSync and marks the guard true the instant that open returns, then writes bytes via writeAllBytes's writeSync loop -- mirroring writeFileNoFollow's existing discipline -- so a mid-write failure (ENOSPC/EDQUOT/EIO after the temp file was already created) is cleaned up by the catch block's unlinkSync instead of leaking a stray .lore-sync-tmp-* file. The pre-existing no-temp-ever-created (EACCES on openSync) path is unchanged: its error still never claims a temp file may remain. Updated test/replace.test.ts's LORE-116 commit-phase spy from writeFileSync to openSync+writeSync (writeFileAtomic no longer calls writeFileSync) and added a new regression test that spies writeSync to fail after a real temp-file creation, asserting no litter survives. Verified: bun test 1973 pass/0 fail, bun run typecheck clean, biome check clean on both changed files.
+<!-- SECTION:FINAL_SUMMARY:END -->
