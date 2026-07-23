@@ -958,6 +958,22 @@ describe("runCheck — exit codes and discovery", () => {
     const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
     expect(parsed.data.findings.some((f: { rule: string }) => f.rule === "broken-link")).toBe(true);
   });
+
+  test("discovery advisories survive a scan-phase throw in checkBundles (LORE-191 regression)", () => {
+    // Post-LORE-138, `bodyText` re-throws a plain Error (not swallowed) for a frontmatter whose
+    // language annotation names a gray-matter engine that isn't registered (e.g. `---toml`) — so
+    // `checkBundles` is no longer guaranteed non-throwing. Before the fix, the discovery advisories
+    // collected during `collectBundles` (this symlink) were only flushed AFTER `checkBundles(bundles)`
+    // ran, so a scan-phase throw meant they were never flushed at all: lost silently alongside the
+    // uncaught exception, no report ever emitted (exit 1).
+    writeFileSync(join(root, "docs", "adr", "real.md"), ref("R", "Body."));
+    symlinkSync(join(root, "docs", "adr", "real.md"), join(root, "docs", "adr", "link.md"));
+    writeFileSync(join(root, "docs", "bad.md"), '---toml\nfoo = "bar"\n---\nSee [ghost](ghost.md).\n');
+    const o = opts([]);
+    expect(() => runCheck(o)).toThrow(/gray-matter engine "toml" is not registered/);
+    const stderrText = (o.stderr as ReturnType<typeof capture>).text();
+    expect(stderrText).toContain("symlink");
+  });
 });
 
 // ── isDocsRoot ─────────────────────────────────────────────────────────────────
