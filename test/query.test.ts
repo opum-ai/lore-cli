@@ -202,6 +202,29 @@ describe("query — frontmatter filters", () => {
     ]);
   });
 
+  test("--field matches ANY case-variant frontmatter key, not only the first-enumerated one (LORE-246)", () => {
+    // YAML keys are case-sensitive, so a concept can carry two distinct own keys that
+    // are the same logical field under different case — both survive parsing. The
+    // match must not depend on which case-variant enumeration reaches first, so this
+    // is checked with the matching key BOTH first and second in insertion order.
+    writeDoc("first.md", "---\ntype: Widget\nStatus: draft\nstatus: done\n---\nFirst.\n");
+    writeDoc("second.md", "---\ntype: Widget\nstatus: done\nStatus: draft\n---\nSecond.\n");
+    const data = query(graph(), { fields: [{ key: "status", value: "done" }] });
+    expect(data.hits.map((h) => h.id).sort()).toEqual(["first", "second"]);
+
+    // The same all-case-variants semantics apply through --status (AC#2), and through
+    // a case-variant match hiding inside a list rather than a scalar (AC#3).
+    expect(
+      query(graph(), { status: "done" })
+        .hits.map((h) => h.id)
+        .sort(),
+    ).toEqual(["first", "second"]);
+
+    writeDoc("listed.md", "---\ntype: Widget\nTags:\n  - alpha\ntags: []\n---\nListed.\n");
+    expect(query(graph(), { fields: [{ key: "tags", value: "alpha" }] }).hits.map((h) => h.id)).toEqual(["listed"]);
+    expect(query(graph(), { tags: ["alpha"] }).hits.map((h) => h.id)).toEqual(["listed"]);
+  });
+
   test("filters compose (AND) and combine with a text query", () => {
     writeMixedBundle();
     // Only the story is a Story tagged orders AND mentions archive.
