@@ -190,6 +190,24 @@ describe("lore scaffold mkdocs — never-silent-clobber (AC: user-owned, never r
     ]);
   });
 
+  test("a structural directory blocker AND a pre-existing file together yield a hint conveying both remedies (LORE-238)", () => {
+    // MKDOCS_CONFIG_REL_PATH ("mkdocs.yml") is a top-level file, independent of docs/, so it can
+    // pre-exist as a genuine file collision at the same time docs/ is blocked by a plain file —
+    // exercising AC#3's "both" case in one run.
+    writeFileSync(join(root, "docs"), "not a directory\n");
+    writeFileSync(join(root, MKDOCS_CONFIG_REL_PATH), "site_name: hand-authored\n");
+    const err = expectError("conflict", () =>
+      runScaffold({ root, output: JSON_CTX, args: ["mkdocs"], stdout: capture() }),
+    );
+    expect(err.message).toContain("docs");
+    expect(err.message).toContain(MKDOCS_CONFIG_REL_PATH);
+    // Both remedies must be conveyed: --force for the file, remove/rename for the dir-blocker.
+    expect(err.hint).toContain("--force");
+    expect(err.hint).toContain("remove or rename");
+    expect(readFileSync(join(root, "docs"), "utf8")).toBe("not a directory\n");
+    expect(readFileSync(join(root, MKDOCS_CONFIG_REL_PATH), "utf8")).toBe("site_name: hand-authored\n");
+  });
+
   test("--force on a fresh repo still reports `created` (not `updated`)", () => {
     const { result } = scaffold(["mkdocs", "--force"]);
     expect(result.files.every((f) => f.action === "created")).toBe(true);
@@ -450,7 +468,23 @@ describe("lore scaffold docusaurus — never-silent-clobber (AC: user-owned, nev
       runScaffold({ root, output: JSON_CTX, args: ["docusaurus"], stdout: capture() }),
     );
     expect(err.message).toContain("website");
-    expect(err.hint).toContain("--force");
+    // A structural directory blocker is NOT fixed by --force (LORE-238): the hint must not claim
+    // it, and must instead direct the user to remove/rename the non-directory entry.
+    expect(err.hint).not.toContain("--force");
+    expect(err.hint).toContain("remove or rename");
+    expect(readFileSync(join(root, "website"), "utf8")).toBe("not a directory\n");
+  });
+
+  test("--force does NOT fix a structural directory blocker and still fails with a conflict (LORE-238)", () => {
+    // Regression: --force skips this command's own preflight entirely, so a plain file occupying
+    // website/ is only caught later by writeAllOrRollback -> ensureDir's mkdirSync, which throws
+    // EEXIST on the same entry — remapped to a second `conflict`, never a successful overwrite.
+    // This is the reason the preflight hint above must never tell the user --force will help.
+    writeFileSync(join(root, "website"), "not a directory\n");
+    const err = expectError("conflict", () =>
+      runScaffold({ root, output: JSON_CTX, args: ["docusaurus", "--force"], stdout: capture() }),
+    );
+    expect(err.type).toBe("conflict");
     expect(readFileSync(join(root, "website"), "utf8")).toBe("not a directory\n");
   });
 });
@@ -597,7 +631,22 @@ describe("lore scaffold obsidian — never-silent-clobber (AC: user-owned, never
       runScaffold({ root, output: JSON_CTX, args: ["obsidian"], stdout: capture() }),
     );
     expect(err.message).toContain("docs");
-    expect(err.hint).toContain("--force");
+    // A structural directory blocker is NOT fixed by --force (LORE-238): the hint must not claim
+    // it, and must instead direct the user to remove/rename the non-directory entry.
+    expect(err.hint).not.toContain("--force");
+    expect(err.hint).toContain("remove or rename");
+    expect(readFileSync(join(root, "docs"), "utf8")).toBe("not a directory\n");
+  });
+
+  test("--force does NOT fix a structural directory blocker and still fails with a conflict (LORE-238)", () => {
+    // Regression: --force skips this command's own preflight entirely, so a plain file occupying
+    // docs/ is only caught later by writeAllOrRollback -> ensureDir's mkdirSync, which throws
+    // EEXIST on the same entry — remapped to a second `conflict`, never a successful overwrite.
+    writeFileSync(join(root, "docs"), "not a directory\n");
+    const err = expectError("conflict", () =>
+      runScaffold({ root, output: JSON_CTX, args: ["obsidian", "--force"], stdout: capture() }),
+    );
+    expect(err.type).toBe("conflict");
     expect(readFileSync(join(root, "docs"), "utf8")).toBe("not a directory\n");
   });
 
