@@ -232,6 +232,50 @@ summary: A short summary.
     const report = validateConceptText("docs/adr/x.md", raw);
     expect(report.findings.some((f) => f.rule === "required-section" && /Consequences/.test(f.message))).toBe(true);
   });
+
+  test("a `## ` heading nested inside a blockquote is not a top-level section", () => {
+    const raw = `---
+type: ADR
+summary: A short summary.
+---
+
+# X
+
+## Status
+
+## Context
+
+## Decision
+
+> ## Consequences
+`;
+    // The only "## Consequences" is nested inside a blockquote, not a direct child of the
+    // document root, so it does not satisfy the required section.
+    const report = validateConceptText("docs/adr/x.md", raw);
+    expect(report.findings.some((f) => f.rule === "required-section" && /Consequences/.test(f.message))).toBe(true);
+  });
+
+  test("a `## ` heading nested inside a list item is not a top-level section", () => {
+    const raw = `---
+type: ADR
+summary: A short summary.
+---
+
+# X
+
+## Status
+
+## Context
+
+## Decision
+
+- ## Consequences
+`;
+    // The only "## Consequences" is nested inside a list item, not a direct child of the
+    // document root, so it does not satisfy the required section.
+    const report = validateConceptText("docs/adr/x.md", raw);
+    expect(report.findings.some((f) => f.rule === "required-section" && /Consequences/.test(f.message))).toBe(true);
+  });
 });
 
 // ── Core engine: quote-safety (cross-cutting) ──────────────────────────────────
