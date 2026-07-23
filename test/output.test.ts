@@ -79,7 +79,7 @@ describe("resolveMode — precedence --json > --plain > pretty", () => {
 
 describe("resolveOutput — color policy and context shape", () => {
   test("pretty on a TTY with NO_COLOR unset enables color (§6)", () => {
-    expect(resolveOutput({ isTTY: true, env: {} })).toEqual({ mode: "pretty", color: true });
+    expect(resolveOutput({ isTTY: true, env: {} })).toEqual({ mode: "pretty", color: true, stdoutColor: true });
   });
 
   test("NO_COLOR set to ANY value — including empty — disables color (§6)", () => {
@@ -96,10 +96,10 @@ describe("resolveOutput — color policy and context shape", () => {
     expect(resolveOutput({ isTTY: false, env: {} }).color).toBe(false);
   });
 
-  test("returns a { mode, color } context with no separate, drift-prone json field", () => {
-    expect(resolveOutput({ json: true, env: {} })).toEqual({ mode: "json", color: false });
-    expect(resolveOutput({ plain: true, env: {} })).toEqual({ mode: "plain", color: false });
-    expect(resolveOutput({ isTTY: true, env: {} })).toEqual({ mode: "pretty", color: true });
+  test("returns a { mode, color, stdoutColor } context with no separate, drift-prone json field", () => {
+    expect(resolveOutput({ json: true, env: {} })).toEqual({ mode: "json", color: false, stdoutColor: false });
+    expect(resolveOutput({ plain: true, env: {} })).toEqual({ mode: "plain", color: false, stdoutColor: false });
+    expect(resolveOutput({ isTTY: true, env: {} })).toEqual({ mode: "pretty", color: true, stdoutColor: true });
   });
 
   test("env defaults to process.env when not provided", () => {
@@ -117,6 +117,38 @@ describe("resolveOutput — color policy and context shape", () => {
         delete process.env.NO_COLOR;
       }
     }
+  });
+
+  // LORE-250 AC#1/AC#2: `color` and `stdoutColor` diverge only when `stderrIsTTY`
+  // is explicitly `false` — this is the seam every `WarningCollector.flush`/
+  // `reportError` call site across `commands/*.ts` relies on without knowing it,
+  // since they all read `options.output.color` directly (never `stdoutColor`).
+  describe("stderrIsTTY folds into `color` but never into `stdoutColor` (LORE-250)", () => {
+    test("omitting stderrIsTTY is a no-op: color === stdoutColor, matching every pre-LORE-250 caller", () => {
+      const ctx = resolveOutput({ isTTY: true, env: {} });
+      expect(ctx).toEqual({ mode: "pretty", color: true, stdoutColor: true });
+    });
+
+    test("stderrIsTTY: false narrows color but leaves stdoutColor (and thus stdout's own rendering) untouched", () => {
+      const ctx = resolveOutput({ isTTY: true, env: {}, stderrIsTTY: false });
+      expect(ctx.stdoutColor).toBe(true);
+      expect(ctx.color).toBe(false);
+    });
+
+    test("stderrIsTTY: true on an already-TTY stdout keeps color === stdoutColor", () => {
+      const ctx = resolveOutput({ isTTY: true, env: {}, stderrIsTTY: true });
+      expect(ctx).toEqual({ mode: "pretty", color: true, stdoutColor: true });
+    });
+
+    test("stderrIsTTY has no effect when stdout itself would not be colored (NO_COLOR set)", () => {
+      const ctx = resolveOutput({ isTTY: true, env: { NO_COLOR: "1" }, stderrIsTTY: true });
+      expect(ctx).toEqual({ mode: "pretty", color: false, stdoutColor: false });
+    });
+
+    test("stderrIsTTY has no effect in plain/json mode — both fields already false", () => {
+      expect(resolveOutput({ plain: true, env: {}, stderrIsTTY: true }).color).toBe(false);
+      expect(resolveOutput({ json: true, env: {}, stderrIsTTY: true }).color).toBe(false);
+    });
   });
 });
 

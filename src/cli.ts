@@ -168,6 +168,16 @@ export function run(argv: readonly string[], context: RunContext = {}): number |
   const stdout = context.stdout ?? process.stdout;
   const stderr = context.stderr ?? process.stderr;
   const parsed = parseArgs(argv);
+  // Stderr's own TTY state, independent of stdout's — same injected-sink-defaults-
+  // non-TTY / real-process-defaults-real-TTY shape as `isTTY` below, but read from
+  // `stderr` so a redirected `2>` is never mistaken for a terminal just because
+  // stdout is one (LORE-250, cli-contract §6). Computed *before* `resolveOutput`
+  // so it can be folded into `output.color` at the source (see `resolveOutput`'s
+  // `stderrIsTTY` input) — the single point every downstream consumer already
+  // reads, including the `WarningCollector.flush({ color: options.output.color,
+  // ... })` call sites in `commands/*.ts`, which never receive `stderrIsTTY`
+  // directly and would otherwise leak stdout's color onto a redirected stderr.
+  const stderrIsTTY = context.stderrIsTTY ?? (context.stderr ? false : process.stderr.isTTY);
   const output = resolveOutput({
     json: parsed.json,
     plain: parsed.plain,
@@ -176,12 +186,8 @@ export function run(argv: readonly string[], context: RunContext = {}): number |
     // real-process path (no injected sink) reads the actual `process.stdout.isTTY`.
     isTTY: context.isTTY ?? (context.stdout ? false : process.stdout.isTTY),
     env: context.env ?? process.env,
+    stderrIsTTY,
   });
-  // Stderr's own TTY state, independent of stdout's — same injected-sink-defaults-
-  // non-TTY / real-process-defaults-real-TTY shape as `isTTY` above, but read from
-  // `stderr` so a redirected `2>` is never mistaken for a terminal just because
-  // stdout is one (LORE-250, cli-contract §6).
-  const stderrIsTTY = context.stderrIsTTY ?? (context.stderr ? false : process.stderr.isTTY);
   try {
     rejectUnknownFlags(parsed.leadingUnknownFlags);
     if (parsed.version || parsed.command === undefined) {

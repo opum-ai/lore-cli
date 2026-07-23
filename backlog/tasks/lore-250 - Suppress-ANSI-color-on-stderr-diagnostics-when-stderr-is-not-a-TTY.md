@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@sonnet-worker'
 created_date: '2026-07-23 16:04'
-updated_date: '2026-07-23 21:45'
+updated_date: '2026-07-23 22:07'
 labels:
   - errors-output-git
   - codex-review-followup
@@ -47,21 +47,29 @@ ordinal: 352000
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Fix landed entirely in output.ts (errorRenderOpts gained an optional stderrIsTTY=true param; returned color = ctx.color && stderrIsTTY) and cli.ts (new RunContext.stderrIsTTY field, computed once in run() mirroring the isTTY real-process/injected-sink default shape, threaded to both errorRenderOpts call sites). errors.ts untouched (git diff confirms 0 lines changed) — reportError/WarningCollector.flush already accepted color as a parameter, so no change was needed there.
+Round 1 (this session's predecessor) fixed only HALF of AC#1: errorRenderOpts(ctx, stderrIsTTY=true) gained the gate and cli.ts threaded the real stderrIsTTY to its two reportError call sites — but every command's WarningCollector.flush({ color: options.output.color, stderr }) call site (15 sites: check.ts:180/261, replace.ts:157, new.ts:503, orphans.ts:157, context.ts:80, validate.ts:78, rename.ts:153, supersede.ts:130, sync.ts:154, query.ts:78, tasks.ts:97/211, link.ts:637, graph.ts:85) reads options.output.color DIRECTLY and never round-trips through errorRenderOpts, so those sites still leaked stdout's raw color onto a redirected stderr. Fable's review (wave 28 request_changes) caught this via a real repro: `graph` warning "no frontmatter mapping" painted ANSI into a non-TTY stderr despite stdout being the only TTY.
 
-Verification: full `bun test` = 2043 pass / 0 fail (was 2043 total incl. new tests); `bun run typecheck` clean; `bun test test/output.test.ts test/cli.test.ts test/errors.test.ts` = 189 pass / 0 fail. bunx biome check on all 4 changed files: no issues.
+Round 2 (this fix) closes the gap without touching any commands/*.ts file: resolveOutput (the single OutputContext construction site, in cli.ts's run()) now takes an optional stderrIsTTY input and folds it into the returned `color` at the source — `color` becomes the stdout decision further AND-gated by stderr's own TTY state. A new `stdoutColor` field carries the un-gated, stdout-only decision; emit()'s pretty branch now reads `ctx.stdoutColor ?? ctx.color` (falling back to `color` for hand-built test contexts that predate the field) so stdout's own rendering is provably unaffected (AC#2) even though `color` is now narrower. Because every flush call site already read `options.output.color`, and that field is now correctly gated at construction time, all 15 sites are fixed with zero changes to their files. cli.ts: stderrIsTTY is now computed before resolveOutput and passed into it; the two pre-existing errorRenderOpts(output, stderrIsTTY) calls for reportError are unchanged (now a harmless idempotent re-application). errors.ts remains untouched (git diff: 0 lines).
+
+New non-vacuous regression (test/cli.test.ts): scaffolds a real bundle via run(["init"]), adds a frontmatter-free docs/stray.md, runs run(["graph"]) with isTTY:true/stderrIsTTY:false, and asserts the resulting "no frontmatter mapping" advisory on stderr contains no \x1b byte. Verified this fails against the pre-round-2 code (confirmed by temporarily swapping in the prior src/output.ts + src/cli.ts and re-running) and passes after. A companion test asserts the same warning IS colored when both stdout and stderr are TTYs. output.test.ts also gained direct resolveOutput coverage of the stderrIsTTY input (color vs. stdoutColor divergence) alongside the pre-existing errorRenderOpts-level tests (kept — they still validate that helper's own arithmetic, just no longer the only evidence for AC#1).
+
+Verification: full `bun test` = 2050 pass / 0 fail (was 2043; net +7: 5 new output.test.ts cases, 2 new cli.test.ts end-to-end cases, plus 2 pre-existing output.test.ts toEqual assertions updated for the new stdoutColor field on OutputContext). `bun run typecheck` clean. Targeted `bun test test/output.test.ts test/cli.test.ts test/errors.test.ts` = 196 pass / 0 fail. `biome check` clean on all 4 changed files. `git diff --stat` confirms exactly src/output.ts, src/cli.ts, test/output.test.ts, test/cli.test.ts changed — src/errors.ts and every commands/*.ts file have zero diff.
 
 AC evidence:
-- AC#1: output.test.ts new describe block 'stderr's own TTY state gates the derived color independently of stdout's' — direct reportError + WarningCollector.flush tests with stderrIsTTY false/true.
-- AC#2: pre-existing output.test.ts 'pretty on a TTY with NO_COLOR unset enables color' (untouched, still passing) + new cli.test.ts independence check that stdout bytes are byte-identical regardless of stderrIsTTY.
-- AC#3: new cli.test.ts test — NO_COLOR:'' with both streams TTY still suppresses stderr color; also covered at unit level (non-pretty context stays color-free regardless of stderrIsTTY in output.test.ts).
-- AC#4: new cli.test.ts test 'AC#4: stdout TTY + non-TTY stderr + NO_COLOR unset -> a reported LoreError writes no ESC byte to stderr' — asserts stderr text does NOT contain \x1b.
-- AC#5: new cli.test.ts test 'AC#5: both stdout and stderr TTYs + NO_COLOR unset -> the stderr error head is still colored' — asserts stderr text contains \x1b[31m.
-- AC#6: full bun test suite green (2043/0), confirming cli.ts/errors.ts/output.ts existing tests all still pass unmodified in behavior (only additive test edits).
+- AC#1: NOW covers both reportError AND WarningCollector.flush through REAL production call sites — output.test.ts's resolveOutput-level tests plus the new cli.test.ts end-to-end test that runs a real `graph` command's advisory warning through run() with isTTY:true/stderrIsTTY:false and asserts no ESC byte on stderr. (Previously this AC was checked on the strength of a unit test that composed flush({...errorRenderOpts(ctx, false), stderr}) directly — a wiring no command actually uses; that gap is what Fable's review caught and this round closes.)
+- AC#2: pre-existing output.test.ts "pretty on a TTY with NO_COLOR unset enables color" (updated only for the new stdoutColor field, behavior unchanged) + cli.test.ts's stdout-byte-identity check + the new end-to-end test's implicit stdout-still-pretty rendering.
+- AC#3: unchanged — cli.test.ts NO_COLOR test + output.test.ts unit coverage, now also exercised at the resolveOutput level.
+- AC#4: unchanged — cli.test.ts AC#4 test (reportError) still green; the new flush-path test is the AC#1-specific analogue.
+- AC#5: unchanged — cli.test.ts AC#5 test (reportError) still green; the new flush-path companion test is the AC#1-specific analogue.
+- AC#6: full bun test suite green (2050/0); errors.ts and every commands/*.ts file unmodified (git diff confirms).
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Suppressed ANSI color on stderr diagnostics whenever the stderr sink is not a TTY, independent of stdout's TTY state. errorRenderOpts (output.ts) now takes an optional stderrIsTTY param (default true, a no-op gate preserving prior behavior for every existing call site) and returns color = ctx.color && stderrIsTTY, so reportError/WarningCollector.flush suppress color on a redirected stderr even when stdout is a colored TTY. cli.ts's run() gained a RunContext.stderrIsTTY field (mirrors the existing isTTY default shape, reading process.stderr.isTTY on the real-process path) and threads it into both errorRenderOpts call sites. errors.ts and stdout's own color decision (ctx.color, used by emit's pretty branch) are untouched. Verified: full bun test 2043/0, bun run typecheck clean, targeted bun test test/output.test.ts test/cli.test.ts test/errors.test.ts 189/0, biome check clean on all 4 changed files, git diff confirms errors.ts has zero changes.
+Suppressed ANSI color on stderr diagnostics whenever the stderr sink is not a TTY, independent of stdout's TTY state — for BOTH reportError and WarningCollector.flush, including every command's advisory-warning flush call site (graph/check/tasks/orphans/validate/query/context/link/rename/supersede/sync/replace/new: 15 sites total), not only the two top-level reportError call sites cli.ts's run() calls directly. A first pass fixed only the latter; a Fable review (wave 28) caught the remaining leak with a real repro (a `graph` command's "no frontmatter mapping" warning painting ANSI onto a redirected stderr) and this pass closes it.
+
+The fix threads the real stderr TTY state into resolveOutput (cli.ts's single OutputContext-construction seam) rather than only into errorRenderOpts: OutputContext.color is now the stdout color decision further AND-gated by stderr's own TTY state, and a new OutputContext.stdoutColor field carries the un-gated, stdout-only decision that emit's pretty rendering path reads instead — so stdout's own color is provably unaffected (AC#2) even as every pre-existing `options.output.color` read at a command's flush call site becomes correctly stderr-safe with zero changes to those command files. errors.ts remains untouched.
+
+Verified end-to-end via a new cli.test.ts regression: run(["graph"]) against a real bundle with a frontmatter-free file, isTTY:true + stderrIsTTY:false, asserts the resulting advisory warning on stderr contains no ESC byte — confirmed to fail against the pre-fix code and pass after. Full bun test 2050/0, typecheck clean, targeted output/cli/errors tests 196/0, biome clean, errors.ts and commands/*.ts diff-free.
 <!-- SECTION:FINAL_SUMMARY:END -->
