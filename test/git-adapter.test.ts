@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { realGitAdapter, resolveHeadSha } from "../src/adapters/git";
 import { generateLog } from "../src/core/log";
 import { LoreError } from "../src/errors";
-import { gitRun as run } from "./helpers";
+import { expectError, gitRun as run } from "./helpers";
 
 function freshRepo(): string {
   const root = mkdtempSync(join(tmpdir(), "lore-git-log-"));
@@ -166,6 +166,42 @@ describe("realGitAdapter — history()", () => {
     }
   });
 
+  test("regression: LORE-169 — a non-ASCII file path round-trips unquoted, not as git's default C-style octal-escaped form", () => {
+    const root = freshRepo();
+    try {
+      commit(root, "docs/café.md", "hello\n", "add café doc");
+      const sha = resolveHeadSha(root) as string;
+      const commits = realGitAdapter(root).history({ to: sha });
+      expect(commits).toHaveLength(1);
+      // Without `-c core.quotePath=false`, git would instead emit the quoted, octal-escaped form
+      // `"docs/caf\303\251.md"` (a literal double-quoted string with backslash escapes) — this
+      // adapter has no unquoting logic, so that mangled string would flow straight into log.md.
+      expect(commits[0]?.files).toEqual(["docs/café.md"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("regression: LORE-169 — a commit subject containing the literal SENTINEL byte sequence fails loud instead of silently corrupting the parsed commits", () => {
+    const root = freshRepo();
+    try {
+      commit(root, "docs/a.md", "a\n", "first");
+      // "\x01lore:log-entry\x01" mirrors adapters/git.ts's own SENTINEL exactly. `git commit -m`
+      // takes this as a single argv entry (no shell involved), so git accepts it verbatim as the
+      // commit subject. Once this subject reaches `git log`'s output, it IS the split delimiter
+      // `parseHistory` looks for, so `String.prototype.split` treats it as an extra block boundary
+      // splitting this one real commit into multiple malformed ones — the exact silent corruption
+      // history()'s `git rev-list --count` cross-check exists to catch.
+      commit(root, "docs/b.md", "b\n", "\x01lore:log-entry\x01");
+      const sha = resolveHeadSha(root) as string;
+
+      const err = expectError("drift", () => realGitAdapter(root).history({ to: sha }));
+      expect(err.message).toContain("git rev-list --count");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("an invalid range is a fail-loud drift LoreError", () => {
     const root = freshRepo();
     try {
@@ -203,7 +239,10 @@ describe("realGitAdapter — history()", () => {
         // biome-ignore lint/suspicious/noExplicitAny: Bun.spawnSync's overload set can't be named as a single call signature
         (...args: any[]) => {
           const cmd = args[0];
-          if (Array.isArray(cmd) && cmd[0] === "git" && cmd[1] === "log") {
+          // `cmd[1]` is no longer always "log": history() now prefixes the invocation with
+          // `-c core.quotePath=false` (LORE-169), and also shells a separate `git rev-list --count`
+          // cross-check — `includes("log")` picks out only the actual `git log` call among those.
+          if (Array.isArray(cmd) && cmd[0] === "git" && cmd.includes("log")) {
             seenArgs.push(cmd as string[]);
           }
           // biome-ignore lint/suspicious/noExplicitAny: forwarding to the real spawnSync overload set
