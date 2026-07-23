@@ -533,16 +533,17 @@ export function defaultAdapter(root: string): BacklogAdapter {
 
 /**
  * Call `adapter.viewTask(taskId)` and verify the returned detail's own `id` matches the requested
- * `taskId` case-insensitively before trusting it — mirrors `reconcile-shared.ts`'s
- * `resolveTaskDetails` (LORE-122). A misbehaving or ambiguous adapter handing back a DIFFERENT
- * task's detail must never be trusted to decide a label/`--doc` edit or the `tasks:` pre-write
- * check: every one of this module's `viewTask` consumers — the pre-write existence check, the
- * back-reference edit's fresh re-read, `unlink`'s removal read, and `moveBackRefs`'s move read
- * (LORE-183; the last of these was an unguarded gap until then) — uses the RETURNED detail's own
- * `title`/`status`/`labels`/`documentation` to decide what to write, so a mismatch left unchecked
- * would silently borrow another task's data while still writing under the REQUESTED `taskId`.
- * Exported so `commands/tasks.ts`'s `resolveRollup` (LORE-125) shares this exact guard instead of
- * hand-maintaining its own byte-identical copy of the comparison/`LoreError`.
+ * `taskId` case-insensitively before trusting it (originally introduced alongside
+ * `reconcile-shared.ts`'s `resolveTaskDetails`, LORE-122). A misbehaving or ambiguous adapter
+ * handing back a DIFFERENT task's detail must never be trusted to decide a label/`--doc` edit or
+ * the `tasks:` pre-write check: every one of this module's `viewTask` consumers — the pre-write
+ * existence check, the back-reference edit's fresh re-read, `unlink`'s removal read, and
+ * `moveBackRefs`'s move read (LORE-183; the last of these was an unguarded gap until then) — uses
+ * the RETURNED detail's own `title`/`status`/`labels`/`documentation` to decide what to write, so
+ * a mismatch left unchecked would silently borrow another task's data while still writing under
+ * the REQUESTED `taskId`. Exported so `commands/tasks.ts`'s `resolveRollup` (LORE-125) AND
+ * `reconcile-shared.ts`'s `resolveTaskDetails` (LORE-183) share this exact guard as the ONE place
+ * the comparison/`LoreError` lives, instead of each hand-maintaining its own byte-identical copy.
  *
  * Returns the verified detail, or `null` when the task genuinely doesn't exist (unchanged from
  * `adapter.viewTask`'s own contract) — a mismatch is a THIRD outcome, always a thrown `LoreError`
