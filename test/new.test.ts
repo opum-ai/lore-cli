@@ -450,6 +450,17 @@ describe("lore new — usage errors (exit 2)", () => {
     expect(expectError([]).type).toBe("usage");
   });
 
+  test("regression: a missing type is still a usage error even with a syntactically invalid .lore/profile.toml (LORE-227)", () => {
+    // Before LORE-227, `loadProfile` ran before `parseNewArgs`, so a broken profile.toml's
+    // `validation` error (profile.ts's parseToml) masked this obvious usage mistake. Argument
+    // parsing must win regardless of profile state — no positionals is never a config problem.
+    writeFileSync(join(root, ".lore/profile.toml"), "a = = 1");
+    const err = expectError([]);
+    expect(err.type).toBe("usage");
+    expect(err.message).toBe("`lore new` needs a type");
+    expect(err.message).not.toContain("TOML");
+  });
+
   test("a missing title is a usage error", () => {
     expect(expectError(["adr"]).type).toBe("usage");
   });

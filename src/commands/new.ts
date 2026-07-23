@@ -88,8 +88,8 @@ interface NewArgs {
  */
 export function runNew(options: NewOptions): number {
   const clock = options.clock ?? (() => new Date());
-  const profile = loadProfile({ root: options.root });
   const parsed = parseNewArgs(options.args);
+  const profile = loadProfile({ root: options.root });
   const type = canonicalType(parsed.type, profile);
   // A profile-declared type is valid by definition — including a multi-word/space-containing name
   // like "QA Plan" (its path segments come from the LOWER-KEBAB slug, which is always safe). The
