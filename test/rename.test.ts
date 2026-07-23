@@ -147,6 +147,35 @@ describe("rewriteInbound — inbound links and refs (move)", () => {
     expect(body).toContain("[img](../reference/pic.png)"); // non-.md untouched
     expect(body).toContain("[ok](../reference/sales-orders.md)"); // the real edge repointed
   });
+
+  test("rewrites a '/'-absolute inbound link to the renamed concept, not skipping it as if it dangled (LORE-180)", () => {
+    writeDoc("target.md", "---\ntype: Reference\n---\nTarget.\n");
+    // A decoy that happens to sit exactly at the naive `posix.join(dir, decoded)` path a
+    // leading-slash-blind resolver would (wrongly) compute for the `/target.md` link below.
+    writeDoc("sub/target.md", "---\ntype: Reference\n---\nDecoy at the dir-joined path.\n");
+    writeDoc("sub/inbound.md", "---\ntype: Story\n---\nAbsolute [abs](/target.md) and relative [rel](target.md).\n");
+    const plan = rewriteInbound(graph(), "target", "renamed-target", { move: true });
+    const body = writesByPath(plan).get("sub/inbound.md") ?? "";
+    // Resolves against the bundle root (leading `/` stripped) — the true target — and is rewritten.
+    expect(body).toContain("[abs](../renamed-target.md)");
+    // The relative link still names the untouched decoy.
+    expect(body).toContain("[rel](target.md)");
+  });
+
+  test("a decoy concept at the dir-joined path cannot hijack a '/'-absolute link meant for the bundle root (LORE-180)", () => {
+    writeDoc("target.md", "---\ntype: Reference\n---\nTarget.\n");
+    writeDoc("sub/target.md", "---\ntype: Reference\n---\nDecoy at the dir-joined path.\n");
+    writeDoc("sub/inbound.md", "---\ntype: Story\n---\nAbsolute [abs](/target.md) and relative [rel](target.md).\n");
+    // Rename the decoy, not the true target. sub/inbound.md is genuinely affected (its relative
+    // [rel] link is a real edge to the decoy), so its body is rewritten — but the classifier must
+    // still tell the two links apart per-link, not conflate them by dir-joined string equality.
+    const plan = rewriteInbound(graph(), "sub/target", "sub/renamed-decoy", { move: true });
+    const body = writesByPath(plan).get("sub/inbound.md") ?? "";
+    // The '/'-absolute link truly resolves to the ROOT "target" concept — untouched by this rename.
+    expect(body).toContain("[abs](/target.md)");
+    // The genuine relative edge to the decoy is correctly repointed.
+    expect(body).toContain("[rel](renamed-decoy.md)");
+  });
 });
 
 // ── core: rewriteInbound — the moved file's own links ─────────────────────────────
@@ -163,6 +192,18 @@ describe("rewriteInbound — the moved file's outbound links (move)", () => {
     const moved = writesByPath(plan).get("reference/sales/orders.md") ?? "";
     expect(moved).toContain("[bulk](../../stories/bulk.md)"); // was ../stories, now ../../stories
     expect(moved).toContain("[me](orders.md)"); // self-link follows: ../sales/orders relative to itself => orders.md
+  });
+
+  test("recomputes a '/'-absolute outbound link against the bundle root, not the file's old directory (LORE-180)", () => {
+    writeDoc("target.md", "---\ntype: Reference\n---\nTarget.\n");
+    writeDoc("sub/mover.md", "---\ntype: Story\n---\nRoot-absolute [abs](/target.md).\n");
+    const plan = rewriteInbound(graph(), "sub/mover", "moved/mover", { move: true });
+    const moved = writesByPath(plan).get("moved/mover.md") ?? "";
+    // /target.md always names the bundle-root "target" concept, regardless of the file's own
+    // old ("sub/") or new ("moved/") directory — so from moved/, it is one hop up: ../target.md.
+    // A leading-slash-blind path-join would instead compute this as if `target.md` sat inside the
+    // file's OLD "sub/" directory (mis-resolving to a nonexistent "sub/target.md").
+    expect(moved).toContain("[abs](../target.md)");
   });
 
   test("recomputes a dangling outbound link by pure path arithmetic", () => {
