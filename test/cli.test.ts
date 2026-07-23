@@ -339,6 +339,45 @@ describe("cli — stderr diagnostic color is independent of stdout's TTY state (
   });
 });
 
+describe("cli — WarningCollector.flush through a real command honors the stderr TTY gate (LORE-250 AC#1)", () => {
+  // Regression for the production leak Fable's review caught: every command's
+  // `advisories.flush({ color: options.output.color, stderr })` call site reads
+  // `options.output.color` directly — never `errorRenderOpts` — so this exercises
+  // the router's real `dispatch()` seam end-to-end (not `errorRenderOpts`'s
+  // arithmetic in isolation, which output.test.ts already covers) to prove the
+  // fix lands where production code actually reads it.
+  let cwd: string;
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), "lore-cli-flush-tty-"));
+  });
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  /** Scaffold a bundle, then add a frontmatter-free file so `graph` emits a real advisory. */
+  function scaffoldWithStray(): void {
+    expect(run(argv("init"), ctx({ cwd }))).toBe(0);
+    writeFileSync(join(cwd, "docs/stray.md"), "# Stray\n\nA plain file with no frontmatter.\n");
+  }
+
+  test("stdout TTY + non-TTY stderr + NO_COLOR unset → a real command's advisory warning writes no ESC byte to stderr", () => {
+    scaffoldWithStray();
+    const c = ctx({ cwd, isTTY: true, stderrIsTTY: false });
+    expect(run(argv("graph"), c)).toBe(0);
+    // Confirms the warning was actually emitted (not silently dropped) before asserting on its bytes.
+    expect(c.stderr.text()).toContain("warning: skipping stray.md: no frontmatter mapping");
+    expect(c.stderr.text()).not.toContain("\x1b");
+  });
+
+  test("both stdout and stderr TTYs + NO_COLOR unset → the same advisory warning is still colored", () => {
+    scaffoldWithStray();
+    const c = ctx({ cwd, isTTY: true, stderrIsTTY: true });
+    expect(run(argv("graph"), c)).toBe(0);
+    expect(c.stderr.text()).toContain("\x1b[33m"); // yellow "warning:" prefix
+    expect(c.stderr.text()).toContain("skipping stray.md");
+  });
+});
+
 describe("cli — schema dispatch", () => {
   let cwd: string;
   beforeEach(() => {

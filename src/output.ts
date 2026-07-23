@@ -19,10 +19,19 @@
  *   {@link errors} deliberately does not — it takes an already-resolved
  *   `{ json, color }`, which {@link errorRenderOpts} derives from an
  *   {@link OutputContext} for `reportError`/`WarningCollector.flush`. Because
- *   that pair writes to **stderr**, `errorRenderOpts` additionally gates on
- *   stderr's own TTY state (independent of the stdout TTY state `mode` was
- *   resolved from), so a redirected `2>` never receives ANSI just because
- *   stdout happens to be a terminal (LORE-250).
+ *   that pair writes to **stderr**, a redirected `2>` must never receive ANSI
+ *   just because stdout happens to be a terminal (LORE-250, cli-contract §6):
+ *   `resolveOutput` takes stderr's own TTY state (independent of the stdout TTY
+ *   state `mode` is resolved from) and folds it into {@link OutputContext.color}
+ *   at the source, so every consumer that reads `ctx.color` — including the
+ *   `WarningCollector.flush({ color: options.output.color, ... })` call sites in
+ *   `commands/*.ts`, which never round-trip through `errorRenderOpts` — gets the
+ *   already-stderr-safe value with no call-site change of their own.
+ *   {@link OutputContext.stdoutColor} carries the un-gated sibling so stdout's
+ *   own pretty rendering ({@link emit}) is provably unaffected by stderr's TTY
+ *   state (§6, AC#2). `errorRenderOpts` still exists for a caller that holds a
+ *   hand-built (not `resolveOutput`-derived) context and needs the gate applied
+ *   explicitly.
  * - **Emit the success envelope** `{ schemaVersion, kind, data }` on stdout in
  *   `--json` mode (§2), and the pretty/plain text otherwise.
  * - **Keep the streams disciplined.** Only the payload goes to stdout; all
@@ -104,14 +113,59 @@ export function resolveMode(inputs: ModeInputs): OutputMode {
  */
 export interface OutputContext {
   readonly mode: OutputMode;
-  /** Whether ANSI color may be emitted. Only ever `true` in pretty mode. */
+  /**
+   * Whether ANSI color may be emitted, for the single color signal a caller that
+   * only ever reads one field gets. Only ever `true` in pretty mode with
+   * `NO_COLOR` unset.
+   *
+   * For a context built by {@link resolveOutput} (the real dispatch path in
+   * cli.ts), this is the stdout color decision further AND-gated by **stderr's
+   * own TTY state** (LORE-250 AC#1) — the value that is safe to hand to a
+   * stderr writer without checking anything else. That is exactly what every
+   * `WarningCollector.flush({ color: options.output.color, stderr })` call site
+   * across `commands/*.ts` already reads (unchanged since before LORE-250), and
+   * what {@link errorRenderOpts} multiplies again (a harmless no-op — see
+   * there) for `reportError`. A hand-built context — most command-level unit
+   * tests construct `{ mode, color }` directly and never route through
+   * `resolveOutput` — has no independent stderr TTY state to gate on, so
+   * `color` there is simply the one signal the test set, used as-is; this is
+   * unchanged, pre-LORE-250 behavior for every such test.
+   *
+   * A caller that specifically needs stdout's own decision, un-narrowed by
+   * stderr's TTY state, wants {@link OutputContext.stdoutColor} instead —
+   * {@link emit} is the only one.
+   */
   readonly color: boolean;
+  /**
+   * Stdout's own color decision — `mode === "pretty"` with `NO_COLOR` unset —
+   * **never** further gated by stderr's TTY state. Set by {@link resolveOutput}
+   * on every context it builds; {@link emit}'s pretty branch reads this (falling
+   * back to {@link OutputContext.color} when absent) specifically so a
+   * still-colored TTY stdout is provably unaffected by stderr being redirected
+   * (LORE-250 AC#2) even though `color` above may have been narrowed for
+   * stderr's sake on the very same context.
+   *
+   * Optional, not required: dozens of existing tests hand-build `{ mode, color }`
+   * literals to unit-test one command's rendering in isolation from
+   * `resolveOutput`'s stderr gate entirely: they never set this field, and
+   * `emit`'s fallback to `color` reproduces their exact pre-existing behavior.
+   */
+  readonly stdoutColor?: boolean;
 }
 
 /** {@link ModeInputs} plus the environment, for the full color-aware resolution. */
 export interface ResolveInputs extends ModeInputs {
   /** The environment to read `NO_COLOR` from. Defaults to `process.env`. */
   env?: Record<string, string | undefined>;
+  /**
+   * Whether **stderr** (not stdout) is a TTY — independent of `isTTY`, which is
+   * stdout's own state and the only one {@link resolveMode}'s `mode` consults.
+   * Defaults to `true`, a no-op that makes the returned `color` equal
+   * `stdoutColor` exactly — every caller that predates this field (and any test
+   * that only ever inspects `.color`) keeps its exact prior behavior. Only
+   * cli.ts's real dispatch passes the actual stderr TTY state (LORE-250 AC#1).
+   */
+  stderrIsTTY?: boolean;
 }
 
 /**
@@ -127,40 +181,47 @@ export interface ResolveInputs extends ModeInputs {
  * rather than truthiness (which would let `NO_COLOR=` slip through).
  * `--plain`/`--json` are always ANSI-free, which falls out for free since
  * neither yields the pretty mode.
+ *
+ * `stdoutColor` is exactly that mode/NO_COLOR decision, untouched by anything
+ * stream-specific. `color` is the same decision additionally AND-gated by
+ * `stderrIsTTY` (LORE-250 AC#1): a `lore <cmd> 2>err.log` invocation run from a
+ * terminal (stdout a TTY, stderr redirected) resolves `stdoutColor: true` (so
+ * stdout keeps its color, AC#2) but `color: false` (so nothing that reads the
+ * shared `color` field — every `WarningCollector.flush`/`reportError` call site
+ * — can paint the redirected stderr). `stderrIsTTY` defaults to `true`, making
+ * `color === stdoutColor`, matching every pre-LORE-250 caller exactly.
  */
 export function resolveOutput(inputs: ResolveInputs): OutputContext {
   const mode = resolveMode(inputs);
   const env = inputs.env ?? process.env;
-  const color = mode === "pretty" && env.NO_COLOR === undefined;
-  return { mode, color };
+  const stdoutColor = mode === "pretty" && env.NO_COLOR === undefined;
+  const stderrIsTTY = inputs.stderrIsTTY ?? true;
+  return { mode, color: stdoutColor && stderrIsTTY, stdoutColor };
 }
 
 /**
  * Derive the `{ json, color }` pair {@link errors.reportError} and
- * `WarningCollector.flush` consume from a resolved {@link OutputContext}. `json`
- * is computed from `mode` here rather than stored on the context, so the success
- * path (routed by `mode`) and the error path (routed by `json`) cannot disagree.
+ * `WarningCollector.flush` consume, for a caller holding an {@link OutputContext}
+ * it needs to apply an *explicit* stderr-TTY gate to. `json` is computed from
+ * `mode` here rather than stored on the context, so the success path (routed by
+ * `mode`) and the error path (routed by `json`) cannot disagree.
  *
- * `color` here is deliberately **not** simply `ctx.color`. `ctx.color` is
- * stdout's own color decision (§6, gated on stdout's TTY state via `mode`) and
- * must stay exactly that — {@link emit}'s pretty branch paints stdout from
- * `ctx.color` alone, and a still-TTY, still-colored stdout must not go dim just
- * because stderr happens to be redirected. But `reportError`/`flush` write to
- * **stderr**, a separate stream with its own TTY state that `mode` never
- * consulted (`mode` is derived from stdout only, see {@link resolveMode}); a
- * `lore <cmd> 2>err.log` invocation from a terminal has a TTY stdout but a
- * redirected stderr, and painting ANSI into that file/pipe would leak escapes
- * §6 forbids (LORE-250). `stderrIsTTY` supplies that second, independent gate —
- * the returned `color` is `true` only when stdout would already show color
- * *and* the stderr sink itself is a TTY.
+ * For a context {@link resolveOutput} built, `ctx.color` is **already** gated by
+ * the real stderr TTY state it was constructed with (LORE-250 AC#1, see
+ * {@link resolveOutput}) — cli.ts's two `reportError` call sites pass that same
+ * real `stderrIsTTY` here too, which is a harmless no-op re-application (ANDing
+ * a boolean with the value it was already ANDed with changes nothing). This
+ * function's load-bearing case is a **hand-built** `ctx` — e.g. a unit test that
+ * constructs `{ mode, color }` directly rather than via `resolveOutput` — where
+ * `ctx.color` is a bare, ungated boolean and `stderrIsTTY` is the *only* place
+ * the gate is applied.
  *
  * `stderrIsTTY` defaults to `true` — a no-op gate — so every call site that
  * predates this parameter (and any test that only cares about `ctx.color`)
- * keeps its exact prior behavior; only cli.ts's real dispatch passes the
- * actual stderr TTY state.
+ * keeps its exact prior behavior.
  *
- * Usage in a command's catch block: `reportError(err, { ...errorRenderOpts(ctx,
- * stderrIsTTY), stderr })` (or `flush` likewise).
+ * Usage: `reportError(err, { ...errorRenderOpts(ctx, stderrIsTTY), stderr })`
+ * (or `flush` likewise).
  */
 export function errorRenderOpts(ctx: OutputContext, stderrIsTTY = true): { json: boolean; color: boolean } {
   return { json: ctx.mode === "json", color: ctx.color && stderrIsTTY };
@@ -296,7 +357,11 @@ export interface Renderable<T> {
  *   success.
  * - **plain / pretty:** the renderer's text via {@link writeBody}, normalized to
  *   exactly one trailing newline (an empty/whitespace-only body writes nothing,
- *   so stdout stays clean). Pretty receives the resolved `color`.
+ *   so stdout stays clean). Pretty receives {@link OutputContext.stdoutColor} —
+ *   stdout's own, never-stderr-gated decision — falling back to
+ *   {@link OutputContext.color} only for a hand-built context that predates the
+ *   `stdoutColor` field, so a still-TTY stdout is never dimmed by a redirected
+ *   stderr (LORE-250 AC#2).
  *
  * The `switch` is exhaustive over {@link OutputMode}: the `never` default makes
  * adding a mode without handling it here a compile error. stdout-only by
@@ -319,7 +384,7 @@ export function emit<T>(renderable: Renderable<T>, ctx: OutputContext, out: Writ
       return;
     }
     case "pretty": {
-      writeBody(renderable.pretty(renderable.data, { color: ctx.color }), out);
+      writeBody(renderable.pretty(renderable.data, { color: ctx.stdoutColor ?? ctx.color }), out);
       return;
     }
     default: {
