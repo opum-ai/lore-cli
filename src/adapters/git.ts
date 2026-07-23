@@ -106,13 +106,20 @@ export function realGitAdapter(cwd: string): GitAdapter {
  * `history()` entirely, rather than pinning to a sha that does not exist.
  *
  * `git rev-parse HEAD` exits non-zero both for this legitimate "empty repo" case AND for a
- * genuinely broken one (not a git repository at all, a corrupted `.git`, …) — the two are NOT the
- * same condition and must not collapse to the same `null` result: only the first should silently
- * skip history (there is none to skip to), while the second must fail loud, matching
- * {@link realGitAdapter}'s own `history()` behavior for the identical condition. Disambiguated with
- * a second, cheap check — `git rev-parse --git-dir` succeeds in ANY valid repository regardless of
- * commit count, so it succeeding while `HEAD` still fails to resolve is the fingerprint of "a real,
- * merely empty repository"; failing itself means "not a git repository" (or worse), which propagates.
+ * genuinely broken one (not a git repository at all, a corrupted `.git`, a malformed `HEAD` file,
+ * …) — the two are NOT the same condition and must not collapse to the same `null` result: only the
+ * first should silently skip history (there is none to skip to), while the second must fail loud,
+ * matching {@link realGitAdapter}'s own `history()` behavior for the identical condition.
+ *
+ * Disambiguated with a second, cheap check: `git symbolic-ref -q HEAD`. A genuinely unborn branch's
+ * `HEAD` is a well-formed symbolic ref (e.g. `ref: refs/heads/main`) whose TARGET simply doesn't
+ * exist yet — `symbolic-ref` only validates and dereferences the ref's own on-disk FORMAT, it never
+ * checks whether the target exists, so it still succeeds in that case. A corrupted-but-present
+ * `.git` (e.g. `HEAD` containing an invalid ref name, or bytes that are not a well-formed symbolic
+ * ref at all) fails this check instead, correctly falling through to the throw below — unlike
+ * `git rev-parse --git-dir` (the previous disambiguator), which only proves ".git exists and is
+ * minimally readable" and succeeds even when `HEAD` itself is malformed, silently misclassifying
+ * that corruption as the benign unborn-branch case.
  *
  * @throws LoreError `drift` (exit 6) when `HEAD` fails to resolve for any reason OTHER than the
  *   repository being real but commit-less.
@@ -122,9 +129,13 @@ export function resolveHeadSha(cwd: string): string | null {
   if (head.exitCode === 0) {
     return head.stdout.toString("utf8").trim();
   }
-  const isRealRepo = Bun.spawnSync(["git", "rev-parse", "--git-dir"], { cwd, stdout: "pipe", stderr: "pipe" });
-  if (isRealRepo.exitCode === 0) {
-    return null; // a real repository with no commits yet
+  const symbolicRef = Bun.spawnSync(["git", "symbolic-ref", "-q", "HEAD"], {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (symbolicRef.exitCode === 0) {
+    return null; // a real repository whose HEAD is a well-formed symbolic ref with no commits yet
   }
   throw new LoreError(
     "drift",
