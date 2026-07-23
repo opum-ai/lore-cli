@@ -390,6 +390,77 @@ describe("parseProfile — grammar errors throw (exit 6)", () => {
     expect(err.message).toContain("items");
     expect(err.message).toContain('"knd"');
   });
+
+  test("a string `default` on an `integer` field is an error naming the field (LORE-242 AC#1)", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", fields: { count: { kind: "integer", default: "not-a-number" } } }],
+      }),
+    );
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("types[0].fields.count.default");
+  });
+
+  test("a string `default` on a `boolean` field is an error naming the field (LORE-242 AC#1)", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", fields: { flag: { kind: "boolean", default: "yes" } } }],
+      }),
+    );
+    expect(err.message).toContain("types[0].fields.flag.default");
+  });
+
+  test("a string `default` on a `datetime` field is an error naming the field (LORE-242 AC#1)", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", fields: { when: { kind: "datetime", default: "not-a-datetime" } } }],
+      }),
+    );
+    expect(err.message).toContain("types[0].fields.when.default");
+  });
+
+  test("a `default` outside the field's `enum` is an error naming the field (LORE-242 AC#2)", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", fields: { color: { enum: ["red", "green"], default: "purple" } } }],
+      }),
+    );
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("types[0].fields.color.default");
+  });
+
+  test("a list field's `default` is checked against the whole-list shape, not merely 'is it an array' (LORE-242 AC#4)", () => {
+    // The list itself is an array (would pass an "is it an array" check), but an element value
+    // falls outside the declared `items.enum` — the whole-list shape must still be judged element
+    // by element, exactly as a written concept's `labels` value would be at runtime.
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", fields: { labels: { kind: "list", items: { enum: ["a", "b"] }, default: ["a", "z"] } } }],
+      }),
+    );
+    expect(err.message).toContain("types[0].fields.labels.default");
+  });
+
+  test("a non-array `default` on a `list` field is an error naming the field (LORE-242 AC#4)", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", fields: { labels: { kind: "list", default: "a" } } }],
+      }),
+    );
+    expect(err.message).toContain("types[0].fields.labels.default");
+  });
 });
 
 describe("parseProfile — a [[types]].template value is confined to .lore/templates/ (LORE-139)", () => {
@@ -548,6 +619,42 @@ describe("compileProfile — field kinds generate the right validators", () => {
     expect(json.properties.level?.default).toBe("info");
     // Runtime: a concept that omits `level` validates and the value is never stamped.
     expect(validateFrontmatter({ type: "T" }, { profile })).toBe("T");
+  });
+});
+
+describe("parseFieldSpec — a `default` consistent with kind/enum still loads unchanged (LORE-242 AC#3)", () => {
+  function buildProfile(doc: Record<string, unknown>) {
+    return compileProfile(parseProfile(doc, "consistent-defaults"));
+  }
+
+  test('`{ kind = "integer", default = 3 }` loads and is emitted into the JSON Schema exactly as before', () => {
+    const profile = buildProfile({
+      profile: { name: "x", okf_version: "0.1" },
+      base: { fields: { type: { required: true } } },
+      types: [{ name: "T", fields: { count: { kind: "integer", default: 3 } } }],
+    });
+    const json = profile.types.get("T")?.jsonSchema as { properties: Record<string, { default?: unknown }> };
+    expect(json.properties.count?.default).toBe(3);
+  });
+
+  test('`{ enum = ["red","green"], default = "red" }` loads and is emitted unchanged', () => {
+    const profile = buildProfile({
+      profile: { name: "x", okf_version: "0.1" },
+      base: { fields: { type: { required: true } } },
+      types: [{ name: "T", fields: { color: { enum: ["red", "green"], default: "red" } } }],
+    });
+    const json = profile.types.get("T")?.jsonSchema as { properties: Record<string, { default?: unknown }> };
+    expect(json.properties.color?.default).toBe("red");
+  });
+
+  test("a list field's `default` consistent with its `items` shape loads and is emitted unchanged", () => {
+    const profile = buildProfile({
+      profile: { name: "x", okf_version: "0.1" },
+      base: { fields: { type: { required: true } } },
+      types: [{ name: "T", fields: { labels: { kind: "list", items: { enum: ["a", "b"] }, default: ["a", "b"] } } }],
+    });
+    const json = profile.types.get("T")?.jsonSchema as { properties: Record<string, { default?: unknown }> };
+    expect(json.properties.labels?.default).toEqual(["a", "b"]);
   });
 });
 
