@@ -167,6 +167,54 @@ describe("replaceInText — managed regions are never touched (AC#1)", () => {
   });
 });
 
+describe("replaceInText — an expansion that would inject a managed marker is rejected (LORE-162)", () => {
+  // applyReplacement's overlapsManaged guard only screens the ORIGINAL matched span, before `expand`
+  // runs. In regex mode, `` $` ``/`$'` copy the document's own prefix/suffix verbatim into the
+  // replacement, so a match sitting entirely outside a managed region can still expand into a splice
+  // that carries an existing managed-block marker along with it — duplicating the marker with no
+  // post-expansion check. These pin that the duplicate is rejected rather than silently written out.
+
+  test("$` copying a preceding index block duplicates its marker and is rejected, not silently written (LORE-162)", () => {
+    const text = `${indexBlock("- [x](x.md)")}\nTOKEN`;
+    // `$\`` expands to everything before the match — the entire index block — which would splice a
+    // second copy of INDEX_BLOCK_BEGIN/END in at TOKEN's position, right next to the untouched original.
+    let thrown: unknown;
+    try {
+      replaceInText(text, "TOKEN", "$`", { regex: true });
+      throw new Error("expected a LoreError");
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(LoreError);
+    expect((thrown as LoreError).type).toBe("usage");
+    expect((thrown as LoreError).message).toContain(INDEX_BLOCK_BEGIN);
+  });
+
+  test("$' copying a following tasks block duplicates its marker and is rejected, not silently written (LORE-162)", () => {
+    const text = `TOKEN\n${tasksBlock("| [x](x.md) | X | Done |")}`;
+    // `$'` expands to everything after the match — the entire tasks block — which would splice a
+    // second copy of TASK_BLOCK_BEGIN/END in at TOKEN's position, right before the untouched original.
+    let thrown: unknown;
+    try {
+      replaceInText(text, "TOKEN", "$'", { regex: true });
+      throw new Error("expected a LoreError");
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(LoreError);
+    expect((thrown as LoreError).type).toBe("usage");
+    expect((thrown as LoreError).message).toContain("lore:tasks");
+    expect((thrown as LoreError).message).toContain("duplicated");
+  });
+
+  test("a $` expansion that stays clear of any managed marker still replaces normally (no false positive)", () => {
+    const text = `prefix TOKEN\n\n${indexBlock("- [x](x.md)")}`;
+    const out = replaceInText(text, "TOKEN", "$`", { regex: true });
+    expect(out.count).toBe(1);
+    expect(out.text).toContain(indexBlock("- [x](x.md)")); // block untouched, single copy
+  });
+});
+
 describe("managedRanges", () => {
   test("locates a well-formed index block including its markers", () => {
     const text = `a\n${indexBlock("x")}\nb`;
