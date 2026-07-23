@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import {
+  BACKLOG_TIMEOUT_ENV_VAR,
   type BacklogCapability,
   type BacklogSpawn,
   bunBacklogSpawn,
@@ -227,6 +228,43 @@ describe("bunBacklogSpawn — the real Bun.spawn seam", () => {
       expect(result.stdout.trim()).toBe(dir);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("kills a deliberately non-terminating process and rejects with a typed timeout error within the bound (LORE-217)", async () => {
+    // Same portable pattern as the cwd test above: the current runtime binary itself with an
+    // inline script, not an external `sleep` (not reliably on PATH on Windows CI runners). The
+    // busy loop never yields to the event loop and has no other way to exit — if the timeout
+    // guard did not kill it, this test would hang until bun's own per-test timeout fired.
+    const previous = process.env[BACKLOG_TIMEOUT_ENV_VAR];
+    process.env[BACKLOG_TIMEOUT_ENV_VAR] = "200";
+    try {
+      const start = Date.now();
+      const spawn = bunBacklogSpawn(process.execPath);
+      let caught: unknown;
+      try {
+        await spawn(["-e", "while (true) {}"]);
+      } catch (err) {
+        caught = err;
+      }
+      const elapsed = Date.now() - start;
+
+      // Terminates well within the bound (generous margin over the 200ms timeout for process
+      // start/teardown overhead) rather than hanging — the property the AC requires.
+      expect(elapsed).toBeLessThan(4_000);
+
+      expect(caught).toBeInstanceOf(LoreError);
+      const err = caught as LoreError;
+      expect(err.type).toBe("validation");
+      expect(exitCodeFor(err)).toBe(6);
+      expect(err.message).toContain("did not exit within 200ms");
+      expect(err.hint).toContain(BACKLOG_TIMEOUT_ENV_VAR);
+    } finally {
+      if (previous === undefined) {
+        delete process.env[BACKLOG_TIMEOUT_ENV_VAR];
+      } else {
+        process.env[BACKLOG_TIMEOUT_ENV_VAR] = previous;
+      }
     }
   });
 });
