@@ -151,8 +151,11 @@ export function typeDirectory(type: string): string {
  * - Unknown `type` → warn; the type-only floor already passed, so nothing else is checked and
  *   every key is preserved (OKF tolerance).
  * - Known `type` with a mistyped field → throw (`validation`) citing the field(s). A `type`
- *   carrying surrounding whitespace classifies on its trimmed value and then fails the literal
- *   check loudly here, rather than being silently demoted to an unvalidated unknown type.
+ *   carrying surrounding whitespace, or spelled in a different casing than the profile's
+ *   canonical form (`story` for `Story`), classifies via {@link canonicalType} — so it is
+ *   looked up and validated against that type's *real* schema — and then fails the schema's
+ *   `type` literal check loudly here, rather than being silently demoted to an unvalidated
+ *   unknown type. Only the lookup key is folded; `fm` itself is never rewritten (ADR-0011).
  * - Known `type` with extra keys → one warning per extra key.
  * - Missing or over-long (~{@link SUMMARY_SOFT_LIMIT}-char) `summary` → warn.
  */
@@ -161,7 +164,7 @@ export function validateFrontmatter(fm: Record<string, unknown>, options: Valida
   const where = options.path ? ` in ${options.path}` : "";
   const type = requireType(fm, where, options.path);
 
-  const compiled = profile.types.get(type);
+  const compiled = profile.types.get(canonicalType(type, profile));
   if (compiled === undefined) {
     // Unknown type: the non-empty-`type` floor (OKF §9) is already satisfied, so this is a
     // tolerated producer extension — warn, validate nothing further, leave every key untouched.

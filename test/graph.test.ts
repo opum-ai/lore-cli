@@ -48,7 +48,7 @@ function writeStandardBundle(): void {
     "---\ntype: Story\nspecs:\n  - ../specs/archive.md\n---\nUses [orders](../reference/orders.md).\n",
   );
   writeDoc("specs/archive.md", "---\ntype: Spec\ntitle: Archive\n---\nArchive spec.\n");
-  writeDoc("adr/0001-x.md", "---\ntype: Adr\n---\nSee [gone](./missing.md).\n");
+  writeDoc("adr/0001-x.md", "---\ntype: ADR\n---\nSee [gone](./missing.md).\n");
 }
 
 /** Run `graph` in JSON mode and return the parsed `data` payload plus the exit code. */
