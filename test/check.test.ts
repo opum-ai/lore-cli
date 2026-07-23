@@ -1127,6 +1127,41 @@ describe("runCheck — exit codes and discovery", () => {
     const stderrText = (o.stderr as ReturnType<typeof capture>).text();
     expect(stderrText).toContain("symlink");
   });
+
+  test("discovery advisories from an earlier root survive a later root's throw inside collectBundles (LORE-197 regression)", () => {
+    // Two bundle roots, processed in order: "docs" (earlier) collects a skipped-symlink advisory
+    // during its own walk; "does-not-exist" (later) then fails collectBundles's statSync entirely,
+    // raising a not_found LoreError before the scan phase (checkBundles) ever runs. Before the fix,
+    // the single advisories.flush() call sat AFTER collectBundles returned, so this throw exited
+    // collectBundles — and runCheck — before that flush ever ran, silently dropping the earlier
+    // root's already-collected symlink advisory alongside the (correctly) propagated error.
+    writeFileSync(join(root, "docs", "adr", "real.md"), ref("R", "Body."));
+    symlinkSync(join(root, "docs", "adr", "real.md"), join(root, "docs", "adr", "link.md"));
+    const o = opts(["docs", "does-not-exist"]);
+
+    let caught: unknown;
+    try {
+      runCheck(o);
+      throw new Error("expected runCheck to throw");
+    } catch (err) {
+      caught = err;
+    }
+
+    // The throw still propagates through the router's one error seam with its unchanged exit
+    // code: a nonexistent bundle root is `not_found` (EXIT_CODES.not_found === 3), unaffected by
+    // whether an earlier root produced an advisory.
+    expect(caught).toBeInstanceOf(LoreError);
+    expect((caught as LoreError).type).toBe("not_found");
+    expect((caught as LoreError).message).toMatch(/does not exist/);
+
+    // The earlier root's advisory survived the later root's throw — flushed via the `finally`
+    // around collectBundles rather than lost when the throw skipped the old post-return flush —
+    // and appears exactly once (no double-flush; WarningCollector.flush is non-draining, so a
+    // second flush site would re-emit this same line).
+    const stderrText = (o.stderr as ReturnType<typeof capture>).text();
+    const lines = stderrText.split("\n").filter((l) => l.includes("skipping symlink"));
+    expect(lines).toHaveLength(1);
+  });
 });
 
 // ── isDocsRoot ─────────────────────────────────────────────────────────────────

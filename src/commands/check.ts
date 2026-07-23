@@ -142,7 +142,11 @@ interface CheckArgs {
  * Discovery advisories (a `.md` skipped behind a symlink, an unreadable sub-directory) are flushed
  * to stderr immediately after discovery — before the scan phase even runs — so they survive even
  * when `checkBundles` throws in the scan phase or reconciliation later rejects (LORE-191); never
- * silently swallowed, but, like every advisory, do not change the exit code.
+ * silently swallowed, but, like every advisory, do not change the exit code. The flush itself runs
+ * in a `finally` around `collectBundles` (LORE-197): `collectBundles` walks its bundle roots
+ * SEQUENTIALLY, feeding `advisories` as it goes, and a LATER root's `not_found`/`denied`/`usage`
+ * throw (or a late `readSource` throw) must not discard an EARLIER root's already-collected
+ * advisories — the `finally` guarantees the one flush still runs before that throw propagates.
  */
 export function runCheck(options: CheckOptions): number | Promise<number> {
   const parsed = parseCheckArgs(options.args);
@@ -153,22 +157,28 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
   // covers every root this command can ever scan (LORE-89).
   const profile = loadProfile({ root: options.root });
   const advisories = new WarningCollector();
-  const bundles = collectBundles(options.root, parsed.paths, advisories);
-
-  // Every discovery-time advisory is known by now — `collectBundles`'s own walk is the only source
-  // that ever feeds `advisories` (nothing past this point adds to it) — so flush once, immediately,
-  // right here, BEFORE the scan phase below runs: `checkBundles` is NOT guaranteed non-throwing
-  // (post-LORE-138 a real input — e.g. a `---toml` frontmatter fence — makes `bodyText` re-throw a
-  // plain `Error` out of the scan), and reconciliation further below can reject too, so deferring
-  // this flush past either point would risk losing every discovery advisory entirely (LORE-191).
-  // `advisories.flush` is non-draining, so this must be the ONLY flush site for `advisories` —
-  // flushing it again later would re-emit the same lines. This means stderr (advisories) is written
-  // BEFORE stdout (the report) — the opposite of this command's pre-LORE-27 order — deliberately:
-  // mirrors `sync.ts`'s own precedent (it flushes right after `loadBundle`, well before its own final
-  // `emit`), and "advisories survive a later throw" is a stronger guarantee to keep than "stdout
-  // precedes stderr" (already an unreliable assumption for any CLI merging two independently-
-  // buffered streams).
-  advisories.flush({ color: options.output.color, stderr: options.stderr });
+  let bundles: Bundle[];
+  try {
+    bundles = collectBundles(options.root, parsed.paths, advisories);
+  } finally {
+    // Every discovery-time advisory that COULD be collected by now already is — `collectBundles`'s
+    // own walk is the only source that ever feeds `advisories` (nothing past this point adds to
+    // it) — so flush once, right here, in a `finally` so it runs on BOTH the return path (before
+    // the scan phase below even starts: `checkBundles` is NOT guaranteed non-throwing — post-
+    // LORE-138 a real input, e.g. a `---toml` frontmatter fence, makes `bodyText` re-throw a plain
+    // `Error` out of the scan — and reconciliation further below can reject too) AND the throw path
+    // (a LATER bundle root's `not_found`/`denied`/`usage` failure inside `collectBundles` itself
+    // must not silently discard an EARLIER root's already-collected advisories — LORE-197, the one
+    // gap LORE-191 left open one grain earlier than the scan phase). `advisories.flush` is
+    // non-draining, so this must be the ONLY flush site for `advisories` — flushing it again later
+    // would re-emit every already-flushed line. This means stderr (advisories) is written BEFORE
+    // stdout (the report) — the opposite of this command's pre-LORE-27 order — deliberately: mirrors
+    // `sync.ts`'s own precedent (it flushes right after `loadBundle`, well before its own final
+    // `emit`), and "advisories survive a later throw" is a stronger guarantee to keep than "stdout
+    // precedes stderr" (already an unreliable assumption for any CLI merging two independently-
+    // buffered streams).
+    advisories.flush({ color: options.output.color, stderr: options.stderr });
+  }
 
   const baseReport = checkBundles(bundles);
 
