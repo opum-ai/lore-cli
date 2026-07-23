@@ -361,7 +361,7 @@ lore context stories/bulk-archive-orders --max-tokens 4000 --depth 2
 | | |
 |---|---|
 | **Args** | `<id>` |
-| **Key flags** | `--max-tokens <n>` (budget; default bounded) · `--depth <n>` (neighbor radius, default 1) |
+| **Key flags** | `--max-tokens <n>` (token budget; if omitted, no cap is applied — output is bounded only by `--depth`) · `--depth <n>` (neighbor radius, default 1) |
 | **Output** | `kind: context.export` — target body + neighbor summaries, with `tokenEstimate`/`truncated` |
 | **Exit** | `0` ok · `2` bad usage (missing `<id>`, unknown/repeated flag, non-integer/out-of-range `--max-tokens`/`--depth`) · `3` `<id>` not found |
 
