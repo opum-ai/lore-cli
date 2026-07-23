@@ -190,6 +190,14 @@ describe("validateLink — missing extension", () => {
     expect(issues("../img/diagram.png")).toEqual([]);
   });
 
+  test("flags a dotted extensionless concept link (orders.v2 for orders.v2.md) as missing-extension (LORE-152)", () => {
+    // "v2" is not a recognized asset extension, so this is presumed a dropped .md suffix rather
+    // than an opaque asset — the shape that used to be invisible to both the portability lint and
+    // the broken-link existence check (bundle.ts/check.ts both gate on a literal .md suffix).
+    expect(issues("orders.v2")).toEqual(["missing-extension"]);
+    expect(issues("../reference/orders.v2")).toEqual(["missing-extension"]);
+  });
+
   test("ignores the fragment when checking the extension", () => {
     expect(validateLink("../reference/orders.md#h")).toEqual([]);
   });

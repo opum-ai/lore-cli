@@ -249,13 +249,19 @@ export interface LinkFinding {
  * - **`directory-link`** — a non-external destination ending in `/` (`../reference/`):
  *   it resolves to a file on no renderer and is almost always a dropped filename.
  * - **`missing-extension`** — an internal target missing the canonical **lowercase**
- *   `.md` suffix ({@link lacksMarkdownSuffix}): either no extension at all
- *   (`../reference/orders`) or a wrong-case `.md` (`orders.MD`), both of which 404
- *   on GitHub/Linux. A directory link is its own `directory-link` finding (above); a
- *   dotfile (`../config/.gitignore`) and any other asset extension (`../img/x.png`) are
- *   left alone — matching the bundle resolver, which treats a non-`.md` target as
- *   simply *not an edge* rather than a broken one. The extension is judged on the
- *   *decoded* path, so the linter and the resolver (which decodes first) agree.
+ *   `.md` suffix ({@link lacksMarkdownSuffix}): no extension at all
+ *   (`../reference/orders`), a wrong-case `.md` (`orders.MD`), or a dotted last
+ *   segment whose "extension" is not on the closed {@link KNOWN_ASSET_EXTENSIONS}
+ *   list (`orders.v2`, presumed a dropped `.md` suffix rather than an opaque asset —
+ *   LORE-152). A directory link is its own `directory-link` finding (above); a
+ *   dotfile (`../config/.gitignore`) and a recognized asset extension
+ *   (`../img/x.png`) are left alone. The third case is the one place this lint and
+ *   the bundle resolver deliberately **disagree**: the resolver still requires a
+ *   literal `.md` suffix to form an edge at all, so it never flags `orders.v2` as
+ *   broken even when no `orders.v2.md` file exists — this finding is the only
+ *   mechanism left to catch that shape. The extension is judged on the *decoded*
+ *   path, so the linter and the resolver (which decodes first) at least agree on
+ *   what the path *is*.
  * - **`unencoded`** — a destination that will not survive a markdown parser
  *   ({@link encodingProblem}): a raw space or paren in the path *or* in the
  *   `#fragment`/`?query`, a malformed `%`-escape, or an interior `//`. A valid but
@@ -324,30 +330,101 @@ export function validateLink(target: string): LinkFinding[] {
 }
 
 /**
+ * The extensions of non-`.md` files a docs bundle legitimately links to directly:
+ * images, common document/archive/media formats, and the handful of source-file
+ * extensions a doc might reference (this repo's own `docs/adr/0006` links straight at
+ * `../../src/core/profile.ts`). Judged as a **closed, known list** rather than "the
+ * last segment has a dot at all" — the rule {@link lacksMarkdownSuffix} used to apply,
+ * which made a dotted-but-extensionless concept link (`orders.v2`, meant for
+ * `orders.v2.md`) indistinguishable from a real asset link and so let it through in
+ * silence (LORE-152). The trade-off this closed list accepts: a real asset whose
+ * extension is not on it is a false positive {@link lacksMarkdownSuffix} cannot avoid
+ * without a filesystem probe, which {@link validateLink} — pure by contract — does
+ * not have.
+ */
+const KNOWN_ASSET_EXTENSIONS = new Set([
+  // images
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "svg",
+  "webp",
+  "bmp",
+  "ico",
+  "avif",
+  "tif",
+  "tiff",
+  // documents
+  "pdf",
+  "csv",
+  "txt",
+  "rtf",
+  "doc",
+  "docx",
+  "xls",
+  "xlsx",
+  "ppt",
+  "pptx",
+  // data/config
+  "json",
+  "yaml",
+  "yml",
+  "toml",
+  "xml",
+  // archives
+  "zip",
+  "tar",
+  "gz",
+  "tgz",
+  "rar",
+  "7z",
+  // media
+  "mp4",
+  "mp3",
+  "wav",
+  "mov",
+  "webm",
+  // source (a doc legitimately links straight at the code it describes)
+  "ts",
+  "tsx",
+  "js",
+  "jsx",
+  "sh",
+  "py",
+  "go",
+  "rs",
+]);
+
+/**
  * Whether a destination's path part lacks the canonical lowercase `.md` suffix and
  * so looks like a dropped-extension concept link — judged on the **decoded** path
  * (`orders%2Emd` decodes to `orders.md`), so the linter and the bundle resolver,
  * which {@link decodeTarget}s before resolving, agree on what the extension *is*.
  *
- * The canonical form is **lowercase** `.md` only; the rule mirrors how the resolver
- * treats a destination, flagging exactly the two cases that 404 on GitHub/Linux:
+ * The canonical form is **lowercase** `.md` only; three shapes are flagged:
  *
  * - **no extension at all** (`../reference/orders`) — a dropped-suffix concept link;
  * - **a wrong-case `.md`** (`orders.MD`/`orders.Md`) — meant to be the portable
- *   suffix but case-broken on a case-sensitive host.
+ *   suffix but case-broken on a case-sensitive host;
+ * - **a dotted last segment whose "extension" is not on the closed
+ *   {@link KNOWN_ASSET_EXTENSIONS} list** (`orders.v2`) — presumed a dropped `.md`
+ *   suffix rather than an opaque asset (LORE-152).
  *
- * Three shapes are deliberately **left alone**, matching the resolver's "a non-`.md`
- * target is simply not a concept edge" rule, so the lint does not cry wolf:
+ * Two shapes are deliberately **left alone**, so the lint does not cry wolf on a real,
+ * non-concept link:
  *
- * - an empty path (a pure `#fragment`/`?query` destination);
- * - a **directory** link (a trailing `/`, e.g. `../reference/`);
- * - a **dotfile** (`../config/.gitignore`) or any other **asset** extension
- *   (`../img/x.png`), which is a real non-concept link, not a dropped suffix.
+ * - an empty path (a pure `#fragment`/`?query` destination), or a **directory** link
+ *   (a trailing `/`, e.g. `../reference/`);
+ * - a **dotfile** (`../config/.gitignore`) or a recognized **asset** extension
+ *   (`../img/x.png`, {@link KNOWN_ASSET_EXTENSIONS}) — a real non-concept link, not a
+ *   dropped suffix.
  *
- * A dotted filename that *was* meant as a concept (`orders.v2` for `orders.v2.md`)
- * is indistinguishable from an asset and is treated as one — the same call the
- * resolver makes; a genuinely broken such link surfaces as a dangling edge in
- * `lore check`'s link-existence pass, not here.
+ * The third flagged shape is where this function and the bundle resolver part ways:
+ * the resolver still requires a literal `.md` suffix to form an edge at all, so a
+ * genuinely broken `orders.v2` link (no matching `orders.v2.md`) never surfaces as a
+ * dangling edge in `lore check`'s link-existence pass — this finding is the only
+ * mechanism left to catch it.
  */
 function lacksMarkdownSuffix(rawPath: string): boolean {
   const path = decodeTarget(rawPath);
@@ -364,7 +441,13 @@ function lacksMarkdownSuffix(rawPath: string): boolean {
   if (MD_SUFFIX_ANY_CASE.test(last)) {
     return true; // wrong-case .MD/.Md — meant to be .md, 404s on a case-sensitive host
   }
-  return !last.includes("."); // no extension → dropped suffix; any other extension → asset
+  const dot = last.lastIndexOf(".");
+  if (dot === -1) {
+    return true; // no extension at all → dropped suffix
+  }
+  // A recognized asset extension is a real non-.md link, left alone; any other dotted
+  // segment (`orders.v2`) is presumed a dropped .md suffix, not an opaque asset (LORE-152).
+  return !KNOWN_ASSET_EXTENSIONS.has(last.slice(dot + 1).toLowerCase());
 }
 
 /** The URL schemes a docs bundle legitimately links with — never an accidental-colon filename. */
