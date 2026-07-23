@@ -28,11 +28,26 @@ calls. No mocking anywhere, matching [ADR-0002](../adr/0002-backlog-integration-
 JSON-only, fail-loud design. LORE-56 first ran this and found four real defects
 (LORE-57/58/59/60) that 1497 passing mocked-adapter tests had missed entirely.
 
+## CI gate (required, since LORE-100)
+
+This harness is no longer local-only. `.github/workflows/ci.yml` runs it as the `docker-e2e` job
+on every PR and push, using the exact same `docker compose -f docker/e2e/docker-compose.yml up
+--build --exit-code-from e2e` invocation described below — a regression anywhere the harness
+covers now fails CI instead of merging silently. The steps in this runbook remain the way to
+reproduce and triage a failure by hand; they are no longer the only way the harness gets run.
+
+The CI job always uploads `docker/e2e/results/report.jsonl` (when it exists) as the
+`docker-e2e-report` build artifact, so a CI failure can be triaged from the workflow run's
+Artifacts panel using the same "Triage every `FAIL`" process below, without re-running the
+harness locally first.
+
 ## Prerequisites
 
 - Docker Desktop (or another Docker Engine) running locally.
 - Network access during the image build (clones `MrLesk/Backlog.md`, `apt-get`/`pip`/`npm` installs).
 - Run from the repo root — the compose file's build context is `../..` relative to `docker/e2e/`.
+- These prerequisites apply to a manual/local run only; the CI job above provisions its own
+  Docker Engine and network access on `ubuntu-latest`.
 
 ## Steps
 
