@@ -21,6 +21,7 @@ import {
   assertNoLabelCaseCollision,
   type LinkOptions,
   type LinkReport,
+  moveBackRefs,
   runLink,
   runUnlink,
   type UnlinkReport,
@@ -1004,6 +1005,107 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
       "--",
       `:(literal)${DIRTY_PATH}`,
     ]);
+  });
+
+  test("unlink: an already-absent back-ref against a genuinely CLEAN tree is a true no-op (LORE-179 AC#3)", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    // The task never carried the label/doc — already-absent, so the edit is skipped — and the file
+    // itself is also clean on disk, so this stays a true no-op.
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+    const git = cleanGitSpawn();
+
+    const { code, report } = await unlinkCmd(["stories/x", "lore-1"], adapter, git);
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks[0]?.backRef).toBe("already-absent");
+    expect(report.backlogCommit).toEqual({ committed: false, files: [] });
+  });
+
+  test("unlink: a retry after a failed backlog/ commit recommits the still-dirty task file instead of silently no-opping (LORE-179 AC#1)", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    // Simulates a PRIOR `lore unlink` run: its Backlog edit (label + --doc removal) already
+    // succeeded — the task already carries neither — but that run's own `commitBacklogFiles` call
+    // failed (e.g. a rejected pre-commit hook), leaving `DIRTY_PATH` uncommitted on disk.
+    // `!hadLabel && !hadDoc` is true, so this retry skips the Backlog edit (rightly — it's already
+    // applied), but must still discover and commit the leftover drift rather than reporting a false
+    // no-op success.
+    const adapter = fakeAdapter([makeTask("LORE-1")]); // no label, no documentation — already absent
+    const git = dirtyGitSpawn(DIRTY);
+
+    const { code, report } = await unlinkCmd(["stories/x", "lore-1"], adapter, git);
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks[0]?.backRef).toBe("already-absent"); // no Backlog edit was needed or made
+    expect(adapter.calls).toHaveLength(0); // confirms no editTask call — the drift is purely git-side
+    expect(report.backlogCommit).toEqual({ committed: true, files: [DIRTY_PATH] }); // but it IS committed
+    // Scoped to exactly lore-1's own file, same as a normal edit's commit — never a bundle-wide sweep.
+    expect(git.calls[1]).toEqual([
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--untracked-files=all",
+      "--",
+      `:(literal)${DIRTY_PATH}`,
+    ]);
+    expect(git.calls[2]).toEqual(["add", "--", `:(literal)${DIRTY_PATH}`]);
+    expect(git.calls[3]).toEqual([
+      "commit",
+      "-m",
+      "chore(backlog): remove doc back-references (lore unlink)",
+      "--",
+      `:(literal)${DIRTY_PATH}`,
+    ]);
+  });
+
+  // `moveBackRefs` is `lore rename`'s back-reference-move engine (called by `commands/rename.ts`,
+  // exercised end-to-end in `rename.test.ts`) but this file is the single owner of the
+  // `doc:<conceptId>` coupling contract it implements, so its "already fully migrated" no-edit
+  // outcome is unit-tested directly here, alongside its `runLink`/`runUnlink` siblings.
+  test("moveBackRefs: a retry after a failed backlog/ commit surfaces the still-dirty task file as a commit candidate instead of silently no-opping (LORE-179 AC#2)", async () => {
+    // Simulates a PRIOR `lore rename` run: its Backlog edit (new label + doc, old label/doc
+    // removed) already succeeded — the task is already fully migrated to the new id/path — but
+    // that run's own `commitBacklogFiles` call failed, leaving the task's file uncommitted on
+    // disk. The "already fully migrated" branch must surface the file as a commit candidate
+    // rather than silently no-opping; `commands/rename.ts` forwards `editedFiles` straight into
+    // `commitBacklogFiles`, whose own `git status` (dirty, per the retry premise, or clean — see
+    // rename.test.ts's paired "genuinely CLEAN tree" test, LORE-179 AC#3) is what actually decides
+    // whether to stage and commit it — `moveBackRefs` itself never touches git.
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", { labels: ["doc:stories/y"], documentation: ["docs/stories/y.md"] }),
+    ]);
+
+    const { outcomes, editedFiles } = await moveBackRefs(
+      adapter,
+      ["lore-1"],
+      "stories/x",
+      "stories/y",
+      "docs/stories/x.md",
+      "docs/stories/y.md",
+    );
+
+    expect(outcomes).toEqual([{ task: "lore-1", backRef: "already-current" }]);
+    expect(adapter.calls).toHaveLength(0); // confirms no editTask call — a retry makes none
+    expect(editedFiles).toEqual(["backlog/tasks/lore-1 - title.md"]); // but IS a commit candidate
+  });
+
+  test("moveBackRefs: a task never given a back-ref at all contributes no commit candidate (unlike the fully-migrated retry case)", async () => {
+    // No trace of this concept's back-reference, old or new — e.g. linked with `--no-back-ref`.
+    // Unlike the fully-migrated case above, no prior run of THIS move could ever have applied an
+    // edit here, so there is no leftover drift of this kind for it to hide — must NOT be pushed as
+    // a candidate (would risk sweeping in an unrelated dirty edit on a task this move never touched).
+    const adapter = fakeAdapter([makeTask("LORE-1")]); // no labels, no documentation at all
+
+    const { outcomes, editedFiles } = await moveBackRefs(
+      adapter,
+      ["lore-1"],
+      "stories/x",
+      "stories/y",
+      "docs/stories/x.md",
+      "docs/stories/y.md",
+    );
+
+    expect(outcomes).toEqual([{ task: "lore-1", backRef: "already-current" }]);
+    expect(editedFiles).toEqual([]);
   });
 
   test("a successfully-edited task with an empty file path is skipped, never passed as an empty git pathspec", async () => {

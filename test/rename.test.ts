@@ -1454,16 +1454,19 @@ describe("lore rename — backlog/ commit (LORE-49)", () => {
     expect(git.calls).toHaveLength(0);
   });
 
-  test("an all-already-current move writes nothing to Backlog, so it does not commit", async () => {
+  test("an all-already-current move against a genuinely CLEAN tree writes nothing to Backlog and is a true no-op (LORE-179 AC#3)", async () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - lore-1\n---\nOrders.\n");
     // Already carries the NEW label/doc — moveBackRefs is a no-op (already-current), no editTask.
+    // The file itself is also clean on disk (never touched by a prior run either), so this stays a
+    // true no-op — see the paired dirty-tree/retry case covered at the `moveBackRefs` unit level in
+    // link.test.ts's "backlog/ commit (LORE-49)" suite (LORE-179 AC#2).
     const adapter = fakeAdapter([
       makeTask("LORE-1", {
         labels: ["doc:reference/sales-orders"],
         documentation: ["docs/reference/sales-orders.md"],
       }),
     ]);
-    const git = dirtyGitSpawn(DIRTY);
+    const git = cleanGitSpawn();
     const stdout = capture();
 
     const code = await runRename({
@@ -1479,8 +1482,11 @@ describe("lore rename — backlog/ commit (LORE-49)", () => {
 
     expect(code).toBe(EXIT_OK);
     expect(data.backRefs).toEqual([{ task: "lore-1", backRef: "already-current" }]);
-    expect(data.backlogCommit.committed).toBe(false);
-    expect(git.calls).toHaveLength(0);
+    expect(data.backlogCommit).toEqual({ committed: false, files: [] });
+    // `commitBacklogFiles` does still query `git status` for the candidate file (its own check
+    // is what proves nothing is dirty) — it just never reaches `add`/`commit`, unlike the paired
+    // dirty-tree case.
+    expect(git.calls.some((c) => c[0] === "add" || c[0] === "commit")).toBe(false);
   });
 
   test("a partial back-ref failure still commits the successful move and exits drift (6)", async () => {
