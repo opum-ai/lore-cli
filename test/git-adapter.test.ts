@@ -11,7 +11,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { realGitAdapter, resolveHeadSha } from "../src/adapters/git";
-import { generateLog } from "../src/core/log";
+import { type GitCommit, generateLog } from "../src/core/log";
 import { LoreError } from "../src/errors";
 import { expectError, gitRun as run } from "./helpers";
 
@@ -274,10 +274,60 @@ describe("realGitAdapter — history()", () => {
       expect(seenArgs).toHaveLength(1);
       const args = seenArgs[0] ?? [];
       // A pathspec always comes after a `--` separator, restricting the walk to exactly `docs` —
-      // not merely narrowing `--name-only`'s per-commit file list after the fact.
+      // not merely narrowing `--name-only`'s per-commit file list after the fact. `:(literal)`-quoted
+      // (LORE-188) so a root containing pathspec magic is matched byte-for-byte, not reinterpreted.
       const dashIndex = args.indexOf("--");
       expect(dashIndex).toBeGreaterThan(-1);
-      expect(args.slice(dashIndex + 1)).toEqual(["docs"]);
+      expect(args.slice(dashIndex + 1)).toEqual([":(literal)docs"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("LORE-188: the docs-root pathspec is `:(literal)`-quoted and composes correctly with `--relative`, so docs-scoped commits are still returned and out-of-docs commits are still excluded", () => {
+    const root = freshRepo();
+    try {
+      commit(root, "docs/a.md", "a\n", "add doc");
+      writeFileSync(join(root, "src.ts"), "code\n");
+      run(root, ["add", "src.ts"]);
+      run(root, ["commit", "-q", "-m", "add unrelated source file"]);
+      const sha = resolveHeadSha(root) as string;
+
+      const realSpawnSync = Bun.spawnSync.bind(Bun);
+      const seenArgs: string[][] = [];
+      const spy = spyOn(Bun, "spawnSync").mockImplementation(
+        // biome-ignore lint/suspicious/noExplicitAny: Bun.spawnSync's overload set can't be named as a single call signature
+        (...args: any[]) => {
+          const cmd = args[0];
+          if (Array.isArray(cmd) && cmd[0] === "git" && cmd.includes("log")) {
+            seenArgs.push(cmd as string[]);
+          }
+          // biome-ignore lint/suspicious/noExplicitAny: forwarding to the real spawnSync overload set
+          return (realSpawnSync as any)(...args);
+        },
+      );
+      let commits: readonly GitCommit[];
+      try {
+        commits = realGitAdapter(root).history({ to: sha }, "docs");
+      } finally {
+        spy.mockRestore();
+      }
+
+      // The spawned `git log` args include the `:(literal)`-prefixed docs-root pathspec after `--`,
+      // alongside the pre-existing `--relative` flag.
+      expect(seenArgs).toHaveLength(1);
+      const args = seenArgs[0] ?? [];
+      expect(args).toContain("--relative");
+      const dashIndex = args.indexOf("--");
+      expect(dashIndex).toBeGreaterThan(-1);
+      expect(args.slice(dashIndex + 1)).toEqual([":(literal)docs"]);
+
+      // `:(literal)` composes correctly with `--relative`: docs-scoped commits are still returned,
+      // relative to `cwd` (not the repo top level), and the out-of-docs commit is still excluded.
+      expect(commits).toHaveLength(1);
+      expect(commits[0]?.subject).toBe("add doc");
+      expect(commits[0]?.files).toEqual(["docs/a.md"]);
+      expect(commits.some((c) => c.subject === "add unrelated source file")).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
