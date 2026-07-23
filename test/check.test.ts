@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BacklogAdapter } from "../src/adapters/backlog";
@@ -29,6 +29,24 @@ const PLAIN_CTX: OutputContext = { mode: "plain", color: false };
  * without this every such test would otherwise hit — and fail against — real DNS).
  */
 const ALLOW_ALL_HOSTS: ResolveHost = async () => ["93.184.216.34"];
+
+/**
+ * Whether the machine actually running this suite folds filename case (macOS/Windows default) or
+ * not (Linux, including this codebase's ubuntu CI) — probed once via a throwaway temp file rather
+ * than assumed from `process.platform`, so the case-variant bundle-root dedup test below (LORE-225
+ * AC#2) only runs where it can be true, and is skipped rather than false-failing on case-sensitive
+ * CI. `test.skipIf`'s condition is evaluated at registration time (before any `beforeEach`), so this
+ * has to be a standalone probe rather than reusing a per-test `root`.
+ */
+const CASE_INSENSITIVE_FS = (() => {
+  const probeDir = mkdtempSync(join(tmpdir(), "lore-check-case-probe-"));
+  try {
+    writeFileSync(join(probeDir, "probe.tmp"), "");
+    return existsSync(join(probeDir, "PROBE.TMP"));
+  } finally {
+    rmSync(probeDir, { recursive: true, force: true });
+  }
+})();
 
 /** A minimal Reference concept with the given body, for membership/anchor fixtures. */
 function ref(title: string, body: string): string {
@@ -922,6 +940,45 @@ describe("runCheck — exit codes and discovery", () => {
     runCheck(o);
     const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
     expect(parsed.data.fileCount).toBe(3); // index.md + orders.md + x.md, each once
+  });
+
+  // POSIX-only, matching this codebase's existing symlink tests' own skip guard (e.g. validate.test.ts).
+  test.skipIf(process.platform === "win32")(
+    "a symlink alias of a root de-duplicates: fileCount and errorCount are not doubled (LORE-225 AC#1)",
+    () => {
+      writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[ghost](../reference/ghost.md)."));
+      symlinkSync(join(root, "docs"), join(root, "docs-alias"));
+      const o = opts(["docs", "docs-alias"], JSON_CTX);
+      const code = runCheck(o);
+      const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+      // Two distinct spellings named explicitly — plain string/`join` dedup would NOT collapse
+      // these; only canonicalIdentity's realpath fold (discover.ts:56) does.
+      expect(parsed.data.fileCount).toBe(3); // index.md + orders.md + x.md, each counted once
+      expect(parsed.data.errorCount).toBe(1); // the broken link is reported once, not twice
+      expect(code).toBe(EXIT_CODES.validation);
+    },
+  );
+
+  // Guarded so a case-sensitive host (this codebase's ubuntu CI) never false-fails: on that
+  // filesystem "docs" and "Docs" really are two distinct, and here nonexistent, directories.
+  test.skipIf(!CASE_INSENSITIVE_FS)(
+    "a case-variant alias of a root de-duplicates on a case-insensitive filesystem (LORE-225 AC#2)",
+    () => {
+      writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[ghost](../reference/ghost.md)."));
+      const o = opts(["docs", "Docs"], JSON_CTX);
+      const code = runCheck(o);
+      const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+      expect(parsed.data.fileCount).toBe(3); // index.md + orders.md + x.md, each counted once
+      expect(parsed.data.errorCount).toBe(1); // the broken link is reported once, not twice
+      expect(code).toBe(EXIT_CODES.validation);
+    },
+  );
+
+  test("a nonexistent bundle root among several still throws not_found, not swallowed by dedup (LORE-225 AC#3)", () => {
+    // Guards the ordering the fix depends on: canonicalIdentity's realpath failure on the missing
+    // root falls back to the path itself (never colliding with the real "docs" root's identity),
+    // so expandRoot still runs for it and still raises its own not_found LoreError.
+    expect(() => runCheck(opts(["docs", "does-not-exist"]))).toThrow(/does not exist/);
   });
 
   test("pretty mode paints the severity token and the error count", () => {
