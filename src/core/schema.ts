@@ -264,8 +264,13 @@ function warnSummary(summary: unknown, where: string, warnings: WarningCollector
     warnings.add(`missing \`summary\`${where}; add a one-line summary for indexes and query snippets`);
     return;
   }
-  if (typeof summary === "string" && summary.length > SUMMARY_SOFT_LIMIT) {
-    warnings.add(`\`summary\`${where} is ${summary.length} chars; keep it under ~${SUMMARY_SOFT_LIMIT} (one sentence)`);
+  if (typeof summary === "string") {
+    const codePointLength = [...summary].length;
+    if (codePointLength > SUMMARY_SOFT_LIMIT) {
+      warnings.add(
+        `\`summary\`${where} is ${codePointLength} chars; keep it under ~${SUMMARY_SOFT_LIMIT} (one sentence)`,
+      );
+    }
   }
 }
 
