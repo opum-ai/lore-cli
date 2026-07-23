@@ -41,6 +41,7 @@ import { DOCS_DIR } from "../core/scaffold";
 import { ANSI, EXIT_OK, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable, renderTaskSummaryRows, type TaskSummaryRow } from "../output";
 import { usage } from "./args";
+import { mapWithConcurrency, TASK_DETAILS_CONCURRENCY } from "./concurrency";
 import { dedupeTaskIds, defaultAdapter, verifiedViewTask } from "./link";
 
 /** Options for {@link runTasks}; `root`, the streams, and the adapter are injectable for tests. */
@@ -130,11 +131,14 @@ function echoedStatus(filter: string | undefined, tasks: readonly TaskRollupRow[
  *
  * The Backlog capability probe runs UP FRONT so a missing/incapable binary fails fast (exit 3/6)
  * before any per-task read — the disambiguation the module docstring relies on. Reads then run
- * concurrently via `allSettled` (mirroring `resolveTaskDetails`, so a second failing read never
- * escapes as an unhandled rejection): the FIRST read that *fails* — in `tasks:` order — is rethrown
- * as a hard error (Backlog drift), exactly as `lore check`/`sync` treat it, while a clean `null` — a
- * task Backlog does not know — is soft: dropped from the rollup with a stderr advisory (`orphans`
- * owns the dangling-link report).
+ * concurrently, bounded to {@link TASK_DETAILS_CONCURRENCY} in flight at once via the shared
+ * {@link mapWithConcurrency} worker-pool (mirroring `resolveTaskDetails`'s own LORE-111 fix, so a
+ * concept whose `tasks:` list links many ids never fans out one Backlog CLI subprocess per id fully
+ * concurrently). Each read's outcome is captured into a settled-result array, in `tasks:` order, so a
+ * second failing read never escapes as an unhandled rejection: the FIRST read that *fails* — in
+ * `tasks:` order — is rethrown as a hard error (Backlog drift), exactly as `lore check`/`sync` treat
+ * it, while a clean `null` — a task Backlog does not know — is soft: dropped from the rollup with a
+ * stderr advisory (`orphans` owns the dangling-link report).
  *
  * Each read goes through `commands/link.ts`'s exported {@link verifiedViewTask} (LORE-183), not a
  * raw `adapter.viewTask` call: it checks the returned detail's own `id` against the id actually
@@ -157,7 +161,19 @@ async function resolveRollup(
   const adapter = options.adapter ?? defaultAdapter(options.root);
   await adapter.probe();
 
-  const settled = await Promise.allSettled(linked.map((id) => verifiedViewTask(adapter, id)));
+  const settled: PromiseSettledResult<Awaited<ReturnType<typeof verifiedViewTask>>>[] = new Array(linked.length);
+  await mapWithConcurrency(
+    linked.map((id, index) => ({ id, index })),
+    TASK_DETAILS_CONCURRENCY,
+    async ({ id, index }) => {
+      try {
+        const value = await verifiedViewTask(adapter, id);
+        settled[index] = { status: "fulfilled", value };
+      } catch (reason) {
+        settled[index] = { status: "rejected", reason };
+      }
+    },
+  );
   const dangling: string[] = [];
   const rows: TaskRollupRow[] = [];
   for (let i = 0; i < linked.length; i++) {

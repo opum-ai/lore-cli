@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BacklogTaskDetail } from "../src/adapters/backlog";
 import { run } from "../src/cli";
+import { TASK_DETAILS_CONCURRENCY } from "../src/commands/concurrency";
 import { runTasks, type TaskRollup, type TasksOptions } from "../src/commands/tasks";
 import { LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
@@ -145,6 +146,41 @@ describe("runTasks — the live rollup (AC#1, AC#2)", () => {
     const { code, data } = await rollupJson(["reference/x"], { adapter });
     expect(code).toBe(0);
     expect(data.tasks).toEqual([]);
+  });
+});
+
+// ── LORE-235: bounded concurrency ───────────────────────────────────────────────────────────
+
+describe("runTasks — resolveRollup's viewTask fan-out is bounded (AC#1, AC#3)", () => {
+  test("never runs more than TASK_DETAILS_CONCURRENCY viewTask calls in flight at once, and saturates the cap", async () => {
+    // Comfortably more distinct linked ids than the cap, so the pool must refill at least twice —
+    // a single un-bounded burst (the pre-fix Promise.allSettled(...map(...)) behavior) would let
+    // `active` climb past the cap immediately. Mirrors reconcile-shared.test.ts's own
+    // TASK_DETAILS_CONCURRENCY cap test (LORE-111) for `resolveTaskDetails`.
+    const total = TASK_DETAILS_CONCURRENCY * 3 + 2;
+    const ids = Array.from({ length: total }, (_, i) => `LORE-${i}`);
+    writeStory("bulk", ids);
+    const base = okAdapter(ids.map((id) => makeTask(id, { status: "Done" })));
+    let active = 0;
+    let peak = 0;
+    const instrumented = {
+      ...base,
+      async viewTask(id: string): Promise<BacklogTaskDetail | null> {
+        active++;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        active--;
+        return base.viewTask(id);
+      },
+    };
+
+    const { code, data } = await rollupJson(["stories/bulk"], { adapter: instrumented });
+
+    expect(code).toBe(0);
+    expect(peak).toBeLessThanOrEqual(TASK_DETAILS_CONCURRENCY);
+    expect(peak).toBe(TASK_DETAILS_CONCURRENCY); // the pool saturates — this isn't just trivially bounded
+    expect(active).toBe(0); // every worker settled
+    expect(data.tasks.map((t) => t.id)).toEqual(ids); // linked-order preserved despite pooled scheduling
   });
 });
 
