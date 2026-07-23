@@ -1,9 +1,10 @@
 ---
 id: LORE-165
 title: Add regression test for rewriteInbound's move + excluded-source-id combination
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-21 22:26'
+updated_date: '2026-07-23 03:24'
 labels:
   - codex-review-followup
   - core-rewrite-engine
@@ -25,6 +26,12 @@ test/rename.test.ts previously lacked coverage for three scenarios: escaped-brac
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 test/rename.test.ts contains a test that calls rewriteInbound with move:true and exclude:new Set([<source id>]), and asserts on the shape of the returned plan's `rename` and `writes` fields together (not merely that the excluded id's file is skipped).
-- [ ] #2 The new test is written so it fails against the current, unfixed rewriteInbound behavior (rename set with no matching write for the destination path) and passes once that inconsistency is corrected.
+- [x] #1 test/rename.test.ts contains a test that calls rewriteInbound with move:true and exclude:new Set([<source id>]), and asserts on the shape of the returned plan's `rename` and `writes` fields together (not merely that the excluded id's file is skipped).
+- [x] #2 The new test is written so it fails against the current, unfixed rewriteInbound behavior (rename set with no matching write for the destination path) and passes once that inconsistency is corrected.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Resolved-by-merge by LORE-164 (merged to dev, PR #159). LORE-164 added exactly the required regression test at test/rename.test.ts:355 — "move=true with the move source itself excluded reports no rename (LORE-164)" — which calls rewriteInbound(graph(), "reference/orders", "reference/sales-orders", {move:true, exclude:new Set(["reference/orders"])}) and asserts on BOTH plan.rename (toBeNull) AND plan.writes (toEqual []) together, satisfying AC#1's requirement to assert on the rename+writes shape jointly (not merely that the excluded id is skipped). AC#2: LORE-164's documented mutation-check confirmed the test fails against the unfixed rewriteInbound (rename={from,to} while writes=[]) and passes after the fix — exactly the fail-before/pass-after property AC#2 requires. Verified on dev @ 04deae2: grep + read of test/rename.test.ts:355-365 confirms the test is present in the merged suite. No separate implementation needed.
+<!-- SECTION:NOTES:END -->
