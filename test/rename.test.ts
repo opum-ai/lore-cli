@@ -263,6 +263,32 @@ describe("rewriteInbound — the moved file's outbound links (move)", () => {
     expect(moved).toContain("[t](../../../backlog/tasks/task-1.md)");
   });
 
+  // LORE-247: an authored link with MORE `../` than the file's depth resolves ABOVE the repo root
+  // (not merely above docs/, as LORE-68's in-repo `backlog/tasks/…` case above does). normalizeLink
+  // roots both operands at a fixed virtual `/` and would silently clamp that surplus `..`, quietly
+  // retargeting an already-non-portable link into the repo rather than preserving it. The moved
+  // branch must instead emit no edit for that candidate, leaving the authored bytes untouched.
+  test("preserves an outbound link resolving above the repo root instead of clamp-retargeting it (AC#1/AC#2)", () => {
+    const original = "---\ntype: Reference\n---\nSee [outside](../../../../outside/thing.md) for context.\n";
+    writeDoc("sub/deep/orders.md", original);
+    const plan = rewriteInbound(graph(), "sub/deep/orders", "moved/away/orders-renamed", { move: true });
+    const moved = writesByPath(plan).get("moved/away/orders-renamed.md") ?? "";
+    // The whole moved file — frontmatter and body alike — matches the original byte-for-byte: the
+    // above-repo link is left exactly as authored, not retargeted to some path inside the repo.
+    expect(moved).toBe(original);
+  });
+
+  // AC#3: the legitimate in-repo cross-subtree case (a link that escapes `docs/` but resolves to a
+  // repo-relative target, e.g. `backlog/tasks/…` — LORE-68's own regression above) must still be
+  // recomputed correctly for the new location, not swept up by the above-repo-root guard.
+  test("still recomputes a legitimate cross-subtree link that stays within the repo root (AC#3)", () => {
+    writeDoc("stories/bulk.md", "---\ntype: Story\n---\nLinks a task file [t](../../backlog/tasks/foo.md).\n");
+    const plan = rewriteInbound(graph(), "stories/bulk", "stories/nested/deep/bulk-renamed", { move: true });
+    const moved = writesByPath(plan).get("stories/nested/deep/bulk-renamed.md") ?? "";
+    // Deeper move => the recomputed relative link gains segments; it is NOT dropped as above-repo.
+    expect(moved).toContain("[t](../../../../backlog/tasks/foo.md)");
+  });
+
   test("renaming the referring file does not canonicalize its bare-id ref to a mirroring-directory shadow's id (LORE-184 consequence (c))", () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n"); // the true target
     writeDoc("stories/reference/orders.md", "---\ntype: Reference\n---\nShadow at the dir-joined path.\n");
