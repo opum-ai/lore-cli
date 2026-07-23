@@ -6,6 +6,7 @@ import type { BacklogAdapter } from "../src/adapters/backlog";
 import { run } from "../src/cli";
 import { driftFindingsForBundle, type FetchLike, isDocsRoot, type ResolveHost, runCheck } from "../src/commands/check";
 import {
+  bodyText,
   type CheckInputFile,
   checkBundle,
   classifyAddress,
@@ -618,6 +619,72 @@ describe("checkBundle — clean bundle and aggregation", () => {
   });
 });
 
+// ── checkBundle: frontmatter-free leading indented code block (LORE-240) ────────
+//
+// Portability scan (`bodyText`) reused `normalizeInput`'s `.replace(/^\s+/, "")` step, which
+// exists to let a whitespace-*padded* frontmatter fence still parse — but for a file with no
+// fence at all, that same strip deleted the body's own first-line indentation. A file whose very
+// first content was an indented (4-space) code block then lost its indentation and was reparsed
+// as a lazy-continuation prose paragraph, so hazard characters inside it (`{`, `[[…]]`) were
+// scanned as prose and produced spurious `portability` warnings.
+
+describe("checkBundle — frontmatter-free leading indented code block (LORE-240)", () => {
+  test("AC#1: an indented code block opening a frontmatter-free file is parsed as code, not prose — no portability warnings", () => {
+    const doc: CheckInputFile = { path: "x.md", raw: "    Use {braces} and [[wikilink]] here\n" };
+    const report = checkBundle([doc]);
+    expect(report.findings).toEqual([]);
+    expect(report.warningCount).toBe(0);
+  });
+
+  test("AC#2: the same indented code block after a heading still produces no warnings (no regression)", () => {
+    const doc: CheckInputFile = {
+      path: "x.md",
+      raw: "# Title\n\n    Use {braces} and [[wikilink]] here\n",
+    };
+    const report = checkBundle([doc]);
+    expect(report.findings).toEqual([]);
+    expect(report.warningCount).toBe(0);
+  });
+
+  test("AC#3: a concept WITH frontmatter whose body opens with the same indented code block is unaffected (frontmatter path unchanged)", () => {
+    const doc: CheckInputFile = {
+      path: "x.md",
+      raw: "---\ntype: Reference\ntitle: X\nsummary: A ref.\ntimestamp: 2026-06-21T00:00:00Z\n---\n\n    Use {braces} and [[wikilink]] here\n",
+    };
+    const report = checkBundle([doc]);
+    expect(report.findings).toEqual([]);
+    expect(report.warningCount).toBe(0);
+  });
+
+  test("AC#3 (unit level): bodyText's frontmatter path is byte-identical — the body after the fence keeps its own indentation exactly as gray-matter returns it", () => {
+    const raw =
+      "---\ntype: Reference\ntitle: X\nsummary: A ref.\ntimestamp: 2026-06-21T00:00:00Z\n---\n\n    indented body line\nmore\n";
+    expect(bodyText(raw)).toBe("\n    indented body line\nmore\n");
+  });
+
+  test("AC#4 (unit level): the frontmatter-free path still strips a leading BOM and normalizes CRLF, while preserving the body's own leading indentation", () => {
+    const raw = "﻿    Use {braces} and [[wikilink]] here\r\nmore\r\n";
+    expect(bodyText(raw)).toBe("    Use {braces} and [[wikilink]] here\nmore\n");
+  });
+
+  test("AC#4 (integration level): a BOM + CRLF frontmatter-free file with the hazard chars inside the indented block still yields no portability warnings", () => {
+    const doc: CheckInputFile = {
+      path: "x.md",
+      raw: "﻿    Use {braces} and [[wikilink]] here\r\nmore\r\n",
+    };
+    const report = checkBundle([doc]);
+    expect(report.findings).toEqual([]);
+    expect(report.warningCount).toBe(0);
+  });
+
+  test("mutation guard: the same hazard characters in ordinary (unindented) prose in a frontmatter-free file are still flagged (the fix does not blanket-suppress portability findings)", () => {
+    const doc: CheckInputFile = { path: "x.md", raw: "Use {braces} and [[wikilink]] here, not indented.\n" };
+    const report = checkBundle([doc]);
+    expect(report.warningCount).toBeGreaterThan(0);
+    expect(report.findings.some((f) => f.rule === "portability")).toBe(true);
+  });
+});
+
 // ── Command layer: runCheck ──────────────────────────────────────────────────────
 
 describe("runCheck — exit codes and discovery", () => {
@@ -666,6 +733,11 @@ describe("runCheck — exit codes and discovery", () => {
 
   test("LORE-239 AC#1: inline formatting before [!type] in ordinary prose does not gate, even under --strict", () => {
     writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "ordinary **bold** [!note] prose"));
+    expect(runCheck(opts(["--strict"]))).toBe(EXIT_OK);
+  });
+
+  test("LORE-240 AC#1: an indented code block opening a frontmatter-free index.md produces no portability warnings, even under --strict", () => {
+    writeFileSync(join(root, "docs", "index.md"), "    Use {braces} and [[wikilink]] here\n");
     expect(runCheck(opts(["--strict"]))).toBe(EXIT_OK);
   });
 
