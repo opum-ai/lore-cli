@@ -607,6 +607,16 @@ describe("WarningCollector", () => {
     expect(warnings.count).toBe(2);
     expect(warnings.list()).toEqual(["first", "second"]);
   });
+
+  test("flush collapses a message with embedded newlines to one stderr line (LORE-172)", () => {
+    const warnings = new WarningCollector();
+    warnings.add("first line\nsecond line");
+    const stderr = capture();
+    expect(warnings.flush({ stderr })).toBe(1);
+    // Same single-line normalization formatErrorText/toErrorEnvelope apply to a
+    // LoreError's message/hint (§5.2/§5.4): one warning → exactly one stderr line.
+    expect(stderr.lines()).toEqual(["warning: first line second line"]);
+  });
 });
 
 describe("stdout discipline", () => {

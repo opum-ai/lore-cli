@@ -601,6 +601,12 @@ export class WarningCollector {
    * Write each collected warning to stderr as `warning: <message>` and return
    * the number flushed. Color is applied only when `opts.color` is true.
    *
+   * Each message is coerced and single-lined via {@link asText}/{@link singleLine} —
+   * the same normalization `formatErrorText`/`toErrorEnvelope` apply to a
+   * `LoreError`'s message/hint — so a warning containing embedded newlines or
+   * control characters still emits as exactly one stderr line, preserving the
+   * one-warning-per-line contract.
+   *
    * This is **non-draining**: it does not clear the collected warnings, so a
    * second `flush` re-emits them and {@link list}/{@link count} stay valid
    * afterward. Gate commands flush exactly once; report a count from
@@ -612,7 +618,7 @@ export class WarningCollector {
     // The painted prefix is loop-invariant — build it once, not once per warning.
     const prefix = paint("warning:", ANSI.yellow, color);
     for (const message of this.messages) {
-      stderr.write(`${prefix} ${message}\n`);
+      stderr.write(`${prefix} ${singleLine(asText(message))}\n`);
     }
     return this.messages.length;
   }
