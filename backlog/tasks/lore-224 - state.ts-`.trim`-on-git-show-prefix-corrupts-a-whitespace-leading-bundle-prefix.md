@@ -3,9 +3,11 @@ id: LORE-224
 title: >-
   state.ts: `.trim()` on git show-prefix corrupts a whitespace-leading bundle
   prefix
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@sonnet-worker'
 created_date: '2026-07-23 16:04'
+updated_date: '2026-07-23 18:32'
 labels:
   - cli-entry-state
   - codex-review-followup
@@ -36,8 +38,28 @@ Provenance: Codex second-opinion review (backlog doc-2), low-severity cluster `c
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `porcelainPaths` strips only the trailing newline from `git rev-parse --show-prefix`, preserving any leading whitespace in the prefix.
-- [ ] #2 A scripted-GitSpawn regression test in test/state.test.ts (extending the nested-bundle describe block, ~line 396): with show-prefix scripted as ` proj/\n` and a status entry ` proj/backlog/tasks/x.md`, `commitBacklogIfDirty` strips the prefix to `backlog/tasks/x.md`, passes the BACKLOG_DIR guard, and reaches `git add`/`git commit` with the stripped path (rather than throwing drift).
-- [ ] #3 Existing prefix behavior is unchanged: an empty prefix (`""`, non-nested) and a normal nested prefix (`"project/"`) still work; the existing nested-bundle tests continue to pass.
-- [ ] #4 `bun test` passes with the new coverage.
+- [x] #1 `porcelainPaths` strips only the trailing newline from `git rev-parse --show-prefix`, preserving any leading whitespace in the prefix.
+- [x] #2 A scripted-GitSpawn regression test in test/state.test.ts (extending the nested-bundle describe block, ~line 396): with show-prefix scripted as ` proj/\n` and a status entry ` proj/backlog/tasks/x.md`, `commitBacklogIfDirty` strips the prefix to `backlog/tasks/x.md`, passes the BACKLOG_DIR guard, and reaches `git add`/`git commit` with the stripped path (rather than throwing drift).
+- [x] #3 Existing prefix behavior is unchanged: an empty prefix (`""`, non-nested) and a normal nested prefix (`"project/"`) still work; the existing nested-bundle tests continue to pass.
+- [x] #4 `bun test` passes with the new coverage.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Fix porcelainPaths (src/state.ts:319) to strip only the trailing newline from 'git rev-parse --show-prefix' stdout via prefixResult.stdout.replace(/\r?\n$/, ""), preserving any leading whitespace instead of .trim() which strips both ends. 2. Add a regression test in the 'commitBacklogIfDirty — nested-bundle cwd (fake GitSpawn)' describe block (test/state.test.ts) that scripts show-prefix as ' proj/\n' and a status entry ' proj/backlog/tasks/x.md', asserting the stripped path is 'backlog/tasks/x.md' and that add/commit are reached (not a drift throw). 3. Confirm existing empty-prefix and 'project/' nested-prefix tests still pass. 4. Run full bun test + bun run typecheck + bunx biome check on changed files. Do not touch src/adapters/backlog.ts:733.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed: prefix = prefixResult.stdout.replace(/\r?\n$/, "") replaces .trim() at src/state.ts:319-321 (with an explanatory comment) — strips only the single trailing newline git terminates --show-prefix output with, preserving leading whitespace. src/adapters/backlog.ts:733 left untouched (out of scope, only tests emptiness). Added regression test 'regression (LORE-224): a leading-whitespace prefix is preserved, not corrupted by .trim()' in the 'commitBacklogIfDirty — nested-bundle cwd (fake GitSpawn)' describe block (test/state.test.ts), scripting show-prefix as ' proj/\n' + status entry ' proj/backlog/tasks/x.md'; asserts result.files == ['backlog/tasks/x.md'] and that the scripted spawn.calls[2]/[3] are the add/commit invocations (proving the BACKLOG_DIR guard passed rather than a drift throw).
+
+Verification: bun test test/state.test.ts -> 45 pass / 0 fail (128 expect calls), including the two pre-existing nested-bundle tests (empty-prefix cases covered elsewhere in the file, and 'project/' nested prefix at line 397 + rename case at line 416) still green, proving AC#3. Full bun test -> 1937 pass / 0 fail across 47 files. bun run typecheck -> clean (tsc --noEmit, no output). bunx biome check src/state.ts test/state.test.ts -> 'Checked 2 files in 18ms. No fixes applied.' (no new lint errors). Diff scoped to src/state.ts + test/state.test.ts + this task's own backlog/tasks/ file only.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+porcelainPaths (src/state.ts) previously did prefix = prefixResult.stdout.trim() on 'git rev-parse --show-prefix' output, which strips leading as well as trailing whitespace — corrupting the prefix (e.g. ' proj/\n' -> 'proj/') for a bundle nested under a directory whose name begins with whitespace, so the prefix never matched git status's still-space-prefixed paths, tripping the BACKLOG_DIR defense-in-depth guard and throwing a spurious 'drift' LoreError that blocked the commit. Fixed to strip only the trailing newline via .replace(/\r?\n$/, ""), preserving leading whitespace. Added a scripted-GitSpawn regression test in the existing 'commitBacklogIfDirty — nested-bundle cwd' describe block covering a ' proj/\n' prefix + ' proj/backlog/tasks/x.md' status entry, proving the path strips to 'backlog/tasks/x.md' and reaches git add/commit. Verified: bun test (1937 pass/0 fail, 47 files, including the new test and the pre-existing empty-prefix / 'project/' nested-prefix regression tests still green), bun run typecheck clean, bunx biome check on both changed files clean. src/adapters/backlog.ts:733 left untouched per scope. Diff limited to src/state.ts, test/state.test.ts, and this task file.
+<!-- SECTION:FINAL_SUMMARY:END -->
