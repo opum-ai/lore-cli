@@ -256,6 +256,17 @@ describe("rewriteInbound — the moved file's outbound links (move)", () => {
     const moved = writesByPath(plan).get("stories/nested/bulk.md") ?? "";
     expect(moved).toContain("[t](../../../backlog/tasks/task-1.md)");
   });
+
+  test("renaming the referring file does not canonicalize its bare-id ref to a mirroring-directory shadow's id (LORE-184 consequence (c))", () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n"); // the true target
+    writeDoc("stories/reference/orders.md", "---\ntype: Reference\n---\nShadow at the dir-joined path.\n");
+    writeDoc("stories/bulk.md", "---\ntype: Story\nspecs:\n  - reference/orders\n---\nText.\n");
+    // Rename the REFERRING file itself; its own refs are canonicalized via the isMoved branch.
+    const plan = rewriteInbound(graph(), "stories/bulk", "stories/bulk-renamed", { move: true });
+    const moved = writesByPath(plan).get("stories/bulk-renamed.md") ?? "";
+    expect(moved).toContain("- reference/orders"); // stays the canonical bare id
+    expect(moved).not.toContain("stories/reference/orders"); // NOT corrupted to the shadow's id
+  });
 });
 
 // ── core: surgical splice fidelity (node.url ≠ source bytes) ───────────────────────
