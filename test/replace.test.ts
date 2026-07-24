@@ -550,31 +550,33 @@ describe("lore replace — command-level suites (root fixture)", () => {
       writeDoc("docs/c.md", "x"); // sorted after b.md — must never be reached once b.md's write throws
 
       // Stub the low-level write call the commit phase's writeFileAtomic ultimately makes, so it
-      // throws on the SECOND file's (b.md's) write — after a.md has already committed, before c.md
-      // is ever attempted — the exact "partway through" shape AC#2 asks for. writeFileAtomic now
-      // creates its temp file via `openSync` and writes its bytes via a `writeSync` loop (LORE-231),
-      // rather than a single `writeFileSync` call, so the write itself is stubbed at `writeSync`;
-      // `openSync` is spied alongside it purely to record which temp path each write belongs to
-      // (`writeSync` only carries an fd, not a path) — both always forward to the real implementation
-      // except the one simulated failure. Calls that aren't the simulated failure forward to the real
-      // syscalls, so a.md's (and, were it reached, c.md's) write still actually happens.
-      const realOpenSync = fs.openSync.bind(fs);
-      const realWriteSync = fs.writeSync.bind(fs);
+      // throws on the SECOND file's (b.md's) byte-write — after a.md has already committed, before
+      // c.md is ever attempted — the exact "partway through" shape AC#2 asks for. writeFileAtomic
+      // now creates its temp file with an EXCLUSIVE `writeFileSync(tmpPath, "", { flag: "wx" })` and
+      // then writes the bytes with a separate `writeFileSync(tmpPath, bytes, { flag: "w" })`
+      // (LORE-231 two-phase split; LORE-252 switched off numeric-flag `openSync`, which Bun/Windows
+      // spuriously ENOENTs on). Both are the same `fs.writeFileSync`, so the spy distinguishes them
+      // by flag: the `wx` exclusive create records which temp path each write belongs to (and always
+      // forwards to the real call, so the temp file genuinely exists and tmpFileExists flips), while
+      // the byte-write is where the simulated failure is injected — on the second one. Non-failing
+      // calls forward to the real syscall, so a.md's write still actually happens.
+      const realWriteFileSync = fs.writeFileSync.bind(fs);
       const openedPaths: string[] = [];
-      const openSpy = spyOn(fs, "openSync").mockImplementation((...args: Parameters<typeof fs.openSync>) => {
-        openedPaths.push(String(args[0]));
-        // biome-ignore lint/suspicious/noExplicitAny: forwarding to the real openSync overload set
-        return (realOpenSync as any)(...args);
-      });
-      let writeCalls = 0;
-      // biome-ignore lint/suspicious/noExplicitAny: writeSync's overload set collapses to `any[]` under mockImplementation's contravariant param check
-      const writeSpy = spyOn(fs, "writeSync").mockImplementation((...args: any[]) => {
-        writeCalls++;
-        if (writeCalls === 2) {
-          throw new Error("simulated ENOSPC");
+      let byteWrites = 0;
+      // biome-ignore lint/suspicious/noExplicitAny: writeFileSync's overload set collapses to `any[]` under mockImplementation's contravariant param check
+      const writeSpy = spyOn(fs, "writeFileSync").mockImplementation((...args: any[]) => {
+        const opts = args[2];
+        const flag = typeof opts === "object" && opts !== null ? opts.flag : opts;
+        if (flag === "wx") {
+          openedPaths.push(String(args[0])); // the exclusive create of the temp file — record its path
+        } else {
+          byteWrites++;
+          if (byteWrites === 2) {
+            throw new Error("simulated ENOSPC");
+          }
         }
-        // biome-ignore lint/suspicious/noExplicitAny: forwarding to the real writeSync overload set
-        return (realWriteSync as any)(...args);
+        // biome-ignore lint/suspicious/noExplicitAny: forwarding to the real writeFileSync overload set
+        return (realWriteFileSync as any)(...args);
       });
       try {
         expect(() =>
@@ -582,7 +584,6 @@ describe("lore replace — command-level suites (root fixture)", () => {
         ).toThrow(); // the failure surfaces rather than being silently swallowed
       } finally {
         writeSpy.mockRestore();
-        openSpy.mockRestore();
       }
 
       expect(readFileSync(join(root, "docs/a.md"), "utf8")).toBe("y"); // committed before the failure
@@ -593,10 +594,10 @@ describe("lore replace — command-level suites (root fixture)", () => {
       // Discriminating assertions (LORE-116 review): the commit phase must go through writeFileAtomic's
       // temp-file+rename discipline, not a plain writeFileSync straight at the destination. Without these,
       // the four assertions above pass identically against the pre-fix writeFileOverwriting code path too.
-      expect(openedPaths).toHaveLength(2); // a.md's temp open, then b.md's temp open — c.md never attempted
+      expect(openedPaths).toHaveLength(2); // a.md's temp create, then b.md's temp create — c.md never attempted
       const failingCallPath = openedPaths[1] as string;
       expect(basename(failingCallPath).startsWith(".lore-sync-tmp-")).toBe(true); // b.md's write went through a temp file, proving the atomic (not plain) discipline
-      expect(openedPaths).not.toContain(join(root, "docs/b.md")); // the destination path itself is never a direct open target
+      expect(openedPaths).not.toContain(join(root, "docs/b.md")); // the destination path itself is never a direct create target
     });
   });
 
@@ -642,39 +643,51 @@ describe("lore replace — command-level suites (root fixture)", () => {
       expect(report).toMatchObject({ filesScanned: 0, filesChanged: 0, totalMatches: 0 });
     });
 
-    test("plain/pretty mode sanitizes a discovered path carrying a newline and an ANSI escape (LORE-229)", () => {
-      // A discovered display path is derived from a real filesystem name — on POSIX that name may
-      // itself carry a newline or ESC byte. Both text renderers must neutralize it before
-      // interpolating, mirroring query.ts's sanitizeField (LORE-118).
-      const evilName = "evil\n\x1b[31mline.md";
-      writeFileSync(join(root, "docs", evilName), "x");
-      for (const mode of ["plain", "pretty"] as const) {
-        const stdout = capture();
-        runReplace({
-          root,
-          output: { mode, color: false },
-          args: ["x", "y", "--dry-run"],
-          stdout,
-          stderr: capture(),
-        });
-        const text = stdout.text();
-        expect(text).not.toContain("\x1b"); // no raw ESC byte reaches the rendered report
-        // The exact rendered text: one sanitized per-file line + one trailing summary line — the
-        // embedded newline in the filename must not have smuggled an extra line break into the
-        // report, and the ANSI escape must be gone entirely (not merely defanged).
-        expect(text).toBe("would replace 1 in docs/evil line.md\n1 match in 1 of 1 file (dry-run)\n");
-      }
-    });
+    // Windows forbids control characters (newline, ESC) in filenames, so this fixture cannot be created
+    // there — `writeFileSync` ENOENTs at setup (LORE-252). The sanitization behavior is platform-
+    // independent and stays fully covered on POSIX; skip only the impossible fixture on win32 (matching
+    // this file's own symlink-test skipIf pattern below).
+    test.skipIf(process.platform === "win32")(
+      "plain/pretty mode sanitizes a discovered path carrying a newline and an ANSI escape (LORE-229)",
+      () => {
+        // A discovered display path is derived from a real filesystem name — on POSIX that name may
+        // itself carry a newline or ESC byte. Both text renderers must neutralize it before
+        // interpolating, mirroring query.ts's sanitizeField (LORE-118).
+        const evilName = "evil\n\x1b[31mline.md";
+        writeFileSync(join(root, "docs", evilName), "x");
+        for (const mode of ["plain", "pretty"] as const) {
+          const stdout = capture();
+          runReplace({
+            root,
+            output: { mode, color: false },
+            args: ["x", "y", "--dry-run"],
+            stdout,
+            stderr: capture(),
+          });
+          const text = stdout.text();
+          expect(text).not.toContain("\x1b"); // no raw ESC byte reaches the rendered report
+          // The exact rendered text: one sanitized per-file line + one trailing summary line — the
+          // embedded newline in the filename must not have smuggled an extra line break into the
+          // report, and the ANSI escape must be gone entirely (not merely defanged).
+          expect(text).toBe("would replace 1 in docs/evil line.md\n1 match in 1 of 1 file (dry-run)\n");
+        }
+      },
+    );
 
-    test("the --json envelope carries the raw, unsanitized path unchanged (LORE-229)", () => {
-      // JSON string serialization already escapes control characters, so the raw discovered path
-      // (newline and ESC intact) is the correct, unsanitized payload here — only the text
-      // renderers sanitize.
-      const evilName = "evil\n\x1b[31mline.md";
-      writeFileSync(join(root, "docs", evilName), "x");
-      const { report } = replaceCmd(["x", "y", "--dry-run"]);
-      expect(report.files).toEqual([{ path: `docs/${evilName}`, count: 1 }]);
-    });
+    // Same Windows-illegal fixture (newline + ESC in the filename) as the sibling test above — cannot
+    // be created on win32, so skip there (LORE-252); the JSON raw-path behavior stays covered on POSIX.
+    test.skipIf(process.platform === "win32")(
+      "the --json envelope carries the raw, unsanitized path unchanged (LORE-229)",
+      () => {
+        // JSON string serialization already escapes control characters, so the raw discovered path
+        // (newline and ESC intact) is the correct, unsanitized payload here — only the text
+        // renderers sanitize.
+        const evilName = "evil\n\x1b[31mline.md";
+        writeFileSync(join(root, "docs", evilName), "x");
+        const { report } = replaceCmd(["x", "y", "--dry-run"]);
+        expect(report.files).toEqual([{ path: `docs/${evilName}`, count: 1 }]);
+      },
+    );
   });
 
   describe("lore replace — usage errors", () => {
@@ -852,20 +865,30 @@ describe("writeFileAtomic", () => {
 
   test("LORE-231: a mid-write failure AFTER the temp file was created leaves no `.lore-sync-tmp-*` litter", () => {
     // Unlike the regression test above (a write failure BEFORE any temp file exists), this simulates
-    // the disk-full/EIO shape: the temp file's `openSync` succeeds (the directory entry is genuinely
-    // allocated), and the failure happens on the write that follows -- standing in for `writeFileSync`
-    // creating the file and then failing partway through (ENOSPC/EDQUOT/EIO), which the pre-fix code
-    // left as a stray `.lore-sync-tmp-*` file because its cleanup guard was only set after the whole
-    // write returned. Mirrors test/fswrite.test.ts's identical `writeFileNoFollow` mid-write probe.
-    const spy = spyOn(fs, "writeSync").mockImplementation(() => {
-      throw new Error("simulated mid-write ENOSPC");
+    // the disk-full/EIO shape: the temp file's exclusive `wx` create succeeds (the directory entry is
+    // genuinely allocated and tmpFileExists flips), and the failure happens on the separate byte-write
+    // that follows (ENOSPC/EDQUOT/EIO) -- which the pre-fix code left as a stray `.lore-sync-tmp-*`
+    // file because its cleanup guard was only set after the whole write returned. writeFileAtomic now
+    // does both phases via `fs.writeFileSync` (LORE-252, Windows-safe), so the spy lets the `wx` create
+    // through and throws only on the `flag: "w"` byte-write. Mirrors test/fswrite.test.ts's identical
+    // `writeFileNoFollow` mid-write probe.
+    const realWriteFileSync = fs.writeFileSync.bind(fs);
+    // biome-ignore lint/suspicious/noExplicitAny: writeFileSync's overload set collapses to `any[]` under mockImplementation's contravariant param check
+    const spy = spyOn(fs, "writeFileSync").mockImplementation((...args: any[]) => {
+      const opts = args[2];
+      const flag = typeof opts === "object" && opts !== null ? opts.flag : opts;
+      if (flag === "wx") {
+        // biome-ignore lint/suspicious/noExplicitAny: forwarding to the real writeFileSync overload set
+        return (realWriteFileSync as any)(...args); // let the exclusive create succeed so tmpFileExists flips
+      }
+      throw new Error("simulated mid-write ENOSPC"); // fail the byte-write that follows
     });
     try {
       expect(() => writeFileAtomic(join(dir, "f.md"), "hello", "f.md")).toThrow(); // the failure surfaces rather than being silently swallowed
     } finally {
       spy.mockRestore();
     }
-    // The temp file the (real) openSync created is cleaned up -- the directory is left exactly as
+    // The temp file the (real) `wx` create made is cleaned up -- the directory is left exactly as
     // it was before the call, no `.lore-sync-tmp-*` litter survives the failure.
     expect(readdirSync(dir).filter((f) => f.startsWith(".lore-sync-tmp"))).toEqual([]);
   });
