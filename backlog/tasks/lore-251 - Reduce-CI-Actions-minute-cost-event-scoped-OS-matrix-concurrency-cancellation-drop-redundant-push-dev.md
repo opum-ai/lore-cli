@@ -3,11 +3,11 @@ id: LORE-251
 title: >-
   Reduce CI Actions minute cost: event-scoped OS matrix, concurrency
   cancellation, drop redundant push:dev
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-24 03:13'
-updated_date: '2026-07-24 03:14'
+updated_date: '2026-07-24 03:25'
 labels:
   - build-ci-config
 dependencies: []
@@ -56,13 +56,13 @@ Config-only change to `.github/workflows/ci.yml` (plus, if needed, small notes).
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The macOS (10x-billed) 'check' test leg no longer runs on pull_request events; it runs only on push to main and manual workflow_dispatch. ubuntu-latest and windows-latest still run 'check' on every pull_request.
-- [ ] #2 A top-level concurrency group with cancel-in-progress: true, keyed per PR head-ref / ref, is present so superseded runs on the same branch are auto-cancelled.
-- [ ] #3 The push trigger no longer includes dev (main only), so a squash-merge to dev does not re-run CI on bytes the PR already verified; pull_request still runs full CI pre-merge.
-- [ ] #4 push is paths-ignore'd for docs/metadata-only changes (**/*.md, docs/**, backlog/**, .claude/**). pull_request is intentionally left unfiltered so the docker-e2e required check (LORE-196) always reports and cannot deadlock a PR.
-- [ ] #5 The docker-e2e job's check-run context name is unchanged ('docker e2e harness (real lore + backlog binaries)') and it still runs on every pull_request, preserving LORE-196's required-check plan.
-- [ ] #6 Every job declares an explicit timeout-minutes (no job inherits the 360-minute default).
-- [ ] #7 actionlint passes on the modified workflow, and the computed matrix resolves to [ubuntu,windows] for pull_request and [ubuntu,windows,macos] for push/workflow_dispatch.
+- [x] #1 The macOS (10x-billed) 'check' test leg no longer runs on pull_request events; it runs only on push to main and manual workflow_dispatch. ubuntu-latest and windows-latest still run 'check' on every pull_request.
+- [x] #2 A top-level concurrency group with cancel-in-progress: true, keyed per PR head-ref / ref, is present so superseded runs on the same branch are auto-cancelled.
+- [x] #3 The push trigger no longer includes dev (main only), so a squash-merge to dev does not re-run CI on bytes the PR already verified; pull_request still runs full CI pre-merge.
+- [x] #4 push is paths-ignore'd for docs/metadata-only changes (**/*.md, docs/**, backlog/**, .claude/**). pull_request is intentionally left unfiltered so the docker-e2e required check (LORE-196) always reports and cannot deadlock a PR.
+- [x] #5 The docker-e2e job's check-run context name is unchanged ('docker e2e harness (real lore + backlog binaries)') and it still runs on every pull_request, preserving LORE-196's required-check plan.
+- [x] #6 Every job declares an explicit timeout-minutes (no job inherits the 360-minute default).
+- [x] #7 actionlint passes on the modified workflow, and the computed matrix resolves to [ubuntu,windows] for pull_request and [ubuntu,windows,macos] for push/workflow_dispatch.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -76,3 +76,45 @@ Config-only change to `.github/workflows/ci.yml` (plus, if needed, small notes).
 6. Validate: actionlint on ci.yml; reason through matrix resolution per event (AC7). Cannot rely on live CI (billing-halt) — validate statically.
 7. Adversarial review (Fable/codex) of the diff; fix findings; then check ACs + final summary.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+## Verification (2026-07-23)
+
+Live CI could not be used to verify — GitHub Actions is halted account-wide on a billing spending-limit failure (see LORE-196 notes). Verified statically instead:
+
+- `actionlint 1.7.12` clean on the modified `.github/workflows/ci.yml` (exit 0).
+- resolve-matrix logic executed locally for each event: pull_request -> `["ubuntu-latest","windows-latest"]`; push & workflow_dispatch -> `["ubuntu-latest","windows-latest","macos-latest"]` (both valid JSON arrays parseable by fromJSON). Proves AC1/AC7.
+- YAML parse confirms: `on.push.branches=['main']`, `push.paths-ignore=['**/*.md','docs/**','backlog/**','.claude/**']`, `pull_request` unfiltered, `workflow_dispatch` present, top-level `concurrency`. Proves AC3/AC4/AC2.
+- `docker-e2e` job `name:` byte-identical to dev's (`diff` IDENTICAL) and the job has no event/path gating -> runs on every pull_request. Proves AC5.
+- 6 jobs, each with explicit `timeout-minutes` (5/20/15/15/20/45). Proves AC6.
+- `lore check` clean (38 files, 0 errors, 0 warnings) after the runbook edit.
+
+## Adversarial review
+
+Two independent reviewers ran on commit 88eb8eb:
+
+- Fable (GHA-semantics skeptic): **approve, 0 blocking**. Verified actionlint, branch-protection APIs (404/no rulesets), docker-e2e name byte-compare, release.yml interplay.
+- Codex gpt-5.6-sol (xhigh): 2 findings, no blocking correctness bug.
+
+Both independently flagged the concurrency key. Addressed in commit f41cbd6:
+- Key PR runs by `github.event.pull_request.number` (unique) instead of `github.head_ref` (collides across two-base / fork PRs, could cancel an unrelated PR's required docker-e2e check).
+- Gate `cancel-in-progress` to `pull_request` events only, so a main-integration push or manual full-matrix dispatch is never cancelled and keeps its green status.
+- Codex P3: synced `docs/runbooks/docker-e2e-testing-environment.md` ('pushes to dev/main' -> 'pushes to main') via `lore replace`.
+
+## Accepted tradeoffs (from review, deliberately not changed)
+
+- Dropping `push: dev` means a direct code push straight to `dev` (no PR) now gets zero CI; a PR that went stale against dev is only integration-verified at the next dev->main ff-push. Bounded: the repo pushes only metadata (backlog commits) directly to dev, and the merge-queue does rebase+re-verify. This is the intended cost saving, not a regression.
+- `push` paths-ignore only skips *re-verification* of docs/backlog bytes the unfiltered `pull_request` leg already verified pre-merge; it never skips first verification.
+
+## Forward caveat recorded on LORE-196
+
+Only the ubuntu/windows `check` legs and `docker-e2e` are eligible *required* status-check contexts. `check (macos-latest)` must NOT be marked required — it doesn't materialize on `pull_request` and would deadlock every PR. (A skipped `resolve-matrix` also satisfies a required check, so if a `check` leg is ever made required, make `resolve test matrix` required too.)
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Restructured .github/workflows/ci.yml to cut billed Actions minutes: event-scoped OS matrix (macOS 10x leg off the per-PR path via a resolve-matrix job), top-level concurrency with PR-scoped cancel-in-progress, push trigger [dev,main]->[main] to drop redundant post-merge runs, and docs/backlog paths-ignore on push (pull_request left unfiltered to keep the docker-e2e required check from deadlocking). docker-e2e name + per-PR run preserved (LORE-196). All 7 ACs verified statically (actionlint clean, resolve-matrix simulated per event, YAML parsed) since live CI is billing-halted; Fable review approve/0-blocking + Codex gpt-5.6 both passed, their shared concurrency-key finding fixed. Estimated ~40-50% off a typical run's weighted minutes.
+<!-- SECTION:FINAL_SUMMARY:END -->
