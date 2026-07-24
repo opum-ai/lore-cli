@@ -2,20 +2,71 @@ name: CI
 
 on:
   push:
-    branches: [dev, main]
+    # Was [dev, main]. `dev` dropped deliberately (LORE-251): every change reaches
+    # dev through a PR that already runs full CI pre-merge, so the post-merge dev
+    # push just re-ran the identical bytes (444 redundant runs in the last
+    # campaign). `main` stays as the cross-OS + e2e integration checkpoint
+    # (dev is fast-forwarded onto main).
+    branches: [main]
+    # Docs/metadata-only pushes to main don't need the compute pipeline. NOTE:
+    # applied to `push` ONLY — `pull_request` is intentionally left unfiltered
+    # below (see its comment) so a required status check can never be skipped
+    # into a permanent "pending" that deadlocks a PR.
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "backlog/**"
+      - ".claude/**"
   # Unfiltered so PRs to dev (and stacked feature-branch PRs) all get CI.
+  # Deliberately NOT paths-ignore'd: the docker-e2e job is slated to become a
+  # required status check (LORE-196), and a workflow skipped by a path filter
+  # leaves its required checks permanently pending, blocking the merge. The
+  # per-PR matrix is ubuntu+windows only (macOS is push/dispatch-gated below),
+  # so an all-docs PR still runs cheaply rather than being skipped.
   pull_request:
+  # Manual full-matrix run (includes the 10x-billed macOS leg) on demand.
+  workflow_dispatch:
+
+# Cancel superseded in-flight runs on the same PR branch / ref. Rapid review
+# fix-up pushes and wave-merge activity previously ran every superseded pipeline
+# (including the 10x macOS leg and the docker-e2e cold build) to completion.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
+  # Resolve the test-matrix OS list by event. Pull requests verify on
+  # ubuntu-latest + windows-latest (the OSes this codebase's path/FS handling
+  # actually breaks on); macOS — billed at 10x Linux and ~half the per-run cost
+  # for ~40s of work — is added only on push-to-main integration and manual
+  # dispatch, not on every PR update or dev push (LORE-251).
+  resolve-matrix:
+    name: resolve test matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      os: ${{ steps.pick.outputs.os }}
+    steps:
+      - id: pick
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo 'os=["ubuntu-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'os=["ubuntu-latest","windows-latest","macos-latest"]' >> "$GITHUB_OUTPUT"
+          fi
+
   check:
     name: "lint · typecheck · test (${{ matrix.os }})"
+    needs: resolve-matrix
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(needs.resolve-matrix.outputs.os) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -36,6 +87,7 @@ jobs:
   build:
     name: compile smoke (ubuntu)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/setup-bun
@@ -68,6 +120,7 @@ jobs:
   scaffold-mkdocs:
     name: mkdocs scaffold smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/setup-bun
@@ -91,6 +144,7 @@ jobs:
   scaffold-docusaurus:
     name: docusaurus scaffold smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/setup-bun
@@ -117,13 +171,19 @@ jobs:
   docker-e2e:
     name: docker e2e harness (real lore + backlog binaries)
     runs-on: ubuntu-latest
+    # Intentionally runs on every pull_request (no event/paths gating): this job is
+    # slated to be the required merge-gate status check (LORE-196), so it must report
+    # on every PR. Its check-run context name above must stay byte-identical to the
+    # string a human selects in branch protection — do not rename it.
+    #
     # A full cold build (Backlog.md clone + build, lore compile, apt/pip/npm installs) plus
     # ~300 real-binary assertions is bounded well below the 360m default so a genuinely hung
     # step (e.g. a stalled network fetch) fails fast instead of silently eating the whole
     # job-timeout budget. 45m (not 30m): this has never been measured on an actual GH-hosted
     # 2-core ubuntu runner -- every run here is a full cold build with no docker layer cache,
     # so local/dev-machine timing doesn't transfer. Re-tighten once real runner timing is
-    # observed.
+    # observed. (Measured ~5m on GH runners as of 2026-07; a buildx layer cache is a
+    # deferred follow-up per LORE-251.)
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0

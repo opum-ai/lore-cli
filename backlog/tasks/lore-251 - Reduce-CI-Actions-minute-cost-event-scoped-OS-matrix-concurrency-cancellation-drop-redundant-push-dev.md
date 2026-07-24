@@ -3,9 +3,11 @@ id: LORE-251
 title: >-
   Reduce CI Actions minute cost: event-scoped OS matrix, concurrency
   cancellation, drop redundant push:dev
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-07-24 03:13'
+updated_date: '2026-07-24 03:14'
 labels:
   - build-ci-config
 dependencies: []
@@ -62,3 +64,15 @@ Config-only change to `.github/workflows/ci.yml` (plus, if needed, small notes).
 - [ ] #6 Every job declares an explicit timeout-minutes (no job inherits the 360-minute default).
 - [ ] #7 actionlint passes on the modified workflow, and the computed matrix resolves to [ubuntu,windows] for pull_request and [ubuntu,windows,macos] for push/workflow_dispatch.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add top-level concurrency { group: workflow-headref/ref, cancel-in-progress: true } (AC2).
+2. Triggers: on.push.branches [dev,main]->[main] + paths-ignore (**/*.md, docs/**, backlog/**, .claude/**); keep pull_request UNFILTERED; add workflow_dispatch (AC3/AC4).
+3. New 'resolve-matrix' ubuntu job: emit os=[ubuntu,windows] for pull_request, [ubuntu,windows,macos] otherwise; 'check' consumes fromJSON(needs.resolve-matrix.outputs.os) so macOS (10x) is off the per-PR path (AC1/AC7).
+4. Add explicit timeout-minutes to every job incl. the new resolve-matrix (AC6).
+5. Leave docker-e2e job name + its unconditional pull_request run untouched (AC5).
+6. Validate: actionlint on ci.yml; reason through matrix resolution per event (AC7). Cannot rely on live CI (billing-halt) — validate statically.
+7. Adversarial review (Fable/codex) of the diff; fix findings; then check ACs + final summary.
+<!-- SECTION:PLAN:END -->
