@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-23 14:08'
-updated_date: '2026-07-24 01:10'
+updated_date: '2026-07-24 03:26'
 labels:
   - needs-human
   - repo-admin
@@ -117,4 +117,12 @@ gh api repos/jeremy-newhouse/lore/branches/dev/protection --jq '.required_status
 
 ### Cross-reference / secondary observation
 This billing outage also retroactively explains how round-3 `feature/*` branches merged with red CI: there is no branch protection (this task's raison d'etre), so red/again-halted CI never blocked those merges. Once billing is restored, the broader question of enforcing the `check` matrix and other CI jobs (not just `docker-e2e`) is worth deciding in the same settings pass.
+
+## Required-check eligibility caveat (from LORE-251 review, 2026-07-23)
+
+LORE-251 (PR #241) made the CI test matrix event-scoped: on `pull_request` only `check (ubuntu-latest)` and `check (windows-latest)` run; `check (macos-latest)` runs only on push-to-main / workflow_dispatch. Consequence for THIS task when a human configures branch protection:
+
+- Eligible required-check contexts are ONLY: `docker e2e harness (real lore + backlog binaries)`, `lint · typecheck · test (ubuntu-latest)`, and `lint · typecheck · test (windows-latest)`.
+- Do NOT mark `lint · typecheck · test (macos-latest)` required — it never materializes on a pull_request and would leave every PR's required check permanently pending (deadlock).
+- Minor: a skipped `resolve test matrix` job also 'satisfies' a required check, so if any `check` leg is ever made required, make `resolve test matrix` required too. `docker-e2e` (the check this task actually plans to require) does not depend on resolve-matrix, so it is unaffected.
 <!-- SECTION:NOTES:END -->
