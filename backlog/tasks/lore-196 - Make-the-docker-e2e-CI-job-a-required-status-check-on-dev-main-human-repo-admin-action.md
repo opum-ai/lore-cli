@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-23 14:08'
+updated_date: '2026-07-24 01:10'
 labels:
   - needs-human
   - repo-admin
@@ -63,3 +64,57 @@ Provenance: follow-up flagged in LORE-100 (Done) and LORE-178 (Done); `backlog s
 - [ ] #4 The task notes record that the branch-protection / ruleset change itself was performed by a human repo-admin (or with explicit human sign-off), and that no autonomous agent toggled repo settings — the agent's contribution is limited to preparing and verifying (exact check name, green-baseline confirmation, drafting the decision).
 - [ ] #5 The exact required-check context string a human must add — `docker e2e harness (real lore + backlog binaries)` — is captured in the task (or linked decision) alongside the note that the repo currently has NO branch protection or ruleset, so protection/a ruleset must be created before the check can be marked required.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+---
+
+## Agent prep + verification (2026-07-23, read-only; nothing in repo settings was changed) [AC4]
+
+An agent performed the preparation/verification half of this task only. No branch protection, ruleset, or any GitHub setting was created or modified. The human repo-admin step (creating protection + selecting the required check, or recording a keep-advisory decision) is still outstanding.
+
+### Verified live (2026-07-23, viewerPermission=ADMIN token, read-only)
+- Repo `jeremy-newhouse/lore`, default branch `dev`.
+- `gh api repos/jeremy-newhouse/lore/branches/dev/protection` -> HTTP 404 "Branch not protected".
+- `gh api repos/jeremy-newhouse/lore/branches/main/protection` -> HTTP 404 "Branch not protected".
+- `gh api repos/jeremy-newhouse/lore/rulesets` -> `[]`.
+- `gh api .../branches` -> dev protected=false, main protected=false.
+- => The task's original observation still holds exactly: the repo has ZERO branch protection and ZERO rulesets on either branch, so protection/a ruleset must be CREATED before any check can be marked required.
+
+### Exact required-check context string [AC5]
+Confirmed against live `.github/workflows/ci.yml`:
+- Job id: `docker-e2e`.
+- Check-run / status-check CONTEXT STRING a human selects in the branch-protection UI: **`docker e2e harness (real lore + backlog binaries)`** (the job's `name:`). No `matrix` on this job, so the context is exactly that string with no `(os)` suffix.
+- Triggers: push to `[dev, main]` + unfiltered `pull_request`; runs-on `ubuntu-latest`.
+
+### AC3 green-baseline confirmation: BLOCKED — cannot be produced right now
+AC3 requires confirming a recent `docker-e2e` run on the target branch was GREEN before enforcement is enabled (so a red gate isn't flipped to required). **This is currently impossible, and the reason is NOT a code regression:**
+
+- The last 300 CI runs (workflow `ci.yml`), spanning **2026-07-22 17:11 UTC -> 2026-07-23 22:37 UTC (~29 h)**, are **100% failures — zero successes** — across `dev` and every `feature/*` branch.
+- On every run, all 7 jobs (the 3-OS `check` matrix, mkdocs/docusaurus/compile smokes, and `docker-e2e`) start and die within ~2-4 s having executed **0 steps**.
+- Root cause is a GitHub **billing / spending-limit halt at the account level**. The failure annotation on each check run states verbatim: *"The job was not started because recent account payments have failed or your spending limit needs to be increased. Please check the 'Billing & plans' section in your settings."*
+- Consequence: no `docker-e2e` run can go green — for any commit — until GitHub Actions billing is restored. Making `docker-e2e` (or any check) a REQUIRED status check while Actions is halted would **permanently block every merge**, because the required check can never report success.
+
+### Revised human-only prerequisite chain (in order)
+1. **[NEW, human, account billing]** Fix GitHub billing: update payment method / raise the Actions spending limit under Settings -> Billing & plans, so Actions jobs can start again. (This currently blocks ALL of CI on the whole repo, not just this task.)
+2. **[human]** Push (or re-run) a CI build on `dev`; confirm a real `docker-e2e` run is GREEN. Record its run id/URL.
+3. **[human, repo-admin]** For `dev` (and decide the same for `main`): create classic branch protection OR a repository ruleset, then add the required status check named `docker e2e harness (real lore + backlog binaries)`. OR record a deliberate keep-advisory decision with rationale (satisfies AC1/AC2 either way).
+4. **[verify]** `gh api repos/jeremy-newhouse/lore/branches/dev/protection` (or `.../rulesets`) lists that context under `required_status_checks`.
+
+### Ready-to-run reference for the human (make-required path, dev; classic protection)
+```
+# after billing is fixed AND a docker-e2e run on dev is confirmed green:
+gh api -X PUT repos/jeremy-newhouse/lore/branches/dev/protection \
+  -H "Accept: application/vnd.github+json" \
+  -f 'required_status_checks[strict]=true' \
+  -f 'required_status_checks[contexts][]=docker e2e harness (real lore + backlog binaries)' \
+  -F 'enforce_admins=null' -F 'required_pull_request_reviews=null' -F 'restrictions=null'
+# verify:
+gh api repos/jeremy-newhouse/lore/branches/dev/protection --jq '.required_status_checks.contexts'
+```
+(Prefer the GitHub web UI Settings -> Branches -> Add rule if you want to also configure PR-review requirements at the same time. Whoever runs this is the human repo-admin performing the toggle per AC4 — the agent did not and must not run it.)
+
+### Cross-reference / secondary observation
+This billing outage also retroactively explains how round-3 `feature/*` branches merged with red CI: there is no branch protection (this task's raison d'etre), so red/again-halted CI never blocked those merges. Once billing is restored, the broader question of enforcing the `check` matrix and other CI jobs (not just `docker-e2e`) is worth deciding in the same settings pass.
+<!-- SECTION:NOTES:END -->
