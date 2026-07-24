@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-24 18:40'
+updated_date: '2026-07-24 22:01'
 labels:
   - adapter-backlog
   - release
@@ -44,3 +45,14 @@ docs/runbooks/backlog-json-patch.md section 8.1; docs/runbooks/release-publishin
 - [ ] #4 docs/runbooks/backlog-json-patch.md and README present the published-package install path as primary; the superseded fork/build-from-source content is clearly demoted or removed.
 - [ ] #5 Full test suite and docker-e2e are green against the real released --json backlog.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+## Related workflow gap surfaced during local testing (2026-07-24)
+
+'backlog task create' has no machine-readable id output: the upstream --json PR (#790) added JSON only to the READ commands (task list / view / search), NOT to create. So the create->link round-trip (e.g. lore's own e2e and any 'create a task then couple it to a Story' flow) must fall back to 'backlog task list --json | .tasks[0].id', which is fragile on a bundle that already has tasks (the newest isn't reliably first). Two possible fixes to weigh when this migration lands:
+- Upstream: request/track 'backlog task create --json' (emit the created id) — the clean fix, belongs with the adapter migration.
+- lore-side convenience: a 'lore link --create-task "<title>"' (or 'lore new task') that creates the backlog task AND couples it in one step, so the id never has to be round-tripped by the caller.
+Not blocking this task; captured here so it is considered alongside the version-floor/adapter work rather than lost.
+<!-- SECTION:NOTES:END -->
