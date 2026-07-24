@@ -2,20 +2,64 @@ name: CI
 
 on:
   push:
-    branches: [dev, main]
+    # Was [dev, main]. `dev` dropped deliberately (LORE-251): every change reaches
+    # dev through a PR that already runs full CI pre-merge, so the post-merge dev
+    # push just re-ran the identical bytes (444 redundant runs in the last
+    # campaign). `main` stays as the cross-OS + e2e integration checkpoint
+    # (dev is fast-forwarded onto main).
+    branches: [main]
+    # Docs/metadata-only pushes to main don't need the compute pipeline. NOTE:
+    # applied to `push` ONLY — `pull_request` is intentionally left unfiltered
+    # below (see its comment) so a required status check can never be skipped
+    # into a permanent "pending" that deadlocks a PR.
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "backlog/**"
+      - ".claude/**"
   # Unfiltered so PRs to dev (and stacked feature-branch PRs) all get CI.
+  # Deliberately NOT paths-ignore'd: the docker-e2e job is slated to become a
+  # required status check (LORE-196), and a workflow skipped by a path filter
+  # leaves its required checks permanently pending, blocking the merge. The
+  # per-PR matrix is ubuntu+windows only (macOS is push/dispatch-gated below),
+  # so an all-docs PR still runs cheaply rather than being skipped.
   pull_request:
+  # Manual full-matrix run (includes the 10x-billed macOS leg) on demand.
+  workflow_dispatch:
+
+# Cancel superseded in-flight PR runs so rapid review fix-up pushes stop instead
+# of running the whole pipeline (10x macOS leg + docker-e2e cold build) to
+# completion. Key PR runs by PR NUMBER (unique — the same branch name PR'd to two
+# bases or arriving from a fork can't collide into one group). push and
+# workflow_dispatch fall back to the unique run_id, so every push/dispatch run
+# gets its OWN group: it is never grouped with — hence never cancelled by, nor
+# left pending-then-superseded behind — another push or dispatch. (GitHub cancels
+# a *queued* run in a shared group even when cancel-in-progress is false, so a
+# per-ref key could drop a main-integration SHA's run; a per-run key can't.) A
+# main-integration run and a manual full-matrix dispatch therefore always run to
+# completion; cancel-in-progress only ever applies to PR runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
   check:
+    # OS list is computed inline by event: pull requests verify on ubuntu + windows
+    # (the OSes this codebase's path/FS handling actually breaks on); macOS — billed
+    # at 10x Linux and ~half a run's cost for ~40s of work — is added only on a
+    # push (integration to main) or a manual workflow_dispatch, never on a PR
+    # (LORE-251). Done as an inline fromJSON expression, NOT a needs: setup job, so
+    # no upstream job can fail/skip and silently drop these (soon-to-be-required,
+    # LORE-196) legs.
     name: "lint · typecheck · test (${{ matrix.os }})"
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest","windows-latest","macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -36,6 +80,7 @@ jobs:
   build:
     name: compile smoke (ubuntu)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/setup-bun
@@ -68,6 +113,7 @@ jobs:
   scaffold-mkdocs:
     name: mkdocs scaffold smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/setup-bun
@@ -91,6 +137,7 @@ jobs:
   scaffold-docusaurus:
     name: docusaurus scaffold smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/setup-bun
@@ -117,14 +164,18 @@ jobs:
   docker-e2e:
     name: docker e2e harness (real lore + backlog binaries)
     runs-on: ubuntu-latest
+    # Intentionally runs on every pull_request (no event/paths gating): this job is
+    # slated to be the required merge-gate status check (LORE-196), so it must report
+    # on every PR. Its check-run context name above must stay byte-identical to the
+    # string a human selects in branch protection — do not rename it.
+    #
     # A full cold build (Backlog.md clone + build, lore compile, apt/pip/npm installs) plus
-    # ~300 real-binary assertions is bounded well below the 360m default so a genuinely hung
-    # step (e.g. a stalled network fetch) fails fast instead of silently eating the whole
-    # job-timeout budget. 45m (not 30m): this has never been measured on an actual GH-hosted
-    # 2-core ubuntu runner -- every run here is a full cold build with no docker layer cache,
-    # so local/dev-machine timing doesn't transfer. Re-tighten once real runner timing is
-    # observed.
-    timeout-minutes: 45
+    # ~300 real-binary assertions measured ~5m on GH-hosted 2-core ubuntu runners (2026-07,
+    # no docker layer cache). 20m bounds a genuinely hung step (e.g. a stalled network fetch)
+    # at ~4x the observed cold build — ample for network variance yet failing far faster than
+    # the 360m default (and the earlier unmeasured 45m guess). A docker layer cache is a
+    # deferred follow-up (LORE-251).
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       # The ~1500-line hermetic E2E harness under docker/e2e/ (LORE-56..68) builds real `lore`
