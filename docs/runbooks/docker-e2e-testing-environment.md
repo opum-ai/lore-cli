@@ -31,7 +31,7 @@ JSON-only, fail-loud design. LORE-56 first ran this and found four real defects
 ## CI gate (required, since LORE-100)
 
 This harness is no longer local-only. `.github/workflows/ci.yml` runs it as the `docker-e2e` job
-on every PR and on pushes to `dev`/`main`, invoking the same compose file and harness as the
+on every PR and on pushes to `main`, invoking the same compose file and harness as the
 manual steps below as `PUID="$(id -u)" PGID="$(id -g)" docker compose -f
 docker/e2e/docker-compose.yml up --build --exit-code-from e2e` — the extra `--exit-code-from e2e`
 and `PUID`/`PGID` are CI-specific (see `ci.yml`'s inline comments: `--exit-code-from` is required

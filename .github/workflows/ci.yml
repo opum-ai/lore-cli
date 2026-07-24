@@ -27,12 +27,17 @@ on:
   # Manual full-matrix run (includes the 10x-billed macOS leg) on demand.
   workflow_dispatch:
 
-# Cancel superseded in-flight runs on the same PR branch / ref. Rapid review
-# fix-up pushes and wave-merge activity previously ran every superseded pipeline
-# (including the 10x macOS leg and the docker-e2e cold build) to completion.
+# Cancel superseded in-flight PR runs so rapid review fix-up pushes stop instead
+# of running the whole pipeline (10x macOS leg + docker-e2e cold build) to
+# completion. Key PR runs by PR NUMBER — unique, so the same branch name PR'd to
+# two bases or arriving from different forks can't collide into one group and
+# cancel an unrelated PR's (possibly required) docker-e2e check. push/dispatch
+# key by ref. Only PR runs are cancellable: a main-integration push or a manual
+# full-matrix dispatch must keep running so its green status stays intact for a
+# would-be required check.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
