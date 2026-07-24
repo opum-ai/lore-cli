@@ -364,18 +364,24 @@ describe("lore query — command", () => {
     expect(text).toContain("note red end");
   });
 
-  test("plain mode strips an ANSI escape sequence embedded in a hit's id (LORE-158)", () => {
-    // Unlike `type`/`summary`, `concept.id` derives straight from the file's relative
-    // path (idFromPath just POSIX-normalizes and strips `.md`) — and POSIX filenames
-    // may contain a raw ESC byte, so a crafted bundle path is a real path to a
-    // control-byte-laden `hit.id`, distinct from the frontmatter-sourced fields above.
-    writeDoc("ansi-id/hack\x1b[31mident.md", "---\ntype: Widget\n---\nBody mentions archive.\n");
-    const stdout = capture();
-    runQuery({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: ["archive"] });
-    const text = stdout.text();
-    expect(text).not.toContain("\x1b");
-    expect(text).toContain("ansi-id/hackident");
-  });
+  // Windows forbids control characters (here, a raw ESC byte) in filenames, so this fixture cannot be
+  // created there — `writeDoc` ENOENTs at setup (LORE-252). The id-sanitization behavior under test is
+  // platform-independent and stays fully covered on POSIX; skip only the impossible fixture on win32.
+  test.skipIf(process.platform === "win32")(
+    "plain mode strips an ANSI escape sequence embedded in a hit's id (LORE-158)",
+    () => {
+      // Unlike `type`/`summary`, `concept.id` derives straight from the file's relative
+      // path (idFromPath just POSIX-normalizes and strips `.md`) — and POSIX filenames
+      // may contain a raw ESC byte, so a crafted bundle path is a real path to a
+      // control-byte-laden `hit.id`, distinct from the frontmatter-sourced fields above.
+      writeDoc("ansi-id/hack\x1b[31mident.md", "---\ntype: Widget\n---\nBody mentions archive.\n");
+      const stdout = capture();
+      runQuery({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: ["archive"] });
+      const text = stdout.text();
+      expect(text).not.toContain("\x1b");
+      expect(text).toContain("ansi-id/hackident");
+    },
+  );
 
   test("`--` ends option parsing so a following dash-token is the search text", () => {
     writeMixedBundle();

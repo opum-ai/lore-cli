@@ -31,12 +31,9 @@
 import {
   chmodSync,
   chownSync,
-  closeSync,
-  constants,
   existsSync,
   lstatSync,
   mkdirSync,
-  openSync,
   readFileSync,
   renameSync,
   rmdirSync,
@@ -44,7 +41,6 @@ import {
   statSync,
   unlinkSync,
   writeFileSync,
-  writeSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { errnoCode, LoreError } from "../errors";
@@ -221,16 +217,27 @@ export function writeFileOverwriting(absPath: string, contents: string, relPath:
  * ever used to conditionally apply preservation, never to gate or fail the write itself, so that
  * case falls through to plain default-umask behavior exactly as before this fix.
  *
- * The temp file itself is created via an `O_CREAT | O_EXCL` `openSync` — rather than a single
- * `writeFileSync(tmpPath, contents)` call — with `tmpFileExists` set to `true` the instant that
- * open returns, mirroring {@link writeFileNoFollow}'s identical discipline (LORE-231). A plain
- * `writeFileSync` both creates AND writes the temp file in one call, so a failure partway through
- * that single call (e.g. `ENOSPC`/`EDQUOT`/`EIO` after the directory entry is allocated but before
- * every byte lands) left the file on disk with `tmpFileExists` still `false` — the catch block's
- * cleanup below was skipped, leaking a stray `.lore-sync-tmp-*` file. Splitting create-then-write
- * into two steps means the guard is set the moment the temp file provably exists, so a failure
- * during the write step (via {@link writeAllBytes}'s `writeSync` loop) is now cleaned up exactly
- * like a failure anywhere else after that point already was.
+ * The temp file itself is created with an EXCLUSIVE `writeFileSync(tmpPath, "", { flag: "wx" })`
+ * (`wx` == `O_CREAT | O_EXCL`) — rather than a single `writeFileSync(tmpPath, contents)` call — with
+ * `tmpFileExists` set to `true` the instant that create returns, mirroring {@link writeFileNoFollow}'s
+ * identical discipline (LORE-231). A single `writeFileSync(tmpPath, contents)` both creates AND writes
+ * the temp file in one call, so a failure partway through that single call (e.g. `ENOSPC`/`EDQUOT`/`EIO`
+ * after the directory entry is allocated but before every byte lands) left the file on disk with
+ * `tmpFileExists` still `false` — the catch block's cleanup below was skipped, leaking a stray
+ * `.lore-sync-tmp-*` file. Splitting create-then-write into two steps (an empty exclusive `wx` create,
+ * then a separate `flag: "w"` byte-write) means the guard is set the moment the temp file provably,
+ * exclusively exists, so a failure during the write step is now cleaned up exactly like a failure
+ * anywhere else after that point already was.
+ *
+ * The primitive is `writeFileSync({ flag: "wx" })`, NOT a numeric-flag `openSync(O_CREAT|O_EXCL)`,
+ * for a Windows-portability reason (LORE-252): Bun on Windows spuriously throws `ENOENT` from that
+ * `openSync` path even when the parent directory provably exists (`ensureDir` just created it),
+ * breaking `lore agents`/`sync`/`replace`/`schema export`/`scaffold --force`. The `wx` `writeFileSync`
+ * carries the same exclusive-create semantics (fail with `EEXIST` if the name already exists) and is
+ * proven to work on Bun/Windows — {@link createIfAbsent} above relies on the identical primitive.
+ * Because `writeFileSync` loops on a short write internally (the very behavior {@link writeAllBytes}
+ * mirrors), the temp write no longer routes through `writeAllBytes`; that helper stays exported and
+ * unit-tested standalone.
  */
 export function writeFileAtomic(absPath: string, contents: string, relPath: string): void {
   const tmpPath = join(dirname(absPath), `.lore-sync-tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
@@ -247,27 +254,21 @@ export function writeFileAtomic(absPath: string, contents: string, relPath: stri
     } catch {
       destStat = null;
     }
-    let fd: number;
+    // LORE-252: exclusively create an EMPTY temp file first (the LORE-231 two-phase split), then
+    // write its bytes in a separate call. The exclusive `wx` create sets the leak guard the instant
+    // the temp provably exists; the byte-write can then fail (ENOSPC/EDQUOT/EIO) and still be cleaned
+    // up by the catch below. `writeFileSync({flag:"wx"})` is used instead of a numeric-flag
+    // `openSync(O_CREAT|O_EXCL)` because Bun/Windows spuriously ENOENTs on that openSync path -- see
+    // this function's docstring. `wx` == O_CREAT|O_EXCL, so an EEXIST name collision still throws
+    // BEFORE `tmpFileExists` flips, so cleanup never unlinks a file this call did not create.
     try {
-      // 0o666 matches writeFileSync's own default creation mode -- unchanged from the prior
-      // single-call behavior, subject to the process umask exactly as before.
-      fd = openSync(tmpPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o666);
+      writeFileSync(tmpPath, "", { flag: "wx" });
     } catch (cause) {
       throw ioError(cause, relPath, "write file");
     }
-    tmpFileExists = true; // true the instant the temp file provably exists -- the open above created it
+    tmpFileExists = true; // true the instant the temp file provably, exclusively exists -- the wx create made it
     try {
-      writeAllBytes((b, offset, length) => writeSync(fd, b, offset, length), Buffer.from(contents, "utf8"));
-    } catch (cause) {
-      try {
-        closeSync(fd);
-      } catch {
-        // Best-effort cleanup; the write failure below is what's reported.
-      }
-      throw ioError(cause, relPath, "write file");
-    }
-    try {
-      closeSync(fd);
+      writeFileSync(tmpPath, Buffer.from(contents, "utf8"), { flag: "w" });
     } catch (cause) {
       throw ioError(cause, relPath, "write file");
     }
@@ -298,10 +299,11 @@ export function writeFileAtomic(absPath: string, contents: string, relPath: stri
         cleanupFailed = true;
       }
     }
-    // An `openSync` failure (e.g. EACCES on a read-only directory — the most common real-world
-    // trigger) never creates `tmpPath` at all, so cleanup is skipped above rather than attempted and
-    // its inevitable ENOENT misreported as "cleanup failed": the error below must never claim a temp
-    // file remains when none was ever created. `cause` may already be a LoreError here (the inner
+    // An exclusive-create failure (e.g. EACCES on a read-only directory — the most common real-world
+    // trigger, or an EEXIST name collision) never creates `tmpPath` at all, so cleanup is skipped
+    // above rather than attempted and its inevitable ENOENT misreported as "cleanup failed": the
+    // error below must never claim a temp file remains when none was ever created. `cause` may
+    // already be a LoreError here (the inner
     // catches above already classified it via `ioError`) -- reclassifying it a second time is a no-op
     // (`ioError` returns non-errno causes unchanged), matching `writeFileNoFollow`'s identical guard.
     const err = cause instanceof LoreError ? cause : ioError(cause, relPath, "write file");
@@ -712,8 +714,12 @@ export function writeAllBytes(write: (buf: Buffer, offset: number, length: numbe
  * ({@link writeFileOverwriting}'s other callers, e.g. `lore rename`/`supersede` (and `lore replace`,
  * via {@link writeFileAtomic}), write back over a concept file the bundle loader just read, and
  * that loader already skips symlinked files during its walk, so their target was never a symlink to
- * begin with). The temp file's own write loops on a short write via {@link writeAllBytes} rather
- * than trusting one `writeSync` call to consume the whole buffer.
+ * begin with). The temp file is exclusively created with `writeFileSync({ flag: "wx" })` and then
+ * written in a separate call, matching {@link writeFileAtomic}'s LORE-231 two-phase leak guard and
+ * its LORE-252 Windows-safe primitive (a numeric-flag `openSync(O_CREAT|O_EXCL)` spuriously ENOENTs
+ * on Bun/Windows) — see that function's docstring. The exclusive create is on the sibling `tmpPath`,
+ * never on `absPath`, so it does not weaken the destination symlink refusal above. `writeFileSync`
+ * loops on a short write internally, so the temp write no longer routes through {@link writeAllBytes}.
  */
 export function writeFileNoFollow(absPath: string, contents: string, relPath: string): void {
   let destStat: ReturnType<typeof lstatSync> | undefined;
@@ -734,25 +740,21 @@ export function writeFileNoFollow(absPath: string, contents: string, relPath: st
   const tmpPath = join(dirname(absPath), `.lore-nofollow-tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
   let tmpFileExists = false;
   try {
-    let fd: number;
+    // LORE-252: same Windows-safe two-phase temp create as writeFileAtomic (see its note). An empty
+    // exclusive `wx` create sets the LORE-231 leak guard the instant the temp provably, exclusively
+    // exists, then a separate `flag: "w"` byte-write fills it -- a mid-write failure still reaches
+    // the catch's unlinkSync cleanup. `writeFileSync({flag:"wx"})` replaces the numeric-flag
+    // `openSync(O_CREAT|O_EXCL)` that Bun/Windows spuriously ENOENTs on. The exclusive create is on
+    // the sibling tmpPath, so the destination symlink refusal above and the renameSync commit below
+    // (LORE-92/LORE-130) are untouched.
     try {
-      fd = openSync(tmpPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o666);
+      writeFileSync(tmpPath, "", { flag: "wx" });
     } catch (cause) {
       throw ioError(cause, relPath, "write file");
     }
     tmpFileExists = true;
     try {
-      writeAllBytes((b, offset, length) => writeSync(fd, b, offset, length), Buffer.from(contents, "utf8"));
-    } catch (cause) {
-      try {
-        closeSync(fd);
-      } catch {
-        // Best-effort cleanup; the write failure below is what's reported.
-      }
-      throw ioError(cause, relPath, "write file");
-    }
-    try {
-      closeSync(fd);
+      writeFileSync(tmpPath, Buffer.from(contents, "utf8"), { flag: "w" });
     } catch (cause) {
       throw ioError(cause, relPath, "write file");
     }

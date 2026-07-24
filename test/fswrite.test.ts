@@ -34,7 +34,8 @@
  * untouched, and a failure after it leaves the complete new bytes — never a partial mix. A real
  * SIGKILL mid-write isn't reproducible in a test, so — mirroring this same file's own
  * `writeManyAtomicOrRollback` tests and test/replace.test.ts's LORE-116 commit-phase test — these
- * inject a failure at the exact point a real kill would land (the low-level `writeSync` call) and
+ * inject a failure on the temp file's byte-write (the `flag: "w"` `writeFileSync`, letting the
+ * exclusive `wx` create through first — LORE-252's Windows-safe two-phase primitive) and
  * assert the destination is unaffected; the pre-existing symlink-refusal tests for `writeFileNoFollow`
  * (LORE-92, test/replace.test.ts) are unmodified and continue to prove that guarantee still holds.
  *
@@ -59,7 +60,7 @@
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 // A namespace import alongside the named one below: `spyOn` needs the module object itself to patch
-// `writeSync` in place, not the already-bound named export `writeFileNoFollow` calls internally —
+// `writeFileSync` in place, not the already-bound named export `writeFileNoFollow` calls internally —
 // mirrors test/replace.test.ts's identical `fs`-namespace-import comment for the same reason.
 import * as fs from "node:fs";
 import {
@@ -84,7 +85,11 @@ import {
 } from "../src/commands/fswrite";
 import { LoreError } from "../src/errors";
 
-describe("writeFileAtomic — mode preservation across overwrite (LORE-117)", () => {
+// Unix mode bits (0o640/0o600) are a POSIX concept: on Windows `chmodSync` only toggles the
+// read-only attribute and `statSync().mode & 0o777` never reflects group/other bits, so these
+// preservation assertions cannot hold there. Skip the whole suite on win32 (LORE-252); mode
+// preservation is meaningful — and fully covered — only on POSIX.
+describe.skipIf(process.platform === "win32")("writeFileAtomic — mode preservation across overwrite (LORE-117)", () => {
   let dir: string;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "lore-fswrite-mode-"));
@@ -266,7 +271,19 @@ describe("writeFileNoFollow — the --force overwrite path is crash-safe against
     const path = join(dir, "f.md");
     const original = "ORIGINAL COMPLETE CONTENT — must survive a mid-write failure untouched\n";
     writeFileSync(path, original);
-    const spy = spyOn(fs, "writeSync").mockImplementation(() => {
+    // writeFileNoFollow creates its temp via an exclusive `wx` writeFileSync and writes the bytes in
+    // a separate `flag: "w"` writeFileSync (LORE-231 two-phase split; LORE-252 Windows-safe primitive
+    // — a numeric-flag openSync spuriously ENOENTs on Bun/Windows). Let the exclusive create through
+    // (so the temp file genuinely exists) and inject the "kill" on the byte-write that follows.
+    const realWriteFileSync = fs.writeFileSync.bind(fs);
+    // biome-ignore lint/suspicious/noExplicitAny: writeFileSync's overload set collapses to `any[]` under mockImplementation's contravariant param check
+    const spy = spyOn(fs, "writeFileSync").mockImplementation((...args: any[]) => {
+      const opts = args[2];
+      const flag = typeof opts === "object" && opts !== null ? opts.flag : opts;
+      if (flag === "wx") {
+        // biome-ignore lint/suspicious/noExplicitAny: forwarding to the real writeFileSync overload set
+        return (realWriteFileSync as any)(...args);
+      }
       throw new Error("simulated crash mid-write");
     });
     try {
@@ -318,14 +335,19 @@ describe("writeFileNoFollow — the --force overwrite path is crash-safe against
     expect(readdirSync(dir)).toEqual(["f.md"]);
   });
 
-  test("mode is preserved across a force overwrite (mirrors writeFileAtomic's LORE-117 discipline -- the switch to temp+rename must not regress it)", () => {
-    const path = join(dir, "secret.md");
-    writeFileSync(path, "old");
-    chmodSync(path, 0o600);
-    writeFileNoFollow(path, "new", "secret.md");
-    expect(readFileSync(path, "utf8")).toBe("new");
-    expect(statSync(path).mode & 0o777).toBe(0o600);
-  });
+  // POSIX-only, same reason as the writeFileAtomic mode-preservation suite above: Windows has no
+  // Unix mode bits for statSync to report, so skip this mode assertion on win32 (LORE-252).
+  test.skipIf(process.platform === "win32")(
+    "mode is preserved across a force overwrite (mirrors writeFileAtomic's LORE-117 discipline -- the switch to temp+rename must not regress it)",
+    () => {
+      const path = join(dir, "secret.md");
+      writeFileSync(path, "old");
+      chmodSync(path, 0o600);
+      writeFileNoFollow(path, "new", "secret.md");
+      expect(readFileSync(path, "utf8")).toBe("new");
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+    },
+  );
 
   test("a fresh file (no prior destination) still succeeds via plain default-umask behavior", () => {
     const path = join(dir, "new-file.md");
