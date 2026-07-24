@@ -3,11 +3,11 @@ id: LORE-252
 title: >-
   Bun on Windows: writeFileAtomic/writeFileNoFollow openSync(O_CREAT|O_EXCL)
   throws ENOENT, breaking agents/sync/replace/schema/scaffold --force
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-24 17:20'
-updated_date: '2026-07-24 17:47'
+updated_date: '2026-07-24 17:54'
 labels:
   - build-ci-config
   - cross-platform
@@ -58,10 +58,10 @@ The fix can only be truly verified on Windows via a CI run (the windows-latest l
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The Windows-only 'ENOENT ... open .lore-sync-tmp-*/.lore-nofollow-tmp-*' failures in writeFileAtomic and writeFileNoFollow no longer occur, and the 'lint · typecheck · test (windows-latest)' CI leg is GREEN on the fix PR (verified via the check-run conclusion, run id/URL recorded).
-- [ ] #2 No regression on macOS/ubuntu: full 'bun test' passes, 'bun run typecheck' is clean, and 'bun run lint' (biome) stays green.
-- [ ] #3 The fix preserves each documented invariant of both functions, each still covered by its existing test: LORE-231 temp-leak guard (mid-write failure cleans up the temp file lore created; lore never unlinks a file it did not create), LORE-117 mode/ownership preservation, LORE-130/LORE-92 symlink safety in writeFileNoFollow, and per-file write-temp-then-rename atomicity.
-- [ ] #4 The Windows-incompatible openSync primitive is replaced by the cross-platform exclusive-create primitive in both writeFileAtomic and writeFileNoFollow, with a short in-code note explaining the Bun-Windows avoidance; task notes record the green Windows CI run as objective evidence.
+- [x] #1 The Windows-only 'ENOENT ... open .lore-sync-tmp-*/.lore-nofollow-tmp-*' failures in writeFileAtomic and writeFileNoFollow no longer occur, and the 'lint · typecheck · test (windows-latest)' CI leg is GREEN on the fix PR (verified via the check-run conclusion, run id/URL recorded).
+- [x] #2 No regression on macOS/ubuntu: full 'bun test' passes, 'bun run typecheck' is clean, and 'bun run lint' (biome) stays green.
+- [x] #3 The fix preserves each documented invariant of both functions, each still covered by its existing test: LORE-231 temp-leak guard (mid-write failure cleans up the temp file lore created; lore never unlinks a file it did not create), LORE-117 mode/ownership preservation, LORE-130/LORE-92 symlink safety in writeFileNoFollow, and per-file write-temp-then-rename atomicity.
+- [x] #4 The Windows-incompatible openSync primitive is replaced by the cross-platform exclusive-create primitive in both writeFileAtomic and writeFileNoFollow, with a short in-code note explaining the Bun-Windows avoidance; task notes record the green Windows CI run as objective evidence.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -94,3 +94,9 @@ Approach validated by a 4-agent research+trace+synthesize+adversarial workflow b
 
 **Local verification (macOS, AC#2):** bun run typecheck clean; bun run lint (biome, 109 files) clean; bun test = 2062 pass / 0 fail. The Windows-only fix (AC#1) can only be confirmed by the win32 CI leg on the PR — pending.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Fixed the Bun/Windows openSync(O_CREAT|O_EXCL) ENOENT in writeFileAtomic + writeFileNoFollow by switching both to a two-phase writeFileSync({flag:'wx'})+writeFileSync({flag:'w'}) temp create (the same exclusive-create primitive createIfAbsent uses, proven on Bun/Windows), preserving the LORE-231/117/130/92 invariants; re-pointed the failure-injection tests to fs.writeFileSync; and guarded the ~3 genuinely-POSIX-only failures (control-char/newline-in-filename sanitization fixtures LORE-158/229, Unix mode-preservation asserts LORE-117/130) with skipIf(win32), matching the repo's symlink-test pattern. VERIFIED: the 'lint · typecheck · test (windows-latest)' CI leg is GREEN for the first time ever (run 30114430122, job 89551515253 = pass, 1m7s) — the whole PR #242 CI was all-green incl. required docker-e2e; locally bun test 2062 pass / typecheck clean / biome clean. Merged to dev as 95b633f (rebase, PR #242). No macOS/ubuntu regression (both green in CI + local).
+<!-- SECTION:FINAL_SUMMARY:END -->
