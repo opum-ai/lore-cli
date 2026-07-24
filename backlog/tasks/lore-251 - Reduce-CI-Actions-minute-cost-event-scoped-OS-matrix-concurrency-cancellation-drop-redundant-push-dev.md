@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-24 03:13'
-updated_date: '2026-07-24 03:25'
+updated_date: '2026-07-24 12:23'
 labels:
   - build-ci-config
 dependencies: []
@@ -111,6 +111,24 @@ Both independently flagged the concurrency key. Addressed in commit f41cbd6:
 ## Forward caveat recorded on LORE-196
 
 Only the ubuntu/windows `check` legs and `docker-e2e` are eligible *required* status-check contexts. `check (macos-latest)` must NOT be marked required — it doesn't materialize on `pull_request` and would deadlock every PR. (A skipped `resolve-matrix` also satisfies a required check, so if a `check` leg is ever made required, make `resolve test matrix` required too.)
+
+## Code-review pass (/code-review max #241, 2026-07-24)
+
+Workflow-backed multi-agent review (6 finders + 13 verifiers): 12 verified findings, 0 refuted. Applied --fix:
+
+FIXED (8):
+- concurrency group fallback github.ref -> github.run_id, so push/workflow_dispatch runs each get a unique group and are never cancelled or left pending-then-superseded (GitHub cancels QUEUED runs in a shared group even with cancel-in-progress:false). Fixes the dispatch/push-collide and unprotected-pending-main-run findings.
+- Inlined the OS matrix as a fromJSON(event=='pull_request' ...) expression and DELETED the resolve-matrix job — removes the needs: dependency that could skip/deadlock the (soon-required) check legs, the redundant billed runner, and a stale 'dev push' comment. actionlint clean; resolves ubuntu+windows on PR, +macos on push/dispatch (unchanged behavior).
+- docker-e2e timeout 45m->20m (~4x the measured ~5m) and reconciled the self-contradicting comment.
+- Runbook: qualified the 'pushes to main' trigger line with the paths-ignore carve-out; fixed the '## CI gate (required, since LORE-100)' heading to 'not yet a *required* check — see LORE-196'.
+
+SKIPPED — intended tradeoffs (fixing would revert the cost saving / change AC intent):
+- macOS excluded from PR matrix (the point of the change; documented).
+- direct pushes to dev now run zero CI (accepted; PR-based flow + merge-queue re-verify).
+- push paths-ignore skips scaffold jobs on a docs-only *direct* main push (bounded by the same accepted direct-push tradeoff; PRs still run scaffolds).
+
+NO CHANGE NEEDED (1):
+- check (macos-latest) not a required-check-eligible context — no code fix possible without defeating the purpose; already documented in LORE-196's notes.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

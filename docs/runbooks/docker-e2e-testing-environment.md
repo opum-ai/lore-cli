@@ -28,10 +28,10 @@ calls. No mocking anywhere, matching [ADR-0002](../adr/0002-backlog-integration-
 JSON-only, fail-loud design. LORE-56 first ran this and found four real defects
 (LORE-57/58/59/60) that 1497 passing mocked-adapter tests had missed entirely.
 
-## CI gate (required, since LORE-100)
+## CI gate (runs in CI since LORE-100; not yet a *required* check — see LORE-196)
 
 This harness is no longer local-only. `.github/workflows/ci.yml` runs it as the `docker-e2e` job
-on every PR and on pushes to `main`, invoking the same compose file and harness as the
+on every PR and on code pushes to `main` (docs/backlog-only pushes are path-ignored), invoking the same compose file and harness as the
 manual steps below as `PUID="$(id -u)" PGID="$(id -g)" docker compose -f
 docker/e2e/docker-compose.yml up --build --exit-code-from e2e` — the extra `--exit-code-from e2e`
 and `PUID`/`PGID` are CI-specific (see `ci.yml`'s inline comments: `--exit-code-from` is required
