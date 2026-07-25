@@ -236,10 +236,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `typecheck`/`lint` clean, `lore check` (40 files, 0 errors/warnings), live pty verification of both
   the fixed hang (`lore init --plain >/dev/null 2>&1` under a real pty, previously hung forever, now
   completes in well under a second) and the fixed EOF behavior (Ctrl-D mid-wizard now renders `error:
-  stdin closed before the init wizard finished (EOF/Ctrl-D)` and exits `2`, leaving only the base
-  scaffold on disk), and a full run of the docker e2e harness (`docker/e2e/run-e2e.sh`) — 302 passed,
-  0 failed, unchanged from its existing baseline (no assertion needed changing: the harness never
-  exercises `init`'s new flags, and the default path it does exercise is byte-for-byte unchanged).
+  stdin closed or the wizard was interrupted before it finished (EOF/Ctrl-D or Ctrl-C)` and exits
+  `2`, leaving only the base scaffold on disk), and a full run of the docker e2e harness
+  (`docker/e2e/run-e2e.sh`) — 302 passed, 0 failed, unchanged from its existing baseline (no assertion
+  needed changing: the harness never exercises `init`'s new flags, and the default path it does
+  exercise is byte-for-byte unchanged).
   A follow-up review round found and fixed two blocking defects in the initial cut of this feature
   (the stdin-only TTY gate, and the EOF-hangs-forever wizard promise) plus several accuracy/UX
   corrections: the unknown-option error envelope on `lore init --bogus` normalizes to the same shape
