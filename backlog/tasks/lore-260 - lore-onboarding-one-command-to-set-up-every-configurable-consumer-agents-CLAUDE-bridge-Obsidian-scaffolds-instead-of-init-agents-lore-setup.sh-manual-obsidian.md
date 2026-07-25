@@ -8,7 +8,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-25 02:01'
-updated_date: '2026-07-25 17:54'
+updated_date: '2026-07-25 18:47'
 labels:
   - cli-ux
   - onboarding
@@ -148,6 +148,56 @@ Verification performed (real output, not just code presence):
 - CHANGELOG.md: added an [Unreleased] / Added entry in house voice, cross-checked against the actual
   diff (explicitly notes this is NOT a --json contract-breaking change: new fields are purely
   additive per ADR-0005, and the default path is unchanged).
+
+## Review round 2 (2026-07-25) — request_changes fixes
+
+An adversarial reviewer found and confirmed two blocking defects (reproduced live, not theorized)
+plus several accuracy/UX corrections. The applyAgentsBridge/applyScaffold extraction, the off-TTY
+guarantee, idempotency, and all five ACs were confirmed correct and preserved as-is; nothing about
+that structure changed in this round.
+
+BLOCKING-1 (the wizard prompts when stderr is not a terminal, hanging invisibly): every wizard
+question is written to stderr, but `interactive` was gated on stdin's TTY state alone. Fixed by
+threading a second resolved boolean, `stderrIsTTY` (cli.ts already computed it for the error-color
+gate but never passed it into runInit), and gating on `stdinIsTTY && stderrIsTTY`. Also added a
+third, independent veto: `jsonRequested` (from cli.ts's real `--json` flag, NOT derived from
+`output.mode` — kept as its own field so a test can still hand-build a JSON OutputContext purely for
+parsing convenience while exercising the wizard). Live pty proof: `lore init --plain >/dev/null 2>&1`
+under `script`/`expect` used to hang forever; now completes in <0.1s. The bare-pty wizard (both
+streams genuinely a TTY) still works, confirmed live via `expect`.
+
+BLOCKING-2 (EOF/Ctrl-D mid-wizard exits 0 with an empty envelope and a half-applied run):
+readline/promises' rl.question() never settles on stdin EOF. DISPOSITION: chosen to error out (a
+`usage` LoreError, exit 2) rather than silently fall back to each question's default — same
+"never silently do something the user couldn't see" principle as BLOCKING-1. Implemented in
+createRealPrompter by racing every question against the readline interface's own `close` event
+(a standalone `.catch(() => {})` on that race promise prevents an unhandled-rejection warning when
+the wizard finishes normally and its own `close()` call fires `close` for the first time). Live pty
+proof via `expect`: Ctrl-D mid-wizard now renders `error: stdin closed before the init wizard
+finished (EOF/Ctrl-D)` and exits 2, leaving only the base scaffold on disk (no bridge/scaffold
+applied) — proving the documented partial-application/safe-to-re-run contract rather than a silent
+false success.
+
+Also fixed: MINOR-4 (init's own renderers now reuse agents.ts's exported `renderTrailer` verbatim
+for a hand-edited/protected bridge file, and paint `protected` yellow not green); NIT-1 (--plain now
+prints a line for an already-up-to-date scaffold step); NIT-2 (--non-interactive alias for --yes).
+Docs corrected: CHANGELOG's "absent in that default case" claim (interactive/scaffolds are ALWAYS
+present), CHANGELOG's stale test-count claims (re-measured against this rebase: dev 2136/19 ->
+branch 2176/55), ADR-0017's "byte-for-byte"/"`--yes` reaches every wizard outcome" claims (both
+refuted, restated precisely — `--yes` is npm's `-y`, not "answer every question yes"), and a new
+CHANGELOG clause acknowledging the unknown-option error envelope's normalization (drops `input`,
+matches every other command's shape) rather than leaving it silent. ADR-0017 and cli-surface.md both
+now document the partial-application/safe-to-re-run contract explicitly (MINOR-6) — the write
+ordering itself (bridge before scaffold preflight) was deliberately NOT changed; that's a separate,
+out-of-scope behavior change per the reviewer's own instruction.
+
+Final verification (round 2): bun test 2176/0 pass (2136/0 dev baseline; 55 tests in
+test/init.test.ts, up from dev's 19), typecheck/lint clean, `lore check` 40 files/0 errors/0
+warnings, docker e2e harness 302 passed/0 failed (unchanged baseline). Mutation-checked both new
+guards via git-diff/apply (never git stash): reverting the stderrIsTTY+jsonRequested gate failed
+exactly the 5 targeted regression tests (unit + router level); reverting the EOF race in
+createRealPrompter caused the dependent test to hang (rl.question() never settling), itself proof
+the regression test exercises the real bug — both restored to green after confirming the kill.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
@@ -178,4 +228,19 @@ cli-surface.md `init` entry, a new "Bootstrapping a brand-new repo" section in
 agent-onboarding.md, an updated README quickstart, and a CHANGELOG [Unreleased] entry (explicitly
 confirmed non-breaking: the --json envelope's new fields are purely additive). Discoverable live via
 `lore --help` and `lore help init`.
+
+Round 2 (post-request_changes): fixed two confirmed blocking defects. BLOCKING-1 — the wizard's TTY
+gate checked stdin only, but every wizard question is written to stderr; a redirected stderr with a
+still-TTY stdin left the wizard blocked on an invisible prompt (confirmed live: `lore init --plain
+>/dev/null 2>&1` under a pty hung forever). Fixed by gating on stdinIsTTY AND stderrIsTTY (both
+resolved once in cli.ts) plus a third veto, `--json` (a machine-readable run must never prompt).
+BLOCKING-2 — EOF/Ctrl-D mid-wizard left the wizard's promise abandoned (rl.question() never settles
+on stdin EOF), exiting 0 with an empty envelope and a half-applied run. Disposition: error out (a
+`usage` LoreError, exit 2) rather than silently default, via racing every question against the
+readline interface's own `close` event. Both confirmed fixed live under a real pty (`script`/`expect`)
+and mutation-tested (revert -> dependent tests fail/hang -> restore -> green). Also fixed MINOR-4
+(reuse agents.ts's renderTrailer for a protected bridge file), NIT-1/NIT-2, and corrected several
+CHANGELOG/ADR-0017 accuracy claims the reviewer flagged (stale test counts, "byte-for-byte", `--yes`
+semantics, a silently-normalized error-envelope field). Final: bun test 2176/0 (2136/0 dev baseline),
+typecheck/lint clean, lore check 40/0/0, docker e2e 302/0 (unchanged baseline).
 <!-- SECTION:FINAL_SUMMARY:END -->
