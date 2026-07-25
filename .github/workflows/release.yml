@@ -311,6 +311,16 @@ jobs:
     if: ${{ inputs.publish == true }}
     needs: [setup, package]
     runs-on: ubuntu-latest
+    # Job-scoped (not workflow-scoped): only serializes overlapping runs of THIS job —
+    # two `publish: true` dispatches queued back-to-back run one after the other rather
+    # than interleaving their `npm publish` calls, which the resumable skip-check
+    # (below) tolerates but does not need to race against. Dry-run-only dispatches
+    # (the common case) never touch this job, so they are unaffected and can still run
+    # concurrently. `cancel-in-progress: false` because canceling a real publish
+    # mid-flight is worse than queuing behind it.
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
     # id-token: write is scoped to ONLY this job — the workflow-level
     # `permissions:` block above stays `contents: read`, so no other job in
     # this workflow (including this one's own upstream dependencies) can mint
@@ -333,7 +343,13 @@ jobs:
         # npm — upgrade here so the floor is actually MET, not merely checked below. Cheap
         # (npm is already on PATH from setup-node) and keeps this job self-sufficient
         # rather than depending on a future Node release to happen to bundle the floor.
-        run: npm install -g npm@latest
+        # Pinned to the `^11` major (not `@latest`): this is the only job with
+        # `id-token: write`, so an unpinned global install of npm's own CLI would let a
+        # compromised npm release run with publish capability the moment it ships —
+        # `^11` keeps the auto-upgrade intent (still tracks patch/minor fixes, still
+        # satisfies the floor assertion below) while narrowing that window to versions
+        # that predate any such compromise landing on a new major.
+        run: npm install -g npm@^11
       - name: Assert npm CLI meets the OIDC trusted-publishing floor (docs/runbooks/release-publishing.md Prerequisites)
         # Post-condition check for the upgrade step above — fail loud here, before
         # touching the registry, rather than letting an unmet floor surface as a
@@ -398,6 +414,20 @@ jobs:
                 console.log(pkg.name, pkg.version);
               });
             ')"
+            # `read ... <<< "$(cmd)"` fails OPEN if `cmd` errors: a here-string always
+            # supplies a trailing newline, so `read` sees at least one (empty) line and
+            # returns 0 regardless of whether `tar`/`node` above actually produced
+            # anything — and `run:` steps execute under `bash -e` WITHOUT `pipefail`, so
+            # neither a `tar` extraction failure nor a `node` JSON-parse crash aborts
+            # this function on their own. Without this guard, `name`/`version` silently
+            # become empty, `npm view "@" version` fails (indistinguishable from "not
+            # published"), and the tarball below gets published unconditionally —
+            # turning a resumable re-dispatch back into the EPUBLISHCONFLICT abort this
+            # function exists to prevent.
+            if [ -z "$name" ] || [ -z "$version" ]; then
+              echo "::error::could not read name/version from $tgz (unexpected tarball layout?)"
+              exit 1
+            fi
             # `npm view` exits non-zero for a name@version that has never been published —
             # that is the expected/common case, hence the explicit guard rather than
             # letting `bash -e` treat it as a failure.
@@ -441,6 +471,24 @@ jobs:
             ls -la dist-npm
             exit 1
           fi
+
+          # Refuse to publish the pre-release placeholder version. Every other
+          # precondition in this workflow fails loud (the npm floor assertion above,
+          # the 6/5+1-tarball count asserts above, verify-versions' 12-value
+          # cross-check in the `verify-versions` job) — this is the only irreversible
+          # action in the repo, and the First-release checklist deliberately orders
+          # Trusted Publisher registration (step 1) BEFORE the version bump (step 2),
+          # so a `publish: true` dispatch made between those two steps would otherwise
+          # sail through every other check and genuinely publish six installable
+          # `0.0.0` packages, moving `latest` onto them. Checked once against the root
+          # tarball (verify-versions already proved all six manifests share one
+          # version, so any of the six would do).
+          root_version="$(tar -xzOf "$root" package/package.json | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>console.log(JSON.parse(d).version));')"
+          if [ -z "$root_version" ] || [ "$root_version" = "0.0.0" ]; then
+            echo "::error::refusing to publish version '${root_version}' — 0.0.0 is the pre-release placeholder. Complete the version-bump item in docs/runbooks/release-publishing.md's First-release checklist first."
+            exit 1
+          fi
+          echo "publishing version ${root_version}"
 
           for tgz in "${platform_tgz[@]}"; do
             publish_or_skip "$tgz"
