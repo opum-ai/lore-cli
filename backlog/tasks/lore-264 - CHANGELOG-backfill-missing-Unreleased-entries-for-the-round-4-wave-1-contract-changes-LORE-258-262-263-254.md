@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-25 03:55'
-updated_date: '2026-07-25 04:05'
+updated_date: '2026-07-25 11:44'
 labels:
   - docs
   - release
@@ -124,6 +124,53 @@ sentence.
 
 Scope: only CHANGELOG.md and this task's own backlog/tasks/ file were touched (git diff --stat
 confirms exactly those two paths).
+
+Review pass 1 (request_changes) found AC#4 partially unmet: 3 CHANGELOG claims were taken from
+task/PR prose instead of re-derived from the merged code. Fixed all four findings (1 major + 3
+minor accepted; 1 minor accepted too — 4 of 5 findings fixed, all substantive ones):
+
+1. [major] LORE-258 blast-radius list understated by six commands. Re-derived via
+   `grep -n "loadBundle(docsRoot, { warnings: advisories" src/commands/*.ts`: TEN commands route
+   through loadBundle with a WarningCollector (context, graph, orphans, rename, link.ts's shared
+   `prepare()` used by both link AND unlink, supersede, sync, query, tasks), all flushing via
+   `advisories.flush({...stderr})`. Entry rewritten to name all ten, distinguishing the four the
+   bug was filed against from the six fixed as a side effect of the shared choke point.
+2. [minor] "6 spurious warning lines" corrected to "5". Reproduced live: mutated
+   `src/core/bundle.ts`'s `RESERVED_STEMS` guard to `if (true)` and ran
+   `bun run src/cli.ts sync --dry-run` -> exactly 5 "no frontmatter mapping" lines (the five
+   non-root reserved-stem hubs: docs/adr/index.md, docs/log.md, docs/reference/index.md,
+   docs/runbooks/index.md, docs/specs/index.md). docs/index.md is excluded because it's the
+   bundle-root index and carries real frontmatter (confirmed via `git show dev:docs/index.md`),
+   so it parses as a concept and never reaches the skip branch (LORE-192). Restored bundle.ts to
+   the committed version immediately after measuring (git diff clean before proceeding).
+3. [minor] LORE-263 entry's "pointing at `--force`" clause re-attached the --force remedy to the
+   directory-blocker case. Verified against `src/commands/scaffold.ts`'s `conflictHint` (lines
+   247-255) and its docstring (234-246): a dir-blocker-only conflict returns a hint that never
+   mentions --force ("remove or rename the non-directory entry... then re-run"), because --force
+   skips the preflight entirely and the later `mkdirSync` throws EEXIST on the same blocker (a
+   second `conflict`). Entry rewritten to split the two cases exactly as the docstring requires,
+   matching the wording PR #247 already landed in cli-surface.md for this same distinction.
+4. [minor] "always frontmatter-free by design" missing the "below the bundle root" qualifier.
+   `docs/index.md` is a real concept with frontmatter (LORE-192, BUNDLE_ROOT_INDEX_PATH /
+   effectiveProfileFor in src/core/bundle.ts exist precisely for that exception). Added the
+   qualifier and the LORE-192 cross-reference, matching bundle.ts's own docstring wording.
+5. [nit] "`check` (never passes a collector)" reworded to "`check` (never calls `loadBundle` — it
+   runs its own file scan, deliberately, per LORE-27)" — verified `src/commands/check.ts` never
+   calls `loadBundle` (it uses `collectBundles`/`walkFiles` instead) and its own comments
+   self-attribute this to LORE-27.
+
+Not touched (correctly out of scope per the reviewer's own note): src/commands/scaffold.ts's
+module docstring (~lines 115-119) carries the same --force/dir-blocker conflation the CHANGELOG
+entry had — the reviewer flagged it as a separate follow-up, not part of LORE-264's scope (only
+CHANGELOG.md and this task's own backlog/tasks/ file). Left as-is; worth a follow-up doc task if
+the user wants one filed.
+
+Re-verified full suite after fixes (worktree root, 2026-07-25): bun test -> 2110 pass / 0 fail
+(48 files, 5956 expect() calls) -- identical counts to before the fix, confirming no code/test
+files were touched; bun run typecheck -> clean; bun run lint -> clean (111 files); bun run
+src/cli.ts check -> 39 files, 0 errors/warnings. `git diff --stat dev` confirms only CHANGELOG.md
+and this task's backlog/tasks/ file changed (plus the round-4 tracker doc pre-existing in the
+branch) -- no code, no docs/, nothing else.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
@@ -152,4 +199,8 @@ calls); bun run typecheck -> clean; bun run lint -> clean (111 files); bun run s
 --dry-run` today shows 0 "no frontmatter mapping" lines (confirms LORE-258 stayed fixed);
 `actionlint .github/workflows/upstream-backlog-watch.yml` -> exit 0; `bun test
 test/upstream-backlog-watch.test.ts` -> 13/13 (confirms the LORE-254 entry's test count).
+
+Review pass 1 returned request_changes on AC#4 (1 major + 4 minor findings; entries partly grounded in task/PR prose rather than re-derived from merged code). Round 2 fixed the major and three of the four minors by re-deriving from the code directly: (1) the LORE-258 blast-radius list now names all ten loadBundle+WarningCollector commands (grep-verified), not just the four from the bug report; (2) the repro count corrected from 6 to 5 spurious warning lines (re-measured live by mutating the RESERVED_STEMS guard); (3) the LORE-263 --force hint no longer applies to the directory-blocker case (verified against conflictHint's own docstring and behavior); (4) 'frontmatter-free by design' now carries bundle.ts's own 'below the bundle root' qualifier (docs/index.md is a real concept, LORE-192). The nit ('check never passes a collector') was also fixed, rewritten to the accurate 'check never calls loadBundle, per LORE-27'. scaffold.ts's own module docstring carries the same --force/dir-blocker conflation the reviewer flagged as a pre-existing, separate, out-of-scope issue -- left untouched per the explicit scope boundary (CHANGELOG.md + this task's backlog/tasks/ file only).
+
+Re-verified after fixes: bun test 2110/0 (48 files, 5956 expect() calls, unchanged from before -- confirms no code/test drift), typecheck clean, lint clean (111 files), lore check 39 files/0/0. git diff --stat dev confirms only CHANGELOG.md and this task's own backlog/tasks/ file changed.
 <!-- SECTION:FINAL_SUMMARY:END -->

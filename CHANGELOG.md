@@ -31,16 +31,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`loadBundle` no longer warns about lore's own generated `index`/`log` hubs** (LORE-258).
   `src/core/bundle.ts`'s `loadBundle` previously fired the `no frontmatter mapping` advisory for
   *any* non-concept file, including the machine-generated `index.md`/`log.md` hubs that
-  `indexes.ts`/`log.ts` regenerate wholesale and which are always frontmatter-free by design — so
-  every command that threads a `WarningCollector` through `loadBundle` (`link`, `unlink`, `sync`,
-  `tasks`) printed spurious warnings on every ordinary invocation, training users to ignore them
-  entirely. `loadBundle` now checks the skipped file's basename against `RESERVED_STEMS`
-  (`core/scaffold.ts`: `index`/`log`) and suppresses the advisory only for those two
-  known-reserved stems; a genuinely unexpected non-concept file still warns exactly as before.
-  `check` (never passes a collector) and `validate` (already tallies a silent `skippedCount`)
-  needed no change. Verified against `dev`: `bun test` 2110/0 pass, `typecheck`/`lint` clean,
-  `lore check` (39 files, 0 errors/warnings); a before/after repro on this repo's own bundle
-  showed `sync --dry-run`/`tasks` dropping from 6 spurious warning lines to 0, with `check`
+  `indexes.ts`/`log.ts` regenerate wholesale and which are always frontmatter-free by design
+  **below the bundle root** (the bundle-root `docs/index.md` is itself a concept with real
+  frontmatter — LORE-192, `BUNDLE_ROOT_INDEX_PATH`/`effectiveProfileFor`) — so every command that
+  threads a `WarningCollector` through `loadBundle` — `link`, `unlink`, `sync` and `tasks` (the
+  four the bug was filed against), plus `query`, `graph`, `context`, `orphans`, `rename` and
+  `supersede`, all fixed uniformly by the single choke point — printed spurious warnings on every
+  ordinary invocation, training users to ignore them entirely. `loadBundle` now checks the skipped
+  file's basename against `RESERVED_STEMS` (`core/scaffold.ts`: `index`/`log`) and suppresses the
+  advisory only for those two known-reserved stems; a genuinely unexpected non-concept file still
+  warns exactly as before. `check` (never calls `loadBundle` — it runs its own file scan,
+  deliberately, per LORE-27) and `validate` (already tallies a silent `skippedCount`) needed no
+  change. Verified against `dev`: `bun test` 2110/0 pass, `typecheck`/`lint` clean, `lore check`
+  (39 files, 0 errors/warnings); a before/after repro on this repo's own bundle (mutating the
+  `RESERVED_STEMS` guard to always warn) showed `sync --dry-run`/`tasks` dropping from 5 spurious
+  warning lines — the five non-root reserved-stem hubs (`docs/adr/index.md`, `docs/log.md`,
+  `docs/reference/index.md`, `docs/runbooks/index.md`, `docs/specs/index.md`) — to 0, with `check`
   unchanged.
 - **ADR-0002 now distinguishes a missing `backlog` binary (exit `3`) from a present-but-incapable one (exit `6`)**
   (LORE-60, a doc-accuracy gap found via the LORE-56 Docker E2E harness against a real
@@ -890,9 +896,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `unchanged` / `differs`, `lstat`-based, never following a symlink, conservative — never
   `unchanged` — on a non-regular entry or a read failure) lets `runScaffold`
   (`src/commands/scaffold.ts`) now tell "nothing to do" apart from "the user edited this": exit
-  `5` is emitted, naming every collision and pointing at `--force`, only for a planned file that
-  genuinely `differs` (a real user edit) or a non-directory entry blocking a planned directory —
-  the byte-identical case is no longer a collision at all. A byte-identical bundle now exits `0`,
+  `5` now names only a planned file whose on-disk bytes genuinely `differs` (a real user edit) and
+  points at `--force`; a non-directory entry blocking a planned directory is the same exit `5` but
+  a different hint from `conflictHint` — remove or rename the blocking entry, since `--force`
+  cannot fix it (under `--force` this preflight is skipped entirely and the later `mkdirSync`
+  throws `EEXIST` on the same entry, a second `conflict`) — the byte-identical case is no longer a
+  collision at all. A byte-identical bundle now exits `0`,
   writes nothing (`scaffold.result.files: []`), and prints `<target> config already up to date —
   nothing to do`, mirroring `lore sync`'s own `0 files changed` no-op model. Classification is
   per-file, so a partially-recreated bundle (one generated file untouched, its sibling separately
