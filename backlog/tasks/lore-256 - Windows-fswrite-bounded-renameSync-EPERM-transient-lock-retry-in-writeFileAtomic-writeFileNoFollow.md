@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-24 18:41'
-updated_date: '2026-07-25 11:43'
+updated_date: '2026-07-25 14:17'
 labels:
   - cross-platform
   - build-ci-config
@@ -37,7 +37,7 @@ src/commands/fswrite.ts writeFileAtomic (~L288 renameSync) and writeFileNoFollow
 - [x] #1 renameSync-over-existing in both writeFileAtomic and writeFileNoFollow retries a bounded number of times with backoff on the Windows transient-lock codes (EPERM/EBUSY/EACCES), then surfaces the failure via ioError if retries exhaust.
 - [x] #2 The retry preserves every existing invariant: LORE-231 temp-leak guard, LORE-117 mode/ownership preservation, LORE-130/92 symlink safety, per-file rename atomicity.
 - [x] #3 A test injects a transient rename failure that succeeds on a later attempt (deterministic, injected — not a real lock), and asserts no behavior change on POSIX.
-- [ ] #4 windows-latest CI leg and the full suite stay green; typecheck and biome clean.
+- [x] #4 windows-latest CI leg and the full suite stay green; typecheck and biome clean.
 <!-- AC:END -->
 
 ## Implementation Plan
