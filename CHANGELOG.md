@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`lore orphans` no longer reports a Backlog subtask as orphaned when its parent task is already
+  linked to a doc** (LORE-261, surfaced by the Meridian 56-concept/40-task e2e stress test: `orphans`
+  first reported 8 orphaned tasks instead of the intended 2, because linking a parent task to a Story
+  via `lore link` does not stamp each of its subtasks with its own `doc:` back-reference). Chose
+  **orphans-side hierarchy awareness** over a link-side cascade or documenting the gap as expected
+  behavior: `commands/orphans.ts`'s `computeOrphans` now walks a task's `parentTaskId` chain (the
+  `--json` adapter already carries it on every task in the same `task list --json` snapshot `orphans`
+  reads — no extra per-task `view` call) and exempts a subtask when any ancestor is forward-referenced
+  by a concept's `tasks:` list or itself carries a `doc:` label; a corrupt/cyclic parent chain is
+  guarded with a visited-id set and fails toward "still reported," never an infinite loop. A task under
+  a genuinely unlinked parent — or a standalone task with no parent at all — is unaffected and still
+  reported (no false negatives). `lore orphans`'s exit codes and the `orphans.report` `--json` shape
+  are unchanged; only which tasks land in `orphanTasks` changes. `docs/reference/cli-surface.md`'s
+  `orphans` entry updated to describe the hierarchy-aware scope. Verified against `dev`: `bun test`
+  2136/0 pass (10 new regression cases covering linked-parent/unlinked-subtask, multi-level chains, a
+  vanished-ancestor case, and cyclic/self-referencing `parentTaskId` data), `typecheck`/`lint` clean,
+  `lore check` (39 files, 0 errors/warnings), plus a live run against a real `backlog`-backed bundle
+  (a linked parent with two `--parent`-created subtasks) confirming both the exemption and, after
+  fully unlinking the parent, that the same subtasks correctly reappear as orphans. A mutation check
+  (reverting just this fix) reproduced 5 failing tests, confirmed fixed with the change restored.
 - **`writeFileAtomic` / `writeFileNoFollow`'s commit `renameSync` now retries a bounded number of
   times on Windows' transient antivirus/indexer lock codes** (LORE-256). Both write-temp-then-rename
   helpers finish with a single `renameSync(tmpPath, absPath)`, which on Windows can intermittently
