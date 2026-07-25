@@ -132,6 +132,12 @@ Operational procedures for working on and with lore.
 - [Docker E2E testing environment](runbooks/docker-e2e-testing-environment.md) —
   build real `lore`/`backlog` binaries and exercise the full command surface
   against a real, mutating backlog project; how to run it and triage findings.
+- [Release publishing](runbooks/release-publishing.md) — how to configure npm
+  trusted publishing and cut a release once the dry-run pipeline is verified.
+- [Upstream Backlog.md --json tag watch](runbooks/upstream-backlog-md-json-tag-watch.md) —
+  how the scheduled `upstream-backlog-watch` workflow detects an upstream
+  `--json`-capable Backlog.md release and where that signal lands (a tracking
+  issue in this repo, linking LORE-253).
 
 ---
 
