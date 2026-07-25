@@ -3,11 +3,11 @@ id: LORE-254
 title: >-
   Watch for the upstream Backlog.md --json release tag (>v1.48.0 containing
   commit 22a091b)
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-24 18:41'
-updated_date: '2026-07-25 02:29'
+updated_date: '2026-07-25 02:33'
 labels:
   - release
   - tooling
@@ -34,9 +34,9 @@ Companion to LORE-253 (the migration this unblocks). A lightweight approach: a s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A mechanism (scheduled CI job, release-watch, or a documented manual cadence) detects a new MrLesk/Backlog.md tag whose history contains commit 22a091b and surfaces it to the maintainer.
-- [ ] #2 It distinguishes a --json-capable tag from a plain one (asserts the commit is an ancestor of the tag, or probes the released binary for --json), not just any new tag.
-- [ ] #3 Where the signal lands and who acts on it is documented, linking to the migration task (LORE-253).
+- [x] #1 A mechanism (scheduled CI job, release-watch, or a documented manual cadence) detects a new MrLesk/Backlog.md tag whose history contains commit 22a091b and surfaces it to the maintainer.
+- [x] #2 It distinguishes a --json-capable tag from a plain one (asserts the commit is an ancestor of the tag, or probes the released binary for --json), not just any new tag.
+- [x] #3 Where the signal lands and who acts on it is documented, linking to the migration task (LORE-253).
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -75,3 +75,61 @@ Companion to LORE-253 (the migration this unblocks). A lightweight approach: a s
 6. bun test / bun run typecheck / bun run lint / bun run src/cli.ts check must all be green;
    commit backlog/ status edits alongside the code in Conventional Commits with Refs: LORE-254.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Decision (AC#2): chose the GitHub compare-API ancestor-check (base=22a091b...head=<tag sha>,
+status in {identical,ahead}) over probing a downloaded released binary. Rationale: it needs no
+per-platform binary download/execution on the runner, is the first option the task's own Context
+names, and satisfies AC#2's wording directly ("asserts the commit is an ancestor of the tag").
+
+Implementation:
+- src/scripts/upstream-backlog-watch.ts: standalone maintenance script (not a `lore` command).
+  Pure helpers (candidateReleases date-cutoff prefilter, isAncestorCompareStatus, renderIssueBody)
+  + a dependency-injected Fetcher so watchOnce() is fully testable without network. One-time
+  surfacing: skips all upstream work if an `upstream-watch`-labeled issue already exists in this
+  repo (open OR closed) -- necessary because once 22a091b is in one tag's history it is in every
+  later tag's history forever, so a naive "is there a NEW qualifying tag" check would re-fire on
+  every future upstream release.
+- .github/workflows/upstream-backlog-watch.yml: daily cron + workflow_dispatch, checkout +
+  setup-bun + run the script with GITHUB_TOKEN=github.token; permissions {contents:read} at
+  workflow level, {issues:write} scoped to the job (least privilege).
+- docs/runbooks/upstream-backlog-md-json-tag-watch.md (AC#3): documents the mechanism, exactly
+  where the signal lands (a GitHub issue labeled upstream-watch in this repo) and who acts on it
+  (the maintainer, starting LORE-253), linking backlog-json-patch.md §8.1 and
+  release-publishing.md's Prerequisites. Added to docs/index.md's hand-authored Runbooks list
+  (also noticed and fixed a pre-existing omission: release-publishing.md was missing from that
+  same list -- one-line addition, same section this AC required touching anyway).
+- test/upstream-backlog-watch.test.ts: 12 tests -- candidateReleases date-cutoff prefix-take
+  (incl. an out-of-order case proving it stops rather than filters), isAncestorCompareStatus for
+  all four compare statuses (the AC#2 assertion: behind/diverged must NOT match), renderIssueBody
+  contains LORE-253 + tag + sha + target commit + runbook path, and watchOnce integration tests
+  against a stubbed Fetcher covering already-surfaced skip, a PR-not-issue false-positive guard,
+  no-match, a full "opened" path (label-ensure -> issue-create), a 422-label-exists tolerance
+  path, and draft/too-old releases never being probed.
+
+Verification:
+- bun test -> 2074 pass, 0 fail (48 files, incl. the 12 new tests)
+- bun run typecheck -> clean
+- bun run lint -> clean (biome check .)
+- bun run src/cli.ts check -> "39 files, 0 errors, 0 warnings"
+- bun run src/cli.ts sync -> regenerated docs/log.md + docs/runbooks/index.md, committed the
+  backlog/ task-plan edit (lore's own commit seam)
+- actionlint .github/workflows/upstream-backlog-watch.yml -> no findings; actionlint (whole repo)
+  -> no findings
+- Real dry run against live APIs (read-only, zero side effects, verified after the fact via
+  `gh issue list --repo jeremy-newhouse/lore --label upstream-watch --state all` and
+  `gh label list --repo jeremy-newhouse/lore --search upstream` both returning empty):
+  `GITHUB_REPOSITORY=jeremy-newhouse/lore GITHUB_TOKEN=$(gh auth token) bun run
+  src/scripts/upstream-backlog-watch.ts` -> "No MrLesk/Backlog.md release yet contains
+  22a091b...", exit 0. Confirms the real MrLesk/Backlog.md release list (latest tag v1.48.0,
+  published 2026-07-12) correctly yields zero candidates against the 2026-07-16 cutoff, so
+  candidateReleases/the whole pipeline behaves correctly against live data, not just fixtures.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added .github/workflows/upstream-backlog-watch.yml (daily cron + workflow_dispatch) driving the new src/scripts/upstream-backlog-watch.ts, which polls MrLesk/Backlog.md's Releases API, ancestor-checks each candidate tag's commit against 22a091b via the GitHub compare API (distinguishing a real --json-capable tag from a merely-newer one), and opens a one-time GitHub issue labeled upstream-watch in this repo naming LORE-253 as the next step. Documented in docs/runbooks/upstream-backlog-md-json-tag-watch.md (linked from docs/index.md), covering where the signal lands and who acts on it. Verified: bun test (2074 pass incl. 12 new), bun run typecheck (clean), bun run lint (clean), bun run src/cli.ts check (39 files, 0 errors/warnings), actionlint (no findings), and a real read-only dry run against live GitHub APIs confirming zero-side-effect correct no-match behavior against today's actual MrLesk/Backlog.md release list.
+<!-- SECTION:FINAL_SUMMARY:END -->
