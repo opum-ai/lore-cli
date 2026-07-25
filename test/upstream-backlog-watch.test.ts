@@ -11,7 +11,7 @@ const TARGET_COMMIT = "22a091b570d44c4f302ca47e7fd36fa28ad8bcb0";
 const MERGE_CUTOFF = "2026-07-16T00:00:00Z";
 
 describe("candidateReleases", () => {
-  test("keeps only releases published at/after the cutoff (newest-first prefix-take)", () => {
+  test("keeps only releases published at/after the cutoff (plain filter, no order assumption)", () => {
     const releases = [
       { tagName: "v1.50.0", publishedAt: "2026-07-20T00:00:00Z" },
       { tagName: "v1.49.0", publishedAt: "2026-07-17T00:00:00Z" },
@@ -123,6 +123,10 @@ describe("watchOnce", () => {
     const result = await watchOnce(env, fetcher);
     expect(result).toEqual({ action: "already-surfaced" });
     expect(calls).toHaveLength(1);
+    // Pin the fix itself, not just the row-level filtering: the request must actually ask for
+    // more than one row, or a revert to per_page=1 would hide the issue row behind the PR row
+    // while this test's hand-crafted two-row stub response keeps passing regardless.
+    expect(calls[0]).toContain("per_page=100");
   });
 
   test("no-match: no candidate release's tag contains the target commit", async () => {

@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-24 18:41'
-updated_date: '2026-07-25 02:41'
+updated_date: '2026-07-25 02:48'
 labels:
   - release
   - tooling
@@ -135,14 +135,21 @@ Review round 1 (request_changes) fixes applied:
 - [nit] Commit 0944997's missing Refs: LORE-254 trailer is a pre-existing commit from before this fix round; not amended (no history rewrite per reviewer guidance) -- all new commits in this fix round carry the trailer.
 
 Re-verified: bun test (2075 pass, 0 fail, incl. 13 tests in upstream-backlog-watch.test.ts), bun run typecheck (clean), bun run lint (clean), bun run src/cli.ts check (39 files, 0 errors, 0 warnings).
+
+Review round 2 (request_changes) fixes applied:
+- [blocking] .github/workflows/upstream-backlog-watch.yml: the `watch` job's job-level `permissions:` block only listed `issues: write`, which REPLACES (not extends) the workflow-level `permissions: contents: read` -- every scope GitHub doesn't see restated at job level is set to none. On this private repo, `actions/checkout` (the job's first step) would fail with a contents:none token on every scheduled/dispatched run, so the daily watch could never reach the script and AC#1 could never fire end-to-end. Fixed by restating `contents: read` alongside `issues: write` in the job-level block and correcting the comment's additive mental model to explain that job-level permissions are self-sufficient, not additive.
+- [minor] test/upstream-backlog-watch.test.ts: the round-1 regression test for a labeled PR ahead of a labeled issue in the same page asserted only the final `already-surfaced` result, which stayed green even if trackingIssueAlreadyExists were reverted from per_page=100 back to per_page=1 (stubFetcher matches by URL substring and ignores query params, returning the full fixture regardless). Added `expect(calls[0]).toContain("per_page=100")` so the test now pins the actual request shape, not just the row-level PR-vs-issue filtering already covered by the adjacent test.
+- [nit] test/upstream-backlog-watch.test.ts: renamed the candidateReleases cutoff test from "...(newest-first prefix-take)" to "...(plain filter, no order assumption)" -- the parenthetical still described the prefix-take implementation round 1 explicitly replaced with an order-independent filter.
+
+Re-verified: bun test (2075 pass, 0 fail, incl. 13 tests in upstream-backlog-watch.test.ts), bun run typecheck (clean), bun run lint (clean, biome check .), bun run src/cli.ts check (39 files, 0 errors, 0 warnings), actionlint .github/workflows/upstream-backlog-watch.yml (no findings).
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Added .github/workflows/upstream-backlog-watch.yml (daily cron + workflow_dispatch) driving the new src/scripts/upstream-backlog-watch.ts, which polls MrLesk/Backlog.md's Releases API, ancestor-checks each candidate tag's commit against 22a091b via the GitHub compare API (distinguishing a real --json-capable tag from a merely-newer one), and opens a one-time GitHub issue labeled upstream-watch in this repo naming LORE-253 as the next step. Documented in docs/runbooks/upstream-backlog-md-json-tag-watch.md (linked from docs/index.md), covering where the signal lands and who acts on it.
+Added .github/workflows/upstream-backlog-watch.yml (daily cron + workflow_dispatch) driving src/scripts/upstream-backlog-watch.ts, which polls MrLesk/Backlog.md's Releases API, ancestor-checks each candidate tag's commit against 22a091b via the GitHub compare API, and opens a one-time GitHub issue labeled upstream-watch in this repo naming LORE-253 as the next step. Documented in docs/runbooks/upstream-backlog-md-json-tag-watch.md (linked from docs/index.md).
 
-Review round 1 (request_changes) fixes: corrected 4 stale runbook-path references to the real on-disk filename (major); replaced candidateReleases' order-assuming prefix-take with a plain filter and flipped its out-of-order test (minor); widened the tracking-issue existence check from per_page=1 to per_page=100 so a labeled PR can't hide a real labeled issue, with a new regression test (minor); documented GitHub's 60-day scheduled-workflow auto-disable as a runbook caveat (nit).
+Review round 2 (request_changes) fix: the job-level `permissions:` block in the workflow only listed `issues: write`, which replaces rather than extends the workflow-level `contents: read`, so `actions/checkout` would fail with a contents:none token on this private repo on every real run -- the watch could never actually execute end-to-end despite the script and its dry run being sound. Restated `contents: read` alongside `issues: write` at job level. Also strengthened the per_page=100 regression test to assert the request URL itself, and fixed a stale test-name parenthetical.
 
-Verified: bun test (2075 pass, 0 fail, incl. 13 tests in upstream-backlog-watch.test.ts), bun run typecheck (clean), bun run lint (clean), bun run src/cli.ts check (39 files, 0 errors/warnings).
+Verified: bun test (2075 pass, 0 fail, incl. 13 tests in upstream-backlog-watch.test.ts), bun run typecheck (clean), bun run lint (clean), bun run src/cli.ts check (39 files, 0 errors/warnings), actionlint (no findings).
 <!-- SECTION:FINAL_SUMMARY:END -->
