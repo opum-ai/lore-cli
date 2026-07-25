@@ -56,6 +56,28 @@
  *   AC#1 — a non-ENOENT classifying lstat failure (e.g. EACCES) surfaces a `LoreError`, not a benign skip.
  *   AC#2 — the documented raced-away ENOENT case is unchanged: still a benign skip (`createIfAbsent`
  *          returns `false`).
+ *
+ * The fifth describe block covers the LORE-256 hardening: both `writeFileAtomic` and
+ * `writeFileNoFollow` now retry their commit `renameSync` a small bounded number of times, with
+ * backoff, on the Windows transient-lock codes (`EPERM`/`EBUSY`/`EACCES`) an antivirus scanner or
+ * the Search indexer can intermittently trigger. A real lock (or a real timing-dependent flake)
+ * isn't reliably reproducible in a test, so — mirroring this file's own injection pattern for the
+ * LORE-130 crash-mid-write suite above — these spy on `fs.renameSync` to throw a deterministic,
+ * chosen errno code for an exact number of calls before delegating to the real implementation.
+ *
+ *   AC#1 — a transient failure (succeeds on a later attempt) is retried and the write completes,
+ *          for both writeFileAtomic and writeFileNoFollow.
+ *   AC#2 — nothing else about either function's behavior changes: mode/ownership preservation, the
+ *          LORE-231 temp-leak guard (no stray temp file survives either a successful retry or an
+ *          exhausted one), and per-file atomicity (the destination is exactly its old or new
+ *          complete bytes, never a partial mix) all continue to hold, per the un-touched suites
+ *          above plus the exhausted-retry assertions here.
+ *   AC#3 — the injected failure is deterministic (an exact call count), never a real lock or a
+ *          sleep-based flake; a dedicated test also asserts the ordinary success path issues
+ *          exactly one `renameSync` call with no retry engaged, i.e. no behavior change on POSIX.
+ *   AC#4 — a PERSISTENT failure still exhausts the bounded budget (asserted via an exact call
+ *          count) and surfaces via the same `ioError` classification as before this fix — a
+ *          genuine failure is never swallowed into a false success.
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
@@ -370,6 +392,153 @@ describe("writeFileNoFollow — the --force overwrite path is crash-safe against
     expect(thrown).toBeInstanceOf(LoreError);
     expect(["conflict", "denied"]).toContain((thrown as LoreError).type);
     expect(readdirSync(dir)).toEqual(["adir"]); // the temp file is cleaned up, not left as litter
+  });
+});
+
+// ── renameOverDestination: bounded retry-with-backoff on the commit rename's Windows
+// transient-lock codes (LORE-256) ───────────────────────────────────────────────────────────────
+
+describe("writeFileAtomic / writeFileNoFollow — bounded retry-with-backoff on the commit rename's Windows transient-lock codes (LORE-256)", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "lore-fswrite-rename-retry-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // Injects a DETERMINISTIC transient renameSync failure -- not a real lock and not a sleep-based
+  // flake: the first `failuresBeforeSuccess` calls throw a fake errno error carrying `code`, then
+  // every subsequent call (including the eventual real commit) delegates to the genuine renameSync.
+  // Mirrors this file's own writeFileNoFollow crash-mid-write spy on fs.writeFileSync/fs.renameSync
+  // (the LORE-130 suite above) rather than inventing a new injection pattern.
+  function spyOnRenameSyncFailing(
+    code: string,
+    failuresBeforeSuccess: number,
+  ): { restore: () => void; calls: () => number } {
+    const realRenameSync = fs.renameSync.bind(fs);
+    let calls = 0;
+    const spy = spyOn(fs, "renameSync").mockImplementation((...args: Parameters<typeof fs.renameSync>) => {
+      calls += 1;
+      if (calls <= failuresBeforeSuccess) {
+        throw Object.assign(new Error(`simulated transient ${code} on renameSync (call ${calls})`), { code });
+      }
+      // biome-ignore lint/suspicious/noExplicitAny: forwarding to the real renameSync overload set
+      return (realRenameSync as any)(...args);
+    });
+    return { restore: () => spy.mockRestore(), calls: () => calls };
+  }
+
+  test("writeFileAtomic: a transient EBUSY on the commit rename that succeeds on a later attempt lands the new bytes, with no stray temp file", () => {
+    const path = join(dir, "f.md");
+    writeFileSync(path, "old");
+    const rename = spyOnRenameSyncFailing("EBUSY", 2);
+    try {
+      expect(() => writeFileAtomic(path, "new", "f.md")).not.toThrow();
+    } finally {
+      rename.restore();
+    }
+    expect(readFileSync(path, "utf8")).toBe("new");
+    expect(readdirSync(dir)).toEqual(["f.md"]); // no stray .lore-sync-tmp-* left behind
+    expect(rename.calls()).toBe(3); // 2 injected failures + the successful 3rd attempt
+  });
+
+  test("writeFileNoFollow: a transient EPERM on the commit rename that succeeds on a later attempt lands the new bytes, with no stray temp file", () => {
+    const path = join(dir, "f.md");
+    writeFileSync(path, "old");
+    const rename = spyOnRenameSyncFailing("EPERM", 2);
+    try {
+      expect(() => writeFileNoFollow(path, "new", "f.md")).not.toThrow();
+    } finally {
+      rename.restore();
+    }
+    expect(readFileSync(path, "utf8")).toBe("new");
+    expect(readdirSync(dir)).toEqual(["f.md"]);
+    expect(rename.calls()).toBe(3);
+  });
+
+  test("writeFileAtomic: a PERSISTENT EACCES on the commit rename still exhausts the bounded retry budget and surfaces the same classified 'denied' error -- never swallowed into a false success", () => {
+    const path = join(dir, "f.md");
+    const original = "ORIGINAL BYTES — must survive an exhausted-retry failure untouched";
+    writeFileSync(path, original);
+    const rename = spyOnRenameSyncFailing("EACCES", Number.POSITIVE_INFINITY);
+    let thrown: unknown;
+    try {
+      try {
+        writeFileAtomic(path, "new", "f.md");
+      } catch (err) {
+        thrown = err;
+      }
+    } finally {
+      rename.restore();
+    }
+    expect(thrown).toBeInstanceOf(LoreError);
+    // Identical classification a persistent EACCES always produced, before this retry existed --
+    // the retry budget only delays that outcome, it never changes or swallows it.
+    expect((thrown as LoreError).type).toBe("denied");
+    expect(readFileSync(path, "utf8")).toBe(original); // destination untouched -- the rename never actually landed
+    expect(readdirSync(dir)).toEqual(["f.md"]); // no stray temp file survives the exhausted retry
+    expect(rename.calls()).toBe(4); // the bounded budget: exactly RENAME_MAX_ATTEMPTS attempts, never unbounded
+  });
+
+  test("writeFileNoFollow: a PERSISTENT EBUSY on the commit rename exhausts the bounded retry budget rather than retrying forever", () => {
+    const path = join(dir, "f.md");
+    const original = "ORIGINAL BYTES — must survive an exhausted-retry failure untouched";
+    writeFileSync(path, original);
+    const rename = spyOnRenameSyncFailing("EBUSY", Number.POSITIVE_INFINITY);
+    let thrown: unknown;
+    try {
+      try {
+        writeFileNoFollow(path, "new", "f.md");
+      } catch (err) {
+        thrown = err;
+      }
+    } finally {
+      rename.restore();
+    }
+    expect(thrown).toBeDefined();
+    expect(readFileSync(path, "utf8")).toBe(original);
+    expect(readdirSync(dir)).toEqual(["f.md"]);
+    expect(rename.calls()).toBe(4); // the same bounded budget writeFileAtomic uses -- shared retry helper
+  });
+
+  test("a NON-retryable rename failure code (e.g. ENOENT) is never retried -- it fails on the very first attempt", () => {
+    const path = join(dir, "f.md");
+    writeFileSync(path, "old");
+    const rename = spyOnRenameSyncFailing("ENOENT", Number.POSITIVE_INFINITY);
+    let thrown: unknown;
+    try {
+      try {
+        writeFileAtomic(path, "new", "f.md");
+      } catch (err) {
+        thrown = err;
+      }
+    } finally {
+      rename.restore();
+    }
+    expect(thrown).toBeDefined();
+    // No retry budget spent on a code that was never a transient-lock symptom -- surfaces immediately.
+    expect(rename.calls()).toBe(1);
+    expect(readFileSync(path, "utf8")).toBe("old");
+  });
+
+  test("AC#3: the ordinary success path (no injected failure) is unaffected -- exactly one renameSync call, no retry/backoff engaged; asserts no behavior change on POSIX", () => {
+    const path = join(dir, "f.md");
+    writeFileSync(path, "old");
+    const realRenameSync = fs.renameSync.bind(fs);
+    let calls = 0;
+    const spy = spyOn(fs, "renameSync").mockImplementation((...args: Parameters<typeof fs.renameSync>) => {
+      calls += 1;
+      // biome-ignore lint/suspicious/noExplicitAny: forwarding to the real renameSync overload set
+      return (realRenameSync as any)(...args);
+    });
+    try {
+      writeFileAtomic(path, "new", "f.md");
+    } finally {
+      spy.mockRestore();
+    }
+    expect(calls).toBe(1);
+    expect(readFileSync(path, "utf8")).toBe("new");
   });
 });
 
