@@ -457,7 +457,12 @@ lore scaffold obsidian
 - **`obsidian`** *(shipped, LORE-41)* — `.obsidian/` vault config tuned for
   graph/backlinks over the relative-link convention (no wikilinks).
 
-An unrecognized target string (e.g. `hugo`) is a `usage` error (exit `2`).
+An unrecognized target string (e.g. `hugo`) is a `usage` error (exit `2`). A
+bare re-run is idempotent when nothing changed: a planned file already on disk
+with byte-identical content is left untouched, so a re-run against an
+unmodified scaffold writes nothing and still exits `0`; the `5` conflict is
+reserved for a planned file whose on-disk bytes actually differ (a user
+edit), naming every such file and pointing at `--force`.
 
 lore **detects** non-portable syntax (portability lint, in [`check`](#check))
 but does **not** guarantee cross-renderer parity — that is the consumer's job.
@@ -466,8 +471,8 @@ but does **not** guarantee cross-renderer parity — that is the consumer's job.
 |---|---|
 | **Args** | `<target>` = `mkdocs` \| `docusaurus` \| `obsidian` |
 | **Key flags** | `--force` (overwrite an existing generated config) |
-| **Output** | `kind: scaffold.result` — files written |
-| **Exit** | `0` ok · `2` unknown target · `5` config exists (without `--force`) |
+| **Output** | `kind: scaffold.result` — files written (empty when already up to date) |
+| **Exit** | `0` ok (already up to date is a no-op) · `2` unknown target · `5` an existing file's bytes differ from what this run would generate (without `--force`), or a non-regular entry blocks a planned path |
 
 ### `schema`
 
