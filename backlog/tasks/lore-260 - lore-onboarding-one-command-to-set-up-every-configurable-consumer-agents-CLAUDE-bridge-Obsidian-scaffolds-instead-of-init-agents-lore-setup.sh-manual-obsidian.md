@@ -4,10 +4,11 @@ title: >-
   lore onboarding: one command to set up every configurable consumer
   (agents/CLAUDE bridge, Obsidian, scaffolds) instead of init -> agents ->
   lore-setup.sh -> manual obsidian
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-07-25 02:01'
-updated_date: '2026-07-25 02:04'
+updated_date: '2026-07-25 17:42'
 labels:
   - cli-ux
   - onboarding
@@ -60,6 +61,34 @@ docs/adr/0004-cli-first-skill-bridge-mcp-deferred.md, docs/adr/0005-cli-contract
 - [ ] #4 The configurable surface is covered consistently in BOTH the wizard and the flags: agent bridge, scaffold targets (obsidian/mkdocs/docusaurus), and a clear warning when a --json-capable backlog is absent.
 - [ ] #5 The interactive-by-default decision is documented (a new ADR, or an amendment to ADR-0004/0005, recording that 'lore init' is interactive-on-TTY yet preserves the non-interactive CLI contract); it's discoverable (top-level help + lore help init); docs/runbooks/agent-onboarding.md + any quickstart updated to the one-command flow; full suite + lore check stay green.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Extract applyAgentsBridge (agents.ts) and applyScaffold (scaffold.ts) out of runAgents/runScaffold
+   so lore init can fold both in without a second stdout envelope.
+2. Rewrite src/commands/init.ts: keep runInit a plain (non-async) function returning
+   number | Promise<number> (mirrors runCheck) -- the fully-synchronous, zero-flag, non-TTY path
+   stays byte-identical to pre-LORE-260 behavior (no agents/scaffold/backlog work at all).
+3. Flags: --yes, --agents, --scaffold <target> (repeatable; mkdocs|docusaurus|obsidian), --obsidian
+   (sugar for --scaffold obsidian), --no-backlog, --check-backlog. ANY flag forces non-interactive
+   even on a TTY. Backlog capability check (adapter.probe(), advisory-only, never fails the run) runs
+   when --check-backlog is passed, or implied by --agents/--scaffold/--obsidian (unless --no-backlog),
+   or always inside the wizard.
+4. Interactive wizard: TTY-gated (InitOptions.stdinIsTTY, resolved once in cli.ts, never read here),
+   with an injectable InitPrompter (confirm/choose/close) -- no real readline touched in tests.
+   3 questions (agent bridge default yes, docs-site choice default none, Obsidian default no), then
+   always runs the backlog check as a detection step (not a 4th question).
+5. cli.ts: add stdinIsTTY + prompter to RunContext, thread through to runInit, drop the old
+   rejectCommandArgs(commandArgs, "init") blanket guard (init now legitimately takes flags).
+6. manifest.ts + agent-bridge.ts LORE_COMMANDS: document the new flags/summary (kept byte-identical
+   between the two per the lockstep test).
+7. New ADR (amendment to ADR-0004/0005) documenting the TTY-gated interactive default; update
+   docs/reference/cli-surface.md's init entry and docs/runbooks/agent-onboarding.md's onboarding
+   flow to the one-command story; CHANGELOG [Unreleased] entry.
+8. Verification: bun test (baseline 2126/0 on dev@b97ab87), typecheck, lint, lore check, the docker
+   e2e harness (302/0 baseline), live CLI runs of both paths, and a mutation check on the TTY gate.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
