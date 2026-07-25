@@ -228,7 +228,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `init` entry, a new "Bootstrapping a brand-new repo" section in
   [`agent-onboarding.md`](docs/runbooks/agent-onboarding.md), and the README quickstart; discoverable
   via top-level `lore --help` and `lore help init`. Verified against `dev`: `bun test` 2176/0 pass (up
-  from the 2136/0 baseline — 55 tests in `test/init.test.ts`, up from 19, plus 5 router-level
+  from the 2136/0 baseline — 55 tests in `test/init.test.ts`, up from 19, plus 4 router-level
   wizard-wiring tests in `test/cli.test.ts`; the stdin/stderr TTY gate, the `--json` veto, the
   flag-bypass check, and the EOF/`close()` handling were each mutation-tested by reverting the fix
   and confirming their dependent tests genuinely fail — one of them (the EOF race) genuinely hangs
@@ -243,8 +243,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A follow-up review round found and fixed two blocking defects in the initial cut of this feature
   (the stdin-only TTY gate, and the EOF-hangs-forever wizard promise) plus several accuracy/UX
   corrections: the unknown-option error envelope on `lore init --bogus` normalizes to the same shape
-  every other command's unknown-option error already uses (drops a redundant `input.options` field,
-  matches the `hint` wording) — additive per ADR-0005, not a removal of contract surface; and
+  every other command's unknown-option error already uses (drops the `input.options` field, matches
+  the `hint` wording) — a small, deliberate divergence from `dev`'s envelope for this one error; and
   `--plain` now prints a line for an already-up-to-date scaffold step instead of nothing.
 - **`.github/workflows/release.yml` gained a real `publish` job — OIDC trusted publishing to npm,
   gated on an explicit dispatch input** (LORE-255). The workflow stays `workflow_dispatch`-only
