@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-24 18:41'
-updated_date: '2026-07-25 04:09'
+updated_date: '2026-07-25 11:50'
 labels:
   - build-ci-config
   - release
@@ -187,30 +187,65 @@ Verified the test actually catches a regression: temporarily stripped the
 `if:` gate from release.yml, re-ran the suite (1 of 6 failed, exactly the
 gate-check test, with a clear "Received: undefined" diagnostic), restored
 the real file, re-ran (6/6 pass again).
+
+## Review pass 1 fixes (request_changes -> addressed)
+
+[blocking] Publish ordering: the publish job's loop published dist-npm/*.tgz
+in filesystem-collation order, which sorts the root launcher tarball BEFORE
+its five platform packages (digit sorts before letter) -- inverting the
+required publish order for this optionalDependencies-pinned distribution
+shape. Rewrote the step to partition dist-npm/*.tgz into 5 platform
+tarballs (matched against needs.setup.outputs.namesSpace) + exactly 1 root
+tarball (whatever is left), asserting counts (6 total, 5 platform, 1 root)
+before publishing anything, then publishes the 5 platform packages first
+and the root launcher LAST. Verified the partition/ordering logic against 6
+real npm-pack-shaped tarball names in a standalone harness (root correctly
+sorted last; count-mismatch correctly fails loud) and mutation-tested the
+new regression test by temporarily reverting to the naive
+'for tgz in dist-npm/*.tgz' loop -- it failed exactly the new ordering test
+(6/7 pass, 1 fail), then restored.
+
+[major] Partial-publish recovery: made the publish loop resumable --
+publish_or_skip() extracts each tarball's real name+version (tar -xzOf
+.../package.json | node -e ...) and npm view's the registry first, skipping
+anything already published, before calling npm publish. Verified against a
+mocked npm binary simulating 2-of-6 already published: the script correctly
+skipped those 2 and published the remaining 4 in the right order (4
+platform-remaining, root last). Added a third Rollback bullet to
+release-publishing.md ('Publish job failed partway') describing the
+re-dispatch-on-same-commit recovery path and the root-last rationale.
+
+[minor] release-publishing.md Step 3 item 2 now explicitly names updating
+root package.json's 5 optionalDependencies pins (the checklist already
+named this; the linked detail step didn't).
+
+[minor] Updated tech-stack.md's 'Status (LORE-9)' paragraph and ADR-0001's
+distribution bullet (as an amendment note) to reflect that the publish job
+is now implemented (LORE-255), not a 'publish-free'/'deliberate follow-up'
+state.
+
+[nit] Added an 'npm install -g npm@latest' step before the existing
+>=11.5.1 floor assertion, so the floor is met rather than merely checked;
+added a comment noting the NaN-on-prerelease fail-closed behavior.
+
+[nit] Renamed the upload/download artifact from npm-packages-dry-run to
+npm-packages (both the package job's upload and the publish job's
+download) since it is no longer accurate -- these tarballs are what gets
+published for real in the publish job.
+
+Declined: none of the 6 findings were skipped; all were cheap, verified
+fixes to the same publish step + a runbook/docs pass.
+
+Re-verified full set: bun test (2117 pass, 0 fail, including
+test/release-workflow.test.ts's new 7th test), bun run typecheck (clean),
+bun run lint / biome check (clean), bun run src/cli.ts check (39 files, 0
+errors, 0 warnings), actionlint .github/workflows/release.yml (clean). No
+version bump (all 6 manifests still 0.0.0); CHANGELOG.md untouched;
+backlog/docs/ untouched.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Rehearsed the full dual-artifact npm dry-run publish end-to-end (all 5
-platform binaries compiled in-worktree + npm publish --dry-run for all 6
-packages + a full pack/install-sanity smoke through the real launcher --
-never a real npm publish/login/token/tag/dispatch), documented a
-first-release checklist + the rehearsal evidence in
-docs/runbooks/release-publishing.md, and implemented release.yml's
-dispatch/tag-gated `publish` job (id-token:write scoped to that job only,
-OIDC trusted publishing, gated on inputs.publish==true and the full
-build/verify-versions/package chain). No version bump (all 6 manifests
-stay 0.0.0); CHANGELOG.md untouched (LORE-264's file, described only in
-the runbook); docker e2e not run (sibling-owned this wave).
-
-Verified: bun test (2116 pass, 0 fail, including the new
-test/release-workflow.test.ts's 6 safety-gate tests -- confirmed one
-actually catches a regression by reverting the if: gate and re-running,
-then restored); bun run typecheck (clean); bun run lint (biome check,
-clean, 0 warnings); bun run src/cli.ts check (39 files, 0 errors, 0
-warnings); actionlint .github/workflows/release.yml (clean); bun run
-src/cli.ts validate docs/runbooks/release-publishing.md (0 errors, 0
-warnings). All 6 npm publish --dry-run runs succeeded with correct
-name/version/os/cpu/bin/files and public access, no auth error.
+Fixed review pass 1's blocking + major findings in release.yml's publish job: platform packages now publish before the root launcher (was root-first via collation-order glob, which could leave npx @salient-data/lore resolving with 404ing optionalDependencies), and the loop is now resumable (skips already-published packages via npm view) with a matching Rollback runbook entry -- so a partial first-release failure is recoverable instead of permanently wedging the version. Also fixed both minor doc-staleness findings (release-publishing.md's version-bump step now names the optionalDependencies pins; tech-stack.md/ADR-0001 no longer call the publish job 'publish-free'/a 'follow-up') and both nits (npm auto-upgraded to meet its own floor; artifact renamed from npm-packages-dry-run to npm-packages). Verified: bun test (2117/2117), typecheck, biome lint, lore check (39 files clean), actionlint all green; mutation-tested the new ordering regression test by reverting to the old naive loop and confirming it fails; verified the partition/skip logic against real tarball names and a mocked npm registry. No version bump, no CHANGELOG.md edit, no backlog/docs/ edit.
 <!-- SECTION:FINAL_SUMMARY:END -->
