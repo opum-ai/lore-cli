@@ -65,8 +65,10 @@
  * LORE-130 crash-mid-write suite above — these spy on `fs.renameSync` to throw a deterministic,
  * chosen errno code for an exact number of calls before delegating to the real implementation.
  *
- *   AC#1 — a transient failure (succeeds on a later attempt) is retried and the write completes,
- *          for both writeFileAtomic and writeFileNoFollow.
+ *   AC#1 — a transient failure is retried and the write completes for both writeFileAtomic and
+ *          writeFileNoFollow; a PERSISTENT failure instead exhausts the bounded budget (asserted
+ *          via an exact call count) and surfaces via the same `ioError` classification as before
+ *          this fix — a genuine failure is never swallowed into a false success.
  *   AC#2 — nothing else about either function's behavior changes: mode/ownership preservation, the
  *          LORE-231 temp-leak guard (no stray temp file survives either a successful retry or an
  *          exhausted one), and per-file atomicity (the destination is exactly its old or new
@@ -75,9 +77,6 @@
  *   AC#3 — the injected failure is deterministic (an exact call count), never a real lock or a
  *          sleep-based flake; a dedicated test also asserts the ordinary success path issues
  *          exactly one `renameSync` call with no retry engaged, i.e. no behavior change on POSIX.
- *   AC#4 — a PERSISTENT failure still exhausts the bounded budget (asserted via an exact call
- *          count) and surfaces via the same `ioError` classification as before this fix — a
- *          genuine failure is never swallowed into a false success.
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
