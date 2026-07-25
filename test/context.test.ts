@@ -295,7 +295,7 @@ describe("lore context — command", () => {
   });
 
   test.each([
-    [[], "missing concept <id>"],
+    [[], "`lore context` needs a concept id"],
     [["--bogus", "x"], "unknown option"],
     [["-x", "x"], 'unknown option "-x"'],
     [["a", "b"], 'unexpected argument "b"'],

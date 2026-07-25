@@ -138,7 +138,10 @@ function parseContextArgs(args: readonly string[]): ContextArgs {
   }
 
   if (positionals.length === 0) {
-    throw usage("missing concept <id>", "give the concept to build context for, e.g. `lore context stories/x`");
+    throw usage(
+      "`lore context` needs a concept id",
+      "give the concept to build context for, e.g. `lore context stories/x`",
+    );
   }
   if (positionals.length > 1) {
     throw usage(`unexpected argument "${positionals[1]}"`, "run `lore context <id> [--max-tokens <n>] [--depth <n>]`");
