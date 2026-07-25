@@ -186,42 +186,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backlog `--json`-capability check, replacing the old `init` → `agents` → external `lore-setup.sh`
   → manual-Obsidian sequence. **Strictly TTY-gated** (the npm-init pattern, [ADR-0017](docs/adr/0017-interactive-init-wizard-tty-gated.md),
   amending [ADR-0004](docs/adr/0004-cli-first-skill-bridge-mcp-deferred.md)/[ADR-0005](docs/adr/0005-cli-contract.md)):
-  the wizard runs only when stdin is a real TTY *and* none of `init`'s own flags was passed; a
-  non-TTY stdin (CI, pipes, this repo's own docker e2e harness) or **any** flag forces the fully
-  non-interactive path with no prompt able to block it. Every wizard question has a 1:1 flag
-  equivalent — `--agents` (the bridge), `--scaffold <target>` (repeatable; `mkdocs`/`docusaurus`/
+  the wizard runs only when **both stdin and stderr** are real TTYs, `--json` was not requested,
+  *and* none of `init`'s own flags was passed; a non-TTY stdin or stderr (CI, pipes, this repo's own
+  docker e2e harness, or a caller that redirects only one of the two streams), `--json`, or **any**
+  flag forces the fully non-interactive path with no prompt able to block it. Both streams matter
+  because every wizard question is written to stderr (cli-contract §4) — gating on stdin alone would
+  leave the wizard blocked on a prompt nobody can see behind a redirected stderr (the universal shell
+  idiom `cmd >/dev/null 2>&1`, which `lore-setup.sh` itself uses). Every wizard question has a 1:1
+  flag equivalent — `--agents` (the bridge), `--scaffold <target>` (repeatable; `mkdocs`/`docusaurus`/
   `obsidian`), `--obsidian` (shorthand for `--scaffold obsidian`), `--check-backlog`/`--no-backlog`
-  (force/skip the advisory-only backlog check), and `--yes` (skip the wizard even on a TTY, applying
-  bare defaults) — so a script reaches the exact wizard outcome with zero prompts. **The
-  non-interactive default is completely unchanged**: with no flags and a non-TTY stdin (the
-  automatic case for every existing caller), `lore init` does exactly what it always did — scaffold
-  `docs/`/`.lore/` and nothing else; the `--json` envelope's new `interactive`/`agents`/`scaffolds`/
-  `backlog` fields are purely additive (ADR-0005 §versioning) and absent in that default case, so
-  this is not a contract-breaking change. The agent-bridge and scaffold steps are idempotent because
-  they reuse `lore agents`/`lore scaffold`'s own primitives directly — `applyAgentsBridge`
+  (force/skip the advisory-only backlog check), and `--yes`/`--non-interactive` (skip the wizard even
+  on a TTY, applying bare defaults — this is npm's `-y`, i.e. "skip every prompt," not "answer every
+  question with its default": the agent-bridge question defaults to yes, but `--yes` installs
+  nothing). EOF (Ctrl-D) mid-wizard is a `usage` error (exit `2`) with a rendered diagnostic, never a
+  silent success. **The non-interactive default is completely unchanged**: with no flags and a
+  non-TTY stdin (the automatic case for every existing caller), `lore init` does exactly what it
+  always did — scaffold `docs/`/`.lore/` and nothing else; `interactive`/`scaffolds` are always
+  present in the `--json` envelope (`false`/`[]` on the default path) and `agents`/`backlog` appear
+  only when those steps ran — all four purely additive (ADR-0005 §versioning), so this is not a
+  contract-breaking change. The agent-bridge and scaffold steps are idempotent because they reuse
+  `lore agents`/`lore scaffold`'s own primitives directly — `applyAgentsBridge`
   (`src/commands/agents.ts`) and `applyScaffold` (`src/commands/scaffold.ts`) were extracted out of
   `runAgents`/`runScaffold` (which are now thin arg-parse/emit wrappers over them) specifically so
   `lore init` never prints a second, separate envelope onto the stdout stream its own `--json`
-  contract owns. The backlog-coupling check (`adapter.probe()`) is advisory-only — a missing or
-  non-`--json`-capable `backlog` becomes a stderr warning plus `backlog: {capable: false, warning}`
-  on the result, never a failed `init` run. The wizard's TTY gate and its prompt I/O are both
-  injectable (`InitOptions.stdinIsTTY`/`InitOptions.prompter`, resolved once at the `cli.ts`
-  boundary alongside the existing `isTTY`/`stderrIsTTY` handling) rather than read from
-  `process.stdin` at the command call site, so the wizard is unit-tested with a scripted prompter
-  and never touches a real terminal; `runInit` stays a plain (non-`async`) function returning
-  `number | Promise<number>` (mirroring `lore check --external`'s existing sync/async split), so the
-  common zero-flag path returns a plain number exactly as before this change. Documented in the new
-  ADR-0017, [`cli-surface.md`](docs/reference/cli-surface.md)'s `init` entry, a new "Bootstrapping a
-  brand-new repo" section in
+  contract owns. `lore init`'s own renderers reuse `lore agents`' actionable trailer verbatim
+  (`renderTrailer`, now exported) for a hand-edited/`protected` bridge file, and paint `protected`
+  as a warning rather than the same green as an actual write. The backlog-coupling check
+  (`adapter.probe()`) is advisory-only — a missing or non-`--json`-capable `backlog` becomes a
+  stderr warning plus `backlog: {capable: false, warning}` on the result, never a failed `init` run.
+  The wizard's TTY gate and its prompt I/O are both injectable (`InitOptions.stdinIsTTY`/
+  `stderrIsTTY`/`prompter`, resolved once at the `cli.ts` boundary alongside the existing
+  `isTTY` handling) rather than read from `process.stdin`/`process.stderr` at the command call site,
+  so the wizard is unit-tested with a scripted prompter and never touches a real terminal; `runInit`
+  stays a plain (non-`async`) function returning `number | Promise<number>` (mirroring `lore check
+  --external`'s existing sync/async split), so the common zero-flag path returns a plain number
+  exactly as before this change. The agent bridge is applied before scaffold targets are
+  pre-flighted, so a scaffold conflict (or an EOF after the bridge question) can leave the bridge
+  already written while the run still exits non-zero — this ordering is unchanged/deliberate;
+  idempotency is what makes re-running `lore init` afterward safe (it picks up exactly where the
+  interrupted run left off). Documented in the new ADR-0017, [`cli-surface.md`](docs/reference/cli-surface.md)'s
+  `init` entry, a new "Bootstrapping a brand-new repo" section in
   [`agent-onboarding.md`](docs/runbooks/agent-onboarding.md), and the README quickstart; discoverable
-  via top-level `lore --help` and `lore help init`. Verified against `dev`: `bun test` 2153/0 pass
-  (up from the 2126/0 baseline — 44 tests in `test/init.test.ts`, up from 20, plus 2 router-level
-  wizard-wiring tests in `test/cli.test.ts`; the TTY gate and the flag-bypass check were each
-  mutation-tested by reverting the fix and confirming their dependent tests genuinely fail, then
-  restored to green), `typecheck`/`lint` clean, `lore check` (40 files, 0 errors/warnings), and a
-  full run of the docker e2e harness (`docker/e2e/run-e2e.sh`) — 302 passed, 0 failed, unchanged from
-  its existing baseline (no assertion needed changing: the harness never exercises `init`'s new
-  flags, and the default path it does exercise is byte-for-byte unchanged).
+  via top-level `lore --help` and `lore help init`. Verified against `dev`: `bun test` 2176/0 pass (up
+  from the 2136/0 baseline — 55 tests in `test/init.test.ts`, up from 19, plus 5 router-level
+  wizard-wiring tests in `test/cli.test.ts`; the stdin/stderr TTY gate, the `--json` veto, the
+  flag-bypass check, and the EOF/`close()` handling were each mutation-tested by reverting the fix
+  and confirming their dependent tests genuinely fail — one of them (the EOF race) genuinely hangs
+  once reverted, itself proof the regression test exercises a real bug — then restored to green),
+  `typecheck`/`lint` clean, `lore check` (40 files, 0 errors/warnings), live pty verification of both
+  the fixed hang (`lore init --plain >/dev/null 2>&1` under a real pty, previously hung forever, now
+  completes in well under a second) and the fixed EOF behavior (Ctrl-D mid-wizard now renders `error:
+  stdin closed before the init wizard finished (EOF/Ctrl-D)` and exits `2`, leaving only the base
+  scaffold on disk), and a full run of the docker e2e harness (`docker/e2e/run-e2e.sh`) — 302 passed,
+  0 failed, unchanged from its existing baseline (no assertion needed changing: the harness never
+  exercises `init`'s new flags, and the default path it does exercise is byte-for-byte unchanged).
+  A follow-up review round found and fixed two blocking defects in the initial cut of this feature
+  (the stdin-only TTY gate, and the EOF-hangs-forever wizard promise) plus several accuracy/UX
+  corrections: the unknown-option error envelope on `lore init --bogus` normalizes to the same shape
+  every other command's unknown-option error already uses (drops a redundant `input.options` field,
+  matches the `hint` wording) — additive per ADR-0005, not a removal of contract surface; and
+  `--plain` now prints a line for an already-up-to-date scaffold step instead of nothing.
 - **`.github/workflows/release.yml` gained a real `publish` job — OIDC trusted publishing to npm,
   gated on an explicit dispatch input** (LORE-255). The workflow stays `workflow_dispatch`-only
   (never push/tag-triggered); the new `publish` job additionally requires
