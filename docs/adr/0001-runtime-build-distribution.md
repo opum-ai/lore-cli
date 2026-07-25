@@ -109,8 +109,11 @@ machines through the channel they already use (npm / `npx` / `bunx`).
   postinstall compilation, and `npx`/`bunx` "just work".
 - The build mechanics (per-platform compile matrix, the launcher, the package
   layout, and a dry-run pipeline that proves `npx` resolution end-to-end) are
-  implemented (LORE-9); the actual `npm publish` step — and the npm Trusted
-  Publisher (OIDC) configuration it depends on — is a deliberate follow-up. See
+  implemented (LORE-9). **Amendment (LORE-255):** the actual `npm publish`
+  step is now implemented too, as a `publish` job gated on an explicit
+  `publish: true` `workflow_dispatch` input with job-scoped `id-token: write`
+  and OIDC trusted publishing; it still requires the one-time npm Trusted
+  Publisher configuration for all six packages before it can succeed. See
   [release-publishing.md](../runbooks/release-publishing.md) for the exact
   setup steps and the release procedure.
 
