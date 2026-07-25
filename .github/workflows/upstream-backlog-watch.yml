@@ -33,8 +33,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      # Least privilege beyond the workflow-level `contents: read`: opening/labeling the
-      # tracking issue this job's whole purpose is to surface.
+      # Job-level `permissions:` REPLACES the workflow-level block, not extends it — every
+      # scope not listed here is set to `none` for this job's token. `contents: read` must be
+      # restated so `actions/checkout` (this job's first step, on a private repo) can still
+      # clone; `issues: write` is for opening/labeling the tracking issue this job's whole
+      # purpose is to surface.
+      contents: read
       issues: write
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
