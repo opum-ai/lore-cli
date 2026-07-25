@@ -23,6 +23,11 @@
  * with {@link assertNoSymlinkInAnyPath} before writing any single file, so a bad target refuses
  * the operation up front rather than after some files already landed.
  *
+ * {@link classifyExistingFile} is a third, narrower helper for the never-clobber family: not a
+ * write itself, but the byte-comparison `lore scaffold` uses (LORE-263) to tell an unchanged
+ * re-run (nothing to do) apart from a genuine user edit (a real `conflict`) instead of treating
+ * every pre-existing file the same way `createIfAbsent`'s plain absent/present check does.
+ *
  * All side effects live in the command layer (lore-design §2.1); core stays pure. These
  * helpers are that side-effecting layer, factored to one module so the filesystem-conflict
  * semantics are identical across every command.
@@ -171,6 +176,43 @@ export function createIfAbsent(absPath: string, contents: string, relPath: strin
     }
     throw ioError(cause, relPath, "write file");
   }
+}
+
+/**
+ * Whether the entry already at `absPath` is absent, present with byte-identical `contents`, or
+ * present but different — the three-way classification `lore scaffold`'s idempotent-when-unchanged
+ * preflight needs (LORE-263), so a bare re-run can tell "nothing to do" (every generated file
+ * already matches) apart from "the user edited this" (a real conflict `--force` is needed to fix)
+ * without conflating the two the way a plain `existsSync` check does.
+ *
+ * Uses `lstatSync`, never following a symlink — mirrors this module's other never-clobber checks
+ * ({@link existingIsRegularFile}) rather than inventing a new pattern. A **non-regular** entry
+ * (directory, symlink, …) occupying the path is always `"differs"`, never `"unchanged"`: silently
+ * treating a symlink whose target happens to read back identical bytes as "nothing to do" would
+ * skip the write loop entirely and, with it, {@link assertNoSymlinkInPath}'s own guard — exactly the
+ * write-outside-the-repo hazard LORE-76 closed. A read failure on an entry that does exist (e.g.
+ * `EACCES`) is classified the same conservative way, for the identical reason: this function must
+ * never claim a match it cannot prove. Only the documented "vanished after the initial `lstat`"
+ * race degrades to `"missing"` (a benign, self-resolving race, not a real problem) rather than
+ * `"differs"`.
+ */
+export function classifyExistingFile(absPath: string, contents: string): "missing" | "unchanged" | "differs" {
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(absPath);
+  } catch {
+    return "missing";
+  }
+  if (!stat.isFile()) {
+    return "differs";
+  }
+  let onDisk: string;
+  try {
+    onDisk = readFileSync(absPath, "utf8");
+  } catch {
+    return "differs";
+  }
+  return onDisk === contents ? "unchanged" : "differs";
 }
 
 /**
