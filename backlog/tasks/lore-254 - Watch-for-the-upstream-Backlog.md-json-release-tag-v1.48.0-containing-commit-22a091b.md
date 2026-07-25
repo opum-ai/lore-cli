@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-24 18:41'
-updated_date: '2026-07-25 02:33'
+updated_date: '2026-07-25 02:41'
 labels:
   - release
   - tooling
@@ -126,10 +126,23 @@ Verification:
   22a091b...", exit 0. Confirms the real MrLesk/Backlog.md release list (latest tag v1.48.0,
   published 2026-07-12) correctly yields zero candidates against the 2026-07-16 cutoff, so
   candidateReleases/the whole pipeline behaves correctly against live data, not just fixtures.
+
+Review round 1 (request_changes) fixes applied:
+- [major] Fixed 4 stale references to the planned-but-nonexistent docs/runbooks/upstream-backlog-watch.md path; the runbook was actually created at docs/runbooks/upstream-backlog-md-json-tag-watch.md (lore's slug from its title). Corrected: src/scripts/upstream-backlog-watch.ts header docstring + renderIssueBody string, .github/workflows/upstream-backlog-watch.yml comment, and test/upstream-backlog-watch.test.ts's assertion (which had enshrined the wrong path). Did not rename the runbook file -- docs/index.md and lore's own regenerated indexes already use the on-disk name.
+- [minor] candidateReleases: replaced the newest-first prefix-take (break on first older release) with a plain filter, since GitHub's Releases API list order is created_at desc, not guaranteed published_at order -- a release drafted before the cutoff but published after it could otherwise sort below an older-published release and be silently dropped. Flipped the out-of-order test to assert the qualifying release IS kept. Updated findQualifyingRelease's doc comment to stop assuming newest-first order.
+- [minor] trackingIssueAlreadyExists: changed per_page=1 to per_page=100 on the issues query so a labeled PR sorted ahead of a labeled issue on the same page can no longer hide a real existing tracking issue behind it. Added a regression test (PR row precedes issue row in the same page) asserting already-surfaced.
+- [nit] Added a Caveat note to docs/runbooks/upstream-backlog-md-json-tag-watch.md: GitHub auto-disables scheduled workflows after ~60 days of repo inactivity (emails a warning first); documented the Actions-tab re-enable + workflow_dispatch fallback.
+- [nit] Commit 0944997's missing Refs: LORE-254 trailer is a pre-existing commit from before this fix round; not amended (no history rewrite per reviewer guidance) -- all new commits in this fix round carry the trailer.
+
+Re-verified: bun test (2075 pass, 0 fail, incl. 13 tests in upstream-backlog-watch.test.ts), bun run typecheck (clean), bun run lint (clean), bun run src/cli.ts check (39 files, 0 errors, 0 warnings).
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Added .github/workflows/upstream-backlog-watch.yml (daily cron + workflow_dispatch) driving the new src/scripts/upstream-backlog-watch.ts, which polls MrLesk/Backlog.md's Releases API, ancestor-checks each candidate tag's commit against 22a091b via the GitHub compare API (distinguishing a real --json-capable tag from a merely-newer one), and opens a one-time GitHub issue labeled upstream-watch in this repo naming LORE-253 as the next step. Documented in docs/runbooks/upstream-backlog-md-json-tag-watch.md (linked from docs/index.md), covering where the signal lands and who acts on it. Verified: bun test (2074 pass incl. 12 new), bun run typecheck (clean), bun run lint (clean), bun run src/cli.ts check (39 files, 0 errors/warnings), actionlint (no findings), and a real read-only dry run against live GitHub APIs confirming zero-side-effect correct no-match behavior against today's actual MrLesk/Backlog.md release list.
+Added .github/workflows/upstream-backlog-watch.yml (daily cron + workflow_dispatch) driving the new src/scripts/upstream-backlog-watch.ts, which polls MrLesk/Backlog.md's Releases API, ancestor-checks each candidate tag's commit against 22a091b via the GitHub compare API (distinguishing a real --json-capable tag from a merely-newer one), and opens a one-time GitHub issue labeled upstream-watch in this repo naming LORE-253 as the next step. Documented in docs/runbooks/upstream-backlog-md-json-tag-watch.md (linked from docs/index.md), covering where the signal lands and who acts on it.
+
+Review round 1 (request_changes) fixes: corrected 4 stale runbook-path references to the real on-disk filename (major); replaced candidateReleases' order-assuming prefix-take with a plain filter and flipped its out-of-order test (minor); widened the tracking-issue existence check from per_page=1 to per_page=100 so a labeled PR can't hide a real labeled issue, with a new regression test (minor); documented GitHub's 60-day scheduled-workflow auto-disable as a runbook caveat (nit).
+
+Verified: bun test (2075 pass, 0 fail, incl. 13 tests in upstream-backlog-watch.test.ts), bun run typecheck (clean), bun run lint (clean), bun run src/cli.ts check (39 files, 0 errors/warnings).
 <!-- SECTION:FINAL_SUMMARY:END -->
