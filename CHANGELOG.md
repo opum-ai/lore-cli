@@ -8,6 +8,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`lore rename` / `lore supersede --rewrite-links` now warn on stderr when a retargeted inbound
+  link's display text still names the OLD id** (LORE-262, surfaced by the Meridian e2e stress
+  test, which needed a manual fix after the run). `rewriteInbound` (`src/core/rewrite.ts`) has
+  always retargeted every inbound body link's *destination* correctly, but never checked whether
+  the link's *visible text* still named the concept being renamed/superseded — so a supersession
+  doc's own `[ADR-0005](…)` citation, retargeted to point at ADR-0006, could ship with the prose
+  and the link silently disagreeing. The retarget itself is unchanged (LORE-262 AC#2: no
+  regression) — skipping it outright was rejected, because `rename` deletes the old file and a
+  skipped link would become genuinely dangling. Instead, a new `RewritePlan.textMismatches:
+  LinkTextMismatch[]` field (populated by `computeBodyEdits`'s new
+  `oldIdNameCandidates`/`textNamesOldId` heuristic — the bare id, its basename, and for lore's
+  `NNNN-slug` ADR/RFC ids, the digits and `<dir>-<digits>`, matched case-insensitively: substring
+  for a full `dir/id`, word-boundary for a bare candidate) is rendered as one `warning:` line per
+  mismatch by both `commands/rename.ts` and `commands/supersede.ts`, through a shared
+  `renderLinkTextMismatchWarning`, on a fresh `WarningCollector` (not the already-flushed
+  bundle-load one — `flush()` is non-draining). Scoped to **inbound** files only, never the moved
+  file's own self-link retarget. Exit codes and the `--json` envelope are unchanged — this is
+  advisory-only. Verified against `dev`: `bun test` 2110/0 pass (including the new
+  `test/rename.test.ts`/`test/supersede.test.ts` coverage), `typecheck`/`lint` clean, `lore check`
+  (39 files, 0 errors/warnings).
+- **`loadBundle` no longer warns about lore's own generated `index`/`log` hubs** (LORE-258).
+  `src/core/bundle.ts`'s `loadBundle` previously fired the `no frontmatter mapping` advisory for
+  *any* non-concept file, including the machine-generated `index.md`/`log.md` hubs that
+  `indexes.ts`/`log.ts` regenerate wholesale and which are always frontmatter-free by design — so
+  every command that threads a `WarningCollector` through `loadBundle` (`link`, `unlink`, `sync`,
+  `tasks`) printed spurious warnings on every ordinary invocation, training users to ignore them
+  entirely. `loadBundle` now checks the skipped file's basename against `RESERVED_STEMS`
+  (`core/scaffold.ts`: `index`/`log`) and suppresses the advisory only for those two
+  known-reserved stems; a genuinely unexpected non-concept file still warns exactly as before.
+  `check` (never passes a collector) and `validate` (already tallies a silent `skippedCount`)
+  needed no change. Verified against `dev`: `bun test` 2110/0 pass, `typecheck`/`lint` clean,
+  `lore check` (39 files, 0 errors/warnings); a before/after repro on this repo's own bundle
+  showed `sync --dry-run`/`tasks` dropping from 6 spurious warning lines to 0, with `check`
+  unchanged.
 - **ADR-0002 now distinguishes a missing `backlog` binary (exit `3`) from a present-but-incapable one (exit `6`)**
   (LORE-60, a doc-accuracy gap found via the LORE-56 Docker E2E harness against a real
   pinned-upstream `backlog` binary). Decision point 5 of `docs/adr/0002-backlog-integration-json-only.md`
@@ -97,6 +131,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency set has.
 
 ### Added
+- **Daily upstream-release watch for MrLesk/Backlog.md's tagged `--json` release** (LORE-254). A
+  new scheduled workflow (`.github/workflows/upstream-backlog-watch.yml`, daily `cron` plus
+  `workflow_dispatch`) runs a new standalone script (`src/scripts/upstream-backlog-watch.ts`) —
+  repo-maintenance tooling, not part of the `lore` CLI surface: no `--json` envelope, no
+  exit-code contract, not reachable via `lore <command>`. lore's adapter
+  (`src/adapters/backlog.ts`) and lore's own first npm release are both blocked on
+  MrLesk/Backlog.md tagging a release whose history actually contains commit `22a091b` (PR #790 /
+  BACK-545, stable `--json` output on `task list`/`task view`/`search`) — nothing upstream
+  notifies lore when that happens, so LORE-253 (the follow-up adapter migration) could otherwise
+  stall indefinitely. The script filters the upstream Releases API to releases published at/after
+  the PR's merge date (`candidateReleases`), resolves each candidate tag's commit sha, and
+  ancestor-checks it against the target commit via GitHub's compare API
+  (`isAncestorCompareStatus`: `status` `identical` or `ahead`) — distinguishing a genuinely
+  `--json`-capable tag from one merely numbered newer than the last-known `v1.48.0`. The first
+  qualifying release opens a one-time GitHub issue in this repo labeled `upstream-watch` naming
+  LORE-253 as the next step; kept idempotent by checking for an existing labeled issue (open or
+  closed) before doing any upstream work, since every later release also contains the target
+  commit forever after. Documented in the new
+  `docs/runbooks/upstream-backlog-md-json-tag-watch.md` runbook. Included here even though it is
+  repo-tooling rather than CLI behavior, matching this file's own existing precedent for logging
+  CI/tooling additions (see the "CI (LORE-8)" / "Dev tooling (LORE-7)" entries below). Verified
+  against `dev`: `bun test` 2110/0 pass (including 13 tests in
+  `test/upstream-backlog-watch.test.ts` covering the date-cutoff filter, all four compare
+  statuses, and `watchOnce`'s already-surfaced/no-match/opened paths against a stubbed fetcher),
+  `typecheck`/`lint` clean, `actionlint` clean, `lore check` (39 files, 0 errors/warnings).
 - **`lore scaffold obsidian` — the third consumer-scaffolding target** (LORE-41). Writes a single
   `docs/.obsidian/app.json` preset (`useMarkdownLinks: true`, `newLinkFormat: "relative"`,
   `alwaysUpdateLinks: true` — consumer-compatibility.md §3.2), plus Files & Links UI guidance
@@ -821,6 +880,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Build plan tracked as Backlog.md milestones and tasks.
 
 ### Changed
+- **`lore scaffold <target>` — a bare re-run against an unchanged config is now an idempotent
+  no-op; exit `5` is narrowed to an actual user edit or a directory blocker** (LORE-263). **A
+  user-visible exit-code contract change.** Previously *any* already-existing planned file always
+  hard-errored `conflict`/exit `5` on a bare re-run — even when its on-disk bytes were
+  byte-identical to what the run would generate — so simply re-running `lore scaffold mkdocs` (or
+  `docusaurus`/`obsidian`) against an untouched, already-scaffolded bundle always failed unless
+  `--force` was passed. A new `classifyExistingFile` (`src/commands/fswrite.ts`: `missing` /
+  `unchanged` / `differs`, `lstat`-based, never following a symlink, conservative — never
+  `unchanged` — on a non-regular entry or a read failure) lets `runScaffold`
+  (`src/commands/scaffold.ts`) now tell "nothing to do" apart from "the user edited this": exit
+  `5` is emitted, naming every collision and pointing at `--force`, only for a planned file that
+  genuinely `differs` (a real user edit) or a non-directory entry blocking a planned directory —
+  the byte-identical case is no longer a collision at all. A byte-identical bundle now exits `0`,
+  writes nothing (`scaffold.result.files: []`), and prints `<target> config already up to date —
+  nothing to do`, mirroring `lore sync`'s own `0 files changed` no-op model. Classification is
+  per-file, so a partially-recreated bundle (one generated file untouched, its sibling separately
+  deleted) recreates only the missing file rather than refusing the whole run. `mkdocs`'s
+  `docs/tags.md` stamps a real wall-clock `timestamp` on every fresh scaffold, which would
+  otherwise defeat this idempotency on every real re-run purely because time moved forward; a
+  bare (non-`--force`) `mkdocs` run now reuses the on-disk file's own `timestamp` via the new
+  `preservedTagsTimestamp` instead of a fresh clock read (`--force` is unaffected, always
+  stamping fresh). The docker e2e harness's `run-e2e.sh` Phase 18 assertions were rewritten at
+  merge time to cover both regression directions (stale-conflict-on-unchanged and
+  silent-clobber-on-edit); a follow-up doc-accuracy fix corrected
+  `docs/reference/cli-surface.md`'s Exit/Output rows, which had briefly still described the
+  pre-change always-conflicts contract. Verified against `dev`: `bun test` 2110/0 pass,
+  `typecheck`/`lint` clean, `lore check` (39 files, 0 errors/warnings).
 - **Deduped the shared task-summary-row type and aligned-row renderer** (LORE-51). `lore tasks`'s
   `TaskRollupRow` and `lore orphans`' `OrphanTask` were byte-identical `{id, title, status}`
   redeclarations, and `orphans.ts`'s orphan-task block re-implemented `tasks.ts`'s id/status/title
