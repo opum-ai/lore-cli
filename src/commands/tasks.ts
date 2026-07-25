@@ -254,7 +254,10 @@ function parseTasksArgs(args: readonly string[]): TasksArgs {
   }
 
   if (positionals.length === 0) {
-    throw usage("missing concept <id>", "give the concept whose task rollup to show, e.g. `lore tasks stories/x`");
+    throw usage(
+      "`lore tasks` needs a concept id",
+      "give the concept whose task rollup to show, e.g. `lore tasks stories/x`",
+    );
   }
   if (positionals.length > 1) {
     throw usage(`unexpected argument "${positionals[1]}"`, "run `lore tasks <id> [--status <S>]`");

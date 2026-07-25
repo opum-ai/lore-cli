@@ -330,8 +330,11 @@ describe("runTasks — resolution and parse errors", () => {
     expect(err.message).toContain("stories/ghost");
   });
 
-  test("a missing <id> is a usage error (exit 2)", async () => {
-    await expectRejection("usage", () => runTasks({ root, output: JSON_CTX, stdout: capture(), args: [] }));
+  test("a missing <id> is a usage error (exit 2) naming the command (LORE-259)", async () => {
+    const err = await expectRejection("usage", () => runTasks({ root, output: JSON_CTX, stdout: capture(), args: [] }));
+    // Matches the same "`lore <command>` needs a <thing>" template `lore link`/`lore rename`/
+    // etc. already use (LORE-259) — `tasks` used to diverge with a bare "missing concept <id>".
+    expect(err.message).toBe("`lore tasks` needs a concept id");
   });
 
   test("a second positional is a usage error (exit 2)", async () => {
