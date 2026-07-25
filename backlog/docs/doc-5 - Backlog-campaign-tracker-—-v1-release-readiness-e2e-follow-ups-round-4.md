@@ -3,7 +3,7 @@ id: doc-5
 title: Backlog campaign tracker — v1 release readiness & e2e follow-ups (round 4)
 type: other
 created_date: '2026-07-25 02:15'
-updated_date: '2026-07-25 03:37'
+updated_date: '2026-07-25 03:56'
 ---
 # Backlog campaign tracker — v1 release readiness & e2e follow-ups
 
@@ -19,7 +19,7 @@ Protocol: restore → compute the ready/conflict graph → mark the wave Dispatc
 
 ## Frontier
 
-The "ready now" set is **always recomputed live** from `backlog/tasks/*.md` + this table at the start of every restore/wave — never trust a persisted "next wave" plan. Informational hint only: as of **wave 1 settlement (2026-07-25)**, **4 resolved**, **5 queued**, **0 in-flight**, **6 not queued**.
+The "ready now" set is **always recomputed live** from `backlog/tasks/*.md` + this table at the start of every restore/wave — never trust a persisted "next wave" plan. Informational hint only: as of **wave 2 dispatch (2026-07-25)**, **4 resolved**, **4 in-flight** (259, 256, 255, 264), **2 queued** (261, 260), **6 not queued**. LORE-264 was filed at wave-1 settlement from the integration review's CHANGELOG finding.
 
 Live conflict edges as computed at wave 1 (file-citation read, over-approximated per skill R4b) — **recompute, do not trust**:
 - **259 ↔ almost everything.** LORE-259 AC#1 harmonizes *every* `missing required arg` usage error, and the shared `usage()` helper (`src/commands/args.ts:58`) is called from 18 command files: `replace, schema, scaffold, help, new, validate, supersede, args, context, graph, agents, orphans, query, instructions, link, check, rename, tasks`. Any task touching one of those files conflicts with 259. Verified: `src/commands/fswrite.ts` has **zero** `usage()` call sites, so **256 does not conflict with 259**.
@@ -31,11 +31,12 @@ Live conflict edges as computed at wave 1 (file-citation read, over-approximated
 ## Queue (confirmed order)
 | # | Issue | Cluster | Formal deps | Status | Wave | Note |
 |---|---|---|---|---|---|---|
-| 2 | LORE-259 | cmd-link/errors-output | — | To Do | — | bug. Consistent usage/error/success phrasing: missing-arg templates, misdirecting bad-id hint (points at check, should be query/graph), unexplained '(doc)'. [src/commands/link.ts, tasks.ts + the 18 `usage()` call sites] |
+| 2 | LORE-259 | cmd-link/errors-output | — | Dispatched | 2 | bug. Consistent usage/error/success phrasing: missing-arg templates, misdirecting bad-id hint (points at check, should be query/graph), unexplained '(doc)'. [src/commands/link.ts, tasks.ts + the 18 `usage()` call sites] |
 | 4 | LORE-261 | cmd-meta-a | — | To Do | — | enhancement. orphans should not flag subtasks of a linked parent (parent/subtask hierarchy) — or link cascades. [src/commands/orphans.ts, reconcile-shared.ts, adapters/backlog.ts] |
-| 6 | LORE-256 | cmd-crud-b (fswrite) | — | To Do | — | bug. Bounded renameSync EPERM/transient-lock retry in writeFileAtomic/writeFileNoFollow. Windows-CI-verified. [src/commands/fswrite.ts] |
-| 8 | LORE-255 | build-ci-config | — | To Do | — | task. First-release rehearsal: npm publish --dry-run of all 6 artifacts + a first-release checklist (+ wire the dispatch-gated publish job). [.github/workflows/release.yml, docs/runbooks/release-publishing.md] |
+| 6 | LORE-256 | cmd-crud-b (fswrite) | — | Dispatched | 2 | bug. Bounded renameSync EPERM/transient-lock retry in writeFileAtomic/writeFileNoFollow. Windows-CI-verified. [src/commands/fswrite.ts] |
+| 8 | LORE-255 | build-ci-config | — | Dispatched | 2 | task. First-release rehearsal: npm publish --dry-run of all 6 artifacts + a first-release checklist (+ wire the dispatch-gated publish job). [.github/workflows/release.yml, docs/runbooks/release-publishing.md] |
 | 9 | LORE-260 | cmd-init/agents/scaffold | — | To Do | — | enhancement (LARGE). One-command onboarding: interactive wizard by default (TTY-gated), flags for prompt-free/CI. Decision locked; may warrant an ADR. [src/commands/init.ts, agents.ts, scaffold.ts] |
+| 10 | LORE-264 | docs/release (new, filed at wave-1 settlement) | — | Dispatched | 2 | chore. Backfill the missing `[Unreleased]` CHANGELOG entries for wave 1's four contract changes. Found by the wave-1 integration review. [CHANGELOG.md] |
 
 ## Resolved
 | # | Issue | Status/date/wave | Evidence summary |
@@ -56,3 +57,5 @@ Live conflict edges as computed at wave 1 (file-citation read, over-approximated
   - **Gate lesson (load-bearing for future waves):** LORE-263 passed `bun test`/typecheck/lint/`lore check` *and* its unit review, then failed the **required docker-e2e CI gate**. The e2e harness (`docker/e2e/run-e2e.sh`) is a separate contract-test suite that `bun test` does **not** cover, and it encodes user-visible CLI contracts. **Any task changing a user-visible CLI contract must run the docker e2e harness locally before review** — add it to the worker's verification set, not just the reviewer's.
   - **Wave-level integration review** (Fable, over `be730be..42ce1bc`): composition **sound**. Verified on the merged tree — `bun test` 2110/0, typecheck/lint clean, `lore check` 39 files 0/0 — plus live composed-CLI runs proving LORE-258's reserved-stem suppression and LORE-262's mismatch warning coexist correctly in one `rename`/`supersede` invocation (separate collectors, separate layers; no double-flush, no swallow), that `RESERVED_STEMS` (defined in `src/core/scaffold.ts`, unmodified by any branch) kept one meaning, that `RewritePlan.textMismatches` is purely additive with no duplicate definitions, that no import cycle was introduced, and that **no test file was modified by two branches** (the collateral-test-file collision vector). LORE-254 is fully disjoint (its script imports nothing from `src/`).
   - **One finding — minor, narrow:** `docs/reference/cli-surface.md` (scaffold section, Exit row) still documented the pre-LORE-263 always-conflicts contract. In a docs-native project that is a real defect. Handled as a direct follow-up on `feature/wave1-docs-drift` off `42ce1bc` (Sonnet fix + Fable re-review), which also sweeps the repo's prose for the same drift and corrects a separate pre-existing README error (`lore scaffold agent` does not exist; `lore agents` emits SKILL.md). **In flight at the time of this settlement** — outcome recorded at the next settlement.
+- 2026-07-25 — **wave 1 tail**: the docs-drift follow-up merged as PR [#247](https://github.com/jeremy-newhouse/lore/pull/247) (`c20e696`) — Fable **approve** after 1 fix cycle (pass 1 caught two wording defects: "non-regular entry" would have wrongly included directories, and a "reserved for" phrasing made exit 5 falsely exclusive to the modified-file case). Reviewer verified every documented claim against the real binary, including that a directory-blocker exits 5 **both bare and under `--force`**. Its prose sweep found the CHANGELOG gap → filed as **LORE-264** and queued.
+- 2026-07-25 — **wave 2 DISPATCHED** (issues: LORE-259, LORE-256, LORE-255, LORE-264; workers: sonnet, reviewer: fable). Wave base `42d0723`. Worktrees at `/Volumes/external/repos/lore.worktrees/<KEY>`. Built greedily over the confirmed order under the live conflict graph: **261 excluded** (`orphans.ts` is a `usage()` call site → conflicts 259), **260 excluded** (`scaffold.ts`/`agents.ts`/`init.ts` are `usage()` call sites → conflicts 259; also shares `src/cli.ts` with 255). LORE-264 added as a 4th member (CHANGELOG.md is disjoint from all three) with an explicit orchestrator-set boundary: **LORE-264 owns `CHANGELOG.md` this wave; no other worker may touch it.** Applying wave 1's gate lesson: **LORE-259's worker is the only one instructed to run the docker e2e harness locally** (it is the only member changing user-visible output text, and the harness asserts message/hint strings); the harness serializes on a single `e2e-e2e` container, so the others are explicitly forbidden from running it.
