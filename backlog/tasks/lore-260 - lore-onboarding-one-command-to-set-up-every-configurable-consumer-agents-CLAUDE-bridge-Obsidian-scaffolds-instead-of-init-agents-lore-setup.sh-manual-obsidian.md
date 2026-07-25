@@ -7,6 +7,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-25 02:01'
+updated_date: '2026-07-25 02:04'
 labels:
   - cli-ux
   - onboarding
@@ -53,9 +54,21 @@ docs/adr/0004-cli-first-skill-bridge-mcp-deferred.md, docs/adr/0005-cli-contract
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A single lore invocation can scaffold the bundle AND set up the chosen configurable consumers (at minimum: the agents/CLAUDE bridge and an Obsidian vault config), replacing the init -> agents -> lore-setup.sh -> manual-obsidian sequence.
-- [ ] #2 A fully NON-INTERACTIVE path exists and is the default for CI/scripts (no prompt can block it); the interactive/guided path, if any, is explicitly opt-in — and the chosen mechanism (flags vs dedicated subcommand vs opt-in wizard) is recorded with rationale against ADR-0004/0005/0014 and signed off before implementation.
-- [ ] #3 The command is idempotent: re-running on an existing bundle detects and skips already-done steps (mirrors lore-setup.sh's existing/skip behavior) rather than erroring or duplicating.
-- [ ] #4 The configurable surface is covered/consistently exposed: agent bridge, scaffold targets (obsidian/mkdocs/docusaurus), and a clear warning when a --json-capable backlog is absent.
-- [ ] #5 It's discoverable (top-level help + lore help <cmd>); docs/runbooks/agent-onboarding.md (and any quickstart) updated to the one-command flow; full suite + lore check stay green.
+- [ ] #1 A bare 'lore init' on an interactive terminal runs a guided wizard offering each configurable consumer — at minimum the agents/CLAUDE bridge and an Obsidian vault config (plus mkdocs/docusaurus scaffolds and backlog-coupling detection) — and sets up the chosen ones in that one command, replacing the init -> agents -> lore-setup.sh -> manual-obsidian sequence.
+- [ ] #2 Interactive-by-default is TTY-gated and CI-safe: the wizard runs ONLY when stdin is an interactive terminal; when stdin is non-TTY (CI, pipes) or a non-interactive flag (e.g. --yes / --non-interactive) is passed, 'lore init' runs fully non-interactively with defaults and NO prompt can block it. Every option the wizard asks is ALSO settable via an explicit flag (e.g. --agents / --obsidian / --scaffold mkdocs / --no-backlog) for prompt-free/scripted use.
+- [ ] #3 Idempotent: re-running on an existing bundle detects and skips already-done steps (mirrors lore-setup.sh's existing/skip behavior) rather than erroring or duplicating — in both the wizard and non-interactive paths.
+- [ ] #4 The configurable surface is covered consistently in BOTH the wizard and the flags: agent bridge, scaffold targets (obsidian/mkdocs/docusaurus), and a clear warning when a --json-capable backlog is absent.
+- [ ] #5 The interactive-by-default decision is documented (a new ADR, or an amendment to ADR-0004/0005, recording that 'lore init' is interactive-on-TTY yet preserves the non-interactive CLI contract); it's discoverable (top-level help + lore help init); docs/runbooks/agent-onboarding.md + any quickstart updated to the one-command flow; full suite + lore check stay green.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+## Design decision (2026-07-24, user) — interactive wizard by DEFAULT; flags for prompt-free
+
+Chosen approach: a **bare 'lore init' runs a guided interactive wizard** that prompts for each configurable consumer (agents/CLAUDE bridge, Obsidian vault, mkdocs/docusaurus scaffolds, backlog coupling). **Flags let you do any of it without prompts**, and CI is fully supported.
+
+Reconciliation with lore's non-interactive/scriptable contract (ADR-0004 CLI-first, ADR-0005 CLI-contract): **gate the wizard on stdin being a TTY**. When stdin is NOT a TTY (CI, pipes) OR an explicit non-interactive flag is passed (e.g. --yes / --non-interactive), 'lore init' runs fully non-interactively with sensible defaults and no prompt can block it. **Every wizard question maps 1:1 to a flag** so scripts set each option directly. This is the npm-init pattern (interactive on a TTY; -y / non-TTY skips prompts).
+
+Not an LLM concern (ADR-0014 is about no LLM in core; the wizard is deterministic given its inputs). It likely warrants a short ADR — new, or an amendment to ADR-0004/0005 — recording that 'lore init' is the one interactive command while its non-TTY/flag paths (and the rest of the CLI) keep the deterministic, prompt-free contract. ACs updated to match this decision.
+<!-- SECTION:NOTES:END -->
