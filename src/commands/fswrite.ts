@@ -376,7 +376,6 @@ function renameOverDestination(tmpPath: string, absPath: string): void {
  * on top of the plain rename. Everything above this point (temp-file create/write, mode/ownership
  * preservation) runs exactly once regardless of that retry; only the final commit step can repeat.
  */
-
 export function writeFileAtomic(absPath: string, contents: string, relPath: string): void {
   const tmpPath = join(dirname(absPath), `.lore-sync-tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
   let tmpFileExists = false;
