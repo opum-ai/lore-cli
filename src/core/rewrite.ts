@@ -60,6 +60,19 @@
  *   independent) id. A frontmatter ref that *dangles* (resolves to no concept) is left as-is, the
  *   same broken signal `lore check` already reports.
  *
+ * ### Text/target mismatch reporting (LORE-262)
+ *
+ * An inbound link is always retargeted exactly as described above — the engine never *skips* a
+ * retarget, because for `lore rename` the old file is deleted, and a skipped link would become a
+ * genuinely dangling one (worse than a stale-reading text). But a link whose *visible display
+ * text* still names the OLD id (e.g. a supersession doc's own `[ADR-0005](…)` citation, now
+ * pointing at ADR-0006) is easy to leave silently misleading, so every such retarget is *also*
+ * surfaced as a {@link LinkTextMismatch} in {@link RewritePlan.textMismatches} — advisory data
+ * only, the same shape as everything else this module returns (pure, no I/O). The command layer
+ * renders each one as a stderr warning via {@link renderLinkTextMismatchWarning}. Scoped to
+ * **inbound** files only (not the moved file's own self-link retarget in `move` mode) — see
+ * {@link computeBodyEdits}'s doc comment for why.
+ *
  * Per the core contract (lore-design §2.1) everything here is pure: a {@link BundleGraph} in, a
  * {@link RewritePlan} out, or a `not_found`/`conflict` {@link LoreError}. No filesystem, no
  * printing, no flags, no `process.exit` — the command layer reads the bundle, writes the plan's
@@ -74,6 +87,7 @@ import {
   type BundleGraph,
   conceptNotInBundle,
   internalTarget,
+  nodeText,
   REF_FIELDS,
   resolvePath,
   resolveRef,
@@ -100,6 +114,36 @@ export interface RewriteWrite {
 }
 
 /**
+ * One retargeted **inbound** body link whose visible display text still names the OLD id — a
+ * text/target mismatch a naive retarget would otherwise leave silently in place (LORE-262). The
+ * link's destination is always still repointed to `to` (skipping it would leave a genuinely
+ * *dangling* link once `lore rename` deletes the old file — worse than a stale-reading text), so
+ * this is advisory data only: the caller (`commands/supersede.ts`/`commands/rename.ts`) surfaces
+ * it as a stderr warning via {@link renderLinkTextMismatchWarning} so the author can review the
+ * prose, not something the engine acts on itself.
+ */
+export interface LinkTextMismatch {
+  /** Bundle-relative path of the concept file containing the mismatched link. */
+  readonly path: string;
+  /** The link's visible display text, verbatim as authored (e.g. `"ADR-0005"`). */
+  readonly text: string;
+  /** The old id the text names (bare id, no `.md`). */
+  readonly from: string;
+  /** The new id the link's destination now points to (bare id, no `.md`). */
+  readonly to: string;
+}
+
+/**
+ * The stderr warning line for one {@link LinkTextMismatch} (LORE-262). Exported so
+ * `commands/supersede.ts` and `commands/rename.ts` — the two callers that can produce one — render
+ * byte-identical wording through a single shared function, rather than two independently-drifting
+ * copies (mirrors `state.ts`'s `renderBacklogCommitLine`, reused the same way by `rename.ts`).
+ */
+export function renderLinkTextMismatchWarning(m: LinkTextMismatch): string {
+  return `link text "${m.text}" in ${DOCS_DIR}/${m.path} still names "${m.from}", but its link now points to "${m.to}" — review the prose`;
+}
+
+/**
  * The result of {@link rewriteInbound}: the optional file move and every file whose bytes change.
  * `rename` is non-null only in `move` mode — it tells the command which file to write at the new
  * path and delete at the old; the moved file's new bytes are in `writes` under its new path.
@@ -110,6 +154,12 @@ export interface RewritePlan {
   readonly rename: { readonly from: string; readonly to: string } | null;
   /** Each changed file's new bytes, ascending by path. */
   readonly writes: readonly RewriteWrite[];
+  /**
+   * Every retargeted inbound link whose text names the old id, ascending by path (each file's own
+   * entries keep document order — LORE-262). Empty when no such link was found — the overwhelmingly
+   * common case, so an ordinary rewrite carries no advisory data at all.
+   */
+  readonly textMismatches: readonly LinkTextMismatch[];
 }
 
 /** Options for {@link rewriteInbound}. */
@@ -212,6 +262,7 @@ export function rewriteInbound(
   }
 
   const writes: RewriteWrite[] = [];
+  const textMismatches: LinkTextMismatch[] = [];
   for (const id of affected) {
     if (exclude.has(id)) {
       continue; // the caller rewrites this file itself — never parse, serialize, or plan it here
@@ -222,20 +273,23 @@ export function rewriteInbound(
     }
     const isMoved = move && id === from;
     const rewritten = rewriteConcept(concept, graph, { from, to, fromPath, toPath, isMoved, rewriteRefs }, profile);
-    if (rewritten === null && !isMoved) {
+    if (rewritten.bytes === null && !isMoved) {
       continue; // nothing changed in this file and it does not move — leave it untouched
     }
-    const bytes = rewritten ?? serializeConcept(concept, { profile });
+    const bytes = rewritten.bytes ?? serializeConcept(concept, { profile });
     writes.push({ path: isMoved ? toPath : concept.path, bytes });
+    textMismatches.push(...rewritten.textMismatches);
   }
 
   writes.sort((a, b) => compareCodeUnits(a.path, b.path));
+  // Stable sort: each file's own mismatches keep the document order they were collected in.
+  textMismatches.sort((a, b) => compareCodeUnits(a.path, b.path));
   // `rename` must only claim the move when the source's own rewrite actually ran: if `exclude`
   // contains `from`, the loop above `continue`d past it before ever pushing its destination write
   // (the exclude contract — never parsed, serialized, or planned here), so a `rename` announcing the
   // move would leave `writes` with no entry at `toPath` for a caller to act on (LORE-164).
   const rename = move && !exclude.has(from) ? { from: fromPath, to: toPath } : null;
-  return { rename, writes };
+  return { rename, writes, textMismatches };
 }
 
 /**
@@ -359,19 +413,26 @@ interface RewriteContext {
   readonly rewriteRefs: boolean;
 }
 
+/** {@link rewriteConcept}'s result: the new bytes (`null` when nothing changed) plus any {@link LinkTextMismatch}es found. */
+interface ConceptRewrite {
+  readonly bytes: string | null;
+  readonly textMismatches: readonly LinkTextMismatch[];
+}
+
 /**
- * Rewrite one affected concept, returning its new serialized bytes, or `null` when nothing in it
- * changed (no body destination and no frontmatter ref needed rewriting). The moved file always
- * yields bytes from its caller even on a `null` here, because it still relocates.
+ * Rewrite one affected concept, returning its new serialized bytes (`null` when nothing in it
+ * changed — no body destination and no frontmatter ref needed rewriting) plus every
+ * {@link LinkTextMismatch} its body edits surfaced. The moved file always yields bytes from its
+ * caller even on a `null` here, because it still relocates.
  */
 function rewriteConcept(
   concept: Concept,
   graph: BundleGraph,
   ctx: RewriteContext,
   profile: Profile | undefined,
-): string | null {
+): ConceptRewrite {
   const dir = posix.dirname(concept.path);
-  const edits = computeBodyEdits(concept.body, concept.path, ctx, graph.concepts);
+  const { edits, textMismatches } = computeBodyEdits(concept.body, concept.path, ctx, graph.concepts);
   const newBody = applyBodyEdits(concept.body, edits);
 
   // `lore supersede` (rewriteRefs=false) preserves the old file, so a third party's frontmatter ref
@@ -380,14 +441,14 @@ function rewriteConcept(
   const frontmatterChanged = newFrontmatter !== null;
 
   if (newBody === concept.body && !frontmatterChanged) {
-    return null;
+    return { bytes: null, textMismatches: [] };
   }
   const next: Concept = {
     ...concept,
     frontmatter: frontmatterChanged ? newFrontmatter : concept.frontmatter,
     body: newBody,
   };
-  return serializeConcept(next, { profile });
+  return { bytes: serializeConcept(next, { profile }), textMismatches };
 }
 
 // ── Body link rewriting ──────────────────────────────────────────────────────────
@@ -395,6 +456,12 @@ function rewriteConcept(
 /** A planned destination splice: the source byte range to replace and its replacement text. */
 interface BodyEdit extends ByteRange {
   readonly dest: string;
+}
+
+/** {@link computeBodyEdits}'s result: the destination splices plus any {@link LinkTextMismatch}es they surfaced. */
+interface BodyEditsResult {
+  readonly edits: BodyEdit[];
+  readonly textMismatches: LinkTextMismatch[];
 }
 
 /**
@@ -405,23 +472,41 @@ interface BodyEdit extends ByteRange {
  * an inbound file, only links that resolve to `fromId` are repointed. An edit is emitted only when
  * the new destination differs from the authored bytes, so a canonical link the move leaves in
  * place produces no churn.
+ *
+ * For an **inbound** file (`!ctx.isMoved`) — the code path both `lore supersede --rewrite-links`
+ * and `lore rename` funnel every *other* affected concept through — each emitted edit is also
+ * checked against {@link textNamesOldId}: if the link's visible display text still names the OLD
+ * id, a {@link LinkTextMismatch} is recorded alongside it. The destination is retargeted exactly
+ * as before either way (LORE-262 AC#2: no regression) — this only adds advisory data the caller
+ * surfaces, never changes what gets rewritten. The moved file's own outbound links are exempt: a
+ * self-link's destination follows the file to its new location by construction, and most of the
+ * candidates recomputed there aren't edges to `fromId` at all (see {@link newDestPathFor}), so
+ * "does this text name the old id" isn't a meaningful question to ask there.
  */
 function computeBodyEdits(
   body: string,
   conceptPath: string,
   ctx: RewriteContext,
   byId: ReadonlyMap<string, Concept>,
-): BodyEdit[] {
+): BodyEditsResult {
   const tree = fromMarkdown(body);
   const links: Nodes[] = [];
   const usedIdentifiers = new Set<string>();
   const firstDefinition = new Map<string, Nodes>();
   const allDefinitions: Nodes[] = [];
+  // The visible text of a reference-style link lives on its `linkReference` node, not on the
+  // `definition` it resolves to — collected here, first occurrence wins, while the tree is walked
+  // anyway for `usedIdentifiers` (LORE-262: needed only to check a definition-candidate's text
+  // below, but cheap to always collect).
+  const linkRefText = new Map<string, string>();
   walkMdast(tree, (node) => {
     if (node.type === "link") {
       links.push(node);
     } else if (node.type === "linkReference") {
       usedIdentifiers.add(node.identifier);
+      if (!linkRefText.has(node.identifier)) {
+        linkRefText.set(node.identifier, nodeText(node));
+      }
     } else if (node.type === "definition") {
       allDefinitions.push(node);
       if (!firstDefinition.has(node.identifier)) {
@@ -451,7 +536,12 @@ function computeBodyEdits(
     }
   }
 
+  // Only an inbound file's retargets are checked for a stale text citation (see the doc comment
+  // above) — computed once, not per-candidate.
+  const oldIdCandidates = ctx.isMoved ? null : oldIdNameCandidates(ctx.from);
+
   const edits: BodyEdit[] = [];
+  const textMismatches: LinkTextMismatch[] = [];
   for (const { node, isDefinition } of candidates) {
     const newPath = newDestPathFor((node as { url: string }).url, conceptPath, ctx, byId);
     if (newPath === null) {
@@ -470,8 +560,74 @@ function computeBodyEdits(
       continue; // already the canonical bytes — no edit (the move left this link in place)
     }
     edits.push({ start: range.start, end: range.end, dest: newDest });
+
+    if (oldIdCandidates !== null) {
+      // Reference-style: the visible text is the linkReference's, looked up by identifier — a
+      // definition candidate here always has one (only *used* definitions are candidates when
+      // `!ctx.isMoved`), so this lookup cannot miss. Inline: the text lives on the link node itself.
+      const text = isDefinition ? (linkRefText.get((node as { identifier: string }).identifier) ?? "") : nodeText(node);
+      if (textNamesOldId(text, oldIdCandidates)) {
+        textMismatches.push({ path: conceptPath, text, from: ctx.from, to: ctx.to });
+      }
+    }
   }
-  return edits;
+  return { edits, textMismatches };
+}
+
+/**
+ * Candidate substrings a link's visible text might contain to be "naming" `fromId` (LORE-262): the
+ * bare id itself, its basename, and — for an `NNNN-slug` id (lore's ADR/RFC-style numbering
+ * convention, e.g. `adr/0005-cli-contract`) — the bare digits and `<dirname>-<digits>` (so a prose
+ * citation like `"ADR-0005"` is caught even though the id's own basename is `0005-cli-contract`,
+ * not `adr-0005`). This is a deliberately pragmatic heuristic, not a full NLP match: it cannot
+ * catch every phrasing (a citation with no digits at all, an id with no numeric prefix referenced
+ * only by an unrelated-looking title) — see {@link textNamesOldId} for how each candidate is
+ * matched against the text.
+ */
+function oldIdNameCandidates(fromId: string): string[] {
+  const candidates = new Set<string>([fromId]);
+  const base = posix.basename(fromId);
+  candidates.add(base);
+  const numeric = base.match(/^(\d+)-/);
+  if (numeric?.[1] !== undefined) {
+    const digits = numeric[1];
+    candidates.add(digits);
+    const dir = posix.basename(posix.dirname(fromId));
+    if (dir !== "" && dir !== ".") {
+      candidates.add(`${dir}-${digits}`);
+    }
+  }
+  // A short candidate (e.g. a one/two-character id or digit run) is dropped: matching it against
+  // arbitrary prose would produce far more noise than signal.
+  return [...candidates].filter((c) => c.length >= 3);
+}
+
+/**
+ * Whether `text` names one of `candidates` — a case-insensitive check, applied as a plain
+ * substring for a candidate containing `/` (a full bundle id, which essentially never collides
+ * with unrelated prose) and as a **word-boundary** regex match otherwise (a bare id/digits/slug
+ * candidate, which — unlike a full id — could otherwise false-positive inside a longer unrelated
+ * word or number).
+ */
+function textNamesOldId(text: string, candidates: readonly string[]): boolean {
+  const lower = text.toLowerCase();
+  for (const candidate of candidates) {
+    if (candidate.includes("/")) {
+      if (lower.includes(candidate.toLowerCase())) {
+        return true;
+      }
+      continue;
+    }
+    if (new RegExp(`\\b${escapeRegExp(candidate)}\\b`, "i").test(text)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Escape every regex metacharacter in `s`, so a candidate built from arbitrary id text is safe to interpolate into a `RegExp`. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**
