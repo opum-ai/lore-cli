@@ -292,7 +292,9 @@ lore tasks stories/bulk-archive-orders
 ### `orphans`
 
 Bidirectional orphan report: **tasks with no owning doc** (no concept lists
-them and no task carries a `doc:` label) and **docs whose linked tasks have
+them, no task carries a `doc:` label, and — LORE-261 — no ancestor in the
+task's Backlog parent/subtask chain is owned either, so a subtask of an
+already-linked parent is not reported) and **docs whose linked tasks have
 vanished** (a `tasks:` id Backlog no longer knows). The agent/CI signal that
 the doc↔task coupling has gaps.
 
