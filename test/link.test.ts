@@ -273,6 +273,10 @@ describe("lore link — wiring (AC#1)", () => {
     const adapter = fakeAdapter([makeTask("LORE-1")]);
     const err = await expectLinkError(["stories/missing", "lore-1"], adapter);
     expect(err.type).toBe("not_found");
+    // LORE-259: the hint points at a command that actually lists concept ids — `lore query`
+    // and `lore graph` (run with no args) both do; `lore check` only prints a summary count.
+    expect(err.hint).toContain("lore query");
+    expect(err.hint).not.toContain("lore check");
   });
 
   test("usage errors: missing concept id, missing task ids, unknown flag", async () => {
@@ -387,7 +391,7 @@ describe("lore link/unlink — plain rendering and parser edge cases", () => {
       adapter,
       gitSpawn: cleanGitSpawn(),
     });
-    expect(stdout.text()).toBe("lore-1: added (doc), back-ref added\ndocs/stories/x.md: updated\n");
+    expect(stdout.text()).toBe("lore-1: tasks: added, back-ref: added\ndocs/stories/x.md: updated\n");
   });
 
   test("plain mode renders unlink's report the same way", async () => {
@@ -404,7 +408,7 @@ describe("lore link/unlink — plain rendering and parser edge cases", () => {
       adapter,
       gitSpawn: cleanGitSpawn(),
     });
-    expect(stdout.text()).toBe("lore-1: removed (doc), back-ref already-absent\ndocs/stories/x.md: updated\n");
+    expect(stdout.text()).toBe("lore-1: tasks: removed, back-ref: already-absent\ndocs/stories/x.md: updated\n");
   });
 
   test("pretty (color) mode renders the same report body", async () => {
@@ -421,7 +425,7 @@ describe("lore link/unlink — plain rendering and parser edge cases", () => {
       adapter,
       gitSpawn: cleanGitSpawn(),
     });
-    expect(stdout.text()).toBe("lore-1: added (doc), back-ref added\ndocs/stories/x.md: updated\n");
+    expect(stdout.text()).toBe("lore-1: tasks: added, back-ref: added\ndocs/stories/x.md: updated\n");
   });
 
   test("reads a bare-scalar tasks: authored value as a single-element list (an undeclared field on a non-Story type is unvalidated passthrough)", async () => {
@@ -1237,7 +1241,7 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
     });
 
     expect(stdout.text()).toBe(
-      "lore-1: added (doc), back-ref added\ndocs/stories/x.md: updated\ncommitted backlog/: 1 file\n",
+      "lore-1: tasks: added, back-ref: added\ndocs/stories/x.md: updated\ncommitted backlog/: 1 file\n",
     );
   });
 

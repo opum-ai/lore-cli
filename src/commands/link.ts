@@ -852,11 +852,18 @@ interface TaskReportLike {
   }[];
 }
 
-/** One line per task's doc-side + back-ref outcome (with its error, if any), the concept-write line, then the `backlog/` commit line if one was made. Shared by `link` and `unlink` — the two reports render identically. */
+/**
+ * One line per task's doc-side + back-ref outcome (with its error, if any), the concept-write
+ * line, then the `backlog/` commit line if one was made. Shared by `link` and `unlink` — the two
+ * reports render identically. Both halves of each task line are named explicitly (`tasks:` for
+ * the concept's own frontmatter list, `back-ref` for the Backlog `doc:<conceptId>` label/`--doc`
+ * side) rather than the old bare `(doc)` qualifier, which read as unexplained shorthand without
+ * already knowing the `doc:` label convention (LORE-259).
+ */
 function renderTaskReport(data: TaskReportLike): string {
   const lines = data.tasks.map((t) => {
     const suffix = t.error !== undefined ? ` (${t.error})` : "";
-    return `${t.task}: ${t.status} (doc), back-ref ${t.backRef}${suffix}`;
+    return `${t.task}: tasks: ${t.status}, back-ref: ${t.backRef}${suffix}`;
   });
   lines.push(`${data.concept}: ${data.changed ? "updated" : "unchanged"}`);
   const commitLine = renderBacklogCommitLine(data.backlogCommit);
