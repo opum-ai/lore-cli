@@ -133,4 +133,58 @@ describe("release.yml publish job stays safely gated", () => {
     // 403ing (EPUBLISHCONFLICT) on packages already published.
     expect(script).toMatch(/npm view/);
   });
+
+  test("the publish step refuses to publish the pre-release placeholder version 0.0.0, before publishing anything", () => {
+    const doc = loadWorkflow();
+    const publishStep = doc.jobs.publish?.steps?.find((s) => s.run?.includes("npm publish"));
+    expect(publishStep).toBeDefined();
+    const script = publishStep?.run ?? "";
+
+    // The regression this guards: every OTHER precondition in this workflow fails
+    // loud (the npm-floor assertion, the 6/5+1-tarball count asserts, verify-versions'
+    // 12-value cross-check) — but nothing refused the one value that actually matters
+    // for an irreversible `npm publish`: the placeholder version itself. Because the
+    // First-release checklist deliberately orders Trusted Publisher registration
+    // (step 1) before the version bump (step 2), a `publish: true` dispatch made
+    // between those two steps would otherwise sail through every other check and
+    // genuinely publish six installable `0.0.0` packages.
+    expect(script).toMatch(/0\.0\.0/);
+    expect(script).toMatch(/refusing to publish version/);
+
+    // The guard must run before ANY tarball is actually published — i.e. before the
+    // platform-tarball publish loop starts, not interleaved with or after it.
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal bash array-expansion syntax from release.yml's own script, not a JS template placeholder.
+    const platformLoopIndex = script.indexOf('for tgz in "${platform_tgz[@]}"');
+    const guardIndex = script.indexOf("0.0.0");
+    expect(platformLoopIndex).toBeGreaterThan(-1);
+    expect(guardIndex).toBeGreaterThan(-1);
+    expect(guardIndex).toBeLessThan(platformLoopIndex);
+  });
+
+  test("publish_or_skip fails loud (not open) if a tarball's name/version extraction produces nothing", () => {
+    const doc = loadWorkflow();
+    const publishStep = doc.jobs.publish?.steps?.find((s) => s.run?.includes("npm publish"));
+    expect(publishStep).toBeDefined();
+    const script = publishStep?.run ?? "";
+
+    // The regression this guards: `read -r name version <<< "$(cmd)"` fails OPEN when
+    // `cmd` errors — a here-string always supplies a trailing newline, so `read`
+    // returns 0 even when the substitution produced nothing, and `run:` steps execute
+    // under `bash -e` WITHOUT `pipefail`, so neither a `tar` extraction failure nor a
+    // `node` JSON-parse crash aborts the function. Without an explicit emptiness
+    // check immediately after the `read`, `name`/`version` silently become empty,
+    // `npm view "@" version` fails (indistinguishable from "never published"), and
+    // the tarball gets published unconditionally — turning a resumable re-dispatch
+    // back into the EPUBLISHCONFLICT abort the resumability feature exists to prevent.
+    const readIndex = script.indexOf("read -r name version");
+    expect(readIndex).toBeGreaterThan(-1);
+    const guardIndex = script.indexOf('[ -z "$name" ] || [ -z "$version" ]');
+    expect(guardIndex).toBeGreaterThan(readIndex);
+    // The guard's failure path must actually exit, not just log — the very next
+    // `npm view`/`npm publish` calls must never see empty name/version.
+    const npmViewIndex = script.indexOf("npm view", guardIndex);
+    const exitIndex = script.indexOf("exit 1", guardIndex);
+    expect(exitIndex).toBeGreaterThan(guardIndex);
+    expect(exitIndex).toBeLessThan(npmViewIndex);
+  });
 });
