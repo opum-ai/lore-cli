@@ -1319,15 +1319,28 @@ done
 
 # ── Phase 18: scaffold mkdocs + a real build ────────────────────────────────────
 step "lore scaffold mkdocs" 0 -- lore scaffold mkdocs
-# LORE-66 AC4: a re-run without --force is an all-or-nothing conflict (writes nothing); --force
-# overwrites, reporting the previously-existing files as "updated"; an unknown target is usage.
-step_fail "AC4: lore scaffold mkdocs re-run without --force is a conflict (exit 5)" 5 \
-  '.error_type == "conflict"' \
+# LORE-66 AC4 (superseded by LORE-263): a bare re-run used to be an all-or-nothing conflict no
+# matter what. LORE-263 made it idempotent-when-unchanged instead, matching `lore sync`'s own
+# "0 files changed" no-op model: a bare re-run over a byte-identical on-disk scaffold is now a
+# no-op (exit 0, no files written); only a genuinely HAND-MODIFIED generated file still hard-errors
+# with a conflict (exit 5) naming that file and pointing at --force. --force is unchanged — it
+# always overwrites, reporting the previously-existing files as "updated". An unknown target is
+# still a usage error.
+step_json "LORE-263 AC1: lore scaffold mkdocs re-run on an unchanged scaffold is a no-op (exit 0, no files written)" \
+  '.kind == "scaffold.result" and (.data.files | length) == 0' \
   -- lore scaffold mkdocs --json
-step_json "AC4: lore scaffold mkdocs --force overwrites the existing scaffold" \
+printf '\nhand-edited-marker: true\n' >>mkdocs.yml
+step_fail "LORE-263 AC2: lore scaffold mkdocs re-run over a HAND-MODIFIED mkdocs.yml is still a conflict (exit 5)" 5 \
+  '.error_type == "conflict" and (.message | contains("mkdocs.yml")) and (.hint | contains("--force"))' \
+  -- lore scaffold mkdocs --json
+check "the hand-edited mkdocs.yml was left untouched by the refused re-run" \
+  'grep -q "hand-edited-marker" mkdocs.yml'
+step_json "LORE-263 AC3: lore scaffold mkdocs --force overwrites the existing scaffold" \
   '.kind == "scaffold.result" and (.data.files | any(.action == "updated"))' \
   -- lore scaffold mkdocs --force --json
-step_fail "AC4: lore scaffold with an unknown target is a usage error (exit 2)" 2 \
+check "the hand-edited marker is gone once --force regenerated mkdocs.yml" \
+  '! grep -q "hand-edited-marker" mkdocs.yml'
+step_fail "lore scaffold with an unknown target is a usage error (exit 2)" 2 \
   '.error_type == "usage"' \
   -- lore scaffold bogus-target --json
 step "mkdocs build (real)" 0 -- mkdocs build --site-dir /tmp/mkdocs-site
