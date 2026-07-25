@@ -5,8 +5,11 @@
  * coupling `lore link`/`sync` maintain has gaps. Two directions, one envelope:
  *
  *   - **orphanTasks** — tasks with **no owning doc**: no concept lists the task in its `tasks:`
- *     frontmatter AND the task carries no `doc:<conceptId>` back-reference label. Work that exists
- *     in Backlog but is documented nowhere.
+ *     frontmatter AND the task carries no `doc:<conceptId>` back-reference label AND (LORE-261) no
+ *     ancestor in its Backlog `parentTaskId` chain is owned either — a subtask of an already-linked
+ *     parent task is not reported, since linking the parent does not stamp each subtask with its own
+ *     back-reference (see {@link hasOwnedAncestor}). Work that exists in Backlog but is documented
+ *     nowhere, at any level of its parent/subtask hierarchy.
  *   - **danglingLinks** — docs whose linked task **vanished**: a `tasks:` id the current-branch
  *     Backlog snapshot no longer knows. A doc pointing at a task that has been deleted or renamed.
  *
@@ -192,8 +195,12 @@ export function computeOrphans(
   }
 
   const known = new Set(snapshot.map((task) => task.id.toLowerCase())); // lower-cased ids Backlog knows
+  const byId = new Map(snapshot.map((task) => [task.id.toLowerCase(), task])); // for the parent-chain walk below
   const orphanTasks = snapshot
-    .filter((task) => !referenced.has(task.id.toLowerCase()) && !hasDocLabel(task))
+    .filter(
+      (task) =>
+        !referenced.has(task.id.toLowerCase()) && !hasDocLabel(task) && !hasOwnedAncestor(task, referenced, byId),
+    )
     .map((task): OrphanTask => ({ id: task.id, title: task.title, status: task.status }))
     .sort((a, b) => compareLower(a.id, b.id));
   const danglingLinks = references
@@ -240,6 +247,54 @@ export const DEFAULT_ORPHANS_LIMIT = 20;
 /** Whether a task claims an owning doc via a `doc:<conceptId>` back-reference label (case-insensitive). */
 function hasDocLabel(task: BacklogTask): boolean {
   return task.labels.some((label) => label.toLowerCase().startsWith("doc:"));
+}
+
+/**
+ * LORE-261: exempt a Backlog **subtask** from the orphan report when an ancestor in its
+ * `parentTaskId` chain is already owned — forward-referenced by some concept's `tasks:` list, or
+ * itself carrying a `doc:` label. Linking a parent task to a Story does not (and per ADR-0009 §2
+ * cannot cheaply) stamp every subtask with its own back-reference, so without this walk a
+ * correctly-coupled Story's subtasks would all read as false-positive orphans (the Meridian stress
+ * test: 8 reported instead of the intended 2).
+ *
+ * This is **orphans-side hierarchy awareness**, chosen over a link-side cascade (`lore link` writing
+ * a `doc:` label onto every subtask): the `--json` adapter already carries `parentTaskId` on every
+ * task in the SAME `listTasks()` snapshot this command already reads (no extra per-task `view`
+ * call, preserving the "one snapshot" design above), and a cascade would go stale the instant a new
+ * subtask is added after the parent was linked — this walk instead recomputes fresh on every run.
+ *
+ * Only the task's **ancestors** are walked (never siblings or descendants) — starting at
+ * `task.parentTaskId`, not `task` itself, since the caller already tested the task's own
+ * reference/label directly. A parent absent from the current snapshot (deleted, archived, or
+ * renamed out from under a stale `parentTaskId`) grants no exemption — a subtask under a vanished
+ * ancestor is reported, matching how `orphans` already treats an archived task as gone everywhere
+ * else (module docstring, "Scope boundary"). A visited-id set guards a corrupt or cyclic parent
+ * chain: a cycle yields `false` (not owned, so still reported) rather than looping forever — this
+ * is the fail-toward-reporting side of AC#3's no-false-negatives requirement.
+ */
+function hasOwnedAncestor(
+  task: BacklogTask,
+  referenced: ReadonlySet<string>,
+  byId: ReadonlyMap<string, BacklogTask>,
+): boolean {
+  const visited = new Set<string>([task.id.toLowerCase()]);
+  let parentId = task.parentTaskId;
+  while (parentId !== null) {
+    const key = parentId.toLowerCase();
+    if (visited.has(key)) {
+      return false; // a cycle/self-reference in the parent chain — fail toward "still reported"
+    }
+    visited.add(key);
+    const parent = byId.get(key);
+    if (parent === undefined) {
+      return false; // the ancestor isn't in the current-branch snapshot — no exemption to grant
+    }
+    if (referenced.has(key) || hasDocLabel(parent)) {
+      return true;
+    }
+    parentId = parent.parentTaskId;
+  }
+  return false;
 }
 
 /** Case-insensitive string order, locale-independent, for the report's deterministic sort. */
