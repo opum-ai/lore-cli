@@ -252,10 +252,10 @@ function hasDocLabel(task: BacklogTask): boolean {
 /**
  * LORE-261: exempt a Backlog **subtask** from the orphan report when an ancestor in its
  * `parentTaskId` chain is already owned — forward-referenced by some concept's `tasks:` list, or
- * itself carrying a `doc:` label. Linking a parent task to a Story does not (and per ADR-0009 §2
- * cannot cheaply) stamp every subtask with its own back-reference, so without this walk a
- * correctly-coupled Story's subtasks would all read as false-positive orphans (the Meridian stress
- * test: 8 reported instead of the intended 2).
+ * itself carrying a `doc:` label. Linking a parent task to a Story does not stamp every subtask
+ * with its own back-reference (one `backlog task edit` per task — ADR-0009 §2), so without this
+ * walk a correctly-coupled Story's subtasks would all read as false-positive orphans (the Meridian
+ * stress test: 8 reported instead of the intended 2).
  *
  * This is **orphans-side hierarchy awareness**, chosen over a link-side cascade (`lore link` writing
  * a `doc:` label onto every subtask): the `--json` adapter already carries `parentTaskId` on every
