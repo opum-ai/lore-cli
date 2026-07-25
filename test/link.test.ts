@@ -1286,3 +1286,42 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
     expect(stdout.text()).toBe("");
   });
 });
+
+describe("lore link/unlink — reserved-stem non-concept files stay silent (LORE-258)", () => {
+  // `docs/log.md` and a child `index.md` are lore's own machine-generated hubs, always
+  // frontmatter-less — loadBundle used to warn "no frontmatter mapping" for them on every
+  // link/unlink run, spurious noise `lore check` never raised for the same bundle. Only the
+  // two reserved stems (index/log) go quiet; a genuinely unexpected non-concept file still warns.
+  test("lore link emits no advisory for docs/log.md or a child docs/adr/index.md", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    writeDoc("log.md", "# Generated changelog, no frontmatter\n");
+    writeDoc("adr/index.md", "# Generated hub, no frontmatter\n");
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+
+    const { code } = await linkCmd(["stories/x", "lore-1"], adapter);
+    expect(code).toBe(EXIT_OK);
+  });
+
+  test("lore link/unlink still warn about a genuinely unexpected non-concept file (not a reserved stem)", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    writeDoc("stray.md", "# Unexpected, no frontmatter\n");
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+
+    const stderr = capture();
+    const code = await runLink({ ...opts(["stories/x", "lore-1"], adapter), stderr });
+    expect(code).toBe(EXIT_OK);
+    expect(stderr.text()).toContain("skipping stray.md: no frontmatter mapping");
+  });
+
+  test("lore unlink emits no advisory for docs/log.md or a child docs/adr/index.md", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    writeDoc("log.md", "# Generated changelog, no frontmatter\n");
+    writeDoc("adr/index.md", "# Generated hub, no frontmatter\n");
+    const adapter = fakeAdapter([makeTask("LORE-1", { labels: ["doc:stories/x"] })]);
+
+    const stderr = capture();
+    const code = await runUnlink({ ...opts(["stories/x", "lore-1"], adapter), stderr });
+    expect(code).toBe(EXIT_OK);
+    expect(stderr.text()).not.toContain("no frontmatter mapping");
+  });
+});

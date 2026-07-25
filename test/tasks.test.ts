@@ -357,6 +357,33 @@ describe("runTasks — resolution and parse errors", () => {
   });
 });
 
+describe("runTasks — reserved-stem non-concept files stay silent (LORE-258)", () => {
+  // `docs/log.md` and a child `index.md` are lore's own machine-generated hubs, always
+  // frontmatter-less — loadBundle used to warn "no frontmatter mapping" for them on every
+  // `lore tasks` run, spurious noise `lore check` never raised for the same bundle. Only the
+  // two reserved stems (index/log) go quiet; a genuinely unexpected non-concept file still warns.
+  test("emits no advisory for docs/log.md or a child docs/adr/index.md", async () => {
+    writeStory("bulk", ["LORE-1"]);
+    writeDoc("log.md", "# Generated changelog, no frontmatter\n");
+    writeDoc("adr/index.md", "# Generated hub, no frontmatter\n");
+    const adapter = okAdapter([makeTask("LORE-1", { title: "First", status: "Done" })]);
+
+    const { code, stderr } = await rollupJson(["stories/bulk"], { adapter });
+    expect(code).toBe(0);
+    expect(stderr).not.toContain("no frontmatter mapping");
+  });
+
+  test("still warns about a genuinely unexpected non-concept file (not a reserved stem)", async () => {
+    writeStory("bulk", ["LORE-1"]);
+    writeDoc("stray.md", "# Unexpected, no frontmatter\n");
+    const adapter = okAdapter([makeTask("LORE-1", { title: "First", status: "Done" })]);
+
+    const { code, stderr } = await rollupJson(["stories/bulk"], { adapter });
+    expect(code).toBe(0);
+    expect(stderr).toContain("skipping stray.md: no frontmatter mapping");
+  });
+});
+
 describe("runTasks — text rendering", () => {
   test("plain lists the concept, the count, and an aligned row per task; no ANSI", async () => {
     writeStory("bulk", ["LORE-1", "LORE-2"]);

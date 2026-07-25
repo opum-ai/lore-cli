@@ -1209,6 +1209,19 @@ describe("runCheck — exit codes and discovery", () => {
     expect((o.stderr as ReturnType<typeof capture>).text()).toBe("");
   });
 
+  test("a child index.md and log.md produce no advisory noise either (LORE-258 harmonization)", () => {
+    // check never calls loadBundle() with a warnings collector, so it was always silent about
+    // these reserved-stem non-concept files — unlike link/sync/tasks before LORE-258's fix. This
+    // pins that check's own silence (the target every other command was harmonized towards) stays
+    // exactly that: silent, on the same reserved files (log.md, a child index.md) those commands
+    // now also stop warning about.
+    writeFileSync(join(root, "docs", "adr", "index.md"), "# Generated hub, no frontmatter\n");
+    writeFileSync(join(root, "docs", "log.md"), "# Generated changelog, no frontmatter\n");
+    const o = opts([]);
+    expect(runCheck(o)).toBe(EXIT_OK);
+    expect((o.stderr as ReturnType<typeof capture>).text()).toBe("");
+  });
+
   test("a malformed concept elsewhere in the bundle does not crash the gate (LORE-27 regression)", () => {
     // Before the fix, the reconciliation-eligibility scan used loadBundle(), which THROWS on any
     // schema-invalid frontmatter anywhere in the bundle — even a file with no tasks: link at all —

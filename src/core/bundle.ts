@@ -64,6 +64,7 @@ import { type Concept, idFromPath, serializeConcept, tryParseConcept } from "./c
 import { decodeTarget, isExternalTarget, pathPart } from "./links";
 import { compareCodeUnits } from "./order";
 import { defaultProfile, type Profile } from "./profile";
+import { RESERVED_STEMS } from "./scaffold";
 
 /**
  * The kind of a concept→concept reference. `"link"` is a body markdown
@@ -146,8 +147,16 @@ export interface LoadBundleOptions {
  *
  * - a file that is **not a concept** (no frontmatter, an empty fence, or a fence
  *   holding a bare scalar/list — e.g. a hand-written `index.md`/`log.md`, or a doc
- *   that merely opens with a `---` thematic break) returns `null` and is skipped,
- *   warned about if a collector is provided;
+ *   that merely opens with a `---` thematic break) returns `null` and is skipped —
+ *   warned about if a collector is provided, **unless** the file's stem is a
+ *   {@link RESERVED_STEMS} entry (`index`/`log`): those are lore's own
+ *   machine-generated hubs (`indexes.ts`/`log.ts` regenerate them wholesale, always
+ *   frontmatter-free below the bundle root), so skipping one is never a surprise
+ *   worth an advisory — every `loadBundle`-backed command warning about it trains
+ *   users to ignore the warning entirely (LORE-258). A genuinely unexpected
+ *   non-concept file (any other stem) still warns; only the two known-reserved
+ *   stems are silent, matching `lore check`'s own scan (which never parses through
+ *   `loadBundle` and so never raised this noise to begin with);
  * - a **malformed concept** (a frontmatter *mapping* that fails the lore profile,
  *   or unparseable YAML) throws its `validation` {@link LoreError} (path included)
  *   rather than being silently dropped.
@@ -179,7 +188,10 @@ export function loadBundle(root: string, options: LoadBundleOptions = {}): Bundl
       profile: effectiveProfileFor(rel, BUNDLE_ROOT_INDEX_PATH, profile),
     });
     if (concept === null) {
-      options.warnings?.add(`skipping ${rel}: no frontmatter mapping, treated as a non-concept file`);
+      // A known-reserved stem (index/log) skips silently — see the docstring above (LORE-258).
+      if (!RESERVED_STEMS.has(posix.basename(rel, ".md"))) {
+        options.warnings?.add(`skipping ${rel}: no frontmatter mapping, treated as a non-concept file`);
+      }
       continue;
     }
     concepts.push(concept);

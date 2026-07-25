@@ -9,7 +9,7 @@ import { compileProfile, defaultProfile, PROFILE_REL_PATH, parseProfile } from "
 import { requiredSectionsFor } from "../src/core/schema";
 import { builtinTemplateFor } from "../src/core/template";
 import { quoteSafetyFindings, type ValidateReport, validateConceptText, validateFiles } from "../src/core/validate";
-import { EXIT_CODES, LoreError } from "../src/errors";
+import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
 
@@ -893,5 +893,26 @@ describe("validate (command) — discovery hardening", () => {
     runValidate({ root, output: { mode: "plain", color: false }, args: ["docs"], stdout, stderr });
     expect(stderr.text()).toContain("symlink");
     expect(stderr.text()).toContain("link.md");
+  });
+
+  test("a reserved-stem non-concept (index.md/log.md) is counted in `skippedCount`, with no stderr advisory (LORE-258 harmonization)", () => {
+    // Unlike link/sync/tasks (which route their non-concept skip through loadBundle's own
+    // advisories collector — the source of LORE-258's spurious per-file warning), `validate` never
+    // calls loadBundle at all: it already counts every skip silently through `skippedCount` and
+    // never prints an individual "no frontmatter mapping" line, reserved stem or not. This pins
+    // that pre-existing behavior stays the reconciliation target: silent, counted, never a stderr
+    // advisory — for the exact reserved files (log.md, a child index.md) the other commands were
+    // harmonized towards.
+    writeFileSync(join(root, "docs/real.md"), "---\ntype: Reference\nsummary: A short summary.\n---\n\n# R\n");
+    mkdirSync(join(root, "docs/adr"), { recursive: true });
+    writeFileSync(join(root, "docs/adr/index.md"), "# Generated hub, no frontmatter\n");
+    writeFileSync(join(root, "docs/log.md"), "# Generated changelog, no frontmatter\n");
+    const stdout = capture();
+    const stderr = capture();
+    const code = runValidate({ root, output: JSON_CTX, args: [], stdout, stderr });
+    const report = (JSON.parse(stdout.text()) as { data: ValidateReport }).data;
+    expect(code).toBe(EXIT_OK);
+    expect(report.skippedCount).toBe(2);
+    expect(stderr.text()).toBe("");
   });
 });
