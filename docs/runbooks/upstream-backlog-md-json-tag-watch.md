@@ -58,6 +58,13 @@ tests) live in
    guard every subsequent daily run would open a fresh issue for whatever the
    newest release happens to be.
 
+**Caveat.** GitHub automatically disables scheduled (`cron`) workflows after
+~60 days without any activity in the repository (it emails a warning first).
+If this repo goes quiet for that long, the daily scan silently stops running
+while looking, from the workflow file, like it's still watching. Re-enable it
+from the repo's Actions tab if that happens, or run it on demand via
+`workflow_dispatch` as a manual fallback cadence.
+
 ## Where the signal lands
 
 **A GitHub issue in this repository, labeled `upstream-watch`.** Its title is

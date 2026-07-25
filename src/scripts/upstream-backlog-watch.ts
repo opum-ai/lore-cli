@@ -14,7 +14,7 @@
  * Releases API and, the first time it finds a release whose commit history actually **contains**
  * 22a091b (not merely a release numbered higher than v1.48.0 — a newer tag could still predate the
  * merge), opens a tracking issue in THIS repo labeled `upstream-watch` so the maintainer can pick up
- * LORE-253. See `docs/runbooks/upstream-backlog-watch.md` for the full runbook (where the signal
+ * LORE-253. See `docs/runbooks/upstream-backlog-md-json-tag-watch.md` for the full runbook (where the signal
  * lands, who acts on it) and `docs/runbooks/backlog-json-patch.md` §8.1 for what LORE-253 does once
  * unblocked.
  *
@@ -54,17 +54,14 @@ export type WatchResult =
 
 /**
  * Keep only releases that could possibly contain {@link TARGET_COMMIT}: everything published
- * at/after {@link TARGET_COMMIT_MERGED_AT}. `releases` must already be sorted newest-first
- * (GitHub's Releases API default order) — the moment one release is older than the cutoff, every
- * remaining (older) release is guaranteed to be too, so this is a prefix-take, not a full scan.
+ * at/after {@link TARGET_COMMIT_MERGED_AT}. GitHub's Releases API list order is `created_at` desc
+ * (not guaranteed `published_at` order — a release drafted before the cutoff but published after
+ * it can sort below an older-published release), so this is a plain filter rather than a
+ * newest-first prefix-take: the list is already capped at `per_page=100` in memory, so a full
+ * scan costs nothing extra and doesn't risk silently dropping a qualifying release.
  */
 export function candidateReleases(releases: ReleaseInfo[], cutoffIso: string = TARGET_COMMIT_MERGED_AT): ReleaseInfo[] {
-  const candidates: ReleaseInfo[] = [];
-  for (const release of releases) {
-    if (release.publishedAt < cutoffIso) break;
-    candidates.push(release);
-  }
-  return candidates;
+  return releases.filter((release) => release.publishedAt >= cutoffIso);
 }
 
 /**
@@ -95,7 +92,7 @@ export function renderIssueBody(release: QualifyingRelease): string {
     "published package instead of the interim pinned-commit build.",
     "",
     "Detected by `.github/workflows/upstream-backlog-watch.yml` (LORE-254); see",
-    "`docs/runbooks/upstream-backlog-watch.md` for how this signal works and who acts on it.",
+    "`docs/runbooks/upstream-backlog-md-json-tag-watch.md` for how this signal works and who acts on it.",
   ].join("\n");
 }
 
@@ -169,7 +166,10 @@ async function compareAgainstTarget(fetcher: Fetcher, token: string, sha: string
   return comparison.status;
 }
 
-/** The first candidate release (newest-first) whose history contains {@link TARGET_COMMIT}, if any. */
+/**
+ * The first candidate release, in GitHub's Releases API list order (`created_at` desc — not
+ * necessarily `published_at` order), whose history contains {@link TARGET_COMMIT}, if any.
+ */
 async function findQualifyingRelease(fetcher: Fetcher, token: string): Promise<QualifyingRelease | null> {
   const releases = await listUpstreamReleases(fetcher, token);
   for (const candidate of candidateReleases(releases)) {
@@ -191,7 +191,7 @@ async function trackingIssueAlreadyExists(fetcher: Fetcher, token: string, repoS
     fetcher,
     token,
     "GET",
-    `/repos/${repoSlug}/issues?labels=${TRACKING_LABEL}&state=all&per_page=1`,
+    `/repos/${repoSlug}/issues?labels=${TRACKING_LABEL}&state=all&per_page=100`,
   );
   // The issues endpoint also returns pull requests carrying the label; a real hit must be an
   // actual issue.

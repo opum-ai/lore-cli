@@ -10,7 +10,7 @@ name: Upstream Backlog.md --json tag watch
 # can pick up LORE-253. All of the actual logic lives in
 # src/scripts/upstream-backlog-watch.ts (unit-tested in test/upstream-backlog-watch.test.ts);
 # this workflow only schedules it and wires the token. See
-# docs/runbooks/upstream-backlog-watch.md for where the signal lands and who acts on it.
+# docs/runbooks/upstream-backlog-md-json-tag-watch.md for where the signal lands and who acts on it.
 
 on:
   schedule:

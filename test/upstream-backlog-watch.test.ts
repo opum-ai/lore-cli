@@ -24,9 +24,10 @@ describe("candidateReleases", () => {
     ]);
   });
 
-  test("stops at the first older release even if a later (out-of-order) one would qualify", () => {
-    // Releases must already be sorted newest-first; this asserts the prefix-take actually stops
-    // rather than filtering the whole array, per the function's documented contract.
+  test("keeps a later (out-of-order) qualifying release even after an older one in list order", () => {
+    // GitHub's Releases API list order is created_at desc, not guaranteed published_at order, so
+    // a qualifying release can appear after a disqualifying one in the raw list. This asserts the
+    // filter still keeps it rather than stopping at the first out-of-order older entry.
     const releases = [
       { tagName: "v1.50.0", publishedAt: "2026-07-20T00:00:00Z" },
       { tagName: "v1.40.0", publishedAt: "2026-01-01T00:00:00Z" },
@@ -34,6 +35,7 @@ describe("candidateReleases", () => {
     ];
     expect(candidateReleases(releases, MERGE_CUTOFF)).toEqual([
       { tagName: "v1.50.0", publishedAt: "2026-07-20T00:00:00Z" },
+      { tagName: "v1.60.0", publishedAt: "2026-08-01T00:00:00Z" },
     ]);
   });
 
@@ -61,7 +63,7 @@ describe("renderIssueBody", () => {
     expect(body).toContain("v1.49.0");
     expect(body).toContain("deadbeef");
     expect(body).toContain(TARGET_COMMIT);
-    expect(body).toContain("docs/runbooks/upstream-backlog-watch.md");
+    expect(body).toContain("docs/runbooks/upstream-backlog-md-json-tag-watch.md");
   });
 });
 
@@ -104,6 +106,23 @@ describe("watchOnce", () => {
     ]);
     const result = await watchOnce(env, fetcher);
     expect(result).toEqual({ action: "no-match" });
+  });
+
+  test("a labeled PR ahead of a labeled issue in the same page is still recognized as already-surfaced", async () => {
+    // Regression for per_page defeating the PR-vs-issue filter: if the query only fetched a
+    // single row, a PR sorted first would hide a real tracking issue behind it.
+    const { fetcher, calls } = stubFetcher([
+      {
+        match: `/issues?labels=${TRACKING_LABEL}`,
+        response: [
+          { html_url: "https://example.com/pull/9", pull_request: {} },
+          { html_url: "https://example.com/issues/1" },
+        ],
+      },
+    ]);
+    const result = await watchOnce(env, fetcher);
+    expect(result).toEqual({ action: "already-surfaced" });
+    expect(calls).toHaveLength(1);
   });
 
   test("no-match: no candidate release's tag contains the target commit", async () => {
