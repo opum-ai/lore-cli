@@ -184,9 +184,9 @@ graph to rewrite all inbound links and frontmatter refs.
 `lore` is CLI-first for humans **and** agents. The agent bridge is generated,
 not bespoke:
 
-- `lore scaffold agent` (and `lore init`) emit `.claude/skills/lore/SKILL.md` —
-  a skill that teaches Claude Code when and how to drive `lore` (always with
-  `--json` for structured results).
+- `lore agents` emits `.claude/skills/lore/SKILL.md` — a skill that teaches
+  Claude Code when and how to drive `lore` (always with `--json` for
+  structured results).
 - A tiny CLAUDE.md nudge points the agent at the skill; an AGENTS.md `@import`
   shim is deferred.
 - `lore instructions` prints task-shaped guidance on demand for any agent or
