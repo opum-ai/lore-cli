@@ -22,8 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never produces one of these codes in the narrow commit window, so the ordinary case is unchanged
   (still exactly one `renameSync` call). Any other errno is never retried, and once the bounded
   budget exhausts the LAST failure is what's thrown into each function's existing `catch`/`ioError`
-  classification, so a persistent failure still surfaces the identical `denied` `LoreError` it always
-  did — never a swallowed false success. The LORE-231 temp-leak guard, LORE-117 mode/ownership
+  classification, so a persistent failure still ends in the identical classified outcome it always
+  did (a persistent `EACCES`/`EPERM` still becomes the same `denied` `LoreError`) — never a
+  swallowed false success. The LORE-231 temp-leak guard, LORE-117 mode/ownership
   preservation, and LORE-130/92 symlink refusal are untouched — only the commit step can repeat.
   Verified with `bun test` (spying on `fs.renameSync` to throw a deterministic errno for an exact
   call count before delegating to the real implementation — not a real lock, not a sleep-based
@@ -166,8 +167,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plain dispatch only builds/packages/dry-run-verifies every platform artifact and the `publish` job
   simply does not run. `id-token: write` is scoped to **only** the `publish` job — workflow-level
   `permissions:` stays `contents: read`, so no other job can mint an OIDC token — and publishing goes
-  through `actions/setup-node`'s OIDC Trusted Publishing, not a stored npm token. Before publishing
-  anything, the job installs `npm@^11` and fails closed if the resolved CLI version is below the
+  through npm's own OIDC Trusted Publishing (hence the CLI floor below), with `actions/setup-node`
+  only supplying the registry URL — not a stored npm token. Before publishing anything, the job
+  installs `npm@^11` and fails closed if the resolved CLI version is below the
   `>= 11.5.1` floor OIDC trusted publishing requires. The five platform packages are published
   **before** the root launcher (`optionalDependencies` on the root pin the platform packages at an
   exact version, and publishing root first would open a window where `npx @salient-data/lore`
@@ -952,17 +954,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never did, so both halves of the line now read the same way. This is the entry most likely to break
   an existing consumer: any pipeline splitting the old line on `", "` or matching the literal string
   `(doc)` breaks. Second, the shared `conceptNotInBundle` `not_found` hint (`src/core/bundle.ts`) —
-  surfaced through `link`/`unlink`, `tasks`, `sync`'s `scopeConcepts`, `rename`'s rewrite engine,
-  `supersede`, and `graph`/`context`'s subgraph traversal — moved from ``run `lore check` to list
-  concept ids`` to ``run `lore query` or `lore graph` to see known concept ids``: verified live that
-  `lore check` only ever prints a pass/fail summary count and never lists an id, so the old hint
-  misdirected every one of those commands' bad-id path. Third, `lore tasks`/`lore context`'s
-  missing-`<id>` usage error changed from the bare `missing concept <id>` to `` `lore tasks` needs a
-  concept id `` / `` `lore context` needs a concept id `` respectively, matching the `` `lore
-  <command>` needs a <thing> `` template `link`/`new`/`rename`/`replace`/`supersede`/`schema` already
-  used — `tasks` and `context` were the only two commands still diverging from it; each command's own
-  actionable hint text is unchanged. **Exit codes and the `--json` envelope shape are unchanged** —
-  every affected surface's `hint` field (and the one `--plain` line above) changed string value only.
+  surfaced through `link`/`unlink`, `tasks`, `rename`'s rewrite engine, `supersede`, and
+  `graph`/`context`'s subgraph traversal — moved from ``run `lore check` to list concept ids`` to
+  ``run `lore query` or `lore graph` to see known concept ids``: verified live that `lore check`
+  only ever prints a pass/fail summary count and never lists an id, so the old hint misdirected
+  every one of those commands' bad-id path. A standalone, byte-identical copy of the same wrong
+  hint also existed in `sync`'s `scopeConcepts` not-found path (not routed through
+  `conceptNotInBundle`) and was repointed the same way, so the harmonization doesn't leave a stale
+  duplicate. Third, `lore tasks`/`lore context`'s missing-`<id>` usage error changed from the bare
+  `missing concept <id>` to `` `lore tasks` needs a concept id `` / `` `lore context` needs a
+  concept id `` respectively, matching the `` `lore
+  <command>` needs a <thing> `` template `link`/`new`/`rename`/`replace`/`scaffold`/`supersede`/
+  `schema` already used — `tasks` and `context` were the only two commands still diverging from it;
+  each command's own actionable hint text is unchanged (the message itself is what changed, from the
+  bare `missing concept <id>` to the templated form). **Exit codes and the `--json` envelope shape are
+  unchanged** — every affected surface changed a `message`/`hint` string value (plus the one
+  `--plain` line above); no envelope field was added, removed, or retyped.
   Verified against `dev`: `bun test` 2126/0 pass, `typecheck`/`lint` clean, `lore check` (39 files, 0
   errors/warnings).
 - **`lore scaffold <target>` — a bare re-run against an unchanged config is now an idempotent
