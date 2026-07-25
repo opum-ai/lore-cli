@@ -85,22 +85,42 @@ Obsidian vault config, and a backlog `--json`-capability check — instead of
 the older `init` → `agents` → external `lore-setup.sh` → manual-Obsidian
 sequence ([ADR-0017](../adr/0017-interactive-init-wizard-tty-gated.md)).
 
-The wizard is **strictly TTY-gated**: it runs only when stdin is an
-interactive terminal *and* none of `init`'s own flags was passed. Whenever
-stdin is **not** a TTY (CI, pipes, a subprocess) or **any** flag below is
-given, `init` runs fully non-interactively with defaults and no prompt can
-ever block it — the npm-init pattern. Every wizard question has a 1:1 flag
-equivalent, so a script reaches the exact same outcome with zero prompts. A
-bare `lore init` off a TTY with no flags behaves exactly as it always has
-(scaffold only, nothing else) — the agent bridge/scaffolds/backlog check are
-strictly opt-in there.
+The wizard is **strictly TTY-gated**: it runs only when **both stdin and
+stderr** are interactive terminals (every wizard question is written to
+stderr, so a redirected stderr alone is enough to veto it — e.g.
+`lore init >out 2>/dev/null`, or the shell idiom `cmd >/dev/null 2>&1`),
+`--json` was not requested, *and* none of `init`'s own flags was passed.
+Whenever stdin or stderr is **not** a TTY (CI, pipes, a subprocess), `--json`
+is given, or **any** flag below is given, `init` runs fully
+non-interactively with defaults and no prompt can ever block it — the
+npm-init pattern. Every wizard question has a 1:1 flag equivalent, so a
+script can reach every option the wizard offers with zero prompts — but
+`--yes`/`--non-interactive` is npm's `-y` ("skip the wizard, run the bare
+default"), **not** "answer every question with its own default"; the two
+diverge on the agent-bridge question in particular (its wizard default is
+yes, but `--yes` installs nothing). A bare `lore init` off a TTY with no
+flags behaves exactly as it always has (scaffold only, nothing else) — the
+agent bridge/scaffolds/backlog check are strictly opt-in there.
+
+Hitting EOF (Ctrl-D) mid-wizard is a `usage` error (exit `2`) with a rendered
+diagnostic, never a silent success — see
+[ADR-0017](../adr/0017-interactive-init-wizard-tty-gated.md).
+
+**Partial application on an interrupted run.** The agent bridge (when
+requested) is applied before scaffold targets are pre-flighted, so a scaffold
+conflict — or an EOF mid-wizard after the bridge question was already
+answered — can leave the bridge already written to disk while the run still
+exits non-zero. This is safe: every step `init` performs is independently
+idempotent, so re-running `lore init` (via the wizard or the same flags)
+picks up exactly where the interrupted run left off — it detects and skips
+whatever already succeeded rather than erroring or duplicating anything.
 
 | | |
 |---|---|
 | **Args** | none |
-| **Key flags** | `--yes` (skip the wizard even on a TTY) · `--agents` (also set up the Claude Code bridge) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-backlog` / `--no-backlog` (force/skip the backlog capability check) |
-| **Output** | `kind: init` — created/skipped scaffold paths, plus `agents`/`scaffolds`/`backlog` when those steps ran |
-| **Exit** | `0` ok (the backlog check is advisory-only and never changes this) · `2` usage (bad flag/unknown `--scaffold` target) · `4` permission denied · `5` a non-regular entry (directory/symlink) blocks a scaffold path, or a scaffold target collides with a differing hand-edited file |
+| **Key flags** | `--yes` / `--non-interactive` (skip the wizard even on a TTY) · `--agents` (also set up the Claude Code bridge) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-backlog` / `--no-backlog` (force/skip the backlog capability check) |
+| **Output** | `kind: init` — created/skipped scaffold paths, plus `interactive`/`scaffolds` always present (`false`/`[]` on the default path) and `agents`/`backlog` present only when those steps ran |
+| **Exit** | `0` ok (the backlog check is advisory-only and never changes this) · `2` usage (bad flag/unknown `--scaffold` target, or the wizard's stdin closed before finishing) · `4` permission denied · `5` a non-regular entry (directory/symlink) blocks a scaffold path, or a scaffold target collides with a differing hand-edited file |
 
 ### `new`
 
