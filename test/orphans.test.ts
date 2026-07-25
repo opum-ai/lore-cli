@@ -159,6 +159,81 @@ describe("computeOrphans — the pure set arithmetic (AC#1)", () => {
   });
 });
 
+describe("computeOrphans — parent/subtask hierarchy awareness (LORE-261, AC#1/#3)", () => {
+  test("a subtask is NOT an orphan when its parent carries a doc: label", () => {
+    const report = computeOrphans(
+      [],
+      [
+        makeTask("LORE-1", { labels: ["doc:stories/bulk"] }), // the linked parent
+        makeTask("LORE-2", { parentTaskId: "LORE-1" }), // unlinked subtask, no doc: label of its own
+      ],
+      NO_FLAGS,
+    );
+    expect(report.orphanTasks).toEqual([]);
+  });
+
+  test("a subtask is NOT an orphan when its parent is forward-referenced by a concept's tasks:", () => {
+    const report = computeOrphans(
+      [concept("stories/bulk", { tasks: ["LORE-1"] })],
+      [makeTask("LORE-1"), makeTask("LORE-2", { parentTaskId: "LORE-1" })],
+      NO_FLAGS,
+    );
+    expect(report.orphanTasks).toEqual([]);
+  });
+
+  test("the parent-id match is case-insensitive (parentTaskId lore-1, snapshot has LORE-1)", () => {
+    const report = computeOrphans(
+      [],
+      [makeTask("LORE-1", { labels: ["doc:stories/bulk"] }), makeTask("LORE-2", { parentTaskId: "lore-1" })],
+      NO_FLAGS,
+    );
+    expect(report.orphanTasks).toEqual([]);
+  });
+
+  test("AC#3 no false negative: a subtask of a genuinely unlinked parent is STILL reported as an orphan", () => {
+    // Neither LORE-1 (the parent) nor LORE-2 (the subtask) carries a doc: label or a forward ref.
+    const report = computeOrphans([], [makeTask("LORE-1"), makeTask("LORE-2", { parentTaskId: "LORE-1" })], NO_FLAGS);
+    expect(report.orphanTasks?.map((t) => t.id).sort()).toEqual(["LORE-1", "LORE-2"]);
+  });
+
+  test("AC#3 no false negative: a fully-unlinked standalone task (no parent at all) is still reported", () => {
+    const report = computeOrphans([], [makeTask("LORE-9")], NO_FLAGS);
+    expect(report.orphanTasks).toEqual([{ id: "LORE-9", title: "Title for LORE-9", status: "To Do" }]);
+  });
+
+  test("a subtask whose parent is NOT in the current snapshot (deleted/archived) grants no exemption", () => {
+    const report = computeOrphans([], [makeTask("LORE-2", { parentTaskId: "LORE-1" })], NO_FLAGS);
+    expect(report.orphanTasks).toEqual([{ id: "LORE-2", title: "Title for LORE-2", status: "To Do" }]);
+  });
+
+  test("hierarchy awareness walks a multi-level chain (grandchild owned via a linked grandparent)", () => {
+    const report = computeOrphans(
+      [],
+      [
+        makeTask("LORE-1", { labels: ["doc:stories/bulk"] }), // grandparent, linked
+        makeTask("LORE-2", { parentTaskId: "LORE-1" }), // parent, unlinked
+        makeTask("LORE-3", { parentTaskId: "LORE-2" }), // grandchild, unlinked
+      ],
+      NO_FLAGS,
+    );
+    expect(report.orphanTasks).toEqual([]);
+  });
+
+  test("a cyclic/self-referencing parentTaskId does not hang and does not grant a false exemption", () => {
+    const report = computeOrphans(
+      [],
+      [makeTask("LORE-1", { parentTaskId: "LORE-2" }), makeTask("LORE-2", { parentTaskId: "LORE-1" })],
+      NO_FLAGS,
+    );
+    expect(report.orphanTasks?.map((t) => t.id).sort()).toEqual(["LORE-1", "LORE-2"]);
+  });
+
+  test("a task that is its own parent (data anomaly) does not hang and does not grant a false exemption", () => {
+    const report = computeOrphans([], [makeTask("LORE-1", { parentTaskId: "LORE-1" })], NO_FLAGS);
+    expect(report.orphanTasks).toEqual([{ id: "LORE-1", title: "Title for LORE-1", status: "To Do" }]);
+  });
+});
+
 describe("computeOrphans — bounded output, §3 truncation (LORE-74, AC#1)", () => {
   test("no --limit falls back to DEFAULT_ORPHANS_LIMIT, applied independently per section", () => {
     // 25 orphan tasks (over the default cap of 20) but only 2 dangling links (under it) — each
@@ -255,6 +330,22 @@ describe("runOrphans — integration over a bundle + snapshot (AC#2)", () => {
     const { data } = await reportJson(["--docs-only"], adapter);
     expect(data.danglingLinks).toEqual([{ concept: "stories/bulk", task: "GONE-9" }]);
     expect("orphanTasks" in data).toBe(false);
+  });
+
+  test("LORE-261 AC#1: a linked-parent's unlinked subtasks are NOT reported through the run path", async () => {
+    // stories/bulk links LORE-1 (the parent); LORE-2/LORE-3 are its subtasks, carrying no doc: label
+    // and no forward reference of their own — the exact Meridian-stress-test shape (8 reported instead
+    // of 2 before this fix).
+    writeStory("bulk", ["LORE-1"]);
+    const adapter = okAdapter([
+      makeTask("LORE-1", { labels: ["doc:stories/bulk"] }),
+      makeTask("LORE-2", { parentTaskId: "LORE-1" }),
+      makeTask("LORE-3", { parentTaskId: "LORE-1" }),
+      makeTask("LORE-9", { title: "Genuinely unlinked" }), // no parent, no doc:, no forward ref
+    ]);
+    const { data } = await reportJson([], adapter);
+    // AC#3 no false negative: LORE-9 (fully unlinked, no parent) still reports.
+    expect(data.orphanTasks).toEqual([{ id: "LORE-9", title: "Genuinely unlinked", status: "To Do" }]);
   });
 });
 
