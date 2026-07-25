@@ -341,7 +341,7 @@ export function createRealPrompter(
       reject(
         new LoreError(
           "usage",
-          "stdin closed before the init wizard finished (EOF/Ctrl-D)",
+          "stdin closed or the wizard was interrupted before it finished (EOF/Ctrl-D or Ctrl-C)",
           "answer every prompt, or run prompt-free with `lore init --yes` (or --agents/--scaffold <target>/--obsidian/--no-backlog/--check-backlog)",
         ),
       );
