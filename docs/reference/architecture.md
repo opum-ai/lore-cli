@@ -202,7 +202,10 @@ formatted output + exit code. The flows below trace the load-bearing ones.
 `commands/init` → `state.ts` scaffolds `.lore/` (config, schemas, templates) and
 `bundle.ts` writes a minimal `docs/index.md` carrying `okf_version: "0.1"` (the
 **only** file with that key — [ADR-0003](../adr/0003-okf-substrate.md)). Idempotent:
-re-running on an existing bundle is a no-op, not an error.
+re-running on an existing bundle is a no-op, not an error. On a bare invocation
+with both stdin and stderr as TTYs, this same command also runs a TTY-gated
+wizard that folds in `commands/agents`, `commands/scaffold`, and a backlog
+capability probe — [ADR-0017](../adr/0017-interactive-init-wizard-tty-gated.md).
 
 ### `lore new <type> "<title>"`
 `commands/new` → `schema.ts` (resolve the type) + a `.lore/templates/<type>.md`
