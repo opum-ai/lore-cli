@@ -72,12 +72,14 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import {
   type AtomicRollbackWrite,
+  classifyExistingFile,
   createIfAbsent,
   writeFileAtomic,
   writeFileNoFollow,
@@ -446,5 +448,87 @@ describe("createIfAbsent — a non-ENOENT lstat failure while classifying a wx E
     }
     expect(thrown).toBeInstanceOf(LoreError);
     expect((thrown as LoreError).type).toBe("conflict");
+  });
+});
+
+// ── classifyExistingFile: the three-way absent/unchanged/differs classification `lore scaffold`'s
+// idempotent-when-unchanged preflight needs (LORE-263) ─────────────────────────────────────────
+
+describe("classifyExistingFile — absent vs. byte-identical vs. differing (LORE-263)", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "lore-fswrite-classify-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a path with nothing on disk is 'missing'", () => {
+    expect(classifyExistingFile(join(dir, "f.md"), "contents")).toBe("missing");
+  });
+
+  test("a pre-existing regular file with byte-identical contents is 'unchanged'", () => {
+    const path = join(dir, "f.md");
+    writeFileSync(path, "same bytes\n");
+    expect(classifyExistingFile(path, "same bytes\n")).toBe("unchanged");
+  });
+
+  test("a pre-existing regular file with different contents is 'differs'", () => {
+    const path = join(dir, "f.md");
+    writeFileSync(path, "old bytes\n");
+    expect(classifyExistingFile(path, "new bytes\n")).toBe("differs");
+  });
+
+  test("even a single trailing-byte difference is 'differs', not 'unchanged'", () => {
+    const path = join(dir, "f.md");
+    writeFileSync(path, "same bytes");
+    expect(classifyExistingFile(path, "same bytes\n")).toBe("differs");
+  });
+
+  test("a directory occupying the path is 'differs', never 'unchanged'", () => {
+    const path = join(dir, "adir");
+    mkdirSync(path);
+    expect(classifyExistingFile(path, "contents")).toBe("differs");
+  });
+
+  // POSIX-only: symlinkSync's target-resolution semantics are inconsistent enough on Windows CI
+  // that this repo's other symlink-specific tests (fswrite.ts's own writeFileNoFollow suite,
+  // consumer-scaffold.test.ts's LORE-76 suite) are already scoped POSIX-only.
+  test.skipIf(process.platform === "win32")(
+    "a symlink whose target happens to read back byte-identical is still 'differs', never silently 'unchanged' (LORE-76 hazard)",
+    () => {
+      const real = join(dir, "real.md");
+      writeFileSync(real, "same bytes\n");
+      const link = join(dir, "link.md");
+      symlinkSync(real, link);
+      // Regression guard: if this ever returned "unchanged", `lore scaffold`'s preflight would
+      // treat a symlinked planned-file path as "nothing to do" and skip the write loop (and with
+      // it, fswrite.ts's own assertNoSymlinkInPath guard) entirely — never reaching the check that
+      // refuses a symlinked target in the first place.
+      expect(classifyExistingFile(link, "same bytes\n")).toBe("differs");
+    },
+  );
+
+  test("an unreadable-but-present file (permission denied) is 'differs', not silently 'unchanged'", () => {
+    if (process.getuid?.() === 0) {
+      return; // root bypasses read-permission checks, so this repro can't be set up
+    }
+    const path = join(dir, "f.md");
+    writeFileSync(path, "secret\n");
+    chmodSync(path, 0o000);
+    try {
+      let unreadable = false;
+      try {
+        readFileSync(path, "utf8");
+      } catch {
+        unreadable = true;
+      }
+      if (!unreadable) {
+        return; // environment ignores the mode (e.g. a permissive filesystem) — skip
+      }
+      expect(classifyExistingFile(path, "secret\n")).toBe("differs");
+    } finally {
+      chmodSync(path, 0o644); // restore so afterEach's rmSync can clean up
+    }
   });
 });
