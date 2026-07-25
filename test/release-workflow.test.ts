@@ -23,8 +23,10 @@ const WORKFLOW_PATH = join(import.meta.dir, "..", ".github", "workflows", "relea
 
 /** The handful of `release.yml` fields this file's assertions actually read. */
 interface WorkflowStep {
+  name?: string;
   uses?: string;
   with?: Record<string, string>;
+  run?: string;
 }
 
 interface WorkflowJob {
@@ -99,5 +101,36 @@ describe("release.yml publish job stays safely gated", () => {
     const setupNodeStep = doc.jobs.publish?.steps?.find((s) => s.uses?.startsWith("actions/setup-node@"));
     expect(setupNodeStep).toBeDefined();
     expect(setupNodeStep?.with?.["registry-url"]).toBe("https://registry.npmjs.org");
+  });
+
+  test("the publish step publishes the root/launcher tarball LAST, after every platform tarball, not via a naive glob loop", () => {
+    const doc = loadWorkflow();
+    const publishStep = doc.jobs.publish?.steps?.find((s) => s.run?.includes("npm publish"));
+    expect(publishStep).toBeDefined();
+    const script = publishStep?.run ?? "";
+
+    // The regression this guards: `for tgz in dist-npm/*.tgz; do ... npm publish
+    // "$tgz" ... done` publishes in filesystem-collation order, which sorts the root
+    // launcher tarball (`salient-data-lore-<version>.tgz`) BEFORE its five platform
+    // optionalDependencies (`salient-data-lore-<platform>-<version>.tgz`) — a digit
+    // sorts before a letter. That inverts the required publish order for this
+    // distribution shape (root's optionalDependencies pin the platform packages
+    // exactly; bin/lore.cjs require.resolve()s them at runtime) and, combined with
+    // `run:` executing under `bash -e`, makes a mid-loop failure leave the root
+    // published with no working binaries — a version that can never be republished.
+    expect(script).not.toMatch(/for\s+\w+\s+in\s+dist-npm\/\*\.tgz;\s*do\b/);
+
+    // The root/launcher tarball must be split out from the platform tarballs (not
+    // published inside the same undifferentiated loop) and published only after
+    // every platform tarball has already been handled.
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal bash array-expansion syntax from release.yml's own script, not a JS template placeholder.
+    const platformLoopIndex = script.indexOf('for tgz in "${platform_tgz[@]}"');
+    const rootPublishIndex = script.lastIndexOf('publish_or_skip "$root"');
+    expect(platformLoopIndex).toBeGreaterThan(-1);
+    expect(rootPublishIndex).toBeGreaterThan(platformLoopIndex);
+
+    // Resumable: a run that fails partway through must be safe to re-dispatch without
+    // 403ing (EPUBLISHCONFLICT) on packages already published.
+    expect(script).toMatch(/npm view/);
   });
 });

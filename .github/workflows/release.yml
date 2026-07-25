@@ -297,7 +297,7 @@ jobs:
           fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: npm-packages-dry-run
+          name: npm-packages
           path: dist-npm/
           if-no-files-found: error
 
@@ -321,16 +321,26 @@ jobs:
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: npm-packages-dry-run
+          name: npm-packages
           path: dist-npm
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+      - name: Upgrade npm to meet the OIDC trusted-publishing floor
+        # Trusted publishing needs npm >= 11.5.1. `node-version: 24` above resolves to
+        # whatever the latest 24.x ships, which is not guaranteed to bundle a new-enough
+        # npm — upgrade here so the floor is actually MET, not merely checked below. Cheap
+        # (npm is already on PATH from setup-node) and keeps this job self-sufficient
+        # rather than depending on a future Node release to happen to bundle the floor.
+        run: npm install -g npm@latest
       - name: Assert npm CLI meets the OIDC trusted-publishing floor (docs/runbooks/release-publishing.md Prerequisites)
-        # Trusted publishing needs npm >= 11.5.1 on the publishing side. Assert it
-        # explicitly and fail loud here, before touching the registry, rather than
-        # letting an unmet floor surface as a confusing mid-publish auth error.
+        # Post-condition check for the upgrade step above — fail loud here, before
+        # touching the registry, rather than letting an unmet floor surface as a
+        # confusing mid-publish auth error. A non-numeric prerelease segment (e.g.
+        # "11.5.1-pre.0") makes `Number(...)` yield NaN, and every NaN comparison below
+        # is false, so `meetsFloor` is false — this deliberately fails CLOSED (reported
+        # as "older than the floor") rather than risking a false pass.
         run: |
           # The ${...} below are JS template literals for `node -e`, not shell
           # interpolation — single-quoting is intentional.
@@ -346,19 +356,93 @@ jobs:
             }
             console.log(`npm ${version} meets the >= 11.5.1 trusted-publishing floor`);
           '
-      - name: Publish all six packages (root launcher + 5 platform binaries) via OIDC trusted publishing
-        # No NPM_TOKEN/NODE_AUTH_TOKEN secret: actions/setup-node's registry-url
-        # above plus this job's id-token: write is everything npm >= 11.5.1 needs
-        # to authenticate via GitHub's OIDC token. Requires docs/runbooks/
-        # release-publishing.md Step 1 (the one-time npmjs.com Trusted Publisher
-        # setup) to already be done for a given package, or its `npm publish`
-        # call below fails loud with an auth/403 error rather than silently
-        # skipping it. Publishes the exact tarballs the `package` job already
-        # dry-run-verified (no re-packing), and needs no --access flag since all
-        # six already carry publishConfig.access: public (LORE-101).
+      - name: Publish 5 platform binaries first, launcher LAST (resumable) via OIDC trusted publishing
+        # ORDER IS LOAD-BEARING: the root launcher's optionalDependencies pin the five
+        # platform packages at an EXACT version, and bin/lore.cjs require.resolve()s them
+        # at runtime. Publishing root first would (a) leave a window where
+        # `npx @salient-data/lore` installs a launcher whose platform deps 404 (npm skips
+        # an unresolvable optional dep, so the install "succeeds" and only fails at run
+        # time with "no compiled binary found"), and (b) on any mid-loop failure leave the
+        # root published at a version that can never be republished — with the first
+        # publish having already set the `latest` dist-tag. Root last means a partial
+        # failure leaves nothing users can install, so the same version can be retried
+        # after fixing the cause (see docs/runbooks/release-publishing.md Rollback).
+        #
+        # RESUMABLE: `run:` blocks execute under `bash -e`, so the first failing `npm
+        # publish` aborts the loop. Re-dispatching would otherwise 403 (EPUBLISHCONFLICT)
+        # on the packages already published. `publish_or_skip` checks the registry first
+        # and skips anything already there, so re-dispatching after a partial failure
+        # completes the rest instead of being permanently stuck.
+        #
+        # This job has no checkout (only the packed tarballs), so the platform set comes
+        # from `needs.setup.outputs.namesSpace` (the same single source of truth every
+        # other job derives its platform list from) rather than re-deriving it from
+        # package.json here. The root/launcher tarball is whatever tarball's name does
+        # NOT match any `-<platform>-` segment — asserted to be exactly one, so a
+        # naming/count drift fails loud instead of silently publishing the wrong thing
+        # last (or not at all).
+        env:
+          PLATFORM_NAMES_SPACE: ${{ needs.setup.outputs.namesSpace }}
         run: |
-          for tgz in dist-npm/*.tgz; do
-            echo "::group::npm publish $tgz"
+          publish_or_skip() {
+            local tgz="$1"
+            local name version
+            # Here-string (not a heredoc): the RHS is a command substitution whose
+            # output ("name version", space-separated) `read` splits into the two
+            # variables below.
+            read -r name version <<< "$(tar -xzOf "$tgz" package/package.json | node -e '
+              let data = "";
+              process.stdin.on("data", (chunk) => { data += chunk; });
+              process.stdin.on("end", () => {
+                const pkg = JSON.parse(data);
+                console.log(pkg.name, pkg.version);
+              });
+            ')"
+            # `npm view` exits non-zero for a name@version that has never been published —
+            # that is the expected/common case, hence the explicit guard rather than
+            # letting `bash -e` treat it as a failure.
+            if npm view "${name}@${version}" version >/dev/null 2>&1; then
+              echo "${name}@${version} already published — skipping (resuming a partially-failed publish)"
+              return 0
+            fi
+            echo "::group::npm publish $tgz ($name@$version)"
             npm publish "$tgz"
             echo "::endgroup::"
+          }
+
+          shopt -s nullglob
+          all_tgz=(dist-npm/*.tgz)
+          if [ "${#all_tgz[@]}" -ne 6 ]; then
+            echo "::error::expected 6 tarballs in dist-npm, found ${#all_tgz[@]}"
+            ls -la dist-npm
+            exit 1
+          fi
+
+          root=""
+          platform_tgz=()
+          for tgz in "${all_tgz[@]}"; do
+            is_platform=false
+            for name in $PLATFORM_NAMES_SPACE; do
+              case "$tgz" in
+                *"-${name}-"*) is_platform=true ;;
+              esac
+            done
+            if [ "$is_platform" = true ]; then
+              platform_tgz+=("$tgz")
+            elif [ -z "$root" ]; then
+              root="$tgz"
+            else
+              echo "::error::found two candidate root/launcher tarballs: $root and $tgz"
+              exit 1
+            fi
           done
+          if [ "${#platform_tgz[@]}" -ne 5 ] || [ -z "$root" ]; then
+            echo "::error::expected 5 platform tarballs + 1 root tarball, found ${#platform_tgz[@]} platform (root='${root}')"
+            ls -la dist-npm
+            exit 1
+          fi
+
+          for tgz in "${platform_tgz[@]}"; do
+            publish_or_skip "$tgz"
+          done
+          publish_or_skip "$root"
