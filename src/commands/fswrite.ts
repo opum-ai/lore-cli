@@ -192,9 +192,13 @@ export function createIfAbsent(absPath: string, contents: string, relPath: strin
  * skip the write loop entirely and, with it, {@link assertNoSymlinkInPath}'s own guard — exactly the
  * write-outside-the-repo hazard LORE-76 closed. A read failure on an entry that does exist (e.g.
  * `EACCES`) is classified the same conservative way, for the identical reason: this function must
- * never claim a match it cannot prove. Only the documented "vanished after the initial `lstat`"
- * race degrades to `"missing"` (a benign, self-resolving race, not a real problem) rather than
- * `"differs"`.
+ * never claim a match it cannot prove. Only a path with nothing there yet — i.e. the initial
+ * `lstat` itself failing, whether the file was never created or vanished in a race just BEFORE
+ * this call reached it — degrades to `"missing"` (a benign, self-resolving condition, not a real
+ * problem). A file that instead vanishes AFTER that `lstat` succeeds but before the subsequent
+ * read (a narrower race) is conservatively classified `"differs"`, not `"missing"`, by the read
+ * catch below — this function must never claim a match it cannot prove, so only the lstat-time
+ * absence is treated as unambiguously benign.
  */
 export function classifyExistingFile(absPath: string, contents: string): "missing" | "unchanged" | "differs" {
   let stat: ReturnType<typeof lstatSync>;
