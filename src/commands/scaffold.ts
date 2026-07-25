@@ -20,12 +20,24 @@
  * rollback — so a partial *collision*, or a mid-run I/O failure (e.g. a read-only `docs/`), can
  * never leave one scaffolded file refreshed and its sibling stale.
  *
+ * `mkdocs`'s `docs/tags.md` stamps a `timestamp` into its own frontmatter (a real wall-clock read
+ * by default — see {@link ScaffoldOptions.clock}), which would otherwise defeat the idempotent
+ * byte-compare above on every real (non-test) bare re-run: two runs a second apart regenerate
+ * different bytes purely because time moved forward, even though the user touched nothing, so
+ * `classifyExistingFile` would report "differs" and the run would still hard-error. A bare
+ * (non `--force`) `mkdocs` run avoids that by reusing the on-disk `docs/tags.md`'s own `timestamp`
+ * field (via {@link preservedTagsTimestamp}) instead of a fresh `clock()` read, so an otherwise
+ * untouched bundle compares byte-identical regardless of how much wall-clock time has passed.
+ * `--force` is unaffected — it always stamps a fresh timestamp, since its whole point is to
+ * regenerate the file.
+ *
  * `mkdocs`, `docusaurus`, and `obsidian` are implemented; any other target string is a `usage`
  * error (exit 2).
  */
 
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { tryReadFrontmatter } from "../core/concept";
 import {
   buildDocusaurusScaffold,
   buildMkdocsScaffold,
@@ -33,6 +45,7 @@ import {
   type ConsumerScaffoldFile,
   type ConsumerScaffoldOptions,
   type ConsumerScaffoldPlan,
+  TAGS_INDEX_REL_PATH,
 } from "../core/consumer-scaffold";
 import { loadProfile } from "../core/profile";
 import { EXIT_OK, LoreError, type Writer } from "../errors";
@@ -50,7 +63,11 @@ export interface ScaffoldOptions {
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
-  /** Clock seam for `docs/tags.md`'s timestamp; defaults to the real wall clock. */
+  /**
+   * Clock seam for `docs/tags.md`'s timestamp; defaults to the real wall clock. Only actually
+   * consulted for a fresh stamp on a `--force` run, or on a bare run with no usable on-disk
+   * `docs/tags.md` timestamp to preserve — see {@link preservedTagsTimestamp}.
+   */
   clock?: () => Date;
 }
 
@@ -124,8 +141,15 @@ export function runScaffold(options: ScaffoldOptions): number {
     // BUILDERS' own keys — this can only fire if that invariant is ever broken.
     throw new Error(`internal: no builder registered for target "${parsed.target}"`);
   }
+  // A bare mkdocs run reuses docs/tags.md's own on-disk timestamp (when there's one to preserve)
+  // instead of always stamping a fresh clock() read — see the module docstring and
+  // preservedTagsTimestamp's own doc for why this is load-bearing for LORE-263's idempotency
+  // guarantee. --force always wants a fresh stamp (it's regenerating the file outright), and
+  // docusaurus/obsidian ignore `timestamp` entirely, so neither needs this.
+  const timestamp =
+    parsed.target === "mkdocs" && !parsed.force ? preservedTagsTimestamp(options.root, clock) : clock().toISOString();
   const plan = build({
-    timestamp: clock().toISOString(),
+    timestamp,
     siteName: basename(resolve(options.root)),
     profile,
   });
@@ -165,6 +189,46 @@ export function runScaffold(options: ScaffoldOptions): number {
   const result: ScaffoldResult = { target: parsed.target, force: parsed.force, files, notes: plan.notes ?? [] };
   emit(scaffoldRenderable(result), options.output, options.stdout);
   return EXIT_OK;
+}
+
+/**
+ * The timestamp a bare (non `--force`) `lore scaffold mkdocs` run stamps into `docs/tags.md`'s
+ * regenerated frontmatter (LORE-263 follow-up): the on-disk file's own `timestamp` field, when
+ * there's one to reuse, rather than always a fresh `clock()` read. Without this, an otherwise
+ * completely untouched `docs/tags.md` would regenerate different bytes on every real re-run
+ * (the timestamp always advances with the wall clock) even though nothing the user controls
+ * changed, so `classifyExistingFile` would report "differs" and the run would hard-error exactly
+ * the way idempotent-when-unchanged is supposed to prevent. This only decides which timestamp
+ * string goes into the freshly rebuilt plan bytes — the actual byte comparison against what's on
+ * disk still happens afterward via {@link classifyExistingFile}, so a file that differs for any
+ * OTHER reason (a hand-edited title, body, or `$schema` modeline) is still correctly classified
+ * "differs" and still blocks the run.
+ *
+ * Reads via the shared {@link tryReadFrontmatter} (frontmatter mapping only, no schema
+ * validation) rather than the full `parseConcept`, since a file that's otherwise a byte-identical
+ * regenerate is exactly the case this must handle, and schema validation is an orthogonal
+ * concern. Falls back to `clock().toISOString()` — the timestamp a fresh scaffold has always
+ * used — whenever there's nothing usable to reuse: `docs/tags.md` is absent or unreadable, its
+ * YAML frontmatter doesn't parse at all (a genuinely malformed file must still flow through to
+ * the normal "differs" collision path with *some* deterministic timestamp, not fail this whole
+ * command), or its `timestamp` field isn't present as a string.
+ */
+function preservedTagsTimestamp(root: string, clock: () => Date): string {
+  const fresh = () => clock().toISOString();
+  let raw: string;
+  try {
+    raw = readFileSync(join(root, TAGS_INDEX_REL_PATH), "utf8");
+  } catch {
+    return fresh(); // absent, or unreadable -- nothing on disk to preserve
+  }
+  let frontmatter: Record<string, unknown> | null;
+  try {
+    frontmatter = tryReadFrontmatter(TAGS_INDEX_REL_PATH, raw);
+  } catch {
+    return fresh(); // unparseable YAML -- let the normal "differs" collision path handle the file itself
+  }
+  const timestamp = frontmatter?.timestamp;
+  return typeof timestamp === "string" ? timestamp : fresh();
 }
 
 /**
