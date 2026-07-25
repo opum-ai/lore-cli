@@ -138,13 +138,28 @@ this one job ever gets the token. It:
 - `needs: [setup, package]` — `package` already needs `build`, which needs
   `verify-versions`, so every existing consistency/artifact check transitively
   gates it; it never runs against unverified artifacts.
-- Downloads the exact `npm-packages-dry-run` tarballs the `package` job
+- Downloads the exact `npm-packages` artifact tarballs the `package` job
   already assembled and dry-run-verified (no re-packing, so what gets
   published is byte-identical to what was just proven).
-- Uses `actions/setup-node` with `registry-url: https://registry.npmjs.org`
-  and asserts the resolved npm CLI meets the `>= 11.5.1` floor (Prerequisites,
-  above) before publishing anything — fails loud rather than hitting a
-  confusing OIDC error mid-publish.
+- Uses `actions/setup-node` with `registry-url: https://registry.npmjs.org`,
+  upgrades npm (`npm install -g npm@latest`) and then asserts the resolved
+  npm CLI meets the `>= 11.5.1` floor (Prerequisites, above) before publishing
+  anything — fails loud rather than hitting a confusing OIDC error mid-publish.
+- Publishes the **five platform binary packages first, the root launcher
+  last**. Root's `optionalDependencies` pin the five platform packages at an
+  exact version, and `bin/lore.cjs` `require.resolve()`s them at runtime — if
+  root published first, `npx @salient-data/lore` could resolve a launcher
+  whose platform deps still 404 (npm silently skips an unresolvable optional
+  dependency rather than failing the install, so the failure only surfaces at
+  run time as "no compiled binary found"). Publishing root last also means a
+  mid-loop failure leaves nothing installable yet, rather than a launcher
+  live at a version whose binaries never arrived.
+- The publish loop is **resumable**: before each package, it checks whether
+  `name@version` is already on the registry (`npm view`) and skips it if so.
+  Re-dispatching `Release` with `publish: true` on the same commit after a
+  partial failure therefore finishes the remaining packages instead of
+  403ing (`EPUBLISHCONFLICT`) on the ones already published — see
+  [Rollback](#rollback)'s "Publish job failed partway" entry.
 - Runs `npm publish` against each of the six tarballs — no `NPM_TOKEN`/secret
   needed once Step 1's Trusted Publisher setup exists for that package; until
   then, that package's `npm publish` call fails with an auth/403 error, which
@@ -172,12 +187,13 @@ publish is explicitly marked public. Root `package.json` and all five
    install path (git dependency, `npm`/`bun link`) with no fallback to run
    from source. This flip is the first-release trigger, not a standing state.
 2. Bump `version` in `package.json` and all five `npm/<platform>/package.json`
-   files to the same new value, in one commit — `release.yml`'s
-   `verify-versions` job (which `build` depends on and therefore gates)
-   asserts all six versions, plus the `optionalDependencies` pin and
-   `license`/`author`/`repository` metadata, are consistent before compiling
-   anything, so a missed file fails loud here rather than silently skipping
-   an optional dependency later.
+   files to the same new value, **and update root `package.json`'s five
+   `optionalDependencies` pins to that same exact version**, in one commit —
+   `release.yml`'s `verify-versions` job (which `build` depends on and
+   therefore gates) asserts all six versions, plus the `optionalDependencies`
+   pin and `license`/`author`/`repository` metadata, are consistent before
+   compiling anything, so a missed file fails loud here rather than silently
+   skipping an optional dependency later.
 3. Tag it (`git tag vX.Y.Z && git push --tags`) — informational only; nothing
    is triggered automatically by the tag.
 4. Run the `Release` workflow manually (`workflow_dispatch`) with
@@ -223,6 +239,17 @@ version-bump item has happened.
 
 - **Before publish**: nothing external happened — delete the tag, fix the
   issue, retry.
+- **Publish job failed partway** (some of the six packages published, some
+  not): do **not** bump the version — fix the cause (usually a missing or
+  mistyped Trusted Publisher for the package that failed, [Step
+  1](#1-configure-npm-trusted-publishing-once-before-the-first-real-publish))
+  and re-dispatch `Release` with `publish: true` on the **same commit**; the
+  publish step skips packages already on the registry and completes the
+  rest. The launcher (`@salient-data/lore`) is published last precisely so a
+  partial failure leaves nothing installable and the same version stays
+  retryable. If the launcher itself published and something is still wrong,
+  you cannot republish that version — cut `X.Y.Z+1` and `npm deprecate` the
+  bad one (see below).
 - **After a bad publish**: npm allows `npm unpublish` only within 72 hours and
   only if no other package depends on the version; prefer publishing a patched
   version and deprecating the bad one (`npm deprecate @salient-data/lore@X.Y.Z
