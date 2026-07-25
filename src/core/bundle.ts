@@ -460,12 +460,17 @@ function collectBodyEdges(concept: Concept, dir: string, byId: ReadonlyMap<strin
  * The canonical `not_found` {@link LoreError} (exit 3) for a concept id absent from the bundle —
  * the single source of its message and hint so the graph-aware refactoring commands (`lore rename`,
  * `lore supersede`) and the rewrite engine all surface the same wording, whichever layer detects the
- * absence.
+ * absence. The hint points at `lore query`/`lore graph` (LORE-259) — both list every known concept
+ * id when run with no arguments — never `lore check`, which only prints a pass/fail summary count
+ * and lists no ids at all.
  */
 export function conceptNotInBundle(id: string): LoreError {
-  return new LoreError("not_found", `concept "${id}" is not in the bundle`, "run `lore check` to list concept ids", {
-    id,
-  });
+  return new LoreError(
+    "not_found",
+    `concept "${id}" is not in the bundle`,
+    "run `lore query` or `lore graph` to see known concept ids",
+    { id },
+  );
 }
 
 /**

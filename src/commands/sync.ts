@@ -322,7 +322,7 @@ function scopeConcepts(graph: BundleGraph, paths: readonly string[]): Concept[] 
       throw new LoreError(
         "not_found",
         `no concept found at or under "${prefix}"`,
-        "check the id/path and try again — run `lore check` to list concept ids",
+        "check the id/path and try again — run `lore query` or `lore graph` to see known concept ids",
         { path: prefix },
       );
     }
