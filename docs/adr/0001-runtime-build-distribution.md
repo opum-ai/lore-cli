@@ -109,7 +109,7 @@ machines through the channel they already use (npm / `npx` / `bunx`).
   postinstall compilation, and `npx`/`bunx` "just work".
 - The build mechanics (per-platform compile matrix, the launcher, the package
   layout, and a dry-run pipeline that proves `npx` resolution end-to-end) are
-  implemented (LORE-9). **Amendment (LORE-255):** the actual `npm publish`
+  implemented (LORE-9). **Amendment — 2026-07-25 (LORE-255):** the actual `npm publish`
   step is now implemented too, as a `publish` job gated on an explicit
   `publish: true` `workflow_dispatch` input with job-scoped `id-token: write`
   and OIDC trusted publishing; it still requires the one-time npm Trusted

@@ -39,7 +39,13 @@ Walk this in order for the actual first release. Every item elaborates on a
 none of the automated checks in `release.yml` (`verify-versions`, `build`,
 `package`) substitute for these, since they check *consistency*, not
 *absence* (a value that is consistently still `0.0.0`, or a job that never
-runs because `publish` stayed `false`, passes every one of them).
+runs because `publish` stayed `false`, passes every one of them). The one
+exception is the `publish` job itself, which — precisely because it is the
+one place in this workflow that performs the irreversible action — does
+independently hard-refuse to publish version `0.0.0` (see [Step
+2](#2-the-publish-job-already-in-releaseyml)); that is a last-resort
+backstop for an out-of-order dispatch, not a substitute for doing this
+checklist's version-bump item first.
 
 - [ ] **npm Trusted Publisher configured for all 6 packages** on npmjs.com —
   [Step 1](#1-configure-npm-trusted-publishing-once-before-the-first-real-publish).
@@ -89,8 +95,11 @@ runs because `publish` stayed `false`, passes every one of them).
   scope is personal) — required to configure Trusted Publishers; this is not
   something CI or an agent can do.
 - npm CLI **>= 11.5.1** on any machine used for a manual/bootstrap publish
-  (trusted publishing itself only requires this on the *publishing* side —
-  GitHub's `actions/setup-node` on a fresh runner already satisfies it).
+  (trusted publishing itself only requires this on the *publishing* side).
+  In CI, `release.yml`'s `publish` job does not rely on whatever npm version
+  the runner's Node happens to bundle: it explicitly runs `npm install -g
+  npm@^11` and then asserts the `>= 11.5.1` floor before publishing
+  anything.
 - GitHub-hosted runners only — npm trusted publishing does not support
   self-hosted runners (`release.yml` already uses `ubuntu-latest`).
 
@@ -142,9 +151,18 @@ this one job ever gets the token. It:
   already assembled and dry-run-verified (no re-packing, so what gets
   published is byte-identical to what was just proven).
 - Uses `actions/setup-node` with `registry-url: https://registry.npmjs.org`,
-  upgrades npm (`npm install -g npm@latest`) and then asserts the resolved
-  npm CLI meets the `>= 11.5.1` floor (Prerequisites, above) before publishing
-  anything — fails loud rather than hitting a confusing OIDC error mid-publish.
+  upgrades npm (`npm install -g npm@^11` — floor-plus-major pinned, not
+  `@latest`, since this is the only job with `id-token: write`) and then
+  asserts the resolved npm CLI meets the `>= 11.5.1` floor (Prerequisites,
+  above) before publishing anything — fails loud rather than hitting a
+  confusing OIDC error mid-publish.
+- Refuses to publish if the release version is still the pre-release
+  placeholder `0.0.0` — checked once, against the root tarball, before any
+  package is published. This is the one precondition every other
+  `release.yml` check leaves open (see the [First-release
+  checklist](#first-release-checklist) note above): a `publish: true`
+  dispatch made after Trusted Publisher setup but before the version-bump
+  checklist item would otherwise pass every other gate.
 - Publishes the **five platform binary packages first, the root launcher
   last**. Root's `optionalDependencies` pin the five platform packages at an
   exact version, and `bin/lore.cjs` `require.resolve()`s them at runtime — if
@@ -217,11 +235,16 @@ publish` — has been manually rehearsed end-to-end against this repo at
 - `npm publish --dry-run` for the root package (with a scratch `bin.lore`
   patch to `bin/lore.cjs`, reverted immediately after, exactly as the
   `package` job's pack step does) and for all five `npm/<platform>/`
-  packages — every one reported the correct package name, version, `os`/
-  `cpu` gate, file list (`bin/lore[.exe]` + `package.json` for the platform
-  packages; `src/`, `bin/lore.cjs`, `README.md`, `LICENSE`, `package.json`
-  for the root), and `access: public` with no auth error (dry-run doesn't
-  require registry login).
+  packages — every one reported the correct package name, version, file
+  list (`bin/lore[.exe]` + `package.json` for the platform packages; `src/`,
+  `bin/lore.cjs`, `README.md`, `LICENSE`, `package.json` for the root), and
+  `access: public` with no auth error (dry-run doesn't require registry
+  login). `npm publish --dry-run` does **not** report the `os`/`cpu` gate
+  itself — that's asserted separately: structurally by `release.yml`'s
+  `verify-versions` job (against the committed `npm/<platform>/package.json`
+  `os`/`cpu` fields) and behaviorally by the `package` job's install-sanity
+  step, which installs the platform tarball explicitly (not through
+  `optionalDependencies` resolution) so a mismatch hard-fails `EBADPLATFORM`.
 - A full `npm pack` of all six packages, installed together into a scratch
   project (root + the platform tarball matching the rehearsal host), then run
   via `node node_modules/.bin/lore --version`/`--help` — resolved through the
