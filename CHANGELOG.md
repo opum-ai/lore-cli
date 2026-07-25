@@ -180,6 +180,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency set has.
 
 ### Added
+- **`lore init` folds the rest of onboarding into one command via a TTY-gated interactive wizard**
+  (LORE-260): a bare `lore init` on an interactive terminal now walks through the Claude Code agent
+  bridge, a downstream doc-site scaffold (mkdocs/docusaurus), an Obsidian vault config, and a
+  backlog `--json`-capability check, replacing the old `init` → `agents` → external `lore-setup.sh`
+  → manual-Obsidian sequence. **Strictly TTY-gated** (the npm-init pattern, [ADR-0017](docs/adr/0017-interactive-init-wizard-tty-gated.md),
+  amending [ADR-0004](docs/adr/0004-cli-first-skill-bridge-mcp-deferred.md)/[ADR-0005](docs/adr/0005-cli-contract.md)):
+  the wizard runs only when stdin is a real TTY *and* none of `init`'s own flags was passed; a
+  non-TTY stdin (CI, pipes, this repo's own docker e2e harness) or **any** flag forces the fully
+  non-interactive path with no prompt able to block it. Every wizard question has a 1:1 flag
+  equivalent — `--agents` (the bridge), `--scaffold <target>` (repeatable; `mkdocs`/`docusaurus`/
+  `obsidian`), `--obsidian` (shorthand for `--scaffold obsidian`), `--check-backlog`/`--no-backlog`
+  (force/skip the advisory-only backlog check), and `--yes` (skip the wizard even on a TTY, applying
+  bare defaults) — so a script reaches the exact wizard outcome with zero prompts. **The
+  non-interactive default is completely unchanged**: with no flags and a non-TTY stdin (the
+  automatic case for every existing caller), `lore init` does exactly what it always did — scaffold
+  `docs/`/`.lore/` and nothing else; the `--json` envelope's new `interactive`/`agents`/`scaffolds`/
+  `backlog` fields are purely additive (ADR-0005 §versioning) and absent in that default case, so
+  this is not a contract-breaking change. The agent-bridge and scaffold steps are idempotent because
+  they reuse `lore agents`/`lore scaffold`'s own primitives directly — `applyAgentsBridge`
+  (`src/commands/agents.ts`) and `applyScaffold` (`src/commands/scaffold.ts`) were extracted out of
+  `runAgents`/`runScaffold` (which are now thin arg-parse/emit wrappers over them) specifically so
+  `lore init` never prints a second, separate envelope onto the stdout stream its own `--json`
+  contract owns. The backlog-coupling check (`adapter.probe()`) is advisory-only — a missing or
+  non-`--json`-capable `backlog` becomes a stderr warning plus `backlog: {capable: false, warning}`
+  on the result, never a failed `init` run. The wizard's TTY gate and its prompt I/O are both
+  injectable (`InitOptions.stdinIsTTY`/`InitOptions.prompter`, resolved once at the `cli.ts`
+  boundary alongside the existing `isTTY`/`stderrIsTTY` handling) rather than read from
+  `process.stdin` at the command call site, so the wizard is unit-tested with a scripted prompter
+  and never touches a real terminal; `runInit` stays a plain (non-`async`) function returning
+  `number | Promise<number>` (mirroring `lore check --external`'s existing sync/async split), so the
+  common zero-flag path returns a plain number exactly as before this change. Documented in the new
+  ADR-0017, [`cli-surface.md`](docs/reference/cli-surface.md)'s `init` entry, a new "Bootstrapping a
+  brand-new repo" section in
+  [`agent-onboarding.md`](docs/runbooks/agent-onboarding.md), and the README quickstart; discoverable
+  via top-level `lore --help` and `lore help init`. Verified against `dev`: `bun test` 2153/0 pass
+  (up from the 2126/0 baseline — 44 tests in `test/init.test.ts`, up from 20, plus 2 router-level
+  wizard-wiring tests in `test/cli.test.ts`; the TTY gate and the flag-bypass check were each
+  mutation-tested by reverting the fix and confirming their dependent tests genuinely fail, then
+  restored to green), `typecheck`/`lint` clean, `lore check` (40 files, 0 errors/warnings), and a
+  full run of the docker e2e harness (`docker/e2e/run-e2e.sh`) — 302 passed, 0 failed, unchanged from
+  its existing baseline (no assertion needed changing: the harness never exercises `init`'s new
+  flags, and the default path it does exercise is byte-for-byte unchanged).
 - **`.github/workflows/release.yml` gained a real `publish` job — OIDC trusted publishing to npm,
   gated on an explicit dispatch input** (LORE-255). The workflow stays `workflow_dispatch`-only
   (never push/tag-triggered); the new `publish` job additionally requires
