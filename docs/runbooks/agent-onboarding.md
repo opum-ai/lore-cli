@@ -63,9 +63,10 @@ lore init --agents --obsidian --scaffold mkdocs # the same outcome, zero prompts
 
 The wizard is **strictly TTY-gated** — this is the one place lore is
 interactive at all, and it never compromises the rest of the CLI's
-non-interactive contract (§3 below): whenever stdin is not a TTY (CI, a pipe,
-this repo's own docker e2e harness) or any flag is passed, `init` runs fully
-non-interactively with defaults and no prompt can block it. Every wizard
+non-interactive contract (§3 below): whenever stdin or stderr is not a TTY
+(CI, a pipe, this repo's own docker e2e harness), `--json` is passed, or any
+flag is passed, `init` runs fully non-interactively with defaults and no
+prompt can block it. Every wizard
 question has a 1:1 flag equivalent, so an agent scripting a fresh repo never
 needs the wizard at all — pass the flags for the consumers you want and
 `lore init` finishes with zero prompts, exactly as every other lore command

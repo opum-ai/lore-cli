@@ -99,8 +99,8 @@ Every command is idempotent and emits stable exit codes. All of them are
 non-interactive by default — the one exception is `lore init`, which runs a
 guided wizard on a bare, interactive-terminal invocation (folding in the
 Claude Code agent bridge, downstream doc-site scaffolds, and a backlog
-capability check); it is strictly TTY-gated, so a non-TTY stdin or any of its
-own flags runs it fully non-interactively too — see
+capability check); it is strictly TTY-gated, so a non-TTY stdin or stderr,
+`--json`, or any of its own flags runs it fully non-interactively too — see
 [ADR-0017](docs/adr/0017-interactive-init-wizard-tty-gated.md). Output has
 three modes with precedence `--json` > `--plain` > pretty:
 
