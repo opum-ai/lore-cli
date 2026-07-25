@@ -9,6 +9,7 @@
 - 2026-07-16T10:37:34-05:00 5e0e6c8b2b3add1990ec2b5b15acfd09b74bdd5f feat(LORE-40): lore scaffold docusaurus — website/ + build smoke test (#49)
 - 2026-07-18T22:08:41-05:00 6475cc54afcc5c387924b774397e868068d532c4 docs(LORE-52): reconcile stale remark/unified references vs shipped stack
 - 2026-07-19T10:25:07-05:00 9650cd44bdb8a1b2e2c0e43da30bcde8cd91e1bc feat(LORE-56): Docker E2E test harness — real lore + pinned upstream Backlog.md (#52)
+- 2026-07-24T22:21:41-05:00 2e84d2bf13f643fe3c0be39656a66a930f7fdcc8 docs(LORE-254): document the upstream Backlog.md watch runbook
 
 ## docs/adr
 
@@ -31,6 +32,8 @@
 - 2026-07-19T15:45:42-05:00 b8a46675ba0b51b85d9de6c929d7dff472f6fbef docs(LORE-60): fix ADR-0002 exit-code claim for missing vs incapable backlog (#56)
 - 2026-07-19T18:30:06-05:00 8c7c43e7e3d1859598a4d0fde426f5f5acac1c31 fix(LORE-67): remove leftover false validate-options claim in ADR-0013
 - 2026-07-19T18:30:06-05:00 ea60fd696798a34a1fcf6a9ffa7748dfb8fbfc04 fix(LORE-67): correct stale CLI-surface claims and dead validate config knobs
+- 2026-07-25T09:22:49-05:00 3f5f53abb7ed2d426d204b2e411a9472eea4ebe0 docs: fix stale publish-job description in tech-stack.md and ADR-0001
+- 2026-07-25T09:22:49-05:00 5052ebc5f4f28501e9eb9b65f6dbe05c6a224886 docs(release-publishing): fix os/cpu dry-run claim + npm-floor wording
 
 ## docs/reference
 
@@ -63,6 +66,9 @@
 - 2026-07-21T09:08:24-05:00 120e7f1221c5b4e75389a4f6ba3b4501a7ace722 docs(LORE-74): document orphans' new --limit flag and bounded output
 - 2026-07-23T11:38:03-05:00 03faf9e38ed94e592e9fd5abba04ea9326fa0002 docs(cli-surface): correct check's docs — no token estimates
 - 2026-07-23T11:56:28-05:00 8da5feec07136fd4444b4ae071b4ac3915588f4e docs(cli-surface): clarify context --max-tokens has no default cap
+- 2026-07-24T22:55:21-05:00 c20e696c9ca1fa5d3cde8eba9d70a0cf8c2d94ca docs(cli-surface): fix scaffold exit-5 wording for dir vs file blockers
+- 2026-07-24T22:55:21-05:00 e8b668f877cbf2cc80e57e48a8399046af11e5ca docs(cli-surface): scaffold is idempotent-when-unchanged, not always-conflict
+- 2026-07-25T09:22:49-05:00 3f5f53abb7ed2d426d204b2e411a9472eea4ebe0 docs: fix stale publish-job description in tech-stack.md and ADR-0001
 
 ## docs/runbooks
 
@@ -86,6 +92,11 @@
 - 2026-07-23T04:40:48-05:00 96040573b52dd06086e5b9ece6be77e58e97cb9c docs(runbooks): stop overclaiming CI/manual invocation identity
 - 2026-07-23T04:40:48-05:00 b3094e8777c0809de96a0b09b409ecb05cd503eb docs(runbooks): note docker-e2e now runs as a required CI gate
 - 2026-07-24T10:20:29-05:00 e99f2b6f1c44163ab0a6900ecf418e72bed29b3b ci(LORE-251): cut GitHub Actions minute cost (event-scoped OS matrix, concurrency cancel, drop redundant push:dev) (#241)
+- 2026-07-24T22:21:41-05:00 2e84d2bf13f643fe3c0be39656a66a930f7fdcc8 docs(LORE-254): document the upstream Backlog.md watch runbook
+- 2026-07-24T22:21:41-05:00 5a4071a9d499a89d898114a4eb626d0ec9093ee3 fix(LORE-254): correct runbook path refs, release-order and issue-list robustness
+- 2026-07-25T09:22:49-05:00 1025eb1b2fb7f51191fee2f11f072be90a78d182 docs(release-publishing): add partial-publish rollback + fix version-bump gap
+- 2026-07-25T09:22:49-05:00 5052ebc5f4f28501e9eb9b65f6dbe05c6a224886 docs(release-publishing): fix os/cpu dry-run claim + npm-floor wording
+- 2026-07-25T09:22:49-05:00 88f664119d29da8d982ec674782b1e199c83bcbb docs(release-publishing): add first-release checklist + rehearsal evidence
 
 ## docs/specs
 

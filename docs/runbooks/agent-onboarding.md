@@ -45,6 +45,35 @@ code. That determinism is what makes the loop below safe to run unattended.
 
 ---
 
+## 0. Bootstrapping a brand-new repo
+
+Everything below assumes a bundle already exists. Bringing lore into a repo
+that has none is **one command**: `lore init`. On a real (interactive)
+terminal it runs a guided wizard that also offers the Claude Code agent
+bridge, a downstream doc-site scaffold (mkdocs/docusaurus), an Obsidian vault
+config, and a backlog `--json`-capability check — replacing the older
+`init` → `agents` → external `lore-setup.sh` → manual-Obsidian sequence
+([ADR-0017](../adr/0017-interactive-init-wizard-tty-gated.md)).
+
+```sh
+lore init                                       # interactive wizard on a TTY
+lore init --yes                                 # skip the wizard, bare scaffold only
+lore init --agents --obsidian --scaffold mkdocs # the same outcome, zero prompts
+```
+
+The wizard is **strictly TTY-gated** — this is the one place lore is
+interactive at all, and it never compromises the rest of the CLI's
+non-interactive contract (§3 below): whenever stdin is not a TTY (CI, a pipe,
+this repo's own docker e2e harness) or any flag is passed, `init` runs fully
+non-interactively with defaults and no prompt can block it. Every wizard
+question has a 1:1 flag equivalent, so an agent scripting a fresh repo never
+needs the wizard at all — pass the flags for the consumers you want and
+`lore init` finishes with zero prompts, exactly as every other lore command
+does. See [CLI surface: `init`](../reference/cli-surface.md#init) for the
+full flag reference.
+
+---
+
 ## 1. The canonical agent loop
 
 This is the loop. SKILL.md is generated to mirror it, `lore instructions`
