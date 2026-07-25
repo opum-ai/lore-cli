@@ -168,8 +168,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   simply does not run. `id-token: write` is scoped to **only** the `publish` job — workflow-level
   `permissions:` stays `contents: read`, so no other job can mint an OIDC token — and publishing goes
   through npm's own OIDC Trusted Publishing (hence the CLI floor below), with `actions/setup-node`
-  only supplying the registry URL — not a stored npm token. Before publishing anything, the job
-  installs `npm@^11` and fails closed if the resolved CLI version is below the
+  supplying the toolchain and the registry URL rather than a stored npm token. Before publishing
+  anything, the job installs `npm@^11` and fails closed if the resolved CLI version is below the
   `>= 11.5.1` floor OIDC trusted publishing requires. The five platform packages are published
   **before** the root launcher (`optionalDependencies` on the root pin the platform packages at an
   exact version, and publishing root first would open a window where `npx @salient-data/lore`
@@ -958,10 +958,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `graph`/`context`'s subgraph traversal — moved from ``run `lore check` to list concept ids`` to
   ``run `lore query` or `lore graph` to see known concept ids``: verified live that `lore check`
   only ever prints a pass/fail summary count and never lists an id, so the old hint misdirected
-  every one of those commands' bad-id path. A standalone, byte-identical copy of the same wrong
-  hint also existed in `sync`'s `scopeConcepts` not-found path (not routed through
-  `conceptNotInBundle`) and was repointed the same way, so the harmonization doesn't leave a stale
-  duplicate. Third, `lore tasks`/`lore context`'s missing-`<id>` usage error changed from the bare
+  every one of those commands' bad-id path. The same wrong ``run `lore check` to list concept
+  ids`` clause also appeared standalone in `sync`'s `scopeConcepts` not-found path (behind its
+  own `check the id/path and try again —` preamble, not routed through `conceptNotInBundle`) and
+  was repointed the same way, so the harmonization doesn't leave a stale duplicate. Third,
+  `lore tasks`/`lore context`'s missing-`<id>` usage error changed from the bare
   `missing concept <id>` to `` `lore tasks` needs a concept id `` / `` `lore context` needs a
   concept id `` respectively, matching the `` `lore
   <command>` needs a <thing> `` template `link`/`new`/`rename`/`replace`/`scaffold`/`supersede`/
