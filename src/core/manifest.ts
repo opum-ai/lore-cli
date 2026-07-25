@@ -173,7 +173,12 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     summary: "Scaffold an OKF bundle; a bare TTY run also wizards the agent bridge/scaffolds/backlog check",
     args: "",
     flags: [
-      { name: "yes", takesValue: false, summary: "Skip the interactive wizard even on a TTY; use flag defaults" },
+      {
+        name: "yes",
+        takesValue: false,
+        summary: "Skip the interactive wizard even on a TTY; use flag defaults (alias: --non-interactive)",
+      },
+      { name: "non-interactive", takesValue: false, summary: "Alias for --yes" },
       { name: "agents", takesValue: false, summary: "Also set up the Claude Code agent bridge (SKILL.md + CLAUDE.md)" },
       {
         name: "scaffold",
