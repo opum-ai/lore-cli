@@ -53,7 +53,10 @@ export interface CommandSummary {
  * none is a phantom (the exact LORE-37 failure mode: teaching an agent a command that does not exist).
  */
 export const LORE_COMMANDS: readonly CommandSummary[] = [
-  { name: "init", summary: "Scaffold an empty, conformant OKF bundle" },
+  {
+    name: "init",
+    summary: "Scaffold an OKF bundle; a bare TTY run also wizards the agent bridge/scaffolds/backlog check",
+  },
   { name: "new", summary: "Scaffold a typed concept from a template" },
   { name: "validate", summary: "Check concept files against OKF + the lore profile (per-file)" },
   { name: "check", summary: "Validate links/anchors + reconciliation drift across the bundle (CI gate)" },
