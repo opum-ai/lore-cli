@@ -3,7 +3,7 @@ id: doc-5
 title: Backlog campaign tracker — v1 release readiness & e2e follow-ups (round 4)
 type: other
 created_date: '2026-07-25 02:15'
-updated_date: '2026-07-25 15:10'
+updated_date: '2026-07-25 17:13'
 ---
 # Backlog campaign tracker — v1 release readiness & e2e follow-ups
 
@@ -32,8 +32,8 @@ Live conflict edges — **recompute, do not trust**:
 ## Queue (confirmed order)
 | # | Issue | Cluster | Formal deps | Status | Wave | Note |
 |---|---|---|---|---|---|---|
-| 4 | LORE-261 | cmd-meta-a | — | To Do | — | enhancement. orphans should not flag subtasks of a linked parent (parent/subtask hierarchy) — or link cascades. [src/commands/orphans.ts, reconcile-shared.ts, adapters/backlog.ts] |
-| 9 | LORE-260 | cmd-init/agents/scaffold | — | To Do | — | enhancement (LARGE). One-command onboarding: interactive wizard by default (TTY-gated), flags for prompt-free/CI. Decision locked in the task notes; may warrant an ADR. [src/commands/init.ts, agents.ts, scaffold.ts] |
+| 4 | LORE-261 | cmd-meta-a | — | Dispatched | 3 | enhancement. orphans should not flag subtasks of a linked parent (parent/subtask hierarchy) — or link cascades. [src/commands/orphans.ts, reconcile-shared.ts, adapters/backlog.ts] |
+| 9 | LORE-260 | cmd-init/agents/scaffold | — | Dispatched | 3 | enhancement (LARGE). One-command onboarding: interactive wizard by default (TTY-gated), flags for prompt-free/CI. Decision locked in the task notes; may warrant an ADR. [src/commands/init.ts, agents.ts, scaffold.ts] |
 
 ## Resolved
 | # | Issue | Status/date/wave | Evidence summary |
@@ -74,3 +74,6 @@ Live conflict edges — **recompute, do not trust**:
   - **The follow-up's review is the most instructive artifact of this wave.** Pass 1 returned **`request_changes`** having caught **four factually false CHANGELOG claims**: (a) a universal claim that a persistent rename failure "still surfaces the identical `denied` `LoreError`" — false for `EBUSY`, since `ioError` maps only `EACCES`/`EPERM` to `denied` and the repo's own tests deliberately assert no type for persistent EBUSY; (b) the wrong envelope field named (`hint` where it was `message`), self-contradicting the entry's own earlier bullet; (c) `sync`'s `scopeConcepts` listed as a consumer of the shared `conceptNotInBundle` helper when it holds a standalone copy; (d) OIDC Trusted Publishing credited to `actions/setup-node` when the token exchange is the npm CLI's — which is *why* the `npm >= 11.5.1` floor exists. Pass 2 **approved**, re-deriving all five fixes from source and confirming no over-correction; its two remaining one-clause precision notes were folded in. **Lesson: a confidently-worded but wrong CHANGELOG entry is worse than a missing one.**
   - **PROCESS FIX for wave 3 — the CHANGELOG gap has now recurred in BOTH waves.** The repo already encodes the rule (`.github/PULL_REQUEST_TEMPLATE.md` checkbox, `docs/runbooks/dev-kickoff.md` step 6), but campaign workers are dispatched into bare worktrees with task-scoped prompts and never read either file. **Every wave-3 worker prompt must carry the `[Unreleased]` CHANGELOG requirement explicitly**, including for phrasing-only tasks, since §1.3 makes those contract changes too.
   - **Open for the user: the wave-3 reviewer model.** Fable is still capped (re-probed and confirmed). Opus works and has now carried four task reviews plus an integration review and two follow-up passes, but at materially higher cost than the design assumes.
+- 2026-07-25 — **wave 3 DISPATCHED** (LORE-261, LORE-260; workers sonnet, reviewer **opus** — user's explicit choice on 2026-07-25 after Fable was re-probed and still capped). Wave base `0b42088`. Worktrees at `/Volumes/external/repos/lore.worktrees/<KEY>`. This is the **whole remaining queue** — the two are file-disjoint (261: `orphans.ts`/`reconcile-shared.ts`/`adapters/backlog.ts`; 260: `init.ts`/`agents.ts`/`scaffold.ts`), and every 259-edge retired when 259 merged. User chose to run both in parallel despite LORE-260's size, since its key design decision is already locked in the task notes.
+  - **docker e2e allocation** (the harness serializes on one `e2e-e2e` container, so exactly one worker may run it): **LORE-260's worker runs it**, because it changes `lore init` — which every e2e phase depends on — and AC#2's non-TTY/CI-safe path is precisely what the harness exercises. **LORE-261's worker must NOT run the container**, but must grep `docker/e2e/run-e2e.sh` for assertions on the orphans surface and update them in its own branch if its change invalidates a contract assertion (the LORE-263 lesson); its PR's CI run is the verification.
+  - **Both worker prompts carry the `[Unreleased]` CHANGELOG requirement explicitly** — the process fix for the gap that recurred in waves 1 and 2.
