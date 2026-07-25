@@ -110,11 +110,27 @@ const BUILDERS: Record<string, (options: ConsumerScaffoldOptions) => ConsumerSca
 };
 
 /** The consumer targets `lore scaffold` recognizes as valid (derived from {@link BUILDERS}'s own keys). */
-const TARGETS = new Set(Object.keys(BUILDERS));
+export const TARGETS = new Set(Object.keys(BUILDERS));
+
+/** The validated arguments {@link applyScaffold} needs — `root`/`target`/`force` plus an injectable clock. */
+export interface ApplyScaffoldOptions {
+  /** The repo root to scaffold into. */
+  root: string;
+  /** One of {@link TARGETS} (`"mkdocs"`, `"docusaurus"`, `"obsidian"`). */
+  target: string;
+  /** `--force`: overwrite an existing generated config, skipping the collision preflight. */
+  force: boolean;
+  /** Clock seam for `docs/tags.md`'s timestamp; defaults to the real wall clock. */
+  clock?: () => Date;
+}
 
 /**
- * Run `lore scaffold <target>`: parse the arguments, build the target's plan, then — unless
- * `--force` — classify every planned file against what's already on disk (LORE-263):
+ * Build `target`'s plan, then — unless `force` — classify every planned file against what's already
+ * on disk (LORE-263) and write it: the pure side-effecting core of `lore scaffold`, extracted
+ * (LORE-260) so `lore init`'s wizard/flags can fold a downstream-consumer scaffold into one
+ * onboarding run without going through `runScaffold`'s own arg-parsing/emit (which would print a
+ * second, separate envelope onto the SAME stdout `lore init` owns — the `--json` contract requires
+ * stdout be exclusively `init`'s own envelope, cli-contract §4).
  *
  * - any planned file whose on-disk bytes DIFFER from what this run would generate, or a
  *   structural directory blocker, refuses the whole run with a `conflict` error (exit `5`) naming
@@ -123,34 +139,33 @@ const TARGETS = new Set(Object.keys(BUILDERS));
  *   already on disk with byte-identical content is left untouched, so a bare re-run of an
  *   unchanged bundle writes nothing at all and still exits `0` (idempotent no-op).
  *
- * `--force` skips this classification entirely and overwrites every planned file, unchanged from
- * before. An unknown target, or a bad flag/extra argument, throws a `usage` {@link LoreError}
- * (exit `2`).
+ * `force` skips this classification entirely and overwrites every planned file, unchanged from
+ * before. `target` must already be validated against {@link TARGETS} — an unregistered target throws
+ * an internal `Error`, not a `usage` {@link LoreError} (the caller owns argument validation).
  */
-export function runScaffold(options: ScaffoldOptions): number {
-  const parsed = parseScaffoldArgs(options.args);
+export function applyScaffold(options: ApplyScaffoldOptions): ScaffoldResult {
+  const { root, target, force } = options;
   const clock = options.clock ?? (() => new Date());
   // Only mkdocs's builder reads `profile` (to decide docs/tags.md's $schema modeline) — loading
   // it unconditionally for every target would make `lore scaffold docusaurus` fail on a malformed
   // .lore/profile.toml/json it never reads, contradicting ConsumerScaffoldOptions.profile's own
   // "unused by buildDocusaurusScaffold" contract.
-  const profile = parsed.target === "mkdocs" ? loadProfile({ root: options.root }) : undefined;
-  const build = BUILDERS[parsed.target];
+  const profile = target === "mkdocs" ? loadProfile({ root }) : undefined;
+  const build = BUILDERS[target];
   if (!build) {
-    // parseScaffoldArgs already validated parsed.target against TARGETS, which is derived from
-    // BUILDERS' own keys — this can only fire if that invariant is ever broken.
-    throw new Error(`internal: no builder registered for target "${parsed.target}"`);
+    // Callers validate `target` against TARGETS (derived from BUILDERS' own keys) before calling —
+    // this can only fire if that invariant is ever broken.
+    throw new Error(`internal: no builder registered for target "${target}"`);
   }
   // A bare mkdocs run reuses docs/tags.md's own on-disk timestamp (when there's one to preserve)
   // instead of always stamping a fresh clock() read — see the module docstring and
   // preservedTagsTimestamp's own doc for why this is load-bearing for LORE-263's idempotency
   // guarantee. --force always wants a fresh stamp (it's regenerating the file outright), and
   // docusaurus/obsidian ignore `timestamp` entirely, so neither needs this.
-  const timestamp =
-    parsed.target === "mkdocs" && !parsed.force ? preservedTagsTimestamp(options.root, clock) : clock().toISOString();
+  const timestamp = target === "mkdocs" && !force ? preservedTagsTimestamp(root, clock) : clock().toISOString();
   const plan = build({
     timestamp,
-    siteName: basename(resolve(options.root)),
+    siteName: basename(resolve(root)),
     profile,
   });
 
@@ -158,9 +173,9 @@ export function runScaffold(options: ScaffoldOptions): number {
   // run it narrows to only the files actually missing (below) once the collision check clears.
   let filesToWrite: readonly ConsumerScaffoldFile[] = plan.files;
 
-  if (!parsed.force) {
+  if (!force) {
     const blockedDirs = plan.dirs.filter((dir) => {
-      const abs = join(options.root, dir);
+      const abs = join(root, dir);
       return existsSync(abs) && !statSync(abs).isDirectory();
     });
     // Per-file, not per-plan: classifyExistingFile tells "absent" (needs creating), "unchanged"
@@ -169,24 +184,40 @@ export function runScaffold(options: ScaffoldOptions): number {
     // file as a collision regardless of its content.
     const statuses = plan.files.map((file) => ({
       file,
-      status: classifyExistingFile(join(options.root, file.path), file.contents),
+      status: classifyExistingFile(join(root, file.path), file.contents),
     }));
     const differingFiles = statuses.filter((s) => s.status === "differs").map((s) => s.file.path);
     const collisions = [...blockedDirs, ...differingFiles];
     if (collisions.length > 0) {
       throw new LoreError(
         "conflict",
-        `${parsed.target} config already exists: ${collisions.join(", ")}`,
+        `${target} config already exists: ${collisions.join(", ")}`,
         conflictHint(blockedDirs.length > 0, differingFiles.length > 0),
-        { target: parsed.target, paths: collisions },
+        { target, paths: collisions },
       );
     }
     filesToWrite = statuses.filter((s) => s.status === "missing").map((s) => s.file);
   }
 
-  const files = writeAllOrRollback(options.root, plan.dirs, filesToWrite, { force: parsed.force });
+  const files = writeAllOrRollback(root, plan.dirs, filesToWrite, { force });
 
-  const result: ScaffoldResult = { target: parsed.target, force: parsed.force, files, notes: plan.notes ?? [] };
+  return { target, force, files, notes: plan.notes ?? [] };
+}
+
+/**
+ * Run `lore scaffold <target>`: the thin CLI layer over {@link applyScaffold} — parse the arguments,
+ * apply the scaffold, render the result, and return the exit code. An unknown target, or a bad
+ * flag/extra argument, throws a `usage` {@link LoreError} (exit `2`) before {@link applyScaffold}
+ * ever runs.
+ */
+export function runScaffold(options: ScaffoldOptions): number {
+  const parsed = parseScaffoldArgs(options.args);
+  const result = applyScaffold({
+    root: options.root,
+    target: parsed.target,
+    force: parsed.force,
+    clock: options.clock,
+  });
   emit(scaffoldRenderable(result), options.output, options.stdout);
   return EXIT_OK;
 }
