@@ -133,25 +133,29 @@ export interface RunContext {
   cwd?: string;
   isTTY?: boolean;
   /**
-   * Whether **stderr** (not stdout) is a TTY, used only to gate ANSI color on the
-   * stderr diagnostic path (`reportError`, cli-contract §6) independent of `isTTY`
-   * (stdout's own TTY state, which alone drives `mode`/stdout's pretty color).
-   * Defaults the same way `isTTY` does: an injected `stderr` sink with no explicit
-   * hint here is treated as non-TTY; only the real-process path (no injected sink)
-   * reads the actual `process.stderr.isTTY`, coerced to a strict boolean via
+   * Whether **stderr** (not stdout) is a TTY. Gates ANSI color on the stderr diagnostic path
+   * (`reportError`, cli-contract §6) independent of `isTTY` (stdout's own TTY state, which alone
+   * drives `mode`/stdout's pretty color), AND (LORE-260 review round 2, BLOCKING-1) is the OTHER
+   * half of `lore init`'s wizard gate alongside `stdinIsTTY`: every wizard question is written to
+   * stderr, so a redirected stderr must veto the wizard even with a still-TTY stdin — gating on
+   * `stdinIsTTY` alone left the wizard blocked on a prompt nobody could see (confirmed live under a
+   * pty: `lore init >/dev/null 2>&1` hung forever). Defaults the same way `isTTY` does: an injected
+   * `stderr` sink with no explicit hint here is treated as non-TTY; only the real-process path (no
+   * injected sink) reads the actual `process.stderr.isTTY`, coerced to a strict boolean via
    * {@link coerceRealTTY} (LORE-250; a raw, uncoerced read is `undefined` — not
    * `false` — on a non-TTY stream and re-leaks color downstream, see that
    * function's doc).
    */
   stderrIsTTY?: boolean;
   /**
-   * Whether **stdin** is a TTY — `lore init`'s wizard gate (LORE-260, cli-contract's non-interactive
-   * mandate). Independent of `isTTY` (stdout's own TTY state) and `stderrIsTTY`: a real terminal
-   * session normally has all three true, but a script piping input while capturing output can have
-   * any combination. Defaults the same way `isTTY`/`stderrIsTTY` do: an injected `stdout` sink with
-   * no explicit hint here is treated as non-TTY (so a test harness never accidentally enables a
-   * blocking prompt); only the real-process path (no injected sink) reads the actual
-   * `process.stdin.isTTY`, coerced to a strict boolean via {@link coerceRealTTY}.
+   * Whether **stdin** is a TTY — one half of `lore init`'s wizard gate (LORE-260, cli-contract's
+   * non-interactive mandate; see {@link stderrIsTTY} for the other half). Independent of `isTTY`
+   * (stdout's own TTY state) and `stderrIsTTY`: a real terminal session normally has all three true,
+   * but a script piping input while capturing output can have any combination. Defaults the same way
+   * `isTTY`/`stderrIsTTY` do: an injected `stdout` sink with no explicit hint here is treated as
+   * non-TTY (so a test harness never accidentally enables a blocking prompt); only the real-process
+   * path (no injected sink) reads the actual `process.stdin.isTTY`, coerced to a strict boolean via
+   * {@link coerceRealTTY}.
    */
   stdinIsTTY?: boolean;
   /** The fetch `check --external` uses for liveness; defaults to the global `fetch`. Injected so a caller (or a test) controls or stubs the network. */
@@ -273,7 +277,11 @@ export function run(argv: readonly string[], context: RunContext = {}): number |
       rejectStrayCommandFlags(parsed.commandArgs);
       return runHelp({ output, args: [parsed.command], stdout });
     }
-    const result = dispatch(parsed, { ...context, stdout, stderr, stdinIsTTY }, output);
+    // `stderrIsTTY` is threaded into `dispatch`'s context the same way `stdinIsTTY` already is
+    // (LORE-260 review round 2, BLOCKING-1): it was resolved above but never actually reached
+    // `runInit`'s `InitOptions`, so the wizard's stdin-only gate could fire with a redirected
+    // stderr — a caller sees no prompt yet the process blocks waiting for an answer.
+    const result = dispatch(parsed, { ...context, stdout, stderr, stdinIsTTY, stderrIsTTY }, output);
     // The async command paths (`check --external`, `link`, `unlink`, `rename`, `sync`) return a Promise; a
     // rejection from one must funnel through the **same** error seam as a synchronous throw
     // (formatted diagnostic + the right exit code), not escape to the entrypoint's bare backstop.
@@ -322,6 +330,12 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
         stdout: context.stdout,
         stderr: context.stderr,
         stdinIsTTY: context.stdinIsTTY,
+        // Both threaded from the SAME resolved values `run()` already computed above — the wizard's
+        // TTY gate needs stderr's state too (BLOCKING-1: every wizard question is written to
+        // stderr), and `--json` is an independent veto since a machine-readable run must never
+        // prompt (review round 2).
+        stderrIsTTY: context.stderrIsTTY,
+        jsonRequested: parsed.json,
         adapter: context.adapter,
         prompter: context.prompter,
       });

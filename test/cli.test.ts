@@ -129,10 +129,14 @@ describe("cli — init dispatch", () => {
     expect(existsSync(join(cwd, "docs/index.md"))).toBe(true);
   });
 
-  test("the router wires stdinIsTTY + a fake prompter through to the wizard end-to-end (LORE-260)", async () => {
+  test("the router wires stdinIsTTY + stderrIsTTY + a fake prompter through to the wizard end-to-end (LORE-260)", async () => {
     // Proves cli.ts's own wiring (not just runInit called directly, as init.test.ts does): a bare
-    // `lore init` through the REAL router, with stdinIsTTY:true and an injected prompter, actually
-    // engages the interactive wizard rather than the flag-driven default path.
+    // `lore init` through the REAL router, with BOTH streams TTY and an injected prompter, actually
+    // engages the interactive wizard rather than the flag-driven default path. Deliberately does NOT
+    // pass `--json` (review round 2, BLOCKING-1's sibling finding: a machine-readable run must never
+    // prompt) — this scenario can only legitimately happen on the plain/pretty path, so the wizard's
+    // engagement is proved via the async return shape and a real filesystem side effect instead of
+    // parsing a JSON envelope.
     const prompter: InitPrompter = {
       confirm: async (_q, defaultValue) => defaultValue,
       choose: async (_q, _choices, defaultValue) => defaultValue,
@@ -140,13 +144,13 @@ describe("cli — init dispatch", () => {
     };
     // The wizard always runs the (advisory-only) backlog check, so a fake adapter is injected here
     // too — a real, host-dependent `backlog` subprocess must never be reachable from a unit test.
-    const c = ctx({ cwd, stdinIsTTY: true, prompter, adapter: fakeAdapter([], { probe: "ok" }) });
-    const result = run(argv("init", "--json"), c);
-    expect(result).toBeInstanceOf(Promise);
+    const c = ctx({ cwd, stdinIsTTY: true, stderrIsTTY: true, prompter, adapter: fakeAdapter([], { probe: "ok" }) });
+    const result = run(argv("init"), c);
+    expect(result).toBeInstanceOf(Promise); // only the wizard (or an implied backlog check) returns a Promise
     expect(await result).toBe(0);
-    const envelope = JSON.parse(c.stdout.text()) as { kind: string; data: { interactive: boolean } };
-    expect(envelope.kind).toBe("init");
-    expect(envelope.data.interactive).toBe(true);
+    // Every confirm/choose call above resolves to its own default; the agent-bridge question
+    // defaults to "yes", so the bridge was actually applied — the strongest proof the wizard ran.
+    expect(existsSync(join(cwd, ".claude/skills/lore/SKILL.md"))).toBe(true);
   });
 
   test("stdinIsTTY defaults to non-TTY when omitted, even with isTTY:true for stdout (independent axes)", () => {
@@ -156,6 +160,47 @@ describe("cli — init dispatch", () => {
     const c = ctx({ cwd });
     const result = run(argv("init", "--json"), c);
     expect(result).toBe(0); // NOT a Promise -- proves the wizard never engaged
+    const envelope = JSON.parse(c.stdout.text()) as { kind: string; data: { interactive: boolean } };
+    expect(envelope.data.interactive).toBe(false);
+  });
+
+  test("BLOCKING-1 (round 2): a TTY stdin with a non-TTY stderr never engages the wizard through the real router", () => {
+    // The router's own reproduction of the exact bug confirmed live against `lore-setup.sh`'s
+    // `cmd >/dev/null 2>&1` idiom: stdin stays a readable TTY, stderr is redirected. A prompter that
+    // throws on any call proves the wizard is genuinely unreachable, not just answered fast.
+    const forbidden: InitPrompter = {
+      confirm: () => {
+        throw new Error("the wizard must not run");
+      },
+      choose: () => {
+        throw new Error("the wizard must not run");
+      },
+      close: () => {
+        throw new Error("the wizard must not run");
+      },
+    };
+    const c = ctx({ cwd, stdinIsTTY: true, stderrIsTTY: false, prompter: forbidden });
+    const result = run(argv("init", "--json"), c);
+    expect(result).toBe(0); // NOT a Promise -- the flag-free, non-interactive path
+    const envelope = JSON.parse(c.stdout.text()) as { kind: string; data: { interactive: boolean } };
+    expect(envelope.data.interactive).toBe(false);
+  });
+
+  test("BLOCKING-1's sibling (round 2): `lore init --json` never engages the wizard even with both streams TTY", () => {
+    const forbidden: InitPrompter = {
+      confirm: () => {
+        throw new Error("the wizard must not run");
+      },
+      choose: () => {
+        throw new Error("the wizard must not run");
+      },
+      close: () => {
+        throw new Error("the wizard must not run");
+      },
+    };
+    const c = ctx({ cwd, stdinIsTTY: true, stderrIsTTY: true, prompter: forbidden });
+    const result = run(argv("init", "--json"), c);
+    expect(result).toBe(0); // NOT a Promise -- a machine-readable run must never prompt
     const envelope = JSON.parse(c.stdout.text()) as { kind: string; data: { interactive: boolean } };
     expect(envelope.data.interactive).toBe(false);
   });

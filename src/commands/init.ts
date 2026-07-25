@@ -7,14 +7,31 @@
  * ## The locked design decision (2026-07-24)
  *
  * A **bare** `lore init` on an interactive terminal runs a guided wizard that asks about each
- * configurable consumer; it is **TTY-gated** — when stdin is not a TTY (CI, pipes, a test) or ANY
- * of this command's own flags is passed, it runs fully **non-interactively** with defaults and no
- * prompt can ever block it (the npm-init pattern: interactive on a bare TTY invocation, `-y`/non-TTY
- * skips prompts). Every wizard question maps 1:1 to a flag (`--agents`, `--scaffold <target>`,
- * `--obsidian`, `--no-backlog`/`--check-backlog`), so a script gets the exact same outcome as
- * answering the wizard, with zero prompts. This is documented in
+ * configurable consumer; it is **TTY-gated** — when stdin OR stderr is not a TTY (CI, pipes, a
+ * test, or a caller that redirects only one stream), `--json` was requested, or ANY of this
+ * command's own flags is passed, it runs fully **non-interactively** with defaults and no prompt
+ * can ever block it (the npm-init pattern: interactive on a bare TTY invocation, `-y`/non-TTY skips
+ * prompts). **Both stdin and stderr must be real terminals** — every wizard question is written to
+ * stderr (cli-contract §4: stdout stays exclusively `init`'s own envelope), so gating on stdin alone
+ * would leave the wizard blocked-but-invisible behind a redirected stderr (review round 2,
+ * BLOCKING-1 — confirmed live: `lore init >/dev/null 2>&1` under a pty hung forever with zero
+ * output). `--json` is a third, independent veto: a machine-readable run must never prompt even at a
+ * genuinely interactive terminal. Every wizard question maps 1:1 to a flag (`--agents`,
+ * `--scaffold <target>`, `--obsidian`, `--no-backlog`/`--check-backlog`), so a script gets the exact
+ * same outcome as answering the wizard, with zero prompts. This is documented in
  * [ADR-0017](../../docs/adr/0017-interactive-init-wizard-tty-gated.md) (an amendment to ADR-0004/
  * ADR-0005's non-interactive CLI contract).
+ *
+ * **EOF (Ctrl-D) mid-wizard is a `usage` error, not a silent exit 0** (review round 2, BLOCKING-2):
+ * `readline/promises`' `rl.question()` never settles on stdin EOF, so a naive implementation left the
+ * wizard's promise abandoned forever — the process would exit 0 with `process.exitCode` never set,
+ * zero stdout bytes even under `--json` (a parse error for a `| jq` consumer expecting either a valid
+ * envelope or a classified failure), and a half-applied run (the base scaffold already written,
+ * nothing else). {@link createRealPrompter} now races every question against the readline
+ * interface's own `close` event and throws a `usage` {@link LoreError} on an early close, so the run
+ * exits non-zero with a rendered diagnostic instead — chosen over silently falling back to each
+ * question's default because BLOCKING-1's lesson applies here too: never silently do something the
+ * user couldn't see coming.
  *
  * **The non-interactive default is UNCHANGED from before this task**: with no flags and a non-TTY
  * stdin (the automatic case for every existing caller — CI, `lore-setup.sh`, this file's own
@@ -49,7 +66,7 @@ import { loadProfile } from "../core/profile";
 import { buildScaffold } from "../core/scaffold";
 import { ANSI, EXIT_OK, LoreError, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { type AgentsResult, applyAgentsBridge } from "./agents";
+import { type AgentsResult, applyAgentsBridge, renderTrailer } from "./agents";
 import { usage } from "./args";
 import { assertNoSymlinkInPath, createIfAbsent, ensureDir } from "./fswrite";
 import { defaultAdapter } from "./link";
@@ -110,13 +127,39 @@ export interface InitOptions {
   /** stderr sink for the backlog-check advisory; defaults to `process.stderr`. */
   stderr?: Writer;
   /**
-   * Whether STDIN is an interactive terminal — the wizard's TTY gate (AC#2). Resolved once at the
-   * CLI boundary (`cli.ts`'s `run`, mirroring its own `isTTY`/`stderrIsTTY` handling) and handed in
-   * here as a plain boolean; this module never reads `process.stdin.isTTY` itself. Defaults to
-   * `false` (non-interactive) so an omitted value can never accidentally enable a blocking prompt —
+   * Whether STDIN is an interactive terminal — one half of the wizard's TTY gate (AC#2). Resolved
+   * once at the CLI boundary (`cli.ts`'s `run`, mirroring its own `isTTY`/`stderrIsTTY` handling) and
+   * handed in here as a plain boolean; this module never reads `process.stdin.isTTY` itself. Defaults
+   * to `false` (non-interactive) so an omitted value can never accidentally enable a blocking prompt —
    * the safe default for every existing caller (tests, `lore-setup.sh`, CI) that predates this flag.
    */
   stdinIsTTY?: boolean;
+  /**
+   * Whether STDERR is an interactive terminal — the wizard's OTHER required condition (review
+   * round 2, BLOCKING-1). Every wizard question is written to stderr (cli-contract §4: stdout stays
+   * exclusively `init`'s own envelope), so `stdinIsTTY` alone is not sufficient — a caller that
+   * redirects only stderr (`lore init >out 2>/dev/null`, or the universal shell idiom
+   * `cmd >/dev/null 2>&1` that `lore-setup.sh` itself uses) still has a readable stdin, and would
+   * otherwise block forever on a prompt nobody can see. Resolved once at the CLI boundary exactly
+   * like {@link stdinIsTTY} (`cli.ts` already computes this for the error-color gate; LORE-260 round
+   * 2 threads the SAME resolved value here instead of leaving it unset). Defaults to `false` for the
+   * same "never accidentally enable a blocking prompt" reason.
+   */
+  stderrIsTTY?: boolean;
+  /**
+   * Whether `--json` was requested for this run. A machine-readable invocation must never prompt —
+   * even sitting at a real, fully-interactive terminal (review round 2, BLOCKING-1's sibling
+   * finding) — since a script piping `--json` output can never answer a wizard question. Kept as its
+   * own explicit boolean rather than derived from {@link InitOptions.output}'s `mode` (which governs
+   * rendering only, per `output.ts`'s documented single-responsibility split): `output.mode` is
+   * always `"json"` in exactly this case for a real `cli.ts` invocation (`resolveMode` maps `--json`
+   * to `mode: "json"` unconditionally), but a unit test may also hand-build a `mode: "json"`
+   * `OutputContext` purely so it can `JSON.parse` the result for assertions while still wanting the
+   * wizard to run (see `test/init.test.ts`'s wizard-path tests) — a separate flag lets that stay
+   * possible without conflating "how do we render" with "was `--json` actually on the command line".
+   * Defaults to `false` (not requested) when omitted.
+   */
+  jsonRequested?: boolean;
   /** The interactive wizard's I/O seam; defaults to a real `node:readline/promises` session over stdin/stderr. Injected in tests so the wizard never touches a real terminal. */
   prompter?: InitPrompter;
   /** The Backlog adapter for the coupling capability check; defaults to the real `backlog` binary on PATH. */
@@ -125,7 +168,7 @@ export interface InitOptions {
 
 /** The parsed, validated `lore init` arguments. */
 interface InitArgs {
-  /** `--yes`: force the non-interactive path (with defaults) even on a TTY — the npm-init `-y` equivalent. */
+  /** `--yes` (or its `--non-interactive` alias, NIT-2): force the non-interactive path (with defaults) even on a TTY — the npm-init `-y` equivalent. */
   yes: boolean;
   /** `--agents`: also set up the Claude Code agent bridge. */
   agents: boolean;
@@ -153,7 +196,13 @@ interface InitArgs {
 export function runInit(options: InitOptions): number | Promise<number> {
   const parsed = parseInitArgs(options.args ?? []);
   const stdinIsTTY = options.stdinIsTTY ?? false;
-  const interactive = stdinIsTTY && !anyFlagGiven(parsed);
+  // BLOCKING-1 (review round 2): BOTH streams must be a real terminal — every wizard question is
+  // written to stderr, so a redirected stderr with a still-TTY stdin must never engage the wizard
+  // (the reader can't see the prompt to answer it). `--json` is an independent third veto: a
+  // machine-readable run must never prompt even at a genuinely interactive terminal.
+  const stderrIsTTY = options.stderrIsTTY ?? false;
+  const jsonRequested = options.jsonRequested ?? false;
+  const interactive = stdinIsTTY && stderrIsTTY && !jsonRequested && !anyFlagGiven(parsed);
 
   const clock = options.clock ?? (() => new Date());
   // Honor a pre-existing `.lore/profile.toml` so `init` scaffolds schemas for a project's custom
@@ -251,20 +300,74 @@ async function runInteractiveWizard(
   return EXIT_OK;
 }
 
-/** A real, interactive {@link InitPrompter} over `process.stdin`/`process.stderr` — constructed only when the wizard actually runs and no test-injected prompter was given. */
-function createRealPrompter(): InitPrompter {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+/**
+ * A real, interactive {@link InitPrompter} over the given streams (defaulting to
+ * `process.stdin`/`process.stderr`) — constructed only when the wizard actually runs and no
+ * test-injected prompter was given. `streams` is a parameter (not hard-coded) purely so a unit test
+ * can exercise this function's own EOF handling over a fake stream pair, never a real terminal.
+ *
+ * **BLOCKING-2 (review round 2):** `readline/promises`' `rl.question()` never settles when its input
+ * stream hits EOF (Ctrl-D, or stdin simply closing) — confirmed live: a pending `question()` call
+ * neither resolves nor rejects, so a naive implementation left the wizard's promise abandoned
+ * forever, `finally { prompter.close() }` never ran, and the process fell through to exit `0` with
+ * `process.exitCode` unset and zero stdout bytes (a broken `--json | jq` contract on top of a
+ * half-applied run). Every `question()` call is now raced against the readline interface's own
+ * `close` event via {@link ask}: the interface closes on EOF regardless of whether `question()`
+ * itself ever settles, so the race always resolves. **Disposition: error out, not silently default**
+ * (documented in ADR-0017 and this task's Implementation Notes) — an early close throws a `usage`
+ * {@link LoreError} rather than silently resolving to each question's default value, for the same
+ * reason as BLOCKING-1: a user who hits Ctrl-D gets no visual confirmation of what happened, so
+ * guessing an answer on their behalf and proceeding is exactly the kind of invisible side effect
+ * BLOCKING-1 already ruled out. The rejection propagates out of `confirm`/`choose`, unwinds
+ * `runInteractiveWizard`'s `try`/`finally` (which still calls `prompter.close()` — safe here since
+ * `rl.close()` is idempotent and the interface is already closing), and reaches `cli.ts`'s async
+ * error path, which renders the diagnostic and maps `usage` to exit `2`.
+ *
+ * The `closedEarly` promise is given a standalone `.catch(() => {})` in addition to being raced,
+ * because the *normal* (non-EOF) completion path also ends in `prompter.close()` — every question
+ * answered, `runInteractiveWizard`'s `finally` calls `close()` intentionally, which emits `close` for
+ * the FIRST time in that path and would otherwise reject an unobserved promise (an unhandled
+ * rejection) after every race has already settled successfully.
+ */
+export function createRealPrompter(
+  streams: { input: NodeJS.ReadableStream; output: NodeJS.WritableStream } = {
+    input: process.stdin,
+    output: process.stderr,
+  },
+): InitPrompter {
+  const rl = readline.createInterface({ input: streams.input, output: streams.output });
+  const closedEarly = new Promise<never>((_resolve, reject) => {
+    rl.once("close", () => {
+      reject(
+        new LoreError(
+          "usage",
+          "stdin closed before the init wizard finished (EOF/Ctrl-D)",
+          "answer every prompt, or run prompt-free with `lore init --yes` (or --agents/--scaffold <target>/--obsidian/--no-backlog/--check-backlog)",
+        ),
+      );
+    });
+  });
+  // Prevents an "unhandled promise rejection" once the wizard finishes normally and its own
+  // `prompter.close()` call fires `close` for the first time, after every `ask()` race is already
+  // settled and nothing is awaiting `closedEarly` anymore — see the doc comment above.
+  closedEarly.catch(() => {});
+
+  /** Race one `rl.question()` call against the interface's own `close` event (see the doc above). */
+  function ask(promptText: string): Promise<string> {
+    return Promise.race([rl.question(promptText), closedEarly]);
+  }
+
   return {
     async confirm(question, defaultValue) {
       const suffix = defaultValue ? "Y/n" : "y/N";
-      const raw = (await rl.question(`${question} [${suffix}] `)).trim().toLowerCase();
+      const raw = (await ask(`${question} [${suffix}] `)).trim().toLowerCase();
       if (raw === "") {
         return defaultValue;
       }
       return raw === "y" || raw === "yes";
     },
     async choose(question, choices, defaultValue) {
-      const raw = (await rl.question(`${question} (${choices.join("/")}) [${defaultValue}] `)).trim().toLowerCase();
+      const raw = (await ask(`${question} (${choices.join("/")}) [${defaultValue}] `)).trim().toLowerCase();
       return choices.includes(raw) ? raw : defaultValue;
     },
     close() {
@@ -303,10 +406,10 @@ function anyFlagGiven(parsed: InitArgs): boolean {
  * Parse `init`'s tokens: no positionals (unchanged from before LORE-260 — a bare/`--`-terminated
  * positional is still a `usage` error, byte-identical wording to the router's old blanket
  * `rejectCommandArgs` guard so every pre-existing regression test keeps passing), plus the boolean
- * `--yes`/`--agents`/`--obsidian`/`--no-backlog`/`--check-backlog` and the repeatable value flag
- * `--scaffold <target>`. An unknown flag, an invalid `--scaffold` target, a stray positional, or the
- * mutually-exclusive `--no-backlog`+`--check-backlog` pair all throw a `usage` {@link LoreError}
- * (exit `2`) before any scaffold work runs.
+ * `--yes` (alias `--non-interactive`, NIT-2)/`--agents`/`--obsidian`/`--no-backlog`/`--check-backlog`
+ * and the repeatable value flag `--scaffold <target>`. An unknown flag, an invalid `--scaffold`
+ * target, a stray positional, or the mutually-exclusive `--no-backlog`+`--check-backlog` pair all
+ * throw a `usage` {@link LoreError} (exit `2`) before any scaffold work runs.
  */
 function parseInitArgs(args: readonly string[]): InitArgs {
   let yes = false;
@@ -324,7 +427,9 @@ function parseInitArgs(args: readonly string[]): InitArgs {
     }
     if (arg.startsWith("--") && arg.length > 2) {
       const body = arg.slice(2);
-      if (body === "yes") {
+      if (body === "yes" || body === "non-interactive") {
+        // `--non-interactive` is a plain alias for `--yes` (NIT-2, review round 2): AC#2's own
+        // wording says "e.g. `--yes` / `--non-interactive`", and it costs one branch to honor it.
         yes = true;
         continue;
       }
@@ -423,8 +528,18 @@ function renderPretty(data: InitResult, opts: { color: boolean }): string {
   if (data.agents) {
     lines.push("Agent bridge:");
     for (const file of data.agents.files) {
-      const color = file.action === "unchanged" ? ANSI.dim : ANSI.green;
+      // "protected" is a warning, not a success (LORE-260 review round 2, MINOR-4): a hand-edited
+      // file was left untouched, which is meaningfully different from "unchanged" (nothing to do)
+      // and must not be painted the same green as an actual write.
+      const color = file.action === "unchanged" ? ANSI.dim : file.action === "protected" ? ANSI.yellow : ANSI.green;
       lines.push(`  ${paint(file.action, color, opts.color)} ${file.path}`);
+    }
+    // Reuse `lore agents`' own trailer verbatim (MINOR-4) rather than dropping it: a `protected`
+    // file with no visible remedy reads as silent success (LORE-129 established this line as
+    // load-bearing).
+    const agentsTrailer = renderTrailer(data.agents);
+    if (agentsTrailer !== undefined) {
+      lines.push(paint(agentsTrailer, ANSI.yellow, opts.color));
     }
   }
   for (const scaffold of data.scaffolds) {
@@ -456,8 +571,19 @@ function renderPlain(data: InitResult): string {
     for (const file of data.agents.files) {
       lines.push(`agents-${file.action} ${file.path}`);
     }
+    const agentsTrailer = renderTrailer(data.agents);
+    if (agentsTrailer !== undefined) {
+      lines.push(agentsTrailer);
+    }
   }
   for (const scaffold of data.scaffolds) {
+    // NIT-1 (review round 2): an already-up-to-date scaffold produced NO line at all in plain mode
+    // (renderPretty said "already up to date"; renderPlain said nothing), so a --plain consumer
+    // couldn't tell the step ran versus never having been requested.
+    if (scaffold.files.length === 0) {
+      lines.push(`scaffold-${scaffold.target} up-to-date`);
+      continue;
+    }
     for (const file of scaffold.files) {
       lines.push(`scaffold-${scaffold.target}-${file.action} ${file.path}`);
     }

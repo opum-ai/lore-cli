@@ -2,11 +2,18 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import type { BacklogAdapter } from "../src/adapters/backlog";
-import { type InitOptions, type InitPrompter, type InitResult, runInit } from "../src/commands/init";
+import {
+  createRealPrompter,
+  type InitOptions,
+  type InitPrompter,
+  type InitResult,
+  runInit,
+} from "../src/commands/init";
 import { loadBundle } from "../src/core/bundle";
 import { parseConcept } from "../src/core/concept";
-import { LoreError, WarningCollector } from "../src/errors";
+import { EXIT_CODES, LoreError, reportError, WarningCollector } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture, expectError, fakeAdapter } from "./helpers";
 
@@ -32,6 +39,8 @@ async function init(
     clock?: () => Date;
     args?: string[];
     stdinIsTTY?: boolean;
+    stderrIsTTY?: boolean;
+    jsonRequested?: boolean;
     prompter?: InitPrompter;
     adapter?: BacklogAdapter;
   } = {},
@@ -46,6 +55,12 @@ async function init(
     clock: extra.clock ?? FIXED_CLOCK,
     args: extra.args,
     stdinIsTTY: extra.stdinIsTTY,
+    // NOT derived from `output: JSON_CTX` above (review round 2): this helper always renders JSON
+    // purely so tests can parse `result` — that is unrelated to whether the wizard should be
+    // reachable, which is what `jsonRequested` (a real `--json` flag, per `InitOptions`'s own doc)
+    // gates. Only a test that explicitly opts in (`jsonRequested: true`) exercises that veto.
+    stderrIsTTY: extra.stderrIsTTY,
+    jsonRequested: extra.jsonRequested,
     prompter: extra.prompter,
     adapter: extra.adapter,
   };
@@ -242,6 +257,95 @@ describe("lore init — output rendering", () => {
     const lines = stdout.lines();
     expect(lines.some((l) => /^agents-(created|updated) \.claude\/skills\/lore\/SKILL\.md$/.test(l))).toBe(true);
     expect(lines).toContain("scaffold-obsidian-created docs/.obsidian/app.json");
+  });
+
+  test("NIT-1: a second --scaffold mkdocs run reports up-to-date in plain mode instead of printing nothing", async () => {
+    // `--scaffold` implies the backlog check; a fake adapter keeps this hermetic (never reaches a
+    // real, host-dependent `backlog` subprocess).
+    const adapter = fakeAdapter([], { probe: "ok" });
+    await runInit({
+      root,
+      output: { mode: "plain", color: false },
+      stdout: capture(),
+      clock: FIXED_CLOCK,
+      args: ["--scaffold", "mkdocs"],
+      adapter,
+    });
+    const stdout = capture();
+    await runInit({
+      root,
+      output: { mode: "plain", color: false },
+      stdout,
+      clock: FIXED_CLOCK,
+      args: ["--scaffold", "mkdocs"],
+      adapter,
+    });
+    expect(stdout.lines()).toContain("scaffold-mkdocs up-to-date");
+  });
+
+  test("NIT-1: pretty mode's own 'already up to date' wording is unchanged", async () => {
+    const adapter = fakeAdapter([], { probe: "ok" });
+    await runInit({
+      root,
+      output: { mode: "pretty", color: false },
+      stdout: capture(),
+      clock: FIXED_CLOCK,
+      args: ["--scaffold", "mkdocs"],
+      adapter,
+    });
+    const stdout = capture();
+    await runInit({
+      root,
+      output: { mode: "pretty", color: false },
+      stdout,
+      clock: FIXED_CLOCK,
+      args: ["--scaffold", "mkdocs"],
+      adapter,
+    });
+    expect(stdout.text()).toContain("Scaffold (mkdocs):");
+    expect(stdout.text()).toContain("already up to date");
+  });
+
+  test("MINOR-4: a hand-edited SKILL.md is reported `protected` (not green) with agents.ts's own actionable trailer reused verbatim", async () => {
+    // Write a SKILL.md that differs from what `lore agents`/`lore init --agents` would generate, so
+    // `applyAgentsBridge` (force:false) reports it `protected` rather than `created`/`updated` —
+    // mirrors agents.test.ts's own "hand-edited SKILL.md" setup.
+    mkdirSync(join(root, ".claude/skills/lore"), { recursive: true });
+    writeFileSync(join(root, ".claude/skills/lore/SKILL.md"), "hand-edited, not lore-generated\n");
+
+    const plainStdout = capture();
+    await runInit({
+      root,
+      output: { mode: "plain", color: false },
+      stdout: plainStdout,
+      clock: FIXED_CLOCK,
+      args: ["--agents"],
+      adapter: fakeAdapter([], { probe: "ok" }),
+    });
+    const plainLines = plainStdout.lines();
+    expect(plainLines).toContain("agents-protected .claude/skills/lore/SKILL.md");
+    // LORE-129's trailer, reused from agents.ts's own renderTrailer -- previously dropped entirely
+    // by init's fold-in, leaving no remedy visible to a --plain consumer.
+    expect(plainLines.some((l) => l.includes("hand-edited") && l.includes("lore agents --force"))).toBe(true);
+
+    const prettyStdoutColored = capture();
+    await runInit({
+      root,
+      output: { mode: "pretty", color: true },
+      stdout: prettyStdoutColored,
+      clock: FIXED_CLOCK,
+      args: ["--agents"],
+      adapter: fakeAdapter([], { probe: "ok" }),
+    });
+    const prettyText = prettyStdoutColored.text();
+    // "protected" must be painted yellow (a warning), never green (which would read as success) --
+    // ANSI.yellow is \x1b[33m, ANSI.green is \x1b[32m.
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting the exact ANSI sequence.
+    expect(prettyText).toMatch(/\x1b\[33mprotected\x1b\[0m/);
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting the exact ANSI sequence is ABSENT.
+    expect(prettyText).not.toMatch(/\x1b\[32mprotected\x1b\[0m/);
+    expect(prettyText).toContain("hand-edited");
+    expect(prettyText).toContain("lore agents --force");
   });
 });
 
@@ -492,6 +596,7 @@ describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the lock
     const prompter = scriptedPrompter({ agents: true, site: "mkdocs", obsidian: true });
     const { code, result } = await init({
       stdinIsTTY: true,
+      stderrIsTTY: true,
       prompter,
       adapter: fakeAdapter([], { probe: "ok" }),
     });
@@ -506,7 +611,12 @@ describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the lock
 
   test("declining every wizard question sets up nothing beyond the base scaffold, but backlog is still (always) checked", async () => {
     const prompter = scriptedPrompter({ agents: false, site: "none", obsidian: false });
-    const { result } = await init({ stdinIsTTY: true, prompter, adapter: fakeAdapter([], { probe: "ok" }) });
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      adapter: fakeAdapter([], { probe: "ok" }),
+    });
     expect(result.agents).toBeUndefined();
     expect(result.scaffolds).toEqual([]);
     expect(result.backlog?.checked).toBe(true);
@@ -517,7 +627,12 @@ describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the lock
     // which the prompter contract says means "use defaultValue": true for the agents bridge
     // question, "none" for the docs-site choice, false for Obsidian (matching the wizard's own docs).
     const prompter = scriptedPrompter({});
-    const { result } = await init({ stdinIsTTY: true, prompter, adapter: fakeAdapter([], { probe: "ok" }) });
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      adapter: fakeAdapter([], { probe: "ok" }),
+    });
     expect(result.agents).toBeDefined(); // agents bridge defaults to "yes"
     expect(result.scaffolds).toEqual([]); // docs-site defaults to "none", Obsidian defaults to "no"
   });
@@ -528,6 +643,7 @@ describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the lock
     // from a hermetic unit test.
     const { result } = await init({
       stdinIsTTY: true,
+      stderrIsTTY: true,
       prompter: forbiddenPrompter(),
       args: ["--agents"],
       adapter: fakeAdapter([], { probe: "ok" }),
@@ -537,7 +653,25 @@ describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the lock
   });
 
   test("--yes alone on a TTY skips the wizard and applies the bare non-interactive defaults", async () => {
-    const { result } = await init({ stdinIsTTY: true, prompter: forbiddenPrompter(), args: ["--yes"] });
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter: forbiddenPrompter(),
+      args: ["--yes"],
+    });
+    expect(result.interactive).toBe(false);
+    expect(result.agents).toBeUndefined();
+    expect(result.scaffolds).toEqual([]);
+    expect(result.backlog).toBeUndefined();
+  });
+
+  test("--non-interactive is a plain alias for --yes (NIT-2)", async () => {
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter: forbiddenPrompter(),
+      args: ["--non-interactive"],
+    });
     expect(result.interactive).toBe(false);
     expect(result.agents).toBeUndefined();
     expect(result.scaffolds).toEqual([]);
@@ -545,7 +679,9 @@ describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the lock
   });
 
   test("a non-TTY stdin never enters the wizard, no matter what — the non-negotiable off-TTY guarantee (AC#2)", async () => {
-    const { result } = await init({ stdinIsTTY: false, prompter: forbiddenPrompter() });
+    // stderrIsTTY:true proves stdin's own state is still load-bearing on its own — a TTY stderr
+    // does not compensate for a non-TTY stdin.
+    const { result } = await init({ stdinIsTTY: false, stderrIsTTY: true, prompter: forbiddenPrompter() });
     expect(result.interactive).toBe(false);
   });
 
@@ -554,12 +690,119 @@ describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the lock
     expect(result.interactive).toBe(false);
   });
 
+  test("BLOCKING-1: a TTY stdin with a non-TTY stderr never enters the wizard — every wizard question is written to stderr, so a redirected stderr would leave the wizard blocked on an invisible prompt", async () => {
+    // stdinIsTTY:true alone used to be sufficient to enter the wizard (the exact bug reproduced
+    // live against `lore-setup.sh`'s own `cmd >/dev/null 2>&1` idiom: stdin stays a readable TTY,
+    // stderr is redirected, and every prompt is invisible while the process still blocks on it).
+    const { result } = await init({ stdinIsTTY: true, stderrIsTTY: false, prompter: forbiddenPrompter() });
+    expect(result.interactive).toBe(false);
+  });
+
+  test("omitting stderrIsTTY altogether defaults to non-interactive even with a TTY stdin (never assumes a TTY by surprise)", async () => {
+    const { result } = await init({ stdinIsTTY: true, prompter: forbiddenPrompter() });
+    expect(result.interactive).toBe(false);
+  });
+
+  test("BLOCKING-1's sibling: --json forces non-interactive even at a genuinely interactive terminal (both streams TTY) — a machine-readable run must never prompt", async () => {
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      jsonRequested: true,
+      prompter: forbiddenPrompter(),
+    });
+    expect(result.interactive).toBe(false);
+  });
+
   test("a scaffold conflict during the wizard surfaces as the same `conflict` error `lore scaffold` itself throws", async () => {
     mkdirSync(join(root, "docs/.obsidian"), { recursive: true });
     writeFileSync(join(root, "docs/.obsidian/app.json"), "{}");
     const prompter = scriptedPrompter({ agents: false, site: "none", obsidian: true });
-    await expect(init({ stdinIsTTY: true, prompter, adapter: fakeAdapter([], { probe: "ok" }) })).rejects.toThrow(
-      LoreError,
+    await expect(
+      init({ stdinIsTTY: true, stderrIsTTY: true, prompter, adapter: fakeAdapter([], { probe: "ok" }) }),
+    ).rejects.toThrow(LoreError);
+  });
+});
+
+describe("lore init — EOF (Ctrl-D) mid-wizard is a `usage` error, not a silent exit 0 (BLOCKING-2, review round 2)", () => {
+  test("a rejecting prompter (simulating a closed stdin) surfaces as a usage LoreError and still closes the prompter", async () => {
+    // The wizard-level contract, independent of `createRealPrompter`'s own implementation: whatever
+    // makes the injected InitPrompter reject (a closed real readline session, or here a scripted
+    // stand-in) must propagate out of `runInit` as a thrown error rather than resolving with a
+    // number, AND `runInteractiveWizard`'s `finally { prompter.close() }` must still run even though
+    // the confirm/choose call it's waiting on never resolved cleanly.
+    let closed = false;
+    const eofError = new LoreError(
+      "usage",
+      "stdin closed before the init wizard finished (EOF/Ctrl-D)",
+      "answer every prompt, or run prompt-free with `lore init --yes`",
     );
+    const prompter: InitPrompter = {
+      confirm: () => Promise.reject(eofError),
+      choose: () => Promise.reject(eofError),
+      close: () => {
+        closed = true;
+      },
+    };
+    await expect(
+      runInit({ root, output: JSON_CTX, stdinIsTTY: true, stderrIsTTY: true, prompter, clock: FIXED_CLOCK }),
+    ).rejects.toThrow(LoreError);
+    expect(closed).toBe(true);
+  });
+
+  test("the closed-prompter rejection maps to exit 2 with a rendered --json error envelope on stderr, and stdout stays silent (no half-written envelope)", async () => {
+    // Goes through the SAME seam `cli.ts` uses (`reportError`) rather than re-deriving the mapping,
+    // proving the fix closes the exact gap BLOCKING-2 reported: exit 0 with zero stdout bytes under
+    // `--json` (a parse error for a `| jq` consumer expecting either a valid envelope or a
+    // classified failure).
+    const eofError = new LoreError("usage", "stdin closed before the init wizard finished (EOF/Ctrl-D)", "hint");
+    const prompter: InitPrompter = {
+      confirm: () => Promise.reject(eofError),
+      choose: () => Promise.reject(eofError),
+      close: () => {},
+    };
+    const stdout = capture();
+    const stderr = capture();
+    let caught: unknown;
+    try {
+      await runInit({ root, output: JSON_CTX, stdinIsTTY: true, stderrIsTTY: true, prompter, stdout, stderr });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(LoreError);
+    const code = reportError(caught, { json: true, stderr });
+    expect(code).toBe(EXIT_CODES.usage);
+    expect(stdout.text()).toBe(""); // stdout stays silent -- never a half-written success envelope
+    const envelope = JSON.parse(stderr.text()) as { error_type: string; message: string };
+    expect(envelope.error_type).toBe("usage");
+    expect(envelope.message).toContain("EOF");
+  });
+
+  describe("createRealPrompter's own EOF handling over real (fake) streams", () => {
+    test("stdin ending while a question is pending rejects that question with a usage LoreError", async () => {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      // Swallow the prompt bytes so a slow CI runner never backs up the PassThrough's internal buffer.
+      output.resume();
+      const prompter = createRealPrompter({ input, output });
+      const confirmPromise = prompter.confirm("Set up the Claude Code agent bridge?", true);
+      input.end(); // simulate stdin EOF (Ctrl-D) while the question is still outstanding
+      await expect(confirmPromise).rejects.toThrow(LoreError);
+      await expect(confirmPromise).rejects.toThrow(/EOF|Ctrl-D/);
+    });
+
+    test("a normal answer still resolves, and close() afterward raises no unhandled rejection", async () => {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      output.resume();
+      const prompter = createRealPrompter({ input, output });
+      const confirmPromise = prompter.confirm("Set up the Claude Code agent bridge?", true);
+      input.write("y\n"); // stdin stays open -- this answers the question before any EOF
+      expect(await confirmPromise).toBe(true);
+      // The wizard's own `finally` always calls close() after a successful run too; this must not
+      // throw or produce an unhandled rejection now that a real `close` event fires from OUR OWN
+      // call rather than from stdin's EOF.
+      prompter.close();
+      input.end();
+    });
   });
 });

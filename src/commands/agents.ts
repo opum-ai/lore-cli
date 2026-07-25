@@ -237,8 +237,13 @@ function renderPlain(data: AgentsResult): string {
  * `--force` (a plain `lore agents` would leave it untouched), so the hint must say `--force` whenever a
  * protected file is present — under `--check` (where the inert plain remedy would otherwise keep CI
  * red) and on a normal run alike.
+ *
+ * Exported (LORE-260 review round 2, MINOR-4) so `lore init`'s own renderers can reuse this EXACT
+ * trailer for the agent-bridge step it folds in, instead of dropping it: LORE-129 established this
+ * line as load-bearing (a `protected` file with no visible remedy reads as silent success), and
+ * `init`'s own rendering must not regress it just because it's a second, thinner caller.
  */
-function renderTrailer(data: AgentsResult): string | undefined {
+export function renderTrailer(data: AgentsResult): string | undefined {
   const hasProtected = data.files.some((file) => file.action === "protected");
   if (data.check) {
     const stale = data.files.some((file) => file.action !== "unchanged");
