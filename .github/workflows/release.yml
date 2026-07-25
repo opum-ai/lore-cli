@@ -1,17 +1,20 @@
-name: Release (dry-run)
+name: Release
 
 # Manual-only trigger (workflow_dispatch) — never fires on a push or tag, so simply
-# committing/tagging code can never kick off a release. `publish` defaults to false
-# and, as of this workflow, publishing is not wired at all (see the TODO at the
-# bottom): this workflow only builds and packages every platform artifact and
-# proves the npx/launcher mechanism resolves the right binary end-to-end
-# (LORE-9 AC#1/AC#2). See docs/runbooks/release-publishing.md for what a maintainer
-# still needs to configure on npmjs.com before a real publish step can be added.
+# committing/tagging code can never kick off a release. `publish` defaults to false:
+# a plain dispatch (or any dispatch that leaves `publish` at its default) only builds
+# and packages every platform artifact and proves the npx/launcher mechanism resolves
+# the right binary end-to-end (LORE-9 AC#1/AC#2) — the `publish` job below simply does
+# not run. Setting `publish: true` additionally runs that job, publishing all six
+# packages to npm via OIDC Trusted Publishing (LORE-255) — but only once a maintainer
+# has completed the one-time npmjs.com Trusted Publisher setup for all six packages;
+# see docs/runbooks/release-publishing.md's First-release checklist for the full
+# mechanical sequence (version bump, the bin.lore flip, tag, dispatch).
 on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Reserved for a future publish step (not implemented yet — see docs/runbooks/release-publishing.md). Has no effect today."
+        description: "Publish all six packages to npm via OIDC Trusted Publishing (requires the one-time npmjs.com setup — see docs/runbooks/release-publishing.md). Leave false to only build/package/dry-run."
         type: boolean
         default: false
 
@@ -298,12 +301,64 @@ jobs:
           path: dist-npm/
           if-no-files-found: error
 
-# TODO(LORE-9 follow-up, not this task): add a `publish` job gated on
-# `inputs.publish == true` with `permissions: { id-token: write }`, using npm's
-# OIDC-based trusted publishing. Requires configuring the npm trusted publisher for
-# this repo + this workflow file once on npmjs.com first (a maintainer-only step —
-# see docs/runbooks/release-publishing.md for the exact steps and commands). Also
-# flip package.json's bin.lore to bin/lore.cjs for real as part of that same release
-# (see docs/runbooks/release-publishing.md's release procedure) — the `package` job
-# above only patches a scratch copy to dry-run-verify the launcher, never the
-# committed file.
+  publish:
+    name: publish (npm, OIDC trusted publishing)
+    # Only runs on an explicit `publish: true` dispatch (the input defaults to
+    # false) — this workflow is itself workflow_dispatch-only (never fires on a
+    # push or tag), so a real publish always requires a maintainer to
+    # deliberately opt in on that one run, never as a side effect of any other
+    # trigger.
+    if: ${{ inputs.publish == true }}
+    needs: [setup, package]
+    runs-on: ubuntu-latest
+    # id-token: write is scoped to ONLY this job — the workflow-level
+    # `permissions:` block above stays `contents: read`, so no other job in
+    # this workflow (including this one's own upstream dependencies) can mint
+    # an OIDC token.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-packages-dry-run
+          path: dist-npm
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Assert npm CLI meets the OIDC trusted-publishing floor (docs/runbooks/release-publishing.md Prerequisites)
+        # Trusted publishing needs npm >= 11.5.1 on the publishing side. Assert it
+        # explicitly and fail loud here, before touching the registry, rather than
+        # letting an unmet floor surface as a confusing mid-publish auth error.
+        run: |
+          # The ${...} below are JS template literals for `node -e`, not shell
+          # interpolation — single-quoting is intentional.
+          # shellcheck disable=SC2016
+          node -e '
+            const { execSync } = require("node:child_process");
+            const version = execSync("npm --version").toString().trim();
+            const [major, minor, patch] = version.split(".").map(Number);
+            const meetsFloor = major > 11 || (major === 11 && (minor > 5 || (minor === 5 && patch >= 1)));
+            if (!meetsFloor) {
+              console.error(`::error::npm ${version} is older than the >= 11.5.1 floor OIDC trusted publishing requires`);
+              process.exit(1);
+            }
+            console.log(`npm ${version} meets the >= 11.5.1 trusted-publishing floor`);
+          '
+      - name: Publish all six packages (root launcher + 5 platform binaries) via OIDC trusted publishing
+        # No NPM_TOKEN/NODE_AUTH_TOKEN secret: actions/setup-node's registry-url
+        # above plus this job's id-token: write is everything npm >= 11.5.1 needs
+        # to authenticate via GitHub's OIDC token. Requires docs/runbooks/
+        # release-publishing.md Step 1 (the one-time npmjs.com Trusted Publisher
+        # setup) to already be done for a given package, or its `npm publish`
+        # call below fails loud with an auth/403 error rather than silently
+        # skipping it. Publishes the exact tarballs the `package` job already
+        # dry-run-verified (no re-packing), and needs no --access flag since all
+        # six already carry publishConfig.access: public (LORE-101).
+        run: |
+          for tgz in dist-npm/*.tgz; do
+            echo "::group::npm publish $tgz"
+            npm publish "$tgz"
+            echo "::endgroup::"
+          done
