@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-24 18:41'
-updated_date: '2026-07-25 04:07'
+updated_date: '2026-07-25 11:43'
 labels:
   - cross-platform
   - build-ci-config
@@ -130,6 +130,24 @@ merge -- the change is platform-agnostic by construction (errno-code string matc
 process.platform branching, and the new tests spy on fs.renameSync directly rather than depending
 on real OS lock behavior) so it is expected to pass there, but "expected" is not the same as
 verified.
+
+Review-pass-1 fix round (request_changes -> addressed): the new LORE-256 helper block (RENAME_RETRY_CODES/RENAME_MAX_ATTEMPTS/renameRetryDelayMs/blockingSleep/renameOverDestination) had been inserted between writeFileAtomic's 55-line invariant docstring and writeFileAtomic itself, orphaning that docstring (TS attaches JSDoc to the immediately-following declaration, so writeFileAtomic ended up with none). Fixed (major): relocated the whole helper block to immediately before writeFileAtomic's docstring -- pure move, verified via `git diff` that no line changed besides the relocation; writeFileAtomic's docstring now sits directly above writeFileAtomic again.
+
+Fixed (minor): blockingSleep no longer busy-waits on the non-monotonic Date.now() -- replaced the spin with `Bun.sleepSync(ms)`. This package's src/ is Bun-only (engines.bun >= 1.2.23; src/ already uses Bun.spawn/Bun.spawnSync/Bun.Glob/Bun.TOML), so Bun.sleepSync is first-party, not an unverified cross-platform primitive; confirmed working in this worktree (`bun -e 'Bun.sleepSync(30)'` measured ~40ms wall time). Docstring rewritten to state the chosen primitive and note there is currently no dedicated test guard on the delay value.
+
+Fixed (minor): RENAME_MAX_ATTEMPTS's docstring corrected -- it previously implied 1+4=5 total attempts; reworded to "the first attempt plus up to RENAME_MAX_ATTEMPTS - 1 retries (4 total = 1 + 3)", matching the loop's actual guard, the commit message, the plan, and the tests' `expect(rename.calls()).toBe(4)`.
+
+Fixed (nit): test/fswrite.test.ts's file-level doc block folded the spurious "AC#4" bullet (persistent-failure exhaustion) into AC#1, since LORE-256's real AC#4 is the windows-latest CI leg, unrelated to retry exhaustion.
+
+Fixed (nit): renameRetryDelayMs's docstring now states the Math.min(...,100) cap is defensive headroom for a future RENAME_MAX_ATTEMPTS increase and does not bind at the current budget of 4 (attempt only reaches 3, giving 80ms as the largest value actually produced) -- kept the Math.min rather than dropping it, since it's harmless headroom.
+
+Fixed (nit): renameOverDestination's docstring now notes that a SYSTEMIC retryable failure multiplies the bounded per-file budget across every write in a multi-file caller (writeManyAtomicOrRollback's rollback writes included), rather than failing fast -- addresses the cumulative-cost observation; no code change needed since the Bun.sleepSync fix already turns that cost from CPU-pegged busy-wait into an idle wait.
+
+Declined (nit, moveFile third rename-over-destination site with no retry): out of scope per this task's stated scope (writeFileAtomic + writeFileNoFollow only); reviewer's own suggested fix says to file a follow-up rather than widen this diff. Not filing the follow-up task myself -- follow-up task creation needs user/orchestrator approval per the finalization guide, and this campaign's pattern has the orchestrator handle that.
+
+Declined (nit, EBUSY not classified by ioError): reviewer's own suggested fix says leave ioError alone in this task (shared by every other caller) and file a follow-up to decide EBUSY's classification. Same reasoning as above -- not filing it myself, flagging for the orchestrator.
+
+Re-verified full suite after all fixes: bun test 2116 pass/0 fail across 48 files (test/fswrite.test.ts 32/32 unchanged), bun run typecheck clean, bun run lint (biome, 111 files) clean, bun run src/cli.ts check 39 files/0 errors. AC#4's windows-latest CI-leg half remains unconfirmed from this worktree for the same reason recorded in the prior notes -- left unchecked; orchestrator must confirm the windows-latest leg green on this branch's PR before merge.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
@@ -160,4 +178,8 @@ procedure ends at pushing the feature branch (PR creation is the orchestrator's 
 See task notes for detail; the change is platform-agnostic by construction (errno-string matching
 only, no process.platform branching) so the windows leg is expected green, but that still needs
 confirming via the actual CI run on this branch's PR before merge.
+
+Review-pass-2 (post request_changes): fixed the major finding -- the LORE-256 helper block (RENAME_RETRY_CODES/RENAME_MAX_ATTEMPTS/renameRetryDelayMs/blockingSleep/renameOverDestination) was relocated back to immediately before writeFileAtomic's docstring, so that 55-line invariant docstring (LORE-116/117/231/252) is no longer orphaned and every {@link writeFileAtomic} cross-reference resolves again -- a pure relocation, confirmed via diff review. Fixed both minors: blockingSleep now calls Bun.sleepSync(ms) instead of busy-waiting on the non-monotonic Date.now() (this package's src/ is Bun-only, so Bun.sleepSync is first-party, verified working in this worktree); RENAME_MAX_ATTEMPTS's docstring no longer contradicts the code (4 total = 1 + 3, matching the loop guard and tests). Fixed the cheap, clearly-correct nits: test/fswrite.test.ts's AC#4 mislabel folded into AC#1; renameRetryDelayMs's docstring now states its Math.min cap is inactive headroom at the current budget; renameOverDestination's docstring now notes systemic-failure cost multiplication across a multi-file write/rollback set. Declined two nits (moveFile's un-retried third rename site, and EBUSY's unclassified-by-ioError propagation) per the reviewer's own suggested fix, which says both are out of this task's scope and should be filed as separate follow-ups rather than widening this diff -- not filed here since follow-up task creation needs user/orchestrator approval.
+
+Re-verified all five gates after every fix: bun test 2116/0 across 48 files (fswrite.test.ts 32/32 unchanged), bun run typecheck clean, bun run lint (biome, 111 files) clean, bun run src/cli.ts check 39 files/0 errors. AC#4 remains unchecked -- the windows-latest CI leg still cannot be produced as evidence from this worktree; unchanged from the prior pass's reasoning, still the orchestrator's confirmation to make on the PR run.
 <!-- SECTION:FINAL_SUMMARY:END -->
