@@ -78,12 +78,29 @@ there is no clobber of a user's edits), so a re-run with no intervening change
 creates nothing and still exits `0` with everything reported `skipped`; a run
 after a partial delete fills in only the missing pieces.
 
+**On a bare, interactive-terminal invocation, `init` also runs a guided
+wizard** that folds the rest of onboarding into this one command — the Claude
+Code agent bridge, a downstream doc-site scaffold (mkdocs/docusaurus), an
+Obsidian vault config, and a backlog `--json`-capability check — instead of
+the older `init` → `agents` → external `lore-setup.sh` → manual-Obsidian
+sequence ([ADR-0017](../adr/0017-interactive-init-wizard-tty-gated.md)).
+
+The wizard is **strictly TTY-gated**: it runs only when stdin is an
+interactive terminal *and* none of `init`'s own flags was passed. Whenever
+stdin is **not** a TTY (CI, pipes, a subprocess) or **any** flag below is
+given, `init` runs fully non-interactively with defaults and no prompt can
+ever block it — the npm-init pattern. Every wizard question has a 1:1 flag
+equivalent, so a script reaches the exact same outcome with zero prompts. A
+bare `lore init` off a TTY with no flags behaves exactly as it always has
+(scaffold only, nothing else) — the agent bridge/scaffolds/backlog check are
+strictly opt-in there.
+
 | | |
 |---|---|
 | **Args** | none |
-| **Key flags** | none |
-| **Output** | `kind: init.result` — what was created/skipped |
-| **Exit** | `0` ok · `4` permission denied · `5` a non-regular entry (directory/symlink) blocks a scaffold path |
+| **Key flags** | `--yes` (skip the wizard even on a TTY) · `--agents` (also set up the Claude Code bridge) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-backlog` / `--no-backlog` (force/skip the backlog capability check) |
+| **Output** | `kind: init` — created/skipped scaffold paths, plus `agents`/`scaffolds`/`backlog` when those steps ran |
+| **Exit** | `0` ok (the backlog check is advisory-only and never changes this) · `2` usage (bad flag/unknown `--scaffold` target) · `4` permission denied · `5` a non-regular entry (directory/symlink) blocks a scaffold path, or a scaffold target collides with a differing hand-edited file |
 
 ### `new`
 

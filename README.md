@@ -95,8 +95,14 @@ compiled binary delivered as `optionalDependencies` (built with
 
 ## Quickstart (CLI-first)
 
-Every command is non-interactive, idempotent, and emits stable exit codes.
-Output has three modes with precedence `--json` > `--plain` > pretty:
+Every command is idempotent and emits stable exit codes. All of them are
+non-interactive by default — the one exception is `lore init`, which runs a
+guided wizard on a bare, interactive-terminal invocation (folding in the
+Claude Code agent bridge, downstream doc-site scaffolds, and a backlog
+capability check); it is strictly TTY-gated, so a non-TTY stdin or any of its
+own flags runs it fully non-interactively too — see
+[ADR-0017](docs/adr/0017-interactive-init-wizard-tty-gated.md). Output has
+three modes with precedence `--json` > `--plain` > pretty:
 
 - **pretty** — default; color on a TTY, honoring `NO_COLOR`.
 - **`--plain`** — ANSI-free, stable text; the automatic mode when stdout is not
@@ -105,7 +111,10 @@ Output has three modes with precedence `--json` > `--plain` > pretty:
   stderr as `{error_type, message, hint, input}`.
 
 ```bash
-# 1. Scaffold the OKF bundle (docs/, .lore/, root index.md).
+# 1. Scaffold the OKF bundle (docs/, .lore/, root index.md). On a bare TTY
+#    invocation this runs a guided wizard for the rest of onboarding too
+#    (agent bridge, doc-site scaffolds, backlog check); off a TTY (CI, this
+#    snippet) it's exactly this — the bundle only, non-interactively.
 lore init
 
 # 2. Create typed concepts from frontmatter templates.
