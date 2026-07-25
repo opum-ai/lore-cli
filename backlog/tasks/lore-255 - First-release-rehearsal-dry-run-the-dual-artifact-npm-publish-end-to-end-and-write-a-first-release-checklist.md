@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-24 18:41'
-updated_date: '2026-07-25 11:50'
+updated_date: '2026-07-25 12:11'
 labels:
   - build-ci-config
   - release
@@ -242,10 +242,124 @@ bun run lint / biome check (clean), bun run src/cli.ts check (39 files, 0
 errors, 0 warnings), actionlint .github/workflows/release.yml (clean). No
 version bump (all 6 manifests still 0.0.0); CHANGELOG.md untouched;
 backlog/docs/ untouched.
+
+## Review pass 2 fixes (request_changes -> addressed)
+
+[major] Placeholder-version guard: the publish job had no precondition
+refusing to publish version 0.0.0 -- every other precondition in the
+workflow fails loud (npm floor assertion, the 6/5+1-tarball count asserts,
+verify-versions' 12-value cross-check) but this one, the only irreversible
+action in the repo, did not, and the First-release checklist deliberately
+orders Trusted Publisher registration (step 1) before the version bump
+(step 2), leaving a real window. Added a guard in the publish step: after
+partitioning the 5 platform + 1 root tarballs, extract the root tarball's
+version and hard-fail with `::error::` before any `publish_or_skip` call if
+it is empty or exactly "0.0.0". Added a matching regression test
+(release-workflow.test.ts) asserting the guard text is present AND runs
+before the platform-publish loop starts. Mutation-verified two ways: (1)
+built 6 real npm-pack-shaped 0.0.0 tarballs + a mocked npm binary in a
+worktree-local scratch dir, ran the extracted publish script under
+`bash -e` -- confirmed zero publishes and exit 1 with the guard, confirmed
+all 6 would have published (mock log entries) with the guard code removed;
+(2) ran the full test suite with the guard block deleted from release.yml
+-- exactly the new "refuses to publish 0.0.0" test failed (8/9 pass), then
+restored and re-ran clean (9/9).
+
+[minor] `publish_or_skip`'s name/version extraction (`read -r name version
+<<< "$(tar -xzOf ... | node -e ...)"`) failed OPEN: a here-string always
+supplies a trailing newline so `read` returns 0 even when the substitution
+produced nothing, and `run:` steps execute under `bash -e` WITHOUT
+`pipefail`, so neither a `tar` extraction failure nor a `node` JSON-parse
+crash aborted the function -- `name`/`version` silently became empty,
+`npm view "@" version` failed (indistinguishable from "not published"), and
+the tarball published unconditionally, defeating the resumability feature
+on exactly the scenario it exists for. Added an explicit emptiness check
+immediately after the `read`, exiting 1 with a clear error before
+`npm view`/`npm publish` are ever reached. Reproduced the reviewer's exact
+scenario (6 tarballs with the wrong inner path) against the pre-fix script:
+all 6 published unconditionally, logging `(@)` for name@version, exit 0 --
+then confirmed the fixed script fails loud on the first bad tarball with
+zero publishes. Mutation-verified via the test suite too: deleting the
+guard fails exactly the new "fails loud (not open)" test (8/9 pass), then
+restored (9/9).
+
+[minor] release-publishing.md's "Dry-run rehearsal (verified)" section
+claimed the dry-run reported the `os`/`cpu` gate; `npm publish --dry-run`
+does not emit that. Reworded to say the dry-run reported name/version/file
+list/access, and that os/cpu is asserted separately -- structurally by
+verify-versions (against the committed npm/<platform>/package.json fields)
+and behaviorally by the package job's explicit-tarball install (EBADPLATFORM
+on mismatch). Also updated the First-release-checklist intro paragraph to
+note the publish job's own 0.0.0 refusal is a last-resort backstop, not a
+substitute for the checklist's version-bump item.
+
+[nit] Reworded the Prerequisites npm->=11.5.1 bullet, which contradicted the
+new workflow comment about node 24 not guaranteeing a new-enough bundled
+npm -- now says CI explicitly upgrades (npm install -g npm@^11) and asserts
+the floor rather than relying on the runner's bundled version.
+
+[nit] Dated the ADR-0001 amendment to match sibling ADRs' convention:
+"Amendment (LORE-255)" -> "Amendment -- 2026-07-25 (LORE-255)".
+
+[nit] Applied both optional hardening suggestions: pinned the publish job's
+`npm install -g npm@latest` to `npm@^11` (floor-plus-major, narrows the
+compromised-npm-release window since this is the only id-token:write job);
+added a job-scoped `concurrency: { group: release-publish, cancel-in-progress:
+false }` to the publish job only (not workflow-level, so dry-run dispatches
+stay unaffected) so overlapping publish:true dispatches queue instead of
+interleaving.
+
+Declined: the reviewer's secondary "optionally distinguish npm view's E404
+from infra/network failures via --json + stderr capture" sub-suggestion
+under the resumability minor -- explicitly marked optional by the reviewer,
+adds meaningful complexity/new failure surface for a lower-severity edge
+case (a transient registry outage misread as "not published" is a false
+skip, not a false publish), and the guard that actually mattered for
+this review pass (the empty-extraction fail-open) is fixed.
+
+Re-verified full set: bun test (2119 pass, 0 fail, including
+release-workflow.test.ts's 9 tests -- 2 new), bun run typecheck (clean),
+bun run lint / biome check (clean), bun run src/cli.ts check (39 files, 0
+errors, 0 warnings), actionlint .github/workflows/release.yml (clean),
+shellcheck on the extracted publish script (clean). Also ran an independent
+Codex (gpt-5.6-sol, xhigh) review pass over the uncommitted diff -- no
+additional findings; confirmed the guard/concurrency/docs/test changes as
+internally consistent. No version bump (all 6 manifests still 0.0.0);
+CHANGELOG.md untouched; backlog/docs/ untouched; no scratch build artifacts
+committed (rehearsal scratch dir removed via `git clean -fd` before
+committing).
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Fixed review pass 1's blocking + major findings in release.yml's publish job: platform packages now publish before the root launcher (was root-first via collation-order glob, which could leave npx @salient-data/lore resolving with 404ing optionalDependencies), and the loop is now resumable (skips already-published packages via npm view) with a matching Rollback runbook entry -- so a partial first-release failure is recoverable instead of permanently wedging the version. Also fixed both minor doc-staleness findings (release-publishing.md's version-bump step now names the optionalDependencies pins; tech-stack.md/ADR-0001 no longer call the publish job 'publish-free'/a 'follow-up') and both nits (npm auto-upgraded to meet its own floor; artifact renamed from npm-packages-dry-run to npm-packages). Verified: bun test (2117/2117), typecheck, biome lint, lore check (39 files clean), actionlint all green; mutation-tested the new ordering regression test by reverting to the old naive loop and confirming it fails; verified the partition/skip logic against real tarball names and a mocked npm registry. No version bump, no CHANGELOG.md edit, no backlog/docs/ edit.
+Fixed review pass 2's major + minor findings in release.yml's publish job.
+Added a pre-publish guard that hard-refuses version 0.0.0 (the placeholder)
+before any tarball is published -- the one irreversible-action precondition
+that every other check in this workflow enforced except this. Fixed
+publish_or_skip's name/version extraction, which previously failed OPEN
+(bash -e, no pipefail, a here-string always feeds `read` a line) and would
+have published unconditionally on a malformed tarball, defeating the
+resumability feature; it now asserts non-empty and exits loud instead.
+Fixed the runbook's inaccurate claim that npm publish --dry-run reports the
+os/cpu gate (it doesn't; that's verify-versions + the package job's
+install-sanity EBADPLATFORM check) and its internally-contradictory
+Prerequisites npm-floor wording. Dated the ADR-0001 amendment to match
+sibling convention. Applied both optional hardening nits: npm@^11
+floor-plus-major pin (was @latest, in the only id-token:write job) and a
+job-scoped concurrency group on publish so overlapping publish:true
+dispatches queue instead of interleaving. Declined one explicitly-optional
+sub-suggestion (distinguishing npm view's E404 from infra failures) as
+added complexity for a lower-severity edge case.
+
+Verified: bun test (2119/2119, incl. 2 new regression tests, each
+mutation-verified to fail exactly its own target and nothing else), 
+typecheck, biome lint, lore check (39/0), actionlint, shellcheck on the
+extracted publish script all clean. Reproduced the reviewer's exact
+fail-open scenario against the pre-fix script (all 6 tarballs published
+unconditionally with `(@)` name@version) and confirmed the fix blocks it.
+An independent Codex (gpt-5.6-sol, xhigh) pass over the diff raised no
+further findings. No version bump (all 6 manifests still 0.0.0); no
+CHANGELOG.md edit; no backlog/docs/ edit; no scratch build artifacts
+committed.
 <!-- SECTION:FINAL_SUMMARY:END -->
