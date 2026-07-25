@@ -26,7 +26,7 @@ detail with `lore instructions <topic>`:
 
 ## Commands
 
-- `init`          Scaffold an empty, conformant OKF bundle
+- `init`          Scaffold an OKF bundle; a bare TTY run also wizards the agent bridge/scaffolds/backlog check
 - `new`           Scaffold a typed concept from a template
 - `validate`      Check concept files against OKF + the lore profile (per-file)
 - `check`         Validate links/anchors + reconciliation drift across the bundle (CI gate)

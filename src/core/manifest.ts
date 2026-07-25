@@ -170,13 +170,36 @@ const GLOBAL_FLAGS: readonly ManifestFlag[] = deepFreeze([
 const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
   {
     name: "init",
-    summary: "Scaffold an empty, conformant OKF bundle",
+    summary: "Scaffold an OKF bundle; a bare TTY run also wizards the agent bridge/scaffolds/backlog check",
     args: "",
-    flags: [],
+    flags: [
+      { name: "yes", takesValue: false, summary: "Skip the interactive wizard even on a TTY; use flag defaults" },
+      { name: "agents", takesValue: false, summary: "Also set up the Claude Code agent bridge (SKILL.md + CLAUDE.md)" },
+      {
+        name: "scaffold",
+        takesValue: true,
+        repeatable: true,
+        summary: "Also scaffold a downstream doc consumer (mkdocs|docusaurus|obsidian)",
+      },
+      {
+        name: "obsidian",
+        takesValue: false,
+        summary: "Also scaffold an Obsidian vault config (shorthand for --scaffold obsidian)",
+      },
+      {
+        name: "check-backlog",
+        takesValue: false,
+        summary: "Check --json-capable backlog coupling even with no other flag",
+      },
+      { name: "no-backlog", takesValue: false, summary: "Skip the backlog-coupling capability check entirely" },
+    ],
     json: true,
     kind: "init",
+    // The backlog-coupling check is ADVISORY ONLY (LORE-260): a missing/incapable `backlog` becomes
+    // a stderr warning plus a `backlog: {capable: false}` field, never a thrown error — so no
+    // `backlog` seam code is added here despite `runInit` calling `adapter.probe()`.
     exitCodes: exitCodesFor(["profile", "write"]),
-    examples: ["lore init"],
+    examples: ["lore init", "lore init --agents --obsidian", "lore init --yes --scaffold mkdocs"],
   },
   {
     name: "new",

@@ -3,9 +3,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { coerceRealTTY, type RunContext, run } from "../src/cli";
+import type { InitPrompter } from "../src/commands/init";
 import { EXIT_CODES } from "../src/errors";
 import { VERSION } from "../src/meta";
-import { capture } from "./helpers";
+import { capture, fakeAdapter } from "./helpers";
 
 /** Build an argv (`["bun", "lore", ...args]`) the way `run` slices it. */
 function argv(...args: string[]): string[] {
@@ -126,6 +127,37 @@ describe("cli — init dispatch", () => {
     const c = ctx({ cwd });
     expect(run(argv("init", "--"), c)).toBe(0);
     expect(existsSync(join(cwd, "docs/index.md"))).toBe(true);
+  });
+
+  test("the router wires stdinIsTTY + a fake prompter through to the wizard end-to-end (LORE-260)", async () => {
+    // Proves cli.ts's own wiring (not just runInit called directly, as init.test.ts does): a bare
+    // `lore init` through the REAL router, with stdinIsTTY:true and an injected prompter, actually
+    // engages the interactive wizard rather than the flag-driven default path.
+    const prompter: InitPrompter = {
+      confirm: async (_q, defaultValue) => defaultValue,
+      choose: async (_q, _choices, defaultValue) => defaultValue,
+      close: () => {},
+    };
+    // The wizard always runs the (advisory-only) backlog check, so a fake adapter is injected here
+    // too — a real, host-dependent `backlog` subprocess must never be reachable from a unit test.
+    const c = ctx({ cwd, stdinIsTTY: true, prompter, adapter: fakeAdapter([], { probe: "ok" }) });
+    const result = run(argv("init", "--json"), c);
+    expect(result).toBeInstanceOf(Promise);
+    expect(await result).toBe(0);
+    const envelope = JSON.parse(c.stdout.text()) as { kind: string; data: { interactive: boolean } };
+    expect(envelope.kind).toBe("init");
+    expect(envelope.data.interactive).toBe(true);
+  });
+
+  test("stdinIsTTY defaults to non-TTY when omitted, even with isTTY:true for stdout (independent axes)", () => {
+    // ctx() always sets isTTY (stdout) per its own default; without an explicit stdinIsTTY override
+    // the router must still resolve stdin as non-interactive (an injected stdout sink implies a
+    // test harness, never a real terminal on any stream) — plain init, no wizard, a plain number.
+    const c = ctx({ cwd });
+    const result = run(argv("init", "--json"), c);
+    expect(result).toBe(0); // NOT a Promise -- proves the wizard never engaged
+    const envelope = JSON.parse(c.stdout.text()) as { kind: string; data: { interactive: boolean } };
+    expect(envelope.data.interactive).toBe(false);
   });
 });
 

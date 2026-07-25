@@ -21,7 +21,7 @@ import { type FetchLike, type ResolveHost, runCheck } from "./commands/check";
 import { runContext } from "./commands/context";
 import { runGraph } from "./commands/graph";
 import { renderTopLevelHelp, runHelp } from "./commands/help";
-import { runInit } from "./commands/init";
+import { type InitPrompter, runInit } from "./commands/init";
 import { runInstructions } from "./commands/instructions";
 import { runLink, runUnlink } from "./commands/link";
 import { runNew } from "./commands/new";
@@ -144,12 +144,24 @@ export interface RunContext {
    * function's doc).
    */
   stderrIsTTY?: boolean;
+  /**
+   * Whether **stdin** is a TTY — `lore init`'s wizard gate (LORE-260, cli-contract's non-interactive
+   * mandate). Independent of `isTTY` (stdout's own TTY state) and `stderrIsTTY`: a real terminal
+   * session normally has all three true, but a script piping input while capturing output can have
+   * any combination. Defaults the same way `isTTY`/`stderrIsTTY` do: an injected `stdout` sink with
+   * no explicit hint here is treated as non-TTY (so a test harness never accidentally enables a
+   * blocking prompt); only the real-process path (no injected sink) reads the actual
+   * `process.stdin.isTTY`, coerced to a strict boolean via {@link coerceRealTTY}.
+   */
+  stdinIsTTY?: boolean;
   /** The fetch `check --external` uses for liveness; defaults to the global `fetch`. Injected so a caller (or a test) controls or stubs the network. */
   fetch?: FetchLike;
   /** DNS resolution `check --external`'s SSRF guard uses (LORE-71); defaults to real `node:dns`. Injected so a caller (or a test) controls or stubs DNS. */
   resolveHost?: ResolveHost;
   /** The Backlog adapter `link`/`unlink` use; defaults to the real `backlog` binary on PATH. Injected so a caller (or a test) touches no subprocess. */
   adapter?: BacklogAdapter;
+  /** `lore init`'s interactive-wizard I/O seam (LORE-260); defaults to a real `readline` session over stdin/stderr. Injected so a caller (or a test) drives the wizard without a real terminal. */
+  prompter?: InitPrompter;
 }
 
 /**
@@ -222,6 +234,11 @@ export function run(argv: readonly string[], context: RunContext = {}): number |
   // defaults and reopens the leak this line exists to close (LORE-250, round
   // 3 — see {@link coerceRealTTY}'s doc for the confirmed real-pty repro).
   const stderrIsTTY = context.stderrIsTTY ?? (context.stderr ? false : coerceRealTTY(process.stderr.isTTY));
+  // Same injected-sink-defaults-non-TTY / real-process-defaults-real-TTY shape as `stderrIsTTY`
+  // above, keyed off `stdout` (not a `stdin` field — there is no injected stdin stream in
+  // `RunContext`, only this resolved boolean) since a test harness that injects capturing streams
+  // is never a real terminal session on any of the three streams.
+  const stdinIsTTY = context.stdinIsTTY ?? (context.stdout ? false : coerceRealTTY(process.stdin.isTTY));
   const output = resolveOutput({
     json: parsed.json,
     plain: parsed.plain,
@@ -256,7 +273,7 @@ export function run(argv: readonly string[], context: RunContext = {}): number |
       rejectStrayCommandFlags(parsed.commandArgs);
       return runHelp({ output, args: [parsed.command], stdout });
     }
-    const result = dispatch(parsed, { ...context, stdout, stderr }, output);
+    const result = dispatch(parsed, { ...context, stdout, stderr, stdinIsTTY }, output);
     // The async command paths (`check --external`, `link`, `unlink`, `rename`, `sync`) return a Promise; a
     // rejection from one must funnel through the **same** error seam as a synchronous throw
     // (formatted diagnostic + the right exit code), not escape to the entrypoint's bare backstop.
@@ -298,8 +315,16 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
   const root = context.cwd || process.cwd();
   switch (parsed.command) {
     case "init":
-      rejectCommandArgs(parsed.commandArgs, "init");
-      return runInit({ root, output, stdout: context.stdout });
+      return runInit({
+        root,
+        output,
+        args: parsed.commandArgs,
+        stdout: context.stdout,
+        stderr: context.stderr,
+        stdinIsTTY: context.stdinIsTTY,
+        adapter: context.adapter,
+        prompter: context.prompter,
+      });
     case "new":
       return runNew({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     case "validate":
@@ -423,38 +448,6 @@ function rejectStrayCommandFlags(commandArgs: readonly string[]): void {
       options: [stray],
     });
   }
-}
-
-/**
- * Throw a `usage` {@link LoreError} when a command that takes no arguments got any. The `--`
- * end-of-options marker is a no-op and skipped (so `lore init --` still scaffolds). Only tokens
- * **before** the first `--` can be classified as an unrecognized `-`-flag ("unknown option"),
- * matching the parser's contract that a token after the terminator is never re-interpreted as a
- * flag; a leftover positional — before the terminator, or any token at/after it regardless of a
- * leading `-` — is an "unexpected argument" instead (LORE-223), so `lore init -- -bar` reports
- * `-bar` as unexpected rather than as an unknown option.
- */
-function rejectCommandArgs(commandArgs: readonly string[], command: string): void {
-  const dashDashIndex = commandArgs.indexOf("--");
-  const before = dashDashIndex === -1 ? commandArgs : commandArgs.slice(0, dashDashIndex);
-  const after = dashDashIndex === -1 ? [] : commandArgs.slice(dashDashIndex + 1);
-  if (before.length === 0 && after.length === 0) {
-    return;
-  }
-  const firstBefore = before[0];
-  if (firstBefore?.startsWith("-") && firstBefore !== "-") {
-    throw new LoreError("usage", `unknown option "${firstBefore}"`, "run `lore --help` to list options", {
-      options: [...before],
-    });
-  }
-  const leftover = [...before, ...after];
-  const first = leftover[0] as string;
-  throw new LoreError(
-    "usage",
-    `\`lore ${command}\` takes no arguments, got "${first}"`,
-    `run \`lore ${command}\` with no positional arguments`,
-    { command, unexpected: [...leftover] },
-  );
 }
 
 // Only drive the real process when executed directly (not when imported by tests). `run` returns a
