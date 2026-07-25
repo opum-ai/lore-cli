@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`writeFileAtomic` / `writeFileNoFollow`'s commit `renameSync` now retries a bounded number of
+  times on Windows' transient antivirus/indexer lock codes** (LORE-256). Both write-temp-then-rename
+  helpers finish with a single `renameSync(tmpPath, absPath)`, which on Windows can intermittently
+  fail with `EPERM`/`EBUSY`/`EACCES` when an antivirus scanner or the Search indexer briefly holds
+  the destination open — LORE-252 fixed the deterministic `openSync` `ENOENT` but deliberately left
+  this transient hazard for later. The commit step in both functions now goes through a new, shared,
+  unexported `renameOverDestination` helper (`src/commands/fswrite.ts`): a bounded 4-total-attempt
+  sequence (the first attempt plus up to 3 retries) with 20ms/40ms/80ms backoff between attempts via
+  `Bun.sleepSync` — a first-party synchronous sleep, since `src/` is Bun-only (`package.json`
+  `engines.bun`), needing no `Atomics.wait`/busy-wait fallback. Retried **only** on those three named
+  errno codes, gated on the errno itself rather than `process.platform` — a POSIX run essentially
+  never produces one of these codes in the narrow commit window, so the ordinary case is unchanged
+  (still exactly one `renameSync` call). Any other errno is never retried, and once the bounded
+  budget exhausts the LAST failure is what's thrown into each function's existing `catch`/`ioError`
+  classification, so a persistent failure still surfaces the identical `denied` `LoreError` it always
+  did — never a swallowed false success. The LORE-231 temp-leak guard, LORE-117 mode/ownership
+  preservation, and LORE-130/92 symlink refusal are untouched — only the commit step can repeat.
+  Verified with `bun test` (spying on `fs.renameSync` to throw a deterministic errno for an exact
+  call count before delegating to the real implementation — not a real lock, not a sleep-based
+  flake) and confirmed green on the `windows-latest` CI matrix leg (PR #249) since a local macOS
+  worktree cannot produce that evidence directly. Re-verified against `dev`: `bun test` 2126/0 pass,
+  `typecheck`/`lint` clean, `lore check` (39 files, 0 errors/warnings).
 - **`lore rename` / `lore supersede --rewrite-links` now warn on stderr when a retargeted inbound
   link's display text still names the OLD id** (LORE-262, surfaced by the Meridian e2e stress
   test, which needed a manual fix after the run). `rewriteInbound` (`src/core/rewrite.ts`) has
@@ -137,6 +159,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency set has.
 
 ### Added
+- **`.github/workflows/release.yml` gained a real `publish` job — OIDC trusted publishing to npm,
+  gated on an explicit dispatch input** (LORE-255). The workflow stays `workflow_dispatch`-only
+  (never push/tag-triggered); the new `publish` job additionally requires
+  `if: ${{ inputs.publish == true }}`, with the `publish` boolean input defaulting to `false`, so a
+  plain dispatch only builds/packages/dry-run-verifies every platform artifact and the `publish` job
+  simply does not run. `id-token: write` is scoped to **only** the `publish` job — workflow-level
+  `permissions:` stays `contents: read`, so no other job can mint an OIDC token — and publishing goes
+  through `actions/setup-node`'s OIDC Trusted Publishing, not a stored npm token. Before publishing
+  anything, the job installs `npm@^11` and fails closed if the resolved CLI version is below the
+  `>= 11.5.1` floor OIDC trusted publishing requires. The five platform packages are published
+  **before** the root launcher (`optionalDependencies` on the root pin the platform packages at an
+  exact version, and publishing root first would open a window where `npx @salient-data/lore`
+  resolves a launcher whose platform deps 404); the publish loop is **resumable** — `publish_or_skip`
+  checks the registry (`npm view`) before each publish and skips anything already there, so
+  re-dispatching after a partial failure (`run:` steps execute under `bash -e`) completes the rest
+  instead of 403ing on packages already published. A hard-refusal precondition rejects publishing the
+  placeholder version `0.0.0` (checked once against the root tarball's manifest, before any tarball is
+  published), closing a real window the First-release checklist's step ordering (Trusted Publisher
+  setup before the version bump) would otherwise leave open. New regression tests
+  (`test/release-workflow.test.ts`) parse `release.yml` with `js-yaml` (`JSON_SCHEMA`) and assert the
+  dispatch gate, the `needs` chain, the scoped `id-token: write`, the publish-order partition, the
+  0.0.0 refusal, and a fail-open extraction bug in `publish_or_skip`'s name/version parsing (a
+  here-string always supplies `read` a delimiter, so a `tar`/`node` failure previously went unnoticed
+  under `bash -e` without `pipefail`) — each mutation-verified to fail without its corresponding fix.
+  Also adds `docs/runbooks/release-publishing.md`'s first-release checklist (version bump, the
+  `bin.lore` flip, npm Trusted Publisher setup, post-publish smoke install) and a partial-publish
+  rollback procedure, plus amendments to
+  [ADR-0001](docs/adr/0001-runtime-build-distribution.md) and
+  [tech-stack.md](docs/reference/tech-stack.md) correcting their prior "publish-free"/"a deliberate
+  follow-up" wording now that the publish job is implemented. Verified against `dev`: `bun test`
+  2126/0 pass, `typecheck`/`lint` clean, `actionlint` clean, `lore check` (39 files, 0
+  errors/warnings).
 - **Daily upstream-release watch for MrLesk/Backlog.md's tagged `--json` release** (LORE-254). A
   new scheduled workflow (`.github/workflows/upstream-backlog-watch.yml`, daily `cron` plus
   `workflow_dispatch`) runs a new standalone script (`src/scripts/upstream-backlog-watch.ts`) —
@@ -886,6 +940,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Build plan tracked as Backlog.md milestones and tasks.
 
 ### Changed
+- **`lore link`/`lore unlink`'s `--plain` per-task line, the shared bad-concept-id hint, and
+  `lore tasks`/`lore context`'s missing-arg usage text were harmonized in one pass** (LORE-259).
+  **The `--plain` reformat is a contract-level change** per
+  [cli-contract.md](docs/reference/cli-contract.md) §1.3 ("substantial reformatting of `--plain`
+  output is treated as a contract change, not a cosmetic one") and §7.2 (which separately lists
+  substantially reformatting `--plain` output among the non-JSON changes still counted as breaking):
+  `renderTaskReport`'s (`src/commands/link.ts`) per-task success line moved from
+  `<task>: <status> (doc), back-ref <backRef>` to `<task>: tasks: <status>, back-ref: <backRef>` —
+  naming the concept's own `tasks:` frontmatter field, which the bare, unexplained `(doc)` qualifier
+  never did, so both halves of the line now read the same way. This is the entry most likely to break
+  an existing consumer: any pipeline splitting the old line on `", "` or matching the literal string
+  `(doc)` breaks. Second, the shared `conceptNotInBundle` `not_found` hint (`src/core/bundle.ts`) —
+  surfaced through `link`/`unlink`, `tasks`, `sync`'s `scopeConcepts`, `rename`'s rewrite engine,
+  `supersede`, and `graph`/`context`'s subgraph traversal — moved from ``run `lore check` to list
+  concept ids`` to ``run `lore query` or `lore graph` to see known concept ids``: verified live that
+  `lore check` only ever prints a pass/fail summary count and never lists an id, so the old hint
+  misdirected every one of those commands' bad-id path. Third, `lore tasks`/`lore context`'s
+  missing-`<id>` usage error changed from the bare `missing concept <id>` to `` `lore tasks` needs a
+  concept id `` / `` `lore context` needs a concept id `` respectively, matching the `` `lore
+  <command>` needs a <thing> `` template `link`/`new`/`rename`/`replace`/`supersede`/`schema` already
+  used — `tasks` and `context` were the only two commands still diverging from it; each command's own
+  actionable hint text is unchanged. **Exit codes and the `--json` envelope shape are unchanged** —
+  every affected surface's `hint` field (and the one `--plain` line above) changed string value only.
+  Verified against `dev`: `bun test` 2126/0 pass, `typecheck`/`lint` clean, `lore check` (39 files, 0
+  errors/warnings).
 - **`lore scaffold <target>` — a bare re-run against an unchanged config is now an idempotent
   no-op; exit `5` is narrowed to an actual user edit or a directory blocker** (LORE-263). **A
   user-visible exit-code contract change.** Previously *any* already-existing planned file always
