@@ -8,7 +8,7 @@ description: >-
   strictly TTY-gated so the non-interactive, scriptable CLI contract
   (ADR-0004/ADR-0005) is preserved without exception off a TTY.
 tags: [adr, cli, init, wizard, interactive, tty, onboarding, agents, scaffold, backlog]
-summary: lore init runs an interactive wizard only on a bare TTY invocation; any flag or a non-TTY stdin runs it fully non-interactively with defaults, per-flag equivalents for every wizard question.
+summary: lore init runs an interactive wizard only when stdin and stderr are both TTYs; a non-TTY stdin/stderr, --json, or any flag runs it non-interactively with defaults, one flag per wizard question.
 timestamp: 2026-07-25T17:43:50.747Z
 ---
 
