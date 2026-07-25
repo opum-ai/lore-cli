@@ -569,6 +569,10 @@ describe("lore sync — [paths…] scoping", () => {
     const err = await expectSyncError(["stories/typo-does-not-exist"], adapter);
     expect(err.type).toBe("not_found");
     expect(err.message).toContain("stories/typo-does-not-exist");
+    // LORE-259: hints at a command that actually lists concept ids — `lore check` prints only a
+    // pass/fail summary count, never an id listing.
+    expect(err.hint).toContain("lore query");
+    expect(err.hint).not.toContain("lore check");
   });
 });
 

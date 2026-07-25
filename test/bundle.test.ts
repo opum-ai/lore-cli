@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildGraph, type Edge, loadBundle, resolvePath } from "../src/core/bundle";
+import { buildGraph, conceptNotInBundle, type Edge, loadBundle, resolvePath } from "../src/core/bundle";
 import { type CheckInputFile, checkBundle } from "../src/core/check";
 import { parseConcept } from "../src/core/concept";
 import { compileProfile, parseProfile } from "../src/core/profile";
@@ -419,6 +419,23 @@ describe("buildGraph — tokenEstimate", () => {
       return;
     }
     throw new Error("expected a not_found LoreError");
+  });
+});
+
+// ── conceptNotInBundle: the shared not_found hint ─────────────────────────────────
+
+describe("conceptNotInBundle", () => {
+  test("hints at `lore query`/`lore graph`, never `lore check` (LORE-259)", () => {
+    // `link`/`unlink`, `tasks`, `supersede`, `lore rename`'s rewrite engine, and `lore graph`/
+    // `context`'s subgraph traversal all surface a bad id through this ONE function — `lore check`
+    // only prints a pass/fail summary count, never a concept-id listing, so pointing there was a
+    // misdirecting hint; `lore query`/`lore graph` (run with no args) both actually list every id.
+    const err = conceptNotInBundle("stories/ghost");
+    expect(err.type).toBe("not_found");
+    expect(err.message).toContain("stories/ghost");
+    expect(err.hint).toContain("lore query");
+    expect(err.hint).toContain("lore graph");
+    expect(err.hint).not.toContain("lore check");
   });
 });
 
