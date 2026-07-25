@@ -31,6 +31,14 @@
  * error (exit 2); an absent `oldId` a `not_found` (exit 3, from the engine); an already-taken
  * `newId` a `conflict` (exit 5); a failed back-ref move is `drift` (exit 6, same as
  * `link`/`unlink`) — all funnel through the router's one error seam like every command.
+ *
+ * Every retargeted inbound link is still repointed to the new location — `rename` DELETES the old
+ * file, so skipping a retarget would leave a genuinely dangling link, never an option. But when the
+ * link's visible text still names the OLD id (a citation left over from before the rename), that
+ * would silently leave the prose and the link disagreeing. The engine flags each such
+ * {@link LinkTextMismatch} in the plan; this command renders one stderr `warning:` line per mismatch
+ * via {@link renderLinkTextMismatchWarning} (LORE-262) — purely advisory, no effect on the retarget
+ * or the exit code.
  */
 
 import { existsSync } from "node:fs";
@@ -40,7 +48,14 @@ import { type BundleGraph, buildGraph, loadBundle, toRefList, UNREADABLE_DIRECTO
 import { type Concept, idFromPath, parseConcept } from "../core/concept";
 import { generateIndexes, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END, locateManagedBlock } from "../core/indexes";
 import { loadProfile, type Profile } from "../core/profile";
-import { escapesRoot, isDriveRelative, type RewritePlan, resolvesToRoot, rewriteInbound } from "../core/rewrite";
+import {
+  escapesRoot,
+  isDriveRelative,
+  type RewritePlan,
+  renderLinkTextMismatchWarning,
+  resolvesToRoot,
+  rewriteInbound,
+} from "../core/rewrite";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_CODES, EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
@@ -173,6 +188,22 @@ export async function runRename(options: RenameOptions): Promise<number> {
   // concept differing only in case (which a case-sensitive `Map.has` misses) is never overwritten.
   // A target resolving to the *same* inode as the source is a legitimate case-only rename, allowed.
   assertTargetFree(plan, docsRoot);
+
+  // Every retargeted inbound link is still repointed exactly as before (LORE-262 AC#2 — no
+  // regression); a link whose visible text still names the OLD id is additionally called out as a
+  // stderr warning so the author can review the prose, rather than the mismatch shipping silently
+  // (LORE-262 AC#1). Skipping the retarget instead is not an option here: `lore rename` DELETES the
+  // old file, so a skipped link would become a genuinely dangling one — worse than a stale-reading
+  // text. A FRESH collector, not `advisories` — that one was already flushed above (LORE-82's
+  // ordering), and `flush()` is non-draining, so reusing it here would re-print the earlier
+  // bundle-load warnings a second time.
+  if (plan.textMismatches.length > 0) {
+    const mismatchWarnings = new WarningCollector();
+    for (const mismatch of plan.textMismatches) {
+      mismatchWarnings.add(renderLinkTextMismatchWarning(mismatch));
+    }
+    mismatchWarnings.flush({ color: options.output.color, stderr: options.stderr });
+  }
 
   // The Backlog back-ref move's own preconditions, checked up front (before any write) — but only
   // when the move will actually be attempted: a linked concept (an unlinked rename never touches
