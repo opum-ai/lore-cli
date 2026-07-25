@@ -28,6 +28,13 @@
  *   intact (else the successor links to itself), and a generated hub is never hand-rewritten (its
  *   file listing is unchanged, since supersede moves nothing).
  *
+ * Every retargeted link is still repointed to the successor — but when its visible text still names
+ * the OLD id (e.g. `[ADR-0005](…)`, now pointing at ADR-0006 — a supersession doc frequently cites
+ * its predecessor by name to explain the change), that would silently leave the prose and the link
+ * disagreeing. The engine flags each such {@link LinkTextMismatch} in the plan; this command renders
+ * one stderr `warning:` line per mismatch via {@link renderLinkTextMismatchWarning} (LORE-262) — the
+ * retarget and the exit code are unaffected, so this is purely advisory.
+ *
  * Validation lives here, because the engine's `move:false` path checks only that `oldId` exists (its
  * conflict guard is move-only): both ids must name concepts (`not_found`, exit 3); neither may be a
  * reserved hub name (`usage`, exit 2); and the old concept must not already be superseded —
@@ -41,7 +48,7 @@ import { join, posix } from "node:path";
 import { conceptNotInBundle, loadBundle, resolveRef, UNREADABLE_DIRECTORY_WARNING } from "../core/bundle";
 import { type Concept, idFromPath, serializeConcept } from "../core/concept";
 import { loadProfile } from "../core/profile";
-import { rewriteInbound } from "../core/rewrite";
+import { renderLinkTextMismatchWarning, rewriteInbound } from "../core/rewrite";
 import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
@@ -170,6 +177,20 @@ export function runSupersede(options: SupersedeOptions): number {
       writes.set(w.path, w.bytes);
     }
     rewroteLinks = writes.size > 0;
+
+    // Every retargeted inbound link is still repointed exactly as before (LORE-262 AC#2 — no
+    // regression); a link whose visible text still names the OLD id is additionally called out as a
+    // stderr warning so the author can review the prose, rather than the mismatch shipping silently
+    // (LORE-262 AC#1). A FRESH collector, not `advisories` — that one was already flushed above
+    // (LORE-82's ordering), and `flush()` is non-draining, so reusing it here would re-print the
+    // earlier bundle-load warnings a second time.
+    if (plan.textMismatches.length > 0) {
+      const mismatchWarnings = new WarningCollector();
+      for (const mismatch of plan.textMismatches) {
+        mismatchWarnings.add(renderLinkTextMismatchWarning(mismatch));
+      }
+      mismatchWarnings.flush({ color: options.output.color, stderr: options.stderr });
+    }
   }
 
   // Wire the principals' frontmatter (cloned, never mutating the graph snapshot) and serialize under
