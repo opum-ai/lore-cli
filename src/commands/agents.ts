@@ -45,17 +45,30 @@ export interface AgentsResult {
   files: ReadonlyArray<{ path: string; action: BridgeAction }>;
 }
 
-/**
- * Run `lore agents`: plan both bridge files from their on-disk bytes, apply the writes (unless
- * `--check`), render the result, and return the exit code. `--check` writes nothing and returns
- * `6` (`drift`) when any file is out of date, `0` otherwise; a normal run returns `0` (a differing
- * SKILL.md left `protected` for lack of `--force` is reported, not an error — `--check` is the gate).
- */
-export function runAgents(options: AgentsOptions): number {
-  const { force, check } = parseAgentsArgs(options.args);
+/** The parsed, validated arguments {@link applyAgentsBridge} needs — `root` plus `--force`/`--check`. */
+export interface ApplyAgentsOptions {
+  /** The repo root the bridge is written into (or checked against). */
+  root: string;
+  /** `--force`: overwrite a differing (possibly hand-edited) SKILL.md. */
+  force: boolean;
+  /** `--check`: report drift without writing. */
+  check: boolean;
+}
 
-  const skillOnDisk = normalizeOnDisk(readFileIfPresent(join(options.root, SKILL_REL_PATH), SKILL_REL_PATH));
-  const claudeRaw = readFileIfPresent(join(options.root, CLAUDE_MD_REL_PATH), CLAUDE_MD_REL_PATH);
+/**
+ * Plan both bridge files from their on-disk bytes and apply the writes (unless `check`) — the pure
+ * side-effecting core of `lore agents`, extracted (LORE-260) so `lore init`'s wizard/flags can fold
+ * the agent bridge into one onboarding run without going through `runAgents`' own arg-parsing/emit
+ * (which would print a second, separate envelope onto the SAME stdout `lore init` owns — the
+ * `--json` contract requires stdout be exclusively `init`'s own envelope, cli-contract §4). Returns
+ * the {@link AgentsResult}; the caller decides what to do with it (emit it directly for `lore agents`
+ * itself, or fold it into a larger structured result for `lore init`).
+ */
+export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
+  const { root, force, check } = options;
+
+  const skillOnDisk = normalizeOnDisk(readFileIfPresent(join(root, SKILL_REL_PATH), SKILL_REL_PATH));
+  const claudeRaw = readFileIfPresent(join(root, CLAUDE_MD_REL_PATH), CLAUDE_MD_REL_PATH);
   const claudeOnDisk = normalizeOnDisk(claudeRaw);
   // Detected from the RAW (pre-normalization) bytes, so a refresh of just the managed block can
   // re-apply the file's own BOM/EOL convention instead of silently rewriting it to LF/no-BOM
@@ -68,20 +81,19 @@ export function runAgents(options: AgentsOptions): number {
   // none, or the printed trailer falls through to the inert plain-`lore agents` remedy, which
   // leaves the file `protected` again and CI stays red (LORE-129).
   const plan = planBridge({ skillOnDisk, claudeOnDisk, force, check });
-  const drift = plan.files.some((file) => file.action !== "unchanged");
 
   if (!check) {
     const targets = plan.files.filter((file) => file.contents !== null).map((file) => file.path);
     // Swept as a whole before either file is written (LORE-93 AC#5) — `lore agents` writes two
     // files per run, and a bad target reached second in the loop must not leave the first already
     // written; ensureDir's own per-call guard alone is reactive to loop order.
-    assertNoSymlinkInAnyPath(options.root, targets);
+    assertNoSymlinkInAnyPath(root, targets);
     for (const file of plan.files) {
       if (file.contents === null) {
         continue; // unchanged, or protected without --force — leave the file untouched
       }
-      const absPath = join(options.root, file.path);
-      ensureDir(options.root, dirname(file.path));
+      const absPath = join(root, file.path);
+      ensureDir(root, dirname(file.path));
       // CLAUDE.md is a managed-block refresh over a user's hand-authored file: re-apply its
       // original BOM/EOL convention before writing (LORE-128). SKILL.md is wholesale-regenerated
       // (planSkill), so no such preservation applies there.
@@ -92,14 +104,25 @@ export function runAgents(options: AgentsOptions): number {
     }
   }
 
-  const result: AgentsResult = {
-    root: options.root,
+  return {
+    root,
     check,
     force,
     files: plan.files.map((file) => ({ path: file.path, action: file.action })),
   };
-  emit(agentsRenderable(result), options.output, options.stdout);
+}
 
+/**
+ * Run `lore agents`: the thin CLI layer over {@link applyAgentsBridge} — parse the arguments, apply
+ * the bridge, render the result, and return the exit code. `--check` writes nothing and returns `6`
+ * (`drift`) when any file is out of date, `0` otherwise; a normal run returns `0` (a differing
+ * SKILL.md left `protected` for lack of `--force` is reported, not an error — `--check` is the gate).
+ */
+export function runAgents(options: AgentsOptions): number {
+  const { force, check } = parseAgentsArgs(options.args);
+  const result = applyAgentsBridge({ root: options.root, force, check });
+  const drift = result.files.some((file) => file.action !== "unchanged");
+  emit(agentsRenderable(result), options.output, options.stdout);
   return check && drift ? EXIT_CODES.drift : EXIT_OK;
 }
 
