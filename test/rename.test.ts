@@ -609,6 +609,91 @@ describe("rewriteInbound — modes and validation", () => {
   });
 });
 
+// ── core: rewriteInbound — link text still names the old id (LORE-262) ─────────────
+
+describe("rewriteInbound — link text still names the old id (LORE-262)", () => {
+  test("supersede mode (move:false): a link citing the old ADR by number is still retargeted, and reported", () => {
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
+    writeDoc(
+      "stories/discuss.md",
+      "---\ntype: Story\n---\nWe replaced [ADR-0007](../adr/0007-old.md) because of a flaw.\n",
+    );
+    const plan = rewriteInbound(graph(), "adr/0007-old", "adr/0012-new", { move: false });
+    // The link is retargeted exactly as it would be without this feature (AC#2: no regression).
+    expect(writesByPath(plan).get("stories/discuss.md")).toContain("[ADR-0007](../adr/0012-new.md)");
+    expect(plan.textMismatches).toEqual([
+      { path: "stories/discuss.md", text: "ADR-0007", from: "adr/0007-old", to: "adr/0012-new" },
+    ]);
+  });
+
+  test("rename mode (move:true): the same citation on a THIRD-PARTY inbound file is retargeted, and reported", () => {
+    // Skipping the retarget is not an option for rename: the old file is deleted, so a skipped link
+    // would dangle. It is always retargeted; only the mismatch itself is now reported, not silent.
+    writeDoc("adr/0005-old.md", "---\ntype: ADR\n---\nOld.\n");
+    writeDoc(
+      "stories/discuss.md",
+      "---\ntype: Story\n---\nSee [ADR-0005](../adr/0005-old.md) for the original rationale.\n",
+    );
+    const plan = rewriteInbound(graph(), "adr/0005-old", "adr/0012-new", { move: true });
+    expect(writesByPath(plan).get("stories/discuss.md")).toContain("[ADR-0005](../adr/0012-new.md)");
+    expect(plan.textMismatches).toEqual([
+      { path: "stories/discuss.md", text: "ADR-0005", from: "adr/0005-old", to: "adr/0012-new" },
+    ]);
+  });
+
+  test("a non-numeric id's basename slug named in the link text is also detected", () => {
+    writeDoc("concepts/legacy-widget.md", "---\ntype: Reference\n---\nOld.\n");
+    writeDoc("concepts/modern-widget.md", "---\ntype: Reference\n---\nNew.\n");
+    writeDoc(
+      "stories/use.md",
+      "---\ntype: Story\n---\nSee [the legacy-widget approach](../concepts/legacy-widget.md) for background.\n",
+    );
+    const plan = rewriteInbound(graph(), "concepts/legacy-widget", "concepts/modern-widget", { move: false });
+    expect(plan.textMismatches).toEqual([
+      {
+        path: "stories/use.md",
+        text: "the legacy-widget approach",
+        from: "concepts/legacy-widget",
+        to: "concepts/modern-widget",
+      },
+    ]);
+  });
+
+  test("a reference-style link's text (on the linkReference, not the definition) is also checked", () => {
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
+    writeDoc(
+      "stories/discuss.md",
+      "---\ntype: Story\n---\nWe replaced [ADR-0007][old] because of a flaw.\n\n[old]: ../adr/0007-old.md\n",
+    );
+    const plan = rewriteInbound(graph(), "adr/0007-old", "adr/0012-new", { move: false });
+    const body = writesByPath(plan).get("stories/discuss.md") ?? "";
+    expect(body).toContain("[old]: ../adr/0012-new.md");
+    expect(plan.textMismatches).toEqual([
+      { path: "stories/discuss.md", text: "ADR-0007", from: "adr/0007-old", to: "adr/0012-new" },
+    ]);
+  });
+
+  test("an ordinary inbound link (text names something unrelated) produces no mismatch report (no false positive, AC#2)", () => {
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
+    writeDoc("stories/use.md", "---\ntype: Story\n---\nPer [the decision](../adr/0007-old.md).\n");
+    const plan = rewriteInbound(graph(), "adr/0007-old", "adr/0012-new", { move: false });
+    expect(writesByPath(plan).get("stories/use.md")).toContain("[the decision](../adr/0012-new.md)"); // still retargeted
+    expect(plan.textMismatches).toEqual([]);
+  });
+
+  test("the moved file's own self-link is exempt from detection even when its text names the old id (documented scope boundary)", () => {
+    // A self-referential citation inside the file being renamed itself — distinct from the shared
+    // "another concept links to fromId" edge this feature targets (see computeBodyEdits' doc comment).
+    writeDoc("adr/0005-old.md", "---\ntype: ADR\n---\nSee [ADR-0005](0005-old.md) for details.\n");
+    const plan = rewriteInbound(graph(), "adr/0005-old", "adr/0012-new", { move: true });
+    expect(writesByPath(plan).get("adr/0012-new.md")).toContain("[ADR-0005](0012-new.md)"); // still retargeted
+    expect(plan.textMismatches).toEqual([]);
+  });
+});
+
 describe("rewriteInbound — custom profile (LORE-88)", () => {
   test("without a profile, rewriting an inbound concept shaped only by a custom profile throws (repro)", () => {
     // reference/orders is renamed; stories/bulk links to it (an inbound edge, so rewriteInbound
@@ -668,13 +753,14 @@ describe("rewriteInbound — custom profile (LORE-88)", () => {
 
 // ── command: runRename ────────────────────────────────────────────────────────────
 
-/** Run `rename` in JSON mode and return the parsed `data` payload plus the exit code. */
-async function renameCmd(args: string[]): Promise<{ code: number; report: RenameReport }> {
+/** Run `rename` in JSON mode and return the parsed `data` payload, the exit code, and any stderr text. */
+async function renameCmd(args: string[]): Promise<{ code: number; report: RenameReport; stderr: string }> {
   const stdout = capture();
-  const code = await runRename({ root, output: JSON_CTX, args, stdout, stderr: capture() });
+  const stderr = capture();
+  const code = await runRename({ root, output: JSON_CTX, args, stdout, stderr });
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
   expect(envelope.kind).toBe("rename.result");
-  return { code, report: envelope.data };
+  return { code, report: envelope.data, stderr: stderr.text() };
 }
 
 /** Run `rename` expecting a thrown {@link LoreError}, returned for assertions. */
@@ -807,6 +893,33 @@ describe("lore rename — end to end", () => {
     });
     expect(stdout.text()).toContain("renamed docs/reference/orders.md -> docs/reference/sales-orders.md");
     expect(stdout.text()).toMatch(/\d+ files? changed/);
+  });
+});
+
+// ── command: link text still names the old id (LORE-262) ───────────────────────────
+
+describe("lore rename — link text still names the old id (LORE-262)", () => {
+  test("retargets AND warns on stderr when a third-party inbound link's text still names the old id", async () => {
+    writeDoc("adr/0005-old.md", "---\ntype: ADR\n---\nOld.\n");
+    writeDoc(
+      "stories/discuss.md",
+      "---\ntype: Story\n---\nSee [ADR-0005](../adr/0005-old.md) for the original rationale.\n",
+    );
+    const { report, stderr } = await renameCmd(["adr/0005-old", "adr/0012-new"]);
+    expect(report.filesChanged).toBeGreaterThan(0);
+    // Still retargeted exactly as before — the warning is advisory, not a behavior change (AC#2).
+    expect(readDoc("stories/discuss.md")).toContain("[ADR-0005](../adr/0012-new.md)");
+    expect(stderr).toContain('warning: link text "ADR-0005"');
+    expect(stderr).toContain("docs/stories/discuss.md");
+    expect(stderr).toContain("adr/0005-old");
+    expect(stderr).toContain("adr/0012-new");
+  });
+
+  test("an ordinary inbound link's text produces no warning", async () => {
+    writeDoc("adr/0005-old.md", "---\ntype: ADR\n---\nOld.\n");
+    writeDoc("stories/use.md", "---\ntype: Story\n---\n[the decision](../adr/0005-old.md)\n");
+    const { stderr } = await renameCmd(["adr/0005-old", "adr/0012-new"]);
+    expect(stderr).not.toContain("link text");
   });
 });
 

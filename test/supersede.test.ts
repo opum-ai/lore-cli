@@ -34,13 +34,14 @@ function readDoc(rel: string): string {
   return readFileSync(join(root, "docs", rel), "utf8");
 }
 
-/** Run `supersede` in JSON mode and return the parsed `data` payload plus the exit code. */
-function supersedeCmd(args: string[]): { code: number; report: SupersedeReport } {
+/** Run `supersede` in JSON mode and return the parsed `data` payload, the exit code, and any stderr text. */
+function supersedeCmd(args: string[]): { code: number; report: SupersedeReport; stderr: string } {
   const stdout = capture();
-  const code = runSupersede({ root, output: JSON_CTX, args, stdout, stderr: capture() });
+  const stderr = capture();
+  const code = runSupersede({ root, output: JSON_CTX, args, stdout, stderr });
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: SupersedeReport };
   expect(envelope.kind).toBe("supersede.result");
-  return { code, report: envelope.data };
+  return { code, report: envelope.data, stderr: stderr.text() };
 }
 
 /** Run `supersede` expecting a thrown {@link LoreError}, returned for assertions. */
@@ -247,6 +248,43 @@ describe("lore supersede — --rewrite-links (AC#2)", () => {
     const { report } = supersedeCmd(["adr/0007-old", "adr/0012-new", "--rewrite-links"]);
     expect(readDoc("index.md")).toBe(rootIndex); // the hub is excluded — listings are unchanged
     expect(report.files.map((f) => f.path)).not.toContain("docs/index.md");
+  });
+});
+
+// ── link text still names the old id (LORE-262) ─────────────────────────────────
+
+describe("lore supersede — link text still names the old id (LORE-262)", () => {
+  test("--rewrite-links retargets AND warns on stderr when the inbound link's text still names the old id", () => {
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
+    writeDoc(
+      "stories/discuss.md",
+      "---\ntype: Story\n---\nWe replaced [ADR-0007](../adr/0007-old.md) because of a flaw.\n",
+    );
+    const { report, stderr } = supersedeCmd(["adr/0007-old", "adr/0012-new", "--rewrite-links"]);
+    expect(report.rewroteLinks).toBe(true);
+    // Still retargeted exactly as before — the warning is advisory, not a behavior change (AC#2).
+    expect(readDoc("stories/discuss.md")).toContain("[ADR-0007](../adr/0012-new.md)");
+    expect(stderr).toContain('warning: link text "ADR-0007"');
+    expect(stderr).toContain("docs/stories/discuss.md");
+    expect(stderr).toContain("adr/0007-old");
+    expect(stderr).toContain("adr/0012-new");
+  });
+
+  test("an ordinary inbound link's text produces no warning", () => {
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
+    writeDoc("stories/use.md", "---\ntype: Story\n---\nPer [the decision](../adr/0007-old.md).\n");
+    const { stderr } = supersedeCmd(["adr/0007-old", "adr/0012-new", "--rewrite-links"]);
+    expect(stderr).not.toContain("link text");
+  });
+
+  test("without --rewrite-links, no warning is emitted (nothing was retargeted)", () => {
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
+    writeDoc("stories/discuss.md", "---\ntype: Story\n---\n[ADR-0007](../adr/0007-old.md) was replaced.\n");
+    const { stderr } = supersedeCmd(["adr/0007-old", "adr/0012-new"]);
+    expect(stderr).not.toContain("link text");
   });
 });
 
