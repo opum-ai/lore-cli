@@ -10,6 +10,7 @@
 - 2026-07-18T22:08:41-05:00 6475cc54afcc5c387924b774397e868068d532c4 docs(LORE-52): reconcile stale remark/unified references vs shipped stack
 - 2026-07-19T10:25:07-05:00 9650cd44bdb8a1b2e2c0e43da30bcde8cd91e1bc feat(LORE-56): Docker E2E test harness — real lore + pinned upstream Backlog.md (#52)
 - 2026-07-24T22:21:41-05:00 2e84d2bf13f643fe3c0be39656a66a930f7fdcc8 docs(LORE-254): document the upstream Backlog.md watch runbook
+- 2026-07-25T14:25:25-05:00 1d985157372c3a831a34e1fd6c3f1f04fc59ff2f docs(init): document the TTY-gated wizard (ADR-0017) and the one-command flow
 
 ## docs/adr
 
@@ -34,6 +35,8 @@
 - 2026-07-19T18:30:06-05:00 ea60fd696798a34a1fcf6a9ffa7748dfb8fbfc04 fix(LORE-67): correct stale CLI-surface claims and dead validate config knobs
 - 2026-07-25T09:22:49-05:00 3f5f53abb7ed2d426d204b2e411a9472eea4ebe0 docs: fix stale publish-job description in tech-stack.md and ADR-0001
 - 2026-07-25T09:22:49-05:00 5052ebc5f4f28501e9eb9b65f6dbe05c6a224886 docs(release-publishing): fix os/cpu dry-run claim + npm-floor wording
+- 2026-07-25T14:25:25-05:00 1d985157372c3a831a34e1fd6c3f1f04fc59ff2f docs(init): document the TTY-gated wizard (ADR-0017) and the one-command flow
+- 2026-07-25T14:25:25-05:00 a64b1b5344b35854f5fd92e2c69ef2a6d6b5f15e docs(init): correct ADR-0017/CHANGELOG accuracy claims from review
 
 ## docs/reference
 
@@ -69,6 +72,11 @@
 - 2026-07-24T22:55:21-05:00 c20e696c9ca1fa5d3cde8eba9d70a0cf8c2d94ca docs(cli-surface): fix scaffold exit-5 wording for dir vs file blockers
 - 2026-07-24T22:55:21-05:00 e8b668f877cbf2cc80e57e48a8399046af11e5ca docs(cli-surface): scaffold is idempotent-when-unchanged, not always-conflict
 - 2026-07-25T09:22:49-05:00 3f5f53abb7ed2d426d204b2e411a9472eea4ebe0 docs: fix stale publish-job description in tech-stack.md and ADR-0001
+- 2026-07-25T12:40:35-05:00 cac03fae04013bd5843b8153aa2adcac32dbe560 fix(orphans): correct ADR-0009 citation and match house-voice task-id style
+- 2026-07-25T12:40:35-05:00 dc91ca609d0e620d35342dd4d47f64926e65e62e docs(cli-surface): document orphans parent/subtask hierarchy awareness
+- 2026-07-25T14:25:25-05:00 1d985157372c3a831a34e1fd6c3f1f04fc59ff2f docs(init): document the TTY-gated wizard (ADR-0017) and the one-command flow
+- 2026-07-25T14:25:25-05:00 a64b1b5344b35854f5fd92e2c69ef2a6d6b5f15e docs(init): correct ADR-0017/CHANGELOG accuracy claims from review
+- 2026-07-25T14:25:25-05:00 bae8daf58f24ee351ae2425dd0f97323e6c1e16c docs(init): fix review round-3 text nits — CHANGELOG gloss, test count, EOF message, exit 6
 
 ## docs/runbooks
 
@@ -97,6 +105,7 @@
 - 2026-07-25T09:22:49-05:00 1025eb1b2fb7f51191fee2f11f072be90a78d182 docs(release-publishing): add partial-publish rollback + fix version-bump gap
 - 2026-07-25T09:22:49-05:00 5052ebc5f4f28501e9eb9b65f6dbe05c6a224886 docs(release-publishing): fix os/cpu dry-run claim + npm-floor wording
 - 2026-07-25T09:22:49-05:00 88f664119d29da8d982ec674782b1e199c83bcbb docs(release-publishing): add first-release checklist + rehearsal evidence
+- 2026-07-25T14:25:25-05:00 1d985157372c3a831a34e1fd6c3f1f04fc59ff2f docs(init): document the TTY-gated wizard (ADR-0017) and the one-command flow
 
 ## docs/specs
 
