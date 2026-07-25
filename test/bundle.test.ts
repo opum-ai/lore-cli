@@ -461,13 +461,33 @@ describe("loadBundle — filesystem", () => {
   test("skips non-.md files and frontmatter-less markdown, warning on the latter", () => {
     const root = fixture({
       "index.md": "---\ntype: Reference\n---\nok",
-      "adr/index.md": "# Plain index, no frontmatter\n",
+      "adr/notes.md": "# Plain notes, no frontmatter\n",
       "notes.txt": "not markdown",
     });
     const warnings = new WarningCollector();
     const g = loadBundle(root, { warnings });
     expect([...g.concepts.keys()]).toEqual(["index"]);
-    expect(warnings.list().some((w) => w.includes("adr/index.md") && w.includes("no frontmatter"))).toBe(true);
+    expect(warnings.list().some((w) => w.includes("adr/notes.md") && w.includes("no frontmatter"))).toBe(true);
+  });
+
+  test("skips a known-reserved stem (index/log) SILENTLY — no advisory, unlike a genuine non-concept file (LORE-258)", () => {
+    // `adr/index.md` and `log.md` are lore's own machine-generated hubs (indexes.ts/log.ts) —
+    // always frontmatter-less below the bundle root — so warning about them on every
+    // loadBundle-backed command was spurious noise (LORE-258). A stray, unexpected non-concept
+    // file (`adr/stray.md`) still warns: only the two reserved stems go quiet.
+    const root = fixture({
+      "index.md": "---\ntype: Reference\n---\nok",
+      "adr/index.md": "# Generated hub, no frontmatter\n",
+      "log.md": "# Generated changelog, no frontmatter\n",
+      "adr/stray.md": "# An unexpected non-concept file\n",
+    });
+    const warnings = new WarningCollector();
+    const g = loadBundle(root, { warnings });
+    expect([...g.concepts.keys()]).toEqual(["index"]);
+    const list = warnings.list();
+    expect(list.some((w) => w.startsWith("skipping adr/index.md:"))).toBe(false);
+    expect(list.some((w) => w.startsWith("skipping log.md:"))).toBe(false);
+    expect(list.some((w) => w.includes("adr/stray.md") && w.includes("no frontmatter"))).toBe(true);
   });
 
   test("a malformed (mapping but invalid) concept throws validation, not a silent skip", () => {

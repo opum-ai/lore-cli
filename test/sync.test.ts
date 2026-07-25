@@ -251,6 +251,35 @@ describe("lore sync — a reserved-stem concept (index/log) is never reconciled,
   });
 });
 
+describe("lore sync — reserved-stem non-concept files stay silent (LORE-258)", () => {
+  // `docs/log.md` and a child `index.md` are lore's own machine-generated hubs, always
+  // frontmatter-less — loadBundle used to warn "no frontmatter mapping" for them on every sync
+  // run, spurious noise `lore check` never raised for the same bundle. Only the two reserved
+  // stems (index/log) go quiet; a genuinely unexpected non-concept file still warns.
+  test("emits no advisory for docs/log.md or a child docs/adr/index.md", async () => {
+    writeDoc("stories/x.md", storyDoc("X", ["lore-1"], "todo"));
+    writeDoc("log.md", "# Generated changelog, no frontmatter\n");
+    writeDoc("adr/index.md", "# Generated hub, no frontmatter\n");
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done", title: "Ship it" })]);
+    const stderr = capture();
+
+    const code = await runSync({ root, output: JSON_CTX, args: [], adapter, ...baseOptions(), stderr });
+    expect(code).toBe(EXIT_OK);
+    expect(stderr.text()).not.toContain("no frontmatter mapping");
+  });
+
+  test("still warns about a genuinely unexpected non-concept file (not a reserved stem)", async () => {
+    writeDoc("stories/x.md", storyDoc("X", ["lore-1"], "todo"));
+    writeDoc("stray.md", "# Unexpected, no frontmatter\n");
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done", title: "Ship it" })]);
+    const stderr = capture();
+
+    const code = await runSync({ root, output: JSON_CTX, args: [], adapter, ...baseOptions(), stderr });
+    expect(code).toBe(EXIT_OK);
+    expect(stderr.text()).toContain("skipping stray.md: no frontmatter mapping");
+  });
+});
+
 // ── A concept with tasks: but no managed-block markers ────────────────────────────
 
 describe("lore sync — a concept with tasks: but no managed block", () => {
