@@ -28,6 +28,12 @@
  * re-run (nothing to do) apart from a genuine user edit (a real `conflict`) instead of treating
  * every pre-existing file the same way `createIfAbsent`'s plain absent/present check does.
  *
+ * The overwrite discipline's two write-temp-then-rename commands ({@link writeFileAtomic},
+ * {@link writeFileNoFollow}) share one more thing: their final commit `renameSync` goes through
+ * {@link renameOverDestination} (LORE-256), a small bounded retry-with-backoff on the Windows
+ * transient-lock codes (`EPERM`/`EBUSY`/`EACCES`) an antivirus scanner or the Search indexer can
+ * intermittently trigger on that rename — see that function's own docstring.
+ *
  * All side effects live in the command layer (lore-design §2.1); core stays pure. These
  * helpers are that side-effecting layer, factored to one module so the filesystem-conflict
  * semantics are identical across every command.
@@ -284,7 +290,89 @@ export function writeFileOverwriting(absPath: string, contents: string, relPath:
  * Because `writeFileSync` loops on a short write internally (the very behavior {@link writeAllBytes}
  * mirrors), the temp write no longer routes through `writeAllBytes`; that helper stays exported and
  * unit-tested standalone.
+ *
+ * The commit `renameSync` itself goes through {@link renameOverDestination} (LORE-256), not a bare
+ * `renameSync` call — see that function's own docstring for the bounded retry-with-backoff it adds
+ * on top of the plain rename. Everything above this point (temp-file create/write, mode/ownership
+ * preservation) runs exactly once regardless of that retry; only the final commit step can repeat.
  */
+
+/**
+ * The `errno` codes {@link renameOverDestination} treats as a transient, worth-retrying failure on
+ * the commit rename: on Windows, an antivirus scanner or the Search indexer can briefly hold the
+ * destination open, making an otherwise-correct `renameSync` intermittently fail with one of these
+ * even though nothing is actually wrong with the write (LORE-256). Gated on the *errno code*, not
+ * `process.platform` — the check is cheap, and a POSIX run essentially never produces one of these
+ * codes in the narrow window between this module's own temp-file create and its commit rename
+ * (nothing else in-process holds the destination open then), so this changes nothing observable
+ * about the common POSIX case: still exactly one `renameSync` call, same as before this fix. A
+ * PERSISTENT failure (POSIX or Windows) still ends in the identical classified error once the retry
+ * budget below exhausts — retrying only delays, never changes, that outcome.
+ */
+const RENAME_RETRY_CODES: ReadonlySet<string> = new Set(["EPERM", "EBUSY", "EACCES"]);
+
+/** Total `renameSync` attempts {@link renameOverDestination} makes before giving up — the first
+ *  attempt plus up to this many retries. Small and bounded on purpose: a genuinely stuck lock (or a
+ *  real, persistent permission problem, which shares these same codes) must still fail promptly
+ *  rather than hang the command. */
+const RENAME_MAX_ATTEMPTS = 4;
+
+/** Backoff before retry number `attempt` (1-indexed: the delay after attempt `attempt` has just
+ *  failed, before the next one) — doubles each retry, capped, so the whole bounded budget
+ *  ({@link RENAME_MAX_ATTEMPTS} attempts) resolves within a few hundred milliseconds at worst
+ *  (20ms, 40ms, 80ms — ~140ms total), covering the sub-second window these transient Windows locks
+ *  typically clear within without the retry budget itself taking long to exhaust. */
+function renameRetryDelayMs(attempt: number): number {
+  return Math.min(20 * 2 ** (attempt - 1), 100);
+}
+
+/**
+ * A synchronous, blocking sleep for {@link renameOverDestination}'s backoff — spins on `Date.now()`
+ * rather than `Atomics.wait`, deliberately: every write discipline in this module is synchronous
+ * (built directly on the sync `fs` primitives, with no async alternative available without a much
+ * wider refactor out of this task's scope), and `Atomics.wait`'s main-thread behavior is not
+ * something this codebase already relies on elsewhere or has verified on Bun/Windows CI — a plain
+ * `Date.now()` spin has no such platform uncertainty. The delays involved are small
+ * ({@link renameRetryDelayMs}) and this path is only ever reached after a rename has already failed
+ * with a retryable code, so the CPU cost of spinning is negligible against the alternative (failing
+ * a write that a brief wait would have let succeed).
+ */
+function blockingSleep(ms: number): void {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    // Busy-wait — see the docstring above for why this doesn't use Atomics.wait.
+  }
+}
+
+/**
+ * `renameSync(tmpPath, absPath)` — the commit step both {@link writeFileAtomic} and
+ * {@link writeFileNoFollow} share for their write-temp-then-rename discipline — wrapped with a
+ * small bounded retry-with-backoff on the Windows transient-lock codes ({@link RENAME_RETRY_CODES},
+ * LORE-256). Any OTHER failure code (`ENOENT`, `EISDIR`, …) is never retried: it is not a
+ * transient-lock symptom, so surfacing it immediately is both faster and behaves exactly as it did
+ * before this function existed. When the retry budget exhausts, the LAST failure is what's thrown —
+ * both callers' existing `catch` blocks classify it via {@link ioError} exactly as they always have
+ * (e.g. a persistent `EACCES`/`EPERM` still becomes the same `denied` {@link LoreError}), so a
+ * genuinely persistent failure is never swallowed into a false success; only a truly transient one
+ * gets the extra attempts.
+ */
+function renameOverDestination(tmpPath: string, absPath: string): void {
+  let attempt = 0;
+  for (;;) {
+    attempt += 1;
+    try {
+      renameSync(tmpPath, absPath);
+      return;
+    } catch (cause) {
+      const code = errnoCode(cause);
+      if (code === undefined || !RENAME_RETRY_CODES.has(code) || attempt >= RENAME_MAX_ATTEMPTS) {
+        throw cause;
+      }
+      blockingSleep(renameRetryDelayMs(attempt));
+    }
+  }
+}
+
 export function writeFileAtomic(absPath: string, contents: string, relPath: string): void {
   const tmpPath = join(dirname(absPath), `.lore-sync-tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
   let tmpFileExists = false;
@@ -332,7 +420,7 @@ export function writeFileAtomic(absPath: string, contents: string, relPath: stri
         // Swallowed: see above.
       }
     }
-    renameSync(tmpPath, absPath);
+    renameOverDestination(tmpPath, absPath);
   } catch (cause) {
     let cleanupFailed = false;
     if (tmpFileExists) {
@@ -766,6 +854,11 @@ export function writeAllBytes(write: (buf: Buffer, offset: number, length: numbe
  * on Bun/Windows) — see that function's docstring. The exclusive create is on the sibling `tmpPath`,
  * never on `absPath`, so it does not weaken the destination symlink refusal above. `writeFileSync`
  * loops on a short write internally, so the temp write no longer routes through {@link writeAllBytes}.
+ *
+ * The commit `renameSync` itself goes through {@link renameOverDestination} (LORE-256), the same
+ * bounded retry-with-backoff {@link writeFileAtomic} uses on its own commit rename — see that
+ * function's docstring. Retrying only the commit step leaves the symlink refusal above and the
+ * LORE-231/LORE-252 temp-file discipline untouched: both still run exactly once per call.
  */
 export function writeFileNoFollow(absPath: string, contents: string, relPath: string): void {
   let destStat: ReturnType<typeof lstatSync> | undefined;
@@ -818,7 +911,7 @@ export function writeFileNoFollow(absPath: string, contents: string, relPath: st
         // Swallowed: see above.
       }
     }
-    renameSync(tmpPath, absPath);
+    renameOverDestination(tmpPath, absPath);
   } catch (cause) {
     if (tmpFileExists) {
       try {
