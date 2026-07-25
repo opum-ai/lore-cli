@@ -121,7 +121,7 @@ the [CLI surface](cli-surface.md):
 | `kind` | Emitted by | `data` shape (summary) |
 |---|---|---|
 | `version` / `help` | `lore --version` / `lore --help` (global flags) | the version string / the top-level usage text |
-| `init` | `lore init` | created/skipped paths, bundle root |
+| `init` | `lore init` | created/skipped paths, bundle root, `interactive`/`scaffolds` always, `agents`/`backlog` only when those steps ran |
 | `new` | `lore new` | new concept id, path, applied template/vars |
 | `validate.report` | `lore validate` | tiered findings (errors/warnings), counts |
 | `check.report` | `lore check` | drift, broken-link, anchor, portability findings; token estimates |
