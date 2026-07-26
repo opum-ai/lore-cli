@@ -63,7 +63,7 @@ is **fail-loud** (exit 6, validation-or-drift) — never a silent fall-through.
 |---|---|---|
 | Enumerate tasks (current branch) | `backlog task list --json` | Current-branch / on-disk truth. **Never `backlog board`** — board has no `--json` (and no `--plain`). |
 | Read one task's full fields | `backlog task view <id> --json` | The authoritative per-task read. Carries the on-disk file path, all header fields, AC/DoD, and body. |
-| Fuzzy / label search | `backlog search "<q>" --json`, `backlog task list --json --labels "doc:<id>"` | Used by `orphans` / `unlink` to find tasks owning a doc. |
+| Fuzzy / label search | `backlog search "<q>" --json`, `backlog task list --json --labels "doc:<id>"` | Exposed on the adapter (`searchTasks`/`searchByLabel`); no lore command currently calls either — `orphans` reads the `doc:` label straight off its one unfiltered `task list --json` snapshot, and `unlink` operates on task ids named explicitly on the command line. |
 | Find tasks touching a file | `backlog search --modified-file <path> --json` | **Substring** match on the modified-file path, not exact. |
 
 ### 1.2 Prefer per-id `task view` for the managed block
@@ -164,8 +164,11 @@ backlog task edit <id> --add-label "doc:<conceptId>" --doc "<docpath>"
 
 - **`--add-label "doc:<conceptId>"` is the queryable index.**
   `backlog task list --json --labels "doc:<conceptId>"` does an exact AND-match
-  and returns the tagged tasks — this is what `lore orphans` / `lore unlink`
-  rely on.
+  and returns the tagged tasks — the capability (`BacklogAdapter.searchByLabel`)
+  that makes the label a real index rather than free text. In practice, `lore
+  orphans` reads labels directly off its one unfiltered `task list --json`
+  snapshot instead of calling this filtered form, and `lore unlink` operates on
+  task ids named explicitly on the command line.
 - **`--doc "<docpath>"` is display-only.** It writes the `documentation:`
   frontmatter field, visible in `task view`, but is **not** searchable or
   list-filterable. It is the readable cross-reference, not the index.
