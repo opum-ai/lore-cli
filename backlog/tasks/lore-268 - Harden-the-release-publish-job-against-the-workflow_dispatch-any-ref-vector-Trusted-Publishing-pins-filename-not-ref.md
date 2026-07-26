@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-25 23:20'
-updated_date: '2026-07-26 11:50'
+updated_date: '2026-07-26 12:05'
 labels:
   - security
   - build-ci-config
@@ -173,28 +173,12 @@ Files touched (exactly the task's declared scope, confirmed via git diff
 --stat): .github/workflows/release.yml, test/release-workflow.test.ts,
 docs/runbooks/release-publishing.md, CHANGELOG.md, backlog/tasks/lore-268*.
 No sibling-task files (agents.ts, doc-6 tracker, ADR-0009) touched.
+
+Fix pass (post-review): CHANGELOG.md's bolded lead falsely claimed the environment: release declaration was 'closing' the workflow_dispatch-on-any-ref exposure, contradicting the same entry's own later claim that 'the declaration alone does not yet provide protection.' Reworded the lead to call environment: release 'the out-of-file hook for closing' the exposure, inert until two repo-admin steps are done -- no closure claim, no self-contradiction. Also corrected docs/runbooks/release-publishing.md's deployment-branch-policy guidance: it presented a branch policy restricting deploys to main/release/* as a standalone alternative to required reviewers, but verified live via gh api that main carries NO branch protection (repos/jeremy-newhouse/lore/branches/main/protection -> 404 'Branch not protected') and the repo's only ruleset (require-docker-e2e-on-dev, id 19698059) targets refs/heads/dev only and enforces a required status check, not PR-only pushes. So today a deployment-branch policy restricted to main would NOT stop the attack this section exists to prevent -- an actor with write access can push a forged release.yml straight to unprotected main and dispatch it there. The runbook now states required reviewers as the option that holds regardless of branch protection, and states the branch-policy option is only sound if the allowed branch(es) are themselves protected against direct pushes -- which, in this repo today, they are not. The user should treat this as a live fact to address when doing the repo-admin half (either configure required reviewers on the release Environment, or add branch protection/a ruleset barring direct pushes to whichever branch a deployment-branch policy would allow). Also moved the unnumbered 'Repo-admin setup for the release Environment (LORE-268)' section from between Steps 1 and 2 to under ## Prerequisites, preserving the Steps section's 1/2/3 reading order; heading text and anchor (#repo-admin-setup-for-the-release-environment-lore-268) unchanged so the three existing cross-references (First-release checklist, Step 1, Step 2) still resolve, only two forward/backward-reference words ('below'/'above') were flipped to match the new position. lore check still reports 40 files/0/0. release.yml and test/release-workflow.test.ts untouched by this pass (confirmed via git diff).
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Hardened .github/workflows/release.yml's publish job against the
-workflow_dispatch-any-ref vector: added `environment: release`, an
-out-of-file gate (GitHub Environment protection rules live in repo Settings,
-not workflow content, so they survive a wholesale-replaced release.yml on an
-attacker branch — unlike an in-workflow ref guard, which was explicitly
-rejected and documented as insufficient). Extended
-test/release-workflow.test.ts to pin the new field (mutation-verified:
-deleting the line drops 10/10 pass to 9 pass/1 fail; restored). Added a new
-"Repo-admin setup for the release Environment (LORE-268)" section to
-docs/runbooks/release-publishing.md naming the two manual steps still
-required — create the `release` GitHub Environment with required reviewers
-and/or a deployment-branch policy, and set npm Trusted Publisher's
-Environment name field to `release` for all six packages — and stating
-plainly that until both are done the environment declaration is inert and
-the exposure remains open. All six LORE-255 guarantees verified intact.
-Verified: bun test 2177/0 pass (baseline 2176 + 1 new test), lore check 40
-files/0/0, lint and typecheck clean, actionlint clean on release.yml. Did
-not create the GitHub Environment or touch any repo setting — left to the
-repo admin per the task's scope split.
+Shipped the out-of-file hook for closing the workflow_dispatch-any-ref vector in .github/workflows/release.yml's publish job: added `environment: release` (GitHub Environment protection rules live in repo Settings, not workflow content, so they survive a wholesale-replaced release.yml on an attacker branch -- unlike an in-workflow ref guard, which was explicitly rejected and documented as insufficient). This does not itself close the exposure -- it stays fully open until a repo admin completes two follow-up steps: creating the release GitHub Environment with required reviewers and/or a deployment-branch policy, and setting npm Trusted Publisher's Environment name field to release for all six packages. Extended test/release-workflow.test.ts to pin the new field (mutation-verified: deleting the line drops 10/10 pass to 9 pass/1 fail; restored). Added a 'Repo-admin setup for the release Environment (LORE-268)' section to docs/runbooks/release-publishing.md naming both manual steps and stating plainly that until both are done the environment declaration is inert and the exposure remains open; a post-review fix pass also corrected that section's deployment-branch-policy guidance after verifying live that main carries no branch protection and the repo's only ruleset (require-docker-e2e-on-dev) doesn't bar direct pushes to main either -- so required reviewers is the option documented as holding regardless of branch protection, and the branch-policy option is now flagged as unsound in this repo today. All six LORE-255 guarantees verified intact. Verified: bun test 2177/0 pass (baseline 2176 + 1 new test), lore check 40 files/0/0, lint and typecheck clean, actionlint clean on release.yml. Did not create the GitHub Environment, configure branch protection, or touch any other repo setting -- left to the repo admin per the task's scope split.
 <!-- SECTION:FINAL_SUMMARY:END -->
