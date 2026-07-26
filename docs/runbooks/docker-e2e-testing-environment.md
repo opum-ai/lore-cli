@@ -53,6 +53,14 @@ harness locally first.
 - Run from the repo root — the compose file's build context is `../..` relative to `docker/e2e/`.
 - These prerequisites apply to a manual/local run only; the CI job above provisions its own
   Docker Engine and network access on `ubuntu-latest`.
+- **Never invoke `docker/e2e/run-e2e.sh` directly on the host** (e.g. `bash docker/e2e/run-e2e.sh`)
+  — always go through the `docker compose` command below. The script performs real, mutating
+  filesystem operations (`git init`, `backlog init`, `lore init`, and much more) rooted at its cwd;
+  inside its container that cwd is the disposable `/workspace`, but on a host it would be wherever
+  the script happened to be invoked from. The script refuses to run outside its container (LORE-269:
+  it checks for a container-only marker before doing anything else and exits 1 with a pointer back
+  to this command), so a mistaken direct invocation now fails closed instead of silently mutating
+  the caller's working tree.
 
 ## Steps
 
