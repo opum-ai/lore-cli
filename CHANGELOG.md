@@ -22,15 +22,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `created`, `updated`, and `unchanged` keep their existing colors; `--plain`/`--json` output, exit
   codes, and every other behavior are unchanged — this is a pretty-mode ANSI-color-only fix (cli-
   contract.md §1.2: pretty's coloring is explicitly not a parsing target and may change between
-  releases, so no `--plain` contract update was needed). Verified live under a real pty (`script`):
-  both `lore agents` and `lore init --agents`, run against a hand-edited `SKILL.md`, now emit the
-  identical `\x1b[33mprotected\x1b[0m` sequence (previously `lore agents` emitted
-  `\x1b[32mprotected\x1b[0m`); a piped (non-TTY) run of the same case emits zero ANSI bytes. A new
-  test in `test/agents.test.ts` pins `bridgeActionColor` for all four `BridgeAction` values and
-  checks the non-TTY suppression, so a future action added to the union without a mapping update
-  fails loud instead of silently defaulting to green. `bun test` 2180/0 pass (2176/0 baseline, +4),
-  `typecheck`/`lint` clean, `lore check` (40 files, 0 errors/warnings), docker e2e harness 302/0
-  (unchanged baseline).
+  releases, so no `--plain` contract update was needed). In `--check` mode the visible label still
+  comes from the drift-status wording (`up to date`/`out of date`) while the color still comes from
+  the raw action, so the same label can render in two colors — e.g. a stale `protected` file reads
+  yellow `out of date` next to a stale `updated` file's green `out of date` — matching which one
+  needs `--force`; this divergence is unchanged by this fix and is by design. Verified live under a
+  real pty (`script`): both `lore agents` and `lore init --agents`, run against a hand-edited
+  `SKILL.md`, now emit the identical `\x1b[33mprotected\x1b[0m` sequence (previously `lore agents`
+  emitted `\x1b[32mprotected\x1b[0m`); a piped (non-TTY) run of the same case emits zero ANSI bytes.
+  Four new tests in `test/agents.test.ts` pin `bridgeActionColor` for all four `BridgeAction` values,
+  the live `protected`-is-yellow rendering, that `created`/`unchanged` keep their own colors, and the
+  non-TTY suppression. `bridgeActionColor` itself is backed by a `Record<BridgeAction, string>`
+  (`src/commands/agents.ts`), a total mapping with no fallback branch, so a future action added to
+  the `BridgeAction` union without a matching entry is a `bun run typecheck` failure (TS2741, missing
+  property), caught before any test runs rather than silently defaulting to green at runtime — proved
+  by temporarily adding a fifth variant and confirming typecheck fails, then reverting it.
+  `bun test` 2180/0 pass (2176/0 baseline, +4), `typecheck`/`lint` clean, `lore check` (40 files, 0
+  errors/warnings), docker e2e harness 302/0 (unchanged baseline).
 - **`lore orphans` no longer reports a Backlog subtask as orphaned when its parent task is already
   linked to a doc** (LORE-261, surfaced by the Meridian 56-concept/40-task e2e stress test: `orphans`
   first reported 8 orphaned tasks instead of the intended 2, because linking a parent task to a Story
