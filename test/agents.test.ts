@@ -13,7 +13,16 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/cli";
@@ -178,6 +187,45 @@ describe("lore agents — refuses to write through a symlinked ancestor director
       } finally {
         rmSync(outsideDir, { recursive: true, force: true });
       }
+    },
+  );
+});
+
+describe("lore agents — the up-front sweep, not ensureDir's reactive guard, catches a NON-FIRST target (LORE-266)", () => {
+  // POSIX-only, matching this codebase's existing symlink tests' own skip guard.
+  test.skipIf(process.platform === "win32")(
+    "a symlink at CLAUDE.md (the SECOND bridge target) refuses before SKILL.md (the FIRST target) is ever written",
+    () => {
+      // core/agent-bridge.ts's planBridge always orders `files` as [SKILL.md, CLAUDE.md]. A fresh
+      // repo (this test's default tmpdir) plans to CREATE both, so both are non-null targets for
+      // assertNoSymlinkInAnyPath. Planting the symlink at CLAUDE.md — the SECOND target — means
+      // ensureDir's own per-call guard (which only checks each file's PARENT directory, one file at
+      // a time, as the write loop reaches it) would let SKILL.md's write proceed first, before the
+      // loop ever reaches CLAUDE.md at all: ensureDir(root, ".") for CLAUDE.md's parent never
+      // inspects the CLAUDE.md leaf itself, and writeFileAtomic's own commit `renameSync` replaces
+      // whatever sits at the destination (symlink or not) without erroring. Only a preflight sweep
+      // over the WHOLE planned write set, run BEFORE the loop starts, can refuse before SKILL.md is
+      // written at all — the property this test discriminates, which the LORE-93 regression test
+      // just above this describe block explicitly could NOT: there, the symlinked ancestor sits
+      // under SKILL.md itself (the FIRST target), so ensureDir's own reactive guard already throws
+      // on the very first loop iteration regardless of whether the sweep runs at all.
+      symlinkSync(join(root, "this-target-does-not-exist"), claudeAbs());
+
+      let thrown: unknown;
+      try {
+        runAgents({ root, output: JSON_CTX, args: [], stdout: capture() });
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(LoreError);
+      expect((thrown as LoreError).type).toBe("conflict"); // exit 5 (cli-contract §5.3 / EXIT_CODES.conflict)
+
+      // The whole point (distinguishing the up-front sweep from ensureDir's reactive guard): the
+      // FIRST target, SKILL.md, must never have been written — even though it sorts before
+      // CLAUDE.md in plan.files and has nothing wrong with its own path.
+      expect(existsSync(skillAbs())).toBe(false);
+      // The CLAUDE.md symlink itself is untouched — neither followed nor replaced.
+      expect(lstatSync(claudeAbs()).isSymbolicLink()).toBe(true);
     },
   );
 });
