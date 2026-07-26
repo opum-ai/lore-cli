@@ -35,7 +35,7 @@ is the supporting detail behind each checklist item.
 ## First-release checklist
 
 Walk this in order for the actual first release. Every item elaborates on a
-`## Steps` section below it — follow the link for the exact commands/fields;
+section below it — follow the link for the exact commands/fields;
 none of the automated checks in `release.yml` (`verify-versions`, `build`,
 `package`) substitute for these, since they check *consistency*, not
 *absence* (a value that is consistently still `0.0.0`, or a job that never
@@ -52,7 +52,8 @@ checklist's version-bump item first.
   1](#1-configure-npm-trusted-publishing-once-before-the-first-real-publish).
   One-time, must exist before the first publish attempt.
 - [ ] **The `release` GitHub Environment created with protection rules**
-  (required reviewers and/or a deployment branch policy) — [Repo-admin setup
+  (required reviewers — a deployment branch policy alone is not sufficient in
+  this repo today; see the linked section) — [Repo-admin setup
   for the release Environment (LORE-268)](#repo-admin-setup-for-the-release-environment-lore-268).
   Without this, `release.yml`'s `environment: release` declaration is
   cosmetic and the `workflow_dispatch`-on-any-ref exposure it exists to
@@ -139,26 +140,38 @@ LORE-196 and LORE-257):
   regardless of branch protection: any run — including one from a forged
   workflow file dispatched on an arbitrary attacker branch — pauses for
   manual approval before the `publish` job executes, no matter which branch
-  it came from. A **deployment branch policy** (e.g. restricting deploys to
-  `main` or a `release/*` pattern) is *not* a substitute for required
-  reviewers unless the allowed branch(es) are themselves protected against
-  direct pushes (branch protection or a ruleset that requires a PR and bars
-  pushing straight to the branch) — otherwise an actor with write access
-  just pushes their forged `release.yml` directly to an allowed branch and
-  dispatches it from there, satisfying the policy without ever opening a
-  PR. **In this repo, today, that precondition does not hold**: `main` has
-  no branch protection (`gh api repos/jeremy-newhouse/lore/branches/main/protection`
-  returns 404 "Branch not protected") and the repo's only ruleset
-  (`require-docker-e2e-on-dev`) targets `refs/heads/dev` only and enforces a
-  required status check, not PR-only pushes — so a deployment-branch policy
-  restricting to `main` would **not** currently stop the attack this
-  section exists to prevent. Either use required reviewers, or first lock
-  down direct pushes to whichever branch(es) the policy would allow, before
-  relying on a branch policy alone. GitHub auto-creates an environment the
-  first time a workflow references it if it doesn't already exist — but an
-  auto-created environment has **no** protection rules by default, so
-  skipping this step leaves the `environment: release` line in `release.yml`
-  purely cosmetic.
+  it came from. This holds only if the attacker is not themselves one of the
+  listed reviewers — write access alone does not confer reviewer status, but
+  enable GitHub's **Prevent self-review** option on the environment so a
+  listed reviewer cannot approve a run they dispatched themselves. A
+  **deployment branch policy** (e.g. restricting deploys to `main` or a
+  `release/*` pattern) is *not* a substitute for required reviewers unless
+  the allowed branch(es) are themselves protected against direct pushes
+  (branch protection or a ruleset that requires a PR and bars pushing
+  straight to the branch) — otherwise an actor with write access just pushes
+  their forged `release.yml` directly to an allowed branch and dispatches it
+  from there, satisfying the policy without ever opening a PR. Even a
+  ruleset that requires a PR can be defeated by its own **bypass list**: a
+  ruleset's `bypass_actors` entries let the roles named there push straight
+  past its rules, PR requirement included. This repo's own
+  `require-docker-e2e-on-dev` ruleset, for example, carries a
+  `RepositoryRole` id `5` (admin) bypass actor with `bypass_mode: "always"`
+  (`gh api repos/jeremy-newhouse/lore/rulesets/19698059`) — so any
+  admin-level actor bypasses it outright regardless of what its rules say;
+  check a ruleset's bypass list, not just its rules, before treating it as a
+  substitute for required reviewers. **In this repo, today, that
+  precondition does not hold**: `main` has no branch protection (`gh api
+  repos/jeremy-newhouse/lore/branches/main/protection` returns 404 "Branch
+  not protected") and the repo's only ruleset (`require-docker-e2e-on-dev`)
+  targets `refs/heads/dev` only and enforces a required status check, not
+  PR-only pushes — so a deployment-branch policy restricting to `main` would
+  **not** currently stop the attack this section exists to prevent. Either
+  use required reviewers, or first lock down direct pushes to whichever
+  branch(es) the policy would allow, before relying on a branch policy
+  alone. GitHub auto-creates an environment the first time a workflow
+  references it if it doesn't already exist — but an auto-created
+  environment has **no** protection rules by default, so skipping this step
+  leaves the `environment: release` line in `release.yml` purely cosmetic.
 - [ ] **Set each of the six packages' npm Trusted Publisher "Environment
   name" field to `release`** (Step 1, below). This is what stops an attacker
   from defeating the environment gate the same way they'd defeat any
