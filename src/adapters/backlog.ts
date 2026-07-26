@@ -777,10 +777,18 @@ function rejectFlagLike(value: string): string {
 
 /**
  * Comma-join multiple values into a single occurrence of one flag, so lore never has to repeat a
- * flag to send more than one value (§2.4). This is safe regardless of which multiplicity family the
- * flag belongs to: a single-value/last-wins flag and an accumulator flag both parse one comma-joined
- * occurrence identically, so the same helper serves `task list`/`task edit`'s accumulator label flags
- * and `task create`'s single-value one without needing to special-case either.
+ * flag to send more than one value (§2.4). This is safe for the label flags this helper actually
+ * serves — `task list`'s `--labels` filter, `task edit`'s `--add-label`/`--remove-label`
+ * (accumulators), and `task create`'s `--labels` (single-value/last-wins): lore always sends exactly
+ * one occurrence, never a repeat, and each of these four flags reads one comma-joined occurrence as
+ * the same intended list either way. This is a per-flag property, not a rule of "multiplicity
+ * family" in general, so do not assume it for a flag not listed above without checking Backlog's
+ * source first — e.g. `--assignee` is single-value/last-wins on both `create` and `edit` (§2.4), yet
+ * only `edit` comma-splits it (`create` takes the option's raw string as one literal value with no
+ * split at all). Dedup is also per-consumer, not per-family: `task list`/`task edit`'s label flags
+ * all dedup repeated values (via upstream's `parseDelimitedStringList`), but `task create --labels`
+ * does not (an inline split with no `Set`) — harmless here because every `commaJoin` caller already
+ * passes a purpose-built, non-repeating value list.
  * Backlog's CLI has no escape for an embedded comma — the comma **is** the delimiter — so a value
  * containing one cannot be sent safely: it would silently split into two (or more) unrelated
  * Backlog-side values instead of the one lore intends. Reject it instead. Each value is also run

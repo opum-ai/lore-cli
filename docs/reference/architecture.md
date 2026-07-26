@@ -128,12 +128,14 @@ fallback** — that omission is deliberate
 > `search` JSON summaries do not carry (see
 > [backlog-json-schema.md §4](backlog-json-schema.md#4-kind-task-list),
 > "No path field" — only `task view` carries a path, under the `file`/`path`
-> key). The "Reads"/"Writes" bullets below also still describe the
-> **pre-migration fork-based integration** (a compiled fork consumed as a git
-> dependency, and `task view` exiting `0` on a missing task); both are
-> superseded — `lore` now consumes upstream `MrLesk/Backlog.md` directly, and
-> `task view <missing>` exits `1` (see
-> [backlog-cli-contract.md §2.2](backlog-cli-contract.md#22-existence-checks--task-views-exit-code-is-meaningful)).
+> key). It also still reflects the **pre-migration fork-based integration**
+> (a compiled fork consumed as a git dependency, and `task view` exiting `0`
+> on a missing task) — superseded, since `lore` now consumes upstream
+> `MrLesk/Backlog.md` directly, and `task view <missing>` exits `1`. The
+> "Reads"/"Writes" bullets below have already been corrected in place for the
+> current integration (see
+> [backlog-cli-contract.md §2.2](backlog-cli-contract.md#22-existence-checks--task-views-exit-code-is-meaningful)
+> for the exit-code contract they cite).
 > For the authoritative adapter surface, read `src/adapters/backlog.ts`
 > directly; for the operational contract, read
 > [backlog-cli-contract.md](backlog-cli-contract.md) and

@@ -56,7 +56,8 @@ exits `1` unconditionally, in every output mode, and `lore`'s adapter
 migration the two LORE-5 amendments above already cover for items 1 and 4. See
 [backlog-cli-contract.md §2.2](../reference/backlog-cli-contract.md#22-existence-checks--task-views-exit-code-is-meaningful)
 for the full current contract and migration history, and
-[architecture.md §3](../reference/architecture.md) for the up-to-date summary.
+[architecture.md §3](../reference/architecture.md#3-the-backlogmd-adapter-adaptersbacklogts)
+for the up-to-date summary.
 Item 6 is left as originally written below for the historical record; this
 amendment is the authoritative statement of current behavior.
 
