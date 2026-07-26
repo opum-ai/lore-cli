@@ -110,6 +110,79 @@ checklist's version-bump item first.
 - GitHub-hosted runners only — npm trusted publishing does not support
   self-hosted runners (`release.yml` already uses `ubuntu-latest`).
 
+### Repo-admin setup for the release Environment (LORE-268)
+
+**Why this exists:** npm Trusted Publishing (Step 1, below) matches an OIDC
+token on **repository + workflow FILENAME — not a ref.** `release.yml` is
+`workflow_dispatch`-reachable on *any* branch, so an actor with write access
+to this repo could push a branch carrying a `release.yml` with every in-file
+guard stripped (the `if: inputs.publish == true` gate, the `0.0.0` refusal,
+the npm-version floor) and dispatch it there; the resulting OIDC token would
+still authenticate, because npm never looks at which ref the run came from.
+Every guard *inside* `release.yml` — including a hypothetical
+`if: github.ref == 'refs/heads/main'` check — is defeated by this, because
+the attacker supplies the workflow file itself. Only a control configured
+**outside** the file can survive the file being replaced.
+
+`release.yml`'s `publish` job now declares `environment: release`
+(LORE-268), which is the hook for that out-of-file control — but the
+declaration by itself does **not** provide any protection yet. Two separate
+pieces of repo-admin configuration have to exist before it does, and this
+task (LORE-268) deliberately does not perform either of them — creating a
+GitHub Environment and its protection rules, and registering it with npm,
+are both actions an agent must not self-authorize (the same boundary as
+LORE-196 and LORE-257):
+
+- [ ] **Create the `release` GitHub Environment** (repo Settings →
+  Environments → New environment, name it exactly `release`) and configure
+  its protection rules. **Required reviewers** is the option that holds
+  regardless of branch protection: any run — including one from a forged
+  workflow file dispatched on an arbitrary attacker branch — pauses for
+  manual approval before the `publish` job executes, no matter which branch
+  it came from. A **deployment branch policy** (e.g. restricting deploys to
+  `main` or a `release/*` pattern) is *not* a substitute for required
+  reviewers unless the allowed branch(es) are themselves protected against
+  direct pushes (branch protection or a ruleset that requires a PR and bars
+  pushing straight to the branch) — otherwise an actor with write access
+  just pushes their forged `release.yml` directly to an allowed branch and
+  dispatches it from there, satisfying the policy without ever opening a
+  PR. **In this repo, today, that precondition does not hold**: `main` has
+  no branch protection (`gh api repos/jeremy-newhouse/lore/branches/main/protection`
+  returns 404 "Branch not protected") and the repo's only ruleset
+  (`require-docker-e2e-on-dev`) targets `refs/heads/dev` only and enforces a
+  required status check, not PR-only pushes — so a deployment-branch policy
+  restricting to `main` would **not** currently stop the attack this
+  section exists to prevent. Either use required reviewers, or first lock
+  down direct pushes to whichever branch(es) the policy would allow, before
+  relying on a branch policy alone. GitHub auto-creates an environment the
+  first time a workflow references it if it doesn't already exist — but an
+  auto-created environment has **no** protection rules by default, so
+  skipping this step leaves the `environment: release` line in `release.yml`
+  purely cosmetic.
+- [ ] **Set each of the six packages' npm Trusted Publisher "Environment
+  name" field to `release`** (Step 1, below). This is what stops an attacker
+  from defeating the environment gate the same way they'd defeat any
+  in-file guard — by simply deleting the `environment: release` line from
+  their branch's copy of the workflow. Without this field set on npm's side,
+  omitting the line entirely skips the GitHub Environment check with no
+  consequence, because nothing downstream required that OIDC claim in the
+  first place. With it set, npm's verification independently rejects any
+  token that doesn't carry the `environment: release` claim — a check
+  npm performs on its own servers, which no edit to this repo's workflow
+  file can influence.
+
+**Residual risk:** the `environment: release` declaration shipped by
+LORE-268 is a necessary hook, not a complete mitigation on its own. Until
+**both** checklist items above are done, the exact attack this section
+opens with — a forged `release.yml` dispatched on an attacker-controlled
+branch — remains fully possible: an auto-created, rule-less environment
+blocks nothing, and an unconfigured npm Trusted Publisher doesn't require
+the environment claim at all. Neither this workflow change nor
+`test/release-workflow.test.ts` can verify that the two checklist items
+have actually been completed on npmjs.com/GitHub Settings — that
+verification has to happen out of band, by the repo admin who performs
+them.
+
 ## Steps
 
 ### 1. Configure npm Trusted Publishing (once, before the first real publish)
@@ -139,7 +212,7 @@ For **each of the six packages** (`@salient-data/lore` and the five
      actually deployed to a GitHub Environment named `release`. This is what
      closes the last loophole in the out-of-file gate described in
      [Repo-admin setup for the release Environment](#repo-admin-setup-for-the-release-environment-lore-268)
-     below: without this field set, an attacker who deletes the
+     above: without this field set, an attacker who deletes the
      `environment:` line from a forged copy of `release.yml` mints an OIDC
      token npm would still accept, because nothing on npm's side required
      the claim in the first place.
@@ -148,66 +221,6 @@ For **each of the six packages** (`@salient-data/lore` and the five
 Repeat for all six package names. Validation happens at publish time, not at
 save time — a typo here fails silently until the workflow actually tries to
 publish.
-
-### Repo-admin setup for the release Environment (LORE-268)
-
-**Why this exists:** npm Trusted Publishing (Step 1) matches an OIDC token on
-**repository + workflow FILENAME — not a ref.** `release.yml` is
-`workflow_dispatch`-reachable on *any* branch, so an actor with write access
-to this repo could push a branch carrying a `release.yml` with every in-file
-guard stripped (the `if: inputs.publish == true` gate, the `0.0.0` refusal,
-the npm-version floor) and dispatch it there; the resulting OIDC token would
-still authenticate, because npm never looks at which ref the run came from.
-Every guard *inside* `release.yml` — including a hypothetical
-`if: github.ref == 'refs/heads/main'` check — is defeated by this, because
-the attacker supplies the workflow file itself. Only a control configured
-**outside** the file can survive the file being replaced.
-
-`release.yml`'s `publish` job now declares `environment: release`
-(LORE-268), which is the hook for that out-of-file control — but the
-declaration by itself does **not** provide any protection yet. Two separate
-pieces of repo-admin configuration have to exist before it does, and this
-task (LORE-268) deliberately does not perform either of them — creating a
-GitHub Environment and its protection rules, and registering it with npm,
-are both actions an agent must not self-authorize (the same boundary as
-LORE-196 and LORE-257):
-
-- [ ] **Create the `release` GitHub Environment** (repo Settings →
-  Environments → New environment, name it exactly `release`) and configure
-  its protection rules: **required reviewers** (so any run — including one
-  from a forged workflow file — pauses for manual approval before the
-  `publish` job executes) and/or a **deployment branch policy** restricting
-  which branches may deploy to it (e.g. only `main` or a `release/*`
-  pattern, so a dispatch from an arbitrary attacker branch is rejected
-  before the job even starts, regardless of what that branch's copy of
-  `release.yml` contains). GitHub auto-creates an environment the first time
-  a workflow references it if it doesn't already exist — but an
-  auto-created environment has **no** protection rules by default, so
-  skipping this step leaves the `environment: release` line in `release.yml`
-  purely cosmetic.
-- [ ] **Set each of the six packages' npm Trusted Publisher "Environment
-  name" field to `release`** (Step 1 above). This is what stops an attacker
-  from defeating the environment gate the same way they'd defeat any
-  in-file guard — by simply deleting the `environment: release` line from
-  their branch's copy of the workflow. Without this field set on npm's side,
-  omitting the line entirely skips the GitHub Environment check with no
-  consequence, because nothing downstream required that OIDC claim in the
-  first place. With it set, npm's verification independently rejects any
-  token that doesn't carry the `environment: release` claim — a check
-  npm performs on its own servers, which no edit to this repo's workflow
-  file can influence.
-
-**Residual risk:** the `environment: release` declaration shipped by
-LORE-268 is a necessary hook, not a complete mitigation on its own. Until
-**both** checklist items above are done, the exact attack this section
-opens with — a forged `release.yml` dispatched on an attacker-controlled
-branch — remains fully possible: an auto-created, rule-less environment
-blocks nothing, and an unconfigured npm Trusted Publisher doesn't require
-the environment claim at all. Neither this workflow change nor
-`test/release-workflow.test.ts` can verify that the two checklist items
-have actually been completed on npmjs.com/GitHub Settings — that
-verification has to happen out of band, by the repo admin who performs
-them.
 
 ### 2. The `publish` job (already in `release.yml`)
 
