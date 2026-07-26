@@ -23,7 +23,8 @@ new ID from the `Created task <ID>` line) live in the companion
 [Backlog.md CLI contract](backlog-cli-contract.md). This page is the data shape
 only.
 
-> **Provenance.** Stock Backlog.md **v1.47.1 has no `--json` flag.** MrLesk's
+> **Provenance.** Stock Backlog.md — at `v1.47.1` **or** the current `v1.48.0`
+> tag — has **no `--json` flag**. MrLesk's
 > team shipped their own implementation independently —
 > [PR #790](https://github.com/MrLesk/Backlog.md/pull/790), "BACK-545 - Add
 > stable JSON output to read commands", merged 2026-07-16 to `MrLesk/Backlog.md`
