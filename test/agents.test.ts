@@ -17,7 +17,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/cli";
-import { type AgentsResult, runAgents } from "../src/commands/agents";
+import { type AgentsResult, bridgeActionColor, runAgents } from "../src/commands/agents";
 import {
   buildNudgeBody,
   buildSkillDoc,
@@ -26,7 +26,7 @@ import {
   planBridge,
   SKILL_REL_PATH,
 } from "../src/core/agent-bridge";
-import { LoreError } from "../src/errors";
+import { ANSI, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
 
@@ -378,6 +378,62 @@ describe("lore agents — output rendering", () => {
     const envelope = JSON.parse(stdout.text()) as { schemaVersion: number; kind: string };
     expect(envelope.schemaVersion).toBe(1);
     expect(envelope.kind).toBe("agents.result");
+  });
+});
+
+describe("lore agents — pretty-mode colour is pinned per BridgeAction (LORE-267, AC#1-3)", () => {
+  test("bridgeActionColor maps every BridgeAction exactly: created/updated green, unchanged dim, protected yellow", () => {
+    // Exhaustive over agent-bridge.ts's BridgeAction union (created | updated | unchanged |
+    // protected) so a fifth action added later fails this test instead of silently falling through
+    // to the `ANSI.green` default. `lore init`'s renderer (init.ts) imports this exact function, so
+    // pinning it here also pins init's colour — the two commands cannot diverge again (AC#3).
+    expect(bridgeActionColor("created")).toBe(ANSI.green);
+    expect(bridgeActionColor("updated")).toBe(ANSI.green);
+    expect(bridgeActionColor("unchanged")).toBe(ANSI.dim);
+    expect(bridgeActionColor("protected")).toBe(ANSI.yellow);
+  });
+
+  test("a hand-edited SKILL.md renders `protected` in yellow, never green, under pretty+color (AC#1)", () => {
+    mkdirSync(join(root, ".claude/skills/lore"), { recursive: true });
+    writeFileSync(skillAbs(), "hand-edited, not lore-generated\n");
+
+    const stdout = capture();
+    runAgents({ root, output: { mode: "pretty", color: true }, args: [], stdout });
+    const text = stdout.text();
+    // ANSI.yellow is \x1b[33m, ANSI.green is \x1b[32m — the exact bug LORE-267 fixes: `protected`
+    // used to fall through the old two-way `unchanged`-or-green split and paint green (success),
+    // reading as though the stale, hand-edited file were fine.
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting the exact ANSI sequence.
+    expect(text).toMatch(/\x1b\[33mprotected\x1b\[0m/);
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting the exact ANSI sequence is ABSENT.
+    expect(text).not.toMatch(/\x1b\[32mprotected\x1b\[0m/);
+  });
+
+  test("created and unchanged keep their own colours — no unintended recolouring (AC#2)", () => {
+    const first = capture();
+    runAgents({ root, output: { mode: "pretty", color: true }, args: [], stdout: first });
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting the exact ANSI sequence.
+    expect(first.text()).toMatch(/\x1b\[32mcreated\x1b\[0m/);
+
+    // Re-run against the now-current bridge: every file reports `unchanged`.
+    const second = capture();
+    runAgents({ root, output: { mode: "pretty", color: true }, args: [], stdout: second });
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting the exact ANSI sequence.
+    expect(second.text()).toMatch(/\x1b\[2munchanged\x1b\[0m/);
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting the exact ANSI sequence is ABSENT.
+    expect(second.text()).not.toMatch(/\x1b\[32munchanged\x1b\[0m/);
+  });
+
+  test("colour is suppressed on a non-TTY run regardless of action (LORE-250 discipline)", () => {
+    mkdirSync(join(root, ".claude/skills/lore"), { recursive: true });
+    writeFileSync(skillAbs(), "hand-edited, not lore-generated\n");
+
+    const stdout = capture();
+    runAgents({ root, output: { mode: "pretty", color: false }, args: [], stdout });
+    const text = stdout.text();
+    expect(text).toContain("protected");
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting NO ANSI escape is present.
+    expect(text).not.toMatch(/\x1b\[/);
   });
 });
 
