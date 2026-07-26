@@ -311,6 +311,26 @@ jobs:
     if: ${{ inputs.publish == true }}
     needs: [setup, package]
     runs-on: ubuntu-latest
+    # LORE-268: an OUT-OF-FILE gate, on top of (not instead of) the `if:` guard above.
+    # npm Trusted Publishing (LORE-255) matches OIDC tokens on repo + WORKFLOW FILENAME,
+    # not a ref, and this workflow is workflow_dispatch-reachable on any branch — so an
+    # actor with write access could push a branch carrying a release.yml with every
+    # in-file guard stripped (the `if:` above, the 0.0.0 refusal, the npm-version floor)
+    # and dispatch it there. An in-workflow `if: github.ref == …` guard would NOT close
+    # that: it lives in the exact file the attacker already controls, so it is trivially
+    # deleted along with everything else. `environment: release` instead ties this job to
+    # GitHub Environment protection rules (required reviewers / allowed deployment
+    # branches), which are repo Settings configuration evaluated by GitHub's deployment
+    # subsystem, not workflow content — they still apply to a run using a wholesale-
+    # replaced copy of this file. This line is INERT on its own: referencing an
+    # environment that has no protection rules configured auto-creates it with none, and
+    # an attacker who deletes this line from their forged copy skips the gate entirely
+    # unless npm's Trusted Publisher config for all six packages also requires this
+    # environment's OIDC claim. Both of those are repo-admin actions this workflow change
+    # does not and cannot perform — see docs/runbooks/release-publishing.md's "Repo-admin
+    # setup for the release Environment (LORE-268)" section for the exact steps and the
+    # residual risk until they're done.
+    environment: release
     # Job-scoped (not workflow-scoped): only serializes overlapping runs of THIS job —
     # two `publish: true` dispatches queued back-to-back run one after the other rather
     # than interleaving their `npm publish` calls, which the resumable skip-check
