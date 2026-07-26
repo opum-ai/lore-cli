@@ -133,7 +133,7 @@ fallback** — that omission is deliberate
 > dependency, and `task view` exiting `0` on a missing task); both are
 > superseded — `lore` now consumes upstream `MrLesk/Backlog.md` directly, and
 > `task view <missing>` exits `1` (see
-> [backlog-cli-contract.md §§2.2, 2.4](backlog-cli-contract.md#22-existence-checks--task-views-exit-code-is-meaningful)).
+> [backlog-cli-contract.md §2.2](backlog-cli-contract.md#22-existence-checks--task-views-exit-code-is-meaningful)).
 > For the authoritative adapter surface, read `src/adapters/backlog.ts`
 > directly; for the operational contract, read
 > [backlog-cli-contract.md](backlog-cli-contract.md) and

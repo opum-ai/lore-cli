@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@lore-e2e'
 created_date: '2026-07-26 12:46'
-updated_date: '2026-07-26 15:46'
+updated_date: '2026-07-26 16:04'
 labels:
   - docs-drift
   - adapter-backlog
@@ -210,6 +210,46 @@ Verification: bun test -> 2181 pass, 0 fail (49 files); bun run typecheck
 No fixes applied"; bun run lore check -> "40 files, 0 errors, 0 warnings";
 git status --porcelain shows only the two docs/reference/*.md files plus this
 task's own backlog/tasks/*.md - zero src/ changes.
+
+Fix-gate round (request_changes -> fixed): closed all 7 reviewer findings on
+docs/reference/backlog-cli-contract.md and 2 peer docs, without touching
+src/ or docs/reference/cli-contract.md.
+
+Root cause conceded: this task's own title ("v1.48.0 made all four repeatable
+accumulators") was wrong. `task list`'s `-l`/`--labels` was ALREADY an
+accumulator at v1.47.1 (real upstream src/cli.ts: taskCmd.command("list")
+declared line 2010, help schema "repeat --labels or use label1,label2" line
+2022, `.option("-l, --labels <labels>", ..., createMultiValueAccumulator())`
+lines 2041-2045) - confirmed unchanged at v1.48.0 (same option, line 2269).
+Only the three `task edit` flags (-l/--label, --add-label, --remove-label)
+changed family in v1.48.0; at v1.47.1 they were line 2370/2376/2377 with no
+processor arg (previous doc text cited fork-checkout line 513/524-525, which
+does not reproduce against real upstream at either tag - that was the
+blocking finding).
+
+Both v1.47.1 and v1.48.0 source fetched two independent ways (raw.
+githubusercontent.com + codeload tarball) with matching sha256, per repo
+convention. All new line citations (2370, 2376, 2377, 2010, 2022, 2041-2045,
+2928-2934, 2677, 2609-2611, serializer 51-70/51-71/68/83-95) verified against
+the fetched files before writing, not copied from the review prompt.
+
+Also fixed: dropped the false "still" on the --label/--add-label/--remove-
+label combine guard (it's new in v1.48.0, cli.ts:2928-2934; 0 occurrences of
+"Cannot combine" in v1.47.1's cli.ts); corrected the "two behaviors changed"
+count to enumerate all of what actually changed (task-edit label-flag
+accumulator conversion, the new combine guard, the new --clear-labels flag,
+and §2.5's edit idempotency) in all three places it was asserted; scoped the
+serializer sweep note precisely to the frontmatter key-set object (lines
+51-70 v1.47.1 / 51-71 v1.48.0, gains only `type` at line 68) vs. the AC/DoD
+section-emission logic that also changed (lines 83-95) but is out of scope
+for that claim; fixed architecture.md's "§§2.2, 2.4" citation (only §2.2 is
+topically relevant; §2.4 was a spurious addition, dropped); and reworded
+backlog-json-schema.md's provenance note so it no longer singles out v1.47.1
+now that the contract's floor is v1.48.0 (both lack --json).
+
+Re-verified: bun test 2181 pass/0 fail (49 files); bun run lore check 40
+files/0/0; bun run typecheck clean; bun run lint 112 files clean; git diff
+--stat dev...HEAD -- src/ empty; docs/reference/cli-contract.md untouched.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

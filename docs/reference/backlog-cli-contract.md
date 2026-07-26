@@ -22,13 +22,17 @@ verified against real upstream source **at tag `v1.48.0`** — the newest
 tagged release, and a reproducible reference point for a later reader — and
 reconfirmed unchanged at the PR #790 commit and current upstream `main`
 (`babd1d2`, `2026-07-19`). This replaces an earlier "v1.47.1 tested floor"
-framing that had gone stale: two behaviors below (§2.4's label-flag
-multiplicity, §2.5's edit idempotency) changed between v1.47.1 and v1.48.0,
-so a floor of v1.47.1 no longer describes this document's own content. The
-**code's** `MIN_BACKLOG_VERSION` constant (`src/adapters/backlog.ts`) is a
-separate, deliberately non-discriminating sanity floor and remains `1.47.1`
-(see §5) — that constant is not evidence that any CLI behavior below was
-verified at v1.47.1.
+framing that had gone stale: several things below changed between v1.47.1 and
+v1.48.0 — §2.4's `task edit` label-flag accumulator conversion (three flags:
+`-l`/`--label`, `--add-label`, `--remove-label`), §2.4's new hard-error guard
+against combining `--label` with `--add-label`/`--remove-label`, §2.4's new
+`--clear-labels` flag, and §2.5's edit idempotency — so a floor of v1.47.1 no
+longer describes this document's own content. (`task list`'s `-l`/`--labels`
+filter did **not** change between the two tags — see §2.4 — it was already an
+accumulator at v1.47.1.) The **code's** `MIN_BACKLOG_VERSION` constant
+(`src/adapters/backlog.ts`) is a separate, deliberately non-discriminating
+sanity floor and remains `1.47.1` (see §5) — that constant is not evidence
+that any CLI behavior below was verified at v1.47.1.
 
 Two facts shape everything below:
 
@@ -193,30 +197,51 @@ backlog task edit <id> --add-label "doc:<conceptId>" --doc "<docpath>"
 
 ### 2.4 Flag multiplicity rules
 
-Backlog's flags split into two families, and **the label flags moved between
-families in v1.48.0.** Getting this wrong silently drops data.
+Backlog's flags split into two families. **Three of `task edit`'s label flags
+(`-l`/`--label`, `--add-label`, `--remove-label`) moved families in
+v1.48.0** — from single-value/last-wins to accumulator. `task list`'s
+`-l`/`--labels` filter did **not** move: it was already an accumulator at
+v1.47.1 and is unchanged at v1.48.0. Getting this wrong silently drops data.
 
-**Since v1.48.0 (the pinned floor, see above) — accumulator, repeats AND
-commas both work:** `task list`'s `-l`/`--labels` filter, and `task edit`'s
-`-l`/`--label`, `--add-label`, and `--remove-label`. `-l A -l B` and
-`-l "A,B"` are now equivalent (`["A","B"]`). Verified against real upstream
-`MrLesk/Backlog.md` **at tag `v1.48.0`**, `src/cli.ts`: `-l, --labels <labels>`
-on `task list` (line 2269), `-l, --label <labels>` on `task edit` (line 2657),
-`--add-label <labels>` (line 2668), and `--remove-label <labels>` (line 2673)
-each pass `createMultiValueAccumulator()` (defined line 223: every repeat
-appends to an array) as Commander's option processor; each resulting array is
-later comma-split and normalized by `parseDelimitedStringList`
-(`src/utils/task-builders.ts` line 115, same tag).
+**At v1.48.0 — accumulator, repeats AND commas both work:** `task list`'s
+`-l`/`--labels` filter, and `task edit`'s `-l`/`--label`, `--add-label`, and
+`--remove-label`. `-l A -l B` and `-l "A,B"` are equivalent (`["A","B"]`) for
+all four. Verified against real upstream `MrLesk/Backlog.md` **at tag
+`v1.48.0`**, `src/cli.ts`: `-l, --labels <labels>` on `task list` (line 2269),
+`-l, --label <labels>` on `task edit` (line 2657), `--add-label <labels>`
+(line 2668), and `--remove-label <labels>` (line 2673) each pass
+`createMultiValueAccumulator()` (defined line 223: every repeat appends to an
+array) as Commander's option processor; each resulting array is later
+comma-split and normalized by `parseDelimitedStringList`
+(`src/utils/task-builders.ts` line 115, same tag). **Of these four, only the
+three `task edit` flags are new to v1.48.0 — `task list`'s `-l`/`--labels` was
+already an accumulator at v1.47.1** (see below); it is listed here only to
+state the full current-state picture in one place.
 
-**Before v1.48.0 (confirmed at tag `v1.47.1`) these same four flags had NO
-accumulator** — repeating the flag kept only the **last** value (`-l A -l B`
-→ `Labels: B`), matching what this document used to say. At `v1.47.1`,
-`src/cli.ts` line 513 (`.option("-l, --label <labels>")`) and lines 524–525
-(`.option("--add-label <label>")` / `.option("--remove-label <label>")`) pass
-no processor argument at all — confirmed by diffing `v1.47.1` against
-`v1.48.0`'s `src/cli.ts`. This is one of two behaviors in this document that
-changed between v1.47.1 and v1.48.0 (the other is §2.5's edit idempotency);
-every other claim in this file was re-checked and still holds at v1.48.0.
+**Before v1.48.0 (confirmed at tag `v1.47.1`) `task edit`'s three label flags
+had NO accumulator** — repeating the flag kept only the **last** value
+(`-l A -l B` → `Labels: B`). At `v1.47.1`, `src/cli.ts` line 2370
+(`.option("-l, --label <labels>")`), line 2376
+(`.option("--add-label <label>")`), and line 2377
+(`.option("--remove-label <label>")`) pass no processor argument at all —
+confirmed against real upstream `MrLesk/Backlog.md` source fetched at tag
+`v1.47.1` (`raw.githubusercontent.com`, sha256-matched against an
+independently-fetched `codeload` tarball of the same tag). This is one of
+several changes between v1.47.1 and v1.48.0 catalogued in this document's
+opening summary; every other claim in this file was re-checked and still
+holds at v1.48.0.
+
+**`task list`'s `-l`/`--labels` was already an accumulator at v1.47.1 — it did
+not change.** Confirmed against the same real upstream `v1.47.1` source:
+`taskCmd.command("list")` is declared at `src/cli.ts` line 2010, its help
+schema at line 2022 already reads "Require every listed label; repeat
+--labels or use label1,label2", and the option itself (lines 2041–2045) is
+`.option("-l, --labels <labels>", "filter tasks by labels; require every
+comma-separated label (repeatable)", createMultiValueAccumulator())` — the
+identical accumulator processor used at v1.48.0. This falsifies any reading
+of this document (or of LORE-270's own title) as claiming all four label
+flags became repeatable in v1.48.0: only the three `task edit` flags above
+did; `task list`'s filter always was.
 
 **Unaffected by the above — still single-value, last-wins in v1.48.0:**
 - `task create`'s `-l`/`--labels` (setting labels on a brand-new task) was
@@ -234,11 +259,14 @@ Practical consequence for `lore` — **its writes are unaffected either way,**
 because `lore` never repeats any of these flags; it always passes **one**
 occurrence per flag, comma-joining when there is more than one value
 (`src/adapters/backlog.ts`: `listTasks` ~line 838, `createTask` ~line 908,
-`editTask` ~line 946/949). Whether the flag is last-wins-with-comma-split
-(pre-v1.48.0) or an accumulator that also comma-splits (v1.48.0+), a single
-comma-joined occurrence produces the same result, so this version change is
-**not a behavior bug in lore** — it only changes what a *repeated* flag would
-do, and lore never repeats one:
+`editTask` ~line 946/949). For `task edit`'s three label flags — the ones
+that actually changed multiplicity — whether the processor is
+last-wins-with-comma-split (pre-v1.48.0) or an accumulator that also
+comma-splits (v1.48.0+), a single comma-joined occurrence produces the same
+result, so this version change is **not a behavior bug in lore** — it only
+changes what a *repeated* flag would do, and lore never repeats one.
+(`task list`'s `-l`/`--labels` was never affected either way — see above —
+and `lore`'s `listTasks` passes it at most once regardless.)
 
 - `lore link` adds a **single** `doc:<id>` label via `--add-label` (one value,
   no comma) — unaffected by either rule. `lore unlink` removes one via a
@@ -248,10 +276,20 @@ do, and lore never repeats one:
   multiplicity is ever passed; the v1.48.0 change has nothing to act on here.
 - `--add-label` / `--remove-label` are the **incremental** label ops
   (case-insensitive de-dup, preserves casing). Plain `--label`/`-l` on **edit**
-  is **SET/REPLACE** — it wipes all existing labels (a new `--clear-labels`
-  flag was added in v1.48.0 for explicitly clearing all labels, and `--label`
-  still cannot be combined with `--add-label`/`--remove-label`). `lore` uses
-  `--add-label`/`--remove-label` for incremental changes, never bare `--label`.
+  is **SET/REPLACE** — it wipes all existing labels. A `--clear-labels` flag
+  was added in v1.48.0 for explicitly clearing all labels (`src/cli.ts` line
+  2677, tag `v1.48.0`), and a hard-error guard against combining `--label`
+  with `--add-label`/`--remove-label` is **also new in v1.48.0**
+  (`src/cli.ts` lines 2928–2934: `if (options.label !== undefined &&
+  (options.addLabel !== undefined || options.removeLabel !== undefined))` →
+  `"Cannot combine --label with --add-label or --remove-label"`). At
+  v1.47.1 there was **no such guard**: `options.label`, `options.addLabel`,
+  and `options.removeLabel` were parsed side by side with no combination
+  check at all (`src/cli.ts` lines 2609–2611, same tag; confirmed 0
+  occurrences of the string `"Cannot combine"` anywhere in v1.47.1's
+  `cli.ts`). `lore` uses `--add-label`/`--remove-label` for incremental
+  changes, never bare `--label`, so neither the v1.47.1 absence nor the
+  v1.48.0 guard affects `lore`.
 - `--doc`/`--ref` on edit are also SET/REPLACE (the accumulator replaces the
   whole array), and **cannot be cleared** via an empty value (a `length > 0`
   guard ignores `--doc ""`). So `lore unlink` must re-pass the full desired
@@ -272,9 +310,10 @@ do, and lore never repeats one:
   - **This was NOT true at v1.47.1.** The pre-v1.48.0 `updateTask` (same file,
     same tag) unconditionally ran `task.updatedDate = new Date()...` on every
     call, with no comparison — so at v1.47.1 an edit that changed nothing
-    still bumped `updated_date`. This is the second of the two behaviors in
-    this document that changed between v1.47.1 and v1.48.0 (the first is
-    §2.4's flag multiplicity).
+    still bumped `updated_date`. This is one of the several changes between
+    v1.47.1 and v1.48.0 catalogued in this document's opening summary (the
+    others are §2.4's `task edit` label-flag accumulator conversion, its new
+    `--label` combination guard, and its new `--clear-labels` flag).
   - **Precision note:** `saveTask` (`src/file-system/operations.ts` line 389)
     calls an unconditional `Bun.write` on every `updateTask`, at both
     versions — Backlog does not skip the write syscall. "Idempotent" means
@@ -284,9 +323,14 @@ do, and lore never repeats one:
   (`YYYY-MM-DD HH:mm`). Same-minute collisions are possible — never treat
   `updated_date` as a monotonic ordering signal.
 - **Backlog drops unknown frontmatter keys on any mutating edit.** The
-  serializer writes a fixed key set (confirmed unchanged in substance between
-  v1.47.1 and v1.48.0 at `src/markdown/serializer.ts`; v1.48.0 additionally
-  serializes a `type` key when the task has one). **`lore` must never store
+  **frontmatter key set** (`src/markdown/serializer.ts`, the `frontmatter`
+  object literal — lines 51–70 at v1.47.1, lines 51–71 at v1.48.0) is
+  unchanged in substance between the two tags; v1.48.0's only addition to
+  that object is a `type` key (line 68) when the task has one. (The same
+  file's acceptance-criteria/Definition-of-Done section-emission logic also
+  changed between the two tags — `src/markdown/serializer.ts` lines 83–95 at
+  v1.48.0 — but that is body-content emission, not part of the frontmatter
+  key set, and out of scope for this bullet.) **`lore` must never store
   bespoke metadata as task frontmatter.** Anything `lore` needs on a task
   lives in a Backlog-recognized field: `labels` (the `doc:` back-ref),
   `documentation`, `references`, `dependencies`, or `milestone`. AC/DoD `#n`
