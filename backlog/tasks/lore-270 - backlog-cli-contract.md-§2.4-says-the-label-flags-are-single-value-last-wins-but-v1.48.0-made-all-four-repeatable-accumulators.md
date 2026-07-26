@@ -3,9 +3,11 @@ id: LORE-270
 title: >-
   backlog-cli-contract.md §2.4 says the label flags are single-value last-wins,
   but v1.48.0 made all four repeatable accumulators
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@lore-e2e'
 created_date: '2026-07-26 12:46'
+updated_date: '2026-07-26 15:46'
 labels:
   - docs-drift
   - adapter-backlog
@@ -48,9 +50,222 @@ Decide first **which version the document pins** — updating the floor to the v
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The document states one consistent Backlog.md version as its pinned floor, and that version is reconciled with the 'at or past PR #790' statement elsewhere in the same file
-- [ ] #2 §2.4's multiplicity claims for --labels/-l, --label, --add-label and --remove-label match the pinned version, verified against real upstream source at that tag (not the patched binary on PATH and not the local fork checkout) with a citation a later reader can reproduce
-- [ ] #3 Every other version-conditional claim in backlog-cli-contract.md is checked against the chosen pin and corrected or explicitly confirmed accurate
-- [ ] #4 It is stated explicitly whether lore's current writes are affected (link/unlink pass a single value per flag; orphans passes no filters), so a reader does not infer a behaviour bug that does not exist
-- [ ] #5 architecture.md's adapter sketch is either corrected or explicitly marked illustrative; full suite and lore check stay green and the diff contains no src/ changes
+- [x] #1 The document states one consistent Backlog.md version as its pinned floor, and that version is reconciled with the 'at or past PR #790' statement elsewhere in the same file
+- [x] #2 §2.4's multiplicity claims for --labels/-l, --label, --add-label and --remove-label match the pinned version, verified against real upstream source at that tag (not the patched binary on PATH and not the local fork checkout) with a citation a later reader can reproduce
+- [x] #3 Every other version-conditional claim in backlog-cli-contract.md is checked against the chosen pin and corrected or explicitly confirmed accurate
+- [x] #4 It is stated explicitly whether lore's current writes are affected (link/unlink pass a single value per flag; orphans passes no filters), so a reader does not infer a behaviour bug that does not exist
+- [x] #5 architecture.md's adapter sketch is either corrected or explicitly marked illustrative; full suite and lore check stay green and the diff contains no src/ changes
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Read docs/reference/backlog-cli-contract.md fully; confirm §2.4's label-flag
+   multiplicity claim and the two conflicting version statements (line ~15
+   'v1.47.1 tested floor' vs lines ~20-22 'at or past PR #790').
+2. Verify PR #790's real merge state via GitHub API (real upstream
+   MrLesk/Backlog.md, not the local patched fork/checkout): merge commit sha,
+   merge date, and its ancestry relative to the latest tag (v1.48.0). Confirm
+   v1.48.0 is an ancestor of the PR #790 commit (git compare), so the pinned
+   build is a superset of v1.48.0.
+3. Fetch real upstream src/cli.ts at tag v1.47.1 and v1.48.0 and diff them;
+   locate the exact `-l/--labels` (task list), `-l/--label`, `--add-label`,
+   `--remove-label` option definitions and confirm createMultiValueAccumulator()
+   was added in v1.48.0 (absent in v1.47.1). Cite exact upstream lines at the
+   v1.48.0 tag. Confirm --assignee/-a and --doc/--ref/--dep/--modified-file are
+   unaffected.
+4. Sweep every other version-conditional claim in the file against v1.48.0 (and
+   the PR #790 commit / current main where relevant): create/edit output format,
+   task view/archive exit codes, board/milestone --plain behavior, status icon
+   mapping, status defaults, and edit-idempotency/updated_date/frontmatter-key
+   behavior in src/core/backlog.ts + src/file-system/operations.ts +
+   src/markdown/serializer.ts. Found a second real drift: pre-v1.48.0 updateTask
+   unconditionally bumped updated_date on every edit (no idempotency guard) —
+   this only became true in v1.48.0.
+5. Verify lore's own writes are unaffected (AC#4): read src/adapters/backlog.ts
+   (listTasks/createTask/editTask all comma-join into a single flag occurrence,
+   never repeat a flag) and src/commands/link.ts/unlink.ts/orphans.ts (single
+   label per editTask call; orphans passes no listTasks filters at all).
+6. Rewrite backlog-cli-contract.md: reconcile the intro version-pin statement,
+   rewrite §2.4 with dated citations and the lore-is-unaffected consequence,
+   correct §2.5 for the idempotency finding, and re-date the Appendix's
+   "confirmed in v1.47.1" list to v1.48.0.
+7. Sweep peer docs (backlog-json-schema.md, ADRs) for restated multiplicity
+   claims — found none beyond generic --add-label mechanism mentions, which
+   remain accurate and untouched.
+8. Handle architecture.md's stale adapter sketch (~line 138, secondary AC#5):
+   found it more stale than flagged (also describes the pre-LORE-54
+   fork-consumption model and the old 'exits 0 on missing' behavior). Marked
+   the TS interface sketch explicitly illustrative/non-authoritative with a
+   citation-backed caveat, and directly corrected the two clearly-wrong prose
+   bullets (fork/git-dependency framing, exit-code-0 claim) since those fixes
+   were cheap and unambiguous.
+9. Check CHANGELOG precedent via `git show` on LORE-265's fix-pass commits
+   (docs-only, zero CHANGELOG.md touches) and decide accordingly.
+10. Verify: bun test, bun run typecheck, bun run lint, bun run lore check, and
+    confirm zero src/ diff.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Verified against real upstream MrLesk/Backlog.md (GitHub API + raw.githubusercontent.com), NOT
+the local patched --json fork/checkout, per the task's explicit constraint.
+
+Version facts (GitHub API, checked 2026-07-26):
+- Tags up to v1.48.0 (newest, released 2026-07-12). No v1.49+ tag exists.
+- PR #790 ("Add stable JSON output to read commands") merged 2026-07-16, merge
+  commit 22a091b570d44c4f302ca47e7fd36fa28ad8bcb0 (matches the sha already cited
+  in the doc). `compare/v1.48.0...22a091b5` -> ahead_by 10, behind_by 0: v1.48.0
+  is an ancestor of the PR #790 commit, so lore's actual pinned build (at or past
+  PR #790) is necessarily a superset of v1.48.0. Diffed src/cli.ts at v1.48.0 vs
+  the PR #790 commit vs current main (babd1d2, 2026-07-19): zero differences in
+  label/assignee handling across all three - the accumulator behavior is stable
+  from v1.48.0 through current main.
+
+AC#2 central finding (src/cli.ts, tag v1.48.0, fetched via
+raw.githubusercontent.com/MrLesk/Backlog.md/v1.48.0/src/cli.ts): `-l, --labels`
+on `task list` (line 2269), `-l, --label` on `task edit` (line 2657),
+`--add-label` (line 2668), `--remove-label` (line 2673) all pass
+createMultiValueAccumulator() (defined line 223). At v1.47.1 (same file, same
+tag-fetch method) these four had no processor argument at all (lines 513,
+524-525) - confirmed by diffing the two tags' cli.ts directly. `task create`'s
+-l/--labels (line 1691, v1.48.0) and --assignee/-a (all commands, both tags)
+were NOT converted - confirmed unaffected via the same diff (zero lines touch
+"label"/"assignee" outside the four edit/list flags). --doc/--ref/--dep/
+--modified-file already had the accumulator at v1.47.1 - unchanged.
+
+AC#3 sweep - every other version-conditional claim checked against v1.48.0/the
+PR#790 build:
+- §2.1 create output ("Created task <ID>" / "File:" lines): unchanged
+  v1.47.1->v1.48.0->PR790->main (grep confirms identical strings all four
+  places).
+- §2.2 task view/archive exit-1-on-missing: confirmed live in the PR#790
+  commit's cli.ts (taskCmd view action sets process.exitCode=1 unconditionally
+  in every output branch; task archive does the same) - this is the behavior
+  lore's build actually runs.
+- §3.1 status defaults: DEFAULT_STATUSES/FALLBACK_STATUS constants byte-identical
+  in src/constants/index.ts at v1.47.1 and v1.48.0 - confirmed accurate,
+  untouched.
+- §3.3 / Appendix status icons: src/ui/status-icon.ts at v1.48.0 matches the
+  doc's icon table exactly (Done Y/green, In Progress u+25D2/yellow,
+  Blocked ●/red, To Do ○/default, Review ◆/blue, Testing
+  ▣/cyan, unknown->○) - confirmed accurate, untouched (just re-dated).
+- Appendix board/--plain, milestone list --plain no-op: confirmed via
+  addBoardOptions (only --layout/--vertical/--milestones, no --plain/--json
+  declared at v1.48.0) and milestoneCmd "list" action (options.plain read but
+  never branched on - always prints the same format) - both unchanged since
+  v1.47.1 (zero diff lines).
+- §2.5 edit idempotency - REAL SECOND DRIFT FOUND: diffed src/core/backlog.ts
+  v1.47.1 vs v1.48.0. At v1.47.1, updateTask() unconditionally set
+  task.updatedDate = new Date()... on every call (line ~1099), no comparison -
+  so a no-op edit DID bump updated_date at v1.47.1, contradicting what the doc
+  claimed. At v1.48.0, updateTask() (line 1406) added
+  hasUpdatedDateRelevantChanges() (line 162, JSON.stringify comparison over a
+  fixed field allowlist) and only stamps updatedDate when that differs -
+  matching the doc's claim for the first time. Corrected §2.5 to date this
+  precisely and added a precision note: saveTask() (file-system/operations.ts)
+  still calls Bun.write unconditionally at both versions - "idempotent" means
+  byte-identical written content (no git diff), not a skipped write syscall.
+- serializer.ts fixed-key-set claim: diffed v1.47.1 vs v1.48.0 - only addition
+  is a `type` key when present; frontmatter-dropping behavior otherwise
+  unchanged - confirmed accurate, noted the one addition.
+
+AC#4: confirmed in src/adapters/backlog.ts that listTasks/createTask/editTask
+never repeat a flag - each comma-joins into one flag occurrence (lines ~838,
+908, 946, 949), so the v1.48.0 accumulator change is behaviorally inert for
+lore's writes either way. Confirmed via grep that link.ts/unlink.ts call
+editTask with single-element addLabels/removeLabels arrays, and
+orphans.ts's only listTasks() call passes no options at all. Stated explicitly
+in the rewritten §2.4.
+
+AC#5 architecture.md (~line 138): found MORE drift than flagged - the adapter
+sketch also still describes the pre-LORE-54 fork-consumption model ("lore
+consumes a fork... compiled as a local git dependency") and the old
+"task view exits 0 on missing" claim, both superseded by the current,
+already-corrected backlog-cli-contract.md. Chose: marked the TS interface
+sketch explicitly illustrative/non-authoritative (cheap - a caveat block,
+avoids redesigning the sketch's signature) with citations to
+backlog-json-schema.md §4 and backlog-cli-contract.md §2.2; directly corrected
+the two clearly-wrong prose bullets since those were one-line, unambiguous,
+already-cited fixes. AC#5's second half (full suite + lore check green, zero
+src/ diff) verified below.
+
+Peer-doc sweep (backlog-json-schema.md, docs/adr/*.md): grepped for
+"1.47.1"/"last-wins"/"accumulator"/"--add-label"/"--remove-label". Hits are
+all about a DIFFERENT claim (the --json flag not existing in stock Backlog,
+which remains true at v1.48.0 too - json landed in PR#790, after v1.48.0) or
+generic mechanism mentions with no multiplicity claim. None restate the
+label-flag last-wins/accumulator claim this task fixes - none needed changes.
+
+CHANGELOG: checked `git show` on LORE-265's fix-pass commits (bbc084b, 7e07262,
+24010c6, 9508c63, 135bb3b, 97f5cfe) - `git show --stat | grep CHANGELOG` returns
+zero hits on every one; all are docs-only fixes to backlog-cli-contract.md /
+ADR-0009 / backlog-json-schema.md, same file class as this task. Deliberately
+omitted a CHANGELOG entry, matching this direct precedent (docs-only accuracy
+fix, zero src/ changes, zero user-visible behavior change).
+
+Verification: bun test -> 2181 pass, 0 fail (49 files); bun run typecheck
+(tsc --noEmit) -> clean; bun run lint (biome check .) -> "Checked 112 files,
+No fixes applied"; bun run lore check -> "40 files, 0 errors, 0 warnings";
+git status --porcelain shows only the two docs/reference/*.md files plus this
+task's own backlog/tasks/*.md - zero src/ changes.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Fixed docs/reference/backlog-cli-contract.md's §2.4 label-flag multiplicity claim
+and reconciled the file's two conflicting version-pin statements, per real
+upstream MrLesk/Backlog.md source (never the local patched fork).
+
+Verified live (GitHub API + raw.githubusercontent.com, not the local build):
+v1.48.0 is the newest tag (released 2026-07-12) and an ancestor of PR #790's
+merge commit 22a091b5 (merged 2026-07-16) - so lore's actual "at or past PR
+#790" build is necessarily a superset of v1.48.0. Diffed upstream src/cli.ts
+at v1.47.1 vs v1.48.0: `-l/--labels` (task list, line 2269), `-l/--label`
+(edit, line 2657), `--add-label` (2668), `--remove-label` (2673) all gained
+createMultiValueAccumulator() in v1.48.0 (absent at v1.47.1, lines 513/524-525)
+- repeats AND commas now both work, where v1.47.1 was last-wins. `task
+create`'s -l/--labels and --assignee/-a were NOT converted anywhere - confirmed
+unaffected. Rewrote §2.4 with these citations, and reconciled the intro's
+version-pin statement (was "v1.47.1 tested floor", contradicting the "at or
+past PR #790" text 8 lines later) to state the pin consistently.
+
+Swept every other version-conditional claim in the file against v1.48.0
+(AC#3): found and fixed a SECOND real drift in §2.5 - pre-v1.48.0 `updateTask`
+(src/core/backlog.ts) unconditionally bumped `updated_date` on every edit, so
+the doc's "idempotent, no updated_date churn" claim was false at v1.47.1 and
+only became true at v1.48.0 (hasUpdatedDateRelevantChanges guard added).
+Re-verified and confirmed-unchanged (not corrected): create/edit output
+format, task view/archive exit codes, status defaults, status-icon mapping,
+board/milestone --plain behavior, and the frontmatter fixed-key-set claim.
+
+AC#4: confirmed in src/adapters/backlog.ts and src/commands/link.ts/unlink.ts/
+orphans.ts that lore never repeats a flag (comma-joins into one occurrence)
+and orphans passes no filters at all - stated explicitly in §2.4 that the
+v1.48.0 change is behaviorally inert for lore's own writes.
+
+AC#5: architecture.md's adapter sketch (~line 138) was more stale than
+flagged - also described the pre-LORE-54 fork-consumption model and the old
+"exits 0 on missing" claim. Marked the TS interface sketch explicitly
+illustrative/non-authoritative with citations (backlog-json-schema.md §4,
+backlog-cli-contract.md §2.2), and directly corrected the two clearly-wrong
+prose bullets since those fixes were cheap and unambiguous.
+
+Swept peer docs (backlog-json-schema.md, docs/adr/*.md) for restated
+multiplicity claims - found none needing changes (existing --add-label/
+--json-provenance mentions are a different, still-accurate claim).
+
+CHANGELOG: deliberately omitted, per direct precedent checked via `git show`
+on LORE-265's fix-pass commits (bbc084b, 7e07262, 24010c6, 9508c63, 135bb3b,
+97f5cfe) - all docs-only fixes to the same file class, zero CHANGELOG.md
+touches in any of them.
+
+Verification actually run: bun test -> 2181 pass / 0 fail (49 files); bun run
+typecheck (tsc --noEmit) -> clean, no output; bun run lint (biome check .) ->
+"Checked 112 files in 95ms. No fixes applied."; bun run lore check -> "40
+files, 0 errors, 0 warnings"; git status --porcelain confirms zero src/
+changes (only the two docs/reference/*.md files plus this task's own
+backlog/tasks/ record).
+<!-- SECTION:FINAL_SUMMARY:END -->
