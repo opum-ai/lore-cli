@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@lore-e2e'
 created_date: '2026-07-26 12:46'
-updated_date: '2026-07-26 16:04'
+updated_date: '2026-07-26 16:22'
 labels:
   - docs-drift
   - adapter-backlog
@@ -124,16 +124,22 @@ Version facts (GitHub API, checked 2026-07-26):
   from v1.48.0 through current main.
 
 AC#2 central finding (src/cli.ts, tag v1.48.0, fetched via
-raw.githubusercontent.com/MrLesk/Backlog.md/v1.48.0/src/cli.ts): `-l, --labels`
-on `task list` (line 2269), `-l, --label` on `task edit` (line 2657),
-`--add-label` (line 2668), `--remove-label` (line 2673) all pass
-createMultiValueAccumulator() (defined line 223). At v1.47.1 (same file, same
-tag-fetch method) these four had no processor argument at all (lines 513,
-524-525) - confirmed by diffing the two tags' cli.ts directly. `task create`'s
--l/--labels (line 1691, v1.48.0) and --assignee/-a (all commands, both tags)
-were NOT converted - confirmed unaffected via the same diff (zero lines touch
-"label"/"assignee" outside the four edit/list flags). --doc/--ref/--dep/
---modified-file already had the accumulator at v1.47.1 - unchanged.
+raw.githubusercontent.com/MrLesk/Backlog.md/v1.48.0/src/cli.ts): `task edit`'s
+`-l, --label` (line 2657), `--add-label` (line 2668), and `--remove-label`
+(line 2673) all pass createMultiValueAccumulator() (defined line 223) - newly
+converted in v1.48.0. At v1.47.1 (same file, same tag-fetch method) these same
+three `task edit` flags had no processor argument at all (lines 2370, 2376,
+2377 respectively) - confirmed by diffing the two tags' cli.ts directly.
+`task list`'s `-l, --labels` (line 2269, v1.48.0) is a fourth flag carrying the
+same accumulator, but it did NOT change between tags: at v1.47.1 it was
+already declared with the identical createMultiValueAccumulator() processor
+(command declared line 2010, help schema line 2022, option itself lines
+2041-2045) - confirmed unchanged. `task create`'s -l/--labels (line 1691,
+v1.48.0) and --assignee/-a (all commands, both tags) were NOT converted -
+confirmed unaffected via the same diff (zero lines touch "label"/"assignee"
+outside the three edit flags plus the already-accumulator list flag).
+--doc/--ref/--dep/--modified-file already had the accumulator at v1.47.1 -
+unchanged.
 
 AC#3 sweep - every other version-conditional claim checked against v1.48.0/the
 PR#790 build:
@@ -250,6 +256,33 @@ now that the contract's floor is v1.48.0 (both lack --json).
 Re-verified: bun test 2181 pass/0 fail (49 files); bun run lore check 40
 files/0/0; bun run typecheck clean; bun run lint 112 files clean; git diff
 --stat dev...HEAD -- src/ empty; docs/reference/cli-contract.md untouched.
+
+Fix-gate round 2 (request_changes -> fixed): round-1's fix-gate pass had
+already conceded the root cause above (task list's -l/--labels was already an
+accumulator at v1.47.1) but left this section's own "AC#2 central finding"
+paragraph and the mirrored paragraph in Final Summary both still asserting the
+pre-round-1 claim - that all four label flags gained
+createMultiValueAccumulator() in v1.48.0, citing the dead fork-checkout lines
+513/524-525 - making the task record self-contradictory. Both paragraphs are
+now corrected in place to scope the v1.48.0 change to the three `task edit`
+flags only, citing the real upstream v1.47.1 line numbers (2370, 2376, 2377)
+for those three flags; `task list`'s unchanged accumulator status is stated
+consistently in both places now. Also re-verified the `src/markdown/
+serializer.ts` AC/DoD emission range cited in the doc (was a single "83-95"
+range that cut the DoD condition off mid-block; now split into the two real
+hunks, 83-89 (AC) and 92-98 (DoD)), the `saveTask`/`Bun.write` precision note
+(now cites both tags' actual line numbers: operations.ts 289/342 at v1.47.1,
+389/443 at v1.48.0, rather than only the v1.48.0 number), the §2.5 "same tag"
+typo (now reads v1.47.1, with `src/core/backlog.ts` lines 1089/1099 cited),
+and the truncated "Cannot combine" quote (now quoted in full, `cli.ts:2930`).
+The opening summary's and §2.5's "the others are" change-catalogues were both
+extended to also name the two `serializer.ts` changes (the `type` key
+addition and the AC/DoD emission logic change) that the document itself
+already documented elsewhere but the catalogues omitted.
+
+Re-verified again: bun test 2181 pass/0 fail (49 files); bun run lore check 40
+files/0/0; bun run typecheck clean; bun run lint 112 files clean; git diff
+--stat dev...HEAD -- src/ empty; docs/reference/cli-contract.md untouched.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
@@ -263,14 +296,17 @@ Verified live (GitHub API + raw.githubusercontent.com, not the local build):
 v1.48.0 is the newest tag (released 2026-07-12) and an ancestor of PR #790's
 merge commit 22a091b5 (merged 2026-07-16) - so lore's actual "at or past PR
 #790" build is necessarily a superset of v1.48.0. Diffed upstream src/cli.ts
-at v1.47.1 vs v1.48.0: `-l/--labels` (task list, line 2269), `-l/--label`
-(edit, line 2657), `--add-label` (2668), `--remove-label` (2673) all gained
-createMultiValueAccumulator() in v1.48.0 (absent at v1.47.1, lines 513/524-525)
-- repeats AND commas now both work, where v1.47.1 was last-wins. `task
-create`'s -l/--labels and --assignee/-a were NOT converted anywhere - confirmed
-unaffected. Rewrote §2.4 with these citations, and reconciled the intro's
-version-pin statement (was "v1.47.1 tested floor", contradicting the "at or
-past PR #790" text 8 lines later) to state the pin consistently.
+at v1.47.1 vs v1.48.0: only three of the four label flags changed - `task
+edit`'s `-l/--label` (line 2657), `--add-label` (2668), and `--remove-label`
+(2673) all gained createMultiValueAccumulator() in v1.48.0 (absent at v1.47.1,
+lines 2370/2376/2377 respectively) - repeats AND commas now both work there,
+where v1.47.1 was last-wins. `task list`'s `-l/--labels` (line 2269, v1.48.0)
+did NOT change - it was already an accumulator at v1.47.1 (lines 2041-2045)
+and remains so, unchanged. `task create`'s -l/--labels and --assignee/-a were
+NOT converted anywhere - confirmed unaffected. Rewrote §2.4 with these
+citations, and reconciled the intro's version-pin statement (was "v1.47.1
+tested floor", contradicting the "at or past PR #790" text 8 lines later) to
+state the pin consistently.
 
 Swept every other version-conditional claim in the file against v1.48.0
 (AC#3): found and fixed a SECOND real drift in §2.5 - pre-v1.48.0 `updateTask`
@@ -308,4 +344,28 @@ typecheck (tsc --noEmit) -> clean, no output; bun run lint (biome check .) ->
 files, 0 errors, 0 warnings"; git status --porcelain confirms zero src/
 changes (only the two docs/reference/*.md files plus this task's own
 backlog/tasks/ record).
+
+Fix-gate round 2: round-1's fix-gate pass corrected §2.4 and §2.5 in the doc
+but left this Final Summary's "Verified live" paragraph above still asserting
+the pre-round-1 claim (all four label flags gained the accumulator in
+v1.48.0, citing the dead fork-checkout lines 513/524-525) - the same
+self-contradiction the round-1 Implementation Notes had separately conceded
+without fixing here. That paragraph is now corrected in place: only the three
+`task edit` flags changed in v1.48.0 (real upstream v1.47.1 lines 2370/2376/
+2377 for those three), and `task list`'s `-l/--labels` is stated as unchanged
+since v1.47.1. Also re-verified: the doc's `saveTask`/`Bun.write` precision
+note now cites both tags' real line numbers (operations.ts 289/342 at
+v1.47.1, 389/443 at v1.48.0); the §2.5 "same tag" reference now correctly
+reads v1.47.1 with `src/core/backlog.ts` lines 1089/1099 cited; the
+`src/markdown/serializer.ts` AC/DoD emission range is now split into its two
+real hunks (83-89 AC, 92-98 DoD) instead of one range that cut the DoD
+condition off mid-block; the truncated "Cannot combine" quote is now quoted
+in full (`cli.ts:2930`); and both of the document's "the others are"
+change-catalogues now also name the two `serializer.ts` changes (the `type`
+key addition and the AC/DoD emission logic change) the document itself
+already documented elsewhere.
+
+Re-verified again: bun test 2181 pass / 0 fail (49 files); bun run lore check
+40 files/0/0; bun run typecheck clean; bun run lint 112 files clean; git diff
+--stat dev...HEAD -- src/ empty; docs/reference/cli-contract.md untouched.
 <!-- SECTION:FINAL_SUMMARY:END -->
