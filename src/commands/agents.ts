@@ -206,22 +206,32 @@ function actionLabel(action: BridgeAction, check: boolean): string {
 }
 
 /**
- * The colour a bridge file's {@link BridgeAction} paints in `pretty` mode: `unchanged` is dim
- * (nothing happened), `protected` is a warning (a hand-edited file was deliberately left untouched
- * — see {@link renderTrailer}), and everything else (`created`/`updated`) is a success green.
- * Exported (LORE-267) so `lore init`'s own renderer (init.ts) paints the exact same
- * {@link BridgeAction} in the exact same colour, instead of keeping a second, hand-maintained copy
- * of this mapping that can silently drift from this one — which is exactly how `protected` came to
- * render green here (a two-way `unchanged`-or-green split) while `init` already painted it yellow.
+ * The colour each {@link BridgeAction} paints in `pretty` mode: `unchanged` is dim (nothing
+ * happened), `protected` is a warning (a hand-edited file was deliberately left untouched — see
+ * {@link renderTrailer}), and `created`/`updated` are a success green. A total `Record`, not a
+ * chain of `===` checks with a trailing fallback: TypeScript requires every {@link BridgeAction}
+ * literal as a key, so a sixth/future variant added to that union without a matching entry here is
+ * a compile error (`bun run typecheck` fails), not a silent runtime fall-through to some default
+ * colour. That total mapping is also why there is no fallback to reconsider — an action outside the
+ * union cannot reach {@link bridgeActionColor} at all, well-typed callers included.
+ */
+const BRIDGE_ACTION_COLOR: Record<BridgeAction, string> = {
+  unchanged: ANSI.dim,
+  protected: ANSI.yellow,
+  created: ANSI.green,
+  updated: ANSI.green,
+};
+
+/**
+ * The colour a bridge file's {@link BridgeAction} paints in `pretty` mode — see
+ * {@link BRIDGE_ACTION_COLOR}. Exported (LORE-267) so `lore init`'s own renderer (init.ts) paints
+ * the exact same {@link BridgeAction} in the exact same colour, instead of keeping a second,
+ * hand-maintained copy of this mapping that can silently drift from this one — which is exactly how
+ * `protected` came to render green here (the old two-way `unchanged`-or-green split) while `init`
+ * already painted it yellow.
  */
 export function bridgeActionColor(action: BridgeAction): string {
-  if (action === "unchanged") {
-    return ANSI.dim;
-  }
-  if (action === "protected") {
-    return ANSI.yellow;
-  }
-  return ANSI.green; // created | updated
+  return BRIDGE_ACTION_COLOR[action];
 }
 
 /** Human view: a heading, one line per file, and an actionable trailer for stale/protected state. */
