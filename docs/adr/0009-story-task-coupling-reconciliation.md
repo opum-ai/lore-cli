@@ -37,10 +37,12 @@ Several hard constraints, fixed by earlier decisions, shape the answers:
   carries `tasks: [task-42, task-57]`. This is human-authored, diffable, and
   versioned with the narrative it belongs to.
 - **A display-only annotation is not an index.** Backlog supports a free-text
-  `--doc` annotation on a task, but free text is not reliably queryable. To find
-  "every task with no owning doc" (orphans) or to unlink a doc from many tasks,
-  lore needs a field it can *query* through `backlog task list --json` /
-  `backlog search --json`.
+  `--doc` annotation on a task, but free text is not reliably queryable. lore
+  needs a field that *is* queryable — a Backlog label, unlike free text, can be
+  matched exactly (`backlog task list --json --labels`) — to make "does some
+  doc already own this task" a well-defined question. See §2 for what
+  `orphans`/`unlink` actually read today; neither currently issues that
+  filtered query.
 - **Task IDs are stable; on-disk paths are not.** Backlog.md task files are
   named `task-42 - <title>.md`; renaming the task renames the file. Any link
   keyed on the *path* breaks the moment a title changes.
@@ -84,10 +86,11 @@ label**:
 doc:stories/bulk-archive-orders
 ```
 
-- `lore link` calls `backlog task edit <id> --label doc:<conceptId>`; `lore
-  unlink` removes it. The label lives in Backlog.md's own metadata, set the
-  Backlog-approved way, so it **survives `backlog task edit`** — unlike any
-  custom frontmatter key, which Backlog would drop.
+- `lore link` calls `backlog task edit <id> --add-label doc:<conceptId>`;
+  `lore unlink` removes it (`--remove-label`). The label lives in Backlog.md's
+  own metadata, set the Backlog-approved way, so it **survives
+  `backlog task edit`** — unlike any custom frontmatter key, which Backlog
+  would drop.
 - The label is **the index for the reverse direction.** `lore orphans` reads a
   single `backlog task list --json` snapshot — never `backlog search --json`;
   no lore command currently calls that adapter method — and, from it, treats a
@@ -102,7 +105,7 @@ doc:stories/bulk-archive-orders
   the label only from the task ids named explicitly on its command line.
 - `--doc` (the free-text display annotation) is set **in addition**, purely for
   human readability in `backlog task view`. It is explicitly **not** the index:
-  free text is not reliably searchable, so it is never the thing lore queries.
+  free text is not reliably searchable, so it is never the thing lore reads.
   The label carries the machine-readable coupling; `--doc` carries the pretty
   name.
 - `<conceptId>` is the concept ID (path minus `.md`), **case-preserved** —

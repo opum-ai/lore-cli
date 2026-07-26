@@ -156,8 +156,8 @@ Concretely:
 
 7. **Never store lore metadata on tasks.** Backlog.md drops unknown frontmatter
    keys on `edit`, so the doc → task back-reference lives as a *queryable label*
-   `doc:<conceptId>` (set via `task edit --label`, surfaced for display with
-   `--doc`), not as a custom frontmatter field.
+   `doc:<conceptId>` (set via `task edit --add-label`, surfaced for display
+   with `--doc`), not as a custom frontmatter field.
 
 8. **`lore` is the sole committer of `backlog/`.** Backlog.md is configured with
    `auto_commit=false`, `check_active_branches=false`, and
