@@ -66,7 +66,7 @@ import { loadProfile } from "../core/profile";
 import { buildScaffold } from "../core/scaffold";
 import { ANSI, EXIT_OK, LoreError, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { type AgentsResult, applyAgentsBridge, renderTrailer } from "./agents";
+import { type AgentsResult, applyAgentsBridge, bridgeActionColor, renderTrailer } from "./agents";
 import { usage } from "./args";
 import { assertNoSymlinkInPath, createIfAbsent, ensureDir } from "./fswrite";
 import { defaultAdapter } from "./link";
@@ -530,9 +530,9 @@ function renderPretty(data: InitResult, opts: { color: boolean }): string {
     for (const file of data.agents.files) {
       // "protected" is a warning, not a success (LORE-260 review round 2, MINOR-4): a hand-edited
       // file was left untouched, which is meaningfully different from "unchanged" (nothing to do)
-      // and must not be painted the same green as an actual write.
-      const color = file.action === "unchanged" ? ANSI.dim : file.action === "protected" ? ANSI.yellow : ANSI.green;
-      lines.push(`  ${paint(file.action, color, opts.color)} ${file.path}`);
+      // and must not be painted the same green as an actual write. Shared with `lore agents`' own
+      // renderer (LORE-267) so the two commands cannot diverge on this mapping again.
+      lines.push(`  ${paint(file.action, bridgeActionColor(file.action), opts.color)} ${file.path}`);
     }
     // Reuse `lore agents`' own trailer verbatim (MINOR-4) rather than dropping it: a `protected`
     // file with no visible remedy reads as silent success (LORE-129 established this line as

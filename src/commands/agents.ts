@@ -205,13 +205,32 @@ function actionLabel(action: BridgeAction, check: boolean): string {
   return action;
 }
 
+/**
+ * The colour a bridge file's {@link BridgeAction} paints in `pretty` mode: `unchanged` is dim
+ * (nothing happened), `protected` is a warning (a hand-edited file was deliberately left untouched
+ * — see {@link renderTrailer}), and everything else (`created`/`updated`) is a success green.
+ * Exported (LORE-267) so `lore init`'s own renderer (init.ts) paints the exact same
+ * {@link BridgeAction} in the exact same colour, instead of keeping a second, hand-maintained copy
+ * of this mapping that can silently drift from this one — which is exactly how `protected` came to
+ * render green here (a two-way `unchanged`-or-green split) while `init` already painted it yellow.
+ */
+export function bridgeActionColor(action: BridgeAction): string {
+  if (action === "unchanged") {
+    return ANSI.dim;
+  }
+  if (action === "protected") {
+    return ANSI.yellow;
+  }
+  return ANSI.green; // created | updated
+}
+
 /** Human view: a heading, one line per file, and an actionable trailer for stale/protected state. */
 function renderPretty(data: AgentsResult, opts: { color: boolean }): string {
   const head = data.check ? `Checking the lore agent bridge at ${data.root}` : `lore agent bridge at ${data.root}`;
   const lines = [head];
   for (const file of data.files) {
     const label = actionLabel(file.action, data.check);
-    const color = file.action === "unchanged" ? ANSI.dim : ANSI.green;
+    const color = bridgeActionColor(file.action);
     lines.push(`  ${paint(label, color, opts.color)} ${file.path}`);
   }
   const trailer = renderTrailer(data);
