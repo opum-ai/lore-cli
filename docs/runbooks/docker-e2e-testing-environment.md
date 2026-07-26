@@ -67,7 +67,7 @@ harness locally first.
 1. Build and run:
 
    ```sh
-   docker compose -f docker/e2e/docker-compose.yml up --build
+   docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e
    ```
 
    The build stage fails loud (non-zero exit) if either binary doesn't compile to real, working

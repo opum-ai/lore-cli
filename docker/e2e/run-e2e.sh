@@ -56,9 +56,24 @@ fi
 #   - inside a `bash -c '...'`/`bash -c "..."` invocation, ditto (a fresh child process), and
 #     always `&&`-chained (`cd X && actual-command`) so a failed cd there short-circuits the
 #     command that depended on it instead of running it against the wrong directory.
-# A failure in any of those is reported as an ordinary step/check FAIL by the harness's own
-# existing accounting -- never a silent fall-through the way the bare top-level `cd /workspace`
-# was. None of them have the shape this task's bug report describes; none needed a guard.
+# The safety property that actually matters holds at every one of those sites regardless: none can
+# leak a changed cwd into the rest of this script, and none can run a later command against the
+# wrong directory -- unlike the bare top-level `cd /workspace` above. None of them match the shape
+# this task's bug report describes, so none needed a fail-closed guard.
+#
+# Whether a failed `cd` there is ALSO surfaced as a step/check FAIL is a separate question, and the
+# answer is NOT uniform -- two documented carve-outs (line numbers as of this writing; checked
+# against check()'s own `eval "$expr"` mechanism further down, which just runs the string and takes
+# its literal exit status):
+#   - line 1614's bare `bash -c "cd ... && backlog config set ..."` is NOT wrapped in `step`/
+#     `check`; its status and stdout/stderr are all discarded (`>/dev/null 2>&1`), so a failed cd
+#     there is reported nowhere -- though the identical `cd` one line above it, inside the `step` at
+#     line 1612, would already have failed loudly on its own.
+#   - line 1643's `check '[ -z "$(cd "$NESTED_PROJECT" && git status ...)" ]'` turns a failed cd
+#     into a vacuous PASS: the failed `cd` short-circuits the `&&`, the command substitution
+#     captures nothing, and `[ -z "" ]` is true.
+# Every other `cd`/directory-change below IS reported as an ordinary step/check FAIL on failure,
+# same as before.
 RESULTS_DIR="${RESULTS_DIR:-/results}"
 REPORT="$RESULTS_DIR/report.jsonl"
 LORE_REPO="${LORE_REPO:-/opt/lore}"
