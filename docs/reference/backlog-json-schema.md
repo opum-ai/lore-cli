@@ -226,9 +226,12 @@ A Backlog.md task `.md` file has free-form body sections (`## Description`,
 > **The `doc:<conceptId>` label is how `lore` finds the doc → task
 > back-reference.** Per ADR-0002, `lore` never stores its own frontmatter keys on
 > a task (Backlog.md drops unknown keys on edit). Instead it sets a *queryable*
-> label `doc:stories/bulk-archive-orders` via `task edit --label`. That label
-> arrives here in `labels[]`; `lore orphans` and `lore link` read it from this
-> array. Treat the `doc:` prefix as the contract.
+> label `doc:stories/bulk-archive-orders` via `task edit --add-label`. That
+> label arrives here in `labels[]`, which `lore link` reads directly
+> (`hasLabel`) to check whether a task is already linked. `lore orphans` reads
+> the same-named `labels[]` field, but off the `task-list` summary (§4) — it
+> never calls `task view` per task. Treat the `doc:` prefix as the contract in
+> either shape.
 
 ---
 
@@ -284,10 +287,15 @@ reconcile status without a `view` per task. It carries **no path at all**
 `task view` does (§3, §6). `lore` calls `task view` per linked id specifically
 because of this (see the [CLI contract §1.2](backlog-cli-contract.md#12-prefer-per-id-task-view-for-the-managed-block)).
 
-**Filtering.** `task list --json` honors the same filter flags as its text form
-(e.g. `--status`, `--label`, parent filters). `lore` passes through the filters
-it needs (notably `--label doc:<conceptId>` to find a story's tasks, and a status
-filter for reconciliation); `tasks` is the filtered set. See the
+**Filtering.** `task list --json` honors the same filter flags as its text
+form (`--status`, `--labels`, `--parent`, and others). The adapter's
+`listTasks` exposes `status`/`labels` as optional parameters, but **no lore
+command currently passes either** — `orphans` calls `listTasks()` with zero
+options, so `tasks` above is every task on the current branch, unfiltered;
+`lore tasks --status <S>` filters **client-side**, over tasks it already
+fetched individually via `task view` (§3), and never reaches `task list`'s
+own `--status` flag. `{status, labels}` today is exercised only by
+`test/backlog-adapter.test.ts`. See the
 [CLI contract](backlog-cli-contract.md) for the exact flag list.
 
 ---
