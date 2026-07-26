@@ -108,7 +108,7 @@ describe("release.yml publish job stays safely gated", () => {
   });
 
   test("the publish job requires the 'release' GitHub Environment — an out-of-file gate (LORE-268)", () => {
-    const doc = yaml.load(readFileSync(WORKFLOW_PATH, "utf8"), { schema: yaml.JSON_SCHEMA }) as WorkflowDoc;
+    const doc = loadWorkflow();
     // Regression this guards: `if:`/version/floor guards all live INSIDE release.yml, so an
     // actor with write access can push a branch carrying a copy of this file with every one
     // of them stripped and dispatch it there — npm Trusted Publishing matches on repo +
