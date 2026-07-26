@@ -88,11 +88,18 @@ doc:stories/bulk-archive-orders
   unlink` removes it. The label lives in Backlog.md's own metadata, set the
   Backlog-approved way, so it **survives `backlog task edit`** — unlike any
   custom frontmatter key, which Backlog would drop.
-- The label is **the index for the reverse direction.** `lore orphans` queries
-  `backlog task list --json` (and `backlog search --json`) for tasks lacking any
-  `doc:` label to find tasks with no owning doc, and conversely flags docs whose
-  `tasks:` reference IDs that no longer exist. Bulk unlink also keys off the
-  label set.
+- The label is **the index for the reverse direction.** `lore orphans` reads a
+  single `backlog task list --json` snapshot — never `backlog search --json`;
+  no lore command currently calls that adapter method — and, from it, treats a
+  task as owned (not reported as an orphan) when **any** of three conditions
+  holds: the task itself carries a `doc:` label, some concept's `tasks:` list
+  forward-references it, or an ancestor in its Backlog `parentTaskId` chain
+  satisfies either of the first two (LORE-261) — a subtask of an
+  already-linked parent is not reported, since linking the parent does not
+  stamp each subtask with its own back-reference. The same snapshot
+  conversely flags docs whose `tasks:` reference IDs that no longer exist.
+  `lore unlink` does not query the label to discover its targets: it removes
+  the label only from the task ids named explicitly on its command line.
 - `--doc` (the free-text display annotation) is set **in addition**, purely for
   human readability in `backlog task view`. It is explicitly **not** the index:
   free text is not reliably searchable, so it is never the thing lore queries.
