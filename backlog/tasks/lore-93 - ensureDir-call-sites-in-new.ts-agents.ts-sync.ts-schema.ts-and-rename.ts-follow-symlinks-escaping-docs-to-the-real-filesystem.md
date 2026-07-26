@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 18:52'
-updated_date: '2026-07-21 21:52'
+updated_date: '2026-07-26 16:47'
 labels:
   - backlog-campaign-followup
   - security
@@ -140,4 +140,12 @@ AC#5 test is what actually proves the sweep mechanism, confirmed independently b
 
 Verified (final): bun test -> 1697 pass/0 fail (up from 1693); bun run typecheck clean; bun run
 lint clean on all changed files -- 4 pre-existing infos remain in unrelated files, untouched.
+
+**Correction (2026-07-26, round 5 wave 2, via LORE-266).** The Implementation Notes above state that a symlinked `CLAUDE.md` file is "inherently safe via renameSync regardless, so there is no black-box way to construct a genuinely discriminating test for agents.ts specifically". **That is false**, and it was the written rationale that let the LORE-93 AC#5 sweep go untested until LORE-266.
+
+Disproved by execution during LORE-266's review gate: with `assertNoSymlinkInAnyPath` neutered in `src/commands/agents.ts`, `applyAgentsBridge` writes SKILL.md (the FIRST target) and then **destroys the CLAUDE.md symlink** — `writeFileAtomic`'s `renameSync` commit replaces whatever sits at the destination path, symlink or not. Verified in two scenarios, including a symlink pointing at a real file outside the repo: the write does not escape the repo (the outside victim is byte-identical afterwards), but the symlink is replaced outright. That replacement is precisely the failure the up-front sweep exists to prevent, and it IS reachable black-box.
+
+The related claim that `test/rename.test.ts`'s own AC#5 test "is what actually proves the sweep mechanism" was also false at the time it was written: that test was non-discriminating (115/115 under mutation) because its symlinked `evil` destination sorted first, so `ensureDir`'s reactive per-call guard alone caught it. LORE-266 renamed the fixture to `zzz-evil` so the bad target sorts after a legitimate rewrite, making it genuinely discriminating (114/1 under mutation).
+
+All three call sites (`agents.ts`, `rename.ts`, `sync.ts`) are now pinned by discriminating regression tests. This note is appended rather than rewriting the original record.
 <!-- SECTION:NOTES:END -->
