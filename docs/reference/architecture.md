@@ -121,6 +121,24 @@ The single boundary to Backlog.md. It is **JSON-only**: lore invokes
 fallback** — that omission is deliberate
 ([ADR-0002](../adr/0002-backlog-integration-json-only.md)).
 
+> **The sketch below is illustrative, not authoritative — it predates the
+> LORE-54 migration and does not track the current adapter.** It omits
+> `labels` from `listTasks`'s filter options and the `searchTasks` capability
+> entirely, and gives `BacklogTask` a `file` field the real `task list`/
+> `search` JSON summaries do not carry (see
+> [backlog-json-schema.md §4](backlog-json-schema.md#4-kind-task-list),
+> "No path field" — only `task view` carries a path, under the `file`/`path`
+> key). The "Reads"/"Writes" bullets below also still describe the
+> **pre-migration fork-based integration** (a compiled fork consumed as a git
+> dependency, and `task view` exiting `0` on a missing task); both are
+> superseded — `lore` now consumes upstream `MrLesk/Backlog.md` directly, and
+> `task view <missing>` exits `1` (see
+> [backlog-cli-contract.md §§2.2, 2.4](backlog-cli-contract.md#22-existence-checks--task-views-exit-code-is-meaningful)).
+> For the authoritative adapter surface, read `src/adapters/backlog.ts`
+> directly; for the operational contract, read
+> [backlog-cli-contract.md](backlog-cli-contract.md) and
+> [backlog-json-schema.md](backlog-json-schema.md).
+
 ```ts
 interface BacklogTask {
   id: string;          // "task-42"
@@ -143,20 +161,22 @@ interface BacklogAdapter {
 
 Critical implementation rules, each from a locked decision:
 
-- **Reads** go through the `--json` envelope. Stock Backlog.md v1.47.1 has **no**
-  `--json` flag, so lore consumes a fork
-  ([jeremy-newhouse/Backlog.md](../runbooks/backlog-json-patch.md)) that adds
-  minimal `--json` to `task list/view/search`, compiled as a local git
-  dependency, with a minimal upstream PR. See the
-  [Backlog JSON schema](backlog-json-schema.md) for the envelope and the
-  [Backlog CLI contract](backlog-cli-contract.md) for the invocation surface.
+- **Reads** go through the `--json` envelope. Stock Backlog.md lacked
+  `--json` prior to upstream PR #790; `lore` now consumes upstream
+  `MrLesk/Backlog.md` pinned at or past that merge commit (see
+  [backlog-cli-contract.md](backlog-cli-contract.md) for the current pin and
+  [the patch runbook](../runbooks/backlog-json-patch.md) for how the feature
+  was upstreamed). See the [Backlog JSON schema](backlog-json-schema.md) for
+  the envelope and the [Backlog CLI contract](backlog-cli-contract.md) for
+  the invocation surface.
 - **Capability probe** runs once at startup, caches in `.lore/cache/`, enforces a
   minimum `--json`-capable version, and **fails loud** rather than silently
   mis-parsing.
 - **Writes** go through `backlog task create` / `backlog task edit` only — never a
   direct write to `backlog/tasks/*.md`. New task IDs are captured by parsing the
-  `Created task <ID>` line. Existence is checked via `viewTask` returning data,
-  **never** via `task view`'s exit code (it exits `0` when the task is missing).
+  `Created task <ID>` line. Existence **is** checked via `task view`'s exit
+  code: it exits `1` unconditionally when the task is missing (see
+  [backlog-cli-contract.md §2.2](backlog-cli-contract.md#22-existence-checks--task-views-exit-code-is-meaningful)).
 - **Back-references** from a task to a doc are stored as a queryable label
   `doc:<conceptId>` (plus a `--doc` display affordance), because Backlog.md
   **drops unknown frontmatter keys on edit** — so lore never stores its own
