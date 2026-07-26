@@ -947,10 +947,12 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
       await ensureProbed();
       const args = ["task", "edit", rejectFlagLike(id)];
       if (patch.addLabels !== undefined && patch.addLabels.length > 0) {
-        args.push("--add-label", commaJoin(patch.addLabels)); // accumulator flag (§2.4): comma-join into one occurrence.
+        // accumulator flag (§2.4): comma-join into one occurrence.
+        args.push("--add-label", commaJoin(patch.addLabels));
       }
       if (patch.removeLabels !== undefined && patch.removeLabels.length > 0) {
-        args.push("--remove-label", commaJoin(patch.removeLabels)); // accumulator flag (§2.4): comma-join into one occurrence.
+        // accumulator flag (§2.4): comma-join into one occurrence.
+        args.push("--remove-label", commaJoin(patch.removeLabels));
       }
       if (patch.status !== undefined) {
         args.push("--status", rejectFlagLike(patch.status));
