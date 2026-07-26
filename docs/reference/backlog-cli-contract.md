@@ -26,8 +26,10 @@ framing that had gone stale: several things below changed between v1.47.1 and
 v1.48.0 — §2.4's `task edit` label-flag accumulator conversion (three flags:
 `-l`/`--label`, `--add-label`, `--remove-label`), §2.4's new hard-error guard
 against combining `--label` with `--add-label`/`--remove-label`, §2.4's new
-`--clear-labels` flag, and §2.5's edit idempotency — so a floor of v1.47.1 no
-longer describes this document's own content. (`task list`'s `-l`/`--labels`
+`--clear-labels` flag, §2.5's edit idempotency, and §2.5's two
+`src/markdown/serializer.ts` changes (the frontmatter object's new `type` key
+and the AC/DoD section-emission logic) — so a floor of v1.47.1 no longer
+describes this document's own content. (`task list`'s `-l`/`--labels`
 filter did **not** change between the two tags — see §2.4 — it was already an
 accumulator at v1.47.1.) The **code's** `MIN_BACKLOG_VERSION` constant
 (`src/adapters/backlog.ts`) is a separate, deliberately non-discriminating
@@ -282,7 +284,9 @@ and `lore`'s `listTasks` passes it at most once regardless.)
   with `--add-label`/`--remove-label` is **also new in v1.48.0**
   (`src/cli.ts` lines 2928–2934: `if (options.label !== undefined &&
   (options.addLabel !== undefined || options.removeLabel !== undefined))` →
-  `"Cannot combine --label with --add-label or --remove-label"`). At
+  `"Cannot combine --label with --add-label or --remove-label. Use --label
+  a,b for the final full label set, or use add/remove flags without
+  --label."`, line 2930). At
   v1.47.1 there was **no such guard**: `options.label`, `options.addLabel`,
   and `options.removeLabel` were parsed side by side with no combination
   check at all (`src/cli.ts` lines 2609–2611, same tag; confirmed 0
@@ -308,15 +312,21 @@ and `lore`'s `listTasks` passes it at most once regardless.)
   original never had one). `lore` sync/reconciliation may issue edits
   unconditionally without churning `updated_date`.
   - **This was NOT true at v1.47.1.** The pre-v1.48.0 `updateTask` (same file,
-    same tag) unconditionally ran `task.updatedDate = new Date()...` on every
-    call, with no comparison — so at v1.47.1 an edit that changed nothing
-    still bumped `updated_date`. This is one of the several changes between
-    v1.47.1 and v1.48.0 catalogued in this document's opening summary (the
-    others are §2.4's `task edit` label-flag accumulator conversion, its new
-    `--label` combination guard, and its new `--clear-labels` flag).
-  - **Precision note:** `saveTask` (`src/file-system/operations.ts` line 389)
-    calls an unconditional `Bun.write` on every `updateTask`, at both
-    versions — Backlog does not skip the write syscall. "Idempotent" means
+    tag `v1.47.1`, `src/core/backlog.ts` line 1089) unconditionally ran
+    `task.updatedDate = new Date()...` (line 1099) on every call, with no
+    comparison — so at v1.47.1 an edit that changed nothing still bumped
+    `updated_date`. This is one of the several changes between v1.47.1 and
+    v1.48.0 catalogued in this document's opening summary (the others are
+    §2.4's `task edit` label-flag accumulator conversion, its new `--label`
+    combination guard, its new `--clear-labels` flag, and the two
+    `src/markdown/serializer.ts` changes noted just below — the `type` key
+    addition to the frontmatter object and the AC/DoD section-emission logic
+    change).
+  - **Precision note:** `saveTask` (`src/file-system/operations.ts` line 289 at
+    v1.47.1 / line 389 at v1.48.0 — the function moves, it does not change)
+    calls an unconditional `Bun.write` (line 342 at v1.47.1 / line 443 at
+    v1.48.0) on every `updateTask`, at both versions — Backlog does not skip
+    the write syscall. "Idempotent" means
     the **written content** is byte-identical when nothing relevant changed
     (so `git diff` shows nothing), not that the write itself is skipped.
 - Any **effective** change rewrites `updated_date` to **minute precision** UTC
@@ -328,9 +338,10 @@ and `lore`'s `listTasks` passes it at most once regardless.)
   unchanged in substance between the two tags; v1.48.0's only addition to
   that object is a `type` key (line 68) when the task has one. (The same
   file's acceptance-criteria/Definition-of-Done section-emission logic also
-  changed between the two tags — `src/markdown/serializer.ts` lines 83–95 at
-  v1.48.0 — but that is body-content emission, not part of the frontmatter
-  key set, and out of scope for this bullet.) **`lore` must never store
+  changed between the two tags — `src/markdown/serializer.ts` lines 83–89 (the
+  AC hunk) and 92–98 (the DoD hunk) at v1.48.0 — but that is body-content
+  emission, not part of the frontmatter key set, and out of scope for this
+  bullet.) **`lore` must never store
   bespoke metadata as task frontmatter.** Anything `lore` needs on a task
   lives in a Backlog-recognized field: `labels` (the `doc:` back-ref),
   `documentation`, `references`, `dependencies`, or `milestone`. AC/DoD `#n`
