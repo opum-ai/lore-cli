@@ -10,9 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **`docker/e2e/run-e2e.sh` now fails closed instead of silently mutating the caller's working
   directory when run outside its Docker container** (LORE-269). The harness deliberately runs
-  under `set -uo pipefail` without `-e` (so it can keep going past individual failed assertions),
-  and its first real action was an unguarded `cd /workspace` — on a host, where `/workspace`
-  doesn't exist, that `cd` failed but the script kept running anyway, silently executing every
+  under `set -uo pipefail` without `-e` (so it can keep going past individual failed assertions).
+  Before the fix, the script already created `$RESULTS_DIR` and truncated `$REPORT` before ever
+  reaching its unguarded `cd /workspace` — on a host, where `/workspace` doesn't exist, that `cd`
+  failed but the script kept running anyway, silently executing every
   later phase (`git init`, `backlog init`, `lore init`, dozens of real, mutating `backlog`/`lore`
   calls) against whatever directory the caller happened to invoke it from. Hit for real during
   round 5 wave 1 (LORE-267): a direct `bash docker/e2e/run-e2e.sh` on the host overwrote

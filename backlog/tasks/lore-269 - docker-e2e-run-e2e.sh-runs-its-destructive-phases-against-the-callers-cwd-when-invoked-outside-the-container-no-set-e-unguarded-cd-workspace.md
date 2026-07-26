@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-26 12:46'
-updated_date: '2026-07-26 15:42'
+updated_date: '2026-07-26 16:04'
 labels:
   - build-ci-config
   - dx
@@ -142,6 +142,8 @@ Verification (objective, all actually run):
 - `bun test`: 2181 pass, 0 fail (unchanged baseline). `bun run lint` (biome check .): clean, no
   fixes needed. `bun run src/cli.ts check docs/runbooks`: 7 files, 0 errors, 0 warnings (the
   runbook edit is OKF-clean).
+
+Pre-merge polish pass (post-approval): fixed 3 falsifiable statements in this branch's new text, no behaviour change. (1) run-e2e.sh's AC3-sweep comment overreached — claimed every non-guarded cd's failure is reported as an ordinary step/check FAIL; carved out line 1614 (bare bash -c, status/output discarded via >/dev/null 2>&1, reported nowhere) and line 1643 (check '[ -z "$(cd ... && git status ...)" ]', a failed cd yields a vacuous PASS). The safety property (no cwd leak, no wrong-directory mutation) still holds at both and is stated as such. (2) CHANGELOG.md said the script's 'first real action was an unguarded cd /workspace'; corrected — git show dev:docker/e2e/run-e2e.sh shows mkdir -p "$RESULTS_DIR" and : > "$REPORT" both ran first (lines 24-25 pre-fix, cd at line 163). Commit 160984e's message is unchanged (can't rewrite pushed history). (3) docs/runbooks/docker-e2e-testing-environment.md's new bullet referenced the Steps section's docker compose command, which lacked --exit-code-from e2e while the guard message/compose header/CI (.github/workflows/ci.yml:197) all use it; added the flag to Steps section 1. Verified: bash -n clean; one docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e run = 302 passed, 0 failed, exit 0; bun run src/cli.ts check docs/runbooks = 7 files, 0 errors, 0 warnings. Consistency sweep found one pre-existing, explicitly-out-of-scope residual: the runbook's CI-gate paragraph still calls --exit-code-from e2e 'CI-specific', which is now slightly stale given the Steps-section fix; left untouched per orchestrator instruction (tracked separately, same paragraph as the LORE-196 stale-prose item).
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
