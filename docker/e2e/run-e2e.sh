@@ -16,6 +16,49 @@
 
 set -uo pipefail
 
+# ── Container-only guard (LORE-269) ──────────────────────────────────────────
+# Everything below performs REAL, mutating filesystem operations rooted at cwd (git init,
+# backlog init, lore init, and dozens more phases) and shells out to a real `backlog` binary.
+# This script must only ever run inside its purpose-built e2e container (docker-compose.yml's
+# `e2e` service; docker/e2e/Dockerfile bakes in LORE_E2E_CONTAINER=1 and guarantees WORKDIR
+# /workspace) -- never directly on a host checkout of this repo.
+#
+# `set -uo pipefail` above deliberately omits `-e` (see report_write_failed's own comment
+# further down) so the harness can keep running after an individual assertion fails. That same
+# omission is exactly what made the ORIGINAL bug silent: an unguarded `cd /workspace` below, on
+# a host where /workspace does not exist, would print "No such file or directory" to stderr and
+# fall through -- every later phase would then silently run against whatever directory the
+# caller happened to invoke this script from. Confirmed for real during round 5 wave 1
+# (LORE-267): it overwrote backlog/config.yml, created spurious real Backlog tasks, and wrote
+# stray .lore/*, AGENTS.md into a host worktree -- all uncommitted, but only noticed by luck.
+#
+# Two independent, purpose-built signals gate the fail-closed exit below, checked BEFORE even
+# $RESULTS_DIR/$REPORT are created (i.e. before this script writes anywhere at all):
+#   1. LORE_E2E_CONTAINER=1 -- an ENV baked into docker/e2e/Dockerfile, present only in images
+#      built from it. A host shell would have to deliberately export this to defeat the guard.
+#   2. /workspace existing at all -- the one directory the same Dockerfile guarantees (WORKDIR
+#      /workspace, mkdir'd and chowned during the image build). Kept as a backstop in case signal
+#      1 is ever refactored away without updating this check.
+if [ "${LORE_E2E_CONTAINER:-}" != "1" ] || [ ! -d /workspace ]; then
+  {
+    echo "run-e2e.sh must run inside its Docker e2e container -- not directly on a host checkout."
+    echo "It performs real, mutating filesystem operations (git init, backlog init, lore init, ...) rooted at its cwd."
+    echo "Use:"
+    echo "  docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e"
+  } >&2
+  exit 1
+fi
+
+# AC3 sweep (LORE-269): every OTHER `cd`/directory-change in this script (grepped exhaustively,
+# not just skimmed) is one of:
+#   - inside a subshell `( ... )` or command substitution `$( ... )`, which can never change this
+#     script's own process-level cwd no matter what happens inside it, or
+#   - inside a `bash -c '...'`/`bash -c "..."` invocation, ditto (a fresh child process), and
+#     always `&&`-chained (`cd X && actual-command`) so a failed cd there short-circuits the
+#     command that depended on it instead of running it against the wrong directory.
+# A failure in any of those is reported as an ordinary step/check FAIL by the harness's own
+# existing accounting -- never a silent fall-through the way the bare top-level `cd /workspace`
+# was. None of them have the shape this task's bug report describes; none needed a guard.
 RESULTS_DIR="${RESULTS_DIR:-/results}"
 REPORT="$RESULTS_DIR/report.jsonl"
 LORE_REPO="${LORE_REPO:-/opt/lore}"
@@ -160,7 +203,15 @@ critical() {
   fi
 }
 
-cd /workspace
+# Guarded (LORE-269) as defense-in-depth on top of the container check above: this is the
+# literal `cd /workspace` the original bug report cited. The guard above already refuses to
+# reach this line at all when /workspace doesn't exist, so this failing here would mean a
+# genuinely unexpected condition (e.g. /workspace removed mid-run) -- fail loud rather than
+# silently falling through to run every later phase against the wrong directory either way.
+cd /workspace || {
+  echo "run-e2e.sh: cd /workspace failed even after the container guard above -- refusing to continue." >&2
+  exit 1
+}
 
 # ── Phase 0a: binary preflight (no project needed yet) ──────────────────────
 # LORE-66 AC5 (housekeeping): the old version of this check only asserted exit 0 -- a broken
