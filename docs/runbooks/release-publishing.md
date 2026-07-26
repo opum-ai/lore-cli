@@ -25,13 +25,16 @@ six packages, and proves the `npx`/launcher resolution mechanism end-to-end**
 via `npm pack` + a scratch install + running the launcher (LORE-9), then, only
 when a maintainer manually dispatches it with `publish: true`, **publishes all
 six packages via npm OIDC Trusted Publishing** (LORE-255). That `publish` job
-exists in the workflow already, but it is inert until **two** one-time setups
-are done: the npm Trusted-Publisher setup below on npmjs.com for all six
-packages (skip it and any dispatch fails loud with auth/403), and the
+exists in the workflow already, but it is inert until the npm
+Trusted-Publisher setup below on npmjs.com for all six packages is done (skip
+it and any dispatch fails loud with auth/403), and **unprotected** until the
 repo-admin [`release` GitHub Environment setup
-(LORE-268)](#repo-admin-setup-for-the-release-environment-lore-268) that
-makes the workflow's `environment: release` declaration actually enforce
-anything instead of being cosmetic. See the [First-release
+(LORE-268)](#repo-admin-setup-for-the-release-environment-lore-268) is done —
+two separate one-time setups with two different failure modes: skip the
+first and a dispatch fails loud; skip the second and a dispatch **succeeds
+and publishes, unprotected**, since only the second is what makes the
+workflow's `environment: release` declaration actually enforce anything
+instead of being cosmetic. See the [First-release
 checklist](#first-release-checklist) below for the exact mechanical sequence
 to cut the actual first release; the rest of this runbook is the supporting
 detail behind each checklist item.
@@ -82,8 +85,9 @@ checklist's version-bump item first.
 - [ ] **Dispatch `Release` with `publish: true`** on that tag/commit
   — [Step 3, item 4](#3-cut-a-release). `setup` → `verify-versions` → `build`
   → `package` run exactly as they do on every dispatch (proving every
-  artifact again, for this exact commit) before the new `publish` job's
-  `id-token: write` step runs.
+  artifact again, for this exact commit), then the run pauses for manual
+  deployment approval before the new `publish` job's `id-token: write` step
+  runs.
 - [ ] **Post-publish smoke install**: from a machine that has never installed
   lore before, `npx @salient-data/lore@X.Y.Z --version`, on at least one
   platform other than the one used for local development — [Step 3, item
@@ -306,8 +310,10 @@ with required reviewers, and setting each package's npm Trusted Publisher
 Environment name to `release`) that make the `environment: release`
 declaration above actually protective rather than cosmetic. See the
 [First-release checklist](#first-release-checklist) for the full sequence —
-those two repo-admin steps, plus what a maintainer still does by hand
-(version bump, the `bin.lore` flip, tag, dispatch).
+those two repo-admin steps, plus the six items a maintainer still does by
+hand (the version bump, the `bin.lore` flip, the CHANGELOG move,
+commit/tag/push, the `publish: true` dispatch, and the post-publish smoke
+install).
 
 **Scoped-package public access:** all six `@salient-data/lore*` packages are
 scoped, and npm defaults a scoped package's first publish to
@@ -340,7 +346,7 @@ publish is explicitly marked public. Root `package.json` and all five
    `publish: true`, on the tag/commit from step 3. Once the [`release`
    Environment's required
    reviewers](#repo-admin-setup-for-the-release-environment-lore-268) are
-   configured (as this checklist's second item requires), the run will
+   configured, the run will
    **pause at the `publish` job awaiting manual deployment approval** in the
    Actions UI — this is expected, not a hang or a failure; a listed reviewer
    approves the deployment to let `publish` proceed.
@@ -394,9 +400,10 @@ version-bump item has happened.
   not): do **not** bump the version — fix the cause (usually a missing or
   mistyped Trusted Publisher for the package that failed, [Step
   1](#1-configure-npm-trusted-publishing-once-before-the-first-real-publish))
-  and re-dispatch `Release` with `publish: true` on the **same commit**; the
-  publish step skips packages already on the registry and completes the
-  rest. The launcher (`@salient-data/lore`) is published last precisely so a
+  and re-dispatch `Release` with `publish: true` on the **same commit** (the
+  re-dispatch pauses for deployment approval the same way the original did —
+  see [Step 3, item 4](#3-cut-a-release)); the publish step skips packages
+  already on the registry and completes the rest. The launcher (`@salient-data/lore`) is published last precisely so a
   partial failure leaves nothing installable and the same version stays
   retryable. If the launcher itself published and something is still wrong,
   you cannot republish that version — cut `X.Y.Z+1` and `npm deprecate` the
