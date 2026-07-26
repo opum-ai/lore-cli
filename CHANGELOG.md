@@ -40,8 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by temporarily adding a fifth variant and confirming typecheck fails, then reverting it.
   `bun test` 2180/0 pass (2176/0 baseline, +4), `typecheck`/`lint` clean, `lore check` (40 files, 0
   errors/warnings), docker e2e harness 302/0 (unchanged baseline).
-- **`.github/workflows/release.yml`'s `publish` job now declares `environment: release`, closing the
-  `workflow_dispatch`-on-any-ref exposure LORE-255's reviewer flagged and LORE-268 fixes**: npm Trusted
+- **`.github/workflows/release.yml`'s `publish` job now declares `environment: release`, the out-of-file
+  hook for closing the `workflow_dispatch`-on-any-ref exposure LORE-255's reviewer flagged and LORE-268
+  addresses — inert until two repo-admin steps are done (see below)**: npm Trusted
   Publishing matches an OIDC token on repository + workflow **filename**, not a ref, and this workflow
   is `workflow_dispatch`-reachable on any branch — so an actor with write access could push a branch
   carrying a `release.yml` with every in-file guard stripped (the `if: inputs.publish == true` gate,
