@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-25 19:09'
-updated_date: '2026-07-26 12:08'
+updated_date: '2026-07-26 12:21'
 labels:
   - cli-ux
   - cmd-crud-a
@@ -135,4 +135,6 @@ Re-verification after the fix pass: bun test 2180/0 pass, typecheck clean (and c
 under the temporary fifth-variant probe, then clean again after revert), lint clean, lore check 40
 files/0 errors/0 warnings. Docker e2e NOT re-run this pass (already independently verified 302/0 by
 the reviewer; the bare script must never be run directly -- see incident correction above).
+
+Fix-pass round 2 (review round 3, request_changes -> fixed): the CHANGELOG's --check paragraph claimed the yellow/green two-colour split under --check 'is unchanged by this fix and is by design,' via two 'still comes from' phrasings implying pre-existing behaviour. Reproduced live under a pty against a fixture (hand-edited SKILL.md -> protected, block-less CLAUDE.md -> updated): post-fix `lore agents --check` prints \x1b[33mout of date\x1b[0m for SKILL.md and \x1b[32mout of date\x1b[0m for CLAUDE.md (two colours, exit 6). Read dev's src/commands/agents.ts (git show, no checkout) and confirmed its renderPretty used `file.action === "unchanged" ? ANSI.dim : ANSI.green` -- both protected and updated map to green there, so the same fixture would print ONE colour pre-fix. The two-colour --check split is therefore NEW, created by this fix's three-way colour mapping, not pre-existing. Reworded CHANGELOG.md lines 25-30 (dropped both 'still comes from' phrasings, replaced 'this divergence is unchanged by this fix and is by design' with 'this two-color split is new, follows directly from the color fix above, and is intended'); kept the accurate label/colour mechanism description and every other sentence in the entry byte-identical (git diff confirms only that clause changed). src/commands/agents.ts, src/commands/init.ts, test/agents.test.ts, src/core/agent-bridge.ts untouched (git diff empty). Re-verified: bun test 2180/0 pass, typecheck clean, lint clean, lore check 40 files/0 errors/0 warnings.
 <!-- SECTION:NOTES:END -->
