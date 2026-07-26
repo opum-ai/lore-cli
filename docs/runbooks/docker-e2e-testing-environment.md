@@ -33,8 +33,8 @@ JSON-only, fail-loud design. LORE-56 first ran this and found four real defects
 This harness is no longer local-only. `.github/workflows/ci.yml` runs it as the `docker-e2e` job
 on every PR and on code pushes to `main` (docs/backlog-only pushes are path-ignored), invoking the same compose file and harness as the
 manual steps below as `PUID="$(id -u)" PGID="$(id -g)" docker compose -f
-docker/e2e/docker-compose.yml up --build --exit-code-from e2e` — the extra `--exit-code-from e2e`
-and `PUID`/`PGID` are CI-specific (see `ci.yml`'s inline comments: `--exit-code-from` is required
+docker/e2e/docker-compose.yml up --build --exit-code-from e2e` — the extra `PUID`/`PGID`
+are CI-specific (see `ci.yml`'s inline comments: `--exit-code-from` is required
 because plain `up` always exits 0 regardless of the service's own exit code, and `PUID`/`PGID`
 must match the runner's real uid/gid so writes to the bind-mounted report file don't EACCES). A
 regression anywhere the harness covers now fails CI instead of merging silently. The steps in this

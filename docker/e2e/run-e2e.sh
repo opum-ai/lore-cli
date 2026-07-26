@@ -69,7 +69,7 @@ fi
 #     `check`; its status and stdout/stderr are all discarded (`>/dev/null 2>&1`), so a failed cd
 #     there is reported nowhere -- though the identical `cd` one line above it, inside the `step` at
 #     line 1612, would already have failed loudly on its own.
-#   - line 1643's `check '[ -z "$(cd "$NESTED_PROJECT" && git status ...)" ]'` turns a failed cd
+#   - line 1642's `check '[ -z "$(cd "$NESTED_PROJECT" && git status ...)" ]'` turns a failed cd
 #     into a vacuous PASS: the failed `cd` short-circuits the `&&`, the command substitution
 #     captures nothing, and `[ -z "" ]` is true.
 # Every other `cd`/directory-change below IS reported as an ordinary step/check FAIL on failure,
