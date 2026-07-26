@@ -12,6 +12,16 @@
  * workflow-level `permissions:` block (granting it to every job, not just `publish`) would
  * pass `bun run typecheck`/`bun run lint` and even `actionlint` (both are silent on this
  * kind of policy drift) — this test is the guard for exactly that regression.
+ *
+ * LORE-268 adds one more assertion in the same spirit: the `publish` job must declare
+ * `environment: release`. That declaration is an OUT-OF-FILE gate — it ties the job to
+ * GitHub Environment protection rules (required reviewers / allowed deployment branches)
+ * configured in repo Settings, not in this file — which is what keeps a wholesale-replaced
+ * copy of release.yml on an attacker-controlled branch from bypassing every in-file guard
+ * this suite already checks (repo write access + `workflow_dispatch` is enough to dispatch
+ * *some* copy of this workflow on *some* ref; npm Trusted Publishing matches on repo +
+ * workflow filename, not a ref). Removing the `environment:` line fails this file's new
+ * test even though it would still pass `typecheck`/`lint`/`actionlint`.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -33,6 +43,7 @@ interface WorkflowJob {
   if?: string;
   needs?: string[];
   permissions?: Record<string, string>;
+  environment?: string;
   steps?: WorkflowStep[];
 }
 
@@ -94,6 +105,21 @@ describe("release.yml publish job stays safely gated", () => {
       if (name === "publish") continue;
       expect(job.permissions?.["id-token"]).not.toBe("write");
     }
+  });
+
+  test("the publish job requires the 'release' GitHub Environment — an out-of-file gate (LORE-268)", () => {
+    const doc = yaml.load(readFileSync(WORKFLOW_PATH, "utf8"), { schema: yaml.JSON_SCHEMA }) as WorkflowDoc;
+    // Regression this guards: `if:`/version/floor guards all live INSIDE release.yml, so an
+    // actor with write access can push a branch carrying a copy of this file with every one
+    // of them stripped and dispatch it there — npm Trusted Publishing matches on repo +
+    // workflow FILENAME, not a ref, so that forged dispatch would still authenticate. Only a
+    // control configured OUTSIDE this file (GitHub Environment protection rules, evaluated
+    // from repo Settings, not from workflow content) can survive the file itself being
+    // replaced. This assertion only proves the job still NAMES the environment — the
+    // protection rules themselves are repo-admin configuration this test cannot see or
+    // enforce; see docs/runbooks/release-publishing.md for the required manual setup and the
+    // residual risk until it exists.
+    expect(doc.jobs.publish?.environment).toBe("release");
   });
 
   test("the publish job publishes via npm (no unrelated registry)", () => {
