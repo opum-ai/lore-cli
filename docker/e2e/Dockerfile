@@ -103,5 +103,9 @@ USER bun
 WORKDIR /workspace
 ENV RESULTS_DIR=/results
 ENV LORE_REPO=/opt/lore
+# Purpose-built container marker (LORE-269): run-e2e.sh's fail-closed guard checks for this
+# BEFORE any mutating phase. It exists only in images built from this Dockerfile -- a host shell
+# invoking run-e2e.sh directly would have to deliberately export it to defeat the guard.
+ENV LORE_E2E_CONTAINER=1
 
 ENTRYPOINT ["/usr/local/bin/run-e2e.sh"]
