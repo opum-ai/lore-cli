@@ -5,7 +5,7 @@ title: >-
   (round 5)
 type: other
 created_date: '2026-07-25 23:20'
-updated_date: '2026-07-25 23:21'
+updated_date: '2026-07-26 11:42'
 ---
 # Backlog campaign tracker — post-round-4 review residue & release hardening
 
@@ -26,7 +26,9 @@ Protocol: restore → compute the ready/conflict graph → mark the wave Dispatc
 
 The "ready now" set is **always recomputed live** from `backlog/tasks/*.md` + this table at the start of every restore/wave — never trust a persisted "next wave" plan. Informational hint only: as of **init (2026-07-25)**, **4 queued and ready**, **0 resolved**, **6 not queued**. Baseline at init: `dev` @ `7df940c`, clean; `bun test` **2176 pass / 0 fail**; `lore check` **40 files, 0 errors, 0 warnings**; docker e2e **302 / 0**.
 
-> **⛔ CARRIED-OVER BLOCKER — needs a human before this round runs.** **Fable 5 is over its monthly spend limit** (re-probed 2026-07-25; a trivial agent fails immediately with "You've hit your monthly spend limit"). The campaign design uses Fable as the review gate. Round 4's waves 2–3, every fix cycle, and all three integration reviews ran on **Opus** by the user's explicit choice — which preserved the property that matters (an independent adversarial reviewer that is not the implementer) at materially higher cost than the design assumes. **Confirm the reviewer model at the first restore; do not silently spend Opus again.**
+> **✅ RESOLVED 2026-07-26 — reviewer model confirmed by the user: OPUS.** Fable 5 was re-probed live at the round-5 restore and still fails immediately ("You've hit your monthly spend limit"). The user explicitly chose Opus reviewers for round 5, same as round 4's waves 2–3. Original blocker text follows for the record.
+
+> **⛔ CARRIED-OVER BLOCKER (now resolved, see above).** **Fable 5 is over its monthly spend limit** (re-probed 2026-07-25; a trivial agent fails immediately with "You've hit your monthly spend limit"). The campaign design uses Fable as the review gate. Round 4's waves 2–3, every fix cycle, and all three integration reviews ran on **Opus** by the user's explicit choice — which preserved the property that matters (an independent adversarial reviewer that is not the implementer) at materially higher cost than the design assumes. **Confirm the reviewer model at the first restore; do not silently spend Opus again.**
 
 Live conflict edges as computed at init (file-citation read, over-approximated per skill R4b) — **recompute, do not trust**:
 - **LORE-266 ↔ LORE-267 CONFLICT.** Both touch `src/commands/agents.ts` **and** `test/agents.test.ts`. This is the collateral-test-file vector, visible up front for once. They cannot share a wave.
@@ -40,9 +42,9 @@ Likely shape: **wave 1 = {265, 267, 268}**, **wave 2 = {266}**.
 ## Queue (confirmed order)
 | # | Issue | Cluster | Formal deps | Status | Wave | Note |
 |---|---|---|---|---|---|---|
-| 1 | LORE-265 | docs-drift / cmd-meta-a | — | To Do | — | bug (docs-only). ADR-0009 §2 misdescribes how `lore orphans` finds unowned tasks: claims a `backlog search --json` call `orphans.ts` has **never** made, and omits the parent-chain clause LORE-261 added. One inaccuracy is pre-existing, one is new. [docs/adr/0009-story-task-coupling-reconciliation.md] |
-| 2 | LORE-267 | cli-ux / cmd-crud-a | — | To Do | — | bug (tiny). `lore agents` paints a `protected` bridge file **green** (two-way `unchanged ? dim : green` at `agents.ts:214`) while `lore init` paints the same action **yellow**. `protected` means the bridge is STALE and needs `--force`, so green reads as success. [src/commands/agents.ts, test/agents.test.ts] |
-| 3 | LORE-268 | build-ci-config / security | — | To Do | — | task (medium). Harden the publish job: npm Trusted Publishing pins repo + workflow **filename, not a ref**, and the job is `workflow_dispatch`-reachable on **any** ref — so a branch carrying a guard-stripped `release.yml` defeats every in-workflow guard. Needs an **out-of-file** control (GitHub Environment). Has a repo-admin half the agent must not self-authorize. [.github/workflows/release.yml, test/release-workflow.test.ts, docs/runbooks/release-publishing.md] |
+| 1 | LORE-265 | docs-drift / cmd-meta-a | — | Dispatched | 1 | bug (docs-only). ADR-0009 §2 misdescribes how `lore orphans` finds unowned tasks: claims a `backlog search --json` call `orphans.ts` has **never** made, and omits the parent-chain clause LORE-261 added. One inaccuracy is pre-existing, one is new. [docs/adr/0009-story-task-coupling-reconciliation.md] |
+| 2 | LORE-267 | cli-ux / cmd-crud-a | — | Dispatched | 1 | bug (tiny). `lore agents` paints a `protected` bridge file **green** (two-way `unchanged ? dim : green` at `agents.ts:214`) while `lore init` paints the same action **yellow**. `protected` means the bridge is STALE and needs `--force`, so green reads as success. [src/commands/agents.ts, test/agents.test.ts] |
+| 3 | LORE-268 | build-ci-config / security | — | Dispatched | 1 | task (medium). Harden the publish job: npm Trusted Publishing pins repo + workflow **filename, not a ref**, and the job is `workflow_dispatch`-reachable on **any** ref — so a branch carrying a guard-stripped `release.yml` defeats every in-workflow guard. Needs an **out-of-file** control (GitHub Environment). Has a repo-admin half the agent must not self-authorize. [.github/workflows/release.yml, test/release-workflow.test.ts, docs/runbooks/release-publishing.md] |
 | 4 | LORE-266 | security / test-coverage | — | To Do | — | bug (security-relevant). The pre-write symlink sweep `assertNoSymlinkInAnyPath` (the LORE-93 AC#5 invariant) has **zero test coverage** — deleting it fails no test, on `dev` as well as on any branch. `ensureDir`'s reactive per-call guard masks it in the single-target case. AC#3 sweeps the other call sites (`rename.ts`, `sync.ts`). [src/commands/agents.ts, src/commands/fswrite.ts, test/agents.test.ts] |
 
 ## Resolved
