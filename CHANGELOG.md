@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`lore agents`'s pretty-mode output no longer paints a `protected` bridge file green** (LORE-267,
+  found during the LORE-260 review). `protected` means a bridge file (currently only
+  `.claude/skills/lore/SKILL.md`) looked hand-edited and was deliberately left untouched — the
+  bridge is stale and needs `lore agents --force` — but `renderPretty` (`src/commands/agents.ts`)
+  used a two-way `file.action === "unchanged" ? ANSI.dim : ANSI.green` mapping, so every non-
+  `unchanged` action, `protected` included, came out the same green as an actual write. `lore init`'s
+  own renderer already had the correct three-way mapping (`unchanged` dim, `protected` yellow, else
+  green) since LORE-260, so the same action rendered in two different colors depending on which
+  command printed it. Fixed by extracting that three-way mapping into a single exported
+  `bridgeActionColor()` in `src/commands/agents.ts`, which both `agents.ts`'s own `renderPretty` and
+  `init.ts`'s `renderPretty` now call, so the two commands cannot diverge on this mapping again.
+  `created`, `updated`, and `unchanged` keep their existing colors; `--plain`/`--json` output, exit
+  codes, and every other behavior are unchanged — this is a pretty-mode ANSI-color-only fix (cli-
+  contract.md §1.2: pretty's coloring is explicitly not a parsing target and may change between
+  releases, so no `--plain` contract update was needed). Verified live under a real pty (`script`):
+  both `lore agents` and `lore init --agents`, run against a hand-edited `SKILL.md`, now emit the
+  identical `\x1b[33mprotected\x1b[0m` sequence (previously `lore agents` emitted
+  `\x1b[32mprotected\x1b[0m`); a piped (non-TTY) run of the same case emits zero ANSI bytes. A new
+  test in `test/agents.test.ts` pins `bridgeActionColor` for all four `BridgeAction` values and
+  checks the non-TTY suppression, so a future action added to the union without a mapping update
+  fails loud instead of silently defaulting to green. `bun test` 2180/0 pass (2176/0 baseline, +4),
+  `typecheck`/`lint` clean, `lore check` (40 files, 0 errors/warnings), docker e2e harness 302/0
+  (unchanged baseline).
 - **`lore orphans` no longer reports a Backlog subtask as orphaned when its parent task is already
   linked to a doc** (LORE-261, surfaced by the Meridian 56-concept/40-task e2e stress test: `orphans`
   first reported 8 orphaned tasks instead of the intended 2, because linking a parent task to a Story
