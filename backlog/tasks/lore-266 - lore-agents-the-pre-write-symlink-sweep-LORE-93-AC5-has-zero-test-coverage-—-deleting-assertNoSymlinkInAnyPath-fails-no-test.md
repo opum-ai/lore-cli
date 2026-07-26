@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@lore-e2e'
 created_date: '2026-07-25 18:16'
-updated_date: '2026-07-26 15:41'
+updated_date: '2026-07-26 15:53'
 labels:
   - security
   - test-coverage
@@ -74,6 +74,14 @@ Full verification: `bun test` -> 2183 pass / 0 fail (49 files). `bun run lore ch
 CHANGELOG: deliberately omitted. Precedent checked: LORE-211/212/213/214 (identical shape — labeled test-coverage, regression tests added for existing guards, explicit mutation-kill verification, no production behavior change) all merged (see commits 041d487, f5c85c8, b81b1cf, b1821f4) touching only their backlog task file + the relevant test file, with no CHANGELOG.md entry. LORE-266 matches that shape exactly (AC#4: no behavior change) and src/commands/{agents,rename,sync}.ts have an empty diff — no production code was changed, only tests.
 
 Final diff: only test/agents.test.ts, test/rename.test.ts, test/sync.test.ts, and this task's own backlog file were modified. No production source files changed.
+
+Review-gate fix (post-merge-gate request_changes, addressed on this same branch before merge): the reviewer flagged that the LORE-93 regression test's comment (test/agents.test.ts:159-172, pre-existing, untouched by this branch's original diff) asserted two claims disproven by this branch's own new coverage — "there is no black-box way to make agents.ts exercise the sweep's ordering property specifically" and "the only reachable vulnerable target is SKILL.md, which is always first." Both are false: the LORE-266 describe block 40 lines below (added by this task) does exactly that, by symlinking CLAUDE.md (the SECOND target) rather than an ancestor directory, and proves that without the sweep, SKILL.md gets written and the CLAUDE.md symlink is destroyed (replaced by writeFileAtomic's renameSync commit, not "followed"). The same comment also credited test/rename.test.ts's AC#5 test as already proving the sweep's ordering property, when per this task's own implementation notes above, that test was non-discriminating (115/115 under mutation) until this branch's "evil" -> "zzz-evil" fixture reorder made it genuinely discriminate.
+
+Fix applied: rewrote the comment block at test/agents.test.ts:159-172 to (a) keep the still-true part (this specific LORE-93 test does not discriminate the sweep from ensureDir's reactive guard, since SKILL.md is symlinked here and sorts first), (b) drop the "no black-box way" / "only reachable target" claims and point forward to the LORE-266 describe block that does exercise the ordering property, and (c) correct the rename.test.ts credit to note that test only discriminates as of this branch's own fixture fix.
+
+Consistency sweep performed (not just the flagged lines): grepped test/agents.test.ts, test/rename.test.ts, test/sync.test.ts, src/commands/fswrite.ts (assertNoSymlinkInAnyPath docstring + ensureDir docstring), src/commands/agents.ts, src/commands/rename.ts, src/commands/sync.ts for "no black-box way", "SKILL.md, which is always first", "only reachable vulnerable target", "always first", and "actually proves the sweep"/"discriminat*". Only the one flagged comment block in test/agents.test.ts contained the false claims; the analogous comments in test/rename.test.ts (~line 1096-1116, already fixed by this branch) and test/sync.test.ts (~line 191-224) and the source docstrings (fswrite.ts assertNoSymlinkInAnyPath/ensureDir, agents.ts/rename.ts/sync.ts call-site comments) were all already accurate and needed no change.
+
+Re-verified after the comment rewrite: bun test -> 2183 pass / 0 fail across 49 files (unchanged from baseline). bun run lore check -> 40 files, 0 errors, 0 warnings. bun run typecheck -> clean. bun run lint -> "Checked 112 files in 114ms. No fixes applied." git diff dev...HEAD --stat shows zero src/ changes; the only uncommitted change was the comment-only edit to test/agents.test.ts (no executable line touched).
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

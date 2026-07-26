@@ -160,16 +160,20 @@ describe("lore agents — refuses to write through a symlinked ancestor director
       // (assertNoSymlinkInAnyPath) from ensureDir's own per-call guard alone — `plan.files`
       // (core/agent-bridge.ts) always orders SKILL.md first, and SKILL.md's own directory is the
       // one symlinked here, so ensureDir's reactive guard already throws on the very first loop
-      // iteration regardless of whether the sweep runs at all. There is no black-box way to make
-      // agents.ts exercise the sweep's ordering property specifically: CLAUDE.md has no ancestor
-      // directory of its own to symlink (CLAUDE_MD_REL_PATH is repo-root-relative), and a
-      // symlinked CLAUDE.md FILE itself would be safe regardless (writeFileAtomic's renameSync
-      // never follows a final-component symlink) — so the only reachable vulnerable target is
-      // SKILL.md, which is always first. The sweep is still correct and still wired in (matching
-      // rename.ts's/sync.ts's own pattern for consistency and future-proofing against a reordered
-      // or expanded `plan.files`); test/rename.test.ts's own AC#5 test is what actually proves the
-      // sweep's ordering property, since rename's multi-file writes are NOT fixed-order-safe the
-      // same way.
+      // iteration regardless of whether the sweep runs at all. The describe block directly below
+      // this one ("the up-front sweep, not ensureDir's reactive guard, catches a NON-FIRST target
+      // (LORE-266)") is what exercises the sweep's ordering property for `lore agents`: it symlinks
+      // CLAUDE.md — the SECOND target — and (verified by neutering the sweep directly) without it,
+      // SKILL.md (the FIRST target) gets written and the CLAUDE.md symlink itself gets destroyed —
+      // not "followed" to write outside the repo, but replaced outright, since writeFileAtomic's
+      // renameSync commit blows away whatever already sits at the destination path, symlink or
+      // not. That replacement is exactly the failure the sweep exists to prevent, so see that
+      // describe block for the ordering-property coverage. test/rename.test.ts's own AC#5 test
+      // proves the same ordering property for `lore rename`, but only as of this same branch: its
+      // symlinked fixture destination was renamed from "evil" to "zzz-evil" (see that test's own
+      // comment) specifically so the bad target sorts AFTER the legitimate rewrite in write order —
+      // before that reorder, the test was non-discriminating under mutation, same as this one still
+      // is here.
       const outsideDir = mkdtempSync(join(tmpdir(), "lore-agents-outside-"));
       try {
         mkdirSync(join(root, ".claude/skills"), { recursive: true });
