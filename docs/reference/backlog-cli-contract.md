@@ -11,8 +11,24 @@ timestamp: 2026-06-21T00:00:00Z
 
 This is the binding contract for how `lore` invokes the `backlog` binary. It
 governs the **adapter** (`src/adapters/backlog.ts`) and every coupling command
-(`link`, `unlink`, `tasks`, `orphans`, `sync`, `check`). It is pinned to
-**Backlog.md v1.47.1** as the tested floor.
+(`link`, `unlink`, `tasks`, `orphans`, `sync`, `check`). The build `lore`
+actually runs is pinned **at or past the upstream PR #790 merge commit**
+(`22a091b5`, restated just below in fact 1) — which is necessarily a superset of the
+**Backlog.md v1.48.0** tagged release: `v1.48.0` is 10 commits behind
+`22a091b5` on `MrLesk/Backlog.md`'s `main` (`git log --is-ancestor`-equivalent,
+confirmed via GitHub's compare API, `2026-07-26`). The CLI-surface claims in
+this document (flag multiplicity, exit codes, output formats, idempotency) are
+verified against real upstream source **at tag `v1.48.0`** — the newest
+tagged release, and a reproducible reference point for a later reader — and
+reconfirmed unchanged at the PR #790 commit and current upstream `main`
+(`babd1d2`, `2026-07-19`). This replaces an earlier "v1.47.1 tested floor"
+framing that had gone stale: two behaviors below (§2.4's label-flag
+multiplicity, §2.5's edit idempotency) changed between v1.47.1 and v1.48.0,
+so a floor of v1.47.1 no longer describes this document's own content. The
+**code's** `MIN_BACKLOG_VERSION` constant (`src/adapters/backlog.ts`) is a
+separate, deliberately non-discriminating sanity floor and remains `1.47.1`
+(see §5) — that constant is not evidence that any CLI behavior below was
+verified at v1.47.1.
 
 Two facts shape everything below:
 
@@ -177,46 +193,105 @@ backlog task edit <id> --add-label "doc:<conceptId>" --doc "<docpath>"
 
 ### 2.4 Flag multiplicity rules
 
-Backlog's flags split into two families. Getting this wrong silently drops data.
+Backlog's flags split into two families, and **the label flags moved between
+families in v1.48.0.** Getting this wrong silently drops data.
 
-**Single-value, last-wins (NO accumulator) — comma-separate to pass multiples:**
-`--labels`/`-l`, `--label`, `--add-label`, `--remove-label`, `--assignee`/`-a`.
-Repeating the flag keeps **only the last value** (`-l A -l B` → `Labels: B`). To
-set multiple, comma-separate inside **one** flag (`-l "A,B"`, `-a "@x,@y"`); the
-value is comma-split and de-duped.
+**Since v1.48.0 (the pinned floor, see above) — accumulator, repeats AND
+commas both work:** `task list`'s `-l`/`--labels` filter, and `task edit`'s
+`-l`/`--label`, `--add-label`, and `--remove-label`. `-l A -l B` and
+`-l "A,B"` are now equivalent (`["A","B"]`). Verified against real upstream
+`MrLesk/Backlog.md` **at tag `v1.48.0`**, `src/cli.ts`: `-l, --labels <labels>`
+on `task list` (line 2269), `-l, --label <labels>` on `task edit` (line 2657),
+`--add-label <labels>` (line 2668), and `--remove-label <labels>` (line 2673)
+each pass `createMultiValueAccumulator()` (defined line 223: every repeat
+appends to an array) as Commander's option processor; each resulting array is
+later comma-split and normalized by `parseDelimitedStringList`
+(`src/utils/task-builders.ts` line 115, same tag).
 
-**Accumulator (repeats AND commas both work):** `--doc`, `--ref`, `--dep` /
-`--depends-on`, `--modified-file`.
+**Before v1.48.0 (confirmed at tag `v1.47.1`) these same four flags had NO
+accumulator** — repeating the flag kept only the **last** value (`-l A -l B`
+→ `Labels: B`), matching what this document used to say. At `v1.47.1`,
+`src/cli.ts` line 513 (`.option("-l, --label <labels>")`) and lines 524–525
+(`.option("--add-label <label>")` / `.option("--remove-label <label>")`) pass
+no processor argument at all — confirmed by diffing `v1.47.1` against
+`v1.48.0`'s `src/cli.ts`. This is one of two behaviors in this document that
+changed between v1.47.1 and v1.48.0 (the other is §2.5's edit idempotency);
+every other claim in this file was re-checked and still holds at v1.48.0.
 
-Practical consequence for `lore`:
+**Unaffected by the above — still single-value, last-wins in v1.48.0:**
+- `task create`'s `-l`/`--labels` (setting labels on a brand-new task) was
+  **not** converted; it remains a plain `.option()` with no processor
+  (`src/cli.ts` line 1691, tag `v1.48.0`). Comma-separate inside one flag
+  occurrence to set multiple labels at create time.
+- `--assignee`/`-a` is untouched by the v1.48.0 change and remains
+  single-value, last-wins on `create`, `edit`, and `list` (`src/cli.ts`, no
+  processor argument at any of those option definitions, both tags).
+
+**Accumulator, unaffected by the v1.48.0 change (unchanged since v1.47.1):**
+`--doc`, `--ref`, `--dep`/`--depends-on`, `--modified-file`.
+
+Practical consequence for `lore` — **its writes are unaffected either way,**
+because `lore` never repeats any of these flags; it always passes **one**
+occurrence per flag, comma-joining when there is more than one value
+(`src/adapters/backlog.ts`: `listTasks` ~line 838, `createTask` ~line 908,
+`editTask` ~line 946/949). Whether the flag is last-wins-with-comma-split
+(pre-v1.48.0) or an accumulator that also comma-splits (v1.48.0+), a single
+comma-joined occurrence produces the same result, so this version change is
+**not a behavior bug in lore** — it only changes what a *repeated* flag would
+do, and lore never repeats one:
 
 - `lore link` adds a **single** `doc:<id>` label via `--add-label` (one value,
-  no comma) — unaffected by either rule.
+  no comma) — unaffected by either rule. `lore unlink` removes one via a
+  single `--remove-label` the same way.
+- `lore orphans` passes **no filters at all** — its one `listTasks()` call
+  (`src/commands/orphans.ts` ~line 166) omits every option, so no flag of any
+  multiplicity is ever passed; the v1.48.0 change has nothing to act on here.
 - `--add-label` / `--remove-label` are the **incremental** label ops
   (case-insensitive de-dup, preserves casing). Plain `--label`/`-l` on **edit**
-  is **SET/REPLACE** — it wipes all existing labels. `lore` uses
+  is **SET/REPLACE** — it wipes all existing labels (a new `--clear-labels`
+  flag was added in v1.48.0 for explicitly clearing all labels, and `--label`
+  still cannot be combined with `--add-label`/`--remove-label`). `lore` uses
   `--add-label`/`--remove-label` for incremental changes, never bare `--label`.
 - `--doc`/`--ref` on edit are also SET/REPLACE (the accumulator replaces the
   whole array), and **cannot be cleared** via an empty value (a `length > 0`
   guard ignores `--doc ""`). So `lore unlink` must re-pass the full desired
   `--doc` set and remove the label with `--remove-label`.
 
-### 2.5 Edit idempotency and what Backlog persists
+### 2.5 Edit idempotency and what Backlog persists — since v1.48.0
 
-- **Edit is idempotent.** An edit that changes nothing does **not** rewrite the
-  file or bump `updated_date`, yet still exits 0 and prints `Updated task <ID>`.
-  `lore sync`/reconciliation may issue edits unconditionally without churning
-  `updated_date`.
+- **Edit is idempotent as of v1.48.0.** An edit that changes no
+  `updated_date`-relevant field does **not** bump `updated_date`, yet still
+  exits 0 and prints `Updated task <ID>`. Verified at upstream tag `v1.48.0`,
+  `src/core/backlog.ts`: `updateTask` (line 1406) only stamps a fresh
+  `updatedDate` when `hasUpdatedDateRelevantChanges(originalTask, task)`
+  (line 162) — a `JSON.stringify` comparison over a fixed field allowlist,
+  `buildUpdatedDateComparableTask` (line 132) — returns `true`; otherwise it
+  preserves the original task's `updatedDate` (or omits the field if the
+  original never had one). `lore` sync/reconciliation may issue edits
+  unconditionally without churning `updated_date`.
+  - **This was NOT true at v1.47.1.** The pre-v1.48.0 `updateTask` (same file,
+    same tag) unconditionally ran `task.updatedDate = new Date()...` on every
+    call, with no comparison — so at v1.47.1 an edit that changed nothing
+    still bumped `updated_date`. This is the second of the two behaviors in
+    this document that changed between v1.47.1 and v1.48.0 (the first is
+    §2.4's flag multiplicity).
+  - **Precision note:** `saveTask` (`src/file-system/operations.ts` line 389)
+    calls an unconditional `Bun.write` on every `updateTask`, at both
+    versions — Backlog does not skip the write syscall. "Idempotent" means
+    the **written content** is byte-identical when nothing relevant changed
+    (so `git diff` shows nothing), not that the write itself is skipped.
 - Any **effective** change rewrites `updated_date` to **minute precision** UTC
   (`YYYY-MM-DD HH:mm`). Same-minute collisions are possible — never treat
   `updated_date` as a monotonic ordering signal.
 - **Backlog drops unknown frontmatter keys on any mutating edit.** The
-  serializer writes a fixed key set. **`lore` must never store bespoke metadata
-  as task frontmatter.** Anything `lore` needs on a task lives in a
-  Backlog-recognized field: `labels` (the `doc:` back-ref), `documentation`,
-  `references`, `dependencies`, or `milestone`. AC/DoD `#n` indices are
-  **renumbered display positions**, not stable keys — re-resolve after each
-  write or key on text.
+  serializer writes a fixed key set (confirmed unchanged in substance between
+  v1.47.1 and v1.48.0 at `src/markdown/serializer.ts`; v1.48.0 additionally
+  serializes a `type` key when the task has one). **`lore` must never store
+  bespoke metadata as task frontmatter.** Anything `lore` needs on a task
+  lives in a Backlog-recognized field: `labels` (the `doc:` back-ref),
+  `documentation`, `references`, `dependencies`, or `milestone`. AC/DoD `#n`
+  indices are **renumbered display positions**, not stable keys — re-resolve
+  after each write or key on text.
 
 ---
 
@@ -313,7 +388,9 @@ Run once at startup, cached in `.lore/cache/`. See the
 [capability-probe ADR](../adr/0002-backlog-integration-json-only.md).
 
 ```
-1. spawn("backlog", "--version")          → expect exit 0; stdout is bare semver "1.47.1\n"
+1. spawn("backlog", "--version")          → expect exit 0; stdout is bare semver + newline
+                                             (e.g. "1.47.1\n" — the exact numeral depends on
+                                             which build is on PATH; the invariant is the format)
 2. parse version, match /^\d+\.\d+\.\d+/   → no "v" prefix, no name, no extra tokens
 3. semver-compare ver >= MIN_BACKLOG       → a non-discriminating sanity floor (see below)
 4. spawn("backlog", "task", "list", "--json")
@@ -323,7 +400,11 @@ Run once at startup, cached in `.lore/cache/`. See the
 ```
 
 - `backlog --version` (and `-v`) prints **bare semver + newline** to stdout,
-  exit 0, and works outside any project (verified bytes `31 2e 34 37 2e 31 0a`).
+  exit 0, and works outside any project. This is Commander's default
+  `.version()` behavior (`src/cli.ts` line 661, `v1.48.0`), format-invariant
+  across versions; a `v1.47.1` binary was observed to print exactly the bytes
+  `31 2e 34 37 2e 31 0a` (`"1.47.1\n"`) — an example of the format, not a
+  claim about what the currently-pinned build's `--version` prints.
 - The **min-version floor** (`MIN_BACKLOG_VERSION`, still `1.47.1`) does **not**
   by itself distinguish a `--json`-capable binary from one without — a
   pre-`--json` release can still report a version at or above it. Step 4's
@@ -372,7 +453,8 @@ that `lore` does not recognize fails the probe rather than mis-reads.
 emits no JSON; its `--plain` output is **presentation code**
 (`src/formatters/task-plain-text.ts`), not a versioned schema, and it can change
 between releases. A text parser would have to absorb every one of these traps,
-all confirmed in v1.47.1:
+originally confirmed at v1.47.1 and re-checked unchanged at v1.48.0 (this
+document's current pin, see above):
 
 - **ID-case mismatch** — display `TASK-1` vs file `task-1`; the link target must
   come from the `File:` line, never the display ID.
