@@ -8,6 +8,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`docker/e2e/run-e2e.sh` now fails closed instead of silently mutating the caller's working
+  directory when run outside its Docker container** (LORE-269). The harness deliberately runs
+  under `set -uo pipefail` without `-e` (so it can keep going past individual failed assertions),
+  and its first real action was an unguarded `cd /workspace` — on a host, where `/workspace`
+  doesn't exist, that `cd` failed but the script kept running anyway, silently executing every
+  later phase (`git init`, `backlog init`, `lore init`, dozens of real, mutating `backlog`/`lore`
+  calls) against whatever directory the caller happened to invoke it from. Hit for real during
+  round 5 wave 1 (LORE-267): a direct `bash docker/e2e/run-e2e.sh` on the host overwrote
+  `backlog/config.yml`'s `project_name` (stripping its ADR-0012 header comment), created 3
+  spurious real Backlog tasks under `backlog/tasks/`, and wrote stray `.lore/.gitignore`,
+  `.lore/profile.toml`, `.lore/schemas/`, `.lore/templates/`, and `AGENTS.md` into a host
+  worktree — all uncommitted and fully reverted that time, but only because it was noticed before
+  anything was staged. Fixed with two independent, purpose-built signals checked immediately
+  after `set -uo pipefail`, before `$RESULTS_DIR`/the report file are even created and before any
+  mutating phase runs: a `LORE_E2E_CONTAINER=1` `ENV` now baked into `docker/e2e/Dockerfile`
+  (present only in images built from it), and `/workspace` actually existing (the directory the
+  same Dockerfile's `WORKDIR` guarantees). Either signal missing prints a clear message naming the
+  correct invocation (`docker compose -f docker/e2e/docker-compose.yml up --build
+  --exit-code-from e2e`) and exits 1. The literal `cd /workspace` line is also now guarded
+  (`|| { ...; exit 1; }`) as defense-in-depth. `set -e` was deliberately NOT added — verified by
+  temporarily flipping the expected exit code on two unrelated `step` assertions and re-running
+  the full in-container harness: both were reported as `[FAIL]` by name and the run continued
+  through all ~300 remaining checks to a final tally of `300 passed, 2 failed` (exit 1), proving
+  the harness still reports every failing assertion rather than stopping at the first; reverting
+  both restored `302 passed, 0 failed` (exit 0). Every other `cd`/directory-change in the script
+  was swept (found at the pre-init probe, the docusaurus build, and the nested-checkout phase) —
+  each is inside a subshell, command substitution, or `bash -c '...'`, always `&&`-chained to the
+  command depending on it, so none had the same silent-fallthrough shape and none needed a guard.
+  A host-side invocation of the now-guarded script was verified by hand: `git status --porcelain`,
+  `backlog/tasks/` file count, and `backlog/config.yml`'s checksum were snapshotted before and
+  after and were byte-identical (the run printed the guard message and exited 1 without touching
+  anything). `docs/runbooks/docker-e2e-testing-environment.md` gained a note warning against
+  direct invocation and documenting the new guard.
 - **`lore agents`'s pretty-mode output no longer paints a `protected` bridge file green** (LORE-267,
   found during the LORE-260 review). `protected` means a bridge file (currently only
   `.claude/skills/lore/SKILL.md`) looked hand-edited and was deliberately left untouched — the
