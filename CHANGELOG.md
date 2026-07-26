@@ -41,9 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bun test` 2180/0 pass (2176/0 baseline, +4), `typecheck`/`lint` clean, `lore check` (40 files, 0
   errors/warnings), docker e2e harness 302/0 (unchanged baseline).
 - **`.github/workflows/release.yml`'s `publish` job now declares `environment: release`, the out-of-file
-  hook for closing the `workflow_dispatch`-on-any-ref exposure LORE-255's reviewer flagged and LORE-268
-  addresses — inert until two repo-admin steps are done (see below)**: npm Trusted
-  Publishing matches an OIDC token on repository + workflow **filename**, not a ref, and this workflow
+  hook for closing the `workflow_dispatch`-on-any-ref exposure LORE-255's reviewer flagged and
+  LORE-268 addresses — inert until two repo-admin steps are done (see below)**: npm Trusted Publishing
+  matches an OIDC token on repository + workflow **filename**, not a ref, and this workflow
   is `workflow_dispatch`-reachable on any branch — so an actor with write access could push a branch
   carrying a `release.yml` with every in-file guard stripped (the `if: inputs.publish == true` gate,
   the `0.0.0` refusal, the npm-version floor) and dispatch it there, and the resulting OIDC token would
@@ -56,11 +56,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   change does not and cannot create the GitHub Environment or configure its protection rules (the same
   human/repo-admin boundary as LORE-196/LORE-257), and referencing an environment that doesn't exist
   yet auto-creates it with no rules by default. `docs/runbooks/release-publishing.md` gained a new
-  "Repo-admin setup for the release Environment (LORE-268)" section spelling out the two remaining
-  manual steps — creating the `release` GitHub Environment with required reviewers and/or a deployment
-  branch policy, and setting all six packages' npm Trusted Publisher "Environment name" field to
-  `release` (closing the residual loophole where an attacker simply omits the `environment:` line from
-  a forged workflow copy) — and states plainly that the exposure remains open until both are done.
+  "Repo-admin setup for the release Environment (LORE-268)" section spelling out the two
+  remaining manual steps — creating the `release` GitHub Environment with required reviewers
+  (a deployment branch policy alone is not sufficient in this repo today), and setting all
+  six packages' npm Trusted Publisher "Environment name" field to `release` (closing the
+  residual loophole where an attacker simply omits the `environment:` line from a forged
+  workflow copy) — and states plainly that the exposure remains open until both are done.
   `test/release-workflow.test.ts` gained a new assertion pinning `doc.jobs.publish.environment` to
   `"release"` (mutation-verified: deleting the line fails exactly that one test, 9 pass/1 fail, restored
   and re-verified green). Every existing LORE-255 guarantee is unchanged: `workflow_dispatch`-only
