@@ -5,7 +5,7 @@ title: >-
   (round 5)
 type: other
 created_date: '2026-07-25 23:20'
-updated_date: '2026-07-26 13:19'
+updated_date: '2026-07-26 15:26'
 ---
 # Backlog campaign tracker — post-round-4 review residue & release hardening
 
@@ -24,7 +24,7 @@ Protocol: restore → compute the ready/conflict graph → mark the wave Dispatc
 
 ## Frontier
 
-The "ready now" set is **always recomputed live** from `backlog/tasks/*.md` + this table at the start of every restore/wave — never trust a persisted "next wave" plan. Informational hint only: as of **end of wave 1 (2026-07-26)**, **4 queued**, **3 resolved + integration residue**, **6 not queued**.
+The "ready now" set is **always recomputed live** from `backlog/tasks/*.md` + this table at the start of every restore/wave — never trust a persisted "next wave" plan. Informational hint only: as of **wave 2 dispatch (2026-07-26)**, **4 queued** (3 Dispatched in wave 2, 1 held for wave 3), **3 resolved + integration residue**, **6 not queued**.
 
 Baseline on merged `dev` @ `421f7bb`, verified not assumed: `bun test` **2181 pass / 0 fail** · `lore check` **40 files, 0 errors, 0 warnings** · `biome` clean (112 files) · `tsc --noEmit` clean · **docker e2e 302 passed / 0 failed** (run on integrated `dev`, since all four PRs were merged with `--admin`, bypassing the required check).
 
@@ -36,15 +36,15 @@ Live conflict edges as of end of wave 1 — **recompute, do not trust**:
 - LORE-266's **AC#3** may pull in `src/commands/rename.ts` / `src/commands/sync.ts` (both call `assertNoSymlinkInAnyPath`) plus their tests.
 - **`CHANGELOG.md` remains a known, accepted shared edge.** Wave 1 confirmed the cost is real but bounded: LORE-267 and LORE-268 produced a guaranteed add/add conflict at the `### Fixed` anchor, resolved keep-both by the serial merge queue. Do **not** drop the `[Unreleased]` requirement to avoid it.
 
-Likely shape: **wave 2 = {266, 269, 270}**, **wave 3 = {271}**. RECOMPUTE.
+Recomputed live at the wave-2 restore (2026-07-26): the predicted shape **held**. **Wave 2 = {LORE-266, LORE-269, LORE-270}** (pairwise file-disjoint), **wave 3 = {LORE-271}** (blocked out of wave 2 by the `src/commands/agents.ts` + `test/agents.test.ts` edge with LORE-266). Fable 5 re-probed at this restore and is **still over its monthly spend limit** — reviewer stays **Opus**, per the user's standing wave-1 authorisation for this round.
 
 ## Queue (confirmed order)
 | # | Issue | Cluster | Formal deps | Status | Wave | Note |
 |---|---|---|---|---|---|---|
-| 1 | LORE-266 | security / test-coverage | — | To Do | — | bug (security-relevant). The pre-write symlink sweep `assertNoSymlinkInAnyPath` (the LORE-93 AC#5 invariant) has **zero test coverage** — deleting it fails no test, on `dev` as well as on any branch. `ensureDir`'s reactive per-call guard masks it in the single-target case. AC#3 sweeps the other call sites (`rename.ts`, `sync.ts`). [src/commands/agents.ts, src/commands/fswrite.ts, test/agents.test.ts] |
-| 2 | LORE-269 | build-ci-config / dx | — | To Do | — | bug (HIGH). `docker/e2e/run-e2e.sh` is `set -uo pipefail` with **no `-e`** (line 17) and an unguarded `cd /workspace` (line 163), so run on a host the `cd` fails silently and its destructive phases execute against the caller's cwd. **Hit for real in wave 1** — overwrote `backlog/config.yml` and created 3 spurious Backlog tasks in a worktree before being caught and reverted. `set -e` cannot simply be added (the harness relies on continuing past failed assertions), so the guard must be local to the `cd`. [docker/e2e/run-e2e.sh]
+| 1 | LORE-266 | security / test-coverage | — | Dispatched | 2 | bug (security-relevant). The pre-write symlink sweep `assertNoSymlinkInAnyPath` (the LORE-93 AC#5 invariant) has **zero test coverage** — deleting it fails no test, on `dev` as well as on any branch. `ensureDir`'s reactive per-call guard masks it in the single-target case. AC#3 sweeps the other call sites (`rename.ts`, `sync.ts`). [src/commands/agents.ts, src/commands/fswrite.ts, test/agents.test.ts] |
+| 2 | LORE-269 | build-ci-config / dx | — | Dispatched | 2 | bug (HIGH). `docker/e2e/run-e2e.sh` is `set -uo pipefail` with **no `-e`** (line 17) and an unguarded `cd /workspace` (line 163), so run on a host the `cd` fails silently and its destructive phases execute against the caller's cwd. **Hit for real in wave 1** — overwrote `backlog/config.yml` and created 3 spurious Backlog tasks in a worktree before being caught and reverted. `set -e` cannot simply be added (the harness relies on continuing past failed assertions), so the guard must be local to the `cd`. [docker/e2e/run-e2e.sh]
 | 3 | LORE-271 | cli-ux / docs-drift / cmd-crud-a | — | To Do | — | bug (medium). Found by wave 1's **integration review** — invisible to every single-task pass. LORE-267's colour fix made `lore agents --check` the first command where ANSI colour is the *sole* carrier of a per-file status: `actionLabel` collapses `protected` and `updated` to the same literal `out of date`. Falsifies `cli-contract.md` §6's "colour is never load-bearing" for piped/`NO_COLOR` consumers. **Conflicts with LORE-266** (both `src/commands/agents.ts`). [src/commands/agents.ts, docs/reference/cli-contract.md]
-| 4 | LORE-270 | docs-drift / adapter-backlog / cmd-meta-a | — | To Do | — | bug (medium). `backlog-cli-contract.md` §2.4 calls `--labels`/`--label`/`--add-label`/`--remove-label` single-value last-wins. True at the doc's pinned v1.47.1 floor; v1.48.0 gave all four `createMultiValueAccumulator()`, and lore runs a v1.48.0-based binary. The same file also says lore consumes a build "at or past PR #790", so it contradicts itself on which version governs. [docs/reference/backlog-cli-contract.md, docs/reference/architecture.md]
+| 4 | LORE-270 | docs-drift / adapter-backlog / cmd-meta-a | — | Dispatched | 2 | bug (medium). `backlog-cli-contract.md` §2.4 calls `--labels`/`--label`/`--add-label`/`--remove-label` single-value last-wins. True at the doc's pinned v1.47.1 floor; v1.48.0 gave all four `createMultiValueAccumulator()`, and lore runs a v1.48.0-based binary. The same file also says lore consumes a build "at or past PR #790", so it contradicts itself on which version governs. [docs/reference/backlog-cli-contract.md, docs/reference/architecture.md]
 
 ## Resolved
 | # | Issue | Status/date/wave | Evidence summary |
