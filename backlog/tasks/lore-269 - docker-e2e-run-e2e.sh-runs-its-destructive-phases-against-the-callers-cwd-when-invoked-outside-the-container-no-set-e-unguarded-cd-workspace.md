@@ -3,9 +3,11 @@ id: LORE-269
 title: >-
   docker/e2e/run-e2e.sh runs its destructive phases against the caller's cwd
   when invoked outside the container (no set -e, unguarded cd /workspace)
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-26 12:46'
+updated_date: '2026-07-26 15:42'
 labels:
   - build-ci-config
   - dx
@@ -47,9 +49,131 @@ Fail closed at the `cd`, e.g. `cd /workspace || { echo "run-e2e.sh must run insi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Running run-e2e.sh outside its container exits non-zero with a clear message naming the correct docker compose invocation, before any phase that writes to the filesystem or invokes backlog
-- [ ] #2 The guard does not rely on 'set -e' (the harness intentionally omits it so it can continue past failed assertions) — verify the omission is preserved and the harness still reports all failing assertions rather than stopping at the first
-- [ ] #3 Any other unguarded cd or container-path assumption in the script is identified and either guarded or explicitly documented as safe
-- [ ] #4 The in-container path is unaffected: docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e still reports 302 passed / 0 failed and exit 0
-- [ ] #5 A host-side invocation is verified by hand to leave the working tree clean (git status --porcelain empty, no new backlog/tasks/ files, backlog/config.yml unmodified)
+- [x] #1 Running run-e2e.sh outside its container exits non-zero with a clear message naming the correct docker compose invocation, before any phase that writes to the filesystem or invokes backlog
+- [x] #2 The guard does not rely on 'set -e' (the harness intentionally omits it so it can continue past failed assertions) — verify the omission is preserved and the harness still reports all failing assertions rather than stopping at the first
+- [x] #3 Any other unguarded cd or container-path assumption in the script is identified and either guarded or explicitly documented as safe
+- [x] #4 The in-container path is unaffected: docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e still reports 302 passed / 0 failed and exit 0
+- [x] #5 A host-side invocation is verified by hand to leave the working tree clean (git status --porcelain empty, no new backlog/tasks/ files, backlog/config.yml unmodified)
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. docker/e2e/Dockerfile: add `ENV LORE_E2E_CONTAINER=1` alongside RESULTS_DIR/LORE_REPO -- a
+   purpose-built marker baked into the image, present only in containers built from this
+   Dockerfile (compose service `e2e`).
+2. docker/e2e/run-e2e.sh: immediately after `set -uo pipefail` (before RESULTS_DIR/REPORT are
+   even created, before any mutating phase), add a fail-closed guard checking both
+   LORE_E2E_CONTAINER=1 AND /workspace existing; on failure print a clear message naming the
+   correct `docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e`
+   invocation and `exit 1`. Does NOT add `set -e` -- the guard is a plain `if`, so the harness's
+   existing continue-past-failed-assertions behavior (step/check/record) is untouched.
+3. Also guard the literal `cd /workspace` at (originally) line 163 with `|| { echo ...; exit 1; }`
+   as defense-in-depth / direct fix of the cited line.
+4. Sweep: grep every other `cd` in the script (found at ~193, 1351-1352, 1543-1577) -- confirm
+   each is either inside a subshell `(...)`/`$(...)` or `bash -c '...'` and `&&`-chained with the
+   command that depends on it, so a cd failure there can only fail that one step/check (already
+   reported via the harness's own PASS/FAIL machinery), never leak into continued execution
+   against the wrong directory the way the bare top-level `cd /workspace` could. Document the
+   sweep result in the script itself near the guard, and in task notes.
+5. Sweep docs/runbooks/docker-e2e-testing-environment.md for stale prose -- add a short note
+   documenting the new fail-closed guard against direct host invocation if nothing already covers
+   it (currently the runbook is silent on running run-e2e.sh directly, not factually contradicted,
+   but worth documenting for future contributors).
+6. Verify AC4: docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e
+   still reports 302 passed / 0 failed, exit 0 (in-container path unaffected).
+7. Verify AC2: temporarily break two assertions (e.g. flip an expected exit code in two `step`
+   calls), rerun in-container, confirm BOTH report FAIL and the tally still reflects both (not
+   just the first) -- then revert.
+8. Verify AC5: snapshot `git status --porcelain`, `ls backlog/tasks | wc -l`, `md5 backlog/config.yml`
+   before and after running `bash docker/e2e/run-e2e.sh` directly on the host (safe now because of
+   the guard) -- confirm all three are unchanged/empty and the script exits 1 with the guard
+   message.
+9. Add CHANGELOG [Unreleased] entry. Update task notes/final summary with objective evidence,
+   mark Done.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implementation:
+- docker/e2e/Dockerfile: added ENV LORE_E2E_CONTAINER=1 (purpose-built container marker, present
+  only in images built from this file).
+- docker/e2e/run-e2e.sh: added a fail-closed guard immediately after `set -uo pipefail` (before
+  RESULTS_DIR/REPORT are even created, before any mutating phase) checking
+  LORE_E2E_CONTAINER=1 AND /workspace existing; prints a clear message naming the correct
+  `docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e` invocation
+  and exits 1 if either signal is missing. Also guarded the literal `cd /workspace` line itself
+  with `|| { echo ...; exit 1; }` as defense-in-depth. No `set -e` added anywhere.
+- docs/runbooks/docker-e2e-testing-environment.md: added a Prerequisites bullet warning against
+  direct invocation and documenting the new guard.
+- CHANGELOG.md: added [Unreleased] entry.
+
+AC3 sweep: grepped every `cd`/directory-change in run-e2e.sh besides the guarded top-level one.
+Found 4 other sites (pre-init probe /tmp dir; docusaurus `cd website` x2; the nested-checkout
+phase's outer-repo git init + several `bash -c "cd '$NESTED_PROJECT' && ..."` / `$(cd ... && ...)`
+calls). Every one is inside a subshell `(...)`, a command substitution `$(...)`, or a `bash -c
+'...'` child process, and always `&&`-chained to the command that depends on the cd succeeding.
+None can leak a cd failure into continued execution against the wrong directory the way the bare
+top-level `cd /workspace` could -- a failure there just fails that one step/check, already
+reported by the harness's own PASS/FAIL accounting. Documented inline in the script (right after
+the guard) and here. No other absolute/relative container-path assumption found that isn't either
+an absolute path (safe regardless of cwd) or downstream of the now-guarded cd.
+
+Verification (objective, all actually run):
+- `bash -n docker/e2e/run-e2e.sh` -- syntax OK.
+- AC1/host guard: `bash docker/e2e/run-e2e.sh` run directly on the host (in this worktree) prints
+  the guard message and exits 1 (captured exit code: 1).
+- AC5: snapshotted `git status --porcelain`, `ls backlog/tasks | wc -l` (285), and
+  `md5 backlog/config.yml` (6826b029625f7c55dedaca208452931d) BEFORE and AFTER the host
+  invocation above -- all three byte-identical; confirmed no new backlog/tasks/ files, no
+  .lore/.gitignore, .lore/profile.toml, .lore/schemas/, .lore/templates/, or AGENTS.md appeared.
+- AC2 (set -e absence): `grep -n "^set -" docker/e2e/run-e2e.sh` shows only `set -uo pipefail`.
+- AC2 (continues past failures): temporarily flipped the expected exit code (0 -> 1) on two
+  unrelated `step` assertions ("lore --help prints the banner", "lore -h (short flag) prints the
+  banner"), rebuilt and ran `docker compose -f docker/e2e/docker-compose.yml up --build
+  --exit-code-from e2e` -- both reported `[FAIL] ... (exit 0, expected 1)` by name, the run
+  continued through all ~300 remaining checks, and the final tally was "300 passed, 2 failed"
+  (container exit 1). Reverted both, rebuilt and re-ran -- back to "302 passed, 0 failed" (exit
+  0).
+- AC4: `docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e` (clean,
+  before AND after the AC2 break/revert cycle) -- both runs: "==== E2E summary: 302 passed, 0
+  failed ====", container exit code 0.
+- `bun test`: 2181 pass, 0 fail (unchanged baseline). `bun run lint` (biome check .): clean, no
+  fixes needed. `bun run src/cli.ts check docs/runbooks`: 7 files, 0 errors, 0 warnings (the
+  runbook edit is OKF-clean).
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Fixed docker/e2e/run-e2e.sh's silent host-cwd-mutation footgun with a fail-closed container-only
+guard, verified end-to-end rather than assumed:
+
+- Guard: docker/e2e/Dockerfile now bakes in ENV LORE_E2E_CONTAINER=1; run-e2e.sh checks it plus
+  /workspace's existence immediately after `set -uo pipefail` (before any mutating phase, before
+  RESULTS_DIR/REPORT even exist) and exits 1 with the correct docker-compose invocation if either
+  signal is missing. The literal `cd /workspace` line is separately guarded too (defense-in-depth).
+- AC1/AC5 objective evidence: ran `bash docker/e2e/run-e2e.sh` directly on the host in this
+  worktree -- printed the guard message, exit 1. git status --porcelain, `ls backlog/tasks | wc -l`
+  (285), and `md5 backlog/config.yml` were identical before and after; no stray backlog tasks or
+  .lore/*/AGENTS.md files appeared.
+- AC2 objective evidence: `set -e` confirmed still absent (only `set -uo pipefail`). Temporarily
+  broke two `step` assertions' expected exit codes, ran the real in-container harness via
+  `docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e` -- both
+  reported `[FAIL]` by name and the run continued through ~300 more checks to a final tally of
+  "300 passed, 2 failed" (exit 1), proving the harness still reports every failure rather than
+  stopping at the first. Reverted both; re-ran to confirm "302 passed, 0 failed" (exit 0) again.
+- AC3 sweep: every other `cd` in the script (pre-init probe, docusaurus build x2, nested-checkout
+  phase's several sites) is subshell/`bash -c`-scoped and `&&`-chained -- none share the
+  bare-top-level-cd failure shape, none needed a guard; documented inline in the script and in
+  task notes.
+- AC4: `docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e` reports
+  "302 passed, 0 failed", exit 0 -- run twice (before and after the AC2 break/revert cycle),
+  confirming the in-container path is genuinely unaffected.
+- Regression checks: `bun test` 2181/0 pass (unchanged baseline), `bun run lint` clean,
+  `bun run src/cli.ts check docs/runbooks` 7 files/0 errors/0 warnings (the runbook prose addition
+  is OKF-clean).
+- docs/runbooks/docker-e2e-testing-environment.md gained a Prerequisites bullet warning against
+  direct invocation and documenting the guard. CHANGELOG.md gained an [Unreleased] entry.
+<!-- SECTION:FINAL_SUMMARY:END -->
