@@ -1100,11 +1100,25 @@ describe("lore rename — refuses to write through a symlinked ancestor director
       // before any single write) must refuse before bulk.md's own legitimate rewrite ever lands on
       // disk — proving the guard isn't merely reactive to loop order (which would let bulk.md's
       // in-place rewrite through before the loop reached the symlinked move destination).
+      //
+      // The destination category is named "zzz-evil", not "evil" (LORE-266 mutation-tested fix):
+      // `writes`' Map insertion order (commitWrites' own `targets`) is the bundle's sorted path
+      // order, and a NEW destination category also gets its own freshly-generated `index.md` write
+      // (e.g. "evil/index.md") alongside the moved file itself. "evil" sorts BEFORE "stories", so
+      // that synthetic "evil/index.md" entry — itself under the symlinked directory — was always
+      // the very FIRST entry `commitWrites`' write loop reached, meaning `ensureDir`'s own reactive
+      // per-call guard threw on the very first iteration regardless of whether the preflight sweep
+      // ran at all (verified by neutering `assertNoSymlinkInAnyPath` directly: the assertions below
+      // still passed unchanged). "zzz-evil" sorts AFTER "stories/bulk.md", so bulk.md's own
+      // legitimate rewrite is genuinely reached first in loop order — only the up-front sweep, not
+      // `ensureDir`'s reactive check, can refuse before it lands (confirmed by the same mutation:
+      // with the sweep neutered, bulk.md's write DOES land before the reactive guard at the
+      // now-later "zzz-evil/index.md" entry finally throws).
       writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
       writeDoc("stories/bulk.md", "---\ntype: Story\n---\nUses [orders](../reference/orders.md).\n");
-      symlinkSync(outsideDir, join(root, "docs/evil"));
+      symlinkSync(outsideDir, join(root, "docs/zzz-evil"));
 
-      const err = await expectError(["reference/orders", "evil/pwned"]);
+      const err = await expectError(["reference/orders", "zzz-evil/pwned"]);
       expect(err.type).toBe("conflict");
       expect(existsSync(join(outsideDir, "pwned.md"))).toBe(false);
       // bulk.md's own legitimate, unrelated rewrite was NOT written either — all-or-nothing.
