@@ -25,12 +25,16 @@ six packages, and proves the `npx`/launcher resolution mechanism end-to-end**
 via `npm pack` + a scratch install + running the launcher (LORE-9), then, only
 when a maintainer manually dispatches it with `publish: true`, **publishes all
 six packages via npm OIDC Trusted Publishing** (LORE-255). That `publish` job
-exists in the workflow already, but it is inert until the one-time
-Trusted-Publisher setup below is done on npmjs.com for all six packages — it
-will fail loud (auth/403) on any dispatch attempted before then. See
-[First-release checklist](#first-release-checklist) below for the exact
-mechanical sequence to cut the actual first release; the rest of this runbook
-is the supporting detail behind each checklist item.
+exists in the workflow already, but it is inert until **two** one-time setups
+are done: the npm Trusted-Publisher setup below on npmjs.com for all six
+packages (skip it and any dispatch fails loud with auth/403), and the
+repo-admin [`release` GitHub Environment setup
+(LORE-268)](#repo-admin-setup-for-the-release-environment-lore-268) that
+makes the workflow's `environment: release` declaration actually enforce
+anything instead of being cosmetic. See the [First-release
+checklist](#first-release-checklist) below for the exact mechanical sequence
+to cut the actual first release; the rest of this runbook is the supporting
+detail behind each checklist item.
 
 ## First-release checklist
 
@@ -294,8 +298,15 @@ this one job ever gets the token. It:
   then, that package's `npm publish` call fails with an auth/403 error, which
   is the correct "not ready yet" outcome, not a hazard.
 
-No further wiring is needed before a real release — see the [First-release
-checklist](#first-release-checklist) for what a maintainer still does by hand
+Further wiring **is** needed before a real release: see [Repo-admin setup for
+the release Environment
+(LORE-268)](#repo-admin-setup-for-the-release-environment-lore-268) for the
+two one-time, out-of-file steps (creating the `release` GitHub Environment
+with required reviewers, and setting each package's npm Trusted Publisher
+Environment name to `release`) that make the `environment: release`
+declaration above actually protective rather than cosmetic. See the
+[First-release checklist](#first-release-checklist) for the full sequence —
+those two repo-admin steps, plus what a maintainer still does by hand
 (version bump, the `bin.lore` flip, tag, dispatch).
 
 **Scoped-package public access:** all six `@salient-data/lore*` packages are
@@ -326,7 +337,13 @@ publish is explicitly marked public. Root `package.json` and all five
 3. Tag it (`git tag vX.Y.Z && git push --tags`) — informational only; nothing
    is triggered automatically by the tag.
 4. Run the `Release` workflow manually (`workflow_dispatch`) with
-   `publish: true`, on the tag/commit from step 3.
+   `publish: true`, on the tag/commit from step 3. Once the [`release`
+   Environment's required
+   reviewers](#repo-admin-setup-for-the-release-environment-lore-268) are
+   configured (as this checklist's second item requires), the run will
+   **pause at the `publish` job awaiting manual deployment approval** in the
+   Actions UI — this is expected, not a hang or a failure; a listed reviewer
+   approves the deployment to let `publish` proceed.
 5. Verify: `npx @salient-data/lore@X.Y.Z --version` from a machine that has
    never installed lore before, on at least one platform other than the one
    used to test locally.
