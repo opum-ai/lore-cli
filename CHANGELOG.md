@@ -36,7 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   both restored `302 passed, 0 failed` (exit 0). Every other `cd`/directory-change in the script
   was swept (found at the pre-init probe, the docusaurus build, and the nested-checkout phase) —
   each is inside a subshell, command substitution, or `bash -c '...'`, always `&&`-chained to the
-  command depending on it, so none had the same silent-fallthrough shape and none needed a guard.
+  command depending on it, so none can leak a changed cwd into the rest of the script or mutate the
+  wrong directory the way the bare top-level `cd /workspace` did, and none needed a fail-closed
+  guard of their own. Whether a failed `cd` there is *also* surfaced as a step/check FAIL is a
+  separate question, and the answer isn't uniform: two carve-outs report nothing meaningful on a
+  failed cd — the pre-init probe's bare `bash -c "cd ... && backlog config set ..."` (line 1614)
+  discards its status and output entirely (`>/dev/null 2>&1`), and the nested-checkout phase's
+  `check '[ -z "$(cd ... && git status ...)" ]'` (line 1642) turns a failed cd into a vacuous PASS
+  (the short-circuited `&&` yields an empty capture, and `[ -z "" ]` is true). Every other
+  `cd`/directory-change is reported as an ordinary step/check FAIL on failure, same as before.
   A host-side invocation of the now-guarded script was verified by hand: `git status --porcelain`,
   `backlog/tasks/` file count, and `backlog/config.yml`'s checksum were snapshotted before and
   after and were byte-identical (the run printed the guard message and exited 1 without touching

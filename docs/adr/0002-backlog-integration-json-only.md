@@ -45,6 +45,21 @@ exists would mean every real user's capability probe fails on install. See
 the [release-publishing runbook](../runbooks/release-publishing.md)'s
 prerequisite.
 
+**Amendment — 2026-07-26 (LORE-54).** Decision item 6's exit-code claim below
+is **superseded**. It reads "`lore` ... does **not** use `task view`'s exit
+code to test existence — `task view` exits `0` even for a missing task", which
+accurately described the pre-migration fork (LORE-2/4/21) `lore` shipped
+against when this ADR was written. Upstream's PR #790 made the exit code
+meaningful: `task view <missing>` (and the bare `task <missing>` shortcut) now
+exits `1` unconditionally, in every output mode, and `lore`'s adapter
+(`viewTask`) uses exactly that as its existence check — the same PR #790
+migration the two LORE-5 amendments above already cover for items 1 and 4. See
+[backlog-cli-contract.md §2.2](../reference/backlog-cli-contract.md#22-existence-checks--task-views-exit-code-is-meaningful)
+for the full current contract and migration history, and
+[architecture.md §3](../reference/architecture.md) for the up-to-date summary.
+Item 6 is left as originally written below for the historical record; this
+amendment is the authoritative statement of current behavior.
+
 ## Context
 
 `lore`'s differentiating feature is coupling repo-resident docs to Backlog.md

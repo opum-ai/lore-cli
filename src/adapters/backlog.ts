@@ -776,7 +776,11 @@ function rejectFlagLike(value: string): string {
 }
 
 /**
- * Join multiple values for a single-value, last-wins flag into one comma-separated argument (§2.4).
+ * Comma-join multiple values into a single occurrence of one flag, so lore never has to repeat a
+ * flag to send more than one value (§2.4). This is safe regardless of which multiplicity family the
+ * flag belongs to: a single-value/last-wins flag and an accumulator flag both parse one comma-joined
+ * occurrence identically, so the same helper serves `task list`/`task edit`'s accumulator label flags
+ * and `task create`'s single-value one without needing to special-case either.
  * Backlog's CLI has no escape for an embedded comma — the comma **is** the delimiter — so a value
  * containing one cannot be sent safely: it would silently split into two (or more) unrelated
  * Backlog-side values instead of the one lore intends. Reject it instead. Each value is also run
@@ -943,10 +947,10 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
       await ensureProbed();
       const args = ["task", "edit", rejectFlagLike(id)];
       if (patch.addLabels !== undefined && patch.addLabels.length > 0) {
-        args.push("--add-label", commaJoin(patch.addLabels)); // single-value flag (§2.4): comma-join.
+        args.push("--add-label", commaJoin(patch.addLabels)); // accumulator flag (§2.4): comma-join into one occurrence.
       }
       if (patch.removeLabels !== undefined && patch.removeLabels.length > 0) {
-        args.push("--remove-label", commaJoin(patch.removeLabels));
+        args.push("--remove-label", commaJoin(patch.removeLabels)); // accumulator flag (§2.4): comma-join into one occurrence.
       }
       if (patch.status !== undefined) {
         args.push("--status", rejectFlagLike(patch.status));

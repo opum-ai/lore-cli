@@ -110,7 +110,7 @@ describe("listTasks — task list --json → mapped summaries (AC#1)", () => {
     expect(Object.keys(tasks[0] ?? {})).not.toContain("file");
   });
 
-  test("passes --status and comma-joins multiple --labels (single-value flag, §2.4)", async () => {
+  test("passes --status and comma-joins multiple --labels into one accumulator occurrence (§2.4)", async () => {
     const spawn = scriptedSpawn((argv) =>
       argv[0] === "task" && argv[1] === "list" && argv.length > 3 ? ok(TASK_LIST) : undefined,
     );
