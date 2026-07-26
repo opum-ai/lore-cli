@@ -384,9 +384,13 @@ describe("lore agents — output rendering", () => {
 describe("lore agents — pretty-mode colour is pinned per BridgeAction (LORE-267, AC#1-3)", () => {
   test("bridgeActionColor maps every BridgeAction exactly: created/updated green, unchanged dim, protected yellow", () => {
     // Exhaustive over agent-bridge.ts's BridgeAction union (created | updated | unchanged |
-    // protected) so a fifth action added later fails this test instead of silently falling through
-    // to the `ANSI.green` default. `lore init`'s renderer (init.ts) imports this exact function, so
-    // pinning it here also pins init's colour — the two commands cannot diverge again (AC#3).
+    // protected). This test only pins today's four values; the guard against a *future* action
+    // added to the union without a mapping update is a compile-time one — `bridgeActionColor`
+    // (src/commands/agents.ts) is backed by a `Record<BridgeAction, string>`, so `bun run
+    // typecheck` fails (TS2741, missing property) the moment the union grows and this object
+    // literal doesn't, before any test ever runs. `lore init`'s renderer (init.ts) imports this
+    // exact function, so pinning it here also pins init's colour — the two commands cannot
+    // diverge again (AC#3).
     expect(bridgeActionColor("created")).toBe(ANSI.green);
     expect(bridgeActionColor("updated")).toBe(ANSI.green);
     expect(bridgeActionColor("unchanged")).toBe(ANSI.dim);
