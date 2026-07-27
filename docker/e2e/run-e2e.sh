@@ -61,19 +61,12 @@ fi
 # wrong directory -- unlike the bare top-level `cd /workspace` above. None of them match the shape
 # this task's bug report describes, so none needed a fail-closed guard.
 #
-# Whether a failed `cd` there is ALSO surfaced as a step/check FAIL is a separate question, and the
-# answer is NOT uniform -- two documented carve-outs (line numbers as of this writing; checked
-# against check()'s own `eval "$expr"` mechanism further down, which just runs the string and takes
-# its literal exit status):
-#   - line 1614's bare `bash -c "cd ... && backlog config set ..."` is NOT wrapped in `step`/
-#     `check`; its status and stdout/stderr are all discarded (`>/dev/null 2>&1`), so a failed cd
-#     there is reported nowhere -- though the identical `cd` one line above it, inside the `step` at
-#     line 1612, would already have failed loudly on its own.
-#   - line 1642's `check '[ -z "$(cd "$NESTED_PROJECT" && git status ...)" ]'` turns a failed cd
-#     into a vacuous PASS: the failed `cd` short-circuits the `&&`, the command substitution
-#     captures nothing, and `[ -z "" ]` is true.
-# Every other `cd`/directory-change below IS reported as an ordinary step/check FAIL on failure,
-# same as before.
+# A failed `cd` at every child/subshell site is also surfaced by harness accounting (LORE-273).
+# Direct `step` wrappers consume the two nested-checkout statuses that previously disappeared or
+# became a vacuous empty-string PASS. The remaining setup substitutions have explicit downstream
+# assertions: outer-repo init checks `.git`, task creation checks `NESTED_TASK`, and Story creation
+# checks `NESTED_STORY_ID`. Thus no child can mutate the wrong directory, and no failed directory
+# setup can leave the final tally green.
 RESULTS_DIR="${RESULTS_DIR:-/results}"
 REPORT="$RESULTS_DIR/report.jsonl"
 LORE_REPO="${LORE_REPO:-/opt/lore}"
@@ -1611,7 +1604,8 @@ check "AC4: outer git repo initialized ABOVE the lore project directory" '[ -d "
 
 step "AC4: backlog init inside the nested project dir" 0 \
   -- bash -c "cd '$NESTED_PROJECT' && backlog init 'nested-e2e' --defaults"
-bash -c "cd '$NESTED_PROJECT' && backlog config set autoCommit false && backlog config set remoteOperations false && backlog config set checkActiveBranches false" >/dev/null 2>&1
+step "AC4: configure backlog inside the nested project dir" 0 \
+  -- bash -c "cd '$NESTED_PROJECT' && backlog config set autoCommit false && backlog config set remoteOperations false && backlog config set checkActiveBranches false"
 step "AC4: lore init inside the nested project dir" 0 \
   -- bash -c "cd '$NESTED_PROJECT' && lore init"
 check "AC4: git rev-parse --show-prefix from inside the nested project reports a NON-EMPTY prefix" \
@@ -1639,8 +1633,8 @@ check "AC4: the link's per-write commit landed in the OUTER repo's history, scop
 step_json "AC4: lore sync's catch-all sweep also succeeds under a non-empty --show-prefix" \
   '.data.backlogCommit.committed == true' \
   -- bash -c "cd '$NESTED_PROJECT' && lore sync --json"
-check "AC4: git status is clean under the nested project's backlog/ after the sweep (no double-prefix pathspec miss)" \
-  '[ -z "$(cd "$NESTED_PROJECT" && git status --porcelain -- backlog/)" ]'
+step "AC4: git status is clean under the nested project's backlog/ after the sweep (no double-prefix pathspec miss)" 0 \
+  -- bash -c "cd '$NESTED_PROJECT' && [ -z \"\$(git status --porcelain -- backlog/)\" ]"
 rm -rf /tmp/nested-e2e
 
 # ── Phase 25: tally ───────────────────────────────────────────────────────────────

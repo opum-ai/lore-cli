@@ -3,13 +3,18 @@ id: LORE-273
 title: >-
   docker/e2e/run-e2e.sh: a failed cd inside the nested-checkout phase is
   reported as a vacuous PASS at one site and not reported at all at another
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-26 16:48'
+updated_date: '2026-07-27 04:05'
 labels:
   - build-ci-config
   - docker-e2e
 dependencies: []
+modified_files:
+  - docker/e2e/run-e2e.sh
+  - test/docker-e2e-guard.test.ts
+  - CHANGELOG.md
 priority: medium
 type: bug
 ordinal: 375000
@@ -43,9 +48,21 @@ For site 2, make the emptiness assertion distinguishable from a failed `cd` — 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A failed cd at run-e2e.sh's nested-checkout git-status check can no longer produce a PASS — verified by an executed mutation (point NESTED_PROJECT at a non-existent path and confirm the check FAILs)
-- [ ] #2 The bare bash -c site's exit status is consumed and reported by the harness's own accounting
-- [ ] #3 The three further sites with the same structural shape are re-audited and each is either hardened or documented with the specific downstream assertion that covers it
-- [ ] #4 The script's AC#3 sweep comment and LORE-269's CHANGELOG bullet are updated to match whatever ships, with no claim stronger than what is true
-- [ ] #5 docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e still reports 302 passed / 0 failed and exit 0
+- [x] #1 A failed cd at run-e2e.sh's nested-checkout git-status check can no longer produce a PASS — verified by an executed mutation (point NESTED_PROJECT at a non-existent path and confirm the check FAILs)
+- [x] #2 The bare bash -c site's exit status is consumed and reported by the harness's own accounting
+- [x] #3 The three further sites with the same structural shape are re-audited and each is either hardened or documented with the specific downstream assertion that covers it
+- [x] #4 The script's AC#3 sweep comment and LORE-269's CHANGELOG bullet are updated to match whatever ships, with no claim stronger than what is true
+- [x] #5 docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e still reports 302 passed / 0 failed and exit 0
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Executed the nested git-status child against a non-existent path; it exited nonzero and is now pinned by test. The real Docker harness completed 303 passed / 0 failed (one new accounted step explains the task's stale 302 expectation). The remaining substitutions are covered by the named downstream assertions documented in the script.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Wrapped nested configuration and git-status operations in counted step calls, eliminated the vacuous empty-substitution PASS, documented downstream coverage, and added regression tests.
+<!-- SECTION:FINAL_SUMMARY:END -->

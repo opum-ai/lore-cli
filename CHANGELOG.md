@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Release-facing documentation and bootstrap mechanics now match the implemented CLI and current
+  npm policy** (LORE-274/275 and release-readiness review). README/tech-stack no longer present the
+  retired fork as a live git dependency, README identifies the hand-rolled parser and 0.1 release
+  candidate state, and Docker E2E documentation records the active required `dev` check plus its
+  admin bypass. The first-release runbook now uses an interactive 2FA publish of the exact
+  CI-produced `0.1.0` tarballs before configuring Trusted Publishing, because npm requires a
+  package to exist before trust can be created. A real `bun run build` script now matches the
+  contributor instructions and compiles to a same-filesystem `dist/lore`.
 - **`docker/e2e/run-e2e.sh` now fails closed instead of silently mutating the caller's working
   directory when run outside its Docker container** (LORE-269). The harness deliberately runs
   under `set -uo pipefail` without `-e` (so it can keep going past individual failed assertions).
@@ -38,14 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each is inside a subshell, command substitution, or `bash -c '...'`, always `&&`-chained to the
   command depending on it, so none can leak a changed cwd into the rest of the script or mutate the
   wrong directory the way the bare top-level `cd /workspace` did, and none needed a fail-closed
-  guard of their own. Whether a failed `cd` there is *also* surfaced as a step/check FAIL is a
-  separate question, and the answer isn't uniform: two carve-outs, both inside the nested-checkout
-  phase, report nothing meaningful on a failed cd — its pre-`lore init` config step's bare
-  `bash -c "cd ... && backlog config set ..."` (line 1614) discards its status and output entirely
-  (`>/dev/null 2>&1`), and its `check '[ -z "$(cd ... && git status ...)" ]'` (line 1642) turns a
-  failed cd into a vacuous PASS (the short-circuited `&&` yields an empty capture, and `[ -z "" ]`
-  is true). Every other `cd`/directory-change is reported as an ordinary step/check FAIL on
-  failure, same as before.
+  guard of their own. LORE-273 closes the separate reporting gap at the two nested-checkout
+  carve-outs: backlog configuration is now a counted `step`, and the final git-status assertion
+  runs inside a child whose failed `cd` returns nonzero instead of becoming a vacuous empty-string
+  PASS. The other setup substitutions each have a named downstream assertion. LORE-272 adds a
+  Docker-free host regression test that executes the guard in an empty temporary directory,
+  verifies exit 1 plus the exact supported Compose command and zero writes, and statically pins the
+  script guard to the Dockerfile's container-only environment marker.
   A host-side invocation of the now-guarded script was verified by hand: `git status --porcelain`,
   `backlog/tasks/` file count, and `backlog/config.yml`'s checksum were snapshotted before and
   after and were byte-identical (the run printed the guard message and exited 1 without touching
@@ -62,19 +69,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command printed it. Fixed by extracting that three-way mapping into a single exported
   `bridgeActionColor()` in `src/commands/agents.ts`, which both `agents.ts`'s own `renderPretty` and
   `init.ts`'s `renderPretty` now call, so the two commands cannot diverge on this mapping again.
-  `created`, `updated`, and `unchanged` keep their existing colors; `--plain`/`--json` output, exit
-  codes, and every other behavior are unchanged — this is a pretty-mode ANSI-color-only fix (cli-
-  contract.md §1.2: pretty's coloring is explicitly not a parsing target and may change between
-  releases, so no `--plain` contract update was needed). In `--check` mode the visible label comes
-  from the drift-status wording (`up to date`/`out of date`) while the color comes from the raw
-  action, so the same label can render in two colors — e.g. a stale `protected` file reads yellow
-  `out of date` next to a stale `updated` file's green `out of date` — matching which one needs
-  `--force`; this two-color split is new, follows directly from the color fix above, and is
-  intended. Verified live under a
+  `created`, `updated`, and `unchanged` keep their existing colors; `--json` output and exit codes
+  are unchanged. A follow-up (LORE-271) also makes the distinction textual rather than
+  color-dependent: under `--check`, protected drift now reads
+  `out of date (protected; needs --force)` in pretty output and
+  `out-of-date-protected` in `--plain`, while ordinary stale files retain `out of date` /
+  `out-of-date`. This intentionally updates the stable plain contract so `NO_COLOR`, piped, and CI
+  consumers can identify the exact file requiring `--force`, preserving cli-contract.md §6's
+  never-load-bearing color guarantee. Verified live under a
   real pty (`script`): both `lore agents` and `lore init --agents`, run against a hand-edited
   `SKILL.md`, now emit the identical `\x1b[33mprotected\x1b[0m` sequence (previously `lore agents`
   emitted `\x1b[32mprotected\x1b[0m`); a piped (non-TTY) run of the same case emits zero ANSI bytes.
-  Four new tests in `test/agents.test.ts` pin `bridgeActionColor` for all four `BridgeAction` values,
+  Tests in `test/agents.test.ts` pin `bridgeActionColor` for all four `BridgeAction` values,
   the live `protected`-is-yellow rendering, that `created`/`unchanged` keep their own colors, and the
   non-TTY suppression. `bridgeActionColor` itself is backed by a `Record<BridgeAction, string>`
   (`src/commands/agents.ts`), a total mapping with no fallback branch, so a future action added to

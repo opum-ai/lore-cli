@@ -35,6 +35,7 @@
   },
   "scripts": {
     "lore": "bun run src/cli.ts",
+    "build": "bun build --compile src/cli.ts --outfile dist/lore",
     "typecheck": "tsc --noEmit",
     "format": "biome format --write .",
     "lint": "biome check .",

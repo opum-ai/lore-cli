@@ -24,17 +24,17 @@ fires on a push or tag) **compiles all five platform binaries, assembles all
 six packages, and proves the `npx`/launcher resolution mechanism end-to-end**
 via `npm pack` + a scratch install + running the launcher (LORE-9), then, only
 when a maintainer manually dispatches it with `publish: true`, **publishes all
-six packages via npm OIDC Trusted Publishing** (LORE-255). That `publish` job
-exists in the workflow already, but it is inert until the npm
-Trusted-Publisher setup below on npmjs.com for all six packages is done (skip
-it and any dispatch fails loud with auth/403), and **unprotected** until the
-repo-admin [`release` GitHub Environment setup
+six existing packages via npm OIDC Trusted Publishing** (LORE-255).
+
+The initial `0.1.0` release is a one-time bootstrap exception: npm requires a
+package to exist before a Trusted Publisher can be configured, and none of the
+six names exists yet. The exact CI-built tarballs are therefore published
+interactively with 2FA, platform packages first and root last; Trusted
+Publishing is configured immediately afterward for every later release. The
+OIDC publish job is **unprotected** until the repo-admin [`release` GitHub Environment setup
 (LORE-268)](#repo-admin-setup-for-the-release-environment-lore-268) is done —
-two separate one-time setups with two different failure modes: skip the
-first and a dispatch fails loud; skip the second and a dispatch **succeeds
-and publishes, unprotected**, since only the second is what makes the
-workflow's `environment: release` declaration actually enforce anything
-instead of being cosmetic. See the [First-release
+without it, a future OIDC dispatch can publish without an independent
+workflow-file-external approval. See the [First-release
 checklist](#first-release-checklist) below for the exact mechanical sequence
 to cut the actual first release; the rest of this runbook is the supporting
 detail behind each checklist item.
@@ -43,30 +43,13 @@ detail behind each checklist item.
 
 Walk this in order for the actual first release. Every item elaborates on a
 section below it — follow the link for the exact commands/fields;
-none of the automated checks in `release.yml` (`verify-versions`, `build`,
-`package`) substitute for these, since they check *consistency*, not
-*absence* (a value that is consistently still `0.0.0`, or a job that never
-runs because `publish` stayed `false`, passes every one of them). The one
-exception is the `publish` job itself, which — precisely because it is the
-one place in this workflow that performs the irreversible action — does
-independently hard-refuse to publish version `0.0.0` (see [Step
-2](#2-the-publish-job-already-in-releaseyml)); that is a last-resort
-backstop for an out-of-order dispatch, not a substitute for doing this
-checklist's version-bump item first.
+none of the automated checks substitute for the external registry and
+repository settings. The `publish` job independently rejects `0.0.0`, but the
+first release deliberately does not use that job because OIDC trust cannot yet
+be configured.
 
-- [ ] **npm Trusted Publisher configured for all 6 packages, with the
-  `release` Environment name field set** on npmjs.com — [Step
-  1](#1-configure-npm-trusted-publishing-once-before-the-first-real-publish).
-  One-time, must exist before the first publish attempt.
-- [ ] **The `release` GitHub Environment created with protection rules**
-  (required reviewers — a deployment branch policy alone is not sufficient in
-  this repo today; see the linked section) — [Repo-admin setup
-  for the release Environment (LORE-268)](#repo-admin-setup-for-the-release-environment-lore-268).
-  Without this, `release.yml`'s `environment: release` declaration is
-  cosmetic and the `workflow_dispatch`-on-any-ref exposure it exists to
-  close remains open. One-time, must exist before the first publish attempt.
 - [ ] **Coordinated version bump: all six manifests + the 5
-  `optionalDependencies` pins**, root `0.0.0` → the real release version —
+  `optionalDependencies` pins**, root `0.0.0` → `0.1.0` —
   [Step 3, item 2](#3-cut-a-release). This is exactly the 12 values
   `verify-versions` cross-checks (6 `version` fields + the 5 pins + the
   platform-set itself); a missed file fails loud there before any compile
@@ -76,25 +59,27 @@ checklist's version-bump item first.
   [Step 3, item 1](#3-cut-a-release). `release.yml`'s `package` job only ever
   patches a *scratch* copy to dry-run-prove the launcher and reverts it — this
   file is deliberately left to a maintainer, not automated.
-- [ ] **CHANGELOG.md**: move the `[Unreleased]` section's entries under a new
-  `## [X.Y.Z] - YYYY-MM-DD` heading, in the same commit as the version bump,
+- [ ] **CHANGELOG.md**: move the `[Unreleased]` section's entries under
+  `## [0.1.0] - YYYY-MM-DD`, in the same commit as the version bump,
   so the tag below points at a commit whose CHANGELOG already reflects it.
-- [ ] **Commit, tag, push**: `git tag vX.Y.Z && git push --tags` —
-  [Step 3, item 3](#3-cut-a-release). Informational only; nothing in this repo
-  triggers off the tag automatically.
-- [ ] **Dispatch `Release` with `publish: true`** on that tag/commit
-  — [Step 3, item 4](#3-cut-a-release). `setup` → `verify-versions` → `build`
-  → `package` run exactly as they do on every dispatch (proving every
-  artifact again, for this exact commit), then the run pauses for manual
-  deployment approval before the new `publish` job's `id-token: write` step
-  runs.
+- [ ] **Merge to `dev`, fast-forward `main`, and wait for the full `main` CI
+  matrix**, then tag the verified commit: `git tag v0.1.0 && git push --tags`.
+- [ ] **Dispatch `Release` with `publish: false`** on the tag/commit. Download
+  the resulting `npm-packages` artifact; do not rebuild or repack locally.
+- [ ] **Bootstrap-publish the downloaded tarballs interactively with 2FA**:
+  publish the five platform packages first, then `@salient-data/lore` last.
+  Use `npm publish <tarball>` and stop immediately on any failure.
+- [ ] **Create the `release` GitHub Environment** with the repository owner as
+  required reviewer. This repository has only one collaborator, so
+  prevent-self-review must remain disabled to avoid deadlocking release
+  dispatches; record that accepted weaker control.
+- [ ] **Configure npm Trusted Publishing for all six now-existing packages**,
+  using repository `jeremy-newhouse/lore`, workflow `release.yml`, Environment
+  `release`, and allowed action `npm publish`. Future releases use
+  `publish: true`; `0.1.0` does not.
 - [ ] **Post-publish smoke install**: from a machine that has never installed
-  lore before, `npx @salient-data/lore@X.Y.Z --version`, on at least one
-  platform other than the one used for local development — [Step 3, item
-  5](#3-cut-a-release). Confirms the real registry-resolved
-  `optionalDependencies` chain, not just the dry-run tarball chain this
-  runbook's rehearsal already proved (see [Dry-run rehearsal
-  (verified)](#dry-run-rehearsal-verified) below).
+  lore before, `npx @salient-data/lore@0.1.0 --version`, on at least one
+  platform other than the one used for local development.
 
 ## Prerequisites
 
@@ -108,8 +93,9 @@ checklist's version-bump item first.
   before starting this runbook; if the latest tag predates that PR's merge
   commit, stop here.
 - Maintainer access to the `@salient-data` npm org (or user account, if the
-  scope is personal) — required to configure Trusted Publishers; this is not
-  something CI or an agent can do.
+  scope is personal), with account-level 2FA — required for the interactive
+  bootstrap publish and subsequent Trusted Publisher configuration; this is
+  not something CI or an agent can do.
 - npm CLI **>= 11.5.1** on any machine used for a manual/bootstrap publish
   (trusted publishing itself only requires this on the *publishing* side).
   In CI, `release.yml`'s `publish` job does not rely on whatever npm version
@@ -120,6 +106,13 @@ checklist's version-bump item first.
   self-hosted runners (`release.yml` already uses `ubuntu-latest`).
 
 ### Repo-admin setup for the release Environment (LORE-268)
+
+> **Current blocker (2026-07-27, LORE-278):** GitHub rejected creation of
+> this required-reviewer rule with HTTP 422 because the repository's current
+> billing plan does not support Environment required reviewers. No
+> unprotected `release` Environment was created. Upgrade/change the plan or
+> visibility, or approve an equivalent out-of-file control, before any
+> `publish: true` dispatch.
 
 **Why this exists:** npm Trusted Publishing (Step 1, below) matches an OIDC
 token on **repository + workflow FILENAME — not a ref.** `release.yml` is
@@ -148,10 +141,13 @@ LORE-196 and LORE-257):
   regardless of branch protection: any run — including one from a forged
   workflow file dispatched on an arbitrary attacker branch — pauses for
   manual approval before the `publish` job executes, no matter which branch
-  it came from. This holds only if the attacker is not themselves one of the
-  listed reviewers — write access alone does not confer reviewer status, but
-  enable GitHub's **Prevent self-review** option on the environment so a
-  listed reviewer cannot approve a run they dispatched themselves. A
+  it came from. This repository currently has only one collaborator, its
+  owner. For the `0.1.0` setup, list that owner as the required reviewer and
+  leave **Prevent self-review disabled** so releases are operable. This is an
+  accepted weaker control: it adds a deliberate approval pause but does not
+  protect against compromise or malicious action by the sole owner. If a
+  second trusted maintainer is added later, make that person the reviewer and
+  enable Prevent self-review. A
   **deployment branch policy** (e.g. restricting deploys to `main` or a
   `release/*` pattern) is *not* a substitute for required reviewers unless
   the allowed branch(es) are themselves protected against direct pushes
@@ -206,16 +202,21 @@ them.
 
 ## Steps
 
-### 1. Configure npm Trusted Publishing (once, before the first real publish)
+### 1. Bootstrap `0.1.0`, then configure npm Trusted Publishing
 
 npm's OIDC-based Trusted Publishing (GA since 2025-07) lets `release.yml`
 publish **without a long-lived `NPM_TOKEN` secret** — GitHub's OIDC token
-authenticates the publish directly. It works for a brand-new scoped package
-that has never been published, not just an existing one: configure the
-publisher *before* the first publish attempt and it authenticates that first
-publish too. See <https://docs.npmjs.com/trusted-publishers/>.
+authenticates the publish directly. npm requires a package to exist before its
+trust relationship can be created, so OIDC cannot authenticate lore's first
+publication. See <https://docs.npmjs.com/cli/v11/commands/npm-trust/>.
 
-For **each of the six packages** (`@salient-data/lore` and the five
+For `0.1.0`, dispatch `Release` with `publish: false`, download its exact
+`npm-packages` artifact, and publish those tarballs interactively with 2FA.
+Publish all five `@salient-data/lore-<platform>-<arch>` packages first and
+`@salient-data/lore` last. Do not rebuild locally: the downloaded tarballs are
+the bytes the workflow compiled, packed, and install-smoke-tested.
+
+After all six packages exist, for **each package** (`@salient-data/lore` and the five
 `@salient-data/lore-<platform>-<arch>` packages), on npmjs.com:
 
 1. Open the package's Settings page → **Trusted Publisher** section.
@@ -239,12 +240,13 @@ For **each of the six packages** (`@salient-data/lore` and the five
      the claim in the first place.
 4. Save.
 
-Repeat for all six package names. Validation happens at publish time, not at
-save time — a typo here fails silently until the workflow actually tries to
-publish.
+Repeat for all six package names. Validation happens on the next OIDC publish,
+not at save time — a typo here fails silently until the workflow tries to
+publish a later version.
 
 ### 2. The `publish` job (already in `release.yml`)
 
+After the interactive `0.1.0` bootstrap and trust configuration,
 `release.yml`'s `publish` job publishes all six packages via npm's OIDC-based
 Trusted Publishing — `permissions: { id-token: write }` set at the **job**
 level (not the workflow level, which stays `contents: read`-only), so only
@@ -302,18 +304,15 @@ this one job ever gets the token. It:
   then, that package's `npm publish` call fails with an auth/403 error, which
   is the correct "not ready yet" outcome, not a hazard.
 
-Further wiring **is** needed before a real release: see [Repo-admin setup for
+Further wiring **is** needed before the first OIDC release: see [Repo-admin setup for
 the release Environment
 (LORE-268)](#repo-admin-setup-for-the-release-environment-lore-268) for the
 two one-time, out-of-file steps (creating the `release` GitHub Environment
 with required reviewers, and setting each package's npm Trusted Publisher
 Environment name to `release`) that make the `environment: release`
 declaration above actually protective rather than cosmetic. See the
-[First-release checklist](#first-release-checklist) for the full sequence —
-those two repo-admin steps, plus the six items a maintainer still does by
-hand (the version bump, the `bin.lore` flip, the CHANGELOG move,
-commit/tag/push, the `publish: true` dispatch, and the post-publish smoke
-install).
+[First-release checklist](#first-release-checklist) for the bootstrap sequence
+and the handoff to OIDC.
 
 **Scoped-package public access:** all six `@salient-data/lore*` packages are
 scoped, and npm defaults a scoped package's first publish to
@@ -340,19 +339,18 @@ publish is explicitly marked public. Root `package.json` and all five
    pin and `license`/`author`/`repository` metadata, are consistent before
    compiling anything, so a missed file fails loud here rather than silently
    skipping an optional dependency later.
-3. Tag it (`git tag vX.Y.Z && git push --tags`) — informational only; nothing
-   is triggered automatically by the tag.
-4. Run the `Release` workflow manually (`workflow_dispatch`) with
-   `publish: true`, on the tag/commit from step 3. Once the [`release`
-   Environment's required
-   reviewers](#repo-admin-setup-for-the-release-environment-lore-268) are
-   configured, the run will
-   **pause at the `publish` job awaiting manual deployment approval** in the
-   Actions UI — this is expected, not a hang or a failure; a listed reviewer
-   approves the deployment to let `publish` proceed.
-5. Verify: `npx @salient-data/lore@X.Y.Z --version` from a machine that has
-   never installed lore before, on at least one platform other than the one
-   used to test locally.
+3. Merge to `dev`, fast-forward `main`, and wait for the full `main` CI matrix.
+   Tag that verified commit (`git tag v0.1.0 && git push --tags`) — nothing
+   triggers automatically from the tag.
+4. Run `Release` with `publish: false` on the tag/commit and download the
+   `npm-packages` artifact. Interactively publish its five platform tarballs
+   first and root tarball last with 2FA. This is the one-time bootstrap path;
+   do not dispatch `publish: true` for `0.1.0`.
+5. Configure the `release` Environment and npm Trusted Publishers as described
+   above, then verify `npx @salient-data/lore@0.1.0 --version` from a machine
+   that has never installed lore before, on a different platform from local
+   development. Later versions use `publish: true` and pause for Environment
+   approval before OIDC publishing.
 
 ## Dry-run rehearsal (verified)
 
@@ -396,14 +394,15 @@ version-bump item has happened.
 
 - **Before publish**: nothing external happened — delete the tag, fix the
   issue, retry.
-- **Publish job failed partway** (some of the six packages published, some
-  not): do **not** bump the version — fix the cause (usually a missing or
-  mistyped Trusted Publisher for the package that failed, [Step
-  1](#1-configure-npm-trusted-publishing-once-before-the-first-real-publish))
-  and re-dispatch `Release` with `publish: true` on the **same commit** (the
-  re-dispatch pauses for deployment approval the same way the original did —
-  see [Step 3, item 4](#3-cut-a-release)); the publish step skips packages
-  already on the registry and completes the rest. The launcher (`@salient-data/lore`) is published last precisely so a
+- **Bootstrap `0.1.0` failed partway**: do **not** bump the version or rebuild.
+  Fix the account/access problem and resume with the same downloaded tarballs;
+  skip any exact package versions already present. The root launcher is
+  published last, so a platform-package failure leaves nothing installable.
+- **A later OIDC publish job failed partway**: do **not** bump the version —
+  fix the cause (usually a missing or mistyped Trusted Publisher) and
+  re-dispatch `Release` with `publish: true` on the **same commit**. The
+  publish step skips packages already on the registry and completes the rest.
+  The launcher (`@salient-data/lore`) is published last precisely so a
   partial failure leaves nothing installable and the same version stays
   retryable. If the launcher itself published and something is still wrong,
   you cannot republish that version — cut `X.Y.Z+1` and `npm deprecate` the

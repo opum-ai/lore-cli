@@ -119,10 +119,9 @@ consequences. See the [ADR log](adr/index.md) for the full, ordered index.
 
 Operational procedures for working on and with lore.
 
-- [Backlog.md `--json` patch](runbooks/backlog-json-patch.md) — how to fork
-  MrLesk/Backlog.md, add the minimal `--json` flag to `task list`/`view`/
-  `search`, consume the fork as a locally-compiled git dependency, and upstream
-  the change (milestone BJP).
+- [Backlog.md `--json` patch](runbooks/backlog-json-patch.md) — the historical
+  fork/upstreaming procedure plus the current migration from upstream PR #790's
+  pinned merge commit to its eventual containing release tag.
 - [Agent onboarding](runbooks/agent-onboarding.md) — how a coding agent (e.g.
   Claude Code) discovers and uses lore: the generated `SKILL.md`, the CLAUDE.md
   nudge, and `lore instructions`.

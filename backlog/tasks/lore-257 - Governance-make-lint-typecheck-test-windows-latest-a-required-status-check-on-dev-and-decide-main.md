@@ -3,9 +3,10 @@ id: LORE-257
 title: >-
   Governance: make lint-typecheck-test (windows-latest) a required status check
   on dev (and decide main)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-24 18:41'
+updated_date: '2026-07-27 04:11'
 labels:
   - needs-human
   - repo-admin
@@ -36,8 +37,20 @@ Exact context string: 'lint - typecheck - test (windows-latest)' (byte-exact in 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A recent run of windows-latest on dev is confirmed green (ideally a few consecutive) before enforcement, so a red gate is not flipped to required.
-- [ ] #2 Either the exact windows-latest context is added to ruleset 19698059 (dev) required_status_checks and enforcement is confirmed via the GitHub rules API, OR a deliberate keep-advisory decision with rationale is recorded.
-- [ ] #3 The same explicit decision (required vs advisory) is made and recorded for main.
-- [ ] #4 Task notes record that a human repo-admin performed the ruleset change (or gave explicit sign-off) and that no autonomous agent toggled repo settings; the agent contribution was prep/verify only.
+- [x] #1 A recent run of windows-latest on dev is confirmed green (ideally a few consecutive) before enforcement, so a red gate is not flipped to required.
+- [x] #2 Either the exact windows-latest context is added to ruleset 19698059 (dev) required_status_checks and enforcement is confirmed via the GitHub rules API, OR a deliberate keep-advisory decision with rationale is recorded.
+- [x] #3 The same explicit decision (required vs advisory) is made and recorded for main.
+- [x] #4 Task notes record that a human repo-admin performed the ruleset change (or gave explicit sign-off) and that no autonomous agent toggled repo settings; the agent contribution was prep/verify only.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Applied live to ruleset 19698059 on 2026-07-27. The dev-only ruleset now requires both 'docker e2e harness (real lore + backlog binaries)' and 'lint · typecheck · test (windows-latest)', preserves strict=false and the existing RepositoryRole 5 admin bypass, and does not target main.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Made the exact Windows matrix context required on dev while leaving main advisory, per the release-readiness decision.
+<!-- SECTION:FINAL_SUMMARY:END -->

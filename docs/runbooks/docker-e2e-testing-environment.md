@@ -28,7 +28,7 @@ calls. No mocking anywhere, matching [ADR-0002](../adr/0002-backlog-integration-
 JSON-only, fail-loud design. LORE-56 first ran this and found four real defects
 (LORE-57/58/59/60) that 1497 passing mocked-adapter tests had missed entirely.
 
-## CI gate (runs in CI since LORE-100; not yet a *required* check — see LORE-196)
+## CI gate (required on `dev`; LORE-100 / LORE-196)
 
 This harness is no longer local-only. `.github/workflows/ci.yml` runs it as the `docker-e2e` job
 on every PR and on code pushes to `main` (docs/backlog-only pushes are path-ignored), invoking the same compose file and harness as the
@@ -40,6 +40,11 @@ must match the runner's real uid/gid so writes to the bind-mounted report file d
 regression anywhere the harness covers now fails CI instead of merging silently. The steps in this
 runbook remain the way to reproduce and triage a failure by hand; they are no longer the only way
 the harness gets run.
+
+The active `require-docker-e2e-on-dev` repository ruleset requires the exact
+`docker e2e harness (real lore + backlog binaries)` context on `dev`. Its
+`RepositoryRole` admin bypass is configured as `always`, so repository admins
+can deliberately merge without the check; ordinary contributors cannot.
 
 The CI job always uploads `docker/e2e/results/report.jsonl` (when it exists) as the
 `docker-e2e-report` build artifact, so a CI failure can be triaged from the workflow run's

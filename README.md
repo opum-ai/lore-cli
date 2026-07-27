@@ -17,18 +17,17 @@ core is **deterministic with no LLM dependency** — every command is
 reproducible, idempotent, and CI/agent-safe (non-interactive by default, stable
 semantic exit codes, machine-readable `--json`).
 
-- Built on **Bun + TypeScript** with **Commander.js**, matching Backlog.md's own
-  stack.
+- Built on **Bun + TypeScript** with a small hand-rolled argument parser.
 - Distributed on npm as **`@salient-data/lore`** (bin `lore`) — run it with
   `npx`/`bunx`, no global install required.
 - The agent bridge is a generated **`.claude/skills/lore/SKILL.md`** plus a tiny
   CLAUDE.md nudge and `lore instructions`. An **MCP server is secondary and
   deferred to v2**.
 
-> **Status: pre-1.0, bootstrap.** This repo currently holds the spec, the OKF
-> documentation bundle (`docs/`), and the Backlog.md milestones. The
-> implementation is being built milestone by milestone (see
-> [Roadmap](#roadmap)).
+> **Status: 0.1 release candidate.** The v1 CLI implementation and its
+> cross-platform/package pipelines are complete. Publication is waiting on a
+> tagged Backlog.md release containing the upstream JSON contract; MCP and
+> Confluence remain deliberately deferred (see [Roadmap](#roadmap)).
 
 ---
 
@@ -41,11 +40,12 @@ files. It parses a canonical `{schemaVersion, kind, data}` envelope from
 --json`. There is **no `--plain` text-parser fallback** — that is a deliberate
 decision to keep the coupling robust.
 
-The catch: stock Backlog.md v1.47.1 does **not** ship a `--json` flag. So `lore`
-**forks** MrLesk/Backlog.md → `jeremy-newhouse/Backlog.md`, adds a minimal
-`--json` to `task list`/`view`/`search`, consumes the fork as a locally-compiled
-git dependency, and upstreams a minimal PR. A capability probe enforces a
-minimum `--json`-capable version and **fails loud** on anything older.
+Backlog.md did not originally ship this JSON surface. It is now merged upstream
+in MrLesk/Backlog.md as PR #790. Until a tag containing that commit exists,
+development and E2E builds use the upstream repository pinned at the merge
+commit; `lore` has no package or git dependency on Backlog.md and invokes the
+user-installed `backlog` executable on `PATH`. A capability probe enforces the
+JSON contract and **fails loud** when the installed binary cannot provide it.
 
 See the runbook: [Backlog.md `--json` patch](docs/runbooks/backlog-json-patch.md).
 
@@ -241,7 +241,7 @@ Tracked as Backlog.md milestones, built in order:
 
 | Milestone | Scope |
 |---|---|
-| **BJP** | Fork Backlog.md, add minimal `--json` to `task list`/`view`/`search`, consume the fork, upstream a PR |
+| **BJP** | Upstream stable JSON for Backlog.md reads (completed in PR #790; tagged-release adoption gates lore 0.1) |
 | **M0** | Foundations: repo, runtime pin, build/distribution skeleton |
 | **M1** | Core + scaffolding: `init`, `new`, `validate`, concept/frontmatter lib (gray-matter + Zod), bundle walk |
 | **M2** | Backlog coupling: `link`, `sync`, `check`, managed block (remark), status reconciliation |

@@ -395,11 +395,13 @@ publishing; it still requires the one-time npm Trusted Publisher configuration
 for all six packages before it can succeed — see
 [release-publishing.md](../runbooks/release-publishing.md).
 
-**The fork dependency.** lore requires a `--json`-capable Backlog.md, which stock
-v1.47.1 lacks. We consume our fork (`jeremy-newhouse/Backlog.md`) as a
-**locally-compiled git dependency** during development and enforce a minimum
-version via the [capability probe](backlog-cli-contract.md). The fork work and
-upstream PR are described in
+**The Backlog executable boundary.** lore requires a `--json`-capable
+Backlog.md and invokes the user-installed `backlog` executable on `PATH`; it
+does not declare a package or git dependency on Backlog.md. PR #790 is merged
+upstream, and development/E2E currently compile `MrLesk/Backlog.md` at that
+merge commit while lore waits for a containing release tag. The capability
+probe enforces the executable contract. The historical fork work and upstream
+adoption are described in
 [backlog-json-patch.md](../runbooks/backlog-json-patch.md) and
 [ADR 0002 on the Backlog.md integration](../adr/0002-backlog-integration-json-only.md).
 

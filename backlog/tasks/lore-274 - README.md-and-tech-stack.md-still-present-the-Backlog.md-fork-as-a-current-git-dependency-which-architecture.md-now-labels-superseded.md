@@ -3,13 +3,19 @@ id: LORE-274
 title: >-
   README.md and tech-stack.md still present the Backlog.md fork as a current git
   dependency, which architecture.md now labels superseded
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-26 16:48'
+updated_date: '2026-07-27 04:05'
 labels:
   - docs-drift
   - adapter-backlog
 dependencies: []
+modified_files:
+  - README.md
+  - docs/reference/tech-stack.md
+  - docs/index.md
+  - docs/runbooks/dev-kickoff.md
 priority: medium
 type: bug
 ordinal: 376000
@@ -46,9 +52,21 @@ Decide per-file whether the passage should be **corrected** (README — a reader
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 README.md no longer asserts in the present tense that lore consumes a fork of Backlog.md as a git dependency; it describes the current upstream-direct model
-- [ ] #2 tech-stack.md's fork-dependency passage is either corrected or carries an explicit dated superseded banner following backlog-json-patch.md's existing convention
-- [ ] #3 A repo-wide sweep for further present-tense fork-dependency assertions is performed and every hit is corrected or explicitly recorded as intentionally historical
-- [ ] #4 Claims about what lore actually consumes are verified against docker/e2e/Dockerfile and package.json rather than reconstructed from other docs
-- [ ] #5 Full suite + lore check stay green; the diff contains no src/ changes
+- [x] #1 README.md no longer asserts in the present tense that lore consumes a fork of Backlog.md as a git dependency; it describes the current upstream-direct model
+- [x] #2 tech-stack.md's fork-dependency passage is either corrected or carries an explicit dated superseded banner following backlog-json-patch.md's existing convention
+- [x] #3 A repo-wide sweep for further present-tense fork-dependency assertions is performed and every hit is corrected or explicitly recorded as intentionally historical
+- [x] #4 Claims about what lore actually consumes are verified against docker/e2e/Dockerfile and package.json rather than reconstructed from other docs
+- [x] #5 Full suite + lore check stay green; the diff contains no src/ changes
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Verified current behavior against docker/e2e/Dockerfile's upstream MrLesk checkout at commit 22a091b and package.json's absence of a Backlog dependency. Repo-wide hits in ADRs, schema migration docs, and backlog-json-patch are intentionally historical and explicitly amended/superseded.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Updated the README and tech-stack front doors to describe the upstream executable contract and corrected adjacent onboarding/index drift while preserving clearly historical fork records.
+<!-- SECTION:FINAL_SUMMARY:END -->

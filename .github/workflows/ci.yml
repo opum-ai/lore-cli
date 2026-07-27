@@ -10,7 +10,7 @@ on:
     branches: [main]
     # Docs/metadata-only pushes to main don't need the compute pipeline. NOTE:
     # applied to `push` ONLY — `pull_request` is intentionally left unfiltered
-    # below (see its comment) so a required status check can never be skipped
+  # below (see its comment) so the required status check can never be skipped
     # into a permanent "pending" that deadlocks a PR.
     paths-ignore:
       - "**/*.md"
@@ -18,8 +18,8 @@ on:
       - "backlog/**"
       - ".claude/**"
   # Unfiltered so PRs to dev (and stacked feature-branch PRs) all get CI.
-  # Deliberately NOT paths-ignore'd: the docker-e2e job is slated to become a
-  # required status check (LORE-196), and a workflow skipped by a path filter
+  # Deliberately NOT paths-ignore'd: the docker-e2e job is a required status
+  # check on dev (LORE-196), and a workflow skipped by a path filter
   # leaves its required checks permanently pending, blocking the merge. The
   # per-PR matrix is ubuntu+windows only (macOS is push/dispatch-gated below),
   # so an all-docs PR still runs cheaply rather than being skipped.
@@ -165,7 +165,7 @@ jobs:
     name: docker e2e harness (real lore + backlog binaries)
     runs-on: ubuntu-latest
     # Intentionally runs on every pull_request (no event/paths gating): this job is
-    # slated to be the required merge-gate status check (LORE-196), so it must report
+    # the required dev merge-gate status check (LORE-196), so it must report
     # on every PR. Its check-run context name above must stay byte-identical to the
     # string a human selects in branch protection — do not rename it.
     #

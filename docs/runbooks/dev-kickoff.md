@@ -37,13 +37,19 @@ No application source code exists yet; your job is to start implementing it.
 
 - Path: `/Volumes/external/repos/lore` (private GitHub repo `jeremy-newhouse/lore`).
 - Branches: `main` (release) + `dev` (default/working). **Branch from and PR into `dev`.**
-- A clone of Backlog.md v1.47.1 (the integration target) is at `/Users/jdnewhouse/repos/Backlog.md` — read it for any contract questions.
-- **Bun is not installed yet — install the pinned Bun version first** (see [ADR-0001](../adr/0001-runtime-build-distribution.md) / [tech-stack](../reference/tech-stack.md)).
+- Backlog integration targets upstream PR #790's JSON contract. The Docker E2E
+  image compiles `MrLesk/Backlog.md` at its merge commit until a containing tag
+  exists; lore has no Backlog package/git dependency.
+- Bun is pinned to the version in `.bun-version`; verify with `bun --version`
+  before running the gates (see [ADR-0001](../adr/0001-runtime-build-distribution.md)).
 
 ## Non-negotiable constraints (easy to get wrong — honor these)
 
 1. **CLI is the primary interface; the MCP server is deferred to v2 (milestone M6). Do NOT build MCP now.**
-2. **Backlog integration is JSON-only via a `--json` flag that stock Backlog.md lacks.** Do **not** write a `--plain` text parser. Add that `--json` flag first via the **BJP** milestone (fork `MrLesk/Backlog.md` → `jeremy-newhouse/Backlog.md`, add minimal `--json` to task list/view/search, consume the fork as a locally-compiled git dependency, upstream a PR) — see [backlog-json-patch](backlog-json-patch.md). Until it lands, **M2 is blocked**, but **M0 and M1 have no Backlog dependency and can proceed immediately**.
+2. **Backlog integration is JSON-only.** Do **not** add a `--plain` parser.
+   PR #790 is merged upstream; until its release tag exists, validate against
+   the pinned upstream merge commit described in
+   [backlog-json-patch](backlog-json-patch.md).
 3. **All Backlog writes go through the `backlog` CLI** (`task create`/`edit`). Never hand-edit `backlog/**` task or milestone files. lore is the **sole git committer** of `backlog/` (Backlog `auto_commit` stays false).
 4. **OKF cross-links** are relative, URL-encoded, `.md`-suffixed, no leading slash, no wikilinks ([ADR-0010](../adr/0010-multi-consumer-docs-layer.md)). Sub-index files carry no frontmatter; `okf_version` lives only on the root [index](../index.md).
 5. **Core is deterministic: no LLM calls, no vector DB/RAG/chunking, no Rust binaries (e.g. lychee) as runtime deps** ([ADR-0014](../adr/0014-core-has-no-llm-dependency.md), [0015](../adr/0015-lightweight-retrieval-no-vectors.md), [0007](../adr/0007-validation-and-coherence.md)). Link checking is pure-JS (remark).
@@ -51,7 +57,9 @@ No application source code exists yet; your job is to start implementing it.
 
 ## How to work
 
-1. `backlog task list --plain` and pick the next unblocked task. Start with **`LORE-6`** (M0 scaffolding) and/or **`LORE-1`** (BJP). M0 and BJP run in parallel; M1 follows M0; M2 follows BJP.
+1. Run `backlog task list --status "To Do" --json` and pick the next
+   release-relevant, unblocked task; v2 MCP/Confluence/library items remain
+   deliberately deferred.
 2. Claim it: `backlog task edit LORE-N -s "In Progress"`. Read its acceptance criteria and linked docs via `backlog task view LORE-N --plain`.
 3. Implement against the ADRs/spec. Prefer TDD (Bun test). Keep `core/` a library returning structured objects; commands thin.
 4. Validate before committing: `bun test`, `bun run lint`, `bun run typecheck` (set these up in M0). Once `lore check` exists, it is the bundle CI gate.

@@ -357,7 +357,9 @@ In pretty and `--plain` modes a failure prints a human-readable diagnostic to
 - `--plain` and `--json` are **always** ANSI-free regardless of `NO_COLOR`.
 - Color is purely cosmetic and **never load-bearing**: no status, severity, or
   result is conveyed by color alone, so a non-color or piped consumer loses no
-  information.
+  information. For example, `lore agents --check` renders a protected bridge
+  file as `out of date (protected; needs --force)` in pretty output and
+  `out-of-date-protected` in `--plain`; its yellow color is redundant.
 
 ---
 

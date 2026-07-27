@@ -3,14 +3,19 @@ id: LORE-275
 title: >-
   docs/runbooks: docker-e2e section still says the harness is 'not yet a
   required check', but LORE-196 shipped that ruleset
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-26 16:48'
+updated_date: '2026-07-27 04:05'
 labels:
   - docs-drift
   - build-ci-config
   - docker-e2e
 dependencies: []
+modified_files:
+  - docs/runbooks/docker-e2e-testing-environment.md
+  - docs/runbooks/dev-kickoff.md
+  - .github/workflows/ci.yml
 priority: low
 type: bug
 ordinal: 377000
@@ -44,8 +49,20 @@ Correct the heading and any surrounding prose that depends on it. Sweep the whol
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The runbook states the harness is a required status check on dev, and states accurately that the ruleset carries an admin bypass
-- [ ] #2 The enforcement claim is verified live against the ruleset API rather than reconstructed from task history, with the verification recorded in the task notes
-- [ ] #3 The whole file and any peer doc restating the harness's enforcement status are swept, not just the cited heading
-- [ ] #4 lore check stays green
+- [x] #1 The runbook states the harness is a required status check on dev, and states accurately that the ruleset carries an admin bypass
+- [x] #2 The enforcement claim is verified live against the ruleset API rather than reconstructed from task history, with the verification recorded in the task notes
+- [x] #3 The whole file and any peer doc restating the harness's enforcement status are swept, not just the cited heading
+- [x] #4 lore check stays green
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Verified live against active ruleset 19698059: dev requires the exact docker E2E status context and RepositoryRole 5 (admin) retains an always bypass. Swept the runbook, dev kickoff, and CI comments.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Corrected the Docker E2E runbook and peer guidance to say the check is required on dev for non-admins and accurately document the admin bypass.
+<!-- SECTION:FINAL_SUMMARY:END -->

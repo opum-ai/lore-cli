@@ -200,9 +200,20 @@ function agentsRenderable(data: AgentsResult): Renderable<AgentsResult> {
 /** The per-action verb shown for a file: the drift status (`--check`) or the applied action (write path). */
 function actionLabel(action: BridgeAction, check: boolean): string {
   if (check) {
+    if (action === "protected") {
+      return "out of date (protected; needs --force)";
+    }
     return action === "unchanged" ? "up to date" : "out of date";
   }
   return action;
+}
+
+/** Stable, token-shaped equivalent of {@link actionLabel} for `--plain`. */
+function plainActionLabel(action: BridgeAction, check: boolean): string {
+  if (check && action === "protected") {
+    return "out-of-date-protected";
+  }
+  return actionLabel(action, check).replace(/ /g, "-");
 }
 
 /**
@@ -252,7 +263,7 @@ function renderPretty(data: AgentsResult, opts: { color: boolean }): string {
 
 /** ANSI-free, diff-stable view: one `<action> <path>` line each, plus any trailer as a plain line. */
 function renderPlain(data: AgentsResult): string {
-  const lines = data.files.map((file) => `${actionLabel(file.action, data.check).replace(/ /g, "-")} ${file.path}`);
+  const lines = data.files.map((file) => `${plainActionLabel(file.action, data.check)} ${file.path}`);
   const trailer = renderTrailer(data);
   if (trailer !== undefined) {
     lines.push(trailer);

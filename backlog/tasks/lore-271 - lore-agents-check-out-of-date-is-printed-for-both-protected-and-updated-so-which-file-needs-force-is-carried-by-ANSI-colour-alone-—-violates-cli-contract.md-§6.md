@@ -4,14 +4,20 @@ title: >-
   lore agents --check: 'out of date' is printed for both protected and updated,
   so which file needs --force is carried by ANSI colour alone — violates
   cli-contract.md §6
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-26 12:56'
+updated_date: '2026-07-27 04:05'
 labels:
   - cli-ux
   - docs-drift
   - cmd-crud-a
 dependencies: []
+modified_files:
+  - src/commands/agents.ts
+  - test/agents.test.ts
+  - docs/reference/cli-contract.md
+  - CHANGELOG.md
 priority: medium
 type: bug
 ordinal: 373000
@@ -58,9 +64,21 @@ Prefer 1 unless there is a concrete reason not to; record the rationale either w
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Running 'lore agents --check' with one protected and one updated file distinguishes them in TEXT, in both --plain and pretty-with-NO_COLOR — or cli-contract.md §6 and its §8 table row carry an explicit, accurate carve-out naming this command
-- [ ] #2 The chosen option and its rationale are recorded, including why the other was rejected
-- [ ] #3 If the label changes: cli-contract.md is updated per §1.3's contract-change rule, a CHANGELOG [Unreleased] entry is added, and LORE-267's existing CHANGELOG bullet is reconciled so it no longer implies colour alone carries the --force signal
-- [ ] #4 A test pins the chosen behaviour for both actions in non-colour output, so the distinction cannot silently regress
-- [ ] #5 Colour is still suppressed on a non-TTY per LORE-250; --json output and all exit codes (including 6) are unchanged; full suite + lore check stay green
+- [x] #1 Running 'lore agents --check' with one protected and one updated file distinguishes them in TEXT, in both --plain and pretty-with-NO_COLOR — or cli-contract.md §6 and its §8 table row carry an explicit, accurate carve-out naming this command
+- [x] #2 The chosen option and its rationale are recorded, including why the other was rejected
+- [x] #3 If the label changes: cli-contract.md is updated per §1.3's contract-change rule, a CHANGELOG [Unreleased] entry is added, and LORE-267's existing CHANGELOG bullet is reconciled so it no longer implies colour alone carries the --force signal
+- [x] #4 A test pins the chosen behaviour for both actions in non-colour output, so the distinction cannot silently regress
+- [x] #5 Colour is still suppressed on a non-TTY per LORE-250; --json output and all exit codes (including 6) are unchanged; full suite + lore check stay green
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Chose distinct text labels because preserving the no-color information guarantee is stronger than documenting an exception. Verified plain and pretty with color disabled; JSON and exit behavior are unchanged.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Protected drift now renders as 'out-of-date-protected' in plain output and 'out of date (protected; needs --force)' in pretty output. Contract docs, changelog, and regression tests were updated.
+<!-- SECTION:FINAL_SUMMARY:END -->

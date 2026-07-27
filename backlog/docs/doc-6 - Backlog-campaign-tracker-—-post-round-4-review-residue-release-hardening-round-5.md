@@ -5,9 +5,33 @@ title: >-
   (round 5)
 type: other
 created_date: '2026-07-25 23:20'
-updated_date: '2026-07-26 15:26'
+updated_date: '2026-07-27 04:06'
 ---
 # Backlog campaign tracker — post-round-4 review residue & release hardening
+
+## Release-readiness settlement — 2026-07-27
+
+Round 5's agent-resolvable queue is complete. Wave-2 integration fixes were
+recovered from the stranded `feature/wave2-integration-fixes` branch and
+integrated into `dev`; LORE-271 through LORE-275 are Done. The final review
+also found and resolved LORE-276 (the impossible npm first-publish/trusted
+publisher ordering) and LORE-277 (the documented but missing `bun run build`
+script).
+
+Final local evidence: `bun test` **2188 passed / 0 failed**, Biome clean,
+`tsc --noEmit` clean, `lore check` **40 files / 0 errors / 0 warnings**, the
+compiled-binary smoke check green, and Docker E2E **303 passed / 0 failed**.
+The tally increased from 302 because LORE-273 converted one previously
+unaccounted nested-project command into a real harness step.
+
+The only v1 code dependency still open is **LORE-253**, externally blocked
+until MrLesk/Backlog.md tags a release containing PR #790. **LORE-257 is
+Done**: ruleset 19698059 now requires both Docker E2E and the exact Windows
+matrix context on `dev` (with the existing admin bypass); `main` remains
+advisory. **LORE-278** records the remaining repo-admin blocker: GitHub
+rejected the `release` Environment's required-reviewer rule because the
+current billing plan does not support it. LORE-42 through LORE-45 remain
+explicitly deferred to v2.
 
 Round 5 of the lore backlog campaign. Rounds 1–3 (doc-1 / doc-3 / doc-4, LORE-69..250) closed the entire Codex second-opinion review (doc-2). Round 4 (doc-5, LORE-253..264) closed the v1-release-readiness and e2e follow-ups — **complete, queue empty**.
 

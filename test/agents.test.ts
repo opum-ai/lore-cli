@@ -285,6 +285,21 @@ describe("lore agents — --check (the CI drift gate)", () => {
     expect(actionFor(result, SKILL_REL_PATH)).toBe("protected");
   });
 
+  test("LORE-271: protected drift names the file and --force need without relying on colour", () => {
+    agents();
+    writeFileSync(skillAbs(), `${buildSkillDoc()}\nhand edit`);
+
+    const plainOut = capture();
+    runAgents({ root, output: PLAIN_CTX, args: ["--check"], stdout: plainOut });
+    expect(plainOut.lines()).toContain(`out-of-date-protected ${SKILL_REL_PATH}`);
+
+    const prettyOut = capture();
+    runAgents({ root, output: { mode: "pretty", color: false }, args: ["--check"], stdout: prettyOut });
+    expect(prettyOut.lines()).toContain(`  out of date (protected; needs --force) ${SKILL_REL_PATH}`);
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting NO ANSI escape is present.
+    expect(prettyOut.text()).not.toMatch(/\x1b\[/);
+  });
+
   test("LORE-129: `--check --force` together still report `protected` and recommend `--force`, not the inert plain remedy", () => {
     // Regression: `--check --force` against a hand-edited SKILL.md used to report action `updated`
     // (a --check run writes nothing, so that falsely claimed a write) and, because no file was ever
