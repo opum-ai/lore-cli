@@ -48,7 +48,7 @@
 
 import { isIP } from "node:net";
 import { posix } from "node:path";
-import matter from "gray-matter";
+import * as yaml from "js-yaml";
 import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { extractLinkTargets, nodeText, walkMdast } from "./bundle";
@@ -906,22 +906,12 @@ export function tallySeverity(findings: readonly CheckFinding[]): { errorCount: 
  * fence matters: a `#`-prefixed YAML comment inside it would otherwise parse as a phantom
  * heading.
  *
- * Reuses the canonical parse boundary rather than re-rolling one: normalizeInput (the concept
- * parser's BOM/CRLF/leading-whitespace normalization) then gray-matter — the same fence split
- * concept.ts uses — so `lore check` and the parser cannot disagree on where a body begins.
- * gray-matter's bundled js-yaml raises a `YAMLException` (`error.name === "YAMLException"`,
- * checked structurally rather than via `instanceof` — gray-matter vendors its own js-yaml
- * major version, a separate module instance from this codebase's pinned one, so an
- * `instanceof` check against an imported class would never match) for unparseable YAML;
- * only that specific, documented failure degrades the gate to scanning the whole (normalized)
- * file rather than crashing — a genuinely malformed concept is `lore validate`'s error to
- * report, not `check`'s to die on. Any other exception (e.g. an unrecognized fence-language
- * engine, a future gray-matter behavior change) is a real bug or unexpected input and must
- * surface, not be silently absorbed as if it were ordinary malformed YAML (LORE-138).
+ * Reuses the concept parser's normalization and js-yaml schema so `lore check` and concept
+ * parsing agree on the body boundary. Malformed YAML degrades to scanning the whole normalized
+ * file; `lore validate` remains responsible for reporting the frontmatter error. A tagged,
+ * unsupported fence language still fails loud (LORE-138).
  *
- * A file with **no** frontmatter fence at all is detected up front via `matter.test` (gray-matter's
- * own, documented "does this open with the delimiter?" check, so this cannot disagree with what
- * `matter()` itself would do) and takes a separate path that skips normalizeInput's leading-`\s+`
+ * A file with **no** frontmatter fence takes a separate path that skips normalizeInput's leading-`\s+`
  * strip: that strip exists only so a *whitespace-padded fence* (blank lines before `---`) still
  * parses, but applied to a body that never has a fence at all it deletes the body's own first-line
  * indentation — an indented (4-space/tab) code block opening a frontmatter-free file would lose its
@@ -938,16 +928,24 @@ export function tallySeverity(findings: readonly CheckFinding[]): { errorCount: 
  */
 export function bodyText(raw: string): string {
   const normalized = normalizeInput(raw);
-  if (!matter.test(normalized)) {
+  if (!normalized.startsWith("---")) {
     // No frontmatter fence attempted anywhere in this file: normalize BOM and line endings only
     // (normalizeInput's other two steps), and deliberately skip its leading-whitespace strip so a
     // leading indented code block keeps the indentation that makes it parse as code, not prose.
     return raw.replace(/^\uFEFF+/, "").replace(/\r\n?/g, "\n");
   }
+  if (!normalized.startsWith("---\n")) {
+    const engine = normalized.slice(3, normalized.indexOf("\n"));
+    throw new Error(`gray-matter engine "${engine}" is not registered`);
+  }
+  const closeStart = normalized.indexOf("\n---", 4);
+  if (closeStart < 0) return normalized;
   try {
-    return matter(normalized).content;
+    yaml.load(normalized.slice(4, closeStart), { schema: yaml.JSON_SCHEMA });
+    const bodyStart = closeStart + (normalized.charAt(closeStart + 4) === "\n" ? 5 : 4);
+    return normalized.slice(bodyStart);
   } catch (error) {
-    if (error instanceof Error && error.name === "YAMLException") {
+    if (error instanceof Error) {
       return normalized;
     }
     throw error;

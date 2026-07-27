@@ -27,7 +27,7 @@
  */
 
 import { join } from "node:path";
-import yaml from "js-yaml";
+import * as yaml from "js-yaml";
 import { z } from "zod";
 import { deriveMessage, errnoCode, LoreError, readFileIfPresent, stderrHint } from "../errors";
 
@@ -1014,13 +1014,19 @@ const CONFIG_YAML_LOAD_OPTIONS = Object.freeze({ schema: yaml.JSON_SCHEMA });
  *   present but not a list of strings.
  */
 export function parseStatusFlow(yamlText: string): string[] {
+  // js-yaml 5 makes `load("")` a syntax error rather than returning undefined.
+  // Preserve lore's documented fresh-config behavior independently of that
+  // parser-version detail.
+  if (yamlText.trim() === "") {
+    return [...DEFAULT_STATUS_FLOW];
+  }
   let parsed: unknown;
   try {
     parsed = yaml.load(yamlText, CONFIG_YAML_LOAD_OPTIONS);
   } catch (cause) {
     throw configError(`is not valid YAML${reasonSuffix(cause)}`);
   }
-  if (parsed === null || parsed === undefined) {
+  if (parsed === "" || parsed === null || parsed === undefined) {
     return [...DEFAULT_STATUS_FLOW]; // an empty document — Backlog's config carries no keys yet
   }
   if (typeof parsed !== "object" || Array.isArray(parsed)) {

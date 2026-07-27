@@ -19,6 +19,7 @@ import type { BacklogAdapter } from "./adapters/backlog";
 import { runAgents } from "./commands/agents";
 import { type FetchLike, type ResolveHost, runCheck } from "./commands/check";
 import { runContext } from "./commands/context";
+import { runExport } from "./commands/export";
 import { runGraph } from "./commands/graph";
 import { renderTopLevelHelp, runHelp } from "./commands/help";
 import { type InitPrompter, runInit } from "./commands/init";
@@ -418,6 +419,15 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
       return runScaffold({ root, output, args: parsed.commandArgs, stdout: context.stdout });
     case "graph":
       return runGraph({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
+    case "export":
+      return runExport({
+        root,
+        output,
+        args: parsed.commandArgs,
+        stdout: context.stdout,
+        stderr: context.stderr,
+        adapter: context.adapter,
+      });
     case "query":
       return runQuery({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
     case "context":

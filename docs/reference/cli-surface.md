@@ -365,6 +365,19 @@ humans for orientation, by consumers for navigation, and by
 | **Output** | `kind: graph.export` — nodes, edges, token estimates (or DOT text under `--dot`). Machine JSON is the global `--json` envelope, as for every command. |
 | **Exit** | `0` ok · `2` bad usage (`--dot` with `--json`, bad flag/`--depth`) · `3` root `<id>` not found |
 
+### `export`
+
+Emit the complete repository OKF and task snapshot as deterministic, consumer-neutral JSONL for downstream indexes. The export preserves full concept frontmatter/body, authored concept and task edges (including duplicates and dangling targets), stable SHA-256 hashes, bundle identity, and Git provenance; it contains no database-specific labels, identifiers, embeddings, or inferred relationships.
+
+| | |
+|---|---|
+| **Args** | none |
+| **Key flags** | `--schema-version 1.0` (the only supported breaking-contract version) |
+| **Output** | JSONL by default: manifest, concepts, concept edges, tasks, task edges, trailer. Global `--json` emits `kind: projection.export` with the same records. |
+| **Exit** | `0` ok · `2` bad/unsupported schema or flag · `3` missing bundle/Backlog · `4` denied read · `6` malformed bundle, Backlog drift, or Git failure |
+
+See [OKF projection contract](okf-projection-contract.md).
+
 ### `query`
 
 In-memory full-text search over the bundle (BM25-style ranking) with

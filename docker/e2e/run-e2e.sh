@@ -929,6 +929,15 @@ step_json "AC4: lore orphans --docs-only reports only danglingLinks (orphanTasks
 step_json "lore graph (whole bundle, --json)" '.kind == "graph.export"' -- lore graph --json
 step_json "lore graph <id>" '.kind == "graph.export"' -- lore graph "$STORY_ID" --json
 step "lore graph --dot" 0 -- lore graph --dot
+step_json "lore export --schema-version 1.0 emits a complete projection envelope" \
+  '.kind == "projection.export"
+   and .data.projectionSchemaVersion == "1.0"
+   and .data.records[0].record == "manifest"
+   and .data.records[-1].record == "trailer"
+   and ([.data.records[].record] | index("concept") != null)
+   and ([.data.records[].record] | index("task") != null)
+   and ([.data.records[].record] | index("edge") != null)' \
+  -- lore export --schema-version 1.0 --json
 
 # ── Phase 12: query ───────────────────────────────────────────────────────────
 step_json "lore query full-text" '.kind == "query.results"' -- lore query "archive" --json

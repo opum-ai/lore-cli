@@ -107,10 +107,7 @@ be configured.
 
 ### Repo-admin setup for the release Environment (LORE-268)
 
-> **Current blocker (2026-07-27, LORE-278):** GitHub rejected creation of
-> this required-reviewer rule with HTTP 422 because the repository's current
-> billing plan does not support Environment required reviewers. No
-> unprotected `release` Environment was created. Upgrade/change the plan or
+> **Current blocker (2026-07-27, LORE-278):** GitHub rejected creation of\n> the required-reviewer rule with HTTP 422 because the repository’s current\n> billing plan does not support Environment required reviewers. A `release`\n> Environment now exists, but it has zero protection rules, no deployment branch\n> policy, and administrator bypass enabled. Upgrade/change the plan or
 > visibility, or approve an equivalent out-of-file control, before any
 > `publish: true` dispatch.
 

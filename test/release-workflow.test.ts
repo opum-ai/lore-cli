@@ -27,7 +27,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import yaml from "js-yaml";
+import * as yaml from "js-yaml";
 
 const WORKFLOW_PATH = join(import.meta.dir, "..", ".github", "workflows", "release.yml");
 

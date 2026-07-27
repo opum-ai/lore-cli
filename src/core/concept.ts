@@ -36,13 +36,12 @@
  *   BOM, LF, fence-first) on read, so such a file is *accepted* (not rejected) and
  *   reaches a fixpoint after one write rather than churning or erroring.
  *
- * Serialization composes the fence directly (`---` + dumped YAML + `---` + body)
- * rather than going through gray-matter's `stringify`: that helper internally does
- * `Object.assign({}, data)`, whose `[[Set]]` semantics **silently drop an own
+ * Serialization composes the fence directly (`---` + dumped YAML + `---` + body).
+ * This avoids object-copy helpers whose `Object.assign({}, data)` semantics **silently drop an own
  * `__proto__` data key** (a tolerated OKF producer extension) and reflow the body —
  * both of which would break the no-key-dropped (ADR-0011 §5) and byte-stability
- * guarantees this module exists to provide. gray-matter remains the *parse* boundary
- * (it splits the fence from the body).
+ * guarantees this module exists to provide. The fence split and YAML parse therefore share this
+ * module as one hardened boundary.
  *
  * Per the core contract (design §2.1) this module is a pure library: it returns a
  * {@link Concept} or throws a {@link LoreError}; it never prints, reads flags, or
@@ -74,9 +73,8 @@
  */
 
 import { posix } from "node:path";
-import matter from "gray-matter";
-import type { DumpOptions, LoadOptions } from "js-yaml";
-import yaml from "js-yaml";
+import type { Document, DumpOptions, LoadOptions, Node } from "js-yaml";
+import * as yaml from "js-yaml";
 import { deriveMessage, LoreError, singleLine, type WarningCollector } from "../errors";
 import { defaultProfile, type Profile } from "./profile";
 import { validateFrontmatter } from "./schema";
@@ -131,45 +129,66 @@ const YAML_LOAD_OPTIONS: LoadOptions = Object.freeze({ schema: yaml.JSON_SCHEMA 
  * - `lineWidth: -1` — never wrap/reflow long strings or lists into different bytes.
  * - `sortKeys: false` — we control key order ourselves (the active profile's canonical key order).
  * - `noRefs: true` — never emit YAML anchors/aliases for a shared object.
- * - `quotingType: '"'` + `forceQuotes: false` — when a value *must* be quoted, use
+ * - `quoteStyle: "double"` + `forceQuotes: false` — when a value *must* be quoted, use
  *   double quotes; otherwise leave it unquoted (don't gratuitously re-quote).
- * - `noCompatMode: true` — don't quote for YAML-1.1 compatibility (e.g. `yes`/`on`).
+ * - `transform: quoteLeadingZeroStrings` — retain js-yaml 4's stable treatment
+ *   of digit strings such as `"007"` after js-yaml 5 stopped quoting them.
  */
 const YAML_DUMP_OPTIONS: DumpOptions = Object.freeze({
   schema: yaml.JSON_SCHEMA,
   lineWidth: -1,
   sortKeys: false,
   noRefs: true,
-  quotingType: '"',
+  quoteStyle: "double",
   forceQuotes: false,
-  noCompatMode: true,
+  transform: quoteLeadingZeroStrings,
 });
 
 /**
- * gray-matter options carrying the frozen parse engine. Only `parse` is used:
- * serialization composes the fence itself (see the module header), so gray-matter's
- * `stringify` is never invoked.
- *
- * `assertBoundedYamlExpansion` runs on every parsed document before gray-matter ever
- * sees it — the single choke point every read path (`parseConcept`/`tryParseConcept`/
+ * js-yaml 5 resolves an omitted mapping value (`status:`) to an empty string,
+ * while js-yaml 4 and YAML's null semantics resolved it to `null`. Restore that
+ * boundary behavior without changing an explicitly quoted empty string.
+ */
+function normalizeEmptyYamlScalars(input: string): string {
+  return input.replace(
+    /^([ \t]*[A-Za-z_][A-Za-z0-9_-]*:)[ \t]*(#.*)?$(?!\n[ \t]+(?:-|[A-Za-z_][A-Za-z0-9_-]*:))/gm,
+    (_line, prefix, comment = "") => `${prefix} null${comment ? ` ${comment}` : ""}`,
+  );
+}
+
+/** Preserve strings whose plain form is unstable or ambiguous for YAML consumers. */
+function quoteLeadingZeroStrings(documents: Document[]): void {
+  const stack: Node[] = documents.flatMap((document) => (document.contents ? [document.contents] : []));
+  while (stack.length > 0) {
+    const node = stack.pop() as Node;
+    if (node.kind === "scalar") {
+      if (node.tag === "tag:yaml.org,2002:str" && (/^[-+]?0[0-9]+$/.test(node.value) || /^[-?:]/.test(node.value))) {
+        node.style.doubleQuoted = true;
+      }
+    } else if (node.kind === "sequence") {
+      stack.push(...node.items);
+    } else if (node.kind === "mapping") {
+      for (const item of node.items) {
+        stack.push(item.key, item.value);
+      }
+    }
+  }
+}
+
+/**
+ * `assertBoundedYamlExpansion` runs on every parsed document at the single choke point
+ * every read path (`parseConcept`/`tryParseConcept`/
  * `tryReadFrontmatter`, all via {@link splitFrontmatter}) shares, so a malicious file is
  * rejected the moment it is first read, before any downstream consumer (validation, the
  * bundle graph, a later `serializeConcept` dump) can ever touch the dangerous object
  * (LORE-85). A thrown error here is caught and path-annotated by `splitFrontmatter`'s
- * existing `matter(...)` try/catch, exactly like a plain YAML syntax error already is —
- * no separate error-wrapping needed.
+ * existing try/catch, exactly like a plain YAML syntax error.
  */
-const MATTER_OPTIONS = {
-  engines: {
-    yaml: {
-      parse: (input: string): object => {
-        const parsed = yaml.load(input, YAML_LOAD_OPTIONS) as object;
-        assertBoundedYamlExpansion(parsed);
-        return parsed;
-      },
-    },
-  },
-} as const;
+function parseYamlFrontmatter(input: string): unknown {
+  const parsed = yaml.load(normalizeEmptyYamlScalars(input), YAML_LOAD_OPTIONS);
+  assertBoundedYamlExpansion(parsed);
+  return parsed;
+}
 
 /**
  * The budget {@link assertBoundedYamlExpansion} enforces, in "expanded units" (roughly
@@ -264,7 +283,7 @@ export interface ParseConceptOptions {
  * Parse a concept file's raw bytes into a typed {@link Concept}.
  *
  * Normalizes the input ({@link normalizeInput}), splits the frontmatter via
- * gray-matter (under the frozen YAML engine), validates it against the lore profile
+ * the frozen YAML engine, validates it against the lore profile
  * ({@link validateFrontmatter} — throws a `validation` {@link LoreError} on a missing
  * `type` or a mistyped known field; warns on unknown types/keys), and returns the
  * **verbatim** frontmatter object so a later {@link serializeConcept} can reproduce
@@ -450,50 +469,11 @@ interface PresentSplit {
 type FrontmatterSplit = PresentSplit | { readonly present: false; readonly reason: "non-mapping" | "missing" };
 
 /**
- * Guard against gray-matter's loose closing-delimiter search (LORE-141):
- * `lib/index.js` locates the close with `str.indexOf('\n' + '---')`, a plain
- * substring search that matches the FIRST four characters of a longer run (e.g. a
- * closing fence hand-authored as `----`, or one with any other trailing junk like
- * `---x`) and then slices off only those four characters — leaking the rest of
- * that malformed delimiter line into `file.content` (the parsed body) as silent
- * corruption instead of a parse error.
- *
- * This recomputes, independently of gray-matter's internals, the exact byte index
- * in `raw` immediately after the delimiter gray-matter matched (`file.matter`'s
- * length tells us where that match starts: gray-matter strips exactly the 3-byte
- * open delimiter — `"---".length` — before searching, and never touches `raw`
- * itself), and returns whether the very next byte is a newline or end-of-file (a
- * clean fence line) or something else (a malformed one).
- *
- * Only called when `raw` starts with the exact bare fence lore itself ever emits
- * ({@link FENCE}, `"---\n"` — see the caller), which rules out gray-matter's
- * language-tag feature ever having consumed extra bytes after the open delimiter
- * (a tag needs a non-newline character right after the dashes; `FENCE` guarantees
- * a newline is there instead) — so the recomputed offset always lines up with
- * gray-matter's own, and this only ever tightens an already bare-fenced, plain-YAML
- * document; it never changes whether a fence is considered present in the first
- * place.
- *
- * When gray-matter's search found no closing delimiter at all (an unterminated
- * fence — pre-existing, untouched behavior: the whole rest of the file becomes
- * frontmatter with an empty body), the recomputed offset lands past the end of
- * `raw`; `String.charAt` returns `""` for any out-of-range index, which this
- * treats as clean — so that pre-existing case is deliberately left alone.
- */
-function closingFenceIsClean(raw: string, file: matter.GrayMatterFile<string>): boolean {
-  const openDelimiterLength = 3; // "---", not counting the newline FENCE also guarantees follows it
-  const closeDelimiterStart = openDelimiterLength + file.matter.length; // index of the `\n` starting `\n---`, in raw
-  const afterCloseDelimiter = closeDelimiterStart + "\n---".length;
-  const next = raw.charAt(afterCloseDelimiter);
-  return next === "" || next === "\n";
-}
-
-/**
- * Split normalized bytes into a frontmatter mapping + body via gray-matter.
+ * Split normalized bytes into a frontmatter mapping + body.
  *
  * It **throws** a `validation` {@link LoreError} for genuinely malformed YAML
- * inside a fence, or for a malformed *closing* fence ({@link closingFenceIsClean},
- * LORE-141). The two *not-a-concept* shapes — a non-mapping fence (a bare
+ * inside a fence, or for a malformed *closing* fence (LORE-141). The two
+ * *not-a-concept* shapes — a non-mapping fence (a bare
  * scalar/list, which is what a leading `---` thematic break parses to) and a
  * missing/empty/`null` fence — are returned as `present: false`, **not** thrown, so
  * a caller can decide: {@link parseConcept} turns them into the matching error,
@@ -501,9 +481,27 @@ function closingFenceIsClean(raw: string, file: matter.GrayMatterFile<string>): 
  * thematic-break doc from aborting a whole {@link loadBundle}.
  */
 function splitFrontmatter(path: string, raw: string): FrontmatterSplit {
-  let file: matter.GrayMatterFile<string>;
+  const opening = /^---[ \t]*\n/.exec(raw);
+  if (opening === null) return { present: false, reason: "missing" };
+  const openEnd = opening[0].length;
+  const closeStart = raw.indexOf("\n---", openEnd);
+  const cleanClose = closeStart < 0 || raw.charAt(closeStart + 4) === "" || raw.charAt(closeStart + 4) === "\n";
+  if (!cleanClose) {
+    throw new LoreError(
+      "validation",
+      `frontmatter in ${path} has a malformed closing fence (extra characters after the closing ---)`,
+      "close the frontmatter with a line containing exactly `---` and nothing else",
+      { path },
+    );
+  }
+
+  const yamlText = closeStart < 0 ? raw.slice(openEnd) : raw.slice(openEnd, closeStart);
+  if (yamlText.replace(/^[ \t]*#.*$/gm, "").trim() === "") {
+    return { present: false, reason: "missing" };
+  }
+  let data: unknown;
   try {
-    file = matter(raw, MATTER_OPTIONS);
+    data = parseYamlFrontmatter(yamlText);
   } catch (cause) {
     throw new LoreError(
       "validation",
@@ -513,25 +511,17 @@ function splitFrontmatter(path: string, raw: string): FrontmatterSplit {
     );
   }
 
-  if (raw.startsWith(FENCE) && !closingFenceIsClean(raw, file)) {
-    throw new LoreError(
-      "validation",
-      `frontmatter in ${path} has a malformed closing fence (extra characters after the closing ---)`,
-      "close the frontmatter with a line containing exactly `---` and nothing else",
-      { path },
-    );
-  }
-
-  const data: unknown = file.data;
-  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+  if (data === null || data === undefined) return { present: false, reason: "missing" };
+  if (typeof data !== "object" || Array.isArray(data)) {
     return { present: false, reason: "non-mapping" };
   }
   if (Object.getOwnPropertyNames(data).length === 0) {
-    // gray-matter maps a missing fence, an empty fence, AND a fence holding a bare
-    // `null` all to `{}` — one "no usable frontmatter mapping" outcome.
+    // A missing fence, an empty fence, and a bare `null` share one
+    // "no usable frontmatter mapping" outcome.
     return { present: false, reason: "missing" };
   }
-  return { present: true, frontmatter: data as Record<string, unknown>, body: file.content };
+  const bodyStart = closeStart < 0 ? raw.length : closeStart + (raw.charAt(closeStart + 4) === "\n" ? 5 : 4);
+  return { present: true, frontmatter: data as Record<string, unknown>, body: raw.slice(bodyStart) };
 }
 
 /**

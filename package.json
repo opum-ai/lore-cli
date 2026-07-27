@@ -46,13 +46,11 @@
   "devDependencies": {
     "@biomejs/biome": "2.4.12",
     "@types/bun": "^1.2.23",
-    "@types/js-yaml": "4.0.9",
     "@types/mdast": "4.0.4",
     "typescript": "^5"
   },
   "dependencies": {
-    "gray-matter": "4.0.3",
-    "js-yaml": "4.1.0",
+    "js-yaml": "5.2.2",
     "mdast-util-from-markdown": "2.0.3",
     "zod": "4.4.3"
   }

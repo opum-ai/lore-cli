@@ -7,7 +7,7 @@
  * ### Why a surgical string splice, not parse→stringify
  *
  * lore deliberately ships **no markdown serializer** (deps are only `mdast-util-from-markdown`
- * for parsing, plus gray-matter/js-yaml/zod for frontmatter — ADR-0001 packaging constraint).
+ * for parsing, plus js-yaml/zod for frontmatter — ADR-0001 packaging constraint).
  * Re-emitting a body through a stringifier would reflow prose — reindenting lists, normalizing
  * emphasis, rewrapping — which ADR-0008 §7 forbids and AC#3 pins against. So a link's
  * destination is rewritten by **splicing the new bytes over the old destination's byte range**,

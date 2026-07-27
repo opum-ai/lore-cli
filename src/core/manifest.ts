@@ -402,6 +402,22 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     examples: ["lore graph", "lore graph stories/bulk-archive-orders --dot"],
   },
   {
+    name: "export",
+    summary: "Emit a deterministic, consumer-neutral OKF projection as JSONL",
+    args: "",
+    flags: [
+      {
+        name: "schema-version",
+        takesValue: true,
+        summary: "Projection schema version (currently 1.0)",
+      },
+    ],
+    json: true,
+    kind: "projection.export",
+    exitCodes: exitCodesFor(["bundle", "backlog", "git"]),
+    examples: ["lore export", "lore export --schema-version 1.0"],
+  },
+  {
     name: "query",
     summary: "Full-text search the bundle with frontmatter filters",
     args: '["<text>"]',

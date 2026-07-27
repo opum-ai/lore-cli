@@ -7,7 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`lore export` now emits a deterministic, consumer-neutral OKF projection for downstream
+  indexes** (LORE-279). The versioned JSONL stream contains a manifest, full canonical concepts,
+  every authored concept edge, the current Backlog task snapshot, concept-to-task associations,
+  dangling targets, stable SHA-256 content/bundle/stream hashes, and Git provenance, followed by a
+  trailer. Duplicate authored links remain distinct through stable ordinal identity. Unsupported
+  projection schema versions fail before bundle, Backlog, or Git reads; global `--json` wraps the
+  same records in `kind: projection.export`. The command is registered in help and agent
+  capability surfaces and documented in `docs/reference/okf-projection-contract.md`.
+
 ### Fixed
+- **The release dependency graph no longer carries the vulnerable `js-yaml@4.1.0` parser**
+  (LORE-280). Upgraded to `js-yaml@5.2.2`, migrated ESM imports to its named-export contract, and
+  preserved lore's established empty-config and byte-stable leading-zero-string behavior across
+  the major-version parser changes. Existing anchor-expansion bounds and prototype-pollution
+  regression tests remain in force.
 - **Release-facing documentation and bootstrap mechanics now match the implemented CLI and current
   npm policy** (LORE-274/275 and release-readiness review). README/tech-stack no longer present the
   retired fork as a live git dependency, README identifies the hand-rolled parser and 0.1 release

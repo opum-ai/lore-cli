@@ -17,6 +17,11 @@ dist-npm/
 coverage/
 .nyc_output/
 
+# Local investigation/onboarding scratch retained outside the shipped CLI.
+.repro-scratch/
+lore-e2e-test.sh
+lore-setup.sh
+
 # Docker E2E harness output (LORE-56) — the Dockerfile/compose/script are
 # committed; each run's report is generated, not durable.
 docker/e2e/results/*

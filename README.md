@@ -176,7 +176,9 @@ flag.
 ### Refactoring and navigation
 
 ```bash
-lore graph --format json|dot          # cross-link graph + token estimates
+lore graph --json                     # cross-link graph + token estimates
+lore graph --dot                      # Graphviz DOT
+lore export > lore-projection.jsonl   # full consumer-neutral OKF/task projection
 lore orphans                          # tasks with no owning doc; docs whose tasks vanished
 lore replace "OldName" "NewName" --in 'reference/**' --dry-run
 lore rename reference/orders reference/order-lines   # graph-aware: rewrites inbound links
