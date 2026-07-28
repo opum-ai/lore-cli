@@ -5,7 +5,7 @@ title: "CLI surface: the complete lore command catalog"
 description: >-
   The authoritative catalog of every lore subcommand — purpose, arguments,
   key flags, output kind, and exit codes — for the CLI that is lore's primary
-  interface for humans, Claude Code, and CI. Covers init, new, validate,
+  interface for humans, Claude Code, Codex, and CI. Covers init, new, validate,
   check, sync, link/unlink, tasks, orphans, graph, query, context, replace,
   rename, supersede, scaffold, schema, agents, instructions, help, and the
   deferred publish/mcp commands.
@@ -20,7 +20,7 @@ timestamp: 2026-06-21T00:00:00Z
 # CLI surface: the complete lore command catalog
 
 The **CLI is lore's primary interface** — for humans at a terminal, for Claude
-Code through the generated agent bridge, and for CI gates. (The MCP server is
+Code and Codex through generated agent bridges, and for CI gates. (The MCP server is
 [secondary and deferred to v2](./mcp-tools.md); when it ships it will wrap the
 same `core/` functions these commands call.) This page is the command catalog:
 what each subcommand does, its arguments and key flags, the shape of its
@@ -79,8 +79,8 @@ creates nothing and still exits `0` with everything reported `skipped`; a run
 after a partial delete fills in only the missing pieces.
 
 **On a bare, interactive-terminal invocation, `init` also runs a guided
-wizard** that folds the rest of onboarding into this one command — the Claude
-Code agent bridge, a downstream doc-site scaffold (mkdocs/docusaurus), an
+wizard** that folds the rest of onboarding into this one command — independently
+detected Claude Code and Codex agent bridges, a downstream doc-site scaffold (mkdocs/docusaurus), an
 Obsidian vault config, and a backlog `--json`-capability check — instead of
 the older `init` → `agents` → external `lore-setup.sh` → manual-Obsidian
 sequence ([ADR-0017](../adr/0017-interactive-init-wizard-tty-gated.md)).

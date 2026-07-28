@@ -97,8 +97,8 @@ compiled binary delivered as `optionalDependencies` (built with
 
 Every command is idempotent and emits stable exit codes. All of them are
 non-interactive by default — the one exception is `lore init`, which runs a
-guided wizard on a bare, interactive-terminal invocation (folding in the
-Claude Code agent bridge, downstream doc-site scaffolds, and a backlog
+guided wizard on a bare, interactive-terminal invocation (detecting and offering
+Claude Code and Codex agent bridges, downstream doc-site scaffolds, and a backlog
 capability check); it is strictly TTY-gated, so a non-TTY stdin or stderr,
 `--json`, or any of its own flags runs it fully non-interactively too — see
 [ADR-0017](docs/adr/0017-interactive-init-wizard-tty-gated.md). Output has
@@ -190,16 +190,17 @@ graph to rewrite all inbound links and frontmatter refs.
 
 ---
 
-## How Claude Code uses lore
+## How coding agents use lore
 
-`lore` is CLI-first for humans **and** agents. The agent bridge is generated,
+`lore` is CLI-first for humans **and** agents. Its agent bridges are generated,
 not bespoke:
 
 - `lore agents` emits `.claude/skills/lore/SKILL.md` — a skill that teaches
   Claude Code when and how to drive `lore` (always with `--json` for
   structured results).
-- A tiny CLAUDE.md nudge points the agent at the skill; an AGENTS.md `@import`
-  shim is deferred.
+- `lore init --codex` emits `.codex/skills/lore/SKILL.md`; a managed block in
+  `AGENTS.md` points Codex at that skill without overwriting repository guidance.
+- A tiny managed block in `CLAUDE.md` points Claude Code at its skill.
 - `lore instructions` prints task-shaped guidance on demand for any agent or
   human.
 

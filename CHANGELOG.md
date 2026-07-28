@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lore init` now detects and configures Claude Code and Codex independently**
+  (LORE-281). A bare interactive run offers each installed agent separately;
+  prompt-free `--claude` and `--codex` flags provide deterministic setup for
+  scripts and CI, while `--agents` remains an alias for Claude Code. Codex setup
+  generates `.codex/skills/lore/SKILL.md` and surgically maintains Lore's
+  managed block in `AGENTS.md`, preserving unrelated repository instructions
+  and protecting a differing whole-file skill from overwrite. The additive
+  `init` JSON result now includes `codex` only when that setup step runs.
 - **`lore export` now emits a deterministic, consumer-neutral OKF projection for downstream
   indexes** (LORE-279). The versioned JSONL stream contains a manifest, full canonical concepts,
   every authored concept edge, the current Backlog task snapshot, concept-to-task associations,

@@ -14,6 +14,7 @@
 - 2026-07-25T15:19:21-05:00 346d3c15b2d3052da110051a0927996a311cb428 chore(docs): regenerate log.md via lore sync
 - 2026-07-26T23:21:11-05:00 c37c689b9f64ba2175a9eefb386992cb845574fd fix(release): close round-5 readiness issues
 - 2026-07-28T08:20:58-05:00 6ceccfb6b36ecd6679d85edec33252364c046094 feat: add Claude and Codex init onboarding
+- 2026-07-28T11:38:12-05:00 0af37a96f85c864e8e2c2c170d116e6ea7eb4a47 chore: reconcile LORE-281 handoff metadata
 
 ## docs/.obsidian
 
