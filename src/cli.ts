@@ -22,7 +22,7 @@ import { runContext } from "./commands/context";
 import { runExport } from "./commands/export";
 import { runGraph } from "./commands/graph";
 import { renderTopLevelHelp, runHelp } from "./commands/help";
-import { type InitPrompter, runInit } from "./commands/init";
+import { type AgentAvailability, type InitPrompter, runInit } from "./commands/init";
 import { runInstructions } from "./commands/instructions";
 import { runLink, runUnlink } from "./commands/link";
 import { runNew } from "./commands/new";
@@ -167,6 +167,8 @@ export interface RunContext {
   adapter?: BacklogAdapter;
   /** `lore init`'s interactive-wizard I/O seam (LORE-260); defaults to a real `readline` session over stdin/stderr. Injected so a caller (or a test) drives the wizard without a real terminal. */
   prompter?: InitPrompter;
+  /** Injectable executable discovery for `lore init`; keeps router tests independent of the host PATH. */
+  agentAvailability?: () => AgentAvailability;
 }
 
 /**
@@ -339,6 +341,7 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
         jsonRequested: parsed.json,
         adapter: context.adapter,
         prompter: context.prompter,
+        agentAvailability: context.agentAvailability,
       });
     case "new":
       return runNew({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });

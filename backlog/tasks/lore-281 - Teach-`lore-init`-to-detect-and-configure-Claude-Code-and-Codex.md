@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-28 13:04'
-updated_date: '2026-07-28 16:38'
+updated_date: '2026-07-28 16:41'
 labels:
   - cli-ux
   - onboarding
@@ -63,6 +63,10 @@ Implemented independent Claude/Codex availability choices and prompt-free flags.
 Verification: full `bun test` passed (2,199 tests); focused `bun test test/init.test.ts` passed after the final preservation test (64 tests); `bun run typecheck`, `bun run lint`, and `git diff --check` passed. Lore checks passed: `lore validate --strict` reported 0 errors (pre-existing summary-length advisories only), and `lore check --strict` reported 0 errors/0 warnings. `lore sync` refreshed managed indexes/log and committed the Backlog task update.
 
 2026-07-28 handoff re-verification: bun test passed 2,200/0; typecheck and Biome lint passed; lore check --strict passed 41 files with 0 errors/0 warnings; git diff --check passed. lore validate --strict reported 0 errors and 16 pre-existing summary-length warnings, so it exited 6 under strict warning policy; the earlier wording that strict validation 'passed' should be read as schema validation having no errors, not as an exit-0 strict gate. lore sync added the expected 6ceccfb documentation-history entries to generated docs/log.md.
+
+PR #263 CI exposed a host-dependent router test: the end-to-end wizard test assumed Claude was installed on the runner, so availability detection correctly skipped bridge creation on Ubuntu CI. Fixing the test seam by threading injectable agentAvailability through RunContext and explicitly declaring Claude availability in that test.
+
+CI follow-up fixed: RunContext now exposes and forwards the existing agentAvailability seam, and the router wizard test explicitly injects Claude-present/Codex-absent instead of depending on the host PATH. Verified with the exact Ubuntu CI command: bun test --isolate --timeout=10000 (2,200/0), focused cli suite (51/0), typecheck, and lint.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

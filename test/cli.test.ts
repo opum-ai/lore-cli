@@ -144,7 +144,14 @@ describe("cli — init dispatch", () => {
     };
     // The wizard always runs the (advisory-only) backlog check, so a fake adapter is injected here
     // too — a real, host-dependent `backlog` subprocess must never be reachable from a unit test.
-    const c = ctx({ cwd, stdinIsTTY: true, stderrIsTTY: true, prompter, adapter: fakeAdapter([], { probe: "ok" }) });
+    const c = ctx({
+      cwd,
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      adapter: fakeAdapter([], { probe: "ok" }),
+      agentAvailability: () => ({ claude: true, codex: false }),
+    });
     const result = run(argv("init"), c);
     expect(result).toBeInstanceOf(Promise); // only the wizard (or an implied backlog check) returns a Promise
     expect(await result).toBe(0);
