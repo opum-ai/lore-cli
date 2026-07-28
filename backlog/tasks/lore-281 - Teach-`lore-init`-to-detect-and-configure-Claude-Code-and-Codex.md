@@ -1,11 +1,11 @@
 ---
 id: LORE-281
 title: Teach `lore init` to detect and configure Claude Code and Codex
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-28 13:04'
-updated_date: '2026-07-28 17:20'
+updated_date: '2026-07-28 17:21'
 labels:
   - cli-ux
   - onboarding
@@ -66,10 +66,12 @@ PR #263 CI exposed a host-dependent router test: the end-to-end wizard test assu
 CI follow-up fixed: RunContext now exposes and forwards the existing agentAvailability seam, and the router wizard test explicitly injects Claude-present/Codex-absent instead of depending on the host PATH. Verified with the exact Ubuntu CI command: bun test --isolate --timeout=10000 (2,200/0), focused cli suite (51/0), typecheck, and lint.
 
 Review of PR #263 found four blocking inconsistencies: the checked-in .codex skill differs from buildCodexSkillDoc (missing generated footer, so self-setup reports protected); cli-contract.md's init envelope omits codex; the user-visible flags/behavior have no [Unreleased] CHANGELOG entry; and the closed-stdin usage hint omits --claude/--codex. Fixing in-scope before merge.
+
+PR review fixes complete: reconciled the checked-in Codex skill with buildCodexSkillDoc and added a byte-lockstep test; documented the additive codex init result in cli-contract.md; added the [Unreleased] entry; updated README/CLI-surface agent wording; and corrected the EOF hint to advertise --claude/--codex. Verification: exact isolated full suite 2,201/0, focused init+CLI 116/0, typecheck clean, Biome clean (118 files), lore check --strict 41 files 0/0, git diff --check clean. lore validate --strict remains exit 6 only for 16 pre-existing summary-length warnings, with 0 errors.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Implemented multi-agent onboarding in `lore init`: interactive TTY runs safely detect Claude Code and Codex and offer independent choices, while `--claude`/`--codex` provide prompt-free control and `--agents` remains Claude-compatible. Added a protected, idempotent Codex bridge for `AGENTS.md` and `.codex/skills/lore/SKILL.md`, expanded structured rendering/help/docs, and covered all required availability, decline, non-interactive, re-run, and hand-edit scenarios. Verified with the full 2,199-test suite, the final 64-test init suite, typecheck, lint, diff checks, and strict Lore validation/checks.
+Implemented and reviewed multi-agent onboarding for lore init, including deterministic Claude/Codex detection, protected Codex bridge generation, complete CLI/README/contract/CHANGELOG documentation, generator-artifact lockstep coverage, and host-independent router tests. Verified with 2,201 isolated tests, typecheck, lint, strict Lore coherence, and CI before merge.
 <!-- SECTION:FINAL_SUMMARY:END -->
