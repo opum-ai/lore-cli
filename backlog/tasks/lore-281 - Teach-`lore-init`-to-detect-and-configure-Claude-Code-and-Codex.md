@@ -1,0 +1,60 @@
+---
+id: LORE-281
+title: Teach `lore init` to detect and configure Claude Code and Codex
+status: In Progress
+assignee:
+  - '@codex'
+created_date: '2026-07-28 13:04'
+updated_date: '2026-07-28 13:12'
+labels:
+  - cli-ux
+  - onboarding
+  - agents
+dependencies: []
+references:
+  - src/commands/init.ts
+  - src/commands/agents.ts
+  - docs/adr/0017-interactive-init-wizard-tty-gated.md
+modified_files:
+  - src/commands/init.ts
+  - src/commands/codex-bridge.ts
+  - src/core/codex-bridge.ts
+  - src/core/manifest.ts
+  - test/init.test.ts
+  - docs/runbooks/agent-onboarding.md
+  - docs/reference/cli-surface.md
+priority: medium
+type: enhancement
+ordinal: 383000
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+When `lore init` runs interactively, detect whether Claude Code and Codex are installed. For each detected agent, offer to configure the repository-specific Lore bridge instead of treating agent setup as a single Claude-only choice. Preserve deterministic, prompt-free behavior for CI and scripts.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 On an interactive TTY, `lore init` detects Claude Code and Codex availability without failing when either executable is absent.
+- [ ] #2 Each detected agent is presented as an independent configuration choice; undetected agents are not offered as if available.
+- [ ] #3 Accepting Claude Code configuration creates or refreshes the Claude Lore bridge, and accepting Codex configuration creates or refreshes `AGENTS.md` plus `.codex/skills/lore/`.
+- [ ] #4 Explicit flags provide prompt-free control over Claude Code and Codex configuration, and non-TTY or JSON execution never blocks for input.
+- [ ] #5 Re-running setup is idempotent and protects hand-edited bridge files consistently for both agents.
+- [ ] #6 Automated tests cover Claude-only, Codex-only, both-installed, neither-installed, declined choices, and non-interactive execution; CLI help and onboarding documentation describe the behavior.
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add a shared Codex bridge planner/writer that generates `.codex/skills/lore/SKILL.md` and upserts a managed Lore block in `AGENTS.md`, matching Claude bridge protection and disk-style behavior.
+2. Extend `lore init` with injectable Claude/Codex availability detection, independent interactive choices, and prompt-free `--claude` / `--codex` flags while retaining `--agents` as the Claude-compatible alias.
+3. Expand init results/rendering, manifest help, and automated coverage for every availability and interaction combination plus idempotency/hand-edit protection.
+4. Update onboarding and CLI documentation through Lore, then run focused tests, typecheck/lint, Lore validation/checks, and finalize the backlog task with evidence.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented independent Claude/Codex availability choices and prompt-free flags. Added a Codex bridge writer for AGENTS.md plus .codex/skills/lore/SKILL.md with managed-block preservation, whole-file hand-edit protection, disk-style preservation, and idempotent results. Added matrix, declined-choice, non-interactive, re-run, and hand-edit tests; updated manifest help and onboarding/CLI docs.
+<!-- SECTION:NOTES:END -->
