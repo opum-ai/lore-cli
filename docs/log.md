@@ -13,6 +13,7 @@
 - 2026-07-25T14:25:25-05:00 1d985157372c3a831a34e1fd6c3f1f04fc59ff2f docs(init): document the TTY-gated wizard (ADR-0017) and the one-command flow
 - 2026-07-25T15:19:21-05:00 346d3c15b2d3052da110051a0927996a311cb428 chore(docs): regenerate log.md via lore sync
 - 2026-07-26T23:21:11-05:00 c37c689b9f64ba2175a9eefb386992cb845574fd fix(release): close round-5 readiness issues
+- 2026-07-28T08:20:58-05:00 6ceccfb6b36ecd6679d85edec33252364c046094 feat: add Claude and Codex init onboarding
 
 ## docs/.obsidian
 
@@ -98,6 +99,7 @@
 - 2026-07-26T21:25:31-05:00 0f15038ddbe6f7e0adf3fc755c1c71562227034b fix(wave2-integration): correct cd-carve-out misattribution and commaJoin universality claim
 - 2026-07-26T23:21:11-05:00 c37c689b9f64ba2175a9eefb386992cb845574fd fix(release): close round-5 readiness issues
 - 2026-07-27T07:17:12-05:00 047857cc4bb96060430c1735c5b6e46fd268cdf4 feat: add deterministic OKF projection export
+- 2026-07-28T08:20:58-05:00 6ceccfb6b36ecd6679d85edec33252364c046094 feat: add Claude and Codex init onboarding
 
 ## docs/runbooks
 
@@ -138,6 +140,7 @@
 - 2026-07-26T11:36:20-05:00 a22f41d8a03207fe4e8497628575d25d3c6755e5 fix(docker-e2e): close three falsifiable claims in LORE-269's new text
 - 2026-07-26T23:21:11-05:00 c37c689b9f64ba2175a9eefb386992cb845574fd fix(release): close round-5 readiness issues
 - 2026-07-27T07:17:12-05:00 047857cc4bb96060430c1735c5b6e46fd268cdf4 feat: add deterministic OKF projection export
+- 2026-07-28T08:20:58-05:00 6ceccfb6b36ecd6679d85edec33252364c046094 feat: add Claude and Codex init onboarding
 
 ## docs/specs
 
