@@ -1,11 +1,11 @@
 ---
 id: LORE-281
 title: Teach `lore init` to detect and configure Claude Code and Codex
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-28 13:04'
-updated_date: '2026-07-28 16:41'
+updated_date: '2026-07-28 17:20'
 labels:
   - cli-ux
   - onboarding
@@ -49,10 +49,7 @@ When `lore init` runs interactively, detect whether Claude Code and Codex are in
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Add a shared Codex bridge planner/writer that generates `.codex/skills/lore/SKILL.md` and upserts a managed Lore block in `AGENTS.md`, matching Claude bridge protection and disk-style behavior.
-2. Extend `lore init` with injectable Claude/Codex availability detection, independent interactive choices, and prompt-free `--claude` / `--codex` flags while retaining `--agents` as the Claude-compatible alias.
-3. Expand init results/rendering, manifest help, and automated coverage for every availability and interaction combination plus idempotency/hand-edit protection.
-4. Update onboarding and CLI documentation through Lore, then run focused tests, typecheck/lint, Lore validation/checks, and finalize the backlog task with evidence.
+1. Reconcile the checked-in Codex bridge artifacts with the generator and add a lockstep regression test. 2. Update the CLI contract, CLI surface/error guidance, and [Unreleased] CHANGELOG for the additive codex output and new flags. 3. Run the focused and full suites, typecheck/lint, Lore sync/validation/check, and diff checks. 4. Push the reviewed fixes, require all PR checks green, then merge PR #263 and reconcile local dev.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -67,6 +64,8 @@ Verification: full `bun test` passed (2,199 tests); focused `bun test test/init.
 PR #263 CI exposed a host-dependent router test: the end-to-end wizard test assumed Claude was installed on the runner, so availability detection correctly skipped bridge creation on Ubuntu CI. Fixing the test seam by threading injectable agentAvailability through RunContext and explicitly declaring Claude availability in that test.
 
 CI follow-up fixed: RunContext now exposes and forwards the existing agentAvailability seam, and the router wizard test explicitly injects Claude-present/Codex-absent instead of depending on the host PATH. Verified with the exact Ubuntu CI command: bun test --isolate --timeout=10000 (2,200/0), focused cli suite (51/0), typecheck, and lint.
+
+Review of PR #263 found four blocking inconsistencies: the checked-in .codex skill differs from buildCodexSkillDoc (missing generated footer, so self-setup reports protected); cli-contract.md's init envelope omits codex; the user-visible flags/behavior have no [Unreleased] CHANGELOG entry; and the closed-stdin usage hint omits --claude/--codex. Fixing in-scope before merge.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
