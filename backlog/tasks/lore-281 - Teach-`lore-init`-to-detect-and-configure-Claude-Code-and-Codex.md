@@ -1,7 +1,7 @@
 ---
 id: LORE-281
 title: Teach `lore init` to detect and configure Claude Code and Codex
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-28 13:04'
@@ -23,6 +23,8 @@ modified_files:
   - test/init.test.ts
   - docs/runbooks/agent-onboarding.md
   - docs/reference/cli-surface.md
+  - docs/log.md
+  - docs/reference/index.md
 priority: medium
 type: enhancement
 ordinal: 383000
@@ -36,12 +38,12 @@ When `lore init` runs interactively, detect whether Claude Code and Codex are in
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 On an interactive TTY, `lore init` detects Claude Code and Codex availability without failing when either executable is absent.
-- [ ] #2 Each detected agent is presented as an independent configuration choice; undetected agents are not offered as if available.
-- [ ] #3 Accepting Claude Code configuration creates or refreshes the Claude Lore bridge, and accepting Codex configuration creates or refreshes `AGENTS.md` plus `.codex/skills/lore/`.
-- [ ] #4 Explicit flags provide prompt-free control over Claude Code and Codex configuration, and non-TTY or JSON execution never blocks for input.
-- [ ] #5 Re-running setup is idempotent and protects hand-edited bridge files consistently for both agents.
-- [ ] #6 Automated tests cover Claude-only, Codex-only, both-installed, neither-installed, declined choices, and non-interactive execution; CLI help and onboarding documentation describe the behavior.
+- [x] #1 On an interactive TTY, `lore init` detects Claude Code and Codex availability without failing when either executable is absent.
+- [x] #2 Each detected agent is presented as an independent configuration choice; undetected agents are not offered as if available.
+- [x] #3 Accepting Claude Code configuration creates or refreshes the Claude Lore bridge, and accepting Codex configuration creates or refreshes `AGENTS.md` plus `.codex/skills/lore/`.
+- [x] #4 Explicit flags provide prompt-free control over Claude Code and Codex configuration, and non-TTY or JSON execution never blocks for input.
+- [x] #5 Re-running setup is idempotent and protects hand-edited bridge files consistently for both agents.
+- [x] #6 Automated tests cover Claude-only, Codex-only, both-installed, neither-installed, declined choices, and non-interactive execution; CLI help and onboarding documentation describe the behavior.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -57,4 +59,12 @@ When `lore init` runs interactively, detect whether Claude Code and Codex are in
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented independent Claude/Codex availability choices and prompt-free flags. Added a Codex bridge writer for AGENTS.md plus .codex/skills/lore/SKILL.md with managed-block preservation, whole-file hand-edit protection, disk-style preservation, and idempotent results. Added matrix, declined-choice, non-interactive, re-run, and hand-edit tests; updated manifest help and onboarding/CLI docs.
+
+Verification: full `bun test` passed (2,199 tests); focused `bun test test/init.test.ts` passed after the final preservation test (64 tests); `bun run typecheck`, `bun run lint`, and `git diff --check` passed. Lore checks passed: `lore validate --strict` reported 0 errors (pre-existing summary-length advisories only), and `lore check --strict` reported 0 errors/0 warnings. `lore sync` refreshed managed indexes/log and committed the Backlog task update.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented multi-agent onboarding in `lore init`: interactive TTY runs safely detect Claude Code and Codex and offer independent choices, while `--claude`/`--codex` provide prompt-free control and `--agents` remains Claude-compatible. Added a protected, idempotent Codex bridge for `AGENTS.md` and `.codex/skills/lore/SKILL.md`, expanded structured rendering/help/docs, and covered all required availability, decline, non-interactive, re-run, and hand-edit scenarios. Verified with the full 2,199-test suite, the final 64-test init suite, typecheck, lint, diff checks, and strict Lore validation/checks.
+<!-- SECTION:FINAL_SUMMARY:END -->
