@@ -12,6 +12,7 @@ import {
   runInit,
 } from "../src/commands/init";
 import { loadBundle } from "../src/core/bundle";
+import { buildCodexSkillDoc, CODEX_SKILL_REL_PATH } from "../src/core/codex-bridge";
 import { parseConcept } from "../src/core/concept";
 import { EXIT_CODES, LoreError, reportError, WarningCollector } from "../src/errors";
 import type { OutputContext } from "../src/output";
@@ -43,6 +44,7 @@ async function init(
     jsonRequested?: boolean;
     prompter?: InitPrompter;
     adapter?: BacklogAdapter;
+    agentAvailability?: () => { claude: boolean; codex: boolean };
   } = {},
 ): Promise<{ code: number; result: InitResult; stderr: string }> {
   const stdout = capture();
@@ -63,6 +65,7 @@ async function init(
     jsonRequested: extra.jsonRequested,
     prompter: extra.prompter,
     adapter: extra.adapter,
+    agentAvailability: extra.agentAvailability ?? (() => ({ claude: true, codex: false })),
   };
   const code = await runInit(options);
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: InitResult };
@@ -71,11 +74,18 @@ async function init(
 }
 
 /** A scripted {@link InitPrompter}: `agents`/`obsidian` answer the wizard's two confirms (in that call order), `site` answers the "which docs site" choice. Omitted answers fall through to the wizard's own default. */
-function scriptedPrompter(answers: { agents?: boolean; site?: string; obsidian?: boolean }): InitPrompter {
-  const confirmAnswers = [answers.agents, answers.obsidian];
-  let confirmCalls = 0;
+function scriptedPrompter(answers: {
+  agents?: boolean;
+  codex?: boolean;
+  site?: string;
+  obsidian?: boolean;
+}): InitPrompter {
   return {
-    confirm: async (_question, defaultValue) => confirmAnswers[confirmCalls++] ?? defaultValue,
+    confirm: async (question, defaultValue) => {
+      if (question.includes("Claude Code")) return answers.agents ?? defaultValue;
+      if (question.includes("Codex")) return answers.codex ?? defaultValue;
+      return answers.obsidian ?? defaultValue;
+    },
     choose: async (_question, _choices, defaultValue) => answers.site ?? defaultValue,
     close: () => {},
   };
@@ -458,6 +468,10 @@ describe("lore init — refuses to write through a pre-existing symlinked scaffo
 });
 
 describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4)", () => {
+  test("the repository's checked-in Codex skill stays byte-identical to the generator", () => {
+    expect(readFileSync(join(import.meta.dir, "..", CODEX_SKILL_REL_PATH), "utf8")).toBe(buildCodexSkillDoc());
+  });
+
   test("no flags at all: byte-identical to pre-LORE-260 behavior, no consumer folded in, no backlog check", async () => {
     const { result, stderr } = await init();
     expect(result.agents).toBeUndefined();
@@ -478,6 +492,20 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
     );
     expect(existsSync(join(root, ".claude/skills/lore/SKILL.md"))).toBe(true);
     expect(existsSync(join(root, "CLAUDE.md"))).toBe(true);
+  });
+
+  test("--claude is the prompt-free spelling for the Claude Code bridge", async () => {
+    const { result } = await init({ args: ["--claude"], adapter: fakeAdapter([], { probe: "ok" }) });
+    expect(result.agents?.files.map((file) => file.path)).toContain(".claude/skills/lore/SKILL.md");
+  });
+
+  test("--codex sets up the Codex bridge without prompting", async () => {
+    const { result } = await init({ args: ["--codex"], adapter: fakeAdapter([], { probe: "ok" }) });
+    expect(result.codex?.files.map((file) => file.path).sort()).toEqual(
+      [".codex/skills/lore/SKILL.md", "AGENTS.md"].sort(),
+    );
+    expect(existsSync(join(root, ".codex/skills/lore/SKILL.md"))).toBe(true);
+    expect(existsSync(join(root, "AGENTS.md"))).toBe(true);
   });
 
   test("--obsidian scaffolds the Obsidian vault config", async () => {
@@ -578,6 +606,26 @@ describe("lore init — idempotent re-run with flags (AC#3)", () => {
     expect(result.agents?.files.every((f) => f.action === "unchanged")).toBe(true);
   });
 
+  test("a second --codex run is unchanged and protects a hand-edited Codex skill", async () => {
+    await init({ args: ["--codex"], adapter: okAdapter() });
+    const second = await init({ args: ["--codex"], adapter: okAdapter() });
+    expect(second.result.codex?.files.every((file) => file.action === "unchanged")).toBe(true);
+
+    writeFileSync(join(root, ".codex/skills/lore/SKILL.md"), "hand-edited\n");
+    const protectedRun = await init({ args: ["--codex"], adapter: okAdapter() });
+    expect(protectedRun.result.codex?.files.find((file) => file.path.endsWith("SKILL.md"))?.action).toBe("protected");
+    expect(readFileSync(join(root, ".codex/skills/lore/SKILL.md"), "utf8")).toBe("hand-edited\n");
+  });
+
+  test("--codex preserves hand-authored AGENTS.md prose while refreshing Lore's managed block", async () => {
+    writeFileSync(join(root, "AGENTS.md"), "# Team rules\n\nKeep this prose.\n");
+    const first = await init({ args: ["--codex"], adapter: okAdapter() });
+    expect(first.result.codex?.files.find((file) => file.path === "AGENTS.md")?.action).toBe("updated");
+    const agentsMd = readFileSync(join(root, "AGENTS.md"), "utf8");
+    expect(agentsMd).toContain("# Team rules\n\nKeep this prose.");
+    expect(agentsMd).toContain("<!-- lore:agents:begin -->");
+  });
+
   test("a second --scaffold mkdocs run writes nothing (mirrors LORE-263's no-op re-run)", async () => {
     await init({ args: ["--scaffold", "mkdocs"], adapter: okAdapter() });
     const { result } = await init({ args: ["--scaffold", "mkdocs"], adapter: okAdapter() });
@@ -592,6 +640,46 @@ describe("lore init — idempotent re-run with flags (AC#3)", () => {
 });
 
 describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the locked design decision)", () => {
+  test.each([
+    ["Claude-only", { claude: true, codex: false }, true, false],
+    ["Codex-only", { claude: false, codex: true }, false, true],
+    ["both installed", { claude: true, codex: true }, true, true],
+    ["neither installed", { claude: false, codex: false }, false, false],
+  ] as const)("%s availability offers and configures only detected agents", async (_name, availability, claude, codex) => {
+    const questions: string[] = [];
+    const base = scriptedPrompter({ agents: true, codex: true, site: "none", obsidian: false });
+    const prompter: InitPrompter = {
+      ...base,
+      confirm: async (question, defaultValue) => {
+        questions.push(question);
+        return base.confirm(question, defaultValue);
+      },
+    };
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      agentAvailability: () => availability,
+      adapter: fakeAdapter([], { probe: "ok" }),
+    });
+    expect(result.agents !== undefined).toBe(claude);
+    expect(result.codex !== undefined).toBe(codex);
+    expect(questions.some((question) => question.includes("Claude Code"))).toBe(availability.claude);
+    expect(questions.some((question) => question.includes("Codex"))).toBe(availability.codex);
+  });
+
+  test("detected agent choices are independent and may both be declined", async () => {
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter: scriptedPrompter({ agents: false, codex: false, site: "none", obsidian: false }),
+      agentAvailability: () => ({ claude: true, codex: true }),
+      adapter: fakeAdapter([], { probe: "ok" }),
+    });
+    expect(result.agents).toBeUndefined();
+    expect(result.codex).toBeUndefined();
+  });
+
   test("a bare invocation on a TTY runs the wizard and applies every 'yes' answer, in order", async () => {
     const prompter = scriptedPrompter({ agents: true, site: "mkdocs", obsidian: true });
     const { code, result } = await init({

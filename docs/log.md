@@ -11,6 +11,14 @@
 - 2026-07-19T10:25:07-05:00 9650cd44bdb8a1b2e2c0e43da30bcde8cd91e1bc feat(LORE-56): Docker E2E test harness — real lore + pinned upstream Backlog.md (#52)
 - 2026-07-24T22:21:41-05:00 2e84d2bf13f643fe3c0be39656a66a930f7fdcc8 docs(LORE-254): document the upstream Backlog.md watch runbook
 - 2026-07-25T14:25:25-05:00 1d985157372c3a831a34e1fd6c3f1f04fc59ff2f docs(init): document the TTY-gated wizard (ADR-0017) and the one-command flow
+- 2026-07-25T15:19:21-05:00 346d3c15b2d3052da110051a0927996a311cb428 chore(docs): regenerate log.md via lore sync
+- 2026-07-26T23:21:11-05:00 c37c689b9f64ba2175a9eefb386992cb845574fd fix(release): close round-5 readiness issues
+- 2026-07-28T08:20:58-05:00 6ceccfb6b36ecd6679d85edec33252364c046094 feat: add Claude and Codex init onboarding
+- 2026-07-28T11:38:12-05:00 0af37a96f85c864e8e2c2c170d116e6ea7eb4a47 chore: reconcile LORE-281 handoff metadata
+
+## docs/.obsidian
+
+- 2026-07-27T07:17:12-05:00 047857cc4bb96060430c1735c5b6e46fd268cdf4 feat: add deterministic OKF projection export
 
 ## docs/adr
 
@@ -37,6 +45,11 @@
 - 2026-07-25T09:22:49-05:00 5052ebc5f4f28501e9eb9b65f6dbe05c6a224886 docs(release-publishing): fix os/cpu dry-run claim + npm-floor wording
 - 2026-07-25T14:25:25-05:00 1d985157372c3a831a34e1fd6c3f1f04fc59ff2f docs(init): document the TTY-gated wizard (ADR-0017) and the one-command flow
 - 2026-07-25T14:25:25-05:00 a64b1b5344b35854f5fd92e2c69ef2a6d6b5f15e docs(init): correct ADR-0017/CHANGELOG accuracy claims from review
+- 2026-07-25T15:19:21-05:00 e6a1aeeccbd6102d890152808148593c82d2c764 fix(docs): correct three stale stdin-only descriptions of the init TTY gate
+- 2026-07-26T07:33:17-05:00 135bb3bf718cc92d513fb230182a593a13da8200 docs(adr): fix --label-vs-add-label drift found in LORE-265's wider sweep
+- 2026-07-26T07:33:17-05:00 24010c650030d6d384ef4b0c6881ef3399a39a7c docs(adr-0009): correct §2's orphans data-source and ownership-rule claims
+- 2026-07-26T21:25:31-05:00 0f15038ddbe6f7e0adf3fc755c1c71562227034b fix(wave2-integration): correct cd-carve-out misattribution and commaJoin universality claim
+- 2026-07-26T21:25:31-05:00 dccfabfe1eea13ceeee034c70cc21ab68d52c8b1 docs(wave2-integration): fix label-flag comment/test contradictions and ADR-0002 item 6
 
 ## docs/reference
 
@@ -77,6 +90,17 @@
 - 2026-07-25T14:25:25-05:00 1d985157372c3a831a34e1fd6c3f1f04fc59ff2f docs(init): document the TTY-gated wizard (ADR-0017) and the one-command flow
 - 2026-07-25T14:25:25-05:00 a64b1b5344b35854f5fd92e2c69ef2a6d6b5f15e docs(init): correct ADR-0017/CHANGELOG accuracy claims from review
 - 2026-07-25T14:25:25-05:00 bae8daf58f24ee351ae2425dd0f97323e6c1e16c docs(init): fix review round-3 text nits — CHANGELOG gloss, test count, EOF message, exit 6
+- 2026-07-25T15:19:21-05:00 08cbe4021a277f740de56d025e548daed2649f53 docs(reference): fold the init wizard and its --json fields into two summaries
+- 2026-07-26T07:33:17-05:00 7e07262db4033618096dd612a32dd1f545c661f2 docs(backlog-cli-contract): fix same orphans/unlink search-query drift
+- 2026-07-26T07:33:17-05:00 9508c63f61ed3f218fdda6195b1238c0ec496043 docs(backlog-json-schema): fix filter/label claims reviewer found in AC#3 miss
+- 2026-07-26T11:37:13-05:00 2899ff54a453e1916ea78c1c875fac033734d52f docs(backlog-cli-contract): fix task-list/task-edit label-flag conflation and version-count drift
+- 2026-07-26T11:37:13-05:00 3b1f7eab8c7df79cf6d622022e31d8a66bc43226 docs(backlog-cli-contract): fix version-split citations and close self-contradictory task record
+- 2026-07-26T11:37:13-05:00 56ee70fd5544e108c209635906bb8d44295f6b37 docs(backlog-cli-contract): fix §2.4 label-flag multiplicity drift, reconcile version pin
+- 2026-07-26T11:37:13-05:00 74a45a912ed6ade6d4843714cf98ecebfc16a694 docs(architecture): mark adapter sketch illustrative, fix stale pre-migration claims
+- 2026-07-26T21:25:31-05:00 0f15038ddbe6f7e0adf3fc755c1c71562227034b fix(wave2-integration): correct cd-carve-out misattribution and commaJoin universality claim
+- 2026-07-26T23:21:11-05:00 c37c689b9f64ba2175a9eefb386992cb845574fd fix(release): close round-5 readiness issues
+- 2026-07-27T07:17:12-05:00 047857cc4bb96060430c1735c5b6e46fd268cdf4 feat: add deterministic OKF projection export
+- 2026-07-28T08:20:58-05:00 6ceccfb6b36ecd6679d85edec33252364c046094 feat: add Claude and Codex init onboarding
 
 ## docs/runbooks
 
@@ -106,6 +130,18 @@
 - 2026-07-25T09:22:49-05:00 5052ebc5f4f28501e9eb9b65f6dbe05c6a224886 docs(release-publishing): fix os/cpu dry-run claim + npm-floor wording
 - 2026-07-25T09:22:49-05:00 88f664119d29da8d982ec674782b1e199c83bcbb docs(release-publishing): add first-release checklist + rehearsal evidence
 - 2026-07-25T14:25:25-05:00 1d985157372c3a831a34e1fd6c3f1f04fc59ff2f docs(init): document the TTY-gated wizard (ADR-0017) and the one-command flow
+- 2026-07-25T15:19:21-05:00 e6a1aeeccbd6102d890152808148593c82d2c764 fix(docs): correct three stale stdin-only descriptions of the init TTY gate
+- 2026-07-26T07:44:22-05:00 697a3317da83d907a82fc93679ac72ff863c67a8 docs(release-publishing): close the and/or gap in the checklist, add self-review/bypass_actors caveats
+- 2026-07-26T07:44:22-05:00 7a6056b2cb67a837e471c302fc3a091423d09117 docs(release-publishing): fix branch-policy guidance, move repo-admin section
+- 2026-07-26T07:44:22-05:00 d3a2be67eba12a58af900409bfb2efb6427cfc86 docs(release-publishing): document the release Environment repo-admin steps
+- 2026-07-26T08:17:26-05:00 421f7bb755f284e08dda406155a8061c1fd4390a docs(runbooks): fix inert/count claims and dispatch-pause gaps in release-publishing.md
+- 2026-07-26T08:17:26-05:00 ba6c7f35748a15534dcba88e747a0b982ed5b461 docs(runbooks): fix release-publishing.md prose left stale by LORE-268
+- 2026-07-26T11:36:20-05:00 39a8ac8454b75da0442038789ce776bc1b965e74 docs(docker-e2e): warn against direct run-e2e.sh invocation
+- 2026-07-26T11:36:20-05:00 5c38ff8f171a3bfc951d18f65d6ebae884d09009 docs(runbooks): fix stale --exit-code-from e2e claim and 1643→1642 comment cite
+- 2026-07-26T11:36:20-05:00 a22f41d8a03207fe4e8497628575d25d3c6755e5 fix(docker-e2e): close three falsifiable claims in LORE-269's new text
+- 2026-07-26T23:21:11-05:00 c37c689b9f64ba2175a9eefb386992cb845574fd fix(release): close round-5 readiness issues
+- 2026-07-27T07:17:12-05:00 047857cc4bb96060430c1735c5b6e46fd268cdf4 feat: add deterministic OKF projection export
+- 2026-07-28T08:20:58-05:00 6ceccfb6b36ecd6679d85edec33252364c046094 feat: add Claude and Codex init onboarding
 
 ## docs/specs
 

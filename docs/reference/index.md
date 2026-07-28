@@ -9,6 +9,7 @@
 - [Consumer compatibility](consumer-compatibility.md)
 - [MCP tools and resources (DEFERRED v2 design)](mcp-tools.md)
 - [OKF conformance](okf-conformance.md)
+- [OKF projection contract](okf-projection-contract.md)
 - [Portable Markdown — the subset lore guarantees](portable-markdown.md)
 - [Tech Stack](tech-stack.md)
 <!-- lore:index:end -->
