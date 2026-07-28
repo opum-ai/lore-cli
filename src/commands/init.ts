@@ -68,6 +68,7 @@ import { ANSI, EXIT_OK, LoreError, paint, WarningCollector, type Writer } from "
 import { emit, type OutputContext, type Renderable } from "../output";
 import { type AgentsResult, applyAgentsBridge, bridgeActionColor, renderTrailer } from "./agents";
 import { usage } from "./args";
+import { applyCodexBridge, type CodexBridgeResult } from "./codex-bridge";
 import { assertNoSymlinkInPath, createIfAbsent, ensureDir } from "./fswrite";
 import { defaultAdapter } from "./link";
 import { applyScaffold, TARGETS as SCAFFOLD_TARGETS, type ScaffoldResult } from "./scaffold";
@@ -96,6 +97,8 @@ export interface InitResult {
   interactive: boolean;
   /** The agent bridge's result, present iff this run set it up (wizard "yes", or `--agents`). */
   agents?: AgentsResult;
+  /** Codex bridge result, present iff Codex setup was selected or explicitly requested. */
+  codex?: CodexBridgeResult;
   /** One entry per downstream doc-site/vault actually scaffolded this run (wizard picks, `--scaffold`, `--obsidian`); empty when none were requested. */
   scaffolds: ScaffoldResult[];
   /** The backlog-coupling capability check's outcome, present iff it ran this invocation. */
@@ -164,6 +167,13 @@ export interface InitOptions {
   prompter?: InitPrompter;
   /** The Backlog adapter for the coupling capability check; defaults to the real `backlog` binary on PATH. */
   adapter?: BacklogAdapter;
+  /** Injectable executable discovery for the interactive agent choices. */
+  agentAvailability?: () => AgentAvailability;
+}
+
+export interface AgentAvailability {
+  readonly claude: boolean;
+  readonly codex: boolean;
 }
 
 /** The parsed, validated `lore init` arguments. */
@@ -172,6 +182,8 @@ interface InitArgs {
   yes: boolean;
   /** `--agents`: also set up the Claude Code agent bridge. */
   agents: boolean;
+  /** `--codex`: set up the Codex bridge. */
+  codex: boolean;
   /** `--scaffold <target>` (repeatable) and/or `--obsidian`, deduped; targets from {@link SCAFFOLD_TARGETS}. */
   scaffolds: string[];
   /** `--no-backlog`: skip the backlog-coupling capability check entirely. */
@@ -234,6 +246,7 @@ export function runInit(options: InitOptions): number | Promise<number> {
 
   const scaffoldTargets = [...new Set(parsed.scaffolds)];
   const agents = parsed.agents ? applyAgentsBridge({ root: options.root, force: false, check: false }) : undefined;
+  const codex = parsed.codex ? applyCodexBridge({ root: options.root, force: false, check: false }) : undefined;
   const scaffolds = scaffoldTargets.map((target) => applyScaffold({ root: options.root, target, force: false, clock }));
 
   // The backlog check is advisory-only (never fails the run) and, off-TTY/via-flags, runs only when
@@ -242,9 +255,9 @@ export function runInit(options: InitOptions): number | Promise<number> {
   // opted all the way out with `--no-backlog`. A completely bare `lore init` therefore never spawns
   // a `backlog` subprocess, exactly as before this task.
   const shouldCheckBacklog =
-    parsed.checkBacklog || (!parsed.noBacklog && (parsed.agents || scaffoldTargets.length > 0));
+    parsed.checkBacklog || (!parsed.noBacklog && (parsed.agents || parsed.codex || scaffoldTargets.length > 0));
   if (!shouldCheckBacklog) {
-    const result: InitResult = { ...base, interactive: false, agents, scaffolds, backlog: undefined };
+    const result: InitResult = { ...base, interactive: false, agents, codex, scaffolds, backlog: undefined };
     emit(initRenderable(result), options.output, options.stdout);
     return EXIT_OK;
   }
@@ -252,7 +265,7 @@ export function runInit(options: InitOptions): number | Promise<number> {
   const warnings = new WarningCollector();
   return probeBacklogCapability(options, warnings).then((backlog) => {
     warnings.flush({ color: options.output.color, stderr: options.stderr ?? process.stderr });
-    const result: InitResult = { ...base, interactive: false, agents, scaffolds, backlog };
+    const result: InitResult = { ...base, interactive: false, agents, codex, scaffolds, backlog };
     emit(initRenderable(result), options.output, options.stdout);
     return EXIT_OK;
   });
@@ -272,9 +285,16 @@ async function runInteractiveWizard(
 ): Promise<number> {
   const prompter = options.prompter ?? createRealPrompter();
   const scaffoldTargets: string[] = [];
-  let wantAgents: boolean;
+  let wantAgents = false;
+  let wantCodex = false;
   try {
-    wantAgents = await prompter.confirm("Set up the Claude Code agent bridge (SKILL.md + CLAUDE.md nudge)?", true);
+    const available = detectAgentAvailability(options);
+    if (available.claude) {
+      wantAgents = await prompter.confirm("Set up the Claude Code agent bridge (SKILL.md + CLAUDE.md nudge)?", true);
+    }
+    if (available.codex) {
+      wantCodex = await prompter.confirm("Set up the Codex agent bridge (SKILL.md + AGENTS.md nudge)?", true);
+    }
     const site = await prompter.choose("Scaffold a downstream docs site?", ["none", "mkdocs", "docusaurus"], "none");
     if (site !== "none") {
       scaffoldTargets.push(site);
@@ -289,13 +309,14 @@ async function runInteractiveWizard(
 
   const clock = options.clock ?? (() => new Date());
   const agents = wantAgents ? applyAgentsBridge({ root: options.root, force: false, check: false }) : undefined;
+  const codex = wantCodex ? applyCodexBridge({ root: options.root, force: false, check: false }) : undefined;
   const scaffolds = scaffoldTargets.map((target) => applyScaffold({ root: options.root, target, force: false, clock }));
 
   const warnings = new WarningCollector();
   const backlog = await probeBacklogCapability(options, warnings);
   warnings.flush({ color: options.output.color, stderr: options.stderr ?? process.stderr });
 
-  const result: InitResult = { ...base, interactive: true, agents, scaffolds, backlog };
+  const result: InitResult = { ...base, interactive: true, agents, codex, scaffolds, backlog };
   emit(initRenderable(result), options.output, options.stdout);
   return EXIT_OK;
 }
@@ -399,7 +420,14 @@ async function probeBacklogCapability(options: InitOptions, warnings: WarningCol
 
 /** Whether any of `lore init`'s own flags was passed — the signal that overrides a bare-TTY invocation into the non-interactive path (AC#2). */
 function anyFlagGiven(parsed: InitArgs): boolean {
-  return parsed.yes || parsed.agents || parsed.scaffolds.length > 0 || parsed.noBacklog || parsed.checkBacklog;
+  return (
+    parsed.yes ||
+    parsed.agents ||
+    parsed.codex ||
+    parsed.scaffolds.length > 0 ||
+    parsed.noBacklog ||
+    parsed.checkBacklog
+  );
 }
 
 /**
@@ -414,6 +442,7 @@ function anyFlagGiven(parsed: InitArgs): boolean {
 function parseInitArgs(args: readonly string[]): InitArgs {
   let yes = false;
   let agents = false;
+  let codex = false;
   let noBacklog = false;
   let checkBacklog = false;
   const scaffolds: string[] = [];
@@ -433,8 +462,12 @@ function parseInitArgs(args: readonly string[]): InitArgs {
         yes = true;
         continue;
       }
-      if (body === "agents") {
+      if (body === "agents" || body === "claude") {
         agents = true;
+        continue;
+      }
+      if (body === "codex") {
+        codex = true;
         continue;
       }
       if (body === "obsidian") {
@@ -490,7 +523,17 @@ function parseInitArgs(args: readonly string[]): InitArgs {
       "pass at most one of --no-backlog / --check-backlog",
     );
   }
-  return { yes, agents, scaffolds, noBacklog, checkBacklog };
+  return { yes, agents, codex, scaffolds, noBacklog, checkBacklog };
+}
+
+/** Detect installed agents without making absence or a broken PATH fatal to onboarding. */
+function detectAgentAvailability(options: InitOptions): AgentAvailability {
+  if (options.agentAvailability) return options.agentAvailability();
+  try {
+    return { claude: Bun.which("claude") !== null, codex: Bun.which("codex") !== null };
+  } catch {
+    return { claude: false, codex: false };
+  }
 }
 
 /** Read `--scaffold`'s value: its inline `--scaffold=value` form when present, else the next token. A missing/empty value, or a next token that looks like another flag, is a `usage` error. */
@@ -526,7 +569,7 @@ function renderPretty(data: InitResult, opts: { color: boolean }): string {
     lines.push(`  ${paint(`· ${path} (exists)`, ANSI.dim, opts.color)}`);
   }
   if (data.agents) {
-    lines.push("Agent bridge:");
+    lines.push("Claude Code bridge:");
     for (const file of data.agents.files) {
       // "protected" is a warning, not a success (LORE-260 review round 2, MINOR-4): a hand-edited
       // file was left untouched, which is meaningfully different from "unchanged" (nothing to do)
@@ -540,6 +583,12 @@ function renderPretty(data: InitResult, opts: { color: boolean }): string {
     const agentsTrailer = renderTrailer(data.agents);
     if (agentsTrailer !== undefined) {
       lines.push(paint(agentsTrailer, ANSI.yellow, opts.color));
+    }
+  }
+  if (data.codex) {
+    lines.push("Codex bridge:");
+    for (const file of data.codex.files) {
+      lines.push(`  ${paint(file.action, bridgeActionColor(file.action), opts.color)} ${file.path}`);
     }
   }
   for (const scaffold of data.scaffolds) {
@@ -574,6 +623,11 @@ function renderPlain(data: InitResult): string {
     const agentsTrailer = renderTrailer(data.agents);
     if (agentsTrailer !== undefined) {
       lines.push(agentsTrailer);
+    }
+  }
+  if (data.codex) {
+    for (const file of data.codex.files) {
+      lines.push(`codex-${file.action} ${file.path}`);
     }
   }
   for (const scaffold of data.scaffolds) {

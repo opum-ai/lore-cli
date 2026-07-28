@@ -179,7 +179,9 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
         summary: "Skip the interactive wizard even on a TTY; use flag defaults (alias: --non-interactive)",
       },
       { name: "non-interactive", takesValue: false, summary: "Alias for --yes" },
-      { name: "agents", takesValue: false, summary: "Also set up the Claude Code agent bridge (SKILL.md + CLAUDE.md)" },
+      { name: "agents", takesValue: false, summary: "Alias for --claude" },
+      { name: "claude", takesValue: false, summary: "Set up the Claude Code bridge (SKILL.md + CLAUDE.md)" },
+      { name: "codex", takesValue: false, summary: "Set up the Codex bridge (SKILL.md + AGENTS.md)" },
       {
         name: "scaffold",
         takesValue: true,
@@ -204,7 +206,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     // a stderr warning plus a `backlog: {capable: false}` field, never a thrown error — so no
     // `backlog` seam code is added here despite `runInit` calling `adapter.probe()`.
     exitCodes: exitCodesFor(["profile", "write"]),
-    examples: ["lore init", "lore init --agents --obsidian", "lore init --yes --scaffold mkdocs"],
+    examples: ["lore init", "lore init --claude --codex", "lore init --yes --scaffold mkdocs"],
   },
   {
     name: "new",
