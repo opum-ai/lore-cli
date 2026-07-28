@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:16'
+updated_date: '2026-07-28 20:31'
 labels:
   - security
   - build-ci-config
@@ -58,7 +58,7 @@ Record the chosen approach and its rationale, and state plainly in the runbook w
 - [x] #2 The chosen approach and its rationale are recorded, including why an in-workflow ref guard alone is insufficient.
 - [x] #3 test/release-workflow.test.ts asserts the new out-of-file gate is declared in the workflow (e.g. the job carries the expected environment), so removing it fails a test.
 - [x] #4 docs/runbooks/release-publishing.md states exactly which repo-admin steps the user must perform for the protection to be live, and what the residual risk is until they are done — no claim that the risk is closed by the workflow change alone.
-- [x] #5 Existing LORE-255 guarantees are preserved: dispatch-only trigger, publish input defaulting false, id-token: write scoped to the publish job, npm >= 11.5.1 fail-closed floor, platform-packages-before-root ordering, 0.0.0 refusal. Full suite + lore check stay green.
+- [x] #5 Existing LCLI-255 guarantees are preserved: dispatch-only trigger, publish input defaulting false, id-token: write scoped to the publish job, npm >= 11.5.1 fail-closed floor, platform-packages-before-root ordering, 0.0.0 refusal. Full suite + lore check stay green.
 <!-- AC:END -->
 
 ## Implementation Plan

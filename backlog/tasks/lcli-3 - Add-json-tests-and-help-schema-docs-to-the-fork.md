@@ -4,7 +4,7 @@ title: Add --json tests and help-schema docs to the fork
 status: Done
 assignee: []
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:14'
+updated_date: '2026-07-28 20:21'
 labels:
   - backlog-fork
   - test

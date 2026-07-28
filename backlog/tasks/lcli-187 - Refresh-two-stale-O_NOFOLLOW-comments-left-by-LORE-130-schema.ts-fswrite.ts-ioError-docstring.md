@@ -1,13 +1,13 @@
 ---
 id: LCLI-187
 title: >-
-  Refresh two stale O_NOFOLLOW comments left by LORE-130 (schema.ts + fswrite.ts
+  Refresh two stale O_NOFOLLOW comments left by LCLI-130 (schema.ts + fswrite.ts
   ioError docstring)
 status: Done
 assignee:
   - '@sonnet-worker'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:28'
 labels:
   - codex-review-followup
   - cmd-meta-c

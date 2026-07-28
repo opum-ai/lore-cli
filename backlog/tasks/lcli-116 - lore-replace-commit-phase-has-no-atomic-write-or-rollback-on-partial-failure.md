@@ -4,7 +4,7 @@ title: lore replace commit phase has no atomic write or rollback on partial fail
 status: Done
 assignee: []
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:25'
 labels:
   - codex-review-followup
   - cmd-crud-a

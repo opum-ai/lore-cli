@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@sonnet-worker'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:28'
 labels:
   - codex-review-followup
   - cmd-crud-b
@@ -26,7 +26,7 @@ Wave-10 integration finding (surfaced by LCLI-146). The module doc comment at sr
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The module doc comment at src/commands/sync.ts:30-31 no longer claims link/unlink/rename leave their backlog/tasks edits for `lore sync` to commit; it accurately states each of link/unlink/rename commits its own touched files via commitBacklogFiles.
-- [x] #2 The corrected sync.ts comment is consistent with the `linking` instructions prose in src/core/instructions.ts (as fixed by LORE-146) — no contradiction between the two.
+- [x] #2 The corrected sync.ts comment is consistent with the `linking` instructions prose in src/core/instructions.ts (as fixed by LCLI-146) — no contradiction between the two.
 <!-- AC:END -->
 
 ## Implementation Plan

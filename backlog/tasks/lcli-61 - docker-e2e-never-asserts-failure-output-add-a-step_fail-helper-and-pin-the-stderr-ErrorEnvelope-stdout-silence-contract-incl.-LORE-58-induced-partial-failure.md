@@ -2,13 +2,13 @@
 id: LCLI-61
 title: >-
   docker/e2e never asserts failure output: add a step_fail helper and pin the
-  stderr ErrorEnvelope + stdout-silence contract (incl. LORE-58 induced partial
+  stderr ErrorEnvelope + stdout-silence contract (incl. LCLI-58 induced partial
   failure)
 status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:23'
 labels:
   - e2e
   - testing
@@ -43,7 +43,7 @@ An induced real write failure (e.g. `chmod 555 backlog/tasks` around a `lore lin
 <!-- AC:BEGIN -->
 - [x] #1 A step_fail helper exists in run-e2e.sh asserting all three of: expected exit code, EMPTY stdout, and a jq filter over stderr — recording to report.jsonl in the existing record/log idiom
 - [x] #2 The five exit-class spot checks assert the failure-output contract via step_fail, including error_type literals; the exit-6 step actually distinguishes validation from drift as its step name claims
-- [x] #3 An induced real back-ref write failure exercises the LORE-58 path E2E: link/unlink --json exits 6 with stdout EMPTY and an ErrorEnvelope on stderr carrying the per-task report in .input
+- [x] #3 An induced real back-ref write failure exercises the LCLI-58 path E2E: link/unlink --json exits 6 with stdout EMPTY and an ErrorEnvelope on stderr carrying the per-task report in .input
 - [x] #4 The two missing-binary probe steps assert the documented install-hint text on stderr
 - [x] #5 The full harness runs green against the real pinned upstream binary with all new assertions, and teardown is clean
 <!-- AC:END -->

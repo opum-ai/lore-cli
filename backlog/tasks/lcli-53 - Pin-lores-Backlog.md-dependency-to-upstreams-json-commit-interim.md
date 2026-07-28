@@ -4,7 +4,7 @@ title: Pin lore's Backlog.md dependency to upstream's --json commit (interim)
 status: Done
 assignee: []
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:14'
+updated_date: '2026-07-28 20:23'
 labels:
   - backlog-fork
   - upstream

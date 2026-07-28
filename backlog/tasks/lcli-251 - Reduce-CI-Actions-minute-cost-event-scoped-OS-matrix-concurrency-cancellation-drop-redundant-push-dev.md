@@ -7,13 +7,13 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:16'
+updated_date: '2026-07-28 20:30'
 labels:
   - build-ci-config
 dependencies: []
 references:
-  - LORE-196
-  - LORE-100
+  - LCLI-196
+  - LCLI-100
   - doc-2
 priority: medium
 type: chore
@@ -33,7 +33,7 @@ A forensic audit of `jeremy-newhouse/lore` (ci.yml) found the Actions bill was d
 
 Measured facts (per-job wall-clock reconstructed with GitHub's billing rules — each job rounds up to a whole minute; macOS x10, Windows x2, Linux x1; the `/timing` API returned 0):
 
-- **806 CI runs** in ~1 month; ~503 actually billed. 217 runs on 2026-07-23 alone (the LORE-2xx wave campaign).
+- **806 CI runs** in ~1 month; ~503 actually billed. 217 runs on 2026-07-23 alone (the LCLI-2xx wave campaign).
 - **~20 weighted billed-min per run** in the historical 6-job era (~25 now with docker-e2e).
 - **The macOS `check` leg is ~50% of per-run cost**: ~40s of real test work billed as 1 min x10 = 10 weighted min — a ~15x inflation (rounding x multiplier).
 - **No `concurrency` cancellation** — superseded pushes each ran the whole pipeline to completion.
@@ -59,8 +59,8 @@ Config-only change to `.github/workflows/ci.yml` (plus, if needed, small notes).
 - [x] #1 The macOS (10x-billed) 'check' test leg no longer runs on pull_request events; it runs only on push to main and manual workflow_dispatch. ubuntu-latest and windows-latest still run 'check' on every pull_request.
 - [x] #2 A top-level concurrency group with cancel-in-progress: true, keyed per PR head-ref / ref, is present so superseded runs on the same branch are auto-cancelled.
 - [x] #3 The push trigger no longer includes dev (main only), so a squash-merge to dev does not re-run CI on bytes the PR already verified; pull_request still runs full CI pre-merge.
-- [x] #4 push is paths-ignore'd for docs/metadata-only changes (**/*.md, docs/**, backlog/**, .claude/**). pull_request is intentionally left unfiltered so the docker-e2e required check (LORE-196) always reports and cannot deadlock a PR.
-- [x] #5 The docker-e2e job's check-run context name is unchanged ('docker e2e harness (real lore + backlog binaries)') and it still runs on every pull_request, preserving LORE-196's required-check plan.
+- [x] #4 push is paths-ignore'd for docs/metadata-only changes (**/*.md, docs/**, backlog/**, .claude/**). pull_request is intentionally left unfiltered so the docker-e2e required check (LCLI-196) always reports and cannot deadlock a PR.
+- [x] #5 The docker-e2e job's check-run context name is unchanged ('docker e2e harness (real lore + backlog binaries)') and it still runs on every pull_request, preserving LCLI-196's required-check plan.
 - [x] #6 Every job declares an explicit timeout-minutes (no job inherits the 360-minute default).
 - [x] #7 actionlint passes on the modified workflow, and the computed matrix resolves to [ubuntu,windows] for pull_request and [ubuntu,windows,macos] for push/workflow_dispatch.
 <!-- AC:END -->

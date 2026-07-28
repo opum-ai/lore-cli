@@ -2,12 +2,12 @@
 id: LCLI-264
 title: >-
   CHANGELOG: backfill missing [Unreleased] entries for the round-4 wave-1
-  contract changes (LORE-258/262/263/254)
+  contract changes (LCLI-258/262/263/254)
 status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:16'
+updated_date: '2026-07-28 20:31'
 labels:
   - docs
   - release
@@ -38,9 +38,9 @@ CHANGELOG.md `[Unreleased]`; the merged PRs are #243 (LCLI-258), #245 (LCLI-262)
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 Each of LORE-258, LORE-262 and LORE-263 has an [Unreleased] CHANGELOG entry under the correct Keep a Changelog heading (Fixed/Changed/Added), matching the depth and voice of the existing LORE-59/LORE-60 entries.
-- [x] #2 LORE-263's entry explicitly states the exit-code contract change (byte-identical re-run now exits 0 as a no-op; exit 5 reserved for a user-modified config or a directory blocker) — the change most likely to surprise an existing user.
-- [x] #3 LORE-254 is either included or deliberately omitted, with the choice consistent with how CHANGELOG.md already treats repo-tooling-only changes; state which was chosen and why in the task notes.
+- [x] #1 Each of LCLI-258, LCLI-262 and LCLI-263 has an [Unreleased] CHANGELOG entry under the correct Keep a Changelog heading (Fixed/Changed/Added), matching the depth and voice of the existing LCLI-59/LCLI-60 entries.
+- [x] #2 LCLI-263's entry explicitly states the exit-code contract change (byte-identical re-run now exits 0 as a no-op; exit 5 reserved for a user-modified config or a directory blocker) — the change most likely to surprise an existing user.
+- [x] #3 LCLI-254 is either included or deliberately omitted, with the choice consistent with how CHANGELOG.md already treats repo-tooling-only changes; state which was chosen and why in the task notes.
 - [x] #4 Every factual claim in the new entries is verified against the merged code on dev, not against this task's summary; lore check, the full suite, typecheck and lint stay green.
 <!-- AC:END -->
 

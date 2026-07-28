@@ -4,7 +4,7 @@ title: resolveRollup doesn't verify viewTask's returned id matches the requested
 status: Done
 assignee: []
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:26'
 labels:
   - codex-review-followup
   - cmd-meta-a
@@ -39,7 +39,7 @@ In src/commands/tasks.ts, resolveRollup (line 158) builds each TaskRollupRow dir
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Fixed resolveRollup (src/commands/tasks.ts): after a fulfilled non-null viewTask result, compares result.value.id case-insensitively against linked[i] (the id actually requested at that position); mismatch throws LoreError('not_found', ...) naming both ids, mirroring reconcile-shared.ts's resolveTaskDetails fix for the identical bug class (LCLI-122). Added regression test in test/tasks.test.ts with a stub adapter whose viewTask always returns a different task's detail (LORE-999 for a request of LCLI-1); asserts a thrown not_found LoreError naming both ids instead of a silently wrong row. Mutation-checked: reverted the throw hunk, confirmed exactly that new test failed (23 pass/1 fail), restored, reconfirmed green. Verification: bun test -> 1749 pass / 0 fail across 46 files; bun run typecheck -> clean; real CLI repro (bun run src/cli.ts tasks adr/0009-story-task-coupling-reconciliation --json) confirms the normal (non-mismatch) path still works end-to-end, exit 0. A real-CLI repro of the mismatch itself is not meaningful (the real backlog binary never misreports a task's own id under a correct request -- this is a defensive check against adapter bugs/id collisions), same as LCLI-122's precedent, so the stub-adapter unit test is the correct and only sensible proof for AC#2.
+Fixed resolveRollup (src/commands/tasks.ts): after a fulfilled non-null viewTask result, compares result.value.id case-insensitively against linked[i] (the id actually requested at that position); mismatch throws LoreError('not_found', ...) naming both ids, mirroring reconcile-shared.ts's resolveTaskDetails fix for the identical bug class (LCLI-122). Added regression test in test/tasks.test.ts with a stub adapter whose viewTask always returns a different task's detail (LCLI-999 for a request of LCLI-1); asserts a thrown not_found LoreError naming both ids instead of a silently wrong row. Mutation-checked: reverted the throw hunk, confirmed exactly that new test failed (23 pass/1 fail), restored, reconfirmed green. Verification: bun test -> 1749 pass / 0 fail across 46 files; bun run typecheck -> clean; real CLI repro (bun run src/cli.ts tasks adr/0009-story-task-coupling-reconciliation --json) confirms the normal (non-mismatch) path still works end-to-end, exit 0. A real-CLI repro of the mismatch itself is not meaningful (the real backlog binary never misreports a task's own id under a correct request -- this is a defensive check against adapter bugs/id collisions), same as LCLI-122's precedent, so the stub-adapter unit test is the correct and only sensible proof for AC#2.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

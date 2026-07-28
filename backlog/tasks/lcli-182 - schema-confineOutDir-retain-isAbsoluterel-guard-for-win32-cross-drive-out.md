@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@sonnet-worker'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:27'
 labels:
   - cmd-meta-a
 dependencies: []
@@ -22,7 +22,7 @@ LCLI-124 replaced confineOutDir's isAbsolute(rel) clause with isAbsolute(out) on
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 confineOutDir rejects a win32 cross-drive drive-relative --out (e.g. 'C:foo' with repo root on another drive) with the clean usage LoreError, verified via a path.win32-based unit test matching the codebase's existing win32-path test convention
-- [x] #2 All existing schema-export absolute/relative --out behavior from LORE-124 is preserved on POSIX
+- [x] #2 All existing schema-export absolute/relative --out behavior from LCLI-124 is preserved on POSIX
 - [x] #3 Typecheck and the full bun test suite are green
 <!-- AC:END -->
 

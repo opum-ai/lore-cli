@@ -7,7 +7,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:16'
+updated_date: '2026-07-28 20:31'
 labels:
   - cli-ux
   - docs-drift
@@ -66,9 +66,9 @@ Prefer 1 unless there is a concrete reason not to; record the rationale either w
 <!-- AC:BEGIN -->
 - [x] #1 Running 'lore agents --check' with one protected and one updated file distinguishes them in TEXT, in both --plain and pretty-with-NO_COLOR — or cli-contract.md §6 and its §8 table row carry an explicit, accurate carve-out naming this command
 - [x] #2 The chosen option and its rationale are recorded, including why the other was rejected
-- [x] #3 If the label changes: cli-contract.md is updated per §1.3's contract-change rule, a CHANGELOG [Unreleased] entry is added, and LORE-267's existing CHANGELOG bullet is reconciled so it no longer implies colour alone carries the --force signal
+- [x] #3 If the label changes: cli-contract.md is updated per §1.3's contract-change rule, a CHANGELOG [Unreleased] entry is added, and LCLI-267's existing CHANGELOG bullet is reconciled so it no longer implies colour alone carries the --force signal
 - [x] #4 A test pins the chosen behaviour for both actions in non-colour output, so the distinction cannot silently regress
-- [x] #5 Colour is still suppressed on a non-TTY per LORE-250; --json output and all exit codes (including 6) are unchanged; full suite + lore check stay green
+- [x] #5 Colour is still suppressed on a non-TTY per LCLI-250; --json output and all exit codes (including 6) are unchanged; full suite + lore check stay green
 <!-- AC:END -->
 
 ## Implementation Notes

@@ -4,7 +4,7 @@ title: lore new default title-slug path bypasses reserved index/log stem policy
 status: Done
 assignee: []
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:27'
 labels:
   - codex-review-followup
   - cmd-crud-a
@@ -26,7 +26,7 @@ Sibling of LCLI-114 (which fixed only the `--out` path). resolveDocPath() in src
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 `lore new <type> "Index"` and `lore new <type> "Log"` (default path, no --out) whose slugified basename is a reserved stem (index or log at any nesting depth) throw the same usage error assertNotReservedStem produces, instead of creating the file
-- [x] #2 The docs-root index (docs/index.md) still fails with its existing RESERVED_ROOT_INDEX-specific message; the --out path behavior added in LORE-114 is unchanged
+- [x] #2 The docs-root index (docs/index.md) still fails with its existing RESERVED_ROOT_INDEX-specific message; the --out path behavior added in LCLI-114 is unchanged
 - [x] #3 A regression test in test/new.test.ts covers a default-path (no --out) title that slugifies to index and one that slugifies to log, asserting runNew throws a usage error for both
 <!-- AC:END -->
 

@@ -2,12 +2,12 @@
 id: LCLI-197
 title: >-
   Discovery advisories from an earlier bundle root are lost when a later root
-  throws inside collectBundles (residual of LORE-191)
+  throws inside collectBundles (residual of LCLI-191)
 status: Done
 assignee:
   - '@sonnet-worker'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:28'
 labels:
   - cmd-check
   - codex-review-followup
@@ -48,7 +48,7 @@ Wave-16 integration-review follow-up of **LCLI-191** (Done). LCLI-191 strictly s
 <!-- AC:BEGIN -->
 - [x] #1 Advisories collected from an EARLIER bundle root survive a throw raised while processing a LATER root inside collectBundles (surfaced to the user on stderr, not silently dropped); the original throw still propagates through the router's one error seam with its unchanged exit code (e.g. exit 3 for a not_found bundle root).
 - [x] #2 A regression test in test/check.test.ts simulates a multi-root scan where an earlier root produces a discovery advisory (e.g. a skipped symlink) and a later root throws (e.g. a nonexistent bundle root -> not_found), asserting runCheck still throws that error AND the earlier root's advisory is present on stderr.
-- [x] #3 Existing single-root behavior is unchanged: the advisory collector is still flushed exactly once (no double-flush / no re-emitted lines, since WarningCollector.flush is non-draining), and the LORE-191 single-root scan-phase-throw regression plus the clean-bundle no-advisory-noise tests still pass.
+- [x] #3 Existing single-root behavior is unchanged: the advisory collector is still flushed exactly once (no double-flush / no re-emitted lines, since WarningCollector.flush is non-draining), and the LCLI-191 single-root scan-phase-throw regression plus the clean-bundle no-advisory-noise tests still pass.
 <!-- AC:END -->
 
 ## Implementation Plan

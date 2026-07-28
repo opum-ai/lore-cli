@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:16'
+updated_date: '2026-07-28 20:31'
 labels:
   - cli-ux
   - cmd-crud-a
@@ -45,7 +45,7 @@ src/commands/agents.ts (`renderPretty`, approx. line 214), src/commands/init.ts 
 <!-- AC:BEGIN -->
 - [x] #1 'lore agents' renders a 'protected' file in the same colour 'lore init' does (yellow/warning), via a three-way dim/warning/success mapping rather than the current two-way unchanged-or-green split.
 - [x] #2 Every other action ('written', 'unchanged', etc.) keeps its current colour — no unintended recolouring.
-- [x] #3 A test pins the colour mapping so the two commands cannot diverge again; colour is still suppressed on a non-TTY per LORE-250.
+- [x] #3 A test pins the colour mapping so the two commands cannot diverge again; colour is still suppressed on a non-TTY per LCLI-250.
 - [x] #4 Full suite + lore check stay green; no behaviour change beyond the ANSI colour.
 <!-- AC:END -->
 

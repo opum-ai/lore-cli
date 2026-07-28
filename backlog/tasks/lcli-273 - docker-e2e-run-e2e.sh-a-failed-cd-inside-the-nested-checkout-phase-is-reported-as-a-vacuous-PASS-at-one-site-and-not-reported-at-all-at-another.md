@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:16'
+updated_date: '2026-07-28 20:31'
 labels:
   - build-ci-config
   - docker-e2e
@@ -51,7 +51,7 @@ For site 2, make the emptiness assertion distinguishable from a failed `cd` — 
 - [x] #1 A failed cd at run-e2e.sh's nested-checkout git-status check can no longer produce a PASS — verified by an executed mutation (point NESTED_PROJECT at a non-existent path and confirm the check FAILs)
 - [x] #2 The bare bash -c site's exit status is consumed and reported by the harness's own accounting
 - [x] #3 The three further sites with the same structural shape are re-audited and each is either hardened or documented with the specific downstream assertion that covers it
-- [x] #4 The script's AC#3 sweep comment and LORE-269's CHANGELOG bullet are updated to match whatever ships, with no claim stronger than what is true
+- [x] #4 The script's AC#3 sweep comment and LCLI-269's CHANGELOG bullet are updated to match whatever ships, with no claim stronger than what is true
 - [x] #5 docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e still reports 302 passed / 0 failed and exit 0
 <!-- AC:END -->
 

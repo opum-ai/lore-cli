@@ -2,11 +2,11 @@
 id: LCLI-275
 title: >-
   docs/runbooks: docker-e2e section still says the harness is 'not yet a
-  required check', but LORE-196 shipped that ruleset
+  required check', but LCLI-196 shipped that ruleset
 status: Done
 assignee: []
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:16'
+updated_date: '2026-07-28 20:31'
 labels:
   - docs-drift
   - build-ci-config

@@ -1,13 +1,13 @@
 ---
 id: LCLI-64
 title: >-
-  docker/e2e: declarative profile subsystem (LORE-46) has zero E2E coverage
+  docker/e2e: declarative profile subsystem (LCLI-46) has zero E2E coverage
   beyond the default fallback
 status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:24'
 labels:
   - e2e
   - testing

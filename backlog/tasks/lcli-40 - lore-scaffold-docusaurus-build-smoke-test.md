@@ -4,7 +4,7 @@ title: lore scaffold docusaurus + build smoke test
 status: Done
 assignee: []
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:14'
+updated_date: '2026-07-28 20:22'
 labels:
   - cmd
   - consumers

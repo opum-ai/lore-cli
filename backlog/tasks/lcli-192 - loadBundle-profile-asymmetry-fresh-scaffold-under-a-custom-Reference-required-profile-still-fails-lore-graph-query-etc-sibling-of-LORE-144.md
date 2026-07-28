@@ -2,12 +2,12 @@
 id: LCLI-192
 title: >-
   loadBundle profile asymmetry: fresh scaffold under a custom Reference-required
-  profile still fails lore graph/query/etc (sibling of LORE-144)
+  profile still fails lore graph/query/etc (sibling of LCLI-144)
 status: Done
 assignee:
   - '@sonnet-worker'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:28'
 labels:
   - codex-review-followup
   - core-bundle-check
@@ -26,7 +26,7 @@ LCLI-144 (wave 11) fixed the write/read profile asymmetry for `lore validate` on
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 A freshly scaffolded bundle (`lore init`) under an active profile that adds a required field to the Reference type can run loadBundle-based commands (e.g. `lore graph`) without a validation error on the reserved root docs/index.md
-- [x] #2 The reserved-root exemption is applied at loadBundles bundle-relative root index path (not a repo-relative match), consistent with LORE-144s validate.ts carve-out
+- [x] #2 The reserved-root exemption is applied at loadBundles bundle-relative root index path (not a repo-relative match), consistent with LCLI-144s validate.ts carve-out
 - [x] #3 A regression test covers init-then-graph (or another loadBundle command) under such a profile, asserting no validation failure on the scaffolded root index; existing behavior for non-root concepts unchanged
 <!-- AC:END -->
 

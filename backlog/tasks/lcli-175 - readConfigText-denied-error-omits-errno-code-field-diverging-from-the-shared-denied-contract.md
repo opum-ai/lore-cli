@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:27'
 labels:
   - codex-review-followup
   - cli-entry-state
@@ -26,7 +26,7 @@ Wave-2 integration-review follow-up of LCLI-108. LCLI-108 correctly made readCon
 <!-- AC:BEGIN -->
 - [x] #1 readConfigText's denied LoreError includes the errno `code` (e.g. 'EACCES'/'EPERM') in its structured `input`, matching the shape emitted by errors.ts's ioError/readFileIfPresent for denied errors
 - [x] #2 loadConfig's docstring is updated to reflect that a denied error type is now possible (no longer only 'validation')
-- [x] #3 A test asserts the denied error's input.code is populated for an EACCES/EPERM config read; existing LORE-108 denied-type/exit-code assertions still pass
+- [x] #3 A test asserts the denied error's input.code is populated for an EACCES/EPERM config read; existing LCLI-108 denied-type/exit-code assertions still pass
 <!-- AC:END -->
 
 ## Implementation Plan

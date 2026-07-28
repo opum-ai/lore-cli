@@ -4,7 +4,7 @@ title: sync's multi-file write loop has no cross-file rollback on mid-loop failu
 status: Done
 assignee: []
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:26'
 labels:
   - codex-review-followup
   - cmd-crud-b

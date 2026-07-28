@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:16'
+updated_date: '2026-07-28 20:30'
 labels:
   - build-ci-config
   - cross-platform
@@ -60,7 +60,7 @@ The fix can only be truly verified on Windows via a CI run (the windows-latest l
 <!-- AC:BEGIN -->
 - [x] #1 The Windows-only 'ENOENT ... open .lore-sync-tmp-*/.lore-nofollow-tmp-*' failures in writeFileAtomic and writeFileNoFollow no longer occur, and the 'lint · typecheck · test (windows-latest)' CI leg is GREEN on the fix PR (verified via the check-run conclusion, run id/URL recorded).
 - [x] #2 No regression on macOS/ubuntu: full 'bun test' passes, 'bun run typecheck' is clean, and 'bun run lint' (biome) stays green.
-- [x] #3 The fix preserves each documented invariant of both functions, each still covered by its existing test: LORE-231 temp-leak guard (mid-write failure cleans up the temp file lore created; lore never unlinks a file it did not create), LORE-117 mode/ownership preservation, LORE-130/LORE-92 symlink safety in writeFileNoFollow, and per-file write-temp-then-rename atomicity.
+- [x] #3 The fix preserves each documented invariant of both functions, each still covered by its existing test: LCLI-231 temp-leak guard (mid-write failure cleans up the temp file lore created; lore never unlinks a file it did not create), LCLI-117 mode/ownership preservation, LCLI-130/LCLI-92 symlink safety in writeFileNoFollow, and per-file write-temp-then-rename atomicity.
 - [x] #4 The Windows-incompatible openSync primitive is replaced by the cross-platform exclusive-create primitive in both writeFileAtomic and writeFileNoFollow, with a short in-code note explaining the Bun-Windows avoidance; task notes record the green Windows CI run as objective evidence.
 <!-- AC:END -->
 

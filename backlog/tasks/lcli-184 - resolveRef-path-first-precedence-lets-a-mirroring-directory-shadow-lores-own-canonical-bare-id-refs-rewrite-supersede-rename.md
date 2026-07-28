@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:28'
 labels:
   - codex-review-followup
   - core-bundle-check
@@ -36,7 +36,7 @@ Files: src/core/bundle.ts (resolveRef/resolvePath ~438-490, idFromPath), src/cor
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 resolveRef resolves a suffix-less bare bundle-root id to that root id even when a shadow concept at <dir>/<id> exists (no silent dir-join shadowing of lore's own written refs)
-- [x] #2 LORE-134's original fix still holds: a '.md'-suffixed or './'-prefixed relative ref that dir-joins to a real concept still resolves to the dir-relative target, not a coincidental root id
+- [x] #2 LCLI-134's original fix still holds: a '.md'-suffixed or './'-prefixed relative ref that dir-joins to a real concept still resolves to the dir-relative target, not a coincidental root id
 - [x] #3 lore rename of a referring file no longer rewrites a canonical bare-id ref to a shadow concept's id (consequence (c) above cannot reproduce); regression test added
 - [x] #4 supersede dedup and rename inbound-repointing behave correctly in the presence of a mirroring/shadow directory; regression tests cover the shadow scenario
 <!-- AC:END -->

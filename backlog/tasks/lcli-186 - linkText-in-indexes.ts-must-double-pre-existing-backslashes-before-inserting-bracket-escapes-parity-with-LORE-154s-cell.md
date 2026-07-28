@@ -2,12 +2,12 @@
 id: LCLI-186
 title: >-
   linkText in indexes.ts must double pre-existing backslashes before inserting
-  bracket escapes (parity with LORE-154's cell())
+  bracket escapes (parity with LCLI-154's cell())
 status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:28'
 labels:
   - codex-review-followup
   - core-index-context
@@ -35,7 +35,7 @@ Files: src/core/indexes.ts (linkText ~194-199), cross-ref src/core/managed-block
 <!-- AC:BEGIN -->
 - [x] #1 linkText doubles pre-existing backslashes before inserting bracket escapes, so a title containing a backslash-bracket sequence produces a well-formed markdown link in generated indexes (no live/unbalanced bracket)
 - [x] #2 Regression test covers a title like 'a\[b' (and a trailing-backslash title) through the real index generation path, asserting the '- [text](link)' entry stays balanced
-- [x] #3 Behavior matches LORE-154's cell()/escapeLinkText discipline (backslash-doubling first); ideally via one shared escaper so they can't diverge again
+- [x] #3 Behavior matches LCLI-154's cell()/escapeLinkText discipline (backslash-doubling first); ideally via one shared escaper so they can't diverge again
 <!-- AC:END -->
 
 ## Implementation Plan

@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@sonnet-worker'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:27'
 labels:
   - codex-review-followup
   - cmd-link
@@ -34,7 +34,7 @@ Found by the wave-7 integration review (2026-07-22); see doc-3 wave log. Not a r
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 moveBackRefs (link.ts) routes its adapter.viewTask result through the same id-mismatch guard as verifiedViewTask (case-insensitive id match; a mismatched detail is refused rather than used to compute the editTask write), and 'lore rename' surfaces the mismatch as a per-task failure instead of corrupting the doc list
-- [x] #2 The id-mismatch check (comparison + LoreError type + message + hint + {taskId,resolvedId} input) exists in ONE shared place, consumed by link.ts's viewTask consumers and by resolveRollup in tasks.ts; the inline duplicate in tasks.ts is replaced by the shared helper with no behavior change (existing LORE-125 tasks.test.ts assertions still pass)
+- [x] #2 The id-mismatch check (comparison + LoreError type + message + hint + {taskId,resolvedId} input) exists in ONE shared place, consumed by link.ts's viewTask consumers and by resolveRollup in tasks.ts; the inline duplicate in tasks.ts is replaced by the shared helper with no behavior change (existing LCLI-125 tasks.test.ts assertions still pass)
 - [x] #3 The verifiedViewTask (or shared helper) doc comment accurately describes which consumers it covers (no longer claims 'every viewTask consumer' while omitting moveBackRefs)
 - [x] #4 A regression test drives the rename/moveBackRefs path with a stubbed adapter returning a mismatched id and asserts the operation refuses rather than writing the wrong task's documentation into the back-ref; full suite + typecheck + biome remain green
 <!-- AC:END -->

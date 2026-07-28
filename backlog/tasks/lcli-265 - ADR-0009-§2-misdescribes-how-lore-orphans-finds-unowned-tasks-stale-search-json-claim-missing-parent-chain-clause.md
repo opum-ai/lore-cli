@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:16'
+updated_date: '2026-07-28 20:31'
 labels:
   - docs-drift
   - adapter-backlog
@@ -43,7 +43,7 @@ docs/adr/0009-story-task-coupling-reconciliation.md (§2, approx. lines 78-119),
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 ADR-0009 §2 no longer claims 'lore orphans' uses 'backlog search --json'; the described data source matches what orphans.ts actually calls (probe + listTasks only).
-- [x] #2 ADR-0009 §2 describes the full current ownership rule: a task is not an orphan when it carries a 'doc:' label, OR is forward-referenced by a concept's 'tasks:' list, OR has an ancestor in its Backlog parent/subtask chain that is itself owned (LORE-261).
+- [x] #2 ADR-0009 §2 describes the full current ownership rule: a task is not an orphan when it carries a 'doc:' label, OR is forward-referenced by a concept's 'tasks:' list, OR has an ancestor in its Backlog parent/subtask chain that is itself owned (LCLI-261).
 - [x] #3 Any other prose in docs/ describing the orphans rule is checked for the same drift and corrected or confirmed accurate; 'lore check' stays green.
 - [x] #4 No behavior change — this is documentation only; the full suite stays green.
 <!-- AC:END -->

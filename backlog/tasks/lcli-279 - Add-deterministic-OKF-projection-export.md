@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:16'
+updated_date: '2026-07-28 20:32'
 labels:
   - projection
   - okf
@@ -44,7 +44,7 @@ ordinal: 381000
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Provide downstream consumers such as lore-graph with a consumer-neutral, versioned, deterministic JSONL export of the repository’s OKF bundle and task associations. The export is a projection of Git/OKF source facts only: it must not encode Neo4j labels, database identifiers, embeddings, or inferred relationships.
 
-This upstream task fulfills lore-graph LG-1. The downstream contract is documented in /Volumes/external/repos/lore-graph/docs/specs/okf-projection-contract.md and the consuming story in /Volumes/external/repos/lore-graph/docs/stories/dogfood-lore-through-neo4j.md. A future session should inspect the current lore command/output conventions before recording an implementation plan.
+This upstream task fulfills lore-graph LGRAPH-1. The downstream contract is documented in /Volumes/external/repos/lore-graph/docs/specs/okf-projection-contract.md and the consuming story in /Volumes/external/repos/lore-graph/docs/stories/dogfood-lore-through-neo4j.md. A future session should inspect the current lore command/output conventions before recording an implementation plan.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

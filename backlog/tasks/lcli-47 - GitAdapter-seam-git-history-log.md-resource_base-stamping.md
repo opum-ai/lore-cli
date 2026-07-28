@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:14'
+updated_date: '2026-07-28 20:23'
 labels:
   - eck-alignment
   - core
@@ -29,7 +29,7 @@ Add the third injectable deterministic seam (GitAdapter) and the resource_base c
 - [x] #2 ADR-0007 amended: log.md is a sync-time materialized artifact excluded from 'lore check' drift-compare; index.md + managed blocks stay gated as today
 - [x] #3 log.md git-history-derived, per-folder, directory-sorted, byte-stable over a pinned range; tested against a fixed fake-history fixture (not real history) and excluded from byte-equality goldens
 - [x] #4 'lore new' stamps 'resource' only when resource_base is set; value = resource_base + concept path with documented normalization; omitted when empty
-- [x] #5 ADR-0013 amended: resource_base is a key in .lore/profile.toml [profile] (NOT config.toml — reconciles with LORE-46); empty default => resource omitted. Introduces .lore/profile.toml as a 2nd committed TOML (config=operational knobs; profile=type/schema source)
+- [x] #5 ADR-0013 amended: resource_base is a key in .lore/profile.toml [profile] (NOT config.toml — reconciles with LCLI-46); empty default => resource omitted. Introduces .lore/profile.toml as a 2nd committed TOML (config=operational knobs; profile=type/schema source)
 <!-- AC:END -->
 
 ## Implementation Plan

@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@sonnet-worker'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:27'
 labels:
   - cmd-crud-b
   - codex-review-followup
@@ -25,11 +25,11 @@ LCLI-118 sanitized lore query's renderText output using stripAnsiAndControls, bu
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 stripAnsiAndControls is defined in exactly one module and imported by both src/commands/query.ts and src/output.ts (no duplicate definition)
-- [x] #2 lore query and lore tasks/orphans output remain sanitized identically — the LORE-118 and LORE-115 regression tests still pass unchanged
+- [x] #2 lore query and lore tasks/orphans output remain sanitized identically — the LCLI-118 and LCLI-115 regression tests still pass unchanged
 - [x] #3 Typecheck and the full bun test suite are green
-- [x] #4 src/core/validate.ts sanitizeForMessage (added by LORE-161) also delegates to the shared sanitizer — no third copy of the ANSI/control regex remains in src/
+- [x] #4 src/core/validate.ts sanitizeForMessage (added by LCLI-161) also delegates to the shared sanitizer — no third copy of the ANSI/control regex remains in src/
 - [x] #5 The stale "keep the two in sync" comments in query.ts / validate.ts are removed or corrected
-- [x] #6 The core/links.ts sanitizeForMessage copy (added by LORE-153, wave 15) also delegates to the shared sanitizer — no ANSI/control-strip regex copy remains in src/core/links.ts either
+- [x] #6 The core/links.ts sanitizeForMessage copy (added by LCLI-153, wave 15) also delegates to the shared sanitizer — no ANSI/control-strip regex copy remains in src/core/links.ts either
 <!-- AC:END -->
 
 ## Implementation Plan

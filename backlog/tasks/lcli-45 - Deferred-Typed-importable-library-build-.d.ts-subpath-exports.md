@@ -4,7 +4,7 @@ title: '[Deferred] Typed importable library build (.d.ts + subpath exports)'
 status: To Do
 assignee: []
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:14'
+updated_date: '2026-07-28 20:23'
 labels:
   - eck-alignment
   - packaging
@@ -26,7 +26,7 @@ Extend ADR-0001 to publish a SECONDARY typed library artifact alongside the bina
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 ADR-0001 amended with a 'typed library artifact (secondary)' subsection: single @salient-data/lore package + subpath exports (/core, /contract); binary remains the primary CLI distribution
-- [ ] #2 package.json exports map + .d.ts emit (tsc --emitDeclarationOnly or bun build) wired into the release pipeline (LORE-9)
+- [ ] #2 package.json exports map + .d.ts emit (tsc --emitDeclarationOnly or bun build) wired into the release pipeline (LCLI-9)
 - [ ] #3 import-sanity test: import from '@salient-data/lore/core' resolves and type-checks under Bun and Node
 - [ ] #4 NO writable /backlog subpath: any exported Backlog surface is read-only/pure over the --json envelope; lore stays sole committer of backlog/ (ADR-0012)
 - [ ] #5 library surface is an additive-only versioned contract, version-locked to the binary under one SemVer line; no business logic reachable only via import (ADR-0004 CLI-primacy)

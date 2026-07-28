@@ -2,12 +2,12 @@
 id: LCLI-68
 title: >-
   docker/e2e: renamed-story's managed block carries broken backlog/tasks/ links
-  after the LORE-62 F1 rename sequence
+  after the LCLI-62 F1 rename sequence
 status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:24'
 labels:
   - e2e
   - bug

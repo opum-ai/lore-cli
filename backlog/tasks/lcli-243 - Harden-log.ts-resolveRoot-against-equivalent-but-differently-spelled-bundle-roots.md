@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@sonnet-worker'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:16'
+updated_date: '2026-07-28 20:30'
 labels:
   - core-engine-a
   - codex-review-followup
@@ -35,7 +35,7 @@ ordinal: 345000
 - [x] #1 Given commits touching files under `docs/`, `generateLog(commits, { root })` produces byte-identical output for `root` values "docs", "./docs", "docs/.", and "./docs/" (none silently empty).
 - [x] #2 A root with internal redundant separators — "docs//adr" and "docs/./adr" — resolves to the same bundle root as "docs/adr".
 - [x] #3 Existing behavior preserved: an empty or all-slashes root still falls back to DOCS_DIR, and "docs"/"docs/"/"docs///" continue to match — the existing assertions at test/log.test.ts:158,192-193 stay green.
-- [x] #4 buildLog forwards the same canonicalized root to `adapter.history` as the pathspec (extend the LORE-143 assertion in test/log.test.ts so generateLog's post-filter and the adapter walk still agree on the resolved root).
+- [x] #4 buildLog forwards the same canonicalized root to `adapter.history` as the pathspec (extend the LCLI-143 assertion in test/log.test.ts so generateLog's post-filter and the adapter walk still agree on the resolved root).
 - [x] #5 New tests added in test/log.test.ts covering the equivalent-spelling cases above; `bun test test/log.test.ts` passes and no other suite regresses.
 <!-- AC:END -->
 

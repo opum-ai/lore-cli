@@ -1,13 +1,13 @@
 ---
 id: LCLI-266
 title: >-
-  lore agents: the pre-write symlink sweep (LORE-93 AC#5) has zero test coverage
+  lore agents: the pre-write symlink sweep (LCLI-93 AC#5) has zero test coverage
   — deleting assertNoSymlinkInAnyPath fails no test
 status: Done
 assignee:
   - '@lore-e2e'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:16'
+updated_date: '2026-07-28 20:31'
 labels:
   - security
   - test-coverage

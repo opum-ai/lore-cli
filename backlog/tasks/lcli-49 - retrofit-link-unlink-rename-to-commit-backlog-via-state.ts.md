@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:14'
+updated_date: '2026-07-28 20:23'
 labels:
   - cmd
 dependencies:
@@ -41,7 +41,7 @@ rename call and the next `lore sync`.
 <!-- AC:BEGIN -->
 - [x] #1 link/unlink commit their own backlog/ writes immediately, matching design §3.6
 - [x] #2 rename's back-ref move commits its backlog/ writes immediately
-- [x] #3 no regression to LORE-24's existing exit codes/behavior
+- [x] #3 no regression to LCLI-24's existing exit codes/behavior
 <!-- AC:END -->
 
 ## Implementation Plan

@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:26'
 labels:
   - codex-review-followup
   - cmd-meta-c
@@ -29,7 +29,7 @@ ordinal: 144000
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The overwrite path used by writeAllOrRollback's --force branch no longer truncates the destination file in place; if the fix uses a temp-file-then-rename strategy, a process kill mid-write leaves either the original file intact or the fully-written new file, never a partially-overwritten file.
-- [x] #2 If a full crash-safe fix is out of scope, the docstring/comment on writeAllOrRollback and writeFileNoFollow is updated to explicitly document the remaining crash-mid-write data-loss risk on the --force overwrite path, distinct from the symlink race that LORE-92 already closed.
+- [x] #2 If a full crash-safe fix is out of scope, the docstring/comment on writeAllOrRollback and writeFileNoFollow is updated to explicitly document the remaining crash-mid-write data-loss risk on the --force overwrite path, distinct from the symlink race that LCLI-92 already closed.
 <!-- AC:END -->
 
 ## Implementation Plan

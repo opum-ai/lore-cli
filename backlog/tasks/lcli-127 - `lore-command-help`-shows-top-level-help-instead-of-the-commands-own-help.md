@@ -4,7 +4,7 @@ title: '`lore <command> --help` shows top-level help instead of the command''s o
 status: Done
 assignee: []
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:26'
 labels:
   - codex-review-followup
   - cmd-meta-c

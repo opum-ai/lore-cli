@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:24'
 labels:
   - codex-review
   - api-design
@@ -30,7 +30,7 @@ docs/reference/cli-contract.md explicitly names orphans as one of the read-heavy
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 lore orphans caps emitted rows and reports total/shown/truncated counts, consistent with query/graph/context
-- [x] #2 The existing LORE-51 unbounded-output test is updated to reflect the new capped, truncation-hinted behavior
+- [x] #2 The existing LCLI-51 unbounded-output test is updated to reflect the new capped, truncation-hinted behavior
 <!-- AC:END -->
 
 ## Implementation Plan

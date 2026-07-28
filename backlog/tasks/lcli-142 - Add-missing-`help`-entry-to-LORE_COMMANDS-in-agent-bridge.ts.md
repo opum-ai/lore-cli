@@ -4,7 +4,7 @@ title: Add missing `help` entry to LORE_COMMANDS in agent-bridge.ts
 status: Done
 assignee: []
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:26'
 labels:
   - codex-review-followup
   - core-engine-a

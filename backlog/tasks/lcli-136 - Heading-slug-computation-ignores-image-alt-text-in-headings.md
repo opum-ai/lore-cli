@@ -4,7 +4,7 @@ title: Heading slug computation ignores image alt text in headings
 status: Done
 assignee: []
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:26'
 labels:
   - codex-review-followup
   - core-bundle-check

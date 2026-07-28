@@ -2,11 +2,11 @@
 id: LCLI-177
 title: >-
   lore link viewTask consumers do not verify returned id matches requested id
-  (sibling of LORE-122/125)
+  (sibling of LCLI-122/125)
 status: Done
 assignee: []
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:27'
 labels:
   - codex-review-followup
   - cmd-link
@@ -24,7 +24,7 @@ LCLI-122 hardened resolveTaskDetails (`src/commands/reconcile-shared.ts`) to rej
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 The lore link viewTask-consuming paths (pre-write validation and back-ref edit around `src/commands/link.ts:180`, `212`, `346`) verify the returned BacklogTaskDetail id matches the requested id case-insensitively (matching LORE-122 discipline) and refuse to use a mismatched detail.
+- [x] #1 The lore link viewTask-consuming paths (pre-write validation and back-ref edit around `src/commands/link.ts:180`, `212`, `346`) verify the returned BacklogTaskDetail id matches the requested id case-insensitively (matching LCLI-122 discipline) and refuse to use a mismatched detail.
 - [x] #2 A regression test drives a link path with a stubbed adapter returning a mismatched id and asserts the operation refuses rather than writing the wrong task data into the managed block or back-ref.
 <!-- AC:END -->
 
@@ -48,9 +48,9 @@ LCLI-122 hardened resolveTaskDetails (`src/commands/reconcile-shared.ts`) to rej
 <!-- SECTION:NOTES:BEGIN -->
 Added a private verifiedViewTask(adapter, taskId) helper in src/commands/link.ts mirroring reconcile-shared.ts's resolveTaskDetails (LCLI-122): calls adapter.viewTask(taskId) and throws LoreError(not_found) naming both the requested and resolved ids when detail.id doesn't case-insensitively match taskId; a genuine null (task doesn't exist) still passes through unchanged. Wired into the 3 call sites named in the AC: runLink's pre-write existence validation (line ~180, now surfaces a mismatch through the existing rejected-Promise.allSettled handling as not_found, refusing the whole command before any write), runLink's fresh re-read inside the back-ref edit loop (line ~216, a mismatch is caught by runSequentially and reported per-task as backRef:"failed" rather than being used to compute desiredDocs/labels), and removeBackRefs shared by runUnlink (line ~363, same treatment instead of silently returning "skipped"/"removed"). Did NOT touch moveBackRefs (~line 425, rename.ts's mover) - out of this task's named 3-line scope; same bug class remains there, flagging as a follow-up gap.
 
-Added 3 regression tests to test/link.test.ts (new describe "lore link/unlink — viewTask identity verification (LCLI-177)"), each driving a stubbed adapter whose viewTask always answers with a different task's (LORE-999) detail: (1) link's pre-write validation refuses before any doc write (not_found, doc file untouched, zero editTask calls); (2) link's back-ref edit path reports the task failed and makes zero editTask calls (never borrows LORE-999's documentation); (3) unlink's removeBackRefs reports the task failed and makes zero editTask calls, while the independent doc-side tasks: removal still completes.
+Added 3 regression tests to test/link.test.ts (new describe "lore link/unlink — viewTask identity verification (LCLI-177)"), each driving a stubbed adapter whose viewTask always answers with a different task's (LCLI-999) detail: (1) link's pre-write validation refuses before any doc write (not_found, doc file untouched, zero editTask calls); (2) link's back-ref edit path reports the task failed and makes zero editTask calls (never borrows LCLI-999's documentation); (3) unlink's removeBackRefs reports the task failed and makes zero editTask calls, while the independent doc-side tasks: removal still completes.
 
-Mutation-checked: git-stashed the src/commands/link.ts hunk, re-ran test/link.test.ts - all 3 new tests failed with the exact expected wrong-shape errors (drift instead of not_found; "expected a LoreError, but runLink returned"; message missing "LORE-999"), confirming they exercise the fix. Restored via git stash pop; re-ran - all 63 pass.
+Mutation-checked: git-stashed the src/commands/link.ts hunk, re-ran test/link.test.ts - all 3 new tests failed with the exact expected wrong-shape errors (drift instead of not_found; "expected a LoreError, but runLink returned"; message missing "LCLI-999"), confirming they exercise the fix. Restored via git stash pop; re-ran - all 63 pass.
 
 Verification: bun test test/link.test.ts -> 63 pass, 0 fail. Full suite: bun test -> 1751 pass, 0 fail across 46 files. bun run typecheck -> clean (tsc --noEmit, no output). bunx biome check src/commands/link.ts test/link.test.ts -> no findings. A live bun run src/cli.ts repro wasn't applicable: a real backlog binary cannot be coerced into returning a mismatched task id for a matching query, so (exactly as LCLI-122's own precedent) the stubbed-adapter unit tests are the correct and only meaningful proof of this AC.
 <!-- SECTION:NOTES:END -->

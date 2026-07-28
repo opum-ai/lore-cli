@@ -1,11 +1,11 @@
 ---
 id: LCLI-55
-title: 'Fix LORE-41 / PR #50 code-review findings'
+title: 'Fix LCLI-41 / PR #50 code-review findings'
 status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:23'
 labels:
   - cmd
   - core

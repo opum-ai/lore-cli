@@ -4,7 +4,7 @@ title: Golden recorder trusts a live mutable task and an unverified upstream CLI
 status: Done
 assignee: []
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:25'
 labels:
   - codex-review-followup
   - build-runtime

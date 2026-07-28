@@ -2,12 +2,12 @@
 id: LCLI-178
 title: >-
   Runbook docker-e2e-testing-environment.md doesn't mention the harness now runs
-  as a CI gate (post-LORE-100)
+  as a CI gate (post-LCLI-100)
 status: Done
 assignee:
   - '@sonnet-worker'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:27'
 labels:
   - codex-review-followup
   - build-ci-config

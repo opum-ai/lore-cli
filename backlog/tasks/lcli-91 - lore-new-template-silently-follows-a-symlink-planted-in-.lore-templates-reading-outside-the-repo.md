@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:25'
 labels:
   - backlog-campaign-followup
   - security
@@ -36,7 +36,7 @@ This requires attacker control of repo CONTENT (a symlink committed into `.lore/
 - [x] #1 Running `lore new <type> "<title>" --template <name>` where the resolved template file (`.lore/templates/<name>.md` or its lower-cased candidate) is a symlink refuses to read through it and reports a clear error instead of embedding the link target's content into the generated concept.
 - [x] #2 The same refusal fires when the symlink is nested inside a subdirectory of .lore/templates/, not only at the top level.
 - [x] #3 When the refusal fires, no output file is created at the computed docPath - the command leaves no partial artifact and does not silently fall back to a built-in template in place of the rejected symlink.
-- [x] #4 A profile-declared template base (the non---template fallback path) is unaffected by the new check's scope, consistent with LORE-72's own precedent of scoping its guard to the explicit CLI flag only and leaving the profile-declared path's separate, already-recorded-as-out-of-scope trust boundary untouched.
+- [x] #4 A profile-declared template base (the non---template fallback path) is unaffected by the new check's scope, consistent with LCLI-72's own precedent of scoping its guard to the explicit CLI flag only and leaving the profile-declared path's separate, already-recorded-as-out-of-scope trust boundary untouched.
 - [x] #5 Automated tests cover both the top-level and nested-subdirectory symlinked-template cases and assert the current live-repro behavior (silent read-through, exit 0, secret content embedded) now fails/rejects instead.
 <!-- AC:END -->
 

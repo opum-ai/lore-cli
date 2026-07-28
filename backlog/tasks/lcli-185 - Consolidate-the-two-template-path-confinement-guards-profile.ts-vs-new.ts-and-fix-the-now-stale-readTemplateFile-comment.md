@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@sonnet-worker'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:28'
 labels:
   - codex-review-followup
   - core-bundle-check
@@ -39,7 +39,7 @@ Files: src/core/profile.ts (assertTemplateConfined), src/commands/new.ts (assert
 <!-- AC:BEGIN -->
 - [x] #1 A single shared template-path confinement helper is used by both the --template flag path (new.ts) and the profile-declared [[types]].template path (profile.ts); no duplicated guard remains
 - [x] #2 The profile-declared template path refuses symlinks consistently with the --template flag path (or the intentional difference is documented with rationale)
-- [x] #3 readTemplateFile's docstring no longer claims the profile-declared template boundary is 'left untouched'; comment reflects LORE-139
+- [x] #3 readTemplateFile's docstring no longer claims the profile-declared template boundary is 'left untouched'; comment reflects LCLI-139
 - [x] #4 Existing traversal-rejection behavior on both paths is preserved (no regression); tests cover the shared helper on both call paths
 <!-- AC:END -->
 

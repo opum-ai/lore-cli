@@ -2,12 +2,12 @@
 id: LCLI-191
 title: >-
   Discovery advisories are lost when checkBundles throws in the scan phase
-  (post-LORE-138)
+  (post-LCLI-138)
 status: Done
 assignee:
   - '@sonnet-worker'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:28'
 labels:
   - codex-review-followup
   - cmd-check

@@ -2,12 +2,12 @@
 id: LCLI-210
 title: >-
   Remove indexes.ts's duplicate encodePathSegments; import the canonical encoder
-  from links.ts (LORE-28 landed)
+  from links.ts (LCLI-28 landed)
 status: Done
 assignee:
   - '@sonnet-worker'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:16'
+updated_date: '2026-07-28 20:29'
 labels:
   - core-index-context
   - codex-review-followup
@@ -32,7 +32,7 @@ ordinal: 312000
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 `src/core/indexes.ts` no longer defines a local `encodePathSegments` or `escapePercent`; it imports `encodePathSegments` from `./links`.
-- [x] #2 The `TODO(LORE-28)` comment block (indexes.ts:445-447) is removed.
+- [x] #2 The `TODO(LCLI-28)` comment block (indexes.ts:445-447) is removed.
 - [x] #3 `buildListing` (indexes.ts) uses the imported encoder; `bun run typecheck` (or `tsc --noEmit`) passes with no unused-import or unresolved-symbol errors.
 - [x] #4 `bun test` passes — existing index generation / byte-stability tests still produce identical index.md link destinations (encoder output is unchanged).
 <!-- AC:END -->

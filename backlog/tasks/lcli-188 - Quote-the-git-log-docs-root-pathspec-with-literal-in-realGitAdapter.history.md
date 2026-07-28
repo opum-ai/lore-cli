@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@sonnet-worker'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:28'
 labels:
   - codex-review-followup
   - core-engine-a
@@ -23,7 +23,7 @@ Wave-10 integration finding (from LCLI-143). LCLI-143 scoped `git log` to the do
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 realGitAdapter.history in src/adapters/git.ts passes the docs-root pathspec as `:(literal)<root>` (matching the LORE-49 :(literal) convention in state.ts), so a root containing pathspec-magic (`*`, `?`, `[`, or a leading `:`) is treated as a literal path, not magic.
+- [x] #1 realGitAdapter.history in src/adapters/git.ts passes the docs-root pathspec as `:(literal)<root>` (matching the LCLI-49 :(literal) convention in state.ts), so a root containing pathspec-magic (`*`, `?`, `[`, or a leading `:`) is treated as a literal path, not magic.
 - [x] #2 A test asserts the spawned `git log` args include the `:(literal)`-prefixed docs-root pathspec after `--`, and confirms `:(literal)` composes correctly with the existing `--relative` flag (docs-scoped commits still returned; out-of-docs commits still excluded).
 <!-- AC:END -->
 

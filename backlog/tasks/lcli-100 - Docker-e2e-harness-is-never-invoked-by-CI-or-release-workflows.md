@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:15'
+updated_date: '2026-07-28 20:25'
 labels:
   - codex-review-followup
   - build-ci-config
@@ -29,7 +29,7 @@ The ~1500-line Docker e2e test harness under docker/e2e/ (docker-compose.yml, Do
 <!-- AC:BEGIN -->
 - [x] #1 ci.yml (or release.yml, whichever is the intended gate) contains a job that builds and runs docker/e2e/docker-compose.yml (via run-e2e.sh or equivalent) on relevant PRs/pushes
 - [x] #2 That job is a required check — a failing e2e scenario fails the workflow run, not just a log warning
-- [x] #3 A deliberately broken e2e scenario (e.g. reverting an assertion added in LORE-61..68) is demonstrated to fail the new CI job
+- [x] #3 A deliberately broken e2e scenario (e.g. reverting an assertion added in LCLI-61..68) is demonstrated to fail the new CI job
 <!-- AC:END -->
 
 ## Implementation Plan

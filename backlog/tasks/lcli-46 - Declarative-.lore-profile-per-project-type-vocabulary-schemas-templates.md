@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:14'
+updated_date: '2026-07-28 20:23'
 labels:
   - eck-alignment
   - core
@@ -44,7 +44,7 @@ ADR amendments: ADR-0006 (primary inversion; RETAIN the §5 summary-length heuri
 - [x] #3 lore ships the default story-convention profile built-in (Epic/Story/Spec/ADR/Runbook/Reference); fully usable with zero config
 - [x] #4 A project configures custom types by adding .lore/profile.* — read by the STANDALONE binary as DATA; no code, no library/embedding required; lore bundles NO consumer-specific profile (ECK ships its profile in its own repo)
 - [x] #5 NO code-registration / escape hatch: the declarative language is the boundary; document the expressiveness limit (no arbitrary cross-field/custom refinements)
-- [x] #6 LORE-15 builds validators from the active profile; LORE-19/LORE-20 iterate it; profile loading is deterministic (sorted, order-independent emitted bytes — ADR-0014)
+- [x] #6 LCLI-15 builds validators from the active profile; LCLI-19/LCLI-20 iterate it; profile loading is deterministic (sorted, order-independent emitted bytes — ADR-0014)
 - [x] #7 Type-name -> generated schema filename + yaml-language-server modeline = LOWER-KEBAB slug (e.g. 'QA Plan' -> qa-plan.json), matching the template naming; multi-word/space type names never produce an invalid path/URI
 - [x] #8 Grammar validated against ECK's 17-type SDD draft (first external consumer): reconciles with ZERO consumer-file edits; ADR-0006 §5 summary-length heuristic retained as a lore built-in
 <!-- AC:END -->

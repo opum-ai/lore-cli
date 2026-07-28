@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:16'
+updated_date: '2026-07-28 20:30'
 labels:
   - release
   - tooling
@@ -36,7 +36,7 @@ Companion to LCLI-253 (the migration this unblocks). A lightweight approach: a s
 <!-- AC:BEGIN -->
 - [x] #1 A mechanism (scheduled CI job, release-watch, or a documented manual cadence) detects a new MrLesk/Backlog.md tag whose history contains commit 22a091b and surfaces it to the maintainer.
 - [x] #2 It distinguishes a --json-capable tag from a plain one (asserts the commit is an ancestor of the tag, or probes the released binary for --json), not just any new tag.
-- [x] #3 Where the signal lands and who acts on it is documented, linking to the migration task (LORE-253).
+- [x] #3 Where the signal lands and who acts on it is documented, linking to the migration task (LCLI-253).
 <!-- AC:END -->
 
 ## Implementation Plan
