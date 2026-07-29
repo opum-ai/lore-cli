@@ -20,7 +20,7 @@ lore's entire first-release gate hinges on one external event: MrLesk/Backlog.md
 tagging a release **newer than v1.48.0** whose history contains commit
 `22a091b570d44c4f302ca47e7fd36fa28ad8bcb0` (PR #790 / BACK-545 — stable `--json`
 output on `task list`/`task view`/`search`, merged to `main` 2026-07-16). Until
-that tag exists, **LORE-253** ("Migrate backlog adapter to the released --json
+that tag exists, **LCLI-253** ("Migrate backlog adapter to the released --json
 Backlog.md...") is not startable, and neither is lore's own first npm release
 (see [release-publishing.md](release-publishing.md)'s Prerequisites).
 
@@ -28,7 +28,7 @@ Nothing upstream notifies lore when that tag ships, so
 [`.github/workflows/upstream-backlog-watch.yml`](../../.github/workflows/upstream-backlog-watch.yml)
 polls for it on a daily schedule and surfaces the event automatically. This
 runbook documents **where that signal lands and who acts on it** — the
-maintainer-facing half of LORE-254; the mechanism itself (and its regression
+maintainer-facing half of LCLI-254; the mechanism itself (and its regression
 tests) live in
 [`src/scripts/upstream-backlog-watch.ts`](../../src/scripts/upstream-backlog-watch.ts).
 
@@ -68,8 +68,8 @@ from the repo's Actions tab if that happens, or run it on demand via
 ## Where the signal lands
 
 **A GitHub issue in this repository, labeled `upstream-watch`.** Its title is
-`Upstream Backlog.md <tag> is --json-capable — LORE-253 is unblocked`; the body
-names the detected tag/commit and links back to this runbook and to LORE-253.
+`Upstream Backlog.md <tag> is --json-capable — LCLI-253 is unblocked`; the body
+names the detected tag/commit and links back to this runbook and to LCLI-253.
 Anyone watching this repo's issues (the default for the maintainer) sees it
 through normal GitHub notifications — no separate channel (Slack, email, etc.)
 is wired up.
@@ -79,18 +79,18 @@ is wired up.
 The **maintainer** (today, `jeremy-newhouse`):
 
 1. Confirm the tag for real: `gh release view <tag> --repo MrLesk/Backlog.md`.
-2. Start LORE-253: `backlog task view LORE-253 --plain`, then follow
+2. Start LCLI-253: `backlog task view LCLI-253 --plain`, then follow
    [backlog-json-patch.md §8.1 step 4](backlog-json-patch.md#8-migrate-to-upstream-on-release-and-bump-the-floor)
    to add a real `package.json` dependency on the published package and bump
    `MIN_BACKLOG_VERSION` in `src/adapters/backlog.ts`.
-3. Close the tracking issue once LORE-253 lands (or reference it from the PR
-   that closes LORE-253) — closing does **not** cause the workflow to reopen it
+3. Close the tracking issue once LCLI-253 lands (or reference it from the PR
+   that closes LCLI-253) — closing does **not** cause the workflow to reopen it
    later; per the one-time-signal design above, an `upstream-watch` issue in any
    state permanently satisfies the "already surfaced" check.
 
 ## Rollback / decommissioning
 
-Once LORE-253 has migrated the adapter off the interim pinned-commit build,
+Once LCLI-253 has migrated the adapter off the interim pinned-commit build,
 this watch has served its purpose. Delete
 `.github/workflows/upstream-backlog-watch.yml` and
 `src/scripts/upstream-backlog-watch.ts` (and this runbook, or mark it

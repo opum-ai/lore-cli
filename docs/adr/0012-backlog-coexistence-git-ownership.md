@@ -3,7 +3,7 @@ type: ADR
 title: "ADR-0012: Backlog operational coexistence & git ownership"
 description: How lore coexists on disk with Backlog.md without fighting it for control of the working tree and git — lore is the sole committer of backlog/, Backlog runs with auto_commit/check_active_branches/remote_operations all false, writes are single-writer with only ID allocation locked, and task .md files are never written directly.
 tags: [adr, backlog, git, auto-commit, branches, locking, determinism, coexistence]
-summary: lore is the sole committer of backlog/ and runs Backlog.md with auto_commit, check_active_branches, and remote_operations all false so that on-disk state equals current-branch CLI state, with single-writer serialized writes (only ID allocation locked) and no direct task-file writes.
+summary: lore exclusively commits backlog files using deterministic current-branch Backlog settings and serialized CLI-managed writes.
 timestamp: 2026-06-21T00:00:00Z
 ---
 

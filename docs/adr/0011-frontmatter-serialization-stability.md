@@ -3,7 +3,7 @@ type: ADR
 title: "ADR-0011: Frontmatter serialization & diff stability"
 description: lore parses and re-serializes concept frontmatter with gray-matter under a frozen, stability-oriented configuration so that round-tripping an unchanged document is byte-identical — preserving key order, quoting, and unknown keys — and never stores bespoke lore metadata on Backlog.md tasks (which drop unknown keys on edit).
 tags: [adr, frontmatter, gray-matter, serialization, idempotency, diff-stability, drift, backlog]
-summary: lore round-trips concept frontmatter byte-identically via gray-matter with a frozen serializer config (stable key order, quoting, and unknown-key preservation), and keeps all lore metadata in docs rather than on Backlog tasks because Backlog drops unknown frontmatter keys.
+summary: lore preserves stable frontmatter ordering, quoting, and unknown keys while keeping documentation metadata in the docs bundle.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -13,7 +13,7 @@ timestamp: 2026-06-21T00:00:00Z
 
 Accepted — 2026-06-21
 
-Amended — 2026-06-25 (LORE-46): the **canonical key order is profile-driven**. The "append-slot"
+Amended — 2026-06-25 (LCLI-46): the **canonical key order is profile-driven**. The "append-slot"
 for lore-written keys (§3) is the active profile's **field declaration order** — base fields in
 declaration order, then each type's own fields, then lore's reserved coupling fields
 (`supersedes`/`superseded_by`) — derived from `.lore/profile.toml`
@@ -100,7 +100,7 @@ Concretely:
    and no key sorting. This is the frontmatter analogue of the frozen-format
    string managed blocks are spliced from ([ADR-0008](0008-managed-block-remark-ast.md)) —
    both trade a general-purpose serializer for a fixed, hand-controlled output shape;
-   lore ships no markdown serializer at all (LORE-22).
+   lore ships no markdown serializer at all (LCLI-22).
 
 3. **Key order is preserved, never sorted.** lore emits keys in the order they
    were read from disk; newly added keys (e.g. a `status` lore computes, or a

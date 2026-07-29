@@ -1,4 +1,4 @@
-# Handover — sixth backlog campaign session, cursor at LORE-94 (item 2 of 8)
+# Handover — sixth backlog campaign session, cursor at LCLI-94 (item 2 of 8)
 
 **Date**: 2026-07-21 | **Grounded against**: `dev @ 2aa6a77`, clean except `.repro-scratch/` and `docs/.obsidian/` (both pre-existing/unrelated, leave alone), pushed and in sync with `origin/dev` | **Tracker**: doc-1
 
@@ -6,18 +6,18 @@
 
 ```
 Run /backlog-handover restore in /Volumes/external/repos/lore. Tracker: doc-1.
-Cursor: LORE-94 — schema export's `isManagedSchemasDir` (src/commands/schema.ts,
+Cursor: LCLI-94 — schema export's `isManagedSchemasDir` (src/commands/schema.ts,
 currently lines ~151-153) is a purely lexical `absOutDir === resolve(root,
 SCHEMAS_DIR)` comparison with no realpath/symlink resolution, plus a missing
 regression test for near-miss `--out` directory names. This is item 2 of the
-8-item queue (LORE-90/94/92/95/89/88/91/93) confirmed by the user on
+8-item queue (LCLI-90/94/92/95/89/88/91/93) confirmed by the user on
 2026-07-21 ("Risk-ascending, sweep last (Recommended)"); do not re-ask before
 taking the next item.
 
-Read the task itself first (`backlog task view LORE-94 --plain`) — do not
+Read the task itself first (`backlog task view LCLI-94 --plain`) — do not
 trust this summary alone; re-verify line numbers and the repro fresh against
 current dev HEAD before implementing, per this campaign's standing discipline
-(a LOT changes session to session; LORE-90 re-verified this same way and it
+(a LOT changes session to session; LCLI-90 re-verified this same way and it
 paid off — the task's own line-number claims still matched exactly, but never
 assume that holds).
 
@@ -38,7 +38,7 @@ before implementing):
 Likely fix shape for gap 2 (verify before implementing, don't assume): this
 codebase already has a precedented symlink guard for exactly this class of
 problem — `assertNoSymlinkInPath` in `src/commands/fswrite.ts:57`
-(LORE-76/77), which walks every path segment via `lstatSync` rather than
+(LCLI-76/77), which walks every path segment via `lstatSync` rather than
 following. Read that function and its existing call sites
 (`fswrite.ts:303`/`322`) before designing a new check from scratch; whether
 `isManagedSchemasDir` should call it directly or use `realpathSync`-based
@@ -49,29 +49,29 @@ Merge gate is self-merge (skill default, user-confirmed 2026-07-19) — no
 PR-approval wait. Run the lifecycle's step 6 independent review
 (general-purpose subagent) AFTER committing the fix+tests, THEN write the
 outcome into the tracker — this ordering discipline has held cleanly across
-every session since LORE-74 (most recently LORE-90); don't regress on it.
+every session since LCLI-74 (most recently LCLI-90); don't regress on it.
 
-After LORE-94: advance cursor to LORE-92, then LORE-95, LORE-89, LORE-88,
-LORE-91, LORE-93 in that confirmed order.
+After LCLI-94: advance cursor to LCLI-92, then LCLI-95, LCLI-89, LCLI-88,
+LCLI-91, LCLI-93 in that confirmed order.
 ```
 
 ## State
 
 | Item | Status |
 | --- | --- |
-| Tracker doc | doc-1, updated this session (LORE-90 moved to Resolved as row #28, Cursor → LORE-94, Queue renumbered to 7 remaining items, session-log entry appended for session 29) |
-| Queue | 7 tasks remaining, all `To Do`, all `bug` type: LORE-94/92/95/89/88/91/93 |
-| Resolved this session | LORE-90 — see Resolved table row 28 for full evidence summary |
-| New Not-queued follow-up filed this session | A non-blocking finding from LORE-90's independent review: `commitBacklogFiles`'s fixed guard reused only `escapesRoot`, not the `win32.isAbsolute` half of `rename.ts`'s three-part precedent pattern. Confirmed live that a win32-absolute-looking suffix (`backlog/C:\Windows\evil.md`) still passes today — not an active escape, outside LORE-90's own ACs, needs a human to confirm priority before filing as its own task. |
+| Tracker doc | doc-1, updated this session (LCLI-90 moved to Resolved as row #28, Cursor → LCLI-94, Queue renumbered to 7 remaining items, session-log entry appended for session 29) |
+| Queue | 7 tasks remaining, all `To Do`, all `bug` type: LCLI-94/92/95/89/88/91/93 |
+| Resolved this session | LCLI-90 — see Resolved table row 28 for full evidence summary |
+| New Not-queued follow-up filed this session | A non-blocking finding from LCLI-90's independent review: `commitBacklogFiles`'s fixed guard reused only `escapesRoot`, not the `win32.isAbsolute` half of `rename.ts`'s three-part precedent pattern. Confirmed live that a win32-absolute-looking suffix (`backlog/C:\Windows\evil.md`) still passes today — not an active escape, outside LCLI-90's own ACs, needs a human to confirm priority before filing as its own task. |
 | Branch | `dev`, clean, pushed and in sync with `origin/dev` @ `2aa6a77` |
-| Leftover branches/PRs | none — `feature/LORE-90` was merged (PR #84, `gh pr merge --rebase --delete-branch`) and pruned both remotely and locally (confirmed via `git fetch --prune`) |
-| Not queued | LORE-42/43/44/45 (deferred by recorded product decisions, unchanged) plus the accumulated independent-review follow-up candidates from sessions 9-29 (see tracker's Not-queued section) |
+| Leftover branches/PRs | none — `feature/LCLI-90` was merged (PR #84, `gh pr merge --rebase --delete-branch`) and pruned both remotely and locally (confirmed via `git fetch --prune`) |
+| Not queued | LCLI-42/43/44/45 (deferred by recorded product decisions, unchanged) plus the accumulated independent-review follow-up candidates from sessions 9-29 (see tracker's Not-queued section) |
 
 ## Next steps
 
-1. Run the per-issue lifecycle on **LORE-94** (schema export near-miss test gap + `isManagedSchemasDir` symlink bypass): branch `feature/LORE-94` off `dev`, read the task's AC (`backlog task view LORE-94 --plain`), re-verify both gaps fresh against current `src/commands/schema.ts` (line numbers may have drifted from the ~151-153/~163-184 cited above), implement both fixes (test coverage AC#1 + symlink guard AC#2/#3, non-regression AC#4), verify, review, commit fix+tests, run independent review, THEN update the tracker with the outcome, PR, self-merge, prune.
-2. Update doc-1's Cursor/Queue/Resolved/Session-log sections on the feature branch (per the skill's step 4) — advance cursor to LORE-92 — but only AFTER the independent review completes, filling in its real outcome (don't pre-write a review verdict before the review has actually run — this session initially drafted one prematurely and had to backfill placeholders after the fact; avoid repeating that ordering mistake).
-3. Continue the confirmed queue order: LORE-92 → LORE-95 → LORE-89 → LORE-88 → LORE-91 → LORE-93.
+1. Run the per-issue lifecycle on **LCLI-94** (schema export near-miss test gap + `isManagedSchemasDir` symlink bypass): branch `feature/LCLI-94` off `dev`, read the task's AC (`backlog task view LCLI-94 --plain`), re-verify both gaps fresh against current `src/commands/schema.ts` (line numbers may have drifted from the ~151-153/~163-184 cited above), implement both fixes (test coverage AC#1 + symlink guard AC#2/#3, non-regression AC#4), verify, review, commit fix+tests, run independent review, THEN update the tracker with the outcome, PR, self-merge, prune.
+2. Update doc-1's Cursor/Queue/Resolved/Session-log sections on the feature branch (per the skill's step 4) — advance cursor to LCLI-92 — but only AFTER the independent review completes, filling in its real outcome (don't pre-write a review verdict before the review has actually run — this session initially drafted one prematurely and had to backfill placeholders after the fact; avoid repeating that ordering mistake).
+3. Continue the confirmed queue order: LCLI-92 → LCLI-95 → LCLI-89 → LCLI-88 → LCLI-91 → LCLI-93.
 
 ## Critical context / traps
 
@@ -91,9 +91,9 @@ LORE-91, LORE-93 in that confirmed order.
 
 - Don't recreate the tracker doc — doc-1 already exists and is reused across all 29 campaign sessions to date; `backlog doc list --plain` finds it.
 - Don't delete `.repro-scratch/` without being asked again.
-- Don't trust a synthetic test suite alone as proof a destructive/security fix is correct — run the real CLI against a scratch repo too (this session did, for LORE-90; the same discipline applies to LORE-94's symlink-deletion behavior — a synthetic fake-fs test would NOT be sufficient proof there, a real scratch directory with a real symlink is needed, mirroring how LORE-90 needed a real scratch git repo).
+- Don't trust a synthetic test suite alone as proof a destructive/security fix is correct — run the real CLI against a scratch repo too (this session did, for LCLI-90; the same discipline applies to LCLI-94's symlink-deletion behavior — a synthetic fake-fs test would NOT be sufficient proof there, a real scratch directory with a real symlink is needed, mirroring how LCLI-90 needed a real scratch git repo).
 - Don't assert "lint clean"/"tests are green" — or "no review needed"/"review found nothing" — in task/tracker notes from memory or before actually running the check.
-- Don't assume a task's own filed repro is still an open gap without live-CLI-verifying it first — this campaign's single highest-value discipline; apply it to LORE-94 even though the filing session already did a first-pass live verification of both gaps (re-verify at pickup time too, since state can drift between sessions).
-- Don't re-derive a security/correctness-sensitive check from scratch when an existing, already-tested one fits — check `fswrite.ts`'s `assertNoSymlinkInPath` (LORE-76/77 precedent) before writing something new for LORE-94's symlink gap, the same way LORE-90 reused `core/rewrite.ts`'s `escapesRoot` instead of re-deriving a new traversal check.
+- Don't assume a task's own filed repro is still an open gap without live-CLI-verifying it first — this campaign's single highest-value discipline; apply it to LCLI-94 even though the filing session already did a first-pass live verification of both gaps (re-verify at pickup time too, since state can drift between sessions).
+- Don't re-derive a security/correctness-sensitive check from scratch when an existing, already-tested one fits — check `fswrite.ts`'s `assertNoSymlinkInPath` (LCLI-76/77 precedent) before writing something new for LCLI-94's symlink gap, the same way LCLI-90 reused `core/rewrite.ts`'s `escapesRoot` instead of re-deriving a new traversal check.
 - Don't write a tracker Resolved-row or session-log entry that asserts a review outcome before the review has actually run — draft it once, after the review completes, with the real verdict (see "Critical context" above).
 - Don't export a private `parse*Args` function just to unit-test a fix in isolation — no precedent for this anywhere in the codebase; stick to CLI-level integration tests like every other command.

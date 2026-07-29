@@ -15,6 +15,7 @@
 - 2026-07-26T23:21:11-05:00 c37c689b9f64ba2175a9eefb386992cb845574fd fix(release): close round-5 readiness issues
 - 2026-07-28T08:20:58-05:00 6ceccfb6b36ecd6679d85edec33252364c046094 feat: add Claude and Codex init onboarding
 - 2026-07-28T11:38:12-05:00 0af37a96f85c864e8e2c2c170d116e6ea7eb4a47 chore: reconcile LORE-281 handoff metadata
+- 2026-07-28T12:22:07-05:00 7d5d3835e2028d3de6b4b7742817447819aac88c fix: close LORE-281 review gaps
 
 ## docs/.obsidian
 
@@ -101,6 +102,7 @@
 - 2026-07-26T23:21:11-05:00 c37c689b9f64ba2175a9eefb386992cb845574fd fix(release): close round-5 readiness issues
 - 2026-07-27T07:17:12-05:00 047857cc4bb96060430c1735c5b6e46fd268cdf4 feat: add deterministic OKF projection export
 - 2026-07-28T08:20:58-05:00 6ceccfb6b36ecd6679d85edec33252364c046094 feat: add Claude and Codex init onboarding
+- 2026-07-28T12:22:07-05:00 7d5d3835e2028d3de6b4b7742817447819aac88c fix: close LORE-281 review gaps
 
 ## docs/runbooks
 

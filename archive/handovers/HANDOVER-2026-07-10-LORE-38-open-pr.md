@@ -1,33 +1,33 @@
-# Handover — LORE-38 (`lore help` + capability manifest) delivered as open PR #41, review-hardened, awaiting merge
+# Handover — LCLI-38 (`lore help` + capability manifest) delivered as open PR #41, review-hardened, awaiting merge
 
-**Date**: 2026-07-10 | **Grounded against**: `feat/lore-38-help-json` @ `0727858`; `dev` @ `3072a85` | **Backlog**: LORE-38 (In Progress, both ACs checked)
+**Date**: 2026-07-10 | **Grounded against**: `feat/lore-38-help-json` @ `0727858`; `dev` @ `3072a85` | **Backlog**: LCLI-38 (In Progress, both ACs checked)
 
 ## Paste-ready prompt for the next session
 
 ```
 FIRST run `backlog instructions overview`.
 
-LORE-38 (lore help + the `--json` capability manifest) is DONE and delivered as
+LCLI-38 (lore help + the `--json` capability manifest) is DONE and delivered as
 PR #41 (feat/lore-38-help-json -> dev): OPEN, mergeable, all 4 CI checks green,
 review-hardened over THREE /code-review rounds (9 -> 8 -> 2 findings, all fixed).
 It is the user's to review/merge — do NOT self-merge.
 
 Branch @ 0727858 (4 commits ahead of dev @ 3072a85). Working tree clean.
 
-- If PR #41 is ALREADY MERGED when you resume: finalize LORE-38 — mark it Done
-  (`backlog task edit LORE-38 -s Done`), then ff-push dev->main (main has no
+- If PR #41 is ALREADY MERGED when you resume: finalize LCLI-38 — mark it Done
+  (`backlog task edit LCLI-38 -s Done`), then ff-push dev->main (main has no
   independent history; see the [[lore-finalize-shorthand]] memory), prune the
   branch. Then pick the next ship-sequence task.
 - If STILL OPEN: hand it to the user to merge (or merge if they ask). Nothing
   code-wise is pending on it.
 
 Then continue the "finish the backlog and ship" sequence the user asked for:
-  command surface: LORE-25 (lore tasks) -> LORE-32 (orphans) -> LORE-49
-  (state.ts commit retrofit) -> LORE-39/40 (scaffold mkdocs/docusaurus);
-  then de-risk + ship: LORE-14 (bun compile spike) -> LORE-9 (release pipeline).
-  Deferred/out of v1: LORE-5, LORE-41..45.
-Recommended next pick: LORE-25 (lore tasks) — independent of #41, branch off dev.
-Ask the user which to pick, or proceed with LORE-25.
+  command surface: LCLI-25 (lore tasks) -> LCLI-32 (orphans) -> LCLI-49
+  (state.ts commit retrofit) -> LCLI-39/40 (scaffold mkdocs/docusaurus);
+  then de-risk + ship: LCLI-14 (bun compile spike) -> LCLI-9 (release pipeline).
+  Deferred/out of v1: LCLI-5, LCLI-41..45.
+Recommended next pick: LCLI-25 (lore tasks) — independent of #41, branch off dev.
+Ask the user which to pick, or proceed with LCLI-25.
 ```
 
 ## State
@@ -36,13 +36,13 @@ Ask the user which to pick, or proceed with LORE-25.
 | --- | --- |
 | PR #41 | **OPEN**, base `dev`, mergeable, 4 commits, all 4 CI checks pass (macos·ubuntu·windows + compile-smoke); no review decision yet — awaiting user merge |
 | `feat/lore-38-help-json` | `0727858`, pushed (0/0 vs origin), 4 ahead of `dev` |
-| LORE-38 | In Progress; both ACs checked; → Done on merge |
-| `dev` / `main` | `dev` @ `3072a85` (main behind by the LORE-36 archive commit — normal pre-promotion state) |
+| LCLI-38 | In Progress; both ACs checked; → Done on merge |
+| `dev` / `main` | `dev` @ `3072a85` (main behind by the LCLI-36 archive commit — normal pre-promotion state) |
 
 ## Next steps
 
-1. Merge PR #41 (user's call) → then finalize LORE-38 (mark Done; ff `dev`→`main`; prune branch).
-2. Pick the next ship-sequence task — **LORE-25 (`lore tasks`)** recommended (branch off `dev`; independent of #41).
+1. Merge PR #41 (user's call) → then finalize LCLI-38 (mark Done; ff `dev`→`main`; prune branch).
+2. Pick the next ship-sequence task — **LCLI-25 (`lore tasks`)** recommended (branch off `dev`; independent of #41).
 
 ## Critical context / traps
 
@@ -60,6 +60,6 @@ Ask the user which to pick, or proceed with LORE-25.
 
 ## System of record updated
 
-- **LORE-38 task** → full review-trail notes across all 3 rounds; both ACs checked (committed to the branch, `0727858`).
+- **LCLI-38 task** → full review-trail notes across all 3 rounds; both ACs checked (committed to the branch, `0727858`).
 - **CHANGELOG.md** → `## [Unreleased] → Added` entry for `lore help` (in the feat commit).
 - **Auto-memory** → new [[rereview-fixes-and-derive-machine-contracts]] (re-review the fixes; derive machine contracts from traced seams + golden test); indexed in MEMORY.md.

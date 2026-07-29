@@ -60,16 +60,16 @@ No application source code exists yet; your job is to start implementing it.
 1. Run `backlog task list --status "To Do" --json` and pick the next
    release-relevant, unblocked task; v2 MCP/Confluence/library items remain
    deliberately deferred.
-2. Claim it: `backlog task edit LORE-N -s "In Progress"`. Read its acceptance criteria and linked docs via `backlog task view LORE-N --plain`.
+2. Claim it: `backlog task edit LCLI-N -s "In Progress"`. Read its acceptance criteria and linked docs via `backlog task view LCLI-N --plain`.
 3. Implement against the ADRs/spec. Prefer TDD (Bun test). Keep `core/` a library returning structured objects; commands thin.
 4. Validate before committing: `bun test`, `bun run lint`, `bun run typecheck` (set these up in M0). Once `lore check` exists, it is the bundle CI gate.
 5. Commit to `dev` with Conventional Commits, ending messages with:
    `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`
-6. Finish the task: `backlog task edit LORE-N -s Done` with a `--final-summary`, and update [`CHANGELOG.md`](../../CHANGELOG.md) (Unreleased).
+6. Finish the task: `backlog task edit LCLI-N -s Done` with a `--final-summary`, and update [`CHANGELOG.md`](../../CHANGELOG.md) (Unreleased).
 
 ## First move
 
 Confirm your understanding by summarizing the build order (BJP → M2; M0 → M1 → M2; M3 → M5;
 M6–M8 deferred) and the JSON-only / CLI-first constraints, then propose starting **M0
-(`LORE-6`: scaffold package.json / tsconfig / pinned Bun)** in parallel with **BJP (`LORE-1`:
+(`LCLI-6`: scaffold package.json / tsconfig / pinned Bun)** in parallel with **BJP (`LCLI-1`:
 fork + `--json` task)**. Then begin.

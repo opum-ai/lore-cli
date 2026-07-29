@@ -1,13 +1,13 @@
 name: Upstream Backlog.md --json tag watch
 
-# LORE-254: lore's adapter (src/adapters/backlog.ts) and lore's own first npm release both
+# LCLI-254: lore's adapter (src/adapters/backlog.ts) and lore's own first npm release both
 # depend on MrLesk/Backlog.md shipping commit 22a091b (PR #790 / BACK-545 — stable `--json`
 # output) inside a TAGGED release; the interim dev/test-time wiring only builds it from a pinned
 # commit (docs/runbooks/backlog-json-patch.md §8.1). Nothing upstream notifies lore when that
 # release exists, so this job polls MrLesk/Backlog.md's Releases API on a schedule and — the
 # first time it finds a release whose commit history actually CONTAINS 22a091b, not merely one
 # numbered newer than the last-known tag — opens a tracking issue in this repo so the maintainer
-# can pick up LORE-253. All of the actual logic lives in
+# can pick up LCLI-253. All of the actual logic lives in
 # src/scripts/upstream-backlog-watch.ts (unit-tested in test/upstream-backlog-watch.test.ts);
 # this workflow only schedules it and wires the token. See
 # docs/runbooks/upstream-backlog-md-json-tag-watch.md for where the signal lands and who acts on it.
@@ -15,7 +15,7 @@ name: Upstream Backlog.md --json tag watch
 on:
   schedule:
     # Daily, off the well-known GH Actions cron backlog spike at :00. A --json-capable upstream
-    # release is a one-time event lore is waiting on indefinitely (LORE-253) — daily is frequent
+    # release is a one-time event lore is waiting on indefinitely (LCLI-253) — daily is frequent
     # enough to notice within a day of it shipping without spamming the GitHub API.
     - cron: "17 6 * * *"
   workflow_dispatch: {}

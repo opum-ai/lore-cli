@@ -3,7 +3,7 @@ type: ADR
 title: "ADR-0005: CLI contract: output modes, exit codes, error envelope"
 description: Defines lore's stable command-line contract — three output tiers (pretty/--plain/--json), semantic exit codes, a structured --json error envelope, and the stdout/stderr discipline that makes the CLI safe for agents and CI to consume.
 tags: [adr, cli, contract, json, exit-codes, agent, ci]
-summary: lore exposes three precedence-ordered output modes (--json > --plain > pretty), six semantic exit codes, and a structured --json error envelope so agents and CI can branch deterministically without scraping prose.
+summary: lore provides deterministic JSON, plain, and pretty output modes, semantic exit codes, and structured machine-readable errors.
 timestamp: 2026-06-21T00:00:00Z
 ---
 

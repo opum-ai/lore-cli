@@ -3,7 +3,7 @@ type: ADR
 title: "ADR-0015: Lightweight retrieval: full-text + graph context, no vectors"
 description: Why lore's retrieval surface is in-memory BM25-style full-text search plus frontmatter filtering (`lore query`) and a deterministic, depth-bounded, token-budgeted graph export (`lore context`), with no vector database, embeddings, RAG, or chunking subsystem.
 tags: [adr, retrieval, query, context, search, graph, no-rag, no-vectors, agent]
-summary: lore retrieves with in-memory full-text (BM25) plus frontmatter filters and a deterministic depth-bounded graph context export, treating the typed graph as the curation layer instead of building a vector/RAG/chunking stack.
+summary: lore combines in-memory full-text search, frontmatter filters, and deterministic graph expansion without a vector stack.
 timestamp: 2026-06-21T00:00:00Z
 ---
 

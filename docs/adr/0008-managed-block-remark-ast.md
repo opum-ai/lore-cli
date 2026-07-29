@@ -11,7 +11,7 @@ timestamp: 2026-06-21T00:00:00Z
 
 ## Status
 
-Accepted — 2026-06-21. Amended — 2026-07-02 (LORE-22): the serializer step
+Accepted — 2026-06-21. Amended — 2026-07-02 (LCLI-22): the serializer step
 (item 3) is superseded — lore ships **no markdown serializer**, so the managed
 block is built as a frozen-format **string** and spliced over the byte range
 between the marker nodes, rather than re-serialized with `remark-stringify`.
@@ -19,13 +19,13 @@ mdast is still used, but only to *locate* the markers structurally; every other
 guarantee below (structural location, marker validation, byte-identity, bounded
 blast radius) is unchanged. See `src/core/managed-block.ts`.
 
-Amended — 2026-07-19 (LORE-52): the Context/Decision/Consequences prose below also says lore
+Amended — 2026-07-19 (LCLI-52): the Context/Decision/Consequences prose below also says lore
 "depends on unified / remark (mdast)" or reuses "the remark stack" for this and other mdast-based
 work. It never did — lore's only markdown dependency, then and now, is `mdast-util-from-markdown`
 (a parser only; verified against `package.json`), not the `remark` or `unified` npm packages. This
-is a separate, narrower correction than the LORE-22 amendment above (which was about the
+is a separate, narrower correction than the LCLI-22 amendment above (which was about the
 serializer, item 3); the parser-dependency claim was never accurate. See
-[tech-stack](../reference/tech-stack.md) (LORE-14).
+[tech-stack](../reference/tech-stack.md) (LCLI-14).
 
 ## Context
 
@@ -90,7 +90,7 @@ Concretely:
 
 1. **Locate the region structurally, not textually.** Parse the document with
    `mdast-util-from-markdown` (the parser lore already ships; *amended
-   (LORE-22)* — not `unified().use(remarkParse)`, and **no GFM/table
+   (LCLI-22)* — not `unified().use(remarkParse)`, and **no GFM/table
    extension** is needed, since only the two comment nodes are read and the
    bytes between them are replaced wholesale). Walk the mdast for two `html`
    nodes whose values match the canonical `lore:tasks:begin` /
@@ -108,7 +108,7 @@ Concretely:
    corrupted block.
 
 3. **Build the new content as a frozen string, then splice it in.** *Amended
-   (LORE-22).* lore deliberately ships **no markdown serializer** — its only
+   (LCLI-22).* lore deliberately ships **no markdown serializer** — its only
    markdown dependency is `mdast-util-from-markdown` (a parser); there is no
    `remark-stringify`/`mdast-util-to-markdown` (ADR-0001 packaging constraint), and
    re-emitting the whole document would reflow the author's untouched prose (item 7
@@ -145,7 +145,7 @@ Concretely:
 
 6. **Byte-identical on no change.** Because location is structural, ordering is
    defined, links come from canonical JSON paths, and the block is emitted from
-   a frozen-format string (*amended (LORE-22)* — the byte-stability rests on the
+   a frozen-format string (*amended (LCLI-22)* — the byte-stability rests on the
    fixed string format, not a serializer config), a regenerate over an
    already-current block reproduces the exact same bytes. lore can therefore
    compare new-vs-old and treat "no byte difference" as a genuine no-op: `lore
@@ -180,7 +180,7 @@ data is fetched.
   pure byte comparison, with exit code 6, and no false positives.
 - **Robust against pathological markdown.** Sentinels inside code fences,
   blockquotes, or nested lists are not confused for markers, because location is
-  structural (a top-level `html` node), not a text scan. *Amended (LORE-22):*
+  structural (a top-level `html` node), not a text scan. *Amended (LCLI-22):*
   line-ending normalization is **not** part of this engine — input is expected
   LF-normalized (every lore read path guarantees it via `concept.ts`
   `normalizeInput`), and the frozen string format fixes blank-line and
@@ -198,7 +198,7 @@ data is fetched.
 
 ### Negative / tradeoffs
 
-- **Format coupling.** *Amended (LORE-22).* With no serializer, byte-stability
+- **Format coupling.** *Amended (LCLI-22).* With no serializer, byte-stability
   depends on the frozen table-string format in `managed-block.ts` and on the
   parser (`mdast-util-from-markdown`) assigning stable marker offsets — a much
   smaller surface than a `remark-stringify` config. A deliberate change to the

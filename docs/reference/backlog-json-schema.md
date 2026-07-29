@@ -29,7 +29,7 @@ only.
 > [PR #790](https://github.com/MrLesk/Backlog.md/pull/790), "BACK-545 - Add
 > stable JSON output to read commands", merged 2026-07-16 to `MrLesk/Backlog.md`
 > `main` at commit `22a091b570d44c4f302ca47e7fd36fa28ad8bcb0` — and `lore`
-> adopted that contract (LORE-5) rather than upstreaming an earlier,
+> adopted that contract (LCLI-5) rather than upstreaming an earlier,
 > differently-shaped fork of its own (`jeremy-newhouse/Backlog.md`; see
 > [§8](#8-migration-history-complete) for that history). As of this writing
 > PR #790 is merged but **not yet in a tagged release** (the latest tag,
@@ -90,7 +90,7 @@ about Backlog.md's in-memory model; getting them wrong silently corrupts the
 coupling.
 
 - **`id` is display-cased.** Backlog.md exposes the *display* identity
-  (`"LORE-33"`, uppercase prefix), which differs from the lowercase on-disk
+  (`"LCLI-33"`, uppercase prefix), which differs from the lowercase on-disk
   filename (`lore-33 - Title.md`). **Never reconstruct a filename from `id`** —
   prefix casing and zero-padding are configurable. Use `path` (task-view only;
   §3, §6) for the on-disk location and `id` for identity/links.
@@ -137,7 +137,7 @@ bare `task <id> --json` shortcut). This is the richest shape; the
   "schemaVersion": 1,
   "kind": "task-view",
   "task": {
-    "id": "LORE-33",                  // display-cased identity; do NOT derive filename
+    "id": "LCLI-33",                  // display-cased identity; do NOT derive filename
     "title": "lore query (full-text + frontmatter filters)",
     "status": "Done",                 // raw configured status, NO icon
     "type": null,                     // semantic task type (config `types:`), or null
@@ -154,7 +154,7 @@ bare `task <id> --json` shortcut). This is the richest shape; the
 
     "path": "backlog/tasks/lore-33 - lore-query-full-text-frontmatter-filters.md", // project-relative; null on a not-yet-written task
     "description": "In-memory full-text (BM25-style) + frontmatter-field filters…",
-    "dependencies": ["LORE-16"],       // array of display-cased ids
+    "dependencies": ["LCLI-16"],       // array of display-cased ids
     "references": [],                  // array of free-form refs
     "documentation": ["docs/adr/0015-lightweight-retrieval-no-vectors.md"], // array
     "modifiedFiles": [],               // array
@@ -250,7 +250,7 @@ reconcile status without a `view` per task. It carries **no path at all**
   "kind": "task-list",
   "tasks": [
     {
-      "id": "LORE-1",
+      "id": "LCLI-1",
       "title": "Fork Backlog.md and create the --json tracking task",
       "status": "Done",         // raw, no icon
       "type": null,             // or a config `types:` label
@@ -349,7 +349,7 @@ silently produce wrong results.
 
 ### `id` case ≠ filename case
 
-`id` is `LORE-33` (display, uppercase prefix); the file is
+`id` is `LCLI-33` (display, uppercase prefix); the file is
 `lore-33 - Title.md` (lowercase). Prefix casing and zero-padding are
 configurable (`zeroPaddedIds`), so **reconstructing a filename from `id` is
 unsafe**. Use `path` (task-view only) for the on-disk path and keep `id` only as
@@ -433,7 +433,7 @@ relies on it.
 
 ## 8. Migration history (complete)
 
-`lore`'s adapter originally shipped (LORE-2/4/21) against a **different, earlier
+`lore`'s adapter originally shipped (LCLI-2/4/21) against a **different, earlier
 contract**: a fork of Backlog.md (`jeremy-newhouse/Backlog.md`) that this
 project patched in to add `--json` before any independent upstream
 implementation existed. That fork's shape — a uniform
@@ -449,13 +449,13 @@ When MrLesk's team shipped their own, independent `--json` implementation
 ([PR #790](https://github.com/MrLesk/Backlog.md/pull/790), merged 2026-07-16,
 closing [issue #784](https://github.com/MrLesk/Backlog.md/issues/784) before
 this project's own upstream PR was opened), `lore` adopted that contract
-instead of upstreaming its fork (LORE-5) — a genuine contract migration, not a
+instead of upstreaming its fork (LCLI-5) — a genuine contract migration, not a
 version-floor bump, split across two tasks:
 
-- **LORE-53** — migrated the capability probe (`probeBacklog`) alone, so a
+- **LCLI-53** — migrated the capability probe (`probeBacklog`) alone, so a
   `--json`-incapable binary is refused against upstream's real envelope shape
   even before the rest of the adapter caught up.
-- **LORE-54** — migrated the full read adapter (`EnvelopeSchema`,
+- **LCLI-54** — migrated the full read adapter (`EnvelopeSchema`,
   `parseEnvelope`, `listTasks`/`viewTask`/`searchTasks`, and the golden
   fixtures under `test/fixtures/backlog-json/`) onto the same contract, and
   rewrote §1–§7 above to describe it as current. `viewTask`'s missing-task

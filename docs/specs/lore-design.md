@@ -4,7 +4,7 @@ type: Spec
 title: lore implementation design
 description: The implementation design for lore — module responsibilities and boundaries, command sequence flows, the error/exit-code model, the idempotency strategy, git-native versioning, the output-mode layer, and the testing strategy — elaborating the product spec into a buildable plan.
 tags: [design, spec, core, commands, idempotency, testing, exit-codes]
-summary: "How lore is built: a deterministic core/ library returning structured objects, thin commands over it, byte-stable serialization, git-native versioning, and a layered output/error model — with the testing strategy that locks it all down."
+summary: "Describes lore's deterministic core, thin commands, stable serialization, Git-native versioning, output model, and testing strategy."
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -217,7 +217,7 @@ The new concept is **not** committed automatically — it is yours to edit
 `summary` is warned about, not blocked.
 
 The built-in `Story` template also ships an empty
-`<!-- lore:tasks:begin -->…<!-- lore:tasks:end -->` managed block (LORE-59), so
+`<!-- lore:tasks:begin -->…<!-- lore:tasks:end -->` managed block (LCLI-59), so
 a fresh Story is immediately `lore sync`-able once linked, with no
 hand-authored markup.
 

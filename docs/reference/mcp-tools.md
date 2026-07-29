@@ -4,7 +4,7 @@ type: Reference
 title: "MCP tools and resources (DEFERRED v2 design)"
 description: The pre-specified design for lore's deferred Model Context Protocol server — the tools (lore_new_concept, lore_link_tasks, lore_story_status, lore_sync, lore_check, lore_graph, lore_query, lore_context, lore_publish) and resources (lore://bundle/index, lore://concept/{id}, lore://graph, lore://context/{id}) mapping to the same core functions the CLI drives, over stdio, with structuredContent reusing the --json serializer and strict stdout hygiene. Documents why MCP is secondary to the CLI and deferred per ADR-0004.
 tags: [reference, mcp, deferred, agents, transport, v2, stdio, claude-code]
-summary: The deferred-v2 MCP server design — tools and resources that wrap the same core functions the CLI drives, over stdio, returning structuredContent from the --json serializer; secondary to the CLI-primary surface per ADR-0004.
+summary: Records the deferred local MCP design that would wrap lore core functions while keeping the CLI as the primary surface.
 timestamp: 2026-06-21T00:00:00Z
 ---
 

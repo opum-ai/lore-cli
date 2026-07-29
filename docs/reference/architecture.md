@@ -122,7 +122,7 @@ fallback** — that omission is deliberate
 ([ADR-0002](../adr/0002-backlog-integration-json-only.md)).
 
 > **The sketch below is illustrative, not authoritative — it predates the
-> LORE-54 migration and does not track the current adapter.** It omits
+> LCLI-54 migration and does not track the current adapter.** It omits
 > `labels` from `listTasks`'s filter options and the `searchTasks` capability
 > entirely, and gives `BacklogTask` a `file` field the real `task list`/
 > `search` JSON summaries do not carry (see

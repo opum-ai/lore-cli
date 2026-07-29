@@ -1,26 +1,26 @@
-# Handover — LORE-47 fully landed; pick the next task (no work in flight)
+# Handover — LCLI-47 fully landed; pick the next task (no work in flight)
 
-**Date**: 2026-06-26 | **Grounded against**: `dev`=`ad8c5fe` (==origin/dev, clean tree, on `dev`, no open PRs) | **Backlog**: LORE-47 **Done**
+**Date**: 2026-06-26 | **Grounded against**: `dev`=`ad8c5fe` (==origin/dev, clean tree, on `dev`, no open PRs) | **Backlog**: LCLI-47 **Done**
 
 ## Paste-ready prompt for the next session
 
 ```
-LORE-47 (GitAdapter seam + git-history log.md + resource stamping) is FULLY LANDED: squash-merged
+LCLI-47 (GitAdapter seam + git-history log.md + resource stamping) is FULLY LANDED: squash-merged
 via PR #18 (feat 8249d9e), post-merge chore 3f5423a, CHANGELOG refinement ad8c5fe. dev = ad8c5fe
 == origin/dev, clean tree, you are ON dev, NO open PRs, nothing uncommitted. All 13 /code-review
-max findings were fixed on-branch before merge (recorded in LORE-47 notes) — NONE were deferred.
+max findings were fixed on-branch before merge (recorded in LCLI-47 notes) — NONE were deferred.
 
 There is NO work in flight. The only open thing is choosing the next task. Per CLAUDE.md, FIRST run
 `backlog instructions overview`, then `backlog task list --plain`.
 
 Locked facts to trust (don't re-derive):
 - The real git-shelling GitAdapter + `lore sync` wiring that materializes log.md is ALREADY a task:
-  LORE-26 "lore sync" (HIGH, To Do). Do NOT create a new "sync follow-up" — the log.ts review
-  findings were fixed in #18, not deferred, so LORE-26 is just the command-layer adapter now.
-- The prior handover flagged LORE-20 "lore schema export" (MEDIUM) as the next candidate, but the
-  HIGH set is unstarted: two tracks — the Backlog-fork --json track (LORE-1/2/3/4/5 → 21) and the
-  core-commands track (LORE-26 sync / LORE-27 check / LORE-28 links / LORE-22 managed-block /
-  LORE-23 reconcile / LORE-24 link / LORE-29 index+log gen / LORE-30 link lint). Ask Jeremy which
+  LCLI-26 "lore sync" (HIGH, To Do). Do NOT create a new "sync follow-up" — the log.ts review
+  findings were fixed in #18, not deferred, so LCLI-26 is just the command-layer adapter now.
+- The prior handover flagged LCLI-20 "lore schema export" (MEDIUM) as the next candidate, but the
+  HIGH set is unstarted: two tracks — the Backlog-fork --json track (LCLI-1/2/3/4/5 → 21) and the
+  core-commands track (LCLI-26 sync / LCLI-27 check / LCLI-28 links / LCLI-22 managed-block /
+  LCLI-23 reconcile / LCLI-24 link / LCLI-29 index+log gen / LCLI-30 link lint). Ask Jeremy which
   track/task; don't assume.
 
 Per-task workflow: new feature branch off dev → implement → gates (bun test + `bunx biome check
@@ -33,18 +33,18 @@ carry forward; do not self-merge again unless he says so per-PR.
 
 | Item | Status |
 | --- | --- |
-| LORE-47 | **✔ Done** (merged via #18; squash `8249d9e`, chore `3f5423a`, CHANGELOG `ad8c5fe`) |
+| LCLI-47 | **✔ Done** (merged via #18; squash `8249d9e`, chore `3f5423a`, CHANGELOG `ad8c5fe`) |
 | `dev` | `ad8c5fe` == origin/dev; clean tree; checked out |
 | PR #18 / branch `feat/lore-47-gitadapter-resource` | merged + branch **deleted** (local + remote) |
 | Open PRs | **none** |
 | Handover `HANDOVER-2026-06-26-lore-47-pr-open.md` | consumed → `archive/handovers/HANDOVER-2026-06-26-lore-47-landed.md` |
 | Next task | **OPEN decision** — not chosen (Jeremy ran /handover instead of answering "next up?") |
-| LORE-26 "lore sync" | **To Do** (HIGH) — owns the real GitAdapter + log.md materialization |
-| LORE-20 "lore schema export" | **To Do** (MEDIUM) — prior handover's suggested next |
+| LCLI-26 "lore sync" | **To Do** (HIGH) — owns the real GitAdapter + log.md materialization |
+| LCLI-20 "lore schema export" | **To Do** (MEDIUM) — prior handover's suggested next |
 
 ## Next steps
 
-1. `backlog instructions overview`, then `backlog task list --plain`; ask Jeremy which task/track to start (HIGH core-commands vs Backlog-fork --json vs LORE-20). Don't assume.
+1. `backlog instructions overview`, then `backlog task list --plain`; ask Jeremy which task/track to start (HIGH core-commands vs Backlog-fork --json vs LCLI-20). Don't assume.
 2. On a pick: `backlog task view LORE-N --plain` → `backlog task edit LORE-N -s "In Progress" -a @claude` → new feature branch off dev → plan (`--plan`) → implement.
 3. Gates then PR into dev (see paste prompt). Let Jeremy review+merge.
 
@@ -64,15 +64,15 @@ carry forward; do not self-merge again unless he says so per-PR.
 
 ## Do not repeat
 
-- **Don't create a "lore sync follow-up" task** — it already exists as LORE-26; the log.ts findings
+- **Don't create a "lore sync follow-up" task** — it already exists as LCLI-26; the log.ts findings
   it would have carried were fixed in #18, not deferred.
 - **Don't bare `git push`/`git fetch`** while ssh is down — gh-token route from the first call.
 
 ## System of record updated (this session)
 
-- **LORE-47** notes → full disposition of the 13 `/code-review max` findings (each fix, file, test) +
+- **LCLI-47** notes → full disposition of the 13 `/code-review max` findings (each fix, file, test) +
   status set **Done**.
-- **CHANGELOG.md** (Unreleased / LORE-47) → per-type resource stamp guard, the index-file `resource`
+- **CHANGELOG.md** (Unreleased / LCLI-47) → per-type resource stamp guard, the index-file `resource`
   warning, and the new advisory `lore validate` resource-drift rule (commit `ad8c5fe`).
 - **Code** → PR #18 (squash `8249d9e`): per-type `acceptsStampedResource`, shared `expectedResource`,
   resource-base trim, index-aware reserved-key check, `resource` drift finding, log.ts determinism

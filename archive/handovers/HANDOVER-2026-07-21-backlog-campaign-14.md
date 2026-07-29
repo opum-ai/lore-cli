@@ -1,4 +1,4 @@
-# Handover — third backlog campaign, cursor at LORE-74 (LORE-69..87)
+# Handover — third backlog campaign, cursor at LCLI-74 (LCLI-69..87)
 
 **Date**: 2026-07-21 | **Grounded against**: `dev @ fb2db2f`, clean except `.repro-scratch/` and `docs/.obsidian/` (both pre-existing/unrelated, leave alone), 0 unpushed commits, 0 ahead/behind `origin/dev` | **Tracker**: doc-1
 
@@ -6,14 +6,14 @@
 
 ```
 Run /backlog-handover restore in /Volumes/external/repos/lore. Tracker: doc-1.
-Cursor: LORE-74 — lore orphans report has no output cap, contradicting the
+Cursor: LCLI-74 — lore orphans report has no output cap, contradicting the
 documented bounded-output-with-truncation contract (cli-contract.md §3).
 NOT security-labeled (labels: codex-review, api-design) — an API-contract
-consistency bug, second non-security task in a row after LORE-73. Queue
+consistency bug, second non-security task in a row after LCLI-73. Queue
 order confirmed by user on 2026-07-21 (independent fixes first, the
-LORE-78/79/80 rename-traversal cluster last); do not re-ask. Merge gate is
+LCLI-78/79/80 rename-traversal cluster last); do not re-ask. Merge gate is
 self-merge (skill default, user-confirmed 2026-07-19) — no PR-approval
-wait. 6-issue queue remaining after LORE-74 (LORE-75, 80, 79, 78, 81), all
+wait. 6-issue queue remaining after LCLI-74 (LCLI-75, 80, 79, 78, 81), all
 from a full-codebase Codex review (see backlog/docs/reviews/doc-2 for full
 context/repro detail on every issue, and doc-1's Cursor/Queue/Campaign-
 conventions sections for the rest).
@@ -23,25 +23,25 @@ conventions sections for the rest).
 
 | Item | Status |
 | --- | --- |
-| Tracker doc | doc-1, updated this session (Cursor → LORE-74, Queue = 6 items, LORE-73 moved to Resolved with its 3-round-fix/2-round-review evidence, four new campaign conventions recorded) |
+| Tracker doc | doc-1, updated this session (Cursor → LCLI-74, Queue = 6 items, LCLI-73 moved to Resolved with its 3-round-fix/2-round-review evidence, four new campaign conventions recorded) |
 | Review doc | doc-2, full Codex second-opinion review (201 confirmed findings, 25/25 clusters) — source of all queued tasks |
-| Queue | 6 tasks remaining (LORE-74, 75, 80, 79, 78, 81), all `To Do`, `bug`, `High` priority, each with AC + a `--ref` to doc-2 |
+| Queue | 6 tasks remaining (LCLI-74, 75, 80, 79, 78, 81), all `To Do`, `bug`, `High` priority, each with AC + a `--ref` to doc-2 |
 | Branch | `dev`, clean (0 unpushed after this session's final push) |
-| Leftover branches/PRs | none — `feature/LORE-73` fully merged (PR #77, rebase-merged, plus one metadata-only commit reconciled by direct cherry-pick onto `dev` after a `gh pr merge` local-checkout race — see Critical context) and pruned (local + remote) |
-| Not queued | LORE-42/43/44/45 (deferred) plus the same seven unfiled follow-up candidates as before (LORE-73 added no new one) |
+| Leftover branches/PRs | none — `feature/LCLI-73` fully merged (PR #77, rebase-merged, plus one metadata-only commit reconciled by direct cherry-pick onto `dev` after a `gh pr merge` local-checkout race — see Critical context) and pruned (local + remote) |
+| Not queued | LCLI-42/43/44/45 (deferred) plus the same seven unfiled follow-up candidates as before (LCLI-73 added no new one) |
 
 ## Next steps
 
-1. Run the per-issue lifecycle on **LORE-74** (`lore orphans` report has no
+1. Run the per-issue lifecycle on **LCLI-74** (`lore orphans` report has no
    output cap, contradicting the documented truncation contract): branch
-   `feature/LORE-74` off `dev`, read the task's AC, implement, verify,
+   `feature/LCLI-74` off `dev`, read the task's AC, implement, verify,
    review, PR, self-merge, prune. Grounded code pointers (verified this
    session, not just the filing task's own prose):
    - `src/commands/orphans.ts` — `computeOrphans` (line ~152) builds
      `orphanTasks`/`danglingLinks` as full, uncapped arrays; `runOrphans`
      (line ~121) emits the whole `OrphansReport` with no limit anywhere.
      `renderReport` (line ~262) renders every row of both sections via a
-     per-item loop (the LORE-51 fix already made this loop-based rather
+     per-item loop (the LCLI-51 fix already made this loop-based rather
      than spread-based, to dodge a `RangeError` on a huge array — but
      "doesn't crash on 700k rows" and "doesn't dump 700k rows" are
      different properties; only the first is currently true).
@@ -79,13 +79,13 @@ conventions sections for the rest).
      `context` expose their own `--limit` flags too (grep both) before
      deciding whether omitting one on `orphans` would be an inconsistency
      the review will flag.
-2. **AC2** — `test/orphans.test.ts:301-329`'s existing LORE-51 regression
+2. **AC2** — `test/orphans.test.ts:301-329`'s existing LCLI-51 regression
    test currently asserts the OPPOSITE of the new contract: it builds
    700,000 orphan tasks and asserts the header reads `700000 orphan
-   tasks` AND that both the lowest (`LORE-0`) and highest (`LORE-699999`)
+   tasks` AND that both the lowest (`LCLI-0`) and highest (`LCLI-699999`)
    id are rendered — i.e. it pins today's unbounded dump as correct
    behavior. This test needs updating, not just leaving alone: preserve
-   its actual point (a huge input must not crash — the original LORE-51
+   its actual point (a huge input must not crash — the original LCLI-51
    `RangeError` regression) while updating its assertions to match the
    new capped/truncated contract (total=700000, shown=<the new cap>,
    truncated=true, and the truncation footer line present). Confirm via
@@ -94,7 +94,7 @@ conventions sections for the rest).
    task this campaign.
 3. Update doc-1's Cursor/Queue/Resolved/Session-log sections on the
    feature branch before merging (per the skill's step 4), advancing the
-   cursor to **LORE-75** (`lore schema export --out` can irreversibly
+   cursor to **LCLI-75** (`lore schema export --out` can irreversibly
    delete unrelated files outside its own directory) — the next queue
    item; re-confirm against the tracker's own Queue table at restore time
    in case of drift.
@@ -105,7 +105,7 @@ conventions sections for the rest).
 
 ## Critical context / traps
 
-- **LORE-74 is NOT security-labeled** (`codex-review, api-design`) — an
+- **LCLI-74 is NOT security-labeled** (`codex-review, api-design`) — an
   API-contract consistency bug (documented behavior vs. actual behavior),
   not a vulnerability. Still run the full lifecycle (branch, implement,
   verify, independent review, PR, merge) with full rigor — an unbounded
@@ -113,7 +113,7 @@ conventions sections for the rest).
   agent context window on a large Backlog snapshot), just not a security
   one; match the reviewer's brief to a normal correctness/consistency
   review, not an adversarial "try to construct a bypass" one.
-- **LORE-73 (this session, previous cursor) needed THREE fix rounds and
+- **LCLI-73 (this session, previous cursor) needed THREE fix rounds and
   TWO independent review rounds** — the most review-intensive task this
   campaign. Round 1 (reusing `indexes.ts`'s literal `indexOf`-based
   `locateManagedBlock` for the new `lore:tasks` marker pair) passed a
@@ -128,15 +128,15 @@ conventions sections for the rest).
   against `dev`'s actual `docs/` tree (dry-run is safe) as a verification
   step, not just the task's own narrow repro or synthetic tests. This is
   now a standing convention (see doc-1's Campaign-conventions section,
-  the four new 2026-07-21/LORE-73 entries) — apply it to LORE-74 too if
+  the four new 2026-07-21/LCLI-73 entries) — apply it to LCLI-74 too if
   the fix touches how `orphans` walks/reports over bundle-wide data,
   though the risk profile here is different (a cap, not a matcher).
-- Also newly recorded from LORE-73: don't assert "lint is clean"/"tests
+- Also newly recorded from LCLI-73: don't assert "lint is clean"/"tests
   are green" in task notes from memory — capture the actual exit code
   immediately before writing the claim. A follow-up review caught a real
   CI-blocking lint error the round-2 notes had incorrectly claimed was
   clean.
-- Also newly recorded from LORE-73: a `gh pr merge --rebase` can succeed
+- Also newly recorded from LCLI-73: a `gh pr merge --rebase` can succeed
   on GitHub's side while its own local git-checkout cleanup step still
   errors (e.g. an uncommitted local file blocking the post-merge branch
   switch). If this happens: check `gh pr view <n> --json state,mergedAt`
@@ -151,7 +151,7 @@ conventions sections for the rest).
   session (a task-notes-update commit ended up needing a direct
   cherry-pick onto `dev`, `0e30f2b`).
 - **`.repro-scratch/` keeps accumulating scratch files from every
-  review** (now also from LORE-73's two review rounds, including a
+  review** (now also from LCLI-73's two review rounds, including a
   scratch `lore init`+`lore new story` bundle at
   `.repro-scratch/lore73-e2e/`) — all harmless, untracked, outside any
   diff. Per this campaign's standing rule, do NOT delete
@@ -180,10 +180,10 @@ conventions sections for the rest).
 - Don't delete `.repro-scratch/` without being asked again.
 - Don't trust a synthetic test suite alone as proof a bundle-wide command
   fix is correct — run the real CLI against this repo's own `docs/` tree
-  too (LORE-73's round-1→round-2 lesson, the costliest miss this
+  too (LCLI-73's round-1→round-2 lesson, the costliest miss this
   campaign).
 - Don't assert "lint clean"/"tests green" in task notes without the
-  actual command's exit code in hand (LORE-73 round 2's own notes got
+  actual command's exit code in hand (LCLI-73 round 2's own notes got
   this wrong).
 - Don't assume a "non-security" (api-design/correctness) label means
   lighter verification is fine — an unbounded report is a real

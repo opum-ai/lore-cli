@@ -1,32 +1,32 @@
-# Handover — LORE-16 (`src/core/bundle.ts`) delivered as PR #13, awaiting review/merge
+# Handover — LCLI-16 (`src/core/bundle.ts`) delivered as PR #13, awaiting review/merge
 
-**Date**: 2026-06-25 | **Grounded against**: `feat/lore-16-bundle`=`dc2dda5` (pushed, == origin); `dev`=`8970ca2` (== origin/dev, has the archived kickoff handover) | **Backlog**: LORE-16 In Progress (both ACs checked, delivered via #13) | **PR #13**: OPEN, `mergeable: CLEAN`, CI green ×3 OS
+**Date**: 2026-06-25 | **Grounded against**: `feat/lore-16-bundle`=`dc2dda5` (pushed, == origin); `dev`=`8970ca2` (== origin/dev, has the archived kickoff handover) | **Backlog**: LCLI-16 In Progress (both ACs checked, delivered via #13) | **PR #13**: OPEN, `mergeable: CLEAN`, CI green ×3 OS
 
 ## Paste-ready prompt for the next session
 
 ```
-Continue building lore (OKF-native docs CLI, Bun+TS). LORE-16 (src/core/bundle.ts — the
+Continue building lore (OKF-native docs CLI, Bun+TS). LCLI-16 (src/core/bundle.ts — the
 bundle graph layer) is DONE and delivered as PR #13 into dev (CI green: lint·typecheck·test
 on ubuntu/macos/windows + compile smoke; mergeable). Branch feat/lore-16-bundle @ 52b5fad.
 
 FIRST: check if Jeremy merged #13.
   gh pr view 13 --json state,mergedAt,mergeCommit
 - If MERGED: 
-    1) backlog task edit LORE-16 -s Done
+    1) backlog task edit LCLI-16 -s Done
     2) git checkout dev && git -c credential.helper='!gh auth git-credential' fetch https://github.com/jeremy-newhouse/lore.git dev && git reset --hard <merge-sha> (or pull)
        (ssh-agent is DOWN — use the gh-token HTTPS route for every fetch/push; see traps)
     3) git update-ref refs/remotes/origin/dev <merge-sha>
     4) git branch -D feat/lore-16-bundle ; delete remote branch via gh
-    5) Archive this handover: mkdir -p archive/handovers && mv .claude/handovers/HANDOVER-2026-06-25-lore-16-pr-open.md archive/handovers/ ; commit on dev "docs: archive consumed handover lore-16-pr-open (PR #13 merged, LORE-16 Done)"
+    5) Archive this handover: mkdir -p archive/handovers && mv .claude/handovers/HANDOVER-2026-06-25-lore-16-pr-open.md archive/handovers/ ; commit on dev "docs: archive consumed handover lore-16-pr-open (PR #13 merged, LCLI-16 Done)"
 - If still OPEN with review comments: address them on feat/lore-16-bundle, push via gh-token route, re-check CI.
 
-THEN START LORE-17 (`lore init`): backlog task view LORE-17 --plain. Deps 15+16 satisfied.
+THEN START LCLI-17 (`lore init`): backlog task view LCLI-17 --plain. Deps 15+16 satisfied.
   - lore init scaffolds .lore/{config.toml, schemas/*.schema.json, templates/<type>.md, cache/}
     and writes a minimal docs/index.md carrying okf_version: "0.1" (the ONLY file with that key).
-  - LORE-17 ALSO owns the two deferred-from-LORE-15 items: emit Zod→JSON-Schema files
+  - LCLI-17 ALSO owns the two deferred-from-LCLI-15 items: emit Zod→JSON-Schema files
     (z.toJSONSchema per known type) + the above-fence editor modeline (# yaml-language-server: …).
-  - bundle.ts's generateIndexes() was DEFERRED from LORE-16 (graph-only scope, Jeremy's call) —
-    LORE-17/M2 is where the byte-stable index/log format gets pinned against a real consumer.
+  - bundle.ts's generateIndexes() was DEFERRED from LCLI-16 (graph-only scope, Jeremy's call) —
+    LCLI-17/M2 is where the byte-stable index/log format gets pinned against a real consumer.
   - READ FIRST: docs/specs/lore-design.md §3.1 (init flow), docs/adr/0006 (schema/types/templates),
     docs/adr/0013 (.lore/ state dir), okf-conformance (reserved index.md / okf_version discipline).
 
@@ -50,17 +50,17 @@ Backlog via CLI only (never hand-edit backlog/**).
 
 | Item | Status |
 | --- | --- |
-| PR #13 (LORE-16) | **OPEN** into dev, **CI green** (lint·typecheck·test on ubuntu/macos/windows + compile smoke), `mergeStateStatus: CLEAN`. Awaiting Jeremy's review/merge |
+| PR #13 (LCLI-16) | **OPEN** into dev, **CI green** (lint·typecheck·test on ubuntu/macos/windows + compile smoke), `mergeStateStatus: CLEAN`. Awaiting Jeremy's review/merge |
 | `feat/lore-16-bundle` | `dc2dda5` (pushed, == origin). Commits: `0bf2c59` feat(bundle.ts) + `52b5fad` fix(@types/mdast direct devDep) + `dc2dda5` chore(task notes) |
-| LORE-16 | In Progress; both ACs checked; delivered via #13. Flip to Done **after** merge |
+| LCLI-16 | In Progress; both ACs checked; delivered via #13. Flip to Done **after** merge |
 | `dev` | `8970ca2` (== origin/dev) — advanced one commit this session: archived the consumed lore-16-kickoff handover (`docs:` housekeeping, not part of #13) |
-| LORE-17 (`lore init`) | To Do — next; deps 15+16 satisfied; also lands the 2 LORE-15 deferrals (JSON-Schema emit + modeline) |
-| `generateIndexes()` | Deferred from LORE-16 (graph-only); belongs with LORE-17/M2 |
+| LCLI-17 (`lore init`) | To Do — next; deps 15+16 satisfied; also lands the 2 LCLI-15 deferrals (JSON-Schema emit + modeline) |
+| `generateIndexes()` | Deferred from LCLI-16 (graph-only); belongs with LCLI-17/M2 |
 
 ## Next steps
 
 1. Check `gh pr view 13` — if merged, finalize (Done + branch cleanup + archive this handover); if review comments, address on the branch.
-2. Start **LORE-17** (`lore init`) per the paste-ready prompt.
+2. Start **LCLI-17** (`lore init`) per the paste-ready prompt.
 
 ## Critical context / traps
 
@@ -80,6 +80,6 @@ Backlog via CLI only (never hand-edit backlog/**).
 
 ## System of record updated (this session)
 
-- **LORE-16** → both ACs checked; plan + 4 rounds of review notes + PR #13 link recorded (Backlog CLI). Status In Progress (Done after merge).
+- **LCLI-16** → both ACs checked; plan + 4 rounds of review notes + PR #13 link recorded (Backlog CLI). Status In Progress (Done after merge).
 - **dev docs**: fixed invalid-YAML frontmatter in `docs/adr/0009` + `docs/specs/lore-design` (unquoted colon-space) — shipped inside PR #13.
 - **Auto-memory updated**: appended the @types/mdast isolated-linker trap (declare every bare import as a *direct* dep; transitive `@types` fails `TS2307` only under CI's `--linker=isolated`, unreproducible locally on `/Volumes/external`) to [[external-volume-bun-exdev-traps]] + its MEMORY.md index hook. [[lore-serialization-invariants]], [[lore-git-workflow]] still accurate.

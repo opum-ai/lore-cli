@@ -1,4 +1,4 @@
-# Handover — third backlog campaign, cursor at LORE-83 (LORE-69..87)
+# Handover — third backlog campaign, cursor at LCLI-83 (LCLI-69..87)
 
 **Date**: 2026-07-21 | **Grounded against**: `dev @ 8a11f2f`, clean except `.repro-scratch/` and `docs/.obsidian/` (both pre-existing/unrelated, leave alone), 0 unpushed commits (about to be pushed by this same restore session) | **Tracker**: doc-1
 
@@ -6,9 +6,9 @@
 
 ```
 Run /backlog-handover restore in /Volumes/external/repos/lore. Tracker: doc-1.
-Cursor: LORE-83 — profile.toml field/type declarations silently ignore
+Cursor: LCLI-83 — profile.toml field/type declarations silently ignore
 unknown or misspelled attribute keys. Queue order confirmed by user on
-2026-07-21 (independent fixes first, the LORE-78/79/80 rename-traversal
+2026-07-21 (independent fixes first, the LCLI-78/79/80 rename-traversal
 cluster last); do not re-ask. Merge gate is self-merge (skill default,
 user-confirmed 2026-07-19) — no PR-approval wait. 16-issue queue remaining,
 all from a full-codebase Codex review (see backlog/docs/reviews/doc-2 for
@@ -20,18 +20,18 @@ conventions sections for the rest).
 
 | Item | Status |
 | --- | --- |
-| Tracker doc | doc-1, updated this session (Cursor → LORE-83, Queue = 16 items, LORE-87 moved to Resolved, one new convention recorded) |
+| Tracker doc | doc-1, updated this session (Cursor → LCLI-83, Queue = 16 items, LCLI-87 moved to Resolved, one new convention recorded) |
 | Review doc | doc-2, full Codex second-opinion review (201 confirmed findings, 25/25 clusters) — source of all queued tasks |
-| Queue | 16 tasks remaining (LORE-83, 84, 82, 85, 69, 72, 71, 76, 77, 73, 74, 75, 80, 79, 78, 81), all `To Do`, `bug`, `High` priority, each with AC + a `--ref` to doc-2 |
+| Queue | 16 tasks remaining (LCLI-83, 84, 82, 85, 69, 72, 71, 76, 77, 73, 74, 75, 80, 79, 78, 81), all `To Do`, `bug`, `High` priority, each with AC + a `--ref` to doc-2 |
 | Branch | `dev`, clean (0 unpushed after this session's final push) |
-| Leftover branches/PRs | none — `feature/LORE-87` fully merged (PR #67, rebase-merged, commit `9ef143f`) and pruned (local + remote) |
-| Not queued | LORE-42/43/44/45 — unchanged, deferred by recorded product decision |
+| Leftover branches/PRs | none — `feature/LCLI-87` fully merged (PR #67, rebase-merged, commit `9ef143f`) and pruned (local + remote) |
+| Not queued | LCLI-42/43/44/45 — unchanged, deferred by recorded product decision |
 
 ## Next steps
 
-1. Run the per-issue lifecycle on **LORE-83** (`profile.toml field/type
+1. Run the per-issue lifecycle on **LCLI-83** (`profile.toml field/type
    declarations silently ignore unknown or misspelled attribute keys`):
-   branch `feature/LORE-83` off `dev`, read the task's AC, implement, verify,
+   branch `feature/LCLI-83` off `dev`, read the task's AC, implement, verify,
    review, PR, self-merge, prune. Root area: `src/core/profile.ts` —
    `parseFieldSpec` (line ~435), `parseTypes` (line ~347), and `parseItems`
    (line ~473) each read known attribute keys by name with no unknown-key
@@ -44,19 +44,19 @@ conventions sections for the rest).
    Codex-review-sourced, not infallible).
 2. Update doc-1's Cursor/Queue/Resolved/Session-log sections on the feature
    branch before merging (per the skill's step 4), advancing the cursor to
-   **LORE-84** (item #2 of the remaining queue).
+   **LCLI-84** (item #2 of the remaining queue).
 3. Archive this handover to `archive/handovers/` and write the next one for
-   LORE-84. Note: today's date (`2026-07-21`) already has THREE prior
+   LCLI-84. Note: today's date (`2026-07-21`) already has THREE prior
    archived handovers (base, `-2`, `-3`) — this session's own archival will
    need suffix `-4`.
 
 ## Critical context / traps
 
 - **Three queued issues are one gap at three layers** (see doc-1's Campaign
-  conventions): LORE-78 (arg-parsing), LORE-79 (rename command), LORE-80
+  conventions): LCLI-78 (arg-parsing), LCLI-79 (rename command), LCLI-80
   (shared `rewriteInbound` engine) all describe `lore rename`'s destination
   path never being confined to `docs/`. They're queued last (now #14-16 of
-  the remaining queue) intentionally — LORE-80 last of the three so its
+  the remaining queue) intentionally — LCLI-80 last of the three so its
   containment fix is available before/while working the other two. Read all
   three task descriptions before starting any one.
 - **`docs/.obsidian/` and `.repro-scratch/` are known, intentional
@@ -74,11 +74,11 @@ conventions sections for the rest).
   explicit exception to this repo's general "don't self-merge, user reviews
   PRs" convention — the exception applies ONLY inside this campaign's
   one-issue-per-session lifecycle, not to ad-hoc feature work outside it.
-- **LORE-69..87 come from `doc-2`, not a filing task's own prose** — each
+- **LCLI-69..87 come from `doc-2`, not a filing task's own prose** — each
   task description is self-contained with a verified repro, but re-verify
   against current HEAD before implementing anyway (same discipline as every
   prior campaign task). This has genuinely mattered in past sessions (e.g.
-  LORE-61/68's filing hypotheses both turned out wrong on closer inspection).
+  LCLI-61/68's filing hypotheses both turned out wrong on closer inspection).
 - No `code-reviewer` subagent type is registered in this project — use
   `general-purpose` for the lifecycle's step-6 independent review. Every
   review so far this campaign has either found a real, fixable issue or done
@@ -87,7 +87,7 @@ conventions sections for the rest).
   it as a real second pass, not a formality. This session's review was
   clean (no findings) but only after probing edge cases and the sibling
   function independently, not by rubber-stamping.
-- **New convention from this session (LORE-87)**: in `src/core/rewrite.ts`,
+- **New convention from this session (LCLI-87)**: in `src/core/rewrite.ts`,
   a raw-source structural scan can only reuse a parsed mdast node's own
   `children` offsets when that node TYPE actually has children — a
   `definition` node doesn't (only decoded `identifier`/`label`/`url`/`title`
@@ -105,10 +105,10 @@ conventions sections for the rest).
 - Don't build a real-subprocess flush/truncation regression test around
   `Bun.spawnSync`'s own direct `stdout: "pipe"` capture — it produces a false
   negative (passes even against broken code) for that class of bug; see
-  `test/cli-exit-flush.test.ts` (LORE-70) for the correct pattern
+  `test/cli-exit-flush.test.ts` (LCLI-70) for the correct pattern
   (`sh -c "cmd | cat"`).
 - Don't assume every merged bugfix needs a CHANGELOG.md entry just because
-  older fixes (LORE-58/59/60) had one — check actual recent precedent first.
-  Neither LORE-68, LORE-70, nor LORE-86/87 (all merged in this same campaign
+  older fixes (LCLI-58/59/60) had one — check actual recent precedent first.
+  Neither LCLI-68, LCLI-70, nor LCLI-86/87 (all merged in this same campaign
   lineage) added one; the tracker doc, not CHANGELOG.md, is this campaign's
   record of truth.

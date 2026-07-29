@@ -275,7 +275,7 @@ These are degradations and a division of labor, not breakage:
    is officially experimental and disables JSX/import-export. This is acceptable —
    OKF bundles must avoid tool-specific MDX anyway — but it is not a frozen API.
    The `scaffold-docusaurus` CI job smoke-tests it with a real `docusaurus build`
-   against the live bundle on every push/PR (LORE-40), not just before release.
+   against the live bundle on every push/PR (LCLI-40), not just before release.
 
 4. **lore does not guarantee cross-renderer parity.** lore *detects*
    non-portable syntax (the portability lint warns) and generates portable links,

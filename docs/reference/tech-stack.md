@@ -69,7 +69,7 @@ full target matrix live in
 [ADR 0001](../adr/0001-runtime-build-distribution.md).
 
 **Compile-time caveat: `--outfile` must land on the same filesystem as the
-source tree (LORE-14).** `bun build --compile` writes the binary via a
+source tree (LCLI-14).** `bun build --compile` writes the binary via a
 temp-file-then-rename step; when the temp file and the final `--outfile` path
 sit on **different mounted filesystems** (e.g. compiling a checkout on one
 volume to an `--outfile` on another), the rename hits `EXDEV`
@@ -89,7 +89,7 @@ this), and assert the produced binary is non-empty **and** actually runs
 exit code alone — exactly the two checks the `compile smoke` job in `ci.yml`
 already makes. [`DEVELOPMENT.md`](../../DEVELOPMENT.md#local-environment-working-copies-on-an-external-volume)
 already documented this failure mode from the "cloned onto an external volume"
-angle; LORE-14 confirmed the precise trigger is **crossing any filesystem
+angle; LCLI-14 confirmed the precise trigger is **crossing any filesystem
 boundary** (not that volume specifically) and tightened both notes to match.
 
 **Native-module surface.** None of lore's v1 runtime dependencies
@@ -199,7 +199,7 @@ a stringify round-trip risks reflowing or reformatting the author's untouched
 prose (width-wrapping, list-marker normalization, escaping differences), which
 would break the "unchanged input → byte-identical output" guarantee managed
 blocks and link rewrites depend on. See
-[ADR-0008](../adr/0008-managed-block-remark-ast.md) (the LORE-22 amendment
+[ADR-0008](../adr/0008-managed-block-remark-ast.md) (the LCLI-22 amendment
 records this shift from an originally-planned `unified().use(remarkParse)`
 pipeline to the leaner parser-only shape) and
 [ADR-0011](../adr/0011-frontmatter-serialization-stability.md) for the
@@ -379,7 +379,7 @@ This mirrors Backlog.md's own distribution shape and lets the same codebase be
 consumed three ways: `npx`/`bunx` for ad-hoc use, an installed `lore` binary for
 day-to-day, and a pinned binary release for CI.
 
-**Status (LORE-9).** The build/package mechanics — the per-platform compile
+**Status (LCLI-9).** The build/package mechanics — the per-platform compile
 matrix, `bin/lore.cjs`, the five `npm/<platform>/` package templates, and a
 `workflow_dispatch`-only pipeline (`.github/workflows/release.yml`) that
 proves the `npx` resolution chain end-to-end — are implemented and verified
@@ -389,7 +389,7 @@ had a first real GitHub Actions run** — `workflow_dispatch` requires the file
 to exist on the default branch before it can be triggered, so this could only
 happen post-merge; a maintainer should trigger it once and confirm green
 before relying on it for an actual release. The `npm publish` step is now
-implemented (LORE-255) as a `publish` job gated on an explicit `publish: true`
+implemented (LCLI-255) as a `publish` job gated on an explicit `publish: true`
 `workflow_dispatch` input, with job-scoped `id-token: write` and OIDC trusted
 publishing; it still requires the one-time npm Trusted Publisher configuration
 for all six packages before it can succeed — see

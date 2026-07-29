@@ -1,25 +1,25 @@
-# Handover — LORE-47 PR #18 open + `/code-review max` produced 13 findings awaiting Jeremy's disposition
+# Handover — LCLI-47 PR #18 open + `/code-review max` produced 13 findings awaiting Jeremy's disposition
 
-**Date**: 2026-06-26 | **Grounded against**: branch `feat/lore-47-gitadapter-resource`=`a9177cc` (==origin, clean tree, nothing unpushed); `dev`=`987e0df` (==origin/dev, unmoved) | **Backlog**: LORE-47 **In Progress** (Done on merge)
+**Date**: 2026-06-26 | **Grounded against**: branch `feat/lore-47-gitadapter-resource`=`a9177cc` (==origin, clean tree, nothing unpushed); `dev`=`987e0df` (==origin/dev, unmoved) | **Backlog**: LCLI-47 **In Progress** (Done on merge)
 
 ## Paste-ready prompt for the next session
 
 ```
-LORE-47 (GitAdapter seam + git-history log.md + resource stamping) is delivered as OPEN PR #18
+LCLI-47 (GitAdapter seam + git-history log.md + resource stamping) is delivered as OPEN PR #18
 into dev (https://github.com/jeremy-newhouse/lore/pull/18), branch feat/lore-47-gitadapter-resource
 = a9177cc, fully pushed, clean tree, MERGEABLE, 4/4 CI green, NO review from Jeremy yet. dev is
-UNCHANGED at 987e0df. LORE-47 is In Progress (Jeremy reviews+merges himself; don't self-merge unless
+UNCHANGED at 987e0df. LCLI-47 is In Progress (Jeremy reviews+merges himself; don't self-merge unless
 he says "admin-merge"/"merge").
 
 THIS SESSION ran `/code-review max` on PR #18: 13 verified findings (8 correctness, 5 cleanup),
-FULLY RECORDED in LORE-47 task notes (`backlog task view LORE-47 --plain`). NONE were applied —
+FULLY RECORDED in LCLI-47 task notes (`backlog task view LCLI-47 --plain`). NONE were applied —
 I asked Jeremy how to dispose (fix-on-branch / inline PR comments / defer log.ts ones to the
 follow-up task) and he ran /handover instead of answering. So DISPOSITION IS STILL OPEN — that
 is the first thing to resolve.
 
 Per CLAUDE.md, FIRST run `backlog instructions overview`.
 
-PRIMARY next action — ask Jeremy how to dispose of the 13 review findings (read them from LORE-47
+PRIMARY next action — ask Jeremy how to dispose of the 13 review findings (read them from LCLI-47
 notes; summary below). The two worst are real blockers; the log.ts ones are latent until `lore
 sync` is wired:
   • Worst two (BOTH in stampResource, template.ts:214/218): the `canonicalKeyOrder.includes("resource")`
@@ -42,7 +42,7 @@ If Jeremy says FIX ON BRANCH: edit on feat/lore-47-gitadapter-resource, gates (b
 required-`resource` profile. If POST COMMENTS: `gh pr comment`/inline review via gh api. If DEFER:
 ensure the log.ts findings land in the deferred `lore sync` follow-up task when it's created.
 
-If instead Jeremy has by now MERGED PR #18: (a) `backlog task edit LORE-47 -s Done`; (b) ff local
+If instead Jeremy has by now MERGED PR #18: (a) `backlog task edit LCLI-47 -s Done`; (b) ff local
 dev via the gh-token route; (c) write a fresh handover (this one supersedes); (d) CREATE the deferred
 `lore sync` follow-up task AND carry the log.ts findings (:174/:114/:191/:186/:185) into it; (e) pick
 next with Jeremy.
@@ -58,16 +58,16 @@ commits end with `Co-Authored-By: Claude Opus 4.8 (1M context)`.
 | PR #18 | **OPEN** into `dev`, MERGEABLE, 4/4 CI green, **no review from Jeremy yet** (0 comments) |
 | branch `feat/lore-47-gitadapter-resource` | `a9177cc` == origin; clean tree; nothing unpushed |
 | `dev` | `987e0df` == origin/dev — **unmoved** |
-| LORE-47 | **In Progress**; ACs #1–#5 checked; **13 `/code-review max` findings appended to notes this session** |
+| LCLI-47 | **In Progress**; ACs #1–#5 checked; **13 `/code-review max` findings appended to notes this session** |
 | `/code-review max` findings disposition | **OPEN** — not applied; Jeremy hasn't chosen fix/comment/defer |
 | deferred `lore sync` wiring | **not yet a task** — create on merge; carry log.ts findings into it |
-| LORE-20 | **To Do** (m-2) — `lore schema export` |
+| LCLI-20 | **To Do** (m-2) — `lore schema export` |
 
 ## Next steps
 
-1. `backlog instructions overview`, then ask Jeremy how to dispose of the 13 findings (in LORE-47 notes). Default recommendation: fix the two stampResource blockers (template.ts:214/218) on the branch now; defer the latent log.ts ones to the sync follow-up.
+1. `backlog instructions overview`, then ask Jeremy how to dispose of the 13 findings (in LCLI-47 notes). Default recommendation: fix the two stampResource blockers (template.ts:214/218) on the branch now; defer the latent log.ts ones to the sync follow-up.
 2. On a fix-on-branch decision: edit → gates → push via gh-token → keep #18 open; add own-type-guard + required-`resource` tests.
-3. On merge (if Jeremy merged first): LORE-47 → Done; ff dev (gh-token); fresh handover; create the deferred `lore sync` follow-up AND move the log.ts findings into it; pick next.
+3. On merge (if Jeremy merged first): LCLI-47 → Done; ff dev (gh-token); fresh handover; create the deferred `lore sync` follow-up AND move the log.ts findings into it; pick next.
 
 ## Critical context / traps
 
@@ -98,12 +98,12 @@ commits end with `Co-Authored-By: Claude Opus 4.8 (1M context)`.
 - **Don't self-merge** PR #18 unless Jeremy explicitly says "admin-merge"/"merge" ([[lore-git-workflow]]).
 - **Don't apply the 13 findings without Jeremy's disposition** — he was asked and hasn't chosen; some
   (e.g. the docs/ double-prefix, encodeURIComponent) are by-design/refuted-adjacent, not all are fixes.
-- **Don't re-run `/code-review max` on #18** — it's done; results are in LORE-47 notes (workflow wf_dbed19c0-3ff).
+- **Don't re-run `/code-review max` on #18** — it's done; results are in LCLI-47 notes (workflow wf_dbed19c0-3ff).
 - **Don't fix the stampResource guard by patching the global key list** — fix at the concept's own type.
 
 ## System of record updated (this session)
 
-- **LORE-47** notes → full `/code-review max` disposition appended: 13 findings (file:line, verdict,
+- **LCLI-47** notes → full `/code-review max` disposition appended: 13 findings (file:line, verdict,
   fix sketch) + the 6 refuted, marked NOT-applied / disposition-pending. This is the durable record;
   the handover only points at it.
 - No code changed, no commits, no Backlog status change. PR #18 untouched (still a9177cc).

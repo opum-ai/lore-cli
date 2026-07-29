@@ -1,4 +1,4 @@
-# Handover — third backlog campaign, cursor at LORE-85 (LORE-69..87)
+# Handover — third backlog campaign, cursor at LCLI-85 (LCLI-69..87)
 
 **Date**: 2026-07-21 | **Grounded against**: `dev @ 01b09e0`, clean except `.repro-scratch/` and `docs/.obsidian/` (both pre-existing/unrelated, leave alone), 0 unpushed commits (about to be pushed by this same restore session) | **Tracker**: doc-1
 
@@ -6,9 +6,9 @@
 
 ```
 Run /backlog-handover restore in /Volumes/external/repos/lore. Tracker: doc-1.
-Cursor: LORE-85 — Frontmatter YAML anchors can be crafted to exhaust memory
+Cursor: LCLI-85 — Frontmatter YAML anchors can be crafted to exhaust memory
 on serialize (anchor bomb, security-labeled). Queue order confirmed by user
-on 2026-07-21 (independent fixes first, the LORE-78/79/80 rename-traversal
+on 2026-07-21 (independent fixes first, the LCLI-78/79/80 rename-traversal
 cluster last); do not re-ask. Merge gate is self-merge (skill default,
 user-confirmed 2026-07-19) — no PR-approval wait. 13-issue queue remaining,
 all from a full-codebase Codex review (see backlog/docs/reviews/doc-2 for
@@ -20,18 +20,18 @@ conventions sections for the rest).
 
 | Item | Status |
 | --- | --- |
-| Tracker doc | doc-1, updated this session (Cursor → LORE-85, Queue = 13 items, LORE-82 moved to Resolved, two new campaign conventions recorded) |
+| Tracker doc | doc-1, updated this session (Cursor → LCLI-85, Queue = 13 items, LCLI-82 moved to Resolved, two new campaign conventions recorded) |
 | Review doc | doc-2, full Codex second-opinion review (201 confirmed findings, 25/25 clusters) — source of all queued tasks |
-| Queue | 13 tasks remaining (LORE-85, 69, 72, 71, 76, 77, 73, 74, 75, 80, 79, 78, 81), all `To Do`, `bug`, `High` priority, each with AC + a `--ref` to doc-2 |
+| Queue | 13 tasks remaining (LCLI-85, 69, 72, 71, 76, 77, 73, 74, 75, 80, 79, 78, 81), all `To Do`, `bug`, `High` priority, each with AC + a `--ref` to doc-2 |
 | Branch | `dev`, clean (0 unpushed after this session's final push) |
-| Leftover branches/PRs | none — `feature/LORE-82` fully merged (PR #70, rebase-merged) and pruned (local + remote). **Note on this session's own merge**: `gh pr merge` succeeded remotely on the first attempt, but the immediately-following local checkout step failed because an uncommitted `backlog task edit --append-notes` change was still on disk — the note commit ended up pushed to the feature branch AFTER GitHub had already merged the PR, orphaning it. Recovered by cherry-picking that one commit directly onto `dev` and pushing. Lesson: commit and push EVERY backlog CLI mutation before calling `gh pr merge`, not just before the review pass — a `backlog task edit` call issued between review and merge is easy to leave uncommitted. |
-| Not queued | LORE-42/43/44/45 (deferred) plus two unfiled follow-up candidates from LORE-84 (rewriteInbound's profile gap; lore check's separate validation path) |
+| Leftover branches/PRs | none — `feature/LCLI-82` fully merged (PR #70, rebase-merged) and pruned (local + remote). **Note on this session's own merge**: `gh pr merge` succeeded remotely on the first attempt, but the immediately-following local checkout step failed because an uncommitted `backlog task edit --append-notes` change was still on disk — the note commit ended up pushed to the feature branch AFTER GitHub had already merged the PR, orphaning it. Recovered by cherry-picking that one commit directly onto `dev` and pushing. Lesson: commit and push EVERY backlog CLI mutation before calling `gh pr merge`, not just before the review pass — a `backlog task edit` call issued between review and merge is easy to leave uncommitted. |
+| Not queued | LCLI-42/43/44/45 (deferred) plus two unfiled follow-up candidates from LCLI-84 (rewriteInbound's profile gap; lore check's separate validation path) |
 
 ## Next steps
 
-1. Run the per-issue lifecycle on **LORE-85** (`Frontmatter YAML anchors can
+1. Run the per-issue lifecycle on **LCLI-85** (`Frontmatter YAML anchors can
    be crafted to exhaust memory on serialize`, security-labeled): branch
-   `feature/LORE-85` off `dev`, read the task's AC, implement, verify,
+   `feature/LCLI-85` off `dev`, read the task's AC, implement, verify,
    review, PR, self-merge, prune. Root area: `src/core/concept.ts` —
    `YAML_LOAD_OPTIONS` (line ~124, `yaml.load(input, YAML_LOAD_OPTIONS)`)
    and `YAML_DUMP_OPTIONS` (line ~138, sets `noRefs: true` — meaning
@@ -57,9 +57,9 @@ conventions sections for the rest).
    the expensive expansion happens, not after.
 3. Update doc-1's Cursor/Queue/Resolved/Session-log sections on the feature
    branch before merging (per the skill's step 4), advancing the cursor to
-   **LORE-69** (item #2 of the remaining queue).
+   **LCLI-69** (item #2 of the remaining queue).
 4. Archive this handover to `archive/handovers/` and write the next one for
-   LORE-69. Note: today's date (`2026-07-21`) already has SIX prior
+   LCLI-69. Note: today's date (`2026-07-21`) already has SIX prior
    archived handovers (base, `-2` through `-6`) — this session's own
    archival will need suffix `-7`.
 
@@ -78,12 +78,12 @@ conventions sections for the rest).
   Prefer fixing at the shared root (`concept.ts`'s parse/serialize
   boundary) over patching every caller individually, unless research shows
   that's not where the bound actually needs to live.
-- **A gotcha this campaign learned the hard way (LORE-83, LORE-84)**: when
+- **A gotcha this campaign learned the hard way (LCLI-83, LCLI-84)**: when
   a fix needs to change a shared low-level primitive (here, YAML
   load/dump options or a new validation step in `concept.ts`), check EVERY
   caller/consumer for a pre-existing assumption the change might violate
-  before mechanically applying it everywhere — LORE-84's `sync.ts` had a
-  documented precedence contract; LORE-82's `WarningCollector` change had
+  before mechanically applying it everywhere — LCLI-84's `sync.ts` had a
+  documented precedence contract; LCLI-82's `WarningCollector` change had
   to preserve every existing `.add()` call site's behavior. Do the same
   discipline here.
 - **`docs/.obsidian/` and `.repro-scratch/` are known, intentional
@@ -113,9 +113,9 @@ conventions sections for the rest).
   that action once already, earlier in this campaign.
 - Don't build a real-subprocess flush/truncation regression test around
   `Bun.spawnSync`'s own direct `stdout: "pipe"` capture — see
-  `test/cli-exit-flush.test.ts` (LORE-70) for the correct pattern.
+  `test/cli-exit-flush.test.ts` (LCLI-70) for the correct pattern.
 - Don't assume every merged bugfix needs a CHANGELOG.md entry — check actual
-  recent precedent first (none of this campaign's LORE-68/70/82/83/84/86/87
+  recent precedent first (none of this campaign's LCLI-68/70/82/83/84/86/87
   added one; the tracker doc is this campaign's record of truth).
 - **New this session**: don't call `gh pr merge` while ANY backlog CLI
   mutation (`backlog task edit`, `backlog doc update`) from the review

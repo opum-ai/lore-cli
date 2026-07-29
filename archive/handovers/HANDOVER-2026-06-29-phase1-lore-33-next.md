@@ -1,24 +1,24 @@
-# Handover — Phase 1 continues: LORE-34 shipped; next is LORE-33 `lore query` (LORE-33, then 48)
+# Handover — Phase 1 continues: LCLI-34 shipped; next is LCLI-33 `lore query` (LCLI-33, then 48)
 
-**Date**: 2026-06-29 | **Grounded against**: `dev`=`origin/dev`=`b125e3e` (clean, on `dev`); `main`=`23f3733` (intentionally behind) | **Backlog**: LORE-34 **Done** (#27)
+**Date**: 2026-06-29 | **Grounded against**: `dev`=`origin/dev`=`b125e3e` (clean, on `dev`); `main`=`23f3733` (intentionally behind) | **Backlog**: LCLI-34 **Done** (#27)
 
 ## Paste-ready prompt for the next session
 
 ```
 State: dev == origin/dev == b125e3e, clean, on dev, no open PRs. main == 23f3733 (intentionally behind;
-do NOT promote unless asked). LORE-34 (lore context) is DONE (squash #27 = 63c0e31, chore e1191f1,
+do NOT promote unless asked). LCLI-34 (lore context) is DONE (squash #27 = 63c0e31, chore e1191f1,
 archive b125e3e). FIRST run `backlog instructions overview`. The master plan is at
 /Users/jdnewhouse/.claude/plans/review-entire-backlog-of-mutable-origami.md — read it; it sequences the
 WHOLE backlog into 4 phases, approved by Jeremy.
 
-Next task = Phase 1 task 4: LORE-33 `lore query` (`backlog task view LORE-33 --plain`). Add a BM25-style
+Next task = Phase 1 task 4: LCLI-33 `lore query` (`backlog task view LCLI-33 --plain`). Add a BM25-style
 in-memory full-text search + frontmatter-field filters to the EXISTING core/query.ts (which already hosts
 subgraph() and whose module header already anticipates "the BM25 full-text search behind lore query
 lands here too"), then a thin commands/query.ts. Read the locked contract in docs/reference/cli-surface.md
 §query and build to it. ACs: #1 filter by type/tag/status/any field; #2 bounded output with a narrow-it
 hint. No vectors/RAG (ADR-0015).
 
-REUSE the foundation LORE-34 just shipped (all in core/, do NOT re-roll):
+REUSE the foundation LCLI-34 just shipped (all in core/, do NOT re-roll):
 - core/bundle.ts `estimateTokens(text)` — the shared chars/4 kernel — for the `--max-tokens` budget.
 - core/bundle.ts `frontmatterScalar(value)` — verbatim string / finite number|boolean / else undefined —
   for snippet titles (keeps `title` byte-identical across commands).
@@ -36,7 +36,7 @@ verified findings → CHANGELOG (Unreleased/Added) + cli-surface.md if a flag ch
 --check-ac/--append-notes (commit backlog edits BEFORE any dev-sync reset) → PR into dev via the gh token
 (ssh-agent down). Jeremy reviews; admin squash-merge ONLY when he says so.
 
-Do NOT re-add the subgraph adjacency memoization (adjacencyOf/WeakMap) — it was tried in LORE-34 and
+Do NOT re-add the subgraph adjacency memoization (adjacencyOf/WeakMap) — it was tried in LCLI-34 and
 reverted as premature; see [[adjacency-memoization-premature]]. subgraph() rebuilds adjacency inline now.
 ```
 
@@ -44,28 +44,28 @@ reverted as premature; see [[adjacency-memoization-premature]]. subgraph() rebui
 
 | Item | Status |
 | --- | --- |
-| **LORE-34** (lore context) | **Done** — squash #27 (`63c0e31`) + chore (`e1191f1`); both ACs checked; review fold recorded |
+| **LCLI-34** (lore context) | **Done** — squash #27 (`63c0e31`) + chore (`e1191f1`); both ACs checked; review fold recorded |
 | `dev` / `origin/dev` | both `b125e3e` (incl. the archive commit); pushed |
 | `main` | `23f3733` — intentionally behind dev; do not promote unless asked |
 | Open PRs | **none** (#27 merged) |
 | Feature branches | **pruned** (local + remote `feat/lore-34-context` + tracking ref deleted) |
-| Phase 1 remaining | **LORE-33 query (next)**, then **LORE-48 check follow-ups** |
-| Shared foundation now on dev | `core/query.ts` `subgraph()`; `core/context.ts` `buildContext()`; `core/bundle.ts` `estimateTokens` + `frontmatterScalar` (NEW — reuse for LORE-33) |
-| Phase 2 (fork+coupling) | LORE-1→2→{3,4}→21→{22,23,24,25,32}→{26,27}; **LORE-5 parked**; nothing started |
+| Phase 1 remaining | **LCLI-33 query (next)**, then **LCLI-48 check follow-ups** |
+| Shared foundation now on dev | `core/query.ts` `subgraph()`; `core/context.ts` `buildContext()`; `core/bundle.ts` `estimateTokens` + `frontmatterScalar` (NEW — reuse for LCLI-33) |
+| Phase 2 (fork+coupling) | LCLI-1→2→{3,4}→21→{22,23,24,25,32}→{26,27}; **LCLI-5 parked**; nothing started |
 
 ## Next steps
 
-1. **LORE-33 `lore query`** — `backlog task view LORE-33 --plain`; mark In Progress. BM25 full-text +
+1. **LCLI-33 `lore query`** — `backlog task view LCLI-33 --plain`; mark In Progress. BM25 full-text +
    frontmatter filters (`--type`/`--tag`/`--status`/`--field`) in the existing `core/query.ts`; thin
    `commands/query.ts`. Build to `docs/reference/cli-surface.md` §query. Reuse `estimateTokens`,
    `frontmatterScalar`, `truncation()`/`renderTruncationLine()`, and `summary` for snippets. No vectors.
-2. Then **LORE-48 `check` follow-ups** (deps LORE-30 **Done**) — extend `core/check.ts`/`commands/check.ts`
+2. Then **LCLI-48 `check` follow-ups** (deps LCLI-30 **Done**) — extend `core/check.ts`/`commands/check.ts`
    with `--external` liveness, MDX hazard lint, filename-portability rules, **plus the carried-forward
    items detailed in its ACs**: (a) accidental-colon-filename detection (`notes:2026.md`), (b) a precise
    Obsidian block-ref `^id` detector, (c) trailing-slash dir-link policy, (d) converge `validate.ts`
    Severity/Finding with `check.ts` CheckFinding, (e) consolidate the errno→LoreError IO helper across
-   `commands/check.ts`/`commands/validate.ts`/`bundle.ts readError`. **Do LORE-48 BEFORE LORE-27** (both
-   edit `check`; LORE-27 layers the adapter-dependent drift dims on top).
+   `commands/check.ts`/`commands/validate.ts`/`bundle.ts readError`. **Do LCLI-48 BEFORE LCLI-27** (both
+   edit `check`; LCLI-27 layers the adapter-dependent drift dims on top).
 
 ## Critical context / traps
 
@@ -79,33 +79,33 @@ reverted as premature; see [[adjacency-memoization-premature]]. subgraph() rebui
   on dev; then direct `chore(LORE-N): mark Done (delivered via #NN)` on dev; then archive the consumed
   handover (`docs: archive consumed handover …`). Do **not** ff main unless asked.
 - **Code review is the WORKFLOW one**: `Skill code-review args "max"` (calls `Workflow{name:"code-review"}`),
-  NOT inline /review. LORE-34's max review found 12 verified (target-body budget honesty, title divergence,
+  NOT inline /review. LCLI-34's max review found 12 verified (target-body budget honesty, title divergence,
   premature cache) — budget a real fold pass. [[code-review-vs-review-command]]
 - **`--json` is the only machine-JSON path.** Do NOT add a per-command `--format json` value.
-- **Do NOT re-add the subgraph adjacency cache** — reverted in LORE-34. [[adjacency-memoization-premature]]
+- **Do NOT re-add the subgraph adjacency cache** — reverted in LCLI-34. [[adjacency-memoization-premature]]
 - **Read deps via `backlog task view --plain`, never grep** backlog/tasks. [[backlog-dependency-grep-trap]]
 - Sweep the repo root for stray smoke-test redirect files before committing; `cd` to a temp dir for any
   `lore` WRITE command (read-only `query`/`context`/`graph` are safe to smoke in-repo).
 
 ## Do not repeat
 
-- **Don't add speculative caching** (the LORE-34 review reverted the adjacency `WeakMap`: no shipping
+- **Don't add speculative caching** (the LCLI-34 review reverted the adjacency `WeakMap`: no shipping
   command traverses a graph twice/run, and it exported a mutable shared map). Add `adjacencyOf` only when
-  `lore orphans` (LORE-32) lands. [[adjacency-memoization-premature]]
+  `lore orphans` (LCLI-32) lands. [[adjacency-memoization-premature]]
 - **Don't hand-roll NEW arg-parser divergence** — clone the graph.ts/schema.ts parser verbatim; the
-  shared-parser refactor is accepted debt, but new divergence gets flagged every review (LORE-34's
+  shared-parser refactor is accepted debt, but new divergence gets flagged every review (LCLI-34's
   parseCount clone was flagged but accepted as no-new-divergence).
-- **Don't let the neighbor/snippet token cost charge only the summary** — LORE-34's review showed the
+- **Don't let the neighbor/snippet token cost charge only the summary** — LCLI-34's review showed the
   id+type overhead must be charged too, or a wide result set overruns `--max-tokens` while reporting fit.
 
 ## System of record updated (this session)
 
-- **LORE-34 → Done**; ACs #1/#2 checked; notes record the impl + the folded #27 `/code-review max` cluster
+- **LCLI-34 → Done**; ACs #1/#2 checked; notes record the impl + the folded #27 `/code-review max` cluster
   (12 verified) + the deferred/refuted dispositions.
 - **Code on dev** (`63c0e31`): NEW `core/context.ts` (`buildContext`), `commands/context.ts`, `cli.ts`
   registers `context`; `core/query.ts` (adjacency cache reverted); `core/bundle.ts` (`estimateTokens` +
   `frontmatterScalar` extracted); `core/graph.ts` (uses `frontmatterScalar`); `test/context.test.ts`.
 - **CHANGELOG.md** + **docs/reference/cli-surface.md** §context (exit row) updated and on dev.
 - **Auto-memory**: added [[adjacency-memoization-premature]].
-- Archived the consumed `HANDOVER-2026-06-29-LORE-34-context-next.md` → `archive/handovers/` (commit `b125e3e`).
+- Archived the consumed `HANDOVER-2026-06-29-LCLI-34-context-next.md` → `archive/handovers/` (commit `b125e3e`).
 - Stale auto-snapshot `HANDOVER-2026-06-22T184432Z.md` still in `.claude/handovers/` (low-fidelity; ignore).

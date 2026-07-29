@@ -11,9 +11,8 @@ description: >-
   stored — environment-only via LORE_CONFLUENCE_TOKEN.
 tags: [adr, state, config, toml, cache, confluence, sync-state, secrets]
 summary: >-
-  lore keeps its state in `.lore/`: a committed `config.toml` (Bun-native TOML
-  parse, no dependency) and `sync-state.json` publish bookkeeping, plus a
-  gitignored `cache/`; the Confluence token is environment-only and never stored.
+  lore keeps committed configuration and publish state in `.lore/`, transient
+  data in an ignored cache, and secrets only in the environment.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -23,18 +22,18 @@ timestamp: 2026-06-21T00:00:00Z
 
 Accepted — 2026-06-21.
 
-Amended — 2026-06-25 (LORE-46): `.lore/` gains a second committed TOML, **`profile.toml`** (a
+Amended — 2026-06-25 (LCLI-46): `.lore/` gains a second committed TOML, **`profile.toml`** (a
 `profile.json` form is accepted, lower precedence). It is **separate from `config.toml`**:
 `config.toml` carries operational knobs (reconcile/validate/Confluence), while `profile.toml` is
 the declarative **type system** — the type vocabulary, per-type frontmatter shape, required
 sections, and templates from which lore generates its validators and editor JSON Schemas
 (see [ADR-0006 amendment](0006-schema-types-templates.md)). Its `[profile]` table also carries
 `resource_base`, the prefix for the `resource` link `lore new` stamps (the stamping itself is
-LORE-47). Like `config.toml`, the profile is **zero-config**: absent — or present with every line
+LCLI-47). Like `config.toml`, the profile is **zero-config**: absent — or present with every line
 commented — it falls back to the built-in story-convention profile, so `lore init` scaffolds a
 fully-commented `profile.toml` that changes nothing until a team fills it in.
 
-Amended — 2026-06-26 (LORE-47): the `resource_base` key (a key of `profile.toml` `[profile]`,
+Amended — 2026-06-26 (LCLI-47): the `resource_base` key (a key of `profile.toml` `[profile]`,
 **not** `config.toml`) is now consumed — `lore new` joins it to a concept's repo-relative path to
 stamp the OKF-recommended `resource` link. An **empty** `resource_base` — the default — omits the
 `resource` key entirely, so output stays byte-identical to before; index/sub-index files never carry

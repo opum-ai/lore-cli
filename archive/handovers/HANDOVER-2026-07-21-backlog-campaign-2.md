@@ -1,4 +1,4 @@
-# Handover — third backlog campaign, cursor at LORE-86 (LORE-69..87)
+# Handover — third backlog campaign, cursor at LCLI-86 (LCLI-69..87)
 
 **Date**: 2026-07-21 | **Grounded against**: `dev @ e4243d8`, clean except `.repro-scratch/` and `docs/.obsidian/` (both pre-existing/unrelated, leave alone), 1 unpushed commit (about to be pushed by this same restore session) | **Tracker**: doc-1
 
@@ -6,9 +6,9 @@
 
 ```
 Run /backlog-handover restore in /Volumes/external/repos/lore. Tracker: doc-1.
-Cursor: LORE-86 — lore sync can silently delete hand-authored prose between
+Cursor: LCLI-86 — lore sync can silently delete hand-authored prose between
 duplicate/malformed managed-block markers. Queue order confirmed by user on
-2026-07-21 (independent fixes first, the LORE-78/79/80 rename-traversal
+2026-07-21 (independent fixes first, the LCLI-78/79/80 rename-traversal
 cluster last); do not re-ask. Merge gate is self-merge (skill default,
 user-confirmed 2026-07-19) — no PR-approval wait. 18-issue queue remaining,
 all from a full-codebase Codex review (see backlog/docs/reviews/doc-2 for
@@ -20,38 +20,38 @@ conventions sections for the rest).
 
 | Item | Status |
 | --- | --- |
-| Tracker doc | doc-1, updated this session (Cursor → LORE-86, Queue = 18 items, LORE-70 moved to Resolved, one new convention recorded) |
+| Tracker doc | doc-1, updated this session (Cursor → LCLI-86, Queue = 18 items, LCLI-70 moved to Resolved, one new convention recorded) |
 | Review doc | doc-2, full Codex second-opinion review (201 confirmed findings, 25/25 clusters) — source of all queued tasks |
-| Queue | 18 tasks remaining (LORE-86, 87, 83, 84, 82, 85, 69, 72, 71, 76, 77, 73, 74, 75, 80, 79, 78, 81), all `To Do`, `bug`, `High` priority, each with AC + a `--ref` to doc-2 |
+| Queue | 18 tasks remaining (LCLI-86, 87, 83, 84, 82, 85, 69, 72, 71, 76, 77, 73, 74, 75, 80, 79, 78, 81), all `To Do`, `bug`, `High` priority, each with AC + a `--ref` to doc-2 |
 | Branch | `dev`, clean (1 commit still to push this session — the handover-archive commit) |
-| Leftover branches/PRs | none — `feature/LORE-70` fully merged (PR #65, rebase-merged, commit `099270c`) and pruned (local + remote) |
-| Not queued | LORE-42/43/44/45 — unchanged, deferred by recorded product decision |
+| Leftover branches/PRs | none — `feature/LCLI-70` fully merged (PR #65, rebase-merged, commit `099270c`) and pruned (local + remote) |
+| Not queued | LCLI-42/43/44/45 — unchanged, deferred by recorded product decision |
 
 ## Next steps
 
-1. Run the per-issue lifecycle on **LORE-86** (`lore sync can silently delete
+1. Run the per-issue lifecycle on **LCLI-86** (`lore sync can silently delete
    hand-authored prose between duplicate/malformed managed-block markers`):
-   branch `feature/LORE-86` off `dev`, read the task's AC, implement, verify,
+   branch `feature/LCLI-86` off `dev`, read the task's AC, implement, verify,
    review, PR, self-merge, prune. Root area: `locateManagedBlock` (managed
    block detection — likely `src/core/managed-block.ts` or similar; re-verify
    the exact file against current HEAD before editing, per this campaign's
    standing discipline).
 2. Update doc-1's Cursor/Queue/Resolved/Session-log sections on the feature
    branch before merging (per the skill's step 4), advancing the cursor to
-   **LORE-87** (item #2 of the remaining queue).
+   **LCLI-87** (item #2 of the remaining queue).
 3. Archive this handover to `archive/handovers/` and write the next one for
-   LORE-87.
+   LCLI-87.
 
 ## Critical context / traps
 
 - **Three queued issues are one gap at three layers** (see doc-1's Campaign
-  conventions, last-but-one bullet): LORE-78 (arg-parsing), LORE-79 (rename
-  command), LORE-80 (shared `rewriteInbound` engine) all describe `lore
+  conventions, last-but-one bullet): LCLI-78 (arg-parsing), LCLI-79 (rename
+  command), LCLI-80 (shared `rewriteInbound` engine) all describe `lore
   rename`'s destination path never being confined to `docs/`. They're queued
-  in that order intentionally — LORE-80 last of the three (now #15 in the
+  in that order intentionally — LCLI-80 last of the three (now #15 in the
   remaining queue) so its containment fix is available before/while working
   the other two. Read all three task descriptions before starting any one;
-  fixing LORE-80 may reshape what LORE-79/78 actually need.
+  fixing LCLI-80 may reshape what LCLI-79/78 actually need.
 - **`docs/.obsidian/` and `.repro-scratch/` are known, intentional
   non-blockers.** `docs/.obsidian/` has sat untracked since before this
   campaign started — 9 prior sessions ran clean despite it. `.repro-scratch/`
@@ -67,14 +67,14 @@ conventions sections for the rest).
   explicit exception to this repo's general "don't self-merge, user reviews
   PRs" convention — the exception applies ONLY inside this campaign's
   one-issue-per-session lifecycle, not to ad-hoc feature work outside it.
-- **LORE-69..87 come from `doc-2`, not a filing task's own prose** — each
+- **LCLI-69..87 come from `doc-2`, not a filing task's own prose** — each
   task description is self-contained with a verified repro, but re-verify
   against current HEAD before implementing anyway (same discipline as every
   prior campaign task — see doc-1's Campaign-conventions section for why this
   matters).
 - No `code-reviewer` subagent type is registered in this project — use
   `general-purpose` for the lifecycle's step-6 independent review. This
-  session's `general-purpose` review of LORE-70 found one real, moderate
+  session's `general-purpose` review of LCLI-70 found one real, moderate
   issue (a missing Windows platform guard on a new subprocess-spawning test)
   that a self-review had missed — worth continuing to use it, not skipping
   step 6 as a formality.

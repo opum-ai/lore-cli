@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **`lore init` now detects and configures Claude Code and Codex independently**
-  (LORE-281). A bare interactive run offers each installed agent separately;
+  (LCLI-281). A bare interactive run offers each installed agent separately;
   prompt-free `--claude` and `--codex` flags provide deterministic setup for
   scripts and CI, while `--agents` remains an alias for Claude Code. Codex setup
   generates `.codex/skills/lore/SKILL.md` and surgically maintains Lore's
@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and protecting a differing whole-file skill from overwrite. The additive
   `init` JSON result now includes `codex` only when that setup step runs.
 - **`lore export` now emits a deterministic, consumer-neutral OKF projection for downstream
-  indexes** (LORE-279). The versioned JSONL stream contains a manifest, full canonical concepts,
+  indexes** (LCLI-279). The versioned JSONL stream contains a manifest, full canonical concepts,
   every authored concept edge, the current Backlog task snapshot, concept-to-task associations,
   dangling targets, stable SHA-256 content/bundle/stream hashes, and Git provenance, followed by a
   trailer. Duplicate authored links remain distinct through stable ordinal identity. Unsupported
@@ -27,12 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **The release dependency graph no longer carries the vulnerable `js-yaml@4.1.0` parser**
-  (LORE-280). Upgraded to `js-yaml@5.2.2`, migrated ESM imports to its named-export contract, and
+  (LCLI-280). Upgraded to `js-yaml@5.2.2`, migrated ESM imports to its named-export contract, and
   preserved lore's established empty-config and byte-stable leading-zero-string behavior across
   the major-version parser changes. Existing anchor-expansion bounds and prototype-pollution
   regression tests remain in force.
 - **Release-facing documentation and bootstrap mechanics now match the implemented CLI and current
-  npm policy** (LORE-274/275 and release-readiness review). README/tech-stack no longer present the
+  npm policy** (LCLI-274/275 and release-readiness review). README/tech-stack no longer present the
   retired fork as a live git dependency, README identifies the hand-rolled parser and 0.1 release
   candidate state, and Docker E2E documentation records the active required `dev` check plus its
   admin bypass. The first-release runbook now uses an interactive 2FA publish of the exact
@@ -40,14 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   package to exist before trust can be created. A real `bun run build` script now matches the
   contributor instructions and compiles to a same-filesystem `dist/lore`.
 - **`docker/e2e/run-e2e.sh` now fails closed instead of silently mutating the caller's working
-  directory when run outside its Docker container** (LORE-269). The harness deliberately runs
+  directory when run outside its Docker container** (LCLI-269). The harness deliberately runs
   under `set -uo pipefail` without `-e` (so it can keep going past individual failed assertions).
   Before the fix, the script already created `$RESULTS_DIR` and truncated `$REPORT` before ever
   reaching its unguarded `cd /workspace` — on a host, where `/workspace` doesn't exist, that `cd`
   failed but the script kept running anyway, silently executing every
   later phase (`git init`, `backlog init`, `lore init`, dozens of real, mutating `backlog`/`lore`
   calls) against whatever directory the caller happened to invoke it from. Hit for real during
-  round 5 wave 1 (LORE-267): a direct `bash docker/e2e/run-e2e.sh` on the host overwrote
+  round 5 wave 1 (LCLI-267): a direct `bash docker/e2e/run-e2e.sh` on the host overwrote
   `backlog/config.yml`'s `project_name` (stripping its ADR-0012 header comment), created 3
   spurious real Backlog tasks under `backlog/tasks/`, and wrote stray `.lore/.gitignore`,
   `.lore/profile.toml`, `.lore/schemas/`, `.lore/templates/`, and `AGENTS.md` into a host
@@ -69,10 +69,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each is inside a subshell, command substitution, or `bash -c '...'`, always `&&`-chained to the
   command depending on it, so none can leak a changed cwd into the rest of the script or mutate the
   wrong directory the way the bare top-level `cd /workspace` did, and none needed a fail-closed
-  guard of their own. LORE-273 closes the separate reporting gap at the two nested-checkout
+  guard of their own. LCLI-273 closes the separate reporting gap at the two nested-checkout
   carve-outs: backlog configuration is now a counted `step`, and the final git-status assertion
   runs inside a child whose failed `cd` returns nonzero instead of becoming a vacuous empty-string
-  PASS. The other setup substitutions each have a named downstream assertion. LORE-272 adds a
+  PASS. The other setup substitutions each have a named downstream assertion. LCLI-272 adds a
   Docker-free host regression test that executes the guard in an empty temporary directory,
   verifies exit 1 plus the exact supported Compose command and zero writes, and statically pins the
   script guard to the Dockerfile's container-only environment marker.
@@ -81,19 +81,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after and were byte-identical (the run printed the guard message and exited 1 without touching
   anything). `docs/runbooks/docker-e2e-testing-environment.md` gained a note warning against
   direct invocation and documenting the new guard.
-- **`lore agents`'s pretty-mode output no longer paints a `protected` bridge file green** (LORE-267,
-  found during the LORE-260 review). `protected` means a bridge file (currently only
+- **`lore agents`'s pretty-mode output no longer paints a `protected` bridge file green** (LCLI-267,
+  found during the LCLI-260 review). `protected` means a bridge file (currently only
   `.claude/skills/lore/SKILL.md`) looked hand-edited and was deliberately left untouched — the
   bridge is stale and needs `lore agents --force` — but `renderPretty` (`src/commands/agents.ts`)
   used a two-way `file.action === "unchanged" ? ANSI.dim : ANSI.green` mapping, so every non-
   `unchanged` action, `protected` included, came out the same green as an actual write. `lore init`'s
   own renderer already had the correct three-way mapping (`unchanged` dim, `protected` yellow, else
-  green) since LORE-260, so the same action rendered in two different colors depending on which
+  green) since LCLI-260, so the same action rendered in two different colors depending on which
   command printed it. Fixed by extracting that three-way mapping into a single exported
   `bridgeActionColor()` in `src/commands/agents.ts`, which both `agents.ts`'s own `renderPretty` and
   `init.ts`'s `renderPretty` now call, so the two commands cannot diverge on this mapping again.
   `created`, `updated`, and `unchanged` keep their existing colors; `--json` output and exit codes
-  are unchanged. A follow-up (LORE-271) also makes the distinction textual rather than
+  are unchanged. A follow-up (LCLI-271) also makes the distinction textual rather than
   color-dependent: under `--check`, protected drift now reads
   `out of date (protected; needs --force)` in pretty output and
   `out-of-date-protected` in `--plain`, while ordinary stale files retain `out of date` /
@@ -113,8 +113,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bun test` 2180/0 pass (2176/0 baseline, +4), `typecheck`/`lint` clean, `lore check` (40 files, 0
   errors/warnings), docker e2e harness 302/0 (unchanged baseline).
 - **`.github/workflows/release.yml`'s `publish` job now declares `environment: release`, the out-of-file
-  hook for closing the `workflow_dispatch`-on-any-ref exposure LORE-255's reviewer flagged and
-  LORE-268 addresses — inert until two repo-admin steps are done (see below)**: npm Trusted Publishing
+  hook for closing the `workflow_dispatch`-on-any-ref exposure LCLI-255's reviewer flagged and
+  LCLI-268 addresses — inert until two repo-admin steps are done (see below)**: npm Trusted Publishing
   matches an OIDC token on repository + workflow **filename**, not a ref, and this workflow
   is `workflow_dispatch`-reachable on any branch — so an actor with write access could push a branch
   carrying a `release.yml` with every in-file guard stripped (the `if: inputs.publish == true` gate,
@@ -126,9 +126,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   GitHub's deployment subsystem, not workflow content — they still apply to a run using a
   wholesale-replaced copy of the file. **The declaration alone does not yet provide protection**: this
   change does not and cannot create the GitHub Environment or configure its protection rules (the same
-  human/repo-admin boundary as LORE-196/LORE-257), and referencing an environment that doesn't exist
+  human/repo-admin boundary as LCLI-196/LCLI-257), and referencing an environment that doesn't exist
   yet auto-creates it with no rules by default. `docs/runbooks/release-publishing.md` gained a new
-  "Repo-admin setup for the release Environment (LORE-268)" section spelling out the two
+  "Repo-admin setup for the release Environment (LCLI-268)" section spelling out the two
   remaining manual steps — creating the `release` GitHub Environment with required reviewers
   (a deployment branch policy alone is not sufficient in this repo today), and setting all
   six packages' npm Trusted Publisher "Environment name" field to `release` (closing the
@@ -136,13 +136,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workflow copy) — and states plainly that the exposure remains open until both are done.
   `test/release-workflow.test.ts` gained a new assertion pinning `doc.jobs.publish.environment` to
   `"release"` (mutation-verified: deleting the line fails exactly that one test, 9 pass/1 fail, restored
-  and re-verified green). Every existing LORE-255 guarantee is unchanged: `workflow_dispatch`-only
+  and re-verified green). Every existing LCLI-255 guarantee is unchanged: `workflow_dispatch`-only
   trigger, `publish` input defaulting `false`, `id-token: write` scoped to the `publish` job alone, the
   npm `>= 11.5.1` fail-closed floor, platform-packages-before-root publish ordering, and the `0.0.0`
   refusal. Verified against `dev`: `bun test` 2177/0 pass (baseline 2176 + 1 new test), `lore check` (40
   files, 0 errors/warnings), `typecheck`/`lint` clean, `actionlint .github/workflows/release.yml` clean.
 - **`lore orphans` no longer reports a Backlog subtask as orphaned when its parent task is already
-  linked to a doc** (LORE-261, surfaced by the Meridian 56-concept/40-task e2e stress test: `orphans`
+  linked to a doc** (LCLI-261, surfaced by the Meridian 56-concept/40-task e2e stress test: `orphans`
   first reported 8 orphaned tasks instead of the intended 2, because linking a parent task to a Story
   via `lore link` does not stamp each of its subtasks with its own `doc:` back-reference). Chose
   **orphans-side hierarchy awareness** over a link-side cascade or documenting the gap as expected
@@ -162,10 +162,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fully unlinking the parent, that the same subtasks correctly reappear as orphans. A mutation check
   (reverting just this fix) reproduced 5 failing tests, confirmed fixed with the change restored.
 - **`writeFileAtomic` / `writeFileNoFollow`'s commit `renameSync` now retries a bounded number of
-  times on Windows' transient antivirus/indexer lock codes** (LORE-256). Both write-temp-then-rename
+  times on Windows' transient antivirus/indexer lock codes** (LCLI-256). Both write-temp-then-rename
   helpers finish with a single `renameSync(tmpPath, absPath)`, which on Windows can intermittently
   fail with `EPERM`/`EBUSY`/`EACCES` when an antivirus scanner or the Search indexer briefly holds
-  the destination open — LORE-252 fixed the deterministic `openSync` `ENOENT` but deliberately left
+  the destination open — LCLI-252 fixed the deterministic `openSync` `ENOENT` but deliberately left
   this transient hazard for later. The commit step in both functions now goes through a new, shared,
   unexported `renameOverDestination` helper (`src/commands/fswrite.ts`): a bounded 4-total-attempt
   sequence (the first attempt plus up to 3 retries) with 20ms/40ms/80ms backoff between attempts via
@@ -177,20 +177,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   budget exhausts the LAST failure is what's thrown into each function's existing `catch`/`ioError`
   classification, so a persistent failure still ends in the identical classified outcome it always
   did (a persistent `EACCES`/`EPERM` still becomes the same `denied` `LoreError`) — never a
-  swallowed false success. The LORE-231 temp-leak guard, LORE-117 mode/ownership
-  preservation, and LORE-130/92 symlink refusal are untouched — only the commit step can repeat.
+  swallowed false success. The LCLI-231 temp-leak guard, LCLI-117 mode/ownership
+  preservation, and LCLI-130/92 symlink refusal are untouched — only the commit step can repeat.
   Verified with `bun test` (spying on `fs.renameSync` to throw a deterministic errno for an exact
   call count before delegating to the real implementation — not a real lock, not a sleep-based
   flake) and confirmed green on the `windows-latest` CI matrix leg (PR #249) since a local macOS
   worktree cannot produce that evidence directly. Re-verified against `dev`: `bun test` 2126/0 pass,
   `typecheck`/`lint` clean, `lore check` (39 files, 0 errors/warnings).
 - **`lore rename` / `lore supersede --rewrite-links` now warn on stderr when a retargeted inbound
-  link's display text still names the OLD id** (LORE-262, surfaced by the Meridian e2e stress
+  link's display text still names the OLD id** (LCLI-262, surfaced by the Meridian e2e stress
   test, which needed a manual fix after the run). `rewriteInbound` (`src/core/rewrite.ts`) has
   always retargeted every inbound body link's *destination* correctly, but never checked whether
   the link's *visible text* still named the concept being renamed/superseded — so a supersession
   doc's own `[ADR-0005](…)` citation, retargeted to point at ADR-0006, could ship with the prose
-  and the link silently disagreeing. The retarget itself is unchanged (LORE-262 AC#2: no
+  and the link silently disagreeing. The retarget itself is unchanged (LCLI-262 AC#2: no
   regression) — skipping it outright was rejected, because `rename` deletes the old file and a
   skipped link would become genuinely dangling. Instead, a new `RewritePlan.textMismatches:
   LinkTextMismatch[]` field (populated by `computeBodyEdits`'s new
@@ -204,12 +204,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   advisory-only. Verified against `dev`: `bun test` 2110/0 pass (including the new
   `test/rename.test.ts`/`test/supersede.test.ts` coverage), `typecheck`/`lint` clean, `lore check`
   (39 files, 0 errors/warnings).
-- **`loadBundle` no longer warns about lore's own generated `index`/`log` hubs** (LORE-258).
+- **`loadBundle` no longer warns about lore's own generated `index`/`log` hubs** (LCLI-258).
   `src/core/bundle.ts`'s `loadBundle` previously fired the `no frontmatter mapping` advisory for
   *any* non-concept file, including the machine-generated `index.md`/`log.md` hubs that
   `indexes.ts`/`log.ts` regenerate wholesale and which are always frontmatter-free by design
   **below the bundle root** (the bundle-root `docs/index.md` is itself a concept with real
-  frontmatter — LORE-192, `BUNDLE_ROOT_INDEX_PATH`/`effectiveProfileFor`) — so every command that
+  frontmatter — LCLI-192, `BUNDLE_ROOT_INDEX_PATH`/`effectiveProfileFor`) — so every command that
   threads a `WarningCollector` through `loadBundle` — `link`, `unlink`, `sync` and `tasks` (the
   four the bug was filed against), plus `query`, `graph`, `context`, `orphans`, `rename` and
   `supersede`, all fixed uniformly by the single choke point — printed spurious warnings on every
@@ -217,7 +217,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file's basename against `RESERVED_STEMS` (`core/scaffold.ts`: `index`/`log`) and suppresses the
   advisory only for those two known-reserved stems; a genuinely unexpected non-concept file still
   warns exactly as before. `check` (never calls `loadBundle` — it runs its own file scan,
-  deliberately, per LORE-27) and `validate` (already tallies a silent `skippedCount`) needed no
+  deliberately, per LCLI-27) and `validate` (already tallies a silent `skippedCount`) needed no
   change. Verified against `dev`: `bun test` 2110/0 pass, `typecheck`/`lint` clean, `lore check`
   (39 files, 0 errors/warnings); a before/after repro on this repo's own bundle (mutating the
   `RESERVED_STEMS` guard to always warn) showed `sync --dry-run`/`tasks` dropping from 5 spurious
@@ -225,7 +225,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/reference/index.md`, `docs/runbooks/index.md`, `docs/specs/index.md`) — to 0, with `check`
   unchanged.
 - **ADR-0002 now distinguishes a missing `backlog` binary (exit `3`) from a present-but-incapable one (exit `6`)**
-  (LORE-60, a doc-accuracy gap found via the LORE-56 Docker E2E harness against a real
+  (LCLI-60, a doc-accuracy gap found via the LCLI-56 Docker E2E harness against a real
   pinned-upstream `backlog` binary). Decision point 5 of `docs/adr/0002-backlog-integration-json-only.md`
   previously claimed that a missing, too-old, or non-`--json`-capable `backlog` binary all mapped to
   a single "validation/drift exit code `6`" — but the real, deliberate code in
@@ -242,7 +242,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are updated to reflect that it's now fixed.
 
 - **`lore new Story` now scaffolds the `lore:tasks` managed block, so a fresh Story is `lore sync`-able
-  immediately** (LORE-59, found via the LORE-56 Docker E2E harness against a real pinned-upstream
+  immediately** (LCLI-59, found via the LCLI-56 Docker E2E harness against a real pinned-upstream
   `backlog` binary). `STORY_TEMPLATE` (`src/core/template.ts`) previously shipped no `<!-- lore:tasks:begin
   -->`/`<!-- lore:tasks:end -->` markers — just `# {{title}}` / `## Goal` / `## Acceptance criteria` /
   `## Notes` — even though Story is the one type carrying the `tasks:` coupling that `lore sync`
@@ -259,12 +259,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   filled in by the first `lore sync`. Verified with a full unit pass (`bun test`: 1500/1500) plus a real
   pinned-upstream-binary run via `docker/e2e/` (82/82) — a freshly `lore new`-created Story now completes
   the full `new` → `link` → `sync` → `check` loop at exit `0`, with the managed block genuinely populated
-  by rendered task content, not just empty markers. Updated `run-e2e.sh`'s LORE-59 step (flipped expected
+  by rendered task content, not just empty markers. Updated `run-e2e.sh`'s LCLI-59 step (flipped expected
   exit `6`→`0`, removed the manual marker-append workaround, added a check that the rendered table is
   present) and the E2E runbook's known-regressions list accordingly.
 
 - **`lore link`/`unlink --json` no longer leaks a success-shaped envelope on a nonzero exit**
-  (LORE-58, found via the LORE-56 Docker E2E harness against a real pinned-upstream `backlog`
+  (LCLI-58, found via the LCLI-56 Docker E2E harness against a real pinned-upstream `backlog`
   binary). When a per-task Backlog back-reference write (or the `backlog/` commit) failed,
   `link`/`unlink` still printed a full, well-formed `link.result`/`unlink.result` envelope to
   stdout despite exiting `6` (`drift`), with stderr empty — violating cli-contract §4's "stdout
@@ -279,8 +279,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *partial* per-item failure on a multi-item command follows the same stdout/stderr rule as any other
   failure, closing the ambiguity that let the original bug ship unnoticed.
 
-- **`editTask()` no longer sends an unsupported `--json` flag to `backlog task edit`** (LORE-57,
-  found via the LORE-56 Docker E2E harness against a real pinned-upstream `backlog` binary). Per
+- **`editTask()` no longer sends an unsupported `--json` flag to `backlog task edit`** (LCLI-57,
+  found via the LCLI-56 Docker E2E harness against a real pinned-upstream `backlog` binary). Per
   PR #790's scope, upstream Backlog.md only added `--json` to three read commands (`task list`,
   `task view`, `search`) — `task edit` never got one, so every real call to `backlog task edit
   <id> --json ...` failed immediately with `error: unknown option '--json'`, before Commander
@@ -291,7 +291,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repointing. The unit suite never caught it — it mocks `BacklogAdapter` entirely, so the fake
   never enforced the real CLI's flag surface.
 
-- **`tech-stack.md` corrected to match the actually-shipped dependency set** (LORE-14, a Bun
+- **`tech-stack.md` corrected to match the actually-shipped dependency set** (LCLI-14, a Bun
   compile-compatibility spike). The doc claimed three dependencies that were never actually
   adopted — `commander` (CLI parsing is hand-rolled in `src/cli.ts`; Commander remains the named
   but deferred eventual entrypoint), the full `unified`/`remark-parse`/`remark-stringify`
@@ -314,7 +314,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **`lore init` folds the rest of onboarding into one command via a TTY-gated interactive wizard**
-  (LORE-260): a bare `lore init` on an interactive terminal now walks through the Claude Code agent
+  (LCLI-260): a bare `lore init` on an interactive terminal now walks through the Claude Code agent
   bridge, a downstream doc-site scaffold (mkdocs/docusaurus), an Obsidian vault config, and a
   backlog `--json`-capability check, replacing the old `init` → `agents` → external `lore-setup.sh`
   → manual-Obsidian sequence. **Strictly TTY-gated** (the npm-init pattern, [ADR-0017](docs/adr/0017-interactive-init-wizard-tty-gated.md),
@@ -381,7 +381,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `hint` wording) — a small, deliberate divergence from `dev`'s envelope for this one error; and
   `--plain` now prints a line for an already-up-to-date scaffold step instead of nothing.
 - **`.github/workflows/release.yml` gained a real `publish` job — OIDC trusted publishing to npm,
-  gated on an explicit dispatch input** (LORE-255). The workflow stays `workflow_dispatch`-only
+  gated on an explicit dispatch input** (LCLI-255). The workflow stays `workflow_dispatch`-only
   (never push/tag-triggered); the new `publish` job additionally requires
   `if: ${{ inputs.publish == true }}`, with the `publish` boolean input defaulting to `false`, so a
   plain dispatch only builds/packages/dry-run-verifies every platform artifact and the `publish` job
@@ -413,7 +413,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   follow-up" wording now that the publish job is implemented. Verified against `dev`: `bun test`
   2126/0 pass, `typecheck`/`lint` clean, `actionlint` clean, `lore check` (39 files, 0
   errors/warnings).
-- **Daily upstream-release watch for MrLesk/Backlog.md's tagged `--json` release** (LORE-254). A
+- **Daily upstream-release watch for MrLesk/Backlog.md's tagged `--json` release** (LCLI-254). A
   new scheduled workflow (`.github/workflows/upstream-backlog-watch.yml`, daily `cron` plus
   `workflow_dispatch`) runs a new standalone script (`src/scripts/upstream-backlog-watch.ts`) —
   repo-maintenance tooling, not part of the `lore` CLI surface: no `--json` envelope, no
@@ -421,24 +421,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`src/adapters/backlog.ts`) and lore's own first npm release are both blocked on
   MrLesk/Backlog.md tagging a release whose history actually contains commit `22a091b` (PR #790 /
   BACK-545, stable `--json` output on `task list`/`task view`/`search`) — nothing upstream
-  notifies lore when that happens, so LORE-253 (the follow-up adapter migration) could otherwise
+  notifies lore when that happens, so LCLI-253 (the follow-up adapter migration) could otherwise
   stall indefinitely. The script filters the upstream Releases API to releases published at/after
   the PR's merge date (`candidateReleases`), resolves each candidate tag's commit sha, and
   ancestor-checks it against the target commit via GitHub's compare API
   (`isAncestorCompareStatus`: `status` `identical` or `ahead`) — distinguishing a genuinely
   `--json`-capable tag from one merely numbered newer than the last-known `v1.48.0`. The first
   qualifying release opens a one-time GitHub issue in this repo labeled `upstream-watch` naming
-  LORE-253 as the next step; kept idempotent by checking for an existing labeled issue (open or
+  LCLI-253 as the next step; kept idempotent by checking for an existing labeled issue (open or
   closed) before doing any upstream work, since every later release also contains the target
   commit forever after. Documented in the new
   `docs/runbooks/upstream-backlog-md-json-tag-watch.md` runbook. Included here even though it is
   repo-tooling rather than CLI behavior, matching this file's own existing precedent for logging
-  CI/tooling additions (see the "CI (LORE-8)" / "Dev tooling (LORE-7)" entries below). Verified
+  CI/tooling additions (see the "CI (LCLI-8)" / "Dev tooling (LCLI-7)" entries below). Verified
   against `dev`: `bun test` 2110/0 pass (including 13 tests in
   `test/upstream-backlog-watch.test.ts` covering the date-cutoff filter, all four compare
   statuses, and `watchOnce`'s already-surfaced/no-match/opened paths against a stubbed fetcher),
   `typecheck`/`lint` clean, `actionlint` clean, `lore check` (39 files, 0 errors/warnings).
-- **`lore scaffold obsidian` — the third consumer-scaffolding target** (LORE-41). Writes a single
+- **`lore scaffold obsidian` — the third consumer-scaffolding target** (LCLI-41). Writes a single
   `docs/.obsidian/app.json` preset (`useMarkdownLinks: true`, `newLinkFormat: "relative"`,
   `alwaysUpdateLinks: true` — consumer-compatibility.md §3.2), plus Files & Links UI guidance
   printed after the file summary (plain and `--json`), since Obsidian only reads `app.json` on
@@ -453,7 +453,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolves 33 real outgoing links and receives backlinks from 12 files when `docs/` is opened as
   the vault, and `app.vault.getConfig(...)` confirmed the live app actually loaded the scaffolded
   settings from disk, not just that the bytes looked right.
-- **`lore scaffold docusaurus` — the second consumer-scaffolding target** (LORE-40). Writes a
+- **`lore scaffold docusaurus` — the second consumer-scaffolding target** (LCLI-40). Writes a
   `website/` directory (additive, outside `docs/`, per ADR-0010): `package.json` pinning
   `@docusaurus/core`/`@docusaurus/preset-classic` to the same exact version (Docusaurus packages
   must stay in lockstep) plus `react`/`react-dom`; `docusaurus.config.js` with
@@ -473,7 +473,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<`/`{` prose — now runs as its own CI job (`scaffold-docusaurus`), mirroring `scaffold-mkdocs`'s
   separation of a heavyweight external toolchain from `bun test`. Any other target string, or one
   not yet implemented, is a `usage` error (exit `2`).
-- **`lore scaffold mkdocs` — the first consumer-scaffolding target** (LORE-39). Writes a repo-root
+- **`lore scaffold mkdocs` — the first consumer-scaffolding target** (LCLI-39). Writes a repo-root
   `mkdocs.yml` (Material theme, `navigation.indexes`, `search`/`tags` plugins, `strict: false` with
   `not_found`/`anchors: warn` honoring OKF's broken-link tolerance, `absolute_links: relative_to_docs`)
   plus a `docs/tags.md` tag-index page — both additive and outside `docs/`, so the OKF bundle stays the
@@ -485,7 +485,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same choice `lore init`'s root index makes and for the same reason. A real `mkdocs build` against the
   scaffolded config and this repo's own bundle now runs as its own CI job (`scaffold-mkdocs`), mirroring
   the existing compile-smoke job's separation of a heavyweight external toolchain from `bun test`.
-  `docusaurus`/`obsidian` remain documented targets pending their own tasks (LORE-40/41); any other
+  `docusaurus`/`obsidian` remain documented targets pending their own tasks (LCLI-40/41); any other
   target string, or one not yet implemented, is a `usage` error (exit `2`). Under `--json` it emits
   `kind: scaffold.result` — `{ target, force, files: [{ path, action }] }`. Now advertised in `lore
   help`, the `lore help --json` manifest, and the generated agent bridge.
@@ -500,7 +500,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   primitive `lore init`/`lore new` use), and promoted the rollback logic from a private
   `scaffold.ts` function into a shared, exported `fswrite.ts` primitive for future scaffolds to
   reuse.
-- **Release pipeline mechanics: compiled binaries + dual-artifact npm packaging** (LORE-9,
+- **Release pipeline mechanics: compiled binaries + dual-artifact npm packaging** (LCLI-9,
   ADR-0001). `bin/lore.cjs` is the published package's future launcher — plain, dependency-free
   Node CommonJS that resolves the current platform's compiled binary via `require.resolve`
   against five `optionalDependencies` (`@salient-data/lore-{darwin,linux}-{arm64,x64}` and
@@ -540,7 +540,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `beforeEach`/`afterEach` scratch-dir setup (matching the rest of the suite) and gained two new
   tests covering the signal-exit-code and error-masking fixes.
 
-- **`lore orphans` — the bidirectional doc↔task coupling report** (LORE-32). Surfaces two kinds of
+- **`lore orphans` — the bidirectional doc↔task coupling report** (LCLI-32). Surfaces two kinds of
   gap in one pass: **orphan tasks** (a Backlog task no concept lists in its `tasks:` frontmatter and
   that carries no `doc:<conceptId>` back-reference label — work documented nowhere) and **dangling
   links** (a concept `tasks:` id the current-branch Backlog snapshot no longer knows — a doc pointing
@@ -553,7 +553,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exits `6`); it is a **report, not a gate** — always exit `0` on success, even when the report is
   non-empty. Now advertised in `lore help`, the `lore help --json` manifest, and the generated agent
   bridge.
-- **`lore tasks <id>` — a concept's live Backlog task rollup** (LORE-25). Loads the `docs/` bundle,
+- **`lore tasks <id>` — a concept's live Backlog task rollup** (LCLI-25). Loads the `docs/` bundle,
   resolves the concept, and prints each `tasks:`-linked task's **current** status pulled fresh from the
   Backlog JSON adapter — the read-only view of what `lore sync` materializes into the managed block,
   written nowhere. `--status <S>` filters to one Backlog status (case-insensitive). Under `--json` it
@@ -563,7 +563,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer knows be dropped from the rollup with a stderr advisory (exit `0`) rather than mistaken for an
   outage; an `<id>` absent from the bundle exits `3`. Now advertised in `lore help`, the `lore help
   --json` manifest, and the generated agent bridge.
-- **`lore help` — human help plus a machine-readable capability manifest** (LORE-38). `lore help`
+- **`lore help` — human help plus a machine-readable capability manifest** (LCLI-38). `lore help`
   prints the command catalog and `lore help <command>` prints one command's detail (args, flags,
   output `kind`, exit codes, examples); an unknown command exits `3`. Under `--json` it emits
   `kind: help.manifest` — a curated manifest of every **shipped** command (name, summary, args,
@@ -575,7 +575,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   docs), and the exit-code taxonomy is built from `errors.ts` so it cannot drift; a bidirectional
   lockstep test pins the manifest's command set to the real router (every advertised command
   dispatches, and every dispatch case is advertised).
-- **`lore agents` — generate/refresh the Claude Code agent bridge** (LORE-36, ADR-0004). Writes a
+- **`lore agents` — generate/refresh the Claude Code agent bridge** (LCLI-36, ADR-0004). Writes a
   generated `.claude/skills/lore/SKILL.md` (a small, grounded teacher that names the command surface,
   the `--json`/exit-code contract, and points at `lore instructions` as the source of truth) and a
   tiny marker-delimited `CLAUDE.md` nudge (`<!-- lore:agents:begin/end -->`) that points at the skill.
@@ -588,7 +588,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Generated content is grounded in live source, never a runbook (it names only real commands — no
   `lore tasks`), guarded by a lockstep test that runs each advertised command through the real router.
 - **`lore link` / `lore unlink` — wire a concept's `tasks:` frontmatter to Backlog task ids**
-  (LORE-24, ADR-0009 §1–§2). `link` adds task ids to the concept's `tasks:` list and records the
+  (LCLI-24, ADR-0009 §1–§2). `link` adds task ids to the concept's `tasks:` list and records the
   back-reference on each task: a queryable `doc:<conceptId>` label plus the concept's repo-relative
   path via `--doc` (display-only). `unlink` removes both sides. Every task id is validated to exist
   before `link` writes anything (fail loud, no partial edit); `unlink` tolerates a task id already
@@ -613,10 +613,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   IDE refactor), `lore unlink <id> <taskId…> --allow-missing` tolerates `<id>` not resolving to a
   live concept and cleans up just the stale Backlog-side `doc:` label/`--doc` entry (there is no
   concept file to touch `tasks:` on) — the case-collision guard still protects a *live* concept
-  whose id collides with `<id>`. Now consumed by `lore sync` (LORE-26); `lore check`'s read-only
-  drift gate over the same data is LORE-27's job.
+  whose id collides with `<id>`. Now consumed by `lore sync` (LCLI-26); `lore check`'s read-only
+  drift gate over the same data is LCLI-27's job.
 - **`core/reconcile.ts` — roll a Story/Spec's linked task statuses up into one derived `status`**
-  (LORE-23). The pure engine behind the `status:` half of `lore sync`/`lore check` (ADR-0009 §3):
+  (LCLI-23). The pure engine behind the `status:` half of `lore sync`/`lore check` (ADR-0009 §3):
   `reconcileStatus(taskStatuses, statusFlow, overrides?)` classifies each linked task by its
   position in the project's **config-driven** ordered status flow — never hardcoded to the three
   Backlog defaults — and rolls up by elimination: every task terminal → `done`; any task in a
@@ -624,14 +624,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returns `null` so its authored `status` is left untouched (a narrative-only doc is never forced
   into a workflow state). Fails loud (exit 6) on a task status absent from the flow (and with no
   override) or a degenerate (empty/duplicate) flow — lore reports a status it cannot classify rather
-  than guessing. **`overrides` (LORE-26)** — sourced from `.lore/config.toml`'s `[reconcile.overrides]`
+  than guessing. **`overrides` (LCLI-26)** — sourced from `.lore/config.toml`'s `[reconcile.overrides]`
   — lets a status map straight to a rollup value, bypassing flow position entirely; validated against
   the three rollup values here (`config.ts` deliberately defers that check to this module). Reading
   `backlog/config.yml`'s `statuses:` and resolving each linked task's live status are command-layer
-  concerns; wired into `lore sync` (LORE-26).
+  concerns; wired into `lore sync` (LCLI-26).
 - **`core/managed-block.ts` — regenerate the `<!-- lore:tasks -->` region from live Backlog data**
-  (LORE-22). The pure engine behind `lore sync` (writes) and `lore check` (diffs) rewrites a Story's
-  managed task table from the JSON the LORE-21 adapter's `viewTask` returns. Markers are located
+  (LCLI-22). The pure engine behind `lore sync` (writes) and `lore check` (diffs) rewrites a Story's
+  managed task table from the JSON the LCLI-21 adapter's `viewTask` returns. Markers are located
   **structurally** — the document is parsed with `mdast-util-from-markdown` and only a top-level
   `html` comment node is a candidate, so a sentinel inside a code fence or blockquote is never
   mistaken for a boundary — then the table is built as a **frozen-format string** and **spliced over
@@ -643,9 +643,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `filePathRelative` (portable, cross-subtree, `%20`-encoded), never reconstructed from the
   upper-cased display id; a linked task with no on-disk file yet is tolerated (its id renders as
   plain text, never a broken link or an error). Malformed markers (missing/duplicated/crossed) fail
-  loud (exit 6). Wired into `lore sync` (LORE-26); `lore check` (LORE-27) still diffs read-only.
+  loud (exit 6). Wired into `lore sync` (LCLI-26); `lore check` (LCLI-27) still diffs read-only.
 - **`lore sync [paths…] [--dry-run] [--no-index]` — the write counterpart to `lore check`**
-  (LORE-26, ADR-0009, ADR-0012, ADR-0013). For every concept whose `tasks:` links Backlog tasks:
+  (LCLI-26, ADR-0009, ADR-0012, ADR-0013). For every concept whose `tasks:` links Backlog tasks:
   resolves each linked task's live status (`viewTask`, every id validated to exist **before** any
   write — a missing id fails loud, `not_found`/exit 3, no partial state), recomputes `status` via
   `reconcile.ts` (honoring `[reconcile.overrides]`) and rewrites it when changed, and regenerates the
@@ -671,7 +671,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   project's ordered status flow directly from `backlog/config.yml`'s `statuses:` (defaulting to the
   three Backlog defaults when absent), rather than shelling a further Backlog subcommand.
 - **`lore check` — status reconciliation + managed-block drift, the last two ADR-0007 passes**
-  (LORE-27). `check` now reuses the exact pure engines `lore sync` writes with
+  (LCLI-27). `check` now reuses the exact pure engines `lore sync` writes with
   (`reconcile.ts`'s `reconcileStatus`, `managed-block.ts`'s `regenerateTaskBlock`) but only diffs
   against disk — this command never writes. A `Story`/`Spec` whose persisted `status` no longer
   matches its live Backlog rollup is a `status-drift` finding; a `<!-- lore:tasks -->` region that
@@ -695,12 +695,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   treating it as un-linked would be the one case where `check` really would disagree with `sync`.
   **Behavior change:** discovery advisories (a skipped symlink, an unreadable sub-directory) now
   flush to stderr *before* the `check.report` is emitted to stdout, on every invocation — the reverse
-  of `check`'s pre-LORE-27 order, deliberately: advisories are now known and flushed in full before
+  of `check`'s pre-LCLI-27 order, deliberately: advisories are now known and flushed in full before
   any reconciliation step that could throw, so a later failure can never silently drop them (mirrors
   `sync`'s own long-standing order). A script that merges stdout+stderr and assumes report-then-
   advisories should re-check that assumption.
-- **`adapters/backlog.ts` — the typed JSON-only Backlog.md read/write surface** (LORE-21). The
-  capability probe (LORE-4) now backs a full typed adapter over the same injectable `BacklogSpawn`
+- **`adapters/backlog.ts` — the typed JSON-only Backlog.md read/write surface** (LCLI-21). The
+  capability probe (LCLI-4) now backs a full typed adapter over the same injectable `BacklogSpawn`
   seam — the sole place a `backlog` subprocess is spawned and the sole place the `--json` schema is
   parsed. Reads (`listTasks`, `viewTask`, `searchTasks`, `searchByLabel`) `JSON.parse` the
   `{schemaVersion, kind, data}` envelope, assert `schemaVersion`/`kind`, Zod-validate `data` against
@@ -713,8 +713,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `viewTask` returns `null` on a missing id via empty stdout, never trusting `task view`'s exit code.
   The probe is memoized into every path, so a non-`--json`-capable Backlog is refused before any
   output is trusted. **Not yet wired into the CLI** — the coupling commands (`link`/`sync`/…) are
-  LORE-22+; this is the adapter layer only.
-- **`lore check --external` — opt-in external-URL liveness** (LORE-48). With `--external`, `lore
+  LCLI-22+; this is the adapter layer only.
+- **`lore check --external` — opt-in external-URL liveness** (LCLI-48). With `--external`, `lore
   check` probes every `http(s)` link in the bundle with Bun `fetch` (no Rust/lychee runtime
   dependency) and reports dead, unreachable, or timed-out URLs as advisory `external-link`
   findings. Because liveness is **non-deterministic**, these findings are kept entirely out of the
@@ -723,14 +723,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   URL is fetched once (bounded concurrency, per-request timeout) and reported per referencing file;
   the `--json` envelope carries them in a separate `externalFindings` array, leaving the gate
   `errorCount`/`warningCount` untouched.
-- **`lore check` portability lint additions** (LORE-48, warn-only): **MDX hazards** (un-escaped raw
+- **`lore check` portability lint additions** (LCLI-48, warn-only): **MDX hazards** (un-escaped raw
   `<`/`{` in prose and raw HTML tags, which break Docusaurus's MDX build), **filename rules**
   (leading-underscore files/folders Docusaurus ignores as partials, and `.mdx` files), a precise
   **Obsidian block-reference** (`^id`) detector (sparing `x^2`, footnotes, and mid-prose carets
   while catching digit-leading auto ids), **accidental-colon filenames** (`notes:2026.md`, read as
   a `scheme:` URL), and **trailing-slash directory links** (`../reference/`).
 
-- **`lore query` — full-text search the bundle with frontmatter filters** (LORE-33). `lore query
+- **`lore query` — full-text search the bundle with frontmatter filters** (LCLI-33). `lore query
   ["<text>"] [--type <T>] [--tag <t>]… [--status <S>] [--field k=v]… [--limit <n>]` ranks concepts by
   **BM25-style** in-memory relevance to the search text and filters them by frontmatter — `--type`,
   `--tag` (repeatable, AND), `--status`, and an arbitrary `--field key=value` (repeatable, AND), all
@@ -747,7 +747,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   too-large/non-positive `--limit`, malformed `--field`, or a second positional). The BM25 search lands
   in the shared `core/query.ts` beside the `subgraph` traversal — the two halves of "navigate the
   bundle" (lexical relevance and structural reach) over one `BundleGraph`.
-- **`lore context` — assemble a token-budgeted context pack for a concept** (LORE-34). `lore context
+- **`lore context` — assemble a token-budgeted context pack for a concept** (LCLI-34). `lore context
   <id> [--max-tokens <n>] [--depth <n>]` emits the target concept's **full body** plus a **one-line
   `summary` compaction** of its neighbors out to `--depth` hops (default 1), so an agent can be handed
   a concept *and* enough of what surrounds it within a budget. It is deliberately **structural, not
@@ -768,7 +768,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unknown/repeated/value-less flag, non-integer/too-large/out-of-range `--max-tokens` or `--depth`) ·
   `3` `<id>` not in the bundle. The `title` a concept reports is now byte-identical across `lore graph`
   and `lore context` (one shared `core/bundle.ts` `frontmatterScalar` coercion).
-- **`lore graph` — emit the bundle's cross-link graph** (LORE-31). `lore graph [<id>] [--dot] [--depth
+- **`lore graph` — emit the bundle's cross-link graph** (LCLI-31). `lore graph [<id>] [--dot] [--depth
   <n>]` surfaces the graph `loadBundle` already builds — concepts as nodes (each with its `type`,
   optional `title`, and a chars/4 token estimate), OKF body cross-links and the
   `specs`/`supersedes`/`superseded_by` frontmatter refs as edges (a broken reference is a visible
@@ -783,7 +783,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mutually exclusive. Exit `0` ok · `2` bad usage (`--dot` with `--json`, unknown/repeated/value-less
   flag, non-integer or too-large `--depth`, `--depth` without a root) · `3` root `<id>` not in the
   bundle.
-- **`lore schema export` — materialize the profile's editor JSON Schemas** (LORE-20). `lore schema
+- **`lore schema export` — materialize the profile's editor JSON Schemas** (LCLI-20). `lore schema
   export [--out <dir>] [--type <T>]` writes one Draft-7 JSON Schema per active-profile type to
   `.lore/schemas/` (default), so the `# yaml-language-server: $schema=…` modeline `lore new`/`lore
   init` stamp resolves and drives YAML autocomplete/validation in VS Code and Obsidian (AC#1). The
@@ -800,8 +800,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (and template) file — are now rejected at profile load (`core/profile.ts`) rather than silently
   overwriting each other. Output `kind: schema.result`; exit `0` ok · `2` bad usage / unknown or
   repeated flag / unknown `--type` / repo-escaping `--out` · `4` output directory not writable.
-- **`lore supersede` — record a supersession both ways** (LORE-35.3, the last of LORE-35's three
-  refactoring commands; delivers the supersede half of LORE-35). `lore supersede <oldId> <newId>
+- **`lore supersede` — record a supersession both ways** (LCLI-35.3, the last of LCLI-35's three
+  refactoring commands; delivers the supersede half of LCLI-35). `lore supersede <oldId> <newId>
   [--rewrite-links] [--dry-run]` marks one concept superseded by another and wires the relationship in
   both directions: on the **old** concept it sets `status: superseded` and `superseded_by: <newId>`;
   on the **new** concept it **appends** `<oldId>` to `supersedes` (normalizing a scalar to a list and
@@ -829,8 +829,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rewriteFrontmatterRefs` (default `true`, preserving `lore rename`'s behavior) and an `exclude` id
   set — and `core/bundle.ts` now exports a shared `conceptNotInBundle` `not_found` factory so the
   command layer and the engine surface identical wording.
-- **`lore rename` — graph-aware concept rename** (LORE-35.2, the second of LORE-35's three refactoring
-  commands; delivers LORE-35 AC#2). `lore rename <oldId> <newId> [--dry-run]` moves a concept to a new
+- **`lore rename` — graph-aware concept rename** (LCLI-35.2, the second of LCLI-35's three refactoring
+  commands; delivers LCLI-35 AC#2). `lore rename <oldId> <newId> [--dry-run]` moves a concept to a new
   id/path and repoints **every** inbound reference to it — body cross-links (including used
   reference-style definitions, with any `#fragment`/`?query` preserved) and `specs`/`supersedes`/
   `superseded_by` frontmatter refs (rewritten to the canonical bare-id form) — then recomputes the
@@ -865,7 +865,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-implementing them, so its trimming and classification can no longer drift from how the graph
   counts edges. (Full cross-file transactional rollback on a mid-commit IO failure remains a shared
   concern with `lore replace`, deferred.)
-- **`lore replace` — managed-region-safe find-and-replace** (LORE-35.1, the first of LORE-35's three
+- **`lore replace` — managed-region-safe find-and-replace** (LCLI-35.1, the first of LCLI-35's three
   refactoring commands). Literal or regex (`--regex`, with `$1`/`$&` substitution) find-and-replace
   across one doc or the whole `docs/` bundle (`--in <glob>`, repeatable), with `--dry-run` to preview.
   Its inviolable rule is AC#1: a lore-**managed region is never touched**. The pure `replaceInText`
@@ -875,7 +875,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `lore sync` regenerates. Managed regions come from a small extensible marker registry
   (`MANAGED_MARKERS`); today the only kind is the `<!-- lore:index:begin/end -->` listing block
   (markers imported from `core/indexes.ts` for one source of truth), with `<!-- lore:tasks -->` a
-  one-entry addition once LORE-22 lands. The thin `commands/replace.ts` owns discovery/IO: `.md`-only
+  one-entry addition once LCLI-22 lands. The thin `commands/replace.ts` owns discovery/IO: `.md`-only
   targeting (a glob match on `mkdocs.yml` or other config is left alone), `Bun.Glob` scoping confined
   to the repo, overwrite writes via a new `fswrite.writeFileOverwriting`, and a `replace.result`
   report (per-file counts + run totals). Exit `0` ok · `2` invalid regex / bad usage. Delivered as
@@ -897,11 +897,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   were extracted to `commands/discover.ts` (`readSource`/`canonicalIdentity`/`toRepoRelative`/
   `withinRepo`), de-duplicating the copies in `check`/`validate`. (The shared flag-tokenizer cleanup
   across the four command parsers is deferred.)
-- **`lore check` — internal link/anchor validation + portability lint** (LORE-30). A new read-only
+- **`lore check` — internal link/anchor validation + portability lint** (LCLI-30). A new read-only
   coherence gate built on the pure `checkBundle(files)` engine (`core/check.ts`): a whole-bundle pass
   that (1) resolves every internal relative `.md` cross-link against the **full bundle file set**
   — concepts *and* the frontmatter-free `index.md`/`log.md` hubs, so a generated hub link to a
-  non-concept sub-index resolves rather than falsely reporting broken (the LORE-29 link-gate
+  non-concept sub-index resolves rather than falsely reporting broken (the LCLI-29 link-gate
   follow-up) — reporting a missing target as a `broken-link` **error**; (2) validates every
   `#fragment` against the target file's GitHub-style heading slugs (deduped `-1`/`-2`), reporting
   anchor rot as a `broken-anchor` **error** (AC#1), including same-file anchors; and (3) lints
@@ -912,9 +912,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency, keeping zero-config `bunx`); the thin `commands/check.ts` owns discovery/IO/exit and
   exits `6` on any broken link/anchor (or any warning under `--strict`), `0` otherwise. `--external`
   (external-URL liveness) is **accepted but deferred** — a stable surface with no non-deterministic
-  networking in the gate. Scope (LORE-30): the two deterministic, dependency-free passes; the
+  networking in the gate. Scope (LCLI-30): the two deterministic, dependency-free passes; the
   status-reconciliation and managed-block-drift passes (which need the Backlog JSON adapter +
-  `lore sync`, LORE-26) are wired in later. Delivered as pure core + tests (`core/check.ts` 100%
+  `lore sync`, LCLI-26) are wired in later. Delivered as pure core + tests (`core/check.ts` 100%
   line/func).
   Hardened after a `/code-review max` pass: the GitHub slugger now runs the full github-slugger
   collision loop (so `Release`/`Release 1`/`Release` yield `release`/`release-1`/`release-2`, not a
@@ -926,12 +926,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   named `..x.md`; each file body is parsed by mdast **once** and shared across the heading/link/
   portability passes; and `bodyText` reuses the canonical `normalizeInput` + gray-matter boundary
   (with `nodeText` hoisted to `bundle.ts` so anchor slugging and section matching can't drift). The
-  noisy block-reference detector and accidental-colon-filename detection are deferred to LORE-48.
-- **`validateLink` `unencoded` lint aligned with the writer's alphabet** (LORE-30, from the same
+  noisy block-reference detector and accidental-colon-filename detection are deferred to LCLI-48.
+- **`validateLink` `unencoded` lint aligned with the writer's alphabet** (LCLI-30, from the same
   review). A path segment is now canonical iff it is only RFC-3986 unreserved characters and valid
   `%`-escapes — so a raw `! ' *` (which `encodePathSegment` percent-encodes) is flagged, keeping the
   linter and writer in agreement, while an over-encoded `%41` or lowercase `%c3` still passes.
-- **`validateLink` classifier hardening** (LORE-30, folded from PR #19's `/code-review max`). Fixed
+- **`validateLink` classifier hardening** (LCLI-30, folded from PR #19's `/code-review max`). Fixed
   the per-link portability classifier now that `lore check` is its first caller: a **wrong-case**
   `.md` (`orders.MD`) is flagged (404s on a case-sensitive host) while **dotfiles** (`.gitignore`),
   **directory links** (`../reference/`), and other **asset** extensions are correctly left alone; the
@@ -941,7 +941,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `unencoded`; an interior `//` is reported; and a **malformed** `%`-escape gets its own message. A
   shared `pathPart()` (`stripQuery ∘ stripFragment`) replaces the three duplicated call sites and is
   reused by `bundle.ts`.
-- **Graph-derived `index.md` generation — `core/indexes.ts`** (LORE-29). A pure
+- **Graph-derived `index.md` generation — `core/indexes.ts`** (LCLI-29). A pure
   `generateIndexes(g, { existing })` that regenerates every bundle `index.md` as a deterministic,
   byte-stable **navigable hub**: the reserved root entry point plus one local hub per
   concept-bearing directory (and its ancestors, so the tree links from the root down), each listing
@@ -956,17 +956,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   root index's `okf_version`/creation stays `lore init`'s job. Splicing is a **fixpoint** — a
   no-change run is a byte-level no-op — so `index.md` stays trustworthy under `lore check`'s
   regenerate-and-compare drift gate (AC#1). Delivered as pure core + tests (`indexes.ts` 100%
-  line/func); the `lore sync` wiring that reads/writes the files is LORE-26, the remark/mdast
-  unification of all managed regions is LORE-22, and the temporary local path-segment encoder is
-  swapped for `links.ts`'s shared `encodePathSegments` once LORE-28 lands on `dev`.
+  line/func); the `lore sync` wiring that reads/writes the files is LCLI-26, the remark/mdast
+  unification of all managed regions is LCLI-22, and the temporary local path-segment encoder is
+  swapped for `links.ts`'s shared `encodePathSegments` once LCLI-28 lands on `dev`.
   Hardened after a `/code-review max` pass: untrusted titles are single-lined, bracket-escaped, and
   have HTML-comment sentinels neutralized (a title cannot break a link or poison its own block); the
   splice collapses duplicate blocks (first-begin → last-end) and rewrites a truncated region to EOF
   so regeneration converges to a fixpoint from a merge-corrupted file; and a present-but-empty index
   is synthesized like an absent one. Known follow-up for the link gate: a generated root hub links to
-  frontmatter-free sub-indexes (not graph concepts), so `lore check` (LORE-27) must treat reserved
+  frontmatter-free sub-indexes (not graph concepts), so `lore check` (LCLI-27) must treat reserved
   `index.md`/`log.md` link targets as resolved, not broken.
-- **`core/links.ts` — the canonical cross-link form in one place** (LORE-28). The single home for
+- **`core/links.ts` — the canonical cross-link form in one place** (LCLI-28). The single home for
   the ADR-0010 link rule (relative · URL-encoded · `.md`-suffixed · no leading slash · no
   wikilinks), so the form can never be spelled two ways. `normalizeLink(fromPath, toPath, anchor?)`
   is the deterministic **writer** (path arithmetic over `posix.relative`, canonical lowercase `.md`
@@ -977,14 +977,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of `bundle.ts` into `links.ts` and are re-imported there. Pure core (lore-design §2.1): string in,
   string/typed-finding out; non-portable input is a finding, never a throw. The command wiring
   (new/sync/link/index-gen/managed-block) and the graph-wide passes land with their consumers
-  (`validateLinks`+anchors → LORE-30; `rewriteInbound` → LORE-35). **Behavior ripple:** the shared
+  (`validateLinks`+anchors → LCLI-30; `rewriteInbound` → LCLI-35). **Behavior ripple:** the shared
   encoder now also percent-escapes the markdown-significant `! ' ( ) *` that `encodeURIComponent`
   leaves raw, so a `lore new` `resource` URL for a doc path containing those characters is now
   correctly escaped (an unbalanced `)` previously truncated such a link on CommonMark/MkDocs). To
   keep that ripple non-breaking, `lore validate`'s resource-drift check now compares decode-tolerantly
   (`decodeTarget` on both sides), so a `resource` stamped before the encoder tightened (literal
   `( ) ! ' *`) is recognized as equivalent — not falsely reported "stale" — on upgrade.
-- **`GitAdapter` seam + git-history `log.md`, and `resource` stamping** (LORE-47). Two pieces of
+- **`GitAdapter` seam + git-history `log.md`, and `resource` stamping** (LCLI-47). Two pieces of
   the ECK↔lore alignment (D5):
   - The **third injectable deterministic seam, `GitAdapter`** (after the clock and the Backlog
     subprocess — lore-design §8, ADR-0014), plus a pure `generateLog` that renders the bundle's
@@ -1009,7 +1009,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     satisfied by the stamp (not failed) — an incompatible `datetime`/`enum`/`list` field still
     defers. `lore validate` also gains an advisory **`resource` drift** warning: a present `resource`
     that no longer matches its path + `resource_base` is flagged stale (inert under zero-config).
-- **Declarative `.lore/profile.toml` — the type system is now data, not code** (LORE-46). A
+- **Declarative `.lore/profile.toml` — the type system is now data, not code** (LCLI-46). A
   committed, declarative profile is the single source of truth for the type vocabulary, each
   type's frontmatter shape, its required body sections, and its template; lore **generates** its
   runtime Zod validators *and* the editor Draft-7 JSON Schemas from it at load (inverting
@@ -1028,14 +1028,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   grammar is validated against ECK's 17-type SDD vocabulary with zero consumer-file edits.
   `src/core/profile.ts` owns loading + compiling; `schema.ts`/`concept.ts`/`validate.ts`/
   `scaffold.ts` and the commands thread the compiled `Profile` (ADR-0006/0007/0011/0013 amended).
-- `lore validate [paths…]` (LORE-19): tiered, per-file conformance reporting. Unlike the
+- `lore validate [paths…]` (LCLI-19): tiered, per-file conformance reporting. Unlike the
   fail-fast write path, validate is an **aggregating reporter** — it surfaces *every* file's
   findings in one pass, tiered error/warning, and emits a `kind: validate.report` payload on
   stdout, then **returns** exit `6` when any error-tier finding exists (or any warning under
   `--strict`); the report is the payload, the exit code is the gate signal. Tiers (ADR-0007):
   **OKF §9** (frontmatter parses, non-empty `type`) and **per-type shape** — the strict Zod
   schema **plus per-type required body sections** — are errors; an **unknown type / extra key /
-  summary** issue is a warning (OKF tolerance: unknown types never fail, LORE-19 AC#1); and a
+  summary** issue is a warning (OKF tolerance: unknown types never fail, LCLI-19 AC#1); and a
   cross-cutting **frontmatter quote-safety** check flags unquoted scalars a YAML-1.1 consumer
   would coerce (`yes`→bool, bare dates, leading `@`/`*`/… indicators, colon-space). Required
   sections follow a **minimal, evidence-based** policy (ADR → `Status`/`Context`/`Decision`/
@@ -1048,7 +1048,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `quoteSafetyFindings`); `src/commands/validate.ts` the thin discovery/I/O layer. Required
   sections are a single source of truth in `schema.ts` (`requiredSectionsFor`); `walkMarkdown`
   is exported from `bundle.ts` for reuse.
-- `lore new <type> "<title>"` (LORE-18): scaffold a typed concept from a template.
+- `lore new <type> "<title>"` (LCLI-18): scaffold a typed concept from a template.
   lore **owns the frontmatter** — it is built structurally (type/title/summary/timestamp,
   plus `--tags`) and serialized through the byte-stable concept boundary, so a title or
   summary containing YAML-special characters can never corrupt the file — while the
@@ -1069,7 +1069,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `scaffold.ts`; the never-clobber/conflict write path is factored to `src/commands/fswrite.ts`
   and shared with `lore init`. (Coupling flags `--epic`/`--story`/`--resource` deferred to
   the story-task coupling work, ADR-0009.)
-- Concept frontmatter layer (LORE-15): `src/core/schema.ts` + `src/core/concept.ts` —
+- Concept frontmatter layer (LCLI-15): `src/core/schema.ts` + `src/core/concept.ts` —
   the frontmatter boundary and Zod source of truth. `schema.ts` authors the
   story-convention profile (the six known types `Epic`/`Story`/`Spec`/`ADR`/`Runbook`/
   `Reference`) in Zod; `validateFrontmatter` enforces the OKF tiers — a missing `type`
@@ -1087,8 +1087,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   literal `__proto__` frontmatter key is preserved as data without prototype pollution.
   New runtime deps, version-pinned for serializer stability (ADR-0011): `gray-matter`,
   `js-yaml`, `zod`. JSON-Schema emission and the above-fence editor modeline are
-  deferred to `lore init`/`lore new` (LORE-17), where they are consumed.
-- Output-mode layer (LORE-12): `src/output.ts` — lore's single rendering seam.
+  deferred to `lore init`/`lore new` (LCLI-17), where they are consumed.
+- Output-mode layer (LCLI-12): `src/output.ts` — lore's single rendering seam.
   `resolveMode`/`resolveOutput` resolve one of three modes up front with the locked
   precedence `--json > --plain > pretty`; a non-TTY stdout auto-selects `--plain`
   (deterministic pipes without a flag) and `--json` always overrides (cli-contract §1).
@@ -1110,7 +1110,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   passes. Module + tests only; commands wire it in at M1 (matches the errors.ts/config.ts
   precedent). `errors.ts` additionally exports `singleLine`/`asText` (shared text
   discipline) used by the truncation hint.
-- `.lore/config.toml` loader (LORE-10): `src/config.ts` — `loadConfig({ root?, env? })`
+- `.lore/config.toml` loader (LCLI-10): `src/config.ts` — `loadConfig({ root?, env? })`
   parses the committed config with **Bun-native TOML** (no added dependency) into a
   typed, validated `LoreConfig` (`reconcile`, `validate`, `confluence`). Zero-config
   (a missing file yields the documented defaults), deterministic via injectable
@@ -1120,7 +1120,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   throws a `validation` `LoreError` (exit `6`); unknown keys/sections are tolerated for
   forward-compatibility. lore's own `.lore/config.toml` is committed; `.lore/cache/`
   stays gitignored (ADR-0013).
-- Shared error model (LORE-11): `src/errors.ts` — the `LoreError` taxonomy and
+- Shared error model (LCLI-11): `src/errors.ts` — the `LoreError` taxonomy and
   centralized semantic exit-code mapping (`0` ok, `2` usage, `3` not-found,
   `4` denied, `5` conflict, `6` validation/drift; `1` reserved for uncaught
   bugs), the `--json` `{error_type,message,hint,input}` error envelope rendered
@@ -1143,16 +1143,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a non-null, non-array object `input` (cli-contract §5.2).
   `WarningCollector.flush` is documented as non-draining, and `EXIT_CODES` is
   frozen.
-- CI (LORE-8): GitHub Actions workflow running `lint`, `typecheck`, and
+- CI (LCLI-8): GitHub Actions workflow running `lint`, `typecheck`, and
   `bun test --isolate` across Ubuntu/macOS/Windows (Windows tuned with
   `--max-concurrency=4` for stability), plus a Linux compile smoke. The Bun
   version is sourced from `.bun-version` (single source of truth). A
   `.gitattributes` pins text files to LF so the lint gate is stable on Windows.
-- Dev tooling (LORE-7): Biome for lint + format (honoring `.editorconfig`) and the
+- Dev tooling (LCLI-7): Biome for lint + format (honoring `.editorconfig`) and the
   `bun test` harness with coverage (`bunfig.toml`, text + lcov reporters). Scripts:
   `format`, `lint`, `lint:fix`, `test`, `test:coverage`. (Biome was chosen over the
   task's original ESLint+Prettier to satisfy the *thin* and *match Backlog.md* rules.)
-- Bun + TypeScript toolchain scaffold (LORE-6): `package.json` (`@salient-data/lore`,
+- Bun + TypeScript toolchain scaffold (LCLI-6): `package.json` (`@salient-data/lore`,
   bin `lore`), strict `tsconfig.json`, Bun pinned to `1.2.23` (`.bun-version` +
   `packageManager`/`engines`) with rationale and bump procedure in `DEVELOPMENT.md`,
   and a stub `lore` CLI (`src/cli.ts`).
@@ -1163,7 +1163,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **`lore link`/`lore unlink`'s `--plain` per-task line, the shared bad-concept-id hint, and
-  `lore tasks`/`lore context`'s missing-arg usage text were harmonized in one pass** (LORE-259).
+  `lore tasks`/`lore context`'s missing-arg usage text were harmonized in one pass** (LCLI-259).
   **The `--plain` reformat is a contract-level change** per
   [cli-contract.md](docs/reference/cli-contract.md) §1.3 ("substantial reformatting of `--plain`
   output is treated as a contract change, not a cosmetic one") and §7.2 (which separately lists
@@ -1194,7 +1194,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Verified against `dev`: `bun test` 2126/0 pass, `typecheck`/`lint` clean, `lore check` (39 files, 0
   errors/warnings).
 - **`lore scaffold <target>` — a bare re-run against an unchanged config is now an idempotent
-  no-op; exit `5` is narrowed to an actual user edit or a directory blocker** (LORE-263). **A
+  no-op; exit `5` is narrowed to an actual user edit or a directory blocker** (LCLI-263). **A
   user-visible exit-code contract change.** Previously *any* already-existing planned file always
   hard-errored `conflict`/exit `5` on a bare re-run — even when its on-disk bytes were
   byte-identical to what the run would generate — so simply re-running `lore scaffold mkdocs` (or
@@ -1223,7 +1223,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/reference/cli-surface.md`'s Exit/Output rows, which had briefly still described the
   pre-change always-conflicts contract. Verified against `dev`: `bun test` 2110/0 pass,
   `typecheck`/`lint` clean, `lore check` (39 files, 0 errors/warnings).
-- **Deduped the shared task-summary-row type and aligned-row renderer** (LORE-51). `lore tasks`'s
+- **Deduped the shared task-summary-row type and aligned-row renderer** (LCLI-51). `lore tasks`'s
   `TaskRollupRow` and `lore orphans`' `OrphanTask` were byte-identical `{id, title, status}`
   redeclarations, and `orphans.ts`'s orphan-task block re-implemented `tasks.ts`'s id/status/title
   aligned-table logic independently. Both now share `output.ts`'s new `TaskSummaryRow` type and
@@ -1239,7 +1239,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plain per-item loop (matching the sibling `danglingLinks` block, which was never affected); a
   700k-scale regression test was added and confirmed to reproduce the original failure.
 - **`lore link` / `lore unlink` / `lore rename` now commit their `backlog/` writes immediately**
-  (LORE-49): each command's `doc:<conceptId>` back-reference edit is committed in one `lore`-authored
+  (LCLI-49): each command's `doc:<conceptId>` back-reference edit is committed in one `lore`-authored
   commit right after it is written (via `state.ts`'s new `commitBacklogFiles`), instead of being left
   uncommitted in the working tree until the next `lore sync` swept it up — matching design §3.6 and
   [ADR-0012](docs/adr/0012-backlog-coexistence-git-ownership.md) ("lore is the sole committer of
@@ -1254,7 +1254,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commit surfaces loudly as `drift` (exit 6) — but is **captured, not thrown**, so the command still
   emits its per-task report (naming every write it made) with a `backlog/ commit failed: …` line
   before exiting, rather than dropping the report on the failure path.
-- **`lore check` internals** (LORE-48): the `validate`/`check` finding model is unified on a shared
+- **`lore check` internals** (LCLI-48): the `validate`/`check` finding model is unified on a shared
   `Severity`/`Finding<Rule>` (`core/finding.ts`); the filesystem-errno→`LoreError` mapping is
   consolidated into one `ioError` policy (`errors.ts`); `bundle.ts`'s markdown walk is generalized to
   a predicate-driven `walkFiles`; and `normalizeLink` now rejects absolute operands and computes a

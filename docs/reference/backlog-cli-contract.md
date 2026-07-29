@@ -168,8 +168,8 @@ fail-loud drift, never a silent "missing" guess.
   site from `viewTask`, so the two never need to agree on a shared signal).
 - `task list` / a successful `task view --json` parse also confirm existence.
 
-> **History.** This is a migration-driven flip (LORE-54). The earlier fork
-> this project shipped against (LORE-2/4/21) had `task view <missing>` exit
+> **History.** This is a migration-driven flip (LCLI-54). The earlier fork
+> this project shipped against (LCLI-2/4/21) had `task view <missing>` exit
 > `0` with empty stdout and a stderr message — an exit code that was *not* a
 > usable existence signal, so `lore`'s adapter used to treat empty stdout as
 > the "missing" tell instead. Upstream's PR #790 made the exit code meaningful;
@@ -241,7 +241,7 @@ schema at line 2022 already reads "Require every listed label; repeat
 `.option("-l, --labels <labels>", "filter tasks by labels; require every
 comma-separated label (repeatable)", createMultiValueAccumulator())` — the
 identical accumulator processor used at v1.48.0. This falsifies any reading
-of this document (or of LORE-270's own title) as claiming all four label
+of this document (or of LCLI-270's own title) as claiming all four label
 flags became repeatable in v1.48.0: only the three `task edit` flags above
 did; `task list`'s filter always was.
 
@@ -480,7 +480,7 @@ The `--json` envelope is an **additive-only versioned contract**
 ([backlog-json-schema.md](backlog-json-schema.md)); a bump in `schemaVersion`
 that `lore` does not recognize fails the probe rather than mis-reads.
 
-> **Migration status: complete (LORE-53 probe, LORE-54 full adapter).** Both
+> **Migration status: complete (LCLI-53 probe, LCLI-54 full adapter).** Both
 > the probe (step 4 above) and the full read adapter (`EnvelopeSchema`,
 > `parseEnvelope`, `listTasks`/`viewTask`/`searchTasks`) now target upstream's
 > real envelope — numeric `schemaVersion: 1`, hyphenated `kind`s
@@ -498,7 +498,7 @@ that `lore` does not recognize fails the probe rather than mis-reads.
 > commit on PATH (see the [patch runbook §8](../runbooks/backlog-json-patch.md))
 > — deliberately **not** a `package.json` git dependency: `lore` has not
 > shipped yet, so this is dev/test-time-only wiring, deferred until a real
-> release exists (LORE-53 decision).
+> release exists (LCLI-53 decision).
 
 ---
 
