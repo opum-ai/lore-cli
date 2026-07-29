@@ -22,9 +22,33 @@ runs:
       working-directory: ${{ github.action_path }}/../../..
       run: bun install --frozen-lockfile --linker=isolated
 
-    - name: Install JSON-capable Backlog CLI
+    - name: Build pinned JSON-capable Backlog CLI
       shell: bash
-      run: bun add --global --exact backlog.md@1.48.0
+      env:
+        BACKLOG_COMMIT: 22a091b570d44c4f302ca47e7fd36fa28ad8bcb0
+      run: |
+        BACKLOG_SOURCE_DIR="$(mktemp -d "${RUNNER_TEMP}/lore-backlog.XXXXXX")"
+        BACKLOG_BIN_DIR="${RUNNER_TEMP}/lore-bin"
+
+        git init --quiet "$BACKLOG_SOURCE_DIR"
+        git -C "$BACKLOG_SOURCE_DIR" remote add origin https://github.com/MrLesk/Backlog.md.git
+        git -C "$BACKLOG_SOURCE_DIR" fetch --quiet --depth=1 origin "$BACKLOG_COMMIT"
+        git -C "$BACKLOG_SOURCE_DIR" checkout --quiet --detach FETCH_HEAD
+
+        (
+          cd "$BACKLOG_SOURCE_DIR"
+          HUSKY=0 bun install
+          HUSKY=0 bun run build
+        )
+
+        mkdir -p "$BACKLOG_BIN_DIR"
+        install -m 0755 "$BACKLOG_SOURCE_DIR/dist/backlog" "$BACKLOG_BIN_DIR/backlog"
+        BACKLOG_VERSION="$("$BACKLOG_BIN_DIR/backlog" --version)"
+        if [[ -z "$BACKLOG_VERSION" || "$BACKLOG_VERSION" == "0.0.0" ]]; then
+          echo "Pinned Backlog build produced an invalid version: '$BACKLOG_VERSION'" >&2
+          exit 1
+        fi
+        echo "$BACKLOG_BIN_DIR" >> "$GITHUB_PATH"
 
     - name: Validate OKF documents
       shell: bash
