@@ -5,7 +5,7 @@
 # template, so this note is best-effort and may not survive — the durable record
 # is the ADR, and a `lore check` exit-6 drift gate will enforce the invariant once
 # LORE-27 lands. See docs/adr/0012-backlog-coexistence-git-ownership.md.
-project_name: "lore"
+project_name: "lore-cli"
 default_status: "To Do"
 statuses: ["To Do", "In Progress", "Done"]
 labels: []
@@ -19,4 +19,4 @@ filesystem_only: false
 bypass_git_hooks: false
 check_active_branches: false
 active_branch_days: 30
-task_prefix: "LORE"
+task_prefix: "LCLI"

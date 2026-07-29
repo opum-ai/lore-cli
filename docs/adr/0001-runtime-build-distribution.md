@@ -9,9 +9,8 @@ description: >-
   per-platform compiled binaries as optionalDependencies).
 tags: [adr, runtime, build, distribution, bun, typescript, npm, packaging]
 summary: >-
-  lore is built on Bun + TypeScript and shipped as a `bun build --compile`
-  -baseline binary, distributed on npm as a Node .cjs launcher plus
-  per-platform binary optionalDependencies under @salient-data/lore (bin `lore`).
+  lore uses Bun and TypeScript and ships through npm as a Node launcher with
+  optional per-platform compiled binaries.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -109,7 +108,7 @@ machines through the channel they already use (npm / `npx` / `bunx`).
   postinstall compilation, and `npx`/`bunx` "just work".
 - The build mechanics (per-platform compile matrix, the launcher, the package
   layout, and a dry-run pipeline that proves `npx` resolution end-to-end) are
-  implemented (LORE-9). **Amendment — 2026-07-25 (LORE-255):** the actual `npm publish`
+  implemented (LCLI-9). **Amendment — 2026-07-25 (LCLI-255):** the actual `npm publish`
   step is now implemented too, as a `publish` job gated on an explicit
   `publish: true` `workflow_dispatch` input with job-scoped `id-token: write`
   and OIDC trusted publishing; it still requires the one-time npm Trusted

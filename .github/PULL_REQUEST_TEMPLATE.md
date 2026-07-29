@@ -1,6 +1,6 @@
 ## Summary
 
-What does this PR change, and why? Link the Backlog.md task (e.g. `LORE-12`) and any
+What does this PR change, and why? Link the Backlog.md task (e.g. `LCLI-12`) and any
 relevant `docs/` concept or ADR.
 
 ## Type of change

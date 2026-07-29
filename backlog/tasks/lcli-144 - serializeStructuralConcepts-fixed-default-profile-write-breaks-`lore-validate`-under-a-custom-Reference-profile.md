@@ -1,0 +1,64 @@
+---
+id: LCLI-144
+title: >-
+  serializeStructuralConcept's fixed default-profile write breaks `lore
+  validate` under a custom Reference profile
+status: Done
+assignee:
+  - '@claude'
+created_date: '2026-07-28 20:14'
+updated_date: '2026-07-28 20:26'
+labels:
+  - codex-review-followup
+  - core-engine-a
+dependencies: []
+references:
+  - >-
+    backlog/docs/reviews/doc-2 -
+    Codex-second-opinion-review-—-lore-codebase-2026-07-20.md
+priority: medium
+type: bug
+ordinal: 158000
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+serializeStructuralConcept (src/core/scaffold.ts:163-168) always serializes lore-owned reserved files like the scaffolded root `docs/index.md` against the built-in `defaultProfile()`, deliberately ignoring the project's active profile (per its own docstring, so a custom profile can never break a scaffold command). However, `lore validate` (src/commands/validate.ts:71-76) loads the *active* project profile and `validateFrontmatter` (src/core/schema.ts:159-186) validates every file, including docs/index.md with no exemption, against that active profile's compiled schema. If the active profile adds a required field to the `Reference` type, `lore init` writes an index.md that is valid against the default profile but immediately fails `lore validate` — a freshly scaffolded bundle cannot pass its own first validation check.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [x] #1 Running `lore init` followed immediately by `lore validate` succeeds (no thrown/reported error on docs/index.md) even when the project's active profile adds a required field to the `Reference` type.
+- [x] #2 A regression test covering this init-then-validate sequence exists (e.g. alongside scaffold/validate core tests) using a custom profile with a required field added to Reference, asserting no validation failure is reported for the scaffolded root index.
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Export ROOT_INDEX_PATH from src/core/scaffold.ts (was a private const) so validate.ts can recognize the reserved root index by path with no import cycle (scaffold.ts already imports schema.ts; schema.ts must not import scaffold.ts back).
+2. In src/core/validate.ts's validateConceptText, add effectiveProfileFor(path, profile): returns defaultProfile() for path === ROOT_INDEX_PATH, else the caller's active profile unchanged. Route tryParseConcept, requiredSectionFindings, and resourceDriftFindings through this effective profile instead of the raw active profile.
+3. Rationale: serializeStructuralConcept (scaffold.ts) always WRITES the root index against defaultProfile(), deliberately ignoring the active profile (its docstring forbids honoring a custom profile for this reserved file). The bug was read/write asymmetry: validate READ it back against the active profile with no such carve-out. Fix restores symmetry: the root index is judged under the same fixed profile it was serialized with. Scoped to exactly ROOT_INDEX_PATH (not the whole index/log RESERVED_STEMS family) because every other reserved file (sub-dir index.md, log.md) is generated frontmatter-free and is already skipped as a non-concept before reaching any profile-driven check -- root index is the only reserved file that is itself a concept.
+4. Add regression tests in test/validate.test.ts: (a) full runInit+runValidate command-level test with a pre-existing custom .lore/profile.toml that adds a required 'owner' field to Reference, asserting exit 0 / errorCount 0 / docs/index.md ok; (b) core-level validateConceptText test feeding the scaffolded root index bytes against the custom profile directly; (c) a control test proving the exemption is root-index-only -- the same custom profile still fails an ordinary docs/reference/*.md Reference concept missing 'owner'.
+5. Verify: bun test (full suite) + bun run typecheck; confirm the two LCLI-144 tests fail against the pre-fix validate.ts (git stash discrimination check) and pass after restoring the fix; manual CLI sanity check via bun src/cli.ts init/validate in a scratch dir with the same custom profile.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fix: exported ROOT_INDEX_PATH from src/core/scaffold.ts; added effectiveProfileFor(path, profile) in src/core/validate.ts that substitutes defaultProfile() for the bundle-root docs/index.md only (else the active profile passthrough), and routed it through tryParseConcept/requiredSectionFindings/resourceDriftFindings inside validateConceptText. This restores write/read symmetry with serializeStructuralConcept, which already always writes the root index against defaultProfile().
+
+Verification: bun test (full suite) = 1821 pass / 0 fail across 47 files; bun run typecheck = clean (tsc --noEmit, no errors).
+
+Regression tests added in test/validate.test.ts (describe "validate (command) — LCLI-144 reserved root index under a custom profile", 3 tests): AC#1 full runInit+runValidate CLI-command-level test with a pre-existing custom .lore/profile.toml requiring an 'owner' field on Reference — asserts exit 0, errorCount 0, docs/index.md ok:true; AC#2 core-level validateConceptText test on the scaffolded root index bytes against that same custom profile; a third control test proves the exemption is root-index-only (the same custom profile still fails 'owner' on an ordinary docs/reference/*.md Reference concept).
+
+Discrimination proof: git-stashed the validate.ts fix (reverted to profile-everywhere behavior) and reran test/validate.test.ts — the two LCLI-144 CLI/core tests failed exactly as expected (exit 0 became 6; ok:true became false), then restored the fix via git stash pop and reran clean (56/56 pass). Also manually ran the real CLI (bun src/cli.ts init && bun src/cli.ts validate) against a scratch dir with the same custom profile.toml pre-seeded — init created docs/index.md, validate reported 'ok docs/index.md' / '1 file, 0 errors, 0 warnings, 0 skipped', exit 0.
+
+Scope: only src/core/scaffold.ts, src/core/validate.ts, test/validate.test.ts changed (plus this task file). Did not touch src/commands/validate.ts or src/core/schema.ts — the exemption point turned out to belong in core/validate.ts's per-file profile resolution, not either of those, and no other sibling-owned files were touched.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Fixed the write/read asymmetry: scaffold.ts's serializeStructuralConcept always WRITES the reserved root docs/index.md against the built-in defaultProfile() (by design), but lore validate previously READ it back against the active project profile with no exemption, so a custom profile adding a required field to Reference made a freshly scaffolded bundle fail its own first lore validate. Exported ROOT_INDEX_PATH from src/core/scaffold.ts and added effectiveProfileFor() in src/core/validate.ts's validateConceptText, which judges exactly the bundle-root index against defaultProfile() (every other RESERVED_STEMS file is frontmatter-free and already skipped as a non-concept, so no broader carve-out is needed). Verified with bun test (1821 pass / 0 fail) and bun run typecheck (clean); 3 new regression tests in test/validate.test.ts (CLI-level init+validate, core-level, and a control test proving the exemption is root-index-only) were shown to fail against the pre-fix code via a git-stash discrimination check, then pass after restoring the fix; also manually exercised the real CLI (init then validate) against a scratch project with a custom profile.toml.
+<!-- SECTION:FINAL_SUMMARY:END -->

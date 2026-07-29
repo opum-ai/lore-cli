@@ -10,7 +10,7 @@ that selects a toolchain:
 - [`package.json`](package.json) — `packageManager: "bun@1.2.23"` and
   `engines.bun: ">=1.2.23"`.
 
-CI asserts this value before any build (see M0 / LORE-8). The pin is enforced so
+CI asserts this value before any build (see M0 / LCLI-8). The pin is enforced so
 lore behaves identically across every developer, CI runner, and shipped artifact —
 an unpinned runtime is an undeclared dependency (see
 [ADR-0001](docs/adr/0001-runtime-build-distribution.md) and
@@ -59,13 +59,13 @@ neither reproduces there.
   stream**, whenever `--outfile` lands on a **different mounted filesystem** than the
   source checkout — the same underlying `EXDEV` cross-device rename, silently
   swallowed. This is **not specific to the external volume as such**: confirmed
-  (LORE-14) by compiling this exact checkout with `--outfile` on the *same* volume
+  (LCLI-14) by compiling this exact checkout with `--outfile` on the *same* volume
   as the checkout (works, correct multi-MB binary every time) versus a *different*
   mounted volume (0-byte, every time) — the checkout being on `/Volumes/...` only
   matters because it's *a* filesystem boundary, and crossing it in *either* direction
   triggers the same failure. The empty file runs as a no-op — `./dist/lore --version`
   *looks* like a broken CLI but is purely the cross-device write. The CI compile-smoke
-  (LORE-8) asserts the binary's actual output, so a genuinely broken compile is
+  (LCLI-8) asserts the binary's actual output, so a genuinely broken compile is
   caught there. Full repro + the native-module angle:
   [tech-stack §1](docs/reference/tech-stack.md).
 

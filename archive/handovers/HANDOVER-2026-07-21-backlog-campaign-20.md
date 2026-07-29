@@ -1,4 +1,4 @@
-# Handover — fifth backlog campaign session, cursor at LORE-90 (fresh 8-item queue, item 1 of 8)
+# Handover — fifth backlog campaign session, cursor at LCLI-90 (fresh 8-item queue, item 1 of 8)
 
 **Date**: 2026-07-21 | **Grounded against**: `dev @ 6062df4`, clean except `.repro-scratch/` and `docs/.obsidian/` (both pre-existing/unrelated, leave alone), pushed and in sync with `origin/dev` | **Tracker**: doc-1
 
@@ -6,13 +6,13 @@
 
 ```
 Run /backlog-handover restore in /Volumes/external/repos/lore. Tracker: doc-1.
-Cursor: LORE-90 — commitBacklogFiles' backlog/ containment guard uses
+Cursor: LCLI-90 — commitBacklogFiles' backlog/ containment guard uses
 POSIX-only normalize, inconsistent with the project's win32 validation
-convention. This is item 1 of a fresh 8-item queue (LORE-90/94/92/95/89/88/
+convention. This is item 1 of a fresh 8-item queue (LCLI-90/94/92/95/89/88/
 91/93) confirmed by the user on 2026-07-21 ("Risk-ascending, sweep last
 (Recommended)"); do not re-ask before taking the next item.
 
-Read the task itself first (`backlog task view LORE-90 --plain`) — do not
+Read the task itself first (`backlog task view LCLI-90 --plain`) — do not
 trust this summary alone.
 
 Root-cause claim to verify, not assume: `src/state.ts` imports only `posix`
@@ -29,12 +29,12 @@ separator either, so nothing actually gets committed outside `backlog/`
 through this exact path today. Re-verify this yourself before implementing —
 read current line numbers fresh, don't assume today's.
 
-This mirrors the convention LORE-69/72/80 already established in this
+This mirrors the convention LCLI-69/72/80 already established in this
 codebase: validate against the actual deployment platform (this repo ships a
 `windows-latest` CI matrix and a `win32-x64`/`lore.exe` release target), not
 just the POSIX host running the fix. Likely fix shape (verify before
 implementing): also normalize/reject via `win32.normalize` (or an equivalent
-separator-agnostic check), mirroring how LORE-80's `escapesRoot` became
+separator-agnostic check), mirroring how LCLI-80's `escapesRoot` became
 separator-agnostic after its own review-found backslash bypass — read
 `core/rewrite.ts`'s `escapesRoot` for that precedent before designing a new
 check from scratch.
@@ -43,10 +43,10 @@ Merge gate is self-merge (skill default, user-confirmed 2026-07-19) — no
 PR-approval wait. Run the lifecycle's step 6 independent review
 (general-purpose subagent) AFTER committing the fix+tests, THEN write the
 outcome into the tracker — this ordering discipline has held cleanly across
-every session since LORE-74; don't regress on it.
+every session since LCLI-74; don't regress on it.
 
-After LORE-90: advance cursor to LORE-94 (schema export test gaps + symlink
-bypass), then LORE-92, LORE-95, LORE-89, LORE-88, LORE-91, LORE-93 in that
+After LCLI-90: advance cursor to LCLI-94 (schema export test gaps + symlink
+bypass), then LCLI-92, LCLI-95, LCLI-89, LCLI-88, LCLI-91, LCLI-93 in that
 confirmed order.
 ```
 
@@ -54,29 +54,29 @@ confirmed order.
 
 | Item | Status |
 | --- | --- |
-| Tracker doc | doc-1, updated this session (Cursor → LORE-90, Queue = 8 items LORE-90/94/92/95/89/88/91/93, session-log entry appended for this init) |
+| Tracker doc | doc-1, updated this session (Cursor → LCLI-90, Queue = 8 items LCLI-90/94/92/95/89/88/91/93, session-log entry appended for this init) |
 | Review doc | doc-2, the original full Codex second-opinion review (201 confirmed findings) — source of the campaign's first 25 queued tasks; this fresh queue's own source is 9 not-yet-filed follow-up candidates this campaign's own independent reviews accumulated across sessions 9-26 |
 | Queue | 8 tasks, all `To Do`, all `bug` type, labels `backlog-campaign-followup` plus a category label each (`correctness`/`security`/`test-coverage`) |
-| New tasks filed this session | LORE-88 through LORE-95 — each independently re-verified against current dev HEAD by a dedicated workflow agent (live-CLI where feasible) before filing, plus a calibration pass across all nine candidates that merged two (the Windows-drive-relative and empty/self-cancelling-newId `escapesRoot` edge cases) into one task (LORE-95) |
+| New tasks filed this session | LCLI-88 through LCLI-95 — each independently re-verified against current dev HEAD by a dedicated workflow agent (live-CLI where feasible) before filing, plus a calibration pass across all nine candidates that merged two (the Windows-drive-relative and empty/self-cancelling-newId `escapesRoot` edge cases) into one task (LCLI-95) |
 | Branch | `dev`, clean, pushed and in sync with `origin/dev` |
 | Leftover branches/PRs | none |
-| Not queued | LORE-42/43/44/45 (deferred by recorded product decisions — unchanged by this session) |
+| Not queued | LCLI-42/43/44/45 (deferred by recorded product decisions — unchanged by this session) |
 
 ## Next steps
 
-1. Run the per-issue lifecycle on **LORE-90** (`commitBacklogFiles`'s guard is POSIX-only): branch `feature/LORE-90` off `dev`, read the task's AC (`backlog task view LORE-90 --plain`), re-verify the root-cause claim against current `src/state.ts` (line numbers may have drifted), implement, verify, review, PR, self-merge, prune.
-2. Update doc-1's Cursor/Queue/Resolved/Session-log sections on the feature branch before merging (per the skill's step 4) — advance cursor to LORE-94.
+1. Run the per-issue lifecycle on **LCLI-90** (`commitBacklogFiles`'s guard is POSIX-only): branch `feature/LCLI-90` off `dev`, read the task's AC (`backlog task view LCLI-90 --plain`), re-verify the root-cause claim against current `src/state.ts` (line numbers may have drifted), implement, verify, review, PR, self-merge, prune.
+2. Update doc-1's Cursor/Queue/Resolved/Session-log sections on the feature branch before merging (per the skill's step 4) — advance cursor to LCLI-94.
 3. Run the lifecycle's step 6 independent review (`general-purpose` subagent) **after** committing the fix and its tests, **then** write the outcome into the tracker.
-4. Continue the confirmed queue order: LORE-94 → LORE-92 → LORE-95 → LORE-89 → LORE-88 → LORE-91 → LORE-93.
+4. Continue the confirmed queue order: LCLI-94 → LCLI-92 → LCLI-95 → LCLI-89 → LCLI-88 → LCLI-91 → LCLI-93.
 
 ## Critical context / traps
 
 - **Reused doc-1** rather than creating a new tracker doc for this fresh queue — this campaign has now run 28 sessions against the same tracker; its Resolved table (27 rows), Not-queued section, Session log, and Campaign conventions section are all load-bearing history. Don't recreate it.
 - **All 8 new tasks were independently re-verified against dev HEAD before filing** (not just carried forward from stale review notes) — a dedicated Workflow ran 9 parallel verification agents (one per original candidate) plus a calibration/dedup pass. Trust the filed tasks' descriptions as current, but each task's own AC still deserves a fresh live-CLI check at pickup time, per this campaign's standing discipline (a LOT changes session to session).
-- **LORE-93 (last in queue) is the largest-surface item** — 5 command files (`new.ts`, `agents.ts`, `sync.ts`, `schema.ts`, `rename.ts`) all need the same `assertNoSymlinkInPath` guard extended to their direct `ensureDir` calls. Deliberately queued last, mirroring how the just-finished campaign sequenced its own LORE-80→79→78→81 interrelated cluster.
-- **LORE-91 and LORE-93 both touch `new.ts`, but at different call sites** (LORE-91: `readTemplateFile`'s template read; LORE-93: `ensureDir`'s ancestor-directory write) — don't conflate them, they're separate tasks with separate fixes, queued 7th and 8th respectively.
-- **LORE-88 and LORE-89 are both LORE-84 profile-threading follow-ups but touch entirely different code paths** (LORE-88: `core/rewrite.ts`'s `rewriteInbound` engine + `rename.ts`'s `buildPostRenameGraph`; LORE-89: `check.ts`'s own independent `walkFiles`/`parseConcept` scan) — don't merge or conflate.
-- **LORE-95 covers TWO edge cases in the same shared function** (`core/rewrite.ts`'s `escapesRoot`): a Windows drive-relative id (`"C:foo"`, verifiable via `node:path`'s `path.win32` pure functions on any host — no real Windows machine needed) and an empty/self-cancelling `newId` (fully testable on POSIX). Both ACs need covering, not just one.
+- **LCLI-93 (last in queue) is the largest-surface item** — 5 command files (`new.ts`, `agents.ts`, `sync.ts`, `schema.ts`, `rename.ts`) all need the same `assertNoSymlinkInPath` guard extended to their direct `ensureDir` calls. Deliberately queued last, mirroring how the just-finished campaign sequenced its own LCLI-80→79→78→81 interrelated cluster.
+- **LCLI-91 and LCLI-93 both touch `new.ts`, but at different call sites** (LCLI-91: `readTemplateFile`'s template read; LCLI-93: `ensureDir`'s ancestor-directory write) — don't conflate them, they're separate tasks with separate fixes, queued 7th and 8th respectively.
+- **LCLI-88 and LCLI-89 are both LCLI-84 profile-threading follow-ups but touch entirely different code paths** (LCLI-88: `core/rewrite.ts`'s `rewriteInbound` engine + `rename.ts`'s `buildPostRenameGraph`; LCLI-89: `check.ts`'s own independent `walkFiles`/`parseConcept` scan) — don't merge or conflate.
+- **LCLI-95 covers TWO edge cases in the same shared function** (`core/rewrite.ts`'s `escapesRoot`): a Windows drive-relative id (`"C:foo"`, verifiable via `node:path`'s `path.win32` pure functions on any host — no real Windows machine needed) and an empty/self-cancelling `newId` (fully testable on POSIX). Both ACs need covering, not just one.
 - `.repro-scratch/` keeps accumulating scratch files from every review/verification session (unchanged this session structurally, though this session's own verification agents added 9 new `-verify/` subdirectories) — still don't delete its contents without being asked again.
 - `docs/.obsidian/` and `.repro-scratch/` are known, intentional non-blockers for the lifecycle's step-0 clean-tree preflight.
 - **Merge gate is self-merge** — confirmed by the user on 2026-07-19 for this specific campaign.
@@ -92,6 +92,6 @@ confirmed order.
 - Don't delete `.repro-scratch/` without being asked again.
 - Don't trust a synthetic test suite alone as proof a destructive/security fix is correct — run the real CLI against a scratch repo too.
 - Don't assert "lint clean"/"tests are green" — or "no review needed"/"review found nothing" — in task/tracker notes from memory or before actually running the check.
-- Don't assume a task's own filed repro is still an open gap without live-CLI-verifying it first — this campaign's single highest-value discipline; apply it to LORE-90 even though this session's own filing agent already did a first-pass live verification (re-verify at pickup time too, since state can drift between sessions).
-- Don't re-derive a security/correctness-sensitive check from scratch when an existing, already-tested one fits — check `core/rewrite.ts`'s `escapesRoot` for LORE-90's own separator-agnostic-normalize precedent before writing something new.
+- Don't assume a task's own filed repro is still an open gap without live-CLI-verifying it first — this campaign's single highest-value discipline; apply it to LCLI-90 even though this session's own filing agent already did a first-pass live verification (re-verify at pickup time too, since state can drift between sessions).
+- Don't re-derive a security/correctness-sensitive check from scratch when an existing, already-tested one fits — check `core/rewrite.ts`'s `escapesRoot` for LCLI-90's own separator-agnostic-normalize precedent before writing something new.
 - Don't export a private `parse*Args` function just to unit-test a fix in isolation — no precedent for this anywhere in the codebase; stick to CLI-level integration tests like every other command.

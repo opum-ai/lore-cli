@@ -12,9 +12,8 @@ description: >-
   is the primary surface).
 tags: [runbook, agents, claude-code, onboarding, skill, cli, json, exit-codes, ci]
 summary: >-
-  The canonical, deterministic agent loop (index → Story → lore tasks → work →
-  lore sync → lore check) plus how Claude Code discovers lore via SKILL.md, the
-  CLAUDE.md nudge, lore instructions, and the --json/exit-code contract.
+  Defines the deterministic agent loop and how coding agents discover Lore
+  instructions, machine-readable output, and safety guardrails.
 timestamp: 2026-06-21T00:00:00Z
 ---
 

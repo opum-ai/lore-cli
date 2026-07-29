@@ -274,7 +274,7 @@ lore link stories/bulk-archive-orders task-42 task-57
 |---|---|
 | **Args** | `<id>` `<taskId…>` |
 | **Key flags** | `--no-back-ref` (skip the `doc:` label write to the task) |
-| **Output** | `kind: link.result` — links added / already present, plus the `backlog/` commit outcome. Emitted **only on exit `0`**; if any task's back-reference edit (or the `backlog/` commit) fails, stdout stays empty and the same per-task detail moves into the standard `--json` error envelope's `input` on stderr (cli-contract §4/§5) — never a partial-success envelope on stdout (LORE-58). |
+| **Output** | `kind: link.result` — links added / already present, plus the `backlog/` commit outcome. Emitted **only on exit `0`**; if any task's back-reference edit (or the `backlog/` commit) fails, stdout stays empty and the same per-task detail moves into the standard `--json` error envelope's `input` on stderr (cli-contract §4/§5) — never a partial-success envelope on stdout (LCLI-58). |
 | **Exit** | `0` ok · `2` usage (bad flag, comma-bearing id) · `3` concept or task id not found · `4` writing into a managed region denied · `5` `<id>` collides case-insensitively with another concept · `6` a task's back-reference edit failed, or the `backlog/` commit failed (drift) |
 
 ### `unlink`
@@ -304,7 +304,7 @@ lore unlink stories/bulk-archive-orders task-42 --allow-missing
 |---|---|
 | **Args** | `<id>` `<taskId…>` |
 | **Key flags** | `--no-back-ref` (leave the `doc:` label on the task) · `--allow-missing` (tolerate `<id>` not resolving to a live concept) |
-| **Output** | `kind: unlink.result` — links removed / already absent, plus the `backlog/` commit outcome. Emitted **only on exit `0`**; if any task's back-reference edit (or the `backlog/` commit) fails, stdout stays empty and the same per-task detail moves into the standard `--json` error envelope's `input` on stderr (cli-contract §4/§5) — never a partial-success envelope on stdout (LORE-58). |
+| **Output** | `kind: unlink.result` — links removed / already absent, plus the `backlog/` commit outcome. Emitted **only on exit `0`**; if any task's back-reference edit (or the `backlog/` commit) fails, stdout stays empty and the same per-task detail moves into the standard `--json` error envelope's `input` on stderr (cli-contract §4/§5) — never a partial-success envelope on stdout (LCLI-58). |
 | **Exit** | `0` ok · `2` usage (bad flag, comma-bearing id) · `3` concept not found (unless `--allow-missing`) · `5` `<id>` collides case-insensitively with a live concept · `6` a task's back-reference edit failed, or the `backlog/` commit failed (drift) |
 
 ### `tasks`
@@ -330,7 +330,7 @@ lore tasks stories/bulk-archive-orders
 
 Bidirectional orphan report: **tasks with no owning doc** (no concept lists
 them, no task carries a `doc:` label, and no ancestor in the task's Backlog
-parent/subtask chain is owned either (LORE-261), so a subtask of an
+parent/subtask chain is owned either (LCLI-261), so a subtask of an
 already-linked parent is not reported) and **docs whose linked tasks have
 vanished** (a `tasks:` id Backlog no longer knows). The agent/CI signal that
 the doc↔task coupling has gaps.
@@ -447,7 +447,7 @@ graph, then update sub-indexes. Links remain
 [portable](./portable-markdown.md) (relative, URL-encoded, `.md`-suffixed).
 
 If the renamed concept has `tasks:` entries, every linked task's `doc:<id>`
-label and `--doc` path are moved to the new id/path too (LORE-24, ADR-0009
+label and `--doc` path are moved to the new id/path too (LCLI-24, ADR-0009
 §2) — the file move commits first, then the Backlog-side move runs, so a
 Backlog failure never strands an already-renamed file. That Backlog-side move is
 then committed in one `lore`-authored commit (ADR-0012: lore is the sole committer
@@ -501,12 +501,12 @@ lore scaffold docusaurus
 lore scaffold obsidian
 ```
 
-- **`mkdocs`** *(shipped, LORE-39)* — `mkdocs.yml` pointing at `docs/` plus a
+- **`mkdocs`** *(shipped, LCLI-39)* — `mkdocs.yml` pointing at `docs/` plus a
   `docs/tags.md` tag-index page; broken-links set to warn.
-- **`docusaurus`** *(shipped, LORE-40)* — a `website/` directory (`package.json`,
+- **`docusaurus`** *(shipped, LCLI-40)* — a `website/` directory (`package.json`,
   `docusaurus.config.js`, `sidebars.js`) with `markdown.format: 'detect'`
   (raw `<`/`{` safety) and broken-links → warn.
-- **`obsidian`** *(shipped, LORE-41)* — `.obsidian/` vault config tuned for
+- **`obsidian`** *(shipped, LCLI-41)* — `.obsidian/` vault config tuned for
   graph/backlinks over the relative-link convention (no wikilinks).
 
 An unrecognized target string (e.g. `hugo`) is a `usage` error (exit `2`). A

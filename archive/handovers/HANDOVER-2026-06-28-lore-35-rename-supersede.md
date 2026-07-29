@@ -1,16 +1,16 @@
-# Handover — LORE-35 continuation: PR2 `lore rename`, then PR3 `lore supersede`
+# Handover — LCLI-35 continuation: PR2 `lore rename`, then PR3 `lore supersede`
 
-**Date**: 2026-06-28 | **Grounded against**: `dev`=`main`=`15256db` (== origin, clean tree, checked out) | **Backlog**: LORE-35.1 **Done** (#22); LORE-35.2 **To Do** (rename, READY); LORE-35.3 **To Do** (supersede, READY)
+**Date**: 2026-06-28 | **Grounded against**: `dev`=`main`=`15256db` (== origin, clean tree, checked out) | **Backlog**: LCLI-35.1 **Done** (#22); LCLI-35.2 **To Do** (rename, READY); LCLI-35.3 **To Do** (supersede, READY)
 
 ## Paste-ready prompt for the next session
 
 ```
-State: dev == main == 15256db (== origin), clean tree, no open PRs. LORE-35 (lore replace/rename/
-supersede) was split into subtasks LORE-35.1/.2/.3, one PR each. LORE-35.1 (lore replace) is DONE —
-squash-merged as #22 (89330e4); mark-Done chore is 15256db. NEXT: LORE-35.2 = `lore rename` (graph-
+State: dev == main == 15256db (== origin), clean tree, no open PRs. LCLI-35 (lore replace/rename/
+supersede) was split into subtasks LCLI-35.1/.2/.3, one PR each. LCLI-35.1 (lore replace) is DONE —
+squash-merged as #22 (89330e4); mark-Done chore is 15256db. NEXT: LCLI-35.2 = `lore rename` (graph-
 aware concept rename: move a concept to a new id/path and rewrite EVERY inbound cross-link + frontmatter
-ref, then regenerate sub-indexes — LORE-35 AC#2). Then LORE-35.3 = `lore supersede` (reuses rename's
-engine). Confirm deps with the CLI: `backlog task view LORE-35.2 --plain` (dep LORE-28 ✓).
+ref, then regenerate sub-indexes — LCLI-35 AC#2). Then LCLI-35.3 = `lore supersede` (reuses rename's
+engine). Confirm deps with the CLI: `backlog task view LCLI-35.2 --plain` (dep LCLI-28 ✓).
 
 Build PR2 on the VERIFIED surgical-splice design (no markdown serializer dep — empirically probed):
 
@@ -20,7 +20,7 @@ docstring says so):
   RewritePlan = { rename: {from,to}|null, writes: {path, bytes}[] }  // ascending-path order
 - Edit bodies by SURGICAL STRING SPLICE using mdast node `position` offsets — NEVER parse→stringify
   (would reflow prose; forbidden by ADR-0008 §7). Deps are only mdast-util-from-markdown (parse);
-  there is NO mdast-util-to-markdown/remark-stringify (that's LORE-22, blocked + packaging risk).
+  there is NO mdast-util-to-markdown/remark-stringify (that's LCLI-22, blocked + packaging risk).
 - node.url is NOT byte-equal to source (percent-encoding kept, but backslash-escapes/HTML-entities
   decoded and <…> wrappers stripped) → you CANNOT indexOf(node.url) to find the dest. Locate the
   destination byte-range structurally inside the link node's span:
@@ -48,7 +48,7 @@ NEW commands/rename.ts (thin): parse <oldId> <newId> + --dry-run; loadBundle(doc
 rewriteInbound(move:true); regenerate indexes via core/indexes.ts generateIndexes over the post-
 rename graph (splice existing bytes); write all writes + index updates (overwrite) and move/delete;
 unless --dry-run; emit rename.result. Exit 0 · 3 oldId not found · 5 newId exists.
-REUSE what LORE-35.1 already landed: commands/discover.ts (readSource/canonicalIdentity/
+REUSE what LCLI-35.1 already landed: commands/discover.ts (readSource/canonicalIdentity/
 toRepoRelative/withinRepo — already exported), commands/fswrite.ts writeFileOverwriting (ADD a
 removeFile there for the moved-from delete — it was deferred out of PR1), core/indexes.ts
 locateManagedBlock + generateIndexes, links.ts normalizeLink/pathPart/decodeTarget/isExternalTarget,
@@ -64,24 +64,24 @@ the verified findings — last pass found 11 real bugs in replace) → PR into d
 reviews; admin-merge ONLY when he says "admin-merge". ssh is DOWN — route every git network op
 through the gh token.
 
-FIRST run `backlog instructions overview`, then `backlog task view LORE-35.2 --plain`.
+FIRST run `backlog instructions overview`, then `backlog task view LCLI-35.2 --plain`.
 ```
 
 ## State
 
 | Item | Status |
 | --- | --- |
-| **LORE-35.1** (`lore replace`) | **Done** — squash-merged **#22** (`89330e4`); chore `15256db`; branch deleted everywhere |
+| **LCLI-35.1** (`lore replace`) | **Done** — squash-merged **#22** (`89330e4`); chore `15256db`; branch deleted everywhere |
 | `dev` / `main` | both `15256db` == origin; clean; **checked out (dev)**; main re-synced to dev this session (== dev) |
 | Open PRs | **none** |
-| **LORE-35.2** (`lore rename`) | **To Do, READY** (dep LORE-28 ✓) — AC#2; introduces `core/rewrite.ts` `rewriteInbound` |
-| **LORE-35.3** (`lore supersede`) | **To Do, READY** (dep LORE-28 ✓) — reuses `rewriteInbound(move:false)` |
-| LORE-48 | **To Do** — `lore check` follow-ups (unrelated; low priority) |
-| backlog-fork cluster (LORE-1/21/22/26/27/32…) | **Blocked** behind the LORE-1 fork chain |
+| **LCLI-35.2** (`lore rename`) | **To Do, READY** (dep LCLI-28 ✓) — AC#2; introduces `core/rewrite.ts` `rewriteInbound` |
+| **LCLI-35.3** (`lore supersede`) | **To Do, READY** (dep LCLI-28 ✓) — reuses `rewriteInbound(move:false)` |
+| LCLI-48 | **To Do** — `lore check` follow-ups (unrelated; low priority) |
+| backlog-fork cluster (LCLI-1/21/22/26/27/32…) | **Blocked** behind the LCLI-1 fork chain |
 
 ## Critical context / traps
 
-- **No markdown serializer** (deps: only `mdast-util-from-markdown` parse + gray-matter + js-yaml + zod). Body edits MUST be surgical string splices via mdast `position` offsets; never parse→stringify (reflows prose, ADR-0008 §7). Pulling in remark-stringify is LORE-22 (blocked + EXDEV packaging risk, [[external-volume-bun-exdev-traps]]).
+- **No markdown serializer** (deps: only `mdast-util-from-markdown` parse + gray-matter + js-yaml + zod). Body edits MUST be surgical string splices via mdast `position` offsets; never parse→stringify (reflows prose, ADR-0008 §7). Pulling in remark-stringify is LCLI-22 (blocked + EXDEV packaging risk, [[external-volume-bun-exdev-traps]]).
 - **`node.url` ≠ source bytes** — locate the destination range structurally (see paste-ready). Verified empirically against `mdast-util-from-markdown@2.0.3`.
 - **Mirror `bundle.ts` resolution, NOT `check.ts`** for rename targeting: bundle's `resolvePath` absorbs a leading slash (no `/`-absolute special case); rewrite exactly the edges the graph counts. Case-sensitive `Map.has` (a wrong-case link dangles → left alone).
 - **core stays PURE** (design §2.1): string/graph in, typed out; the command layer owns fs/print/exit. ubuntu CI is case-SENSITIVE.
@@ -101,8 +101,8 @@ FIRST run `backlog instructions overview`, then `backlog task view LORE-35.2 --p
 
 ## System of record updated (this session)
 
-- **LORE-35** split into **LORE-35.1** (replace, **Done** #22), **LORE-35.2** (rename), **LORE-35.3** (supersede).
-- **LORE-35.1** → **Done**; both ACs checked; notes record the implementation + the folded #22 `/code-review max` fixes + "delivered via #22 / 89330e4".
+- **LCLI-35** split into **LCLI-35.1** (replace, **Done** #22), **LCLI-35.2** (rename), **LCLI-35.3** (supersede).
+- **LCLI-35.1** → **Done**; both ACs checked; notes record the implementation + the folded #22 `/code-review max` fixes + "delivered via #22 / 89330e4".
 - **CHANGELOG.md** (on dev) → `lore replace` Added entry incl. the review-fold hardening paragraph.
 - **Code on dev** (`89330e4`): `core/replace.ts` + `commands/replace.ts` (new), `commands/discover.ts` (new shared discovery/IO; `check.ts`/`validate.ts` migrated onto it), `core/indexes.ts` (`locateManagedBlock` exported), `commands/fswrite.ts` (`writeFileOverwriting` + `EISDIR→conflict`), `cli.ts` (`replace` registered), `test/replace.test.ts`.
 - Archived consumed handover `HANDOVER-2026-06-28-post-lore-30-next.md`.

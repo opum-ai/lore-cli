@@ -1,4 +1,4 @@
-# Handover — third backlog campaign, cursor at LORE-69 (LORE-69..87)
+# Handover — third backlog campaign, cursor at LCLI-69 (LCLI-69..87)
 
 **Date**: 2026-07-21 | **Grounded against**: `dev @ 2da713a`, clean except `.repro-scratch/` and `docs/.obsidian/` (both pre-existing/unrelated, leave alone), 0 unpushed commits (about to be pushed by this same restore session) | **Tracker**: doc-1
 
@@ -6,9 +6,9 @@
 
 ```
 Run /backlog-handover restore in /Volumes/external/repos/lore. Tracker: doc-1.
-Cursor: LORE-69 — commitBacklogFiles backlog/ scope guard does not block `..`
+Cursor: LCLI-69 — commitBacklogFiles backlog/ scope guard does not block `..`
 pathspec traversal (security-labeled). Queue order confirmed by user on
-2026-07-21 (independent fixes first, the LORE-78/79/80 rename-traversal
+2026-07-21 (independent fixes first, the LCLI-78/79/80 rename-traversal
 cluster last); do not re-ask. Merge gate is self-merge (skill default,
 user-confirmed 2026-07-19) — no PR-approval wait. 12-issue queue remaining,
 all from a full-codebase Codex review (see backlog/docs/reviews/doc-2 for
@@ -20,18 +20,18 @@ conventions sections for the rest).
 
 | Item | Status |
 | --- | --- |
-| Tracker doc | doc-1, updated this session (Cursor → LORE-69, Queue = 12 items, LORE-85 moved to Resolved, three new campaign conventions recorded) |
+| Tracker doc | doc-1, updated this session (Cursor → LCLI-69, Queue = 12 items, LCLI-85 moved to Resolved, three new campaign conventions recorded) |
 | Review doc | doc-2, full Codex second-opinion review (201 confirmed findings, 25/25 clusters) — source of all queued tasks |
-| Queue | 12 tasks remaining (LORE-69, 72, 71, 76, 77, 73, 74, 75, 80, 79, 78, 81), all `To Do`, `bug`, `High` priority, each with AC + a `--ref` to doc-2 |
+| Queue | 12 tasks remaining (LCLI-69, 72, 71, 76, 77, 73, 74, 75, 80, 79, 78, 81), all `To Do`, `bug`, `High` priority, each with AC + a `--ref` to doc-2 |
 | Branch | `dev`, clean (0 unpushed after this session's final push) |
-| Leftover branches/PRs | none — `feature/LORE-85` fully merged (PR #71, rebase-merged) and pruned (local + remote) |
-| Not queued | LORE-42/43/44/45 (deferred) plus two unfiled follow-up candidates from LORE-84 (rewriteInbound's profile gap; lore check's separate validation path) |
+| Leftover branches/PRs | none — `feature/LCLI-85` fully merged (PR #71, rebase-merged) and pruned (local + remote) |
+| Not queued | LCLI-42/43/44/45 (deferred) plus two unfiled follow-up candidates from LCLI-84 (rewriteInbound's profile gap; lore check's separate validation path) |
 
 ## Next steps
 
-1. Run the per-issue lifecycle on **LORE-69** (`commitBacklogFiles backlog/
+1. Run the per-issue lifecycle on **LCLI-69** (`commitBacklogFiles backlog/
    scope guard does not block ".." pathspec traversal`, security-labeled):
-   branch `feature/LORE-69` off `dev`, read the task's AC, implement,
+   branch `feature/LCLI-69` off `dev`, read the task's AC, implement,
    verify, review, PR, self-merge, prune. Root area: `src/state.ts`,
    `commitBacklogFiles` (line ~182-201) — the guard is `if
    (!file.startsWith(BACKLOG_DIR))` where `BACKLOG_DIR = "backlog/"` (line
@@ -54,21 +54,21 @@ conventions sections for the rest).
    defended against.
 3. Update doc-1's Cursor/Queue/Resolved/Session-log sections on the feature
    branch before merging (per the skill's step 4), advancing the cursor to
-   **LORE-72** (item #2 of the remaining queue).
+   **LCLI-72** (item #2 of the remaining queue).
 4. Archive this handover to `archive/handovers/` and write the next one for
-   LORE-72. Note: today's date (`2026-07-21`) already has SEVEN prior
+   LCLI-72. Note: today's date (`2026-07-21`) already has SEVEN prior
    archived handovers (base, `-2` through `-7`) — this session's own
    archival will need suffix `-8`.
 
 ## Critical context / traps
 
 - **This is the SECOND security-labeled task this campaign** (after
-  LORE-85). The queue's remaining items include several more
-  security-labeled ones (LORE-72 path traversal, LORE-71 SSRF, LORE-76/77
-  symlink escapes, LORE-75 destructive file deletion) — read each task's
+  LCLI-85). The queue's remaining items include several more
+  security-labeled ones (LCLI-72 path traversal, LCLI-71 SSRF, LCLI-76/77
+  symlink escapes, LCLI-75 destructive file deletion) — read each task's
   own description carefully; they're all real, Codex-confirmed
   vulnerabilities with live repros, not speculative findings.
-- **`.repro-scratch/` now has TWO extra files from LORE-85's security
+- **`.repro-scratch/` now has TWO extra files from LCLI-85's security
   review** (`lore85-bypass-attempts.test.ts`, `merge-key-check.test.ts`) —
   the review agent tried to clean them up but hit a permission denial;
   they're harmless, untracked, outside any diff. Per this campaign's
@@ -84,22 +84,22 @@ conventions sections for the rest).
   campaign's one-issue-per-session lifecycle.
 - No `code-reviewer` subagent type is registered in this project — use
   `general-purpose` for the lifecycle's step-6 independent review. For
-  LORE-85 (the last security task), the reviewer was told to actively try
+  LCLI-85 (the last security task), the reviewer was told to actively try
   to construct a BYPASS, not just re-confirm the given repro, and did so
   productively (9+ adversarial variants, all caught, no false positives).
-  Use the same adversarial framing for LORE-69 and any other
+  Use the same adversarial framing for LCLI-69 and any other
   security-labeled task — e.g. for a path-traversal fix, try alternate
   traversal encodings (`backlog/./../`, `backlog//../`, a symlink planted
   inside `backlog/` pointing outside, an absolute path disguised as
   relative) not just the exact given repro.
-- **Timing lesson from LORE-82's session** (recorded in that session's
+- **Timing lesson from LCLI-82's session** (recorded in that session's
   handover, worth repeating): commit and push EVERY backlog CLI mutation
   (`backlog task edit`, `backlog doc update`) — including ones issued
   AFTER the review pass, like recording the review's own findings —
-  BEFORE calling `gh pr merge`. This session (LORE-85) deliberately
+  BEFORE calling `gh pr merge`. This session (LCLI-85) deliberately
   committed the review-notes update immediately after `backlog task edit`
   and confirmed a clean `git status` before pushing/merging, precisely to
-  avoid repeating LORE-82's stray-orphaned-commit incident. Keep doing
+  avoid repeating LCLI-82's stray-orphaned-commit incident. Keep doing
   that going forward.
 
 ## Do not repeat
@@ -111,10 +111,10 @@ conventions sections for the rest).
   scratch files too, not just the original contents.
 - Don't build a real-subprocess flush/truncation regression test around
   `Bun.spawnSync`'s own direct `stdout: "pipe"` capture — see
-  `test/cli-exit-flush.test.ts` (LORE-70) for the correct pattern.
+  `test/cli-exit-flush.test.ts` (LCLI-70) for the correct pattern.
 - Don't assume every merged bugfix needs a CHANGELOG.md entry — check actual
   recent precedent first (none of this campaign's fixes have added one; the
   tracker doc is this campaign's record of truth).
 - Don't call `gh pr merge` while any backlog CLI mutation from the review
   pass is still uncommitted on disk — commit and verify `git status` is
-  clean first (LORE-82's session hit this; LORE-85's avoided it).
+  clean first (LCLI-82's session hit this; LCLI-85's avoided it).

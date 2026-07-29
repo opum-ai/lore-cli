@@ -25,10 +25,10 @@ upstream `MrLesk/Backlog.md` pinned at the PR #790 merge commit
 [backlog-json-patch runbook](backlog-json-patch.md) §8.1) — and runs every `lore` command against a
 real, mutating scratch backlog project built through real `backlog init`/`task create`/`task edit`
 calls. No mocking anywhere, matching [ADR-0002](../adr/0002-backlog-integration-json-only.md)'s
-JSON-only, fail-loud design. LORE-56 first ran this and found four real defects
-(LORE-57/58/59/60) that 1497 passing mocked-adapter tests had missed entirely.
+JSON-only, fail-loud design. LCLI-56 first ran this and found four real defects
+(LCLI-57/58/59/60) that 1497 passing mocked-adapter tests had missed entirely.
 
-## CI gate (required on `dev`; LORE-100 / LORE-196)
+## CI gate (required on `dev`; LCLI-100 / LCLI-196)
 
 This harness is no longer local-only. `.github/workflows/ci.yml` runs it as the `docker-e2e` job
 on every PR and on code pushes to `main` (docs/backlog-only pushes are path-ignored), invoking the same compose file and harness as the
@@ -62,7 +62,7 @@ harness locally first.
   — always go through the `docker compose` command below. The script performs real, mutating
   filesystem operations (`git init`, `backlog init`, `lore init`, and much more) rooted at its cwd;
   inside its container that cwd is the disposable `/workspace`, but on a host it would be wherever
-  the script happened to be invoked from. The script refuses to run outside its container (LORE-269:
+  the script happened to be invoked from. The script refuses to run outside its container (LCLI-269:
   it checks for a container-only marker before doing anything else and exits 1 with a pointer back
   to this command), so a mistaken direct invocation now fails closed instead of silently mutating
   the caller's working tree.
@@ -102,20 +102,20 @@ harness locally first.
 
 ## Known, already-filed regressions baked into the script
 
-One finding from the same LORE-56 run is tracked but doesn't have a dedicated `run-e2e.sh`
+One finding from the same LCLI-56 run is tracked but doesn't have a dedicated `run-e2e.sh`
 regression step (nothing in the script's own exit-code assertions currently encodes it):
 
-- **LORE-58** — `lore link`/`unlink --json` would emit a full success-shaped envelope on stdout
-  even on a nonzero exit, if any per-task write fails. LORE-57 (below) removed the only trigger
+- **LCLI-58** — `lore link`/`unlink --json` would emit a full success-shaped envelope on stdout
+  even on a nonzero exit, if any per-task write fails. LCLI-57 (below) removed the only trigger
   path currently exercised by this script, but the structural gap in `link.ts` remains — any
   future per-task write failure would still reproduce it.
 
-**LORE-57 (fixed)** — `lore link`/`unlink`'s Backlog `doc:` back-ref write used to fail
+**LCLI-57 (fixed)** — `lore link`/`unlink`'s Backlog `doc:` back-ref write used to fail
 (`editTask` sent `--json` to `backlog task edit`, which doesn't support it) and exit `6`; the
 frontmatter `tasks:` list was still written correctly. Phase 4's steps now assert the fixed
 behavior (exit `0`, real `backRef` add/remove) instead of the regression baseline.
 
-**LORE-60 (fixed)** — a fully missing `backlog` binary is `not_found`/exit `3`, distinct from a
+**LCLI-60 (fixed)** — a fully missing `backlog` binary is `not_found`/exit `3`, distinct from a
 present-but-too-old-or-non-`--json`-capable binary (`validation`/exit `6`); the code's own inline
 comment explains the split is deliberate. [ADR-0002](../adr/0002-backlog-integration-json-only.md)
 previously collapsed both cases into a single "exit `6`" claim — a doc-accuracy gap, not a code

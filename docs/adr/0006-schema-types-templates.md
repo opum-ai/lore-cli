@@ -3,7 +3,7 @@ type: ADR
 title: "ADR-0006: Schema, types & templates: Zod as source of truth"
 description: Frontmatter schemas are authored in Zod (strict for known types, lenient for unknown), exported to Draft-7 JSON Schema with an editor modeline, and paired with file-based templates for scaffolding.
 tags: [schema, zod, json-schema, frontmatter, templates, types, validation]
-summary: lore makes Zod the single source of truth for frontmatter, emits Draft-7 JSON Schema + a yaml-language-server modeline for editor autocomplete, tolerates user-defined types and custom keys, and scaffolds typed concepts from .lore/templates.
+summary: lore derives frontmatter validation, editor schemas, and typed concept templates from a single Zod-backed model.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -13,10 +13,10 @@ timestamp: 2026-06-21T00:00:00Z
 
 Accepted — 2026-06-21
 
-Amended — 2026-06-25 (LORE-46): the source of truth is **inverted**. See the amendment below;
+Amended — 2026-06-25 (LCLI-46): the source of truth is **inverted**. See the amendment below;
 the original decision text is retained as the historical record.
 
-## Amendment (LORE-46): the declarative profile is the source of truth
+## Amendment (LCLI-46): the declarative profile is the source of truth
 
 The type/profile layer is now **data, not code**. A committed, declarative
 `.lore/profile.toml` (see [ADR-0013](0013-lore-state-directory.md)) is the single source of

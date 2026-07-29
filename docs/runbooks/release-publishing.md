@@ -22,9 +22,9 @@ and `-win32-x64`.
 The `.github/workflows/release.yml` workflow (`workflow_dispatch`-only — it never
 fires on a push or tag) **compiles all five platform binaries, assembles all
 six packages, and proves the `npx`/launcher resolution mechanism end-to-end**
-via `npm pack` + a scratch install + running the launcher (LORE-9), then, only
+via `npm pack` + a scratch install + running the launcher (LCLI-9), then, only
 when a maintainer manually dispatches it with `publish: true`, **publishes all
-six existing packages via npm OIDC Trusted Publishing** (LORE-255).
+six existing packages via npm OIDC Trusted Publishing** (LCLI-255).
 
 The initial `0.1.0` release is a one-time bootstrap exception: npm requires a
 package to exist before a Trusted Publisher can be configured, and none of the
@@ -32,7 +32,7 @@ six names exists yet. The exact CI-built tarballs are therefore published
 interactively with 2FA, platform packages first and root last; Trusted
 Publishing is configured immediately afterward for every later release. The
 OIDC publish job is **unprotected** until the repo-admin [`release` GitHub Environment setup
-(LORE-268)](#repo-admin-setup-for-the-release-environment-lore-268) is done —
+(LCLI-268)](#repo-admin-setup-for-the-release-environment-lcli-268) is done —
 without it, a future OIDC dispatch can publish without an independent
 workflow-file-external approval. See the [First-release
 checklist](#first-release-checklist) below for the exact mechanical sequence
@@ -86,7 +86,7 @@ be configured.
 - **A tagged MrLesk/Backlog.md release containing PR #790 (BACK-545, the
   --json support lore depends on)** — see [ADR-0002's amendment](../adr/0002-backlog-integration-json-only.md).
   lore does not cut its first release until this exists: today's adapter
-  (LORE-53/LORE-54) targets upstream's real --json contract, but only via an
+  (LCLI-53/LCLI-54) targets upstream's real --json contract, but only via an
   interim pinned-commit build developers must compile themselves (RUNBOOK_HINT
   in `src/adapters/backlog.ts`) — no package.json dependency, no tagged
   release to point end users at. Check `gh release list --repo MrLesk/Backlog.md`
@@ -105,9 +105,9 @@ be configured.
 - GitHub-hosted runners only — npm trusted publishing does not support
   self-hosted runners (`release.yml` already uses `ubuntu-latest`).
 
-### Repo-admin setup for the release Environment (LORE-268)
+### Repo-admin setup for the release Environment (LCLI-268)
 
-> **Current blocker (2026-07-27, LORE-278):** GitHub rejected creation of\n> the required-reviewer rule with HTTP 422 because the repository’s current\n> billing plan does not support Environment required reviewers. A `release`\n> Environment now exists, but it has zero protection rules, no deployment branch\n> policy, and administrator bypass enabled. Upgrade/change the plan or
+> **Current blocker (2026-07-27, LCLI-278):** GitHub rejected creation of\n> the required-reviewer rule with HTTP 422 because the repository’s current\n> billing plan does not support Environment required reviewers. A `release`\n> Environment now exists, but it has zero protection rules, no deployment branch\n> policy, and administrator bypass enabled. Upgrade/change the plan or
 > visibility, or approve an equivalent out-of-file control, before any
 > `publish: true` dispatch.
 
@@ -124,13 +124,13 @@ the attacker supplies the workflow file itself. Only a control configured
 **outside** the file can survive the file being replaced.
 
 `release.yml`'s `publish` job now declares `environment: release`
-(LORE-268), which is the hook for that out-of-file control — but the
+(LCLI-268), which is the hook for that out-of-file control — but the
 declaration by itself does **not** provide any protection yet. Two separate
 pieces of repo-admin configuration have to exist before it does, and this
-task (LORE-268) deliberately does not perform either of them — creating a
+task (LCLI-268) deliberately does not perform either of them — creating a
 GitHub Environment and its protection rules, and registering it with npm,
 are both actions an agent must not self-authorize (the same boundary as
-LORE-196 and LORE-257):
+LCLI-196 and LCLI-257):
 
 - [ ] **Create the `release` GitHub Environment** (repo Settings →
   Environments → New environment, name it exactly `release`) and configure
@@ -186,7 +186,7 @@ LORE-196 and LORE-257):
   file can influence.
 
 **Residual risk:** the `environment: release` declaration shipped by
-LORE-268 is a necessary hook, not a complete mitigation on its own. Until
+LCLI-268 is a necessary hook, not a complete mitigation on its own. Until
 **both** checklist items above are done, the exact attack this section
 opens with — a forged `release.yml` dispatched on an attacker-controlled
 branch — remains fully possible: an auto-created, rule-less environment
@@ -225,12 +225,12 @@ After all six packages exist, for **each package** (`@salient-data/lore` and the
      workflow already uses, so no rename is needed later)
    - **Allowed actions**: `npm publish`
    - **Environment name**: `release` — `release.yml`'s `publish` job now
-     declares `environment: release` (LORE-268). Setting this field makes
+     declares `environment: release` (LCLI-268). Setting this field makes
      npm's own OIDC verification require the resulting token to carry a
      matching `environment: release` claim, which only happens when the run
      actually deployed to a GitHub Environment named `release`. This is what
      closes the last loophole in the out-of-file gate described in
-     [Repo-admin setup for the release Environment](#repo-admin-setup-for-the-release-environment-lore-268)
+     [Repo-admin setup for the release Environment](#repo-admin-setup-for-the-release-environment-lcli-268)
      above: without this field set, an attacker who deletes the
      `environment:` line from a forged copy of `release.yml` mints an OIDC
      token npm would still accept, because nothing on npm's side required
@@ -257,8 +257,8 @@ this one job ever gets the token. It:
   nothing against a run of a modified copy dispatched from an
   attacker-controlled branch**, since npm Trusted Publishing matches on
   repository + workflow filename, not a ref (see [Repo-admin setup for the
-  release Environment (LORE-268)](#repo-admin-setup-for-the-release-environment-lore-268)).
-- Declares `environment: release` (LORE-268) — the out-of-file gate that
+  release Environment (LCLI-268)](#repo-admin-setup-for-the-release-environment-lcli-268)).
+- Declares `environment: release` (LCLI-268) — the out-of-file gate that
   *does* survive a modified copy of this file, but only once a repo admin
   has completed the two setup steps in that same section; the declaration
   alone is inert.
@@ -303,7 +303,7 @@ this one job ever gets the token. It:
 
 Further wiring **is** needed before the first OIDC release: see [Repo-admin setup for
 the release Environment
-(LORE-268)](#repo-admin-setup-for-the-release-environment-lore-268) for the
+(LCLI-268)](#repo-admin-setup-for-the-release-environment-lcli-268) for the
 two one-time, out-of-file steps (creating the `release` GitHub Environment
 with required reviewers, and setting each package's npm Trusted Publisher
 Environment name to `release`) that make the `environment: release`
@@ -323,7 +323,7 @@ publish is explicitly marked public. Root `package.json` and all five
 ### 3. Cut a release
 
 1. **Flip `package.json`'s `bin.lore` from `src/cli.ts` to `bin/lore.cjs`.**
-   It is deliberately **not** flipped yet (LORE-9): `bin/lore.cjs` only works
+   It is deliberately **not** flipped yet (LCLI-9): `bin/lore.cjs` only works
    once the five platform packages it `require.resolve`s are actually
    published, and flipping it any earlier would break every pre-publish
    install path (git dependency, `npm`/`bun link`) with no fallback to run
@@ -353,7 +353,7 @@ publish is explicitly marked public. Root `package.json` and all five
 
 The full dry-run path — everything up to but not including a real `npm
 publish` — has been manually rehearsed end-to-end against this repo at
-`version: "0.0.0"` (LORE-255), reproducing exactly what `release.yml`'s
+`version: "0.0.0"` (LCLI-255), reproducing exactly what `release.yml`'s
 `build` and `package` jobs automate:
 
 - All five platform binaries compiled locally (`bun build --compile

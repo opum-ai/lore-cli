@@ -136,7 +136,7 @@ Operational procedures for working on and with lore.
 - [Upstream Backlog.md --json tag watch](runbooks/upstream-backlog-md-json-tag-watch.md) —
   how the scheduled `upstream-backlog-watch` workflow detects an upstream
   `--json`-capable Backlog.md release and where that signal lands (a tracking
-  issue in this repo, linking LORE-253).
+  issue in this repo, linking LCLI-253).
 
 ---
 

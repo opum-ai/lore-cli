@@ -1,33 +1,33 @@
-# Handover — LORE-19 `lore validate` landed; next up an unblocked m-2 task (LORE-19 Done)
+# Handover — LCLI-19 `lore validate` landed; next up an unblocked m-2 task (LCLI-19 Done)
 
-**Date**: 2026-06-25 | **Grounded against**: `dev`=`45f35d2` (==origin/dev) | **Backlog**: LORE-19 **Done**; next = LORE-46 or LORE-20 (both **To Do**)
+**Date**: 2026-06-25 | **Grounded against**: `dev`=`45f35d2` (==origin/dev) | **Backlog**: LCLI-19 **Done**; next = LCLI-46 or LCLI-20 (both **To Do**)
 
 ## Paste-ready prompt for the next session
 
 ```
-LORE-19 (`lore validate`) is DONE and merged to dev (PR #16, squash 97ed51c; task-state
+LCLI-19 (`lore validate`) is DONE and merged to dev (PR #16, squash 97ed51c; task-state
 commit 45f35d2). dev is at 45f35d2 == origin/dev, clean tree, no open PRs. lore now ships
 init → new → validate.
 
 Per CLAUDE.md, FIRST run `backlog instructions overview`. Then pick the next task — DO NOT
 start coding before confirming scope with Jeremy:
 
-  RECOMMENDED next (unblocked, deps satisfied — both depend only on LORE-15, which is Done):
-    • LORE-46 (HIGH) — Declarative .lore profile: per-project type vocabulary, schemas &
+  RECOMMENDED next (unblocked, deps satisfied — both depend only on LCLI-15, which is Done):
+    • LCLI-46 (HIGH) — Declarative .lore profile: per-project type vocabulary, schemas &
       templates. Strategically important: the ECK⇄Lore integration path is "ECK integrates
       via CLI/--json + a declarative .lore/profile" ([[eck-lore-alignment]]). Bigger design task.
-    • LORE-20 (MEDIUM) — `lore schema export` (Zod → JSON Schema + modeline). Smaller; note
+    • LCLI-20 (MEDIUM) — `lore schema export` (Zod → JSON Schema + modeline). Smaller; note
       init.ts ALREADY emits .lore/schemas/ (jsonSchemaFor/schemaModeline in schema.ts), so this
       is likely a thin standalone `lore schema` command surfacing that — confirm what it OWNS
       vs what init already does before scoping.
 
   DO NOT pick the coupling/coherence layer yet — it is BLOCKED:
-    • LORE-21 (backlog.ts adapter) depends on the Backlog.md fork shipping --json (LORE-1..5,
+    • LCLI-21 (backlog.ts adapter) depends on the Backlog.md fork shipping --json (LCLI-1..5,
       all To Do).
-    • LORE-27 (`lore check` drift gate) is m-3 and depends on LORE-22 (managed-block) + LORE-23
+    • LCLI-27 (`lore check` drift gate) is m-3 and depends on LCLI-22 (managed-block) + LCLI-23
       (reconcile), which in turn need the adapter. So `lore check` is several tasks out.
 
-  Ask Jeremy which to take (default to the highest-priority unblocked m-2 task = LORE-46).
+  Ask Jeremy which to take (default to the highest-priority unblocked m-2 task = LCLI-46).
   Then `backlog task view LORE-N --plain`, read its Documentation pointers, branch
   feat/lore-N-<slug> off dev, plan via `backlog task edit LORE-N --plan` (task-execution
   workflow), implement, gate, PR into dev, hand back (no self-merge).
@@ -40,16 +40,16 @@ All commits end with `Co-Authored-By: Claude Opus 4.8 (1M context)`.
 
 | Item | Status |
 | --- | --- |
-| LORE-19 | **Done** — `lore validate` delivered via PR #16 (squash `97ed51c`); both ACs checked; full `/code-review max` disposition in task notes |
-| `dev` | `45f35d2` == origin/dev (squash merge + `chore(LORE-19) mark Done` + archived handover). Clean tree |
+| LCLI-19 | **Done** — `lore validate` delivered via PR #16 (squash `97ed51c`); both ACs checked; full `/code-review max` disposition in task notes |
+| `dev` | `45f35d2` == origin/dev (squash merge + `chore(LCLI-19) mark Done` + archived handover). Clean tree |
 | feature branch | none (feat/lore-19-validate deleted, remote + local) |
-| LORE-46 | **To Do** (HIGH, m-2, dep LORE-15 ✓) — declarative .lore profile |
-| LORE-20 | **To Do** (MEDIUM, m-2, dep LORE-15 ✓) — schema export |
-| m-3 (LORE-21/27 …) | **Blocked** on the Backlog.md fork (LORE-1..5) + LORE-22/23 |
+| LCLI-46 | **To Do** (HIGH, m-2, dep LCLI-15 ✓) — declarative .lore profile |
+| LCLI-20 | **To Do** (MEDIUM, m-2, dep LCLI-15 ✓) — schema export |
+| m-3 (LCLI-21/27 …) | **Blocked** on the Backlog.md fork (LCLI-1..5) + LCLI-22/23 |
 
 ## Next steps
 
-1. `backlog instructions overview` → confirm next task with Jeremy (LORE-46 vs LORE-20) → `backlog task view LORE-N --plain` + read its docs.
+1. `backlog instructions overview` → confirm next task with Jeremy (LCLI-46 vs LCLI-20) → `backlog task view LORE-N --plain` + read its docs.
 2. Branch `feat/lore-N-<slug>` off `dev`. Plan via `backlog task edit LORE-N --plan` before coding.
 3. Build pure logic in `core/`, thin I/O in `commands/`, wire into the `dispatch` switch + USAGE in `src/cli.ts` (the init/new/validate pattern).
 4. Gates → `/code-review max` → PR into dev → hand back (no self-merge).
@@ -66,7 +66,7 @@ All commits end with `Co-Authored-By: Claude Opus 4.8 (1M context)`.
   --ff-only FETCH_HEAD`, `git update-ref refs/remotes/origin/dev <sha>`, `git stash pop`, mark task
   Done + archive handover, commit, push dev, delete remote branch via `gh api -X DELETE
   repos/jeremy-newhouse/lore/git/refs/heads/<branch>`.
-- **CLI arg-model convention (src/cli.ts, set by LORE-18, reused by validate)**: global flags
+- **CLI arg-model convention (src/cli.ts, set by LCLI-18, reused by validate)**: global flags
   (`--json/--plain/-v/--version/-h/--help`) stripped in any position; FIRST positional is the
   command; everything after → `commandArgs` for the command to parse. A value-taking command flag
   (`--type`) must refuse a following flag-looking token as its value; `--` ends option parsing;
@@ -89,7 +89,7 @@ All commits end with `Co-Authored-By: Claude Opus 4.8 (1M context)`.
 - **Don't self-merge** unless Jeremy explicitly says "admin-merge" / "merge" ([[lore-git-workflow]]).
 - **A per-type FILTER on a gate must never drop error/unparseable items** — they have no confirmed
   type, so filtering them out silently narrows the gate (this was the dominant `/code-review max`
-  finding on LORE-19: `--type` dropped malformed files → gate went green over broken concepts).
+  finding on LCLI-19: `--type` dropped malformed files → gate went green over broken concepts).
   Keep error files always; recover their type for display only.
 - **Quote-safety / any raw-frontmatter line scan must strip trailing YAML comments** before judging
   a value (` # …` after whitespace), or a colon-in-comment false-errors a valid file.
@@ -98,9 +98,9 @@ All commits end with `Co-Authored-By: Claude Opus 4.8 (1M context)`.
 
 ## System of record updated (this session)
 
-- **LORE-19** → **Done** (commit `45f35d2`): both ACs checked; notes capture the delivery, the two
+- **LCLI-19** → **Done** (commit `45f35d2`): both ACs checked; notes capture the delivery, the two
   PR commits (feature `b0c87c5` + `/code-review max` fixes `83e7d09`, squashed to `97ed51c`), the
   13-confirmed-finding review disposition, and the 3 accepted-as-intended items.
-- **dev** → `45f35d2`: squash merge of #16 + `chore(LORE-19) mark Done` + archived handover.
+- **dev** → `45f35d2`: squash merge of #16 + `chore(LCLI-19) mark Done` + archived handover.
 - **CHANGELOG.md** (Unreleased) → `lore validate` entry (tiers, required-sections policy, quote-safety, AC#2).
 - **Prior handover** `HANDOVER-2026-06-25-lore-18-landed.md` → archived to `archive/handovers/` (consumed; committed in `45f35d2`).

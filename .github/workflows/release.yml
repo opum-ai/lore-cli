@@ -4,9 +4,9 @@ name: Release
 # committing/tagging code can never kick off a release. `publish` defaults to false:
 # a plain dispatch (or any dispatch that leaves `publish` at its default) only builds
 # and packages every platform artifact and proves the npx/launcher mechanism resolves
-# the right binary end-to-end (LORE-9 AC#1/AC#2) — the `publish` job below simply does
+# the right binary end-to-end (LCLI-9 AC#1/AC#2) — the `publish` job below simply does
 # not run. Setting `publish: true` additionally runs that job, publishing all six
-# packages to npm via OIDC Trusted Publishing (LORE-255) — but only once a maintainer
+# packages to npm via OIDC Trusted Publishing (LCLI-255) — but only once a maintainer
 # has completed the one-time npmjs.com Trusted Publisher setup for all six packages;
 # see docs/runbooks/release-publishing.md's First-release checklist for the full
 # mechanical sequence (version bump, the bin.lore flip, tag, dispatch).
@@ -171,7 +171,7 @@ jobs:
       matrix:
         include: ${{ fromJson(needs.setup.outputs.matrix) }}
     # Cross-compiling all five targets from one ubuntu runner (verified locally,
-    # LORE-9): Bun downloads the target runtime and compiles without needing a
+    # LCLI-9): Bun downloads the target runtime and compiles without needing a
     # matching host OS/arch. Only linux-x64 matches this runner natively, so it is
     # the one target actually executed below; the rest get a non-empty-file check.
     runs-on: ubuntu-latest
@@ -180,7 +180,7 @@ jobs:
       - uses: ./.github/actions/setup-bun
       - name: Compile ${{ matrix.name }}
         # The outfile is a subdirectory of the checkout — same filesystem as the
-        # source (see docs/reference/tech-stack.md §1 / LORE-14): a cross-device
+        # source (see docs/reference/tech-stack.md §1 / LCLI-14): a cross-device
         # --outfile silently produces a 0-byte binary at exit 0.
         run: |
           mkdir -p "npm/${{ matrix.name }}/bin"
@@ -244,7 +244,7 @@ jobs:
             cp -r "npm-artifacts/lore-$name/." "npm/$name/bin/"
             chmod +x npm/"$name"/bin/lore* 2>/dev/null || true
           done
-      - name: npm pack every package (LORE-9 AC#1 — produces all platform artifacts; never publishes)
+      - name: npm pack every package (LCLI-9 AC#1 — produces all platform artifacts; never publishes)
         # The root package's COMMITTED `bin` still points at src/cli.ts (see
         # docs/runbooks/release-publishing.md's release procedure — flipping it to
         # bin/lore.cjs is a first-release step, not a standing state, so pre-publish
@@ -272,7 +272,7 @@ jobs:
           ls -la dist-npm
           echo "ROOT_TARBALL=dist-npm/salient-data-lore-${version}.tgz" >> "$GITHUB_ENV"
           echo "LINUX_X64_TARBALL=dist-npm/salient-data-lore-linux-x64-${version}.tgz" >> "$GITHUB_ENV"
-      - name: Install-sanity — npx-equivalent resolution through the real launcher (LORE-9 AC#2)
+      - name: Install-sanity — npx-equivalent resolution through the real launcher (LCLI-9 AC#2)
         run: |
           # Same comparison mechanism as ci.yml's compile-smoke job (ci.yml:56-64):
           # read package.json's version, compare strictly, hard-fail naming both
@@ -311,8 +311,8 @@ jobs:
     if: ${{ inputs.publish == true }}
     needs: [setup, package]
     runs-on: ubuntu-latest
-    # LORE-268: an OUT-OF-FILE gate, on top of (not instead of) the `if:` guard above.
-    # npm Trusted Publishing (LORE-255) matches OIDC tokens on repo + WORKFLOW FILENAME,
+    # LCLI-268: an OUT-OF-FILE gate, on top of (not instead of) the `if:` guard above.
+    # npm Trusted Publishing (LCLI-255) matches OIDC tokens on repo + WORKFLOW FILENAME,
     # not a ref, and this workflow is workflow_dispatch-reachable on any branch — so an
     # actor with write access could push a branch carrying a release.yml with every
     # in-file guard stripped (the `if:` above, the 0.0.0 refusal, the npm-version floor)
@@ -328,7 +328,7 @@ jobs:
     # unless npm's Trusted Publisher config for all six packages also requires this
     # environment's OIDC claim. Both of those are repo-admin actions this workflow change
     # does not and cannot perform — see docs/runbooks/release-publishing.md's "Repo-admin
-    # setup for the release Environment (LORE-268)" section for the exact steps and the
+    # setup for the release Environment (LCLI-268)" section for the exact steps and the
     # residual risk until they're done.
     environment: release
     # Job-scoped (not workflow-scoped): only serializes overlapping runs of THIS job —

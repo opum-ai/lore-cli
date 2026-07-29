@@ -3,7 +3,7 @@ type: ADR
 title: "ADR-0002: Backlog.md integration: JSON-only via --json (fork → upstream)"
 description: lore integrates with Backlog.md exclusively through its CLI, reading structured JSON via a --json flag and parsing a canonical envelope; stock Backlog v1.47.1 lacks --json, so we fork, add it, consume the fork as a compiled git dependency, and upstream a PR.
 tags: [adr, backlog, integration, json, fork, cli-contract]
-summary: lore couples to Backlog.md only through its CLI, reading a canonical JSON envelope via a --json flag we add to a fork of Backlog.md (and upstream), with a fail-loud capability probe and no text-parser fallback.
+summary: lore integrates with Backlog.md only through its CLI and canonical JSON output, with a fail-loud capability probe and no text fallback.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -18,7 +18,7 @@ Supersedes the relevant parts of the spec's §3 and §10.1–10.2, which assumed
 MCP server might avoid parsing. Both assumptions were verified false (see
 [Context](#context)).
 
-**Amendment — 2026-07-17 (LORE-5).** Decision items 1 ("fork Backlog.md
+**Amendment — 2026-07-17 (LCLI-5).** Decision items 1 ("fork Backlog.md
 ourselves") and 4 ("upstream a minimal PR") below are **superseded**. MrLesk's
 team shipped their own independent `--json` implementation —
 [PR #790](https://github.com/MrLesk/Backlog.md/pull/790) (BACK-545), merged
@@ -35,9 +35,9 @@ diff and migration history are in
 [backlog-json-schema.md §8](../reference/backlog-json-schema.md#8-migration-history-complete)
 and the [patch runbook §8](../runbooks/backlog-json-patch.md).
 
-**Amendment — 2026-07-19 (LORE-5).** lore will not publish its first release
+**Amendment — 2026-07-19 (LCLI-5).** lore will not publish its first release
 until MrLesk/Backlog.md tags a release containing PR #790's merge commit. The
-interim pinned-commit build (LORE-53) is dev/test-time only — developers
+interim pinned-commit build (LCLI-53) is dev/test-time only — developers
 compile it themselves per `RUNBOOK_HINT` in `src/adapters/backlog.ts`; there
 is no `package.json` dependency and nothing a published lore package could
 point an end user's `backlog` install at. Shipping lore before that release
@@ -45,15 +45,15 @@ exists would mean every real user's capability probe fails on install. See
 the [release-publishing runbook](../runbooks/release-publishing.md)'s
 prerequisite.
 
-**Amendment — 2026-07-26 (LORE-54).** Decision item 6's exit-code claim below
+**Amendment — 2026-07-26 (LCLI-54).** Decision item 6's exit-code claim below
 is **superseded**. It reads "`lore` ... does **not** use `task view`'s exit
 code to test existence — `task view` exits `0` even for a missing task", which
-accurately described the pre-migration fork (LORE-2/4/21) `lore` shipped
+accurately described the pre-migration fork (LCLI-2/4/21) `lore` shipped
 against when this ADR was written. Upstream's PR #790 made the exit code
 meaningful: `task view <missing>` (and the bare `task <missing>` shortcut) now
 exits `1` unconditionally, in every output mode, and `lore`'s adapter
 (`viewTask`) uses exactly that as its existence check — the same PR #790
-migration the two LORE-5 amendments above already cover for items 1 and 4. See
+migration the two LCLI-5 amendments above already cover for items 1 and 4. See
 [backlog-cli-contract.md §2.2](../reference/backlog-cli-contract.md#22-existence-checks--task-views-exit-code-is-meaningful)
 for the full current contract and migration history, and
 [architecture.md §3](../reference/architecture.md#3-the-backlogmd-adapter-adaptersbacklogts)

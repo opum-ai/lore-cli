@@ -1,30 +1,30 @@
-# Handover — start LORE-18 `lore new` (LORE-17 shipped & merged)
+# Handover — start LCLI-18 `lore new` (LCLI-17 shipped & merged)
 
-**Date**: 2026-06-25 | **Grounded against**: `dev`=`880b170` (==origin/dev) | **Backlog**: LORE-17 **Done**, LORE-18 **To Do**
+**Date**: 2026-06-25 | **Grounded against**: `dev`=`880b170` (==origin/dev) | **Backlog**: LCLI-17 **Done**, LCLI-18 **To Do**
 
 ## Paste-ready prompt for the next session
 
 ```
-LORE-17 (`lore init`) is DONE and merged to dev (PR #14, squash a0f6815). dev is at 880b170
-== origin/dev, clean tree, no open PRs. Start LORE-18: `lore new` with templates.
+LCLI-17 (`lore init`) is DONE and merged to dev (PR #14, squash a0f6815). dev is at 880b170
+== origin/dev, clean tree, no open PRs. Start LCLI-18: `lore new` with templates.
 
-Per CLAUDE.md, FIRST run `backlog instructions overview`, then `backlog task view LORE-18 --plain`
+Per CLAUDE.md, FIRST run `backlog instructions overview`, then `backlog task view LCLI-18 --plain`
 and read docs/adr/0006-schema-types-templates.md (the task's Documentation pointer). Plan with
-`backlog task edit LORE-18 --plan ...` before coding (task-execution workflow), confirm scope
+`backlog task edit LCLI-18 --plan ...` before coding (task-execution workflow), confirm scope
 with Jeremy if it widens.
 
-LORE-18 = scaffold a typed concept from `.lore/templates/<type>.md` with {{placeholders}} + `--var
+LCLI-18 = scaffold a typed concept from `.lore/templates/<type>.md` with {{placeholders}} + `--var
 key=value`; inject the $schema modeline, a stub summary, and the required-section skeleton.
 ACs: #1 new docs validate clean BY CONSTRUCTION (parse + loadBundle with 0 warnings, like init's
 index); #2 user templates override bundled defaults (template in `.lore/templates/<type>.md` wins
 over the built-in fallback).
 
-REUSE these LORE-17 seams (don't reinvent):
+REUSE these LCLI-17 seams (don't reinvent):
   - src/core/concept.ts `serializeConceptWithModeline(concept, modeline)` — splices the modeline as
     the first line INSIDE the opening fence. Built precisely for this command; use it.
   - src/core/schema.ts: `schemaModeline(docPath, type)`, `schemaFileName(type)`, `SCHEMAS_DIR`,
     `KNOWN_TYPES`/`KnownType`, `jsonSchemaFor` — the modeline/type vocabulary.
-  - `.lore/templates/` dir already exists (init writes `templates/.gitkeep`); LORE-18 OWNS the
+  - `.lore/templates/` dir already exists (init writes `templates/.gitkeep`); LCLI-18 OWNS the
     per-type template CONTENT (`.lore/templates/<type>.md`) + built-in fallbacks + override-if-present.
   - Command pattern = commands/init.ts: thin layer over a PURE core renderer; injectable
     streams/clock; `emit()` a `Renderable` (output.ts); LoreError taxonomy. `lore new` writes a NEW
@@ -40,15 +40,15 @@ when ready). All commits end with the `Co-Authored-By: Claude Opus 4.8 (1M conte
 
 | Item | Status |
 | --- | --- |
-| LORE-17 | **Done** — `lore init` delivered via PR #14 (squash `a0f6815`); final summary recorded |
-| LORE-18 | **To Do** — `lore new with templates`, deps LORE-15 (satisfied). Doc: docs/adr/0006-schema-types-templates.md |
+| LCLI-17 | **Done** — `lore init` delivered via PR #14 (squash `a0f6815`); final summary recorded |
+| LCLI-18 | **To Do** — `lore new with templates`, deps LCLI-15 (satisfied). Doc: docs/adr/0006-schema-types-templates.md |
 | `dev` | `880b170` == origin/dev (merge + `chore: mark Done` + archived handover). Clean tree |
 | feature branch | none (feat/lore-17-init deleted, remote + local) |
 
 ## Next steps
 
-1. `backlog instructions overview` → `backlog task view LORE-18 --plain` → read docs/adr/0006-schema-types-templates.md.
-2. Branch `feat/lore-18-new` off `dev`. Plan via `backlog task edit LORE-18 --plan`.
+1. `backlog instructions overview` → `backlog task view LCLI-18 --plain` → read docs/adr/0006-schema-types-templates.md.
+2. Branch `feat/lore-18-new` off `dev`. Plan via `backlog task edit LCLI-18 --plan`.
 3. Design point — **`--var key=value` parsing**: cli.ts `parseArgs` only recognizes the global
    flags (`--json/--plain/--version/--help`) and collects everything else `-`-prefixed into
    `unknownFlags` (→ usage error). `lore new` needs `--var` (repeatable) + positionals (the type,
@@ -82,9 +82,9 @@ when ready). All commits end with the `Co-Authored-By: Claude Opus 4.8 (1M conte
 
 ## System of record updated (this session)
 
-- **LORE-17** → **Done**: final summary + notes capture both `/code-review max` rounds (pre- and
+- **LCLI-17** → **Done**: final summary + notes capture both `/code-review max` rounds (pre- and
   post-PR), the conflict-classification fix, `serializeConceptWithModeline` extraction, and the
-  deferrals (root-only okf_version → LORE-26; template content → LORE-18). PR #14 merged `a0f6815`.
-- **dev** → `880b170`: merge + `chore(LORE-17): mark Done` + archived prior handover.
+  deferrals (root-only okf_version → LCLI-26; template content → LCLI-18). PR #14 merged `a0f6815`.
+- **dev** → `880b170`: merge + `chore(LCLI-17): mark Done` + archived prior handover.
 - **auto-memory** [[lore-git-workflow]] → added the `gh pr merge --delete-branch` + ssh-down recovery.
 - **Prior handover** `HANDOVER-2026-06-25-lore-17-pr-open.md` → archived to `archive/handovers/` (consumed).
