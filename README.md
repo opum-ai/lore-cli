@@ -101,11 +101,12 @@ without a cross-repository PAT or a public npm release:
 - uses: salient-data/lore-cli/.github/actions/strict-check@<full-commit-sha>
 ```
 
-The private composite action installs Bun 1.2.23, this action revision's frozen
-dependencies, and Backlog.md 1.48.0, then runs `lore validate --strict` and
-`lore check --strict` against the caller workspace. Consumer workflows must
-replace the placeholder with the full immutable commit SHA. Private-action
-access remains limited to organization repositories.
+The private composite action installs Bun 1.2.23 and this action revision's
+frozen dependencies, builds the JSON-capable upstream Backlog.md commit pinned
+by the Docker E2E harness, then runs `lore validate --strict` and `lore check
+--strict` against the caller workspace. Consumer workflows must replace the
+placeholder with the full immutable commit SHA. Private-action access remains
+limited to organization repositories.
 
 ---
 
