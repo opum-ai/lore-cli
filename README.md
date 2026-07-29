@@ -91,6 +91,22 @@ compiled binary delivered as `optionalDependencies` (built with
 `--json`-capable Backlog.md on `PATH`; see the
 [runbook](docs/runbooks/backlog-json-patch.md).
 
+### Private-repository CI before npm publication
+
+Repositories inside the `salient-data` organization can run strict Lore gates
+without a cross-repository PAT or a public npm release:
+
+```yaml
+- uses: actions/checkout@v6
+- uses: salient-data/lore-cli/.github/actions/strict-check@<full-commit-sha>
+```
+
+The private composite action installs Bun 1.2.23, this action revision's frozen
+dependencies, and Backlog.md 1.48.0, then runs `lore validate --strict` and
+`lore check --strict` against the caller workspace. Consumer workflows must
+replace the placeholder with the full immutable commit SHA. Private-action
+access remains limited to organization repositories.
+
 ---
 
 ## Quickstart (CLI-first)
