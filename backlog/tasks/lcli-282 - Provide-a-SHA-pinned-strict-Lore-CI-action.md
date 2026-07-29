@@ -1,11 +1,11 @@
 ---
 id: LCLI-282
 title: Provide a SHA-pinned strict Lore CI action
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-29 02:27'
-updated_date: '2026-07-29 02:46'
+updated_date: '2026-07-29 02:54'
 labels:
   - ci
   - github-actions
@@ -24,11 +24,11 @@ Expose a private organization-scoped composite action that runs this checkout's 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The composite action installs the pinned Bun toolchain and frozen lore-cli dependencies from its own SHA-pinned checkout
-- [ ] #2 A caller can run lore validate --strict and lore check --strict against its workspace without receiving a lore-cli repository token
-- [ ] #3 Private action access is limited to repositories in the salient-data organization
-- [ ] #4 A real lore-graph workflow invocation passes both strict gates using an immutable lore-cli commit SHA
-- [ ] #5 lore-cli typecheck, lint, full tests, build, strict Lore gates, and diff checks remain passing
+- [x] #1 The composite action installs the pinned Bun toolchain and frozen lore-cli dependencies from its own SHA-pinned checkout
+- [x] #2 A caller can run lore validate --strict and lore check --strict against its workspace without receiving a lore-cli repository token
+- [x] #3 Private action access is limited to repositories in the salient-data organization
+- [x] #4 A real lore-graph workflow invocation passes both strict gates using an immutable lore-cli commit SHA
+- [x] #5 lore-cli typecheck, lint, full tests, build, strict Lore gates, and diff checks remain passing
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -41,4 +41,12 @@ Expose a private organization-scoped composite action that runs this checkout's 
 
 <!-- SECTION:NOTES:BEGIN -->
 The first real lore-graph invocation reached the private action and passed validation, then proved npm Backlog.md 1.48.0 is not --json-capable. Replaced that release install with the existing Docker-E2E provenance: build upstream MrLesk/Backlog.md at commit 22a091b570d44c4f302ca47e7fd36fa28ad8bcb0 and put the compiled binary on PATH.
+
+Objective verification: lore-graph Actions run 30418024712 resolved the private action at immutable SHA 05005738d705830a9029b35a82cdda6152458e9c without a repository token and passed both strict gates; GitHub reports lore-cli private action access_level=organization; PR #265 passed Ubuntu/Windows lint, typecheck, 2,201 tests, compile, docs scaffolds, and the five-minute Docker E2E harness. Local binary build, strict Lore validation/check, and diff checks also passed.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Published an organization-private, SHA-pinned composite action that installs exact Lore dependencies, builds the JSON-capable Backlog PR #790 commit, and runs strict validation/coherence in callers. Verified by successful lore-graph run 30418024712 and all six protected lore-cli PR #265 checks.
+<!-- SECTION:FINAL_SUMMARY:END -->
