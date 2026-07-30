@@ -61,20 +61,39 @@ function rules(files: CheckInputFile[]): string[] {
 
 // ── slugify: GitHub-style heading slugs ──────────────────────────────────────────
 
+/**
+ * Versioned pre/post oracle for LCLI-287's stateless primitive. `before` records the
+ * hand-written implementation's output so intentional corrections stay reviewable; `after`
+ * is the exact github-slugger 2.0.0 contract. Unchanged rows guard the surrounding output
+ * surface while leading/trailing whitespace and decomposed marks pin the known drift fixes.
+ */
+const HEADING_SLUG_CONFORMANCE_V1: readonly (readonly [
+  input: string,
+  before: string,
+  after: string,
+  behavior: string,
+])[] = [
+  ["Archival Policy", "archival-policy", "archival-policy", "ordinary ASCII"],
+  ["Hello, World!", "hello-world", "hello-world", "punctuation"],
+  ["Status: Done", "status-done", "status-done", "colon punctuation"],
+  ["  Trim Me  ", "trim-me", "--trim-me--", "leading and trailing whitespace"],
+  ["Multiple   spaces", "multiple---spaces", "multiple---spaces", "repeated spaces"],
+  ["snake_case-and-dash", "snake_case-and-dash", "snake_case-and-dash", "underscore and dash"],
+  ["Café Münü", "café-münü", "café-münü", "composed Unicode"],
+  ["Cafe\u0301", "cafe", "cafe\u0301", "decomposed Unicode"],
+  ["Привет non-latin 你好", "привет-non-latin-你好", "привет-non-latin-你好", "non-Latin text"],
+  ["!!!", "", "", "punctuation-only empty slug"],
+];
+
 describe("slugify — GitHub-style slugs", () => {
-  test.each([
-    ["Archival Policy", "archival-policy"],
-    ["Hello, World!", "hello-world"],
-    ["Status: Done", "status-done"],
-    ["  Trim Me  ", "trim-me"],
-    ["Multiple   spaces", "multiple---spaces"],
-    ["snake_case-and-dash", "snake_case-and-dash"],
-  ])("slugifies %p to %p", (input, expected) => {
-    expect(slugify(input)).toBe(expected);
+  test.each(HEADING_SLUG_CONFORMANCE_V1)("slugifies %p with the before/after oracle", (input, _before, after) => {
+    expect(slugify(input)).toBe(after);
   });
 
-  test("keeps unicode letters (Café stays café, not caf)", () => {
-    expect(slugify("Café Münü")).toBe("café-münü");
+  test("the before/after table isolates the two intentional primitive corrections", () => {
+    expect(
+      HEADING_SLUG_CONFORMANCE_V1.filter(([, before, after]) => before !== after).map(([, , , behavior]) => behavior),
+    ).toEqual(["leading and trailing whitespace", "decomposed Unicode"]);
   });
 });
 
@@ -108,6 +127,24 @@ describe("extractHeadingSlugs", () => {
     expect([...slugs]).toEqual(["the-foo-bar"]);
   });
 
+  test("preserves a leading space around excluded image text (LCLI-136 follow-up correction)", () => {
+    // nodeText deliberately excludes the image, leaving " Leading". The old trim() boundary
+    // returned "leading"; GitHub/github-slugger preserves that leading space as "-leading".
+    expect([...extractHeadingSlugs("## ![Alt](img.png) Leading\n")]).toEqual(["-leading"]);
+  });
+
+  test("preserves a trailing space around excluded image text", () => {
+    expect([...extractHeadingSlugs("## Trailing ![Alt](img.png)\n")]).toEqual(["trailing-"]);
+  });
+
+  test("keeps composed and decomposed Unicode distinct without normalization", () => {
+    expect([...extractHeadingSlugs("## Café\n\n## Cafe\u0301\n")]).toEqual(["café", "cafe\u0301"]);
+  });
+
+  test("retains non-Latin heading text", () => {
+    expect([...extractHeadingSlugs("## Привет non-latin 你好\n")]).toEqual(["привет-non-latin-你好"]);
+  });
+
   test("a heading made of only an image contributes no text (LORE-136)", () => {
     // GitHub renders an <img> with empty textContent regardless of its `alt` attribute, so
     // an image-only heading gets no visible text and no anchor at all (verified empirically
@@ -129,6 +166,16 @@ describe("extractHeadingSlugs", () => {
   test("an imageReference contributes no text the same way", () => {
     const slugs = extractHeadingSlugs("## ![Alt Text][ref]\n\n[ref]: img.png\n");
     expect([...slugs]).toEqual([""]);
+  });
+
+  test("empty and punctuation-only headings share per-document duplicate state", () => {
+    expect([...extractHeadingSlugs("##\n\n## !!!\n\n## ![Alt](img.png)\n")]).toEqual(["", "-1", "-2"]);
+  });
+
+  test("duplicate state is fresh for every document and repeated extraction", () => {
+    const source = "## Repeat\n\n## Repeat\n";
+    expect([...extractHeadingSlugs(source)]).toEqual(["repeat", "repeat-1"]);
+    expect([...extractHeadingSlugs(source)]).toEqual(["repeat", "repeat-1"]);
   });
 });
 
@@ -384,6 +431,35 @@ describe("checkBundle — anchor rot (AC#1)", () => {
     const report = checkBundle([adr, orders2]);
     expect(report.errorCount).toBe(1);
     expect(report.findings[0]?.rule).toBe("broken-anchor");
+  });
+
+  test("LCLI-287: internal anchor validation uses the corrected image-adjacent leading slug", () => {
+    const target: CheckInputFile = {
+      path: "reference/target.md",
+      raw: ref("Target", "## ![Alt](img.png) Key Features"),
+    };
+    const source: CheckInputFile = {
+      path: "source.md",
+      raw: ref("Source", "See [features](reference/target.md#-key-features)."),
+    };
+    expect(checkBundle([source, target]).errorCount).toBe(0);
+  });
+
+  test("LCLI-287: duplicate state is isolated per document, repeated run, and bundle order", () => {
+    const a: CheckInputFile = {
+      path: "a.md",
+      raw: ref("A", "## Repeat\n\n## Repeat\n\n[second](#repeat-1)"),
+    };
+    const b: CheckInputFile = {
+      path: "b.md",
+      raw: ref("B", "## Repeat\n\n## Repeat\n\n[second](#repeat-1)"),
+    };
+    const first = checkBundle([a, b]);
+    const repeated = checkBundle([a, b]);
+    const reversed = checkBundle([b, a]);
+    expect(first).toEqual({ fileCount: 2, errorCount: 0, warningCount: 0, findings: [], complete: true });
+    expect(repeated).toEqual(first);
+    expect(reversed).toEqual(first);
   });
 });
 

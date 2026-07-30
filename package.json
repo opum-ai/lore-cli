@@ -50,6 +50,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "github-slugger": "2.0.0",
     "ipaddr.js": "2.4.0",
     "js-yaml": "5.2.2",
     "mdast-util-from-markdown": "2.0.3",

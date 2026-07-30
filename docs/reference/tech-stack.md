@@ -230,31 +230,34 @@ no leading slash.
 
 ---
 
-## 6. Internal link & anchor validation — hand-rolled over the parsed mdast
+## 6. Internal link & anchor validation — Lore policy over parsed mdast
 
 | | |
 |---|---|
-| **Package** | *(none — no `remark-validate-links` dependency)* |
+| **Package** | Exact-pinned `github-slugger` `2.0.0` for heading slugs and per-document duplicate state; no `remark-validate-links` dependency |
 | **Role** | Validate internal cross-links and heading-anchor targets across the whole bundle for [`lore check`](cli-surface.md) |
 
 **Rationale.** [`lore check`](cli-surface.md) must verify that every internal
 link resolves and every `#anchor` matches a real heading, across the whole bundle
-in one pass. lore does this in **pure JavaScript**, hand-rolled directly over
-the mdast §5 already parses — `core/bundle.ts`'s `walkMdast`/`extractLinkTargets`
-locate every link/heading node, and `core/check.ts` cross-references them
-against the loaded bundle graph — rather than depending on the
-`remark-validate-links` plugin (which would pull in the full `unified`/`remark`
-pipeline §5 deliberately does not ship). No external binary, no network,
+in one pass. `core/bundle.ts`'s `walkMdast`/`extractLinkTargets` locate every
+link and heading node, and `core/check.ts` cross-references them against the
+loaded bundle. Exact-pinned `github-slugger` owns only GitHub-compatible
+lowercasing, Unicode/punctuation filtering, space conversion, and duplicate
+suffix state; a fresh slugger is created for each document. Lore retains the
+mdast text rule (`text` and `inlineCode`, excluding image alt text), target
+resolution, finding model, output, and link policy. This avoids the
+`remark-validate-links` plugin and the full `unified`/`remark` pipeline §5
+deliberately does not ship. No external binary, no network,
 internal-by-default. External liveness checking is **opt-in** via `--external`
 and is the only mode that touches the network.
 
 This is a deliberate choice over a Rust link checker (e.g. **lychee**): see §10
 and [validation & coherence (ADR-0007)](../adr/0007-validation-and-coherence.md).
 The cross-document traversal, link policy, and finding model remain Lore-owned.
-`LCLI-287` delegates only GitHub-compatible slug and duplicate-anchor state to
-`github-slugger`; it does not adopt a remark pipeline or move link policy into a
-package. This focused boundary removes generic Unicode/slug drift while keeping
-the deterministic in-process checker.
+`LCLI-287` delegates only GitHub-compatible slug and duplicate-anchor state; it
+does not adopt a remark pipeline or move link policy into a package. This
+focused boundary removes generic Unicode/slug drift while keeping the
+deterministic in-process checker.
 
 Keeping the rest in-process over an AST Lore already builds avoids both a Rust
 toolchain/native binary and an extra remark-ecosystem dependency.
@@ -457,7 +460,7 @@ adoption are described in
 | CLI parsing | *(hand-rolled today)* → Commander (`LCLI-284`, §3) | pin during M6 implementation | current / planned M6 |
 | Frontmatter parse/serialize | Lore fence boundary + `js-yaml` | exact `5.2.2` | yes |
 | Markdown AST surgery & links | `mdast-util-from-markdown` (mdast), parse-only | exact `2.0.3` | yes |
-| Internal link validation | Lore-owned over parsed mdast; slug primitive → `github-slugger` (`LCLI-287`) | pin during implementation | current / planned |
+| Internal link validation | Lore-owned over parsed mdast; slug and per-document duplicate primitive via `github-slugger` (`LCLI-287`) | exact `2.0.0` | yes |
 | Terminal display width | hand-rolled → `string-width` (`LCLI-285`) | pin during implementation | current / planned |
 | SSRF address parsing and CIDR match | `ipaddr.js`; Lore retains explicit block policy, DNS, redirect, timeout, fail-closed, and error behavior (`LCLI-286`) | exact `2.4.0` | yes |
 | Schema + JSON Schema emit | Zod **v4** | exact `4.4.3` | yes |

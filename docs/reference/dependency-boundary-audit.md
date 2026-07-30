@@ -16,9 +16,10 @@ timestamp: 2026-07-30T15:27:43.592Z
 This reference records where Lore should delegate a generic infrastructure
 primitive to a maintained package and where its behavior is product-specific
 enough to remain repository-owned. It is the durable companion to the
-implementation tasks. `ipaddr.js` is now exact-pinned by `LCLI-286`; versions
-for the remaining candidates are selected only when their owning task is
-activated and verified against the pinned Bun toolchain.
+implementation tasks. `ipaddr.js` is exact-pinned by `LCLI-286`, and
+`github-slugger` is exact-pinned by `LCLI-287`; versions for the remaining
+candidates are selected only when their owning task is activated and verified
+against the pinned Bun toolchain.
 
 The governing rule is narrow delegation: a package may own a standards-heavy
 primitive, but it does not inherit Lore’s policy, output contracts, domain
@@ -32,7 +33,7 @@ semantics, or error model. See the [tech stack](tech-stack.md),
 |---|---|---|
 | `LCLI-285` | Terminal display-column measurement via [`string-width`](https://www.npmjs.com/package/string-width) | Pretty-row composition, padding policy, output modes, ANSI policy, and all machine contracts |
 | `LCLI-286` | IPv4 and IPv6 parsing, normalization, and CIDR matching via exact-pinned [`ipaddr.js` 2.4.0](https://www.npmjs.com/package/ipaddr.js/v/2.4.0) | The explicit blocked-range policy, strict rejection of ambiguous and legacy IPv4 spellings, DNS resolution, redirect revalidation, timeouts, fail-closed behavior, and redacted errors |
-| `LCLI-287` | GitHub-compatible slug and duplicate-anchor state via [`github-slugger`](https://www.npmjs.com/package/github-slugger) | mdast heading-text extraction, including the verified exclusion of image alt text, plus Lore link findings and reporting |
+| `LCLI-287` | GitHub-compatible slug and duplicate-anchor state via exact-pinned [`github-slugger` 2.0.0](https://www.npmjs.com/package/github-slugger/v/2.0.0) | mdast heading-text extraction, including the verified exclusion of image alt text, plus Lore link findings and reporting |
 | `LCLI-288` | Parsed TOML shape validation through the already-installed [Zod](https://zod.dev/) | Bun TOML parsing, recursive secret detection, environment overlay, defaults, page-id precision, unsafe-key policy, and Lore error mapping |
 
 These tasks are independent maintenance work. They do not change the M6

@@ -47,6 +47,7 @@
  */
 
 import { posix } from "node:path";
+import GithubSlugger, { slug as githubSlug } from "github-slugger";
 import * as ipaddr from "ipaddr.js";
 import * as yaml from "js-yaml";
 import type { Nodes } from "mdast";
@@ -534,52 +535,25 @@ function fragmentOf(target: string): string {
  */
 export function extractHeadingSlugs(source: Nodes | string): ReadonlySet<string> {
   const tree = typeof source === "string" ? fromMarkdown(source) : source;
-  const seen = new Map<string, number>();
+  const slugger = new GithubSlugger();
   const slugs = new Set<string>();
   walkMdast(tree, (node) => {
     if (node.type === "heading") {
-      slugs.add(uniqueSlug(slugify(nodeText(node)), seen));
+      slugs.add(slugger.slug(nodeText(node)));
     }
   });
   return slugs;
 }
 
 /**
- * Slugify heading text the GitHub way: lower-case, drop punctuation (keeping letters,
- * numbers, spaces, `-`, and `_`), then turn each space into a hyphen. Unicode letters and
- * numbers survive (`Café` → `café`); double spaces become double hyphens, matching GitHub.
+ * Slugify already-extracted heading text with the same package primitive used by
+ * {@link extractHeadingSlugs}, without retaining duplicate state. The package lower-cases,
+ * removes GitHub-excluded punctuation and Unicode code points, and maps literal spaces to
+ * hyphens. It deliberately does not trim or normalize Unicode: those details are part of
+ * GitHub-compatible anchor behavior rather than Lore policy.
  */
 export function slugify(text: string): string {
-  return text
-    .trim()
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N} _-]+/gu, "")
-    .replace(/ /g, "-");
-}
-
-/**
- * GitHub's per-document slug de-duplication (the github-slugger algorithm): the first
- * occurrence of a base slug is used verbatim; each later occurrence appends `-N` with an
- * incrementing per-base counter — but, crucially, if that candidate **collides with a slug
- * already taken** (a natural slug or an earlier disambiguation), the counter keeps advancing
- * until a free one is found. So headings `Release`, `Release 1`, `Release` yield
- * `release`, `release-1`, `release-2` — *not* a second `release-1` that would shadow the
- * real one and falsely fail a `#release-2` anchor. Every produced slug is registered (count
- * `0`) so a later natural collision is itself disambiguated. `seen` carries state across one
- * document.
- */
-function uniqueSlug(base: string, seen: Map<string, number>): string {
-  let slug = base;
-  if (seen.has(base)) {
-    let count = seen.get(base) ?? 0;
-    do {
-      count++;
-      slug = `${base}-${count}`;
-    } while (seen.has(slug));
-    seen.set(base, count);
-  }
-  seen.set(slug, 0);
-  return slug;
+  return githubSlug(text);
 }
 
 // ── Portability lint (warn-only body-text scan) ──────────────────────────────────
