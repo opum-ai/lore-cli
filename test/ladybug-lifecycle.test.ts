@@ -18,13 +18,10 @@ import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildGraph } from "../src/core/bundle";
 import { parseConcept } from "../src/core/concept";
-import { LADYBUG_STORAGE_VERSION, LADYBUG_VERSION, readLadybugSourceRecords } from "../src/core/ladybug-driver";
-import {
-  disposeLadybugProjection,
-  type LadybugControlManifest,
-  type LadybugProjectionGeneration,
-  type LadybugProjectionLifecycleResult,
-  reconcileLadybugProjection,
+import type {
+  LadybugControlManifest,
+  LadybugProjectionGeneration,
+  LadybugProjectionLifecycleResult,
 } from "../src/core/ladybug-lifecycle";
 import {
   canonicalJson,
@@ -35,6 +32,31 @@ import {
 } from "../src/core/ladybug-source";
 import { buildProjection, projectionStreamHash } from "../src/core/projection";
 import { fakeAdapter, makeTask } from "./helpers";
+
+// Bun 1.2.23 crashes in the Windows process while loading Ladybug's native
+// addon, before a test can run or skip. Native Windows packaging/qualification
+// belongs to LCLI-283.1.4, so keep source-contract coverage active there while
+// loading and exercising the native lifecycle only on qualified hosts.
+const nativeDriver = process.platform === "win32" ? null : await import("../src/core/ladybug-driver");
+const nativeLifecycle = process.platform === "win32" ? null : await import("../src/core/ladybug-lifecycle");
+const LADYBUG_VERSION = nativeDriver?.LADYBUG_VERSION ?? "0.18.2";
+const LADYBUG_STORAGE_VERSION = nativeDriver?.LADYBUG_STORAGE_VERSION ?? "42";
+const readLadybugSourceRecords: typeof import("../src/core/ladybug-driver").readLadybugSourceRecords =
+  nativeDriver?.readLadybugSourceRecords ??
+  (async () => {
+    throw new Error("native Ladybug lifecycle is unavailable on this host");
+  });
+const reconcileLadybugProjection: typeof import("../src/core/ladybug-lifecycle").reconcileLadybugProjection =
+  nativeLifecycle?.reconcileLadybugProjection ??
+  (async () => {
+    throw new Error("native Ladybug lifecycle is unavailable on this host");
+  });
+const disposeLadybugProjection: typeof import("../src/core/ladybug-lifecycle").disposeLadybugProjection =
+  nativeLifecycle?.disposeLadybugProjection ??
+  (() => {
+    throw new Error("native Ladybug lifecycle is unavailable on this host");
+  });
+const nativeDescribe = process.platform === "win32" ? describe.skip : describe;
 
 const roots: string[] = [];
 
@@ -180,7 +202,7 @@ describe("Ladybug projection source", () => {
   });
 });
 
-describe("Ladybug projection lifecycle", () => {
+nativeDescribe("Ladybug projection lifecycle", () => {
   test("builds, verifies, reuses, disposes, and deterministically rebuilds one immutable generation", async () => {
     const root = tempRepository();
     const source = fixtureSource();
