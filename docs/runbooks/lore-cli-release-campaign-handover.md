@@ -34,8 +34,7 @@ and wider private-beta work remain held.
 - **Last completed atomic task:** `LCLI-284`.
   - Backlog activation/plan commit: `ec32a85`;
   - final Backlog state commit: `222d177`;
-  - implementation and campaign handover are committed by the closeout commit
-    that follows `222d177`.
+  - implementation and campaign handover commit: `90e9fbd`.
 - **Closed prior campaign:** the dependency-boundary campaign remains closed
   and must not be reactivated.
 
@@ -54,12 +53,18 @@ and wider private-beta work remain held.
 - **LCLI-284 final Backlog HEAD:**
   `222d177`. The implementation and this handover are in the immediately
   following campaign closeout commit.
-- **origin/dev:** synchronized to local `dev` by the authorized campaign
-  closeout push.
+- **Published branch:** `feature/lcli-284-commander`. GitHub rejected a direct
+  `dev` push with `GH013` because both required status checks are expected, so
+  the verified closeout was published on this feature branch without changing
+  repository rules.
+- **origin/dev:** remains
+  `1afd3bba89dd0f43a7a6a13cab90fe916e018c58` until the protected-branch checks
+  and merge complete.
 - **LCLI-284 starting divergence:** local `dev` was 30 commits ahead and 0
   behind.
-- **Checkpoint divergence:** local `dev` and `origin/dev` match after the
-  campaign closeout push.
+- **Checkpoint divergence:** local `dev` and the published
+  `feature/lcli-284-commander` branch match after the handover correction;
+  protected `origin/dev` remains behind pending the required-check merge.
 - **Worktree:** clean after the closeout commit. Reinspect with
   `git status --short --branch`; do not reset, rebase, or discard.
 - **Pinned runtime:** `/Users/jdnewhouse/.bun/bin/bun` 1.2.23. Do not count
@@ -139,10 +144,11 @@ LCLI-284 startup, implementation, and verification completed on 2026-07-30:
 - `lore validate --strict` and `lore check --strict` — 46 concepts, 0 errors,
   0 warnings.
 - `git diff --check` — clean.
-- Closeout: committed the complete LCLI-284 implementation and handover,
-  pushed `dev` to `origin/dev`, fetched with remote-prune semantics, and deleted
-  only the five merged local campaign branches identified in the repository
-  state above.
+- Closeout: committed the complete LCLI-284 implementation and handover.
+  Direct `dev` publication was correctly blocked by required checks, so the
+  exact state was pushed to `feature/lcli-284-commander`. Remote-tracking refs
+  were fetched with prune semantics, and only the five merged local campaign
+  branches identified in the repository state above were deleted.
 
 ## Remaining blockers
 
@@ -153,17 +159,19 @@ LCLI-284 startup, implementation, and verification completed on 2026-07-30:
 - **Operator:** LCLI-278 requires a decision for GitHub release-environment
   protection. The existing `release` environment has no effective required
   reviewer protection under the current plan.
-- **External release gate:** the campaign closeout push of `dev` was authorized
-  and completed. No tag, remote merge, GitHub settings change, npm publish, or
-  public version selection was performed.
+- **Protected-branch gate:** `feature/lcli-284-commander` still needs the two
+  required checks and a protected-branch merge into `dev`. No rule bypass,
+  GitHub settings change, tag, npm publish, or public version selection was
+  performed.
 
 ## Exact next action
 
-In a separate focused session, re-run the mandated Backlog/Lore startup and
-activate only `LCLI-283.1.2` to implement the deterministic LadybugDB
-projection lifecycle. Do not start indexed routing (`LCLI-283.1.3`) until both
-prerequisite lanes are Done, and do not advance the parent before all children
-qualify.
+First land `feature/lcli-284-commander` into protected `dev` through both
+required checks. Then, in a separate focused implementation session, re-run the
+mandated Backlog/Lore startup and activate only `LCLI-283.1.2` to implement the
+deterministic LadybugDB projection lifecycle. Do not start indexed routing
+(`LCLI-283.1.3`) until both prerequisite lanes are Done, and do not advance the
+parent before all children qualify.
 
 ## Recovery
 
@@ -181,10 +189,12 @@ action. Then read backlog instructions task-execution, the Lore skill,
 lore instructions, and
 docs/runbooks/lore-cli-release-campaign-handover.md. Preserve the published
 campaign history and inspect the clean live repository/Backlog before changing
-anything. Start only LCLI-283.1.2: verify its completed LCLI-283.1.1
-dependency, activate and assign it, research the current projection contract
-and official LadybugDB package, record the implementation plan in Backlog, then
-implement and verify the deterministic projection lifecycle. Use pinned
+anything. First verify `feature/lcli-284-commander` has passed both required
+checks and is merged into protected `dev`; do not bypass repository rules.
+Then start only LCLI-283.1.2: verify its completed LCLI-283.1.1 dependency,
+activate and assign it, research the current projection contract and official
+LadybugDB package, record the implementation plan in Backlog, then implement
+and verify the deterministic projection lifecycle. Use pinned
 /Users/jdnewhouse/.bun/bin/bun 1.2.23. Do not start indexed routing, explorer,
 M8, or held MCP/Confluence/library scope in this focused session. Do not pull,
 push, publish, tag, rewrite history, change GitHub settings, or advance a parent

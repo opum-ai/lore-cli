@@ -35,6 +35,7 @@
 - 2026-07-30T12:37:18-05:00 484353d8d8a973aa24d6e429525c489fe44daca3 docs: record campaign closeout verification
 - 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
 - 2026-07-30T14:00:06-05:00 02bc9694043958d27022be2c2de1e107572ab249 docs: advance release campaign to Commander
+- 2026-07-30T15:07:43-05:00 90e9fbd90cd42c49348be7b2d0834b4d7cbf1a76 refactor: migrate CLI parsing to Commander
 
 ## docs/.obsidian
 
@@ -134,6 +135,7 @@
 - 2026-07-30T11:54:18-05:00 60c953c7db84ffed7376ee72663eaf9c5641abff refactor: delegate heading slugging to github-slugger
 - 2026-07-30T12:04:38-05:00 921032fe8653e09c62f647152e05e6cd9454865e refactor: delegate terminal width to string-width
 - 2026-07-30T12:17:00-05:00 b9dcc4a3a88ffb01b217b9ad83bc06195935e9e6 refactor: consolidate config shape validation on Zod
+- 2026-07-30T15:07:43-05:00 90e9fbd90cd42c49348be7b2d0834b4d7cbf1a76 refactor: migrate CLI parsing to Commander
 
 ## docs/runbooks
 
@@ -186,6 +188,7 @@
 - 2026-07-30T12:21:28-05:00 8331d768d2c541f0f66d56f65c86872e2166c0af docs: complete dependency boundary campaign
 - 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
 - 2026-07-30T14:00:06-05:00 02bc9694043958d27022be2c2de1e107572ab249 docs: advance release campaign to Commander
+- 2026-07-30T15:07:43-05:00 90e9fbd90cd42c49348be7b2d0834b4d7cbf1a76 refactor: migrate CLI parsing to Commander
 
 ## docs/specs
 
@@ -202,3 +205,4 @@
 - 2026-07-30T09:49:16-05:00 1520b894f0c4af7d36bf959069bb1e189963981f docs: sequence Commander before indexed retrieval
 - 2026-07-30T10:40:14-05:00 1e2e6dc4c9f59328cf22b6ca3bb13e49ce111f6b docs: record dependency boundary audit
 - 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
+- 2026-07-30T15:07:43-05:00 90e9fbd90cd42c49348be7b2d0834b4d7cbf1a76 refactor: migrate CLI parsing to Commander
