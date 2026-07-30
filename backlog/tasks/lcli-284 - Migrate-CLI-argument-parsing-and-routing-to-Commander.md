@@ -1,10 +1,11 @@
 ---
 id: LCLI-284
 title: Migrate CLI argument parsing and routing to Commander
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-30 14:25'
-updated_date: '2026-07-30 14:40'
+updated_date: '2026-07-30 19:19'
 labels:
   - cli
   - argument-parsing
@@ -40,3 +41,13 @@ Replace Lore’s hand-rolled global router and duplicated command-level option p
 - [ ] #5 Bun source execution, compiled binaries, supported platform packaging, startup behavior, and dependency/license checks pass without regressing the published package contract
 - [ ] #6 Architecture, tech-stack, CLI-surface, and contributor documentation no longer describe the router as hand-rolled and accurately record Commander’s role and constraints
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Pin the official Commander 15.0.0 package with Bun 1.2.23 and extend the existing capability manifest into the single declarative parser source for positional shapes, option arity, repeatability, aliases, command catalog, and generated Lore help.
+2. Replace cli.ts hand-written token scanning and switch dispatch with a fresh local Commander program per run, ordinary global help/version/output flags, injected output writers, exitOverride, and a data-driven handler registry. Translate Commander failures into Lore usage errors so Commander never exits, writes around Lore, or changes JSON envelopes, output precedence, TTY/NO_COLOR behavior, or semantic exit codes.
+3. Replace command-local token loops with shared Commander-parsed invocation data while retaining command-specific value and business validation; keep direct command tests compatible through the shared parser seam and preserve global flags in supported positions, equals forms, repeats, and literal end-of-options behavior.
+4. Add parser parity and Commander failure-path tests, update architecture, tech-stack, CLI surface, design/contributor prose, dependency metadata, and package/license expectations to record the exact role and constraints.
+5. Verify focused parser/help/command tests, the full Bun 1.2.23 suite, lint, typecheck, compiled build/version and package/distribution checks, then run Lore sync and strict validation/check plus git diff hygiene before task finalization.
+<!-- SECTION:PLAN:END -->
