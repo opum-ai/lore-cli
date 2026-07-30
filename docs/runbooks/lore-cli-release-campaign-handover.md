@@ -24,26 +24,36 @@ and wider private-beta work remain held.
 ## Campaign state and cursor
 
 - **Campaign state:** Active.
-- **Current atomic task:** `LCLI-283.1.1` — freeze the LadybugDB projection
-  schema and lifecycle contract.
-- **Task status:** In Progress, assigned to `@codex`.
-- **Dependency state:** eligible. `LCLI-31`, `LCLI-33`, `LCLI-34`, and
-  `LCLI-279` are Done. Parent `LCLI-283.1` remains To Do and must not be
-  finalized before all four children qualify.
-- **Last completed atomic task:** `LCLI-288`; finalization commit `edc3a66`.
-  The dependency-boundary campaign is closed and must not be reactivated.
-- **Next default task:** `LCLI-284` only after `LCLI-283.1.1` is Done.
+- **Current atomic cursor:** `LCLI-284` — migrate CLI argument parsing and
+  routing to Commander.
+- **Cursor status:** To Do and not activated in this session.
+- **Dependency state:** eligible. Its sole dependency, `LCLI-283.1.1`, is
+  Done. Parent `LCLI-283.1` remains To Do and must not be finalized before all
+  four children qualify.
+- **Last completed atomic task:** `LCLI-283.1.1`.
+  - activation/plan commit: `1931ce6`;
+  - Backlog acceptance/finalization commit: `a46a802`;
+  - contract implementation commit: `15a3a29`.
+- **Closed prior campaign:** the dependency-boundary campaign remains closed
+  and must not be reactivated.
 
 ## Repository state
 
-- **Branch:** `feature/lcli-283-1-1-ladybug-contract`, created from local
-  `dev`.
+- **Branch after this checkpoint is integrated:** `dev`. LCLI-283.1.1 was
+  developed on `feature/lcli-283-1-1-ladybug-contract` and fast-forwarded
+  locally; the feature branch is retained.
 - **Campaign starting HEAD:** `484353d8d8a973aa24d6e429525c489fe44daca3`.
+- **Completed-task implementation HEAD:**
+  `15a3a29a661d904942e02fa19946a80685f6bd90`. The handover checkpoint commit
+  immediately follows it; inspect `git rev-parse HEAD` for that
+  self-referential commit's hash.
 - **origin/dev:** `1afd3bba89dd0f43a7a6a13cab90fe916e018c58`.
 - **Starting divergence:** local `dev` was 26 commits ahead and 0 behind.
-- **Worktree:** expected dirty while LCLI-283.1.1 documentation, its Backlog
-  record, generated Lore files, and this runbook are in progress. Reinspect
-  with `git status --short --branch`; do not reset, rebase, or discard.
+- **Checkpoint divergence:** local `dev` is expected to be 30 commits ahead and
+  0 behind after the handover commit and local fast-forward.
+- **Worktree:** clean after the handover commit and local fast-forward.
+  Reinspect with `git status --short --branch`; do not reset, rebase, or
+  discard.
 - **Pinned runtime:** `/Users/jdnewhouse/.bun/bin/bun` 1.2.23. Do not count
   evidence from another Bun version.
 
@@ -99,14 +109,26 @@ Startup and research completed on 2026-07-30:
   `@ladybugdb/core`, native platform packages, typed schema, on-disk
   persistence, and one-writer-or-many-readers concurrency. Registry `latest`
   was `0.19.0`; no package was installed or wired by this contract task.
-
-Append exact implementation and final gate results here before ending the
-session. Historical counts are context only and are not acceptance evidence.
+- Focused:
+  `/Users/jdnewhouse/.bun/bin/bun test test/local-graph-contract.test.ts` —
+  4 passed, 0 failed, 36 assertions.
+- Full:
+  `/Users/jdnewhouse/.bun/bin/bun test` — 2,249 passed, 0 failed, 6,489
+  assertions across 52 files.
+- `/Users/jdnewhouse/.bun/bin/bun run lint` — 119 files clean.
+- `/Users/jdnewhouse/.bun/bin/bun run typecheck` — clean.
+- `/Users/jdnewhouse/.bun/bin/bun run build` — 222 modules compiled;
+  `./dist/lore --version` — `0.0.0`.
+- `lore sync` — Backlog final state committed and generated bundle files
+  reconciled.
+- `lore validate --strict` and `lore check --strict` — 46 concepts, 0 errors,
+  0 warnings.
+- `git diff --check` — clean.
 
 ## Remaining blockers
 
-- **Code:** LCLI-283.1.1 and the remaining M6–M8 task sequence are not yet
-  complete.
+- **Code:** LCLI-284 and the remaining M6–M8 task sequence are not yet
+  complete. LCLI-283.1.1 has no remaining code or documentation blocker.
 - **Upstream:** LCLI-253 requires a tagged Backlog.md release newer than the
   currently identified v1.48.0 and containing the stable JSON contract.
 - **Operator:** LCLI-278 requires a decision for GitHub release-environment
@@ -117,11 +139,12 @@ session. Historical counts are context only and are not acceptance evidence.
 
 ## Exact next action
 
-Complete LCLI-283.1.1: add focused contract-drift tests, run the pinned-Bun and
-strict Lore gates, record objective acceptance evidence through Backlog, mark
-the task Done only after reading the finalization guide, commit the completed
-work, update this runbook to the resulting commit/clean state, and return the
-cursor to `LCLI-284`.
+Open a fresh focused session on local `dev` at `LCLI-284`. Re-run the mandated
+Backlog/Lore startup, verify the live task and `LCLI-283.1.1` dependency, then
+activate only LCLI-284, research the current parser/command tests and current
+official Commander package contract, record a concrete plan in Backlog, and
+perform the compatibility-preserving parser migration. Do not activate
+LCLI-283.1.2 or any later graph/explorer task in the same focused session.
 
 ## Recovery
 
@@ -139,8 +162,12 @@ action. Then read backlog instructions task-execution, the Lore skill,
 lore instructions, and
 docs/runbooks/lore-cli-release-campaign-handover.md. Preserve the unpublished
 local dev history and inspect the live repository/Backlog before changing
-anything. Continue only the atomic cursor recorded in that runbook, using
-pinned /Users/jdnewhouse/.bun/bin/bun 1.2.23. Do not pull, push, publish, tag,
-rewrite history, change GitHub settings, activate held MCP/Confluence/library
-scope, or advance a parent before all children qualify.
+anything. Start only LCLI-284: verify its completed LCLI-283.1.1 dependency,
+activate and assign it, research the current CLI parser and official Commander
+package, record the implementation plan in Backlog, then implement and verify
+the compatibility-preserving migration. Use pinned
+/Users/jdnewhouse/.bun/bin/bun 1.2.23. Do not start LCLI-283.1.2, indexed
+routing, explorer, M8, or held MCP/Confluence/library scope in this focused
+session. Do not pull, push, publish, tag, rewrite history, change GitHub
+settings, or advance a parent before all children qualify.
 ```

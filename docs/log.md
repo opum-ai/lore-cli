@@ -33,6 +33,7 @@
 - 2026-07-30T12:21:28-05:00 8331d768d2c541f0f66d56f65c86872e2166c0af docs: complete dependency boundary campaign
 - 2026-07-30T12:36:44-05:00 f03786705b803a3742f98fbd90e5267e7264a29b docs: sync dependency campaign closeout log
 - 2026-07-30T12:37:18-05:00 484353d8d8a973aa24d6e429525c489fe44daca3 docs: record campaign closeout verification
+- 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
 
 ## docs/.obsidian
 
@@ -71,6 +72,7 @@
 - 2026-07-28T21:23:02-05:00 fea4509a7a2a9be13a197bff638f03b6bcdb9717 chore: migrate backlog namespace to lcli
 - 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
 - 2026-07-30T10:40:14-05:00 1e2e6dc4c9f59328cf22b6ca3bb13e49ce111f6b docs: record dependency boundary audit
+- 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
 
 ## docs/reference
 
@@ -181,6 +183,7 @@
 - 2026-07-30T11:56:37-05:00 82d321458ded7a971847042b49a613d40426adb6 docs: advance dependency campaign to LCLI-285
 - 2026-07-30T12:07:11-05:00 c46620514f1705ef51a2b7ff5de4dcbd6ba6a205 docs: advance dependency campaign to LCLI-288
 - 2026-07-30T12:21:28-05:00 8331d768d2c541f0f66d56f65c86872e2166c0af docs: complete dependency boundary campaign
+- 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
 
 ## docs/specs
 
@@ -196,3 +199,4 @@
 - 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
 - 2026-07-30T09:49:16-05:00 1520b894f0c4af7d36bf959069bb1e189963981f docs: sequence Commander before indexed retrieval
 - 2026-07-30T10:40:14-05:00 1e2e6dc4c9f59328cf22b6ca3bb13e49ce111f6b docs: record dependency boundary audit
+- 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
