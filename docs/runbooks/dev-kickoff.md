@@ -73,26 +73,29 @@ This ordering prevents new indexed options from being implemented in the
 hand-rolled parser and then migrated again. It does not build the explorer
 against an unstable projection.
 
-## Independent dependency-boundary queue
+## Completed dependency-boundary campaign
 
-Four focused maintenance tasks are open outside the M6–M8 dependency graph:
+The four independent maintenance tasks outside the M6–M8 dependency graph are
+Done and integrated into the local `dev` baseline:
 
-- `LCLI-285` delegates terminal display width to `string-width`.
-- `LCLI-286` delegates security-sensitive IP parsing and CIDR matching to
-  `ipaddr.js` while retaining Lore’s outbound-request policy.
-- `LCLI-287` delegates GitHub heading slug and duplicate state to
-  `github-slugger` while retaining Lore’s mdast text extraction.
-- `LCLI-288` consolidates generic config shape validation on the already-pinned
-  Zod dependency while retaining operational policy and Lore errors.
+- `LCLI-286` exact-pinned `ipaddr.js` 2.4.0 for IP parsing/CIDR matching while
+  retaining Lore’s outbound-request policy.
+- `LCLI-287` exact-pinned `github-slugger` 2.0.0 for heading slug/duplicate
+  state while retaining Lore’s mdast text extraction and link policy.
+- `LCLI-285` exact-pinned `string-width` 8.2.2 for terminal display width while
+  retaining Lore’s sanitizer, padding, and output contracts.
+- `LCLI-288` moved generic config shape recognition to the existing
+  exact-pinned Zod 4.4.3 while retaining operational/security policy and Lore
+  errors.
 
-They may be scheduled as independent focused branches when a worker is assigned;
-they do not block `LCLI-283.1.1`, Commander, projection construction, or the
-explorer. Do not bundle them into `LCLI-284` or a LadybugDB task. Each task must
-apply the exact-pin, pinned-Bun, compiled-binary, conformance, and packaging
-gates in the [dependency boundary audit](../reference/dependency-boundary-audit.md).
-The same reference durably retains the `write-file-atomic` and maintained
-YAML/mdast-frontmatter investigations without prematurely committing either
-migration.
+The focused commits, pinned-Bun and packaging evidence, and closeout state are
+recorded in the
+[dependency campaign handover](dependency-boundary-campaign-handover.md).
+The normal cursor is again `LCLI-283.1.1`; these completed tasks do not block or
+reorder Commander, projection construction, or the explorer. The
+[dependency boundary audit](../reference/dependency-boundary-audit.md) still
+retains the deferred `write-file-atomic` and maintained
+YAML/mdast-frontmatter investigations without authorizing either migration.
 
 ## Non-negotiable constraints
 
