@@ -67,6 +67,44 @@ schema freeze:
 
 M6 is complete only when LadybugDB produces a material measured warm-query improvement, remains safe and rebuildable under stale, corrupt, locked, and interrupted states, preserves deterministic output contracts, and does not impose an unacceptable regression on small repositories.
 
+#### Frozen M6 schema and lifecycle
+
+`LCLI-283.1.1` freezes index format `ladybug-projection/1` and the complete
+schema/lifecycle in [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md).
+Later M6 tasks implement that contract; they do not select a different
+identity, storage, migration, or concurrency model without a superseding
+decision.
+
+- The only ingestion boundary is validated `lore export` schema `1.0`.
+  `RepositoryProjection`, `ProjectionSnapshot`, `SourceCommit`,
+  `ConceptRecord`, `TaskRecord`, and one `AuthoredEdgeRecord` per exported edge
+  retain canonical source JSON and repository-scope, bundle, commit, export,
+  record, path/target, and task provenance. Separate edge records preserve
+  duplicates and dangling targets; Ladybug internal ids are never source ids.
+- Storage is repository-local under
+  `.lore/cache/graph/ladybug/1/generations/<source-fingerprint>/`. Published
+  generations are immutable and opened read-only. One exclusive writer builds
+  in a sibling staging directory, closes and reopens for verification, writes
+  the control manifest last, and atomically publishes by directory rename.
+- The source fingerprint hashes versions and exact source bytes/task snapshot;
+  it never trusts mtimes or Git cleanliness. Ordered checks classify an index
+  as `locked`, `unsupported`, `corrupt`, `rebuildable`, or `reusable`.
+  Unsupported newer formats are preserved, corrupt generations are quarantined
+  only under exclusive ownership, and every M6 migration is rebuild-only.
+- Readers may share one immutable generation. A writer never opens that
+  generation read-write; it builds a new one because Ladybug supports either
+  one read-write database object or multiple read-only objects, not both
+  concurrently against the same file.
+- Every path—reuse, build, recovery, cleanup, fallback, and deletion—is
+  read-only with respect to repository sources. No embedding, vector index,
+  model call, inferred edge, raw Cypher, database-native id, hidden
+  user-global graph, AuraDB, or local MCP surface enters this contract.
+
+The official native package boundary is `@ladybugdb/core`. Its exact version is
+selected and tested under pinned Bun 1.2.23 by the implementation/packaging
+tasks and recorded in the index; a version change rebuilds rather than assuming
+native file compatibility.
+
 ### M7 — Local graph explorer
 
 `LCLI-283.2` consumes the stable indexed projection through a Lore-owned read
