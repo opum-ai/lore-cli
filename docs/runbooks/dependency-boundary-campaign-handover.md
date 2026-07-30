@@ -34,34 +34,37 @@ advances.
 
 ## Current cursor
 
-- **Current task:** `LCLI-286` — Delegate SSRF address parsing and CIDR matching
-  to `ipaddr.js`.
-- **Live Backlog status:** `Done` as of 2026-07-30, assigned to
-  `@codex`; live Backlog state remains
-  authoritative over this handover.
-- **Current branch:** `feature/lcli-286-ipaddr-js`.
-- **Campaign base:** `1e2e6dc4c9f59328cf22b6ca3bb13e49ce111f6b`
+- **Current task:** `LCLI-287` — Delegate GitHub heading anchor slugging to
+  `github-slugger`.
+- **Live Backlog status:** `To Do` as of 2026-07-30, unassigned; live Backlog
+  state remains authoritative over this handover.
+- **Current branch:** `dev`.
+- **Initial campaign base:**
+  `1e2e6dc4c9f59328cf22b6ca3bb13e49ce111f6b`
   (`1e2e6dc4c9f5`).
-- **Focused-branch base/current HEAD:**
-  `d8fc743f7944054d0730849512cad2fba068b030`
-  (`d8fc743f7944`); implementation is currently uncommitted.
-- **Next task cursor:** `LCLI-286`; do not advance until it is finalized,
+- **Current local campaign baseline/integrated implementation HEAD:**
+  `6ed37e2c9ccf260eeaf933ea47aab4a5d1d2272a`
+  (`6ed37e2`).
+- **Next task cursor:** `LCLI-287`; do not advance until it is finalized,
   integrated into the local campaign baseline, and this runbook is reconciled.
 
 ## Completed work
 
-- `LCLI-286` implementation, verification, acceptance evidence, final summary,
-  and Backlog finalization are complete.
-- The focused implementation commit and local `dev` integration are still
-  pending, so the campaign cursor has not advanced.
+- `LCLI-286` is Done and integrated into local `dev`.
+  - `2a00c49` — activate and assign the task.
+  - `d8fc743` — record the researched implementation plan.
+  - `6dc2365` — record acceptance evidence, final summary, and Done status.
+  - `6ed37e2` — exact-pin `ipaddr.js` 2.4.0, delegate the generic primitive,
+    add conformance/security regressions, and update shipping documentation.
+- `LCLI-287`, `LCLI-285`, and `LCLI-288` are not started.
 
 ## Current implementation state
 
-Initial inspection and package research are complete. `LCLI-286` is active with
-a researched Backlog plan. `ipaddr.js` 2.4.0 is exact-pinned in `package.json`
-and `bun.lock`; its MIT license, zero runtime/transitive dependency set, Node
-10+ engine, built-in types, May 2026 release, registry integrity, upstream
-advisory state, and pinned-Bun compatibility were checked.
+`LCLI-286` is shipping on the local campaign baseline. `ipaddr.js` 2.4.0 is
+exact-pinned in `package.json` and `bun.lock`; its MIT license, zero
+runtime/transitive dependency set, Node 10+ engine, built-in types, May 2026
+release, registry integrity, upstream advisory state, and pinned-Bun
+compatibility were checked.
 
 The hand-written BigInt IPv4/IPv6 parsers and inclusive range arithmetic have
 been removed. `ipaddr.js` now owns strict address validation, normalization,
@@ -70,23 +73,27 @@ blocked-range policy, rejects ambiguous/legacy IPv4 forms, preserves the
 deprecated dotted IPv4-compatible label despite an upstream normalization
 quirk, and retains DNS resolution, redirect-hop revalidation, bounded timeouts,
 fail-closed behavior, response-body disposal, the documented DNS-rebinding
-limitation, and redacted errors/output.
+limitation, and redacted errors/output. The next sequential change,
+`LCLI-287`, also modifies `src/core/check.ts` and must start from this integrated
+baseline so it preserves the completed SSRF boundary.
 
 ## Exact next action
 
-Run `lore sync` to commit the terminal Backlog state, create the focused
-implementation commit, fast-forward local `dev` to the feature branch, then
-reconcile this handover with the integrated commits and advance the next-task
-cursor to `LCLI-287` without activating that task.
+In the next session, repeat the required repository and campaign inspection,
+run `backlog instructions task-execution`, confirm live `LCLI-287` is still
+eligible, then activate and assign only `LCLI-287`. Research the current
+`github-slugger` release and the existing slug consumers before recording its
+plan or creating its focused feature branch.
 
 ## Decisions, blockers, and risks
 
 - **Decisions:** campaign order and scope are fixed by the campaign prompt.
 - **Blockers:** none.
-- **Risks:** security-sensitive behavior must remain fail-closed; malformed,
-  ambiguous, legacy-form, IPv4-mapped IPv6, and resolver-returned inputs must
-  not become newly allowed. Compiled compatibility must be proved using the
-  repository-pinned Bun version, not only a newer workstation Bun.
+- **Risks:** `LCLI-287` must preserve Lore's mdast heading-text extraction,
+  especially exclusion of image alt text, while replacing slug and duplicate
+  state. It shares `src/core/check.ts` with completed `LCLI-286`, so the next
+  branch must retain the integrated IP boundary. Package selection and GitHub
+  compatibility still require current research under pinned Bun 1.2.23.
 
 ## Verification
 
@@ -120,20 +127,31 @@ Completed:
 - `lore check --strict`
 - `git diff --check`
 
-Remaining for `LCLI-286`:
+Remaining for `LCLI-287`:
 
-- focused implementation commit and local `dev` integration
-- post-integration clean-tree and cursor reconciliation
+- package research, activation, researched Backlog plan, and focused branch
+- versioned before/after conformance fixtures for punctuation, whitespace,
+  inline code, excluded image text, Unicode forms, non-Latin text, empty and
+  repeated headings, per-document duplicate state, and consumer parity
+- exact pin, audit, pinned-Bun source/build and five-target packaging evidence
+- `bun test`
+- `bun run lint`
+- `bun run typecheck`
+- `bun run build`
+- `./dist/lore --version`
+- `lore sync`
+- `lore validate --strict`
+- `lore check --strict`
+- `git diff --check`
 
 ## Working-tree and remote state
 
-Before campaign activation, `dev` was clean at the expected baseline and seven
-commits ahead of `origin/dev`. Lore created two local Backlog lifecycle commits,
-placing the focused branch base at `d8fc743f7944`. The feature branch currently
-contains uncommitted source, tests, dependency/lockfile, documentation, and
-generated Lore index/log changes. Ignored compile artifacts exist under
-`dist/`. No pull, reset, rebase, discard, push, or remote merge has been
-performed.
+`dev` is at integrated implementation commit `6ed37e2`, eleven commits ahead of
+`origin/dev` before the cursor-only commit. The tracked worktree was clean
+immediately after the fast-forward; only this handover update and Lore's
+generated log entry belong to the cursor commit. Ignored verification artifacts
+exist under `dist/`. No pull, reset, rebase, discard, push, or remote merge has
+been performed.
 
 ## Continuation prompt
 
@@ -142,11 +160,12 @@ Continue the Lore CLI dependency-boundary campaign from
 /Volumes/external/repos/lore-cli/docs/runbooks/dependency-boundary-campaign-handover.md.
 Read AGENTS.md completely, run backlog instructions overview, read the Lore
 skill and run lore instructions, then inspect git without cleaning. Treat live
-Backlog status as authoritative. Resume only the current task, LCLI-286:
-delegate generic IP parsing, normalization, and CIDR matching to exact-pinned
-ipaddr.js while preserving Lore's explicit blocked-range policy, DNS and
-redirect behavior, bounded timeouts, response disposal, fail-closed and
-redacted errors, and the documented DNS-rebinding limitation. Do not start
-LCLI-287, LCLI-285, LCLI-288, LadybugDB, Commander, the explorer, local MCP, or
-deferred investigations. Update this handover before stopping or advancing.
+Backlog status as authoritative. Confirm LCLI-286 remains Done and resume only
+the current task, LCLI-287: research and exact-pin github-slugger, delegate
+GitHub-compatible slug and duplicate-anchor state, and preserve Lore's mdast
+heading-text extraction including image-alt exclusion plus link findings and
+machine output. Start from the current local dev baseline so the integrated
+LCLI-286 SSRF boundary in src/core/check.ts is retained. Do not start LCLI-285,
+LCLI-288, LadybugDB, Commander, the explorer, local MCP, or deferred
+investigations. Update this handover before stopping or advancing.
 ```

@@ -23,6 +23,7 @@
 - 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
 - 2026-07-30T09:49:16-05:00 1520b894f0c4af7d36bf959069bb1e189963981f docs: sequence Commander before indexed retrieval
 - 2026-07-30T10:40:14-05:00 1e2e6dc4c9f59328cf22b6ca3bb13e49ce111f6b docs: record dependency boundary audit
+- 2026-07-30T11:35:54-05:00 6ed37e2c9ccf260eeaf933ea47aab4a5d1d2272a refactor: delegate SSRF IP parsing to ipaddr.js
 
 ## docs/.obsidian
 
@@ -117,6 +118,7 @@
 - 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
 - 2026-07-30T09:49:16-05:00 1520b894f0c4af7d36bf959069bb1e189963981f docs: sequence Commander before indexed retrieval
 - 2026-07-30T10:40:14-05:00 1e2e6dc4c9f59328cf22b6ca3bb13e49ce111f6b docs: record dependency boundary audit
+- 2026-07-30T11:35:54-05:00 6ed37e2c9ccf260eeaf933ea47aab4a5d1d2272a refactor: delegate SSRF IP parsing to ipaddr.js
 
 ## docs/runbooks
 
@@ -162,6 +164,7 @@
 - 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
 - 2026-07-30T09:49:16-05:00 1520b894f0c4af7d36bf959069bb1e189963981f docs: sequence Commander before indexed retrieval
 - 2026-07-30T10:40:14-05:00 1e2e6dc4c9f59328cf22b6ca3bb13e49ce111f6b docs: record dependency boundary audit
+- 2026-07-30T11:35:54-05:00 6ed37e2c9ccf260eeaf933ea47aab4a5d1d2272a refactor: delegate SSRF IP parsing to ipaddr.js
 
 ## docs/specs
 
