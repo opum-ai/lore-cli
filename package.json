@@ -50,6 +50,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@ladybugdb/core": "0.18.2",
     "commander": "15.0.0",
     "github-slugger": "2.0.0",
     "ipaddr.js": "2.4.0",
@@ -57,5 +58,8 @@
     "mdast-util-from-markdown": "2.0.3",
     "string-width": "8.2.2",
     "zod": "4.4.3"
-  }
+  },
+  "trustedDependencies": [
+    "@ladybugdb/core"
+  ]
 }

@@ -127,15 +127,24 @@ export function buildProjection(input: ProjectionInput): Projection {
     }
   }
 
-  const semanticLines = records.map((record) =>
-    JSON.stringify(record.record === "manifest" ? { ...record, generatedAt: null } : record),
-  );
   records.push({
     record: "trailer",
     recordCount: records.length,
-    streamHash: hash(semanticLines.join("\n")),
+    streamHash: projectionStreamHash(records),
   });
   return { records, jsonl: `${records.map((record) => JSON.stringify(record)).join("\n")}\n` };
+}
+
+/**
+ * Compute export schema 1.0's semantic stream hash for every record before the
+ * trailer. The generated timestamp is deliberately normalized away so the same
+ * source snapshot has one digest regardless of wall-clock time.
+ */
+export function projectionStreamHash(records: readonly ProjectionRecord[]): string {
+  const semanticLines = records.map((record) =>
+    JSON.stringify(record.record === "manifest" ? { ...record, generatedAt: null } : record),
+  );
+  return hash(semanticLines.join("\n"));
 }
 
 function conceptEdge(

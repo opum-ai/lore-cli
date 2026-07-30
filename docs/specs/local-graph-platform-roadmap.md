@@ -105,6 +105,12 @@ selected and tested under pinned Bun 1.2.23 by the implementation/packaging
 tasks and recorded in the index; a version change rebuilds rather than assuming
 native file compatibility.
 
+`LCLI-283.1.2` selected exact `@ladybugdb/core@0.18.2`. Under pinned Bun
+1.2.23 the package reports runtime version `0.18.2` and storage version `42`;
+both values are duplicated in the projection database and control manifest and
+participate in the source fingerprint. Bun trusts only this package's install
+script so its exact platform optional dependency can copy the native addon.
+
 ### M7 — Local graph explorer
 
 `LCLI-283.2` consumes the stable indexed projection through a Lore-owned read
