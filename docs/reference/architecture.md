@@ -231,6 +231,12 @@ byte-identical outputs (the property that makes agent loops and CI gates safe).
 `templates/`) per [ADR-0013](../adr/0013-lore-state-directory.md) and performs the
 git operations for `backlog/` ownership (§3.1).
 
+`config.ts` reads and parses `.lore/config.toml` with Bun, then uses reusable
+loose Zod schemas for the generic parsed table/primitive shape. Lore code
+retains recursive committed-token scanning, environment overlay,
+defaults/snake-case projection, reserved override-key defense, page-id value
+and precision rules, failure precedence, and the credential-safe error model.
+
 ## 5. Data flow for the key commands
 
 Each command is a short pipeline: surface → command handler → core (+ adapter) →

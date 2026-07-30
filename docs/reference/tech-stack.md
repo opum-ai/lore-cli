@@ -270,7 +270,7 @@ toolchain/native binary and an extra remark-ecosystem dependency.
 | | |
 |---|---|
 | **Package** | `zod` (**v4**) |
-| **Role** | Runtime validation compiled from the declarative profile, JSON Schema generation, and reusable boundary validation |
+| **Role** | Runtime validation compiled from the declarative profile, JSON Schema generation, parsed config shape validation, and reusable boundary validation |
 
 **Rationale.** `.lore/profile.toml` is the source of truth for the type
 vocabulary and field grammar. Lore compiles that profile into Zod validators and
@@ -294,12 +294,14 @@ runtime shape mechanism, while the profile remains the declarative authority.
 - **Dates as ISO strings.** `timestamp` and any date field are ISO-8601 strings,
   validated as such — not `Date` objects — so they serialize deterministically.
 
-Why v4 specifically: native `z.toJSONSchema()` removes a dependency and keeps the
-schema and the emitted JSON Schema guaranteed in lockstep (one source, one
-generator). `LCLI-288` extends the same installed dependency to generic parsed
-TOML shape validation while retaining Lore-specific secret, environment,
-precision, and error policies outside the schema. The schema-to-output story is
-detailed in [cli-contract.md](cli-contract.md).
+Why v4 specifically: native `z.toJSONSchema()` removes a dependency and keeps
+the schema and emitted JSON Schema in lockstep. The same exact-pinned 4.4.3
+dependency now validates the generic parsed-TOML tables, booleans, enums,
+string map, and page-id input type. Loose object schemas preserve additive
+unknown-key tolerance. Lore still owns defaults and snake-case projection,
+recursive secret detection, environment overlay, reserved map keys, page-id
+value/precision rules, failure precedence, and credential-safe error mapping.
+The schema-to-output story is detailed in [cli-contract.md](cli-contract.md).
 
 ---
 
@@ -309,13 +311,15 @@ detailed in [cli-contract.md](cli-contract.md).
 |---|---|
 | **Format** | TOML (`.lore/config.toml`) |
 | **Parser** | `Bun.TOML.parse` over the explicitly read configuration text |
-| **Library** | **none** |
+| **Shape validator** | Exact-pinned Zod 4.4.3 (§7) |
 
 **Rationale.** lore reads a small config file (`.lore/config.toml`) and Bun parses
-TOML from explicitly read text via `Bun.TOML.parse`. That means **zero** added
-dependency for config parsing — see §10. TOML is human-friendly, comment-friendly, and matches the
-ecosystem's expectation for tool config. Secrets (e.g. the deferred Confluence
-token) are read from environment variables, never the file.
+TOML from explicitly read text via `Bun.TOML.parse`; no parser package is
+added. The already-shipping Zod boundary validates the parsed generic shape.
+TOML is human-friendly, comment-friendly, and matches the ecosystem's
+expectation for tool config. Secrets (e.g. the deferred Confluence token) are
+read from environment variables, never the file, and secret scanning remains
+outside the generic schema.
 
 ---
 
@@ -465,7 +469,7 @@ adoption are described in
 | Terminal display width | `string-width`; Lore retains field sanitization, padding, and row/output policy (`LCLI-285`) | exact `8.2.2` | yes |
 | SSRF address parsing and CIDR match | `ipaddr.js`; Lore retains explicit block policy, DNS, redirect, timeout, fail-closed, and error behavior (`LCLI-286`) | exact `2.4.0` | yes |
 | Schema + JSON Schema emit | Zod **v4** | exact `4.4.3` | yes |
-| Config parse and shape | Bun native TOML; hand-rolled shape → existing Zod (`LCLI-288`) | Bun + existing Zod pins | current / planned |
+| Config parse and shape | Bun native TOML parsing + Zod generic shape; Lore retains security, defaults/projection, page-id precision, and error policy (`LCLI-288`) | pinned Bun + exact Zod `4.4.3` | yes |
 | Local graph and lexical projection | `@ladybugdb/core` | pin during M6 implementation | **planned M6** |
 | MCP transport | @modelcontextprotocol/sdk | — | **on hold** |
 | Confluence publish | *(plain `fetch`)* | — | **on hold** |

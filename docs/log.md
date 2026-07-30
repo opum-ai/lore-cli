@@ -28,6 +28,7 @@
 - 2026-07-30T11:54:18-05:00 60c953c7db84ffed7376ee72663eaf9c5641abff refactor: delegate heading slugging to github-slugger
 - 2026-07-30T11:56:37-05:00 82d321458ded7a971847042b49a613d40426adb6 docs: advance dependency campaign to LCLI-285
 - 2026-07-30T12:04:38-05:00 921032fe8653e09c62f647152e05e6cd9454865e refactor: delegate terminal width to string-width
+- 2026-07-30T12:07:11-05:00 c46620514f1705ef51a2b7ff5de4dcbd6ba6a205 docs: advance dependency campaign to LCLI-288
 
 ## docs/.obsidian
 
@@ -173,6 +174,7 @@
 - 2026-07-30T11:35:54-05:00 6ed37e2c9ccf260eeaf933ea47aab4a5d1d2272a refactor: delegate SSRF IP parsing to ipaddr.js
 - 2026-07-30T11:38:19-05:00 c0d0e442f0d900c8fa65f2e30d3672027b2e324a docs: advance dependency campaign to LCLI-287
 - 2026-07-30T11:56:37-05:00 82d321458ded7a971847042b49a613d40426adb6 docs: advance dependency campaign to LCLI-285
+- 2026-07-30T12:07:11-05:00 c46620514f1705ef51a2b7ff5de4dcbd6ba6a205 docs: advance dependency campaign to LCLI-288
 
 ## docs/specs
 
