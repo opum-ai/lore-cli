@@ -1,6 +1,6 @@
 ---
 id: m-9
-title: "M8 — Confluence production mirror (deferred)"
+title: "Superseded M8 — Confluence mirror schedule"
 ---
 
 ## Description

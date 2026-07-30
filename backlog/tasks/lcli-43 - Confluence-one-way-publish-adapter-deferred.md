@@ -4,11 +4,11 @@ title: Confluence one-way publish adapter (deferred)
 status: To Do
 assignee: []
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:22'
+updated_date: '2026-07-30 13:29'
 labels:
   - deferred
   - confluence
-milestone: m-8
+milestone: m-11
 dependencies:
   - LCLI-28
 documentation:

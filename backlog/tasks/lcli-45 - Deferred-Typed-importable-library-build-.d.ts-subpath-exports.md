@@ -4,11 +4,11 @@ title: '[Deferred] Typed importable library build (.d.ts + subpath exports)'
 status: To Do
 assignee: []
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:23'
+updated_date: '2026-07-30 13:29'
 labels:
   - eck-alignment
   - packaging
-milestone: m-9
+milestone: m-12
 dependencies:
   - LCLI-9
 documentation:

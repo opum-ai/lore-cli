@@ -4,11 +4,11 @@ title: Confluence production mirror (deferred)
 status: To Do
 assignee: []
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:23'
+updated_date: '2026-07-30 13:29'
 labels:
   - deferred
   - confluence
-milestone: m-9
+milestone: m-12
 dependencies:
   - LCLI-43
 documentation:

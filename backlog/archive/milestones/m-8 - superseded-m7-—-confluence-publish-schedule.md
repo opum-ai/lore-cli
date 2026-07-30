@@ -1,6 +1,6 @@
 ---
 id: m-8
-title: "M7 — Confluence publish (deferred)"
+title: "Superseded M7 — Confluence publish schedule"
 ---
 
 ## Description
