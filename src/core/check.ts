@@ -46,8 +46,8 @@
  * `lore sync`/LORE-26; validating them is that pass's concern.)
  */
 
-import { isIP } from "node:net";
 import { posix } from "node:path";
+import * as ipaddr from "ipaddr.js";
 import * as yaml from "js-yaml";
 import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
@@ -174,10 +174,9 @@ const HTTP_URL = /^https?:\/\//i;
  * its actual IP address(es) first (`commands/check.ts`'s injectable DNS seam — resolution
  * itself is IO, ADR-0014) and classifies each one here, BEFORE ever issuing a request for it.
  *
- * An IPv4 address is checked in its IPv4-mapped IPv6 form (`::ffff:a.b.c.d`) alongside every
- * native IPv6 range (via {@link addressToBigInt}'s uniform 128-bit space), so an attacker can't
- * dodge an IPv4-only blocklist by requesting the exact same address spelled as its IPv6-mapped
- * equivalent — a well-known SSRF-filter bypass technique.
+ * IPv4-mapped IPv6 is normalized to IPv4 through ipaddr.js before the explicit IPv4 policy ranges
+ * are matched, so an attacker cannot dodge an IPv4-only blocklist by requesting the exact same
+ * address in its mapped form — a well-known SSRF-filter bypass technique.
  *
  * Not an exhaustive IANA special-purpose-registry sweep (documentation ranges like
  * `192.0.2.0/24` are omitted as low real-world SSRF risk) — scoped to the ranges an attacker
@@ -185,50 +184,75 @@ const HTTP_URL = /^https?:\/\//i;
  * cloud-metadata address `169.254.169.254` lives), RFC1918 private space, and carrier-grade NAT.
  */
 export function classifyAddress(ip: string): { readonly blocked: boolean; readonly reason?: string } {
-  const value = addressToBigInt(ip);
-  if (value === null) {
+  const parsed = parseAddressLiteral(ip);
+  if (parsed === null) {
     return { blocked: true, reason: `"${ip}" is not a valid IP address literal` };
   }
+  if (isDottedIpv4CompatibleSpelling(ip, parsed)) {
+    return { blocked: true, reason: IPV4_COMPATIBLE_LABEL };
+  }
+  const address = parsed instanceof ipaddr.IPv6 && parsed.isIPv4MappedAddress() ? parsed.toIPv4Address() : parsed;
   for (const range of BLOCKED_ADDRESS_RANGES) {
-    if (value >= range.start && value <= range.end) {
+    if (address.kind() === range.network.kind() && address.match(range.network, range.prefixBits)) {
       return { blocked: true, reason: range.label };
     }
   }
   return { blocked: false };
 }
 
-/** One inclusive `[start, end]` range in the unified 128-bit (IPv4-mapped) address space {@link addressToBigInt} produces. */
+/**
+ * Whether a value is a strict address literal under the same package-backed parser used by
+ * {@link classifyAddress}. IPv4 is deliberately limited to four-part decimal: ipaddr.js also
+ * supports legacy inet_aton hex, octal, short-part, and integer spellings, but accepting those
+ * would widen Lore's resolver boundary and create ambiguous SSRF inputs. IPv6 retains the
+ * package's supported compressed, embedded-IPv4, case, and zone-id forms.
+ */
+export function isAddressLiteral(ip: string): boolean {
+  return parseAddressLiteral(ip) !== null;
+}
+
+/** Parse and normalize the accepted address-literal grammar without performing any IO. */
+function parseAddressLiteral(ip: string): ipaddr.IPv4 | ipaddr.IPv6 | null {
+  if (ipaddr.IPv4.isValidFourPartDecimal(ip)) {
+    return ipaddr.IPv4.parse(ip);
+  }
+  if (ipaddr.IPv6.isValid(ip)) {
+    return ipaddr.IPv6.parse(ip);
+  }
+  return null;
+}
+
+const IPV4_COMPATIBLE_LABEL = "deprecated IPv4-compatible form (::/96)";
+
+/**
+ * ipaddr.js normalizes the historical dotted spelling `::127.0.0.1` to the mapped address
+ * `::ffff:127.0.0.1`. Lore has always treated that authored spelling as the deprecated `::/96`
+ * policy range instead. Preserve that policy distinction before mapped-address normalization;
+ * parsing and validation still belong to ipaddr.js.
+ */
+function isDottedIpv4CompatibleSpelling(ip: string, parsed: ipaddr.IPv4 | ipaddr.IPv6): boolean {
+  if (!(parsed instanceof ipaddr.IPv6) || !parsed.isIPv4MappedAddress()) {
+    return false;
+  }
+  const withoutZone = ip.split("%", 1)[0] ?? ip;
+  if (!withoutZone.includes(".")) {
+    return false;
+  }
+  const prefix = withoutZone.slice(0, withoutZone.lastIndexOf(":")).toLowerCase();
+  return !prefix.endsWith(":ffff");
+}
+
+/** One explicit Lore-owned policy CIDR, parsed and matched by ipaddr.js. */
 interface AddressRange {
-  readonly start: bigint;
-  readonly end: bigint;
+  readonly network: ipaddr.IPv4 | ipaddr.IPv6;
+  readonly prefixBits: number;
   readonly label: string;
 }
 
-/** The fixed top-96-bit prefix of an IPv4-mapped IPv6 address (`::ffff:0:0/96`) — where an IPv4 value sits once unified into the 128-bit space. */
-const V4_MAPPED_PREFIX = 0xffffn << 32n;
-
-/** An IPv4 CIDR range (e.g. `v4Range("10.0.0.0", 8, ...)`), expressed as an {@link AddressRange} in the unified (IPv4-mapped) space. */
-function v4Range(base: string, prefixBits: number, label: string): AddressRange {
-  const start = v4ToBigInt(base);
-  if (start === null) {
-    throw new Error(`invalid IPv4 literal in a hard-coded range table: ${base}`);
-  }
-  const hostBits = BigInt(32 - prefixBits);
-  const mask = (1n << hostBits) - 1n;
-  const network = start & ~mask;
-  return { start: V4_MAPPED_PREFIX | network, end: V4_MAPPED_PREFIX | (network | mask), label };
-}
-
-/** A native IPv6 CIDR range (e.g. `v6Range("fe80::", 10, ...)`), expressed as an {@link AddressRange}. */
-function v6Range(base: string, prefixBits: number, label: string): AddressRange {
-  const start = v6ToBigInt(base);
-  if (start === null) {
-    throw new Error(`invalid IPv6 literal in a hard-coded range table: ${base}`);
-  }
-  const hostBits = BigInt(128 - prefixBits);
-  const mask = (1n << hostBits) - 1n;
-  const network = start & ~mask;
-  return { start: network, end: network | mask, label };
+/** Parse one hard-coded policy CIDR once at module initialization. */
+function blockedRange(cidr: string, label: string): AddressRange {
+  const [network, prefixBits] = ipaddr.parseCIDR(cidr);
+  return { network, prefixBits, label };
 }
 
 /**
@@ -254,118 +278,20 @@ function v6Range(base: string, prefixBits: number, label: string): AddressRange 
  * how either address is actually used in practice.
  */
 const BLOCKED_ADDRESS_RANGES: readonly AddressRange[] = [
-  v4Range("0.0.0.0", 8, "this-network (0.0.0.0/8)"),
-  v4Range("10.0.0.0", 8, "private (10.0.0.0/8)"),
-  v4Range("100.64.0.0", 10, "carrier-grade NAT (100.64.0.0/10)"),
-  v4Range("127.0.0.0", 8, "loopback (127.0.0.0/8)"),
-  v4Range("169.254.0.0", 16, "link-local (169.254.0.0/16)"),
-  v4Range("172.16.0.0", 12, "private (172.16.0.0/12)"),
-  v4Range("192.168.0.0", 16, "private (192.168.0.0/16)"),
-  v6Range("::1", 128, "loopback (::1)"),
-  v6Range("::", 128, "unspecified (::)"),
-  v6Range("fe80::", 10, "link-local (fe80::/10)"),
-  v6Range("fc00::", 7, "unique-local (fc00::/7)"),
-  v6Range("::", 96, "deprecated IPv4-compatible form (::/96)"),
-  v6Range("64:ff9b::", 96, "NAT64 well-known prefix (64:ff9b::/96)"),
+  blockedRange("0.0.0.0/8", "this-network (0.0.0.0/8)"),
+  blockedRange("10.0.0.0/8", "private (10.0.0.0/8)"),
+  blockedRange("100.64.0.0/10", "carrier-grade NAT (100.64.0.0/10)"),
+  blockedRange("127.0.0.0/8", "loopback (127.0.0.0/8)"),
+  blockedRange("169.254.0.0/16", "link-local (169.254.0.0/16)"),
+  blockedRange("172.16.0.0/12", "private (172.16.0.0/12)"),
+  blockedRange("192.168.0.0/16", "private (192.168.0.0/16)"),
+  blockedRange("::1/128", "loopback (::1)"),
+  blockedRange("::/128", "unspecified (::)"),
+  blockedRange("fe80::/10", "link-local (fe80::/10)"),
+  blockedRange("fc00::/7", "unique-local (fc00::/7)"),
+  blockedRange("::/96", IPV4_COMPATIBLE_LABEL),
+  blockedRange("64:ff9b::/96", "NAT64 well-known prefix (64:ff9b::/96)"),
 ];
-
-/**
- * Parse any well-formed IPv4 or IPv6 address literal into a single 128-bit value for uniform
- * range comparison. IPv4 is mapped into `::ffff:a.b.c.d`'s numeric space so an IPv4 address and
- * its IPv6-mapped spelling always compare equal (see {@link classifyAddress}). Returns `null`
- * for anything that isn't a well-formed address literal — a hostname must be DNS-resolved to an
- * address first; this function never does name resolution (it is pure, no IO).
- */
-function addressToBigInt(ip: string): bigint | null {
-  const family = isIP(ip);
-  if (family === 4) {
-    return v4ToBigInt(ip);
-  }
-  if (family === 6) {
-    return v6ToBigInt(ip);
-  }
-  return null;
-}
-
-/** Parse a well-formed IPv4 literal (`node:net`'s `isIP` already confirmed the shape) into its IPv4-mapped 128-bit value. */
-function v4ToBigInt(ip: string): bigint | null {
-  const octets = ip.split(".").map(Number);
-  if (octets.length !== 4 || octets.some((o) => !Number.isInteger(o) || o < 0 || o > 255)) {
-    return null;
-  }
-  let value = 0n;
-  for (const o of octets) {
-    value = (value << 8n) | BigInt(o);
-  }
-  return V4_MAPPED_PREFIX | value;
-}
-
-/**
- * Parse a well-formed IPv6 literal into its native 128-bit value, expanding `::` compression
- * and an embedded IPv4 dotted-quad tail (`::ffff:127.0.0.1`) the same way a real socket
- * connection would resolve it.
- */
-function v6ToBigInt(ip: string): bigint | null {
-  const core = ip.split("%")[0] ?? ip; // strip a zone id, e.g. `fe80::1%eth0`
-  const halves = core.split("::");
-  if (halves.length > 2) {
-    return null;
-  }
-  const parseGroups = (segment: string): number[] | null => {
-    if (segment === "") {
-      return [];
-    }
-    const parts = segment.split(":");
-    const groups: number[] = [];
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i] as string;
-      if (i === parts.length - 1 && part.includes(".")) {
-        const embedded = v4ToBigInt(part);
-        if (embedded === null) {
-          return null;
-        }
-        const v4Bits = embedded & 0xffffffffn;
-        groups.push(Number((v4Bits >> 16n) & 0xffffn), Number(v4Bits & 0xffffn));
-        continue;
-      }
-      if (part === "") {
-        return null;
-      }
-      const value = Number.parseInt(part, 16);
-      if (!Number.isInteger(value) || value < 0 || value > 0xffff) {
-        return null;
-      }
-      groups.push(value);
-    }
-    return groups;
-  };
-  const head = parseGroups(halves[0] ?? "");
-  if (head === null) {
-    return null;
-  }
-  let full: number[];
-  if (halves.length === 2) {
-    const tail = parseGroups(halves[1] ?? "");
-    if (tail === null) {
-      return null;
-    }
-    const missing = 8 - head.length - tail.length;
-    if (missing < 0) {
-      return null;
-    }
-    full = [...head, ...new Array(missing).fill(0), ...tail];
-  } else {
-    full = head;
-  }
-  if (full.length !== 8) {
-    return null;
-  }
-  let value = 0n;
-  for (const g of full) {
-    value = (value << 16n) | BigInt(g);
-  }
-  return value;
-}
 
 /**
  * Run the link/anchor + portability passes over a whole bundle and aggregate the findings.

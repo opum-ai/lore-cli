@@ -28,7 +28,6 @@
 
 import { lookup as dnsLookup } from "node:dns/promises";
 import { statSync } from "node:fs";
-import { isIP } from "node:net";
 import { join, posix } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { toRefList, walkFiles } from "../core/bundle";
@@ -40,6 +39,7 @@ import {
   classifyAddress,
   collectExternalLinks,
   type ExternalLink,
+  isAddressLiteral,
   reconcileDriftFindings,
   tallySeverity,
 } from "../core/check";
@@ -911,14 +911,14 @@ async function blockedDestination(url: string, resolveHost: ResolveHost): Promis
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return `uses a disallowed scheme "${parsed.protocol}"`;
   }
-  // `URL#hostname` keeps an IPv6 literal's brackets (e.g. "[::1]") — `isIP`/`classifyAddress` need
-  // the bare address. A literal IP is classified DIRECTLY, never through `resolveHost`: it isn't a
-  // name to resolve, and deferring to `resolveHost` here would let an injected DNS fake that
-  // ignores its `hostname` argument (a reasonable "allow everything" test default) accidentally
-  // paper over a literal blocked-IP URL — the guard's correctness must not depend on `resolveHost`
-  // actually inspecting its input.
+  // `URL#hostname` keeps an IPv6 literal's brackets (e.g. "[::1]") — the package-backed literal
+  // parser/classifier need the bare address. A literal IP is classified DIRECTLY, never through
+  // `resolveHost`: it is not a name to resolve, and deferring to `resolveHost` here would let an
+  // injected DNS fake that ignores its `hostname` argument (a reasonable "allow everything" test
+  // default) accidentally paper over a literal blocked-IP URL — the guard's correctness must not
+  // depend on `resolveHost` actually inspecting its input.
   const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
-  const addresses = isIP(hostname) !== 0 ? [hostname] : await resolveHost(hostname);
+  const addresses = isAddressLiteral(hostname) ? [hostname] : await resolveHost(hostname);
   // The real `node:dns` resolver throws (never resolves empty) when a hostname has no records, so
   // this shouldn't fire against `defaultResolveHost` — but a custom `ResolveHost` returning `[]`
   // for "nothing found" (a plausible alternative contract) must fail CLOSED, not vacuously pass

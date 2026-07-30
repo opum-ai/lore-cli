@@ -94,10 +94,10 @@ already documented this failure mode from the "cloned onto an external volume"
 angle; LCLI-14 confirmed the precise trigger is **crossing any filesystem
 boundary** (not that volume specifically) and tightened both notes to match.
 
-**Native-module surface.** None of lore's v1 runtime dependencies
-(`js-yaml`, `mdast-util-from-markdown`, `zod`) ship a native
+**Native-module surface.** None of lore's current runtime dependencies
+(`ipaddr.js`, `js-yaml`, `mdast-util-from-markdown`, `zod`) ship a native
 addon (no `.node` binaries, no `binding.gyp`) — all pure JS/TS. A same-filesystem
-`bun build --compile` bundles and runs all three with no special handling; the
+`bun build --compile` bundles and runs all four with no special handling; the
 "native modules stay optional and lazily required" policy in
 [ADR-0001](../adr/0001-runtime-build-distribution.md) is a forward-looking
 guard for a *future* native dependency, not a caveat any current one triggers.
@@ -459,7 +459,7 @@ adoption are described in
 | Markdown AST surgery & links | `mdast-util-from-markdown` (mdast), parse-only | exact `2.0.3` | yes |
 | Internal link validation | Lore-owned over parsed mdast; slug primitive → `github-slugger` (`LCLI-287`) | pin during implementation | current / planned |
 | Terminal display width | hand-rolled → `string-width` (`LCLI-285`) | pin during implementation | current / planned |
-| SSRF address parsing and CIDR match | hand-rolled → `ipaddr.js` (`LCLI-286`) | pin during implementation | current / planned |
+| SSRF address parsing and CIDR match | `ipaddr.js`; Lore retains explicit block policy, DNS, redirect, timeout, fail-closed, and error behavior (`LCLI-286`) | exact `2.4.0` | yes |
 | Schema + JSON Schema emit | Zod **v4** | exact `4.4.3` | yes |
 | Config parse and shape | Bun native TOML; hand-rolled shape → existing Zod (`LCLI-288`) | Bun + existing Zod pins | current / planned |
 | Local graph and lexical projection | `@ladybugdb/core` | pin during M6 implementation | **planned M6** |
