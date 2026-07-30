@@ -95,9 +95,10 @@ angle; LCLI-14 confirmed the precise trigger is **crossing any filesystem
 boundary** (not that volume specifically) and tightened both notes to match.
 
 **Native-module surface.** None of lore's current runtime dependencies
-(`ipaddr.js`, `js-yaml`, `mdast-util-from-markdown`, `zod`) ship a native
-addon (no `.node` binaries, no `binding.gyp`) — all pure JS/TS. A same-filesystem
-`bun build --compile` bundles and runs all four with no special handling; the
+(`github-slugger`, `ipaddr.js`, `js-yaml`, `mdast-util-from-markdown`,
+`string-width`, `zod`) ship a native addon (no `.node` binaries, no
+`binding.gyp`) — all pure JS/TS. A same-filesystem `bun build --compile`
+bundles and runs all six with no special handling; the
 "native modules stay optional and lazily required" policy in
 [ADR-0001](../adr/0001-runtime-build-distribution.md) is a forward-looking
 guard for a *future* native dependency, not a caveat any current one triggers.
@@ -461,7 +462,7 @@ adoption are described in
 | Frontmatter parse/serialize | Lore fence boundary + `js-yaml` | exact `5.2.2` | yes |
 | Markdown AST surgery & links | `mdast-util-from-markdown` (mdast), parse-only | exact `2.0.3` | yes |
 | Internal link validation | Lore-owned over parsed mdast; slug and per-document duplicate primitive via `github-slugger` (`LCLI-287`) | exact `2.0.0` | yes |
-| Terminal display width | hand-rolled → `string-width` (`LCLI-285`) | pin during implementation | current / planned |
+| Terminal display width | `string-width`; Lore retains field sanitization, padding, and row/output policy (`LCLI-285`) | exact `8.2.2` | yes |
 | SSRF address parsing and CIDR match | `ipaddr.js`; Lore retains explicit block policy, DNS, redirect, timeout, fail-closed, and error behavior (`LCLI-286`) | exact `2.4.0` | yes |
 | Schema + JSON Schema emit | Zod **v4** | exact `4.4.3` | yes |
 | Config parse and shape | Bun native TOML; hand-rolled shape → existing Zod (`LCLI-288`) | Bun + existing Zod pins | current / planned |

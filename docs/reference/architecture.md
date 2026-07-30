@@ -109,6 +109,12 @@ the machine contract — see [CLI contract](cli-contract.md) and
 [ADR-0005](../adr/0005-cli-contract.md). The full command list is the
 [CLI surface](cli-surface.md).
 
+`output.ts` is the shared rendering seam. Exact-pinned `string-width` owns
+Unicode grapheme segmentation and terminal display-column measurement for the
+task-summary rows shared by `tasks` and `orphans`. Lore sanitizes fields before
+measurement, retains the column-padding and row-composition policy, and owns
+all JSON/plain/pretty, stream, color, exit, and ordering contracts.
+
 Commands are thin. A handler parses flags, calls one or more **core** functions
 (which do the real work and return plain data structures), then formats. Handlers
 never embed business logic that a future MCP tool would need to reimplement —
