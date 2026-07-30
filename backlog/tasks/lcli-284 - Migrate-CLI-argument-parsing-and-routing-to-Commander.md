@@ -1,11 +1,11 @@
 ---
 id: LCLI-284
 title: Migrate CLI argument parsing and routing to Commander
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 14:25'
-updated_date: '2026-07-30 19:19'
+updated_date: '2026-07-30 19:46'
 labels:
   - cli
   - argument-parsing
@@ -34,12 +34,12 @@ Replace Lore’s hand-rolled global router and duplicated command-level option p
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A single declarative command and option definition drives subcommand dispatch, global and command flags, positional arguments, end-of-options handling, and generated help without duplicated hand-written tokenizers
-- [ ] #2 All documented CLI behavior remains compatible, including global flags in supported positions, --flag=value forms, repeatable options, the literal -- terminator, unknown-option handling, help, and version output
-- [ ] #3 Commander never terminates the process or bypasses Lore’s injected writers; stdout/stderr separation, JSON error envelopes, output-mode precedence, semantic exit codes, TTY behavior, and NO_COLOR behavior remain unchanged
-- [ ] #4 Existing CLI, command, golden, and end-to-end tests pass, with parity tests covering parser edge cases and any Commander-specific failure paths
-- [ ] #5 Bun source execution, compiled binaries, supported platform packaging, startup behavior, and dependency/license checks pass without regressing the published package contract
-- [ ] #6 Architecture, tech-stack, CLI-surface, and contributor documentation no longer describe the router as hand-rolled and accurately record Commander’s role and constraints
+- [x] #1 A single declarative command and option definition drives subcommand dispatch, global and command flags, positional arguments, end-of-options handling, and generated help without duplicated hand-written tokenizers
+- [x] #2 All documented CLI behavior remains compatible, including global flags in supported positions, --flag=value forms, repeatable options, the literal -- terminator, unknown-option handling, help, and version output
+- [x] #3 Commander never terminates the process or bypasses Lore’s injected writers; stdout/stderr separation, JSON error envelopes, output-mode precedence, semantic exit codes, TTY behavior, and NO_COLOR behavior remain unchanged
+- [x] #4 Existing CLI, command, golden, and end-to-end tests pass, with parity tests covering parser edge cases and any Commander-specific failure paths
+- [x] #5 Bun source execution, compiled binaries, supported platform packaging, startup behavior, and dependency/license checks pass without regressing the published package contract
+- [x] #6 Architecture, tech-stack, CLI-surface, and contributor documentation no longer describe the router as hand-rolled and accurately record Commander’s role and constraints
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -51,3 +51,15 @@ Replace Lore’s hand-rolled global router and duplicated command-level option p
 4. Add parser parity and Commander failure-path tests, update architecture, tech-stack, CLI surface, design/contributor prose, dependency metadata, and package/license expectations to record the exact role and constraints.
 5. Verify focused parser/help/command tests, the full Bun 1.2.23 suite, lint, typecheck, compiled build/version and package/distribution checks, then run Lore sync and strict validation/check plus git diff hygiene before task finalization.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented exact commander@15.0.0 behind the capability manifest with fresh local programs, exitOverride, injected no-op Commander writers, LoreError translation, manifest-derived positional/option declarations, and a data-driven handler registry. Replaced command-local token loops with the shared Commander parser while retaining command-specific arity/value/business diagnostics. Verification: Bun 1.2.23 full suite 2252 pass/0 fail/6500 assertions; focused CLI/help/agent 123 pass; lint and typecheck clean; source and compiled 0.0.0 startup; compiled JSON usage-error seam; package dry-run; launcher/release/smoke 18 pass; Commander MIT/zero dependencies; bun audit clean; Lore strict validate/check 46 files, 0 errors/warnings; git diff --check clean.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Migrated Lore CLI parsing and routing to exact Commander 15.0.0 using the capability manifest and shared parser/handler registry, while preserving Lore-owned help, writers, JSON/error envelopes, exit codes, TTY/NO_COLOR behavior, and package shape. Verified with 2,252 tests, lint, typecheck, source/compiled startup, compiled error-envelope, dry-run packaging, distribution tests, audit/license checks, and strict Lore validation/check.
+<!-- SECTION:FINAL_SUMMARY:END -->
