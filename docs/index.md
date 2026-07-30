@@ -56,9 +56,14 @@ How lore is built and how its pieces fit together.
   thin-transport shape: `core/` library, the CLI as primary transport, the
   Backlog and Confluence adapters, and `.lore/` state.
 - [Tech stack](reference/tech-stack.md) — Bun (pinned), TypeScript, the current
-  hand-rolled router and approved M6 Commander migration, gray-matter,
-  mdast-util-from-markdown, and Zod, plus the `bun build --compile` +
-  dual-artifact npm distribution.
+  hand-rolled router and approved M6 Commander migration, the Lore-owned
+  `js-yaml` frontmatter boundary, mdast parsing, Zod, and approved generic
+  primitive delegations, plus the `bun build --compile` + dual-artifact npm
+  distribution.
+- [Dependency boundary audit](reference/dependency-boundary-audit.md) — approved
+  `string-width`, `ipaddr.js`, `github-slugger`, and Zod consolidation tasks;
+  package acceptance gates; deferred filesystem/frontmatter investigations; and
+  the behavior that intentionally remains Lore-owned.
 
 ## References
 

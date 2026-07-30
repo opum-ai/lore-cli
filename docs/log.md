@@ -21,6 +21,7 @@
 - 2026-07-28T21:47:51-05:00 05005738d705830a9029b35a82cdda6152458e9c fix: build pinned Backlog for strict action
 - 2026-07-28T21:54:50-05:00 c2109d94f74f62402cb5f382b5653659adde865e docs: finalize strict action task
 - 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
+- 2026-07-30T09:49:16-05:00 1520b894f0c4af7d36bf959069bb1e189963981f docs: sequence Commander before indexed retrieval
 
 ## docs/.obsidian
 
@@ -112,6 +113,7 @@
 - 2026-07-28T12:22:07-05:00 7d5d3835e2028d3de6b4b7742817447819aac88c fix: close LORE-281 review gaps
 - 2026-07-28T21:23:02-05:00 fea4509a7a2a9be13a197bff638f03b6bcdb9717 chore: migrate backlog namespace to lcli
 - 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
+- 2026-07-30T09:49:16-05:00 1520b894f0c4af7d36bf959069bb1e189963981f docs: sequence Commander before indexed retrieval
 
 ## docs/runbooks
 
@@ -155,6 +157,7 @@
 - 2026-07-28T08:20:58-05:00 6ceccfb6b36ecd6679d85edec33252364c046094 feat: add Claude and Codex init onboarding
 - 2026-07-28T21:23:02-05:00 fea4509a7a2a9be13a197bff638f03b6bcdb9717 chore: migrate backlog namespace to lcli
 - 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
+- 2026-07-30T09:49:16-05:00 1520b894f0c4af7d36bf959069bb1e189963981f docs: sequence Commander before indexed retrieval
 
 ## docs/specs
 
@@ -168,3 +171,4 @@
 - 2026-07-19T15:40:26-05:00 686a14afab2392d056d446100bfbc41c3b8f5f55 fix(LORE-59): scaffold the lore:tasks managed block in the Story template (#55)
 - 2026-07-28T21:23:02-05:00 fea4509a7a2a9be13a197bff638f03b6bcdb9717 chore: migrate backlog namespace to lcli
 - 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
+- 2026-07-30T09:49:16-05:00 1520b894f0c4af7d36bf959069bb1e189963981f docs: sequence Commander before indexed retrieval

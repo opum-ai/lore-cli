@@ -22,6 +22,19 @@ keys emit in this fixed order, **authored unknown keys follow verbatim**, no key
 there is **no global re-sort**. The byte-stable fixpoint and `__proto__`-safe ordering still hold;
 only the *source* of the known-key order moved from a hard-coded list to the compiled profile.
 
+Amended — 2026-07-30 (implementation reconciliation): commit `047857c`
+removed `gray-matter` while remediating YAML dependency advisories. The
+frontmatter boundary now detects and validates fences in `src/core/concept.ts`
+and parses/emits the YAML payload directly through exact-pinned `js-yaml` under
+the same frozen stability policy. This supersedes the package-specific
+`gray-matter` statements in the original decision, which remain below as the
+historical record. The decision’s load-bearing invariants remain unchanged:
+one boundary, deterministic fence/body handling, JSON-schema scalar behavior,
+canonical key order, unknown-key preservation, alias limits, stable quoting,
+and a serialize-parse fixpoint. A future `yaml` or mdast-frontmatter migration
+requires the compatibility proof recorded in the
+[dependency boundary audit](../reference/dependency-boundary-audit.md).
+
 ## Context
 
 Every non-index concept file in the bundle begins with a YAML frontmatter

@@ -211,8 +211,8 @@ byte-identical outputs (the property that makes agent loops and CI gates safe).
 
 | Module | Responsibility |
 |---|---|
-| `schema.ts` | **The single source of truth for types.** Per-`type` Zod schemas (strict for the known story-convention types; lenient `type`-only for unknown types, per OKF tolerance). Emits Draft-7 JSON Schema via `z.toJSONSchema()` and injects the `# yaml-language-server: $schema=…` modeline for editor autocomplete. See [ADR-0006](../adr/0006-schema-types-templates.md). |
-| `concept.ts` | Frontmatter ⇄ object. Wraps gray-matter to parse/serialize a single `.md` concept, validates frontmatter against `schema.ts`, and serializes back **stably** (quote-safety, deterministic key order) so unchanged docs round-trip byte-identically — [ADR-0011](../adr/0011-frontmatter-serialization-stability.md). User-defined types and custom keys pass through untouched. |
+| `profile.ts` / `schema.ts` | `.lore/profile.toml` is the declarative type source of truth. Lore compiles it into per-type Zod validators, emits Draft-7 JSON Schema via `z.toJSONSchema()`, and injects the `# yaml-language-server: $schema=…` modeline for editor autocomplete while retaining OKF tolerance. See [ADR-0006](../adr/0006-schema-types-templates.md). |
+| `concept.ts` | Frontmatter ⇄ object. Owns fence/body splitting and uses exact-pinned `js-yaml` under a frozen configuration, validates frontmatter against generated Zod schemas, and serializes back **stably** so unchanged docs reach a byte-identical fixpoint — [ADR-0011](../adr/0011-frontmatter-serialization-stability.md). User-defined types and custom keys pass through untouched. |
 | `bundle.ts` | Walks `docs/`, loads every concept, and builds the in-memory **bundle graph** (nodes = concepts, edges = cross-links + frontmatter refs). Generates the root `index.md`, sub-index files, and `log.md`. Computes per-doc / per-bundle token **estimates** (chars/4 heuristic, labeled). The graph is the substrate `query`, `context`, `graph`, `rename`, and `supersede` all reuse. |
 | `managed-block.ts` | mdast-based surgery (via `mdast-util-from-markdown`, never `remark`) on the `<!-- lore:tasks:begin -->…<!-- lore:tasks:end -->` region of a Story. Regenerates the live task table from the Backlog adapter; **idempotent** (no upstream change → byte-identical output). Hand edits inside the markers are overwritten; everything outside is preserved. See [ADR-0008](../adr/0008-managed-block-remark-ast.md). |
 | `reconcile.ts` | Status rules. Rolls a Story's `status` up from its tasks (all Done → `done`; any In Progress → `in-progress`; else if tasks exist → `todo`; no tasks → author's value). `sync` writes the result; `check` reports drift without writing. See [ADR-0009](../adr/0009-story-task-coupling-reconciliation.md). |
@@ -339,7 +339,8 @@ beyond the two narrow seams it needs:
 ## See also
 
 - [lore design spec](../specs/lore-design.md) — the full design, including spec §8 structure
-- [Tech stack](tech-stack.md) — Bun, the current hand-rolled/approved Commander CLI transition, gray-matter, mdast-util-from-markdown, Zod
+- [Tech stack](tech-stack.md) — Bun, the current hand-rolled/approved Commander CLI transition, the `js-yaml` frontmatter boundary, mdast parsing, and Zod
+- [Dependency boundary audit](dependency-boundary-audit.md) — focused package delegation, compatibility gates, future filesystem/frontmatter investigations, and retained Lore-owned behavior
 - [CLI surface](cli-surface.md) and [CLI contract](cli-contract.md)
 - [Backlog JSON schema](backlog-json-schema.md) and [Backlog CLI contract](backlog-cli-contract.md)
 - [Consumer compatibility](consumer-compatibility.md) and [portable markdown](portable-markdown.md)

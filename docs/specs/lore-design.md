@@ -67,8 +67,9 @@ src/
 ├── cli.ts            # CLI entrypoint (hand-rolled now; Commander target in LCLI-284)
 ├── mcp.ts            # MCP server entrypoint (DEFERRED, v2)
 ├── core/             # deterministic library — returns structured objects
-│   ├── schema.ts     # Zod source of truth; emits JSON Schema + modeline
-│   ├── concept.ts    # frontmatter <-> object (gray-matter + zod), stable serialize
+│   ├── profile.ts    # compile declarative profile into Zod validators
+│   ├── schema.ts     # emit JSON Schema + modeline from generated validators
+│   ├── concept.ts    # Lore fence split + js-yaml + generated Zod, stable serialize
 │   ├── bundle.ts     # walk docs/, build graph, generate index/log, token estimates
 │   ├── managed-block.ts  # mdast surgery (mdast-util-from-markdown) on <!-- lore:tasks --> regions
 │   ├── reconcile.ts  # status roll-up rules
@@ -104,7 +105,7 @@ interface Concept {
   frontmatter: Record<string, unknown>;  // validated where known, passthrough where not
   body: string;               // markdown after frontmatter
 }
-function parseConcept(path: string, raw: string): Concept;     // gray-matter + zod
+function parseConcept(path: string, raw: string): Concept;     // Lore fence split + js-yaml + generated Zod
 function serializeConcept(c: Concept): string;                 // STABLE bytes (§6)
 
 // bundle.ts — the whole docs/ tree as a graph
@@ -623,7 +624,8 @@ This design is built in milestone order (see product spec
 - [Product spec — `lore-spec.md`](../../lore-spec.md) — the narrative origin this design elaborates
 - [System architecture](../reference/architecture.md) — the layered map this spec implements
 - [Local graph platform roadmap](local-graph-platform-roadmap.md) — the active M6–M8 sequence and task gates
-- [Tech stack](../reference/tech-stack.md) — Bun, the current hand-rolled/approved Commander CLI transition, gray-matter, mdast-util-from-markdown, Zod
+- [Tech stack](../reference/tech-stack.md) — Bun, the current hand-rolled/approved Commander CLI transition, the `js-yaml` frontmatter boundary, mdast parsing, and Zod
+- [Dependency boundary audit](../reference/dependency-boundary-audit.md) — approved generic primitive delegation, compatibility gates, future investigations, and retained custom boundaries
 - [CLI surface](../reference/cli-surface.md) and [CLI contract](../reference/cli-contract.md)
 - [Backlog JSON schema](../reference/backlog-json-schema.md) and [Backlog CLI contract](../reference/backlog-cli-contract.md)
 - [OKF conformance](../reference/okf-conformance.md) and [portable Markdown](../reference/portable-markdown.md)

@@ -29,8 +29,9 @@ Read these in order before changing task state or source:
 2. [Documentation index](../index.md) and the
    [local graph platform roadmap](../specs/local-graph-platform-roadmap.md).
 3. [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md),
-   [architecture](../reference/architecture.md), and
-   [tech stack](../reference/tech-stack.md).
+   [architecture](../reference/architecture.md),
+   [tech stack](../reference/tech-stack.md), and the
+   [dependency boundary audit](../reference/dependency-boundary-audit.md).
 4. [CLI surface](../reference/cli-surface.md) and
    [CLI contract](../reference/cli-contract.md); these are compatibility inputs
    for Commander and indexed routing.
@@ -71,6 +72,27 @@ capabilities. Only a preparation lane moves earlier:
 This ordering prevents new indexed options from being implemented in the
 hand-rolled parser and then migrated again. It does not build the explorer
 against an unstable projection.
+
+## Independent dependency-boundary queue
+
+Four focused maintenance tasks are open outside the M6–M8 dependency graph:
+
+- `LCLI-285` delegates terminal display width to `string-width`.
+- `LCLI-286` delegates security-sensitive IP parsing and CIDR matching to
+  `ipaddr.js` while retaining Lore’s outbound-request policy.
+- `LCLI-287` delegates GitHub heading slug and duplicate state to
+  `github-slugger` while retaining Lore’s mdast text extraction.
+- `LCLI-288` consolidates generic config shape validation on the already-pinned
+  Zod dependency while retaining operational policy and Lore errors.
+
+They may be scheduled as independent focused branches when a worker is assigned;
+they do not block `LCLI-283.1.1`, Commander, projection construction, or the
+explorer. Do not bundle them into `LCLI-284` or a LadybugDB task. Each task must
+apply the exact-pin, pinned-Bun, compiled-binary, conformance, and packaging
+gates in the [dependency boundary audit](../reference/dependency-boundary-audit.md).
+The same reference durably retains the `write-file-atomic` and maintained
+YAML/mdast-frontmatter investigations without prematurely committing either
+migration.
 
 ## Non-negotiable constraints
 

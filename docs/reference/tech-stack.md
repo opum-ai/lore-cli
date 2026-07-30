@@ -14,7 +14,9 @@ This document is the authoritative inventory of lore's dependencies: what we use
 why, at what version, and — just as importantly — what we deliberately refuse to
 depend on. It expands [the spec's §4 tech-stack table](../specs/lore-design.md)
 and is the reference companion to
-[architecture.md](architecture.md) (how the pieces fit) and
+[architecture.md](architecture.md) (how the pieces fit), the
+[dependency boundary audit](dependency-boundary-audit.md) (what should be
+delegated or retained), and
 [the runtime/build/distribution ADR](../adr/0001-runtime-build-distribution.md).
 
 Guiding constraints, in priority order:
@@ -50,8 +52,8 @@ things we would otherwise pull libraries for:
 - **`Bun.spawn` / `Bun.spawnSync`** — the subprocess primitive the Backlog.md
   adapter uses to shell out to the `backlog` binary. See
   [backlog-cli-contract.md](backlog-cli-contract.md).
-- **Native TOML import** — Bun parses `.toml` natively (`import cfg from
-  "./config.toml"`), so reading `.lore/config.toml` needs **no TOML library**
+- **Native TOML parsing** — `Bun.TOML.parse` parses the text read from
+  `.lore/config.toml`, so configuration needs **no TOML library**
   (see §10).
 - **`Bun.file` / fast FS** — bundle walking and reads.
 - **`bun test`** — the test runner; no separate Jest/Vitest dependency.
@@ -93,9 +95,9 @@ angle; LCLI-14 confirmed the precise trigger is **crossing any filesystem
 boundary** (not that volume specifically) and tightened both notes to match.
 
 **Native-module surface.** None of lore's v1 runtime dependencies
-(`gray-matter`, `js-yaml`, `mdast-util-from-markdown`, `zod`) ship a native
+(`js-yaml`, `mdast-util-from-markdown`, `zod`) ship a native
 addon (no `.node` binaries, no `binding.gyp`) — all pure JS/TS. A same-filesystem
-`bun build --compile` bundles and runs all four with no special handling; the
+`bun build --compile` bundles and runs all three with no special handling; the
 "native modules stay optional and lazily required" policy in
 [ADR-0001](../adr/0001-runtime-build-distribution.md) is a forward-looking
 guard for a *future* native dependency, not a caveat any current one triggers.
@@ -151,24 +153,37 @@ must preserve:
 
 ---
 
-## 4. Frontmatter — gray-matter
+## 4. Frontmatter — Lore boundary plus js-yaml
 
 | | |
 |---|---|
-| **Package** | `gray-matter` |
-| **Role** | Parse and serialize the YAML frontmatter block at the top of every concept `.md` |
+| **Package** | `js-yaml` (`5.2.2`, exact-pinned) |
+| **Role** | Parse and emit YAML inside Lore-owned frontmatter fence and body splitting |
 
-**Rationale.** Battle-tested, round-trips YAML frontmatter cleanly, and is the de
-facto choice in the markdown-tooling ecosystem. lore parses with gray-matter,
-validates the parsed object against a Zod schema (§7), and serializes back when
-writing. gray-matter handles the `---` fence detection and the body split; Zod
-handles meaning and shape.
+**Rationale.** `src/core/concept.ts` is the single frontmatter boundary. Lore
+locates and validates the opening and closing `---` fences, separates the
+Markdown body, normalizes accepted BOM and line-ending forms, parses YAML with
+`js-yaml` under `JSON_SCHEMA`, validates known shapes with Zod (§7), and emits
+the fence directly with a frozen dump configuration. Keeping the split and
+serializer policy in one boundary preserves Lore-specific malformed-fence
+diagnostics, alias limits, unknown-key handling, canonical order, and the
+serialize-parse fixpoint.
 
-**Quote-safety note.** gray-matter parses whatever YAML it is given. lore's
+`gray-matter` is not a current dependency. It was removed during dependency
+security maintenance, and direct `js-yaml` ownership now makes the YAML version
+and stability configuration explicit. Historical ADR text records the original
+choice; the current implementation amendment is in
+[ADR-0011](../adr/0011-frontmatter-serialization-stability.md).
+
+**Quote-safety note.** YAML parsing alone cannot prove lossless author intent. lore's
 [`validate`](cli-surface.md) adds a frontmatter **quote-safety** check on top
 (catching values that YAML would silently coerce or that break on re-serialize)
 because "parses today" is not the same as "round-trips losslessly." See
 [okf-conformance.md](okf-conformance.md).
+
+A possible maintained `yaml` plus mdast-frontmatter substitution remains an
+investigation, not an approved migration. Its compatibility gate is recorded in
+the [dependency boundary audit](dependency-boundary-audit.md).
 
 ---
 
@@ -235,8 +250,14 @@ and is the only mode that touches the network.
 
 This is a deliberate choice over a Rust link checker (e.g. **lychee**): see §10
 and [validation & coherence (ADR-0007)](../adr/0007-validation-and-coherence.md).
-Doing it hand-rolled, in-process, over an AST we already build avoids both a
-Rust toolchain/native binary *and* an extra remark-ecosystem dependency.
+The cross-document traversal, link policy, and finding model remain Lore-owned.
+`LCLI-287` delegates only GitHub-compatible slug and duplicate-anchor state to
+`github-slugger`; it does not adopt a remark pipeline or move link policy into a
+package. This focused boundary removes generic Unicode/slug drift while keeping
+the deterministic in-process checker.
+
+Keeping the rest in-process over an AST Lore already builds avoids both a Rust
+toolchain/native binary and an extra remark-ecosystem dependency.
 
 ---
 
@@ -245,10 +266,12 @@ Rust toolchain/native binary *and* an extra remark-ecosystem dependency.
 | | |
 |---|---|
 | **Package** | `zod` (**v4**) |
-| **Role** | The **single source of truth** for every frontmatter schema, and the generator for the JSON Schemas used for editor autocomplete |
+| **Role** | Runtime validation compiled from the declarative profile, JSON Schema generation, and reusable boundary validation |
 
-**Rationale.** lore has exactly one place where frontmatter shape is defined:
-Zod schemas, one per `type`. Everything else is derived from them.
+**Rationale.** `.lore/profile.toml` is the source of truth for the type
+vocabulary and field grammar. Lore compiles that profile into Zod validators and
+derives editor JSON Schemas from the same validators. Zod is therefore the one
+runtime shape mechanism, while the profile remains the declarative authority.
 
 - **Strict for known types, lenient for unknown.** Known types
   (`Reference`/`Spec`/`ADR`/`Runbook`/`Epic`/`Story`) get strict per-type schemas
@@ -269,8 +292,10 @@ Zod schemas, one per `type`. Everything else is derived from them.
 
 Why v4 specifically: native `z.toJSONSchema()` removes a dependency and keeps the
 schema and the emitted JSON Schema guaranteed in lockstep (one source, one
-generator). The schema-to-output story is detailed in
-[cli-contract.md](cli-contract.md).
+generator). `LCLI-288` extends the same installed dependency to generic parsed
+TOML shape validation while retaining Lore-specific secret, environment,
+precision, and error policies outside the schema. The schema-to-output story is
+detailed in [cli-contract.md](cli-contract.md).
 
 ---
 
@@ -279,12 +304,12 @@ generator). The schema-to-output story is detailed in
 | | |
 |---|---|
 | **Format** | TOML (`.lore/config.toml`) |
-| **Parser** | **Bun's native TOML import** — `import config from "./config.toml"` |
+| **Parser** | `Bun.TOML.parse` over the explicitly read configuration text |
 | **Library** | **none** |
 
 **Rationale.** lore reads a small config file (`.lore/config.toml`) and Bun parses
-TOML natively at import time. That means **zero** added dependency for config
-parsing — see §10. TOML is human-friendly, comment-friendly, and matches the
+TOML from explicitly read text via `Bun.TOML.parse`. That means **zero** added
+dependency for config parsing — see §10. TOML is human-friendly, comment-friendly, and matches the
 ecosystem's expectation for tool config. Secrets (e.g. the deferred Confluence
 token) are read from environment variables, never the file.
 
@@ -334,9 +359,9 @@ surface, or a determinism/portability hazard.
 | **A TOML parsing library** (`@iarna/toml`, `smol-toml`, etc.) | TOML parsing | Bun parses TOML natively (§8). Adding a library would duplicate a runtime capability. |
 | **An LLM / model SDK in `core/`** | "smart" summaries, ranking, link suggestions | The **core is deterministic by mandate**. No network, no model, no nondeterminism. The `summary` field is author-written; the chars/4 token figure is an explicitly *labeled estimate*, not a model call. Any future LLM use lives outside `core/` and is never on the validate/check/sync path. |
 | **A separate test runner / bundler / transpiler** (Jest, Vitest, esbuild, webpack, tsup) | tests, build | Bun provides `bun test` and `bun build --compile`. `tsc` is used for type-checking only. |
-| **A YAML library beyond gray-matter's** | extra YAML control | gray-matter (§4) already owns frontmatter YAML; quote-safety is a lore-level lint, not a new parser. |
+| **A second YAML/frontmatter abstraction** | convenience fence splitting or comment-preserving syntax trees | Exact-pinned `js-yaml` plus the Lore-owned boundary (§4) is the shipping implementation. A `yaml`/mdast-frontmatter alternative must first pass the investigation gate; quote-safety and byte stability remain Lore policy. |
 | **A Confluence SDK** | publish to Confluence | The (deferred) Confluence adapter uses plain `fetch` against the REST API in an isolated module with **zero core dependency**. |
-| **An interactive prompt library** (inquirer, prompts) | nice wizards | Every command is **non-interactive by default** (agent/CI-safe). Scaffolding uses `--template` + `--var k=v`, not prompts. |
+| **An interactive prompt library** (Inquirer, prompts) | richer wizards | Commands remain non-interactive by default. The opt-in TTY-gated `lore init` wizard uses a small `readline/promises` adapter; add a package only if the interaction surface grows enough to justify its dependency and compiled-binary cost. |
 
 ---
 
@@ -430,11 +455,13 @@ adoption are described in
 | Runtime / build / spawn / TOML / test | Bun | **pinned** (`.bun-version`) | yes |
 | Language | TypeScript | dev-/typecheck-only | yes |
 | CLI parsing | *(hand-rolled today)* → Commander (`LCLI-284`, §3) | pin during M6 implementation | current / planned M6 |
-| Frontmatter parse/serialize | gray-matter | `^` | yes |
-| Markdown AST surgery & links | mdast-util-from-markdown (mdast), parse-only | `^` | yes |
-| Internal link & anchor validation | *(hand-rolled over the parsed mdast — §6)* | — | yes |
-| Schema + JSON Schema emit | Zod **v4** | `^4` | yes |
-| Config parsing | *(Bun native TOML)* | — | yes |
+| Frontmatter parse/serialize | Lore fence boundary + `js-yaml` | exact `5.2.2` | yes |
+| Markdown AST surgery & links | `mdast-util-from-markdown` (mdast), parse-only | exact `2.0.3` | yes |
+| Internal link validation | Lore-owned over parsed mdast; slug primitive → `github-slugger` (`LCLI-287`) | pin during implementation | current / planned |
+| Terminal display width | hand-rolled → `string-width` (`LCLI-285`) | pin during implementation | current / planned |
+| SSRF address parsing and CIDR match | hand-rolled → `ipaddr.js` (`LCLI-286`) | pin during implementation | current / planned |
+| Schema + JSON Schema emit | Zod **v4** | exact `4.4.3` | yes |
+| Config parse and shape | Bun native TOML; hand-rolled shape → existing Zod (`LCLI-288`) | Bun + existing Zod pins | current / planned |
 | Local graph and lexical projection | `@ladybugdb/core` | pin during M6 implementation | **planned M6** |
 | MCP transport | @modelcontextprotocol/sdk | — | **on hold** |
 | Confluence publish | *(plain `fetch`)* | — | **on hold** |
