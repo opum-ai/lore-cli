@@ -1,9 +1,11 @@
 ---
 id: LCLI-286
 title: Delegate SSRF address parsing and CIDR matching to ipaddr.js
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-30 15:27'
+updated_date: '2026-07-30 16:21'
 labels:
   - dependencies
   - security
