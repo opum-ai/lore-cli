@@ -79,7 +79,7 @@ export interface SyncOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `sync`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -337,9 +337,9 @@ function matchesScope(id: string, prefix: string): boolean {
 
 // ── Argument parsing ───────────────────────────────────────────────────────────
 
-/** Parse `sync`'s tokens into `[paths…]`, `--dry-run`, and `--no-index` via the shared tokenizer. */
+/** Parse `sync`'s tokens into `[paths…]`, `--dry-run`, and `--no-index` via the shared parser. */
 function parseSyncArgs(args: readonly string[]): SyncArgs {
-  const { positionals, flags } = parseCommandArgs(args, "sync", ["dry-run", "no-index"]);
+  const { positionals, flags } = parseCommandArgs(args, "sync");
   return { paths: positionals, dryRun: flags.has("dry-run"), noIndex: flags.has("no-index") };
 }
 

@@ -58,9 +58,9 @@ operation. The dependency graph intentionally exposes two lanes after the
 schema freeze:
 
 - `LCLI-283.1.1` freezes the property-graph schema, provenance model, format version, storage boundary, freshness fingerprint, migration and rebuild rules, and single-writer lifecycle.
-- `LCLI-284` migrates the current hand-rolled router and command option
-  tokenizers to Commander. It depends only on `LCLI-283.1.1`, belongs to M6,
-  and must finish before indexed command integration.
+- `LCLI-284` migrated the router and command option tokenizers to exact-pinned
+  Commander. It depends only on `LCLI-283.1.1`, belongs to M6, and must remain
+  complete before indexed command integration.
 - `LCLI-283.1.2` implements deterministic projection construction, reconciliation, transactional replacement, invalidation, corruption recovery, and disposal. It also depends on `LCLI-283.1.1` and may proceed independently of `LCLI-284`.
 - `LCLI-283.1.3` depends on both `LCLI-283.1.2` and `LCLI-284`, then routes graph, lexical query, and context through indexed retrieval while retaining the in-memory implementation as a conformance oracle and documented fallback.
 - `LCLI-283.1.4` establishes cold and warm benchmarks, small and large fixtures, memory and disk budgets, supported native packaging, concurrency tests, and release thresholds.
@@ -137,8 +137,8 @@ Start a new implementation session from `dev` in this order:
    `LCLI-283.1.2` are independent implementation lanes. Give each its own
    feature branch, activation, current-system research, and Backlog plan.
 3. Start `LCLI-283.1.3` only after both lanes merge. This prevents new indexed
-   flags and dispatch paths from being implemented once in the hand-rolled
-   parser and migrated again.
+   flags and dispatch paths from being reimplemented outside the declarative
+   Commander/manifest boundary when indexed retrieval arrives.
 4. Finish `LCLI-283.1.4` before accepting M6.
 5. `LCLI-283.2.1` may begin after step 1, but do not begin
    `LCLI-283.2.2` until M6 is accepted. M8 and local MCP remain out of scope.

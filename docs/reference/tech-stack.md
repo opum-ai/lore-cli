@@ -122,28 +122,27 @@ build-/dev-time concern, not a runtime one.
 
 ---
 
-## 3. CLI framework — hand-rolled today; Commander approved for M6
+## 3. CLI framework — Commander
 
 | | |
 |---|---|
-| **Current package** | *(none — hand-rolled in `src/cli.ts` and command handlers)* |
-| **Approved target** | Commander (`LCLI-284`; version pinned during implementation) |
+| **Package** | `commander` |
+| **Version** | **exact `15.0.0`** |
+| **License** | MIT |
 | **Role** | Argument parsing, subcommand dispatch, help text, the entrypoint in `src/cli.ts` |
 
-**Current state and rationale.** The original dependency-free router was a
-reasonable fit for a small surface, and it remains the shipping implementation.
-The command count and the number of value-bearing/repeatable option parsers now
-justify the dependency, especially before indexed retrieval and the explorer
-add more command wiring. `LCLI-284` therefore approves Commander as an M6
-preparation task: it starts after `LCLI-283.1.1` freezes the LadybugDB contract
-and must finish before `LCLI-283.1.3` wires indexed `graph`, `query`, and
-`context`.
+**Current state and rationale.** Commander is the shipping parser and router.
+The command count and the number of value-bearing/repeatable options justify a
+declarative parser before indexed retrieval adds more command wiring. The
+existing capability manifest is the declaration source for command names,
+positional signatures, global and command flags, aliases, and generated Lore
+help; a handler registry binds that surface to thin command adapters.
 
-Commander replaces parsing, dispatch, and help duplication; it does not own
-Lore's process lifecycle or machine contract. The migration must keep Lore's
-injected writers and centralized error/output seams rather than allowing
-Commander to call `process.exit` or write around them. The resulting entrypoint
-must preserve:
+Commander owns token parsing and subcommand selection; it does not own Lore's
+process lifecycle or machine contract. Each invocation creates a local
+Commander graph, uses `exitOverride()`, and suppresses Commander output.
+Failures are translated to `LoreError` and rendered through Lore's injected
+writers and centralized error/output seams. The entrypoint preserves:
 
 - **Output-mode precedence** `--json > --plain > pretty`, with `--plain` forced
   automatically when stdout is non-TTY. Defined in [cli-contract.md](cli-contract.md).
@@ -462,7 +461,7 @@ adoption are described in
 |---|---|---|---|
 | Runtime / build / spawn / TOML / test | Bun | **pinned** (`.bun-version`) | yes |
 | Language | TypeScript | dev-/typecheck-only | yes |
-| CLI parsing | *(hand-rolled today)* → Commander (`LCLI-284`, §3) | pin during M6 implementation | current / planned M6 |
+| CLI parsing | Commander (§3); Lore owns lifecycle, errors, and output | exact `15.0.0` | yes |
 | Frontmatter parse/serialize | Lore fence boundary + `js-yaml` | exact `5.2.2` | yes |
 | Markdown AST surgery & links | `mdast-util-from-markdown` (mdast), parse-only | exact `2.0.3` | yes |
 | Internal link validation | Lore-owned over parsed mdast; slug and per-document duplicate primitive via `github-slugger` (`LCLI-287`) | exact `2.0.0` | yes |

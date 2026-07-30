@@ -24,7 +24,7 @@ import { canonicalType, isKnownType, SCHEMAS_DIR, schemaFileName, schemaModeline
 import { buildNewConcept, builtinTemplateFor, slugify } from "../core/template";
 import { EXIT_OK, errnoCode, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { assertNotReservedStem } from "./args";
+import { assertNotReservedStem, optionValues, parseCommandArgs } from "./args";
 import { createIfAbsent, ensureDir, findSymlinkSegment } from "./fswrite";
 
 /** Where user templates live, relative to the repo root. */
@@ -59,7 +59,7 @@ export interface NewOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `new`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** Clock seam for the `timestamp` token; defaults to the real wall clock. */
   clock?: () => Date;
@@ -173,62 +173,14 @@ function resolveModeline(type: string, docPath: string, root: string, profile: P
  * title may begin with `-` (`lore new adr -- "-5 minute timeout"`).
  */
 function parseNewArgs(args: readonly string[]): NewArgs {
-  const positionals: string[] = [];
+  const parsed = parseCommandArgs(args, "new");
+  const positionals = parsed.positionals;
   const vars: Record<string, string> = Object.create(null);
-  let template: string | undefined;
-  let summary: string | undefined;
-  let tags: string | undefined;
-  let out: string | undefined;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      // End of options: every remaining token is a positional, even if it looks like a flag.
-      positionals.push(...args.slice(i + 1));
-      break;
-    }
-    if (arg.startsWith("--") && arg.length > 2) {
-      const eq = arg.indexOf("=");
-      const name = eq >= 0 ? arg.slice(2, eq) : arg.slice(2);
-      // Consume the flag's value: the inline `=` form, else the next token — which must exist
-      // and must not itself be a flag (a following `--json`/`--tags`/`--` is a missing value,
-      // not the value), so a mis-ordered flag fails loud instead of silently binding.
-      const takeValue = (): string => {
-        if (eq >= 0) {
-          return arg.slice(eq + 1);
-        }
-        const next = args[i + 1];
-        if (next === undefined || (next.startsWith("-") && next !== "-")) {
-          throw usage(`option "--${name}" needs a value`, `pass a value, e.g. --${name}=<value>`);
-        }
-        i++;
-        return next;
-      };
-      switch (name) {
-        case "var":
-          addVar(vars, takeValue());
-          break;
-        case "template":
-          template = takeValue();
-          break;
-        case "summary":
-          summary = takeValue();
-          break;
-        case "tags":
-          tags = takeValue();
-          break;
-        case "out":
-          out = takeValue();
-          break;
-        default:
-          throw usage(`unknown option "--${name}"`, "run `lore new --help` to list options");
-      }
-    } else if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, "run `lore new --help` to list options");
-    } else {
-      positionals.push(arg);
-    }
-  }
+  for (const raw of optionValues(parsed, "var")) addVar(vars, raw);
+  const template = optionValues(parsed, "template").at(-1);
+  const summary = optionValues(parsed, "summary").at(-1);
+  const tags = optionValues(parsed, "tags").at(-1);
+  const out = optionValues(parsed, "out").at(-1);
 
   const type = positionals[0];
   if (type === undefined || type.trim() === "") {

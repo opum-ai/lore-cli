@@ -34,6 +34,7 @@
 - 2026-07-30T12:36:44-05:00 f03786705b803a3742f98fbd90e5267e7264a29b docs: sync dependency campaign closeout log
 - 2026-07-30T12:37:18-05:00 484353d8d8a973aa24d6e429525c489fe44daca3 docs: record campaign closeout verification
 - 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
+- 2026-07-30T14:00:06-05:00 02bc9694043958d27022be2c2de1e107572ab249 docs: advance release campaign to Commander
 
 ## docs/.obsidian
 
@@ -184,6 +185,7 @@
 - 2026-07-30T12:07:11-05:00 c46620514f1705ef51a2b7ff5de4dcbd6ba6a205 docs: advance dependency campaign to LCLI-288
 - 2026-07-30T12:21:28-05:00 8331d768d2c541f0f66d56f65c86872e2166c0af docs: complete dependency boundary campaign
 - 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
+- 2026-07-30T14:00:06-05:00 02bc9694043958d27022be2c2de1e107572ab249 docs: advance release campaign to Commander
 
 ## docs/specs
 

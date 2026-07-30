@@ -32,11 +32,12 @@ semantic exit codes, the stdout/stderr discipline, the `--json` envelope and
 error envelope, truncation hints, and the `kind` taxonomy — are specified once
 in the [CLI contract](./cli-contract.md) and are not repeated per command here.
 
-The current implementation parses this surface with a hand-rolled router and
-command tokenizers. `LCLI-284` will move that implementation to Commander
-during M6, after the LadybugDB schema freeze and before indexed command routing.
-This catalog and the CLI contract are compatibility inputs to that migration;
-the parser library is not permission to change the public surface.
+The implementation parses this surface with exact-pinned Commander, using the
+capability manifest as its declarative command/flag source and a data-driven
+handler registry for dispatch. Lore—not Commander—still owns help rendering,
+injected streams, JSON/error envelopes, semantic exit codes, TTY/`NO_COLOR`
+behavior, and process lifecycle. The parser library does not change the public
+surface recorded here.
 
 ## Global behavior (applies to every command)
 

@@ -64,7 +64,7 @@ export interface SupersedeOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `supersede`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -328,12 +328,12 @@ function statusIsSuperseded(concept: Concept): boolean {
 
 /**
  * Parse `supersede`'s tokens into its two positionals (`<oldId> <newId>`), `--rewrite-links`, and
- * `--dry-run`, via the shared {@link parseCommandArgs} tokenizer (mirrors
+ * `--dry-run`, via the shared {@link parseCommandArgs} parser (mirrors
  * `commands/rename.ts`/`commands/link.ts`'s parsers). Positional arity is validated here since it
  * differs per command.
  */
 function parseSupersedeArgs(args: readonly string[]): SupersedeArgs {
-  const { positionals, flags } = parseCommandArgs(args, "supersede", ["rewrite-links", "dry-run"]);
+  const { positionals, flags } = parseCommandArgs(args, "supersede");
 
   const oldId = positionals[0];
   if (oldId === undefined) {

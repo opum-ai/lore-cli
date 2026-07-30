@@ -58,6 +58,7 @@ import {
   type Writer,
 } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { parseCommandArgs } from "./args";
 import { canonicalIdentity, readSource } from "./discover";
 import { dedupeTaskIds, defaultAdapter } from "./link";
 import {
@@ -97,7 +98,7 @@ export interface CheckOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `check`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -601,42 +602,18 @@ export function isDocsRoot(label: string): boolean {
 // ── Argument parsing ───────────────────────────────────────────────────────────
 
 /**
- * Parse `check`'s tokens into target bundle roots and its flags. The router has already
+ * Parse `check`'s tokens into target bundle roots and its flags. Commander has already
  * stripped lore's global flags, so anything `--`-prefixed here is a command flag: an
  * unrecognized one is a `usage` error. A `--` ends option parsing so a path may begin with
  * `-`.
  */
 function parseCheckArgs(args: readonly string[]): CheckArgs {
-  const paths: string[] = [];
-  let strict = false;
-  let external = false;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      paths.push(...args.slice(i + 1));
-      break;
-    }
-    if (arg.startsWith("--") && arg.length > 2) {
-      const name = arg.slice(2);
-      switch (name) {
-        case "strict":
-          strict = true;
-          break;
-        case "external":
-          external = true;
-          break;
-        default:
-          throw usage(`unknown option "--${name}"`, "run `lore check --help` to list options");
-      }
-    } else if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, "run `lore check --help` to list options");
-    } else {
-      paths.push(arg);
-    }
-  }
-
-  return { paths, strict, external };
+  const parsed = parseCommandArgs(args, "check");
+  return {
+    paths: parsed.positionals,
+    strict: parsed.flags.has("strict"),
+    external: parsed.flags.has("external"),
+  };
 }
 
 // ── File discovery ─────────────────────────────────────────────────────────────

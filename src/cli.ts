@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * cli.ts — lore's primary surface (lore-design §2): a thin Commander-less router.
+ * cli.ts — lore's primary surface (lore-design §2): a thin Commander entrypoint.
  *
  * It resolves global flags + the output mode once, dispatches a subcommand to its
  * thin handler in `commands/`, and funnels every thrown {@link LoreError} through the
@@ -8,15 +8,16 @@
  * across commands (cli-contract §4–§5). The handler does the work and returns its
  * success code; the router owns parsing, mode resolution, and error reporting.
  *
- * Argument parsing is hand-rolled (no `commander` dependency) while the command
- * surface is small: this keeps the package dependency-neutral with respect to the
- * isolated-linker / EXDEV packaging constraints (ADR-0001). The design names
- * Commander as the eventual entrypoint; adopting it is deferred until the command
- * count justifies the dependency.
+ * Commander owns tokenization, option validation, positional collection, and
+ * declarative subcommand routing. Lore retains its own output/error seams: every
+ * parser failure is translated to a {@link LoreError}, and Commander is configured
+ * never to exit the process or write directly to a real/injected stream.
  */
 
+import { Command } from "commander";
 import type { BacklogAdapter } from "./adapters/backlog";
 import { runAgents } from "./commands/agents";
+import { commanderOption, commanderUnknownCommand, commanderUsageError } from "./commands/args";
 import { type FetchLike, type ResolveHost, runCheck } from "./commands/check";
 import { runContext } from "./commands/context";
 import { runExport } from "./commands/export";
@@ -36,6 +37,7 @@ import { runSupersede } from "./commands/supersede";
 import { runSync } from "./commands/sync";
 import { runTasks } from "./commands/tasks";
 import { runValidate } from "./commands/validate";
+import { buildManifest } from "./core/manifest";
 import { EXIT_OK, EXIT_UNCAUGHT, LoreError, reportError, type Writer } from "./errors";
 import { VERSION } from "./meta";
 import { emit, errorRenderOpts, type OutputContext, type Renderable, resolveOutput } from "./output";
@@ -45,85 +47,18 @@ import { emit, errorRenderOpts, type OutputContext, type Renderable, resolveOutp
 // for both `lore --help` and the `lore help` command, so no separately-maintained
 // `USAGE` literal can drift from the real command surface (LORE-38).
 
-/** The global flags, the subcommand, and the command's own argument tokens a single invocation resolves to. */
+/** The subcommand and normalized command-local tokens Commander resolved for one invocation. */
 interface ParsedArgs {
-  command?: string;
-  /**
-   * The ordered tokens after the command — its positionals **and** its own flags — for the
-   * command to parse itself. Global flags are removed; a command that takes value-bearing
-   * flags (e.g. `new --var k=v`) needs the raw tail, since only it knows which flags consume
-   * a following token.
-   */
+  command: string;
   commandArgs: string[];
+}
+
+/** The ordinary global options Commander parses without invoking its built-in help/version exits. */
+interface GlobalOptions {
   json: boolean;
   plain: boolean;
   version: boolean;
   help: boolean;
-  /** Unknown `-`-flags appearing **before** any command — a global usage error (e.g. `lore --bogus`). */
-  leadingUnknownFlags: string[];
-}
-
-/**
- * Split `argv` into the global flags, the subcommand, and the command's own tokens.
- *
- * Global flags (`--json`/`--plain`/`-v`/`--version`/`-h`/`--help`) are recognized in **any**
- * position before a `--` and stripped (they set their bool, they do not reach the command).
- * The **first positional** (a non-`-` token, or a bare `-`) is the command; every token after
- * it — positionals and the command's own flags — is collected verbatim into
- * {@link ParsedArgs.commandArgs} for the command to parse, because only the command knows which
- * of its flags take a value.
- *
- * The POSIX `--` end-of-options marker is honored: before the command, the next token is the
- * command and the rest are its positionals; **after** the command, the marker and the remaining
- * tokens are forwarded verbatim so the command can take a value (e.g. a title) that begins with
- * `-`. Tokens after a `--` are never re-interpreted as flags. An unrecognized `-`-flag *before*
- * the command has no command to own it, so it is a global usage error
- * ({@link ParsedArgs.leadingUnknownFlags}); a `-`-token is never the command (it is an "unknown
- * option", not an "unknown command"), and a bare `-` is a positional.
- */
-function parseArgs(argv: readonly string[]): ParsedArgs {
-  let json = false;
-  let plain = false;
-  let version = false;
-  let help = false;
-  let command: string | undefined;
-  const commandArgs: string[] = [];
-  const leadingUnknownFlags: string[] = [];
-  const args = argv.slice(2);
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      if (command === undefined) {
-        const rest = args.slice(i + 1);
-        command = rest[0];
-        commandArgs.push(...rest.slice(1));
-      } else {
-        commandArgs.push(arg, ...args.slice(i + 1));
-      }
-      break;
-    }
-    if (arg === "--json") {
-      json = true;
-    } else if (arg === "--plain") {
-      plain = true;
-    } else if (arg === "--version" || arg === "-v") {
-      version = true;
-    } else if (arg === "--help" || arg === "-h") {
-      help = true;
-    } else if (arg.startsWith("-") && arg !== "-") {
-      if (command === undefined) {
-        leadingUnknownFlags.push(arg);
-      } else {
-        commandArgs.push(arg);
-      }
-    } else if (command === undefined) {
-      command = arg;
-    } else {
-      commandArgs.push(arg);
-    }
-  }
-  return { command, commandArgs, json, plain, version, help, leadingUnknownFlags };
 }
 
 /** The injectable environment a {@link run} sees; every field defaults to the real process. */
@@ -222,7 +157,17 @@ export function coerceRealTTY(isTTY: boolean | undefined): boolean {
 export function run(argv: readonly string[], context: RunContext = {}): number | Promise<number> {
   const stdout = context.stdout ?? process.stdout;
   const stderr = context.stderr ?? process.stderr;
-  const parsed = parseArgs(argv);
+  let parsed: ParsedArgs | undefined;
+  const program = createProgram((invocation) => {
+    parsed = invocation;
+  });
+  let parseError: unknown;
+  try {
+    program.parse(argv.slice(2), { from: "user" });
+  } catch (error) {
+    parseError = error;
+  }
+  const globals = program.opts<GlobalOptions>();
   // Stderr's own TTY state, independent of stdout's — same injected-sink-defaults-
   // non-TTY / real-process-defaults-real-TTY shape as `isTTY` below, but read from
   // `stderr` so a redirected `2>` is never mistaken for a terminal just because
@@ -247,8 +192,8 @@ export function run(argv: readonly string[], context: RunContext = {}): number |
   // is never a real terminal session on any of the three streams.
   const stdinIsTTY = context.stdinIsTTY ?? (context.stdout ? false : coerceRealTTY(process.stdin.isTTY));
   const output = resolveOutput({
-    json: parsed.json,
-    plain: parsed.plain,
+    json: globals.json,
+    plain: globals.plain,
     // A caller that injects its own stdout sink but no TTY hint is not at a terminal,
     // so its mode resolves to plain (no stray ANSI in a captured buffer); only the
     // real-process path (no injected sink) reads the actual `process.stdout.isTTY`.
@@ -257,27 +202,31 @@ export function run(argv: readonly string[], context: RunContext = {}): number |
     stderrIsTTY,
   });
   try {
-    rejectUnknownFlags(parsed.leadingUnknownFlags);
-    if (parsed.version || parsed.command === undefined) {
-      // The version/no-command paths short-circuit before any command runs, so no command
-      // will validate the tail. A stray non-global flag here (e.g. `lore init --bogus --version`)
-      // would otherwise slip through to a silent exit 0 — reject it, preserving the invariant
-      // that a typo'd flag is never swallowed by `--version`/`--help`.
-      rejectStrayCommandFlags(parsed.commandArgs);
-      if (parsed.version) {
+    if (parseError !== undefined) {
+      const unknownCommand = commanderUnknownCommand(parseError);
+      // Lore's global meta flags intentionally short-circuit an otherwise unknown
+      // positional command, matching the pre-Commander contract. Known commands still
+      // parse all their flags first, so `lore init --bogus --version` remains an error.
+      if (unknownCommand !== undefined && (globals.version || globals.help)) {
+        parsed = { command: unknownCommand, commandArgs: [] };
+      } else {
+        throw commanderUsageError(parseError, parsed?.command);
+      }
+    }
+    if (globals.version || parsed === undefined) {
+      if (globals.version) {
         return emitMeta("version", { version: VERSION }, VERSION, output, stdout);
       }
       const helpText = renderTopLevelHelp();
       return emitMeta("help", { usage: helpText }, helpText, output, stdout);
     }
-    if (parsed.help) {
+    if (globals.help) {
       // A command was given alongside `--help`/`-h` (in any position): render that
       // command's own detailed help — the same as `lore help <command>` — instead of
       // the generic top-level catalog, so `lore <cmd> --help` describes the command the
       // user actually typed (LORE-107). Still reject a stray unrecognized flag first (same
       // invariant as the `--version`/no-command paths above): a typo'd flag must never be
       // swallowed just because `--help` also appears on the line.
-      rejectStrayCommandFlags(parsed.commandArgs);
       return runHelp({ output, args: [parsed.command], stdout });
     }
     // `stderrIsTTY` is threaded into `dispatch`'s context the same way `stdinIsTTY` already is
@@ -296,6 +245,113 @@ export function run(argv: readonly string[], context: RunContext = {}): number |
   } catch (err) {
     return reportError(err, { ...errorRenderOpts(output, stderrIsTTY), stderr });
   }
+}
+
+/** One command-local option occurrence, retained in input order for repeatable/duplicate parity. */
+interface OptionOccurrence {
+  readonly name: string;
+  readonly value?: string;
+}
+
+/**
+ * Build a fresh Commander graph for one invocation.
+ *
+ * The capability manifest is the declaration source for command names and flags,
+ * and also drives Lore's generated help. Each command accepts a variadic positional
+ * collection here so global `--help`/`--version` can short-circuit incomplete command
+ * lines exactly as before; command-specific arity/value rules remain in the thin
+ * handlers. Built-in help/version are disabled, output is swallowed, and
+ * `exitOverride` turns every parser exit into a caught {@link CommanderError}.
+ */
+function createProgram(onInvocation: (parsed: ParsedArgs) => void): Command {
+  const manifest = buildManifest();
+  const program = new Command()
+    .name("lore")
+    .helpOption(false)
+    .helpCommand(false)
+    .showSuggestionAfterError(false)
+    .exitOverride()
+    .configureOutput({ writeOut: () => {}, writeErr: () => {} })
+    // A variadic root positional lets Lore retain its exact unknown-command
+    // classification (including a bare "-" and a token after a root "--").
+    // Known declarative subcommands still win Commander's normal dispatch.
+    .argument("[args...]")
+    .action((args: string[]) => {
+      const command = args[0];
+      if (command !== undefined) {
+        onInvocation({ command, commandArgs: args.slice(1) });
+      }
+    });
+
+  for (const flag of manifest.globalFlags) {
+    program.addOption(commanderOption(flag));
+  }
+
+  for (const definition of manifest.commands) {
+    const occurrences: OptionOccurrence[] = [];
+    const positionalSyntax = commanderPositionalSyntax(definition.args);
+    const command = program
+      .command(definition.name)
+      .description(definition.summary)
+      .helpOption(false)
+      .exitOverride((error) => {
+        (error as typeof error & { loreCommand?: string }).loreCommand = definition.name;
+        throw error;
+      })
+      // Keep arity validation in the thin handlers so established Lore wording,
+      // hints, and error metadata stay compatible. Commander still receives the
+      // manifest-derived positional shape and performs token/end-of-options parsing.
+      .allowExcessArguments(true)
+      .arguments(positionalSyntax);
+    for (const flag of definition.flags) {
+      command.addOption(commanderOption(flag));
+      command.on(`option:${flag.name}`, (value?: string) => {
+        occurrences.push(value === undefined ? { name: flag.name } : { name: flag.name, value });
+      });
+    }
+    command.action(function () {
+      onInvocation({
+        command: definition.name,
+        commandArgs: normalizeCommandArgs(this.args, occurrences),
+      });
+    });
+  }
+  return program;
+}
+
+/**
+ * Convert the manifest's human-facing positional signature to a permissive
+ * Commander declaration. Required operands are intentionally made optional:
+ * command handlers retain their established arity diagnostics, while Commander
+ * owns positional tokenization and the literal `--` boundary.
+ */
+function commanderPositionalSyntax(signature: string): string {
+  const operands = [...signature.matchAll(/([A-Za-z][A-Za-z0-9-]*)(…)?/g)].map((match) => ({
+    name: match[1] as string,
+    variadic: match[2] !== undefined,
+  }));
+  if (operands.length === 0) {
+    // Commands with no documented operands still accept a compatibility catch-all
+    // so their handlers can preserve the exact "takes no arguments" diagnostic.
+    return "[args...]";
+  }
+  return operands.map(({ name, variadic }) => `[${name}${variadic ? "..." : ""}]`).join(" ");
+}
+
+/**
+ * Reconstitute a stable command-local vector for the existing thin handlers.
+ * Options are emitted in their original occurrence order using inline values, then
+ * positionals. A literal `--` is inserted when a positional starts with `-`, so no
+ * downstream command can accidentally reclassify a Commander positional as a flag.
+ */
+function normalizeCommandArgs(positionals: readonly string[], occurrences: readonly OptionOccurrence[]): string[] {
+  const options = occurrences.map((occurrence) =>
+    occurrence.value === undefined ? `--${occurrence.name}` : `--${occurrence.name}=${occurrence.value}`,
+  );
+  if (positionals.some((arg) => arg.startsWith("-") && arg !== "-")) {
+    return [...options, "--", ...positionals];
+  }
+  return [...positionals, ...options];
 }
 
 /**
@@ -322,159 +378,180 @@ function emitMeta(
  * --external` (whose liveness probe is non-deterministic network IO) and `link`/`unlink`/`rename`/
  * `sync` (which drive the Backlog adapter).
  */
+type CommandHandler = (args: readonly string[], context: RunContext, output: OutputContext) => number | Promise<number>;
+
+/** Handler registry; Commander/manifest own routing declarations, this table only injects Lore seams. */
+const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
+  init: (args, context, output) => {
+    const root = context.cwd || process.cwd();
+    return runInit({
+      root,
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+      stdinIsTTY: context.stdinIsTTY,
+      stderrIsTTY: context.stderrIsTTY,
+      jsonRequested: output.mode === "json",
+      adapter: context.adapter,
+      prompter: context.prompter,
+      agentAvailability: context.agentAvailability,
+    });
+  },
+  new: (args, context, output) =>
+    runNew({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+    }),
+  validate: (args, context, output) =>
+    runValidate({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+    }),
+  check: (args, context, output) =>
+    runCheck({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+      fetch: context.fetch,
+      resolveHost: context.resolveHost,
+      adapter: context.adapter,
+    }),
+  replace: (args, context, output) =>
+    runReplace({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+    }),
+  rename: (args, context, output) =>
+    runRename({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+      adapter: context.adapter,
+    }),
+  supersede: (args, context, output) =>
+    runSupersede({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+    }),
+  link: (args, context, output) =>
+    runLink({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+      adapter: context.adapter,
+    }),
+  unlink: (args, context, output) =>
+    runUnlink({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+      adapter: context.adapter,
+    }),
+  sync: (args, context, output) =>
+    runSync({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+      adapter: context.adapter,
+    }),
+  tasks: (args, context, output) =>
+    runTasks({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+      adapter: context.adapter,
+    }),
+  orphans: (args, context, output) =>
+    runOrphans({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+      adapter: context.adapter,
+    }),
+  schema: (args, context, output) =>
+    runSchema({ root: context.cwd || process.cwd(), output, args, stdout: context.stdout }),
+  scaffold: (args, context, output) =>
+    runScaffold({ root: context.cwd || process.cwd(), output, args, stdout: context.stdout }),
+  graph: (args, context, output) =>
+    runGraph({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+    }),
+  export: (args, context, output) =>
+    runExport({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+      adapter: context.adapter,
+    }),
+  query: (args, context, output) =>
+    runQuery({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+    }),
+  context: (args, context, output) =>
+    runContext({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+    }),
+  instructions: (args, context, output) => runInstructions({ output, args, stdout: context.stdout }),
+  agents: (args, context, output) =>
+    runAgents({ root: context.cwd || process.cwd(), output, args, stdout: context.stdout }),
+  help: (args, context, output) => runHelp({ output, args, stdout: context.stdout }),
+};
+
+/** Command-handler registry names in declarative dispatch order (test/bridge lockstep seam). */
+export function commandHandlerNames(): readonly string[] {
+  return Object.keys(COMMAND_HANDLERS);
+}
+
 function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext): number | Promise<number> {
   const root = context.cwd || process.cwd();
-  switch (parsed.command) {
-    case "init":
-      return runInit({
-        root,
-        output,
-        args: parsed.commandArgs,
-        stdout: context.stdout,
-        stderr: context.stderr,
-        stdinIsTTY: context.stdinIsTTY,
-        // Both threaded from the SAME resolved values `run()` already computed above — the wizard's
-        // TTY gate needs stderr's state too (BLOCKING-1: every wizard question is written to
-        // stderr), and `--json` is an independent veto since a machine-readable run must never
-        // prompt (review round 2).
-        stderrIsTTY: context.stderrIsTTY,
-        jsonRequested: parsed.json,
-        adapter: context.adapter,
-        prompter: context.prompter,
-        agentAvailability: context.agentAvailability,
-      });
-    case "new":
-      return runNew({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
-    case "validate":
-      return runValidate({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
-    case "check":
-      return runCheck({
-        root,
-        output,
-        args: parsed.commandArgs,
-        stdout: context.stdout,
-        stderr: context.stderr,
-        fetch: context.fetch,
-        resolveHost: context.resolveHost,
-        adapter: context.adapter,
-      });
-    case "replace":
-      return runReplace({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
-    case "rename":
-      return runRename({
-        root,
-        output,
-        args: parsed.commandArgs,
-        stdout: context.stdout,
-        stderr: context.stderr,
-        adapter: context.adapter,
-      });
-    case "supersede":
-      return runSupersede({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
-    case "link":
-      return runLink({
-        root,
-        output,
-        args: parsed.commandArgs,
-        stdout: context.stdout,
-        stderr: context.stderr,
-        adapter: context.adapter,
-      });
-    case "unlink":
-      return runUnlink({
-        root,
-        output,
-        args: parsed.commandArgs,
-        stdout: context.stdout,
-        stderr: context.stderr,
-        adapter: context.adapter,
-      });
-    case "sync":
-      return runSync({
-        root,
-        output,
-        args: parsed.commandArgs,
-        stdout: context.stdout,
-        stderr: context.stderr,
-        adapter: context.adapter,
-      });
-    case "tasks":
-      return runTasks({
-        root,
-        output,
-        args: parsed.commandArgs,
-        stdout: context.stdout,
-        stderr: context.stderr,
-        adapter: context.adapter,
-      });
-    case "orphans":
-      return runOrphans({
-        root,
-        output,
-        args: parsed.commandArgs,
-        stdout: context.stdout,
-        stderr: context.stderr,
-        adapter: context.adapter,
-      });
-    case "schema":
-      return runSchema({ root, output, args: parsed.commandArgs, stdout: context.stdout });
-    case "scaffold":
-      return runScaffold({ root, output, args: parsed.commandArgs, stdout: context.stdout });
-    case "graph":
-      return runGraph({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
-    case "export":
-      return runExport({
-        root,
-        output,
-        args: parsed.commandArgs,
-        stdout: context.stdout,
-        stderr: context.stderr,
-        adapter: context.adapter,
-      });
-    case "query":
-      return runQuery({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
-    case "context":
-      return runContext({ root, output, args: parsed.commandArgs, stdout: context.stdout, stderr: context.stderr });
-    case "instructions":
-      return runInstructions({ output, args: parsed.commandArgs, stdout: context.stdout });
-    case "agents":
-      return runAgents({ root, output, args: parsed.commandArgs, stdout: context.stdout });
-    case "help":
-      return runHelp({ output, args: parsed.commandArgs, stdout: context.stdout });
-    default:
-      throw new LoreError("usage", `unknown command "${parsed.command}"`, "run `lore --help` to list commands", {
-        command: parsed.command,
-      });
-  }
-}
-
-/** Throw a `usage` {@link LoreError} when any unrecognized leading flag was passed. */
-function rejectUnknownFlags(unknownFlags: readonly string[]): void {
-  if (unknownFlags.length > 0) {
-    throw new LoreError("usage", `unknown option "${unknownFlags[0]}"`, "run `lore --help` to list options", {
-      options: [...unknownFlags],
+  const handler = COMMAND_HANDLERS[parsed.command];
+  if (handler === undefined) {
+    throw new LoreError("usage", `unknown command "${parsed.command}"`, "run `lore --help` to list commands", {
+      command: parsed.command,
     });
   }
-}
-
-/**
- * Reject the stray flags in `commandArgs` on a path where no command will run
- * (version/help/no-command). Positionals and the `--` terminator are ignored — a leftover
- * positional that `--version` simply overrides is not an error; only an unrecognized `-`-flag
- * is, preserving the invariant that a typo'd flag is never swallowed by `--version`/`--help`.
- * Only tokens **before** the first `--` are scanned: per the parser's contract (line 78 above),
- * a token after the terminator is a positional, never re-interpreted as a flag, so
- * `lore --version tasks -- -x` must print the version rather than error (LORE-223).
- */
-function rejectStrayCommandFlags(commandArgs: readonly string[]): void {
-  const dashDashIndex = commandArgs.indexOf("--");
-  const scanned = dashDashIndex === -1 ? commandArgs : commandArgs.slice(0, dashDashIndex);
-  const stray = scanned.find((token) => token.startsWith("-") && token !== "-");
-  if (stray !== undefined) {
-    throw new LoreError("usage", `unknown option "${stray}"`, "run `lore --help` to list options", {
-      options: [stray],
-    });
-  }
+  return handler(parsed.commandArgs, { ...context, cwd: root }, output);
 }
 
 // Only drive the real process when executed directly (not when imported by tests). `run` returns a

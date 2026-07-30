@@ -64,7 +64,7 @@ seams, the Backlog adapter); nothing lower knows about anything higher.
 
 ```
 src/
-├── cli.ts            # CLI entrypoint (hand-rolled now; Commander target in LCLI-284)
+├── cli.ts            # Commander entrypoint; manifest declarations + Lore lifecycle/output seams
 ├── mcp.ts            # MCP server entrypoint (DEFERRED, v2)
 ├── core/             # deterministic library — returns structured objects
 │   ├── profile.ts    # compile declarative profile into Zod validators
@@ -136,9 +136,10 @@ and what exit code to map a thrown `LoreError` to.
 
 A `commands/*.ts` handler does exactly four things, in order:
 
-1. **Accept** already-validated arguments from the CLI router (the current
-   hand-rolled parser, replaced by Commander in `LCLI-284`) with no business
-   logic.
+1. **Accept** Commander-parsed arguments from the CLI surface with no business
+   logic. The capability manifest declares commands, positional signatures,
+   options, aliases, and generated Lore help; `exitOverride()` and injected
+   writers keep lifecycle and output in Lore's seams.
 2. **Call** one or more core functions (and, where needed, an adapter), passing
    injectable dependencies — the `clock`, the `BacklogAdapter`, the bundle root.
 3. **Map** the structured result, or a caught `LoreError`, to an output payload
@@ -624,7 +625,7 @@ This design is built in milestone order (see product spec
 - [Product spec — `lore-spec.md`](../../lore-spec.md) — the narrative origin this design elaborates
 - [System architecture](../reference/architecture.md) — the layered map this spec implements
 - [Local graph platform roadmap](local-graph-platform-roadmap.md) — the active M6–M8 sequence and task gates
-- [Tech stack](../reference/tech-stack.md) — Bun, the current hand-rolled/approved Commander CLI transition, the `js-yaml` frontmatter boundary, mdast parsing, and Zod
+- [Tech stack](../reference/tech-stack.md) — Bun, exact-pinned Commander with Lore-owned lifecycle/output, the `js-yaml` frontmatter boundary, mdast parsing, and Zod
 - [Dependency boundary audit](../reference/dependency-boundary-audit.md) — approved generic primitive delegation, compatibility gates, future investigations, and retained custom boundaries
 - [CLI surface](../reference/cli-surface.md) and [CLI contract](../reference/cli-contract.md)
 - [Backlog JSON schema](../reference/backlog-json-schema.md) and [Backlog CLI contract](../reference/backlog-cli-contract.md)

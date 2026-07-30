@@ -31,7 +31,7 @@ knows about a higher one.
 ```mermaid
 flowchart TD
     subgraph Surfaces["Surfaces (transports)"]
-        CLI["cli.ts — CLI entrypoint<br/>hand-rolled now; Commander planned M6<br/>PRIMARY"]
+        CLI["cli.ts — CLI entrypoint<br/>Commander + capability manifest<br/>PRIMARY"]
         MCP["mcp.ts — MCP server<br/>ON HOLD"]
         SKILL[".claude/skills/lore/SKILL.md<br/>+ CLAUDE.md nudge (generated)"]
     end
@@ -91,11 +91,11 @@ secondary and on hold** (see §6). The planned M6 LadybugDB projection is derive
 
 ## 2. The CLI is primary
 
-`cli.ts` is currently a [hand-rolled CLI router](tech-stack.md). `LCLI-284`
-migrates parsing, dispatch, and generated help to Commander after the M6
-LadybugDB schema freeze and before indexed command routing. Both implementations
-own global flags, dispatch to a `commands/*.ts` handler, and render the
-handler's result in one of three output modes with strict precedence
+`cli.ts` uses exact-pinned [Commander](tech-stack.md) for parsing and subcommand
+selection. The capability manifest supplies the command catalog, positional
+signatures, global flags, command flags, aliases, and generated Lore help; a
+data-driven handler registry connects those declarations to `commands/*.ts`.
+The command result is rendered in one of three output modes with strict precedence
 `--json > --plain > pretty`:
 
 - **pretty** — color on a TTY, the default for humans;
@@ -121,11 +121,13 @@ never embed business logic that a future MCP tool would need to reimplement —
 that logic lives in core, so the deferred MCP transport (§6) is genuinely the
 *same code* behind a different door.
 
-Commander does not move business rules into the surface layer. The migration
-must preserve injected streams, the centralized `LoreError` seam, semantic exit
-codes, and the capability manifest. It may replace the duplicated tokenizers in
-`commands/*.ts`, but command handlers remain adapters over structured core
-inputs and results.
+Commander does not move business rules or process lifecycle into the surface
+layer. Every invocation builds a local program with `exitOverride()` and
+injected no-op Commander writers; parser failures are translated into
+`LoreError` before Lore's output seam renders them. Command handlers remain
+adapters over structured core inputs and results, while injected streams,
+semantic exit codes, JSON envelopes, TTY behavior, and `NO_COLOR` stay
+Lore-owned.
 
 ## 3. The Backlog.md adapter (`adapters/backlog.ts`)
 
@@ -352,7 +354,7 @@ beyond the two narrow seams it needs:
 ## See also
 
 - [lore design spec](../specs/lore-design.md) — the full design, including spec §8 structure
-- [Tech stack](tech-stack.md) — Bun, the current hand-rolled/approved Commander CLI transition, the `js-yaml` frontmatter boundary, mdast parsing, and Zod
+- [Tech stack](tech-stack.md) — Bun, exact-pinned Commander with Lore-owned lifecycle/output, the `js-yaml` frontmatter boundary, mdast parsing, and Zod
 - [Dependency boundary audit](dependency-boundary-audit.md) — focused package delegation, compatibility gates, future filesystem/frontmatter investigations, and retained Lore-owned behavior
 - [CLI surface](cli-surface.md) and [CLI contract](cli-contract.md)
 - [Backlog JSON schema](backlog-json-schema.md) and [Backlog CLI contract](backlog-cli-contract.md)

@@ -35,6 +35,7 @@ import { type CompiledType, loadProfile } from "../core/profile";
 import { canonicalType, emitSchemaFiles, SCHEMAS_DIR, type SchemaFile } from "../core/schema";
 import { EXIT_OK, LoreError, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { parseCommandArgs, singleOptionValue } from "./args";
 import { ensureDir, findSymlinkSegment, ioError, writeFileNoFollow } from "./fswrite";
 
 /** Options for {@link runSchema}; `root` and the stream are injectable for tests. */
@@ -43,7 +44,7 @@ export interface SchemaOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `schema`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -237,53 +238,18 @@ function pruneOrphans(absDir: string, displayDir: string, files: readonly Schema
 
 /**
  * Parse `schema`'s tokens into the `export` subcommand and the value flags `--out <dir>` / `--type
- * <T>` (both also accept the `--flag=value` form). The router has already stripped lore's global
+ * <T>` (both also accept the `--flag=value` form). Commander has already resolved Lore's global
  * flags, so a `--`-prefixed token here is a command flag: an unrecognized one is a `usage` error, as
  * is a repeated or value-less flag, a missing/unknown subcommand, or a stray extra positional. A `--`
  * ends option parsing.
  */
 function parseSchemaArgs(args: readonly string[]): SchemaArgs {
-  const positionals: string[] = [];
-  let out: string | undefined;
-  let type: string | undefined;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      positionals.push(...args.slice(i + 1));
-      break;
-    }
-    if (arg.startsWith("--") && arg.length > 2) {
-      const body = arg.slice(2);
-      const eq = body.indexOf("=");
-      const name = eq === -1 ? body : body.slice(0, eq);
-      const inline = eq === -1 ? undefined : body.slice(eq + 1);
-      if (name === "out") {
-        if (out !== undefined) {
-          throw usage("--out given more than once", "pass --out at most once");
-        }
-        out = readValue("--out", inline, args, i);
-        if (inline === undefined) {
-          i++;
-        }
-      } else if (name === "type") {
-        if (type !== undefined) {
-          throw usage("--type given more than once", "pass --type at most once");
-        }
-        type = readValue("--type", inline, args, i);
-        if (inline === undefined) {
-          i++;
-        }
-      } else {
-        throw usage(`unknown option "--${name}"`, "run `lore schema --help` to list options");
-      }
-    } else if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, "run `lore schema --help` to list options");
-    } else {
-      positionals.push(arg);
-    }
-  }
-
+  const parsed = parseCommandArgs(args, "schema");
+  const positionals = parsed.positionals;
+  const out = singleOptionValue(parsed, "out");
+  const type = singleOptionValue(parsed, "type");
+  if (out === "") throw missingValue("--out");
+  if (type === "") throw missingValue("--type");
   const sub = positionals[0];
   if (sub === undefined) {
     throw usage("`lore schema` needs a subcommand", "the only subcommand is `export`: run `lore schema export`");
@@ -295,26 +261,6 @@ function parseSchemaArgs(args: readonly string[]): SchemaArgs {
     throw usage(`unexpected argument "${positionals[1]}"`, "run `lore schema export [--out <dir>] [--type <T>]`");
   }
   return { out, type };
-}
-
-/**
- * Read a value flag's argument: its inline `--flag=value` form when present, else the **next** token.
- * A missing/empty value — or a next token that is itself an option (`--out --type`, `--out --`) — is a
- * `usage` error rather than a silently swallowed flag (mirroring `lore new`'s value-flag guard), so a
- * fat-fingered `--out --type=Story` fails loudly instead of exporting the wrong files to a garbage dir.
- */
-function readValue(flag: string, inline: string | undefined, args: readonly string[], i: number): string {
-  if (inline !== undefined) {
-    if (inline === "") {
-      throw missingValue(flag);
-    }
-    return inline;
-  }
-  const next = args[i + 1];
-  if (next === undefined || next === "" || (next.startsWith("-") && next !== "-")) {
-    throw missingValue(flag);
-  }
-  return next;
 }
 
 /** The `usage` error a value-less value flag raises, with a flag-appropriate example. */

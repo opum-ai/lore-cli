@@ -17,7 +17,8 @@ core is **deterministic with no LLM dependency** — every command is
 reproducible, idempotent, and CI/agent-safe (non-interactive by default, stable
 semantic exit codes, machine-readable `--json`).
 
-- Built on **Bun + TypeScript** with a small hand-rolled argument parser.
+- Built on **Bun + TypeScript** with an exact-pinned **Commander** parser fed by
+  Lore's capability manifest; Lore still owns output, errors, and process lifecycle.
 - Distributed on npm as **`@salient-data/lore`** (bin `lore`) — run it with
   `npx`/`bunx`, no global install required.
 - The agent bridge is a generated **`.claude/skills/lore/SKILL.md`** plus a tiny

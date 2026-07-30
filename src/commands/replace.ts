@@ -31,6 +31,7 @@ import { compileReplacer, type Replacer } from "../core/replace";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, singleLine, stripAnsiAndControls, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { optionValues, parseCommandArgs } from "./args";
 import { canonicalIdentity, readSource, toRepoRelative, withinRepo } from "./discover";
 import { writeFileAtomic } from "./fswrite";
 
@@ -43,7 +44,7 @@ export interface ReplaceOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `replace`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -167,57 +168,8 @@ export function runReplace(options: ReplaceOptions): number {
  * not itself be a flag), and a `--` ends option parsing so a `find`/`replace` may begin with `-`.
  */
 function parseReplaceArgs(args: readonly string[]): ReplaceArgs {
-  const positionals: string[] = [];
-  const ins: string[] = [];
-  let regex = false;
-  let dryRun = false;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      positionals.push(...args.slice(i + 1));
-      break;
-    }
-    if (arg.startsWith("--") && arg.length > 2) {
-      const eq = arg.indexOf("=");
-      const name = eq >= 0 ? arg.slice(2, eq) : arg.slice(2);
-      const takeValue = (): string => {
-        if (eq >= 0) {
-          return arg.slice(eq + 1);
-        }
-        const next = args[i + 1];
-        if (next === undefined || (next.startsWith("-") && next !== "-")) {
-          throw usage(`option "--${name}" needs a value`, `pass a value, e.g. --${name}=<value>`);
-        }
-        i++;
-        return next;
-      };
-      switch (name) {
-        case "regex":
-          if (eq >= 0) {
-            throw usage("--regex takes no value", "pass --regex on its own");
-          }
-          regex = true;
-          break;
-        case "dry-run":
-          if (eq >= 0) {
-            throw usage("--dry-run takes no value", "pass --dry-run on its own");
-          }
-          dryRun = true;
-          break;
-        case "in":
-          ins.push(takeValue());
-          break;
-        default:
-          throw usage(`unknown option "--${name}"`, "run `lore replace --help` to list options");
-      }
-    } else if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, "run `lore replace --help` to list options");
-    } else {
-      positionals.push(arg);
-    }
-  }
-
+  const parsed = parseCommandArgs(args, "replace");
+  const positionals = parsed.positionals;
   const find = positionals[0];
   if (find === undefined) {
     throw usage("`lore replace` needs a find and a replace argument", 'run `lore replace "<find>" "<replace>"`');
@@ -235,7 +187,13 @@ function parseReplaceArgs(args: readonly string[]): ReplaceArgs {
       "pass exactly a find and a replace; quote values containing spaces, and scope with --in <glob>",
     );
   }
-  return { find, replace, regex, in: ins, dryRun };
+  return {
+    find,
+    replace,
+    regex: parsed.flags.has("regex"),
+    in: [...optionValues(parsed, "in")],
+    dryRun: parsed.flags.has("dry-run"),
+  };
 }
 
 // ── File discovery ─────────────────────────────────────────────────────────────

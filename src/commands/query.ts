@@ -30,6 +30,7 @@ import { type FieldFilter, type QueryResult, query } from "../core/query";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, singleLine, stripAnsiAndControls, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable, renderTruncationLine, truncation } from "../output";
+import { optionValues, parseCommandArgs, singleOptionValue } from "./args";
 
 /** Options for {@link runQuery}; `root` and the streams are injectable for tests. */
 export interface QueryCommandOptions {
@@ -37,7 +38,7 @@ export interface QueryCommandOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `query`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -94,81 +95,33 @@ export function runQuery(options: QueryCommandOptions): number {
 /**
  * Parse `query`'s tokens into the optional text positional and the value flags
  * (`--type`/`--status`/`--limit` at most once each; `--tag`/`--field` repeatable),
- * also accepting the `--flag=value` form. The router has already stripped lore's
+ * also accepting the `--flag=value` form. Commander has already resolved Lore's
  * global flags, so a `--`-prefixed token here is a command flag: an unrecognized one
  * is a `usage` error, as is a repeated single-value flag, a value-less value flag, a
  * non-integer/out-of-range `--limit`, a malformed `--field`, or a second positional.
  * A `--` ends option parsing.
  */
 function parseQueryArgs(args: readonly string[]): QueryArgs {
-  const positionals: string[] = [];
-  let type: string | undefined;
-  let status: string | undefined;
-  let limit: number | undefined;
-  const tags: string[] = [];
-  const fields: FieldFilter[] = [];
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      positionals.push(...args.slice(i + 1));
-      break;
-    }
-    if (arg.startsWith("--") && arg.length > 2) {
-      const body = arg.slice(2);
-      const eq = body.indexOf("=");
-      const name = eq === -1 ? body : body.slice(0, eq);
-      const inline = eq === -1 ? undefined : body.slice(eq + 1);
-      switch (name) {
-        case "type":
-          if (type !== undefined) {
-            throw usage("--type given more than once", "pass --type at most once");
-          }
-          type = readTrimmedValue("--type", inline, args, i);
-          if (inline === undefined) {
-            i++;
-          }
-          break;
-        case "status":
-          if (status !== undefined) {
-            throw usage("--status given more than once", "pass --status at most once");
-          }
-          status = readTrimmedValue("--status", inline, args, i);
-          if (inline === undefined) {
-            i++;
-          }
-          break;
-        case "limit":
-          if (limit !== undefined) {
-            throw usage("--limit given more than once", "pass --limit at most once");
-          }
-          limit = parseCount("--limit", readValue("--limit", inline, args, i));
-          if (inline === undefined) {
-            i++;
-          }
-          break;
-        case "tag":
-          tags.push(readTrimmedValue("--tag", inline, args, i));
-          if (inline === undefined) {
-            i++;
-          }
-          break;
-        case "field":
-          fields.push(parseFieldFilter(readValue("--field", inline, args, i)));
-          if (inline === undefined) {
-            i++;
-          }
-          break;
-        default:
-          throw usage(`unknown option "--${name}"`, "run `lore query --help` to list options");
-      }
-    } else if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, "run `lore query --help` to list options");
-    } else {
-      positionals.push(arg);
-    }
-  }
-
+  const parsed = parseCommandArgs(args, "query");
+  const positionals = parsed.positionals;
+  const trimmed = (name: string): string | undefined => {
+    const value = singleOptionValue(parsed, name);
+    if (value === undefined) return undefined;
+    const result = value.trim();
+    if (result === "") throw usage(`--${name} needs a value`, `pass a value, e.g. \`--${name} orders\``);
+    return result;
+  };
+  const type = trimmed("type");
+  const status = trimmed("status");
+  const rawLimit = singleOptionValue(parsed, "limit");
+  if (rawLimit === "") throw usage("--limit needs a value", "pass a value, e.g. `--limit orders`");
+  const limit = rawLimit === undefined ? undefined : parseCount("--limit", rawLimit);
+  const tags = optionValues(parsed, "tag").map((value) => {
+    const tag = value.trim();
+    if (tag === "") throw usage("--tag needs a value", "pass a value, e.g. `--tag orders`");
+    return tag;
+  });
+  const fields = optionValues(parsed, "field").map(parseFieldFilter);
   if (positionals.length > 1) {
     throw usage(
       `unexpected argument "${positionals[1]}"`,
@@ -229,37 +182,6 @@ function parseCount(flag: string, value: string): number {
  * (`--type --tag`) — is a `usage` error rather than a silently swallowed flag
  * (mirroring `lore graph`/`context`'s value-flag guard).
  */
-function readValue(flag: string, inline: string | undefined, args: readonly string[], i: number): string {
-  if (inline !== undefined) {
-    if (inline === "") {
-      throw usage(`${flag} needs a value`, `pass a value, e.g. \`${flag} orders\``);
-    }
-    return inline;
-  }
-  const next = args[i + 1];
-  if (next === undefined || next === "" || (next.startsWith("-") && next !== "-")) {
-    throw usage(`${flag} needs a value`, `pass a value, e.g. \`${flag} orders\``);
-  }
-  return next;
-}
-
-/**
- * Read a **string-filter** flag's value (`--type`/`--status`/`--tag`): delegates to
- * {@link readValue} for the raw token, then trims surrounding whitespace and rejects a
- * whitespace-only result as the same `usage` error `readValue` gives an empty one —
- * matching `parseFieldFilter`'s empty-after-trim rejection so a padded value (`--type "
- * Story "`) is never silently mismatched against the case-folding-but-not-trimming
- * engine comparator (LORE-232). Deliberately not used for `--limit`, whose `parseCount`
- * rejects a space-padded run and must stay that strict.
- */
-function readTrimmedValue(flag: string, inline: string | undefined, args: readonly string[], i: number): string {
-  const value = readValue(flag, inline, args, i).trim();
-  if (value === "") {
-    throw usage(`${flag} needs a value`, `pass a value, e.g. \`${flag} orders\``);
-  }
-  return value;
-}
-
 // ── Output ─────────────────────────────────────────────────────────────────────
 
 /**

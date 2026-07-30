@@ -38,6 +38,7 @@ import { subgraph } from "../core/query";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, singleLine, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { assertFlagAtMostOnce, parseCommandArgs, singleOptionValue } from "./args";
 
 /** Options for {@link runGraph}; `root` and the streams are injectable for tests. */
 export interface GraphOptions {
@@ -45,7 +46,7 @@ export interface GraphOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `graph`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -101,54 +102,19 @@ export function runGraph(options: GraphOptions): number {
 /**
  * Parse `graph`'s tokens into the optional root `<id>` positional, the boolean
  * `--dot`, and the value flag `--depth <n>` (also accepting `--depth=<n>`). The
- * router has already stripped lore's global flags, so a `--`-prefixed token here
+ * Commander has already resolved Lore's global flags, so a `--`-prefixed token here
  * is a command flag: an unrecognized one is a `usage` error, as is a repeated or
  * value-bearing `--dot`, a repeated/value-less/non-integer/too-large `--depth`, a
  * `--depth` with no root, or a second positional. A `--` ends option parsing. The
  * `<id>` is {@link idFromPath}-normalized so path/`.md`/`./` forms resolve.
  */
 function parseGraphArgs(args: readonly string[]): GraphArgs {
-  const positionals: string[] = [];
-  let dot = false;
-  let depth: number | undefined;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      positionals.push(...args.slice(i + 1));
-      break;
-    }
-    if (arg.startsWith("--") && arg.length > 2) {
-      const body = arg.slice(2);
-      const eq = body.indexOf("=");
-      const name = eq === -1 ? body : body.slice(0, eq);
-      const inline = eq === -1 ? undefined : body.slice(eq + 1);
-      if (name === "dot") {
-        if (inline !== undefined) {
-          throw usage("--dot takes no value", "pass --dot on its own to emit Graphviz DOT");
-        }
-        if (dot) {
-          throw usage("--dot given more than once", "pass --dot at most once");
-        }
-        dot = true;
-      } else if (name === "depth") {
-        if (depth !== undefined) {
-          throw usage("--depth given more than once", "pass --depth at most once");
-        }
-        depth = parseDepth(readValue("--depth", inline, args, i));
-        if (inline === undefined) {
-          i++;
-        }
-      } else {
-        throw usage(`unknown option "--${name}"`, "run `lore graph --help` to list options");
-      }
-    } else if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, "run `lore graph --help` to list options");
-    } else {
-      positionals.push(arg);
-    }
-  }
-
+  const parsed = parseCommandArgs(args, "graph");
+  const positionals = parsed.positionals;
+  assertFlagAtMostOnce(parsed, "dot");
+  const rawDepth = singleOptionValue(parsed, "depth");
+  if (rawDepth === "") throw usage("--depth needs a value", "pass a value, e.g. `--depth 2`");
+  const depth = rawDepth === undefined ? undefined : parseDepth(rawDepth);
   if (positionals.length > 1) {
     throw usage(`unexpected argument "${positionals[1]}"`, "run `lore graph [<id>] [--dot] [--depth <n>]`");
   }
@@ -159,14 +125,17 @@ function parseGraphArgs(args: readonly string[]): GraphArgs {
       "give the concept to bound the radius from, e.g. `lore graph <id> --depth 2`",
     );
   }
-  return { id: raw !== undefined ? idFromPath(raw) : undefined, dot, depth };
+  return { id: raw !== undefined ? idFromPath(raw) : undefined, dot: parsed.flags.has("dot"), depth };
 }
 
 /** Parse a `--depth` value as a non-negative, safe integer (`0` = root only). */
 function parseDepth(value: string): number {
   // Accept only a bare run of digits — Number() would coerce "1.5"/"0x2"/" 2 "/"1e3".
   if (!/^\d+$/.test(value)) {
-    throw usage(`invalid --depth "${value}"`, "pass a non-negative integer, e.g. `--depth 2`");
+    throw usage(
+      `invalid --depth "${value}"`,
+      "pass a non-negative integer, e.g. `--depth 2`; --depth needs a value before a separate flag-looking token",
+    );
   }
   const depth = Number.parseInt(value, 10);
   // A >2^53 run of digits parses without error but loses precision, so the echoed
@@ -183,20 +152,6 @@ function parseDepth(value: string): number {
  * option (`--depth --dot`) — is a `usage` error rather than a silently swallowed
  * flag (mirroring `lore schema`'s value-flag guard).
  */
-function readValue(flag: string, inline: string | undefined, args: readonly string[], i: number): string {
-  if (inline !== undefined) {
-    if (inline === "") {
-      throw usage(`${flag} needs a value`, "pass a value, e.g. `--depth 2`");
-    }
-    return inline;
-  }
-  const next = args[i + 1];
-  if (next === undefined || next === "" || (next.startsWith("-") && next !== "-")) {
-    throw usage(`${flag} needs a value`, "pass a value, e.g. `--depth 2`");
-  }
-  return next;
-}
-
 // ── Output ─────────────────────────────────────────────────────────────────────
 
 /**

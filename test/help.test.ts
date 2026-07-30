@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { run } from "../src/cli";
+import { commandHandlerNames, run } from "../src/cli";
 import { type HelpOptions, renderTopLevelHelp, runHelp } from "../src/commands/help";
 import { LORE_COMMANDS } from "../src/core/agent-bridge";
 import { buildManifest, findManifestCommand, type Manifest, manifestCommandNames } from "../src/core/manifest";
@@ -255,19 +254,10 @@ describe("manifest ⇔ router — bidirectional lockstep guard", () => {
     }
   });
 
-  test("reverse: every dispatch case in cli.ts appears in the manifest", () => {
-    // Grounded in the router source, scoped to the `switch (parsed.command)` block
-    // (so an unrelated switch/case elsewhere in cli.ts can't pollute the set): a
-    // command added to the router but omitted from the manifest fails here.
-    const source = readFileSync(new URL("../src/cli.ts", import.meta.url), "utf8");
-    const switchStart = source.indexOf("switch (parsed.command)");
-    const dispatchBlock = source.slice(switchStart, source.indexOf("default:", switchStart));
-    // Capture the full quoted token (not just [a-z]+) so a hyphenated/digit command can't slip the guard.
-    const dispatched = [...dispatchBlock.matchAll(/case "([^"]+)":/g)].map((m) => m[1] as string);
-    expect(dispatched.length).toBeGreaterThan(10); // sanity: the switch block was located and parsed
-    // Order-sensitive: pins both membership AND the "in cli.ts dispatch order" claim the manifest makes,
-    // which the hand-ordered self-contained array no longer guarantees mechanically.
-    expect([...manifestCommandNames()]).toEqual(dispatched);
+  test("reverse: every Commander handler appears in the manifest", () => {
+    const dispatched = commandHandlerNames();
+    expect(dispatched.length).toBeGreaterThan(10);
+    expect([...manifestCommandNames()]).toEqual([...dispatched]);
   });
 
   test("each command's summary is sourced from LORE_COMMANDS (no re-transcription drift)", () => {
