@@ -45,21 +45,21 @@ No application source code exists yet; your job is to start implementing it.
 
 ## Non-negotiable constraints (easy to get wrong — honor these)
 
-1. **CLI is the primary interface; the MCP server is deferred to v2 (milestone M6). Do NOT build MCP now.**
+1. **CLI is the primary interface; the local MCP server is on hold and unscheduled. M6 is LadybugDB persistent indexing, M7 is the local graph explorer, and M8 is LadybugDB-enabled graph capability work. Do NOT build local MCP without an explicit roadmap reactivation.**
 2. **Backlog integration is JSON-only.** Do **not** add a `--plain` parser.
    PR #790 is merged upstream; until its release tag exists, validate against
    the pinned upstream merge commit described in
    [backlog-json-patch](backlog-json-patch.md).
 3. **All Backlog writes go through the `backlog` CLI** (`task create`/`edit`). Never hand-edit `backlog/**` task or milestone files. lore is the **sole git committer** of `backlog/` (Backlog `auto_commit` stays false).
 4. **OKF cross-links** are relative, URL-encoded, `.md`-suffixed, no leading slash, no wikilinks ([ADR-0010](../adr/0010-multi-consumer-docs-layer.md)). Sub-index files carry no frontmatter; `okf_version` lives only on the root [index](../index.md).
-5. **Core is deterministic: no LLM calls, no vector DB/RAG/chunking, no Rust binaries (e.g. lychee) as runtime deps** ([ADR-0014](../adr/0014-core-has-no-llm-dependency.md), [0015](../adr/0015-lightweight-retrieval-no-vectors.md), [0007](../adr/0007-validation-and-coherence.md)). Link checking is pure-JS (remark).
+5. **Core remains deterministic: no LLM calls, embeddings, vector retrieval, RAG, chunking, or unrelated native tools such as lychee; the planned LadybugDB graph index is derived and must preserve deterministic contracts** ([ADR-0014](../adr/0014-core-has-no-llm-dependency.md), [0015](../adr/0015-lightweight-retrieval-no-vectors.md), [0007](../adr/0007-validation-and-coherence.md)). Link checking is pure-JS (remark).
 6. **Every command** supports `--plain` and `--json` (envelope `{schemaVersion, kind, data}`), uses the semantic exit codes (0/2/3/4/5/6) and `--json` error envelope, writes data to stdout / diagnostics to stderr, and is idempotent. All logic lives in a reusable `core/` library; commands are thin ([ADR-0004](../adr/0004-cli-first-skill-bridge-mcp-deferred.md), [0005](../adr/0005-cli-contract.md)).
 
 ## How to work
 
 1. Run `backlog task list --status "To Do" --json` and pick the next
-   release-relevant, unblocked task; v2 MCP/Confluence/library items remain
-   deliberately deferred.
+   release-relevant, unblocked task. After current release work, follow
+   `LCLI-283.1` → `LCLI-283.2` → `LCLI-283.3`; MCP, Confluence, and library items remain on hold.
 2. Claim it: `backlog task edit LCLI-N -s "In Progress"`. Read its acceptance criteria and linked docs via `backlog task view LCLI-N --plain`.
 3. Implement against the ADRs/spec. Prefer TDD (Bun test). Keep `core/` a library returning structured objects; commands thin.
 4. Validate before committing: `bun test`, `bun run lint`, `bun run typecheck` (set these up in M0). Once `lore check` exists, it is the bundle CI gate.
@@ -69,7 +69,4 @@ No application source code exists yet; your job is to start implementing it.
 
 ## First move
 
-Confirm your understanding by summarizing the build order (BJP → M2; M0 → M1 → M2; M3 → M5;
-M6–M8 deferred) and the JSON-only / CLI-first constraints, then propose starting **M0
-(`LCLI-6`: scaffold package.json / tsconfig / pinned Bun)** in parallel with **BJP (`LCLI-1`:
-fork + `--json` task)**. Then begin.
+Do not restart the completed BJP or M0–M5 work. Confirm the current release task state first. When the user activates the post-MVP local roadmap, begin with `LCLI-283.1.1`, follow the Backlog activation and planning workflow, and complete all M6 gates before starting the M7 explorer. Do not start M8 capabilities or reactivate local MCP early.

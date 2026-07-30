@@ -4,7 +4,7 @@ type: Reference
 title: Tech Stack
 description: The libraries, runtime, and distribution model behind lore — with pinned versions, rationale, and the dependencies deliberately left out.
 tags: [tech-stack, dependencies, runtime, distribution, build]
-summary: lore runs on a pinned Bun + TypeScript stack (hand-rolled CLI parsing, gray-matter, mdast-util-from-markdown, Zod v4, native TOML) and ships with no vector DB, no Rust binary, no TOML lib, and no LLM.
+summary: Lore runs on pinned Bun and TypeScript with deterministic retrieval; M6 plans a derived LadybugDB graph and lexical index, while embeddings, vector retrieval, and local MCP stay excluded or held.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -286,19 +286,31 @@ token) are read from environment variables, never the file.
 
 ---
 
-## 9. MCP SDK — @modelcontextprotocol/sdk (DEFERRED)
+## Planned M6: LadybugDB — `@ladybugdb/core`
+
+| | |
+|---|---|
+| **Package** | `@ladybugdb/core` |
+| **Status** | **Planned for M6; not yet a shipping dependency.** |
+| **Role** | Rebuildable persistent local property-graph and lexical projection for `graph`, `query`, and `context` |
+
+**Rationale.** Repeated retrieval, future interactive exploration, and larger bundles need a persistent index with measurable warm-query and scale behavior. LadybugDB is adopted only as derived local state built from the deterministic export. Git-tracked OKF and Backlog records remain authoritative; indexed and in-memory paths must pass the same deterministic conformance fixtures. No embeddings, vector retrieval, inferred edges, raw public Cypher, or hidden user-global database are introduced. Native packaging, schema migration, locking, corruption recovery, memory, disk, and benchmark thresholds are M6 release gates. See [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md) and the [local graph roadmap](../specs/local-graph-platform-roadmap.md).
+
+---
+
+## 9. MCP SDK — @modelcontextprotocol/sdk (ON HOLD)
 
 | | |
 |---|---|
 | **Package** | `@modelcontextprotocol/sdk` |
-| **Status** | **Deferred to v2.** Not shipped in v1. |
+| **Status** | **On hold and unscheduled.** Not shipped. |
 | **Role (when built)** | A stdio MCP transport exposing the *same* `core/` functions the CLI calls |
 
 **Rationale.** The **CLI is primary** for both humans and Claude Code. The MCP
-server is a secondary, deferred *transport* over the identical core functions —
-it adds no new behavior, only a different call path. Because it is deferred, the
-SDK is **not a v1 runtime dependency**; it enters the dependency set only when the
-M6 milestone is built. The intended tool/resource surface is documented now (so
+server is a secondary, on-hold *transport* over the identical core functions —
+it adds no new behavior, only a different call path. The SDK is **not a runtime
+dependency** and enters the dependency set only after an explicit roadmap
+reactivation following M6–M8. The intended tool/resource surface is documented now (so
 the core API is designed transport-agnostic) in
 [mcp-tools.md](mcp-tools.md). Until then, the agent bridge is the generated
 `.claude/skills/lore/SKILL.md`, a small CLAUDE.md nudge, and `lore instructions`
@@ -313,7 +325,7 @@ surface, or a determinism/portability hazard.
 
 | Not used | What we'd "gain" | Why we refuse it |
 |---|---|---|
-| **Vector DB / embeddings / RAG / chunker** (e.g. a local vector store) | semantic retrieval | [`lore query`](cli-surface.md) is in-memory **BM25-style full-text + frontmatter filters**; [`lore context`](cli-surface.md) is **deterministic, depth-bounded graph expansion**. No vectors means no index to build, no model to load, reproducible results, and a deterministic core. |
+| **Embedding/vector retrieval, RAG, or chunker** | semantic retrieval | Lore retains deterministic lexical ranking and authored graph expansion. M6 adds a LadybugDB property-graph and lexical index, not embeddings or a vector index; no model loads or network calls enter retrieval, and indexed output must conform to the reference implementation. |
 | **Rust link checker at runtime** (e.g. **lychee**) | fast external link checks | We use a pure-JS, hand-rolled validator (§6) on the AST we already have — no `remark-validate-links` dependency either. No Rust toolchain, no native binary to ship per platform, no subprocess. External liveness stays opt-in (`--external`). See [ADR-0007](../adr/0007-validation-and-coherence.md). |
 | **A TOML parsing library** (`@iarna/toml`, `smol-toml`, etc.) | TOML parsing | Bun parses TOML natively (§8). Adding a library would duplicate a runtime capability. |
 | **An LLM / model SDK in `core/`** | "smart" summaries, ranking, link suggestions | The **core is deterministic by mandate**. No network, no model, no nondeterminism. The `summary` field is author-written; the chars/4 token figure is an explicitly *labeled estimate*, not a model call. Any future LLM use lives outside `core/` and is never on the validate/check/sync path. |
@@ -419,8 +431,9 @@ adoption are described in
 | Internal link & anchor validation | *(hand-rolled over the parsed mdast — §6)* | — | yes |
 | Schema + JSON Schema emit | Zod **v4** | `^4` | yes |
 | Config parsing | *(Bun native TOML)* | — | yes |
-| MCP transport | @modelcontextprotocol/sdk | — | **deferred (v2)** |
-| Confluence publish | *(plain `fetch`)* | — | **deferred** |
+| Local graph and lexical projection | `@ladybugdb/core` | pin during M6 implementation | **planned M6** |
+| MCP transport | @modelcontextprotocol/sdk | — | **on hold** |
+| Confluence publish | *(plain `fetch`)* | — | **on hold** |
 
 For how these dependencies are wired together at runtime, see
 [architecture.md](architecture.md). For the build/distribution decision in full,

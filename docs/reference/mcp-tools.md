@@ -1,29 +1,29 @@
 ---
 # yaml-language-server: $schema=../../.lore/schemas/Reference.schema.json
 type: Reference
-title: "MCP tools and resources (DEFERRED v2 design)"
-description: The pre-specified design for lore's deferred Model Context Protocol server — the tools (lore_new_concept, lore_link_tasks, lore_story_status, lore_sync, lore_check, lore_graph, lore_query, lore_context, lore_publish) and resources (lore://bundle/index, lore://concept/{id}, lore://graph, lore://context/{id}) mapping to the same core functions the CLI drives, over stdio, with structuredContent reusing the --json serializer and strict stdout hygiene. Documents why MCP is secondary to the CLI and deferred per ADR-0004.
-tags: [reference, mcp, deferred, agents, transport, v2, stdio, claude-code]
-summary: Records the deferred local MCP design that would wrap lore core functions while keeping the CLI as the primary surface.
+title: "MCP tools and resources (ON HOLD design)"
+description: The pre-specified design for lore's deferred Model Context Protocol server — the tools (lore_new_concept, lore_link_tasks, lore_story_status, lore_sync, lore_check, lore_graph, lore_query, lore_context, lore_publish) and resources (lore://bundle/index, lore://concept/{id}, lore://graph, lore://context/{id}) mapping to the same core functions the CLI drives, over stdio, with structuredContent reusing the --json serializer and strict stdout hygiene. Documents why MCP is secondary to the CLI, records the retained contract, and marks implementation on hold under ADR-0018.
+tags: [reference, mcp, deferred, on-hold, agents, transport, stdio, claude-code]
+summary: Retains the on-hold local MCP design as an unscheduled transport over the same core while LadybugDB indexing, the explorer, and graph capabilities take priority.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
-# MCP tools and resources (DEFERRED v2 design)
+# MCP tools and resources (ON HOLD design)
 
-> **Status: DEFERRED, not built.** The MCP server is a **secondary** transport
-> scheduled as milestone **M6 (deferred)** in the build order — after the CLI,
-> the Backlog.md coupling, navigability/search/refactoring, the agent bridge, and
-> the browsable consumers all ship. This document specifies the *intended* shape
-> so the contract is stable when work begins; **nothing here exists in the
-> initial release.** The primary, shipping agent surface today is the **CLI plus
-> the generated `.claude/skills/lore/SKILL.md` bridge** — see
-> [agent onboarding](../runbooks/agent-onboarding.md).
+> **Status: ON HOLD, not built.** The MCP server remains a **secondary** local
+> transport, but it is unscheduled and no longer occupies M6. M6–M8 now deliver
+> LadybugDB persistent indexing, the local graph explorer, and LadybugDB-enabled
+> capabilities in that order. `LCLI-42` retains this intended contract without
+> blocking or depending on those milestones. The primary shipping agent surface
+> remains the **CLI plus the generated `.claude/skills/lore/SKILL.md` bridge**;
+> see [agent onboarding](../runbooks/agent-onboarding.md) and the
+> [local graph roadmap](../specs/local-graph-platform-roadmap.md).
 
 This is a forward-looking design reference. It records the tools, resources,
 transport, and serialization contract the `lore mcp` server **will** expose when
 it is built, and — equally important — *why* it is deferred behind the CLI. The
 decision and its evidence are recorded in
-[ADR-0004: CLI-first; SKILL.md bridge; MCP deferred](../adr/0004-cli-first-skill-bridge-mcp-deferred.md).
+[ADR-0004: CLI-first; SKILL.md bridge; MCP deferred](../adr/0004-cli-first-skill-bridge-mcp-deferred.md); [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md) places implementation on hold behind the local graph roadmap.
 
 The governing constraint, stated once and load-bearing throughout: **the MCP
 server is only a transport.** Every tool and resource below is a thin wrapper
@@ -33,12 +33,12 @@ door, never a second source of truth.
 
 ---
 
-## 1. Why MCP is secondary and deferred
+## 1. Why MCP is secondary and on hold
 
 The v0.2 spec (`lore-spec.md` §6) originally treated the MCP server as a
 co-primary, first-class surface. We re-evaluated that against 2026 evidence on
 how agents actually consume tooling and what it costs in context, and demoted MCP
-to a deferred v2 transport. The full rationale is in
+to a secondary transport and later placed it on hold without a scheduled milestone. The original rationale is in
 [ADR-0004](../adr/0004-cli-first-skill-bridge-mcp-deferred.md); the summary:
 
 - **Idle token tax.** A registered MCP server injects its full tool and resource
@@ -61,7 +61,7 @@ to a deferred v2 transport. The full rationale is in
   MCP transport would add recurring per-turn cost and a second contract to
   maintain in exchange for marginal ergonomic gain.
 
-Deferred is **not** dropped. Because the core returns plain data and the CLI
+On hold is **not** dropped. Because the core returns plain data and the CLI
 commands are thin, adding the MCP surface later is **additive** — not a refactor —
 and inherits identical behavior. This reference exists so that addition has a
 pre-agreed contract.

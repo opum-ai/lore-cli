@@ -611,12 +611,16 @@ This design is built in milestone order (see product spec
 | **M3** | Navigability/search/refactoring: index/log gen, `graph`, `query`, `context`, `replace`, `rename`, `supersede` |
 | **M4** | Agent bridge: generated `SKILL.md`, CLAUDE.md nudge, `lore instructions` ([agent onboarding](../runbooks/agent-onboarding.md)) |
 | **M5** | Browsable + graph consumers: MkDocs/Docusaurus/Obsidian scaffolds |
-| **M6–M8** | **Deferred** — MCP server ([MCP tools](../reference/mcp-tools.md)), Confluence publish, Confluence mirror |
+| **M6** | LadybugDB persistent local projection, indexed graph/query/context compatibility, recovery, packaging, benchmarks, and scale gates ([ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md)) |
+| **M7** | Read-only offline-capable local graph explorer over the stable indexed projection |
+| **M8** | Explicit multi-repository workspaces plus bounded path, impact, change, and provenance capabilities |
+| **Hold** | Local MCP ([MCP tools](../reference/mcp-tools.md)), Confluence publishing/mirror, and importable-library work remain retained but unscheduled |
 
 ## See also
 
 - [Product spec — `lore-spec.md`](../../lore-spec.md) — the narrative origin this design elaborates
 - [System architecture](../reference/architecture.md) — the layered map this spec implements
+- [Local graph platform roadmap](local-graph-platform-roadmap.md) — the active M6–M8 sequence and task gates
 - [Tech stack](../reference/tech-stack.md) — Bun, a hand-rolled CLI router, gray-matter, mdast-util-from-markdown, Zod
 - [CLI surface](../reference/cli-surface.md) and [CLI contract](../reference/cli-contract.md)
 - [Backlog JSON schema](../reference/backlog-json-schema.md) and [Backlog CLI contract](../reference/backlog-cli-contract.md)

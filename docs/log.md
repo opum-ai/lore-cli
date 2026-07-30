@@ -19,6 +19,7 @@
 - 2026-07-28T21:23:02-05:00 fea4509a7a2a9be13a197bff638f03b6bcdb9717 chore: migrate backlog namespace to lcli
 - 2026-07-28T21:30:33-05:00 84fa4bd966db5d64bea9ddcb729b4a768a8839df ci: expose strict Lore composite action
 - 2026-07-28T21:47:51-05:00 05005738d705830a9029b35a82cdda6152458e9c fix: build pinned Backlog for strict action
+- 2026-07-28T21:54:50-05:00 c2109d94f74f62402cb5f382b5653659adde865e docs: finalize strict action task
 
 ## docs/.obsidian
 

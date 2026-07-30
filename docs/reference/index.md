@@ -7,7 +7,7 @@
 - [lore CLI contract (the agent/CI API)](cli-contract.md)
 - [CLI surface: the complete lore command catalog](cli-surface.md)
 - [Consumer compatibility](consumer-compatibility.md)
-- [MCP tools and resources (DEFERRED v2 design)](mcp-tools.md)
+- [MCP tools and resources (ON HOLD design)](mcp-tools.md)
 - [OKF conformance](okf-conformance.md)
 - [OKF projection contract](okf-projection-contract.md)
 - [Portable Markdown — the subset lore guarantees](portable-markdown.md)

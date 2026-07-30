@@ -51,6 +51,7 @@ How lore is built and how its pieces fit together.
 - [lore design spec](specs/lore-design.md) — the end-to-end design: command
   surface, core data flow, the Backlog.md coupling, and how the OKF bundle is
   produced and kept coherent.
+- [Local graph platform roadmap](specs/local-graph-platform-roadmap.md) — the active M6–M8 sequence: LadybugDB persistent indexing, local graph explorer, then indexed graph capabilities.
 - [Architecture](reference/architecture.md) — the deterministic-core /
   thin-transport shape: `core/` library, the CLI as primary transport, the
   Backlog and Confluence adapters, and `.lore/` state.
@@ -88,7 +89,7 @@ docs and tools rely on.
 - [OKF conformance](reference/okf-conformance.md) — how lore conforms to OKF
   v0.1, lore's "story convention" producer profile, and the deliberate
   override of OKF §5's `/`-absolute link recommendation.
-- [MCP tools](reference/mcp-tools.md) — the **deferred (v2)** MCP server design:
+- [MCP tools](reference/mcp-tools.md) — the **on-hold** local MCP design:
   the tools and resources it will expose over the same core functions.
 
 ## ADRs
@@ -112,8 +113,10 @@ consequences. See the [ADR log](adr/index.md) for the full, ordered index.
 - [0012 — Backlog operational coexistence & git ownership](adr/0012-backlog-coexistence-git-ownership.md)
 - [0013 — `.lore/` state directory](adr/0013-lore-state-directory.md)
 - [0014 — Core lore has no LLM dependency](adr/0014-core-has-no-llm-dependency.md)
-- [0015 — Lightweight retrieval: full-text + graph context, no vectors](adr/0015-lightweight-retrieval-no-vectors.md)
+- [0015 — Lightweight retrieval: full-text + graph context, no vectors — superseded](adr/0015-lightweight-retrieval-no-vectors.md)
 - [0016 — Confluence publish: one-way, Cloud/ADF, deferred](adr/0016-confluence-one-way-publish-deferred.md)
+- [0017 — Interactive init wizard, TTY-gated](adr/0017-interactive-init-wizard-tty-gated.md)
+- [0018 — Persistent local graph projection with LadybugDB](adr/0018-persistent-local-graph-projection-with-ladybugdb.md)
 
 ## Runbooks
 

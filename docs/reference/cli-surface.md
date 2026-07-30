@@ -610,7 +610,7 @@ lore --version            # version string
 These are part of the designed surface but **not implemented in the initial
 milestones**. They are documented so the contract is stable when they land.
 
-### `publish confluence` — DEFERRED
+### `publish confluence` — ON HOLD
 
 One-way publish of the bundle to Confluence (Cloud / ADF target). Isolated
 adapter with **zero core dependency**; Server/DC is deferred-not-dropped. See
@@ -622,18 +622,18 @@ lore publish confluence [paths…] --space KEY --parent PAGE_ID --dry-run --all 
 
 | | |
 |---|---|
-| **Status** | implementation deferred (M7) |
+| **Status** | on hold; retained but unscheduled |
 | **Args** | optional `[paths…]` (default: changed-only) |
 | **Key flags** | `--space <KEY>` · `--parent <PAGE_ID>` · `--all` · `--prune` · `--dry-run` |
 | **Output** | `kind: publish.result` — created/updated/skipped pages |
 | **Exit** | `0` ok · `4` auth/token denied · `5` remote version conflict |
 
-### `mcp` — DEFERRED (v2)
+### `mcp` — ON HOLD
 
 Start the lore MCP server (stdio transport) exposing the same `core/` functions
 as agent-callable tools/resources. Secondary to the CLI. Full design in the
 [MCP tools reference](./mcp-tools.md); decision in
-[ADR-0004](../adr/0004-cli-first-skill-bridge-mcp-deferred.md).
+[ADR-0004](../adr/0004-cli-first-skill-bridge-mcp-deferred.md), with the current hold and successor sequence controlled by [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md).
 
 ```
 lore mcp
@@ -641,7 +641,7 @@ lore mcp
 
 | | |
 |---|---|
-| **Status** | deferred to v2 (M6) |
+| **Status** | on hold; retained by LCLI-42 without a scheduled milestone |
 | **Args** | none |
 | **Key flags** | (transport flags TBD with the server) |
 | **Output** | a long-running stdio MCP server (not a one-shot payload) |

@@ -2,9 +2,9 @@
 # yaml-language-server: $schema=../../.lore/schemas/reference.schema.json
 type: Reference
 title: System architecture
-description: How lore is layered — the CLI as the primary surface over a deterministic core/ library, isolated adapters for Backlog.md and Confluence, and a deferred MCP transport that reuses the same core.
-tags: [architecture, core, adapters, cli, mcp, design]
-summary: lore is a thin CLI over a deterministic core/ library, with Backlog.md and Confluence behind isolated adapters and a deferred MCP transport reusing the same core.
+description: How lore is layered — the CLI over a deterministic core, planned LadybugDB derived projection, isolated adapters, and an on-hold MCP transport that would reuse the same behavior.
+tags: [architecture, core, adapters, cli, mcp, ladybugdb, local-graph, design]
+summary: lore is a deterministic CLI whose next local layer is a rebuildable LadybugDB projection; Backlog remains isolated and local MCP is retained on hold as a future transport.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -32,7 +32,7 @@ knows about a higher one.
 flowchart TD
     subgraph Surfaces["Surfaces (transports)"]
         CLI["cli.ts — hand-rolled CLI entrypoint<br/>PRIMARY"]
-        MCP["mcp.ts — MCP server<br/>DEFERRED (v2)"]
+        MCP["mcp.ts — MCP server<br/>ON HOLD"]
         SKILL[".claude/skills/lore/SKILL.md<br/>+ CLAUDE.md nudge (generated)"]
     end
 
@@ -57,7 +57,7 @@ flowchart TD
 
     subgraph Adapters["adapters/ — isolated, lazy-loaded"]
         BACKLOG["backlog.ts<br/>(backlog … --json)"]
-        CONFLUENCE["confluence.ts<br/>DEFERRED (v2)"]
+        CONFLUENCE["confluence.ts<br/>ON HOLD"]
     end
 
     CLI --> CMD
@@ -73,21 +73,21 @@ flowchart TD
     RECONCILE --> BACKLOG
     MANAGED --> BACKLOG
     CMD --> Adapters
-    CONFLUENCE -. "v2, zero core dep" .-> Core
+    CONFLUENCE -. "on hold, zero core dep" .-> Core
 ```
 
 | Layer | What lives here | Knows about |
 |---|---|---|
-| **Surfaces** | `cli.ts` (primary), `mcp.ts` (deferred), generated `SKILL.md` + CLAUDE.md nudge | commands |
+| **Surfaces** | `cli.ts` (primary), `mcp.ts` (on hold), generated `SKILL.md` + CLAUDE.md nudge | commands |
 | **Commands** | `commands/*.ts` — argument parsing glue, output formatting, exit codes | core, state, adapters |
 | **Core** | `concept`, `bundle`, `managed-block`, `reconcile`, `links`, `query`, `context`, `schema` | schema; the filesystem; the backlog adapter (for reconcile/managed-block) |
 | **State** | `state.ts` — `.lore/` read/write; lore as sole git committer of `backlog/` | filesystem, git |
-| **Adapters** | `backlog.ts` (JSON), `confluence.ts` (deferred) | external processes / HTTP only |
+| **Adapters** | `backlog.ts` (JSON), `confluence.ts` (on hold) | external processes / HTTP only |
 
 The shape mirrors spec [§8 project structure](../specs/lore-design.md), with two
 deliberate departures driven by the locked decisions: the Backlog adapter is
 **JSON-only** (no `--plain` text parser — see §3), and the **MCP server is
-secondary and deferred to v2** (see §6).
+secondary and on hold** (see §6). The planned M6 LadybugDB projection is derived state below the existing command contract, not a new source of truth.
 
 ## 2. The CLI is primary
 
@@ -272,6 +272,10 @@ with truncation hints (e.g. `showing 30 of 120 — narrow with --type story`).
 `commands/context` → `context.ts` walks the graph from the given id within the
 `--max-tokens` budget and emits body + neighbor summaries. Both are pure reads.
 
+### Planned M6 indexed read path
+
+M6 keeps these command and core contracts but adds a versioned LadybugDB projection built from the deterministic export. A fresh projection can serve graph, query, and context; the current in-memory path remains the conformance oracle and documented fallback. Git and OKF remain authoritative. Database files are ignored, disposable, and rebuilt on stale fingerprints, incompatible schema, or corruption. Deterministic ordering, lexical semantics, token budgets, errors, and provenance must match across paths. See [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md) and the [local graph roadmap](../specs/local-graph-platform-roadmap.md).
+
 ### `lore graph / rename / supersede / replace`
 All reuse `bundle.ts`'s graph. `graph` emits the cross-link graph (`--format
 dot|json`) with token estimates; `rename` and `supersede` rewrite **all inbound
@@ -279,19 +283,13 @@ links and frontmatter refs** through the graph and set
 `superseded_by`/`supersedes`/`status`; `replace` does literal/regex find-replace
 (`--in` glob, `--dry-run`) and **skips lore-managed regions**.
 
-## 6. The deferred MCP transport (`mcp.ts`)
+## 6. The on-hold MCP transport (`mcp.ts`)
 
-The MCP server is **secondary and deferred to v2**
-([ADR-0004](../adr/0004-cli-first-skill-bridge-mcp-deferred.md)). When built, it
-is *only a transport*: each MCP tool is a thin wrapper over the **same core
-functions** the CLI commands call — no duplicated logic, no second source of
-truth. The deferred tool/resource design is documented in the
-[MCP tools reference](mcp-tools.md). Because core returns plain data and commands
-are thin, adding the MCP surface is additive, not a refactor.
+The MCP server is **secondary, retained, and on hold**. ADR-0004 records the original CLI-first deferral; [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md) removes it from the scheduled M6 slot. If reactivated, it remains only a transport: each MCP tool wraps the same core functions as the CLI with no duplicated logic or second source of truth. The retained contract is documented in the [MCP tools reference](mcp-tools.md). No M6–M8 task depends on MCP.
 
 ## 7. The agent bridge (primary, today)
 
-Until the MCP transport ships, the agent surface is the CLI plus three generated
+While the MCP transport remains on hold, the agent surface is the CLI plus three generated
 artifacts that teach an agent to drive it:
 
 - **`.claude/skills/lore/SKILL.md`** — a generated Claude Code skill describing
