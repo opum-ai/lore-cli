@@ -25,6 +25,7 @@
 - 2026-07-30T10:40:14-05:00 1e2e6dc4c9f59328cf22b6ca3bb13e49ce111f6b docs: record dependency boundary audit
 - 2026-07-30T11:35:54-05:00 6ed37e2c9ccf260eeaf933ea47aab4a5d1d2272a refactor: delegate SSRF IP parsing to ipaddr.js
 - 2026-07-30T11:38:19-05:00 c0d0e442f0d900c8fa65f2e30d3672027b2e324a docs: advance dependency campaign to LCLI-287
+- 2026-07-30T11:54:18-05:00 60c953c7db84ffed7376ee72663eaf9c5641abff refactor: delegate heading slugging to github-slugger
 
 ## docs/.obsidian
 
@@ -120,6 +121,7 @@
 - 2026-07-30T09:49:16-05:00 1520b894f0c4af7d36bf959069bb1e189963981f docs: sequence Commander before indexed retrieval
 - 2026-07-30T10:40:14-05:00 1e2e6dc4c9f59328cf22b6ca3bb13e49ce111f6b docs: record dependency boundary audit
 - 2026-07-30T11:35:54-05:00 6ed37e2c9ccf260eeaf933ea47aab4a5d1d2272a refactor: delegate SSRF IP parsing to ipaddr.js
+- 2026-07-30T11:54:18-05:00 60c953c7db84ffed7376ee72663eaf9c5641abff refactor: delegate heading slugging to github-slugger
 
 ## docs/runbooks
 
