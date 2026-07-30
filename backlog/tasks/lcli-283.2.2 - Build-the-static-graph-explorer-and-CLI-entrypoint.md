@@ -4,6 +4,7 @@ title: Build the static graph explorer and CLI entrypoint
 status: To Do
 assignee: []
 created_date: '2026-07-30 13:33'
+updated_date: '2026-07-30 14:40'
 labels:
   - graph-explorer
   - frontend
@@ -11,6 +12,7 @@ labels:
 milestone: m-14
 dependencies:
   - LCLI-283.2.1
+  - LCLI-283.1
 documentation:
   - docs/specs/local-graph-platform-roadmap.md
 parent_task_id: LCLI-283.2

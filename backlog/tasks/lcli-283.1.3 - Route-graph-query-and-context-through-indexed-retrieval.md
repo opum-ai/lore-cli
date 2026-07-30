@@ -4,6 +4,7 @@ title: Route graph query and context through indexed retrieval
 status: To Do
 assignee: []
 created_date: '2026-07-30 13:33'
+updated_date: '2026-07-30 14:40'
 labels:
   - ladybugdb
   - retrieval
@@ -11,6 +12,7 @@ labels:
 milestone: m-13
 dependencies:
   - LCLI-283.1.2
+  - LCLI-284
 documentation:
   - docs/specs/local-graph-platform-roadmap.md
 parent_task_id: LCLI-283.1
