@@ -31,7 +31,7 @@ knows about a higher one.
 ```mermaid
 flowchart TD
     subgraph Surfaces["Surfaces (transports)"]
-        CLI["cli.ts — hand-rolled CLI entrypoint<br/>PRIMARY"]
+        CLI["cli.ts — CLI entrypoint<br/>hand-rolled now; Commander planned M6<br/>PRIMARY"]
         MCP["mcp.ts — MCP server<br/>ON HOLD"]
         SKILL[".claude/skills/lore/SKILL.md<br/>+ CLAUDE.md nudge (generated)"]
     end
@@ -91,9 +91,12 @@ secondary and on hold** (see §6). The planned M6 LadybugDB projection is derive
 
 ## 2. The CLI is primary
 
-`cli.ts` is a [hand-rolled CLI router](tech-stack.md) (Commander is deferred; see tech-stack.md §3). It owns global flags, dispatches
-to a `commands/*.ts` handler, and renders the handler's result in one of three
-output modes with strict precedence `--json > --plain > pretty`:
+`cli.ts` is currently a [hand-rolled CLI router](tech-stack.md). `LCLI-284`
+migrates parsing, dispatch, and generated help to Commander after the M6
+LadybugDB schema freeze and before indexed command routing. Both implementations
+own global flags, dispatch to a `commands/*.ts` handler, and render the
+handler's result in one of three output modes with strict precedence
+`--json > --plain > pretty`:
 
 - **pretty** — color on a TTY, the default for humans;
 - **--plain** — ANSI-free stable text, auto-selected when stdout is not a TTY;
@@ -111,6 +114,12 @@ Commands are thin. A handler parses flags, calls one or more **core** functions
 never embed business logic that a future MCP tool would need to reimplement —
 that logic lives in core, so the deferred MCP transport (§6) is genuinely the
 *same code* behind a different door.
+
+Commander does not move business rules into the surface layer. The migration
+must preserve injected streams, the centralized `LoreError` seam, semantic exit
+codes, and the capability manifest. It may replace the duplicated tokenizers in
+`commands/*.ts`, but command handlers remain adapters over structured core
+inputs and results.
 
 ## 3. The Backlog.md adapter (`adapters/backlog.ts`)
 
@@ -274,7 +283,17 @@ with truncation hints (e.g. `showing 30 of 120 — narrow with --type story`).
 
 ### Planned M6 indexed read path
 
-M6 keeps these command and core contracts but adds a versioned LadybugDB projection built from the deterministic export. A fresh projection can serve graph, query, and context; the current in-memory path remains the conformance oracle and documented fallback. Git and OKF remain authoritative. Database files are ignored, disposable, and rebuilt on stale fingerprints, incompatible schema, or corruption. Deterministic ordering, lexical semantics, token budgets, errors, and provenance must match across paths. See [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md) and the [local graph roadmap](../specs/local-graph-platform-roadmap.md).
+M6 keeps these command and core contracts but adds a versioned LadybugDB
+projection built from the deterministic export. After the schema contract is
+frozen, Commander migration and projection construction may proceed
+independently; indexed command routing waits for both. A fresh projection can
+serve graph, query, and context; the current in-memory path remains the
+conformance oracle and documented fallback. Git and OKF remain authoritative.
+Database files are ignored, disposable, and rebuilt on stale fingerprints,
+incompatible schema, or corruption. Deterministic ordering, lexical semantics,
+token budgets, errors, and provenance must match across paths. See
+[ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md) and
+the [local graph roadmap](../specs/local-graph-platform-roadmap.md).
 
 ### `lore graph / rename / supersede / replace`
 All reuse `bundle.ts`'s graph. `graph` emits the cross-link graph (`--format
@@ -320,7 +339,7 @@ beyond the two narrow seams it needs:
 ## See also
 
 - [lore design spec](../specs/lore-design.md) — the full design, including spec §8 structure
-- [Tech stack](tech-stack.md) — Bun, a hand-rolled CLI router, gray-matter, mdast-util-from-markdown, Zod
+- [Tech stack](tech-stack.md) — Bun, the current hand-rolled/approved Commander CLI transition, gray-matter, mdast-util-from-markdown, Zod
 - [CLI surface](cli-surface.md) and [CLI contract](cli-contract.md)
 - [Backlog JSON schema](backlog-json-schema.md) and [Backlog CLI contract](backlog-cli-contract.md)
 - [Consumer compatibility](consumer-compatibility.md) and [portable markdown](portable-markdown.md)

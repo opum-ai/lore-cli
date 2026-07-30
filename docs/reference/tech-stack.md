@@ -4,7 +4,7 @@ type: Reference
 title: Tech Stack
 description: The libraries, runtime, and distribution model behind lore — with pinned versions, rationale, and the dependencies deliberately left out.
 tags: [tech-stack, dependencies, runtime, distribution, build]
-summary: Lore runs on pinned Bun and TypeScript with deterministic retrieval; M6 plans a derived LadybugDB graph and lexical index, while embeddings, vector retrieval, and local MCP stay excluded or held.
+summary: Lore runs on pinned Bun and TypeScript; M6 schedules Commander and a derived LadybugDB index while vectors and local MCP remain excluded or held.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -119,24 +119,28 @@ build-/dev-time concern, not a runtime one.
 
 ---
 
-## 3. CLI framework — a hand-rolled router (Commander deferred)
+## 3. CLI framework — hand-rolled today; Commander approved for M6
 
 | | |
 |---|---|
-| **Package** | *(none — hand-rolled in `src/cli.ts`)* |
+| **Current package** | *(none — hand-rolled in `src/cli.ts` and command handlers)* |
+| **Approved target** | Commander (`LCLI-284`; version pinned during implementation) |
 | **Role** | Argument parsing, subcommand dispatch, help text, the entrypoint in `src/cli.ts` |
 
-**Rationale.** Backlog.md uses Commander, and it remains the **named eventual
-entrypoint** for lore too (see `src/cli.ts`'s own module docstring) — but
-adopting it is **deferred until the command count justifies the dependency**.
-While the command surface stays small, a hand-rolled parser keeps the package
-dependency-neutral with respect to the isolated-linker / EXDEV packaging
-constraints ([ADR-0001](../adr/0001-runtime-build-distribution.md)), at the
-cost of a bit more hand-written flag-splitting code per command (mitigated by
-the shared tokenizer in `commands/args.ts` most commands reuse). Every command
-still gets the subcommand structure (`lore new`, `lore validate`, `lore
-check`, …) documented in [cli-surface.md](cli-surface.md), and one stable
-seam — `src/cli.ts`'s router — enforces the cross-cutting output flags:
+**Current state and rationale.** The original dependency-free router was a
+reasonable fit for a small surface, and it remains the shipping implementation.
+The command count and the number of value-bearing/repeatable option parsers now
+justify the dependency, especially before indexed retrieval and the explorer
+add more command wiring. `LCLI-284` therefore approves Commander as an M6
+preparation task: it starts after `LCLI-283.1.1` freezes the LadybugDB contract
+and must finish before `LCLI-283.1.3` wires indexed `graph`, `query`, and
+`context`.
+
+Commander replaces parsing, dispatch, and help duplication; it does not own
+Lore's process lifecycle or machine contract. The migration must keep Lore's
+injected writers and centralized error/output seams rather than allowing
+Commander to call `process.exit` or write around them. The resulting entrypoint
+must preserve:
 
 - **Output-mode precedence** `--json > --plain > pretty`, with `--plain` forced
   automatically when stdout is non-TTY. Defined in [cli-contract.md](cli-contract.md).
@@ -425,7 +429,7 @@ adoption are described in
 |---|---|---|---|
 | Runtime / build / spawn / TOML / test | Bun | **pinned** (`.bun-version`) | yes |
 | Language | TypeScript | dev-/typecheck-only | yes |
-| CLI parsing | *(hand-rolled; Commander deferred — §3)* | — | yes |
+| CLI parsing | *(hand-rolled today)* → Commander (`LCLI-284`, §3) | pin during M6 implementation | current / planned M6 |
 | Frontmatter parse/serialize | gray-matter | `^` | yes |
 | Markdown AST surgery & links | mdast-util-from-markdown (mdast), parse-only | `^` | yes |
 | Internal link & anchor validation | *(hand-rolled over the parsed mdast — §6)* | — | yes |

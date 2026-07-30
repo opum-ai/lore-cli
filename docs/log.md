@@ -20,6 +20,7 @@
 - 2026-07-28T21:30:33-05:00 84fa4bd966db5d64bea9ddcb729b4a768a8839df ci: expose strict Lore composite action
 - 2026-07-28T21:47:51-05:00 05005738d705830a9029b35a82cdda6152458e9c fix: build pinned Backlog for strict action
 - 2026-07-28T21:54:50-05:00 c2109d94f74f62402cb5f382b5653659adde865e docs: finalize strict action task
+- 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
 
 ## docs/.obsidian
 
@@ -56,6 +57,7 @@
 - 2026-07-26T21:25:31-05:00 0f15038ddbe6f7e0adf3fc755c1c71562227034b fix(wave2-integration): correct cd-carve-out misattribution and commaJoin universality claim
 - 2026-07-26T21:25:31-05:00 dccfabfe1eea13ceeee034c70cc21ab68d52c8b1 docs(wave2-integration): fix label-flag comment/test contradictions and ADR-0002 item 6
 - 2026-07-28T21:23:02-05:00 fea4509a7a2a9be13a197bff638f03b6bcdb9717 chore: migrate backlog namespace to lcli
+- 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
 
 ## docs/reference
 
@@ -109,6 +111,7 @@
 - 2026-07-28T08:20:58-05:00 6ceccfb6b36ecd6679d85edec33252364c046094 feat: add Claude and Codex init onboarding
 - 2026-07-28T12:22:07-05:00 7d5d3835e2028d3de6b4b7742817447819aac88c fix: close LORE-281 review gaps
 - 2026-07-28T21:23:02-05:00 fea4509a7a2a9be13a197bff638f03b6bcdb9717 chore: migrate backlog namespace to lcli
+- 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
 
 ## docs/runbooks
 
@@ -151,6 +154,7 @@
 - 2026-07-27T07:17:12-05:00 047857cc4bb96060430c1735c5b6e46fd268cdf4 feat: add deterministic OKF projection export
 - 2026-07-28T08:20:58-05:00 6ceccfb6b36ecd6679d85edec33252364c046094 feat: add Claude and Codex init onboarding
 - 2026-07-28T21:23:02-05:00 fea4509a7a2a9be13a197bff638f03b6bcdb9717 chore: migrate backlog namespace to lcli
+- 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
 
 ## docs/specs
 
@@ -163,3 +167,4 @@
 - 2026-07-18T22:08:41-05:00 6475cc54afcc5c387924b774397e868068d532c4 docs(LORE-52): reconcile stale remark/unified references vs shipped stack
 - 2026-07-19T15:40:26-05:00 686a14afab2392d056d446100bfbc41c3b8f5f55 fix(LORE-59): scaffold the lore:tasks managed block in the Story template (#55)
 - 2026-07-28T21:23:02-05:00 fea4509a7a2a9be13a197bff638f03b6bcdb9717 chore: migrate backlog namespace to lcli
+- 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap

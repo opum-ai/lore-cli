@@ -8,65 +8,161 @@ description: >-
   the working agreement.
 tags: [lore, runbook, onboarding, handover, development]
 summary: >-
-  Open (or paste) this at the start of a new dev session to begin implementing
-  lore with the right constraints, entry points, and workflow.
+  Open this in a fresh session to execute the M6 schema, Commander, and
+  LadybugDB lanes in dependency order without pulling the explorer forward.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
 # Developer kickoff — start building lore
 
-This runbook doubles as a **handover prompt**: open it at the start of a fresh session (or
-paste its body as the first message) to begin implementing **lore** — a thin, OKF-native
-documentation CLI (Bun + TypeScript) that couples repo-resident docs to Backlog.md and serves
-them to agents and humans. The repo, documentation, and a 44-task build plan already exist.
-No application source code exists yet; your job is to start implementing it.
+This is the component handover for a fresh M6 implementation session in
+`lore-cli`. The CLI, deterministic in-memory graph/query/context surfaces, test
+suite, compiled distribution, and deterministic export already exist. The next
+work is not a greenfield build: it adds a persistent derived projection while
+preserving those contracts.
 
-## Orientation (read first, in order)
+## Orientation
 
-1. [`lore-spec.md`](../../lore-spec.md) — the product spec (v0.2).
-2. [`docs/index.md`](../index.md) — the OKF bundle entry point; follow it into:
-   - [architecture](../reference/architecture.md), [tech-stack](../reference/tech-stack.md), [cli-surface](../reference/cli-surface.md), [cli-contract](../reference/cli-contract.md)
-   - [backlog-json-schema](../reference/backlog-json-schema.md) + [backlog-cli-contract](../reference/backlog-cli-contract.md) — the verified Backlog.md integration contract
-   - [consumer-compatibility](../reference/consumer-compatibility.md), [portable-markdown](../reference/portable-markdown.md), [okf-conformance](../reference/okf-conformance.md)
-   - [lore-design](../specs/lore-design.md) — implementation design (modules, sequence flows, testing)
-   - [the ADR log](../adr/index.md) — 16 ADRs; the load-bearing ones are 0002, 0004, 0005, 0006, 0007, 0010, 0012, 0014, 0015
-   - [backlog-json-patch](backlog-json-patch.md) and [agent-onboarding](agent-onboarding.md)
-3. `backlog overview` and `backlog instructions overview` — the build plan and task workflow.
+Read these in order before changing task state or source:
 
-## Repo facts
+1. Repository `AGENTS.md`, then `backlog instructions overview`.
+2. [Documentation index](../index.md) and the
+   [local graph platform roadmap](../specs/local-graph-platform-roadmap.md).
+3. [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md),
+   [architecture](../reference/architecture.md), and
+   [tech stack](../reference/tech-stack.md).
+4. [CLI surface](../reference/cli-surface.md) and
+   [CLI contract](../reference/cli-contract.md); these are compatibility inputs
+   for Commander and indexed routing.
+5. `backlog task view LCLI-283.1.1 --plain`, followed only by the task selected
+   according to the dependency graph below.
 
-- Path: `/Volumes/external/repos/lore` (private GitHub repo `jeremy-newhouse/lore`).
-- Branches: `main` (release) + `dev` (default/working). **Branch from and PR into `dev`.**
-- Backlog integration targets upstream PR #790's JSON contract. The Docker E2E
-  image compiles `MrLesk/Backlog.md` at its merge commit until a containing tag
-  exists; lore has no Backlog package/git dependency.
-- Bun is pinned to the version in `.bun-version`; verify with `bun --version`
-  before running the gates (see [ADR-0001](../adr/0001-runtime-build-distribution.md)).
+## Repository facts
 
-## Non-negotiable constraints (easy to get wrong — honor these)
+- Path: `/Volumes/external/repos/lore-cli`.
+- Remote: private `salient-data/lore-cli`.
+- Integration branch: `dev`; stable/release branch: `main`.
+- Branch feature work from the current local `dev` and target PRs back to
+  `dev`. Never discard local commits merely because `dev` is ahead of
+  `origin/dev`; inspect the central session handover first.
+- npm package remains `@salient-data/lore`; executable remains `lore`.
+- Bun is pinned by the repository. Check `bun --version` before installing or
+  building native dependencies.
+- Backlog integration remains JSON-only against the pinned upstream
+  `--json`-capable commit until a containing release is adopted by
+  `LCLI-253`.
 
-1. **CLI is the primary interface; the local MCP server is on hold and unscheduled. M6 is LadybugDB persistent indexing, M7 is the local graph explorer, and M8 is LadybugDB-enabled graph capability work. Do NOT build local MCP without an explicit roadmap reactivation.**
-2. **Backlog integration is JSON-only.** Do **not** add a `--plain` parser.
-   PR #790 is merged upstream; until its release tag exists, validate against
-   the pinned upstream merge commit described in
-   [backlog-json-patch](backlog-json-patch.md).
-3. **All Backlog writes go through the `backlog` CLI** (`task create`/`edit`). Never hand-edit `backlog/**` task or milestone files. lore is the **sole git committer** of `backlog/` (Backlog `auto_commit` stays false).
-4. **OKF cross-links** are relative, URL-encoded, `.md`-suffixed, no leading slash, no wikilinks ([ADR-0010](../adr/0010-multi-consumer-docs-layer.md)). Sub-index files carry no frontmatter; `okf_version` lives only on the root [index](../index.md).
-5. **Core remains deterministic: no LLM calls, embeddings, vector retrieval, RAG, chunking, or unrelated native tools such as lychee; the planned LadybugDB graph index is derived and must preserve deterministic contracts** ([ADR-0014](../adr/0014-core-has-no-llm-dependency.md), [0015](../adr/0015-lightweight-retrieval-no-vectors.md), [0007](../adr/0007-validation-and-coherence.md)). Link checking is pure-JS (remark).
-6. **Every command** supports `--plain` and `--json` (envelope `{schemaVersion, kind, data}`), uses the semantic exit codes (0/2/3/4/5/6) and `--json` error envelope, writes data to stdout / diagnostics to stderr, and is idempotent. All logic lives in a reusable `core/` library; commands are thin ([ADR-0004](../adr/0004-cli-first-skill-bridge-mcp-deferred.md), [0005](../adr/0005-cli-contract.md)).
+## Approved delivery graph
 
-## How to work
+The feature order remains M6 LadybugDB → M7 explorer → M8 indexed
+capabilities. Only a preparation lane moves earlier:
 
-1. Run `backlog task list --status "To Do" --json` and pick the next
-   release-relevant, unblocked task. After current release work, follow
-   `LCLI-283.1` → `LCLI-283.2` → `LCLI-283.3`; MCP, Confluence, and library items remain on hold.
-2. Claim it: `backlog task edit LCLI-N -s "In Progress"`. Read its acceptance criteria and linked docs via `backlog task view LCLI-N --plain`.
-3. Implement against the ADRs/spec. Prefer TDD (Bun test). Keep `core/` a library returning structured objects; commands thin.
-4. Validate before committing: `bun test`, `bun run lint`, `bun run typecheck` (set these up in M0). Once `lore check` exists, it is the bundle CI gate.
-5. Commit to `dev` with Conventional Commits, ending messages with:
-   `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`
-6. Finish the task: `backlog task edit LCLI-N -s Done` with a `--final-summary`, and update [`CHANGELOG.md`](../../CHANGELOG.md) (Unreleased).
+1. `LCLI-283.1.1` freezes the LadybugDB schema and lifecycle contract.
+2. After it is accepted, two independent branches may proceed:
+   - `LCLI-284` migrates CLI parsing, dispatch, and help to Commander.
+   - `LCLI-283.1.2` implements the deterministic projection lifecycle.
+3. `LCLI-283.1.3` depends on both branches and integrates indexed
+   `graph`, `query`, and `context`.
+4. `LCLI-283.1.4` completes performance, packaging, recovery, concurrency, and
+   scale gates.
+5. `LCLI-283.2.1` may define the explorer contract after step 1, but
+   `LCLI-283.2.2` implementation waits for all M6 gates.
 
-## First move
+This ordering prevents new indexed options from being implemented in the
+hand-rolled parser and then migrated again. It does not build the explorer
+against an unstable projection.
 
-Do not restart the completed BJP or M0–M5 work. Confirm the current release task state first. When the user activates the post-MVP local roadmap, begin with `LCLI-283.1.1`, follow the Backlog activation and planning workflow, and complete all M6 gates before starting the M7 explorer. Do not start M8 capabilities or reactivate local MCP early.
+## Non-negotiable constraints
+
+1. **Start with `LCLI-283.1.1`; do not activate a high-level parent as a
+   substitute for its atomic task.**
+2. **Commander is a transport refactor, not a CLI redesign.** Preserve global
+   flag positions, `--flag=value`, repeatable options, literal `--`, help and
+   version output, injected writers, stdout/stderr separation, JSON envelopes,
+   output precedence, semantic exits, TTY behavior, and `NO_COLOR`. Commander
+   must not terminate the process or bypass Lore's error/output seams.
+3. **LadybugDB is disposable derived state.** Git-tracked OKF documents and
+   Backlog records remain authoritative; no raw Cypher or database identifier
+   enters the public CLI.
+4. **The in-memory implementation remains the conformance oracle and fallback.**
+   Indexed ordering, lexical ranking, filtering, depth, budgets, truncation,
+   errors, Unicode, dangling/duplicate behavior, and provenance must match.
+5. **No embeddings, vector index, model call, hidden user-global graph, hosted
+   AuraDB coupling, or local MCP enters M6.**
+6. **All Backlog mutations use the `backlog` CLI.** Never hand-edit task,
+   document, decision, or milestone files.
+7. **Do not start M7 explorer implementation or M8 capabilities early.** Local
+   MCP, Confluence, and importable-library work remain on hold.
+
+## Fresh-session procedure
+
+1. Inspect, do not clean blindly:
+
+   ```text
+   git status --short --branch
+   git log -5 --oneline
+   ```
+
+2. Run `backlog instructions overview` and
+   `backlog instructions task-execution`.
+3. View `LCLI-283.1.1`, confirm it is unblocked, then mark only that task
+   `In Progress` and assign the current worker.
+4. Research the deterministic export, in-memory graph, current packaging
+   matrix, and LadybugDB Node/Bun support before recording the task plan.
+5. Put the researched plan in Backlog before implementation. The task must
+   freeze stable identities, provenance, storage, freshness, rebuild,
+   corruption, atomic replacement, and single-writer semantics; do not install
+   or wire LadybugDB yet unless that activated task's accepted scope requires a
+   verified spike.
+6. Implement on a focused feature branch and finish the task through the
+   Backlog finalization workflow. Only then activate `LCLI-284` and/or
+   `LCLI-283.1.2`.
+
+## Verification
+
+Run checks proportional to the activated task, with these full repository gates
+before merge:
+
+```text
+bun test
+bun run lint
+bun run typecheck
+bun run build
+lore sync
+lore validate --strict
+lore check --strict
+git diff --check
+```
+
+Commander work must also exercise source execution, compiled binaries,
+platform packaging, parser parity, injected-stream behavior, and error paths.
+LadybugDB work must add deterministic conformance, native packaging,
+concurrency, corruption/rebuild, and benchmark evidence as its tasks require.
+
+## Stop conditions
+
+Stop and resolve the dependency or contract instead of guessing if:
+
+- `LCLI-283.1.1` is not accepted but a later task needs a schema or lifecycle
+  decision;
+- Commander behavior differs from the published CLI contract;
+- LadybugDB cannot satisfy supported Bun/Node packaging or deterministic
+  fallback requirements;
+- a change would expose Cypher, mutate repository source through the index, or
+  introduce a hidden cross-repository database; or
+- work crosses into the explorer implementation, M8, local MCP, or hosted graph
+  services.
+
+## Ready-to-paste prompt
+
+```text
+Continue Lore CLI M6 from
+/Volumes/external/repos/lore-cli/docs/runbooks/dev-kickoff.md.
+Read AGENTS.md and run backlog instructions overview before any action. Work
+from the current local dev baseline without discarding its commits. Start only
+LCLI-283.1.1: research and freeze the LadybugDB projection schema and lifecycle
+contract, record the plan in Backlog, and implement only that accepted task.
+Do not start Commander (LCLI-284), projection implementation
+(LCLI-283.1.2), indexed routing, the graph explorer, M8, or local MCP until the
+documented dependencies permit them.
+```

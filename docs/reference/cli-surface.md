@@ -32,6 +32,12 @@ semantic exit codes, the stdout/stderr discipline, the `--json` envelope and
 error envelope, truncation hints, and the `kind` taxonomy — are specified once
 in the [CLI contract](./cli-contract.md) and are not repeated per command here.
 
+The current implementation parses this surface with a hand-rolled router and
+command tokenizers. `LCLI-284` will move that implementation to Commander
+during M6, after the LadybugDB schema freeze and before indexed command routing.
+This catalog and the CLI contract are compatibility inputs to that migration;
+the parser library is not permission to change the public surface.
+
 ## Global behavior (applies to every command)
 
 Every command obeys the same contract; read it in full in the

@@ -51,13 +51,14 @@ How lore is built and how its pieces fit together.
 - [lore design spec](specs/lore-design.md) — the end-to-end design: command
   surface, core data flow, the Backlog.md coupling, and how the OKF bundle is
   produced and kept coherent.
-- [Local graph platform roadmap](specs/local-graph-platform-roadmap.md) — the active M6–M8 sequence: LadybugDB persistent indexing, local graph explorer, then indexed graph capabilities.
+- [Local graph platform roadmap](specs/local-graph-platform-roadmap.md) — the active M6–M8 sequence: Commander-prepared LadybugDB indexing, local graph explorer, then indexed graph capabilities.
 - [Architecture](reference/architecture.md) — the deterministic-core /
   thin-transport shape: `core/` library, the CLI as primary transport, the
   Backlog and Confluence adapters, and `.lore/` state.
-- [Tech stack](reference/tech-stack.md) — Bun (pinned), TypeScript, a
-  hand-rolled CLI router, gray-matter, mdast-util-from-markdown, and Zod, plus
-  the `bun build --compile` + dual-artifact npm distribution.
+- [Tech stack](reference/tech-stack.md) — Bun (pinned), TypeScript, the current
+  hand-rolled router and approved M6 Commander migration, gray-matter,
+  mdast-util-from-markdown, and Zod, plus the `bun build --compile` +
+  dual-artifact npm distribution.
 
 ## References
 
