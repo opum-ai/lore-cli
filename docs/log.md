@@ -30,6 +30,7 @@
 - 2026-07-30T12:04:38-05:00 921032fe8653e09c62f647152e05e6cd9454865e refactor: delegate terminal width to string-width
 - 2026-07-30T12:07:11-05:00 c46620514f1705ef51a2b7ff5de4dcbd6ba6a205 docs: advance dependency campaign to LCLI-288
 - 2026-07-30T12:17:00-05:00 b9dcc4a3a88ffb01b217b9ad83bc06195935e9e6 refactor: consolidate config shape validation on Zod
+- 2026-07-30T12:21:28-05:00 8331d768d2c541f0f66d56f65c86872e2166c0af docs: complete dependency boundary campaign
 
 ## docs/.obsidian
 
@@ -177,6 +178,7 @@
 - 2026-07-30T11:38:19-05:00 c0d0e442f0d900c8fa65f2e30d3672027b2e324a docs: advance dependency campaign to LCLI-287
 - 2026-07-30T11:56:37-05:00 82d321458ded7a971847042b49a613d40426adb6 docs: advance dependency campaign to LCLI-285
 - 2026-07-30T12:07:11-05:00 c46620514f1705ef51a2b7ff5de4dcbd6ba6a205 docs: advance dependency campaign to LCLI-288
+- 2026-07-30T12:21:28-05:00 8331d768d2c541f0f66d56f65c86872e2166c0af docs: complete dependency boundary campaign
 
 ## docs/specs
 
