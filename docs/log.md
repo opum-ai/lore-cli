@@ -36,6 +36,7 @@
 - 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
 - 2026-07-30T14:00:06-05:00 02bc9694043958d27022be2c2de1e107572ab249 docs: advance release campaign to Commander
 - 2026-07-30T15:07:43-05:00 90e9fbd90cd42c49348be7b2d0834b4d7cbf1a76 refactor: migrate CLI parsing to Commander
+- 2026-07-30T15:08:52-05:00 743795bf0cc80f6c2b016cedaa424b5f9f189dfc docs: record protected branch handoff
 
 ## docs/.obsidian
 
@@ -189,6 +190,7 @@
 - 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
 - 2026-07-30T14:00:06-05:00 02bc9694043958d27022be2c2de1e107572ab249 docs: advance release campaign to Commander
 - 2026-07-30T15:07:43-05:00 90e9fbd90cd42c49348be7b2d0834b4d7cbf1a76 refactor: migrate CLI parsing to Commander
+- 2026-07-30T15:08:52-05:00 743795bf0cc80f6c2b016cedaa424b5f9f189dfc docs: record protected branch handoff
 
 ## docs/specs
 
