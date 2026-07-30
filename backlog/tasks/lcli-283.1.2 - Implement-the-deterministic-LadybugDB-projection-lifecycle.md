@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:33'
-updated_date: '2026-07-30 21:35'
+updated_date: '2026-07-30 21:36'
 labels:
   - ladybugdb
   - indexing
@@ -25,6 +25,7 @@ modified_files:
   - test/ladybug-lifecycle.test.ts
   - docs/specs/local-graph-platform-roadmap.md
   - docs/runbooks/lore-cli-release-campaign-handover.md
+  - docs/log.md
 parent_task_id: LCLI-283.1
 priority: high
 type: task
@@ -66,6 +67,8 @@ Added the private Ladybug schema/driver with parameterized writes, one data tran
 Focused pinned-Bun evidence so far: lifecycle/projection/contract tests 17 passed with 130 assertions; typecheck clean; Biome lint clean across 123 files. Tests cover deterministic semantic rebuild/reuse (Ladybug physical bytes legitimately vary and each digest is independently verified), changed/deleted replacement, duplicate/dangling/additive fields, interruption recovery, native and duplicated-control corruption, stale/live locks, unsupported preservation, immutable permissions, Git ignore, disposal, and byte-level source no-write.
 
 Final acceptance evidence: identical validated export records publish the same stable sourceFingerprint, generation key, source identities, semantic record set, and observable control metadata; equivalent physical Ladybug files are independently digested and verified because native byte layout may vary. Replacement tests prove changed and deleted records leave no stale nodes or edges, while duplicate edges, dangling targets, and additive fields round-trip losslessly. Interruption, native corruption, duplicated-control corruption, active/stale locks, unsupported formats, compatibility rebuilds, immutable permissions, disposal, Git ignore, source-byte preservation, and cache-symlink containment are covered. Pinned Bun 1.2.23 results: focused lifecycle/projection/contract 19 pass, 0 fail, 135 assertions; full suite 2,264 pass, 0 fail, 6,583 assertions across 53 files; lint 123 files clean; typecheck clean; build 229 modules; frozen install unchanged; native compiled close/reopen read-only smoke passed with Ladybug runtime 0.18.2/storage 42; package dry-run 68 files and 1.36 MB unpacked; audit reported no vulnerabilities. No later child, parent, routing, explorer, M8, MCP, hosted, release, or publication scope was started.
+
+Final documentation gates after task completion: lore sync reconciled Backlog-managed state; lore validate --strict reported 46 files, 0 errors, and 0 warnings; lore check --strict reported 46 files, 0 errors, and 0 warnings; git diff --check was clean. Final audit confirmed origin/dev and feature/lcli-284-commander unchanged, the linked feature/wave2-integration-fixes worktree untouched, parent LCLI-283.1 To Do, and LCLI-283.1.3 To Do.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
