@@ -1,11 +1,11 @@
 ---
 id: LCLI-283.1.3
 title: Route graph query and context through indexed retrieval
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:33'
-updated_date: '2026-07-30 23:00'
+updated_date: '2026-07-30 23:20'
 labels:
   - ladybugdb
   - retrieval
@@ -16,6 +16,28 @@ dependencies:
   - LCLI-284
 documentation:
   - docs/specs/local-graph-platform-roadmap.md
+modified_files:
+  - docs/index.md
+  - docs/log.md
+  - docs/reference/architecture.md
+  - docs/reference/cli-surface.md
+  - docs/reference/tech-stack.md
+  - docs/runbooks/dev-kickoff.md
+  - docs/runbooks/lore-cli-release-campaign-handover.md
+  - docs/specs/local-graph-platform-roadmap.md
+  - src/cli.ts
+  - src/commands/context.ts
+  - src/commands/graph.ts
+  - src/commands/query.ts
+  - src/core/ladybug-driver.ts
+  - src/core/ladybug-lifecycle.ts
+  - src/core/ladybug-native.ts
+  - src/core/retrieval.ts
+  - test/cli.test.ts
+  - test/context.test.ts
+  - test/graph.test.ts
+  - test/indexed-retrieval.test.ts
+  - test/query.test.ts
 parent_task_id: LCLI-283.1
 priority: high
 type: task
@@ -30,10 +52,10 @@ Use the fresh LadybugDB projection for local graph, lexical query, and context o
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Indexed and reference in-memory implementations pass the same graph, query, context, error, ordering, truncation, and provenance conformance fixtures
-- [ ] #2 Lexical ranking and filters remain deterministic and no embeddings, vector indexes, or model calls enter the default path
-- [ ] #3 Missing, stale, incompatible, corrupt, or contended indexes follow the documented rebuild or fallback policy without partial output
-- [ ] #4 No public command exposes raw Cypher or database-specific identifiers
+- [x] #1 Indexed and reference in-memory implementations pass the same graph, query, context, error, ordering, truncation, and provenance conformance fixtures
+- [x] #2 Lexical ranking and filters remain deterministic and no embeddings, vector indexes, or model calls enter the default path
+- [x] #3 Missing, stale, incompatible, corrupt, or contended indexes follow the documented rebuild or fallback policy without partial output
+- [x] #4 No public command exposes raw Cypher or database-specific identifiers
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -46,3 +68,24 @@ Use the fresh LadybugDB projection for local graph, lexical query, and context o
 5. Add shared indexed-versus-reference command/core fixtures and focused lifecycle tests covering JSON/plain/pretty parity, errors, ordering/ties/filters/depth/budgets/provenance, Unicode, duplicate/dangling/additive/empty/boundary cases, missing/stale/incompatible/corrupt/locked/contended/unsupported states, no partial output, source no-write, absence of public database details, and objective native lazy-loading/Windows-safe fallback.
 6. Update architecture, CLI, roadmap, and campaign handover prose through Lore, then verify only with Bun 1.2.23: focused and full tests, lint, typecheck, source/compiled startup and versions, supported compiled/native smokes, frozen install, package dry-run, audit, Lore sync/strict validation/check, and git diff hygiene. Follow Backlog finalization, map executed evidence to all four criteria, and complete only LCLI-283.1.3 without changing its parent or siblings.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Final design and evidence (Bun 1.2.23):
+
+- Architecture: the existing Commander handlers inject a Lore-owned retrieval resolver. Supported hosts reconcile and verify one immutable content-addressed generation, dynamically load the native driver only when needed, reconstruct the existing BundleGraph from canonical ConceptRecord and AuthoredEdgeRecord payloads, then reuse the unchanged graph/query/context algorithms and emitters. The filesystem/in-memory loader remains the conformance oracle and automatic fallback.
+- AC #1: shared indexed/reference command fixtures plus affected command/lifecycle tests passed 237/237 with 671 assertions across 6 files. Exact output parity covers graph/query/context JSON, plain, and pretty success; error envelopes and semantic exits; ordering, ties, filters, depth, budgets, truncation, internal provenance, Unicode, duplicate and dangling edges, additive fields, empty inputs, and limits. Full suite passed 2,295/2,295 with 6,652 assertions across 54 files.
+- AC #2: shared lexical fixtures prove identical BM25 ranking, ascending-id tie breaks, filters, punctuation-only and filters-only behavior. The resolver and docs retain the no-vector/no-embedding/no-model boundary; no network or inference surface was added.
+- AC #3: focused tests prove missing/stale build and replacement, known-incompatible rebuild, corruption quarantine/rebuild under ownership, exact-generation reuse under an active lock, contention fallback without native load, newer unsupported preservation, native-read fallback, one-result/no-partial-output behavior, and repository-source byte preservation.
+- AC #4: public stdout/stderr fixtures reject Cypher, native record ids, database paths, fingerprints, and private native error details. Cypher and physical schema remain inside the dynamically loaded driver only.
+- Windows boundary: Bun 1.2.23 segfaults while loading the Ladybug addon on Windows. CLI import, lifecycle preflight, reference fallback, newer-unsupported, contention, usage-error, and simulated Windows paths do not evaluate the addon. Native Windows packaging support is not claimed and remains exclusively LCLI-283.1.4 scope.
+- Additional verification: lint clean across 126 files; typecheck clean; source and compiled version/JSON-version checks passed; build compiled 241 modules; compiled graph/query/context created and reused a real Ladybug generation on Darwin; launcher/release/flush/local-contract tests passed 25/25 with 102 assertions; frozen install checked 98 installs across 109 packages with no changes; package dry-run contained 70 files and 1.38 MB unpacked; audit found no vulnerabilities; Lore sync changed 0 files; strict validation and check each reported 46 concepts, 0 errors, 0 warnings; git diff check clean.
+- Publication and scope: no push, PR, merge, tag, release version, npm publication, or GitHub setting change occurred. Parent LCLI-283.1 and sibling LCLI-283.1.4 remain To Do; the linked Wave 2 worktree remains untouched.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Routed graph, lexical query, and context through fully verified LadybugDB generations behind the existing Commander/handler boundary, retaining the deterministic in-memory implementation as conformance oracle and pre-output fallback. Added a Windows-safe lazy native boundary and shared lifecycle/conformance coverage; all 2,295 tests, lint, typecheck, build, compiled native smoke, frozen install, package dry-run, audit, and strict Lore gates passed. Native Windows packaging, performance, scale, and wider qualification remain deferred to LCLI-283.1.4.
+<!-- SECTION:FINAL_SUMMARY:END -->
