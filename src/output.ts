@@ -53,6 +53,8 @@
  * Design: docs/specs/lore-design.md §5. Rationale: docs/adr/0005-cli-contract.md.
  */
 
+import stringWidth from "string-width";
+
 import { asText, singleLine, stripAnsiAndControls, type Writer } from "./errors";
 
 // Re-exported so a command author gets the write sink type from the rendering
@@ -506,71 +508,17 @@ export function maxLen<T>(items: readonly T[], length: (item: T) => number): num
 }
 
 /**
- * East Asian Wide/Fullwidth code point ranges (Unicode East_Asian_Width property W/F) that occupy
- * two terminal columns instead of one — CJK ideographs, Hangul syllables, kana, and fullwidth
- * forms/signs. A compact, hand-rolled range table, not the full Unicode East_Asian_Width property
- * or an external `wcwidth`/`string-width` dependency (LORE-221 AC#5) — it covers the blocks a
- * configured Backlog status string could plausibly carry.
- */
-function isWideCodePoint(codePoint: number): boolean {
-  return (
-    (codePoint >= 0x1100 && codePoint <= 0x115f) || // Hangul Jamo
-    (codePoint >= 0x2e80 && codePoint <= 0x303e) || // CJK Radicals .. CJK Symbols and Punctuation
-    (codePoint >= 0x3041 && codePoint <= 0x33ff) || // Hiragana, Katakana .. CJK Compatibility
-    (codePoint >= 0x3400 && codePoint <= 0x4dbf) || // CJK Unified Ideographs Extension A
-    (codePoint >= 0x4e00 && codePoint <= 0x9fff) || // CJK Unified Ideographs
-    (codePoint >= 0xa000 && codePoint <= 0xa4cf) || // Yi Syllables / Yi Radicals
-    (codePoint >= 0xac00 && codePoint <= 0xd7a3) || // Hangul Syllables
-    (codePoint >= 0xf900 && codePoint <= 0xfaff) || // CJK Compatibility Ideographs
-    (codePoint >= 0xfe30 && codePoint <= 0xfe4f) || // CJK Compatibility Forms
-    (codePoint >= 0xff00 && codePoint <= 0xff60) || // Fullwidth Forms
-    (codePoint >= 0xffe0 && codePoint <= 0xffe6) || // Fullwidth Signs
-    (codePoint >= 0x20000 && codePoint <= 0x3fffd) // CJK Unified Ideographs Extension B and beyond
-  );
-}
-
-/**
- * Zero-width and combining-mark code point ranges (Unicode general categories Mn/Me and the
- * common zero-width format characters) that render stacked on the preceding base character and
- * occupy no terminal column of their own. Same compact-table tradeoff as
- * {@link isWideCodePoint} — covers the blocks realistic status text could carry, not the full
- * Unicode property.
- */
-function isZeroWidthCodePoint(codePoint: number): boolean {
-  return (
-    (codePoint >= 0x0300 && codePoint <= 0x036f) || // Combining Diacritical Marks
-    (codePoint >= 0x1ab0 && codePoint <= 0x1aff) || // Combining Diacritical Marks Extended
-    (codePoint >= 0x1dc0 && codePoint <= 0x1dff) || // Combining Diacritical Marks Supplement
-    (codePoint >= 0x20d0 && codePoint <= 0x20ff) || // Combining Diacritical Marks for Symbols
-    (codePoint >= 0xfe00 && codePoint <= 0xfe0f) || // Variation Selectors
-    (codePoint >= 0xfe20 && codePoint <= 0xfe2f) || // Combining Half Marks
-    codePoint === 0x200b || // Zero Width Space
-    codePoint === 0x200c || // Zero Width Non-Joiner
-    codePoint === 0x200d || // Zero Width Joiner
-    codePoint === 0x2060 || // Word Joiner
-    codePoint === 0xfeff // Zero Width No-Break Space / BOM
-  );
-}
-
-/**
  * Terminal display width of `text` — the number of terminal columns it occupies when printed, not
- * `text.length` (UTF-16 code units). Iterates Unicode code points (`for...of` on a string steps by
- * code point, correctly handling surrogate pairs) rather than UTF-16 units, so a supplementary-plane
- * character is counted once, not twice. Each code point contributes 0 columns if it is
- * zero-width/combining ({@link isZeroWidthCodePoint}), 2 if it is East Asian wide/fullwidth
- * ({@link isWideCodePoint}), else 1 — which makes an ASCII-only string's display width equal its
- * `.length`, so callers that only ever saw ASCII see byte-identical output (LORE-221 AC#4).
+ * `text.length` (UTF-16 code units). `string-width` owns Unicode grapheme segmentation,
+ * East_Asian_Width data, combining/default-ignorable handling, and emoji-sequence width. Keeping
+ * the dependency behind this wrapper preserves the output layer's single measurement seam and
+ * makes ASCII-only strings byte-compatible (`displayWidth(text) === text.length`) while correctly
+ * treating emoji variation, regional-indicator, keycap, and ZWJ sequences as terminal graphemes.
+ * Callers sanitize fields before measurement, so Lore's stricter ANSI/control policy remains owned
+ * by {@link renderTaskSummaryRows} rather than delegated to the dependency (LORE-221, LCLI-285).
  */
 export function displayWidth(text: string): number {
-  let width = 0;
-  for (const ch of text) {
-    const codePoint = ch.codePointAt(0) ?? 0;
-    if (isZeroWidthCodePoint(codePoint)) {
-      continue;
-    }
-    width += isWideCodePoint(codePoint) ? 2 : 1;
-  }
-  return width;
+  return stringWidth(text);
 }
 
 /**

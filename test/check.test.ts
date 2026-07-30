@@ -61,20 +61,39 @@ function rules(files: CheckInputFile[]): string[] {
 
 // ── slugify: GitHub-style heading slugs ──────────────────────────────────────────
 
+/**
+ * Versioned pre/post oracle for LCLI-287's stateless primitive. `before` records the
+ * hand-written implementation's output so intentional corrections stay reviewable; `after`
+ * is the exact github-slugger 2.0.0 contract. Unchanged rows guard the surrounding output
+ * surface while leading/trailing whitespace and decomposed marks pin the known drift fixes.
+ */
+const HEADING_SLUG_CONFORMANCE_V1: readonly (readonly [
+  input: string,
+  before: string,
+  after: string,
+  behavior: string,
+])[] = [
+  ["Archival Policy", "archival-policy", "archival-policy", "ordinary ASCII"],
+  ["Hello, World!", "hello-world", "hello-world", "punctuation"],
+  ["Status: Done", "status-done", "status-done", "colon punctuation"],
+  ["  Trim Me  ", "trim-me", "--trim-me--", "leading and trailing whitespace"],
+  ["Multiple   spaces", "multiple---spaces", "multiple---spaces", "repeated spaces"],
+  ["snake_case-and-dash", "snake_case-and-dash", "snake_case-and-dash", "underscore and dash"],
+  ["Café Münü", "café-münü", "café-münü", "composed Unicode"],
+  ["Cafe\u0301", "cafe", "cafe\u0301", "decomposed Unicode"],
+  ["Привет non-latin 你好", "привет-non-latin-你好", "привет-non-latin-你好", "non-Latin text"],
+  ["!!!", "", "", "punctuation-only empty slug"],
+];
+
 describe("slugify — GitHub-style slugs", () => {
-  test.each([
-    ["Archival Policy", "archival-policy"],
-    ["Hello, World!", "hello-world"],
-    ["Status: Done", "status-done"],
-    ["  Trim Me  ", "trim-me"],
-    ["Multiple   spaces", "multiple---spaces"],
-    ["snake_case-and-dash", "snake_case-and-dash"],
-  ])("slugifies %p to %p", (input, expected) => {
-    expect(slugify(input)).toBe(expected);
+  test.each(HEADING_SLUG_CONFORMANCE_V1)("slugifies %p with the before/after oracle", (input, _before, after) => {
+    expect(slugify(input)).toBe(after);
   });
 
-  test("keeps unicode letters (Café stays café, not caf)", () => {
-    expect(slugify("Café Münü")).toBe("café-münü");
+  test("the before/after table isolates the two intentional primitive corrections", () => {
+    expect(
+      HEADING_SLUG_CONFORMANCE_V1.filter(([, before, after]) => before !== after).map(([, , , behavior]) => behavior),
+    ).toEqual(["leading and trailing whitespace", "decomposed Unicode"]);
   });
 });
 
@@ -108,6 +127,24 @@ describe("extractHeadingSlugs", () => {
     expect([...slugs]).toEqual(["the-foo-bar"]);
   });
 
+  test("preserves a leading space around excluded image text (LCLI-136 follow-up correction)", () => {
+    // nodeText deliberately excludes the image, leaving " Leading". The old trim() boundary
+    // returned "leading"; GitHub/github-slugger preserves that leading space as "-leading".
+    expect([...extractHeadingSlugs("## ![Alt](img.png) Leading\n")]).toEqual(["-leading"]);
+  });
+
+  test("preserves a trailing space around excluded image text", () => {
+    expect([...extractHeadingSlugs("## Trailing ![Alt](img.png)\n")]).toEqual(["trailing-"]);
+  });
+
+  test("keeps composed and decomposed Unicode distinct without normalization", () => {
+    expect([...extractHeadingSlugs("## Café\n\n## Cafe\u0301\n")]).toEqual(["café", "cafe\u0301"]);
+  });
+
+  test("retains non-Latin heading text", () => {
+    expect([...extractHeadingSlugs("## Привет non-latin 你好\n")]).toEqual(["привет-non-latin-你好"]);
+  });
+
   test("a heading made of only an image contributes no text (LORE-136)", () => {
     // GitHub renders an <img> with empty textContent regardless of its `alt` attribute, so
     // an image-only heading gets no visible text and no anchor at all (verified empirically
@@ -130,109 +167,143 @@ describe("extractHeadingSlugs", () => {
     const slugs = extractHeadingSlugs("## ![Alt Text][ref]\n\n[ref]: img.png\n");
     expect([...slugs]).toEqual([""]);
   });
+
+  test("empty and punctuation-only headings share per-document duplicate state", () => {
+    expect([...extractHeadingSlugs("##\n\n## !!!\n\n## ![Alt](img.png)\n")]).toEqual(["", "-1", "-2"]);
+  });
+
+  test("duplicate state is fresh for every document and repeated extraction", () => {
+    const source = "## Repeat\n\n## Repeat\n";
+    expect([...extractHeadingSlugs(source)]).toEqual(["repeat", "repeat-1"]);
+    expect([...extractHeadingSlugs(source)]).toEqual(["repeat", "repeat-1"]);
+  });
 });
 
 // ── classifyAddress: LORE-71's SSRF range classifier ──────────────────────────────
 
-describe("classifyAddress — IP-range classification (LORE-71)", () => {
-  test.each([
-    ["0.0.0.0", true, "this-network"],
-    ["0.255.255.255", true, "this-network"],
-    ["1.0.0.0", false, undefined],
-    ["9.255.255.255", false, undefined],
-    ["10.0.0.0", true, "private"],
-    ["10.255.255.255", true, "private"],
-    ["11.0.0.0", false, undefined],
-    ["100.63.255.255", false, undefined],
-    ["100.64.0.0", true, "carrier-grade NAT"],
-    ["100.127.255.255", true, "carrier-grade NAT"],
-    ["100.128.0.0", false, undefined],
-    ["126.255.255.255", false, undefined],
-    ["127.0.0.0", true, "loopback"],
-    ["127.0.0.1", true, "loopback"],
-    ["127.255.255.255", true, "loopback"],
-    ["128.0.0.0", false, undefined],
-    ["169.253.255.255", false, undefined],
-    ["169.254.0.0", true, "link-local"],
-    ["169.254.169.254", true, "link-local"], // the task's own cloud-metadata example
-    ["169.254.255.255", true, "link-local"],
-    ["169.255.0.0", false, undefined],
-    ["172.15.255.255", false, undefined],
-    ["172.16.0.0", true, "private"],
-    ["172.31.255.255", true, "private"],
-    ["172.32.0.0", false, undefined],
-    ["192.167.255.255", false, undefined],
-    ["192.168.0.0", true, "private"],
-    ["192.168.255.255", true, "private"],
-    ["192.169.0.0", false, undefined],
-    ["255.255.255.255", false, undefined],
-    ["8.8.8.8", false, undefined],
-    ["93.184.216.34", false, undefined],
-  ])("IPv4 %s -> blocked=%p (%s)", (ip, expectedBlocked, expectedReasonSubstring) => {
+/**
+ * Versioned before/after oracle for LCLI-286. This table ran first against the hand-written
+ * BigInt classifier, then unchanged against the ipaddr.js boundary. It deliberately records
+ * Lore policy rather than ipaddr.js's broader built-in special-range opinions: documentation,
+ * multicast, and broadcast addresses remain allowed because LCLI-286 is delegation, not a policy
+ * expansion.
+ */
+const ADDRESS_POLICY_CONFORMANCE_V1: readonly (readonly [
+  address: string,
+  blocked: boolean,
+  reasonSubstring?: string,
+])[] = [
+  // IPv4 explicit-policy boundaries.
+  ["0.0.0.0", true, "this-network"],
+  ["0.255.255.255", true, "this-network"],
+  ["1.0.0.0", false, undefined],
+  ["9.255.255.255", false, undefined],
+  ["10.0.0.0", true, "private"],
+  ["10.255.255.255", true, "private"],
+  ["11.0.0.0", false, undefined],
+  ["100.63.255.255", false, undefined],
+  ["100.64.0.0", true, "carrier-grade NAT"],
+  ["100.127.255.255", true, "carrier-grade NAT"],
+  ["100.128.0.0", false, undefined],
+  ["126.255.255.255", false, undefined],
+  ["127.0.0.0", true, "loopback"],
+  ["127.0.0.1", true, "loopback"],
+  ["127.255.255.255", true, "loopback"],
+  ["128.0.0.0", false, undefined],
+  ["169.253.255.255", false, undefined],
+  ["169.254.0.0", true, "link-local"],
+  ["169.254.169.254", true, "link-local"],
+  ["169.254.255.255", true, "link-local"],
+  ["169.255.0.0", false, undefined],
+  ["172.15.255.255", false, undefined],
+  ["172.16.0.0", true, "private"],
+  ["172.31.255.255", true, "private"],
+  ["172.32.0.0", false, undefined],
+  ["192.167.255.255", false, undefined],
+  ["192.168.0.0", true, "private"],
+  ["192.168.255.255", true, "private"],
+  ["192.169.0.0", false, undefined],
+
+  // IPv6 explicit-policy boundaries.
+  ["::", true, "unspecified"],
+  ["::1", true, "loopback"],
+  ["0:0:0:0:0:0:0:1", true, "loopback"],
+  ["::ffff:ffff", true, "deprecated"],
+  ["::1:0:0", false, undefined],
+  ["64:ff9a:ffff:ffff:ffff:ffff:ffff:ffff", false, undefined],
+  ["64:ff9b::", true, "NAT64"],
+  ["64:ff9b::ffff:ffff", true, "NAT64"],
+  ["64:ff9b::1:0:0", false, undefined],
+  ["fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff", false, undefined],
+  ["fe80::", true, "link-local"],
+  ["fe80::1", true, "link-local"],
+  ["febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff", true, "link-local"],
+  ["fec0::", false, undefined],
+  ["fbff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", false, undefined],
+  ["fc00::", true, "unique-local"],
+  ["fd00::1", true, "unique-local"],
+  ["fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", true, "unique-local"],
+  ["fe00::", false, undefined],
+
+  // IPv4-mapped IPv6 normalization and translation forms.
+  ["::ffff:127.0.0.1", true, "loopback"],
+  ["::ffff:7f00:1", true, "loopback"],
+  ["::ffff:169.254.169.254", true, "link-local"],
+  ["::FFFF:A9FE:A9FE", true, "link-local"],
+  ["::ffff:10.0.0.1", true, "private"],
+  ["::ffff:192.168.1.1", true, "private"],
+  ["::ffff:8.8.8.8", false, undefined],
+  ["::169.254.169.254", true, "deprecated"],
+  ["::127.0.0.1", true, "deprecated"],
+  ["64:ff9b::a9fe:a9fe", true, "NAT64"],
+  ["64:ff9b::169.254.169.254", true, "NAT64"],
+
+  // Explicit non-block decisions: documentation, multicast, broadcast, and public addresses.
+  ["192.0.2.1", false, undefined],
+  ["198.51.100.1", false, undefined],
+  ["203.0.113.1", false, undefined],
+  ["2001:db8::1", false, undefined],
+  ["224.0.0.1", false, undefined],
+  ["239.255.255.255", false, undefined],
+  ["ff02::1", false, undefined],
+  ["ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", false, undefined],
+  ["255.255.255.255", false, undefined],
+  ["8.8.8.8", false, undefined],
+  ["93.184.216.34", false, undefined],
+  ["2001:4860:4860::8888", false, undefined],
+  ["2606:2800:220:1:248:1893:25c8:1946", false, undefined],
+];
+
+describe("classifyAddress — IP-range classification (LORE-71, LCLI-286 policy-v1)", () => {
+  test.each(ADDRESS_POLICY_CONFORMANCE_V1)("%s -> blocked=%p (%s)", (ip, expectedBlocked, expectedReasonSubstring) => {
     const result = classifyAddress(ip);
     expect(result.blocked).toBe(expectedBlocked);
-    if (expectedReasonSubstring !== undefined) {
+    if (expectedBlocked) {
       expect(result.reason).toContain(expectedReasonSubstring);
+    } else {
+      expect(result.reason).toBeUndefined();
     }
-  });
-
-  test.each([
-    ["::1", true, "loopback"],
-    ["0:0:0:0:0:0:0:1", true, "loopback"], // fully-expanded spelling of ::1
-    ["::", true, "unspecified"],
-    ["fe80::", true, "link-local"],
-    ["fe80::1", true, "link-local"],
-    ["febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff", true, "link-local"], // fe80::/10's top boundary
-    ["fec0::", false, undefined], // just past fe80::/10
-    ["fc00::", true, "unique-local"],
-    ["fd00::1", true, "unique-local"],
-    ["fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", true, "unique-local"], // fc00::/7's top boundary
-    ["fe00::", false, undefined], // just past fc00::/7
-    ["2001:4860:4860::8888", false, undefined], // a real public IPv6 address (Google DNS)
-    ["2606:2800:220:1:248:1893:25c8:1946", false, undefined], // example.com's real IPv6 address
-  ])("IPv6 %s -> blocked=%p (%s)", (ip, expectedBlocked, expectedReasonSubstring) => {
-    const result = classifyAddress(ip);
-    expect(result.blocked).toBe(expectedBlocked);
-    if (expectedReasonSubstring !== undefined) {
-      expect(result.reason).toContain(expectedReasonSubstring);
-    }
-  });
-
-  test.each([
-    ["::ffff:127.0.0.1", "loopback"],
-    ["::ffff:7f00:1", "loopback"], // the same value, hex-hextet spelling
-    ["::ffff:169.254.169.254", "link-local"],
-    ["::FFFF:A9FE:A9FE", "link-local"], // uppercase hex
-    ["::ffff:10.0.0.1", "private"],
-    ["::ffff:192.168.1.1", "private"],
-  ])("IPv4-mapped IPv6 %s is blocked the same as its plain IPv4 form (%s)", (ip, expectedReasonSubstring) => {
-    // The classic SSRF-filter bypass this file's own doc comment calls out: an IPv4-only
-    // blocklist missing the IPv6-mapped spelling of the exact same address.
-    const result = classifyAddress(ip);
-    expect(result.blocked).toBe(true);
-    expect(result.reason).toContain(expectedReasonSubstring);
-  });
-
-  test.each([
-    ["::169.254.169.254", "deprecated"], // legacy IPv4-compatible form (::/96), NOT the same value as ::ffff:...
-    ["::127.0.0.1", "deprecated"],
-    ["64:ff9b::a9fe:a9fe", "NAT64"], // NAT64 well-known prefix embedding 169.254.169.254
-    ["64:ff9b::169.254.169.254", "NAT64"],
-  ])("legacy/translation IPv6 address forms are blocked wholesale (%s -> %s)", (ip, expectedReasonSubstring) => {
-    const result = classifyAddress(ip);
-    expect(result.blocked).toBe(true);
-    expect(result.reason).toContain(expectedReasonSubstring);
   });
 
   test.each([
     "not-an-ip",
     "",
+    " 127.0.0.1",
+    "127.0.0.1 ",
     "999.1.1.1",
     "1.2.3",
+    "127.1",
+    "0177.0.0.1",
+    "0x7f000001",
+    "2130706433",
     "gggg::1",
+    "127.0.0.1/8",
     "http://example.com",
-  ])("a malformed/non-IP literal %p is blocked (fails closed, not silently allowed)", (input) => {
-    expect(classifyAddress(input).blocked).toBe(true);
+  ])("malformed, ambiguous, or legacy-form literal %p fails closed with the stable reason", (input) => {
+    expect(classifyAddress(input)).toEqual({
+      blocked: true,
+      reason: `"${input}" is not a valid IP address literal`,
+    });
   });
 
   test("case, leading-zero, and zone-id spelling variants of the same address all agree", () => {
@@ -360,6 +431,35 @@ describe("checkBundle — anchor rot (AC#1)", () => {
     const report = checkBundle([adr, orders2]);
     expect(report.errorCount).toBe(1);
     expect(report.findings[0]?.rule).toBe("broken-anchor");
+  });
+
+  test("LCLI-287: internal anchor validation uses the corrected image-adjacent leading slug", () => {
+    const target: CheckInputFile = {
+      path: "reference/target.md",
+      raw: ref("Target", "## ![Alt](img.png) Key Features"),
+    };
+    const source: CheckInputFile = {
+      path: "source.md",
+      raw: ref("Source", "See [features](reference/target.md#-key-features)."),
+    };
+    expect(checkBundle([source, target]).errorCount).toBe(0);
+  });
+
+  test("LCLI-287: duplicate state is isolated per document, repeated run, and bundle order", () => {
+    const a: CheckInputFile = {
+      path: "a.md",
+      raw: ref("A", "## Repeat\n\n## Repeat\n\n[second](#repeat-1)"),
+    };
+    const b: CheckInputFile = {
+      path: "b.md",
+      raw: ref("B", "## Repeat\n\n## Repeat\n\n[second](#repeat-1)"),
+    };
+    const first = checkBundle([a, b]);
+    const repeated = checkBundle([a, b]);
+    const reversed = checkBundle([b, a]);
+    expect(first).toEqual({ fileCount: 2, errorCount: 0, warningCount: 0, findings: [], complete: true });
+    expect(repeated).toEqual(first);
+    expect(reversed).toEqual(first);
   });
 });
 
@@ -818,6 +918,35 @@ describe("runCheck — exit codes and discovery", () => {
     await runCheck(o);
     expect(fetchCalls).toBe(0);
     expect((o.stdout as ReturnType<typeof capture>).text()).toContain("was not probed");
+  });
+
+  test("LCLI-286 AC2: a malformed or legacy-form resolver result fails closed with the stable Lore reason", async () => {
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[internal](http://internal.example/)."));
+    let fetchCalls = 0;
+    const fetchFake: FetchLike = async () => {
+      fetchCalls++;
+      return { ok: true, status: 200 };
+    };
+    const resolveFake: ResolveHost = async () => ["127.1"];
+    const o = { ...opts(["--external"]), fetch: fetchFake, resolveHost: resolveFake };
+    await runCheck(o);
+    expect(fetchCalls).toBe(0);
+    expect((o.stdout as ReturnType<typeof capture>).text()).toContain(
+      'resolves to a blocked address (127.1, "127.1" is not a valid IP address literal)',
+    );
+  });
+
+  test("LCLI-286 AC2: a WHATWG-normalized legacy IPv4 URL cannot bypass literal-address blocking", async () => {
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[internal](http://2130706433/)."));
+    let fetchCalls = 0;
+    const fetchFake: FetchLike = async () => {
+      fetchCalls++;
+      return { ok: true, status: 200 };
+    };
+    const o = { ...opts(["--external"]), fetch: fetchFake, resolveHost: ALLOW_ALL_HOSTS };
+    await runCheck(o);
+    expect(fetchCalls).toBe(0);
+    expect((o.stdout as ReturnType<typeof capture>).text()).toContain("loopback");
   });
 
   test("LORE-71 AC1: a hostname resolving to MULTIPLE addresses is blocked if ANY of them is disallowed", async () => {

@@ -1,6 +1,6 @@
 ---
 id: m-7
-title: "M6 — MCP server (deferred)"
+title: "Superseded M6 — MCP server schedule"
 ---
 
 ## Description

@@ -42,6 +42,15 @@ package. The decision itself is unaffected: pure-JS, no Rust/native runtime, MDX
 markdownlint), and a deterministic internal-by-default gate — only the specific tooling named
 below was never actually adopted; hand-rolled code achieves the same properties.
 
+Amended — 2026-07-30 (dependency-boundary reconciliation): package-specific
+`gray-matter` references below are historical. The current quote-safety and
+frontmatter validation paths use the Lore-owned fence boundary plus exact-pinned
+`js-yaml`, as recorded by the ADR-0011 amendment. The validation tiers and
+byte-stability requirements are unchanged. `LCLI-287` may delegate only the
+generic GitHub slug/duplicate primitive to `github-slugger`; cross-document
+checking, portable-link policy, and finding semantics remain Lore-owned. See the
+[dependency boundary audit](../reference/dependency-boundary-audit.md).
+
 ## Context
 
 lore must answer two distinct questions about a docs bundle, and conflating

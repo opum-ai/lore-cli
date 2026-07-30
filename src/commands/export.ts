@@ -10,6 +10,7 @@ import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { VERSION } from "../meta";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { parseCommandArgs, singleOptionValue } from "./args";
 
 export interface ExportOptions {
   readonly root: string;
@@ -60,28 +61,15 @@ export async function runExport(options: ExportOptions): Promise<number> {
 
 function parseExportArgs(args: readonly string[], output: OutputContext): string {
   void output;
-  let version = PROJECTION_SCHEMA_VERSION;
-  let seen = false;
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--schema-version") {
-      if (seen) throw usage("--schema-version given more than once", "pass it at most once");
-      const value = args[++i];
-      if (value === undefined || value.startsWith("-")) {
-        throw usage("--schema-version needs a value", `pass --schema-version ${PROJECTION_SCHEMA_VERSION}`);
-      }
-      version = value;
-      seen = true;
-    } else if (arg.startsWith("--schema-version=")) {
-      if (seen) throw usage("--schema-version given more than once", "pass it at most once");
-      version = arg.slice("--schema-version=".length);
-      seen = true;
-    } else if (arg.startsWith("-")) {
-      throw usage(`unknown option "${arg}"`, "run `lore export --help` to list options");
-    } else {
-      throw usage(`unexpected argument "${arg}"`, "run `lore export --help` to list options");
-    }
+  const parsed = parseCommandArgs(args, "export");
+  if (parsed.positionals.length > 0) {
+    throw usage(`unexpected argument "${parsed.positionals[0]}"`, "run `lore export --help` to list options");
   }
+  const rawVersion = singleOptionValue(parsed, "schema-version");
+  if (rawVersion === "") {
+    throw usage("--schema-version needs a value", `pass --schema-version ${PROJECTION_SCHEMA_VERSION}`);
+  }
+  const version = rawVersion ?? PROJECTION_SCHEMA_VERSION;
   if (version !== PROJECTION_SCHEMA_VERSION) {
     throw usage(
       `unsupported projection schema version "${version}"`,

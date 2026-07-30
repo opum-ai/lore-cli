@@ -81,7 +81,7 @@ export interface LinkOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `link`/`unlink`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -808,15 +808,12 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
 
 /**
  * Parse `link`/`unlink`'s tokens into `<id> <taskId…>` and `--no-back-ref`, via the shared
- * {@link parseCommandArgs} tokenizer (mirrors `commands/rename.ts`/`commands/supersede.ts`'s
+ * {@link parseCommandArgs} parser (mirrors `commands/rename.ts`/`commands/supersede.ts`'s
  * parsers). Positional arity is validated here since it differs per command (a variadic task-id
  * tail, not a fixed count).
  */
 function parseLinkArgs(args: readonly string[], command: "link" | "unlink"): LinkArgs {
-  // `--allow-missing` is unlink-only: `link` fundamentally needs a live concept to add `tasks:`
-  // to, so tolerating a miss would be meaningless there.
-  const knownFlags = command === "unlink" ? ["no-back-ref", "allow-missing"] : ["no-back-ref"];
-  const { positionals, flags } = parseCommandArgs(args, command, knownFlags);
+  const { positionals, flags } = parseCommandArgs(args, command);
 
   const id = positionals[0];
   if (id === undefined) {

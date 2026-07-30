@@ -19,6 +19,24 @@
 - 2026-07-28T21:23:02-05:00 fea4509a7a2a9be13a197bff638f03b6bcdb9717 chore: migrate backlog namespace to lcli
 - 2026-07-28T21:30:33-05:00 84fa4bd966db5d64bea9ddcb729b4a768a8839df ci: expose strict Lore composite action
 - 2026-07-28T21:47:51-05:00 05005738d705830a9029b35a82cdda6152458e9c fix: build pinned Backlog for strict action
+- 2026-07-28T21:54:50-05:00 c2109d94f74f62402cb5f382b5653659adde865e docs: finalize strict action task
+- 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
+- 2026-07-30T09:49:16-05:00 1520b894f0c4af7d36bf959069bb1e189963981f docs: sequence Commander before indexed retrieval
+- 2026-07-30T10:40:14-05:00 1e2e6dc4c9f59328cf22b6ca3bb13e49ce111f6b docs: record dependency boundary audit
+- 2026-07-30T11:35:54-05:00 6ed37e2c9ccf260eeaf933ea47aab4a5d1d2272a refactor: delegate SSRF IP parsing to ipaddr.js
+- 2026-07-30T11:38:19-05:00 c0d0e442f0d900c8fa65f2e30d3672027b2e324a docs: advance dependency campaign to LCLI-287
+- 2026-07-30T11:54:18-05:00 60c953c7db84ffed7376ee72663eaf9c5641abff refactor: delegate heading slugging to github-slugger
+- 2026-07-30T11:56:37-05:00 82d321458ded7a971847042b49a613d40426adb6 docs: advance dependency campaign to LCLI-285
+- 2026-07-30T12:04:38-05:00 921032fe8653e09c62f647152e05e6cd9454865e refactor: delegate terminal width to string-width
+- 2026-07-30T12:07:11-05:00 c46620514f1705ef51a2b7ff5de4dcbd6ba6a205 docs: advance dependency campaign to LCLI-288
+- 2026-07-30T12:17:00-05:00 b9dcc4a3a88ffb01b217b9ad83bc06195935e9e6 refactor: consolidate config shape validation on Zod
+- 2026-07-30T12:21:28-05:00 8331d768d2c541f0f66d56f65c86872e2166c0af docs: complete dependency boundary campaign
+- 2026-07-30T12:36:44-05:00 f03786705b803a3742f98fbd90e5267e7264a29b docs: sync dependency campaign closeout log
+- 2026-07-30T12:37:18-05:00 484353d8d8a973aa24d6e429525c489fe44daca3 docs: record campaign closeout verification
+- 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
+- 2026-07-30T14:00:06-05:00 02bc9694043958d27022be2c2de1e107572ab249 docs: advance release campaign to Commander
+- 2026-07-30T15:07:43-05:00 90e9fbd90cd42c49348be7b2d0834b4d7cbf1a76 refactor: migrate CLI parsing to Commander
+- 2026-07-30T15:08:52-05:00 743795bf0cc80f6c2b016cedaa424b5f9f189dfc docs: record protected branch handoff
 
 ## docs/.obsidian
 
@@ -55,6 +73,9 @@
 - 2026-07-26T21:25:31-05:00 0f15038ddbe6f7e0adf3fc755c1c71562227034b fix(wave2-integration): correct cd-carve-out misattribution and commaJoin universality claim
 - 2026-07-26T21:25:31-05:00 dccfabfe1eea13ceeee034c70cc21ab68d52c8b1 docs(wave2-integration): fix label-flag comment/test contradictions and ADR-0002 item 6
 - 2026-07-28T21:23:02-05:00 fea4509a7a2a9be13a197bff638f03b6bcdb9717 chore: migrate backlog namespace to lcli
+- 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
+- 2026-07-30T10:40:14-05:00 1e2e6dc4c9f59328cf22b6ca3bb13e49ce111f6b docs: record dependency boundary audit
+- 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
 
 ## docs/reference
 
@@ -108,6 +129,14 @@
 - 2026-07-28T08:20:58-05:00 6ceccfb6b36ecd6679d85edec33252364c046094 feat: add Claude and Codex init onboarding
 - 2026-07-28T12:22:07-05:00 7d5d3835e2028d3de6b4b7742817447819aac88c fix: close LORE-281 review gaps
 - 2026-07-28T21:23:02-05:00 fea4509a7a2a9be13a197bff638f03b6bcdb9717 chore: migrate backlog namespace to lcli
+- 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
+- 2026-07-30T09:49:16-05:00 1520b894f0c4af7d36bf959069bb1e189963981f docs: sequence Commander before indexed retrieval
+- 2026-07-30T10:40:14-05:00 1e2e6dc4c9f59328cf22b6ca3bb13e49ce111f6b docs: record dependency boundary audit
+- 2026-07-30T11:35:54-05:00 6ed37e2c9ccf260eeaf933ea47aab4a5d1d2272a refactor: delegate SSRF IP parsing to ipaddr.js
+- 2026-07-30T11:54:18-05:00 60c953c7db84ffed7376ee72663eaf9c5641abff refactor: delegate heading slugging to github-slugger
+- 2026-07-30T12:04:38-05:00 921032fe8653e09c62f647152e05e6cd9454865e refactor: delegate terminal width to string-width
+- 2026-07-30T12:17:00-05:00 b9dcc4a3a88ffb01b217b9ad83bc06195935e9e6 refactor: consolidate config shape validation on Zod
+- 2026-07-30T15:07:43-05:00 90e9fbd90cd42c49348be7b2d0834b4d7cbf1a76 refactor: migrate CLI parsing to Commander
 
 ## docs/runbooks
 
@@ -150,6 +179,18 @@
 - 2026-07-27T07:17:12-05:00 047857cc4bb96060430c1735c5b6e46fd268cdf4 feat: add deterministic OKF projection export
 - 2026-07-28T08:20:58-05:00 6ceccfb6b36ecd6679d85edec33252364c046094 feat: add Claude and Codex init onboarding
 - 2026-07-28T21:23:02-05:00 fea4509a7a2a9be13a197bff638f03b6bcdb9717 chore: migrate backlog namespace to lcli
+- 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
+- 2026-07-30T09:49:16-05:00 1520b894f0c4af7d36bf959069bb1e189963981f docs: sequence Commander before indexed retrieval
+- 2026-07-30T10:40:14-05:00 1e2e6dc4c9f59328cf22b6ca3bb13e49ce111f6b docs: record dependency boundary audit
+- 2026-07-30T11:35:54-05:00 6ed37e2c9ccf260eeaf933ea47aab4a5d1d2272a refactor: delegate SSRF IP parsing to ipaddr.js
+- 2026-07-30T11:38:19-05:00 c0d0e442f0d900c8fa65f2e30d3672027b2e324a docs: advance dependency campaign to LCLI-287
+- 2026-07-30T11:56:37-05:00 82d321458ded7a971847042b49a613d40426adb6 docs: advance dependency campaign to LCLI-285
+- 2026-07-30T12:07:11-05:00 c46620514f1705ef51a2b7ff5de4dcbd6ba6a205 docs: advance dependency campaign to LCLI-288
+- 2026-07-30T12:21:28-05:00 8331d768d2c541f0f66d56f65c86872e2166c0af docs: complete dependency boundary campaign
+- 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
+- 2026-07-30T14:00:06-05:00 02bc9694043958d27022be2c2de1e107572ab249 docs: advance release campaign to Commander
+- 2026-07-30T15:07:43-05:00 90e9fbd90cd42c49348be7b2d0834b4d7cbf1a76 refactor: migrate CLI parsing to Commander
+- 2026-07-30T15:08:52-05:00 743795bf0cc80f6c2b016cedaa424b5f9f189dfc docs: record protected branch handoff
 
 ## docs/specs
 
@@ -162,3 +203,8 @@
 - 2026-07-18T22:08:41-05:00 6475cc54afcc5c387924b774397e868068d532c4 docs(LORE-52): reconcile stale remark/unified references vs shipped stack
 - 2026-07-19T15:40:26-05:00 686a14afab2392d056d446100bfbc41c3b8f5f55 fix(LORE-59): scaffold the lore:tasks managed block in the Story template (#55)
 - 2026-07-28T21:23:02-05:00 fea4509a7a2a9be13a197bff638f03b6bcdb9717 chore: migrate backlog namespace to lcli
+- 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
+- 2026-07-30T09:49:16-05:00 1520b894f0c4af7d36bf959069bb1e189963981f docs: sequence Commander before indexed retrieval
+- 2026-07-30T10:40:14-05:00 1e2e6dc4c9f59328cf22b6ca3bb13e49ce111f6b docs: record dependency boundary audit
+- 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
+- 2026-07-30T15:07:43-05:00 90e9fbd90cd42c49348be7b2d0834b4d7cbf1a76 refactor: migrate CLI parsing to Commander

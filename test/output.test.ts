@@ -751,33 +751,57 @@ describe("renderTaskSummaryRows — shared id/status/title alignment (LORE-51)",
     expect(prefixWidths[0]).toBe(prefixWidths[1]);
     expect(lines).toEqual(["  LORE-1    Café         Short", "  LORE-100  In Progress  A longer title"]);
   });
+
+  test.each([
+    ["ordinary emoji", "😀"],
+    ["emoji variation sequence", "❤️"],
+    ["regional-indicator flag", "🇺🇸"],
+    ["short ZWJ sequence", "👩‍💻"],
+    ["multi-person ZWJ sequence", "👨‍👩‍👧‍👦"],
+    ["keycap sequence", "1️⃣"],
+  ])("aligns exact row bytes for a %s status (LCLI-285)", (_kind, status) => {
+    const emojiRow: TaskSummaryRow = { id: "LORE-1", title: "Emoji", status };
+    const asciiRow: TaskSummaryRow = { id: "LORE-100", title: "ASCII", status: "Done" };
+    const lines = renderTaskSummaryRows([emojiRow, asciiRow]);
+
+    expect(lines).toEqual([`  LORE-1    ${status}    Emoji`, "  LORE-100  Done  ASCII"]);
+    expect(displayWidth(lines[0]?.slice(0, -(emojiRow.title.length ?? 0)) ?? "")).toBe(
+      displayWidth(lines[1]?.slice(0, -(asciiRow.title.length ?? 0)) ?? ""),
+    );
+  });
 });
 
 describe("displayWidth — terminal column count, not UTF-16 length (LORE-221)", () => {
-  test("counts ASCII text at 1 column per character, matching .length", () => {
-    expect(displayWidth("LORE-100")).toBe("LORE-100".length);
-    expect(displayWidth("")).toBe(0);
+  const DISPLAY_WIDTH_CONFORMANCE_V1 = [
+    { kind: "empty", input: "", before: 0, after: 0 },
+    { kind: "ASCII", input: "LORE-100", before: 8, after: 8 },
+    { kind: "East Asian wide", input: "処理中", before: 6, after: 6 },
+    { kind: "East Asian fullwidth", input: "Ａ", before: 2, after: 2 },
+    { kind: "combining mark", input: `e${"́"}`, before: 1, after: 1 },
+    { kind: "ordinary emoji", input: "😀", before: 1, after: 2 },
+    { kind: "emoji variation sequence", input: "❤️", before: 1, after: 2 },
+    { kind: "regional-indicator flag", input: "🇺🇸", before: 2, after: 2 },
+    { kind: "short ZWJ sequence", input: "👩‍💻", before: 2, after: 2 },
+    { kind: "multi-person ZWJ sequence", input: "👨‍👩‍👧‍👦", before: 4, after: 2 },
+    { kind: "keycap sequence", input: "1️⃣", before: 1, after: 2 },
+  ] as const;
+
+  test("matches every versioned post-boundary width", () => {
+    for (const { kind, input, after } of DISPLAY_WIDTH_CONFORMANCE_V1) {
+      expect(displayWidth(input), kind).toBe(after);
+    }
   });
 
-  test("counts each East Asian Wide/Fullwidth code point as 2 columns", () => {
-    expect(displayWidth("処理中")).toBe(6); // 3 code points x 2 columns
-    expect(displayWidth("Ａ")).toBe(2); // fullwidth Latin "A" (U+FF21)
+  test("isolates the intentional behavior changes from the pinned pre-change oracle", () => {
+    expect(DISPLAY_WIDTH_CONFORMANCE_V1.filter(({ before, after }) => before !== after)).toEqual([
+      { kind: "ordinary emoji", input: "😀", before: 1, after: 2 },
+      { kind: "emoji variation sequence", input: "❤️", before: 1, after: 2 },
+      { kind: "multi-person ZWJ sequence", input: "👨‍👩‍👧‍👦", before: 4, after: 2 },
+      { kind: "keycap sequence", input: "1️⃣", before: 1, after: 2 },
+    ]);
   });
 
-  test("counts a combining mark as 0 columns, not 1", () => {
-    expect(displayWidth(`e${"́"}`)).toBe(1); // base "e" (1) + combining acute (0)
-  });
-
-  test("counts a zero-width joiner as 0 columns", () => {
-    expect(displayWidth(`a${"‍"}b`)).toBe(2); // "a" (1) + ZWJ (0) + "b" (1)
-  });
-
-  test("does not double-count a supplementary-plane (surrogate-pair) code point", () => {
-    // U+1F600 (😀) is one code point represented as a UTF-16 surrogate pair (.length === 2);
-    // displayWidth must iterate code points, not UTF-16 units, to avoid counting it as 2 chars.
-    const emoji = "\u{1F600}";
-    expect(emoji.length).toBe(2);
-    expect(displayWidth(emoji)).toBeGreaterThan(0);
-    expect(displayWidth(emoji)).toBeLessThan(emoji.length + 1);
+  test("keeps package-level ANSI width handling compatible with sanitized row inputs", () => {
+    expect(displayWidth("\x1b[31m処理中\x1b[39m")).toBe(6);
   });
 });

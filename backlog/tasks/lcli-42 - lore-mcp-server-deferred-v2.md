@@ -1,20 +1,23 @@
 ---
 id: LCLI-42
-title: lore mcp server (deferred v2)
+title: Local lore MCP server (on hold)
 status: To Do
 assignee: []
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:22'
+updated_date: '2026-07-30 13:50'
 labels:
   - deferred
   - mcp
-milestone: m-7
+  - on-hold
+milestone: m-10
 dependencies:
   - LCLI-21
   - LCLI-28
 documentation:
   - docs/reference/mcp-tools.md
   - docs/adr/0004-cli-first-skill-bridge-mcp-deferred.md
+  - docs/adr/0018-persistent-local-graph-projection-with-ladybugdb.md
+  - docs/specs/local-graph-platform-roadmap.md
 priority: low
 ordinal: 42000
 ---
@@ -22,7 +25,7 @@ ordinal: 42000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-DEFERRED: stdio MCP transport over the same core; tools + resources; structuredContent on success reads reusing the --json serializer. Secondary to the CLI.
+ON HOLD and unscheduled. Retain the local stdio MCP transport design as a thin wrapper over the same core functions, but do not implement it until explicitly reactivated after LadybugDB persistent indexing, the local graph explorer, and LadybugDB-enabled graph capabilities.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

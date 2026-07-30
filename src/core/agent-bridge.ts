@@ -49,7 +49,7 @@ export interface CommandSummary {
 /**
  * The canonical `lore` command surface the bridge advertises — the single source both
  * {@link buildSkillDoc} and the `agents.test.ts` lockstep guard read. Names and order mirror
- * `src/cli.ts`'s dispatch switch / USAGE; the guard runs each name through the real router to prove
+ * `src/cli.ts`'s Commander handler registry / USAGE; the guard runs each name through the real CLI to prove
  * none is a phantom (the exact LORE-37 failure mode: teaching an agent a command that does not exist).
  */
 export const LORE_COMMANDS: readonly CommandSummary[] = [

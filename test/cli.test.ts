@@ -103,6 +103,25 @@ describe("cli — usage errors (exit 2)", () => {
     expect(envelope.error_type).toBe("usage");
     expect(c.stdout.text()).toBe(""); // stdout stays silent on error
   });
+
+  test("a Commander missing-value failure uses Lore's JSON error seam", () => {
+    const c = ctx();
+    expect(run(argv("new", "adr", "Title", "--summary", "--json"), c)).toBe(EXIT_CODES.usage);
+    const envelope = JSON.parse(c.stderr.text()) as { error_type: string; message: string; hint: string };
+    expect(envelope.error_type).toBe("usage");
+    expect(envelope.message).toContain("--summary needs a value");
+    expect(envelope.hint).toContain("--summary=<value>");
+    expect(c.stdout.text()).toBe("");
+  });
+
+  test("a boolean inline value is translated from Commander into Lore's compatibility error", () => {
+    const c = ctx();
+    expect(run(argv("init", "--yes=true", "--json"), c)).toBe(EXIT_CODES.usage);
+    const envelope = JSON.parse(c.stderr.text()) as { error_type: string; message: string };
+    expect(envelope.error_type).toBe("usage");
+    expect(envelope.message).toContain("--yes takes no value");
+    expect(c.stdout.text()).toBe("");
+  });
 });
 
 describe("cli — init dispatch", () => {
@@ -240,6 +259,15 @@ describe("cli — new dispatch", () => {
     writeFileSync(join(tmplDir, "reference.md"), "\n# {{title}}\n\nOwner: {{owner}}\n");
     expect(run(argv("new", "reference", "Orders", "--var", "owner=payments", "--json"), c)).toBe(0);
     expect(readFileSync(join(cwd, "docs/reference/orders.md"), "utf8")).toContain("Owner: payments");
+  });
+
+  test("global-before-command plus repeatable equals options preserve parser compatibility", () => {
+    const c = ctx({ cwd });
+    const tmplDir = join(cwd, ".lore/templates");
+    mkdirSync(tmplDir, { recursive: true });
+    writeFileSync(join(tmplDir, "reference.md"), "\n# {{title}}\n\nOwner: {{owner}}\nRegion: {{region}}\n");
+    expect(run(argv("--json", "new", "reference", "Orders", "--var=owner=payments", "--var=region=us"), c)).toBe(0);
+    expect(readFileSync(join(cwd, "docs/reference/orders.md"), "utf8")).toContain("Owner: payments\nRegion: us");
   });
 
   test("an unknown flag on `new` is a usage error", () => {

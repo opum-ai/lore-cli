@@ -24,7 +24,7 @@
  *   - `backlog` (the Backlog adapter)           → 3 not_found, 6 validation/drift
  *   - `git`     (git log / commit seams)        → 6 drift
  *
- * plus `0` (success) and the universal `2` (usage, from the router's flag parsing)
+ * plus `0` (success) and the universal `2` (usage, from Commander parsing)
  * on every command, and any command-specific `extra` code that is the command's own
  * logic rather than an I/O seam — a `not_found` for an unknown `instructions` topic,
  * or a gate/validation return (`validate`/`check`/`new`/`agents` all pass their
@@ -41,8 +41,8 @@
  * runtime import, so the two agent catalogs can't drift while the live CLI stays
  * decoupled from the SKILL generator. `--json` availability is universal, carried
  * per entry so a single entry is self-describing. Every entry is a real `cli.ts`
- * dispatch case (never an aspirational `scaffold`), pinned to the
- * router both directions by the lockstep test.
+ * handler (never an aspirational `scaffold`), pinned to the handler registry
+ * in both directions by the lockstep test.
  */
 
 import { EXIT_CODES, EXIT_OK, EXIT_UNCAUGHT } from "../errors";
@@ -64,7 +64,7 @@ export interface ManifestFlag {
 
 /** One command in the manifest: everything an agent needs to invoke it correctly. */
 export interface ManifestCommand {
-  /** The subcommand token, exactly as `cli.ts` dispatches it. */
+  /** The subcommand token, exactly as Commander and `cli.ts` dispatch it. */
   readonly name: string;
   /** One-line description of what the command does (kept in sync with `LORE_COMMANDS`). */
   readonly summary: string;
@@ -88,9 +88,9 @@ export interface Manifest {
   readonly schemaVersion: number;
   /** The semantic exit-code taxonomy: name → code, sourced from `errors.ts` so it cannot drift. */
   readonly exitCodes: Readonly<Record<string, number>>;
-  /** The flags accepted in any position on every command (resolved by the router, not the command). */
+  /** The flags accepted in supported positions on every command (resolved by Commander, not the handler). */
   readonly globalFlags: readonly ManifestFlag[];
-  /** Every shipped command, in `cli.ts` dispatch order. */
+  /** Every shipped command, in `cli.ts` handler-registry order. */
   readonly commands: readonly ManifestCommand[];
 }
 
@@ -148,7 +148,7 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-/** The four global flags the router resolves for every invocation (cli-contract §1). */
+/** The four global flags Commander resolves for every invocation (cli-contract §1). */
 const GLOBAL_FLAGS: readonly ManifestFlag[] = deepFreeze([
   {
     name: "json",
@@ -161,7 +161,7 @@ const GLOBAL_FLAGS: readonly ManifestFlag[] = deepFreeze([
 ]);
 
 /**
- * Every shipped command, in `cli.ts` dispatch order. Flags, `kind` values, and the
+ * Every shipped command, in `cli.ts` handler-registry order. Flags, `kind` values, and the
  * seam declarations behind `exitCodes` are transcribed from live source
  * (`commands/*.ts` call chains and `kind:` literals); summaries are kept identical
  * to `LORE_COMMANDS` (guarded by a test). The seam list passed to

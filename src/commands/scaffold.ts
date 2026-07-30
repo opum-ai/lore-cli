@@ -59,7 +59,7 @@ export interface ScaffoldOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `scaffold`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -297,11 +297,11 @@ interface ScaffoldArgs {
 
 /**
  * Parse `scaffold`'s tokens into the `<target>` positional and `--force`, via the shared
- * `<positionals…> [--flags…]` tokenizer every no-value-flag command uses. An unknown flag, an
+ * shared Commander-backed parser every no-value-flag command uses. An unknown flag, an
  * extra positional, or a missing target is a `usage` error.
  */
 function parseScaffoldArgs(args: readonly string[]): ScaffoldArgs {
-  const { positionals, flags } = parseCommandArgs(args, "scaffold", ["force"]);
+  const { positionals, flags } = parseCommandArgs(args, "scaffold");
 
   const target = positionals[0];
   if (target === undefined) {

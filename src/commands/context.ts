@@ -37,6 +37,7 @@ import { loadProfile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable, renderTruncationLine, truncation } from "../output";
+import { parseCommandArgs, singleOptionValue } from "./args";
 
 /** Options for {@link runContext}; `root` and the streams are injectable for tests. */
 export interface ContextOptions {
@@ -44,7 +45,7 @@ export interface ContextOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `context`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -89,54 +90,21 @@ export function runContext(options: ContextOptions): number {
 /**
  * Parse `context`'s tokens into the required `<id>` positional and the value flags
  * `--max-tokens <n>` / `--depth <n>` (also accepting the `--flag=value` form). The
- * router has already stripped lore's global flags, so a `--`-prefixed token here is
+ * Commander has already resolved Lore's global flags, so a `--`-prefixed token here is
  * a command flag: an unrecognized one is a `usage` error, as is a repeated or
  * value-less value flag, a non-integer/out-of-range value, a missing `<id>`, or a
  * second positional. A `--` ends option parsing. The `<id>` is
  * {@link idFromPath}-normalized so path/`.md`/`./` forms resolve.
  */
 function parseContextArgs(args: readonly string[]): ContextArgs {
-  const positionals: string[] = [];
-  let maxTokens: number | undefined;
-  let depth: number | undefined;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      positionals.push(...args.slice(i + 1));
-      break;
-    }
-    if (arg.startsWith("--") && arg.length > 2) {
-      const body = arg.slice(2);
-      const eq = body.indexOf("=");
-      const name = eq === -1 ? body : body.slice(0, eq);
-      const inline = eq === -1 ? undefined : body.slice(eq + 1);
-      if (name === "max-tokens") {
-        if (maxTokens !== undefined) {
-          throw usage("--max-tokens given more than once", "pass --max-tokens at most once");
-        }
-        maxTokens = parseCount("--max-tokens", readValue("--max-tokens", inline, args, i), { min: 1 });
-        if (inline === undefined) {
-          i++;
-        }
-      } else if (name === "depth") {
-        if (depth !== undefined) {
-          throw usage("--depth given more than once", "pass --depth at most once");
-        }
-        depth = parseCount("--depth", readValue("--depth", inline, args, i), { min: 0 });
-        if (inline === undefined) {
-          i++;
-        }
-      } else {
-        throw usage(`unknown option "--${name}"`, "run `lore context --help` to list options");
-      }
-    } else if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, "run `lore context --help` to list options");
-    } else {
-      positionals.push(arg);
-    }
-  }
-
+  const parsed = parseCommandArgs(args, "context");
+  const positionals = parsed.positionals;
+  const rawMaxTokens = singleOptionValue(parsed, "max-tokens");
+  const rawDepth = singleOptionValue(parsed, "depth");
+  if (rawMaxTokens === "") throw usage("--max-tokens needs a value", "pass a value, e.g. `--max-tokens 2`");
+  if (rawDepth === "") throw usage("--depth needs a value", "pass a value, e.g. `--depth 2`");
+  const maxTokens = rawMaxTokens === undefined ? undefined : parseCount("--max-tokens", rawMaxTokens, { min: 1 });
+  const depth = rawDepth === undefined ? undefined : parseCount("--depth", rawDepth, { min: 0 });
   if (positionals.length === 0) {
     throw usage(
       "`lore context` needs a concept id",
@@ -158,7 +126,10 @@ function parseContextArgs(args: readonly string[]): ContextArgs {
  */
 function parseCount(flag: string, value: string, opts: { min: number }): number {
   if (!/^\d+$/.test(value)) {
-    throw usage(`invalid ${flag} "${value}"`, `pass an integer ≥ ${opts.min}, e.g. \`${flag} ${opts.min + 1}\``);
+    throw usage(
+      `invalid ${flag} "${value}"`,
+      `pass an integer ≥ ${opts.min}, e.g. \`${flag} ${opts.min + 1}\`; ${flag} needs a value before a separate flag-looking token`,
+    );
   }
   const count = Number.parseInt(value, 10);
   if (!Number.isSafeInteger(count)) {
@@ -176,20 +147,6 @@ function parseCount(flag: string, value: string, opts: { min: number }): number 
  * option (`--depth --max-tokens`) — is a `usage` error rather than a silently
  * swallowed flag (mirroring `lore graph`'s value-flag guard).
  */
-function readValue(flag: string, inline: string | undefined, args: readonly string[], i: number): string {
-  if (inline !== undefined) {
-    if (inline === "") {
-      throw usage(`${flag} needs a value`, `pass a value, e.g. \`${flag} 2\``);
-    }
-    return inline;
-  }
-  const next = args[i + 1];
-  if (next === undefined || next === "" || (next.startsWith("-") && next !== "-")) {
-    throw usage(`${flag} needs a value`, `pass a value, e.g. \`${flag} 2\``);
-  }
-  return next;
-}
-
 // ── Output ─────────────────────────────────────────────────────────────────────
 
 /**

@@ -81,7 +81,7 @@ export interface RenameOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `rename`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -504,13 +504,13 @@ function assertDestinationConfined(newId: string): void {
 
 /**
  * Parse `rename`'s tokens into its two positionals (`<oldId> <newId>`) and `--dry-run`, via the
- * shared {@link parseCommandArgs} tokenizer (mirrors `commands/supersede.ts`/`commands/link.ts`'s
+ * shared {@link parseCommandArgs} parser (mirrors `commands/supersede.ts`/`commands/link.ts`'s
  * parsers). Positional arity is validated here since it differs per command. `newId` is also
  * confined to the `docs/` bundle root here (LORE-78) — before this function returns, so a
  * traversal/absolute destination never reaches `runRename`'s body as a "parsed" value.
  */
 function parseRenameArgs(args: readonly string[]): RenameArgs {
-  const { positionals, flags } = parseCommandArgs(args, "rename", ["dry-run"]);
+  const { positionals, flags } = parseCommandArgs(args, "rename");
 
   const oldId = positionals[0];
   if (oldId === undefined) {

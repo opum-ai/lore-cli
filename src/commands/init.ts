@@ -67,7 +67,7 @@ import { buildScaffold } from "../core/scaffold";
 import { ANSI, EXIT_OK, LoreError, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { type AgentsResult, applyAgentsBridge, bridgeActionColor, renderTrailer } from "./agents";
-import { usage } from "./args";
+import { optionValues, parseCommandArgs, usage } from "./args";
 import { applyCodexBridge, type CodexBridgeResult } from "./codex-bridge";
 import { assertNoSymlinkInPath, createIfAbsent, ensureDir } from "./fswrite";
 import { defaultAdapter } from "./link";
@@ -121,7 +121,7 @@ export interface InitOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's own tokens (everything after `init`), as split by the router. */
+  /** The command's normalized tokens from Commander. */
   args?: readonly string[];
   /** Clock seam for the root index timestamp (and a fresh scaffold's timestamp); defaults to the real wall clock. */
   clock?: () => Date;
@@ -440,81 +440,30 @@ function anyFlagGiven(parsed: InitArgs): boolean {
  * throw a `usage` {@link LoreError} (exit `2`) before any scaffold work runs.
  */
 function parseInitArgs(args: readonly string[]): InitArgs {
-  let yes = false;
-  let agents = false;
-  let codex = false;
-  let noBacklog = false;
-  let checkBacklog = false;
+  const parsed = parseCommandArgs(args, "init");
+  const yes = parsed.flags.has("yes") || parsed.flags.has("non-interactive");
+  const agents = parsed.flags.has("agents") || parsed.flags.has("claude");
+  const codex = parsed.flags.has("codex");
+  const noBacklog = parsed.flags.has("no-backlog");
+  const checkBacklog = parsed.flags.has("check-backlog");
   const scaffolds: string[] = [];
-  const positionals: string[] = [];
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      positionals.push(...args.slice(i + 1));
-      break;
+  for (const value of optionValues(parsed, "scaffold")) {
+    if (value === "") {
+      throw usage("--scaffold needs a value", "pass a value, e.g. `--scaffold mkdocs`");
     }
-    if (arg.startsWith("--") && arg.length > 2) {
-      const body = arg.slice(2);
-      if (body === "yes" || body === "non-interactive") {
-        // `--non-interactive` is a plain alias for `--yes` (NIT-2, review round 2): AC#2's own
-        // wording says "e.g. `--yes` / `--non-interactive`", and it costs one branch to honor it.
-        yes = true;
-        continue;
-      }
-      if (body === "agents" || body === "claude") {
-        agents = true;
-        continue;
-      }
-      if (body === "codex") {
-        codex = true;
-        continue;
-      }
-      if (body === "obsidian") {
-        if (!scaffolds.includes("obsidian")) {
-          scaffolds.push("obsidian");
-        }
-        continue;
-      }
-      if (body === "no-backlog") {
-        noBacklog = true;
-        continue;
-      }
-      if (body === "check-backlog") {
-        checkBacklog = true;
-        continue;
-      }
-      const eq = body.indexOf("=");
-      const name = eq === -1 ? body : body.slice(0, eq);
-      const inline = eq === -1 ? undefined : body.slice(eq + 1);
-      if (name === "scaffold") {
-        const value = readScaffoldValue(inline, args, i);
-        if (inline === undefined) {
-          i++;
-        }
-        if (!SCAFFOLD_TARGETS.has(value)) {
-          throw usage(`unknown scaffold target "${value}"`, `valid targets are ${[...SCAFFOLD_TARGETS].join(", ")}`);
-        }
-        if (!scaffolds.includes(value)) {
-          scaffolds.push(value);
-        }
-        continue;
-      }
-      throw usage(`unknown option "--${name}"`, "run `lore init --help` to list options");
+    if (!SCAFFOLD_TARGETS.has(value)) {
+      throw usage(`unknown scaffold target "${value}"`, `valid targets are ${[...SCAFFOLD_TARGETS].join(", ")}`);
     }
-    if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, "run `lore init --help` to list options");
-    }
-    positionals.push(arg);
+    if (!scaffolds.includes(value)) scaffolds.push(value);
   }
-
-  if (positionals.length > 0) {
+  if (parsed.flags.has("obsidian") && !scaffolds.includes("obsidian")) scaffolds.push("obsidian");
+  if (parsed.positionals.length > 0) {
     // Byte-identical wording to the router's pre-LORE-260 `rejectCommandArgs` guard (cli.ts), which
     // used to reject EVERY token this command received — `lore init` still takes no positionals.
     throw usage(
-      `\`lore init\` takes no arguments, got "${positionals[0]}"`,
+      `\`lore init\` takes no arguments, got "${parsed.positionals[0]}"`,
       "run `lore init` with no positional arguments",
-      { command: "init", unexpected: [...positionals] },
+      { command: "init", unexpected: [...parsed.positionals] },
     );
   }
   if (noBacklog && checkBacklog) {
@@ -534,21 +483,6 @@ function detectAgentAvailability(options: InitOptions): AgentAvailability {
   } catch {
     return { claude: false, codex: false };
   }
-}
-
-/** Read `--scaffold`'s value: its inline `--scaffold=value` form when present, else the next token. A missing/empty value, or a next token that looks like another flag, is a `usage` error. */
-function readScaffoldValue(inline: string | undefined, args: readonly string[], i: number): string {
-  if (inline !== undefined) {
-    if (inline === "") {
-      throw usage("--scaffold needs a value", "pass a value, e.g. `--scaffold mkdocs`");
-    }
-    return inline;
-  }
-  const next = args[i + 1];
-  if (next === undefined || (next.startsWith("-") && next !== "-")) {
-    throw usage("--scaffold needs a value", "pass a value, e.g. `--scaffold mkdocs`");
-  }
-  return next;
 }
 
 /** The per-result-type rendering bundle for `init` (output.ts dispatches on the mode). */

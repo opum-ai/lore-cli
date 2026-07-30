@@ -35,7 +35,7 @@ import { parseCommandArgs, usage } from "./args";
 export interface HelpOptions {
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional tokens (everything after `help`), as split by the router. */
+  /** The command's normalized positional tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -63,9 +63,9 @@ export function runHelp(options: HelpOptions): number {
   return EXIT_OK;
 }
 
-/** Parse `help`'s tokens via the shared tokenizer (no known flags): at most one positional (the command name); a flag or second positional is a `usage` error. */
+/** Parse `help`'s tokens via the shared parser (no known flags): at most one positional (the command name); a flag or second positional is a `usage` error. */
 function parseHelpArgs(args: readonly string[]): string | undefined {
-  const { positionals } = parseCommandArgs(args, "help", []);
+  const { positionals } = parseCommandArgs(args, "help");
   if (positionals.length > 1) {
     throw usage(`unexpected argument "${positionals[1]}"`, "run `lore help [<command>]`");
   }

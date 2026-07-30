@@ -27,7 +27,7 @@ export interface AgentsOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's tokens (everything after `agents`), as split by the router. */
+  /** The command's normalized tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -128,7 +128,7 @@ export function runAgents(options: AgentsOptions): number {
 
 /** Parse `agents`' tokens: no positionals; boolean `--force`/`--check`. A positional or unknown flag is a `usage` error (exit 2). */
 function parseAgentsArgs(args: readonly string[]): { force: boolean; check: boolean } {
-  const { positionals, flags } = parseCommandArgs(args, "agents", ["force", "check"]);
+  const { positionals, flags } = parseCommandArgs(args, "agents");
   if (positionals.length > 0) {
     throw usage(
       `\`lore agents\` takes no arguments, got "${positionals[0]}"`,

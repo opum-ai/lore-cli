@@ -25,10 +25,7 @@ agent loop that the generated `.claude/skills/lore/SKILL.md` mirrors and that
 `lore agents` and `lore instructions` teach on demand.
 
 lore is **CLI-primary** for both humans and agents — there is no behavior
-reachable only through a non-CLI surface, and the MCP server is a deferred v2
-transport over the same core (see
-[ADR-0004: CLI-first; SKILL.md bridge; MCP deferred](../adr/0004-cli-first-skill-bridge-mcp-deferred.md)
-and [MCP tools (deferred)](../reference/mcp-tools.md)). An agent therefore works
+reachable only through a non-CLI surface, and the local MCP server is an on-hold transport over the same core (see [ADR-0004: CLI-first; SKILL.md bridge; MCP deferred](../adr/0004-cli-first-skill-bridge-mcp-deferred.md), [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md), and [MCP tools (on hold)](../reference/mcp-tools.md)). An agent therefore works
 with lore exactly the way a CI pipeline or a shell script does: it **shells out**
 and reads structured output. Everything an agent relies on — the output modes,
 the `{schemaVersion, kind, data}` envelope, the semantic exit codes, the
@@ -372,7 +369,7 @@ non-destructive.
   metadata never lives on tasks — see
   [ADR-0002](../adr/0002-backlog-integration-json-only.md) and
   [ADR-0012](../adr/0012-backlog-coexistence-git-ownership.md)). There is no
-  hidden non-CLI surface to use; the deferred MCP server, when it lands, will
+  hidden non-CLI surface to use; the on-hold MCP server, if explicitly reactivated, will
   drive the same core functions ([MCP tools](../reference/mcp-tools.md)).
 
 - **Respect managed regions.** Never write inside `<!-- lore:tasks:begin -->` …

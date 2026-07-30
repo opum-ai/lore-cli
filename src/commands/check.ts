@@ -28,7 +28,6 @@
 
 import { lookup as dnsLookup } from "node:dns/promises";
 import { statSync } from "node:fs";
-import { isIP } from "node:net";
 import { join, posix } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { toRefList, walkFiles } from "../core/bundle";
@@ -40,6 +39,7 @@ import {
   classifyAddress,
   collectExternalLinks,
   type ExternalLink,
+  isAddressLiteral,
   reconcileDriftFindings,
   tallySeverity,
 } from "../core/check";
@@ -58,6 +58,7 @@ import {
   type Writer,
 } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { parseCommandArgs } from "./args";
 import { canonicalIdentity, readSource } from "./discover";
 import { dedupeTaskIds, defaultAdapter } from "./link";
 import {
@@ -97,7 +98,7 @@ export interface CheckOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `check`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -601,42 +602,18 @@ export function isDocsRoot(label: string): boolean {
 // ── Argument parsing ───────────────────────────────────────────────────────────
 
 /**
- * Parse `check`'s tokens into target bundle roots and its flags. The router has already
+ * Parse `check`'s tokens into target bundle roots and its flags. Commander has already
  * stripped lore's global flags, so anything `--`-prefixed here is a command flag: an
  * unrecognized one is a `usage` error. A `--` ends option parsing so a path may begin with
  * `-`.
  */
 function parseCheckArgs(args: readonly string[]): CheckArgs {
-  const paths: string[] = [];
-  let strict = false;
-  let external = false;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      paths.push(...args.slice(i + 1));
-      break;
-    }
-    if (arg.startsWith("--") && arg.length > 2) {
-      const name = arg.slice(2);
-      switch (name) {
-        case "strict":
-          strict = true;
-          break;
-        case "external":
-          external = true;
-          break;
-        default:
-          throw usage(`unknown option "--${name}"`, "run `lore check --help` to list options");
-      }
-    } else if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, "run `lore check --help` to list options");
-    } else {
-      paths.push(arg);
-    }
-  }
-
-  return { paths, strict, external };
+  const parsed = parseCommandArgs(args, "check");
+  return {
+    paths: parsed.positionals,
+    strict: parsed.flags.has("strict"),
+    external: parsed.flags.has("external"),
+  };
 }
 
 // ── File discovery ─────────────────────────────────────────────────────────────
@@ -911,14 +888,14 @@ async function blockedDestination(url: string, resolveHost: ResolveHost): Promis
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return `uses a disallowed scheme "${parsed.protocol}"`;
   }
-  // `URL#hostname` keeps an IPv6 literal's brackets (e.g. "[::1]") — `isIP`/`classifyAddress` need
-  // the bare address. A literal IP is classified DIRECTLY, never through `resolveHost`: it isn't a
-  // name to resolve, and deferring to `resolveHost` here would let an injected DNS fake that
-  // ignores its `hostname` argument (a reasonable "allow everything" test default) accidentally
-  // paper over a literal blocked-IP URL — the guard's correctness must not depend on `resolveHost`
-  // actually inspecting its input.
+  // `URL#hostname` keeps an IPv6 literal's brackets (e.g. "[::1]") — the package-backed literal
+  // parser/classifier need the bare address. A literal IP is classified DIRECTLY, never through
+  // `resolveHost`: it is not a name to resolve, and deferring to `resolveHost` here would let an
+  // injected DNS fake that ignores its `hostname` argument (a reasonable "allow everything" test
+  // default) accidentally paper over a literal blocked-IP URL — the guard's correctness must not
+  // depend on `resolveHost` actually inspecting its input.
   const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
-  const addresses = isIP(hostname) !== 0 ? [hostname] : await resolveHost(hostname);
+  const addresses = isAddressLiteral(hostname) ? [hostname] : await resolveHost(hostname);
   // The real `node:dns` resolver throws (never resolves empty) when a hostname has no records, so
   // this shouldn't fire against `defaultResolveHost` — but a custom `ResolveHost` returning `[]`
   // for "nothing found" (a plausible alternative contract) must fail CLOSED, not vacuously pass
