@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:33'
-updated_date: '2026-07-30 23:20'
+updated_date: '2026-07-31 00:23'
 labels:
   - ladybugdb
   - retrieval
@@ -32,9 +32,12 @@ modified_files:
   - src/core/ladybug-driver.ts
   - src/core/ladybug-lifecycle.ts
   - src/core/ladybug-native.ts
+  - src/core/ladybug-source.ts
   - src/core/retrieval.ts
+  - src/errors.ts
   - test/cli.test.ts
   - test/context.test.ts
+  - test/errors.test.ts
   - test/graph.test.ts
   - test/indexed-retrieval.test.ts
   - test/query.test.ts
@@ -82,10 +85,12 @@ Final design and evidence (Bun 1.2.23):
 - Windows boundary: Bun 1.2.23 segfaults while loading the Ladybug addon on Windows. CLI import, lifecycle preflight, reference fallback, newer-unsupported, contention, usage-error, and simulated Windows paths do not evaluate the addon. Native Windows packaging support is not claimed and remains exclusively LCLI-283.1.4 scope.
 - Additional verification: lint clean across 126 files; typecheck clean; source and compiled version/JSON-version checks passed; build compiled 241 modules; compiled graph/query/context created and reused a real Ladybug generation on Darwin; launcher/release/flush/local-contract tests passed 25/25 with 102 assertions; frozen install checked 98 installs across 109 packages with no changes; package dry-run contained 70 files and 1.38 MB unpacked; audit found no vulnerabilities; Lore sync changed 0 files; strict validation and check each reported 46 concepts, 0 errors, 0 warnings; git diff check clean.
 - Publication and scope: no push, PR, merge, tag, release version, npm publication, or GitHub setting change occurred. Parent LCLI-283.1 and sibling LCLI-283.1.4 remain To Do; the linked Wave 2 worktree remains untouched.
+
+Landing review corrections and post-review evidence (Bun 1.2.23): preserved newer unsupported control formats before applying this version’s immutable-permission rules; made native-loader/runtime failures fall back without quarantining an otherwise valid generation; and made projection-source retry warnings transactional so an abandoned snapshot attempt cannot duplicate public advisories. Focused indexed/reference and affected lifecycle/command suite: 238 passed, 0 failed, 678 assertions across 6 files. Full suite: 2,296 passed, 0 failed, 6,662 assertions across 54 files. Launcher/release/flush/local-contract: 25 passed, 102 assertions. Lint: 126 files clean; typecheck clean; build: 241 modules. Source/compiled help, version, JSON-version, and JSON-usage checks passed; compiled graph/query/context created and reused one immutable real Ladybug generation. Frozen install checked 98 installs across 109 packages with no changes; package dry-run was 70 files/1.38 MB; audit found no vulnerabilities. The pre-existing installed package tree initially lacked its copied lbugjs.node; the exact trusted package install script restored it from the locked Darwin package without changing source or lock state. Clean-install and wider platform qualification remain LCLI-283.1.4 scope. No push, PR, merge, tag, release, package publication, task activation, parent advancement, or GitHub setting change occurred.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Routed graph, lexical query, and context through fully verified LadybugDB generations behind the existing Commander/handler boundary, retaining the deterministic in-memory implementation as conformance oracle and pre-output fallback. Added a Windows-safe lazy native boundary and shared lifecycle/conformance coverage; all 2,295 tests, lint, typecheck, build, compiled native smoke, frozen install, package dry-run, audit, and strict Lore gates passed. Native Windows packaging, performance, scale, and wider qualification remain deferred to LCLI-283.1.4.
+Landing-reviewed graph, lexical query, and context routing through fully verified LadybugDB generations behind the existing Commander/handler boundary, retaining deterministic in-memory conformance and pre-output fallback. Review hardened unsupported-format preservation, native-loader failure recovery, and source-retry warning parity. All 2,296 tests, lint, typecheck, build, compiled native create/reuse smoke, frozen install, package dry-run, audit, and strict Lore gates pass; native Windows packaging, performance, scale, and wider qualification remain deferred to LCLI-283.1.4.
 <!-- SECTION:FINAL_SUMMARY:END -->
