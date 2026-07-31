@@ -472,19 +472,19 @@ describe("cli — WarningCollector.flush through a real command honors the stder
     writeFileSync(join(cwd, "docs/stray.md"), "# Stray\n\nA plain file with no frontmatter.\n");
   }
 
-  test("stdout TTY + non-TTY stderr + NO_COLOR unset → a real command's advisory warning writes no ESC byte to stderr", () => {
+  test("stdout TTY + non-TTY stderr + NO_COLOR unset → a real command's advisory warning writes no ESC byte to stderr", async () => {
     scaffoldWithStray();
     const c = ctx({ cwd, isTTY: true, stderrIsTTY: false });
-    expect(run(argv("graph"), c)).toBe(0);
+    expect(await run(argv("graph"), c)).toBe(0);
     // Confirms the warning was actually emitted (not silently dropped) before asserting on its bytes.
     expect(c.stderr.text()).toContain("warning: skipping stray.md: no frontmatter mapping");
     expect(c.stderr.text()).not.toContain("\x1b");
   });
 
-  test("both stdout and stderr TTYs + NO_COLOR unset → the same advisory warning is still colored", () => {
+  test("both stdout and stderr TTYs + NO_COLOR unset → the same advisory warning is still colored", async () => {
     scaffoldWithStray();
     const c = ctx({ cwd, isTTY: true, stderrIsTTY: true });
-    expect(run(argv("graph"), c)).toBe(0);
+    expect(await run(argv("graph"), c)).toBe(0);
     expect(c.stderr.text()).toContain("\x1b[33m"); // yellow "warning:" prefix
     expect(c.stderr.text()).toContain("skipping stray.md");
   });

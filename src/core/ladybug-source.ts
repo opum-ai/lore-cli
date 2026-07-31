@@ -11,7 +11,7 @@ import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type BacklogAdapter, bunBacklogSpawn, createBacklogAdapter } from "../adapters/backlog";
 import { resolveHeadSha } from "../adapters/git";
-import { LoreError, type WarningCollector } from "../errors";
+import { LoreError, WarningCollector } from "../errors";
 import { VERSION } from "../meta";
 import { loadBundle, walkMarkdown } from "./bundle";
 import { loadProfile, PROFILE_JSON_REL_PATH, PROFILE_REL_PATH } from "./profile";
@@ -163,10 +163,15 @@ export async function loadLadybugProjectionSource(
   const adapter = options.adapter ?? createBacklogAdapter(bunBacklogSpawn(undefined, options.root));
   const resolveGitCommit = options.resolveGitCommit ?? resolveHeadSha;
   for (let attempt = 0; attempt < 2; attempt++) {
+    // A changed source snapshot abandons this entire attempt. Buffer its
+    // advisories too, then merge only the stable attempt so indexed commands
+    // cannot emit duplicate warnings that the reference loader would report
+    // once.
+    const attemptWarnings = options.warnings === undefined ? undefined : new WarningCollector();
     const inventory = readSourceInventory(options.root);
     const profileInventory = readProfileInventory(options.root);
     const profile = loadProfile({ root: options.root });
-    const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: options.warnings, profile });
+    const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: attemptWarnings, profile });
     const tasks = await adapter.listTasks();
     const gitCommit = resolveGitCommit(options.root);
     const projection = buildProjection({
@@ -186,7 +191,7 @@ export async function loadLadybugProjectionSource(
       canonicalJson(profileInventory) === canonicalJson(finalProfileInventory) &&
       gitCommit === finalGitCommit
     ) {
-      return prepareLadybugProjectionSource({
+      const source = prepareLadybugProjectionSource({
         projection,
         inventory,
         profileInventory,
@@ -194,6 +199,10 @@ export async function loadLadybugProjectionSource(
         ladybugStorageVersion: options.ladybugStorageVersion,
         loreVersion: VERSION,
       });
+      if (attemptWarnings !== undefined && options.warnings !== undefined) {
+        options.warnings.merge(attemptWarnings);
+      }
+      return source;
     }
   }
   throw new LoreError(

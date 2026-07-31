@@ -654,6 +654,12 @@ export class WarningCollector {
     return [...this.messages];
   }
 
+  /** Append another collector's messages and machine-readable kinds in order. */
+  merge(other: WarningCollector): void {
+    this.messages.push(...other.messages);
+    for (const kind of other.kinds) this.kinds.add(kind);
+  }
+
   /**
    * Write each collected warning to stderr as `warning: <message>` and return
    * the number flushed. Color is applied only when `opts.color` is true.

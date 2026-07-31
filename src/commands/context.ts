@@ -2,12 +2,13 @@
  * commands/context.ts — `lore context <id> [--max-tokens <n>] [--depth <n>]`.
  *
  * The thin, read-only layer that emits a **token-budgeted context pack** for one
- * concept (cli-surface §context; LORE-34). It loads the `docs/` bundle into a
- * {@link BundleGraph}, then hands the target id, the neighbor radius (`--depth`,
- * default {@link DEFAULT_DEPTH}), and the budget (`--max-tokens`) to the pure
- * {@link buildContext} shaper — which gathers the target's neighborhood via the
- * shared {@link subgraph} traversal and compacts it to the target's full body plus
- * one-line neighbor summaries.
+ * concept (cli-surface §context; LORE-34). Commander supplies a verified indexed
+ * {@link BundleGraph} with automatic reference fallback; direct core callers
+ * retain the reference loader. It then hands the target id, neighbor radius
+ * (`--depth`, default {@link DEFAULT_DEPTH}), and budget (`--max-tokens`) to the
+ * pure {@link buildContext} shaper, which gathers the target's neighborhood via
+ * the shared {@link subgraph} traversal and compacts it to the target's full body
+ * plus one-line neighbor summaries.
  *
  * Output follows the uniform CLI modes: the `{schemaVersion, kind:
  * "context.export", data}` envelope under the global `--json`, and otherwise a
@@ -30,10 +31,12 @@
  */
 
 import { join } from "node:path";
+import type { BacklogAdapter } from "../adapters/backlog";
 import { loadBundle } from "../core/bundle";
 import { idFromPath } from "../core/concept";
 import { buildContext, type ContextExport, DEFAULT_DEPTH } from "../core/context";
 import { loadProfile } from "../core/profile";
+import type { RetrievalGraphLoader } from "../core/retrieval";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable, renderTruncationLine, truncation } from "../output";
@@ -51,6 +54,10 @@ export interface ContextOptions {
   stdout?: Writer;
   /** stderr sink for advisory warnings; defaults to `process.stderr`. */
   stderr?: Writer;
+  /** Backlog snapshot seam used only by indexed projection freshness/builds. */
+  adapter?: BacklogAdapter;
+  /** Indexed/reference selector injected by the Commander handler or conformance tests. */
+  retrieval?: RetrievalGraphLoader;
 }
 
 /** The parsed form of `lore context`'s arguments. */
@@ -69,12 +76,25 @@ interface ContextArgs {
  * {@link LoreError} (exit `2`); an `<id>` not in the bundle a `not_found` one (exit
  * `3`).
  */
-export function runContext(options: ContextOptions): number {
+export function runContext(options: ContextOptions): number | Promise<number> {
   const parsed = parseContextArgs(options.args);
-  const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
+  if (options.retrieval !== undefined) {
+    return options
+      .retrieval({ root: options.root, warnings: advisories, adapter: options.adapter })
+      .then(({ graph }) => finishContext(options, parsed, graph, advisories));
+  }
   const profile = loadProfile({ root: options.root });
-  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
+  const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, profile });
+  return finishContext(options, parsed, graph, advisories);
+}
+
+function finishContext(
+  options: ContextOptions,
+  parsed: ContextArgs,
+  graph: ReturnType<typeof loadBundle>,
+  advisories: WarningCollector,
+): number {
   // Flush load warnings before buildContext, which throws not_found for an unknown
   // target — otherwise an advisory explaining *why* a file is not a concept would be
   // discarded on exactly the path that most needs it (mirrors `lore graph`).

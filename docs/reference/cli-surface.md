@@ -355,7 +355,15 @@ the doc↔task coupling has gaps.
 
 These are deterministic, no-LLM operations (see
 [ADR-0014](../adr/0014-core-has-no-llm-dependency.md) and
-[ADR-0015](../adr/0015-lightweight-retrieval-no-vectors.md)).
+[ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md)).
+`graph`, `query`, and `context` use canonical records from a fully verified,
+immutable local LadybugDB generation on supported hosts. Missing, stale, known
+incompatible, or corrupt state rebuilds only under the frozen ownership policy;
+contention, a newer unsupported format, an unavailable native backend, or a
+failed indexed operation selects the reference in-memory implementation before
+output. The public envelopes, diagnostics, and ordering do not reveal which
+backend was selected. No command accepts Cypher or exposes database paths,
+physical identifiers, or native errors.
 
 ### `graph`
 
@@ -387,7 +395,7 @@ See [OKF projection contract](okf-projection-contract.md).
 
 ### `query`
 
-In-memory full-text search over the bundle (BM25-style ranking) with
+Deterministic lexical search over the selected bundle graph (BM25-style ranking) with
 frontmatter-field filters. **No vectors, RAG, or chunking.** Returns ranked
 hits with a `summary`-derived snippet; output is bounded with a truncation hint
 (`showing 30 of 120 — narrow with --type story`).

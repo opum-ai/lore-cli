@@ -8,29 +8,19 @@
 
 import ladybug, { Connection, Database, type LbugValue, type QueryResult } from "@ladybugdb/core";
 import { LoreError } from "../errors";
+import type { BundleGraph, Edge, EdgeKind } from "./bundle";
+import type { Concept } from "./concept";
+import type { LadybugDatabaseVerification } from "./ladybug-native";
 import {
   canonicalJson,
   LADYBUG_INDEX_FORMAT,
   type LadybugProjectionSource,
+  type ProjectionConceptRecord,
   type ProjectionEdgeRecord,
 } from "./ladybug-source";
 
 export const LADYBUG_VERSION = String(ladybug.VERSION);
 export const LADYBUG_STORAGE_VERSION = String(ladybug.STORAGE_VERSION);
-
-export interface LadybugDatabaseVerification {
-  readonly repositoryScopeKey: string;
-  readonly snapshotKey: string;
-  readonly sourceFingerprint: string;
-  readonly exportDigest: string;
-  readonly taskSnapshotDigest: string;
-  readonly sourceRecordsDigest: string;
-  readonly recordKeysDigest: string;
-  readonly recordCount: number;
-  readonly conceptCount: number;
-  readonly taskCount: number;
-  readonly authoredEdgeCount: number;
-}
 
 const SCHEMA_QUERIES = [
   `CREATE NODE TABLE RepositoryProjection(
@@ -396,6 +386,107 @@ export async function readLadybugSourceRecords(databasePath: string): Promise<Re
       }
     }
     return result;
+  } finally {
+    await closeConnection(connection);
+    await database.close();
+  }
+}
+
+/**
+ * Read the verified projection into Lore's existing deterministic graph model.
+ *
+ * The database remains an implementation detail: canonical export records are
+ * the read boundary, source record keys are translated back to concept ids, and
+ * neither Ladybug ids nor physical schema values enter the returned graph.
+ */
+export async function readLadybugBundleGraph(
+  databasePath: string,
+  source: LadybugProjectionSource,
+): Promise<BundleGraph> {
+  const database = readOnlyDatabase(databasePath);
+  const connection = new Connection(database);
+  try {
+    const conceptRows = await queryRows(
+      connection,
+      "MATCH (n:ConceptRecord) RETURN n.sourceRecordJson AS sourceRecordJson",
+    );
+    const edgeRows = await queryRows(
+      connection,
+      "MATCH (n:AuthoredEdgeRecord) RETURN n.sourceRecordJson AS sourceRecordJson",
+    );
+    if (conceptRows.length !== source.counts.concepts || edgeRows.length !== source.counts.authoredEdges) {
+      corrupt("indexed read counts differ from the verified source snapshot");
+    }
+
+    const records = conceptRows.map((row) => parseConceptSourceRecord(row.sourceRecordJson));
+    records.sort((a, b) => compare(a.id, b.id));
+    const concepts = new Map<string, Concept>();
+    const conceptIdsByRecordKey = new Map<string, string>();
+    const tokenEstimates = new Map<string, number>();
+    const docsPrefix = `${source.manifest.bundle.docsRoot}/`;
+    for (const record of records) {
+      if (concepts.has(record.id) || conceptIdsByRecordKey.has(record.key) || !record.path.startsWith(docsPrefix)) {
+        corrupt("indexed concept identities are duplicated or outside the bundle root");
+      }
+      const concept: Concept = {
+        id: record.id,
+        path: record.path.slice(docsPrefix.length),
+        type: record.type,
+        frontmatter: record.frontmatter,
+        body: record.body,
+      };
+      concepts.set(record.id, concept);
+      conceptIdsByRecordKey.set(record.key, record.id);
+      tokenEstimates.set(record.id, record.tokenEstimate);
+    }
+
+    const indexedEdges = edgeRows
+      .map((row) => parseEdgeSourceRecord(row.sourceRecordJson))
+      .filter((record) => record.kind !== "task")
+      .map((record) => {
+        const from = conceptIdsByRecordKey.get(record.from);
+        const to = record.to === null ? null : conceptIdsByRecordKey.get(record.to);
+        if (
+          from === undefined ||
+          (record.to !== null && to === undefined) ||
+          record.dangling !== (record.to === null) ||
+          !isEdgeKind(record.kind)
+        ) {
+          corrupt("indexed authored-edge identities or promoted fields disagree");
+        }
+        return { record, edge: { from, to: to ?? null, kind: record.kind, target: record.target } satisfies Edge };
+      });
+    indexedEdges.sort(
+      (a, b) =>
+        compare(a.edge.from, b.edge.from) || a.record.ordinal - b.record.ordinal || compare(a.record.key, b.record.key),
+    );
+    for (let index = 1; index < indexedEdges.length; index++) {
+      const previous = indexedEdges[index - 1] as (typeof indexedEdges)[number];
+      const current = indexedEdges[index] as (typeof indexedEdges)[number];
+      if (previous.edge.from === current.edge.from && previous.record.ordinal === current.record.ordinal) {
+        corrupt("indexed concept-edge ordinals are duplicated");
+      }
+    }
+    const edges = indexedEdges.map(({ edge }) => edge);
+
+    let total: number | undefined;
+    const tokenEstimate = (id?: string): number => {
+      if (id === undefined) {
+        total ??= [...tokenEstimates.values()].reduce((sum, value) => sum + value, 0);
+        return total;
+      }
+      const value = tokenEstimates.get(id);
+      if (value === undefined) {
+        throw new LoreError(
+          "not_found",
+          `concept "${id}" is not in the bundle`,
+          "run `lore query` to find the right id, or check the path",
+          { id },
+        );
+      }
+      return value;
+    };
+    return { concepts, edges, tokenEstimate };
   } finally {
     await closeConnection(connection);
     await database.close();
@@ -993,6 +1084,65 @@ function sameDatabaseValue(actual: unknown, expected: unknown): boolean {
 
 function compare(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function parseConceptSourceRecord(value: unknown): ProjectionConceptRecord {
+  const record = parseSourceRecord(value);
+  if (
+    record.record !== "concept" ||
+    typeof record.key !== "string" ||
+    typeof record.id !== "string" ||
+    typeof record.path !== "string" ||
+    typeof record.type !== "string" ||
+    !isObject(record.frontmatter) ||
+    typeof record.body !== "string" ||
+    typeof record.contentHash !== "string" ||
+    typeof record.tokenEstimate !== "number" ||
+    !Number.isSafeInteger(record.tokenEstimate) ||
+    record.tokenEstimate < 0
+  ) {
+    corrupt("indexed concept source record is invalid");
+  }
+  return record as ProjectionConceptRecord;
+}
+
+function parseEdgeSourceRecord(value: unknown): ProjectionEdgeRecord {
+  const record = parseSourceRecord(value);
+  if (
+    record.record !== "edge" ||
+    typeof record.key !== "string" ||
+    typeof record.from !== "string" ||
+    (record.to !== null && typeof record.to !== "string") ||
+    typeof record.kind !== "string" ||
+    typeof record.target !== "string" ||
+    typeof record.ordinal !== "number" ||
+    !Number.isSafeInteger(record.ordinal) ||
+    record.ordinal < 0 ||
+    typeof record.dangling !== "boolean"
+  ) {
+    corrupt("indexed authored-edge source record is invalid");
+  }
+  return record as ProjectionEdgeRecord;
+}
+
+function parseSourceRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "string") corrupt("indexed source record JSON is missing");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    corrupt("indexed source record JSON is malformed");
+  }
+  if (!isObject(parsed)) corrupt("indexed source record JSON is not an object");
+  return parsed;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isEdgeKind(value: string): value is EdgeKind {
+  return value === "link" || value === "specs" || value === "supersedes" || value === "superseded_by";
 }
 
 function corrupt(message: string): never {

@@ -6,8 +6,8 @@ tags:
   - graph-explorer
   - roadmap
   - local-graph
-summary: Orders the Commander-prepared M6 LadybugDB index, M7 graph explorer, and M8 indexed capabilities while local MCP remains on hold.
-timestamp: 2026-07-30T13:35:04.555Z
+summary: Tracks the M6 LadybugDB index after verified command routing, with packaging gates next, followed by the M7 graph explorer and M8 indexed capabilities while local MCP remains on hold.
+timestamp: 2026-07-31T00:20:13Z
 ---
 
 # Local graph platform roadmap
@@ -17,13 +17,17 @@ timestamp: 2026-07-30T13:35:04.555Z
 The local graph roadmap is outside the hosted private-beta acceptance scope but
 may proceed independently. Its feature milestones remain deliberately
 sequential: LadybugDB first, the graph explorer second, and new indexed
-capabilities third. M6 includes one preparatory CLI lane. After the
-LadybugDB schema and lifecycle contract is frozen, the Commander migration and
-projection-lifecycle implementation may proceed independently; indexed
-`graph`, `query`, and `context` routing waits for both. The M7 explorer contract
-may be drafted against the frozen M6 schema, but explorer implementation still
-waits for every M6 gate and the stable projection. The local stdio MCP design
-remains retained but on hold and is not part of this delivery chain.
+capabilities third. M6 includes one preparatory CLI lane. The LadybugDB schema
+and lifecycle contract, Commander migration, and deterministic projection
+lifecycle and verified indexed command routing are complete.
+`LCLI-283.1.3` retains the in-memory implementation as its conformance oracle
+and fallback; landing review is complete and protected publication remains a
+separately authorized operation.
+Packaging, benchmark, and scale qualification remain for the still-unstarted
+`LCLI-283.1.4`. The M7 explorer contract may be drafted against the frozen M6
+schema, but explorer implementation still waits for every M6 gate and the
+stable projection. The local stdio MCP design remains retained but on hold and
+is not part of this delivery chain.
 
 Parent task `LCLI-283` owns the roadmap. Milestones and feature gates are:
 
@@ -57,12 +61,12 @@ Parent task `LCLI-283` owns the roadmap. Milestones and feature gates are:
 operation. The dependency graph intentionally exposes two lanes after the
 schema freeze:
 
-- `LCLI-283.1.1` freezes the property-graph schema, provenance model, format version, storage boundary, freshness fingerprint, migration and rebuild rules, and single-writer lifecycle.
+- `LCLI-283.1.1` froze the property-graph schema, provenance model, format version, storage boundary, freshness fingerprint, migration and rebuild rules, and single-writer lifecycle.
 - `LCLI-284` migrated the router and command option tokenizers to exact-pinned
   Commander. It depends only on `LCLI-283.1.1`, belongs to M6, and must remain
   complete before indexed command integration.
-- `LCLI-283.1.2` implements deterministic projection construction, reconciliation, transactional replacement, invalidation, corruption recovery, and disposal. It also depends on `LCLI-283.1.1` and may proceed independently of `LCLI-284`.
-- `LCLI-283.1.3` depends on both `LCLI-283.1.2` and `LCLI-284`, then routes graph, lexical query, and context through indexed retrieval while retaining the in-memory implementation as a conformance oracle and documented fallback.
+- `LCLI-283.1.2` completed deterministic projection construction, reconciliation, transactional replacement, invalidation, corruption recovery, and disposal with exact `@ladybugdb/core@0.18.2`.
+- `LCLI-283.1.3` completed verified graph, lexical query, and context routing while retaining the in-memory implementation as a conformance oracle and documented fallback.
 - `LCLI-283.1.4` establishes cold and warm benchmarks, small and large fixtures, memory and disk budgets, supported native packaging, concurrency tests, and release thresholds.
 
 M6 is complete only when LadybugDB produces a material measured warm-query improvement, remains safe and rebuildable under stale, corrupt, locked, and interrupted states, preserves deterministic output contracts, and does not impose an unacceptable regression on small repositories.
@@ -111,6 +115,12 @@ both values are duplicated in the projection database and control manifest and
 participate in the source fingerprint. Bun trusts only this package's install
 script so its exact platform optional dependency can copy the native addon.
 
+Bun 1.2.23 segfaults while loading the Ladybug Windows addon before native
+tests can execute. Indexed routing must therefore keep native loading behind an
+explicit lazy boundary so unsupported and fallback paths do not import the
+addon. Non-native contracts continue to run on Windows; native Windows
+packaging qualification remains explicitly deferred to `LCLI-283.1.4`.
+
 ### M7 — Local graph explorer
 
 `LCLI-283.2` consumes the stable indexed projection through a Lore-owned read
@@ -135,18 +145,16 @@ M8 public contracts remain bounded Lore operations. LadybugDB, Cypher, physical 
 
 ### Fresh-session execution order
 
-Start a new implementation session from `dev` in this order:
+Start a new session from clean context in this order:
 
-1. Activate and complete `LCLI-283.1.1`; do not start implementation from the
-   high-level parent alone.
-2. After the schema/lifecycle contract is accepted, `LCLI-284` and
-   `LCLI-283.1.2` are independent implementation lanes. Give each its own
-   feature branch, activation, current-system research, and Backlog plan.
-3. Start `LCLI-283.1.3` only after both lanes merge. This prevents new indexed
-   flags and dispatch paths from being reimplemented outside the declarative
-   Commander/manifest boundary when indexed retrieval arrives.
-4. Finish `LCLI-283.1.4` before accepting M6.
-5. `LCLI-283.2.1` may begin after step 1, but do not begin
+1. Preserve the completed and landing-reviewed `LCLI-283.1.3` history, and
+   publish only through the normal protected branch/PR workflow when separately
+   authorized.
+2. Confirm `LCLI-283.1.1`, `LCLI-283.1.2`, `LCLI-283.1.3`, and `LCLI-284`
+   remain Done; do not advance parent `LCLI-283.1`.
+3. In another explicitly scoped implementation session, activate and finish
+   `LCLI-283.1.4` before accepting M6.
+4. `LCLI-283.2.1` may proceed from the frozen contract, but do not begin
    `LCLI-283.2.2` until M6 is accepted. M8 and local MCP remain out of scope.
 
 ### Held work

@@ -322,15 +322,33 @@ outside the generic schema.
 
 ---
 
-## Planned M6: LadybugDB — `@ladybugdb/core`
+## M6: LadybugDB — `@ladybugdb/core`
 
 | | |
 |---|---|
-| **Package** | `@ladybugdb/core` |
-| **Status** | **Planned for M6; not yet a shipping dependency.** |
+| **Package** | Exact-pinned `@ladybugdb/core@0.18.2` |
+| **Status** | **Shipping dependency; deterministic projection lifecycle and indexed command routing complete.** |
+| **Runtime/storage** | Ladybug `0.18.2` / storage version `42` under pinned Bun 1.2.23 |
 | **Role** | Rebuildable persistent local property-graph and lexical projection for `graph`, `query`, and `context` |
 
-**Rationale.** Repeated retrieval, future interactive exploration, and larger bundles need a persistent index with measurable warm-query and scale behavior. LadybugDB is adopted only as derived local state built from the deterministic export. Git-tracked OKF and Backlog records remain authoritative; indexed and in-memory paths must pass the same deterministic conformance fixtures. No embeddings, vector retrieval, inferred edges, raw public Cypher, or hidden user-global database are introduced. Native packaging, schema migration, locking, corruption recovery, memory, disk, and benchmark thresholds are M6 release gates. See [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md) and the [local graph roadmap](../specs/local-graph-platform-roadmap.md).
+**Rationale.** Repeated retrieval, future interactive exploration, and larger
+bundles need a persistent index with measurable warm-query and scale behavior.
+LadybugDB is derived local state built only from deterministic export schema
+`1.0`; Git-tracked OKF and Backlog records remain authoritative. The completed
+`LCLI-283.1.2` lifecycle provides lossless content-addressed source snapshots,
+transactional isolated builds, immutable publication, read-only verification,
+and safe rebuild/recovery. `LCLI-283.1.3` routes the three read commands through
+that projection while the retained in-memory path passes the same deterministic
+conformance fixtures and remains the fallback.
+
+The native addon is lazy-loaded. Bun 1.2.23's Windows Ladybug addon crashes
+while loading, so Windows-safe non-native/fallback paths must not import it;
+native Windows packaging qualification is explicitly deferred to
+`LCLI-283.1.4`. No embeddings, vector retrieval, inferred edges, raw public
+Cypher, or hidden user-global database are introduced. Native packaging,
+memory, disk, benchmark, and scale thresholds remain M6 release gates. See
+[ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md) and
+the [local graph roadmap](../specs/local-graph-platform-roadmap.md).
 
 ---
 
@@ -469,7 +487,7 @@ adoption are described in
 | SSRF address parsing and CIDR match | `ipaddr.js`; Lore retains explicit block policy, DNS, redirect, timeout, fail-closed, and error behavior (`LCLI-286`) | exact `2.4.0` | yes |
 | Schema + JSON Schema emit | Zod **v4** | exact `4.4.3` | yes |
 | Config parse and shape | Bun native TOML parsing + Zod generic shape; Lore retains security, defaults/projection, page-id precision, and error policy (`LCLI-288`) | pinned Bun + exact Zod `4.4.3` | yes |
-| Local graph and lexical projection | `@ladybugdb/core` | pin during M6 implementation | **planned M6** |
+| Local graph and lexical projection | `@ladybugdb/core` | `0.18.2` | **shipping M6 dependency; indexed routing complete** |
 | MCP transport | @modelcontextprotocol/sdk | — | **on hold** |
 | Confluence publish | *(plain `fetch`)* | — | **on hold** |
 

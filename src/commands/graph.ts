@@ -2,7 +2,9 @@
  * commands/graph.ts — `lore graph [<id>] [--dot] [--depth <n>]`.
  *
  * The thin, read-only layer that emits the bundle's cross-link graph (cli-surface
- * §graph; LORE-31). It loads the `docs/` bundle into a {@link BundleGraph}, then:
+ * §graph; LORE-31). Commander supplies a verified indexed {@link BundleGraph}
+ * with automatic reference fallback; direct core callers retain the reference
+ * loader. The selected graph is then shaped as follows:
  *
  * - with **no `<id>`** exports the whole bundle;
  * - with an `<id>` exports the **subgraph** rooted there, bounded to `--depth`
@@ -30,11 +32,13 @@
  */
 
 import { join } from "node:path";
+import type { BacklogAdapter } from "../adapters/backlog";
 import { loadBundle } from "../core/bundle";
 import { idFromPath } from "../core/concept";
 import { buildGraphExport, type GraphExport, toDot } from "../core/graph";
 import { loadProfile } from "../core/profile";
 import { subgraph } from "../core/query";
+import type { RetrievalGraphLoader } from "../core/retrieval";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, singleLine, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
@@ -52,6 +56,10 @@ export interface GraphOptions {
   stdout?: Writer;
   /** stderr sink for advisory warnings; defaults to `process.stderr`. */
   stderr?: Writer;
+  /** Backlog snapshot seam used only by indexed projection freshness/builds. */
+  adapter?: BacklogAdapter;
+  /** Indexed/reference selector injected by the Commander handler or conformance tests. */
+  retrieval?: RetrievalGraphLoader;
 }
 
 /** The parsed form of `lore graph`'s arguments. */
@@ -71,15 +79,28 @@ interface GraphArgs {
  * a `usage` {@link LoreError} (exit `2`); an `<id>` not in the bundle a
  * `not_found` one (exit `3`).
  */
-export function runGraph(options: GraphOptions): number {
+export function runGraph(options: GraphOptions): number | Promise<number> {
   const parsed = parseGraphArgs(options.args);
   if (parsed.dot && options.output.mode === "json") {
     throw usage("--dot cannot be combined with --json", "DOT has no JSON envelope; pass one of --dot or --json");
   }
-  const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
+  if (options.retrieval !== undefined) {
+    return options
+      .retrieval({ root: options.root, warnings: advisories, adapter: options.adapter })
+      .then(({ graph }) => finishGraph(options, parsed, graph, advisories));
+  }
   const profile = loadProfile({ root: options.root });
-  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
+  const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, profile });
+  return finishGraph(options, parsed, graph, advisories);
+}
+
+function finishGraph(
+  options: GraphOptions,
+  parsed: GraphArgs,
+  graph: ReturnType<typeof loadBundle>,
+  advisories: WarningCollector,
+): number {
   // Flush load warnings before the subgraph lookup, which throws not_found for an
   // unknown root — otherwise an advisory that explains *why* a file is not a
   // concept would be discarded on exactly the path that most needs it.

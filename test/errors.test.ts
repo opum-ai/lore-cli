@@ -612,7 +612,7 @@ describe("WarningCollector", () => {
     expect(warnings.list()).toEqual([]);
   });
 
-  test("accumulates in insertion order and reports a snapshot copy", () => {
+  test("accumulates and merges in insertion order while reporting a snapshot copy", () => {
     const warnings = new WarningCollector();
     warnings.add("unknown type 'Widget'");
     warnings.add("missing summary");
@@ -623,6 +623,14 @@ describe("WarningCollector", () => {
     // list() is a copy: mutating it must not affect the collector.
     (snapshot as string[]).push("tampered");
     expect(warnings.count).toBe(2);
+
+    const more = new WarningCollector();
+    more.add("unreadable directory", "unreadable-directory");
+    warnings.merge(more);
+    more.add("late mutation", "late");
+    expect(warnings.list()).toEqual(["unknown type 'Widget'", "missing summary", "unreadable directory"]);
+    expect(warnings.has("unreadable-directory")).toBe(true);
+    expect(warnings.has("late")).toBe(false);
   });
 
   test("flush writes each warning to stderr and returns the count", () => {

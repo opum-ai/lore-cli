@@ -38,6 +38,7 @@
 - 2026-07-30T15:07:43-05:00 90e9fbd90cd42c49348be7b2d0834b4d7cbf1a76 refactor: migrate CLI parsing to Commander
 - 2026-07-30T15:08:52-05:00 743795bf0cc80f6c2b016cedaa424b5f9f189dfc docs: record protected branch handoff
 - 2026-07-30T15:10:18-05:00 a6348ff8971c5ad4f9a43aedb62643e70fc09deb docs: sync Commander campaign closeout log
+- 2026-07-30T17:03:49-05:00 edbd6f3abd1a37d9e04324db08e9ad8eea7657af feat: add deterministic LadybugDB projection lifecycle
 
 ## docs/.obsidian
 
@@ -192,6 +193,7 @@
 - 2026-07-30T14:00:06-05:00 02bc9694043958d27022be2c2de1e107572ab249 docs: advance release campaign to Commander
 - 2026-07-30T15:07:43-05:00 90e9fbd90cd42c49348be7b2d0834b4d7cbf1a76 refactor: migrate CLI parsing to Commander
 - 2026-07-30T15:08:52-05:00 743795bf0cc80f6c2b016cedaa424b5f9f189dfc docs: record protected branch handoff
+- 2026-07-30T17:03:49-05:00 edbd6f3abd1a37d9e04324db08e9ad8eea7657af feat: add deterministic LadybugDB projection lifecycle
 
 ## docs/specs
 
@@ -209,3 +211,4 @@
 - 2026-07-30T10:40:14-05:00 1e2e6dc4c9f59328cf22b6ca3bb13e49ce111f6b docs: record dependency boundary audit
 - 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
 - 2026-07-30T15:07:43-05:00 90e9fbd90cd42c49348be7b2d0834b4d7cbf1a76 refactor: migrate CLI parsing to Commander
+- 2026-07-30T17:03:49-05:00 edbd6f3abd1a37d9e04324db08e9ad8eea7657af feat: add deterministic LadybugDB projection lifecycle

@@ -8,18 +8,20 @@ description: >-
   the working agreement.
 tags: [lore, runbook, onboarding, handover, development]
 summary: >-
-  Open this in a fresh session to execute the M6 schema, Commander, and
-  LadybugDB lanes in dependency order without pulling the explorer forward.
-timestamp: 2026-06-21T00:00:00Z
+  Fresh-session publication handover for landing-reviewed M6 indexed graph,
+  query, and context routing before later packaging gates.
+timestamp: 2026-07-31T00:20:13Z
 ---
 
 # Developer kickoff — start building lore
 
-This is the component handover for a fresh M6 implementation session in
-`lore-cli`. The CLI, deterministic in-memory graph/query/context surfaces, test
-suite, compiled distribution, and deterministic export already exist. The next
-work is not a greenfield build: it adds a persistent derived projection while
-preserving those contracts.
+This is the component handover for a fresh M6 indexed-routing publication session in
+`lore-cli`. The CLI, deterministic in-memory graph/query/context surfaces,
+Commander routing, compiled distribution, deterministic export, and
+LadybugDB projection lifecycle and indexed read routing already exist and have
+passed landing review. The next operation is protected publication when
+separately authorized, not new implementation; the in-memory implementation
+remains the oracle and fallback.
 
 ## Orientation
 
@@ -35,8 +37,9 @@ Read these in order before changing task state or source:
 4. [CLI surface](../reference/cli-surface.md) and
    [CLI contract](../reference/cli-contract.md); these are compatibility inputs
    for Commander and indexed routing.
-5. `backlog task view LCLI-283.1.1 --plain`, followed only by the task selected
-   according to the dependency graph below.
+5. The [release campaign handover](lore-cli-release-campaign-handover.md), then
+   live Backlog records for `LCLI-283.1`, `LCLI-283.1.2`, `LCLI-283.1.3`,
+   `LCLI-283.1.4`, and `LCLI-284`.
 
 ## Repository facts
 
@@ -58,12 +61,13 @@ Read these in order before changing task state or source:
 The feature order remains M6 LadybugDB → M7 explorer → M8 indexed
 capabilities. Only a preparation lane moves earlier:
 
-1. `LCLI-283.1.1` freezes the LadybugDB schema and lifecycle contract.
-2. After it is accepted, two independent branches may proceed:
-   - `LCLI-284` migrates CLI parsing, dispatch, and help to Commander.
-   - `LCLI-283.1.2` implements the deterministic projection lifecycle.
-3. `LCLI-283.1.3` depends on both branches and integrates indexed
-   `graph`, `query`, and `context`.
+1. `LCLI-283.1.1` froze the LadybugDB schema and lifecycle contract.
+2. The two independent prerequisites are complete and merged:
+   - `LCLI-284` migrated CLI parsing, dispatch, and help to Commander.
+   - `LCLI-283.1.2` implemented and landing-reviewed the deterministic
+     projection lifecycle using exact `@ladybugdb/core@0.18.2`.
+3. `LCLI-283.1.3` completed indexed `graph`, `query`, and `context` integration
+   against both prerequisites; its protected publication is the next operation.
 4. `LCLI-283.1.4` completes performance, packaging, recovery, concurrency, and
    scale gates.
 5. `LCLI-283.2.1` may define the explorer contract after step 1, but
@@ -91,16 +95,16 @@ Done and integrated into the local `dev` baseline:
 The focused commits, pinned-Bun and packaging evidence, and closeout state are
 recorded in the
 [dependency campaign handover](dependency-boundary-campaign-handover.md).
-The normal cursor is again `LCLI-283.1.1`; these completed tasks do not block or
-reorder Commander, projection construction, or the explorer. The
+The active cursor is `LCLI-283.1.3`; the closed dependency campaign does not
+block or reorder indexed routing, packaging qualification, or the explorer. The
 [dependency boundary audit](../reference/dependency-boundary-audit.md) still
 retains the deferred `write-file-atomic` and maintained
 YAML/mdast-frontmatter investigations without authorizing either migration.
 
 ## Non-negotiable constraints
 
-1. **Start with `LCLI-283.1.1`; do not activate a high-level parent as a
-   substitute for its atomic task.**
+1. **Publish only the landing-reviewed `LCLI-283.1.3` change; do not activate
+   the high-level parent or `LCLI-283.1.4` in that session.**
 2. **Commander is a transport refactor, not a CLI redesign.** Preserve global
    flag positions, `--flag=value`, repeatable options, literal `--`, help and
    version output, injected writers, stdout/stderr separation, JSON envelopes,
@@ -118,6 +122,9 @@ YAML/mdast-frontmatter investigations without authorizing either migration.
    document, decision, or milestone files.
 7. **Do not start M7 explorer implementation or M8 capabilities early.** Local
    MCP, Confluence, and importable-library work remain on hold.
+8. **Keep Ladybug native loading lazy.** Bun 1.2.23 segfaults while loading the
+   Windows addon; unsupported and fallback paths must execute without importing
+   it. Native Windows qualification belongs to `LCLI-283.1.4`.
 
 ## Fresh-session procedure
 
@@ -130,18 +137,14 @@ YAML/mdast-frontmatter investigations without authorizing either migration.
 
 2. Run `backlog instructions overview` and
    `backlog instructions task-execution`.
-3. View `LCLI-283.1.1`, confirm it is unblocked, then mark only that task
-   `In Progress` and assign the current worker.
-4. Research the deterministic export, in-memory graph, current packaging
-   matrix, and LadybugDB Node/Bun support before recording the task plan.
-5. Put the researched plan in Backlog before implementation. The task must
-   freeze stable identities, provenance, storage, freshness, rebuild,
-   corruption, atomic replacement, and single-writer semantics; do not install
-   or wire LadybugDB yet unless that activated task's accepted scope requires a
-   verified spike.
-6. Implement on a focused feature branch and finish the task through the
-   Backlog finalization workflow. Only then activate `LCLI-284` and/or
-   `LCLI-283.1.2`.
+3. Confirm `LCLI-283.1.2`, `LCLI-283.1.3`, and `LCLI-284` are Done and parent
+   `LCLI-283.1` plus sibling `LCLI-283.1.4` remain To Do.
+4. Read the completed task and landing-review evidence, then verify the clean
+   local tip, remote baseline, active ruleset, and absence of an overlapping PR.
+5. When separately authorized, create a focused feature branch at that exact
+   tip, push it, open the normal PR to `dev`, and wait for required checks.
+6. Do not merge, activate `LCLI-283.1.4`, or advance the parent in the same
+   session.
 
 ## Verification
 
@@ -161,15 +164,16 @@ git diff --check
 
 Commander work must also exercise source execution, compiled binaries,
 platform packaging, parser parity, injected-stream behavior, and error paths.
-LadybugDB work must add deterministic conformance, native packaging,
-concurrency, corruption/rebuild, and benchmark evidence as its tasks require.
+Indexed-routing work must add shared indexed-versus-reference fixtures, state
+and fallback coverage, no-partial-output evidence, and proof that unsupported
+paths do not load the Windows native addon. Packaging, benchmark, and wider
+native-platform qualification remain for `LCLI-283.1.4`.
 
 ## Stop conditions
 
 Stop and resolve the dependency or contract instead of guessing if:
 
-- `LCLI-283.1.1` is not accepted but a later task needs a schema or lifecycle
-  decision;
+- either `LCLI-283.1.2` or `LCLI-284` is no longer Done;
 - Commander behavior differs from the published CLI contract;
 - LadybugDB cannot satisfy supported Bun/Node packaging or deterministic
   fallback requirements;
@@ -184,10 +188,14 @@ Stop and resolve the dependency or contract instead of guessing if:
 Continue Lore CLI M6 from
 /Volumes/external/repos/lore-cli/docs/runbooks/dev-kickoff.md.
 Read AGENTS.md and run backlog instructions overview before any action. Work
-from the current local dev baseline without discarding its commits. Start only
-LCLI-283.1.1: research and freeze the LadybugDB projection schema and lifecycle
-contract, record the plan in Backlog, and implement only that accepted task.
-Do not start Commander (LCLI-284), projection implementation
-(LCLI-283.1.2), indexed routing, the graph explorer, M8, or local MCP until the
-documented dependencies permit them.
+from clean dev at the live protected baseline without discarding history.
+Confirm LCLI-283.1.2, LCLI-283.1.3, and LCLI-284 remain Done. Review the
+completed landing evidence, preserve the reviewed local tip, then use the
+normal protected branch/PR flow only when publication is separately
+authorized. Do not start
+LCLI-283.1.4, advance the parent, or enter
+explorer, M7/M8, MCP, Confluence, hosted-graph, release, tag, or publication
+scope.
+Use the complete current-session instructions in
+docs/runbooks/lore-cli-release-campaign-handover.md.
 ```

@@ -2,9 +2,9 @@
 # yaml-language-server: $schema=../../.lore/schemas/reference.schema.json
 type: Reference
 title: System architecture
-description: How lore is layered — the CLI over a deterministic core, planned LadybugDB derived projection, isolated adapters, and an on-hold MCP transport that would reuse the same behavior.
+description: How lore is layered — the CLI over deterministic indexed and reference retrieval, the LadybugDB derived projection, isolated adapters, and an on-hold MCP transport that would reuse the same behavior.
 tags: [architecture, core, adapters, cli, mcp, ladybugdb, local-graph, design]
-summary: lore is a deterministic CLI whose next local layer is a rebuildable LadybugDB projection; Backlog remains isolated and local MCP is retained on hold as a future transport.
+summary: lore is a deterministic CLI whose graph, query, and context commands use a verified LadybugDB projection with an in-memory fallback; Backlog remains isolated and local MCP stays on hold.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -48,11 +48,14 @@ flowchart TD
         LINKS["links.ts"]
         QUERY["query.ts"]
         CONTEXT["context.ts"]
+        RETRIEVAL["retrieval.ts<br/>indexed selection + reference fallback"]
+        LIFECYCLE["ladybug-lifecycle.ts<br/>verified immutable generations"]
         SCHEMA["schema.ts (Zod SoT)"]
     end
 
     subgraph State["state.ts — .lore/ + git"]
         STATEIO[".lore/config.toml · cache/ · templates/<br/>git add/commit of backlog/"]
+        LADYBUG[".lore/cache/graph/ladybug/1/<br/>disposable derived projection"]
     end
 
     subgraph Adapters["adapters/ — isolated, lazy-loaded"]
@@ -70,6 +73,10 @@ flowchart TD
     BUNDLE --> LINKS
     QUERY --> BUNDLE
     CONTEXT --> BUNDLE
+    CMD --> RETRIEVAL
+    RETRIEVAL --> LIFECYCLE
+    RETRIEVAL --> BUNDLE
+    LIFECYCLE --> LADYBUG
     RECONCILE --> BACKLOG
     MANAGED --> BACKLOG
     CMD --> Adapters
@@ -80,14 +87,15 @@ flowchart TD
 |---|---|---|
 | **Surfaces** | `cli.ts` (primary), `mcp.ts` (on hold), generated `SKILL.md` + CLAUDE.md nudge | commands |
 | **Commands** | `commands/*.ts` — argument parsing glue, output formatting, exit codes | core, state, adapters |
-| **Core** | `concept`, `bundle`, `managed-block`, `reconcile`, `links`, `query`, `context`, `schema` | schema; the filesystem; the backlog adapter (for reconcile/managed-block) |
+| **Core** | `concept`, `bundle`, `managed-block`, `reconcile`, `links`, `query`, `context`, `retrieval`, `ladybug-*`, `schema` | schema; repository reads; the backlog adapter; the private lazy native boundary |
 | **State** | `state.ts` — `.lore/` read/write; lore as sole git committer of `backlog/` | filesystem, git |
 | **Adapters** | `backlog.ts` (JSON), `confluence.ts` (on hold) | external processes / HTTP only |
 
 The shape mirrors spec [§8 project structure](../specs/lore-design.md), with two
 deliberate departures driven by the locked decisions: the Backlog adapter is
 **JSON-only** (no `--plain` text parser — see §3), and the **MCP server is
-secondary and on hold** (see §6). The planned M6 LadybugDB projection is derived state below the existing command contract, not a new source of truth.
+secondary and on hold** (see §6). The active M6 LadybugDB projection is derived
+state below the existing command contract, not a new source of truth.
 
 ## 2. The CLI is primary
 
@@ -221,13 +229,15 @@ byte-identical outputs (the property that makes agent loops and CI gates safe).
 |---|---|
 | `profile.ts` / `schema.ts` | `.lore/profile.toml` is the declarative type source of truth. Lore compiles it into per-type Zod validators, emits Draft-7 JSON Schema via `z.toJSONSchema()`, and injects the `# yaml-language-server: $schema=…` modeline for editor autocomplete while retaining OKF tolerance. See [ADR-0006](../adr/0006-schema-types-templates.md). |
 | `concept.ts` | Frontmatter ⇄ object. Owns fence/body splitting and uses exact-pinned `js-yaml` under a frozen configuration, validates frontmatter against generated Zod schemas, and serializes back **stably** so unchanged docs reach a byte-identical fixpoint — [ADR-0011](../adr/0011-frontmatter-serialization-stability.md). User-defined types and custom keys pass through untouched. |
-| `bundle.ts` | Walks `docs/`, loads every concept, and builds the in-memory **bundle graph** (nodes = concepts, edges = cross-links + frontmatter refs). Generates the root `index.md`, sub-index files, and `log.md`. Computes per-doc / per-bundle token **estimates** (chars/4 heuristic, labeled). The graph is the substrate `query`, `context`, `graph`, `rename`, and `supersede` all reuse. |
+| `bundle.ts` | Walks `docs/`, loads every concept, and builds the reference in-memory **bundle graph** (nodes = concepts, edges = cross-links + frontmatter refs). Generates the root `index.md`, sub-index files, and `log.md`. Computes per-doc / per-bundle token **estimates** (chars/4 heuristic, labeled). It remains the conformance oracle and fallback for retrieval and the direct substrate for mutation commands. |
 | `managed-block.ts` | mdast-based surgery (via `mdast-util-from-markdown`, never `remark`) on the `<!-- lore:tasks:begin -->…<!-- lore:tasks:end -->` region of a Story. Regenerates the live task table from the Backlog adapter; **idempotent** (no upstream change → byte-identical output). Hand edits inside the markers are overwritten; everything outside is preserved. See [ADR-0008](../adr/0008-managed-block-remark-ast.md). |
 | `reconcile.ts` | Status rules. Rolls a Story's `status` up from its tasks (all Done → `done`; any In Progress → `in-progress`; else if tasks exist → `todo`; no tasks → author's value). `sync` writes the result; `check` reports drift without writing. See [ADR-0009](../adr/0009-story-task-coupling-reconciliation.md). |
 | `links.ts` | OKF cross-link normalization and rewriting. Enforces the lore link form — **relative, URL-encoded, `.md`-suffixed, no leading slash** — and powers `rename`/`supersede` inbound-link rewrites plus `replace`. See [ADR-0010](../adr/0010-multi-consumer-docs-layer.md). |
 | `check.ts` | Resolves internal links against the whole bundle, validates fragments against headings, and runs the portability lint over the shared mdast tree. Exact-pinned `github-slugger` owns only GitHub-compatible slug and per-document duplicate state; Lore retains mdast heading-text extraction, link policy, findings, and output. |
-| `query.ts` | In-memory full-text retrieval (BM25-style) over the loaded bundle, plus frontmatter-field filters. **No vectors, no RAG, no chunking** — [ADR-0015](../adr/0015-lightweight-retrieval-no-vectors.md). Uses each concept's `summary` for snippets. |
+| `query.ts` | Deterministic lexical retrieval (BM25-style) over a `BundleGraph`, plus frontmatter-field filters. The graph may come from a verified projection or the reference loader; scoring and tie-breaking are identical. **No vectors, no RAG, no chunking** — [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md). |
 | `context.ts` | Deterministic, depth-bounded **graph-expansion export** for a concept id with a `--max-tokens` budget: full body of the target concept plus one-line `summary` neighbors, walking the bundle graph. No ranking heuristics. |
+| `retrieval.ts` / `ladybug-native.ts` | Selects a fully verified indexed `BundleGraph` or the reference fallback before output begins. The exact Ladybug compatibility facts and platform gate are import-safe; `@ladybugdb/core` is dynamically evaluated only after a supported indexed operation is selected. |
+| `ladybug-source.ts` / `ladybug-lifecycle.ts` / `ladybug-driver.ts` | Builds the export-1.0 source snapshot, classifies and reconciles immutable content-addressed generations, verifies native metadata and structure read-only, and reconstructs Lore concepts and authored edges from canonical source records. Cypher, physical schema, database paths, and native ids stay private. |
 
 `state.ts` sits beside core: it reads/writes `.lore/` (`config.toml`, `cache/`,
 `templates/`) per [ADR-0013](../adr/0013-lore-state-directory.md) and performs the
@@ -290,30 +300,52 @@ task (task → doc), then `state.ts` commits `backlog/`. `lore orphans` cross-ch
 both directions: tasks with no owning doc, and docs whose referenced tasks have
 vanished.
 
-### `lore query / context`
-`commands/query` → `bundle.ts` loads → `query.ts` BM25 + filters → bounded output
-with truncation hints (e.g. `showing 30 of 120 — narrow with --type story`).
-`commands/context` → `context.ts` walks the graph from the given id within the
-`--max-tokens` budget and emits body + neighbor summaries. Both are pure reads.
+### `lore graph / query / context`
+Commander dispatch injects `retrieval.ts` into the three existing thin handlers.
+The resolver computes the current export fingerprint, follows the frozen
+lifecycle policy, and either reads canonical concept/edge records from a fully
+verified immutable generation or loads `bundle.ts` as the reference fallback.
+Only then do the unchanged `graph.ts`, `query.ts`, and `context.ts` algorithms
+shape the result, and only a complete result reaches Lore's emitter.
 
-### Planned M6 indexed read path
+`query.ts` applies the same BM25 scoring, filters, limits, and code-unit
+tie-breaking to either graph. `context.ts` performs the same nearest-first
+depth walk and budget prefix. Public output does not reveal the selected backend.
 
-M6 keeps these command and core contracts but adds a versioned LadybugDB
-projection built from the deterministic export. After the schema contract is
-frozen, Commander migration and projection construction may proceed
-independently; indexed command routing waits for both. A fresh projection can
-serve graph, query, and context; the current in-memory path remains the
-conformance oracle and documented fallback. Git and OKF remain authoritative.
-Database files are ignored, disposable, and rebuilt on stale fingerprints,
-incompatible schema, or corruption. Deterministic ordering, lexical semantics,
-token budgets, errors, and provenance must match across paths. See
+### M6 indexed read path
+
+M6 keeps these command and core contracts and uses exact-pinned
+`@ladybugdb/core@0.18.2` behind deterministic export schema `1.0`. `graph`,
+`query`, and `context` now consume a `BundleGraph` reconstructed from canonical
+records in a fully verified read-only generation. The current in-memory loader
+remains the conformance oracle and documented fallback. Git and OKF remain
+authoritative; database files are ignored, disposable, immutable after
+publication, and never returned as provenance.
+
+The resolver applies the lifecycle decision before public output:
+
+- reusable generations are verified read-only and served, including under a
+  live writer lock when the exact generation remains safe;
+- missing, stale, and known-incompatible generations rebuild under exclusive
+  ownership;
+- corrupt generations are never served and are quarantined only under that
+  ownership before rebuild;
+- active contention without an exact verified generation and newer unsupported
+  formats use the in-memory fallback, preserving the unsupported bytes;
+- any native build/read failure falls back before warnings or results are
+  emitted, so partial indexed output is impossible.
+
+Native loading stays behind an explicit lazy boundary. Importing the CLI,
+Commander registry, lifecycle classifier, or fallback path does not evaluate
+the addon. Bun 1.2.23 cannot safely load the Ladybug Windows addon in the test
+process, so Windows selects the reference path before the loader; Windows
+native packaging qualification remains `LCLI-283.1.4` scope. See
 [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md) and
 the [local graph roadmap](../specs/local-graph-platform-roadmap.md).
 
-### `lore graph / rename / supersede / replace`
-All reuse `bundle.ts`'s graph. `graph` emits the cross-link graph (`--format
-dot|json`) with token estimates; `rename` and `supersede` rewrite **all inbound
-links and frontmatter refs** through the graph and set
+### `lore rename / supersede / replace`
+Mutation commands continue to load `bundle.ts` directly. `rename` and
+`supersede` rewrite **all inbound links and frontmatter refs** through the graph and set
 `superseded_by`/`supersedes`/`status`; `replace` does literal/regex find-replace
 (`--in` glob, `--dry-run`) and **skips lore-managed regions**.
 
