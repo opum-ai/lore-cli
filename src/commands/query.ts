@@ -1,12 +1,14 @@
 /**
  * commands/query.ts — `lore query ["<text>"] [--type <T>] [--tag <t>]… [--status <S>] [--field k=v]… [--limit <n>]`.
  *
- * The thin, read-only layer behind the bundle's full-text search (cli-surface §query;
- * LORE-33). It loads the `docs/` bundle into a {@link BundleGraph}, then hands the
- * optional search text and the frontmatter filters to the pure {@link query} engine —
- * which keeps the concepts matching every filter, ranks them by BM25 relevance to the
- * text (when given), and returns the top `--limit` hits with a bounded-output signal.
- * **No vectors, RAG, or chunking** (ADR-0015): a deterministic in-memory lexical index.
+ * The thin, read-only layer behind the bundle's full-text search (cli-surface
+ * §query; LORE-33). Commander supplies a verified indexed {@link BundleGraph}
+ * with automatic reference fallback; direct core callers retain the reference
+ * loader. The optional search text and frontmatter filters then go to the pure
+ * {@link query} engine, which keeps concepts matching every filter, ranks them
+ * by BM25 relevance, and returns the top `--limit` hits with a bounded-output
+ * signal. **No vectors, RAG, or chunking** (ADR-0018): the lexical index remains
+ * deterministic and in memory.
  *
  * Output follows the uniform CLI modes: the `{schemaVersion, kind: "query.results",
  * data}` envelope under the global `--json`, otherwise a ranked listing — one
@@ -24,9 +26,11 @@
  */
 
 import { join } from "node:path";
+import type { BacklogAdapter } from "../adapters/backlog";
 import { loadBundle } from "../core/bundle";
 import { loadProfile } from "../core/profile";
 import { type FieldFilter, type QueryResult, query } from "../core/query";
+import type { RetrievalGraphLoader } from "../core/retrieval";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, singleLine, stripAnsiAndControls, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable, renderTruncationLine, truncation } from "../output";
@@ -44,6 +48,10 @@ export interface QueryCommandOptions {
   stdout?: Writer;
   /** stderr sink for advisory warnings; defaults to `process.stderr`. */
   stderr?: Writer;
+  /** Backlog snapshot seam used only by indexed projection freshness/builds. */
+  adapter?: BacklogAdapter;
+  /** Indexed/reference selector injected by the Commander handler or conformance tests. */
+  retrieval?: RetrievalGraphLoader;
 }
 
 /** The parsed form of `lore query`'s arguments. */
@@ -70,12 +78,25 @@ const NARROW_HINT = "narrow with --type/--tag/--status/--field, or raise --limit
  * `query.results`, and return `0`. A bad flag/positional throws a `usage`
  * {@link LoreError} (exit `2`); there is no not-found path (zero hits is a normal `0`).
  */
-export function runQuery(options: QueryCommandOptions): number {
+export function runQuery(options: QueryCommandOptions): number | Promise<number> {
   const parsed = parseQueryArgs(options.args);
-  const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
+  if (options.retrieval !== undefined) {
+    return options
+      .retrieval({ root: options.root, warnings: advisories, adapter: options.adapter })
+      .then(({ graph }) => finishQuery(options, parsed, graph, advisories));
+  }
   const profile = loadProfile({ root: options.root });
-  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
+  const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, profile });
+  return finishQuery(options, parsed, graph, advisories);
+}
+
+function finishQuery(
+  options: QueryCommandOptions,
+  parsed: QueryArgs,
+  graph: ReturnType<typeof loadBundle>,
+  advisories: WarningCollector,
+): number {
   advisories.flush({ color: options.output.color, stderr: options.stderr });
 
   const data = query(graph, {

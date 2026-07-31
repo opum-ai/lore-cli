@@ -58,6 +58,7 @@ function exportGraph(args: string[], options?: Partial<GraphOptions>): { code: n
   const stdout = capture();
   const stderr = capture();
   const code = runGraph({ root, output: JSON_CTX, stdout, stderr, args, ...options });
+  if (code instanceof Promise) throw new Error("reference graph helper unexpectedly selected async retrieval");
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: GraphExport };
   expect(envelope.kind).toBe("graph.export");
   return { code, data: envelope.data };
@@ -417,17 +418,22 @@ describe("lore graph — command", () => {
 // ── router: cli dispatch ─────────────────────────────────────────────────────────
 
 describe("cli — graph dispatch", () => {
-  test("`lore graph --json` routes to runGraph and emits the envelope", () => {
+  test("`lore graph --json` routes to runGraph and emits the envelope", async () => {
     writeStandardBundle();
     const stdout = capture();
-    const code = run(["bun", "cli", "graph", "--json"], { stdout, stderr: capture(), cwd: root, isTTY: false });
+    const code = await run(["bun", "cli", "graph", "--json"], {
+      stdout,
+      stderr: capture(),
+      cwd: root,
+      isTTY: false,
+    });
     expect(code).toBe(0);
     expect(JSON.parse(stdout.text()).kind).toBe("graph.export");
   });
 
-  test("`lore graph <missing>` exits 3 (not found)", () => {
+  test("`lore graph <missing>` exits 3 (not found)", async () => {
     writeStandardBundle();
-    const code = run(["bun", "cli", "graph", "nope/x"], {
+    const code = await run(["bun", "cli", "graph", "nope/x"], {
       stdout: capture(),
       stderr: capture(),
       cwd: root,

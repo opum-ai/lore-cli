@@ -65,6 +65,7 @@ function exportContext(args: string[], options?: Partial<ContextOptions>): { cod
   const stdout = capture();
   const stderr = capture();
   const code = runContext({ root, output: JSON_CTX, stdout, stderr, args, ...options });
+  if (code instanceof Promise) throw new Error("reference context helper unexpectedly selected async retrieval");
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: ContextExport };
   expect(envelope.kind).toBe("context.export");
   return { code, data: envelope.data };
@@ -327,10 +328,10 @@ describe("lore context — command", () => {
 // ── router: cli dispatch ─────────────────────────────────────────────────────────
 
 describe("cli — context dispatch", () => {
-  test("`lore context <id> --json` routes to runContext and emits the envelope", () => {
+  test("`lore context <id> --json` routes to runContext and emits the envelope", async () => {
     writeChainBundle();
     const stdout = capture();
-    const code = run(["bun", "cli", "context", "stories/bulk", "--json"], {
+    const code = await run(["bun", "cli", "context", "stories/bulk", "--json"], {
       stdout,
       stderr: capture(),
       cwd: root,
@@ -340,9 +341,9 @@ describe("cli — context dispatch", () => {
     expect(JSON.parse(stdout.text()).kind).toBe("context.export");
   });
 
-  test("`lore context <missing>` exits 3 (not found)", () => {
+  test("`lore context <missing>` exits 3 (not found)", async () => {
     writeChainBundle();
-    const code = run(["bun", "cli", "context", "nope/x"], {
+    const code = await run(["bun", "cli", "context", "nope/x"], {
       stdout: capture(),
       stderr: capture(),
       cwd: root,

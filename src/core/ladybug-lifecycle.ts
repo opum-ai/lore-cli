@@ -28,14 +28,15 @@ import {
 import { hostname } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
-import { LoreError } from "../errors";
+import { LoreError, type WarningCollector } from "../errors";
 import {
-  buildLadybugDatabase,
-  LADYBUG_STORAGE_VERSION,
-  LADYBUG_VERSION,
+  EXPECTED_LADYBUG_STORAGE_VERSION,
+  EXPECTED_LADYBUG_VERSION,
   type LadybugDatabaseVerification,
-  verifyLadybugDatabase,
-} from "./ladybug-driver";
+  type LadybugNativeDriver,
+  type LadybugNativeLoader,
+  loadLadybugNativeDriver,
+} from "./ladybug-native";
 import {
   canonicalJson,
   LADYBUG_CACHE_REL_ROOT,
@@ -119,7 +120,10 @@ export interface ReconcileLadybugProjectionOptions {
   readonly root: string;
   readonly adapter?: BacklogAdapter;
   readonly resolveGitCommit?: (root: string) => string | null;
+  readonly warnings?: WarningCollector;
   readonly loadSource?: () => Promise<LadybugProjectionSource>;
+  /** Injectable lazy native boundary; never invoked before supported control-manifest preflight. */
+  readonly loadNativeDriver?: LadybugNativeLoader;
   readonly hooks?: LadybugLifecycleHooks;
 }
 
@@ -142,6 +146,10 @@ interface GenerationInspection {
   readonly reason?: string;
 }
 
+class NativeDriverLoadFailure {
+  constructor(readonly cause: unknown) {}
+}
+
 /**
  * Reuse or safely construct the exact generation for the current repository
  * source. Unsupported and actively locked states are non-destructive and return
@@ -151,15 +159,17 @@ export async function reconcileLadybugProjection(
   options: ReconcileLadybugProjectionOptions,
 ): Promise<LadybugProjectionLifecycleResult> {
   const root = canonicalRepositoryRoot(options.root);
+  const loadNative = onceNativeDriver(options.loadNativeDriver ?? loadLadybugNativeDriver);
   const loadSource =
     options.loadSource ??
     (() =>
       loadLadybugProjectionSource({
         root,
-        ladybugVersion: LADYBUG_VERSION,
-        ladybugStorageVersion: LADYBUG_STORAGE_VERSION,
+        ladybugVersion: EXPECTED_LADYBUG_VERSION,
+        ladybugStorageVersion: EXPECTED_LADYBUG_STORAGE_VERSION,
         adapter: options.adapter,
         resolveGitCommit: options.resolveGitCommit,
+        warnings: options.warnings,
       }));
   let source = await loadSource();
   assertNativeVersion(source);
@@ -168,7 +178,7 @@ export async function reconcileLadybugProjection(
 
   const lockState = inspectWriterLock(cacheRoot);
   if (lockState === "active") {
-    const inspection = await inspectGeneration(cacheRoot, source);
+    const inspection = await inspectGeneration(cacheRoot, source, loadNative);
     if (inspection.classification === "reusable" && inspection.generation !== undefined) {
       return {
         classification: "locked",
@@ -186,7 +196,7 @@ export async function reconcileLadybugProjection(
     };
   }
 
-  let inspection = await inspectGeneration(cacheRoot, source);
+  let inspection = await inspectGeneration(cacheRoot, source, loadNative);
   const initialClassification = inspection.classification;
   if (inspection.classification === "reusable" && inspection.generation !== undefined) {
     return { classification: "reusable", outcome: "reused", source, generation: inspection.generation };
@@ -211,7 +221,7 @@ export async function reconcileLadybugProjection(
   ensureCacheLayout(root, cacheRoot);
   const ownedLock = acquireWriterLock(cacheRoot);
   if (ownedLock === null) {
-    inspection = await inspectGeneration(cacheRoot, source);
+    inspection = await inspectGeneration(cacheRoot, source, loadNative);
     if (inspection.classification === "reusable" && inspection.generation !== undefined) {
       return {
         classification: "locked",
@@ -234,7 +244,7 @@ export async function reconcileLadybugProjection(
     for (let attempt = 0; attempt < 2; attempt++) {
       source = await loadSource();
       assertNativeVersion(source);
-      inspection = await inspectGeneration(cacheRoot, source);
+      inspection = await inspectGeneration(cacheRoot, source, loadNative);
       if (inspection.classification === "reusable" && inspection.generation !== undefined) {
         return {
           classification: initialClassification,
@@ -269,9 +279,10 @@ export async function reconcileLadybugProjection(
       assertContained(cacheRoot, stagingPath);
       mkdirSync(stagingPath, { mode: 0o700 });
       const databasePath = join(stagingPath, LADYBUG_DATABASE_FILENAME);
-      await buildLadybugDatabase(databasePath, source);
+      const native = await loadNative();
+      await native.buildLadybugDatabase(databasePath, source);
       await options.hooks?.afterDatabaseClose?.(stagingPath);
-      const verification = await verifyLadybugDatabase(databasePath, source);
+      const verification = await native.verifyLadybugDatabase(databasePath, source);
       const database = await hashFile(databasePath);
       const control = controlManifest(source, database.byteLength, database.digest);
       const controlPath = join(stagingPath, LADYBUG_CONTROL_FILENAME);
@@ -290,7 +301,7 @@ export async function reconcileLadybugProjection(
       assertContained(cacheRoot, generationPath);
       if (existsSync(generationPath)) {
         removeContained(cacheRoot, stagingPath);
-        const existing = await inspectGeneration(cacheRoot, source);
+        const existing = await inspectGeneration(cacheRoot, source, loadNative);
         if (existing.classification === "reusable" && existing.generation !== undefined) {
           return {
             classification: initialClassification,
@@ -361,7 +372,11 @@ export function disposeLadybugProjection(rootInput: string): boolean {
   }
 }
 
-async function inspectGeneration(cacheRoot: string, source: LadybugProjectionSource): Promise<GenerationInspection> {
+async function inspectGeneration(
+  cacheRoot: string,
+  source: LadybugProjectionSource,
+  loadNative: LadybugNativeLoader,
+): Promise<GenerationInspection> {
   const generationPath = generationPathFor(cacheRoot, source);
   if (!existsSync(generationPath)) {
     return { classification: "rebuildable", reason: "the exact content-addressed generation does not exist" };
@@ -371,17 +386,11 @@ async function inspectGeneration(cacheRoot: string, source: LadybugProjectionSou
     if (!generationStat.isDirectory() || generationStat.isSymbolicLink()) {
       return { classification: "corrupt", reason: "generation path is not a real directory" };
     }
-    if ((generationStat.mode & 0o222) !== 0) {
-      return { classification: "corrupt", reason: "generation directory is not immutable" };
-    }
     const controlPath = join(generationPath, LADYBUG_CONTROL_FILENAME);
     const databasePath = join(generationPath, LADYBUG_DATABASE_FILENAME);
     const controlStat = lstatSync(controlPath);
     if (!controlStat.isFile() || controlStat.isSymbolicLink()) {
       return { classification: "corrupt", reason: "control manifest is missing or symlinked" };
-    }
-    if ((controlStat.mode & 0o222) !== 0) {
-      return { classification: "corrupt", reason: "control manifest is not immutable" };
     }
     let parsed: unknown;
     try {
@@ -390,6 +399,16 @@ async function inspectGeneration(cacheRoot: string, source: LadybugProjectionSou
       return { classification: "corrupt", reason: "control manifest is not parseable JSON" };
     }
     const compatibility = classifyControlCompatibility(parsed, source);
+    // Unsupported is ordered before corruption. A newer format may use
+    // different publication permissions, so preserve it before applying this
+    // version's immutable-generation checks.
+    if (compatibility.classification === "unsupported") return compatibility;
+    if ((generationStat.mode & 0o222) !== 0) {
+      return { classification: "corrupt", reason: "generation directory is not immutable" };
+    }
+    if ((controlStat.mode & 0o222) !== 0) {
+      return { classification: "corrupt", reason: "control manifest is not immutable" };
+    }
     if (compatibility.classification !== "reusable") return compatibility;
     const control = parsed as LadybugControlManifest;
     const databaseStat = lstatSync(databasePath);
@@ -406,8 +425,18 @@ async function inspectGeneration(cacheRoot: string, source: LadybugProjectionSou
     if (actualDigest !== control.database.digest) {
       return { classification: "corrupt", reason: "projection database digest differs" };
     }
+    let native: LadybugNativeDriver;
     try {
-      const verification = await verifyLadybugDatabase(databasePath, source);
+      native = await loadNative();
+    } catch (cause) {
+      // Failure to load the addon describes the host/runtime, not the verified
+      // generation bytes. Let the retrieval resolver fall back without
+      // quarantining a generation that may remain valid once the runtime is
+      // repaired.
+      throw new NativeDriverLoadFailure(cause);
+    }
+    try {
+      const verification = await native.verifyLadybugDatabase(databasePath, source);
       return {
         classification: "reusable",
         generation: { root: cacheRoot, generationPath, databasePath, controlPath, control, verification },
@@ -419,6 +448,7 @@ async function inspectGeneration(cacheRoot: string, source: LadybugProjectionSou
       return { classification: "corrupt", reason: errorMessage(cause) };
     }
   } catch (cause) {
+    if (cause instanceof NativeDriverLoadFailure) throw cause.cause;
     if (isErrno(cause, "ENOENT")) return { classification: "corrupt", reason: "generation is incomplete" };
     return { classification: "corrupt", reason: errorMessage(cause) };
   }
@@ -791,9 +821,28 @@ function fsyncDirectory(path: string): void {
 }
 
 function assertNativeVersion(source: LadybugProjectionSource): void {
-  if (source.ladybugVersion !== LADYBUG_VERSION || source.ladybugStorageVersion !== LADYBUG_STORAGE_VERSION) {
-    throw lifecycleError("source fingerprint Ladybug runtime facts differ from the loaded native package");
+  if (
+    source.ladybugVersion !== EXPECTED_LADYBUG_VERSION ||
+    source.ladybugStorageVersion !== EXPECTED_LADYBUG_STORAGE_VERSION
+  ) {
+    throw lifecycleError("source fingerprint Ladybug runtime facts differ from the frozen compatibility contract");
   }
+}
+
+function onceNativeDriver(loader: LadybugNativeLoader): LadybugNativeLoader {
+  let pending: Promise<LadybugNativeDriver> | undefined;
+  return async () => {
+    pending ??= loader().then((driver) => {
+      if (
+        driver.LADYBUG_VERSION !== EXPECTED_LADYBUG_VERSION ||
+        driver.LADYBUG_STORAGE_VERSION !== EXPECTED_LADYBUG_STORAGE_VERSION
+      ) {
+        throw lifecycleError("loaded Ladybug runtime differs from the frozen compatibility contract");
+      }
+      return driver;
+    });
+    return pending;
+  };
 }
 
 function isControlManifest(value: unknown): value is LadybugControlManifest {

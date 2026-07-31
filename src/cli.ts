@@ -38,6 +38,7 @@ import { runSync } from "./commands/sync";
 import { runTasks } from "./commands/tasks";
 import { runValidate } from "./commands/validate";
 import { buildManifest } from "./core/manifest";
+import { loadRetrievalGraph, type RetrievalGraphLoader } from "./core/retrieval";
 import { EXIT_OK, EXIT_UNCAUGHT, LoreError, reportError, type Writer } from "./errors";
 import { VERSION } from "./meta";
 import { emit, errorRenderOpts, type OutputContext, type Renderable, resolveOutput } from "./output";
@@ -100,6 +101,12 @@ export interface RunContext {
   resolveHost?: ResolveHost;
   /** The Backlog adapter `link`/`unlink` use; defaults to the real `backlog` binary on PATH. Injected so a caller (or a test) touches no subprocess. */
   adapter?: BacklogAdapter;
+  /**
+   * Internal graph/query/context backend seam. The real Commander dispatch uses
+   * verified indexed retrieval with reference fallback; tests may inject either
+   * conformance implementation without adding a public parser flag.
+   */
+  retrieval?: RetrievalGraphLoader;
   /** `lore init`'s interactive-wizard I/O seam (LORE-260); defaults to a real `readline` session over stdin/stderr. Injected so a caller (or a test) drives the wizard without a real terminal. */
   prompter?: InitPrompter;
   /** Injectable executable discovery for `lore init`; keeps router tests independent of the host PATH. */
@@ -234,10 +241,12 @@ export function run(argv: readonly string[], context: RunContext = {}): number |
     // `runInit`'s `InitOptions`, so the wizard's stdin-only gate could fire with a redirected
     // stderr — a caller sees no prompt yet the process blocks waiting for an answer.
     const result = dispatch(parsed, { ...context, stdout, stderr, stdinIsTTY, stderrIsTTY }, output);
-    // The async command paths (`check --external`, `link`, `unlink`, `rename`, `sync`) return a Promise; a
-    // rejection from one must funnel through the **same** error seam as a synchronous throw
-    // (formatted diagnostic + the right exit code), not escape to the entrypoint's bare backstop.
-    // The sync `catch` below cannot see an async rejection, so attach the seam to the promise here.
+    // Async command paths (external checks, Backlog mutations, and indexed
+    // graph/query/context retrieval) return a Promise. A rejection from one
+    // must funnel through the **same** error seam as a synchronous throw
+    // (formatted diagnostic + the right exit code), not escape to the
+    // entrypoint's bare backstop. The sync `catch` below cannot see an async
+    // rejection, so attach the seam to the promise here.
     if (result instanceof Promise) {
       return result.catch((err: unknown) => reportError(err, { ...errorRenderOpts(output, stderrIsTTY), stderr }));
     }
@@ -374,9 +383,9 @@ function emitMeta(
 
 /**
  * Route a parsed invocation to its command handler, throwing a `usage` error on bad input. Returns
- * a `number` for the synchronous commands and a `Promise<number>` for the async ones — `check
- * --external` (whose liveness probe is non-deterministic network IO) and `link`/`unlink`/`rename`/
- * `sync` (which drive the Backlog adapter).
+ * a `number` for the synchronous commands and a `Promise<number>` for the async
+ * ones — external checks, Backlog-backed mutations, and indexed
+ * graph/query/context retrieval.
  */
 type CommandHandler = (args: readonly string[], context: RunContext, output: OutputContext) => number | Promise<number>;
 
@@ -506,6 +515,8 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
       args,
       stdout: context.stdout,
       stderr: context.stderr,
+      adapter: context.adapter,
+      retrieval: context.retrieval ?? loadRetrievalGraph,
     }),
   export: (args, context, output) =>
     runExport({
@@ -523,6 +534,8 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
       args,
       stdout: context.stdout,
       stderr: context.stderr,
+      adapter: context.adapter,
+      retrieval: context.retrieval ?? loadRetrievalGraph,
     }),
   context: (args, context, output) =>
     runContext({
@@ -531,6 +544,8 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
       args,
       stdout: context.stdout,
       stderr: context.stderr,
+      adapter: context.adapter,
+      retrieval: context.retrieval ?? loadRetrievalGraph,
     }),
   instructions: (args, context, output) => runInstructions({ output, args, stdout: context.stdout }),
   agents: (args, context, output) =>
@@ -555,10 +570,11 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
 }
 
 // Only drive the real process when executed directly (not when imported by tests). `run` returns a
-// number for synchronous commands and a Promise for the async ones (`check --external`, `link`,
-// `unlink`, `rename`, `sync`); it funnels its own async rejections through `reportError`, so `Promise.resolve(...).then` normally
-// receives a numeric exit code. The `.catch` is a last-ditch backstop (e.g. `reportError` itself
-// throwing) — `EXIT_UNCAUGHT` (1), the uncaught-fault code, not the validation gate's `6`.
+// number for synchronous commands and a Promise for the async ones; it funnels
+// its own async rejections through `reportError`, so `Promise.resolve(...).then`
+// normally receives a numeric exit code. The `.catch` is a last-ditch backstop
+// (e.g. `reportError` itself throwing) — `EXIT_UNCAUGHT` (1), the uncaught-fault
+// code, not the validation gate's `6`.
 //
 // Setting `process.exitCode` rather than calling `process.exit()` is deliberate (LORE-70):
 // `emit`/`reportError`'s writes to `process.stdout`/`process.stderr` are async for a piped

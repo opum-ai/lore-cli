@@ -1,0 +1,145 @@
+/**
+ * Backend selection for Lore's existing graph/query/context contracts.
+ *
+ * The indexed path reads one completely verified immutable Ladybug generation
+ * into the same BundleGraph model the reference filesystem loader produces.
+ * Selection and fallback complete before a command renders or writes output.
+ */
+
+import { join } from "node:path";
+import type { BacklogAdapter } from "../adapters/backlog";
+import { LoreError, WarningCollector } from "../errors";
+import { type BundleGraph, loadBundle } from "./bundle";
+import { reconcileLadybugProjection } from "./ladybug-lifecycle";
+import {
+  EXPECTED_LADYBUG_STORAGE_VERSION,
+  EXPECTED_LADYBUG_VERSION,
+  type LadybugNativeLoader,
+  loadLadybugNativeDriver,
+  memoizeLadybugNativeLoader,
+  supportsLadybugNative,
+} from "./ladybug-native";
+import { loadLadybugProjectionSource } from "./ladybug-source";
+import { loadProfile } from "./profile";
+import { DOCS_DIR } from "./scaffold";
+
+export type RetrievalBackend = "indexed" | "reference";
+export type RetrievalPolicy = "auto" | RetrievalBackend;
+
+/** Internal provenance proving which verified snapshot supplied an indexed graph. */
+export interface IndexedRetrievalProvenance {
+  readonly repositoryScopeKey: string;
+  readonly snapshotKey: string;
+  readonly sourceFingerprint: string;
+  readonly exportDigest: string;
+  readonly gitCommit: string | null;
+}
+
+export interface RetrievalGraph {
+  readonly graph: BundleGraph;
+  readonly backend: RetrievalBackend;
+  readonly provenance?: IndexedRetrievalProvenance;
+}
+
+export interface RetrievalGraphOptions {
+  readonly root: string;
+  readonly warnings?: WarningCollector;
+  readonly adapter?: BacklogAdapter;
+  readonly resolveGitCommit?: (root: string) => string | null;
+  /** Internal test/conformance control; never exposed as a public CLI flag. */
+  readonly policy?: RetrievalPolicy;
+  /** Injectable platform fact for objective Windows-safe fallback coverage. */
+  readonly platform?: NodeJS.Platform;
+  /** Injectable lazy native boundary for load-order and failure tests. */
+  readonly loadNativeDriver?: LadybugNativeLoader;
+}
+
+export type RetrievalGraphLoader = (options: RetrievalGraphOptions) => Promise<RetrievalGraph>;
+
+/**
+ * Select a verified indexed graph when supported and usable, otherwise load the
+ * existing in-memory graph. Failed indexed warnings and data are discarded so a
+ * fallback run has exactly the reference path's observable stderr/stdout.
+ */
+export async function loadRetrievalGraph(options: RetrievalGraphOptions): Promise<RetrievalGraph> {
+  const policy = options.policy ?? "auto";
+  if (policy === "reference") {
+    return loadReferenceGraph(options.root, options.warnings);
+  }
+  if (!supportsLadybugNative(options.platform)) {
+    if (policy === "indexed") {
+      throw indexedUnavailable();
+    }
+    return loadReferenceGraph(options.root, options.warnings);
+  }
+
+  let indexedWarnings = new WarningCollector();
+  const loadNative = memoizeLadybugNativeLoader(options.loadNativeDriver ?? loadLadybugNativeDriver);
+  const loadSource = async () => {
+    const attemptWarnings = new WarningCollector();
+    const source = await loadLadybugProjectionSource({
+      root: options.root,
+      ladybugVersion: EXPECTED_LADYBUG_VERSION,
+      ladybugStorageVersion: EXPECTED_LADYBUG_STORAGE_VERSION,
+      adapter: options.adapter,
+      resolveGitCommit: options.resolveGitCommit,
+      warnings: attemptWarnings,
+    });
+    indexedWarnings = attemptWarnings;
+    return source;
+  };
+  try {
+    const lifecycle = await reconcileLadybugProjection({
+      root: options.root,
+      loadSource,
+      loadNativeDriver: loadNative,
+    });
+    if (lifecycle.generation === undefined) {
+      if (policy === "indexed") throw indexedUnavailable();
+      return loadReferenceGraph(options.root, options.warnings);
+    }
+    const native = await loadNative();
+    const graph = await native.readLadybugBundleGraph(lifecycle.generation.databasePath, lifecycle.source);
+    copyWarnings(indexedWarnings, options.warnings);
+    return {
+      graph,
+      backend: "indexed",
+      provenance: {
+        repositoryScopeKey: lifecycle.source.repositoryScopeKey,
+        snapshotKey: lifecycle.source.snapshotKey,
+        sourceFingerprint: lifecycle.source.sourceFingerprint,
+        exportDigest: lifecycle.source.exportDigest,
+        gitCommit: lifecycle.source.manifest.bundle.gitCommit,
+      },
+    };
+  } catch {
+    if (policy === "indexed") throw indexedUnavailable();
+    return loadReferenceGraph(options.root, options.warnings);
+  }
+}
+
+/** The retained filesystem/in-memory conformance oracle and fallback. */
+export async function loadReferenceRetrievalGraph(options: RetrievalGraphOptions): Promise<RetrievalGraph> {
+  return loadReferenceGraph(options.root, options.warnings);
+}
+
+function loadReferenceGraph(root: string, warnings?: WarningCollector): RetrievalGraph {
+  const profile = loadProfile({ root });
+  return {
+    graph: loadBundle(join(root, DOCS_DIR), { warnings, profile }),
+    backend: "reference",
+  };
+}
+
+function copyWarnings(from: WarningCollector, to?: WarningCollector): void {
+  if (to === undefined) return;
+  for (const message of from.list()) to.add(message);
+}
+
+function indexedUnavailable(): LoreError {
+  return new LoreError(
+    "validation",
+    "verified indexed retrieval is unavailable",
+    "retry after the local projection can be rebuilt, or use Lore's automatic in-memory fallback",
+  );
+}

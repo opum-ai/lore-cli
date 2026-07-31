@@ -70,6 +70,7 @@ function exportQuery(args: string[], options?: Partial<QueryCommandOptions>): { 
   const stdout = capture();
   const stderr = capture();
   const code = runQuery({ root, output: JSON_CTX, stdout, stderr, args, ...options });
+  if (code instanceof Promise) throw new Error("reference query helper unexpectedly selected async retrieval");
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: QueryResult };
   expect(envelope.kind).toBe("query.results");
   return { code, data: envelope.data };
@@ -468,10 +469,10 @@ describe("formatScore", () => {
 // ── router: cli dispatch ─────────────────────────────────────────────────────────
 
 describe("cli — query dispatch", () => {
-  test("`lore query <text> --json` routes to runQuery and emits the envelope", () => {
+  test("`lore query <text> --json` routes to runQuery and emits the envelope", async () => {
     writeMixedBundle();
     const stdout = capture();
-    const code = run(["bun", "cli", "query", "archive", "--json"], {
+    const code = await run(["bun", "cli", "query", "archive", "--json"], {
       stdout,
       stderr: capture(),
       cwd: root,

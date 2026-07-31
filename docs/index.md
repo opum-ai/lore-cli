@@ -51,7 +51,7 @@ How lore is built and how its pieces fit together.
 - [lore design spec](specs/lore-design.md) — the end-to-end design: command
   surface, core data flow, the Backlog.md coupling, and how the OKF bundle is
   produced and kept coherent.
-- [Local graph platform roadmap](specs/local-graph-platform-roadmap.md) — the active M6–M8 sequence: Commander-prepared LadybugDB indexing, local graph explorer, then indexed graph capabilities.
+- [Local graph platform roadmap](specs/local-graph-platform-roadmap.md) — the active M6–M8 sequence: verified indexed `graph`/`query`/`context` routing is complete, followed by packaging gates, the local graph explorer, and indexed capabilities.
 - [Architecture](reference/architecture.md) — the deterministic-core /
   thin-transport shape: `core/` library, the CLI as primary transport, the
   Backlog and Confluence adapters, and `.lore/` state.
