@@ -40,7 +40,7 @@ jobs:
         # shell loops, computed once here rather than re-decoded from `names` (JSON) in
         # every consuming step.
         run: |
-          matrix='[{"name":"darwin-arm64","target":"bun-darwin-arm64","binary":"lore"},{"name":"darwin-x64","target":"bun-darwin-x64-baseline","binary":"lore"},{"name":"linux-arm64","target":"bun-linux-arm64","binary":"lore"},{"name":"linux-x64","target":"bun-linux-x64-baseline","binary":"lore"},{"name":"win32-x64","target":"bun-windows-x64-baseline","binary":"lore.exe"}]'
+          matrix='[{"name":"darwin-arm64","target":"bun-darwin-arm64","binary":"lore","runner":"macos-latest","os":"darwin","cpu":"arm64","ladybugPackage":"@ladybugdb/core-darwin-arm64","ladybugIntegrity":"sha512-gAwxsdijBFTz4aZ9ITG6zdQw3lAki0eY33hNBLCfKXjKJLvW/8wCvgCVBglqfqBF5WyI7icFUt+wfy/Fbdfl5A=="},{"name":"darwin-x64","target":"bun-darwin-x64-baseline","binary":"lore","runner":"macos-15-intel","os":"darwin","cpu":"x64","ladybugPackage":"@ladybugdb/core-darwin-x64","ladybugIntegrity":"sha512-oUjYLc1fW3ntCrO9te55PoPfvhFo8AKeNa/sU66fiQyEAZB7qZJxeHnnLgl/bLueTF2os3RSawq46ZftoD/9Eg=="},{"name":"linux-arm64","target":"bun-linux-arm64","binary":"lore","runner":"ubuntu-24.04-arm","os":"linux","cpu":"arm64","ladybugPackage":"@ladybugdb/core-linux-arm64","ladybugIntegrity":"sha512-UppokeTaPl9pN0xOsdMa+hmM68zbN2eKReTZhZNYM16qX0d2OlgbS/NlXi09Wdot+w5qvlZ9Q0iCCPfr7qvPaw=="},{"name":"linux-x64","target":"bun-linux-x64-baseline","binary":"lore","runner":"ubuntu-24.04","os":"linux","cpu":"x64","ladybugPackage":"@ladybugdb/core-linux-x64","ladybugIntegrity":"sha512-GypOxCnP2ix/FWM8YhQ41aQYlS+ruoNMJp7pmaF5laJHhL/a+P/apywNTE+9N41Walsl+Emgg9xwxwTC93slow=="},{"name":"win32-x64","target":"bun-windows-x64-baseline","binary":"lore.exe","runner":"windows-latest","os":"win32","cpu":"x64","ladybugPackage":"@ladybugdb/core-win32-x64","ladybugIntegrity":"sha512-hvFwjhTYdwG2sijapx963a27jP9mlLW0ZFv5Yfj19e0B3T/FqD9CaKULPy23mU2XlkISN2LUkY5qdgvCFztl/g=="}]'
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           names=$(node -e "console.log(JSON.stringify(JSON.parse(process.argv[1]).map((p) => p.name)))" "$matrix")
           echo "names=$names" >> "$GITHUB_OUTPUT"
@@ -163,9 +163,135 @@ jobs:
             console.log(`all six release packages are consistent (version ${root.version})`);
           '
 
+  ladybug-qualification:
+    name: Ladybug qualification (ubuntu-24.04 x64)
+    needs: verify-versions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    # A second dispatch queues instead of overlapping a timing run on another
+    # shared runner. Inconclusive calibration requires a fresh serialized rerun.
+    concurrency:
+      group: ladybug-release-qualification
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: ./.github/actions/setup-bun
+      - name: Assert the qualification host and toolchain
+        shell: bash
+        run: |
+          actual_bun="$(bun --version)"
+          if [ "$actual_bun" != "1.2.23" ]; then
+            echo "::error::Ladybug qualification requires Bun 1.2.23, observed $actual_bun"
+            exit 1
+          fi
+          if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "x86_64" ]; then
+            echo "::error::Ladybug release qualification requires Linux x64"
+            exit 1
+          fi
+          if [ -z "${ImageOS:-}" ] || [ -z "${ImageVersion:-}" ]; then
+            echo "::error::GitHub runner image identity is unavailable"
+            exit 1
+          fi
+      - name: Run the full paired Ladybug qualification
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          bun benchmark/ladybug/run.ts \
+            --fixture small \
+            --fixture large \
+            --output artifacts/ladybug-benchmark-v1.json \
+            --runner-image "${ImageOS}-${ImageVersion}"
+      - name: Assert conclusive threshold success
+        shell: bash
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          # The ${...} below is a JavaScript template literal inside the single-quoted
+          # bun program, not shell interpolation.
+          # shellcheck disable=SC2016
+          bun -e '
+            const report = await Bun.file("artifacts/ladybug-benchmark-v1.json").json();
+            const fixtures = report.fixtures?.map((fixture) => fixture.name);
+            if (
+              report.schema !== "lore.ladybug-benchmark/1" ||
+              report.mode !== "qualification" ||
+              report.host?.platform !== "linux" ||
+              report.host?.arch !== "x64" ||
+              report.repository?.commit !== process.env.EXPECTED_COMMIT ||
+              report.repository?.dirty !== false ||
+              JSON.stringify(fixtures) !== JSON.stringify(["small", "large"]) ||
+              report.gates?.evaluation?.status !== "pass"
+            ) {
+              console.error("::error::Ladybug qualification artifact is not a conclusive Linux-x64 pass");
+              process.exit(1);
+            }
+            console.log(`Ladybug qualification passed ${report.gates.results.length} approved gates`);
+          '
+      - name: Upload qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ladybug-benchmark-qualification-linux-x64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/ladybug-benchmark-v1.json
+            benchmark/ladybug/gates/v1.json
+          if-no-files-found: warn
+          retention-days: 90
+
+  ladybug-concurrency-qualification:
+    name: Ladybug concurrency and crash qualification (ubuntu-24.04 x64)
+    needs: verify-versions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: ./.github/actions/setup-bun
+      - name: Run focused multi-process contention, crash, lifecycle, and indexed retrieval tests
+        shell: bash
+        env:
+          LADYBUG_CONCURRENCY_EVIDENCE: artifacts/ladybug-concurrency-evidence-v1.json
+        run: |
+          mkdir -p artifacts
+          bun test --isolate \
+            test/ladybug-concurrency.test.ts \
+            test/ladybug-lifecycle.test.ts \
+            test/indexed-retrieval.test.ts
+      - name: Assert complete sanitized concurrency evidence
+        shell: bash
+        env:
+          REPORT_PATH: artifacts/ladybug-concurrency-evidence-v1.json
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          bun -e '
+            import {
+              LADYBUG_CONCURRENCY_EVIDENCE_KILL_POINTS,
+              parseLadybugConcurrencyEvidenceReport,
+            } from "./benchmark/ladybug/concurrency-evidence";
+            const path = process.env.REPORT_PATH;
+            if (!path) throw new Error("concurrency evidence report path is unavailable");
+            const report = parseLadybugConcurrencyEvidenceReport(await Bun.file(path).json());
+            if (
+              report.toolchain.bun !== "1.2.23" ||
+              report.repository.commit !== process.env.EXPECTED_COMMIT ||
+              report.repository.dirty ||
+              report.status !== "pass" ||
+              JSON.stringify(report.coverage.killPoints) !== JSON.stringify(LADYBUG_CONCURRENCY_EVIDENCE_KILL_POINTS)
+            ) {
+              throw new Error("concurrency artifact is not clean pinned-Bun executable evidence");
+            }
+          '
+      - name: Upload concurrency and crash evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ladybug-concurrency-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/ladybug-concurrency-evidence-v1.json
+          if-no-files-found: warn
+          retention-days: 90
+
   build:
     name: "compile (${{ matrix.name }})"
-    needs: [setup, verify-versions]
+    needs: [setup, verify-versions, ladybug-qualification, ladybug-concurrency-qualification]
     strategy:
       fail-fast: false
       matrix:
@@ -226,9 +352,79 @@ jobs:
           path: npm/${{ matrix.name }}/bin/
           if-no-files-found: error
 
+  package-qualification:
+    name: "matching-host package qualification (${{ matrix.name }})"
+    needs: [setup, verify-versions, ladybug-qualification, ladybug-concurrency-qualification]
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.setup.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      # The shared action is the isolated frozen install. Its Bun pin and
+      # --linker=isolated flags are part of the package-qualification contract.
+      - uses: ./.github/actions/setup-bun
+      - name: Build, pack, install, smoke, uninstall, and audit ${{ matrix.name }}
+        shell: bash
+        run: |
+          bun benchmark/ladybug/package-qualification.ts \
+            --name "${{ matrix.name }}" \
+            --target "${{ matrix.target }}" \
+            --binary "${{ matrix.binary }}" \
+            --os "${{ matrix.os }}" \
+            --cpu "${{ matrix.cpu }}" \
+            --ladybug-package "${{ matrix.ladybugPackage }}" \
+            --ladybug-integrity "${{ matrix.ladybugIntegrity }}" \
+            --output "artifacts/ladybug-package-qualification-${{ matrix.name }}.json"
+      - name: Assert the approved native platform verdict
+        shell: bash
+        env:
+          REPORT_PATH: artifacts/ladybug-package-qualification-${{ matrix.name }}.json
+          EXPECTED_OS: ${{ matrix.os }}
+          EXPECTED_CPU: ${{ matrix.cpu }}
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          bun -e '
+            import { assertPackageQualificationReport } from "./benchmark/ladybug/package-qualification";
+            const path = process.env.REPORT_PATH;
+            if (!path) throw new Error("package qualification report path is unavailable");
+            const report = await Bun.file(path).json();
+            assertPackageQualificationReport(report);
+            if (
+              report.mode !== "qualification" ||
+              report.platform.os !== process.env.EXPECTED_OS ||
+              report.platform.cpu !== process.env.EXPECTED_CPU ||
+              report.repository.commit !== process.env.EXPECTED_COMMIT
+            ) {
+              throw new Error("package qualification artifact does not match its matrix host");
+            }
+            if (
+              process.env.EXPECTED_OS === "win32"
+                ? report.native.supportClaim !== "reference-fallback-only" ||
+                  report.native.referenceFallbackDatabaseAbsent !== true ||
+                  report.native.databaseCreated
+                : report.native.supportClaim !== "native-index" ||
+                  report.native.probeOutcome !== "pass" ||
+                  !report.native.executableEvidence ||
+                  !report.native.databaseCreated
+            ) {
+              throw new Error("package qualification artifact violates the approved native support policy");
+            }
+          '
+      - name: Upload matching-host package evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ladybug-package-qualification-${{ matrix.name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 90
+
   package:
     name: package + install-sanity (dry-run, never publishes)
-    needs: [setup, build]
+    needs: [setup, build, package-qualification]
     runs-on: ubuntu-latest
     env:
       PLATFORM_NAMES_SPACE: ${{ needs.setup.outputs.namesSpace }}

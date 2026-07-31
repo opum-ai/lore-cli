@@ -114,6 +114,8 @@ export interface LadybugLifecycleHooks {
   readonly afterControlManifest?: (stagingPath: string) => void | Promise<void>;
   /** Test seam for a crash after atomic publication is complete and immutable. */
   readonly afterPublication?: (generationPath: string) => void | Promise<void>;
+  /** Test seam for a crash after reconciliation completes but before writer ownership is released. */
+  readonly beforeLockRelease?: () => void | Promise<void>;
 }
 
 export interface ReconcileLadybugProjectionOptions {
@@ -198,7 +200,7 @@ export async function reconcileLadybugProjection(
 
   let inspection = await inspectGeneration(cacheRoot, source, loadNative);
   const initialClassification = inspection.classification;
-  if (inspection.classification === "reusable" && inspection.generation !== undefined) {
+  if (lockState === "none" && inspection.classification === "reusable" && inspection.generation !== undefined) {
     return { classification: "reusable", outcome: "reused", source, generation: inspection.generation };
   }
   if (inspection.classification === "unsupported") {
@@ -338,7 +340,11 @@ export async function reconcileLadybugProjection(
       reason: "repository inputs changed during both isolated build attempts",
     };
   } finally {
-    releaseWriterLock(ownedLock);
+    try {
+      await options.hooks?.beforeLockRelease?.();
+    } finally {
+      releaseWriterLock(ownedLock);
+    }
   }
 }
 
@@ -568,22 +574,31 @@ function ensureCacheLayout(root: string, cacheRoot: string): void {
   for (const segment of segments) {
     current = join(current, segment);
     assertContained(realRoot, current);
-    if (existsSync(current)) {
-      const stat = lstatSync(current);
-      if (!stat.isDirectory() || stat.isSymbolicLink()) {
-        throw new LoreError(
-          "denied",
-          `refusing Ladybug cache path through non-directory or symlink ${relative(realRoot, current)}`,
-          "replace it with a repository-local real directory",
-        );
+    if (!existsSync(current)) {
+      try {
+        mkdirSync(current, { mode: 0o700 });
+      } catch (cause) {
+        if (!isErrno(cause, "EEXIST")) throw cause;
       }
-    } else {
-      mkdirSync(current, { mode: 0o700 });
+    }
+    const stat = lstatSync(current);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new LoreError(
+        "denied",
+        `refusing Ladybug cache path through non-directory or symlink ${relative(realRoot, current)}`,
+        "replace it with a repository-local real directory",
+      );
     }
   }
   if (current !== cacheRoot) throw lifecycleError("resolved cache root does not match the frozen storage path");
   const generations = join(cacheRoot, "generations");
-  if (!existsSync(generations)) mkdirSync(generations, { mode: 0o700 });
+  if (!existsSync(generations)) {
+    try {
+      mkdirSync(generations, { mode: 0o700 });
+    } catch (cause) {
+      if (!isErrno(cause, "EEXIST")) throw cause;
+    }
+  }
   const stat = lstatSync(generations);
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new LoreError("denied", "refusing symlinked or non-directory Ladybug generations path");
