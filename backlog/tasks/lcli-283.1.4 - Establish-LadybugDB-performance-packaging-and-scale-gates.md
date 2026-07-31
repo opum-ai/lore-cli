@@ -1,9 +1,11 @@
 ---
 id: LCLI-283.1.4
 title: Establish LadybugDB performance packaging and scale gates
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-30 13:33'
+updated_date: '2026-07-31 03:15'
 labels:
   - ladybugdb
   - benchmark
