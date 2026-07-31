@@ -9,7 +9,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, posix } from "node:path";
 import { z } from "zod";
-import type { BacklogTask } from "../../src/adapters/backlog";
+import type { BacklogAdapter, BacklogTask, ListTasksOptions } from "../../src/adapters/backlog";
 import { loadBundle } from "../../src/core/bundle";
 import {
   canonicalJson,
@@ -23,6 +23,8 @@ import { buildProjection } from "../../src/core/projection";
 import { VERSION } from "../../src/meta";
 
 export const LADYBUG_BENCHMARK_FIXTURE_SCHEMA = "ladybug-benchmark-fixture/1";
+export const LADYBUG_BENCHMARK_TASK_SNAPSHOT_SCHEMA = "ladybug-benchmark-task-snapshot/1";
+export const LADYBUG_BENCHMARK_TASK_SNAPSHOT_REL_PATH = "backlog/ladybug-benchmark-tasks-v1.json";
 export const LADYBUG_BENCHMARK_FIXTURE_EXPORTER_VERSION = VERSION;
 export const LADYBUG_BENCHMARK_FIXTURE_COMMIT = null;
 export const LADYBUG_BENCHMARK_FIXTURE_BODY_BYTES_PER_CONCEPT = 16 * 1024;
@@ -85,6 +87,21 @@ const QuerySpecSchema = z.strictObject({
   expectedMatches: z.number().int().nonnegative(),
   expectTopTie: z.boolean().optional(),
 });
+const BacklogTaskSchema = z.strictObject({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  status: z.string().min(1),
+  priority: z.string().min(1).nullable(),
+  ordinal: z.number().int().nonnegative().nullable(),
+  assignees: z.array(z.string()),
+  labels: z.array(z.string()),
+  milestone: z.string().min(1).nullable(),
+  parentTaskId: z.string().min(1).nullable(),
+});
+const TaskSnapshotSchema = z.strictObject({
+  schema: z.literal(LADYBUG_BENCHMARK_TASK_SNAPSHOT_SCHEMA),
+  tasks: z.array(BacklogTaskSchema).min(1),
+});
 const FixtureSpecSchema = z.strictObject({
   schema: z.literal(LADYBUG_BENCHMARK_FIXTURE_SCHEMA),
   name: z.enum(["small", "large"]),
@@ -121,6 +138,62 @@ export function loadLadybugBenchmarkFixtureSpec(path: string): LadybugBenchmarkF
   const value: unknown = JSON.parse(readFileSync(path, "utf8"));
   assertFixtureSpec(value, path);
   return value;
+}
+
+/** Read the benchmark-private task snapshot without consulting a host Backlog executable. */
+export function loadLadybugBenchmarkTasks(root: string): BacklogTask[] {
+  const value: unknown = JSON.parse(readFileSync(join(root, LADYBUG_BENCHMARK_TASK_SNAPSHOT_REL_PATH), "utf8"));
+  const parsed = TaskSnapshotSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new Error(`invalid benchmark task snapshot: ${parsed.error.issues[0]?.message ?? "does not match schema"}`);
+  }
+  return parsed.data.tasks;
+}
+
+/**
+ * A read-only adapter for disposable benchmark fixtures. This keeps timing and
+ * package evidence independent of an undeclared host Backlog installation.
+ */
+export function createLadybugBenchmarkBacklogAdapter(root: string): BacklogAdapter {
+  const tasks = loadLadybugBenchmarkTasks(root);
+  const unavailable = (): never => {
+    throw new Error("benchmark task adapter supports only probe and listTasks");
+  };
+  return {
+    async probe() {
+      return { version: "1.47.1", schemaVersion: 1 };
+    },
+    async listTasks(options?: ListTasksOptions) {
+      let selected = tasks;
+      if (options?.status !== undefined) {
+        const status = options.status.toLowerCase();
+        selected = selected.filter((task) => task.status.toLowerCase() === status);
+      }
+      if (options?.labels !== undefined && options.labels.length > 0) {
+        const labels = options.labels.map((label) => label.toLowerCase());
+        selected = selected.filter((task) => {
+          const present = new Set(task.labels.map((label) => label.toLowerCase()));
+          return labels.every((label) => present.has(label));
+        });
+      }
+      return selected;
+    },
+    async viewTask() {
+      return unavailable();
+    },
+    async searchByLabel() {
+      return unavailable();
+    },
+    async searchTasks() {
+      return unavailable();
+    },
+    async createTask() {
+      return unavailable();
+    },
+    async editTask() {
+      return unavailable();
+    },
+  };
 }
 
 /**
@@ -188,6 +261,10 @@ function writeRepository(spec: LadybugBenchmarkFixtureSpec, root: string, tasks:
       'task_prefix: "BENCH"',
       "",
     ].join("\n"),
+  );
+  writeFileSync(
+    join(root, LADYBUG_BENCHMARK_TASK_SNAPSHOT_REL_PATH),
+    `${canonicalJson({ schema: LADYBUG_BENCHMARK_TASK_SNAPSHOT_SCHEMA, tasks })}\n`,
   );
 
   const random = xorshift32(spec.seed);

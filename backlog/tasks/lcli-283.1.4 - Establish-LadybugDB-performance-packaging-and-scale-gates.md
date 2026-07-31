@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:33'
-updated_date: '2026-07-31 18:08'
+updated_date: '2026-07-31 18:21'
 labels:
   - ladybugdb
   - benchmark
@@ -122,4 +122,10 @@ Item 10 partial exact-pin verification on 2026-07-31: the frozen isolated instal
 Item 10 cannot yet collect admissible final evidence under the standing no-commit constraint. HEAD is still baseline 7b81734764658048a9924b0ba64cd810e8c212b7, all item 1-9 implementation is uncommitted, and no remote feature branch exists. GitHub matching-host jobs therefore cannot execute this implementation, while the item-9 manifest correctly rejects artifacts that are dirty or do not share the workflow commit. The full Linux qualification benchmark, clean-commit Darwin supplemental benchmark, five matching-host package reports, concurrency workflow artifact, and final manifest remain pending. Lore sync --dry-run reports docs/log.md drift, but a real Lore sync would commit the dirty Backlog tree and therefore also requires explicit commit authority. No Lore documentation was changed, all ACs remain unchecked, and the task remains In Progress.
 
 User explicitly authorized creating and pushing the implementation, evidence, and documentation commits required to complete item 10 on 2026-07-31. This supersedes the prior no-commit/baseline-HEAD blocker for item 10 only; package publication and parent-task advancement remain out of scope.
+
+Item 10 workflow run 30654089886 on clean commit b888886d7422fed7d436a5e7e8d3a6a6709e214f exposed a benchmark hermeticity defect before measurement: the Linux job failed because the private worker attempted to resolve a host backlog executable. Concurrency qualification passed, and all downstream build/package/publish jobs were correctly skipped. Narrow refinement before retry: persist the fixture already-generated deterministic task snapshot inside the disposable Backlog tree, validate it strictly, and inject a benchmark-private read-only adapter into source loading in both the orchestrator and worker. Add a regression that poisons any accidental host backlog invocation. Public retrieval behavior, fixtures, thresholds, platform policy, and scope remain unchanged.
+
+The same hermeticity audit found the matching-host packaged graph/query/context smoke would otherwise inherit the undeclared host-Backlog dependency. Include a matching-host compiled fixture-only Backlog JSON shim in package-qualification scratch and prepend it only to the two packaged smoke subprocess environments. The shim implements the exact capability-probe and task-list JSON contract from the deterministic snapshot; it is never shipped, never used by public runtime code, and does not simulate OS/native behavior.
+
+Hermeticity refinement verified locally on exact Bun 1.2.23. The benchmark runner passed with a deliberately poisoned backlog command, proving no host subprocess was reached. The real Darwin-arm64 package qualification passed using the scratch-only compiled Backlog JSON shim, including native indexing, Node launcher and relocated Bun binary parity, uninstall, explicit cache disposal, isolated-global cleanup, and source preservation. Combined focused benchmark/concurrency/lifecycle/indexed/package/release/evidence coverage passed 86 tests with 685 assertions; full bun test --isolate passed 2,328 tests with 7,156 assertions across 62 files. Typecheck, lint across 150 files, and git diff --check passed. All package-fix scratch, tarballs, compiled shims, npm caches, and reports were removed.
 <!-- SECTION:NOTES:END -->

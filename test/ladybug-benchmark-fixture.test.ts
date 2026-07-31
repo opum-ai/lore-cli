@@ -3,10 +3,13 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  createLadybugBenchmarkBacklogAdapter,
   generateLadybugBenchmarkFixture,
   LADYBUG_BENCHMARK_FIXTURE_SCHEMA,
+  LADYBUG_BENCHMARK_TASK_SNAPSHOT_REL_PATH,
   type LadybugBenchmarkFixtureSpec,
   loadLadybugBenchmarkFixtureSpec,
+  loadLadybugBenchmarkTasks,
 } from "../benchmark/ladybug/fixture";
 import { loadBundle } from "../src/core/bundle";
 import { buildContext } from "../src/core/context";
@@ -51,6 +54,9 @@ describe("Ladybug benchmark fixture v1", () => {
       spec.counts.markdownBodyBytes,
     );
     expect(readdirSync(join(generated.root, "backlog", "tasks"))).toHaveLength(spec.counts.tasks);
+    expect(existsSync(join(generated.root, LADYBUG_BENCHMARK_TASK_SNAPSHOT_REL_PATH))).toBe(true);
+    expect(loadLadybugBenchmarkTasks(generated.root)).toEqual([...generated.tasks]);
+    expect(await createLadybugBenchmarkBacklogAdapter(generated.root).listTasks()).toEqual([...generated.tasks]);
     expect(existsSync(join(generated.root, LADYBUG_CACHE_REL_ROOT))).toBe(false);
 
     const productionSource = await loadLadybugProjectionSource({

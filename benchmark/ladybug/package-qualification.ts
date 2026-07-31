@@ -16,7 +16,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { disposeLadybugProjection } from "../../src/core/ladybug-lifecycle";
 import { canonicalJson, digest, LADYBUG_CACHE_REL_ROOT, readSourceInventory } from "../../src/core/ladybug-source";
 import { generateLadybugBenchmarkFixture, loadLadybugBenchmarkFixtureSpec } from "./fixture";
@@ -288,13 +288,14 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
       join(REPOSITORY_ROOT, "benchmark", "ladybug", "fixtures", "v1", "small.json"),
     );
     generateLadybugBenchmarkFixture(spec, fixtureRoot);
+    const smokeEnvironment = await createFixtureBacklogEnvironment(input, scratch);
     const sourceDigestBefore = sourceInventoryDigest(fixtureRoot);
     progress("probing the exact native boundary in a sacrificial child");
     const nativeProbe = await runNativeProbe(input, scratch);
     progress("smoking the installed Node launcher");
-    const launcherSmoke = await smoke([node, launcher], fixtureRoot, expectedVersion);
+    const launcherSmoke = await smoke([node, launcher], fixtureRoot, expectedVersion, smokeEnvironment);
     progress("smoking the relocated standalone Bun executable");
-    const standaloneSmoke = await smoke([standaloneBinary], fixtureRoot, expectedVersion);
+    const standaloneSmoke = await smoke([standaloneBinary], fixtureRoot, expectedVersion, smokeEnvironment);
 
     const cacheRoot = join(fixtureRoot, LADYBUG_CACHE_REL_ROOT);
     const commandOutputsStable = canonicalJson(launcherSmoke) === canonicalJson(standaloneSmoke);
@@ -606,14 +607,21 @@ async function smoke(
   command: readonly string[],
   fixtureRoot: string,
   expectedVersion: string,
+  environment: Record<string, string | undefined>,
 ): Promise<SmokeCommandEvidence[]> {
   const evidence: SmokeCommandEvidence[] = [];
-  const versionResult = await run(command[0] as string, [...command.slice(1), "--version"], { cwd: fixtureRoot });
+  const versionResult = await run(command[0] as string, [...command.slice(1), "--version"], {
+    cwd: fixtureRoot,
+    env: environment,
+  });
   const version = versionResult.stdout.trim();
   if (version !== expectedVersion)
     throw new Error(`packaged Lore version ${version} does not match ${expectedVersion}`);
   evidence.push({ name: "version", stdoutSha256: digest(versionResult.stdout) });
-  const helpResult = await run(command[0] as string, [...command.slice(1), "--help"], { cwd: fixtureRoot });
+  const helpResult = await run(command[0] as string, [...command.slice(1), "--help"], {
+    cwd: fixtureRoot,
+    env: environment,
+  });
   const help = helpResult.stdout;
   if (!help.includes("graph") || !help.includes("query") || !help.includes("context")) {
     throw new Error("packaged Lore help is missing retrieval commands");
@@ -629,7 +637,10 @@ async function smoke(
     },
   ];
   for (const item of commands) {
-    const result = await run(command[0] as string, [...command.slice(1), ...item.args], { cwd: fixtureRoot });
+    const result = await run(command[0] as string, [...command.slice(1), ...item.args], {
+      cwd: fixtureRoot,
+      env: environment,
+    });
     const value: unknown = JSON.parse(result.stdout);
     if (
       typeof value !== "object" ||
@@ -642,6 +653,27 @@ async function smoke(
     evidence.push({ name: item.name, stdoutSha256: digest(result.stdout) });
   }
   return evidence;
+}
+
+async function createFixtureBacklogEnvironment(
+  input: PackageQualificationInput,
+  scratch: string,
+): Promise<Record<string, string | undefined>> {
+  const binRoot = join(scratch, "fixture-bin");
+  mkdirSync(binRoot, { recursive: true });
+  const executable = join(binRoot, input.os === "win32" ? "backlog.exe" : "backlog");
+  await run(
+    "bun",
+    ["build", "--compile", `--outfile=${executable}`, join(REPOSITORY_ROOT, "benchmark", "ladybug", "backlog-shim.ts")],
+    { cwd: REPOSITORY_ROOT },
+  );
+  if (!existsSync(executable) || statSync(executable).size < 1_000_000) {
+    throw new Error("fixture Backlog shim is missing or suspiciously small");
+  }
+  return {
+    ...process.env,
+    PATH: [binRoot, process.env.PATH].filter((value): value is string => value !== undefined).join(delimiter),
+  };
 }
 
 async function run(

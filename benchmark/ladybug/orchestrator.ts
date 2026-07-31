@@ -9,7 +9,7 @@ import {
   ladybugCacheLogicalBytes,
   snapshotLadybugBenchmarkSources,
 } from "./accounting";
-import type { LadybugBenchmarkFixtureSpec } from "./fixture";
+import { createLadybugBenchmarkBacklogAdapter, type LadybugBenchmarkFixtureSpec } from "./fixture";
 import {
   type BenchmarkOperation,
   type BenchmarkPolicy,
@@ -183,6 +183,7 @@ export async function measureCanonicalInputBytes(root: string): Promise<number> 
     root,
     ladybugVersion: EXPECTED_LADYBUG_VERSION,
     ladybugStorageVersion: EXPECTED_LADYBUG_STORAGE_VERSION,
+    adapter: createLadybugBenchmarkBacklogAdapter(root),
   });
   const after = snapshotLadybugBenchmarkSources(root);
   assertLadybugBenchmarkSourcesUnchanged(before, after);

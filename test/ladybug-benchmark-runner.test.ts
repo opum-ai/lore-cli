@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import {
   assertLadybugBenchmarkSourcesUnchanged,
   canonicalProjectionByteLength,
@@ -76,7 +76,21 @@ describe("Ladybug benchmark worker and orchestrator", () => {
       { id: "context-budget", operation: { kind: "context", root: "index", depth: 1, maxTokens: 512 } },
     ];
     const before = snapshotLadybugBenchmarkSources(generated.root);
-    const pass = await runLadybugBenchmarkPass({ root: generated.root, scenarios, order: ["indexed", "reference"] });
+    const poisonBin = tempRoot("poison-backlog");
+    const poisonBacklog = join(poisonBin, process.platform === "win32" ? "backlog.cmd" : "backlog");
+    writeFileSync(poisonBacklog, process.platform === "win32" ? "@exit /b 97\r\n" : "#!/bin/sh\nexit 97\n");
+    if (process.platform !== "win32") chmodSync(poisonBacklog, 0o755);
+    const originalPath = process.env.PATH;
+    let pass: Awaited<ReturnType<typeof runLadybugBenchmarkPass>>;
+    try {
+      process.env.PATH = [poisonBin, originalPath]
+        .filter((value): value is string => value !== undefined)
+        .join(delimiter);
+      pass = await runLadybugBenchmarkPass({ root: generated.root, scenarios, order: ["indexed", "reference"] });
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+    }
 
     expect(pass.canonicalInputBytes).toBe(canonicalProjectionByteLength(generated.source));
     expect(pass.coldBuild.result.backend).toBe("indexed");

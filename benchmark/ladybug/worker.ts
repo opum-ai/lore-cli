@@ -6,6 +6,7 @@ import { buildGraphExport } from "../../src/core/graph";
 import { loadRetrievalGraph, type RetrievalGraph, type RetrievalGraphLoader } from "../../src/core/retrieval";
 import type { Writer } from "../../src/errors";
 import { benchmarkDigest, ladybugGenerationCount } from "./accounting";
+import { createLadybugBenchmarkBacklogAdapter } from "./fixture";
 import {
   type BenchmarkOperation,
   type BenchmarkPolicy,
@@ -66,7 +67,7 @@ async function main(): Promise<void> {
 }
 
 function load(root: string, policy: BenchmarkPolicy): Promise<RetrievalGraph> {
-  return loadRetrievalGraph({ root, policy });
+  return loadRetrievalGraph({ root, policy, adapter: createLadybugBenchmarkBacklogAdapter(root) });
 }
 
 function workerResult(

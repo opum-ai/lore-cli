@@ -12,6 +12,7 @@ import {
 const RELEASE_PATH = join(import.meta.dir, "..", ".github", "workflows", "release.yml");
 const PACKAGE_RUNNER_PATH = join(import.meta.dir, "..", "benchmark", "ladybug", "package-qualification.ts");
 const NATIVE_PROBE_PATH = join(import.meta.dir, "..", "benchmark", "ladybug", "native-probe.ts");
+const BACKLOG_SHIM_PATH = join(import.meta.dir, "..", "benchmark", "ladybug", "backlog-shim.ts");
 
 interface WorkflowStep {
   id?: string;
@@ -258,11 +259,17 @@ describe("matching-host Ladybug package qualification", () => {
   test("native indexing and Windows fallback evidence stay process-isolated and explicit", () => {
     const runner = readFileSync(PACKAGE_RUNNER_PATH, "utf8");
     const probe = readFileSync(NATIVE_PROBE_PATH, "utf8");
+    const backlogShim = readFileSync(BACKLOG_SHIM_PATH, "utf8");
     expect(runner).toContain('input.os === "win32" ? "import" : "indexed"');
     expect(runner).toContain("child.signalCode");
     expect(runner).toContain("isKnownNativeCrash");
     expect(runner).toContain("referenceFallbackDatabaseAbsent");
     expect(runner).toContain("commandOutputsStable");
+    expect(runner).toContain("createFixtureBacklogEnvironment");
+    expect(runner).toContain("backlog-shim.ts");
+    expect(backlogShim).toContain('args[0] === "--version"');
+    expect(backlogShim).toContain('args[0] === "task"');
+    expect(backlogShim).toContain('kind: "task-list"');
     expect(probe).toContain("loadLadybugNativeDriver");
     expect(probe).not.toContain('from "@ladybugdb/core"');
     expect(probe).toContain('if (mode === "import")');
