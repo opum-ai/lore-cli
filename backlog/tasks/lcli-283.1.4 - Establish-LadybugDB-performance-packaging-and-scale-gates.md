@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:33'
-updated_date: '2026-08-01 11:42'
+updated_date: '2026-08-01 11:50'
 labels:
   - ladybugdb
   - benchmark
@@ -183,6 +183,8 @@ Post-profile verification refinement: the staged database now runs the approved 
 Exact-host run 30697247321 on clean commit 36a5cac3f43b78826dec41cf37e1e730a04c3487 completed the bounded benchmark and concurrency jobs. Concurrency passed. Seventeen of eighteen frozen benchmark gates passed; the only failure was large.cold-build.wall-p95. Warm open, query absolute and improvement, graph/context, memory, and storage gates all passed. Downstream package qualification, final manifest, package, and publish jobs were correctly skipped, and publishing was disabled. The evidence is retained; no fixture, threshold, sample, or time-cap value changed.
 
 Cold-build recovery on 2026-08-01: official Ladybug hash-function guidance supports database-side SHA-256, so staged verification now compares every stored body in one bounded digest scan instead of thousands of body transfers. New generations skip reuse-only freshness reads when no candidate exists and reuse lexical lengths already computed for postings. CommonMark extraction preserves the standards parser but compacts only exceptionally long syntax-free lines to a representation still above the 999-character link-label ceiling; definition destinations remain byte-exact. The representative 100 MiB local build improved materially while retaining the fixed cleanup rate and full logical verification. Full verification now passes 2,339 tests with zero failures; lint, typecheck, compiled build, and diff checks pass. Exact hosted evidence remains required before any AC is checked.
+
+Exact-host run 30698283991 on clean commit 9b6562cd5e4c3070dfed0dbead4dc1e50756ad2b is retained as mixed qualification evidence. The pinned Linux-x64 benchmark passed all eighteen frozen gates, including the repaired cold-build gate and all warm-query improvement checks. Concurrency/crash evidence also passed. All five matching-host package jobs then failed at the same checker assumption: Bun 1.2.23 isolated installs keep a transitive optional platform package beside its parent instead of hoisting it to the repository node_modules root. Compile jobs passed; final manifest, package dry-run, and publish were correctly skipped, with publishing disabled. The checker now resolves the optional package from the installed Ladybug core package, which supports both valid isolated and hoisted layouts without weakening version, OS/CPU, integrity, or byte-identical-addon checks. Local Darwin package smoke, focused package tests, lint, and typecheck pass; a new clean hosted run is required.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
