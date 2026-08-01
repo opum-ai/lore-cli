@@ -6,7 +6,7 @@ import * as yaml from "js-yaml";
 import {
   assertPackageQualificationReport,
   isKnownNativeCrash,
-  isProvenSilentWindowsImportCrash,
+  isProvenAbruptWindowsImportCrash,
   LADYBUG_PACKAGE_QUALIFICATION_SCHEMA,
   packageCompileCommand,
   parsePackageQualificationArgs,
@@ -346,6 +346,7 @@ describe("matching-host Ladybug package qualification", () => {
     expect(probe).toContain("loadLadybugNativeDriver");
     expect(probe).toContain("NATIVE_IMPORT_STARTED_FILENAME");
     expect(probe).toContain("NATIVE_IMPORT_COMPLETED_FILENAME");
+    expect(probe).toContain("NATIVE_IMPORT_FAILED_FILENAME");
     expect(probe).not.toContain('from "@ladybugdb/core"');
     expect(probe).toContain('if (mode === "import")');
     expect(probe).toContain("buildLadybugDatabase");
@@ -357,34 +358,40 @@ describe("matching-host Ladybug package qualification", () => {
     expect(isKnownNativeCrash(0, "SIGSEGV")).toBe(true);
     expect(isKnownNativeCrash(1, null)).toBe(false);
     expect(
-      isProvenSilentWindowsImportCrash({
+      isProvenAbruptWindowsImportCrash({
         exitCode: 1,
         signal: null,
-        stdout: "",
-        stderr: "",
         importStarted: true,
         importCompleted: false,
+        importFailed: false,
       }),
     ).toBe(true);
     expect(
-      isProvenSilentWindowsImportCrash({
+      isProvenAbruptWindowsImportCrash({
         exitCode: 1,
         signal: null,
-        stdout: "",
-        stderr: "ordinary JavaScript error",
         importStarted: true,
         importCompleted: false,
+        importFailed: true,
       }),
     ).toBe(false);
     expect(
-      isProvenSilentWindowsImportCrash({
+      isProvenAbruptWindowsImportCrash({
         exitCode: 1,
         signal: null,
-        stdout: "",
-        stderr: "",
         importStarted: true,
         importCompleted: true,
+        importFailed: false,
       }),
     ).toBe(false);
+    expect(
+      isProvenAbruptWindowsImportCrash({
+        exitCode: 0,
+        signal: "SIGSEGV",
+        importStarted: true,
+        importCompleted: false,
+        importFailed: false,
+      }),
+    ).toBe(true);
   });
 });

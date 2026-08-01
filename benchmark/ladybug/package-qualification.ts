@@ -25,6 +25,7 @@ import { generateLadybugBenchmarkFixture, loadLadybugBenchmarkFixtureSpec } from
 import {
   LADYBUG_NATIVE_PROBE_SCHEMA,
   NATIVE_IMPORT_COMPLETED_FILENAME,
+  NATIVE_IMPORT_FAILED_FILENAME,
   NATIVE_IMPORT_STARTED_FILENAME,
 } from "./native-probe";
 
@@ -573,6 +574,7 @@ async function runNativeProbe(input: PackageQualificationInput, scratch: string)
   const stderrSha256 = digest(stderr);
   const importStarted = existsSync(join(probeRoot, NATIVE_IMPORT_STARTED_FILENAME));
   const importCompleted = existsSync(join(probeRoot, NATIVE_IMPORT_COMPLETED_FILENAME));
+  const importFailed = existsSync(join(probeRoot, NATIVE_IMPORT_FAILED_FILENAME));
   if (timedOut) throw new Error("sacrificial Ladybug native probe timed out after 180000ms");
 
   if (input.os === "win32") {
@@ -594,14 +596,9 @@ async function runNativeProbe(input: PackageQualificationInput, scratch: string)
         executableEvidence: false,
       };
     }
-    if (
-      !importStarted ||
-      importCompleted ||
-      (!isKnownNativeCrash(exitCode, signal) &&
-        !isProvenSilentWindowsImportCrash({ exitCode, signal, stdout, stderr, importStarted, importCompleted }))
-    ) {
+    if (!isProvenAbruptWindowsImportCrash({ exitCode, signal, importStarted, importCompleted, importFailed })) {
       throw new Error(
-        `Windows native probe failed without the approved crash signature (exit=${exitCode}, signal=${signal ?? "none"}, stdout=${stdoutSha256}, stderr=${stderrSha256})`,
+        `Windows native probe failed without a proven abrupt native stop (exit=${exitCode}, signal=${signal ?? "none"}, stdout=${stdoutSha256}, stderr=${stderrSha256})`,
       );
     }
     return {
@@ -677,21 +674,18 @@ export function isKnownNativeCrash(exitCode: number, signal: NodeJS.Signals | nu
   return [11, 134, 139, -1_073_741_819, 3_221_225_477].includes(exitCode);
 }
 
-export function isProvenSilentWindowsImportCrash(evidence: {
+export function isProvenAbruptWindowsImportCrash(evidence: {
   readonly exitCode: number;
   readonly signal: NodeJS.Signals | null;
-  readonly stdout: string;
-  readonly stderr: string;
   readonly importStarted: boolean;
   readonly importCompleted: boolean;
+  readonly importFailed: boolean;
 }): boolean {
   return (
-    evidence.exitCode !== 0 &&
-    evidence.signal === null &&
-    evidence.stdout === "" &&
-    evidence.stderr === "" &&
+    (evidence.exitCode !== 0 || evidence.signal !== null) &&
     evidence.importStarted &&
-    !evidence.importCompleted
+    !evidence.importCompleted &&
+    !evidence.importFailed
   );
 }
 

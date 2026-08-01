@@ -9,6 +9,7 @@ import { generateLadybugBenchmarkFixture, loadLadybugBenchmarkFixtureSpec } from
 export const LADYBUG_NATIVE_PROBE_SCHEMA = "lore.ladybug-native-probe/1";
 export const NATIVE_IMPORT_STARTED_FILENAME = "native-import-started";
 export const NATIVE_IMPORT_COMPLETED_FILENAME = "native-import-completed";
+export const NATIVE_IMPORT_FAILED_FILENAME = "native-import-failed";
 
 type ProbeMode = "import" | "indexed";
 
@@ -102,6 +103,10 @@ if (import.meta.main) {
   probe(mode, root)
     .then((report) => process.stdout.write(`${canonicalJson(report)}\n`))
     .catch((error: unknown) => {
+      // A normal JavaScript rejection reaches this handler; a native process
+      // crash does not. The parent can therefore distinguish the two without
+      // relying on platform-specific exit-code normalization or error text.
+      writeFileSync(join(root, NATIVE_IMPORT_FAILED_FILENAME), "");
       process.stderr.write(`${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
       process.exitCode = 1;
     });
