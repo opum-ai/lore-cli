@@ -8,6 +8,7 @@
 - [CLI surface: the complete lore command catalog](cli-surface.md)
 - [Consumer compatibility](consumer-compatibility.md)
 - [Dependency boundary audit](dependency-boundary-audit.md)
+- [LadybugDB benchmark and scale acceptance strategy](ladybugdb-benchmark-and-scale-acceptance-strategy.md)
 - [MCP tools and resources (ON HOLD design)](mcp-tools.md)
 - [OKF conformance](okf-conformance.md)
 - [OKF projection contract](okf-projection-contract.md)

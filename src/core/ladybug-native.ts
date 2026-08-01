@@ -12,9 +12,9 @@ import type { BundleGraph } from "./bundle";
 import type { LadybugProjectionSource } from "./ladybug-source";
 
 /** Exact package/runtime version frozen into ladybug-projection/1 fingerprints. */
-export const EXPECTED_LADYBUG_VERSION = "0.18.2";
-/** Exact storage version reported by @ladybugdb/core 0.18.2. */
-export const EXPECTED_LADYBUG_STORAGE_VERSION = "42";
+export const EXPECTED_LADYBUG_VERSION = "0.19.0";
+/** Exact storage version reported by @ladybugdb/core 0.19.0. */
+export const EXPECTED_LADYBUG_STORAGE_VERSION = "43";
 
 /** Structural facts proven by a complete read-only native verification. */
 export interface LadybugDatabaseVerification {

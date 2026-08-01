@@ -322,7 +322,7 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
     });
     const generation = generationFor(built.provenance?.sourceFingerprint);
     const controlPath = join(generation, "index.json");
-    mutateControl(generation, { ladybugVersion: "0.17.0" });
+    mutateControl(generation, { ladybugVersion: "0.18.3", ladybugStorageVersion: "42" });
     const rebuilt = await loadRetrievalGraph({
       root,
       adapter,
