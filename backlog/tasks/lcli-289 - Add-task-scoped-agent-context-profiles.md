@@ -1,11 +1,11 @@
 ---
 id: LCLI-289
 title: Add task-scoped agent context profiles
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-31 01:16'
-updated_date: '2026-08-01 17:47'
+updated_date: '2026-08-01 17:52'
 labels:
   - agents
   - context
@@ -42,7 +42,7 @@ Add named, version-controlled context profiles that let existing Claude Code and
 - [x] #3 Context packs rank Markdown sections only inside the explicit profile allowlist, preserve mandatory pins and provenance, respect bounded output, and remain deterministic across indexed and reference retrieval.
 - [x] #4 Orchestrator packs include only their own evidence and a compact direct-delegate roster; delegated workers retrieve their own profile context.
 - [x] #5 Context emits to stdout by default and optionally writes safely and atomically without silent overwrite, symlink traversal, or repository path escape.
-- [ ] #6 Generated Lore guidance documents the one-line Claude Code and Codex opt-in without creating or patching native agent definitions, and automated tests plus strict Lore gates pass.
+- [x] #6 Generated Lore guidance documents the one-line Claude Code and Codex opt-in without creating or patching native agent definitions, and automated tests plus strict Lore gates pass.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -61,4 +61,12 @@ Implementation slice 2 (2026-08-01): completed the shipped Story/Spec/runbook an
 Final adversarial pass: confined --task-file to repo-relative non-symlink paths (stdin remains supported), added real-file/escape/symlink tests, and updated the Spec/runbook/help contract. Post-change focused command/help/CLI suite: 107 pass; post-change full suite: 2362 pass / 0 fail / 7415 assertions. Typecheck, Biome, and diff hygiene remain clean.
 
 Pinned-runtime verification completed via ephemeral bun@1.2.23: full suite 2362 pass / 0 fail / 7415 assertions; typecheck clean; Biome clean across 156 files; compiled build succeeded; compiled help-agent and empty-profile-list JSON smokes passed. The earlier pinned-runtime gap is closed. Only Lore sync/commit authorization and the post-sync strict check remain for AC #6 and terminal completion.
+
+Authorized settlement: lore sync generated the six expected documentation files and created scoped Backlog commit 91ee1c0. Post-sync pinned Bun 1.2.23 gates passed: lore validate --strict 0 errors/0 warnings, lore check --strict complete with 0 findings, generated Claude bridge check unchanged, and git diff --check clean.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added strict committed specialist/orchestrator context profiles and the singular lore agent list/show/context surface; deterministic allowlisted BM25 section packs with mandatory pins, provenance, bounded whole-block output, direct-delegate rosters, and indexed/reference parity; confined atomic task-file/output handling; check-time validation; generated Claude/Codex opt-in guidance; and shipped Story/Spec/runbook/reference documentation. Verified on pinned Bun 1.2.23 with 2362 tests passing, typecheck, Biome, compiled smokes, strict Lore validation/check, bridge drift check, and diff hygiene.
+<!-- SECTION:FINAL_SUMMARY:END -->
