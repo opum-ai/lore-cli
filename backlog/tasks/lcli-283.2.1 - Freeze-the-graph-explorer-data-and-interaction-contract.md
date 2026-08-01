@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:33'
-updated_date: '2026-08-01 18:22'
+updated_date: '2026-08-01 18:27'
 labels:
   - graph-explorer
   - design
@@ -58,6 +58,8 @@ Define the read-only explorer payload, deterministic snapshot format, supported 
 Implemented the strict lore-explorer-snapshot/1 and separate lore-explorer-presentation/1 schemas, deterministic serializer and cross-record invariants, bounded render limits, a duplicate/dangling/supersession fixture, and the Lore data/interaction specification with stable accessibility and health-state requirement IDs. Pinned Bun 1.2.23 focused verification passes 6 tests / 36 expectations; typecheck and repository lint pass.
 
 Final objective verification under pinned Bun 1.2.23: focused explorer contract suite passes 6 tests / 47 expectations; the complete repository test suite exits 0; typecheck, repository lint, production build, and git diff --check pass. Strict Lore validation of both authored Specs reports 2 files, 0 errors, 0 warnings. AC 1-4 are verified by the executable payload/presentation schemas, conformance fixture/tests, exported refresh and interaction contracts, and the validated Spec. Remaining finalization gate: lore sync plus lore validate/check --strict; lore sync will auto-commit the dirty Backlog task record, so it awaits local commit authority for this task.
+
+Settlement completed after explicit user authorization: moved the task to Done, ran Lore sync, and created local commits 07a220d (terminal Backlog record), 3179b04 (feature), and 9c1f136 (generated Lore log). Terminal-head verification passes the full pinned Bun 1.2.23 suite, typecheck, lint, build, strict Lore validation/check, and diff hygiene. No push, PR, merge, publication, lease return, branch deletion, or primary-checkout cleanup was performed.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
