@@ -320,6 +320,10 @@ expectation for tool config. Secrets (e.g. the deferred Confluence token) are
 read from environment variables, never the file, and secret scanning remains
 outside the generic schema.
 
+Agent profiles reuse this exact boundary for `.lore/agents/*.toml`: Bun parses
+the file and Zod validates its strict profile shape. The feature adds no TOML
+parser, agent SDK, tokenizer, embedding, or model dependency.
+
 ---
 
 ## M6: LadybugDB — `@ladybugdb/core`
@@ -384,7 +388,7 @@ surface, or a determinism/portability hazard.
 
 | Not used | What we'd "gain" | Why we refuse it |
 |---|---|---|
-| **Embedding/vector retrieval, RAG, or chunker** | semantic retrieval | Lore retains deterministic lexical ranking and authored graph expansion. M6 adds a LadybugDB property-graph and lexical index, not embeddings or a vector index; no model loads or network calls enter retrieval, and indexed output must conform to the reference implementation. |
+| **Embedding/vector retrieval, RAG, or chunk-store dependency** | semantic retrieval | Lore retains deterministic lexical ranking and authored graph expansion. M6 adds a LadybugDB property-graph and lexical index, not embeddings or a vector index; no model loads or network calls enter retrieval, and indexed output must conform to the reference implementation. Agent profiles reuse the mdast parser to partition selected Markdown at heading and top-level block boundaries in memory; they add no overlap chunk store, embedding model, or ranking service. |
 | **Rust link checker at runtime** (e.g. **lychee**) | fast external link checks | We use a pure-JS, hand-rolled validator (§6) on the AST we already have — no `remark-validate-links` dependency either. No Rust toolchain, no native binary to ship per platform, no subprocess. External liveness stays opt-in (`--external`). See [ADR-0007](../adr/0007-validation-and-coherence.md). |
 | **A TOML parsing library** (`@iarna/toml`, `smol-toml`, etc.) | TOML parsing | Bun parses TOML natively (§8). Adding a library would duplicate a runtime capability. |
 | **An LLM / model SDK in `core/`** | "smart" summaries, ranking, link suggestions | The **core is deterministic by mandate**. No network, no model, no nondeterminism. The `summary` field is author-written; the chars/4 token figure is an explicitly *labeled estimate*, not a model call. Any future LLM use lives outside `core/` and is never on the validate/check/sync path. |

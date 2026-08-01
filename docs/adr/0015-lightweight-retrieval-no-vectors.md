@@ -24,6 +24,13 @@ superseded_by: adr/0018-persistent-local-graph-projection-with-ladybugdb
 
 Accepted — 2026-06-21
 
+Superseded for persistence and indexed routing by
+[ADR-0018](0018-persistent-local-graph-projection-with-ladybugdb.md). Its
+deterministic lexical and no-vector boundary remains active. LCLI-289 extends
+that boundary with Markdown-section selection inside an explicit agent-profile
+allowlist. This is AST-based evidence packing, not an embedding system,
+semantic reranker, overlap chunk store, or model-backed RAG pipeline.
+
 ## Context
 
 lore must let agents and humans *find* and *assemble* the right documentation

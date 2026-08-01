@@ -432,6 +432,34 @@ lore context stories/bulk-archive-orders --max-tokens 4000 --depth 2
 | **Output** | `kind: context.export` — target body + neighbor summaries, with `tokenEstimate`/`truncated` |
 | **Exit** | `0` ok · `2` bad usage (missing `<id>`, unknown/repeated flag, non-integer/out-of-range `--max-tokens`/`--depth`) · `3` `<id>` not found |
 
+### `agent`
+
+Discovers committed `.lore/agents/*.toml` profiles and compiles deterministic,
+task-ranked evidence from each profile's explicit Lore source allowlist. The
+singular family is distinct from the plural [`agents`](#agents) bridge command:
+it does not create, patch, or run native Claude Code or Codex agents.
+
+```text
+lore agent list
+lore agent show frontend-dev
+lore agent context frontend-dev --task "Add accessible dialog focus management"
+lore agent context frontend-dev --task-file task.txt --max-tokens 6000
+```
+
+| Subcommand | Contract |
+|---|---|
+| `list` | Stable profile summaries; `kind: agent.profiles` |
+| `show <name>` | One normalized profile; `kind: agent.profile` |
+| `context <name>` | Exactly one of `--task <text>` or `--task-file <repo-relative-path|->`; optional `--max-tokens <n>`, `--out <repo-relative-path>`, and `--force`; `kind: agent.context.export` |
+
+`context` reserves space for metadata and mandatory pins, then ranks complete
+heading/top-level-block records from `sources`. Task-file and output paths are
+confined to the repository and reject symlink traversal. Outputs write
+atomically and require
+`--force` to replace different bytes. Common exits are `0` success, `2` usage,
+`3` unknown profile/source, `4` denied I/O, `5` output conflict, and `6`
+profile/reference validation or mandatory-budget failure.
+
 ---
 
 ## Refactoring

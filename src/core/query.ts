@@ -401,6 +401,18 @@ export interface Bm25Index {
   readonly avgdl: number;
 }
 
+/** One arbitrary lexical record for consumers that share Lore's BM25 contract. */
+export interface Bm25Record {
+  readonly id: string;
+  readonly text: string;
+}
+
+/** One arbitrary record's deterministic relevance score. */
+export interface Bm25RecordScore {
+  readonly id: string;
+  readonly score: number;
+}
+
 /**
  * Tokenize a string into lower-cased lexical terms: maximal runs of Unicode letters
  * or digits, with everything else (punctuation, whitespace, path separators) a
@@ -437,11 +449,25 @@ export function searchableConceptFields(concept: Concept): readonly string[] {
  * frequencies and the average document length accumulate across the pass.
  */
 export function buildBm25Index(graph: BundleGraph): Bm25Index {
+  return buildBm25RecordIndex(
+    [...graph.concepts.values()].map((concept) => ({ id: concept.id, text: searchableConceptText(concept) })),
+  );
+}
+
+/**
+ * Build the same deterministic BM25 index over caller-owned records. This is the
+ * reusable lexical seam profile section ranking needs; `lore query` delegates to
+ * it, so the two consumers cannot drift in tokenization, IDF, or saturation.
+ */
+export function buildBm25RecordIndex(records: readonly Bm25Record[]): Bm25Index {
   const docs = new Map<string, IndexedDoc>();
   const df = new Map<string, number>();
   let totalLength = 0;
-  for (const concept of graph.concepts.values()) {
-    const tokens = tokenizeQueryText(searchableConceptText(concept));
+  for (const record of records) {
+    if (docs.has(record.id)) {
+      throw new Error(`duplicate BM25 record id: ${record.id}`);
+    }
+    const tokens = tokenizeQueryText(record.text);
     const tf = new Map<string, number>();
     for (const token of tokens) {
       tf.set(token, (tf.get(token) ?? 0) + 1);
@@ -449,11 +475,25 @@ export function buildBm25Index(graph: BundleGraph): Bm25Index {
     for (const term of tf.keys()) {
       df.set(term, (df.get(term) ?? 0) + 1);
     }
-    docs.set(concept.id, { tf, length: tokens.length });
+    docs.set(record.id, { tf, length: tokens.length });
     totalLength += tokens.length;
   }
   const n = docs.size;
   return { docs, df, n, avgdl: n === 0 ? 0 : totalLength / n };
+}
+
+/**
+ * Score arbitrary records against task text. Input order is retained in the
+ * returned array; callers apply their own stable domain tie-breaks. Punctuation-
+ * only tasks and all-zero corpora return zero scores so declaration-order
+ * fallback remains explicit at the caller.
+ */
+export function scoreBm25Records(records: readonly Bm25Record[], text: string): readonly Bm25RecordScore[] {
+  const terms = [...new Set(tokenizeQueryText(text.trim()))];
+  if (terms.length === 0) return records.map((record) => ({ id: record.id, score: 0 }));
+  const index = buildBm25RecordIndex(records);
+  const idf = idfForTerms(index, terms);
+  return records.map((record) => ({ id: record.id, score: scoreBm25(index, idf, record.id, terms) }));
 }
 
 /**

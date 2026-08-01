@@ -30,7 +30,8 @@ import { lookup as dnsLookup } from "node:dns/promises";
 import { statSync } from "node:fs";
 import { join, posix } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
-import { toRefList, walkFiles } from "../core/bundle";
+import { loadAgentProfiles, validateAgentProfileReferences } from "../core/agent-profile";
+import { loadBundle, toRefList, walkFiles } from "../core/bundle";
 import {
   type CheckFinding,
   type CheckInputFile,
@@ -157,6 +158,10 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
   // (`--external`/multi-path), never several separate repos with their own profiles, so one load
   // covers every root this command can ever scan (LORE-89).
   const profile = loadProfile({ root: options.root });
+  const agentProfiles = loadAgentProfiles(options.root);
+  if (agentProfiles.profiles.size > 0) {
+    validateAgentProfileReferences(agentProfiles, loadBundle(join(options.root, DOCS_DIR), { profile }));
+  }
   const advisories = new WarningCollector();
   let bundles: Bundle[];
   try {

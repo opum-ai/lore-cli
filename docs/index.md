@@ -159,4 +159,5 @@ GitHub, in Obsidian, and under MkDocs/Docusaurus.*
 - [reference](reference/index.md)
 - [runbooks](runbooks/index.md)
 - [specs](specs/index.md)
+- [stories](stories/index.md)
 <!-- lore:index:end -->

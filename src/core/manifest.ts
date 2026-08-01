@@ -449,6 +449,28 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     examples: ["lore context stories/bulk-archive-orders --max-tokens 4000 --depth 2"],
   },
   {
+    name: "agent",
+    summary: "List context profiles or compile bounded task-scoped evidence",
+    args: "<list|show|context> [args…]",
+    flags: [
+      { name: "task", takesValue: true, summary: "Assigned task text for context compilation" },
+      { name: "task-file", takesValue: true, summary: "Read task text from a repo-relative path or stdin (-)" },
+      { name: "max-tokens", takesValue: true, summary: "Override the profile's chars/4 token budget" },
+      { name: "out", takesValue: true, summary: "Atomically save canonical Markdown to a repo-relative path" },
+      { name: "force", takesValue: false, summary: "Replace a differing regular --out file" },
+    ],
+    json: true,
+    kind: "agent.context.export",
+    // Profile/reference validation is command-owned (extra 6), unknown profiles are
+    // command-owned not_found (extra 3), and task-file/output paths reach read/write.
+    exitCodes: exitCodesFor(["bundle", "read", "write"], [3, 6]),
+    examples: [
+      "lore agent list",
+      "lore agent show frontend-dev",
+      'lore agent context frontend-dev --task "implement the checkout form"',
+    ],
+  },
+  {
     name: "instructions",
     summary: "Print task-scoped agent guidance on demand",
     args: "[<topic>]",

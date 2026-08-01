@@ -5,14 +5,15 @@ title: "ADR-0013: .lore/ state directory"
 description: >-
   Records where lore keeps its own state: a committed `.lore/config.toml`
   (parsed with Bun's native TOML, no dependency) carrying reconcile rules,
-  link/validate options, and Confluence config; a committed
+  link/validate options, and Confluence config; committed Lore-specific agent
+  profiles under `.lore/agents/`; a committed
   `.lore/sync-state.json` for Confluence publish bookkeeping; and a gitignored
   `.lore/cache/` for transient data. Secrets (the Confluence token) are never
   stored — environment-only via LORE_CONFLUENCE_TOKEN.
 tags: [adr, state, config, toml, cache, confluence, sync-state, secrets]
 summary: >-
-  lore keeps committed configuration and publish state in `.lore/`, transient
-  data in an ignored cache, and secrets only in the environment.
+  lore keeps committed configuration, agent profiles, and publish state in
+  `.lore/`, transient data in an ignored cache, and secrets only in the environment.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -38,6 +39,12 @@ Amended — 2026-06-26 (LCLI-47): the `resource_base` key (a key of `profile.tom
 stamp the OKF-recommended `resource` link. An **empty** `resource_base` — the default — omits the
 `resource` key entirely, so output stays byte-identical to before; index/sub-index files never carry
 it, and a profile that declares its own `resource` field keeps ownership (lore does not auto-stamp).
+
+Amended — 2026-08-01 (LCLI-289): `.lore/agents/<name>.toml` stores committed,
+vendor-neutral agent context mappings. Explicitly saved task evidence packs may
+use the ignored `.lore/cache/contexts/` directory. Profiles and generated packs
+are Lore state rather than OKF concepts; the exact contract is in
+[Agent profile context retrieval](../specs/agent-profile-context-retrieval.md).
 
 ## Context
 
@@ -146,11 +153,22 @@ format         = "storage"  # or "adf"
 - JSON (not TOML) because it is machine-written and machine-read, never
   hand-authored, and benefits from a trivially serializable shape.
 
+### `.lore/agents/` — committed agent context mappings
+
+- One strict TOML file per named profile maps a native agent role to explicit
+  pinned and task-ranked Lore concept or heading references, or to direct
+  delegate profile names for an orchestrator.
+- Profiles use Bun-native TOML and the existing Zod boundary. They contain no
+  secrets, model settings, tools, permissions, or native-agent prompt body.
+- A missing directory is valid and preserves zero-config behavior.
+
 ### `.lore/cache/` — gitignored transient data
 
 - Holds recomputable, machine-local scratch: the Backlog.md capability-probe
   result, parse/graph caches, and similar. Safe to delete at any time; lore
   regenerates it on demand.
+- Explicitly saved agent evidence packs may live under `cache/contexts/`. They
+  are reproducible handoff artifacts, not canonical documentation.
 - **Gitignored.** It must never appear in diffs or history. lore writes a
   `.lore/.gitignore` (or the repo's root ignore) covering `cache/` so this is
   enforced by default, the same way `backlog/.locks/` is ignored (see
@@ -181,6 +199,9 @@ format         = "storage"  # or "adf"
   reconcile rules are identical across every developer, agent, and CI run, so
   `lore sync`/`lore check`'s reconciliation is reproducible and config changes
   are diffable and reviewable.
+- **Portable agent context policy.** A team can review one committed evidence
+  mapping and reuse it from Claude Code or Codex without duplicating
+  host-specific execution settings.
 - **Cheap, idempotent publish.** The committed `sync-state.json` ledger lets
   publish skip unchanged docs with no API call and run safely on every merge from
   any machine.

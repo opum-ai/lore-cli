@@ -16,6 +16,7 @@
 
 import { Command } from "commander";
 import type { BacklogAdapter } from "./adapters/backlog";
+import { runAgent } from "./commands/agent";
 import { runAgents } from "./commands/agents";
 import { commanderOption, commanderUnknownCommand, commanderUsageError } from "./commands/args";
 import { type FetchLike, type ResolveHost, runCheck } from "./commands/check";
@@ -539,6 +540,16 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
     }),
   context: (args, context, output) =>
     runContext({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+      adapter: context.adapter,
+      retrieval: context.retrieval ?? loadRetrievalGraph,
+    }),
+  agent: (args, context, output) =>
+    runAgent({
       root: context.cwd || process.cwd(),
       output,
       args,
