@@ -128,7 +128,7 @@ describe("Ladybug benchmark fixture v1", () => {
     const spec = load("large");
     const generated = generateLadybugBenchmarkFixture(spec, tempRoot("large"));
     expect(generated.source.counts).toEqual({ concepts: 4096, tasks: 4096, authoredEdges: 32768 });
-    expect(generated.markdownBodyBytes).toBe(64 * 1024 * 1024);
+    expect(generated.markdownBodyBytes).toBe(100 * 1024 * 1024);
     expect(generated.digests).toEqual(spec.expected);
     expect(generated.source.inventory).toHaveLength(spec.counts.concepts);
     expect(readdirSync(join(generated.root, "backlog", "tasks"))).toHaveLength(spec.counts.tasks);

@@ -11,6 +11,7 @@ import { basename, dirname, join, posix } from "node:path";
 import { z } from "zod";
 import type { BacklogAdapter, BacklogTask, ListTasksOptions } from "../../src/adapters/backlog";
 import { loadBundle } from "../../src/core/bundle";
+import { EXPECTED_LADYBUG_STORAGE_VERSION, EXPECTED_LADYBUG_VERSION } from "../../src/core/ladybug-native";
 import {
   canonicalJson,
   digest,
@@ -224,8 +225,8 @@ export function generateLadybugBenchmarkFixture(
     projection,
     inventory: readSourceInventory(root),
     profileInventory: readProfileInventory(root),
-    ladybugVersion: "0.18.2",
-    ladybugStorageVersion: "42",
+    ladybugVersion: EXPECTED_LADYBUG_VERSION,
+    ladybugStorageVersion: EXPECTED_LADYBUG_STORAGE_VERSION,
     loreVersion: LADYBUG_BENCHMARK_FIXTURE_EXPORTER_VERSION,
   });
   const digests = {
@@ -470,8 +471,11 @@ function assertFixtureSpec(value: unknown, source: string): asserts value is Lad
   const spec = value as Partial<LadybugBenchmarkFixtureSpec>;
   const counts = spec.counts as LadybugBenchmarkFixtureSpec["counts"];
   if (counts.authoredEdges !== counts.concepts * 8) invalidSpec(source, "authoredEdges must equal concepts * 8");
-  if (counts.markdownBodyBytes !== counts.concepts * LADYBUG_BENCHMARK_FIXTURE_BODY_BYTES_PER_CONCEPT) {
-    invalidSpec(source, "every concept must receive exactly 16 KiB of Markdown body bytes");
+  if (counts.markdownBodyBytes % counts.concepts !== 0) {
+    invalidSpec(source, "Markdown body bytes must divide evenly across concepts");
+  }
+  if (counts.markdownBodyBytes < counts.concepts * LADYBUG_BENCHMARK_FIXTURE_BODY_BYTES_PER_CONCEPT) {
+    invalidSpec(source, "every concept must receive at least 16 KiB of Markdown body bytes");
   }
   const coverage = spec.coverage as LadybugBenchmarkFixtureSpec["coverage"];
   if (canonicalJson(coverage.graphShapes) !== canonicalJson(["chain", "star", "cycle", "duplicate", "dangling"])) {

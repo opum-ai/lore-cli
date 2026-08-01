@@ -12,7 +12,7 @@ import {
   LADYBUG_BENCHMARK_GATE_SCHEMA,
   LADYBUG_BENCHMARK_QUALIFICATION_GATE_COUNT,
 } from "./gates";
-import { ladybugBenchmarkScenarios } from "./orchestrator";
+import { ladybugQualificationScenarios } from "./orchestrator";
 import {
   assertPackageQualificationReport,
   LADYBUG_PACKAGE_QUALIFICATION_SCHEMA,
@@ -49,14 +49,9 @@ export interface LadybugQualificationEvidenceManifest {
   readonly repository: { readonly commit: string };
   readonly artifacts: {
     readonly linuxBenchmark: ArtifactReference;
-    readonly darwinBenchmark: ArtifactReference;
     readonly gates: ArtifactReference;
     readonly packages: readonly ArtifactReference[];
     readonly concurrency: ArtifactReference;
-  };
-  readonly darwinSupplemental: {
-    readonly arch: string;
-    readonly gateStatus: "pass" | "fail" | "inconclusive";
   };
   readonly platformVerdicts: readonly {
     readonly distribution: string;
@@ -75,7 +70,6 @@ export interface LadybugQualificationEvidenceManifest {
 
 export interface LadybugQualificationEvidenceInputs {
   readonly linuxBenchmark: QualificationEvidenceArtifact<unknown>;
-  readonly darwinBenchmark: QualificationEvidenceArtifact<unknown>;
   readonly gates: QualificationEvidenceArtifact<unknown>;
   readonly packages: readonly QualificationEvidenceArtifact<unknown>[];
   readonly concurrency: QualificationEvidenceArtifact<unknown>;
@@ -94,14 +88,9 @@ export const LadybugQualificationEvidenceManifestSchema = z.strictObject({
   repository: z.strictObject({ commit: z.string().regex(/^[0-9a-f]{40}$/) }),
   artifacts: z.strictObject({
     linuxBenchmark: ArtifactReferenceSchema,
-    darwinBenchmark: ArtifactReferenceSchema,
     gates: ArtifactReferenceSchema,
     packages: z.array(ArtifactReferenceSchema).length(5),
     concurrency: ArtifactReferenceSchema,
-  }),
-  darwinSupplemental: z.strictObject({
-    arch: z.string().min(1),
-    gateStatus: z.enum(["pass", "fail", "inconclusive"]),
   }),
   platformVerdicts: z
     .array(
@@ -127,13 +116,7 @@ export const LadybugQualificationEvidenceManifestSchema = z.strictObject({
 export function buildLadybugQualificationEvidenceManifest(
   inputs: LadybugQualificationEvidenceInputs,
 ): LadybugQualificationEvidenceManifest {
-  assertArtifactNamesUnique([
-    inputs.linuxBenchmark,
-    inputs.darwinBenchmark,
-    inputs.gates,
-    ...inputs.packages,
-    inputs.concurrency,
-  ]);
+  assertArtifactNamesUnique([inputs.linuxBenchmark, inputs.gates, ...inputs.packages, inputs.concurrency]);
   const gateDigest = artifactDigest(inputs.gates.bytes);
   if (gateDigest !== LADYBUG_BENCHMARK_GATE_DIGEST) {
     throw new Error(`qualification gate artifact digest is not the approved ${LADYBUG_BENCHMARK_GATE_DIGEST}`);
@@ -145,9 +128,6 @@ export function buildLadybugQualificationEvidenceManifest(
 
   const linux = parseLadybugBenchmarkReport(inputs.linuxBenchmark.value);
   assertFullBenchmark(linux, "linux", "x64", true);
-  const darwin = parseLadybugBenchmarkReport(inputs.darwinBenchmark.value);
-  assertFullBenchmark(darwin, "darwin", undefined, false);
-  assertSameFixtureDigests(linux, darwin);
 
   const concurrency = parseLadybugConcurrencyEvidenceReport(inputs.concurrency.value);
   if (
@@ -181,8 +161,8 @@ export function buildLadybugQualificationEvidenceManifest(
   });
 
   const commit = linux.repository.commit;
-  if (commit === null || linux.repository.dirty || darwin.repository.commit !== commit || darwin.repository.dirty) {
-    throw new Error("benchmark evidence must come from the same clean repository commit");
+  if (commit === null || linux.repository.dirty) {
+    throw new Error("benchmark evidence must come from a clean repository commit");
   }
   const observedCommits = [concurrency.repository.commit, ...packages.map(({ report }) => report.repository.commit)];
   if (observedCommits.some((candidate) => candidate !== commit)) {
@@ -191,7 +171,6 @@ export function buildLadybugQualificationEvidenceManifest(
 
   const packageReferences = packages.map(({ artifact }) => reference(artifact, LADYBUG_PACKAGE_QUALIFICATION_SCHEMA));
   const linuxReference = reference(inputs.linuxBenchmark, LADYBUG_BENCHMARK_REPORT_SCHEMA);
-  const darwinReference = reference(inputs.darwinBenchmark, LADYBUG_BENCHMARK_REPORT_SCHEMA);
   const gateReference = reference(inputs.gates, LADYBUG_BENCHMARK_GATE_SCHEMA);
   const concurrencyReference = reference(inputs.concurrency, LADYBUG_CONCURRENCY_EVIDENCE_SCHEMA);
   const manifest: LadybugQualificationEvidenceManifest = {
@@ -200,16 +179,14 @@ export function buildLadybugQualificationEvidenceManifest(
     repository: { commit },
     artifacts: {
       linuxBenchmark: linuxReference,
-      darwinBenchmark: darwinReference,
       gates: gateReference,
       packages: packageReferences,
       concurrency: concurrencyReference,
     },
-    darwinSupplemental: { arch: darwin.host.arch, gateStatus: darwin.gates.evaluation.status },
     platformVerdicts: verdicts,
     acceptanceCriteria: [
-      { number: 1, status: "pass", evidence: [linuxReference.digest, darwinReference.digest] },
-      { number: 2, status: "pass", evidence: [gateReference.digest, linuxReference.digest, darwinReference.digest] },
+      { number: 1, status: "pass", evidence: [linuxReference.digest] },
+      { number: 2, status: "pass", evidence: [gateReference.digest, linuxReference.digest] },
       { number: 3, status: "pass", evidence: packageReferences.map((artifact) => artifact.digest) },
       { number: 4, status: "pass", evidence: [concurrencyReference.digest] },
     ],
@@ -255,8 +232,8 @@ function assertFullBenchmark(
   ) {
     throw new Error("benchmark evidence does not carry all approved gate results");
   }
-  if (report.fixtures.map((fixture) => fixture.name).join(",") !== "small,large") {
-    throw new Error("benchmark evidence requires ordered small and large fixtures");
+  if (report.fixtures.map((fixture) => fixture.name).join(",") !== "large") {
+    throw new Error("benchmark evidence requires the bounded 100 MiB large fixture");
   }
   for (const fixture of report.fixtures) {
     const expected = loadLadybugBenchmarkFixtureSpec(
@@ -269,7 +246,7 @@ function assertFullBenchmark(
     ) {
       throw new Error(`${fixture.name} benchmark fixture does not match the frozen digest contract`);
     }
-    const expectedScenarioIds = ladybugBenchmarkScenarios(expected).map((scenario) => scenario.id);
+    const expectedScenarioIds = ladybugQualificationScenarios(expected).map((scenario) => scenario.id);
     if (
       fixture.scenarios.map((scenario) => scenario.id).join(",") !== expectedScenarioIds.join(",") ||
       fixture.summaries.warm.map((summary) => summary.scenarioId).join(",") !== expectedScenarioIds.join(",")
@@ -287,29 +264,20 @@ function assertFullSampleInventory(
   samples: LadybugBenchmarkReport["fixtures"][number]["samples"],
   scenarioIds: readonly string[],
 ): void {
-  if (samples.filter((sample) => sample.phase === "cold-setup").length !== 1) {
-    throw new Error("full benchmark evidence requires one discarded cold setup");
+  if (samples.some((sample) => sample.phase === "cold-setup")) {
+    throw new Error("bounded benchmark evidence must not contain a discarded cold setup");
   }
-  if (samples.filter((sample) => sample.phase === "cold-measurement").length !== 7) {
-    throw new Error("full benchmark evidence requires seven cold measurements");
+  if (samples.filter((sample) => sample.phase === "cold-measurement").length !== 1) {
+    throw new Error("bounded benchmark evidence requires exactly one cold build");
   }
   for (const scenarioId of scenarioIds) {
     const scenario = samples.filter((sample) => sample.scenarioId === scenarioId);
     if (
-      scenario.filter((sample) => sample.phase === "parity").length !== 2 ||
-      scenario.filter((sample) => sample.phase === "warmup").length !== 10 ||
-      scenario.filter((sample) => sample.phase === "measurement").length !== 60
+      scenario.some((sample) => sample.phase === "parity" || sample.phase === "warmup") ||
+      scenario.filter((sample) => sample.phase === "measurement").length !== 10
     ) {
       throw new Error(`full benchmark evidence has incomplete ${scenarioId} samples`);
     }
-  }
-}
-
-function assertSameFixtureDigests(left: LadybugBenchmarkReport, right: LadybugBenchmarkReport): void {
-  const digests = (report: LadybugBenchmarkReport) =>
-    report.fixtures.map((fixture) => ({ name: fixture.name, digests: fixture.digests, counts: fixture.counts }));
-  if (JSON.stringify(digests(left)) !== JSON.stringify(digests(right))) {
-    throw new Error("Linux and Darwin benchmark evidence use different fixture contracts");
   }
 }
 
@@ -386,7 +354,6 @@ function objectValue(value: unknown, label: string): Record<string, unknown> {
 
 interface CliOptions {
   readonly linuxBenchmark: string;
-  readonly darwinBenchmark: string;
   readonly gates: string;
   readonly packages: readonly string[];
   readonly concurrency: string;
@@ -409,7 +376,7 @@ export function parseLadybugQualificationEvidenceArgs(args: readonly string[]): 
     if (values.has(key)) throw new Error(`duplicate qualification evidence argument: ${key}`);
     values.set(key, value);
   }
-  const known = new Set(["--linux-benchmark", "--darwin-benchmark", "--gates", "--concurrency", "--output"]);
+  const known = new Set(["--linux-benchmark", "--gates", "--concurrency", "--output"]);
   for (const key of values.keys()) {
     if (!known.has(key)) throw new Error(`unknown qualification evidence argument: ${key}`);
   }
@@ -421,7 +388,6 @@ export function parseLadybugQualificationEvidenceArgs(args: readonly string[]): 
   if (packages.length !== 5) throw new Error("qualification evidence requires five --package-report arguments");
   return {
     linuxBenchmark: required("--linux-benchmark"),
-    darwinBenchmark: required("--darwin-benchmark"),
     gates: required("--gates"),
     packages,
     concurrency: required("--concurrency"),
@@ -438,7 +404,6 @@ async function main(): Promise<void> {
   const options = parseLadybugQualificationEvidenceArgs(process.argv.slice(2));
   const manifest = buildLadybugQualificationEvidenceManifest({
     linuxBenchmark: readArtifact(options.linuxBenchmark),
-    darwinBenchmark: readArtifact(options.darwinBenchmark),
     gates: readArtifact(options.gates),
     packages: options.packages.map(readArtifact),
     concurrency: readArtifact(options.concurrency),

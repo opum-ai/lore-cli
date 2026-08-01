@@ -88,7 +88,7 @@ describe("matching-host Ladybug package qualification", () => {
       expect(entry.ladybugIntegrity).toMatch(/^sha512-[A-Za-z0-9+/]+={0,2}$/);
       const lock = readFileSync(join(import.meta.dir, "..", "bun.lock"), "utf8");
       const line = lock.split("\n").find((candidate) => candidate.trimStart().startsWith(`"${entry.ladybugPackage}":`));
-      expect(line).toContain(`${entry.ladybugPackage}@0.18.2`);
+      expect(line).toContain(`${entry.ladybugPackage}@0.19.0`);
       expect(line).toContain(entry.ladybugIntegrity);
     }
   });
@@ -150,6 +150,7 @@ describe("matching-host Ladybug package qualification", () => {
     const jobs = loadWorkflow().jobs;
     expect(needs(jobs.package as WorkflowJob)).toContain("build");
     expect(needs(jobs.package as WorkflowJob)).toContain("package-qualification");
+    expect(needs(jobs.package as WorkflowJob)).toContain("ladybug-qualification-evidence");
     expect(needs(jobs.publish as WorkflowJob)).toContain("package");
   });
 
@@ -206,7 +207,7 @@ describe("matching-host Ladybug package qualification", () => {
       mode: "qualification",
       platform: { bun: "1.2.23", os: "linux" },
       repository: { commit: "a".repeat(40) },
-      ladybug: { core: "0.18.2", copiedAddonMatches: true },
+      ladybug: { core: "0.19.0", copiedAddonMatches: true },
       smoke: { outputsStable: true },
       native: {
         supportClaim: "native-index",

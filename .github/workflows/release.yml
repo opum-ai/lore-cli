@@ -17,6 +17,10 @@ on:
         description: "Publish all six packages to npm via OIDC Trusted Publishing (requires the one-time npmjs.com setup — see docs/runbooks/release-publishing.md). Leave false to only build/package/dry-run."
         type: boolean
         default: false
+      ladybug_scale_observation:
+        description: "Run the non-blocking 1 GiB Ladybug scale observation (30-minute time box)."
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -40,7 +44,7 @@ jobs:
         # shell loops, computed once here rather than re-decoded from `names` (JSON) in
         # every consuming step.
         run: |
-          matrix='[{"name":"darwin-arm64","target":"bun-darwin-arm64","binary":"lore","runner":"macos-latest","os":"darwin","cpu":"arm64","ladybugPackage":"@ladybugdb/core-darwin-arm64","ladybugIntegrity":"sha512-gAwxsdijBFTz4aZ9ITG6zdQw3lAki0eY33hNBLCfKXjKJLvW/8wCvgCVBglqfqBF5WyI7icFUt+wfy/Fbdfl5A=="},{"name":"darwin-x64","target":"bun-darwin-x64-baseline","binary":"lore","runner":"macos-15-intel","os":"darwin","cpu":"x64","ladybugPackage":"@ladybugdb/core-darwin-x64","ladybugIntegrity":"sha512-oUjYLc1fW3ntCrO9te55PoPfvhFo8AKeNa/sU66fiQyEAZB7qZJxeHnnLgl/bLueTF2os3RSawq46ZftoD/9Eg=="},{"name":"linux-arm64","target":"bun-linux-arm64","binary":"lore","runner":"ubuntu-24.04-arm","os":"linux","cpu":"arm64","ladybugPackage":"@ladybugdb/core-linux-arm64","ladybugIntegrity":"sha512-UppokeTaPl9pN0xOsdMa+hmM68zbN2eKReTZhZNYM16qX0d2OlgbS/NlXi09Wdot+w5qvlZ9Q0iCCPfr7qvPaw=="},{"name":"linux-x64","target":"bun-linux-x64-baseline","binary":"lore","runner":"ubuntu-24.04","os":"linux","cpu":"x64","ladybugPackage":"@ladybugdb/core-linux-x64","ladybugIntegrity":"sha512-GypOxCnP2ix/FWM8YhQ41aQYlS+ruoNMJp7pmaF5laJHhL/a+P/apywNTE+9N41Walsl+Emgg9xwxwTC93slow=="},{"name":"win32-x64","target":"bun-windows-x64-baseline","binary":"lore.exe","runner":"windows-latest","os":"win32","cpu":"x64","ladybugPackage":"@ladybugdb/core-win32-x64","ladybugIntegrity":"sha512-hvFwjhTYdwG2sijapx963a27jP9mlLW0ZFv5Yfj19e0B3T/FqD9CaKULPy23mU2XlkISN2LUkY5qdgvCFztl/g=="}]'
+          matrix='[{"name":"darwin-arm64","target":"bun-darwin-arm64","binary":"lore","runner":"macos-latest","os":"darwin","cpu":"arm64","ladybugPackage":"@ladybugdb/core-darwin-arm64","ladybugIntegrity":"sha512-3Ut3XL9kowzBoHw0wrN3QnW4xy5wYoPBypeuMtH92j59fol2w9e3lQJ6DM29YJ4F6mAVfW2cYGBXH2l9aXGmmw=="},{"name":"darwin-x64","target":"bun-darwin-x64-baseline","binary":"lore","runner":"macos-15-intel","os":"darwin","cpu":"x64","ladybugPackage":"@ladybugdb/core-darwin-x64","ladybugIntegrity":"sha512-KHuCBx+jkyxdfFEmmbsfUS1f108P4rS+VNkwCrMLvzJmJOZTZgNKeRmT0vO7qRum5KEoHSIPJLj2Le//rCYigQ=="},{"name":"linux-arm64","target":"bun-linux-arm64","binary":"lore","runner":"ubuntu-24.04-arm","os":"linux","cpu":"arm64","ladybugPackage":"@ladybugdb/core-linux-arm64","ladybugIntegrity":"sha512-z4Z67LZlgj6H7YnKMB1PornbdmeszVxfENusfDQ2MFyOyrze1X6c/3MkhVPyunuaTtriN9SBnEdyK39mB7NdyQ=="},{"name":"linux-x64","target":"bun-linux-x64-baseline","binary":"lore","runner":"ubuntu-24.04","os":"linux","cpu":"x64","ladybugPackage":"@ladybugdb/core-linux-x64","ladybugIntegrity":"sha512-aJOh7+XbTzCLNloK+KlDXuRmHgr7nLqyQwR/BR8fP/XsWVnxCKGpVVL8s+Lms7JNQAh6vEsvExttGgUq9hAu1Q=="},{"name":"win32-x64","target":"bun-windows-x64-baseline","binary":"lore.exe","runner":"windows-latest","os":"win32","cpu":"x64","ladybugPackage":"@ladybugdb/core-win32-x64","ladybugIntegrity":"sha512-y2/IOMKmydo4ZfQPDZuZhiFC104VJQ9lwc0w1KVdvb4Z2RIUUL8/tn5QD4Uq8DUrJGxQhoEESPnlkk69cKaaDQ=="}]'
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           names=$(node -e "console.log(JSON.stringify(JSON.parse(process.argv[1]).map((p) => p.name)))" "$matrix")
           echo "names=$names" >> "$GITHUB_OUTPUT"
@@ -164,12 +168,11 @@ jobs:
           '
 
   ladybug-qualification:
-    name: Ladybug qualification (ubuntu-24.04 x64)
+    name: Ladybug bounded 100 MiB qualification (ubuntu-24.04 x64)
     needs: verify-versions
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
-    # A second dispatch queues instead of overlapping a timing run on another
-    # shared runner. Inconclusive calibration requires a fresh serialized rerun.
+    timeout-minutes: 15
+    # A second dispatch queues instead of overlapping the bounded timing gate.
     concurrency:
       group: ladybug-release-qualification
       cancel-in-progress: false
@@ -192,12 +195,11 @@ jobs:
             echo "::error::GitHub runner image identity is unavailable"
             exit 1
           fi
-      - name: Run the full paired Ladybug qualification
+      - name: Run the bounded paired Ladybug qualification
         shell: bash
         run: |
           mkdir -p artifacts
           bun benchmark/ladybug/run.ts \
-            --fixture small \
             --fixture large \
             --output artifacts/ladybug-benchmark-v1.json \
             --runner-image "${ImageOS}-${ImageVersion}"
@@ -219,7 +221,7 @@ jobs:
               report.host?.arch !== "x64" ||
               report.repository?.commit !== process.env.EXPECTED_COMMIT ||
               report.repository?.dirty !== false ||
-              JSON.stringify(fixtures) !== JSON.stringify(["small", "large"]) ||
+              JSON.stringify(fixtures) !== JSON.stringify(["large"]) ||
               report.gates?.evaluation?.status !== "pass"
             ) {
               console.error("::error::Ladybug qualification artifact is not a conclusive Linux-x64 pass");
@@ -237,6 +239,34 @@ jobs:
             benchmark/ladybug/gates/v1.json
           if-no-files-found: warn
           retention-days: 90
+
+  ladybug-scale-observation:
+    name: Ladybug optional 1 GiB observation (ubuntu-24.04 x64)
+    if: inputs.ladybug_scale_observation == true
+    continue-on-error: true
+    needs: verify-versions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: ./.github/actions/setup-bun
+      - name: Run the informational 1 GiB observation
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          bun benchmark/ladybug/run.ts \
+            --fixture large \
+            --observation-1gib \
+            --output artifacts/ladybug-benchmark-observation-1gib-v1.json \
+            --runner-image "${ImageOS}-${ImageVersion}"
+      - name: Upload informational observation
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ladybug-benchmark-observation-1gib-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/ladybug-benchmark-observation-1gib-v1.json
+          if-no-files-found: warn
+          retention-days: 30
 
   ladybug-concurrency-qualification:
     name: Ladybug concurrency and crash qualification (ubuntu-24.04 x64)
@@ -422,9 +452,79 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
 
+  ladybug-qualification-evidence:
+    name: Assemble Ladybug acceptance evidence
+    needs: [ladybug-qualification, ladybug-concurrency-qualification, package-qualification]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: ./.github/actions/setup-bun
+      - name: Download bounded benchmark evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ladybug-benchmark-qualification-linux-x64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: qualification-inputs/benchmark
+      - name: Download concurrency evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ladybug-concurrency-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: qualification-inputs/concurrency
+      - name: Download all matching-host package evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: ladybug-package-qualification-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: qualification-inputs/packages
+          merge-multiple: true
+      - name: Build the strict task-level evidence manifest
+        shell: bash
+        run: |
+          benchmark_report="$(find qualification-inputs/benchmark -type f -name 'ladybug-benchmark-v1.json' -print -quit)"
+          gate_policy="$(find qualification-inputs/benchmark -type f -name 'v1.json' -print -quit)"
+          concurrency_report="$(find qualification-inputs/concurrency -type f -name 'ladybug-concurrency-evidence-v1.json' -print -quit)"
+          if [ -z "$benchmark_report" ] || [ -z "$gate_policy" ] || [ -z "$concurrency_report" ]; then
+            echo "::error::required Ladybug qualification input is missing"
+            exit 1
+          fi
+          package_reports=()
+          while IFS= read -r report; do
+            package_reports+=(--package-report "$report")
+          done < <(find qualification-inputs/packages -type f -name 'ladybug-package-qualification-*.json' -print | sort)
+          bun benchmark/ladybug/qualification-evidence.ts \
+            --linux-benchmark "$benchmark_report" \
+            --gates "$gate_policy" \
+            --concurrency "$concurrency_report" \
+            "${package_reports[@]}" \
+            --output artifacts/ladybug-qualification-evidence-v1.json
+      - name: Assert the final manifest maps all acceptance criteria to this commit
+        shell: bash
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          bun -e '
+            import { parseLadybugQualificationEvidenceManifest } from "./benchmark/ladybug/qualification-evidence";
+            const manifest = parseLadybugQualificationEvidenceManifest(
+              await Bun.file("artifacts/ladybug-qualification-evidence-v1.json").json(),
+            );
+            if (
+              manifest.repository.commit !== process.env.EXPECTED_COMMIT ||
+              manifest.status !== "pass" ||
+              manifest.acceptanceCriteria.map(({ number }) => number).join(",") !== "1,2,3,4"
+            ) {
+              throw new Error("Ladybug qualification manifest does not map a clean passing evidence set");
+            }
+          '
+      - name: Upload final Ladybug qualification manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ladybug-qualification-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/ladybug-qualification-evidence-v1.json
+          if-no-files-found: error
+          retention-days: 90
+
   package:
     name: package + install-sanity (dry-run, never publishes)
-    needs: [setup, build, package-qualification]
+    needs: [setup, build, package-qualification, ladybug-qualification-evidence]
     runs-on: ubuntu-latest
     env:
       PLATFORM_NAMES_SPACE: ${{ needs.setup.outputs.namesSpace }}

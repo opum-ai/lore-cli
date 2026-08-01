@@ -74,6 +74,17 @@ export function ladybugBenchmarkScenarios(spec: LadybugBenchmarkFixtureSpec): La
   return scenarios;
 }
 
+/** The bounded timing envelope; the full scenario matrix remains in smoke/tests. */
+export function ladybugQualificationScenarios(spec: LadybugBenchmarkFixtureSpec): LadybugBenchmarkScenario[] {
+  const all = ladybugBenchmarkScenarios(spec);
+  const ids = ["warm-open", "query-rare", "graph-depth-2", "context-depth-2-tokens-16384"];
+  return ids.map((id) => {
+    const scenario = all.find((candidate) => candidate.id === id);
+    if (scenario === undefined) throw new Error(`benchmark fixture is missing representative scenario ${id}`);
+    return scenario;
+  });
+}
+
 /**
  * Run one non-qualification smoke pass. Every result is proven identical before
  * any measured policy pair begins; repetitions/statistics/reporting belong to plan item 3.

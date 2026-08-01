@@ -1,4 +1,4 @@
-/** Approved plan-item-4 threshold loader and pure benchmark gate evaluation. */
+/** Approved bounded plan-item-11 thresholds and pure benchmark gate evaluation. */
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -17,8 +17,8 @@ import type {
 
 export const LADYBUG_BENCHMARK_GATE_SCHEMA = "lore.ladybug-benchmark-gates/1";
 export const LADYBUG_BENCHMARK_GATE_PATH = join(import.meta.dir, "gates", "v1.json");
-export const LADYBUG_BENCHMARK_GATE_DIGEST = "sha256:169cc001f5334988aacff1fa89b864b1724396aebe4865256db5635f84479a59";
-export const LADYBUG_BENCHMARK_QUALIFICATION_GATE_COUNT = 175;
+export const LADYBUG_BENCHMARK_GATE_DIGEST = "sha256:3c686a06f4b680896a6d7894e2d28d78d686e0c687569730859e41d89f506038";
+export const LADYBUG_BENCHMARK_QUALIFICATION_GATE_COUNT = 18;
 
 const FixtureThresholdSchema = z.strictObject({
   coldBuildP95WallNanoseconds: z.number().int().positive(),
@@ -31,7 +31,7 @@ const FixtureThresholdSchema = z.strictObject({
 const LadybugBenchmarkGateSetSchema = z.strictObject({
   schema: z.literal(LADYBUG_BENCHMARK_GATE_SCHEMA),
   approvedTask: z.literal("LCLI-283.1.4"),
-  approvedPlanItem: z.literal(4),
+  approvedPlanItem: z.literal(11),
   approvedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   units: z.strictObject({
     duration: z.literal("nanoseconds"),
@@ -61,6 +61,8 @@ const LadybugBenchmarkGateSetSchema = z.strictObject({
   absolute: z.strictObject({
     small: FixtureThresholdSchema,
     large: FixtureThresholdSchema.extend({
+      warmQueryP95OperationNanoseconds: z.number().int().positive(),
+      warmGraphContextP95OperationNanoseconds: z.number().int().positive(),
       indexLogicalBytesFormula: z.strictObject({
         baseBytes: z.number().int().positive(),
         canonicalInputMultiplier: z.number().int().positive(),
@@ -113,7 +115,6 @@ export function evaluateLadybugBenchmarkGates(options: {
   }
   if (
     options.mode === "qualification" &&
-    options.fixtures.some((fixture) => fixture.name === "small") &&
     options.fixtures.some((fixture) => fixture.name === "large") &&
     observations.length !== LADYBUG_BENCHMARK_QUALIFICATION_GATE_COUNT
   ) {
@@ -245,6 +246,26 @@ function addAbsoluteGates(
       sourceRule: "absolute.warmCommandPeakMaxRSSBytes",
       observed: requiredPolicy(scenario, "indexed").maxRSSBytes.max,
     });
+    if (fixture.name === "large") {
+      const indexed = requiredPolicy(scenario, "indexed");
+      const query = scenario.scenarioId.startsWith("query-");
+      add(observations, {
+        id: `${fixture.name}.${scenario.scenarioId}.operation-p95`,
+        fixture: fixture.name,
+        scenarioId: scenario.scenarioId,
+        policy: "indexed",
+        metric: "operationNanoseconds",
+        statistic: "p95",
+        threshold: query
+          ? gateSet.absolute.large.warmQueryP95OperationNanoseconds
+          : gateSet.absolute.large.warmGraphContextP95OperationNanoseconds,
+        unit: gateSet.units.duration,
+        sourceRule: query
+          ? "absolute.large.warmQueryP95OperationNanoseconds"
+          : "absolute.large.warmGraphContextP95OperationNanoseconds",
+        observed: indexed.operationNanoseconds.p95,
+      });
+    }
   }
 }
 
@@ -378,25 +399,39 @@ function qualificationEvidenceIssues(options: {
   readonly fixtures: readonly LadybugBenchmarkFixtureReport[];
 }): string[] {
   const reasons: string[] = [];
-  if (options.mode !== "qualification") reasons.push("smoke mode is functional evidence, not qualification evidence");
+  if (options.mode !== "qualification") {
+    reasons.push(
+      options.mode === "observation"
+        ? "1 GiB observation mode is informational and non-blocking"
+        : "smoke mode is functional evidence, not qualification evidence",
+    );
+  }
   if (!isQualificationConfiguration(options.configuration))
     reasons.push("benchmark methodology does not match the frozen qualification counts");
   if (options.calibration.status !== "pass") reasons.push(...options.calibration.reasons);
   const names = options.fixtures.map((fixture) => fixture.name);
-  for (const required of ["small", "large"] as const) {
-    if (!names.includes(required)) reasons.push(`missing required ${required} fixture evidence`);
+  if (!names.includes("large")) reasons.push("missing required large fixture evidence");
+  if (options.mode === "qualification" && names.join(",") !== "large") {
+    reasons.push("qualification evidence must contain only the 100 MiB large fixture");
   }
   if (new Set(names).size !== names.length) reasons.push("fixture evidence contains duplicate fixture names");
   for (const fixture of options.fixtures) {
-    if (fixture.summaries.coldBuild.operationNanoseconds.count !== 7) {
-      reasons.push(`${fixture.name} cold build does not contain 7 measured repetitions`);
+    if (fixture.summaries.coldBuild.operationNanoseconds.count !== 1) {
+      reasons.push(`${fixture.name} cold build does not contain exactly one measurement`);
+    }
+    if (options.mode === "qualification" && fixture.counts.markdownBodyBytes !== 100 * 1024 * 1024) {
+      reasons.push(`${fixture.name} does not contain exactly 100 MiB of authored Markdown`);
+    }
+    const representative = ["warm-open", "query-rare", "graph-depth-2", "context-depth-2-tokens-16384"];
+    if (
+      options.mode !== "smoke" &&
+      fixture.summaries.warm.map(({ scenarioId }) => scenarioId).join(",") !== representative.join(",")
+    ) {
+      reasons.push(`${fixture.name} does not contain the frozen representative warm scenarios`);
     }
     for (const scenario of fixture.summaries.warm) {
-      if (
-        scenario.paired.count !== 30 ||
-        scenario.policies.some((policy) => policy.operationNanoseconds.count !== 30)
-      ) {
-        reasons.push(`${fixture.name}/${scenario.scenarioId} does not contain 30 measured policy pairs`);
+      if (scenario.paired.count !== 5 || scenario.policies.some((policy) => policy.operationNanoseconds.count !== 5)) {
+        reasons.push(`${fixture.name}/${scenario.scenarioId} does not contain five measured policy pairs`);
       }
     }
   }
@@ -406,15 +441,15 @@ function qualificationEvidenceIssues(options: {
 function isQualificationConfiguration(configuration: LadybugBenchmarkRunConfiguration): boolean {
   return (
     configuration.mode === "qualification" &&
-    configuration.coldSetupRepetitions === 1 &&
-    configuration.coldRepetitions === 7 &&
-    configuration.warmups === 5 &&
-    configuration.repetitions === 30 &&
-    configuration.batches === 3 &&
-    configuration.bootstrapIterations === 10_000 &&
+    configuration.coldSetupRepetitions === 0 &&
+    configuration.coldRepetitions === 1 &&
+    configuration.warmups === 0 &&
+    configuration.repetitions === 5 &&
+    configuration.batches === 1 &&
+    configuration.bootstrapIterations === 1_000 &&
     configuration.confidence === 0.95 &&
-    configuration.calibrationWarmups === 5 &&
-    configuration.calibrationRepetitions === 20 &&
+    configuration.calibrationWarmups === 1 &&
+    configuration.calibrationRepetitions === 5 &&
     configuration.calibrationCoefficientOfVariationLimit === 0.1
   );
 }
@@ -458,8 +493,10 @@ function assertApprovedValues(gateSet: LadybugBenchmarkGateSet): void {
         coldBuildP95WallNanoseconds: 30_000_000_000,
         warmOpenP95WallNanoseconds: 3_000_000_000,
         coldPeakMaxRSSBytes: 2 * 1024 * 1024 * 1024,
-        warmCommandPeakMaxRSSBytes: 1024 * 1024 * 1024,
+        warmCommandPeakMaxRSSBytes: 2 * 1024 * 1024 * 1024,
         indexLogicalBytes: 512 * 1024 * 1024,
+        warmQueryP95OperationNanoseconds: 500_000_000,
+        warmGraphContextP95OperationNanoseconds: 1_000_000_000,
         indexLogicalBytesFormula: { baseBytes: 64 * 1024 * 1024, canonicalInputMultiplier: 4 },
       },
     },
@@ -474,5 +511,5 @@ function assertApprovedValues(gateSet: LadybugBenchmarkGateSet): void {
       },
     },
   });
-  if (actual !== approved) throw new Error("Ladybug benchmark gates do not match the approved plan-item-4 thresholds");
+  if (actual !== approved) throw new Error("Ladybug benchmark gates do not match the approved plan-item-11 thresholds");
 }

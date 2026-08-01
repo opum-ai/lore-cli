@@ -18,12 +18,13 @@ import {
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { disposeLadybugProjection } from "../../src/core/ladybug-lifecycle";
+import { EXPECTED_LADYBUG_STORAGE_VERSION, EXPECTED_LADYBUG_VERSION } from "../../src/core/ladybug-native";
 import { canonicalJson, digest, LADYBUG_CACHE_REL_ROOT, readSourceInventory } from "../../src/core/ladybug-source";
 import { generateLadybugBenchmarkFixture, loadLadybugBenchmarkFixtureSpec } from "./fixture";
 import { LADYBUG_NATIVE_PROBE_SCHEMA } from "./native-probe";
 
 export const LADYBUG_PACKAGE_QUALIFICATION_SCHEMA = "lore.ladybug-package-qualification/1";
-const LADYBUG_VERSION = "0.18.2";
+const LADYBUG_VERSION = EXPECTED_LADYBUG_VERSION;
 const REPOSITORY_ROOT = resolve(import.meta.dir, "..", "..");
 
 export interface PackageQualificationInput {
@@ -592,7 +593,7 @@ function assertNativeProbeReport(
     report.arch !== input.cpu ||
     report.bun !== Bun.version ||
     report.ladybugVersion !== LADYBUG_VERSION ||
-    report.ladybugStorageVersion !== "42"
+    report.ladybugStorageVersion !== EXPECTED_LADYBUG_STORAGE_VERSION
   ) {
     throw new Error("native probe report does not match the active host and Ladybug contract");
   }

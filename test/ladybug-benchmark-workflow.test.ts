@@ -52,7 +52,7 @@ function needs(job: WorkflowJob): string[] {
 }
 
 describe("Ladybug benchmark workflow placement", () => {
-  test("CI runs a complete two-fixture smoke without treating timings as qualification", () => {
+  test("CI runs the complete small-fixture matrix without treating timings as qualification", () => {
     const job = loadWorkflow(CI_PATH).jobs["ladybug-benchmark-smoke"];
     expect(job).toBeDefined();
     expect(job?.name).toBe("ladybug benchmark smoke (non-timing)");
@@ -62,7 +62,7 @@ describe("Ladybug benchmark workflow placement", () => {
 
     const script = runStep(job as WorkflowJob, "benchmark/ladybug/run.ts").run ?? "";
     expect(script).toContain("--fixture small");
-    expect(script).toContain("--fixture large");
+    expect(script).not.toContain("--fixture large");
     expect(script).toContain("--smoke");
     expect(script).toContain("artifacts/ladybug-benchmark-smoke-v1.json");
     // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell parameter expansion from the workflow.
@@ -74,11 +74,11 @@ describe("Ladybug benchmark workflow placement", () => {
     expect(String(upload.with?.path)).toContain("benchmark/ladybug/gates/v1.json");
   });
 
-  test("release serializes one fixed Linux-x64 full qualification with no services or matrix", () => {
+  test("release serializes one fixed Linux-x64 bounded qualification with no services or matrix", () => {
     const job = loadWorkflow(RELEASE_PATH).jobs["ladybug-qualification"];
     expect(job).toBeDefined();
     expect(job?.["runs-on"]).toBe("ubuntu-24.04");
-    expect(job?.["timeout-minutes"]).toBe(240);
+    expect(job?.["timeout-minutes"]).toBe(15);
     expect(job?.services).toBeUndefined();
     expect(job?.strategy).toBeUndefined();
     expect(job?.concurrency).toEqual({ group: "ladybug-release-qualification", "cancel-in-progress": false });
@@ -91,7 +91,7 @@ describe("Ladybug benchmark workflow placement", () => {
     expect(hostScript).toContain('"$(uname -m)" != "x86_64"');
 
     const qualification = runStep(job as WorkflowJob, "benchmark/ladybug/run.ts").run ?? "";
-    expect(qualification).toContain("--fixture small");
+    expect(qualification).not.toContain("--fixture small");
     expect(qualification).toContain("--fixture large");
     expect(qualification).not.toContain("--smoke");
     expect(qualification).toContain("artifacts/ladybug-benchmark-v1.json");
@@ -107,6 +107,17 @@ describe("Ladybug benchmark workflow placement", () => {
     expect(upload.if).toBe("always()");
     expect(String(upload.with?.path)).toContain("artifacts/ladybug-benchmark-v1.json");
     expect(String(upload.with?.path)).toContain("benchmark/ladybug/gates/v1.json");
+  });
+
+  test("release exposes a separately opted-in non-blocking 1 GiB observation", () => {
+    const job = loadWorkflow(RELEASE_PATH).jobs["ladybug-scale-observation"];
+    expect(job).toBeDefined();
+    expect(job?.["runs-on"]).toBe("ubuntu-24.04");
+    expect(job?.["timeout-minutes"]).toBe(30);
+    expect((job as WorkflowJob & { "continue-on-error"?: boolean })["continue-on-error"]).toBe(true);
+    const script = runStep(job as WorkflowJob, "--observation-1gib").run ?? "";
+    expect(script).toContain("--fixture large");
+    expect(script).toContain("--observation-1gib");
   });
 
   test("release emits pinned real-process concurrency and crash evidence with source/cache inventories", () => {
@@ -138,11 +149,23 @@ describe("Ladybug benchmark workflow placement", () => {
     expect(needs(jobs.build as WorkflowJob)).toContain("ladybug-qualification");
     expect(needs(jobs.build as WorkflowJob)).toContain("ladybug-concurrency-qualification");
     expect(needs(jobs.package as WorkflowJob)).toContain("build");
+    expect(needs(jobs.package as WorkflowJob)).toContain("ladybug-qualification-evidence");
     expect(needs(jobs.publish as WorkflowJob)).toContain("package");
+
+    const evidence = jobs["ladybug-qualification-evidence"] as WorkflowJob;
+    expect(needs(evidence)).toEqual([
+      "ladybug-qualification",
+      "ladybug-concurrency-qualification",
+      "package-qualification",
+    ]);
+    expect(runStep(evidence, "qualification-evidence.ts").run).not.toContain("--darwin-benchmark");
+    expect(runStep(evidence, "parseLadybugQualificationEvidenceManifest").run).toContain(
+      "manifest.repository.commit !== process.env.EXPECTED_COMMIT",
+    );
 
     const qualificationJobs = Object.entries(jobs).filter(([, job]) =>
       job.steps?.some((step) => step.run?.includes("benchmark/ladybug/run.ts")),
     );
-    expect(qualificationJobs.map(([name]) => name)).toEqual(["ladybug-qualification"]);
+    expect(qualificationJobs.map(([name]) => name)).toEqual(["ladybug-qualification", "ladybug-scale-observation"]);
   });
 });

@@ -9,7 +9,7 @@ import {
 } from "../benchmark/ladybug/concurrency-evidence";
 import { loadLadybugBenchmarkFixtureSpec } from "../benchmark/ladybug/fixture";
 import { evaluateLadybugBenchmarkGates, LADYBUG_BENCHMARK_GATE_PATH } from "../benchmark/ladybug/gates";
-import { ladybugBenchmarkScenarios } from "../benchmark/ladybug/orchestrator";
+import { ladybugQualificationScenarios } from "../benchmark/ladybug/orchestrator";
 import {
   LADYBUG_PACKAGE_QUALIFICATION_SCHEMA,
   type PackageQualificationReport,
@@ -105,12 +105,10 @@ describe("LCLI-283.1.4 qualification evidence mapping", () => {
     expect(() => buildLadybugQualificationEvidenceManifest(windows)).toThrow("approved native platform verdict");
   });
 
-  test("requires explicit paths for two benchmarks, gates, concurrency, five packages, and output", () => {
+  test("requires explicit paths for the benchmark, gates, concurrency, five packages, and output", () => {
     const args = [
       "--linux-benchmark",
       "linux.json",
-      "--darwin-benchmark",
-      "darwin.json",
       "--gates",
       "gates.json",
       "--concurrency",
@@ -127,18 +125,15 @@ describe("LCLI-283.1.4 qualification evidence mapping", () => {
 
 function completeInputs(): {
   linuxBenchmark: QualificationEvidenceArtifact<unknown>;
-  darwinBenchmark: QualificationEvidenceArtifact<unknown>;
   gates: QualificationEvidenceArtifact<unknown>;
   packages: QualificationEvidenceArtifact<unknown>[];
   concurrency: QualificationEvidenceArtifact<unknown>;
 } {
   const linux = benchmarkReport("linux", "x64");
-  const darwin = benchmarkReport("darwin", "arm64");
   const gateBytes = readFileSync(LADYBUG_BENCHMARK_GATE_PATH);
   const concurrency = concurrencyReport();
   return {
     linuxBenchmark: artifact("ladybug-benchmark-linux-x64.json", linux),
-    darwinBenchmark: artifact("ladybug-benchmark-darwin-arm64.json", darwin),
     gates: {
       name: "ladybug-gates-v1.json",
       bytes: gateBytes,
@@ -152,11 +147,11 @@ function completeInputs(): {
 }
 
 function benchmarkReport(platform: NodeJS.Platform, arch: string): LadybugBenchmarkReport {
-  const fixtures = [qualificationFixture("small"), qualificationFixture("large")];
+  const fixtures = [qualificationFixture("large")];
   const gates = evaluateLadybugBenchmarkGates({
     mode: "qualification",
     configuration: qualificationRunConfiguration("qualification"),
-    calibration: calibrationReport(Array(20).fill(100), 5),
+    calibration: calibrationReport(Array(5).fill(100), 1),
     fixtures,
   });
   if (gates.evaluation.status !== "pass") {
@@ -170,9 +165,9 @@ function benchmarkReport(platform: NodeJS.Platform, arch: string): LadybugBenchm
       loreVersion: "0.0.0",
       bunVersion: "1.2.23",
       nodeVersion: "22.0.0",
-      ladybugPackageVersion: "0.18.2",
-      ladybugRuntimeVersion: "0.18.2",
-      ladybugStorageVersion: "42",
+      ladybugPackageVersion: "0.19.0",
+      ladybugRuntimeVersion: "0.19.0",
+      ladybugStorageVersion: "43",
     },
     host: {
       platform,
@@ -185,42 +180,33 @@ function benchmarkReport(platform: NodeJS.Platform, arch: string): LadybugBenchm
     },
     repository: { commit: COMMIT, dirty: false },
     configuration: qualificationRunConfiguration("qualification"),
-    calibration: calibrationReport(Array(20).fill(100), 5),
+    calibration: calibrationReport(Array(5).fill(100), 1),
     fixtures,
     gates,
   };
 }
 
-function qualificationFixture(name: "small" | "large"): LadybugBenchmarkFixtureReport {
+function qualificationFixture(name: "large"): LadybugBenchmarkFixtureReport {
   const spec = loadLadybugBenchmarkFixtureSpec(resolve(FIXTURES, `${name}.json`));
-  const scenarios = ladybugBenchmarkScenarios(spec);
+  const scenarios = ladybugQualificationScenarios(spec);
   const samples: LadybugBenchmarkRawSample[] = [];
   let sequence = 0;
-  samples.push(sample(sequence++, "cold-setup", "projection-cold", "indexed", null));
-  for (let repetition = 1; repetition <= 7; repetition++) {
-    samples.push(sample(sequence++, "cold-measurement", "projection-cold", "indexed", null, repetition));
-  }
+  samples.push(sample(sequence++, "cold-measurement", "projection-cold", "indexed", null));
   for (const scenario of scenarios) {
-    samples.push(sample(sequence++, "parity", scenario.id, "reference", `parity:${scenario.id}`));
-    samples.push(sample(sequence++, "parity", scenario.id, "indexed", `parity:${scenario.id}`));
     for (let repetition = 1; repetition <= 5; repetition++) {
-      samples.push(sample(sequence++, "warmup", scenario.id, "reference", `warmup:${scenario.id}:${repetition}`));
-      samples.push(sample(sequence++, "warmup", scenario.id, "indexed", `warmup:${scenario.id}:${repetition}`));
-    }
-    for (let repetition = 1; repetition <= 30; repetition++) {
       samples.push(sample(sequence++, "measurement", scenario.id, "reference", `${scenario.id}:${repetition}`));
       samples.push(sample(sequence++, "measurement", scenario.id, "indexed", `${scenario.id}:${repetition}`));
     }
   }
   const warm = scenarios.map((scenario) => qualificationSummary(name, scenario.id));
-  const cold = policySummary("indexed", 7, name === "small" ? 1_000_000_000 : 10_000_000_000);
+  const cold = policySummary("indexed", 1, 10_000_000_000);
   return {
     name,
     fixtureSchema: spec.schema,
     seed: spec.seed,
     digests: spec.expected,
     counts: spec.counts,
-    canonicalInputBytes: name === "small" ? 2_000_000 : 70_000_000,
+    canonicalInputBytes: 110_000_000,
     scenarios,
     samples,
     summaries: { coldBuild: cold, warm },
@@ -231,8 +217,8 @@ function qualificationFixture(name: "small" | "large"): LadybugBenchmarkFixtureR
       cpuTotalMicroseconds: samples.length * 2,
       emittedBytes: samples.length,
       diagnosticBytes: 0,
-      peakMaxRSSBytes: name === "small" ? 128 * 1024 * 1024 : 1024 * 1024 * 1024,
-      peakCacheLogicalBytes: name === "small" ? 32 * 1024 * 1024 : 128 * 1024 * 1024,
+      peakMaxRSSBytes: 1024 * 1024 * 1024,
+      peakCacheLogicalBytes: 128 * 1024 * 1024,
     },
   };
 }
@@ -268,23 +254,23 @@ function sample(
   };
 }
 
-function qualificationSummary(fixture: "small" | "large", scenarioId: string): LadybugBenchmarkScenarioSummary {
-  const query = fixture === "large" && scenarioId.startsWith("query-");
+function qualificationSummary(_fixture: "large", scenarioId: string): LadybugBenchmarkScenarioSummary {
+  const query = scenarioId.startsWith("query-");
   const ratio = query ? 0.5 : 1;
   return {
     scenarioId,
-    policies: [policySummary("indexed", 30, query ? 50 : 100), policySummary("reference", 30, 100)],
+    policies: [policySummary("indexed", 5, query ? 50 : 100), policySummary("reference", 5, 100)],
     paired: {
-      count: 30,
+      count: 5,
       indexedOverReferenceOperation: {
-        count: 30,
+        count: 5,
         median: ratio,
         p95: ratio,
         mad: 0,
         max: ratio,
         upperOneSided95: ratio,
       },
-      indexedOverReferenceWall: { count: 30, median: ratio, p95: ratio, mad: 0, max: ratio, upperOneSided95: ratio },
+      indexedOverReferenceWall: { count: 5, median: ratio, p95: ratio, mad: 0, max: ratio, upperOneSided95: ratio },
     },
   };
 }
@@ -322,7 +308,7 @@ function packageReport(platform: (typeof LADYBUG_QUALIFICATION_PLATFORMS)[number
     },
     repository: { commit: COMMIT },
     ladybug: {
-      core: "0.18.2",
+      core: "0.19.0",
       optionalPackage: `@ladybugdb/core-${platform.os}-${platform.cpu}`,
       lockIntegrity: "sha512-YWJjZA==",
       addonSha256: SHA,

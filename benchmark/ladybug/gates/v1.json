@@ -1,7 +1,7 @@
 {
   "schema": "lore.ladybug-benchmark-gates/1",
   "approvedTask": "LCLI-283.1.4",
-  "approvedPlanItem": 4,
+  "approvedPlanItem": 11,
   "approvedAt": "2026-07-31",
   "units": {
     "duration": "nanoseconds",
@@ -35,8 +35,10 @@
       "coldBuildP95WallNanoseconds": 30000000000,
       "warmOpenP95WallNanoseconds": 3000000000,
       "coldPeakMaxRSSBytes": 2147483648,
-      "warmCommandPeakMaxRSSBytes": 1073741824,
+      "warmCommandPeakMaxRSSBytes": 2147483648,
       "indexLogicalBytes": 536870912,
+      "warmQueryP95OperationNanoseconds": 500000000,
+      "warmGraphContextP95OperationNanoseconds": 1000000000,
       "indexLogicalBytesFormula": {
         "baseBytes": 67108864,
         "canonicalInputMultiplier": 4

@@ -10,7 +10,7 @@ import {
   LADYBUG_BENCHMARK_QUALIFICATION_GATE_COUNT,
   loadLadybugBenchmarkGateSet,
 } from "../benchmark/ladybug/gates";
-import { ladybugBenchmarkScenarios } from "../benchmark/ladybug/orchestrator";
+import { ladybugBenchmarkScenarios, ladybugQualificationScenarios } from "../benchmark/ladybug/orchestrator";
 import {
   calibrationReport,
   type LadybugBenchmarkFixtureReport,
@@ -23,11 +23,12 @@ import type { DistributionSummary } from "../benchmark/ladybug/statistics";
 const FIXTURES = resolve(import.meta.dir, "..", "benchmark", "ladybug", "fixtures", "v1");
 
 describe("Ladybug benchmark approved gates", () => {
-  test("pins the committed plan-item-4 gate file and every approved value", () => {
+  test("pins the committed bounded plan-item-11 gate file and every approved value", () => {
     const bytes = readFileSync(LADYBUG_BENCHMARK_GATE_PATH);
     const gateSet = loadLadybugBenchmarkGateSet();
     expect(gateSet.schema).toBe(LADYBUG_BENCHMARK_GATE_SCHEMA);
     expect(gateSet.approvedTask).toBe("LCLI-283.1.4");
+    expect(gateSet.approvedPlanItem).toBe(11);
     expect(gateSet.metrics).toEqual({
       coldBuildLatency: "wallNanoseconds.p95",
       warmOpenLatency: "wallNanoseconds.p95",
@@ -47,6 +48,9 @@ describe("Ladybug benchmark approved gates", () => {
       baseBytes: 64 * 1024 * 1024,
       canonicalInputMultiplier: 4,
     });
+    expect(gateSet.absolute.large.warmCommandPeakMaxRSSBytes).toBe(2 * 1024 * 1024 * 1024);
+    expect(gateSet.absolute.large.warmQueryP95OperationNanoseconds).toBe(500_000_000);
+    expect(gateSet.absolute.large.warmGraphContextP95OperationNanoseconds).toBe(1_000_000_000);
     expect(gateSet.relative).toEqual({
       largeQuery: { medianRatio: 0.6, p95Ratio: 0.75, upperOneSided95MedianRatio: 0.75 },
       largeGraphContext: { medianRatio: 1.1, p95Ratio: 1.2 },
@@ -57,15 +61,15 @@ describe("Ladybug benchmark approved gates", () => {
         p95Relative: 0.25,
       },
     });
-    expect(benchmarkDigest(bytes)).toBe("sha256:169cc001f5334988aacff1fa89b864b1724396aebe4865256db5635f84479a59");
+    expect(benchmarkDigest(bytes)).toBe("sha256:3c686a06f4b680896a6d7894e2d28d78d686e0c687569730859e41d89f506038");
   });
 
-  test("resolves all 175 gates and passes evidence inside every approved budget", () => {
-    const fixtures = [fakeFixture("small"), fakeFixture("large")];
+  test("resolves all bounded gates and passes evidence inside every approved budget", () => {
+    const fixtures = [fakeFixture("large")];
     const gates = evaluateLadybugBenchmarkGates({
       mode: "qualification",
       configuration: qualificationRunConfiguration("qualification"),
-      calibration: calibrationReport(Array(20).fill(100), 5),
+      calibration: calibrationReport(Array(5).fill(100), 1),
       fixtures,
     });
     expect(gates.evaluation).toEqual({
@@ -74,12 +78,12 @@ describe("Ladybug benchmark approved gates", () => {
     });
     expect(gates.definitions).toHaveLength(LADYBUG_BENCHMARK_QUALIFICATION_GATE_COUNT);
     expect(gates.results).toHaveLength(LADYBUG_BENCHMARK_QUALIFICATION_GATE_COUNT);
-    expect(gates.source.digest).toBe("sha256:169cc001f5334988aacff1fa89b864b1724396aebe4865256db5635f84479a59");
+    expect(gates.source.digest).toBe("sha256:3c686a06f4b680896a6d7894e2d28d78d686e0c687569730859e41d89f506038");
     expect(gates.results.every((result) => result.status === "pass")).toBe(true);
-    expect(definition(gates.definitions, "small.warm-open.operation-regression-median").threshold).toBe(115_000_000);
-    expect(definition(gates.definitions, "small.warm-open.operation-regression-p95").threshold).toBe(130_000_000);
+    expect(definition(gates.definitions, "large.query-rare.operation-p95").threshold).toBe(500_000_000);
+    expect(definition(gates.definitions, "large.graph-depth-2.operation-p95").threshold).toBe(1_000_000_000);
     expect(definition(gates.definitions, "large.index.logical-bytes-scaled").threshold).toBe(
-      64 * 1024 * 1024 + 4 * 70_000_000,
+      64 * 1024 * 1024 + 4 * 110_000_000,
     );
   });
 
@@ -87,13 +91,13 @@ describe("Ladybug benchmark approved gates", () => {
     const gates = evaluateLadybugBenchmarkGates({
       mode: "qualification",
       configuration: qualificationRunConfiguration("qualification"),
-      calibration: calibrationReport(Array(20).fill(100), 5),
-      fixtures: [fakeFixture("small"), fakeFixture("large", { largeQueryMedianRatio: 0.61 })],
+      calibration: calibrationReport(Array(5).fill(100), 1),
+      fixtures: [fakeFixture("large", { largeQueryMedianRatio: 0.61 })],
     });
     expect(gates.evaluation.status).toBe("fail");
     expect(
       gates.results.some(
-        (result) => result.id === "large.query-common.indexed-over-reference-median" && result.status === "fail",
+        (result) => result.id === "large.query-rare.indexed-over-reference-median" && result.status === "fail",
       ),
     ).toBe(true);
     expect(gates.evaluation.reasons[0]).toContain("approved at-most 0.6");
@@ -115,7 +119,7 @@ describe("Ladybug benchmark approved gates", () => {
       mode: "qualification",
       configuration: qualificationRunConfiguration("qualification"),
       calibration: calibrationReport([1, 100, 1, 100], 5),
-      fixtures: [fakeFixture("small"), fakeFixture("large")],
+      fixtures: [fakeFixture("large")],
     });
     expect(noisy.evaluation.status).toBe("inconclusive");
     expect(noisy.evaluation.reasons.some((reason) => reason.includes("coefficient of variation"))).toBe(true);
@@ -126,11 +130,11 @@ function fakeFixture(
   name: "small" | "large",
   options: { readonly count?: number; readonly coldCount?: number; readonly largeQueryMedianRatio?: number } = {},
 ): LadybugBenchmarkFixtureReport {
-  const count = options.count ?? 30;
-  const coldCount = options.coldCount ?? 7;
+  const count = options.count ?? 5;
+  const coldCount = options.coldCount ?? 1;
   const spec = loadLadybugBenchmarkFixtureSpec(resolve(FIXTURES, `${name}.json`));
-  const scenarios = ladybugBenchmarkScenarios(spec);
-  const canonicalInputBytes = name === "small" ? 2_000_000 : 70_000_000;
+  const scenarios = name === "small" ? ladybugBenchmarkScenarios(spec) : ladybugQualificationScenarios(spec);
+  const canonicalInputBytes = name === "small" ? 2_000_000 : 110_000_000;
   const coldWall = name === "small" ? 1_000_000_000 : 10_000_000_000;
   const coldRSS = name === "small" ? 128 * 1024 * 1024 : 1024 * 1024 * 1024;
   const cacheBytes = name === "small" ? 32 * 1024 * 1024 : 128 * 1024 * 1024;

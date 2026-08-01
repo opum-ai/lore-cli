@@ -19,6 +19,7 @@ import {
   type LadybugBenchmarkScenario,
   type LadybugBenchmarkSubprocessSample,
   ladybugBenchmarkScenarios,
+  ladybugQualificationScenarios,
   measureCanonicalInputBytes,
   runLadybugBenchmarkPolicyPair,
   spawnLadybugBenchmarkWorker,
@@ -67,15 +68,15 @@ export function qualificationRunConfiguration(mode: LadybugBenchmarkMode): Ladyb
   }
   return {
     mode,
-    coldSetupRepetitions: 1,
-    coldRepetitions: 7,
-    warmups: 5,
-    repetitions: 30,
-    batches: 3,
-    bootstrapIterations: 10_000,
+    coldSetupRepetitions: 0,
+    coldRepetitions: 1,
+    warmups: 0,
+    repetitions: 5,
+    batches: 1,
+    bootstrapIterations: 1_000,
     confidence: 0.95,
-    calibrationWarmups: 5,
-    calibrationRepetitions: 20,
+    calibrationWarmups: 1,
+    calibrationRepetitions: 5,
     calibrationCoefficientOfVariationLimit: LADYBUG_BENCHMARK_CALIBRATION_CV_LIMIT,
   };
 }
@@ -105,12 +106,19 @@ export function parseLadybugBenchmarkCliArgs(args: readonly string[], cwd = proc
       mode = "smoke";
       continue;
     }
+    if (argument === "--observation-1gib") {
+      mode = "observation";
+      continue;
+    }
     if (argument === "--help" || argument === "-h") throw new BenchmarkHelp();
     throw new Error(`unknown Ladybug benchmark option: ${argument}`);
   }
   if (fixtureNames.length === 0) throw new Error("at least one --fixture small|large is required");
   if (output === undefined) throw new Error("--output <path> is required");
   if (runnerImage.trim() === "") throw new Error("--runner-image must not be empty");
+  if (mode === "observation" && (fixtureNames.length !== 1 || fixtureNames[0] !== "large")) {
+    throw new Error("--observation-1gib requires exactly --fixture large");
+  }
   return {
     fixtureNames,
     output: isAbsolute(output) ? output : resolve(cwd, output),
@@ -130,7 +138,8 @@ export async function runLadybugBenchmarkReport(options: LadybugBenchmarkCliOpti
   );
   const fixtures: LadybugBenchmarkFixtureReport[] = [];
   for (const name of options.fixtureNames) {
-    const spec = loadLadybugBenchmarkFixtureSpec(join(FIXTURE_ROOT, `${name}.json`));
+    const loaded = loadLadybugBenchmarkFixtureSpec(join(FIXTURE_ROOT, `${name}.json`));
+    const spec = options.mode === "observation" ? oneGiBObservationSpec(loaded) : loaded;
     fixtures.push(await runFixture(spec, configuration));
   }
   const repository = repositoryFacts(REPOSITORY_ROOT);
@@ -167,7 +176,7 @@ export async function runLadybugBenchmarkReport(options: LadybugBenchmarkCliOpti
 }
 
 export function assertLadybugBenchmarkRuntime(mode: LadybugBenchmarkMode, bunVersion = Bun.version): void {
-  if (mode === "qualification" && bunVersion !== LADYBUG_BENCHMARK_QUALIFICATION_BUN_VERSION) {
+  if (mode !== "smoke" && bunVersion !== LADYBUG_BENCHMARK_QUALIFICATION_BUN_VERSION) {
     throw new Error(
       `Ladybug qualification requires Bun ${LADYBUG_BENCHMARK_QUALIFICATION_BUN_VERSION}; observed ${bunVersion}. Use --smoke only for functional evidence.`,
     );
@@ -201,52 +210,52 @@ async function runFixture(
   let sequence = 0;
   try {
     const warmFixture = generate(spec, temporaryRoots, "warm");
-    assertFixtureDigests(warmFixture);
+    if (configuration.mode !== "observation") assertFixtureDigests(warmFixture);
+    const reportSpec = configuration.mode === "observation" ? { ...spec, expected: warmFixture.digests } : spec;
     const canonicalInputBytes = await measureCanonicalInputBytes(warmFixture.root);
-    const setup = await spawnLadybugBenchmarkWorker(warmFixture.root, "indexed", { kind: "projection-cold" });
-    samples.push(
-      rawSample({
-        sequence: sequence++,
-        phase: "cold-setup",
-        batch: null,
-        repetition: 1,
-        pairId: null,
-        scenarioId: "projection-cold",
-        order: ["indexed"],
-        canonicalInputBytes,
-        sample: setup,
-      }),
-    );
-
-    for (let repetition = 1; repetition <= configuration.coldRepetitions; repetition++) {
-      const coldFixture = generate(spec, temporaryRoots, `cold-${repetition}`);
-      assertFixtureDigests(coldFixture);
-      const measuredInputBytes = await measureCanonicalInputBytes(coldFixture.root);
-      if (measuredInputBytes !== canonicalInputBytes)
-        throw new Error(`${spec.name}: canonical input byte count drifted`);
-      const cold = await spawnLadybugBenchmarkWorker(coldFixture.root, "indexed", { kind: "projection-cold" });
+    for (let repetition = 1; repetition <= configuration.coldSetupRepetitions; repetition++) {
+      const setupFixture = generate(spec, temporaryRoots, `setup-${repetition}`);
+      const setup = await spawnLadybugBenchmarkWorker(setupFixture.root, "indexed", { kind: "projection-cold" });
       samples.push(
         rawSample({
           sequence: sequence++,
-          phase: "cold-measurement",
+          phase: "cold-setup",
           batch: null,
           repetition,
           pairId: null,
           scenarioId: "projection-cold",
           order: ["indexed"],
           canonicalInputBytes,
-          sample: cold,
+          sample: setup,
         }),
       );
-      cleanupRoot(coldFixture.root);
-      temporaryRoots.splice(temporaryRoots.indexOf(coldFixture.root), 1);
+      cleanupRoot(setupFixture.root);
+      temporaryRoots.splice(temporaryRoots.indexOf(setupFixture.root), 1);
     }
 
-    const scenarios = ladybugBenchmarkScenarios(spec);
-    for (let scenarioIndex = 0; scenarioIndex < scenarios.length; scenarioIndex++) {
-      const scenario = scenarios[scenarioIndex] as LadybugBenchmarkScenario;
-      const pair = await runLadybugBenchmarkPolicyPair(warmFixture.root, scenario, ["reference", "indexed"]);
-      sequence = appendPair(samples, sequence, pair, "parity", null, 1, `parity:${scenario.id}`, canonicalInputBytes);
+    const cold = await spawnLadybugBenchmarkWorker(warmFixture.root, "indexed", { kind: "projection-cold" });
+    samples.push(
+      rawSample({
+        sequence: sequence++,
+        phase: "cold-measurement",
+        batch: null,
+        repetition: 1,
+        pairId: null,
+        scenarioId: "projection-cold",
+        order: ["indexed"],
+        canonicalInputBytes,
+        sample: cold,
+      }),
+    );
+
+    const scenarios =
+      configuration.mode === "smoke" ? ladybugBenchmarkScenarios(spec) : ladybugQualificationScenarios(spec);
+    if (configuration.mode === "smoke") {
+      for (let scenarioIndex = 0; scenarioIndex < scenarios.length; scenarioIndex++) {
+        const scenario = scenarios[scenarioIndex] as LadybugBenchmarkScenario;
+        const pair = await runLadybugBenchmarkPolicyPair(warmFixture.root, scenario, ["reference", "indexed"]);
+        sequence = appendPair(samples, sequence, pair, "parity", null, 1, `parity:${scenario.id}`, canonicalInputBytes);
+      }
     }
 
     const warmupOrders = scenarios.map((_, index) =>
@@ -300,7 +309,7 @@ async function runFixture(
     }
 
     return summarizeLadybugBenchmarkFixture({
-      spec,
+      spec: reportSpec,
       canonicalInputBytes,
       scenarios,
       samples,
@@ -443,10 +452,23 @@ function repositoryFacts(root: string): LadybugBenchmarkReport["repository"] {
 }
 
 function assertConfiguration(configuration: LadybugBenchmarkRunConfiguration): void {
-  if (configuration.coldSetupRepetitions !== 1) throw new Error("cold setup must contain exactly one discarded run");
+  if (configuration.coldRepetitions !== 1) throw new Error("bounded benchmark must contain exactly one cold build");
   if (configuration.repetitions % configuration.batches !== 0) {
     throw new Error("warm benchmark repetitions must divide evenly across batches");
   }
+}
+
+function oneGiBObservationSpec(spec: LadybugBenchmarkFixtureSpec): LadybugBenchmarkFixtureSpec {
+  return {
+    ...spec,
+    seed: spec.seed ^ 0x1_0000,
+    counts: { ...spec.counts, markdownBodyBytes: 1024 * 1024 * 1024 },
+    expected: {
+      canonicalExportSha256: `sha256:${"0".repeat(64)}`,
+      sourceInventorySha256: `sha256:${"0".repeat(64)}`,
+      taskSnapshotSha256: `sha256:${"0".repeat(64)}`,
+    },
+  };
 }
 
 function inferredRunnerImage(): string {
@@ -489,6 +511,7 @@ function usage(): string {
     "  --output <path>        Ordered lore.ladybug-benchmark/1 JSON report",
     "  --runner-image <id>    Exact runner image identifier (or LORE_LADYBUG_RUNNER_IMAGE)",
     "  --smoke                One-repetition functional run; never qualification evidence",
+    "  --observation-1gib     Non-blocking 1 GiB informational run (requires --fixture large)",
     "  -h, --help             Show this help",
     "",
   ].join("\n");

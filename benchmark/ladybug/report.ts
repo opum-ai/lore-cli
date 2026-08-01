@@ -20,7 +20,7 @@ import {
 export const LADYBUG_BENCHMARK_REPORT_SCHEMA = "lore.ladybug-benchmark/1";
 export const LADYBUG_BENCHMARK_CALIBRATION_CV_LIMIT = 0.1;
 
-export type LadybugBenchmarkMode = "qualification" | "smoke";
+export type LadybugBenchmarkMode = "qualification" | "smoke" | "observation";
 export type LadybugBenchmarkSamplePhase = "cold-setup" | "cold-measurement" | "parity" | "warmup" | "measurement";
 
 export interface LadybugBenchmarkRunConfiguration {
@@ -236,7 +236,7 @@ const RawSampleSchema = z.strictObject({
 export const LadybugBenchmarkReportSchema = z.strictObject({
   schema: z.literal(LADYBUG_BENCHMARK_REPORT_SCHEMA),
   generatedAt: z.iso.datetime({ offset: true }),
-  mode: z.enum(["qualification", "smoke"]),
+  mode: z.enum(["qualification", "smoke", "observation"]),
   toolchain: z.strictObject({
     loreVersion: z.string().min(1),
     bunVersion: z.string().min(1),
@@ -259,7 +259,7 @@ export const LadybugBenchmarkReportSchema = z.strictObject({
     dirty: z.boolean(),
   }),
   configuration: z.strictObject({
-    mode: z.enum(["qualification", "smoke"]),
+    mode: z.enum(["qualification", "smoke", "observation"]),
     coldSetupRepetitions: z.number().int().nonnegative(),
     coldRepetitions: PositiveIntegerSchema,
     warmups: z.number().int().nonnegative(),

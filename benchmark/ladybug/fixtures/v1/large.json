@@ -6,7 +6,7 @@
     "concepts": 4096,
     "tasks": 4096,
     "authoredEdges": 32768,
-    "markdownBodyBytes": 67108864
+    "markdownBodyBytes": 104857600
   },
   "coverage": {
     "graphShapes": ["chain", "star", "cycle", "duplicate", "dangling"],
@@ -23,8 +23,8 @@
     "additiveFields": ["fixture_extension.schema", "fixture_extension.seed", "fixture_extension.ordinal", "fixture_extension.unicode"]
   },
   "expected": {
-    "canonicalExportSha256": "sha256:c862ea5effbe148ec9c4cf3c15a1f1c91e51739793523377fd0685adcca55f56",
-    "sourceInventorySha256": "sha256:b0bbc198f639bd4a084be687512bd4baecdccafa4ad3e95439eef42432642707",
+    "canonicalExportSha256": "sha256:56c47883e29363023874d85b450db7603b59d8a28764b983cc6afcdc989ea1d6",
+    "sourceInventorySha256": "sha256:75cd7667a2eca19415b7530f8f9609029d4226e9b4695d4bed3b0f630145b1cc",
     "taskSnapshotSha256": "sha256:0b41643e9a7208c1a31fa90a25b9751dc564d8fd1d9d616ca526cc70d2ef96aa"
   }
 }

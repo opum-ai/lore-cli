@@ -131,11 +131,14 @@ platform artifacts and audited npm integrity values:
 - `@ladybugdb/core-win32-x64@0.19.0` — `sha512-y2/IOMKmydo4ZfQPDZuZhiFC104VJQ9lwc0w1KVdvb4Z2RIUUL8/tn5QD4Uq8DUrJGxQhoEESPnlkk69cKaaDQ==`.
 
 All six packages declare MIT licensing. Bun 1.2.23 installation and `bun
-audit` reported no vulnerabilities. Darwin-arm64 executable evidence is
-complete locally; matching-host Darwin x64, Linux arm64/x64, and the explicit
-Windows fallback-only package policy remain required workflow evidence before
-the dependency task can be finalized. Final `LCLI-283.1.4` benchmark and
-packaging evidence is authoritative only after that host matrix settles.
+audit` reported no vulnerabilities. Exact-host workflow evidence passed native
+loading and the full suite on Darwin arm64/x64 and Linux arm64/x64, plus the
+explicit Windows x64 import-safe fallback. `LCLI-283.1.5` is complete; final
+`LCLI-283.1.4` evidence combines the bounded Linux-x64 100 MiB scale gate
+with separate concurrency/crash and five-host package gates. A strict final
+manifest accepts those artifacts only when they all pass on one clean commit;
+the matching-host package reports, rather than a duplicate Darwin timing run,
+carry the Darwin executable-platform evidence.
 
 ## Sources
 

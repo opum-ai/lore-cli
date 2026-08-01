@@ -46,11 +46,11 @@ describe("Ladybug benchmark report contract", () => {
 
   test("freezes qualification counts and balanced deterministic AB/BA schedules", () => {
     expect(qualificationRunConfiguration("qualification")).toMatchObject({
-      coldSetupRepetitions: 1,
-      coldRepetitions: 7,
-      warmups: 5,
-      repetitions: 30,
-      batches: 3,
+      coldSetupRepetitions: 0,
+      coldRepetitions: 1,
+      warmups: 0,
+      repetitions: 5,
+      batches: 1,
       confidence: 0.95,
     });
     expect(qualificationRunConfiguration("smoke")).toMatchObject({
@@ -59,13 +59,13 @@ describe("Ladybug benchmark report contract", () => {
       repetitions: 1,
       batches: 1,
     });
-    const orders = randomizedPolicyOrders(28310401, 30);
-    expect(orders).toEqual(randomizedPolicyOrders(28310401, 30));
-    expect(orders.filter((order) => order[0] === "indexed")).toHaveLength(15);
-    expect(orders.filter((order) => order[0] === "reference")).toHaveLength(15);
+    const orders = randomizedPolicyOrders(28310401, 5);
+    expect(orders).toEqual(randomizedPolicyOrders(28310401, 5));
+    expect(new Set(orders.map((order) => order[0]))).toEqual(new Set(["indexed", "reference"]));
     expect(() => assertLadybugBenchmarkRuntime("qualification", "1.2.23")).not.toThrow();
     expect(() => assertLadybugBenchmarkRuntime("qualification", "1.3.14")).toThrow("requires Bun 1.2.23");
     expect(() => assertLadybugBenchmarkRuntime("smoke", "1.3.14")).not.toThrow();
+    expect(() => assertLadybugBenchmarkRuntime("observation", "1.3.14")).toThrow("requires Bun 1.2.23");
   });
 
   test("parses repeatable fixtures, required output, runner identity, and smoke mode", () => {
@@ -135,9 +135,9 @@ describe("Ladybug benchmark report contract", () => {
         loreVersion: "0.0.0",
         bunVersion: "1.2.23",
         nodeVersion: "22.0.0",
-        ladybugPackageVersion: "0.18.2",
-        ladybugRuntimeVersion: "0.18.2",
-        ladybugStorageVersion: "42",
+        ladybugPackageVersion: "0.19.0",
+        ladybugRuntimeVersion: "0.19.0",
+        ladybugStorageVersion: "43",
       },
       host: {
         platform: "linux",
@@ -156,7 +156,7 @@ describe("Ladybug benchmark report contract", () => {
         source: {
           schema: "lore.ladybug-benchmark-gates/1",
           approvedTask: "LCLI-283.1.4",
-          approvedPlanItem: 4,
+          approvedPlanItem: 11,
           approvedAt: "2026-07-31",
           digest: `sha256:${"d".repeat(64)}`,
         },
@@ -179,7 +179,7 @@ describe("Ladybug benchmark report contract", () => {
       "fixtures",
       "gates",
     ]);
-    expect(benchmarkDigest(json)).toBe("sha256:8ed23001a7a8f22be11bf3da2ecd62e9eff5c90421ba5677a4890d46fe93ed66");
+    expect(benchmarkDigest(json)).toBe("sha256:8376cba6845591c01536497a388fce381ec74110dc8287b36876a8dd27537781");
     expect(() => parseLadybugBenchmarkReport({ ...report, unexpected: true })).toThrow();
   });
 });

@@ -20,11 +20,20 @@ per-platform binary packages published as its `optionalDependencies` —
 and `-win32-x64`.
 
 The `.github/workflows/release.yml` workflow (`workflow_dispatch`-only — it never
-fires on a push or tag) **compiles all five platform binaries, assembles all
-six packages, and proves the `npx`/launcher resolution mechanism end-to-end**
-via `npm pack` + a scratch install + running the launcher (LCLI-9), then, only
-when a maintainer manually dispatches it with `publish: true`, **publishes all
-six existing packages via npm OIDC Trusted Publishing** (LCLI-255).
+fires on a push or tag) first gates the release chain on a 15-minute bounded
+LadybugDB qualification over a deterministic 100 MiB authored fixture and on
+separate real-process concurrency/crash evidence. Five matching-host jobs then
+prove native package installation, execution, and cleanup, after which a strict
+`lore.ladybug-qualification-evidence/1` manifest hashes the benchmark, gate
+policy, concurrency report, and all five package reports from the same clean
+commit. Only then does the workflow **compile all five platform binaries,
+assemble all six packages, and prove the `npx`/launcher resolution mechanism
+end-to-end** (LCLI-9/LCLI-283.1.4). The independent
+`ladybug_scale_observation` input adds a non-blocking, 30-minute 1 GiB
+observation; it never weakens or replaces the blocking gates. Only when a
+maintainer manually dispatches with `publish: true` does the workflow
+**publish all six existing packages via npm OIDC Trusted Publishing**
+(LCLI-255).
 
 The initial `0.1.0` release is a one-time bootstrap exception: npm requires a
 package to exist before a Trusted Publisher can be configured, and none of the
