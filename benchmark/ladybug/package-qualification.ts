@@ -416,8 +416,11 @@ function assertHost(input: PackageQualificationInput): void {
 
 function assertFrozenLadybugInstall(input: PackageQualificationInput): { addonSha256: string } {
   const coreRoot = join(REPOSITORY_ROOT, "node_modules", "@ladybugdb", "core");
-  const platformPackagePath = createRequire(join(coreRoot, "package.json")).resolve(
-    `${input.ladybugPackage}/package.json`,
+  const platformPackagePath = resolveInstalledOptionalPackageJson(
+    REPOSITORY_ROOT,
+    coreRoot,
+    input.ladybugPackage,
+    LADYBUG_VERSION,
   );
   const platformRoot = dirname(platformPackagePath);
   const corePackage = readJson(join(coreRoot, "package.json"));
@@ -460,6 +463,38 @@ function assertFrozenLadybugInstall(input: PackageQualificationInput): { addonSh
     throw new Error("Ladybug core lbugjs.node is not the byte-identical matching-host addon copy");
   }
   return { addonSha256: coreHash };
+}
+
+/** Resolve either a hoisted optional package or Bun's isolated package-store layout. */
+export function resolveInstalledOptionalPackageJson(
+  repositoryRoot: string,
+  coreRoot: string,
+  packageName: string,
+  version: string,
+): string {
+  try {
+    return createRequire(join(coreRoot, "package.json")).resolve(`${packageName}/package.json`);
+  } catch {
+    // Bun 1.2's isolated linker can install the optional package in .bun without
+    // exposing it through Node resolution from the parent package.
+  }
+  const packageSegments = packageName.split("/");
+  const candidates = [
+    join(repositoryRoot, "node_modules", ...packageSegments, "package.json"),
+    join(
+      repositoryRoot,
+      "node_modules",
+      ".bun",
+      `${packageName.replace("/", "+")}@${version}`,
+      "node_modules",
+      ...packageSegments,
+      "package.json",
+    ),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  throw new Error(`cannot locate installed optional package ${packageName}@${version}`);
 }
 
 function stageRootPackage(root: string, sourcePackage: Record<string, unknown>): void {

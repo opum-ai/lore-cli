@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as yaml from "js-yaml";
 import {
@@ -7,6 +8,7 @@ import {
   isKnownNativeCrash,
   LADYBUG_PACKAGE_QUALIFICATION_SCHEMA,
   parsePackageQualificationArgs,
+  resolveInstalledOptionalPackageJson,
 } from "../benchmark/ladybug/package-qualification";
 
 const RELEASE_PATH = join(import.meta.dir, "..", ".github", "workflows", "release.yml");
@@ -62,6 +64,33 @@ function needs(job: WorkflowJob): string[] {
 }
 
 describe("matching-host Ladybug package qualification", () => {
+  test("resolves an optional package from Bun's isolated store when no hoisted link exists", () => {
+    const root = mkdtempSync(join(tmpdir(), "lore-isolated-package-"));
+    try {
+      const coreRoot = join(root, "node_modules", "@ladybugdb", "core");
+      const platformPackage = join(
+        root,
+        "node_modules",
+        ".bun",
+        "@ladybugdb+core-linux-x64@0.19.0",
+        "node_modules",
+        "@ladybugdb",
+        "core-linux-x64",
+        "package.json",
+      );
+      mkdirSync(coreRoot, { recursive: true });
+      mkdirSync(join(platformPackage, ".."), { recursive: true });
+      writeFileSync(join(coreRoot, "package.json"), "{}\n");
+      writeFileSync(platformPackage, "{}\n");
+
+      expect(resolveInstalledOptionalPackageJson(root, coreRoot, "@ladybugdb/core-linux-x64", "0.19.0")).toBe(
+        platformPackage,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("the existing five distributions map to the five approved matching hosts", () => {
     const matrix = releaseMatrix(loadWorkflow());
     expect(matrix.map(({ name, runner, os, cpu }) => ({ name, runner, os, cpu }))).toEqual([
