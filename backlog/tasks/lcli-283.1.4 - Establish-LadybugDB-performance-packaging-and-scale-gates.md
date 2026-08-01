@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:33'
-updated_date: '2026-08-01 00:31'
+updated_date: '2026-08-01 04:53'
 labels:
   - ladybugdb
   - benchmark
@@ -18,38 +18,43 @@ dependencies:
 documentation:
   - docs/specs/local-graph-platform-roadmap.md
 modified_files:
-  - biome.json
-  - tsconfig.json
+  - .github/workflows/ci.yml
+  - .github/workflows/release.yml
   - benchmark/ladybug/accounting.ts
+  - benchmark/ladybug/concurrency-evidence.ts
+  - benchmark/ladybug/concurrency-protocol.ts
+  - benchmark/ladybug/concurrency-worker.ts
   - benchmark/ladybug/fixture.ts
+  - benchmark/ladybug/fixtures/v1/large.json
   - benchmark/ladybug/fixtures/v1/schema.json
   - benchmark/ladybug/fixtures/v1/small.json
-  - benchmark/ladybug/fixtures/v1/large.json
-  - benchmark/ladybug/orchestrator.ts
-  - benchmark/ladybug/protocol.ts
-  - benchmark/ladybug/worker.ts
-  - benchmark/ladybug/report.ts
-  - benchmark/ladybug/run.ts
-  - benchmark/ladybug/statistics.ts
   - benchmark/ladybug/gates.ts
   - benchmark/ladybug/gates/v1.json
   - benchmark/ladybug/native-probe.ts
+  - benchmark/ladybug/orchestrator.ts
   - benchmark/ladybug/package-qualification.ts
-  - test/ladybug-benchmark-fixture.test.ts
-  - test/ladybug-benchmark-runner.test.ts
-  - test/ladybug-benchmark-report.test.ts
-  - test/ladybug-benchmark-gates.test.ts
-  - test/ladybug-benchmark-workflow.test.ts
-  - test/ladybug-package-qualification.test.ts
-  - .github/workflows/ci.yml
-  - .github/workflows/release.yml
-  - src/core/ladybug-lifecycle.ts
-  - benchmark/ladybug/concurrency-protocol.ts
-  - benchmark/ladybug/concurrency-worker.ts
-  - test/ladybug-concurrency.test.ts
-  - benchmark/ladybug/concurrency-evidence.ts
+  - benchmark/ladybug/protocol.ts
   - benchmark/ladybug/qualification-evidence.ts
+  - benchmark/ladybug/report.ts
+  - benchmark/ladybug/run.ts
+  - benchmark/ladybug/statistics.ts
+  - benchmark/ladybug/worker.ts
+  - biome.json
+  - docs/log.md
+  - docs/reference/ladybugdb-benchmark-and-scale-acceptance-strategy.md
+  - docs/runbooks/release-publishing.md
+  - docs/specs/local-graph-platform-roadmap.md
+  - src/core/ladybug-lifecycle.ts
+  - test/ci-workflow.test.ts
+  - test/ladybug-benchmark-fixture.test.ts
+  - test/ladybug-benchmark-gates.test.ts
+  - test/ladybug-benchmark-report.test.ts
+  - test/ladybug-benchmark-runner.test.ts
+  - test/ladybug-benchmark-workflow.test.ts
+  - test/ladybug-concurrency.test.ts
+  - test/ladybug-package-qualification.test.ts
   - test/ladybug-qualification-evidence.test.ts
+  - tsconfig.json
 parent_task_id: LCLI-283.1
 priority: high
 type: task
@@ -137,6 +142,14 @@ Restore reconciliation on 2026-07-31 (GitHub run evidence): release workflow run
 Diagnosis before rerun: this is a structural workload/cap mismatch, not evidence of a threshold failure. The two-fixture smoke recorded in prior notes launches 224 samples and took about 17 minutes. The approved full configuration launches 3,976 samples: per fixture, 1 discarded cold setup + 7 cold measurements + 2 parity workers, 10 warmup workers, and 60 measured workers for every scenario; the small fixture has 23 scenarios and the large fixture has 32. That is 17.75 times the smoke's process count, before hosted-runner variance, and each worker currently hashes all docs/Backlog/Git/profile/non-cache-.lore bytes before and after. The 64 MiB large fixture amplifies this guard overhead. A blind retry under the same 240-minute cap is not justified. Continue only after a reviewed choice between increasing the job budget or refining the fresh-process methodology/guard placement without weakening the approved 30-pair statistics; retain this failed-run evidence.
 
 2026-07-31: User approved replacing the multi-hour synthetic stress model with the bounded 100 MiB blocking gate and optional 1 GiB informational run documented in docs/reference/ladybugdb-benchmark-and-scale-acceptance-strategy.md. LCLI-283.1.5 now gates final acceptance so the exact supported LadybugDB version is qualified before benchmark evidence is treated as authoritative.
+
+Wave 2 restore and bounded-strategy implementation (2026-07-31): merged origin/dev at eb5dc0ee2e2f743acbda35477c83cdaadc0f9750 into the existing feature branch as integration commit ece1da2f5b735d25f63186c1cf281a25b938cf6a. Resolved the completed LCLI-283.1.5 task and current Lore documentation from authoritative dev, retained LCLI-283.1.4 implementation history, and regenerated Lore's managed log. The merge exposed a stale worktree install and stale release-matrix integrities: frozen install refreshed @ladybugdb/core to 0.19.0, and release.yml now matches all five 0.19.0 bun.lock integrities.
+
+Implemented the user-approved bounded benchmark strategy. The blocking fixture now contains exactly 100 MiB of authored Markdown with refreshed deterministic export/source digests. Qualification performs one cold projection build and five indexed/reference pairs for warm open, rare lexical query, depth-2 graph, and depth-2/16,384-token context. Eighteen frozen gates enforce the 30 s cold build, 3 s warm open, 500 ms query, 1 s graph/context, 2 GiB peak RSS, disk-growth bounds, material query improvement, and graph/context non-regression. CI keeps the full small-fixture scenario matrix as non-timing functional smoke. release.yml caps the blocking Linux-x64 job at 15 minutes and adds an explicit default-off, continue-on-error 1 GiB observation capped at 30 minutes. Package qualification and fixture fingerprints now consume the merged 0.19.0/storage-43 constants.
+
+Local evidence on Bun 1.3.14 after bun install --frozen-lockfile: 81 focused benchmark/concurrency/lifecycle/indexed/workflow/package/evidence tests passed with 674 assertions and zero failures; typecheck, lint across 152 files, actionlint for ci.yml/release.yml, and git diff --check passed. A real small-fixture report run completed with 23 scenarios, 94 raw samples, strict schema parsing, and the expected inconclusive smoke gate status. No repository benchmark/database/report artifacts were retained; the smoke report is outside the repository under /private/tmp.
+
+Remaining completion evidence is intentionally external and exact-pin: commit the integrated implementation, push it, run the exact Bun 1.2.23 Linux-x64 100 MiB blocking benchmark, pinned concurrency/crash job, five matching-host package matrix, and final qualification manifest on one clean commit. All four acceptance criteria remain unchecked and the task remains In Progress until those artifacts pass.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
