@@ -17,6 +17,12 @@ timestamp: 2026-06-21T00:00:00Z
 
 Accepted — 2026-06-21.
 
+Amended — 2026-08-01 (LCLI-289): task-scoped agent context profiles are an
+additional CLI-first, progressively disclosed use of the deterministic core.
+Lore profiles map native Claude Code or Codex roles to bounded authored
+evidence; they do not replace native prompts, tools, permissions, models, or
+execution, and they do not reactivate MCP.
+
 Supersedes the v0.2 spec's framing (`lore-spec.md` §6) that treated the MCP
 server as a co-primary, first-class surface. MCP is retained as a deferred v2
 transport, not dropped. See [ADR-0001: Runtime, build, distribution](0001-runtime-build-distribution.md),
@@ -98,6 +104,12 @@ well-documented `--json` CLI. The economics favor CLI-first now and MCP later.
    - **AGENTS.md dual-write is deferred** to a later milestone via a CLAUDE.md
      `@import` shim, so a single source of agent guidance can fan out to other
      agent runtimes without duplicated, drift-prone files.
+
+3a. **Task-scoped agent context profiles are additive, not a native-agent
+generator.** Committed mappings under `.lore/agents/` are exposed through the
+singular `lore agent` family. The native-agent adapter is a one-line instruction
+that names the profile and invokes `lore agent context`; the existing plural
+`lore agents` bridge command retains its current meaning.
 
 4. **The MCP server is a DEFERRED, secondary v2 transport over the same core.**
    It is explicitly scheduled as milestone M6 (deferred) in the build order, not

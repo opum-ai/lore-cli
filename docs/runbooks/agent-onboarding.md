@@ -282,6 +282,21 @@ probe lore runs against Backlog.md (it fails loud below the minimum `--json`
 version; see [Backlog CLI contract](../reference/backlog-cli-contract.md)), an
 agent can verify its whole toolchain is capable before starting work.
 
+### 2.5 Opt in to a task-scoped Lore profile
+
+When the repository defines `.lore/agents/<name>.toml`, an existing native
+agent can add one small adapter instruction:
+
+> Lore profile: `frontend-dev`. Before working, run `lore agent context
+> frontend-dev --task "<assigned task>"` and ground decisions in the returned
+> source IDs.
+
+The profile supplies bounded documentation context only. Native Claude Code
+and Codex files continue to own behavior, tools, models, permissions, and
+execution. Lore does not generate or patch native subagents or select profiles
+automatically. Use `lore agent list` to discover available profiles and the
+[agent profile runbook](agent-profile-implementation-handover.md) to define one.
+
 ---
 
 ## 3. The contract agents rely on
@@ -404,6 +419,7 @@ non-destructive.
 | Discover the surface | `lore help --json` | capability manifest in the canonical envelope |
 | Refactor across docs | `lore replace` / `lore rename` / `lore supersede` | graph-aware; skips managed regions |
 | Get bounded context for an id | `lore context <id> --max-tokens N` | body + 1-line neighbor summaries |
+| Get task-scoped context for a role | `lore agent context <profile> --task "<text>"` | deterministic evidence from a committed profile allowlist |
 
 ---
 

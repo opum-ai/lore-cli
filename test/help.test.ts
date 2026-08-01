@@ -82,6 +82,7 @@ describe("core/manifest — shape and invariants", () => {
       export: [0, 2, 3, 4, 6],
       query: [0, 2, 3, 4, 6],
       context: [0, 2, 3, 4, 6],
+      agent: [0, 2, 3, 4, 5, 6],
       instructions: [0, 2, 3],
       agents: [0, 2, 4, 5, 6], // no 3: readFileIfPresent maps ENOENT→undefined
       help: [0, 2, 3],
@@ -119,6 +120,7 @@ describe("core/manifest — shape and invariants", () => {
       export: "projection.export",
       query: "query.results",
       context: "context.export",
+      agent: "agent.context.export",
       instructions: "instructions.text",
       agents: "agents.result",
       help: "help.manifest",

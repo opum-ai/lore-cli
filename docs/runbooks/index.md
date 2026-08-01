@@ -2,6 +2,7 @@
 
 <!-- lore:index:begin -->
 - [Agent onboarding: how a coding agent uses lore](agent-onboarding.md)
+- [Agent profile implementation and operation](agent-profile-implementation-handover.md)
 - [Backlog.md --json patch runbook (fork, patch, build, upstream)](backlog-json-patch.md)
 - [Dependency boundary campaign handover](dependency-boundary-campaign-handover.md)
 - [Developer kickoff — start building lore](dev-kickoff.md)

@@ -312,6 +312,24 @@ shape the result, and only a complete result reaches Lore's emitter.
 tie-breaking to either graph. `context.ts` performs the same nearest-first
 depth walk and budget prefix. Public output does not reveal the selected backend.
 
+### Agent profile context compiler
+
+The singular `lore agent` family loads strict, committed
+`.lore/agents/<name>.toml` mappings and compiles task-scoped evidence through a
+pure core pipeline. Profiles constrain retrieval to explicit pinned and ranked
+concept or heading references. The compiler reserves profile/catalog metadata,
+includes mandatory pins, partitions long Markdown sources at heading and
+top-level block boundaries, applies deterministic BM25 scoring only within the
+allowed records, and fills the remaining chars-per-four budget with complete
+provenance and omission accounting.
+
+The command layer owns flags, rendering, task-file reads, and optional atomic
+output. The core does not read native Claude Code or Codex agent files, call a
+model, use a network, or spawn a worker. An orchestrator pack contains only its
+own evidence plus a compact direct-delegate roster; each native worker invokes
+the CLI independently for its own specialist profile. The plural `lore agents`
+bridge command remains the separate native-guidance generator.
+
 ### M6 indexed read path
 
 M6 keeps these command and core contracts and uses exact-pinned
