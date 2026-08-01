@@ -151,6 +151,33 @@ describe("subgraph — depth-bounded undirected traversal", () => {
     const reached = [...subgraph(graph(), "a", Number.POSITIVE_INFINITY)].sort();
     expect(reached).toEqual(["a", "b"]); // no "missing"; cycle did not loop
   });
+
+  test("uses a backend-provided neighbor index without rebuilding adjacency from edges", () => {
+    writeStandardBundle();
+    const loaded = graph();
+    const lookups: string[] = [];
+    const neighbors = new Map<string, readonly string[]>([
+      ["reference/orders", ["stories/bulk"]],
+      ["stories/bulk", ["reference/orders", "specs/archive"]],
+      ["specs/archive", ["stories/bulk"]],
+    ]);
+    const indexed = {
+      ...loaded,
+      // Deliberately empty: traversal can succeed only through the supplied index.
+      edges: [],
+      neighbors: (id: string): Iterable<string> => {
+        lookups.push(id);
+        return neighbors.get(id) ?? [];
+      },
+    };
+
+    expect([...subgraph(indexed, "reference/orders", 2)]).toEqual([
+      "reference/orders",
+      "stories/bulk",
+      "specs/archive",
+    ]);
+    expect(lookups).toEqual(["reference/orders", "stories/bulk"]);
+  });
 });
 
 // ── core/graph: export shaping ───────────────────────────────────────────────────

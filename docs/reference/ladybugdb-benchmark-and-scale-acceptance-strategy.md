@@ -91,8 +91,11 @@ Lore writes bounded temporary CSV batches, loads them with `COPY`, checkpoints
 between phases, and removes staging files. Primary-keyed term nodes plus
 concept-to-term postings provide the persistent lexical lookup while preserving
 Lore's exact BM25 behavior. Warm retrieval opens one immutable read-only
-generation, uses promoted metadata for graph output and filters, and fetches a
-full document body only when context output needs it.
+generation, uses promoted metadata for graph output and filters, and builds the
+deterministic undirected neighbor lookup once while materializing those edges.
+Graph and context traversals reuse that lookup instead of rebuilding it for each
+command, while a full document body is still fetched only when context output
+needs it.
 
 Cold construction avoids reparsing syntax-free oversized prose as Markdown link
 structure, skips freshness reads when no generation can be reused, and retains

@@ -64,7 +64,8 @@ export function subgraph(graph: BundleGraph, rootId: string, maxDepth: number): 
   if (maxDepth <= 0) {
     return new Set([rootId]);
   }
-  const adjacency = buildAdjacency(graph.edges);
+  const adjacency = graph.neighbors === undefined ? buildAdjacency(graph.edges) : undefined;
+  const neighbors = graph.neighbors ?? ((id: string) => adjacency?.get(id) ?? EMPTY);
   const visited = new Set<string>([rootId]);
   let frontier: string[] = [rootId];
   // Level-by-level BFS: each iteration expands one hop. `maxDepth` is an upper
@@ -72,7 +73,7 @@ export function subgraph(graph: BundleGraph, rootId: string, maxDepth: number): 
   for (let depth = 0; depth < maxDepth && frontier.length > 0; depth++) {
     const next: string[] = [];
     for (const id of frontier) {
-      for (const neighbor of adjacency.get(id) ?? EMPTY) {
+      for (const neighbor of neighbors(id)) {
         if (!visited.has(neighbor)) {
           visited.add(neighbor);
           next.push(neighbor);

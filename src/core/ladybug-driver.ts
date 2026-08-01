@@ -782,10 +782,12 @@ function bundleGraph(
   edges: readonly Edge[],
   tokenEstimates: ReadonlyMap<string, number>,
 ): BundleGraph {
+  const neighbors = buildNeighborIndex(edges);
   let total: number | undefined;
   return {
     concepts,
     edges,
+    neighbors: (id) => neighbors.get(id) ?? EMPTY_NEIGHBORS,
     tokenEstimate(id?: string): number {
       if (id === undefined) {
         total ??= [...tokenEstimates.values()].reduce((sum, value) => sum + value, 0);
@@ -803,6 +805,26 @@ function bundleGraph(
       return value;
     },
   };
+}
+
+const EMPTY_NEIGHBORS: readonly string[] = [];
+
+function buildNeighborIndex(edges: readonly Edge[]): ReadonlyMap<string, ReadonlySet<string>> {
+  const neighbors = new Map<string, Set<string>>();
+  const connect = (from: string, to: string): void => {
+    let adjacent = neighbors.get(from);
+    if (adjacent === undefined) {
+      adjacent = new Set<string>();
+      neighbors.set(from, adjacent);
+    }
+    adjacent.add(to);
+  };
+  for (const edge of edges) {
+    if (edge.to === null || edge.to === edge.from) continue;
+    connect(edge.from, edge.to);
+    connect(edge.to, edge.from);
+  }
+  return neighbors;
 }
 
 async function withReadConnection<T>(databasePath: string, fn: (connection: Connection) => Promise<T>): Promise<T> {

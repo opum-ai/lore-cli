@@ -112,6 +112,13 @@ export interface BundleGraph {
    */
   readonly edges: readonly Edge[];
   /**
+   * Optional precomputed undirected neighbor lookup. Persistent retrieval backends
+   * can provide this while materializing their edge index so bounded graph and
+   * context traversals do not rebuild the same O(E) adjacency map per command.
+   * The returned order must match first appearance in {@link edges}.
+   */
+  readonly neighbors?: (id: string) => Iterable<string>;
+  /**
    * A token-count **estimate** (chars/4 heuristic, not a real tokenizer) over the
    * canonical serialized bytes of one concept (`id` given) or the whole bundle
    * (`id` omitted). Throws `not_found` if `id` names no loaded concept. Results are

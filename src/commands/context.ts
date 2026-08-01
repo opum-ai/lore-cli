@@ -109,7 +109,7 @@ function withConceptBody(
   if (concept === undefined) return graph;
   const concepts = new Map(graph.concepts);
   concepts.set(id, { ...concept, body });
-  return { concepts, edges: graph.edges, tokenEstimate: graph.tokenEstimate };
+  return { ...graph, concepts };
 }
 
 function finishContext(
