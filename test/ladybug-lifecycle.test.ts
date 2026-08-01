@@ -56,6 +56,9 @@ const disposeLadybugProjection: typeof import("../src/core/ladybug-lifecycle").d
   (() => {
     throw new Error("native Ladybug lifecycle is unavailable on this host");
   });
+const isUnsupportedDirectoryFsyncError:
+  | typeof import("../src/core/ladybug-lifecycle").isUnsupportedDirectoryFsyncError
+  | undefined = nativeLifecycle?.isUnsupportedDirectoryFsyncError;
 const nativeDescribe = process.platform === "win32" ? describe.skip : describe;
 
 const roots: string[] = [];
@@ -204,6 +207,15 @@ describe("Ladybug projection source", () => {
 });
 
 nativeDescribe("Ladybug projection lifecycle", () => {
+  test("accepts only documented unsupported directory flush errors for each host", () => {
+    const error = (code: string): NodeJS.ErrnoException => Object.assign(new Error(code), { code });
+    expect(isUnsupportedDirectoryFsyncError?.(error("EINVAL"), "linux")).toBe(true);
+    expect(isUnsupportedDirectoryFsyncError?.(error("ENOTSUP"), "darwin")).toBe(true);
+    expect(isUnsupportedDirectoryFsyncError?.(error("EPERM"), "win32")).toBe(true);
+    expect(isUnsupportedDirectoryFsyncError?.(error("EPERM"), "linux")).toBe(false);
+    expect(isUnsupportedDirectoryFsyncError?.(error("EIO"), "win32")).toBe(false);
+  });
+
   test("builds, verifies, reuses, disposes, and deterministically rebuilds one immutable generation", async () => {
     const root = tempRepository();
     const source = fixtureSource();

@@ -1004,10 +1004,17 @@ function fsyncDirectory(path: string): void {
     descriptor = openSync(path, "r");
     fsyncSync(descriptor);
   } catch (cause) {
-    if (!isErrno(cause, "EINVAL") && !isErrno(cause, "ENOTSUP")) throw cause;
+    if (!isUnsupportedDirectoryFsyncError(cause)) throw cause;
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
   }
+}
+
+export function isUnsupportedDirectoryFsyncError(
+  cause: unknown,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return isErrno(cause, "EINVAL") || isErrno(cause, "ENOTSUP") || (platform === "win32" && isErrno(cause, "EPERM"));
 }
 
 function assertNativeVersion(source: LadybugProjectionSource): void {
