@@ -1,0 +1,199 @@
+{
+  "schemaVersion": "lore-explorer-snapshot/1",
+  "source": {
+    "repositoryScopeKey": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "snapshotKey": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "bundleId": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "gitCommit": "dddddddddddddddddddddddddddddddddddddddd",
+    "exportDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "docsRoot": "docs",
+    "sourceFingerprint": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "generatedAt": null
+  },
+  "facts": {
+    "repositories": [
+      {
+        "repositoryScopeKey": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "snapshotKey": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bundleId": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "gitCommit": "dddddddddddddddddddddddddddddddddddddddd",
+        "exportDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "kind": "repository",
+        "docsRoot": "docs",
+        "displayName": "Fixture repository"
+      }
+    ],
+    "concepts": [
+      {
+        "repositoryScopeKey": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "snapshotKey": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bundleId": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "gitCommit": "dddddddddddddddddddddddddddddddddddddddd",
+        "exportDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "recordKey": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "sourcePath": "docs/specs/new.md",
+        "kind": "concept",
+        "conceptId": "specs/new",
+        "conceptType": "Spec",
+        "title": "New specification",
+        "summary": "Supersedes the old specification.",
+        "status": null,
+        "tags": ["fixture", "graph"],
+        "contentHash": "sha256:1010101010101010101010101010101010101010101010101010101010101010",
+        "tokenEstimate": 42
+      },
+      {
+        "repositoryScopeKey": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "snapshotKey": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bundleId": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "gitCommit": "dddddddddddddddddddddddddddddddddddddddd",
+        "exportDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "recordKey": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "sourcePath": "docs/index.md",
+        "kind": "concept",
+        "conceptId": "index",
+        "conceptType": "Reference",
+        "title": "Fixture root",
+        "summary": "The fixture bundle root.",
+        "status": null,
+        "tags": ["fixture"],
+        "contentHash": "sha256:2020202020202020202020202020202020202020202020202020202020202020",
+        "tokenEstimate": 24
+      },
+      {
+        "repositoryScopeKey": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "snapshotKey": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bundleId": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "gitCommit": "dddddddddddddddddddddddddddddddddddddddd",
+        "exportDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "recordKey": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sourcePath": "docs/specs/old.md",
+        "kind": "concept",
+        "conceptId": "specs/old",
+        "conceptType": "Spec",
+        "title": "Old specification",
+        "summary": "Retained superseded evidence.",
+        "status": "superseded",
+        "tags": ["fixture"],
+        "contentHash": "sha256:3030303030303030303030303030303030303030303030303030303030303030",
+        "tokenEstimate": 18
+      }
+    ],
+    "tasks": [
+      {
+        "repositoryScopeKey": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "snapshotKey": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bundleId": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "gitCommit": "dddddddddddddddddddddddddddddddddddddddd",
+        "exportDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "recordKey": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        "sourcePath": null,
+        "kind": "task",
+        "taskId": "TASK-1",
+        "title": "Ship fixture",
+        "summary": null,
+        "status": "In Progress",
+        "labels": ["fixture"],
+        "priority": "High",
+        "assignees": ["@codex"],
+        "milestone": "M7",
+        "parentTaskId": null
+      }
+    ],
+    "authoredEdges": [
+      {
+        "repositoryScopeKey": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "snapshotKey": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bundleId": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "gitCommit": "dddddddddddddddddddddddddddddddddddddddd",
+        "exportDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "recordKey": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+        "sourcePath": "docs/specs/new.md",
+        "kind": "authored-edge",
+        "edgeKind": "link",
+        "fromRecordKey": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "toRecordKey": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "target": "../index.md",
+        "ordinal": 0,
+        "dangling": false
+      },
+      {
+        "repositoryScopeKey": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "snapshotKey": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bundleId": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "gitCommit": "dddddddddddddddddddddddddddddddddddddddd",
+        "exportDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "recordKey": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+        "sourcePath": "docs/specs/new.md",
+        "kind": "authored-edge",
+        "edgeKind": "link",
+        "fromRecordKey": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "toRecordKey": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "target": "../index.md",
+        "ordinal": 1,
+        "dangling": false
+      },
+      {
+        "repositoryScopeKey": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "snapshotKey": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bundleId": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "gitCommit": "dddddddddddddddddddddddddddddddddddddddd",
+        "exportDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "recordKey": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+        "sourcePath": "docs/specs/new.md",
+        "kind": "authored-edge",
+        "edgeKind": "link",
+        "fromRecordKey": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "toRecordKey": null,
+        "target": "missing.md",
+        "ordinal": 2,
+        "dangling": true
+      },
+      {
+        "repositoryScopeKey": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "snapshotKey": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bundleId": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "gitCommit": "dddddddddddddddddddddddddddddddddddddddd",
+        "exportDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "recordKey": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+        "sourcePath": "docs/specs/new.md",
+        "kind": "authored-edge",
+        "edgeKind": "supersedes",
+        "fromRecordKey": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "toRecordKey": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "target": "specs/old",
+        "ordinal": 0,
+        "dangling": false
+      },
+      {
+        "repositoryScopeKey": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "snapshotKey": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bundleId": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "gitCommit": "dddddddddddddddddddddddddddddddddddddddd",
+        "exportDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "recordKey": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "sourcePath": "docs/specs/new.md",
+        "kind": "authored-edge",
+        "edgeKind": "task",
+        "fromRecordKey": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "toRecordKey": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        "target": "TASK-1",
+        "ordinal": 0,
+        "dangling": false
+      }
+    ]
+  },
+  "health": {
+    "state": "ready",
+    "messageCode": null,
+    "counts": {
+      "repositories": 1,
+      "concepts": 3,
+      "tasks": 1,
+      "authoredEdges": 5,
+      "danglingEdges": 1,
+      "duplicateEdges": 1
+    },
+    "warnings": []
+  }
+}
