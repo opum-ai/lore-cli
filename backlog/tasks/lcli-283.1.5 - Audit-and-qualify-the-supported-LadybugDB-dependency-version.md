@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-01 00:30'
-updated_date: '2026-08-01 01:14'
+updated_date: '2026-08-01 01:23'
 labels:
   - ladybugdb
   - dependency
@@ -77,4 +77,13 @@ Wave 1 local qualification result (2026-07-31):
 Completion blocker: this Darwin arm64 checkout cannot supply matching-host Darwin x64, Linux arm64, Linux x64, or Windows fallback package evidence, nor the required supported-platform concurrency/crash qualification. Those boundaries must run on matching hosts before AC 2 and AC 3, and therefore the task, can close. LCLI-283.1.4 already contains the expanded qualification machinery but formally waits on this task. The implementation and documentation remain uncommitted in the leased Treehouse worktree; the branch also contains local replay commits 6c9ff65 and fb9db3a plus Lore automatic task-sync commit 7a51ac8. No push, PR, merge, publication, or lease return was authorized or performed.
 
 Delivery authorization and pre-commit grounding (2026-07-31): the user explicitly approved committing and pushing the scoped feature branch, opening its PR, and dispatching matching-host CI. After fetching origin, the branch contained current origin/dev with no rebase required. The final dirty-tree rerun under exact Bun 1.2.23 passed all 2300 tests with 0 failures and 6694 expectations; lint, typecheck, strict Lore validation, strict Lore coherence, and git diff hygiene also passed. AC 2 and AC 3 remain open until objective matching-host and concurrency/crash results arrive.
+
+Remote delivery and host evidence (2026-07-31): feature commit 7d1b17459a34e9dff7dee2dbb820b507e5dc87b6 was pushed and PR #269 opened against dev at https://github.com/salient-data/lore-cli/pull/269. The PR is open, mergeable, and CLEAN; all six required PR checks passed in run 30677534306, including Ubuntu and Windows test legs, compile, MkDocs, Docusaurus, and the real-binary Docker E2E harness. Manual full-matrix run 30677543858 also passed all seven jobs.
+
+Concrete host results from the manual run:
+- GitHub macos-latest resolved to image macos-26-arm64. It installed @ladybugdb/core 0.19.0, passed the dynamic addon runtime/storage assertion, and completed 2300 tests with 0 failures.
+- GitHub ubuntu-latest resolved to ubuntu-24.04 on the standard x64 runner. It installed @ladybugdb/core 0.19.0, passed the dynamic addon runtime/storage assertion, and ran all 2300 tests with 0 failures (2299 pass, one unrelated platform skip).
+- GitHub windows-latest resolved to windows-2025-vs2026 on the standard x64 runner. The exact package metadata, integrities, and import-safe fallback assertions passed; the native addon assertion and native lifecycle suites were intentionally skipped by policy. The leg completed 2218 passes, 82 documented platform skips, and 0 failures.
+
+Residual completion blocker: the available matrix does not execute on Darwin x64 or Linux arm64, and this branch does not contain the real process concurrency/crash qualification owned by the dependent LCLI-283.1.4 machinery. Therefore AC 2 and AC 3 remain open, the task remains In Progress, and PR #269 must not be merged as task-complete evidence yet. No merge, publication, or lease return was authorized.
 <!-- SECTION:NOTES:END -->
