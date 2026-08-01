@@ -1,11 +1,11 @@
 ---
 id: LCLI-283.1.4
 title: Establish LadybugDB performance packaging and scale gates
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:33'
-updated_date: '2026-08-01 16:23'
+updated_date: '2026-08-01 16:30'
 labels:
   - ladybugdb
   - benchmark
@@ -193,6 +193,8 @@ Final qualification evidence (2026-08-01): no-publish Release workflow 307018029
 PR #270 delivery verification (2026-08-01): required CI run 30706559170 failed only the Windows full-suite job; six other jobs passed or were still completing when diagnosed. The Windows job ran 2,344 tests with 2 failures: test/ladybug-benchmark-report.test.ts hard-codes `/tmp/benchmark-cwd/artifact.json` although path.resolve correctly returns `D:\\tmp\\benchmark-cwd\\artifact.json` on Windows, and test/ladybug-benchmark-runner.test.ts unconditionally requires an indexed worker although the approved Windows policy is reference-fallback-only, producing `LoreError: verified indexed retrieval is unavailable`. This is a delivery blocker. No source/test fix, commit, push, rerun, or merge is authorized or performed yet.
 
 Approved PR portability repair implemented locally (2026-08-01): the CLI argument contract test now compares against `resolve(cwd, "artifact.json")`, and only the native indexed/reference worker parity test is skipped on Windows, matching the already approved fallback-only policy while leaving Darwin/Linux coverage unchanged. No production code, fixture, threshold, sample, gate, time cap, or platform policy changed. Verification: `bun test --isolate test/ladybug-benchmark-report.test.ts test/ladybug-benchmark-runner.test.ts` passed 8 tests / 164 assertions; `bun test --isolate` passed 2,344 tests / 7,266 assertions across 64 files; `bun run lint`, `bun run typecheck`, and `git diff --check` passed. Adversarial self-review found the patch limited to the two failing tests and consistent with dedicated Windows fallback/package evidence. Required PR CI and merge remain pending.
+
+PR #270 repair verification completed (2026-08-01): required CI run 30708064793 passed all seven jobs on commit 8014e97, including `lint · typecheck · test (windows-latest)` with the platform-aware path expectation and intentional Windows native-parity skip, Ubuntu full suite, Ladybug smoke, both scaffold smokes, compile smoke, and Docker E2E. This supersedes failed run 30706559170 without changing any production behavior or qualification policy. The task is ready for a terminal task-record commit and final-head CI.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
@@ -204,3 +206,9 @@ created: 2026-08-01 00:24
 2026-07-31 user review: pause the approved 3,976-worker timeout refinement before source edits. The multi-hour harness does not represent a Lore user query and should not be used to rediscover LadybugDB's maximum scale. Revise the acceptance plan around a conservative bounded Lore integration envelope, upstream published benchmark evidence, and a short optional larger-scale check; obtain explicit approval before replacing plan item 11 or changing benchmark methodology.
 ---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Improved persistent search and graph retrieval with bulk indexed ingestion, deterministic lexical postings, warm reader reuse, lazy body access, prepared lookups, and reusable adjacency while preserving exact output parity and repository containment. No-publish workflow 30701802962 passed all 18 frozen performance gates, concurrency/crash recovery, five builds, five matching-host package audits, strict evidence assembly, and package/install dry-run. The PR portability repair preserved the approved Windows fallback-only policy; local verification passed 2,344 tests, and required PR run 30708064793 passed all seven jobs on commit 8014e97.
+<!-- SECTION:FINAL_SUMMARY:END -->
