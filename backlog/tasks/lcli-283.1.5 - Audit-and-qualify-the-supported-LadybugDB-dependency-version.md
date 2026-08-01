@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-01 00:30'
-updated_date: '2026-08-01 02:45'
+updated_date: '2026-08-01 02:48'
 labels:
   - ladybugdb
   - dependency
@@ -48,8 +48,8 @@ Determine whether Lore's exact @ladybugdb/core pin remains the latest version th
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The audit inventories every LadybugDB version, optional-platform package, integrity, runtime/storage-version constant, fixture, workflow, test, and documentation pin in Lore and compares them with the official npm latest tag and upstream stable releases.
-- [ ] #2 Release notes and executable probes assess API, storage-format, migration/rebuild, Bun 1.2.23, native-addon, Windows fallback, packaging, security, and license compatibility for every candidate version after 0.18.2. Full real-process concurrency and crash qualification remains exclusively owned by LCLI-283.1.4.
-- [ ] #3 The selected exact version passes frozen installation; native loading on Darwin arm64, Darwin x64, Linux arm64, and Linux x64; projection build/reuse/rebuild; indexed graph/query/context parity; Windows x64 import-safe fallback; and supported-platform package qualification evidence without weakening existing fallback or cleanup guarantees. Full concurrency and crash qualification remains exclusively owned by LCLI-283.1.4.
+- [x] #2 Release notes and executable probes assess API, storage-format, migration/rebuild, Bun 1.2.23, native-addon, Windows fallback, packaging, security, and license compatibility for every candidate version after 0.18.2. Full real-process concurrency and crash qualification remains exclusively owned by LCLI-283.1.4.
+- [x] #3 The selected exact version passes frozen installation; native loading on Darwin arm64, Darwin x64, Linux arm64, and Linux x64; projection build/reuse/rebuild; indexed graph/query/context parity; Windows x64 import-safe fallback; and supported-platform package qualification evidence without weakening existing fallback or cleanup guarantees. Full concurrency and crash qualification remains exclusively owned by LCLI-283.1.4.
 - [x] #4 Lore either upgrades every exact pin, lock entry, optional-package integrity, fingerprint/control-manifest expectation, fixture, workflow, test, and documentation reference coherently, or records why 0.18.2 remains the latest supported version and what upstream change would unblock it.
 - [x] #5 The supported-version decision and evidence are documented in the LadybugDB benchmark and scale acceptance reference, and focused/full verification plus strict Lore validation and coherence gates pass.
 <!-- AC:END -->
@@ -94,6 +94,8 @@ Residual completion blocker: the available matrix does not execute on Darwin x64
 Option 2 local workflow verification (2026-07-31): added a default-off workflow_dispatch input that selects only macos-15-intel and ubuntu-24.04-arm for the existing check job and skips build, scaffold, and Docker jobs only in that narrow mode. Added static workflow regression coverage preserving the normal PR and full-matrix OS sets plus every unrelated-job skip guard. Local Bun 1.3.14 verification passed: focused CI/Ladybug qualification 7 tests and 42 assertions; full isolated suite 2,303 tests and 6,704 expectations across 56 files; lint checked 128 files; typecheck, actionlint, and git diff --check passed. These local results validate the workflow/configuration change but are not substitutes for the pending exact Bun 1.2.23 Darwin x64 and Linux arm64 host runs.
 
 Exact-host run 30680490024 on commit d7510d2 provided admissible Linux arm64 evidence: ubuntu-24.04-arm completed setup with pinned Bun 1.2.23, lint, typecheck, and all tests successfully. Darwin x64 on macos-15-intel also loaded the selected native addon and passed the runtime/storage assertion, plus 2,302 tests, but the job failed because the unrelated existing 700,000-row runOrphans regression took 29,855 ms and exceeded the generic 10,000 ms per-test timeout. This is a host-speed harness failure, not a LadybugDB failure. Refined only the macos-15-intel test command to a bounded 40,000 ms timeout; normal PR/full-matrix timeouts remain unchanged. Static coverage asserts both the special bound and ordinary 10,000 ms bound. Post-refinement local verification passed 8 focused tests/45 assertions, the full 2,304-test suite/6,707 expectations, lint across 128 files, typecheck, actionlint, and diff hygiene. A clean Darwin x64 rerun remains required before AC 2/3 can close.
+
+Final exact-host evidence (2026-07-31): workflow run 30680661668 completed successfully on shared code/workflow commit 903f7d84f4188c817f6eb1d75544858b10c4d279. macos-15-intel used exact Bun 1.2.23, passed the installed @ladybugdb/core native runtime/storage assertion, and finished 2,304 tests with 0 failures and 6,707 expectations across 56 files. ubuntu-24.04-arm used exact Bun 1.2.23, passed the same installed-addon runtime/storage assertion, and ran 2,304 tests with 2,303 passes, one documented platform skip, 0 failures, and 6,704 expectations across 56 files. Both jobs also passed lint and typecheck; the narrow dispatch skipped compile, scaffold, and Docker jobs as intended. Combined with the prior final-head Darwin arm64, Linux x64, and Windows x64 fallback evidence, this objectively satisfies revised AC 2 and AC 3. Full real-process concurrency/crash qualification remains exclusively in LCLI-283.1.4 per the user-approved scope split. LCLI-283.1.5 remains In Progress pending authorized PR delivery; no merge, publication, or lease return has been performed.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
