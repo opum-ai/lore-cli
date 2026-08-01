@@ -79,6 +79,11 @@ jobs:
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             # Windows runners hit FS/resource pressure under default parallelism (AC#2).
             bun test --isolate --max-concurrency=4 --timeout=30000
+          elif [[ "${{ matrix.os }}" == "macos-15-intel" ]]; then
+            # The 700k-row orphan-render regression takes ~30s on the slower Intel
+            # hosted runner. Keep its exact-host qualification bounded without
+            # weakening the ordinary matrix's per-test timeout.
+            bun test --isolate --timeout=40000
           else
             # Isolate test files so suites that mutate global process state can't bleed.
             bun test --isolate --timeout=10000

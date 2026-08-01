@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-01 00:30'
-updated_date: '2026-08-01 02:40'
+updated_date: '2026-08-01 02:45'
 labels:
   - ladybugdb
   - dependency
@@ -92,6 +92,8 @@ Residual completion blocker: the available matrix does not execute on Darwin x64
 2026-07-31 scope decision: the user approved option 2. LCLI-283.1.5 retains exact dependency-version and supported-host native/fallback qualification; full real-process concurrency and crash qualification is exclusively deferred to dependent task LCLI-283.1.4. The approved continuation is a narrow manual CI dispatch for only Darwin x64 and Linux arm64, with ordinary CI behavior unchanged.
 
 Option 2 local workflow verification (2026-07-31): added a default-off workflow_dispatch input that selects only macos-15-intel and ubuntu-24.04-arm for the existing check job and skips build, scaffold, and Docker jobs only in that narrow mode. Added static workflow regression coverage preserving the normal PR and full-matrix OS sets plus every unrelated-job skip guard. Local Bun 1.3.14 verification passed: focused CI/Ladybug qualification 7 tests and 42 assertions; full isolated suite 2,303 tests and 6,704 expectations across 56 files; lint checked 128 files; typecheck, actionlint, and git diff --check passed. These local results validate the workflow/configuration change but are not substitutes for the pending exact Bun 1.2.23 Darwin x64 and Linux arm64 host runs.
+
+Exact-host run 30680490024 on commit d7510d2 provided admissible Linux arm64 evidence: ubuntu-24.04-arm completed setup with pinned Bun 1.2.23, lint, typecheck, and all tests successfully. Darwin x64 on macos-15-intel also loaded the selected native addon and passed the runtime/storage assertion, plus 2,302 tests, but the job failed because the unrelated existing 700,000-row runOrphans regression took 29,855 ms and exceeded the generic 10,000 ms per-test timeout. This is a host-speed harness failure, not a LadybugDB failure. Refined only the macos-15-intel test command to a bounded 40,000 ms timeout; normal PR/full-matrix timeouts remain unchanged. Static coverage asserts both the special bound and ordinary 10,000 ms bound. Post-refinement local verification passed 8 focused tests/45 assertions, the full 2,304-test suite/6,707 expectations, lint across 128 files, typecheck, actionlint, and diff hygiene. A clean Darwin x64 rerun remains required before AC 2/3 can close.
 <!-- SECTION:NOTES:END -->
 
 ## Comments

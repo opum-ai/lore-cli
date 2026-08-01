@@ -7,6 +7,10 @@ const WORKFLOW_PATH = join(import.meta.dir, "..", ".github", "workflows", "ci.ym
 
 interface WorkflowJob {
   if?: string;
+  steps?: Array<{
+    name?: string;
+    run?: string;
+  }>;
   strategy?: {
     matrix?: {
       os?: string;
@@ -60,5 +64,12 @@ describe("ci.yml exact-host LadybugDB qualification", () => {
       if (name === "check") continue;
       expect(job.if).toBe(exactHostSkipGuard);
     }
+  });
+
+  test("the slower Darwin x64 runner has a bounded timeout without widening ordinary CI", () => {
+    const testScript = loadWorkflow().jobs.check?.steps?.find((step) => step.name === "Test")?.run ?? "";
+    expect(testScript).toContain('"macos-15-intel"');
+    expect(testScript).toContain("bun test --isolate --timeout=40000");
+    expect(testScript).toContain("bun test --isolate --timeout=10000");
   });
 });
