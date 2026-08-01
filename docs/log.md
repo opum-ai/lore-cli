@@ -39,6 +39,7 @@
 - 2026-07-30T15:08:52-05:00 743795bf0cc80f6c2b016cedaa424b5f9f189dfc docs: record protected branch handoff
 - 2026-07-30T15:10:18-05:00 a6348ff8971c5ad4f9a43aedb62643e70fc09deb docs: sync Commander campaign closeout log
 - 2026-07-30T17:03:49-05:00 edbd6f3abd1a37d9e04324db08e9ad8eea7657af feat: add deterministic LadybugDB projection lifecycle
+- 2026-07-30T19:26:25-05:00 0828913cdfa2f548ffa1385b77d9232570e9a785 feat: route retrieval through verified Ladybug index
 
 ## docs/.obsidian
 
@@ -139,6 +140,8 @@
 - 2026-07-30T12:04:38-05:00 921032fe8653e09c62f647152e05e6cd9454865e refactor: delegate terminal width to string-width
 - 2026-07-30T12:17:00-05:00 b9dcc4a3a88ffb01b217b9ad83bc06195935e9e6 refactor: consolidate config shape validation on Zod
 - 2026-07-30T15:07:43-05:00 90e9fbd90cd42c49348be7b2d0834b4d7cbf1a76 refactor: migrate CLI parsing to Commander
+- 2026-07-30T19:26:25-05:00 0828913cdfa2f548ffa1385b77d9232570e9a785 feat: route retrieval through verified Ladybug index
+- 2026-07-31T19:46:59-05:00 fb9db3a9e37e482f24b1b02c1d2287149efa14de docs: bound LadybugDB qualification scale
 
 ## docs/runbooks
 
@@ -194,6 +197,7 @@
 - 2026-07-30T15:07:43-05:00 90e9fbd90cd42c49348be7b2d0834b4d7cbf1a76 refactor: migrate CLI parsing to Commander
 - 2026-07-30T15:08:52-05:00 743795bf0cc80f6c2b016cedaa424b5f9f189dfc docs: record protected branch handoff
 - 2026-07-30T17:03:49-05:00 edbd6f3abd1a37d9e04324db08e9ad8eea7657af feat: add deterministic LadybugDB projection lifecycle
+- 2026-07-30T19:26:25-05:00 0828913cdfa2f548ffa1385b77d9232570e9a785 feat: route retrieval through verified Ladybug index
 
 ## docs/specs
 
@@ -212,3 +216,5 @@
 - 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
 - 2026-07-30T15:07:43-05:00 90e9fbd90cd42c49348be7b2d0834b4d7cbf1a76 refactor: migrate CLI parsing to Commander
 - 2026-07-30T17:03:49-05:00 edbd6f3abd1a37d9e04324db08e9ad8eea7657af feat: add deterministic LadybugDB projection lifecycle
+- 2026-07-30T19:26:25-05:00 0828913cdfa2f548ffa1385b77d9232570e9a785 feat: route retrieval through verified Ladybug index
+- 2026-07-31T19:46:59-05:00 fb9db3a9e37e482f24b1b02c1d2287149efa14de docs: bound LadybugDB qualification scale

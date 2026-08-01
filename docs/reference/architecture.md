@@ -315,12 +315,19 @@ depth walk and budget prefix. Public output does not reveal the selected backend
 ### M6 indexed read path
 
 M6 keeps these command and core contracts and uses exact-pinned
-`@ladybugdb/core@0.18.2` behind deterministic export schema `1.0`. `graph`,
+`@ladybugdb/core@0.19.0` (storage version `43`) behind deterministic export
+schema `1.0`. `graph`,
 `query`, and `context` now consume a `BundleGraph` reconstructed from canonical
 records in a fully verified read-only generation. The current in-memory loader
 remains the conformance oracle and documented fallback. Git and OKF remain
 authoritative; database files are ignored, disposable, immutable after
 publication, and never returned as provenance.
+
+The package/runtime/storage facts are part of the source fingerprint and
+control manifest. Although the selected 0.19.0 runtime can read the former
+storage-42 format, the 0.18.x to 0.19.0 transition is rebuild-only: Lore builds
+and verifies a new immutable storage-43 generation and never upgrades a
+published database in place.
 
 The resolver applies the lifecycle decision before public output:
 

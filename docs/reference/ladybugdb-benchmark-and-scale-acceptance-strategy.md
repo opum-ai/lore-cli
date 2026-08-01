@@ -100,15 +100,42 @@ The scale job does not replace these independent checks:
 
 ## Dependency version status
 
-Lore currently pins `@ladybugdb/core@0.18.2`, while the npm `latest` tag
-reported `0.19.0` on 2026-07-31. A newer package is not automatically a safer
-supported package: native loading, Bun compatibility, storage-version changes,
-platform artifacts, and existing Lore contracts must all be checked.
+`LCLI-283.1.5` selected exact `@ladybugdb/core@0.19.0` and storage version `43`
+on 2026-07-31. The decision covered every stable release after Lore's former
+`0.18.2` pin:
 
-`LCLI-283.1.5` owns that audit. It must either update every exact pin and
-recorded runtime/storage constant coherently or document the objective blocker
-for retaining `0.18.2`. Final `LCLI-283.1.4` evidence is authoritative only
-after that version decision.
+| Candidate | Published | Storage | Qualification result |
+|---|---:|---:|---|
+| `0.18.2` | 2026-07-15 | `42` | Former baseline; exact Bun 1.2.23 native lifecycle/retrieval suite passed. |
+| `0.18.3` | 2026-07-21 | `42` | Patch candidate; the same exact-Bun suite passed, including projection build/reuse/rebuild and indexed output parity. |
+| `0.19.0` | 2026-07-30 | `43` | Selected current npm `latest`; the same suite and audit passed. A real `0.18.2` storage-42 database reopened read-only and returned identical data under `0.19.0`. |
+
+The 0.18.3 tag fixes shortest-path filtering, boolean-filter selection, and
+interval conversion without changing storage format. The 0.19.0 release adds
+storage-43 sorted-table metadata plus fixes directly relevant to Lore's
+boundary: read-only opens during checkpoints, WAL forward reads, checkpoint
+lock cleanup, and macOS native-addon OpenSSL resolution. Upstream permits a
+storage-43 runtime to read storage 42, but Lore deliberately does not reuse the
+old generation: package and storage versions participate in the source
+fingerprint and control manifest, so the transition builds and verifies a new
+immutable generation.
+
+The selected lock contains the core package plus these five exact optional
+platform artifacts and audited npm integrity values:
+
+- `@ladybugdb/core@0.19.0` — `sha512-vlE2D2b6Ej/OiwtBCRtye34j8uRH9aV/ziJM+ZnXow77VkVr8zeVjSrAEj/eisj+uPPQ/pmuOXzJjJra0m0Bbg==`;
+- `@ladybugdb/core-darwin-arm64@0.19.0` — `sha512-3Ut3XL9kowzBoHw0wrN3QnW4xy5wYoPBypeuMtH92j59fol2w9e3lQJ6DM29YJ4F6mAVfW2cYGBXH2l9aXGmmw==`;
+- `@ladybugdb/core-darwin-x64@0.19.0` — `sha512-KHuCBx+jkyxdfFEmmbsfUS1f108P4rS+VNkwCrMLvzJmJOZTZgNKeRmT0vO7qRum5KEoHSIPJLj2Le//rCYigQ==`;
+- `@ladybugdb/core-linux-arm64@0.19.0` — `sha512-z4Z67LZlgj6H7YnKMB1PornbdmeszVxfENusfDQ2MFyOyrze1X6c/3MkhVPyunuaTtriN9SBnEdyK39mB7NdyQ==`;
+- `@ladybugdb/core-linux-x64@0.19.0` — `sha512-aJOh7+XbTzCLNloK+KlDXuRmHgr7nLqyQwR/BR8fP/XsWVnxCKGpVVL8s+Lms7JNQAh6vEsvExttGgUq9hAu1Q==`; and
+- `@ladybugdb/core-win32-x64@0.19.0` — `sha512-y2/IOMKmydo4ZfQPDZuZhiFC104VJQ9lwc0w1KVdvb4Z2RIUUL8/tn5QD4Uq8DUrJGxQhoEESPnlkk69cKaaDQ==`.
+
+All six packages declare MIT licensing. Bun 1.2.23 installation and `bun
+audit` reported no vulnerabilities. Darwin-arm64 executable evidence is
+complete locally; matching-host Darwin x64, Linux arm64/x64, and the explicit
+Windows fallback-only package policy remain required workflow evidence before
+the dependency task can be finalized. Final `LCLI-283.1.4` benchmark and
+packaging evidence is authoritative only after that host matrix settles.
 
 ## Sources
 
@@ -117,3 +144,5 @@ after that version decision.
 - [Kùzu Graph Database Management System, CIDR 2023](https://www.vldb.org/cidrdb/papers/2023/p48-jin.pdf)
 - [`@ladybugdb/core` on npm](https://www.npmjs.com/package/@ladybugdb/core)
 - [LadybugDB releases](https://github.com/LadybugDB/ladybug/releases)
+- [LadybugDB 0.18.2...0.18.3 comparison](https://github.com/LadybugDB/ladybug/compare/v0.18.2...v0.18.3)
+- [LadybugDB 0.19.0 release](https://github.com/LadybugDB/ladybug/releases/tag/v0.19.0)

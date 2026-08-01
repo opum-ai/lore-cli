@@ -50,7 +50,7 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "@ladybugdb/core": "0.18.2",
+    "@ladybugdb/core": "0.19.0",
     "commander": "15.0.0",
     "github-slugger": "2.0.0",
     "ipaddr.js": "2.4.0",

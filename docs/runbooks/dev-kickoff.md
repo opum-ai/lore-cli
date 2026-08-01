@@ -65,12 +65,15 @@ capabilities. Only a preparation lane moves earlier:
 2. The two independent prerequisites are complete and merged:
    - `LCLI-284` migrated CLI parsing, dispatch, and help to Commander.
    - `LCLI-283.1.2` implemented and landing-reviewed the deterministic
-     projection lifecycle using exact `@ladybugdb/core@0.18.2`.
+     projection lifecycle using the then-current exact
+     `@ladybugdb/core@0.18.2`.
 3. `LCLI-283.1.3` completed indexed `graph`, `query`, and `context` integration
    against both prerequisites; its protected publication is the next operation.
-4. `LCLI-283.1.4` completes performance, packaging, recovery, concurrency, and
+4. `LCLI-283.1.5` selected exact `@ladybugdb/core@0.19.0` / storage `43` and
+   must finish matching-host qualification before the final M6 evidence.
+5. `LCLI-283.1.4` completes performance, packaging, recovery, concurrency, and
    scale gates.
-5. `LCLI-283.2.1` may define the explorer contract after step 1, but
+6. `LCLI-283.2.1` may define the explorer contract after step 1, but
    `LCLI-283.2.2` implementation waits for all M6 gates.
 
 This ordering prevents new indexed options from being implemented in the

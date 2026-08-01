@@ -39,8 +39,8 @@ import { fakeAdapter, makeTask } from "./helpers";
 // loading and exercising the native lifecycle only on qualified hosts.
 const nativeDriver = process.platform === "win32" ? null : await import("../src/core/ladybug-driver");
 const nativeLifecycle = process.platform === "win32" ? null : await import("../src/core/ladybug-lifecycle");
-const LADYBUG_VERSION = nativeDriver?.LADYBUG_VERSION ?? "0.18.2";
-const LADYBUG_STORAGE_VERSION = nativeDriver?.LADYBUG_STORAGE_VERSION ?? "42";
+const LADYBUG_VERSION = nativeDriver?.LADYBUG_VERSION ?? "0.19.0";
+const LADYBUG_STORAGE_VERSION = nativeDriver?.LADYBUG_STORAGE_VERSION ?? "43";
 const readLadybugSourceRecords: typeof import("../src/core/ladybug-driver").readLadybugSourceRecords =
   nativeDriver?.readLadybugSourceRecords ??
   (async () => {
@@ -389,7 +389,14 @@ nativeDescribe("Ladybug projection lifecycle", () => {
     chmodSync(generation.generationPath, 0o700);
     chmodSync(generation.controlPath, 0o600);
     const control = JSON.parse(readFileSync(generation.controlPath, "utf8")) as LadybugControlManifest;
-    writeFileSync(generation.controlPath, `${canonicalJson({ ...control, ladybugVersion: "0.17.0" })}\n`);
+    writeFileSync(
+      generation.controlPath,
+      `${canonicalJson({
+        ...control,
+        ladybugVersion: "0.18.3",
+        ladybugStorageVersion: "42",
+      })}\n`,
+    );
     chmodSync(generation.controlPath, 0o444);
     chmodSync(generation.generationPath, 0o555);
 
