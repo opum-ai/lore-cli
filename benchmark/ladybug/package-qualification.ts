@@ -384,7 +384,7 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
     writeFileSync(input.output, `${canonicalJson(report)}\n`);
     return report;
   } finally {
-    removeQualificationScratch(scratch);
+    await removeQualificationScratch(scratch);
     if (report === undefined && existsSync(input.output)) rmSync(input.output, { force: true });
   }
 }
@@ -803,15 +803,36 @@ function findFiles(root: string, filename: string): string[] {
   return found;
 }
 
-function removeQualificationScratch(root: string): void {
+export interface ScratchRemovalOptions {
+  readonly remove?: (root: string) => void;
+  readonly delay?: (milliseconds: number) => Promise<void>;
+}
+
+export async function removeQualificationScratch(root: string, options: ScratchRemovalOptions = {}): Promise<void> {
   const expectedPrefix = "lore-ladybug-package-";
   if (dirname(root) !== tmpdir() || !basename(root).startsWith(expectedPrefix)) {
     throw new Error(`refusing to remove an unexpected package-qualification scratch path: ${root}`);
   }
   makeTreeWritable(root);
-  // Windows can retain a crashed native probe's file handles briefly. Node's
-  // recursive rm contract retries EBUSY/EPERM with bounded linear backoff.
-  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 });
+  const remove = options.remove ?? ((path: string) => rmSync(path, { recursive: true, force: true }));
+  const delay = options.delay ?? ((milliseconds: number) => Bun.sleep(milliseconds));
+  for (let attempt = 0; ; attempt++) {
+    try {
+      remove(root);
+      return;
+    } catch (error: unknown) {
+      if (!isRetryableRemovalError(error) || attempt >= 10) throw error;
+      // Bun 1.2.23 does not honor Node's rmSync maxRetries option. Preserve the
+      // documented bounded linear-backoff behavior explicitly for transient
+      // Windows handles retained after the sacrificial native process exits.
+      await delay(250 * (attempt + 1));
+    }
+  }
+}
+
+function isRetryableRemovalError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error)) return false;
+  return ["EBUSY", "EMFILE", "ENFILE", "ENOTEMPTY", "EPERM"].includes(String(error.code));
 }
 
 function makeTreeWritable(path: string): void {

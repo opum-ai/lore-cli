@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as yaml from "js-yaml";
@@ -9,6 +9,7 @@ import {
   LADYBUG_PACKAGE_QUALIFICATION_SCHEMA,
   packageCompileCommand,
   parsePackageQualificationArgs,
+  removeQualificationScratch,
   resolveInstalledOptionalPackageJson,
 } from "../benchmark/ladybug/package-qualification";
 
@@ -65,6 +66,30 @@ function needs(job: WorkflowJob): string[] {
 }
 
 describe("matching-host Ladybug package qualification", () => {
+  test("retries temporary Windows-style scratch locks with bounded linear backoff", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lore-ladybug-package-retry-"));
+    const delays: number[] = [];
+    let attempts = 0;
+    await removeQualificationScratch(root, {
+      remove: (path) => {
+        attempts++;
+        if (attempts <= 2) {
+          const error = new Error("locked") as NodeJS.ErrnoException;
+          error.code = "EBUSY";
+          throw error;
+        }
+        rmSync(path, { recursive: true, force: true });
+      },
+      delay: async (milliseconds) => {
+        delays.push(milliseconds);
+      },
+    });
+
+    expect(attempts).toBe(3);
+    expect(delays).toEqual([250, 500]);
+    expect(existsSync(root)).toBe(false);
+  });
+
   test("builds from same-drive scratch with an absolute repository entrypoint", () => {
     expect(
       packageCompileCommand("D:\\repo", "C:\\scratch", "bun-windows-x64-baseline", "C:\\scratch\\lore.exe"),
