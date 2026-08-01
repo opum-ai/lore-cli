@@ -12,6 +12,7 @@ labels:
 milestone: m-13
 dependencies:
   - LCLI-283.1.3
+  - LCLI-283.1.5
 documentation:
   - docs/specs/local-graph-platform-roadmap.md
 parent_task_id: LCLI-283.1
