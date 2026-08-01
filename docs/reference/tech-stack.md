@@ -326,9 +326,9 @@ outside the generic schema.
 
 | | |
 |---|---|
-| **Package** | Exact-pinned `@ladybugdb/core@0.18.2` |
+| **Package** | Exact-pinned `@ladybugdb/core@0.19.0` |
 | **Status** | **Shipping dependency; deterministic projection lifecycle and indexed command routing complete.** |
-| **Runtime/storage** | Ladybug `0.18.2` / storage version `42` under pinned Bun 1.2.23 |
+| **Runtime/storage** | Ladybug `0.19.0` / storage version `43` under pinned Bun 1.2.23 |
 | **Role** | Rebuildable persistent local property-graph and lexical projection for `graph`, `query`, and `context` |
 
 **Rationale.** Repeated retrieval, future interactive exploration, and larger
@@ -340,6 +340,11 @@ transactional isolated builds, immutable publication, read-only verification,
 and safe rebuild/recovery. `LCLI-283.1.3` routes the three read commands through
 that projection while the retained in-memory path passes the same deterministic
 conformance fixtures and remains the fallback.
+
+`LCLI-283.1.5` compared stable 0.18.3 and 0.19.0 with the former 0.18.2
+baseline, then selected 0.19.0. The storage-43 runtime can read a storage-42
+database, but Lore includes package and storage versions in its fingerprint and
+therefore replaces the derived generation instead of migrating it in place.
 
 The native addon is lazy-loaded. Bun 1.2.23's Windows Ladybug addon crashes
 while loading, so Windows-safe non-native/fallback paths must not import it;
@@ -487,7 +492,7 @@ adoption are described in
 | SSRF address parsing and CIDR match | `ipaddr.js`; Lore retains explicit block policy, DNS, redirect, timeout, fail-closed, and error behavior (`LCLI-286`) | exact `2.4.0` | yes |
 | Schema + JSON Schema emit | Zod **v4** | exact `4.4.3` | yes |
 | Config parse and shape | Bun native TOML parsing + Zod generic shape; Lore retains security, defaults/projection, page-id precision, and error policy (`LCLI-288`) | pinned Bun + exact Zod `4.4.3` | yes |
-| Local graph and lexical projection | `@ladybugdb/core` | `0.18.2` | **shipping M6 dependency; indexed routing complete** |
+| Local graph and lexical projection | `@ladybugdb/core` | `0.19.0` | **shipping M6 dependency; indexed routing complete** |
 | MCP transport | @modelcontextprotocol/sdk | — | **on hold** |
 | Confluence publish | *(plain `fetch`)* | — | **on hold** |
 

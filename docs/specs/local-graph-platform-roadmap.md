@@ -67,9 +67,9 @@ schema freeze:
 - `LCLI-284` migrated the router and command option tokenizers to exact-pinned
   Commander. It depends only on `LCLI-283.1.1`, belongs to M6, and must remain
   complete before indexed command integration.
-- `LCLI-283.1.2` completed deterministic projection construction, reconciliation, transactional replacement, invalidation, corruption recovery, and disposal with exact `@ladybugdb/core@0.18.2`.
+- `LCLI-283.1.2` completed deterministic projection construction, reconciliation, transactional replacement, invalidation, corruption recovery, and disposal with the then-current exact `@ladybugdb/core@0.18.2`.
 - `LCLI-283.1.3` completed verified graph, lexical query, and context routing while retaining the in-memory implementation as a conformance oracle and documented fallback.
-- `LCLI-283.1.5` audits the current LadybugDB pin against the latest stable release and qualifies the selected exact version across storage, Bun, native-platform, packaging, and recovery boundaries.
+- `LCLI-283.1.5` selected exact `@ladybugdb/core@0.19.0` / storage `43` after comparing every later stable release with the 0.18.2 baseline under pinned Bun 1.2.23. Matching-host package evidence remains its final gate.
 - `LCLI-283.1.4` establishes the bounded cold and warm acceptance envelope, memory and disk budgets, supported native packaging, concurrency tests, and release thresholds. Its blocking scale gate is a deterministic 100 MiB authored-source fixture; the 1 GiB observation is opt-in and non-blocking. The rationale and precise budgets are recorded in [LadybugDB benchmark and scale acceptance strategy](../reference/ladybugdb-benchmark-and-scale-acceptance-strategy.md).
 
 M6 is complete only when LadybugDB produces a material measured warm-query improvement, remains safe and rebuildable under stale, corrupt, locked, and interrupted states, preserves deterministic output contracts, and does not impose an unacceptable regression on small repositories.
@@ -112,11 +112,14 @@ selected and tested under pinned Bun 1.2.23 by the implementation/packaging
 tasks and recorded in the index; a version change rebuilds rather than assuming
 native file compatibility.
 
-`LCLI-283.1.2` selected exact `@ladybugdb/core@0.18.2`. Under pinned Bun
-1.2.23 the package reports runtime version `0.18.2` and storage version `42`;
-both values are duplicated in the projection database and control manifest and
-participate in the source fingerprint. Bun trusts only this package's install
-script so its exact platform optional dependency can copy the native addon.
+`LCLI-283.1.2` initially selected exact `@ladybugdb/core@0.18.2`. The later
+`LCLI-283.1.5` audit selected exact `@ladybugdb/core@0.19.0`; under pinned Bun
+1.2.23 it reports runtime version `0.19.0` and storage version `43`. Both values
+are duplicated in the projection database and control manifest and participate
+in the source fingerprint. Even though Ladybug 0.19.0 can read the former
+storage-42 database, Lore performs a rebuild-only replacement. Bun trusts only
+the core package's install script so its exact platform optional dependency can
+copy the native addon.
 
 Bun 1.2.23 segfaults while loading the Ladybug Windows addon before native
 tests can execute. Indexed routing must therefore keep native loading behind an
