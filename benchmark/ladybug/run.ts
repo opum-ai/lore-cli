@@ -22,6 +22,7 @@ import {
   ladybugQualificationScenarios,
   measureCanonicalInputBytes,
   runLadybugBenchmarkPolicyPair,
+  runLadybugBenchmarkSessionPair,
   spawnLadybugBenchmarkWorker,
 } from "./orchestrator";
 import type { BenchmarkPolicy } from "./protocol";
@@ -210,6 +211,7 @@ async function runFixture(
   let sequence = 0;
   try {
     const warmFixture = generate(spec, temporaryRoots, "warm");
+    benchmarkProgress(`${spec.name}: generated ${spec.counts.markdownBodyBytes} authored Markdown bytes`);
     if (configuration.mode !== "observation") assertFixtureDigests(warmFixture);
     const reportSpec = configuration.mode === "observation" ? { ...spec, expected: warmFixture.digests } : spec;
     const canonicalInputBytes = await measureCanonicalInputBytes(warmFixture.root);
@@ -233,6 +235,7 @@ async function runFixture(
       temporaryRoots.splice(temporaryRoots.indexOf(setupFixture.root), 1);
     }
 
+    benchmarkProgress(`${spec.name}: starting the single cold projection build`);
     const cold = await spawnLadybugBenchmarkWorker(warmFixture.root, "indexed", { kind: "projection-cold" });
     samples.push(
       rawSample({
@@ -281,27 +284,48 @@ async function runFixture(
       }
     }
 
-    const measuredOrders = scenarios.map((_, index) =>
-      randomizedPolicyOrders(spec.seed ^ 0x2468_ace0 ^ index, configuration.repetitions),
-    );
-    const repetitionsPerBatch = configuration.repetitions / configuration.batches;
-    for (let batch = 1; batch <= configuration.batches; batch++) {
-      for (let inBatch = 1; inBatch <= repetitionsPerBatch; inBatch++) {
-        const repetition = (batch - 1) * repetitionsPerBatch + inBatch;
-        for (let scenarioIndex = 0; scenarioIndex < scenarios.length; scenarioIndex++) {
-          const scenario = scenarios[scenarioIndex] as LadybugBenchmarkScenario;
-          const order = (measuredOrders[scenarioIndex] as Array<readonly [BenchmarkPolicy, BenchmarkPolicy]>)[
-            repetition - 1
-          ] as readonly [BenchmarkPolicy, BenchmarkPolicy];
-          const pair = await runLadybugBenchmarkPolicyPair(warmFixture.root, scenario, order);
+    if (configuration.mode === "smoke") {
+      const measuredOrders = scenarios.map((_, index) =>
+        randomizedPolicyOrders(spec.seed ^ 0x2468_ace0 ^ index, configuration.repetitions),
+      );
+      const repetitionsPerBatch = configuration.repetitions / configuration.batches;
+      for (let batch = 1; batch <= configuration.batches; batch++) {
+        for (let inBatch = 1; inBatch <= repetitionsPerBatch; inBatch++) {
+          const repetition = (batch - 1) * repetitionsPerBatch + inBatch;
+          for (let scenarioIndex = 0; scenarioIndex < scenarios.length; scenarioIndex++) {
+            const scenario = scenarios[scenarioIndex] as LadybugBenchmarkScenario;
+            const order = (measuredOrders[scenarioIndex] as Array<readonly [BenchmarkPolicy, BenchmarkPolicy]>)[
+              repetition - 1
+            ] as readonly [BenchmarkPolicy, BenchmarkPolicy];
+            const pair = await runLadybugBenchmarkPolicyPair(warmFixture.root, scenario, order);
+            sequence = appendPair(
+              samples,
+              sequence,
+              pair,
+              "measurement",
+              batch,
+              repetition,
+              `measurement:${scenario.id}:${padded(repetition)}`,
+              canonicalInputBytes,
+            );
+          }
+        }
+      }
+    } else {
+      const orders = randomizedPolicyOrders(spec.seed ^ 0x2468_ace0, configuration.repetitions);
+      for (let repetition = 1; repetition <= configuration.repetitions; repetition++) {
+        const order = orders[repetition - 1] as readonly [BenchmarkPolicy, BenchmarkPolicy];
+        benchmarkProgress(`${spec.name}: warm session ${repetition}/${configuration.repetitions} (${order.join("/")})`);
+        const pairs = await runLadybugBenchmarkSessionPair(warmFixture.root, scenarios, order);
+        for (const pair of pairs) {
           sequence = appendPair(
             samples,
             sequence,
             pair,
             "measurement",
-            batch,
+            1,
             repetition,
-            `measurement:${scenario.id}:${padded(repetition)}`,
+            `measurement:${pair.scenario.id}:${padded(repetition)}`,
             canonicalInputBytes,
           );
         }
@@ -436,6 +460,10 @@ function runCalibration(warmups: number, repetitions: number): number[] {
   };
   for (let index = 0; index < warmups; index++) one();
   return Array.from({ length: repetitions }, one);
+}
+
+function benchmarkProgress(message: string): void {
+  process.stderr.write(`[ladybug-benchmark] ${message}\n`);
 }
 
 function repositoryFacts(root: string): LadybugBenchmarkReport["repository"] {

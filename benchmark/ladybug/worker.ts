@@ -10,9 +10,15 @@ import { createLadybugBenchmarkBacklogAdapter } from "./fixture";
 import {
   type BenchmarkOperation,
   type BenchmarkPolicy,
+  LADYBUG_BENCHMARK_SESSION_REQUEST_SCHEMA,
+  LADYBUG_BENCHMARK_SESSION_RESULT_SCHEMA,
+  LADYBUG_BENCHMARK_WORKER_REQUEST_SCHEMA,
   LADYBUG_BENCHMARK_WORKER_RESULT_SCHEMA,
+  type LadybugBenchmarkSessionRequest,
+  type LadybugBenchmarkSessionResult,
   type LadybugBenchmarkWorkerRequest,
   type LadybugBenchmarkWorkerResult,
+  parseLadybugBenchmarkSessionRequest,
   parseLadybugBenchmarkWorkerRequest,
 } from "./protocol";
 
@@ -56,14 +62,108 @@ export async function executeLadybugBenchmarkWorker(
   return workerResult(request, loaded, operationNanoseconds, emitted, Buffer.byteLength(emitted), stderr.text());
 }
 
+export async function executeLadybugBenchmarkSessionWorker(
+  request: LadybugBenchmarkSessionRequest,
+): Promise<LadybugBenchmarkSessionResult> {
+  if (!isAbsolute(request.root)) throw new Error("benchmark session root must be absolute");
+  if (
+    request.operations[0]?.kind !== "warm-open" ||
+    request.operations.slice(1).some(({ kind }) => kind === "warm-open")
+  ) {
+    throw new Error("benchmark session must begin with exactly one warm-open operation");
+  }
+  assertGenerationState(request.root, request.policy, request.operations[0]);
+  const cpuStarted = process.cpuUsage();
+  const started = process.hrtime.bigint();
+  const loaded = await load(request.root, request.policy);
+  const operationNanoseconds = elapsedNanoseconds(started);
+  const cpuMicroseconds = operationCpuMicroseconds(cpuStarted);
+  assertBackend(request.policy, loaded);
+  const warmOpenRequest: LadybugBenchmarkWorkerRequest = {
+    schema: LADYBUG_BENCHMARK_WORKER_REQUEST_SCHEMA,
+    root: request.root,
+    policy: request.policy,
+    operation: request.operations[0],
+  };
+  const samples: LadybugBenchmarkSessionResult["samples"] = [
+    {
+      result: workerResult(
+        warmOpenRequest,
+        loaded,
+        operationNanoseconds,
+        JSON.stringify(buildGraphExport(loaded.graph)),
+        0,
+        "",
+      ),
+      cpuMicroseconds,
+    },
+  ];
+  for (const operation of request.operations.slice(1)) {
+    if (operation.kind === "projection-cold") throw new Error("benchmark session cannot contain a cold build");
+    const operationRequest: LadybugBenchmarkWorkerRequest = {
+      schema: LADYBUG_BENCHMARK_WORKER_REQUEST_SCHEMA,
+      root: request.root,
+      policy: request.policy,
+      operation,
+    };
+    samples.push(await executeLoadedOperation(operationRequest, loaded));
+  }
+  return {
+    schema: LADYBUG_BENCHMARK_SESSION_RESULT_SCHEMA,
+    policy: request.policy,
+    backend: loaded.backend,
+    samples,
+  };
+}
+
 async function main(): Promise<void> {
   const raw = process.argv[2];
   if (raw === undefined || process.argv.length !== 3) {
     throw new Error("usage: bun benchmark/ladybug/worker.ts '<worker-request-json>'");
   }
-  const request = parseLadybugBenchmarkWorkerRequest(JSON.parse(raw) as unknown);
-  const result = await executeLadybugBenchmarkWorker(request);
+  const value = JSON.parse(raw) as { schema?: unknown };
+  const result =
+    value.schema === LADYBUG_BENCHMARK_SESSION_REQUEST_SCHEMA
+      ? await executeLadybugBenchmarkSessionWorker(parseLadybugBenchmarkSessionRequest(value))
+      : await executeLadybugBenchmarkWorker(parseLadybugBenchmarkWorkerRequest(value));
   process.stdout.write(`${JSON.stringify(result)}\n`);
+}
+
+async function executeLoadedOperation(
+  request: LadybugBenchmarkWorkerRequest,
+  loaded: RetrievalGraph,
+): Promise<LadybugBenchmarkSessionResult["samples"][number]> {
+  if (request.operation.kind === "projection-cold" || request.operation.kind === "warm-open") {
+    throw new Error("loaded benchmark operation must be graph, query, or context");
+  }
+  const stdout = capture();
+  const stderr = capture();
+  const retrieval: RetrievalGraphLoader = async () => loaded;
+  const args = commandArgs(request.operation);
+  const cpuStarted = process.cpuUsage();
+  const started = process.hrtime.bigint();
+  const code = await run([process.execPath, "lore", ...args], {
+    cwd: request.root,
+    stdout,
+    stderr,
+    isTTY: false,
+    stderrIsTTY: false,
+    env: {},
+    retrieval,
+  });
+  const measured = elapsedNanoseconds(started);
+  const cpuMicroseconds = operationCpuMicroseconds(cpuStarted);
+  if (code !== 0) throw new Error(`benchmark command ${request.operation.kind} exited ${code}: ${stderr.text()}`);
+  const emitted = stdout.text();
+  return {
+    result: workerResult(request, loaded, measured, emitted, Buffer.byteLength(emitted), stderr.text()),
+    cpuMicroseconds,
+  };
+}
+
+function operationCpuMicroseconds(started: NodeJS.CpuUsage): { user: number; system: number; total: number } {
+  const { user, system } = process.cpuUsage(started);
+  return { user, system, total: user + system };
 }
 
 function load(root: string, policy: BenchmarkPolicy): Promise<RetrievalGraph> {

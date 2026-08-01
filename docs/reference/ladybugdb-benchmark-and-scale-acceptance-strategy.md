@@ -62,8 +62,13 @@ source-byte count, document and task counts, projected node and edge counts,
 and export digest so results can be compared across runs.
 
 The blocking job performs one cold projection build followed by five warm
-samples for representative query, graph, and context operations. The wider
-functional scenario matrix belongs in fast non-timing tests. Initial budgets
+samples for representative query, graph, and context operations. Each
+repetition starts one fresh indexed session and one fresh reference session in
+a deterministic AB/BA order, measures warm open once per policy, and then
+measures the representative operations against that loaded session. Source
+bytes are hashed before and after each session. This keeps the samples
+independent without reparsing the same 100 MiB repository once per operation.
+The wider functional scenario matrix belongs in fast non-timing tests. Initial budgets
 are deliberately conservative and may only be changed with recorded evidence:
 
 | Measurement | Initial blocking budget |

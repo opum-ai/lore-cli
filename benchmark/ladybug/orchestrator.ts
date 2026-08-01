@@ -13,9 +13,12 @@ import { createLadybugBenchmarkBacklogAdapter, type LadybugBenchmarkFixtureSpec 
 import {
   type BenchmarkOperation,
   type BenchmarkPolicy,
+  LADYBUG_BENCHMARK_SESSION_REQUEST_SCHEMA,
   LADYBUG_BENCHMARK_WORKER_REQUEST_SCHEMA,
+  type LadybugBenchmarkSessionRequest,
   type LadybugBenchmarkWorkerRequest,
   type LadybugBenchmarkWorkerResult,
+  parseLadybugBenchmarkSessionResult,
   parseLadybugBenchmarkWorkerResult,
 } from "./protocol";
 
@@ -180,6 +183,94 @@ export async function runLadybugBenchmarkPolicyPair(
     throw new Error(`indexed/reference emitted-byte mismatch for ${scenario.id}`);
   }
   return { scenario, order, samples: [first, second] };
+}
+
+/**
+ * Collect one warm sample for every representative operation from each policy
+ * while loading the 100 MiB authored repository only once per policy session.
+ */
+export async function runLadybugBenchmarkSessionPair(
+  root: string,
+  scenarios: readonly LadybugBenchmarkScenario[],
+  order: readonly [BenchmarkPolicy, BenchmarkPolicy],
+): Promise<LadybugBenchmarkPolicyPair[]> {
+  assertPolicyOrder(order);
+  if (scenarios[0]?.operation.kind !== "warm-open") {
+    throw new Error("benchmark session scenarios must begin with warm-open");
+  }
+  const first = await spawnLadybugBenchmarkSessionWorker(root, order[0], scenarios);
+  const second = await spawnLadybugBenchmarkSessionWorker(root, order[1], scenarios);
+  return scenarios.map((scenario, index) => {
+    const firstSample = first[index];
+    const secondSample = second[index];
+    if (firstSample === undefined || secondSample === undefined) {
+      throw new Error(`benchmark session omitted ${scenario.id}`);
+    }
+    if (firstSample.result.resultDigest !== secondSample.result.resultDigest) {
+      throw new Error(
+        `indexed/reference result digest mismatch for ${scenario.id}: ${firstSample.result.resultDigest} != ${secondSample.result.resultDigest}`,
+      );
+    }
+    if (firstSample.result.emittedBytes !== secondSample.result.emittedBytes) {
+      throw new Error(`indexed/reference emitted-byte mismatch for ${scenario.id}`);
+    }
+    return { scenario, order, samples: [firstSample, secondSample] };
+  });
+}
+
+async function spawnLadybugBenchmarkSessionWorker(
+  root: string,
+  policy: BenchmarkPolicy,
+  scenarios: readonly LadybugBenchmarkScenario[],
+): Promise<LadybugBenchmarkSubprocessSample[]> {
+  const request: LadybugBenchmarkSessionRequest = {
+    schema: LADYBUG_BENCHMARK_SESSION_REQUEST_SCHEMA,
+    root,
+    policy,
+    operations: scenarios.map(({ operation }) => operation),
+  };
+  const before = snapshotLadybugBenchmarkSources(root);
+  const cacheLogicalBytesBefore = ladybugCacheLogicalBytes(root);
+  const workerPath = join(import.meta.dir, "worker.ts");
+  const subprocess = Bun.spawn([process.execPath, workerPath, JSON.stringify(request)], {
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: process.env,
+  });
+  const stdoutPromise = new Response(subprocess.stdout).text();
+  const stderrPromise = new Response(subprocess.stderr).text();
+  const exitCode = await subprocess.exited;
+  const stdout = await stdoutPromise;
+  const stderr = await stderrPromise;
+  const usage = subprocess.resourceUsage();
+  const after = snapshotLadybugBenchmarkSources(root);
+  assertLadybugBenchmarkSourcesUnchanged(before, after);
+  if (exitCode !== 0) {
+    throw new Error(`ladybug benchmark session worker exited ${exitCode}: ${stderr.trim() || "no diagnostic"}`);
+  }
+  if (stderr !== "") throw new Error(`ladybug benchmark session worker emitted stderr: ${stderr.trim()}`);
+  if (usage === undefined) throw new Error("Bun did not provide completed session subprocess resource usage");
+  const result = parseLadybugBenchmarkSessionResult(JSON.parse(stdout) as unknown);
+  if (result.policy !== policy || result.backend !== policy || result.samples.length !== scenarios.length) {
+    throw new Error("ladybug benchmark session result does not match its requested policy and scenarios");
+  }
+  const maxRSSBytes = resourceCounter(usage.maxRSS, "max RSS bytes");
+  const cacheLogicalBytesAfter = ladybugCacheLogicalBytes(root);
+  return result.samples.map(({ result: workerResult, cpuMicroseconds }, index) => {
+    if (JSON.stringify(workerResult.operation) !== JSON.stringify(scenarios[index]?.operation)) {
+      throw new Error(`ladybug benchmark session result order drifted at index ${index}`);
+    }
+    return {
+      result: workerResult,
+      wallNanoseconds: workerResult.operationNanoseconds,
+      cpuMicroseconds,
+      maxRSSBytes,
+      cacheLogicalBytesBefore,
+      cacheLogicalBytesAfter,
+      sourceDigest: before.digest,
+    };
+  });
 }
 
 function assertPolicyOrder(order: readonly [BenchmarkPolicy, BenchmarkPolicy]): void {

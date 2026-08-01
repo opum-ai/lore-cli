@@ -13,6 +13,7 @@ import {
   type LadybugBenchmarkScenario,
   ladybugBenchmarkScenarios,
   runLadybugBenchmarkPass,
+  runLadybugBenchmarkSessionPair,
 } from "../benchmark/ladybug/orchestrator";
 import { disposeLadybugProjection } from "../src/core/ladybug-lifecycle";
 
@@ -117,6 +118,16 @@ describe("Ladybug benchmark worker and orchestrator", () => {
       assertLadybugBenchmarkSourcesUnchanged(before, snapshotLadybugBenchmarkSources(generated.root)),
     ).not.toThrow();
     expect(readdirSync(join(generated.root, ".lore", "cache", "graph", "ladybug", "1", "generations"))).toHaveLength(1);
+
+    const sessionPairs = await runLadybugBenchmarkSessionPair(generated.root, scenarios, ["reference", "indexed"]);
+    expect(sessionPairs).toHaveLength(scenarios.length);
+    for (const pair of sessionPairs) {
+      expect(pair.samples[0].result.resultDigest).toBe(pair.samples[1].result.resultDigest);
+      expect(pair.samples[0].result.operation).toEqual(pair.scenario.operation);
+      expect(pair.samples[1].result.operation).toEqual(pair.scenario.operation);
+      expect(pair.samples[0].wallNanoseconds).toBe(pair.samples[0].result.operationNanoseconds);
+      expect(pair.samples[1].wallNanoseconds).toBe(pair.samples[1].result.operationNanoseconds);
+    }
   }, 60_000);
 });
 
