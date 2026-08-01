@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:33'
-updated_date: '2026-08-01 18:27'
+updated_date: '2026-08-01 21:43'
 labels:
   - graph-explorer
   - design
@@ -60,6 +60,8 @@ Implemented the strict lore-explorer-snapshot/1 and separate lore-explorer-prese
 Final objective verification under pinned Bun 1.2.23: focused explorer contract suite passes 6 tests / 47 expectations; the complete repository test suite exits 0; typecheck, repository lint, production build, and git diff --check pass. Strict Lore validation of both authored Specs reports 2 files, 0 errors, 0 warnings. AC 1-4 are verified by the executable payload/presentation schemas, conformance fixture/tests, exported refresh and interaction contracts, and the validated Spec. Remaining finalization gate: lore sync plus lore validate/check --strict; lore sync will auto-commit the dirty Backlog task record, so it awaits local commit authority for this task.
 
 Settlement completed after explicit user authorization: moved the task to Done, ran Lore sync, and created local commits 07a220d (terminal Backlog record), 3179b04 (feature), and 9c1f136 (generated Lore log). Terminal-head verification passes the full pinned Bun 1.2.23 suite, typecheck, lint, build, strict Lore validation/check, and diff hygiene. No push, PR, merge, publication, lease return, branch deletion, or primary-checkout cleanup was performed.
+
+Post-parent-merge delivery verification (2026-08-01): rebased the clean branch onto merged dev f892380196e8a38534ddb740780aedecb1d0ea0f, producing 9a932ddc578c3b761bd27c8bf1291037cdac0db7 before this evidence-only task update. LCLI-283.1 is now Done with all five ACs checked. Exact Bun 1.2.23 explorer-contract verification passed 6 tests, 0 failures, and 47 expectations; typecheck passed; Biome checked 154 files with no fixes; production build compiled 241 modules; strict Lore validation passed both explorer and roadmap Specs with 0 findings; strict Lore check passed 48 files with 0 findings; git diff --check passed. The rebase was conflict-free and introduced no explorer content changes. Do not rerun lore sync solely to make the generated log describe this evidence-only task commit.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
