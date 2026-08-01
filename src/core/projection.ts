@@ -14,6 +14,7 @@ import { serializeConcept } from "./concept";
 
 export const PROJECTION_SCHEMA_VERSION = "1.0";
 export const PROJECTION_NORMALIZATION_VERSION = "1";
+const BOUNDED_MEMORY_GC_RECORD_INTERVAL = 1024;
 
 export interface ProjectionInput {
   readonly graph: BundleGraph;
@@ -82,7 +83,7 @@ export function buildProjection(input: ProjectionInput): Projection {
       contentHash: hash(`${PROJECTION_NORMALIZATION_VERSION}\0${canonical}`),
       tokenEstimate: input.graph.tokenEstimate(concept.id),
     });
-    if (input.materializeJsonl === false && records.length % 256 === 0) Bun.gc(true);
+    if (input.materializeJsonl === false && records.length % BOUNDED_MEMORY_GC_RECORD_INTERVAL === 0) Bun.gc(true);
   }
 
   const ordinals = new Map<string, number>();
@@ -151,7 +152,7 @@ export function projectionStreamHash(records: readonly ProjectionRecord[], bound
   records.forEach((record, index) => {
     if (index > 0) digest.update("\n");
     digest.update(JSON.stringify(record.record === "manifest" ? { ...record, generatedAt: null } : record));
-    if (boundedMemory && index > 0 && index % 256 === 0) Bun.gc(true);
+    if (boundedMemory && index > 0 && index % BOUNDED_MEMORY_GC_RECORD_INTERVAL === 0) Bun.gc(true);
   });
   return `sha256:${digest.digest("hex")}`;
 }

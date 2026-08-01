@@ -49,6 +49,7 @@
 - 2026-08-01T06:12:24-05:00 36a5cac3f43b78826dec41cf37e1e730a04c3487 perf: accelerate Ladybug indexed retrieval
 - 2026-08-01T06:44:02-05:00 9b6562cd5e4c3070dfed0dbead4dc1e50756ad2b perf: reduce Ladybug cold-build overhead
 - 2026-08-01T06:52:17-05:00 ab16b3a3dae47bb4ea4d5cb7e28c00b4e80deb30 fix: resolve isolated Ladybug package layout
+- 2026-08-01T07:05:31-05:00 06f58feea2867f98f324b77514775ed293df29f9 perf: reuse Ladybug graph adjacency
 
 ## docs/.obsidian
 
@@ -159,6 +160,7 @@
 - 2026-08-01T00:34:58-05:00 d9dabbec82ceab714c9a2944d1234efa6aed13ad perf: bound Ladybug benchmark sessions
 - 2026-08-01T06:12:24-05:00 36a5cac3f43b78826dec41cf37e1e730a04c3487 perf: accelerate Ladybug indexed retrieval
 - 2026-08-01T06:44:02-05:00 9b6562cd5e4c3070dfed0dbead4dc1e50756ad2b perf: reduce Ladybug cold-build overhead
+- 2026-08-01T07:05:31-05:00 06f58feea2867f98f324b77514775ed293df29f9 perf: reuse Ladybug graph adjacency
 
 ## docs/runbooks
 

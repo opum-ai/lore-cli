@@ -103,6 +103,13 @@ lexical lengths computed during posting construction. Full staged verification
 still covers every body: LadybugDB computes SHA-256 inside one bounded scan and
 Lore compares those digests with the validated source before publication.
 
+Large source passes retain explicit cleanup points but run them once per 1,024
+records instead of once per 256. Bun documents `Bun.gc(true)` as synchronous and
+its runtime already sizes the garbage-collected heap from available memory,
+including container limits. The wider interval removes repeated full-collector
+pauses while the separate 16 MiB import batches and blocking memory gate continue
+to bound the qualification envelope.
+
 Lore does not depend on LadybugDB's separately installed full-text-search
 extension. That extension has its own installation and user-global storage
 lifecycle, while the release requirement is a repository-contained,
@@ -178,6 +185,8 @@ carry the Darwin executable-platform evidence.
 - [LadybugDB table and primary-key definitions](https://docs.ladybugdb.com/cypher/data-definition/create-table/)
 - [LadybugDB hash functions](https://docs.ladybugdb.com/cypher/expressions/hash-functions/)
 - [LadybugDB full-text-search extension](https://docs.ladybugdb.com/extensions/full-text-search/)
+- [Bun `gc` API](https://bun.com/reference/bun/gc)
+- [Bun runtime memory controls](https://bun.com/docs/runtime)
 - [LadybugDB developer guide](https://docs.ladybugdb.com/developer-guide/)
 - [Kùzu Graph Database Management System, CIDR 2023](https://www.vldb.org/cidrdb/papers/2023/p48-jin.pdf)
 - [`@ladybugdb/core` on npm](https://www.npmjs.com/package/@ladybugdb/core)

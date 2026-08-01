@@ -66,6 +66,10 @@ import { compareCodeUnits } from "./order";
 import { defaultProfile, type Profile } from "./profile";
 import { RESERVED_STEMS } from "./scaffold";
 
+// Bun.gc(true) is synchronous. Large projection loads retain bounded cleanup
+// points without pausing once per small group of authored concepts.
+const BOUNDED_MEMORY_GC_CONCEPT_INTERVAL = 1024;
+
 /**
  * The kind of a concept→concept reference. `"link"` is a body markdown
  * cross-link; the rest mirror the frontmatter fields that carry concept
@@ -204,7 +208,7 @@ export function loadBundle(root: string, options: LoadBundleOptions = {}): Bundl
       continue;
     }
     concepts.push(concept);
-    if (options.boundedMemory === true && concepts.length % 256 === 0) Bun.gc(true);
+    if (options.boundedMemory === true && concepts.length % BOUNDED_MEMORY_GC_CONCEPT_INTERVAL === 0) Bun.gc(true);
   }
   return buildGraph(concepts);
 }

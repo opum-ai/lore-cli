@@ -32,6 +32,7 @@ export const LADYBUG_DATABASE_FILENAME = "projection.lbdb";
 export const LADYBUG_CONTROL_FILENAME = "index.json";
 export const LADYBUG_SOURCE_FINGERPRINT_DOMAIN = "ladybug-projection-source/1";
 export const LADYBUG_INPUT_FINGERPRINT_DOMAIN = "ladybug-projection-input/1";
+const BOUNDED_MEMORY_GC_RECORD_INTERVAL = 1024;
 
 export interface SourceInventoryEntry {
   readonly path: string;
@@ -466,7 +467,7 @@ function digestJsonLines(values: readonly unknown[], boundedMemory = false): str
   values.forEach((value, index) => {
     if (index > 0) hash.update("\n");
     hash.update(JSON.stringify(value));
-    if (boundedMemory && index > 0 && index % 256 === 0) Bun.gc(true);
+    if (boundedMemory && index > 0 && index % BOUNDED_MEMORY_GC_RECORD_INTERVAL === 0) Bun.gc(true);
   });
   return `sha256:${hash.digest("hex")}`;
 }
