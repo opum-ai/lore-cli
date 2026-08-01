@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:33'
-updated_date: '2026-08-01 05:48'
+updated_date: '2026-08-01 11:09'
 labels:
   - ladybugdb
   - benchmark
@@ -40,12 +40,24 @@ modified_files:
   - benchmark/ladybug/statistics.ts
   - benchmark/ladybug/worker.ts
   - biome.json
+  - docs/adr/0018-persistent-local-graph-projection-with-ladybugdb.md
   - docs/log.md
   - docs/reference/ladybugdb-benchmark-and-scale-acceptance-strategy.md
   - docs/runbooks/release-publishing.md
   - docs/specs/local-graph-platform-roadmap.md
+  - src/commands/context.ts
+  - src/commands/graph.ts
+  - src/commands/query.ts
+  - src/core/bundle.ts
+  - src/core/ladybug-driver.ts
   - src/core/ladybug-lifecycle.ts
+  - src/core/ladybug-native.ts
+  - src/core/ladybug-source.ts
+  - src/core/projection.ts
+  - src/core/query.ts
+  - src/core/retrieval.ts
   - test/ci-workflow.test.ts
+  - test/indexed-retrieval.test.ts
   - test/ladybug-benchmark-fixture.test.ts
   - test/ladybug-benchmark-gates.test.ts
   - test/ladybug-benchmark-report.test.ts
@@ -54,6 +66,7 @@ modified_files:
   - test/ladybug-concurrency.test.ts
   - test/ladybug-package-qualification.test.ts
   - test/ladybug-qualification-evidence.test.ts
+  - test/local-graph-contract.test.ts
   - tsconfig.json
 parent_task_id: LCLI-283.1
 priority: high
@@ -90,6 +103,8 @@ Prove that the persistent index improves repeated retrieval at acceptable startu
 10. After implementation only, run exact Bun 1.2.23 frozen install, package dry-run, audit, all focused tests, full `bun test --isolate`, lint, typecheck, source and compiled builds/smokes, the five matching-host qualification matrix, the conclusive benchmark gate, `lore sync`, `lore validate --strict`, `lore check --strict`, `git diff --check`, and tracked/untracked/cache/source-write audits. Update architecture, tech stack, release publishing, roadmap, and campaign handover only outside Lore-managed regions; record raw evidence and any approved platform limitation; then follow task-finalization without advancing parent LCLI-283.1 until every child gate is genuinely complete. Implementation remains blocked on explicit approval of the thresholds, fixture scale, Windows fallback-only native policy, uninstall/cache policy, and release-gate placement above.
 
 11. Approved benchmark strategy (2026-07-31): supersede the 30-pair bootstrap, 3,976-worker, and 240-360 minute release-gate model. First complete LCLI-283.1.5 to select and qualify the exact supported LadybugDB version. Then use a deterministic 100 MiB authored-repository fixture as the blocking scale gate: record fixture counts and digest, perform one cold projection build, and collect five warm samples for representative query, graph, and context operations. Apply conservative initial budgets of 30 seconds for the cold build, 3 seconds for warm open, 500 milliseconds for ordinary queries, 1 second for graph/context operations, and 2 GiB peak RSS, with a 15-minute hard cap for the entire benchmark job. Keep the broader functional scenario matrix in fast non-timing tests. Add an opt-in 1 GiB manual/nightly run with one cold build and representative warm operations, a 30-minute time box, and informational non-blocking results until evidence supports a separate decision. Keep concurrency/crash recovery and five-host native-package qualification as separate gates. Do not publish benchmark numbers from this acceptance harness. Ground the rationale and interpretation in docs/reference/ladybugdb-benchmark-and-scale-acceptance-strategy.md.
+
+12. User-approved performance recovery (2026-08-01): retain failed run 30686123498 and every frozen gate, then replace the per-record/per-relationship write path with repository-contained bulk COPY ingestion, as recommended by the official Ladybug import guidance. Do not depend on the downloadable FTS extension because it installs under a user-global directory and would violate offline, contained packaging. Add a deterministic native lexical index to the private projection schema using primary-key term nodes plus concept-posting relationships, preserving Lore BM25 tokenization, scores, filters, tie-breaking, and output parity. Replace eager whole-database graph rehydration with a closeable indexed reader that opens one verified immutable generation and executes query, graph, and context against promoted/indexed fields, loading bodies only when an output needs them. Keep full logical verification after building; make ordinary reopen verification content-digest and metadata/count based so it does not transfer and parse every stored source record. Add corruption, lifecycle, fallback, source-preservation, exact-output conformance, bulk-loader, and performance-regression tests. Profile the 100 MiB fixture locally, then run the complete local gates and a new clean exact Bun 1.2.23 Linux-x64 nonpublishing workflow. Check ACs only if the frozen performance gate, concurrency evidence, five matching-host package reports, and final evidence manifest all pass.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -158,6 +173,12 @@ Exact-host bounded run 30685082979 at commit 4f0b69cdb1e3f2ddc2fde4c1dcc474974b6
 Bounded-run timeout refinement completed on 2026-07-31 without changing the approved 100 MiB fixture, five-sample count, frozen thresholds, 18 gates, or 15-minute cap. Qualification and observation now start one fresh indexed session and one fresh reference session per randomized AB/BA repetition, measure warm open during the single repository load, and then measure query, graph, and context against that loaded retrieval graph. Source bytes remain hashed before and after every session; result-digest and emitted-byte parity remain mandatory for every operation. Per-operation wall and CPU measurements are retained, while the subprocess peak RSS conservatively applies to each operation in its session. Smoke mode preserves the wider fresh-process functional matrix.\n\nA disposable local 100 MiB functional profile on Bun 1.3.14 completed fixture generation, one cold build, and all five indexed/reference session pairs in about three minutes, showing the structural process-count refinement fits the 15-minute envelope locally; these timings are not admissible acceptance evidence and are not published as qualification results. Verification after the refinement: full isolated suite 2,337 tests / 7,240 assertions / 0 failures; focused qualification suite 81 tests / 700 assertions / 0 failures; typecheck, lint across 152 files, actionlint, Lore strict validation/check, and git diff check all pass. Exact Bun 1.2.23 Linux-x64 workflow evidence remains required before any acceptance criterion is checked.
 
 Exact-host retry run 30686123498 on clean commit d9dabbec82ceab714c9a2944d1234efa6aed13ad is retained as conclusive failed qualification evidence. The bounded benchmark completed inside the 15-minute cap, emitted and uploaded a strict pinned Bun 1.2.23 Linux-x64 report, and evaluated all 18 frozen gates; 12 passed and 6 failed. Failed gate IDs: large.cold-build.wall-p95, large.warm-open.wall-p95, large.query-rare.operation-p95, and the median, p95, and upper-one-sided-95 query indexed/reference improvement gates. Memory, index size, graph/context absolute latency, and graph/context non-regression gates passed. The separate pinned concurrency/crash job passed and uploaded complete evidence. The five matching-host package matrix, final manifest, package, and publish jobs were correctly skipped by the failed benchmark dependency; publishing was disabled at dispatch. No threshold was changed or fitted to this result. LCLI-283.1.4 remains In Progress with every AC unchecked pending a reviewed product/threshold/fixture decision; do not blind-retry the same clean commit.
+
+2026-08-01 performance research: official Ladybug guidance recommends COPY FROM rather than repeated CREATE/MERGE for large imports, confirms node primary keys receive automatic lookup indexes, and provides an FTS extension backed by BM25. The FTS extension is not suitable for Lore as shipped because it must be downloaded separately and installed in a user-global Ladybug directory before every session can load it. The implementation will therefore use bulk COPY plus a private repository-contained term/posting index that preserves the existing deterministic Lore tokenizer and ranking contract. Ordinary indexed commands will stop rebuilding the entire in-memory search index and stop transferring every stored body merely to open a verified generation. Sources: https://docs.ladybugdb.com/import/, https://docs.ladybugdb.com/import/csv/, https://docs.ladybugdb.com/cypher/data-definition/create-table/, https://docs.ladybugdb.com/extensions/full-text-search/, and https://docs.ladybugdb.com/extensions/.
+
+Performance recovery implementation completed locally on 2026-08-01 without changing the frozen fixture, thresholds, sample count, or time cap. The projection now bulk-loads bounded CSV batches with Ladybug COPY, stores deterministic primary-keyed lexical term postings, avoids duplicating large concept bodies, and reuses one verified read-only reader for graph, query, and context. Warm freshness checks hash source inputs without reparsing Markdown; graph loads promoted metadata without bodies; context fetches only its selected body; and query traverses only matching postings while preserving exact Lore BM25 ranking, filters, tie-breaking, warnings, and output digests. Full source validation remains before construction, staged databases receive bounded metadata/count verification plus a closed-file digest before immutable publication, and full logical verification remains available as a diagnostic path. Official import, CSV, primary-key, and FTS-extension guidance is recorded in the benchmark strategy and ADR; the separately installed FTS extension was rejected to preserve repository-contained offline packaging. A representative disposable 100 MiB local profile passed every frozen performance, memory, storage, and indexed/reference comparison gate; no measured benchmark values are published. Full isolated verification passed all 2,337 tests with zero failures. The exact clean Bun 1.2.23 hosted workflow remains required before checking acceptance criteria.
+
+Post-profile verification refinement: the staged database now runs the approved full logical verification before publication. It checks every concept, task, and edge record; all promoted concept fields; every document body through bounded primary-key probes; record and relationship counts; structural endpoints; dangling-target rules; and deterministic samples. This avoids the native engine memory failure caused by scanning the full large body column in one query. The final disposable large-fixture cold profile, including full verification and explicit reader close, still passed the frozen first-run time and memory gates locally. Ordinary warm reuse remains the faster immutable-file digest plus promoted metadata/count check.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
