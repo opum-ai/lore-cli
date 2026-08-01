@@ -54,6 +54,7 @@
 - 2026-08-01T08:36:49-05:00 fb2cc844f1c38ae28cbb8fc64382cb1c58cfdcc2 docs: sync qualification completion log
 - 2026-08-01T16:41:57-05:00 1f5114f85efa1c0f758afec0ce2a427156ee7c34 docs: refresh lore log
 - 2026-08-01T16:41:57-05:00 3ec3d77082adb5b7b389588fbc18a58464d636e3 feat: freeze graph explorer contract
+- 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
 
 ## docs/.obsidian
 
@@ -95,6 +96,7 @@
 - 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
 - 2026-08-01T06:12:24-05:00 36a5cac3f43b78826dec41cf37e1e730a04c3487 perf: accelerate Ladybug indexed retrieval
 - 2026-08-01T06:44:02-05:00 9b6562cd5e4c3070dfed0dbead4dc1e50756ad2b perf: reduce Ladybug cold-build overhead
+- 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
 
 ## docs/reference
 
@@ -166,6 +168,7 @@
 - 2026-08-01T06:44:02-05:00 9b6562cd5e4c3070dfed0dbead4dc1e50756ad2b perf: reduce Ladybug cold-build overhead
 - 2026-08-01T07:05:31-05:00 06f58feea2867f98f324b77514775ed293df29f9 perf: reuse Ladybug graph adjacency
 - 2026-08-01T07:15:08-05:00 a5a53bde39cb6121145602dad0f104383bd92ca6 perf: reduce forced GC pauses in Ladybug builds
+- 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
 
 ## docs/runbooks
 
@@ -225,6 +228,7 @@
 - 2026-07-30T22:23:34-05:00 7b81734764658048a9924b0ba64cd810e8c212b7 docs: record LCLI-283.1.4 qualification plan
 - 2026-07-31T20:14:53-05:00 7d1b17459a34e9dff7dee2dbb820b507e5dc87b6 feat: qualify LadybugDB 0.19.0
 - 2026-08-01T00:02:30-05:00 4f0b69cdb1e3f2ddc2fde4c1dcc474974b6e510a feat: bound Ladybug qualification gate
+- 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
 
 ## docs/specs
 
@@ -249,3 +253,8 @@
 - 2026-07-31T20:14:53-05:00 7d1b17459a34e9dff7dee2dbb820b507e5dc87b6 feat: qualify LadybugDB 0.19.0
 - 2026-08-01T00:02:30-05:00 4f0b69cdb1e3f2ddc2fde4c1dcc474974b6e510a feat: bound Ladybug qualification gate
 - 2026-08-01T16:41:57-05:00 3ec3d77082adb5b7b389588fbc18a58464d636e3 feat: freeze graph explorer contract
+- 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
+
+## docs/stories
+
+- 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
