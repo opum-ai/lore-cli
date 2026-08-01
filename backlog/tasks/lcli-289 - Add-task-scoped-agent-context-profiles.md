@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-31 01:16'
-updated_date: '2026-08-01 17:52'
+updated_date: '2026-08-01 22:29'
 labels:
   - agents
   - context
@@ -63,6 +63,8 @@ Final adversarial pass: confined --task-file to repo-relative non-symlink paths 
 Pinned-runtime verification completed via ephemeral bun@1.2.23: full suite 2362 pass / 0 fail / 7415 assertions; typecheck clean; Biome clean across 156 files; compiled build succeeded; compiled help-agent and empty-profile-list JSON smokes passed. The earlier pinned-runtime gap is closed. Only Lore sync/commit authorization and the post-sync strict check remain for AC #6 and terminal completion.
 
 Authorized settlement: lore sync generated the six expected documentation files and created scoped Backlog commit 91ee1c0. Post-sync pinned Bun 1.2.23 gates passed: lore validate --strict 0 errors/0 warnings, lore check --strict complete with 0 findings, generated Claude bridge check unchanged, and git diff --check clean.
+
+Post-rebase delivery verification (2026-08-01): rebased the three LCLI-289 commits from integration base 010fd10 onto origin/dev 5a858e1. The only conflicts were generated docs/log.md and docs/specs/index.md; Lore regenerated their combined state, preserving both the explorer and agent-profile specs. Exact Bun 1.2.23 focused suite passed 617 tests / 2090 expectations; full suite passed 2368 tests / 7462 expectations across 66 files; typecheck passed; Biome checked 158 files with no fixes; compiled build bundled 244 modules; compiled help, agent help, and empty-profile list JSON smokes passed. The compiled rebased binary reports strict Lore validation 52 files / 0 errors / 0 warnings, strict Lore check 52 files / 0 errors / 0 warnings, and generated bridge files up to date. Git diff hygiene passed. No acceptance criterion, implementation scope, or finalization conclusion changed.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
