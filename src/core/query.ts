@@ -210,9 +210,20 @@ const BM25_B = 0.75;
  * returns plain data, never touches the filesystem or flags.
  */
 export function query(graph: BundleGraph, options: QueryOptions = {}): QueryResult {
+  return queryWithBm25Index(graph, options);
+}
+
+/**
+ * Search with a caller-supplied deterministic BM25 index.
+ *
+ * The persistent Ladybug reader uses this boundary after fetching only postings
+ * for the requested terms. Reference callers omit `index` and retain the exact
+ * in-memory behavior.
+ */
+export function queryWithBm25Index(graph: BundleGraph, options: QueryOptions = {}, index?: Bm25Index): QueryResult {
   const limit = options.limit ?? DEFAULT_QUERY_LIMIT;
   const normalizedText = (options.text ?? "").trim();
-  const queryTerms = [...new Set(tokenize(normalizedText))];
+  const queryTerms = [...new Set(tokenizeQueryText(normalizedText))];
   // `hasText` keys off the *tokenized* terms, not the raw string: a non-empty text
   // that yields no searchable term (punctuation/separators only, e.g. `"%%%"`) is
   // treated as a filters-only query rather than a ranked one that would score every
@@ -224,18 +235,18 @@ export function query(graph: BundleGraph, options: QueryOptions = {}): QueryResu
   const matched: Array<{ concept: Concept; score: number }> = [];
   // IDF is a per-term, per-corpus constant — compute it once here, not once per scored
   // document, so a query over a large filtered set does not recompute the same logs.
-  const index = hasText ? buildBm25Index(graph) : undefined;
-  const idf = index !== undefined ? idfForTerms(index, queryTerms) : undefined;
+  const activeIndex = hasText ? (index ?? buildBm25Index(graph)) : undefined;
+  const idf = activeIndex !== undefined ? idfForTerms(activeIndex, queryTerms) : undefined;
   for (const concept of graph.concepts.values()) {
     if (!matchesFilters(concept, options)) {
       continue;
     }
-    if (index === undefined || idf === undefined) {
+    if (activeIndex === undefined || idf === undefined) {
       matched.push({ concept, score: 0 });
       continue;
     }
     // A text query also filters: a concept with none of its terms scores 0 and is dropped.
-    const score = scoreBm25(index, idf, concept.id, queryTerms);
+    const score = scoreBm25(activeIndex, idf, concept.id, queryTerms);
     if (score > 0) {
       matched.push({ concept, score });
     }
@@ -370,7 +381,7 @@ function oneLine(value: string | undefined): string | undefined {
 // ── BM25 lexical index ───────────────────────────────────────────────────────────
 
 /** One document's term frequencies and length (in tokens) within the BM25 index. */
-interface IndexedDoc {
+export interface IndexedDoc {
   /** Term → occurrence count in this document. */
   readonly tf: ReadonlyMap<string, number>;
   /** The document's length in tokens (the BM25 length-normalization input). */
@@ -378,7 +389,7 @@ interface IndexedDoc {
 }
 
 /** A whole-bundle BM25 index: per-document term frequencies, document frequencies, the doc count, and the average length. */
-interface Bm25Index {
+export interface Bm25Index {
   /** Indexed documents keyed by concept id. */
   readonly docs: ReadonlyMap<string, IndexedDoc>;
   /** Term → number of documents that contain it (for IDF). */
@@ -396,12 +407,17 @@ interface Bm25Index {
  * is a deterministic lexical split, not a real tokenizer — adequate for the
  * lightweight in-memory search ADR-0015 calls for.
  */
-function tokenize(text: string): string[] {
+export function tokenizeQueryText(text: string): string[] {
   return text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 }
 
 /** The searchable text of a concept: its id, the `title`/`summary`/`description`/`tags` scalars, and the body. */
-function searchableText(concept: Concept): string {
+export function searchableConceptText(concept: Concept): string {
+  return searchableConceptFields(concept).join(" ");
+}
+
+/** Searchable fields kept separate so persistent builders do not copy a large body merely to add separators. */
+export function searchableConceptFields(concept: Concept): readonly string[] {
   const fm = concept.frontmatter;
   return [
     concept.id,
@@ -410,7 +426,7 @@ function searchableText(concept: Concept): string {
     frontmatterScalar(fm.description) ?? "",
     tagsOf(concept).join(" "),
     concept.body,
-  ].join(" ");
+  ];
 }
 
 /**
@@ -419,12 +435,12 @@ function searchableText(concept: Concept): string {
  * {@link searchableText} is tokenized once into its term frequencies; document
  * frequencies and the average document length accumulate across the pass.
  */
-function buildBm25Index(graph: BundleGraph): Bm25Index {
+export function buildBm25Index(graph: BundleGraph): Bm25Index {
   const docs = new Map<string, IndexedDoc>();
   const df = new Map<string, number>();
   let totalLength = 0;
   for (const concept of graph.concepts.values()) {
-    const tokens = tokenize(searchableText(concept));
+    const tokens = tokenizeQueryText(searchableConceptText(concept));
     const tf = new Map<string, number>();
     for (const token of tokens) {
       tf.set(token, (tf.get(token) ?? 0) + 1);

@@ -7,9 +7,9 @@
  */
 
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync } from "node:fs";
+import { closeSync, lstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { join } from "node:path";
-import { type BacklogAdapter, bunBacklogSpawn, createBacklogAdapter } from "../adapters/backlog";
+import { type BacklogAdapter, type BacklogTask, bunBacklogSpawn, createBacklogAdapter } from "../adapters/backlog";
 import { resolveHeadSha } from "../adapters/git";
 import { LoreError, WarningCollector } from "../errors";
 import { VERSION } from "../meta";
@@ -31,6 +31,7 @@ export const LADYBUG_CACHE_REL_ROOT = ".lore/cache/graph/ladybug/1";
 export const LADYBUG_DATABASE_FILENAME = "projection.lbdb";
 export const LADYBUG_CONTROL_FILENAME = "index.json";
 export const LADYBUG_SOURCE_FINGERPRINT_DOMAIN = "ladybug-projection-source/1";
+export const LADYBUG_INPUT_FINGERPRINT_DOMAIN = "ladybug-projection-input/1";
 
 export interface SourceInventoryEntry {
   readonly path: string;
@@ -127,6 +128,12 @@ export interface LadybugProjectionSource {
   readonly sourceRecordsDigest: string;
   readonly recordKeysDigest: string;
   readonly sourceFingerprint: string;
+  /** Cheap exact-input identity used to reuse a generation without reparsing the bundle. */
+  readonly inputFingerprint: string;
+  /** Stable bundle warnings captured when this generation was fully built. */
+  readonly warnings: readonly string[];
+  /** True only when warnings came from the complete production source loader. */
+  readonly warningsComplete: boolean;
   /** Portable directory segment for the content-addressed generation. */
   readonly generationKey: string;
   readonly ladybugVersion: string;
@@ -141,6 +148,11 @@ export interface PrepareLadybugProjectionSourceOptions {
   readonly ladybugVersion: string;
   readonly ladybugStorageVersion: string;
   readonly loreVersion?: string;
+  readonly warnings?: readonly string[];
+}
+
+export interface LadybugProjectionFreshness {
+  readonly inputFingerprint: string;
 }
 
 export interface LoadLadybugProjectionSourceOptions {
@@ -171,7 +183,11 @@ export async function loadLadybugProjectionSource(
     const inventory = readSourceInventory(options.root);
     const profileInventory = readProfileInventory(options.root);
     const profile = loadProfile({ root: options.root });
-    const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: attemptWarnings, profile });
+    const graph = loadBundle(join(options.root, DOCS_DIR), {
+      warnings: attemptWarnings,
+      profile,
+      boundedMemory: true,
+    });
     const tasks = await adapter.listTasks();
     const gitCommit = resolveGitCommit(options.root);
     const projection = buildProjection({
@@ -182,6 +198,7 @@ export async function loadLadybugProjectionSource(
       exporterVersion: VERSION,
       gitCommit,
       generatedAt: null,
+      materializeJsonl: false,
     });
     const finalInventory = readSourceInventory(options.root);
     const finalProfileInventory = readProfileInventory(options.root);
@@ -198,6 +215,7 @@ export async function loadLadybugProjectionSource(
         ladybugVersion: options.ladybugVersion,
         ladybugStorageVersion: options.ladybugStorageVersion,
         loreVersion: VERSION,
+        warnings: attemptWarnings?.list() ?? [],
       });
       if (attemptWarnings !== undefined && options.warnings !== undefined) {
         options.warnings.merge(attemptWarnings);
@@ -234,8 +252,7 @@ export function prepareLadybugProjectionSource(
     ...authoredEdges.filter((record) => record.kind === "task").map((record) => JSON.stringify(record)),
   ];
   const taskSnapshotDigest = digest(taskRecords.join("\n"));
-  const sourceRecordLines = [...concepts, ...tasks, ...authoredEdges].map((record) => JSON.stringify(record));
-  const sourceRecordsDigest = digest(sourceRecordLines.join("\n"));
+  const sourceRecordsDigest = digestJsonLines([...concepts, ...tasks, ...authoredEdges], true);
   const recordKeysDigest = digest(
     [...concepts, ...tasks, ...authoredEdges]
       .map((record) => record.key)
@@ -266,6 +283,15 @@ export function prepareLadybugProjectionSource(
     taskSnapshot,
   };
   const sourceFingerprint = digest(`${LADYBUG_SOURCE_FINGERPRINT_DOMAIN}\0${canonicalJson(fingerprintFacts)}`);
+  const inputFingerprint = projectionInputFingerprint({
+    inventory,
+    profileInventory,
+    gitCommit: manifest.bundle.gitCommit,
+    tasks,
+    ladybugVersion: options.ladybugVersion,
+    ladybugStorageVersion: options.ladybugStorageVersion,
+    loreVersion,
+  });
 
   return {
     records: options.projection.records,
@@ -284,6 +310,9 @@ export function prepareLadybugProjectionSource(
     sourceRecordsDigest,
     recordKeysDigest,
     sourceFingerprint,
+    inputFingerprint,
+    warnings: [...(options.warnings ?? [])],
+    warningsComplete: options.warnings !== undefined,
     generationKey: digestHex(sourceFingerprint),
     ladybugVersion: options.ladybugVersion,
     ladybugStorageVersion: options.ladybugStorageVersion,
@@ -295,16 +324,107 @@ export function prepareLadybugProjectionSource(
   };
 }
 
+/** Fingerprint exact repository inputs without parsing Markdown or building a graph. */
+export async function loadLadybugProjectionFreshness(
+  options: LoadLadybugProjectionSourceOptions,
+): Promise<LadybugProjectionFreshness> {
+  const adapter = options.adapter ?? createBacklogAdapter(bunBacklogSpawn(undefined, options.root));
+  const resolveGitCommit = options.resolveGitCommit ?? resolveHeadSha;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const inventory = readSourceInventory(options.root);
+    const profileInventory = readProfileInventory(options.root);
+    const tasks = await adapter.listTasks();
+    const gitCommit = resolveGitCommit(options.root);
+    const inputFingerprint = projectionInputFingerprint({
+      inventory,
+      profileInventory,
+      gitCommit,
+      tasks,
+      ladybugVersion: options.ladybugVersion,
+      ladybugStorageVersion: options.ladybugStorageVersion,
+      loreVersion: VERSION,
+    });
+    if (
+      canonicalJson(inventory) === canonicalJson(readSourceInventory(options.root)) &&
+      canonicalJson(profileInventory) === canonicalJson(readProfileInventory(options.root)) &&
+      gitCommit === resolveGitCommit(options.root)
+    ) {
+      return { inputFingerprint };
+    }
+  }
+  throw new LoreError(
+    "drift",
+    "Ladybug projection source changed while its freshness was being checked",
+    "retry after repository writes settle; no cache generation was selected",
+  );
+}
+
+function projectionInputFingerprint(options: {
+  readonly inventory: readonly SourceInventoryEntry[];
+  readonly profileInventory: readonly ProfileInventoryEntry[];
+  readonly gitCommit: string | null;
+  readonly tasks: readonly (BacklogTask | ProjectionTaskRecord)[];
+  readonly ladybugVersion: string;
+  readonly ladybugStorageVersion: string;
+  readonly loreVersion: string;
+}): string {
+  const tasks = options.tasks
+    .map((task) => ({
+      id: task.id,
+      title: task.title,
+      status: task.status,
+      labels: [...task.labels],
+      priority: task.priority,
+      ordinal: task.ordinal,
+      assignees: [...task.assignees],
+      milestone: task.milestone,
+      parentTaskId: task.parentTaskId,
+      sourceAdapterVersion: "backlog-json/1",
+    }))
+    .sort((a, b) => compareCodeUnits(a.id.toLowerCase(), b.id.toLowerCase()) || compareCodeUnits(a.id, b.id));
+  const facts = {
+    indexFormatVersion: LADYBUG_INDEX_FORMAT,
+    projectionSchemaVersion: PROJECTION_SCHEMA_VERSION,
+    normalizationVersion: PROJECTION_NORMALIZATION_VERSION,
+    loreVersion: options.loreVersion,
+    ladybugVersion: options.ladybugVersion,
+    ladybugStorageVersion: options.ladybugStorageVersion,
+    gitCommit: options.gitCommit,
+    inventory: [...options.inventory].sort((a, b) => compareCodeUnits(a.path, b.path)),
+    profileInventory: [...options.profileInventory].sort((a, b) => compareCodeUnits(a.path, b.path)),
+    tasks,
+  };
+  return digest(`${LADYBUG_INPUT_FINGERPRINT_DOMAIN}\0${canonicalJson(facts)}`);
+}
+
 export function readSourceInventory(root: string): SourceInventoryEntry[] {
   const docsRoot = join(root, DOCS_DIR);
+  const buffer = Buffer.allocUnsafe(64 * 1024);
   return walkMarkdown(docsRoot, undefined).map((relativePath) => {
-    const bytes = readFileSync(join(docsRoot, relativePath));
+    const { byteLength, byteHash } = hashFileSync(join(docsRoot, relativePath), buffer);
     return {
       path: `${DOCS_DIR}/${relativePath}`,
-      byteLength: bytes.byteLength,
-      byteHash: digest(bytes),
+      byteLength,
+      byteHash,
     };
   });
+}
+
+function hashFileSync(path: string, buffer: Buffer): { byteLength: number; byteHash: string } {
+  const hash = createHash("sha256");
+  const descriptor = openSync(path, "r");
+  let byteLength = 0;
+  try {
+    for (;;) {
+      const count = readSync(descriptor, buffer, 0, buffer.byteLength, null);
+      if (count === 0) break;
+      byteLength += count;
+      hash.update(buffer.subarray(0, count));
+    }
+  } finally {
+    closeSync(descriptor);
+  }
+  return { byteLength, byteHash: `sha256:${hash.digest("hex")}` };
 }
 
 export function readProfileInventory(root: string): ProfileInventoryEntry[] {
@@ -341,6 +461,16 @@ export function digest(value: string | Uint8Array): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
+function digestJsonLines(values: readonly unknown[], boundedMemory = false): string {
+  const hash = createHash("sha256");
+  values.forEach((value, index) => {
+    if (index > 0) hash.update("\n");
+    hash.update(JSON.stringify(value));
+    if (boundedMemory && index > 0 && index % 256 === 0) Bun.gc(true);
+  });
+  return `sha256:${hash.digest("hex")}`;
+}
+
 export function digestHex(value: string): string {
   const match = /^sha256:([0-9a-f]{64})$/.exec(value);
   if (!match) {
@@ -371,7 +501,7 @@ function validateProjection(projection: Projection): {
   if (last.recordCount !== semanticRecords.length) {
     invalidProjection("trailer recordCount does not match the stream");
   }
-  if (last.streamHash !== projectionStreamHash(semanticRecords)) {
+  if (last.streamHash !== projectionStreamHash(semanticRecords, projection.jsonl === "")) {
     invalidProjection("trailer streamHash does not match the validated records");
   }
 

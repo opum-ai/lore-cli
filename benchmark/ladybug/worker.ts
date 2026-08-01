@@ -36,30 +36,38 @@ export async function executeLadybugBenchmarkWorker(
     if (request.operation.kind === "projection-cold" && ladybugGenerationCount(request.root) !== 1) {
       throw new Error("projection-cold worker did not publish exactly one immutable generation");
     }
-    const resultBytes = JSON.stringify(buildGraphExport(loaded.graph));
-    return workerResult(request, loaded, operationNanoseconds, resultBytes, 0, "");
+    try {
+      const resultBytes = JSON.stringify(buildGraphExport(loaded.graph));
+      return workerResult(request, loaded, operationNanoseconds, resultBytes, 0, "");
+    } finally {
+      await loaded.dispose?.();
+    }
   }
 
   const loaded = await load(request.root, request.policy);
   assertBackend(request.policy, loaded);
   const stdout = capture();
   const stderr = capture();
-  const retrieval: RetrievalGraphLoader = async () => loaded;
+  const retrieval: RetrievalGraphLoader = async () => sharedRetrieval(loaded);
   const args = commandArgs(request.operation);
   const started = process.hrtime.bigint();
-  const code = await run([process.execPath, "lore", ...args], {
-    cwd: request.root,
-    stdout,
-    stderr,
-    isTTY: false,
-    stderrIsTTY: false,
-    env: {},
-    retrieval,
-  });
-  const operationNanoseconds = elapsedNanoseconds(started);
-  if (code !== 0) throw new Error(`benchmark command ${request.operation.kind} exited ${code}: ${stderr.text()}`);
-  const emitted = stdout.text();
-  return workerResult(request, loaded, operationNanoseconds, emitted, Buffer.byteLength(emitted), stderr.text());
+  try {
+    const code = await run([process.execPath, "lore", ...args], {
+      cwd: request.root,
+      stdout,
+      stderr,
+      isTTY: false,
+      stderrIsTTY: false,
+      env: {},
+      retrieval,
+    });
+    const operationNanoseconds = elapsedNanoseconds(started);
+    if (code !== 0) throw new Error(`benchmark command ${request.operation.kind} exited ${code}: ${stderr.text()}`);
+    const emitted = stdout.text();
+    return workerResult(request, loaded, operationNanoseconds, emitted, Buffer.byteLength(emitted), stderr.text());
+  } finally {
+    await loaded.dispose?.();
+  }
 }
 
 export async function executeLadybugBenchmarkSessionWorker(
@@ -98,22 +106,26 @@ export async function executeLadybugBenchmarkSessionWorker(
       cpuMicroseconds,
     },
   ];
-  for (const operation of request.operations.slice(1)) {
-    if (operation.kind === "projection-cold") throw new Error("benchmark session cannot contain a cold build");
-    const operationRequest: LadybugBenchmarkWorkerRequest = {
-      schema: LADYBUG_BENCHMARK_WORKER_REQUEST_SCHEMA,
-      root: request.root,
+  try {
+    for (const operation of request.operations.slice(1)) {
+      if (operation.kind === "projection-cold") throw new Error("benchmark session cannot contain a cold build");
+      const operationRequest: LadybugBenchmarkWorkerRequest = {
+        schema: LADYBUG_BENCHMARK_WORKER_REQUEST_SCHEMA,
+        root: request.root,
+        policy: request.policy,
+        operation,
+      };
+      samples.push(await executeLoadedOperation(operationRequest, loaded));
+    }
+    return {
+      schema: LADYBUG_BENCHMARK_SESSION_RESULT_SCHEMA,
       policy: request.policy,
-      operation,
+      backend: loaded.backend,
+      samples,
     };
-    samples.push(await executeLoadedOperation(operationRequest, loaded));
+  } finally {
+    await loaded.dispose?.();
   }
-  return {
-    schema: LADYBUG_BENCHMARK_SESSION_RESULT_SCHEMA,
-    policy: request.policy,
-    backend: loaded.backend,
-    samples,
-  };
 }
 
 async function main(): Promise<void> {
@@ -138,7 +150,7 @@ async function executeLoadedOperation(
   }
   const stdout = capture();
   const stderr = capture();
-  const retrieval: RetrievalGraphLoader = async () => loaded;
+  const retrieval: RetrievalGraphLoader = async () => sharedRetrieval(loaded);
   const args = commandArgs(request.operation);
   const cpuStarted = process.cpuUsage();
   const started = process.hrtime.bigint();
@@ -159,6 +171,10 @@ async function executeLoadedOperation(
     result: workerResult(request, loaded, measured, emitted, Buffer.byteLength(emitted), stderr.text()),
     cpuMicroseconds,
   };
+}
+
+function sharedRetrieval(loaded: RetrievalGraph): RetrievalGraph {
+  return { ...loaded, dispose: undefined };
 }
 
 function operationCpuMicroseconds(started: NodeJS.CpuUsage): { user: number; system: number; total: number } {

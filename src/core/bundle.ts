@@ -136,6 +136,8 @@ export interface LoadBundleOptions {
    * module reads only the filesystem tree under `root`, never `.lore/` itself (LORE-84).
    */
   profile?: Profile;
+  /** Internal large-snapshot mode that bounds transient parser allocations. */
+  boundedMemory?: boolean;
 }
 
 /**
@@ -195,6 +197,7 @@ export function loadBundle(root: string, options: LoadBundleOptions = {}): Bundl
       continue;
     }
     concepts.push(concept);
+    if (options.boundedMemory === true && concepts.length % 256 === 0) Bun.gc(true);
   }
   return buildGraph(concepts);
 }

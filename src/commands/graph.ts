@@ -88,7 +88,13 @@ export function runGraph(options: GraphOptions): number | Promise<number> {
   if (options.retrieval !== undefined) {
     return options
       .retrieval({ root: options.root, warnings: advisories, adapter: options.adapter })
-      .then(({ graph }) => finishGraph(options, parsed, graph, advisories));
+      .then(async (loaded) => {
+        try {
+          return finishGraph(options, parsed, loaded.graph, advisories);
+        } finally {
+          await loaded.dispose?.();
+        }
+      });
   }
   const profile = loadProfile({ root: options.root });
   const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, profile });

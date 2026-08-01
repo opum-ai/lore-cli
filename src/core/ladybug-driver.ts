@@ -6,11 +6,14 @@
  * structural verification facts.
  */
 
+import { createHash, randomUUID } from "node:crypto";
+import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
+import { dirname, join } from "node:path";
 import ladybug, { Connection, Database, type LbugValue, type QueryResult } from "@ladybugdb/core";
 import { LoreError } from "../errors";
-import type { BundleGraph, Edge, EdgeKind } from "./bundle";
+import { type BundleGraph, type Edge, type EdgeKind, frontmatterScalar } from "./bundle";
 import type { Concept } from "./concept";
-import type { LadybugDatabaseVerification } from "./ladybug-native";
+import type { LadybugDatabaseVerification, LadybugIndexedReader } from "./ladybug-native";
 import {
   canonicalJson,
   LADYBUG_INDEX_FORMAT,
@@ -18,9 +21,21 @@ import {
   type ProjectionConceptRecord,
   type ProjectionEdgeRecord,
 } from "./ladybug-source";
+import {
+  type Bm25Index,
+  type QueryResult as LoreQueryResult,
+  type QueryOptions,
+  queryWithBm25Index,
+  searchableConceptFields,
+  tokenizeQueryText,
+} from "./query";
 
 export const LADYBUG_VERSION = String(ladybug.VERSION);
 export const LADYBUG_STORAGE_VERSION = String(ladybug.STORAGE_VERSION);
+
+const WRITER_BUFFER_BYTES = 256 * 1024 * 1024;
+const READER_BUFFER_BYTES = 64 * 1024 * 1024;
+const FULL_SCAN_BUFFER_BYTES = 512 * 1024 * 1024;
 
 const SCHEMA_QUERIES = [
   `CREATE NODE TABLE RepositoryProjection(
@@ -49,6 +64,8 @@ const SCHEMA_QUERIES = [
     sourceFingerprint STRING,
     sourceRecordsDigest STRING,
     recordKeysDigest STRING,
+    lexicalDocumentCount INT64,
+    lexicalTotalLength INT64,
     recordCount INT64,
     conceptCount INT64,
     taskCount INT64,
@@ -74,10 +91,14 @@ const SCHEMA_QUERIES = [
     path STRING,
     conceptType STRING,
     frontmatterJson STRING,
+    title STRING,
+    summary STRING,
+    description STRING,
+    tagsJson STRING,
     body STRING,
     contentHash STRING,
     tokenEstimate INT64,
-    sourceRecordJson STRING,
+    lexicalLength INT64,
     PRIMARY KEY (recordKey)
   )`,
   `CREATE NODE TABLE TaskRecord(
@@ -116,6 +137,11 @@ const SCHEMA_QUERIES = [
     sourceRecordJson STRING,
     PRIMARY KEY (recordKey)
   )`,
+  `CREATE NODE TABLE LexicalTerm(
+    termKey STRING,
+    documentFrequency INT64,
+    PRIMARY KEY (termKey)
+  )`,
   "CREATE REL TABLE HAS_SNAPSHOT(FROM RepositoryProjection TO ProjectionSnapshot)",
   "CREATE REL TABLE AT_COMMIT(FROM ProjectionSnapshot TO SourceCommit)",
   "CREATE REL TABLE HAS_CONCEPT(FROM ProjectionSnapshot TO ConceptRecord)",
@@ -124,6 +150,7 @@ const SCHEMA_QUERIES = [
   "CREATE REL TABLE EDGE_SOURCE(FROM ConceptRecord TO AuthoredEdgeRecord)",
   "CREATE REL TABLE EDGE_CONCEPT_TARGET(FROM AuthoredEdgeRecord TO ConceptRecord)",
   "CREATE REL TABLE EDGE_TASK_TARGET(FROM AuthoredEdgeRecord TO TaskRecord)",
+  "CREATE REL TABLE HAS_TERM(FROM ConceptRecord TO LexicalTerm, frequency INT64)",
 ] as const;
 
 /** Create and populate a new isolated database. The path must not be published. */
@@ -132,19 +159,7 @@ export async function buildLadybugDatabase(databasePath: string, source: Ladybug
   const connection = new Connection(database);
   try {
     for (const query of SCHEMA_QUERIES) await executeQuery(connection, query);
-    await executeQuery(connection, "BEGIN TRANSACTION");
-    try {
-      await insertProjection(connection, source);
-      await executeQuery(connection, "COMMIT");
-    } catch (cause) {
-      try {
-        await executeQuery(connection, "ROLLBACK");
-      } catch {
-        // Preserve the original write failure. Closing the isolated staging
-        // database is the remaining rollback boundary.
-      }
-      throw cause;
-    }
+    await insertProjection(connection, databasePath, source);
     await executeQuery(connection, "CHECKPOINT");
   } finally {
     await closeConnection(connection);
@@ -203,7 +218,7 @@ export async function verifyLadybugDatabase(
       }
     }
 
-    await verifyRecordTable(connection, "ConceptRecord", source.concepts);
+    await verifyConceptRecordTable(connection, source.concepts);
     await verifyRecordTable(connection, "TaskRecord", source.tasks);
     await verifyRecordTable(connection, "AuthoredEdgeRecord", source.authoredEdges);
     await verifyPromotedSamples(connection, source);
@@ -365,13 +380,59 @@ export async function verifyLadybugDatabase(
   }
 }
 
+/** Verify bounded promoted metadata after the immutable file digest has already matched. */
+export async function verifyLadybugDatabaseMetadata(
+  databasePath: string,
+  expected: LadybugDatabaseVerification,
+): Promise<LadybugDatabaseVerification> {
+  return withReadConnection(databasePath, async (connection) => {
+    const rows = await queryRows(
+      connection,
+      `MATCH (s:ProjectionSnapshot {snapshotKey: $snapshotKey})
+       RETURN s.repositoryScopeKey AS repositoryScopeKey, s.snapshotKey AS snapshotKey,
+              s.sourceFingerprint AS sourceFingerprint, s.exportDigest AS exportDigest,
+              s.taskSnapshotDigest AS taskSnapshotDigest, s.sourceRecordsDigest AS sourceRecordsDigest,
+              s.recordKeysDigest AS recordKeysDigest, s.recordCount AS recordCount,
+              s.conceptCount AS conceptCount, s.taskCount AS taskCount,
+              s.authoredEdgeCount AS authoredEdgeCount`,
+      { snapshotKey: expected.snapshotKey },
+    );
+    if (rows.length !== 1) corrupt("projection snapshot metadata is missing or duplicated");
+    const row = rows[0] as Record<string, unknown>;
+    for (const [key, value] of Object.entries(expected)) {
+      if (!sameDatabaseValue(row[key], value)) corrupt(`projection snapshot metadata differs for ${key}`);
+    }
+    await expectCount(connection, "MATCH (n:ConceptRecord) RETURN count(n) AS count", expected.conceptCount, "concept");
+    await expectCount(connection, "MATCH (n:TaskRecord) RETURN count(n) AS count", expected.taskCount, "task");
+    await expectCount(
+      connection,
+      "MATCH (n:AuthoredEdgeRecord) RETURN count(n) AS count",
+      expected.authoredEdgeCount,
+      "authored edge",
+    );
+    return expected;
+  });
+}
+
 /** Read canonical source records for deterministic tests and later bounded readers. */
 export async function readLadybugSourceRecords(databasePath: string): Promise<ReadonlyMap<string, string>> {
-  const database = readOnlyDatabase(databasePath);
+  const database = fullScanDatabase(databasePath);
   const connection = new Connection(database);
   try {
     const result = new Map<string, string>();
-    for (const table of ["ConceptRecord", "TaskRecord", "AuthoredEdgeRecord"] as const) {
+    const concepts = await queryRows(
+      connection,
+      `MATCH (n:ConceptRecord)
+       RETURN n.recordKey AS recordKey, n.conceptId AS conceptId, n.path AS path,
+              n.conceptType AS conceptType, n.frontmatterJson AS frontmatterJson,
+              n.body AS body, n.contentHash AS contentHash, n.tokenEstimate AS tokenEstimate
+       ORDER BY n.recordKey`,
+    );
+    for (const row of concepts) {
+      const record = conceptRecordFromPromotedRow(row);
+      result.set(record.key, JSON.stringify(record));
+    }
+    for (const table of ["TaskRecord", "AuthoredEdgeRecord"] as const) {
       const rows = await queryRows(
         connection,
         `MATCH (n:${table}) RETURN n.recordKey AS key, n.sourceRecordJson AS sourceRecordJson ORDER BY n.recordKey`,
@@ -403,12 +464,15 @@ export async function readLadybugBundleGraph(
   databasePath: string,
   source: LadybugProjectionSource,
 ): Promise<BundleGraph> {
-  const database = readOnlyDatabase(databasePath);
+  const database = fullScanDatabase(databasePath);
   const connection = new Connection(database);
   try {
     const conceptRows = await queryRows(
       connection,
-      "MATCH (n:ConceptRecord) RETURN n.sourceRecordJson AS sourceRecordJson",
+      `MATCH (n:ConceptRecord)
+       RETURN n.recordKey AS recordKey, n.conceptId AS conceptId, n.path AS path,
+              n.conceptType AS conceptType, n.frontmatterJson AS frontmatterJson,
+              n.body AS body, n.contentHash AS contentHash, n.tokenEstimate AS tokenEstimate`,
     );
     const edgeRows = await queryRows(
       connection,
@@ -418,7 +482,7 @@ export async function readLadybugBundleGraph(
       corrupt("indexed read counts differ from the verified source snapshot");
     }
 
-    const records = conceptRows.map((row) => parseConceptSourceRecord(row.sourceRecordJson));
+    const records = conceptRows.map(conceptRecordFromPromotedRow);
     records.sort((a, b) => compare(a.id, b.id));
     const concepts = new Map<string, Concept>();
     const conceptIdsByRecordKey = new Map<string, string>();
@@ -493,15 +557,312 @@ export async function readLadybugBundleGraph(
   }
 }
 
+/** Open one shared read-only native session for bounded indexed operations in this CLI process. */
+export function openLadybugIndexedReader(databasePath: string, source: LadybugProjectionSource): LadybugIndexedReader {
+  const database = readOnlyDatabase(databasePath);
+  const connection = new Connection(database);
+  const recordKeyById = new Map<string, string>();
+  let closed = false;
+  return {
+    readBundleGraph: (bodyId?: string) =>
+      readIndexedBundleGraph(databasePath, source, bodyId, connection, (recordIds) => {
+        for (const [recordKey, id] of recordIds) recordKeyById.set(id, recordKey);
+      }),
+    readConceptBody: async (id: string) => {
+      const recordKey = recordKeyById.get(id);
+      if (recordKey === undefined) return undefined;
+      const rows = await queryRows(
+        connection,
+        "MATCH (n:ConceptRecord {recordKey: $recordKey}) RETURN n.body AS body",
+        { recordKey },
+      );
+      if (rows.length !== 1) corrupt("indexed concept body is missing or duplicated");
+      const body = rows[0]?.body;
+      if (body !== null && typeof body !== "string") corrupt("indexed concept body is invalid");
+      return body ?? "";
+    },
+    query: (options: QueryOptions) => queryIndexedDatabase(databasePath, source, options, connection),
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      await closeConnection(connection);
+      await database.close();
+    },
+  };
+}
+
+async function readIndexedBundleGraph(
+  databasePath: string,
+  source: LadybugProjectionSource,
+  bodyId?: string,
+  existingConnection?: Connection,
+  observeRecordIds?: (recordIds: ReadonlyMap<string, string>) => void,
+): Promise<BundleGraph> {
+  return useReadConnection(databasePath, existingConnection, async (connection) => {
+    const conceptRows = await queryRows(
+      connection,
+      `MATCH (n:ConceptRecord)
+       RETURN n.recordKey AS recordKey, n.conceptId AS conceptId, n.path AS path,
+              n.conceptType AS conceptType, n.frontmatterJson AS frontmatterJson,
+              n.tokenEstimate AS tokenEstimate
+       ORDER BY n.conceptId`,
+    );
+    if (conceptRows.length !== source.counts.concepts) corrupt("indexed concept count differs");
+    const bodies = new Map<string, string>();
+    if (bodyId !== undefined) {
+      const rows = await queryRows(
+        connection,
+        `MATCH (n:ConceptRecord) WHERE n.conceptId = $conceptId
+         RETURN n.conceptId AS conceptId, n.body AS body`,
+        { conceptId: bodyId },
+      );
+      if (rows.length > 1) corrupt("indexed concept id is duplicated");
+      const row = rows[0];
+      if (
+        row !== undefined &&
+        typeof row.conceptId === "string" &&
+        (typeof row.body === "string" || row.body === null)
+      ) {
+        bodies.set(row.conceptId, row.body ?? "");
+      }
+    }
+    const { concepts, recordIds, tokenEstimates } = conceptsFromRows(conceptRows, source, bodies);
+    observeRecordIds?.(recordIds);
+    const edgeRows = await queryRows(
+      connection,
+      `MATCH (n:AuthoredEdgeRecord) WHERE n.kind <> 'task'
+       RETURN n.recordKey AS recordKey, n.fromRecordKey AS fromRecordKey,
+              n.toRecordKey AS toRecordKey, n.kind AS kind, n.target AS target,
+              n.ordinal AS ordinal, n.dangling AS dangling
+       ORDER BY n.fromRecordKey, n.ordinal, n.recordKey`,
+    );
+    const edges = edgesFromRows(edgeRows, recordIds);
+    return bundleGraph(concepts, edges, tokenEstimates);
+  });
+}
+
+async function queryIndexedDatabase(
+  databasePath: string,
+  source: LadybugProjectionSource,
+  options: QueryOptions,
+  existingConnection?: Connection,
+): Promise<LoreQueryResult> {
+  return useReadConnection(databasePath, existingConnection, async (connection) => {
+    const terms = [...new Set(tokenizeQueryText((options.text ?? "").trim()))];
+    if (terms.length === 0) {
+      const rows = await queryConceptMetadata(connection);
+      const { concepts, tokenEstimates } = conceptsFromRows(rows, source);
+      return queryWithBm25Index(bundleGraph(concepts, [], tokenEstimates), options);
+    }
+
+    const snapshotRows = await queryRows(
+      connection,
+      `MATCH (s:ProjectionSnapshot {snapshotKey: $snapshotKey})
+       RETURN s.lexicalDocumentCount AS documentCount, s.lexicalTotalLength AS totalLength`,
+      { snapshotKey: source.snapshotKey },
+    );
+    if (snapshotRows.length !== 1) corrupt("lexical snapshot metadata is missing or duplicated");
+    const n = requiredNumber(snapshotRows[0]?.documentCount, "lexical document count");
+    const totalLength = requiredNumber(snapshotRows[0]?.totalLength, "lexical total length");
+    const rowById = new Map<string, Record<string, LbugValue>>();
+    const tfById = new Map<string, Map<string, number>>();
+    const df = new Map<string, number>();
+    for (const term of terms) {
+      const rows = await queryRows(
+        connection,
+        `MATCH (t:LexicalTerm {termKey: $termKey})<-[p:HAS_TERM]-(c:ConceptRecord)
+         RETURN t.documentFrequency AS documentFrequency,
+                c.recordKey AS recordKey, c.conceptId AS conceptId, c.path AS path,
+                c.conceptType AS conceptType, c.frontmatterJson AS frontmatterJson,
+                c.tokenEstimate AS tokenEstimate, c.lexicalLength AS lexicalLength,
+                p.frequency AS frequency
+         ORDER BY c.conceptId`,
+        { termKey: lexicalTermKey(term) },
+      );
+      for (const row of rows) {
+        const id = requiredString(row.conceptId, "lexical concept id");
+        rowById.set(id, row);
+        const frequency = requiredNumber(row.frequency, "lexical term frequency");
+        let frequencies = tfById.get(id);
+        if (frequencies === undefined) {
+          frequencies = new Map();
+          tfById.set(id, frequencies);
+        }
+        frequencies.set(term, frequency);
+        const documentFrequency = requiredNumber(row.documentFrequency, "lexical document frequency");
+        const previous = df.get(term);
+        if (previous !== undefined && previous !== documentFrequency) corrupt("lexical document frequency differs");
+        df.set(term, documentFrequency);
+      }
+    }
+    const rows = [...rowById.values()].sort((a, b) =>
+      compare(requiredString(a.conceptId, "concept id"), requiredString(b.conceptId, "concept id")),
+    );
+    const { concepts, tokenEstimates } = conceptsFromRows(rows, source);
+    const docs = new Map<string, { tf: ReadonlyMap<string, number>; length: number }>();
+    for (const row of rows) {
+      const id = requiredString(row.conceptId, "lexical concept id");
+      docs.set(id, {
+        tf: tfById.get(id) ?? new Map(),
+        length: requiredNumber(row.lexicalLength, "lexical document length"),
+      });
+    }
+    const index: Bm25Index = { docs, df, n, avgdl: n === 0 ? 0 : totalLength / n };
+    return queryWithBm25Index(bundleGraph(concepts, [], tokenEstimates), options, index);
+  });
+}
+
+async function queryConceptMetadata(connection: Connection): Promise<Record<string, LbugValue>[]> {
+  return queryRows(
+    connection,
+    `MATCH (n:ConceptRecord)
+     RETURN n.recordKey AS recordKey, n.conceptId AS conceptId, n.path AS path,
+            n.conceptType AS conceptType, n.frontmatterJson AS frontmatterJson,
+            n.tokenEstimate AS tokenEstimate
+     ORDER BY n.conceptId`,
+  );
+}
+
+function conceptsFromRows(
+  rows: readonly Record<string, LbugValue>[],
+  source: LadybugProjectionSource,
+  bodies: ReadonlyMap<string, string> = new Map(),
+): {
+  concepts: Map<string, Concept>;
+  recordIds: Map<string, string>;
+  tokenEstimates: Map<string, number>;
+} {
+  const concepts = new Map<string, Concept>();
+  const recordIds = new Map<string, string>();
+  const tokenEstimates = new Map<string, number>();
+  const docsPrefix = `${source.manifest.bundle.docsRoot}/`;
+  for (const row of rows) {
+    const recordKey = requiredString(row.recordKey, "concept record key");
+    const id = requiredString(row.conceptId, "concept id");
+    const path = requiredString(row.path, "concept path");
+    const type = requiredString(row.conceptType, "concept type");
+    if (!path.startsWith(docsPrefix) || concepts.has(id) || recordIds.has(recordKey)) {
+      corrupt("indexed concept identities are duplicated or outside the bundle root");
+    }
+    const frontmatter = parseObjectJson(row.frontmatterJson, "concept frontmatter");
+    concepts.set(id, { id, path: path.slice(docsPrefix.length), type, frontmatter, body: bodies.get(id) ?? "" });
+    recordIds.set(recordKey, id);
+    tokenEstimates.set(id, requiredNumber(row.tokenEstimate, "concept token estimate"));
+  }
+  return { concepts, recordIds, tokenEstimates };
+}
+
+function edgesFromRows(rows: readonly Record<string, LbugValue>[], recordIds: ReadonlyMap<string, string>): Edge[] {
+  const indexed = rows.map((row) => {
+    const fromKey = requiredString(row.fromRecordKey, "edge source key");
+    const from = recordIds.get(fromKey);
+    const toKey = row.toRecordKey;
+    const to = typeof toKey === "string" ? recordIds.get(toKey) : undefined;
+    const kind = requiredString(row.kind, "edge kind");
+    const dangling = row.dangling;
+    if (from === undefined || !isEdgeKind(kind) || typeof dangling !== "boolean") corrupt("indexed edge is invalid");
+    if ((!dangling && (typeof toKey !== "string" || to === undefined)) || (dangling && toKey !== null)) {
+      corrupt("indexed edge endpoint differs");
+    }
+    return {
+      ordinal: requiredNumber(row.ordinal, "edge ordinal"),
+      recordKey: requiredString(row.recordKey, "edge record key"),
+      edge: { from, to: to ?? null, kind, target: requiredString(row.target, "edge target") } satisfies Edge,
+    };
+  });
+  indexed.sort(
+    (a, b) => compare(a.edge.from, b.edge.from) || a.ordinal - b.ordinal || compare(a.recordKey, b.recordKey),
+  );
+  return indexed.map(({ edge }) => edge);
+}
+
+function bundleGraph(
+  concepts: ReadonlyMap<string, Concept>,
+  edges: readonly Edge[],
+  tokenEstimates: ReadonlyMap<string, number>,
+): BundleGraph {
+  let total: number | undefined;
+  return {
+    concepts,
+    edges,
+    tokenEstimate(id?: string): number {
+      if (id === undefined) {
+        total ??= [...tokenEstimates.values()].reduce((sum, value) => sum + value, 0);
+        return total;
+      }
+      const value = tokenEstimates.get(id);
+      if (value === undefined) {
+        throw new LoreError(
+          "not_found",
+          `concept "${id}" is not in the bundle`,
+          "run `lore query` to find the right id, or check the path",
+          { id },
+        );
+      }
+      return value;
+    },
+  };
+}
+
+async function withReadConnection<T>(databasePath: string, fn: (connection: Connection) => Promise<T>): Promise<T> {
+  const database = readOnlyDatabase(databasePath);
+  const connection = new Connection(database);
+  try {
+    return await fn(connection);
+  } finally {
+    await closeConnection(connection);
+    await database.close();
+  }
+}
+
+function useReadConnection<T>(
+  databasePath: string,
+  existing: Connection | undefined,
+  fn: (connection: Connection) => Promise<T>,
+): Promise<T> {
+  return existing === undefined ? withReadConnection(databasePath, fn) : fn(existing);
+}
+
+function parseObjectJson(value: unknown, label: string): Record<string, unknown> {
+  if (typeof value !== "string") corrupt(`${label} JSON is missing`);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    corrupt(`${label} JSON is malformed`);
+  }
+  if (!isObject(parsed)) corrupt(`${label} JSON is not an object`);
+  return parsed;
+}
+
+function requiredString(value: unknown, label: string): string {
+  if (typeof value !== "string") corrupt(`${label} is invalid`);
+  return value;
+}
+
+function requiredNumber(value: unknown, label: string): number {
+  const number = numericValue(value);
+  if (number === null || !Number.isSafeInteger(number) || number < 0) corrupt(`${label} is invalid`);
+  return number;
+}
+
 function writableDatabase(path: string): Database {
-  return new Database(path, 0, true, false, 0, false, -1, true, true, true);
+  return new Database(path, WRITER_BUFFER_BYTES, true, false, 0, false, -1, true, true, true);
 }
 
 function readOnlyDatabase(path: string): Database {
-  return new Database(path, 0, true, true, 0, true, -1, true, true, true);
+  return new Database(path, READER_BUFFER_BYTES, true, true, 0, true, -1, true, true, true);
 }
 
-async function insertProjection(connection: Connection, source: LadybugProjectionSource): Promise<void> {
+function fullScanDatabase(path: string): Database {
+  return new Database(path, FULL_SCAN_BUFFER_BYTES, true, true, 0, true, -1, true, true, true);
+}
+
+async function insertProjection(
+  connection: Connection,
+  databasePath: string,
+  source: LadybugProjectionSource,
+): Promise<void> {
   const common = {
     repositoryScopeKey: source.repositoryScopeKey,
     snapshotKey: source.snapshotKey,
@@ -509,6 +870,8 @@ async function insertProjection(connection: Connection, source: LadybugProjectio
     gitCommit: source.manifest.bundle.gitCommit,
     exportDigest: source.exportDigest,
   };
+  const lexical = buildProjectionLexicalIndex(source);
+  Bun.gc(true);
   await executePrepared(
     connection,
     `CREATE (n:RepositoryProjection {
@@ -544,6 +907,8 @@ async function insertProjection(connection: Connection, source: LadybugProjectio
       sourceFingerprint: $sourceFingerprint,
       sourceRecordsDigest: $sourceRecordsDigest,
       recordKeysDigest: $recordKeysDigest,
+      lexicalDocumentCount: $lexicalDocumentCount,
+      lexicalTotalLength: $lexicalTotalLength,
       recordCount: $recordCount,
       conceptCount: $conceptCount,
       taskCount: $taskCount,
@@ -551,7 +916,7 @@ async function insertProjection(connection: Connection, source: LadybugProjectio
       manifestJson: $manifestJson,
       trailerJson: $trailerJson
     })`,
-    snapshotMetadata(source),
+    snapshotMetadata(source, lexical),
   );
   if (source.commitKey !== null && source.manifest.bundle.gitCommit !== null) {
     await executePrepared(
@@ -569,111 +934,92 @@ async function insertProjection(connection: Connection, source: LadybugProjectio
     );
   }
 
-  const conceptStatement = await prepare(
+  await copyRows(
     connection,
-    `CREATE (n:ConceptRecord {
-      recordKey: $recordKey,
-      repositoryScopeKey: $repositoryScopeKey,
-      snapshotKey: $snapshotKey,
-      bundleId: $bundleId,
-      gitCommit: $gitCommit,
-      exportDigest: $exportDigest,
-      conceptId: $conceptId,
-      path: $path,
-      conceptType: $conceptType,
-      frontmatterJson: $frontmatterJson,
-      body: $body,
-      contentHash: $contentHash,
-      tokenEstimate: $tokenEstimate,
-      sourceRecordJson: $sourceRecordJson
-    })`,
+    databasePath,
+    "ConceptRecord",
+    (function* (): Generator<readonly CsvValue[]> {
+      for (const record of source.concepts) {
+        const doc = lexical.docs.get(record.id);
+        if (doc === undefined) corrupt(`lexical document is missing for ${record.id}`);
+        yield [
+          record.key,
+          common.repositoryScopeKey,
+          common.snapshotKey,
+          common.bundleId,
+          common.gitCommit,
+          common.exportDigest,
+          record.id,
+          record.path,
+          record.type,
+          JSON.stringify(record.frontmatter),
+          frontmatterScalar(record.frontmatter.title) ?? null,
+          frontmatterScalar(record.frontmatter.summary) ?? null,
+          frontmatterScalar(record.frontmatter.description) ?? null,
+          canonicalJson(record.frontmatter.tags ?? null),
+          record.body,
+          record.contentHash,
+          record.tokenEstimate,
+          doc.length,
+        ];
+      }
+    })(),
   );
-  for (const record of source.concepts) {
-    await executeStatement(connection, conceptStatement, {
-      ...common,
-      recordKey: record.key,
-      conceptId: record.id,
-      path: record.path,
-      conceptType: record.type,
-      frontmatterJson: canonicalJson(record.frontmatter),
-      body: record.body,
-      contentHash: record.contentHash,
-      tokenEstimate: record.tokenEstimate,
-      sourceRecordJson: JSON.stringify(record),
-    });
-  }
+  Bun.gc(true);
+  await executeQuery(connection, "CHECKPOINT");
+  await copyRows(
+    connection,
+    databasePath,
+    "TaskRecord",
+    source.tasks.map((record) => [
+      record.key,
+      common.repositoryScopeKey,
+      common.snapshotKey,
+      common.bundleId,
+      common.gitCommit,
+      common.exportDigest,
+      record.id,
+      record.title,
+      record.status,
+      canonicalJson(record.labels),
+      record.priority,
+      record.ordinal,
+      canonicalJson(record.assignees),
+      record.milestone,
+      record.parentTaskId,
+      record.sourceAdapterVersion,
+      JSON.stringify(record),
+    ]),
+  );
+  await copyRows(
+    connection,
+    databasePath,
+    "AuthoredEdgeRecord",
+    source.authoredEdges.map((record) => [
+      record.key,
+      common.repositoryScopeKey,
+      common.snapshotKey,
+      common.bundleId,
+      common.gitCommit,
+      common.exportDigest,
+      record.from,
+      record.to,
+      record.kind,
+      record.target,
+      record.ordinal,
+      record.dangling,
+      JSON.stringify(record),
+    ]),
+  );
+  await executeQuery(connection, "CHECKPOINT");
 
-  const taskStatement = await prepare(
+  const terms = [...lexical.df.entries()].sort(([a], [b]) => compare(a, b));
+  await copyRows(
     connection,
-    `CREATE (n:TaskRecord {
-      recordKey: $recordKey,
-      repositoryScopeKey: $repositoryScopeKey,
-      snapshotKey: $snapshotKey,
-      bundleId: $bundleId,
-      gitCommit: $gitCommit,
-      exportDigest: $exportDigest,
-      taskId: $taskId,
-      title: $title,
-      status: $status,
-      labelsJson: $labelsJson,
-      priority: $priority,
-      ordinal: $ordinal,
-      assigneesJson: $assigneesJson,
-      milestone: $milestone,
-      parentTaskId: $parentTaskId,
-      sourceAdapterVersion: $sourceAdapterVersion,
-      sourceRecordJson: $sourceRecordJson
-    })`,
+    databasePath,
+    "LexicalTerm",
+    terms.map(([termKey, documentFrequency]) => [termKey, documentFrequency]),
   );
-  for (const record of source.tasks) {
-    await executeStatement(connection, taskStatement, {
-      ...common,
-      recordKey: record.key,
-      taskId: record.id,
-      title: record.title,
-      status: record.status,
-      labelsJson: canonicalJson(record.labels),
-      priority: record.priority,
-      ordinal: record.ordinal,
-      assigneesJson: canonicalJson(record.assignees),
-      milestone: record.milestone,
-      parentTaskId: record.parentTaskId,
-      sourceAdapterVersion: record.sourceAdapterVersion,
-      sourceRecordJson: JSON.stringify(record),
-    });
-  }
-
-  const edgeStatement = await prepare(
-    connection,
-    `CREATE (n:AuthoredEdgeRecord {
-      recordKey: $recordKey,
-      repositoryScopeKey: $repositoryScopeKey,
-      snapshotKey: $snapshotKey,
-      bundleId: $bundleId,
-      gitCommit: $gitCommit,
-      exportDigest: $exportDigest,
-      fromRecordKey: $fromRecordKey,
-      toRecordKey: $toRecordKey,
-      kind: $kind,
-      target: $target,
-      ordinal: $ordinal,
-      dangling: $dangling,
-      sourceRecordJson: $sourceRecordJson
-    })`,
-  );
-  for (const record of source.authoredEdges) {
-    await executeStatement(connection, edgeStatement, {
-      ...common,
-      recordKey: record.key,
-      fromRecordKey: record.from,
-      toRecordKey: record.to,
-      kind: record.kind,
-      target: record.target,
-      ordinal: record.ordinal,
-      dangling: record.dangling,
-      sourceRecordJson: JSON.stringify(record),
-    });
-  }
 
   await createRelationship(
     connection,
@@ -697,56 +1043,150 @@ async function insertProjection(connection: Connection, source: LadybugProjectio
       source.commitKey,
     );
   }
+  await copyRows(
+    connection,
+    databasePath,
+    "HAS_CONCEPT",
+    source.concepts.map((record) => [source.snapshotKey, record.key]),
+  );
+  await copyRows(
+    connection,
+    databasePath,
+    "HAS_TASK",
+    source.tasks.map((record) => [source.snapshotKey, record.key]),
+  );
+  await copyRows(
+    connection,
+    databasePath,
+    "HAS_EDGE",
+    source.authoredEdges.map((record) => [source.snapshotKey, record.key]),
+  );
+  await copyRows(
+    connection,
+    databasePath,
+    "EDGE_SOURCE",
+    source.authoredEdges.map((record) => [record.from, record.key]),
+  );
+  await copyRows(
+    connection,
+    databasePath,
+    "EDGE_CONCEPT_TARGET",
+    source.authoredEdges
+      .filter((record) => record.kind !== "task" && !record.dangling && record.to !== null)
+      .map((record) => [record.key, record.to]),
+  );
+  await copyRows(
+    connection,
+    databasePath,
+    "EDGE_TASK_TARGET",
+    source.authoredEdges
+      .filter((record) => record.kind === "task" && !record.dangling && record.to !== null)
+      .map((record) => [record.key, record.to]),
+  );
+  const recordKeys = new Map(source.concepts.map((record) => [record.id, record.key]));
+  await copyRows(
+    connection,
+    databasePath,
+    "HAS_TERM",
+    (function* (): Generator<readonly CsvValue[]> {
+      for (const [id, doc] of lexical.docs) {
+        const recordKey = recordKeys.get(id);
+        if (recordKey === undefined) corrupt(`lexical record key is missing for ${id}`);
+        for (const [termKey, frequency] of doc.tf) yield [recordKey, termKey, frequency];
+      }
+    })(),
+  );
+  await executeQuery(connection, "CHECKPOINT");
+}
+
+type CsvValue = string | number | boolean | null;
+
+function buildProjectionLexicalIndex(source: LadybugProjectionSource): Bm25Index {
+  const docsPrefix = `${source.manifest.bundle.docsRoot}/`;
+  const concepts = new Map<string, Concept>();
   for (const record of source.concepts) {
-    await createRelationship(
-      connection,
-      "ProjectionSnapshot",
-      "snapshotKey",
-      source.snapshotKey,
-      "HAS_CONCEPT",
-      "ConceptRecord",
-      "recordKey",
-      record.key,
-    );
+    if (!record.path.startsWith(docsPrefix)) corrupt("projection concept path is outside the bundle root");
+    concepts.set(record.id, {
+      id: record.id,
+      path: record.path.slice(docsPrefix.length),
+      type: record.type,
+      frontmatter: record.frontmatter,
+      body: record.body,
+    });
   }
-  for (const record of source.tasks) {
-    await createRelationship(
-      connection,
-      "ProjectionSnapshot",
-      "snapshotKey",
-      source.snapshotKey,
-      "HAS_TASK",
-      "TaskRecord",
-      "recordKey",
-      record.key,
-    );
+  const docs = new Map<string, { tf: ReadonlyMap<string, number>; length: number }>();
+  const df = new Map<string, number>();
+  let totalLength = 0;
+  for (const concept of concepts.values()) {
+    const tf = new Map<string, number>();
+    let length = 0;
+    for (const field of searchableConceptFields(concept)) {
+      for (const match of field.matchAll(/[\p{L}\p{N}]+/gu)) {
+        const termKey = lexicalTermKey((match[0] as string).toLowerCase());
+        tf.set(termKey, (tf.get(termKey) ?? 0) + 1);
+        length++;
+      }
+    }
+    for (const termKey of tf.keys()) df.set(termKey, (df.get(termKey) ?? 0) + 1);
+    docs.set(concept.id, { tf, length });
+    totalLength += length;
   }
-  for (const edge of source.authoredEdges) {
-    await createRelationship(
-      connection,
-      "ProjectionSnapshot",
-      "snapshotKey",
-      source.snapshotKey,
-      "HAS_EDGE",
-      "AuthoredEdgeRecord",
-      "recordKey",
-      edge.key,
-    );
-    await createRelationship(
-      connection,
-      "ConceptRecord",
-      "recordKey",
-      edge.from,
-      "EDGE_SOURCE",
-      "AuthoredEdgeRecord",
-      "recordKey",
-      edge.key,
-    );
-    if (!edge.dangling && edge.to !== null) await createTargetRelationship(connection, edge);
+  const n = docs.size;
+  return { docs, df, n, avgdl: n === 0 ? 0 : totalLength / n };
+}
+
+function lexicalTermKey(term: string): string {
+  return createHash("sha256").update(term).digest("hex");
+}
+
+async function copyRows(
+  connection: Connection,
+  databasePath: string,
+  table: string,
+  rows: Iterable<readonly CsvValue[]>,
+): Promise<void> {
+  const maxBatchBytes = 16 * 1024 * 1024;
+  const iterator = rows[Symbol.iterator]();
+  let current = iterator.next();
+  while (!current.done) {
+    const path = join(dirname(databasePath), `.lore-import-${table}-${randomUUID()}.csv`);
+    const file = openSync(path, "wx", 0o600);
+    let batchBytes = 0;
+    try {
+      while (!current.done) {
+        const line = `${current.value.map(csvValue).join(",")}\n`;
+        const lineBytes = Buffer.byteLength(line);
+        if (batchBytes > 0 && batchBytes + lineBytes > maxBatchBytes) break;
+        writeSync(file, line);
+        batchBytes += lineBytes;
+        current = iterator.next();
+      }
+    } finally {
+      closeSync(file);
+    }
+    try {
+      await executeQuery(
+        connection,
+        `COPY ${table} FROM ${JSON.stringify(path)} (header=false, auto_detect=false, parallel=false, delim=",", quote="\\"", escape="\\"")`,
+      );
+    } finally {
+      try {
+        unlinkSync(path);
+      } catch {
+        // The generation staging directory remains disposable if cleanup races a failure.
+      }
+    }
   }
 }
 
-function snapshotMetadata(source: LadybugProjectionSource): Record<string, LbugValue> {
+function csvValue(value: CsvValue): string {
+  if (value === null) return "";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number") return String(value);
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+function snapshotMetadata(source: LadybugProjectionSource, lexical?: Bm25Index): Record<string, LbugValue> {
   return {
     snapshotKey: source.snapshotKey,
     indexFormatVersion: LADYBUG_INDEX_FORMAT,
@@ -767,6 +1207,12 @@ function snapshotMetadata(source: LadybugProjectionSource): Record<string, LbugV
     sourceFingerprint: source.sourceFingerprint,
     sourceRecordsDigest: source.sourceRecordsDigest,
     recordKeysDigest: source.recordKeysDigest,
+    ...(lexical === undefined
+      ? {}
+      : {
+          lexicalDocumentCount: lexical.n,
+          lexicalTotalLength: [...lexical.docs.values()].reduce((sum, doc) => sum + doc.length, 0),
+        }),
     recordCount: source.trailer.recordCount,
     conceptCount: source.counts.concepts,
     taskCount: source.counts.tasks,
@@ -774,6 +1220,64 @@ function snapshotMetadata(source: LadybugProjectionSource): Record<string, LbugV
     manifestJson: JSON.stringify(source.manifest),
     trailerJson: JSON.stringify(source.trailer),
   };
+}
+
+async function verifyConceptRecordTable(
+  connection: Connection,
+  expectedRecords: readonly ProjectionConceptRecord[],
+): Promise<void> {
+  const expected = new Map(expectedRecords.map((record) => [record.key, record]));
+  let count = 0;
+  await queryEachRow(
+    connection,
+    `MATCH (n:ConceptRecord)
+     RETURN n.recordKey AS recordKey, n.conceptId AS conceptId, n.path AS path,
+            n.conceptType AS conceptType, n.frontmatterJson AS frontmatterJson,
+            n.title AS title, n.summary AS summary, n.description AS description,
+            n.tagsJson AS tagsJson, n.contentHash AS contentHash,
+            n.tokenEstimate AS tokenEstimate, n.lexicalLength AS lexicalLength`,
+    (row) => {
+      count++;
+      const key = requiredString(row.recordKey, "concept record key");
+      const record = expected.get(key);
+      if (
+        record === undefined ||
+        row.conceptId !== record.id ||
+        row.path !== record.path ||
+        row.conceptType !== record.type ||
+        row.frontmatterJson !== JSON.stringify(record.frontmatter) ||
+        row.title !== (frontmatterScalar(record.frontmatter.title) ?? null) ||
+        row.summary !== (frontmatterScalar(record.frontmatter.summary) ?? null) ||
+        row.description !== (frontmatterScalar(record.frontmatter.description) ?? null) ||
+        row.tagsJson !== canonicalJson(record.frontmatter.tags ?? null) ||
+        row.contentHash !== record.contentHash ||
+        numericValue(row.tokenEstimate) !== record.tokenEstimate ||
+        numericValue(row.lexicalLength) !==
+          searchableConceptFields({
+            id: record.id,
+            path: record.path,
+            type: record.type,
+            frontmatter: record.frontmatter,
+            body: record.body,
+          }).reduce((length, field) => length + tokenizeQueryText(field).length, 0)
+      ) {
+        corrupt("ConceptRecord source record differs");
+      }
+      expected.delete(key);
+    },
+  );
+  if (count !== expectedRecords.length || expected.size !== 0) corrupt("ConceptRecord count differs");
+
+  const bodyStatement = await prepare(
+    connection,
+    "MATCH (n:ConceptRecord {recordKey: $recordKey}) RETURN n.body AS body",
+  );
+  for (const [index, record] of expectedRecords.entries()) {
+    const rows = await queryStatementRows(connection, bodyStatement, { recordKey: record.key });
+    const expectedBody = record.body === "" ? null : record.body;
+    if (rows.length !== 1 || rows[0]?.body !== expectedBody) corrupt("ConceptRecord body differs");
+    if (index > 0 && index % 256 === 0) Bun.gc(true);
+  }
 }
 
 async function verifyRecordTable(
@@ -802,7 +1306,7 @@ async function verifyPromotedSamples(connection: Connection, source: LadybugProj
   const concept = [...source.concepts].sort((a, b) => compare(a.key, b.key))[0];
   await expectSample(
     connection,
-    `MATCH (n:ConceptRecord)
+    `MATCH (n:ConceptRecord {recordKey: $recordKey})
      RETURN n.recordKey AS recordKey,
             n.repositoryScopeKey AS repositoryScopeKey,
             n.snapshotKey AS snapshotKey,
@@ -815,8 +1319,7 @@ async function verifyPromotedSamples(connection: Connection, source: LadybugProj
             n.frontmatterJson AS frontmatterJson,
             n.body AS body,
             n.contentHash AS contentHash,
-            n.tokenEstimate AS tokenEstimate
-     ORDER BY n.recordKey LIMIT 1`,
+            n.tokenEstimate AS tokenEstimate`,
     concept === undefined
       ? undefined
       : {
@@ -825,18 +1328,19 @@ async function verifyPromotedSamples(connection: Connection, source: LadybugProj
           conceptId: concept.id,
           path: concept.path,
           conceptType: concept.type,
-          frontmatterJson: canonicalJson(concept.frontmatter),
-          body: concept.body,
+          frontmatterJson: JSON.stringify(concept.frontmatter),
+          body: concept.body === "" ? null : concept.body,
           contentHash: concept.contentHash,
           tokenEstimate: concept.tokenEstimate,
         },
     "ConceptRecord",
+    { recordKey: concept?.key ?? "" },
   );
 
   const task = [...source.tasks].sort((a, b) => compare(a.key, b.key))[0];
   await expectSample(
     connection,
-    `MATCH (n:TaskRecord)
+    `MATCH (n:TaskRecord {recordKey: $recordKey})
      RETURN n.recordKey AS recordKey,
             n.repositoryScopeKey AS repositoryScopeKey,
             n.snapshotKey AS snapshotKey,
@@ -852,8 +1356,7 @@ async function verifyPromotedSamples(connection: Connection, source: LadybugProj
             n.assigneesJson AS assigneesJson,
             n.milestone AS milestone,
             n.parentTaskId AS parentTaskId,
-            n.sourceAdapterVersion AS sourceAdapterVersion
-     ORDER BY n.recordKey LIMIT 1`,
+            n.sourceAdapterVersion AS sourceAdapterVersion`,
     task === undefined
       ? undefined
       : {
@@ -871,12 +1374,13 @@ async function verifyPromotedSamples(connection: Connection, source: LadybugProj
           sourceAdapterVersion: task.sourceAdapterVersion,
         },
     "TaskRecord",
+    { recordKey: task?.key ?? "" },
   );
 
   const edge = [...source.authoredEdges].sort((a, b) => compare(a.key, b.key))[0];
   await expectSample(
     connection,
-    `MATCH (n:AuthoredEdgeRecord)
+    `MATCH (n:AuthoredEdgeRecord {recordKey: $recordKey})
      RETURN n.recordKey AS recordKey,
             n.repositoryScopeKey AS repositoryScopeKey,
             n.snapshotKey AS snapshotKey,
@@ -888,8 +1392,7 @@ async function verifyPromotedSamples(connection: Connection, source: LadybugProj
             n.kind AS kind,
             n.target AS target,
             n.ordinal AS ordinal,
-            n.dangling AS dangling
-     ORDER BY n.recordKey LIMIT 1`,
+            n.dangling AS dangling`,
     edge === undefined
       ? undefined
       : {
@@ -903,6 +1406,7 @@ async function verifyPromotedSamples(connection: Connection, source: LadybugProj
           dangling: edge.dangling,
         },
     "AuthoredEdgeRecord",
+    { recordKey: edge?.key ?? "" },
   );
 }
 
@@ -921,8 +1425,9 @@ async function expectSample(
   query: string,
   expected: Record<string, LbugValue> | undefined,
   label: string,
+  params: Record<string, LbugValue>,
 ): Promise<void> {
-  const rows = await queryRows(connection, query);
+  const rows = await queryRows(connection, query, params);
   if (expected === undefined) {
     if (rows.length !== 0) corrupt(`${label} conformance sample should be empty`);
     return;
@@ -952,33 +1457,6 @@ async function expectRelationshipPairs(
   expectedPairs.sort(compare);
   if (actualPairs.length !== expectedPairs.length || actualPairs.some((pair, index) => pair !== expectedPairs[index])) {
     corrupt(`${label} endpoints differ`);
-  }
-}
-
-async function createTargetRelationship(connection: Connection, edge: ProjectionEdgeRecord): Promise<void> {
-  if (edge.to === null) return;
-  if (edge.kind === "task") {
-    await createRelationship(
-      connection,
-      "AuthoredEdgeRecord",
-      "recordKey",
-      edge.key,
-      "EDGE_TASK_TARGET",
-      "TaskRecord",
-      "recordKey",
-      edge.to,
-    );
-  } else {
-    await createRelationship(
-      connection,
-      "AuthoredEdgeRecord",
-      "recordKey",
-      edge.key,
-      "EDGE_CONCEPT_TARGET",
-      "ConceptRecord",
-      "recordKey",
-      edge.to,
-    );
   }
 }
 
@@ -1056,6 +1534,43 @@ async function queryRows(
   }
 }
 
+async function queryStatementRows(
+  connection: Connection,
+  statement: Awaited<ReturnType<Connection["prepare"]>>,
+  params: Record<string, LbugValue>,
+): Promise<Record<string, LbugValue>[]> {
+  const result = await connection.execute(statement, params);
+  if (Array.isArray(result)) {
+    closeResult(result);
+    throw new Error("Ladybug returned multiple result sets for a single query");
+  }
+  try {
+    return await result.getAll();
+  } finally {
+    result.close();
+  }
+}
+
+async function queryEachRow(
+  connection: Connection,
+  query: string,
+  visit: (row: Record<string, LbugValue>) => void,
+): Promise<void> {
+  const result = await connection.query(query);
+  if (Array.isArray(result)) {
+    closeResult(result);
+    throw new Error("Ladybug returned multiple result sets for a single query");
+  }
+  try {
+    while (result.hasNext()) {
+      const row = await result.getNext();
+      if (row !== null) visit(row);
+    }
+  } finally {
+    result.close();
+  }
+}
+
 function closeResult(result: QueryResult | QueryResult[]): void {
   if (Array.isArray(result)) {
     for (const item of result) item.close();
@@ -1086,24 +1601,18 @@ function compare(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-function parseConceptSourceRecord(value: unknown): ProjectionConceptRecord {
-  const record = parseSourceRecord(value);
-  if (
-    record.record !== "concept" ||
-    typeof record.key !== "string" ||
-    typeof record.id !== "string" ||
-    typeof record.path !== "string" ||
-    typeof record.type !== "string" ||
-    !isObject(record.frontmatter) ||
-    typeof record.body !== "string" ||
-    typeof record.contentHash !== "string" ||
-    typeof record.tokenEstimate !== "number" ||
-    !Number.isSafeInteger(record.tokenEstimate) ||
-    record.tokenEstimate < 0
-  ) {
-    corrupt("indexed concept source record is invalid");
-  }
-  return record as ProjectionConceptRecord;
+function conceptRecordFromPromotedRow(row: Record<string, LbugValue>): ProjectionConceptRecord {
+  return {
+    record: "concept",
+    key: requiredString(row.recordKey, "concept record key"),
+    id: requiredString(row.conceptId, "concept id"),
+    path: requiredString(row.path, "concept path"),
+    type: requiredString(row.conceptType, "concept type"),
+    frontmatter: parseObjectJson(row.frontmatterJson, "concept frontmatter"),
+    body: row.body === null ? "" : requiredString(row.body, "concept body"),
+    contentHash: requiredString(row.contentHash, "concept content hash"),
+    tokenEstimate: requiredNumber(row.tokenEstimate, "concept token estimate"),
+  };
 }
 
 function parseEdgeSourceRecord(value: unknown): ProjectionEdgeRecord {

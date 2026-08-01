@@ -84,6 +84,22 @@ Report each sample and summary statistic rather than hiding variance behind a
 single best result. A threshold failure is a Lore qualification failure; it is
 not evidence of LadybugDB's absolute limit.
 
+## Qualified implementation approach
+
+The performance recovery follows LadybugDB's recommended bulk-import path:
+Lore writes bounded temporary CSV batches, loads them with `COPY`, checkpoints
+between phases, and removes staging files. Primary-keyed term nodes plus
+concept-to-term postings provide the persistent lexical lookup while preserving
+Lore's exact BM25 behavior. Warm retrieval opens one immutable read-only
+generation, uses promoted metadata for graph output and filters, and fetches a
+full document body only when context output needs it.
+
+Lore does not depend on LadybugDB's separately installed full-text-search
+extension. That extension has its own installation and user-global storage
+lifecycle, while the release requirement is a repository-contained,
+offline-capable native package. The private posting schema therefore uses only
+the exact pinned core package and automatic primary-key indexes.
+
 ## Optional 1 GiB observation
 
 The 1 GiB fixture uses the same deterministic accounting but runs only by an
@@ -148,6 +164,10 @@ carry the Darwin executable-platform evidence.
 ## Sources
 
 - [LadybugDB source repository](https://github.com/LadybugDB/ladybug)
+- [LadybugDB bulk import](https://docs.ladybugdb.com/import/)
+- [LadybugDB CSV import](https://docs.ladybugdb.com/import/csv/)
+- [LadybugDB table and primary-key definitions](https://docs.ladybugdb.com/cypher/data-definition/create-table/)
+- [LadybugDB full-text-search extension](https://docs.ladybugdb.com/extensions/full-text-search/)
 - [LadybugDB developer guide](https://docs.ladybugdb.com/developer-guide/)
 - [Kùzu Graph Database Management System, CIDR 2023](https://www.vldb.org/cidrdb/papers/2023/p48-jin.pdf)
 - [`@ladybugdb/core` on npm](https://www.npmjs.com/package/@ladybugdb/core)

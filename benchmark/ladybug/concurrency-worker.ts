@@ -124,7 +124,11 @@ async function classifyWriteConflict(
 
 async function readDigest(connection: Connection): Promise<string> {
   const result = await connection.query(
-    "MATCH (n:ConceptRecord) RETURN n.sourceRecordJson AS sourceRecordJson ORDER BY n.sourceRecordJson",
+    `MATCH (n:ConceptRecord)
+     RETURN n.recordKey AS recordKey, n.conceptId AS conceptId, n.path AS path,
+            n.conceptType AS conceptType, n.frontmatterJson AS frontmatterJson,
+            n.body AS body, n.contentHash AS contentHash, n.tokenEstimate AS tokenEstimate
+     ORDER BY n.recordKey`,
   );
   if (Array.isArray(result)) {
     closeResults(result);
@@ -172,11 +176,11 @@ async function pause(point: LadybugConcurrencyWorkerEvent["point"], connectionCo
 }
 
 function readOnlyDatabase(path: string): Database {
-  return new Database(path, 0, true, true, 0, true, -1, true, true, true);
+  return new Database(path, 64 * 1024 * 1024, true, true, 0, true, -1, true, true, true);
 }
 
 function writableDatabase(path: string): Database {
-  return new Database(path, 0, true, false, 0, false, -1, true, true, true);
+  return new Database(path, 256 * 1024 * 1024, true, false, 0, false, -1, true, true, true);
 }
 
 function closeResults(results: QueryResult[]): void {
