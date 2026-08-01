@@ -37,6 +37,7 @@ const WRITER_BUFFER_BYTES = 256 * 1024 * 1024;
 const READER_BUFFER_BYTES = 64 * 1024 * 1024;
 const FULL_SCAN_BUFFER_BYTES = 512 * 1024 * 1024;
 const VERIFIED_LEXICAL_LENGTHS = new WeakMap<LadybugProjectionSource, ReadonlyMap<string, number>>();
+const CONCEPT_BODY_QUERY = "MATCH (n:ConceptRecord {recordKey: $recordKey}) RETURN n.body AS body";
 
 const SCHEMA_QUERIES = [
   `CREATE NODE TABLE RepositoryProjection(
@@ -562,6 +563,9 @@ export async function readLadybugBundleGraph(
 export function openLadybugIndexedReader(databasePath: string, source: LadybugProjectionSource): LadybugIndexedReader {
   const database = readOnlyDatabase(databasePath);
   const connection = new Connection(database);
+  // Prepare the primary-key body lookup once during warm open. Context calls on
+  // this reader then bind and execute it without reparsing/replanning Cypher.
+  const conceptBodyStatement = prepareSync(connection, CONCEPT_BODY_QUERY);
   const recordKeyById = new Map<string, string>();
   let closed = false;
   return {
@@ -572,11 +576,7 @@ export function openLadybugIndexedReader(databasePath: string, source: LadybugPr
     readConceptBody: async (id: string) => {
       const recordKey = recordKeyById.get(id);
       if (recordKey === undefined) return undefined;
-      const rows = await queryRows(
-        connection,
-        "MATCH (n:ConceptRecord {recordKey: $recordKey}) RETURN n.body AS body",
-        { recordKey },
-      );
+      const rows = await queryPreparedRows(connection, conceptBodyStatement, { recordKey });
       if (rows.length !== 1) corrupt("indexed concept body is missing or duplicated");
       const body = rows[0]?.body;
       if (body !== null && typeof body !== "string") corrupt("indexed concept body is invalid");
@@ -1539,6 +1539,12 @@ async function prepare(connection: Connection, query: string) {
   return statement;
 }
 
+function prepareSync(connection: Connection, query: string): ReturnType<Connection["prepareSync"]> {
+  const statement = connection.prepareSync(query);
+  if (!statement.isSuccess()) throw new Error(statement.getErrorMessage());
+  return statement;
+}
+
 async function executeStatement(
   connection: Connection,
   statement: Awaited<ReturnType<Connection["prepare"]>>,
@@ -1562,6 +1568,18 @@ async function queryRows(
     params === undefined
       ? await connection.query(query)
       : await connection.execute(await prepare(connection, query), params);
+  return resultRows(result);
+}
+
+async function queryPreparedRows(
+  connection: Connection,
+  statement: Awaited<ReturnType<Connection["prepare"]>>,
+  params: Record<string, LbugValue>,
+): Promise<Record<string, LbugValue>[]> {
+  return resultRows(await connection.execute(statement, params));
+}
+
+async function resultRows(result: QueryResult | QueryResult[]): Promise<Record<string, LbugValue>[]> {
   if (Array.isArray(result)) {
     closeResult(result);
     throw new Error("Ladybug returned multiple result sets for a single query");
