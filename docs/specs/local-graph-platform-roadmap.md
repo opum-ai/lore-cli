@@ -132,6 +132,7 @@ packaging qualification remains explicitly deferred to `LCLI-283.1.4`.
 contract. Its contract task may overlap late M6; implementation may not:
 
 - `LCLI-283.2.1` depends on the frozen projection schema in `LCLI-283.1.1` and may define the explorer snapshot, data, provenance, interaction, accessibility, graph-health, and bounded-rendering contracts while the remaining M6 lanes run.
+- The frozen [graph explorer data and interaction contract](graph-explorer-data-and-interaction-contract.md) defines `lore-explorer-snapshot/1`, separates disposable presentation state, and supplies the executable boundary for the implementation and hardening tasks.
 - `LCLI-283.2.2` depends on both `LCLI-283.2.1` and completion of all `LCLI-283.1` gates, then builds the deterministic static explorer and CLI entrypoint with search, filters, detail inspection, inbound and outbound focus, depth focus, dangling references, and supersession chains.
 - `LCLI-283.2.3` proves keyboard and screen-reader access, responsive and reduced-motion behavior, offline and credential-free packaging, browser compatibility, reproducible artifacts, and large-graph performance.
 
