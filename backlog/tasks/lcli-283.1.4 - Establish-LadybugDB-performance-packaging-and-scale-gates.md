@@ -1,11 +1,11 @@
 ---
 id: LCLI-283.1.4
 title: Establish LadybugDB performance packaging and scale gates
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:33'
-updated_date: '2026-08-01 11:50'
+updated_date: '2026-08-01 13:36'
 labels:
   - ladybugdb
   - benchmark
@@ -82,10 +82,10 @@ Prove that the persistent index improves repeated retrieval at acceptable startu
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Benchmarks report cold build, warm open, graph, query, and context latency plus memory and disk usage on versioned small and large fixtures
-- [ ] #2 M6 defines quantitative regression thresholds and demonstrates a material warm-query improvement without unacceptable small-repository regression
-- [ ] #3 Node and Bun distribution paths pass supported native platform install, build, smoke, and clean-uninstall tests
-- [ ] #4 Single-writer and multi-reader scenarios, CLI and future long-running-process contention, crash recovery, and file-lock diagnostics are tested
+- [x] #1 Benchmarks report cold build, warm open, graph, query, and context latency plus memory and disk usage on versioned small and large fixtures
+- [x] #2 M6 defines quantitative regression thresholds and demonstrates a material warm-query improvement without unacceptable small-repository regression
+- [x] #3 Node and Bun distribution paths pass supported native platform install, build, smoke, and clean-uninstall tests
+- [x] #4 Single-writer and multi-reader scenarios, CLI and future long-running-process contention, crash recovery, and file-lock diagnostics are tested
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -185,6 +185,8 @@ Exact-host run 30697247321 on clean commit 36a5cac3f43b78826dec41cf37e1e730a04c3
 Cold-build recovery on 2026-08-01: official Ladybug hash-function guidance supports database-side SHA-256, so staged verification now compares every stored body in one bounded digest scan instead of thousands of body transfers. New generations skip reuse-only freshness reads when no candidate exists and reuse lexical lengths already computed for postings. CommonMark extraction preserves the standards parser but compacts only exceptionally long syntax-free lines to a representation still above the 999-character link-label ceiling; definition destinations remain byte-exact. The representative 100 MiB local build improved materially while retaining the fixed cleanup rate and full logical verification. Full verification now passes 2,339 tests with zero failures; lint, typecheck, compiled build, and diff checks pass. Exact hosted evidence remains required before any AC is checked.
 
 Exact-host run 30698283991 on clean commit 9b6562cd5e4c3070dfed0dbead4dc1e50756ad2b is retained as mixed qualification evidence. The pinned Linux-x64 benchmark passed all eighteen frozen gates, including the repaired cold-build gate and all warm-query improvement checks. Concurrency/crash evidence also passed. All five matching-host package jobs then failed at the same checker assumption: Bun 1.2.23 isolated installs keep a transitive optional platform package beside its parent instead of hoisting it to the repository node_modules root. Compile jobs passed; final manifest, package dry-run, and publish were correctly skipped, with publishing disabled. The checker now resolves the optional package from the installed Ladybug core package, which supports both valid isolated and hoisted layouts without weakening version, OS/CPU, integrity, or byte-identical-addon checks. Local Darwin package smoke, focused package tests, lint, and typecheck pass; a new clean hosted run is required.
+
+Final qualification evidence (2026-08-01): no-publish Release workflow 30701802962 completed successfully on exact clean commit 01d236c943817bc11b7912b1719eaa0ec883aacd. All 18 unchanged bounded performance gates passed; concurrency and crash recovery passed; all five supported standalone builds and all five matching-host installed-package audits passed; the strict AC 1-4 evidence manifest and package/install dry run passed; publishing was skipped. Final local verification passed 2,344 tests with 7,266 assertions across 64 files, plus lint, typecheck, Lore strict validation/check, and git diff validation. Search recovery uses bounded bulk COPY ingestion, repository-contained primary-keyed lexical postings with deterministic BM25 parity, reusable closeable readers, prepared primary-key body lookup, lazy body loading, and prebuilt graph adjacency. Frozen fixture, thresholds, sample count, gates, and time cap were not changed.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
@@ -196,3 +198,9 @@ created: 2026-08-01 00:24
 2026-07-31 user review: pause the approved 3,976-worker timeout refinement before source edits. The multi-hour harness does not represent a Lore user query and should not be used to rediscover LadybugDB's maximum scale. Revise the acceptance plan around a conservative bounded Lore integration envelope, upstream published benchmark evidence, and a short optional larger-scale check; obtain explicit approval before replacing plan item 11 or changing benchmark methodology.
 ---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Improved persistent search and graph retrieval with bulk indexed ingestion, deterministic lexical postings, warm reader reuse, lazy body access, prepared lookups, and reusable adjacency while preserving exact output parity and repository containment. Verified on commit 01d236c by successful no-publish workflow 30701802962: all 18 frozen performance gates, concurrency/crash recovery, five builds, five matching-host package audits, strict task evidence assembly, and package/install dry run passed. The complete local isolated suite also passed 2,344 tests across 64 files.
+<!-- SECTION:FINAL_SUMMARY:END -->
