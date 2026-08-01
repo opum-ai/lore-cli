@@ -6,6 +6,7 @@ import * as yaml from "js-yaml";
 import {
   assertPackageQualificationReport,
   isKnownNativeCrash,
+  isProvenSilentWindowsImportCrash,
   LADYBUG_PACKAGE_QUALIFICATION_SCHEMA,
   packageCompileCommand,
   parsePackageQualificationArgs,
@@ -343,6 +344,8 @@ describe("matching-host Ladybug package qualification", () => {
     expect(backlogShim).toContain('args[0] === "task"');
     expect(backlogShim).toContain('kind: "task-list"');
     expect(probe).toContain("loadLadybugNativeDriver");
+    expect(probe).toContain("NATIVE_IMPORT_STARTED_FILENAME");
+    expect(probe).toContain("NATIVE_IMPORT_COMPLETED_FILENAME");
     expect(probe).not.toContain('from "@ladybugdb/core"');
     expect(probe).toContain('if (mode === "import")');
     expect(probe).toContain("buildLadybugDatabase");
@@ -353,5 +356,35 @@ describe("matching-host Ladybug package qualification", () => {
     expect(isKnownNativeCrash(3_221_225_477, null)).toBe(true);
     expect(isKnownNativeCrash(0, "SIGSEGV")).toBe(true);
     expect(isKnownNativeCrash(1, null)).toBe(false);
+    expect(
+      isProvenSilentWindowsImportCrash({
+        exitCode: 1,
+        signal: null,
+        stdout: "",
+        stderr: "",
+        importStarted: true,
+        importCompleted: false,
+      }),
+    ).toBe(true);
+    expect(
+      isProvenSilentWindowsImportCrash({
+        exitCode: 1,
+        signal: null,
+        stdout: "",
+        stderr: "ordinary JavaScript error",
+        importStarted: true,
+        importCompleted: false,
+      }),
+    ).toBe(false);
+    expect(
+      isProvenSilentWindowsImportCrash({
+        exitCode: 1,
+        signal: null,
+        stdout: "",
+        stderr: "",
+        importStarted: true,
+        importCompleted: true,
+      }),
+    ).toBe(false);
   });
 });

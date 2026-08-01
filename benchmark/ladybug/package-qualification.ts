@@ -22,7 +22,11 @@ import { disposeLadybugProjection } from "../../src/core/ladybug-lifecycle";
 import { EXPECTED_LADYBUG_STORAGE_VERSION, EXPECTED_LADYBUG_VERSION } from "../../src/core/ladybug-native";
 import { canonicalJson, digest, LADYBUG_CACHE_REL_ROOT, readSourceInventory } from "../../src/core/ladybug-source";
 import { generateLadybugBenchmarkFixture, loadLadybugBenchmarkFixtureSpec } from "./fixture";
-import { LADYBUG_NATIVE_PROBE_SCHEMA } from "./native-probe";
+import {
+  LADYBUG_NATIVE_PROBE_SCHEMA,
+  NATIVE_IMPORT_COMPLETED_FILENAME,
+  NATIVE_IMPORT_STARTED_FILENAME,
+} from "./native-probe";
 
 export const LADYBUG_PACKAGE_QUALIFICATION_SCHEMA = "lore.ladybug-package-qualification/1";
 const LADYBUG_VERSION = EXPECTED_LADYBUG_VERSION;
@@ -567,11 +571,14 @@ async function runNativeProbe(input: PackageQualificationInput, scratch: string)
   const signal = child.signalCode;
   const stdoutSha256 = digest(stdout);
   const stderrSha256 = digest(stderr);
+  const importStarted = existsSync(join(probeRoot, NATIVE_IMPORT_STARTED_FILENAME));
+  const importCompleted = existsSync(join(probeRoot, NATIVE_IMPORT_COMPLETED_FILENAME));
   if (timedOut) throw new Error("sacrificial Ladybug native probe timed out after 180000ms");
 
   if (input.os === "win32") {
     if (existsSync(databasePath)) throw new Error("Windows import-only native probe created a database");
     if (exitCode === 0 && signal === null) {
+      if (!importStarted || !importCompleted) throw new Error("Windows native import markers are incomplete");
       const report = parseNativeProbeReport(stdout);
       assertNativeProbeReport(report, input, "import");
       if (report.databaseCreated) throw new Error("Windows import-only native probe reported database creation");
@@ -587,7 +594,12 @@ async function runNativeProbe(input: PackageQualificationInput, scratch: string)
         executableEvidence: false,
       };
     }
-    if (!isKnownNativeCrash(exitCode, signal)) {
+    if (
+      !importStarted ||
+      importCompleted ||
+      (!isKnownNativeCrash(exitCode, signal) &&
+        !isProvenSilentWindowsImportCrash({ exitCode, signal, stdout, stderr, importStarted, importCompleted }))
+    ) {
       throw new Error(
         `Windows native probe failed without the approved crash signature (exit=${exitCode}, signal=${signal ?? "none"}, stdout=${stdoutSha256}, stderr=${stderrSha256})`,
       );
@@ -663,6 +675,24 @@ function assertNativeProbeReport(
 export function isKnownNativeCrash(exitCode: number, signal: NodeJS.Signals | null): boolean {
   if (signal === "SIGSEGV" || signal === "SIGABRT") return true;
   return [11, 134, 139, -1_073_741_819, 3_221_225_477].includes(exitCode);
+}
+
+export function isProvenSilentWindowsImportCrash(evidence: {
+  readonly exitCode: number;
+  readonly signal: NodeJS.Signals | null;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly importStarted: boolean;
+  readonly importCompleted: boolean;
+}): boolean {
+  return (
+    evidence.exitCode !== 0 &&
+    evidence.signal === null &&
+    evidence.stdout === "" &&
+    evidence.stderr === "" &&
+    evidence.importStarted &&
+    !evidence.importCompleted
+  );
 }
 
 async function smoke(

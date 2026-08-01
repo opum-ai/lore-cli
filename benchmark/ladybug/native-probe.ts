@@ -1,12 +1,14 @@
 /** Sacrificial matching-host probe for the exact Ladybug native boundary. */
 
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { loadLadybugNativeDriver } from "../../src/core/ladybug-native";
 import { canonicalJson, digest } from "../../src/core/ladybug-source";
 import { generateLadybugBenchmarkFixture, loadLadybugBenchmarkFixtureSpec } from "./fixture";
 
 export const LADYBUG_NATIVE_PROBE_SCHEMA = "lore.ladybug-native-probe/1";
+export const NATIVE_IMPORT_STARTED_FILENAME = "native-import-started";
+export const NATIVE_IMPORT_COMPLETED_FILENAME = "native-import-completed";
 
 type ProbeMode = "import" | "indexed";
 
@@ -26,7 +28,9 @@ interface NativeProbeReport {
 }
 
 async function probe(mode: ProbeMode, root: string): Promise<NativeProbeReport> {
+  writeFileSync(join(root, NATIVE_IMPORT_STARTED_FILENAME), "");
   const driver = await loadLadybugNativeDriver();
+  writeFileSync(join(root, NATIVE_IMPORT_COMPLETED_FILENAME), "");
   if (mode === "import") {
     return {
       schema: LADYBUG_NATIVE_PROBE_SCHEMA,
