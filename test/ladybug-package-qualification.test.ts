@@ -7,6 +7,7 @@ import {
   assertPackageQualificationReport,
   isKnownNativeCrash,
   LADYBUG_PACKAGE_QUALIFICATION_SCHEMA,
+  packageCompileCommand,
   parsePackageQualificationArgs,
   resolveInstalledOptionalPackageJson,
 } from "../benchmark/ladybug/package-qualification";
@@ -64,6 +65,22 @@ function needs(job: WorkflowJob): string[] {
 }
 
 describe("matching-host Ladybug package qualification", () => {
+  test("builds from same-drive scratch with an absolute repository entrypoint", () => {
+    expect(
+      packageCompileCommand("D:\\repo", "C:\\scratch", "bun-windows-x64-baseline", "C:\\scratch\\lore.exe"),
+    ).toEqual({
+      executable: "bun",
+      args: [
+        "build",
+        "--compile",
+        "--target=bun-windows-x64-baseline",
+        "--outfile=C:\\scratch\\lore.exe",
+        join("D:\\repo", "src", "cli.ts"),
+      ],
+      cwd: "C:\\scratch",
+    });
+  });
+
   test("resolves an optional package from Bun's isolated store when no hoisted link exists", () => {
     const root = mkdtempSync(join(tmpdir(), "lore-isolated-package-"));
     try {

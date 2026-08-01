@@ -40,6 +40,12 @@ export interface PackageQualificationInput {
   readonly output: string;
 }
 
+export interface PackageCompileCommand {
+  readonly executable: "bun";
+  readonly args: readonly string[];
+  readonly cwd: string;
+}
+
 interface CommandResult {
   readonly stdout: string;
   readonly stderr: string;
@@ -245,9 +251,8 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
     stageRootPackage(rootStage, rootPackage);
     stagePlatformPackage(platformStage, input.name);
     const compiledPath = join(platformStage, "bin", input.binary);
-    await run("bun", ["build", "--compile", `--target=${input.target}`, `--outfile=${compiledPath}`, "src/cli.ts"], {
-      cwd: REPOSITORY_ROOT,
-    });
+    const compile = packageCompileCommand(REPOSITORY_ROOT, scratch, input.target, compiledPath);
+    await run(compile.executable, compile.args, { cwd: compile.cwd });
     if (!existsSync(compiledPath) || statSync(compiledPath).size < 1_000_000) {
       throw new Error(`compiled ${input.name} binary is missing or suspiciously small`);
     }
@@ -495,6 +500,23 @@ export function resolveInstalledOptionalPackageJson(
     if (existsSync(candidate)) return candidate;
   }
   throw new Error(`cannot locate installed optional package ${packageName}@${version}`);
+}
+
+/** Build from same-drive scratch while resolving imports from the absolute source entrypoint. */
+export function packageCompileCommand(
+  repositoryRoot: string,
+  scratchRoot: string,
+  target: string,
+  output: string,
+): PackageCompileCommand {
+  return {
+    executable: "bun",
+    args: ["build", "--compile", `--target=${target}`, `--outfile=${output}`, join(repositoryRoot, "src", "cli.ts")],
+    // Bun 1.2 extracts a downloaded target runtime relative to cwd before moving
+    // it into the user cache. GitHub's Windows checkout and cache use different
+    // drives, so keep extraction beside this same-drive temporary output.
+    cwd: scratchRoot,
+  };
 }
 
 function stageRootPackage(root: string, sourcePackage: Record<string, unknown>): void {
