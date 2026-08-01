@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:33'
-updated_date: '2026-08-01 04:53'
+updated_date: '2026-08-01 05:02'
 labels:
   - ladybugdb
   - benchmark
@@ -150,6 +150,8 @@ Implemented the user-approved bounded benchmark strategy. The blocking fixture n
 Local evidence on Bun 1.3.14 after bun install --frozen-lockfile: 81 focused benchmark/concurrency/lifecycle/indexed/workflow/package/evidence tests passed with 674 assertions and zero failures; typecheck, lint across 152 files, actionlint for ci.yml/release.yml, and git diff --check passed. A real small-fixture report run completed with 23 scenarios, 94 raw samples, strict schema parsing, and the expected inconclusive smoke gate status. No repository benchmark/database/report artifacts were retained; the smoke report is outside the repository under /private/tmp.
 
 Remaining completion evidence is intentionally external and exact-pin: commit the integrated implementation, push it, run the exact Bun 1.2.23 Linux-x64 100 MiB blocking benchmark, pinned concurrency/crash job, five matching-host package matrix, and final qualification manifest on one clean commit. All four acceptance criteria remain unchecked and the task remains In Progress until those artifacts pass.
+
+Final local integration verification before exact-host dispatch (2026-07-31): aligned lore.ladybug-qualification-evidence/1 with approved plan item 11 by requiring the conclusive pinned Linux-x64 100 MiB benchmark, approved gate artifact, pinned concurrency report, and exactly five matching-host package reports from one clean commit. Removed the obsolete duplicate Darwin timing-artifact requirement; Darwin executable evidence remains mandatory in the Darwin arm64/x64 package reports. release.yml now downloads every qualification artifact, builds and validates the strict AC 1-4 manifest, uploads it for 90 days, and prevents package/install-sanity and publish from bypassing that final evidence gate. Local verification on Bun 1.3.14: full isolated suite 2,337 tests / 7,219 assertions / 0 failures across 64 files; focused manifest/workflow/package suite 15 tests / 163 assertions; lint 152 files, typecheck, actionlint, Lore strict validation/check, and git diff check all pass. bun audit reports no vulnerabilities; source and compiled version/help smokes pass; npm pack --dry-run passes for the root and all five platform manifests using an isolated cache. Exact Bun 1.2.23 Linux benchmark, concurrency, matching-host matrix, and assembled manifest remain the only acceptance evidence outstanding.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
