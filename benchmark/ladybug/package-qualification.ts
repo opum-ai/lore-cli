@@ -15,6 +15,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { disposeLadybugProjection } from "../../src/core/ladybug-lifecycle";
@@ -415,9 +416,12 @@ function assertHost(input: PackageQualificationInput): void {
 
 function assertFrozenLadybugInstall(input: PackageQualificationInput): { addonSha256: string } {
   const coreRoot = join(REPOSITORY_ROOT, "node_modules", "@ladybugdb", "core");
-  const platformRoot = join(REPOSITORY_ROOT, "node_modules", "@ladybugdb", basename(input.ladybugPackage));
+  const platformPackagePath = createRequire(join(coreRoot, "package.json")).resolve(
+    `${input.ladybugPackage}/package.json`,
+  );
+  const platformRoot = dirname(platformPackagePath);
   const corePackage = readJson(join(coreRoot, "package.json"));
-  const platformPackage = readJson(join(platformRoot, "package.json"));
+  const platformPackage = readJson(platformPackagePath);
   if (stringField(corePackage, "version", "Ladybug core") !== LADYBUG_VERSION) {
     throw new Error(`@ladybugdb/core must be exactly ${LADYBUG_VERSION}`);
   }
