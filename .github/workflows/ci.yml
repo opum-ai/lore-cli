@@ -24,8 +24,15 @@ on:
   # per-PR matrix is ubuntu+windows only (macOS is push/dispatch-gated below),
   # so an all-docs PR still runs cheaply rather than being skipped.
   pull_request:
-  # Manual full-matrix run (includes the 10x-billed macOS leg) on demand.
+  # Manual full-matrix run (includes the 10x-billed macOS leg) on demand. The
+  # narrow Ladybug qualification mode runs only the two exact host/architecture
+  # combinations that the normal matrix does not cover.
   workflow_dispatch:
+    inputs:
+      ladybug_exact_hosts_only:
+        description: "Run only LadybugDB qualification on Darwin x64 and Linux arm64"
+        type: boolean
+        default: false
 
 # Cancel superseded in-flight PR runs so rapid review fix-up pushes stop instead
 # of running the whole pipeline (10x macOS leg + docker-e2e cold build) to
@@ -59,7 +66,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest","windows-latest","macos-latest"]') }}
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","windows-latest"]' || github.event_name == 'workflow_dispatch' && inputs.ladybug_exact_hosts_only == true && '["macos-15-intel","ubuntu-24.04-arm"]' || '["ubuntu-latest","windows-latest","macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -79,6 +86,7 @@ jobs:
 
   build:
     name: compile smoke (ubuntu)
+    if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -112,6 +120,7 @@ jobs:
 
   scaffold-mkdocs:
     name: mkdocs scaffold smoke
+    if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -136,6 +145,7 @@ jobs:
 
   scaffold-docusaurus:
     name: docusaurus scaffold smoke
+    if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -163,6 +173,7 @@ jobs:
 
   docker-e2e:
     name: docker e2e harness (real lore + backlog binaries)
+    if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
     runs-on: ubuntu-latest
     # Intentionally runs on every pull_request (no event/paths gating): this job is
     # the required dev merge-gate status check (LCLI-196), so it must report

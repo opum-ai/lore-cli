@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-01 00:30'
-updated_date: '2026-08-01 01:23'
+updated_date: '2026-08-01 02:40'
 labels:
   - ladybugdb
   - dependency
@@ -31,6 +31,8 @@ modified_files:
   - docs/reference/tech-stack.md
   - docs/specs/local-graph-platform-roadmap.md
   - docs/runbooks/dev-kickoff.md
+  - .github/workflows/ci.yml
+  - test/ci-workflow.test.ts
 parent_task_id: LCLI-283.1
 priority: high
 type: task
@@ -46,8 +48,8 @@ Determine whether Lore's exact @ladybugdb/core pin remains the latest version th
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The audit inventories every LadybugDB version, optional-platform package, integrity, runtime/storage-version constant, fixture, workflow, test, and documentation pin in Lore and compares them with the official npm latest tag and upstream stable releases.
-- [ ] #2 Release notes and executable probes assess API, storage-format, migration/rebuild, Bun 1.2.23, native-addon, Windows fallback, concurrency, packaging, security, and license compatibility for every candidate version after 0.18.2.
-- [ ] #3 The selected exact version passes frozen installation, native loading, projection build/reuse/rebuild, indexed graph/query/context parity, concurrency/crash, and supported-platform package qualification evidence without weakening existing fallback or cleanup guarantees.
+- [ ] #2 Release notes and executable probes assess API, storage-format, migration/rebuild, Bun 1.2.23, native-addon, Windows fallback, packaging, security, and license compatibility for every candidate version after 0.18.2. Full real-process concurrency and crash qualification remains exclusively owned by LCLI-283.1.4.
+- [ ] #3 The selected exact version passes frozen installation; native loading on Darwin arm64, Darwin x64, Linux arm64, and Linux x64; projection build/reuse/rebuild; indexed graph/query/context parity; Windows x64 import-safe fallback; and supported-platform package qualification evidence without weakening existing fallback or cleanup guarantees. Full concurrency and crash qualification remains exclusively owned by LCLI-283.1.4.
 - [x] #4 Lore either upgrades every exact pin, lock entry, optional-package integrity, fingerprint/control-manifest expectation, fixture, workflow, test, and documentation reference coherently, or records why 0.18.2 remains the latest supported version and what upstream change would unblock it.
 - [x] #5 The supported-version decision and evidence are documented in the LadybugDB benchmark and scale acceptance reference, and focused/full verification plus strict Lore validation and coherence gates pass.
 <!-- AC:END -->
@@ -55,12 +57,12 @@ Determine whether Lore's exact @ladybugdb/core pin remains the latest version th
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Freeze the audit inventory from the repository and official upstream sources: current 0.18.2 core/platform pins and integrities; stable candidates 0.18.3 and 0.19.0; release/tag chronology; Node package/API metadata; MIT license; Bun/native platform packages; and the storage-42 to storage-43 boundary. Classify historical evidence separately from current normative pins. (AC #1, #2)
-2. Under exact Bun 1.2.23 in the isolated Treehouse worktree, establish the frozen 0.18.2 baseline, then evaluate 0.18.3 and 0.19.0 sequentially with exact installs, runtime/storage probes, native load and close/reopen, projection build/reuse/rebuild, indexed graph/query/context parity, lifecycle recovery, audit, and package/build smokes. Retain candidate failures as evidence and do not infer support from registry metadata alone. (AC #2, #3)
-3. Select the newest stable candidate that satisfies the executable contract. Update the exact root/lock/platform package set, runtime/storage compatibility constants, fingerprints/control-manifest expectations, and any tests or workflow assertions coherently. A version/storage change must rebuild the disposable projection; Windows must remain import-safe and reference-fallback-only unless executable evidence proves the native policy can change. (AC #3, #4)
-4. Add focused regression coverage for the selected package/runtime/storage facts and compatibility rebuild boundary, then run the affected lifecycle/indexed/command/release tests and the full isolated suite with lint, typecheck, source and compiled smokes, frozen reinstall, package dry-runs, audit, and artifact/source-write cleanup checks. Treat unavailable matching-host evidence as an explicit completion blocker, not a simulated pass. (AC #2-#4)
-5. Through Lore, update the benchmark/scale decision reference and current architecture, tech-stack, roadmap, and kickoff guidance with official release links, candidate evidence, the selected exact version, storage behavior, and any remaining platform limitation. Preserve historical handover/task evidence as historical facts. Run Lore sync, strict validation/check, and git diff hygiene. (AC #1, #4, #5)
-6. Follow task finalization criterion by criterion. Complete LCLI-283.1.5 only with objective evidence for every required host/policy boundary; otherwise leave it In Progress with the exact local result, remote-evidence gap, and safe delivery/continuation step.
+1. Preserve the completed upstream inventory, exact Bun 1.2.23 candidate probes, selected 0.19.0/storage-43 implementation, regression coverage, and Lore documentation evidence. (AC #1-#5)
+2. Apply the user-approved scope split: LCLI-283.1.5 owns dependency-version, storage, native-host, Windows fallback, packaging, security, and license qualification; LCLI-283.1.4 exclusively owns full real-process concurrency and crash qualification. (AC #2, #3)
+3. Add a dispatch-only CI input that selects only macos-15-intel and ubuntu-24.04-arm for the existing lint/typecheck/test job, while skipping unrelated compile, scaffold, and Docker jobs in that narrow mode. Keep ordinary PR, main-push, and full-matrix behavior unchanged. (AC #2, #3)
+4. Add workflow regression coverage and run focused tests, actionlint, typecheck, lint, and diff hygiene locally. (AC #3, #5)
+5. Commit and push the scoped task/workflow/test change to the existing PR branch, dispatch the exact-host-only mode at that branch, and collect matching-host runtime/storage/native/test evidence. (AC #2, #3)
+6. Follow task finalization criterion by criterion. Mark LCLI-283.1.5 Done only if the existing evidence plus both exact-host jobs objectively prove all revised criteria; otherwise retain In Progress with the precise remaining blocker. Then recompute LCLI-283.1.4 readiness without merging, publishing, or returning the lease unless separately authorized.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -86,4 +88,18 @@ Concrete host results from the manual run:
 - GitHub windows-latest resolved to windows-2025-vs2026 on the standard x64 runner. The exact package metadata, integrities, and import-safe fallback assertions passed; the native addon assertion and native lifecycle suites were intentionally skipped by policy. The leg completed 2218 passes, 82 documented platform skips, and 0 failures.
 
 Residual completion blocker: the available matrix does not execute on Darwin x64 or Linux arm64, and this branch does not contain the real process concurrency/crash qualification owned by the dependent LCLI-283.1.4 machinery. Therefore AC 2 and AC 3 remain open, the task remains In Progress, and PR #269 must not be merged as task-complete evidence yet. No merge, publication, or lease return was authorized.
+
+2026-07-31 scope decision: the user approved option 2. LCLI-283.1.5 retains exact dependency-version and supported-host native/fallback qualification; full real-process concurrency and crash qualification is exclusively deferred to dependent task LCLI-283.1.4. The approved continuation is a narrow manual CI dispatch for only Darwin x64 and Linux arm64, with ordinary CI behavior unchanged.
+
+Option 2 local workflow verification (2026-07-31): added a default-off workflow_dispatch input that selects only macos-15-intel and ubuntu-24.04-arm for the existing check job and skips build, scaffold, and Docker jobs only in that narrow mode. Added static workflow regression coverage preserving the normal PR and full-matrix OS sets plus every unrelated-job skip guard. Local Bun 1.3.14 verification passed: focused CI/Ladybug qualification 7 tests and 42 assertions; full isolated suite 2,303 tests and 6,704 expectations across 56 files; lint checked 128 files; typecheck, actionlint, and git diff --check passed. These local results validate the workflow/configuration change but are not substitutes for the pending exact Bun 1.2.23 Darwin x64 and Linux arm64 host runs.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: @codex
+created: 2026-08-01 02:37
+---
+Approved option 2: refine AC 2/3 and run only the missing Darwin x64 and Linux arm64 host legs; leave full concurrency/crash qualification to LCLI-283.1.4.
+---
+<!-- COMMENTS:END -->
