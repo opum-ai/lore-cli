@@ -10,6 +10,7 @@
 import { LoreError } from "../errors";
 import type { BundleGraph } from "./bundle";
 import type { LadybugProjectionSource } from "./ladybug-source";
+import type { QueryOptions, QueryResult } from "./query";
 
 /** Exact package/runtime version frozen into ladybug-projection/1 fingerprints. */
 export const EXPECTED_LADYBUG_VERSION = "0.19.0";
@@ -31,13 +32,30 @@ export interface LadybugDatabaseVerification {
   readonly authoredEdgeCount: number;
 }
 
+/** Repository-contained indexed operations over one verified immutable generation. */
+export interface LadybugIndexedReader {
+  /** Read promoted graph metadata and edges; load one body only when context needs it. */
+  readBundleGraph(bodyId?: string): Promise<BundleGraph>;
+  /** Read one body through the concept's primary-key lookup. */
+  readConceptBody(id: string): Promise<string | undefined>;
+  /** Execute Lore's exact deterministic BM25/filter contract through persisted postings. */
+  query(options: QueryOptions): Promise<QueryResult>;
+  /** Release the native connection and database handle. Safe to call more than once. */
+  close(): Promise<void>;
+}
+
 /** The private capabilities exposed by the dynamically loaded native driver. */
 export interface LadybugNativeDriver {
   readonly LADYBUG_VERSION: string;
   readonly LADYBUG_STORAGE_VERSION: string;
   buildLadybugDatabase(databasePath: string, source: LadybugProjectionSource): Promise<void>;
   verifyLadybugDatabase(databasePath: string, source: LadybugProjectionSource): Promise<LadybugDatabaseVerification>;
+  verifyLadybugDatabaseMetadata(
+    databasePath: string,
+    expected: LadybugDatabaseVerification,
+  ): Promise<LadybugDatabaseVerification>;
   readLadybugBundleGraph(databasePath: string, source: LadybugProjectionSource): Promise<BundleGraph>;
+  openLadybugIndexedReader(databasePath: string, source: LadybugProjectionSource): LadybugIndexedReader;
 }
 
 export type LadybugNativeLoader = () => Promise<LadybugNativeDriver>;

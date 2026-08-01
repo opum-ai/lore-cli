@@ -2,7 +2,14 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildGraph, conceptNotInBundle, type Edge, loadBundle, resolvePath } from "../src/core/bundle";
+import {
+  buildGraph,
+  conceptNotInBundle,
+  type Edge,
+  extractBodyTargets,
+  loadBundle,
+  resolvePath,
+} from "../src/core/bundle";
 import { type CheckInputFile, checkBundle } from "../src/core/check";
 import { parseConcept } from "../src/core/concept";
 import { compileProfile, parseProfile } from "../src/core/profile";
@@ -157,6 +164,18 @@ describe("buildGraph — CommonMark link extraction", () => {
     const deep = `${">".repeat(20000)} deep [x](a.md)\n`;
     const g = buildGraph([ref("doc", deep), ref("a")]);
     expect(edgesFrom(g.edges, "doc").map((e) => e.to)).toEqual(["a"]);
+  });
+
+  test("long syntax-free prose does not make link extraction scan irrelevant bytes", () => {
+    const filler = "a".repeat(25_000);
+    const g = buildGraph([ref("doc", `[a](a.md)\n${filler}`), ref("a")]);
+    expect(edgesFrom(g.edges, "doc").map((e) => e.to)).toEqual(["a"]);
+  });
+
+  test("a long reference-definition destination remains byte-exact", () => {
+    const destination = "a".repeat(5_000);
+    const targets = extractBodyTargets(`[target][id]\n\n[id]:\n${destination}`);
+    expect(targets).toEqual([destination]);
   });
 
   test("a protocol-relative URL (//host/x.md) is external, not an internal edge", () => {

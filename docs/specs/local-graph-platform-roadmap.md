@@ -24,9 +24,8 @@ lifecycle and verified indexed command routing are complete.
 and fallback; landing review is complete and protected publication remains a
 separately authorized operation.
 Packaging, benchmark, and scale qualification remain in `LCLI-283.1.4`.
-`LCLI-283.1.5` must first audit the exact LadybugDB dependency and either adopt
-the latest safely supported stable release or record the blocker for retaining
-the current pin. The M7 explorer contract may be drafted against the frozen M6
+`LCLI-283.1.5` completed the dependency audit and selected exact
+`@ladybugdb/core@0.19.0` with storage version `43`. The M7 explorer contract may be drafted against the frozen M6
 schema, but explorer implementation still waits for every M6 gate and the
 stable projection. The local stdio MCP design remains retained but on hold and
 is not part of this delivery chain.
@@ -69,7 +68,7 @@ schema freeze:
   complete before indexed command integration.
 - `LCLI-283.1.2` completed deterministic projection construction, reconciliation, transactional replacement, invalidation, corruption recovery, and disposal with the then-current exact `@ladybugdb/core@0.18.2`.
 - `LCLI-283.1.3` completed verified graph, lexical query, and context routing while retaining the in-memory implementation as a conformance oracle and documented fallback.
-- `LCLI-283.1.5` selected exact `@ladybugdb/core@0.19.0` / storage `43` after comparing every later stable release with the 0.18.2 baseline under pinned Bun 1.2.23. Matching-host package evidence remains its final gate.
+- `LCLI-283.1.5` completed exact `@ladybugdb/core@0.19.0` / storage `43` qualification after comparing every later stable release with the 0.18.2 baseline and passing the pinned-Bun matching-host matrix.
 - `LCLI-283.1.4` establishes the bounded cold and warm acceptance envelope, memory and disk budgets, supported native packaging, concurrency tests, and release thresholds. Its blocking scale gate is a deterministic 100 MiB authored-source fixture; the 1 GiB observation is opt-in and non-blocking. The rationale and precise budgets are recorded in [LadybugDB benchmark and scale acceptance strategy](../reference/ladybugdb-benchmark-and-scale-acceptance-strategy.md).
 
 M6 is complete only when LadybugDB produces a material measured warm-query improvement, remains safe and rebuildable under stale, corrupt, locked, and interrupted states, preserves deterministic output contracts, and does not impose an unacceptable regression on small repositories.

@@ -19,9 +19,11 @@ describe("frozen local graph contract", () => {
       "ConceptRecord",
       "TaskRecord",
       "AuthoredEdgeRecord",
+      "LexicalTerm",
       "sourceRecordJson",
       "EDGE_CONCEPT_TARGET",
       "EDGE_TASK_TARGET",
+      "HAS_TERM",
     ]) {
       expect(adr).toContain(term);
     }

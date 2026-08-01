@@ -82,11 +82,34 @@ export function runContext(options: ContextOptions): number | Promise<number> {
   if (options.retrieval !== undefined) {
     return options
       .retrieval({ root: options.root, warnings: advisories, adapter: options.adapter })
-      .then(({ graph }) => finishContext(options, parsed, graph, advisories));
+      .then(async (loaded) => {
+        try {
+          const graph =
+            loaded.indexed === undefined
+              ? loaded.graph
+              : withConceptBody(loaded.graph, parsed.id, await loaded.indexed.readConceptBody(parsed.id));
+          return finishContext(options, parsed, graph, advisories);
+        } finally {
+          await loaded.dispose?.();
+        }
+      });
   }
   const profile = loadProfile({ root: options.root });
   const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, profile });
   return finishContext(options, parsed, graph, advisories);
+}
+
+function withConceptBody(
+  graph: ReturnType<typeof loadBundle>,
+  id: string,
+  body: string | undefined,
+): ReturnType<typeof loadBundle> {
+  if (body === undefined) return graph;
+  const concept = graph.concepts.get(id);
+  if (concept === undefined) return graph;
+  const concepts = new Map(graph.concepts);
+  concepts.set(id, { ...concept, body });
+  return { ...graph, concepts };
 }
 
 function finishContext(

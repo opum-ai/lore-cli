@@ -24,12 +24,14 @@ and wider private-beta work remain held.
 ## Campaign state and cursor
 
 - **Campaign state:** Active.
-- **Current atomic cursor:** `LCLI-283.1.3` implementation and objective
-  verification are complete, and the separate landing review passed after
-  three in-scope corrections. The reviewed local commit awaits separately
-  authorized protected publication.
-- **Cursor status:** `LCLI-283.1.3` is Done with all four acceptance criteria
-  checked. `LCLI-283.1.4` remains To Do and was not activated.
+- **Current atomic cursor:** `LCLI-283.1.4` is activated in the isolated
+  `feature/lcli-283-1-4-ladybug-qualification` worktree. Research is complete
+  and the numbered benchmark, packaging, platform, concurrency, and recovery
+  plan is recorded on the live task; implementation is paused for explicit
+  plan approval.
+- **Cursor status:** `LCLI-283.1.4` is In Progress and assigned to `@codex`;
+  all four acceptance criteria remain unchecked. `LCLI-283.1.3` remains Done
+  with all four of its acceptance criteria checked.
 - **Dependency state:** `LCLI-283.1.1`, `LCLI-283.1.2`, and `LCLI-284` are
   Done. Parent `LCLI-283.1` remains To Do and must not be finalized before all
   four children qualify.
@@ -52,27 +54,41 @@ and wider private-beta work remain held.
 
 ## Repository state
 
-- **Branch:** `dev`. Completed local campaign branches were pruned after their
-  commits were verified as ancestors of `dev`:
+- **Isolated qualification worktree:** branch
+  `feature/lcli-283-1-4-ladybug-qualification` at
+  `/Volumes/external/repos/lore.worktrees/lcli-283-1-4-qualification`, based
+  exactly on merged `origin/dev`
+  `7eb36c7e36754fdce5476e78c95d0065628b3a3f`. It contains only focused
+  LCLI-283.1.4 activation and plan history plus this pending handover update;
+  it does not contain local `dev` commits `9829d63` or `14a2897`.
+- **Primary worktree boundary:** `/Volumes/external/repos/lore-cli` remains on
+  local `dev` `14a2897ba4758cf308487f1c667f0c25bb590c5d`, 0 behind and 2
+  ahead of `origin/dev`, with the separate unstaged LCLI-289 documentation.
+  Preserve its 11 modified and four untracked files and do not clean, stash,
+  reset, stage, or copy them into the qualification branch.
+- **Plan approval boundary:** fixture sizes, quantitative timing/memory/disk
+  gates, Linux release-gate placement, fallback-only Windows native policy,
+  and uninstall/cache behavior are proposed on LCLI-283.1.4 and require
+  explicit approval before any implementation or benchmark execution.
+- **Prior branch hygiene:** completed local campaign branches were pruned after
+  their commits were verified as ancestors of `dev`:
   `feature/lcli-283-1-1-ladybug-contract`,
   `feature/lcli-285-string-width`, `feature/lcli-286-ipaddr-js`,
   `feature/lcli-287-github-slugger`, and
   `feature/lcli-288-zod-config-shape`. Unrelated branches and the linked
   `feature/wave2-integration-fixes` worktree were left untouched.
-- **Protected baseline:** `origin/dev` remains
-  `9df6186f6b93312153a40ef8bdaf3648f0e801f7`, the PR #267 merge commit. Local
-  `dev` contains the Backlog activation/plan commit `a6fd4d6` and finalization
-  commit `1b80389`, the landing-review evidence synchronization commit
-  `8c6b764`, and the reviewed focused implementation, documentation, and
-  closeout commit at the local branch tip. After that commit, local `dev` is
-  four commits ahead of `origin/dev`.
+- **Protected baseline:** `origin/dev` is
+  `7eb36c7e36754fdce5476e78c95d0065628b3a3f`, the PR #268 merge commit that
+  contains the completed LCLI-283.1.3 history. Local `dev` is two commits
+  ahead at `14a2897ba4758cf308487f1c667f0c25bb590c5d`; those commits and its
+  LCLI-289 worktree changes are outside this qualification boundary.
 - **Published LCLI-283.1.2 branch:**
   `feature/lcli-283-1-2-ladybug-lifecycle` ends at `4018a65`.
 - **Published Commander branch:** `feature/lcli-284-commander` remains at
   `a6348ff8971c5ad4f9a43aedb62643e70fc09deb`; PR #266 is merged.
-- **Worktree:** clean after the reviewed `LCLI-283.1.3` commit. Preserve its
-  four unpublished local commits; do not reset, rebase, amend, squash, or
-  discard them.
+- **LCLI-283.1.3 publication:** PR #268 is merged into `origin/dev`; its
+  reviewed implementation is the exact base of this isolated qualification
+  worktree.
 - **Linked worktree:** `feature/wave2-integration-fixes` remains untouched at
   `f11164b`.
 - **Pinned runtime:** `/Users/jdnewhouse/.bun/bin/bun` 1.2.23. Do not count
@@ -260,18 +276,19 @@ LCLI-284 startup, implementation, and verification completed on 2026-07-30:
 - **Operator:** LCLI-278 requires a decision for GitHub release-environment
   protection. The existing `release` environment has no effective required
   reviewer protection under the current plan.
-- **Protected-branch gate:** LCLI-283.1.2 is fully landed. Any future
-  LCLI-283.1.3 publication must use the normal checked PR flow. No rule bypass,
-  GitHub settings change, tag, npm publish, or public version selection is
-  authorized by this handover.
+- **Protected-branch gate:** LCLI-283.1.2 and LCLI-283.1.3 are fully landed.
+  Future LCLI-283.1.4 publication must use the normal checked PR flow. No rule
+  bypass, GitHub settings change, tag, npm publish, or public version selection
+  is authorized by this handover.
 
 ## Exact next action
 
-When protected publication is separately authorized, branch from the reviewed
-local `dev` tip, push that exact history to a focused feature branch, and open
-the normal checked PR to `dev`. Wait for required checks and report them. Do not
-merge, activate `LCLI-283.1.4`, advance the parent, or enter M7/M8/MCP scope in
-that session.
+After explicit approval of the recorded LCLI-283.1.4 plan and its material
+threshold/platform decisions, resume only the isolated qualification worktree,
+reconfirm merged `origin/dev`, task eligibility, the primary LCLI-289
+fingerprint, and the Wave 2 cursor, then implement the numbered plan in order.
+Do not advance parent `LCLI-283.1`, enter M7/M8/MCP scope, or push, merge, tag,
+publish, or change repository settings without separate authorization.
 
 ## Recovery
 

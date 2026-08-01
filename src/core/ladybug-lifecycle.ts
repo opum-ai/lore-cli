@@ -39,10 +39,12 @@ import {
 } from "./ladybug-native";
 import {
   canonicalJson,
+  digest,
   LADYBUG_CACHE_REL_ROOT,
   LADYBUG_CONTROL_FILENAME,
   LADYBUG_DATABASE_FILENAME,
   LADYBUG_INDEX_FORMAT,
+  type LadybugProjectionFreshness,
   type LadybugProjectionSource,
   loadLadybugProjectionSource,
 } from "./ladybug-source";
@@ -73,6 +75,9 @@ export interface LadybugControlManifest {
   readonly exportDigest: string;
   readonly taskSnapshotDigest: string;
   readonly sourceFingerprint: string;
+  readonly inputFingerprint: string;
+  readonly warnings: readonly string[];
+  readonly warningsComplete: boolean;
   readonly sourceRecordsDigest: string;
   readonly recordKeysDigest: string;
   readonly recordCount: number;
@@ -114,6 +119,8 @@ export interface LadybugLifecycleHooks {
   readonly afterControlManifest?: (stagingPath: string) => void | Promise<void>;
   /** Test seam for a crash after atomic publication is complete and immutable. */
   readonly afterPublication?: (generationPath: string) => void | Promise<void>;
+  /** Test seam for a crash after reconciliation completes but before writer ownership is released. */
+  readonly beforeLockRelease?: () => void | Promise<void>;
 }
 
 export interface ReconcileLadybugProjectionOptions {
@@ -122,6 +129,8 @@ export interface ReconcileLadybugProjectionOptions {
   readonly resolveGitCommit?: (root: string) => string | null;
   readonly warnings?: WarningCollector;
   readonly loadSource?: () => Promise<LadybugProjectionSource>;
+  /** Cheap exact-input probe used before the full Markdown/export source loader. */
+  readonly loadFreshness?: () => Promise<LadybugProjectionFreshness>;
   /** Injectable lazy native boundary; never invoked before supported control-manifest preflight. */
   readonly loadNativeDriver?: LadybugNativeLoader;
   readonly hooks?: LadybugLifecycleHooks;
@@ -171,12 +180,28 @@ export async function reconcileLadybugProjection(
         resolveGitCommit: options.resolveGitCommit,
         warnings: options.warnings,
       }));
-  let source = await loadSource();
-  assertNativeVersion(source);
   const cacheRoot = join(root, LADYBUG_CACHE_REL_ROOT);
   assertExistingCacheLayoutSafe(root, cacheRoot);
-
   const lockState = inspectWriterLock(cacheRoot);
+  if (options.loadFreshness !== undefined && hasPotentialGeneration(cacheRoot)) {
+    const freshness = await options.loadFreshness();
+    const fast = await inspectFreshGeneration(cacheRoot, freshness.inputFingerprint, loadNative);
+    if (fast.classification === "reusable" && fast.generation !== undefined) {
+      const source = sourceFromControl(fast.generation.control);
+      return {
+        classification: lockState === "active" ? "locked" : "reusable",
+        outcome: "reused",
+        source,
+        generation: fast.generation,
+        ...(lockState === "active"
+          ? { reason: "another live writer owns writer.lock; the exact verified generation remains reusable" }
+          : {}),
+      };
+    }
+  }
+
+  let source = await loadSource();
+  assertNativeVersion(source);
   if (lockState === "active") {
     const inspection = await inspectGeneration(cacheRoot, source, loadNative);
     if (inspection.classification === "reusable" && inspection.generation !== undefined) {
@@ -198,7 +223,7 @@ export async function reconcileLadybugProjection(
 
   let inspection = await inspectGeneration(cacheRoot, source, loadNative);
   const initialClassification = inspection.classification;
-  if (inspection.classification === "reusable" && inspection.generation !== undefined) {
+  if (lockState === "none" && inspection.classification === "reusable" && inspection.generation !== undefined) {
     return { classification: "reusable", outcome: "reused", source, generation: inspection.generation };
   }
   if (inspection.classification === "unsupported") {
@@ -242,7 +267,6 @@ export async function reconcileLadybugProjection(
   try {
     cleanupAbandonedStaging(cacheRoot);
     for (let attempt = 0; attempt < 2; attempt++) {
-      source = await loadSource();
       assertNativeVersion(source);
       inspection = await inspectGeneration(cacheRoot, source, loadNative);
       if (inspection.classification === "reusable" && inspection.generation !== undefined) {
@@ -280,6 +304,7 @@ export async function reconcileLadybugProjection(
       mkdirSync(stagingPath, { mode: 0o700 });
       const databasePath = join(stagingPath, LADYBUG_DATABASE_FILENAME);
       const native = await loadNative();
+      Bun.gc(true);
       await native.buildLadybugDatabase(databasePath, source);
       await options.hooks?.afterDatabaseClose?.(stagingPath);
       const verification = await native.verifyLadybugDatabase(databasePath, source);
@@ -289,7 +314,11 @@ export async function reconcileLadybugProjection(
       writeControlManifestLast(controlPath, control);
       await options.hooks?.afterControlManifest?.(stagingPath);
 
-      const finalSource = await loadSource();
+      const finalFreshness = await options.loadFreshness?.();
+      const finalSource =
+        finalFreshness === undefined || finalFreshness.inputFingerprint !== source.inputFingerprint
+          ? await loadSource()
+          : source;
       assertNativeVersion(finalSource);
       if (finalSource.sourceFingerprint !== source.sourceFingerprint) {
         removeContained(cacheRoot, stagingPath);
@@ -338,7 +367,11 @@ export async function reconcileLadybugProjection(
       reason: "repository inputs changed during both isolated build attempts",
     };
   } finally {
-    releaseWriterLock(ownedLock);
+    try {
+      await options.hooks?.beforeLockRelease?.();
+    } finally {
+      releaseWriterLock(ownedLock);
+    }
   }
 }
 
@@ -370,6 +403,150 @@ export function disposeLadybugProjection(rootInput: string): boolean {
   } finally {
     releaseWriterLock(lock);
   }
+}
+
+function hasPotentialGeneration(cacheRoot: string): boolean {
+  const generationsRoot = join(cacheRoot, "generations");
+  if (!existsSync(generationsRoot)) return false;
+  return readdirSync(generationsRoot, { withFileTypes: true }).some(
+    (entry) => entry.isDirectory() && !entry.isSymbolicLink() && /^[0-9a-f]{64}$/.test(entry.name),
+  );
+}
+
+async function inspectFreshGeneration(
+  cacheRoot: string,
+  inputFingerprint: string,
+  loadNative: LadybugNativeLoader,
+): Promise<GenerationInspection> {
+  const generationsRoot = join(cacheRoot, "generations");
+  if (!existsSync(generationsRoot)) return { classification: "rebuildable", reason: "no generation exists" };
+  for (const entry of readdirSync(generationsRoot, { withFileTypes: true }).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  )) {
+    if (!entry.isDirectory() || entry.isSymbolicLink() || !/^[0-9a-f]{64}$/.test(entry.name)) continue;
+    const generationPath = join(generationsRoot, entry.name);
+    const controlPath = join(generationPath, LADYBUG_CONTROL_FILENAME);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(controlPath, "utf8"));
+    } catch {
+      continue;
+    }
+    if (!isObject(parsed) || parsed.inputFingerprint !== inputFingerprint || parsed.warningsComplete !== true) continue;
+    if (!isControlManifest(parsed)) return { classification: "corrupt", reason: "control manifest is incomplete" };
+    const control = parsed;
+    if (
+      control.indexFormatVersion !== LADYBUG_INDEX_FORMAT ||
+      control.projectionSchemaVersion !== "1.0" ||
+      control.ladybugVersion !== EXPECTED_LADYBUG_VERSION ||
+      control.ladybugStorageVersion !== EXPECTED_LADYBUG_STORAGE_VERSION
+    ) {
+      return { classification: "rebuildable", reason: "generation compatibility changed" };
+    }
+    if (entry.name !== control.sourceFingerprint.replace(/^sha256:/, "")) {
+      return { classification: "corrupt", reason: "generation path differs from source identity" };
+    }
+    const databasePath = join(generationPath, LADYBUG_DATABASE_FILENAME);
+    try {
+      const generationStat = lstatSync(generationPath);
+      const controlStat = lstatSync(controlPath);
+      const databaseStat = lstatSync(databasePath);
+      if (
+        !generationStat.isDirectory() ||
+        generationStat.isSymbolicLink() ||
+        !controlStat.isFile() ||
+        controlStat.isSymbolicLink() ||
+        !databaseStat.isFile() ||
+        databaseStat.isSymbolicLink() ||
+        (generationStat.mode & 0o222) !== 0 ||
+        (controlStat.mode & 0o222) !== 0 ||
+        (databaseStat.mode & 0o222) !== 0 ||
+        databaseStat.size !== control.database.byteLength
+      ) {
+        return { classification: "corrupt", reason: "generation files or permissions differ" };
+      }
+      if ((await hashFile(databasePath)).digest !== control.database.digest) {
+        return { classification: "corrupt", reason: "projection database digest differs" };
+      }
+      const expected = verificationFromControl(control);
+      const native = await loadNative();
+      const verification = await native.verifyLadybugDatabaseMetadata(databasePath, expected);
+      return {
+        classification: "reusable",
+        generation: { root: cacheRoot, generationPath, databasePath, controlPath, control, verification },
+      };
+    } catch (cause) {
+      if (isNativeLockError(cause))
+        return { classification: "locked", reason: "Ladybug database is unexpectedly locked" };
+      return { classification: "corrupt", reason: errorMessage(cause) };
+    }
+  }
+  return { classification: "rebuildable", reason: "no generation matches the current input fingerprint" };
+}
+
+function verificationFromControl(control: LadybugControlManifest): LadybugDatabaseVerification {
+  return {
+    repositoryScopeKey: control.repositoryScopeKey,
+    snapshotKey: control.snapshotKey,
+    sourceFingerprint: control.sourceFingerprint,
+    exportDigest: control.exportDigest,
+    taskSnapshotDigest: control.taskSnapshotDigest,
+    sourceRecordsDigest: control.sourceRecordsDigest,
+    recordKeysDigest: control.recordKeysDigest,
+    recordCount: control.recordCount,
+    conceptCount: control.counts.concepts,
+    taskCount: control.counts.tasks,
+    authoredEdgeCount: control.counts.authoredEdges,
+  };
+}
+
+function sourceFromControl(control: LadybugControlManifest): LadybugProjectionSource {
+  const manifest: LadybugProjectionSource["manifest"] = {
+    record: "manifest",
+    schemaVersion: control.projectionSchemaVersion,
+    bundle: {
+      id: control.bundleId,
+      okfVersion: control.okfVersion,
+      docsRoot: control.docsRoot,
+      gitCommit: control.gitCommit,
+    },
+    exporter: { name: control.exporterName, version: control.exporterVersion },
+    generatedAt: null,
+    normalizationVersion: control.normalizationVersion,
+  };
+  const trailer: LadybugProjectionSource["trailer"] = {
+    record: "trailer",
+    recordCount: control.recordCount,
+    streamHash: control.exportDigest,
+  };
+  return {
+    records: [],
+    manifest,
+    trailer,
+    concepts: [],
+    tasks: [],
+    authoredEdges: [],
+    inventory: [],
+    profileInventory: [],
+    repositoryScopeKey: control.repositoryScopeKey,
+    snapshotKey: control.snapshotKey,
+    commitKey:
+      control.gitCommit === null
+        ? null
+        : digest(`lore-source-commit/1\0${control.repositoryScopeKey}\0${control.gitCommit}`),
+    exportDigest: control.exportDigest,
+    taskSnapshotDigest: control.taskSnapshotDigest,
+    sourceRecordsDigest: control.sourceRecordsDigest,
+    recordKeysDigest: control.recordKeysDigest,
+    sourceFingerprint: control.sourceFingerprint,
+    inputFingerprint: control.inputFingerprint,
+    warnings: control.warnings,
+    warningsComplete: control.warningsComplete,
+    generationKey: control.sourceFingerprint.replace(/^sha256:/, ""),
+    ladybugVersion: control.ladybugVersion,
+    ladybugStorageVersion: control.ladybugStorageVersion,
+    counts: control.counts,
+  };
 }
 
 async function inspectGeneration(
@@ -502,6 +679,7 @@ function classifyControlCompatibility(value: unknown, source: LadybugProjectionS
     [value.taskSnapshotDigest, source.taskSnapshotDigest, "task snapshot"],
     [value.sourceRecordsDigest, source.sourceRecordsDigest, "source records"],
     [value.recordKeysDigest, source.recordKeysDigest, "record keys"],
+    [value.inputFingerprint, source.inputFingerprint, "input fingerprint"],
     [value.recordCount, source.trailer.recordCount, "record count"],
     [value.counts.concepts, source.counts.concepts, "concept count"],
     [value.counts.tasks, source.counts.tasks, "task count"],
@@ -536,6 +714,9 @@ function controlManifest(
     exportDigest: source.exportDigest,
     taskSnapshotDigest: source.taskSnapshotDigest,
     sourceFingerprint: source.sourceFingerprint,
+    inputFingerprint: source.inputFingerprint,
+    warnings: source.warnings,
+    warningsComplete: source.warningsComplete,
     sourceRecordsDigest: source.sourceRecordsDigest,
     recordKeysDigest: source.recordKeysDigest,
     recordCount: source.trailer.recordCount,
@@ -568,22 +749,31 @@ function ensureCacheLayout(root: string, cacheRoot: string): void {
   for (const segment of segments) {
     current = join(current, segment);
     assertContained(realRoot, current);
-    if (existsSync(current)) {
-      const stat = lstatSync(current);
-      if (!stat.isDirectory() || stat.isSymbolicLink()) {
-        throw new LoreError(
-          "denied",
-          `refusing Ladybug cache path through non-directory or symlink ${relative(realRoot, current)}`,
-          "replace it with a repository-local real directory",
-        );
+    if (!existsSync(current)) {
+      try {
+        mkdirSync(current, { mode: 0o700 });
+      } catch (cause) {
+        if (!isErrno(cause, "EEXIST")) throw cause;
       }
-    } else {
-      mkdirSync(current, { mode: 0o700 });
+    }
+    const stat = lstatSync(current);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new LoreError(
+        "denied",
+        `refusing Ladybug cache path through non-directory or symlink ${relative(realRoot, current)}`,
+        "replace it with a repository-local real directory",
+      );
     }
   }
   if (current !== cacheRoot) throw lifecycleError("resolved cache root does not match the frozen storage path");
   const generations = join(cacheRoot, "generations");
-  if (!existsSync(generations)) mkdirSync(generations, { mode: 0o700 });
+  if (!existsSync(generations)) {
+    try {
+      mkdirSync(generations, { mode: 0o700 });
+    } catch (cause) {
+      if (!isErrno(cause, "EEXIST")) throw cause;
+    }
+  }
   const stat = lstatSync(generations);
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new LoreError("denied", "refusing symlinked or non-directory Ladybug generations path");
@@ -814,10 +1004,17 @@ function fsyncDirectory(path: string): void {
     descriptor = openSync(path, "r");
     fsyncSync(descriptor);
   } catch (cause) {
-    if (!isErrno(cause, "EINVAL") && !isErrno(cause, "ENOTSUP")) throw cause;
+    if (!isUnsupportedDirectoryFsyncError(cause)) throw cause;
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
   }
+}
+
+export function isUnsupportedDirectoryFsyncError(
+  cause: unknown,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return isErrno(cause, "EINVAL") || isErrno(cause, "ENOTSUP") || (platform === "win32" && isErrno(cause, "EPERM"));
 }
 
 function assertNativeVersion(source: LadybugProjectionSource): void {
@@ -865,6 +1062,10 @@ function isControlManifest(value: unknown): value is LadybugControlManifest {
     typeof value.exportDigest === "string" &&
     typeof value.taskSnapshotDigest === "string" &&
     typeof value.sourceFingerprint === "string" &&
+    typeof value.inputFingerprint === "string" &&
+    Array.isArray(value.warnings) &&
+    value.warnings.every((warning) => typeof warning === "string") &&
+    typeof value.warningsComplete === "boolean" &&
     typeof value.sourceRecordsDigest === "string" &&
     typeof value.recordKeysDigest === "string" &&
     Number.isSafeInteger(value.recordCount) &&

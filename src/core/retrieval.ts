@@ -14,12 +14,13 @@ import { reconcileLadybugProjection } from "./ladybug-lifecycle";
 import {
   EXPECTED_LADYBUG_STORAGE_VERSION,
   EXPECTED_LADYBUG_VERSION,
+  type LadybugIndexedReader,
   type LadybugNativeLoader,
   loadLadybugNativeDriver,
   memoizeLadybugNativeLoader,
   supportsLadybugNative,
 } from "./ladybug-native";
-import { loadLadybugProjectionSource } from "./ladybug-source";
+import { loadLadybugProjectionFreshness, loadLadybugProjectionSource } from "./ladybug-source";
 import { loadProfile } from "./profile";
 import { DOCS_DIR } from "./scaffold";
 
@@ -37,6 +38,10 @@ export interface IndexedRetrievalProvenance {
 
 export interface RetrievalGraph {
   readonly graph: BundleGraph;
+  /** Bounded persisted operations available only for a verified indexed generation. */
+  readonly indexed?: LadybugIndexedReader;
+  /** Release native resources owned by this retrieval load. */
+  readonly dispose?: () => Promise<void>;
   readonly backend: RetrievalBackend;
   readonly provenance?: IndexedRetrievalProvenance;
 }
@@ -88,10 +93,19 @@ export async function loadRetrievalGraph(options: RetrievalGraphOptions): Promis
     indexedWarnings = attemptWarnings;
     return source;
   };
+  const loadFreshness = () =>
+    loadLadybugProjectionFreshness({
+      root: options.root,
+      ladybugVersion: EXPECTED_LADYBUG_VERSION,
+      ladybugStorageVersion: EXPECTED_LADYBUG_STORAGE_VERSION,
+      adapter: options.adapter,
+      resolveGitCommit: options.resolveGitCommit,
+    });
   try {
     const lifecycle = await reconcileLadybugProjection({
       root: options.root,
       loadSource,
+      loadFreshness,
       loadNativeDriver: loadNative,
     });
     if (lifecycle.generation === undefined) {
@@ -99,10 +113,15 @@ export async function loadRetrievalGraph(options: RetrievalGraphOptions): Promis
       return loadReferenceGraph(options.root, options.warnings);
     }
     const native = await loadNative();
-    const graph = await native.readLadybugBundleGraph(lifecycle.generation.databasePath, lifecycle.source);
+    indexedWarnings = new WarningCollector();
+    for (const warning of lifecycle.source.warnings) indexedWarnings.add(warning);
+    const indexed = native.openLadybugIndexedReader(lifecycle.generation.databasePath, lifecycle.source);
+    const graph = await indexed.readBundleGraph();
     copyWarnings(indexedWarnings, options.warnings);
     return {
       graph,
+      indexed,
+      dispose: () => indexed.close(),
       backend: "indexed",
       provenance: {
         repositoryScopeKey: lifecycle.source.repositoryScopeKey,

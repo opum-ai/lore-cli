@@ -57,7 +57,14 @@ describe("ci.yml exact-host LadybugDB qualification", () => {
 
   test("the narrow mode skips every unrelated CI job", () => {
     const jobs = loadWorkflow().jobs;
-    expect(Object.keys(jobs)).toEqual(["check", "build", "scaffold-mkdocs", "scaffold-docusaurus", "docker-e2e"]);
+    expect(Object.keys(jobs)).toEqual([
+      "check",
+      "ladybug-benchmark-smoke",
+      "build",
+      "scaffold-mkdocs",
+      "scaffold-docusaurus",
+      "docker-e2e",
+    ]);
 
     const exactHostSkipGuard = "github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true";
     for (const [name, job] of Object.entries(jobs)) {

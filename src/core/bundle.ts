@@ -66,6 +66,10 @@ import { compareCodeUnits } from "./order";
 import { defaultProfile, type Profile } from "./profile";
 import { RESERVED_STEMS } from "./scaffold";
 
+// Bun.gc(true) is synchronous. Large projection loads retain bounded cleanup
+// points without pausing once per small group of authored concepts.
+const BOUNDED_MEMORY_GC_CONCEPT_INTERVAL = 1024;
+
 /**
  * The kind of a concept→concept reference. `"link"` is a body markdown
  * cross-link; the rest mirror the frontmatter fields that carry concept
@@ -112,6 +116,13 @@ export interface BundleGraph {
    */
   readonly edges: readonly Edge[];
   /**
+   * Optional precomputed undirected neighbor lookup. Persistent retrieval backends
+   * can provide this while materializing their edge index so bounded graph and
+   * context traversals do not rebuild the same O(E) adjacency map per command.
+   * The returned order must match first appearance in {@link edges}.
+   */
+  readonly neighbors?: (id: string) => Iterable<string>;
+  /**
    * A token-count **estimate** (chars/4 heuristic, not a real tokenizer) over the
    * canonical serialized bytes of one concept (`id` given) or the whole bundle
    * (`id` omitted). Throws `not_found` if `id` names no loaded concept. Results are
@@ -136,6 +147,8 @@ export interface LoadBundleOptions {
    * module reads only the filesystem tree under `root`, never `.lore/` itself (LORE-84).
    */
   profile?: Profile;
+  /** Internal large-snapshot mode that bounds transient parser allocations. */
+  boundedMemory?: boolean;
 }
 
 /**
@@ -195,6 +208,7 @@ export function loadBundle(root: string, options: LoadBundleOptions = {}): Bundl
       continue;
     }
     concepts.push(concept);
+    if (options.boundedMemory === true && concepts.length % BOUNDED_MEMORY_GC_CONCEPT_INTERVAL === 0) Bun.gc(true);
   }
   return buildGraph(concepts);
 }
@@ -763,7 +777,29 @@ export function walkMdast(root: Nodes, visit: (node: Nodes) => void): void {
  * them; the anchor check needs them).
  */
 export function extractBodyTargets(body: string): string[] {
-  return extractLinkTargets(fromMarkdown(body));
+  return extractLinkTargets(fromMarkdown(compactPlainTextLines(body)));
+}
+
+/**
+ * Replace exceptionally long syntax-free lines before CommonMark tokenization.
+ * Their exact prose cannot affect link destinations, while retaining more than
+ * CommonMark's 999-character link-label ceiling prevents an invalid oversized
+ * label from becoming valid. Definition destinations on a following line remain
+ * byte-exact because their text is itself the value we return.
+ */
+function compactPlainTextLines(body: string): string {
+  const lines = body.split("\n");
+  let changed = false;
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index] as string;
+    if (line.length <= 4096 || /[^\p{L}\p{N} \t]/u.test(line)) continue;
+    const previous = lines[index - 1]?.trimEnd();
+    if (previous?.endsWith("]:") === true) continue;
+    const indentation = line.match(/^[ \t]*/u)?.[0] ?? "";
+    lines[index] = `${indentation}${"x".repeat(1000)}`;
+    changed = true;
+  }
+  return changed ? lines.join("\n") : body;
 }
 
 /**

@@ -84,7 +84,21 @@ export function runQuery(options: QueryCommandOptions): number | Promise<number>
   if (options.retrieval !== undefined) {
     return options
       .retrieval({ root: options.root, warnings: advisories, adapter: options.adapter })
-      .then(({ graph }) => finishQuery(options, parsed, graph, advisories));
+      .then(async (loaded) => {
+        try {
+          const indexedResult = await loaded.indexed?.query({
+            text: parsed.text,
+            type: parsed.type,
+            tags: parsed.tags,
+            status: parsed.status,
+            fields: parsed.fields,
+            limit: parsed.limit,
+          });
+          return finishQuery(options, parsed, loaded.graph, advisories, indexedResult);
+        } finally {
+          await loaded.dispose?.();
+        }
+      });
   }
   const profile = loadProfile({ root: options.root });
   const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, profile });
@@ -96,17 +110,20 @@ function finishQuery(
   parsed: QueryArgs,
   graph: ReturnType<typeof loadBundle>,
   advisories: WarningCollector,
+  indexedResult?: QueryResult,
 ): number {
   advisories.flush({ color: options.output.color, stderr: options.stderr });
 
-  const data = query(graph, {
-    text: parsed.text,
-    type: parsed.type,
-    tags: parsed.tags,
-    status: parsed.status,
-    fields: parsed.fields,
-    limit: parsed.limit,
-  });
+  const data =
+    indexedResult ??
+    query(graph, {
+      text: parsed.text,
+      type: parsed.type,
+      tags: parsed.tags,
+      status: parsed.status,
+      fields: parsed.fields,
+      limit: parsed.limit,
+    });
   emit(queryRenderable(data), options.output, options.stdout);
   return EXIT_OK;
 }

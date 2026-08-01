@@ -1,0 +1,30 @@
+{
+  "schema": "ladybug-benchmark-fixture/1",
+  "name": "large",
+  "seed": 28310402,
+  "counts": {
+    "concepts": 4096,
+    "tasks": 4096,
+    "authoredEdges": 32768,
+    "markdownBodyBytes": 104857600
+  },
+  "coverage": {
+    "graphShapes": ["chain", "star", "cycle", "duplicate", "dangling"],
+    "graphDepths": [0, 1, 2, 4, 8],
+    "contextBudgets": [4096, 16384, 65536, 262144],
+    "queries": [
+      { "id": "common", "text": "constellation-common", "class": "common", "expectedMatches": 4096 },
+      { "id": "rare", "text": "axolotl-rare", "class": "rare", "expectedMatches": 1 },
+      { "id": "tied", "text": "balanced-tie", "class": "tied", "expectedMatches": 2, "expectTopTie": true },
+      { "id": "no-hit", "text": "nonexistent-platypus", "class": "no-hit", "expectedMatches": 0 },
+      { "id": "unicode", "text": "café-unicode", "class": "unicode", "expectedMatches": 1 }
+    ],
+    "unicode": ["café", "東京", "🪲"],
+    "additiveFields": ["fixture_extension.schema", "fixture_extension.seed", "fixture_extension.ordinal", "fixture_extension.unicode"]
+  },
+  "expected": {
+    "canonicalExportSha256": "sha256:56c47883e29363023874d85b450db7603b59d8a28764b983cc6afcdc989ea1d6",
+    "sourceInventorySha256": "sha256:75cd7667a2eca19415b7530f8f9609029d4226e9b4695d4bed3b0f630145b1cc",
+    "taskSnapshotSha256": "sha256:0b41643e9a7208c1a31fa90a25b9751dc564d8fd1d9d616ca526cc70d2ef96aa"
+  }
+}

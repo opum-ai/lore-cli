@@ -89,6 +89,41 @@ jobs:
             bun test --isolate --timeout=10000
           fi
 
+  ladybug-benchmark-smoke:
+    # Functional evidence only: --smoke uses one measured repetition, reports
+    # every gate as inconclusive, and exits successfully when parity/schema/
+    # accounting all hold. Timing thresholds remain release-only (LCLI-283.1.4).
+    name: ladybug benchmark smoke (non-timing)
+    if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: ./.github/actions/setup-bun
+      - name: Run the complete small-fixture one-repetition smoke
+        shell: bash
+        run: |
+          if [ -z "${ImageOS:-}" ] || [ -z "${ImageVersion:-}" ]; then
+            echo "::error::GitHub runner image identity is unavailable"
+            exit 1
+          fi
+          mkdir -p artifacts
+          bun benchmark/ladybug/run.ts \
+            --fixture small \
+            --output artifacts/ladybug-benchmark-smoke-v1.json \
+            --runner-image "${ImageOS}-${ImageVersion}" \
+            --smoke
+      - name: Upload functional benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ladybug-benchmark-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/ladybug-benchmark-smoke-v1.json
+            benchmark/ladybug/gates/v1.json
+          if-no-files-found: warn
+          retention-days: 30
+
   build:
     name: compile smoke (ubuntu)
     if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true

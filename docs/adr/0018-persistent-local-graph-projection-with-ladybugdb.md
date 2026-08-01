@@ -109,10 +109,12 @@ returned through a Lore contract.
 - `commitKey` is
   `sha256("lore-source-commit/1\0" + repositoryScopeKey + "\0" + gitCommit)`
   when `gitCommit` is non-null.
-- `sourceRecordJson` is the canonical JSON text of each source record exactly
-  as received. It preserves additive fields, unknown OKF fields and types,
-  nullable values, original task fields, authored targets, and duplicate
-  ordinals even when a field is not promoted to a query column.
+- Task and authored-edge nodes retain `sourceRecordJson` as canonical JSON exactly
+as received. Concept nodes instead retain the complete frontmatter JSON plus
+promoted identity, content, and lexical fields, from which Lore reconstructs
+the same source record. This avoids storing each large document body twice
+while preserving additive fields, unknown OKF fields and types, and nullable
+values.
 - Every record node carries `repositoryScopeKey`, `snapshotKey`, `bundleId`,
   nullable `gitCommit`, and `exportDigest`. Concepts additionally retain the
   repository-relative source `path`; authored edges retain `kind`, authored
@@ -128,18 +130,21 @@ provide.
 
 ### Property-graph schema
 
-All table and property names below are internal and may only change with a new
-Lore index-format version. `STRING` JSON properties contain canonical JSON;
-they are not lossy, selected subsets of source objects.
+All table and property names below are internal. A physical-schema change must
+either use a new Lore index-format version or add required control metadata that
+makes every earlier layout rebuild before native open. `STRING` JSON properties
+contain canonical JSON; promoted concept fields remain a lossless reconstruction
+of the source object.
 
 | Node table | Primary key | Required projected properties |
 |---|---|---|
 | `RepositoryProjection` | `repositoryScopeKey STRING` | `bundleId STRING`, `docsRoot STRING` |
-| `ProjectionSnapshot` | `snapshotKey STRING` | `indexFormatVersion STRING`, `projectionSchemaVersion STRING`, `normalizationVersion STRING`, `exporterName STRING`, `exporterVersion STRING`, `loreVersion STRING`, `ladybugVersion STRING`, `repositoryScopeKey STRING`, `bundleId STRING`, `okfVersion STRING`, `docsRoot STRING`, `gitCommit STRING`, `exportDigest STRING`, `taskSnapshotDigest STRING`, `sourceFingerprint STRING`, `recordCount INT64`, `manifestJson STRING`, `trailerJson STRING` |
+| `ProjectionSnapshot` | `snapshotKey STRING` | version, repository, bundle, commit, export, task-snapshot, and source fingerprints; `sourceRecordsDigest STRING`, `recordKeysDigest STRING`; lexical document/length totals; record/type counts; `manifestJson STRING`, `trailerJson STRING` |
 | `SourceCommit` | `commitKey STRING` | `repositoryScopeKey STRING`, `sha STRING` |
-| `ConceptRecord` | `recordKey STRING` | common provenance fields, `conceptId STRING`, `path STRING`, `conceptType STRING`, `frontmatterJson STRING`, `body STRING`, `contentHash STRING`, `tokenEstimate INT64`, `sourceRecordJson STRING` |
+| `ConceptRecord` | `recordKey STRING` | common provenance fields, `conceptId STRING`, `path STRING`, `conceptType STRING`, `frontmatterJson STRING`, nullable `title STRING`, nullable `summary STRING`, nullable `description STRING`, `tagsJson STRING`, `body STRING`, `contentHash STRING`, `tokenEstimate INT64`, `lexicalLength INT64` |
 | `TaskRecord` | `recordKey STRING` | common provenance fields, `taskId STRING`, `title STRING`, `status STRING`, `labelsJson STRING`, `priority STRING`, `ordinal INT64`, `assigneesJson STRING`, `milestone STRING`, `parentTaskId STRING`, `sourceAdapterVersion STRING`, `sourceRecordJson STRING` |
 | `AuthoredEdgeRecord` | `recordKey STRING` | common provenance fields, `fromRecordKey STRING`, `toRecordKey STRING`, `kind STRING`, `target STRING`, `ordinal INT64`, `dangling BOOL`, `sourceRecordJson STRING` |
+| `LexicalTerm` | `termKey STRING` | `documentFrequency INT64`; `termKey` is a deterministic term digest, not public query text |
 
 `gitCommit`, task optionals, and an authored edge's `toRecordKey` are nullable.
 `SourceCommit` is omitted when the export manifest has no commit. Common
@@ -158,14 +163,23 @@ The internal relationship tables are:
 | `EDGE_SOURCE` | `ConceptRecord` → `AuthoredEdgeRecord` |
 | `EDGE_CONCEPT_TARGET` | `AuthoredEdgeRecord` → `ConceptRecord` |
 | `EDGE_TASK_TARGET` | `AuthoredEdgeRecord` → `TaskRecord` |
+| `HAS_TERM` | `ConceptRecord` → `LexicalTerm`; relationship property `frequency INT64` |
 
 Every export manifest and trailer maps to `ProjectionSnapshot`; every concept
 maps to one `ConceptRecord`; every task maps to one `TaskRecord`; and every
 authored concept or task edge maps to its own `AuthoredEdgeRecord`. An authored
 edge is never collapsed into a direct database relationship. This preserves
 duplicates as distinct `recordKey`/`ordinal` pairs and preserves dangling edges
-as records with no target relationship. No task-parent, backlink, semantic,
-similarity, or inferred edge is added by M6.
+as records with no target relationship. No task-parent, backlink, semantic, similarity, or inferred edge is added by M6.
+
+Each concept also maps to deterministic lexical postings. Lore hashes normalized
+terms into primary-keyed `LexicalTerm` nodes and records per-concept frequency
+on `HAS_TERM`; snapshot totals and per-document lengths support the accepted
+BM25 calculation. Queries resolve term nodes by primary key and traverse only
+matching postings, while graph loads omit document bodies and context fetches
+only the selected body by primary key. This is an internal acceleration
+structure and does not change public ranking, filtering, tie-breaking, or
+output.
 
 ## Frozen M6 freshness and lifecycle contract
 
@@ -217,16 +231,20 @@ and a native file migration adds risk without preserving unique data.
    and acquisition time. Time or PID absence alone never authorizes lock
    stealing; recovery must prove the recorded process instance is gone and
    reacquire the lock atomically.
-3. Recompute freshness after locking. If another process published the exact
-   generation, verify and reuse it.
+3. After locking, inspect the already validated source identity. If another
+   process published that exact generation, verify and reuse it without reading
+   the unchanged source a third time.
 4. Create a unique `.building-<owner-token>` directory. Produce one validated
-   export stream, create the frozen schema, insert all records and structural
-   relationships in a transaction, checkpoint, close Ladybug, and write no
-   source file.
-5. Reopen the staged database read-only and verify metadata equality, record
-   counts, primary keys, relationship endpoints, dangling-edge absence of
-   target relationships, export/task digests, and a deterministic conformance
-   sample. Then hash the closed database and write/fsync `index.json` last.
+   export stream, create the frozen schema, bulk-load records and structural
+   relationships through bounded CSV staging, checkpoint between phases, close
+   Ladybug, and write no source file.
+5. Reopen the staged database read-only and perform full logical verification
+   against the validated source: duplicated metadata and digests, every concept,
+   task, and edge record, promoted fields, every document body through one
+   database-side SHA-256 scan, record counts, structural endpoints, dangling
+   targets, and deterministic samples. Conformance tests separately cover
+   lexical scores and public output parity. Then close and hash the complete
+   database before writing and fsyncing `index.json` last.
 6. Recompute the source fingerprint. If it changed, discard only this staging
    directory and retry or fall back.
 7. Atomically rename the complete staging directory to

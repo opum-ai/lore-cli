@@ -14,6 +14,7 @@ import { serializeConcept } from "./concept";
 
 export const PROJECTION_SCHEMA_VERSION = "1.0";
 export const PROJECTION_NORMALIZATION_VERSION = "1";
+const BOUNDED_MEMORY_GC_RECORD_INTERVAL = 1024;
 
 export interface ProjectionInput {
   readonly graph: BundleGraph;
@@ -23,6 +24,8 @@ export interface ProjectionInput {
   readonly exporterVersion: string;
   readonly gitCommit: string | null;
   readonly generatedAt: string | null;
+  /** Internal large-snapshot optimization; public export callers keep the default `true`. */
+  readonly materializeJsonl?: boolean;
 }
 
 export type ProjectionRecord = Record<string, unknown> & { readonly record: string };
@@ -80,6 +83,7 @@ export function buildProjection(input: ProjectionInput): Projection {
       contentHash: hash(`${PROJECTION_NORMALIZATION_VERSION}\0${canonical}`),
       tokenEstimate: input.graph.tokenEstimate(concept.id),
     });
+    if (input.materializeJsonl === false && records.length % BOUNDED_MEMORY_GC_RECORD_INTERVAL === 0) Bun.gc(true);
   }
 
   const ordinals = new Map<string, number>();
@@ -130,9 +134,12 @@ export function buildProjection(input: ProjectionInput): Projection {
   records.push({
     record: "trailer",
     recordCount: records.length,
-    streamHash: projectionStreamHash(records),
+    streamHash: projectionStreamHash(records, input.materializeJsonl === false),
   });
-  return { records, jsonl: `${records.map((record) => JSON.stringify(record)).join("\n")}\n` };
+  return {
+    records,
+    jsonl: input.materializeJsonl === false ? "" : `${records.map((record) => JSON.stringify(record)).join("\n")}\n`,
+  };
 }
 
 /**
@@ -140,11 +147,14 @@ export function buildProjection(input: ProjectionInput): Projection {
  * trailer. The generated timestamp is deliberately normalized away so the same
  * source snapshot has one digest regardless of wall-clock time.
  */
-export function projectionStreamHash(records: readonly ProjectionRecord[]): string {
-  const semanticLines = records.map((record) =>
-    JSON.stringify(record.record === "manifest" ? { ...record, generatedAt: null } : record),
-  );
-  return hash(semanticLines.join("\n"));
+export function projectionStreamHash(records: readonly ProjectionRecord[], boundedMemory = false): string {
+  const digest = createHash("sha256");
+  records.forEach((record, index) => {
+    if (index > 0) digest.update("\n");
+    digest.update(JSON.stringify(record.record === "manifest" ? { ...record, generatedAt: null } : record));
+    if (boundedMemory && index > 0 && index % BOUNDED_MEMORY_GC_RECORD_INTERVAL === 0) Bun.gc(true);
+  });
+  return `sha256:${digest.digest("hex")}`;
 }
 
 function conceptEdge(

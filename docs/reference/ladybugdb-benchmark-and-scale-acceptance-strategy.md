@@ -62,8 +62,13 @@ source-byte count, document and task counts, projected node and edge counts,
 and export digest so results can be compared across runs.
 
 The blocking job performs one cold projection build followed by five warm
-samples for representative query, graph, and context operations. The wider
-functional scenario matrix belongs in fast non-timing tests. Initial budgets
+samples for representative query, graph, and context operations. Each
+repetition starts one fresh indexed session and one fresh reference session in
+a deterministic AB/BA order, measures warm open once per policy, and then
+measures the representative operations against that loaded session. Source
+bytes are hashed before and after each session. This keeps the samples
+independent without reparsing the same 100 MiB repository once per operation.
+The wider functional scenario matrix belongs in fast non-timing tests. Initial budgets
 are deliberately conservative and may only be changed with recorded evidence:
 
 | Measurement | Initial blocking budget |
@@ -78,6 +83,38 @@ are deliberately conservative and may only be changed with recorded evidence:
 Report each sample and summary statistic rather than hiding variance behind a
 single best result. A threshold failure is a Lore qualification failure; it is
 not evidence of LadybugDB's absolute limit.
+
+## Qualified implementation approach
+
+The performance recovery follows LadybugDB's recommended bulk-import path:
+Lore writes bounded temporary CSV batches, loads them with `COPY`, checkpoints
+between phases, and removes staging files. Primary-keyed term nodes plus
+concept-to-term postings provide the persistent lexical lookup while preserving
+Lore's exact BM25 behavior. Warm retrieval opens one immutable read-only
+generation, uses promoted metadata for graph output and filters, and builds the
+deterministic undirected neighbor lookup once while materializing those edges.
+Graph and context traversals reuse that lookup instead of rebuilding it for each
+command, while a full document body is still fetched only when context output
+needs it.
+
+Cold construction avoids reparsing syntax-free oversized prose as Markdown link
+structure, skips freshness reads when no generation can be reused, and retains
+lexical lengths computed during posting construction. Full staged verification
+still covers every body: LadybugDB computes SHA-256 inside one bounded scan and
+Lore compares those digests with the validated source before publication.
+
+Large source passes retain explicit cleanup points but run them once per 1,024
+records instead of once per 256. Bun documents `Bun.gc(true)` as synchronous and
+its runtime already sizes the garbage-collected heap from available memory,
+including container limits. The wider interval removes repeated full-collector
+pauses while the separate 16 MiB import batches and blocking memory gate continue
+to bound the qualification envelope.
+
+Lore does not depend on LadybugDB's separately installed full-text-search
+extension. That extension has its own installation and user-global storage
+lifecycle, while the release requirement is a repository-contained,
+offline-capable native package. The private posting schema therefore uses only
+the exact pinned core package and automatic primary-key indexes.
 
 ## Optional 1 GiB observation
 
@@ -131,15 +168,25 @@ platform artifacts and audited npm integrity values:
 - `@ladybugdb/core-win32-x64@0.19.0` — `sha512-y2/IOMKmydo4ZfQPDZuZhiFC104VJQ9lwc0w1KVdvb4Z2RIUUL8/tn5QD4Uq8DUrJGxQhoEESPnlkk69cKaaDQ==`.
 
 All six packages declare MIT licensing. Bun 1.2.23 installation and `bun
-audit` reported no vulnerabilities. Darwin-arm64 executable evidence is
-complete locally; matching-host Darwin x64, Linux arm64/x64, and the explicit
-Windows fallback-only package policy remain required workflow evidence before
-the dependency task can be finalized. Final `LCLI-283.1.4` benchmark and
-packaging evidence is authoritative only after that host matrix settles.
+audit` reported no vulnerabilities. Exact-host workflow evidence passed native
+loading and the full suite on Darwin arm64/x64 and Linux arm64/x64, plus the
+explicit Windows x64 import-safe fallback. `LCLI-283.1.5` is complete; final
+`LCLI-283.1.4` evidence combines the bounded Linux-x64 100 MiB scale gate
+with separate concurrency/crash and five-host package gates. A strict final
+manifest accepts those artifacts only when they all pass on one clean commit;
+the matching-host package reports, rather than a duplicate Darwin timing run,
+carry the Darwin executable-platform evidence.
 
 ## Sources
 
 - [LadybugDB source repository](https://github.com/LadybugDB/ladybug)
+- [LadybugDB bulk import](https://docs.ladybugdb.com/import/)
+- [LadybugDB CSV import](https://docs.ladybugdb.com/import/csv/)
+- [LadybugDB table and primary-key definitions](https://docs.ladybugdb.com/cypher/data-definition/create-table/)
+- [LadybugDB hash functions](https://docs.ladybugdb.com/cypher/expressions/hash-functions/)
+- [LadybugDB full-text-search extension](https://docs.ladybugdb.com/extensions/full-text-search/)
+- [Bun `gc` API](https://bun.com/reference/bun/gc)
+- [Bun runtime memory controls](https://bun.com/docs/runtime)
 - [LadybugDB developer guide](https://docs.ladybugdb.com/developer-guide/)
 - [Kùzu Graph Database Management System, CIDR 2023](https://www.vldb.org/cidrdb/papers/2023/p48-jin.pdf)
 - [`@ladybugdb/core` on npm](https://www.npmjs.com/package/@ladybugdb/core)
