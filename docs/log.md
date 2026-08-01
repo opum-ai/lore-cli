@@ -40,6 +40,7 @@
 - 2026-07-30T15:10:18-05:00 a6348ff8971c5ad4f9a43aedb62643e70fc09deb docs: sync Commander campaign closeout log
 - 2026-07-30T17:03:49-05:00 edbd6f3abd1a37d9e04324db08e9ad8eea7657af feat: add deterministic LadybugDB projection lifecycle
 - 2026-07-30T19:26:25-05:00 0828913cdfa2f548ffa1385b77d9232570e9a785 feat: route retrieval through verified Ladybug index
+- 2026-07-30T22:23:34-05:00 7b81734764658048a9924b0ba64cd810e8c212b7 docs: record LCLI-283.1.4 qualification plan
 
 ## docs/.obsidian
 
@@ -197,6 +198,7 @@
 - 2026-07-30T15:08:52-05:00 743795bf0cc80f6c2b016cedaa424b5f9f189dfc docs: record protected branch handoff
 - 2026-07-30T17:03:49-05:00 edbd6f3abd1a37d9e04324db08e9ad8eea7657af feat: add deterministic LadybugDB projection lifecycle
 - 2026-07-30T19:26:25-05:00 0828913cdfa2f548ffa1385b77d9232570e9a785 feat: route retrieval through verified Ladybug index
+- 2026-07-30T22:23:34-05:00 7b81734764658048a9924b0ba64cd810e8c212b7 docs: record LCLI-283.1.4 qualification plan
 
 ## docs/specs
 
