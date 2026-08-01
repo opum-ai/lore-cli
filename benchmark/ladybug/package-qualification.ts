@@ -809,7 +809,9 @@ function removeQualificationScratch(root: string): void {
     throw new Error(`refusing to remove an unexpected package-qualification scratch path: ${root}`);
   }
   makeTreeWritable(root);
-  rmSync(root, { recursive: true, force: true });
+  // Windows can retain a crashed native probe's file handles briefly. Node's
+  // recursive rm contract retries EBUSY/EPERM with bounded linear backoff.
+  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 });
 }
 
 function makeTreeWritable(path: string): void {
