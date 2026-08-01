@@ -69,6 +69,7 @@ describe("Ladybug benchmark report contract", () => {
   });
 
   test("parses repeatable fixtures, required output, runner identity, and smoke mode", () => {
+    const cwd = "/tmp/benchmark-cwd";
     expect(
       parseLadybugBenchmarkCliArgs(
         [
@@ -84,11 +85,11 @@ describe("Ladybug benchmark report contract", () => {
           "test-image",
           "--smoke",
         ],
-        "/tmp/benchmark-cwd",
+        cwd,
       ),
     ).toEqual({
       fixtureNames: ["small", "large"],
-      output: "/tmp/benchmark-cwd/artifact.json",
+      output: resolve(cwd, "artifact.json"),
       mode: "smoke",
       runnerImage: "test-image",
     });
