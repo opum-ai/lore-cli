@@ -94,6 +94,12 @@ Lore's exact BM25 behavior. Warm retrieval opens one immutable read-only
 generation, uses promoted metadata for graph output and filters, and fetches a
 full document body only when context output needs it.
 
+Cold construction avoids reparsing syntax-free oversized prose as Markdown link
+structure, skips freshness reads when no generation can be reused, and retains
+lexical lengths computed during posting construction. Full staged verification
+still covers every body: LadybugDB computes SHA-256 inside one bounded scan and
+Lore compares those digests with the validated source before publication.
+
 Lore does not depend on LadybugDB's separately installed full-text-search
 extension. That extension has its own installation and user-global storage
 lifecycle, while the release requirement is a repository-contained,
@@ -167,6 +173,7 @@ carry the Darwin executable-platform evidence.
 - [LadybugDB bulk import](https://docs.ladybugdb.com/import/)
 - [LadybugDB CSV import](https://docs.ladybugdb.com/import/csv/)
 - [LadybugDB table and primary-key definitions](https://docs.ladybugdb.com/cypher/data-definition/create-table/)
+- [LadybugDB hash functions](https://docs.ladybugdb.com/cypher/expressions/hash-functions/)
 - [LadybugDB full-text-search extension](https://docs.ladybugdb.com/extensions/full-text-search/)
 - [LadybugDB developer guide](https://docs.ladybugdb.com/developer-guide/)
 - [Kùzu Graph Database Management System, CIDR 2023](https://www.vldb.org/cidrdb/papers/2023/p48-jin.pdf)

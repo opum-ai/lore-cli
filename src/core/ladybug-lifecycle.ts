@@ -183,7 +183,7 @@ export async function reconcileLadybugProjection(
   const cacheRoot = join(root, LADYBUG_CACHE_REL_ROOT);
   assertExistingCacheLayoutSafe(root, cacheRoot);
   const lockState = inspectWriterLock(cacheRoot);
-  if (options.loadFreshness !== undefined) {
+  if (options.loadFreshness !== undefined && hasPotentialGeneration(cacheRoot)) {
     const freshness = await options.loadFreshness();
     const fast = await inspectFreshGeneration(cacheRoot, freshness.inputFingerprint, loadNative);
     if (fast.classification === "reusable" && fast.generation !== undefined) {
@@ -267,10 +267,6 @@ export async function reconcileLadybugProjection(
   try {
     cleanupAbandonedStaging(cacheRoot);
     for (let attempt = 0; attempt < 2; attempt++) {
-      const lockedFreshness = await options.loadFreshness?.();
-      if (lockedFreshness === undefined || lockedFreshness.inputFingerprint !== source.inputFingerprint) {
-        source = await loadSource();
-      }
       assertNativeVersion(source);
       inspection = await inspectGeneration(cacheRoot, source, loadNative);
       if (inspection.classification === "reusable" && inspection.generation !== undefined) {
@@ -407,6 +403,14 @@ export function disposeLadybugProjection(rootInput: string): boolean {
   } finally {
     releaseWriterLock(lock);
   }
+}
+
+function hasPotentialGeneration(cacheRoot: string): boolean {
+  const generationsRoot = join(cacheRoot, "generations");
+  if (!existsSync(generationsRoot)) return false;
+  return readdirSync(generationsRoot, { withFileTypes: true }).some(
+    (entry) => entry.isDirectory() && !entry.isSymbolicLink() && /^[0-9a-f]{64}$/.test(entry.name),
+  );
 }
 
 async function inspectFreshGeneration(

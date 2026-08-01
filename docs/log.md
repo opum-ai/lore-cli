@@ -46,6 +46,7 @@
 - 2026-08-01T00:02:30-05:00 4f0b69cdb1e3f2ddc2fde4c1dcc474974b6e510a feat: bound Ladybug qualification gate
 - 2026-08-01T00:34:58-05:00 d9dabbec82ceab714c9a2944d1234efa6aed13ad perf: bound Ladybug benchmark sessions
 - 2026-08-01T00:48:51-05:00 d9977c3f0625a7ea706585d3a646cecc2be88bbc docs: record Ladybug qualification result
+- 2026-08-01T06:12:24-05:00 36a5cac3f43b78826dec41cf37e1e730a04c3487 perf: accelerate Ladybug indexed retrieval
 
 ## docs/.obsidian
 
@@ -85,6 +86,7 @@
 - 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
 - 2026-07-30T10:40:14-05:00 1e2e6dc4c9f59328cf22b6ca3bb13e49ce111f6b docs: record dependency boundary audit
 - 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
+- 2026-08-01T06:12:24-05:00 36a5cac3f43b78826dec41cf37e1e730a04c3487 perf: accelerate Ladybug indexed retrieval
 
 ## docs/reference
 
@@ -152,6 +154,7 @@
 - 2026-07-31T20:14:53-05:00 7d1b17459a34e9dff7dee2dbb820b507e5dc87b6 feat: qualify LadybugDB 0.19.0
 - 2026-08-01T00:02:30-05:00 4f0b69cdb1e3f2ddc2fde4c1dcc474974b6e510a feat: bound Ladybug qualification gate
 - 2026-08-01T00:34:58-05:00 d9dabbec82ceab714c9a2944d1234efa6aed13ad perf: bound Ladybug benchmark sessions
+- 2026-08-01T06:12:24-05:00 36a5cac3f43b78826dec41cf37e1e730a04c3487 perf: accelerate Ladybug indexed retrieval
 
 ## docs/runbooks
 

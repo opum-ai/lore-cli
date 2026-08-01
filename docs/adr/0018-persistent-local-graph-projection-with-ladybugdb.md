@@ -231,19 +231,20 @@ and a native file migration adds risk without preserving unique data.
    and acquisition time. Time or PID absence alone never authorizes lock
    stealing; recovery must prove the recorded process instance is gone and
    reacquire the lock atomically.
-3. Recompute freshness after locking. If another process published the exact
-   generation, verify and reuse it.
+3. After locking, inspect the already validated source identity. If another
+   process published that exact generation, verify and reuse it without reading
+   the unchanged source a third time.
 4. Create a unique `.building-<owner-token>` directory. Produce one validated
    export stream, create the frozen schema, bulk-load records and structural
    relationships through bounded CSV staging, checkpoint between phases, close
    Ladybug, and write no source file.
 5. Reopen the staged database read-only and perform full logical verification
    against the validated source: duplicated metadata and digests, every concept,
-   task, and edge record, promoted fields, document bodies through bounded
-   primary-key probes, record counts, structural endpoints, dangling targets,
-   and deterministic samples. Conformance tests separately cover lexical scores
-   and public output parity. Then close and hash the complete database before
-   writing and fsyncing `index.json` last.
+   task, and edge record, promoted fields, every document body through one
+   database-side SHA-256 scan, record counts, structural endpoints, dangling
+   targets, and deterministic samples. Conformance tests separately cover
+   lexical scores and public output parity. Then close and hash the complete
+   database before writing and fsyncing `index.json` last.
 6. Recompute the source fingerprint. If it changed, discard only this staging
    directory and retry or fall back.
 7. Atomically rename the complete staging directory to

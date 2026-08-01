@@ -145,6 +145,7 @@ function fixtureSource(
     profileInventory: [{ path: ".lore/profile.toml", bytes: "# active profile bytes\n" }],
     ladybugVersion: LADYBUG_VERSION,
     ladybugStorageVersion: LADYBUG_STORAGE_VERSION,
+    warnings: [],
   });
 }
 
@@ -208,11 +209,21 @@ nativeDescribe("Ladybug projection lifecycle", () => {
     const source = fixtureSource();
     const beforeDocs = readFileSync(join(root, "docs/source-marker.txt"));
     const beforeProfile = readFileSync(join(root, ".lore/profile.toml"));
-    const loadSource = async () => source;
+    let sourceLoads = 0;
+    let freshnessLoads = 0;
+    const loadSource = async () => {
+      sourceLoads++;
+      return source;
+    };
+    const loadFreshness = async () => {
+      freshnessLoads++;
+      return { inputFingerprint: source.inputFingerprint };
+    };
 
-    const built = await reconcileLadybugProjection({ root, loadSource });
+    const built = await reconcileLadybugProjection({ root, loadSource, loadFreshness });
     expect(built.classification).toBe("rebuildable");
     expect(built.outcome).toBe("built");
+    expect({ sourceLoads, freshnessLoads }).toEqual({ sourceLoads: 1, freshnessLoads: 1 });
     const generation = requireGeneration(built);
     expect(generation.generationPath).toContain(join(LADYBUG_CACHE_REL_ROOT, "generations"));
     expect(statSync(generation.databasePath).mode & 0o222).toBe(0);
@@ -225,15 +236,17 @@ nativeDescribe("Ladybug projection lifecycle", () => {
       expect(records.get(record.key)).toBe(JSON.stringify(record));
     }
 
-    const reused = await reconcileLadybugProjection({ root, loadSource });
+    const reused = await reconcileLadybugProjection({ root, loadSource, loadFreshness });
     expect(reused.classification).toBe("reusable");
     expect(reused.outcome).toBe("reused");
     expect(reused.generation?.control).toEqual(generation.control);
+    expect({ sourceLoads, freshnessLoads }).toEqual({ sourceLoads: 1, freshnessLoads: 2 });
 
     expect(disposeLadybugProjection(root)).toBe(true);
     expect(existsSync(generation.generationPath)).toBe(false);
-    const rebuilt = await reconcileLadybugProjection({ root, loadSource });
+    const rebuilt = await reconcileLadybugProjection({ root, loadSource, loadFreshness });
     expect(rebuilt.outcome).toBe("built");
+    expect({ sourceLoads, freshnessLoads }).toEqual({ sourceLoads: 2, freshnessLoads: 3 });
     const rebuiltGeneration = requireGeneration(rebuilt);
     expect(rebuiltGeneration.generationPath).toBe(generation.generationPath);
     expect(stableControl(rebuiltGeneration.control)).toEqual(stableControl(generation.control));

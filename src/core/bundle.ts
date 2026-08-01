@@ -766,7 +766,29 @@ export function walkMdast(root: Nodes, visit: (node: Nodes) => void): void {
  * them; the anchor check needs them).
  */
 export function extractBodyTargets(body: string): string[] {
-  return extractLinkTargets(fromMarkdown(body));
+  return extractLinkTargets(fromMarkdown(compactPlainTextLines(body)));
+}
+
+/**
+ * Replace exceptionally long syntax-free lines before CommonMark tokenization.
+ * Their exact prose cannot affect link destinations, while retaining more than
+ * CommonMark's 999-character link-label ceiling prevents an invalid oversized
+ * label from becoming valid. Definition destinations on a following line remain
+ * byte-exact because their text is itself the value we return.
+ */
+function compactPlainTextLines(body: string): string {
+  const lines = body.split("\n");
+  let changed = false;
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index] as string;
+    if (line.length <= 4096 || /[^\p{L}\p{N} \t]/u.test(line)) continue;
+    const previous = lines[index - 1]?.trimEnd();
+    if (previous?.endsWith("]:") === true) continue;
+    const indentation = line.match(/^[ \t]*/u)?.[0] ?? "";
+    lines[index] = `${indentation}${"x".repeat(1000)}`;
+    changed = true;
+  }
+  return changed ? lines.join("\n") : body;
 }
 
 /**

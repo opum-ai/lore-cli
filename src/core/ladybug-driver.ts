@@ -36,6 +36,7 @@ export const LADYBUG_STORAGE_VERSION = String(ladybug.STORAGE_VERSION);
 const WRITER_BUFFER_BYTES = 256 * 1024 * 1024;
 const READER_BUFFER_BYTES = 64 * 1024 * 1024;
 const FULL_SCAN_BUFFER_BYTES = 512 * 1024 * 1024;
+const VERIFIED_LEXICAL_LENGTHS = new WeakMap<LadybugProjectionSource, ReadonlyMap<string, number>>();
 
 const SCHEMA_QUERIES = [
   `CREATE NODE TABLE RepositoryProjection(
@@ -218,7 +219,7 @@ export async function verifyLadybugDatabase(
       }
     }
 
-    await verifyConceptRecordTable(connection, source.concepts);
+    await verifyConceptRecordTable(connection, source);
     await verifyRecordTable(connection, "TaskRecord", source.tasks);
     await verifyRecordTable(connection, "AuthoredEdgeRecord", source.authoredEdges);
     await verifyPromotedSamples(connection, source);
@@ -871,6 +872,7 @@ async function insertProjection(
     exportDigest: source.exportDigest,
   };
   const lexical = buildProjectionLexicalIndex(source);
+  VERIFIED_LEXICAL_LENGTHS.set(source, new Map([...lexical.docs].map(([id, document]) => [id, document.length])));
   Bun.gc(true);
   await executePrepared(
     connection,
@@ -1222,10 +1224,9 @@ function snapshotMetadata(source: LadybugProjectionSource, lexical?: Bm25Index):
   };
 }
 
-async function verifyConceptRecordTable(
-  connection: Connection,
-  expectedRecords: readonly ProjectionConceptRecord[],
-): Promise<void> {
+async function verifyConceptRecordTable(connection: Connection, source: LadybugProjectionSource): Promise<void> {
+  const expectedRecords = source.concepts;
+  const lexicalLengths = VERIFIED_LEXICAL_LENGTHS.get(source);
   const expected = new Map(expectedRecords.map((record) => [record.key, record]));
   let count = 0;
   await queryEachRow(
@@ -1252,14 +1253,7 @@ async function verifyConceptRecordTable(
         row.tagsJson !== canonicalJson(record.frontmatter.tags ?? null) ||
         row.contentHash !== record.contentHash ||
         numericValue(row.tokenEstimate) !== record.tokenEstimate ||
-        numericValue(row.lexicalLength) !==
-          searchableConceptFields({
-            id: record.id,
-            path: record.path,
-            type: record.type,
-            frontmatter: record.frontmatter,
-            body: record.body,
-          }).reduce((length, field) => length + tokenizeQueryText(field).length, 0)
+        numericValue(row.lexicalLength) !== expectedLexicalLength(record, lexicalLengths)
       ) {
         corrupt("ConceptRecord source record differs");
       }
@@ -1268,16 +1262,39 @@ async function verifyConceptRecordTable(
   );
   if (count !== expectedRecords.length || expected.size !== 0) corrupt("ConceptRecord count differs");
 
-  const bodyStatement = await prepare(
-    connection,
-    "MATCH (n:ConceptRecord {recordKey: $recordKey}) RETURN n.body AS body",
+  const expectedBodyDigests = new Map(
+    expectedRecords.map((record) => [
+      record.key,
+      record.body === "" ? null : createHash("sha256").update(record.body).digest("hex"),
+    ]),
   );
-  for (const [index, record] of expectedRecords.entries()) {
-    const rows = await queryStatementRows(connection, bodyStatement, { recordKey: record.key });
-    const expectedBody = record.body === "" ? null : record.body;
-    if (rows.length !== 1 || rows[0]?.body !== expectedBody) corrupt("ConceptRecord body differs");
-    if (index > 0 && index % 256 === 0) Bun.gc(true);
-  }
+  await queryEachRow(
+    connection,
+    "MATCH (n:ConceptRecord) RETURN n.recordKey AS recordKey, sha256(n.body) AS bodyDigest",
+    (row) => {
+      const key = requiredString(row.recordKey, "concept body record key");
+      if (!expectedBodyDigests.has(key) || row.bodyDigest !== expectedBodyDigests.get(key)) {
+        corrupt("ConceptRecord body differs");
+      }
+      expectedBodyDigests.delete(key);
+    },
+  );
+  if (expectedBodyDigests.size !== 0) corrupt("ConceptRecord bodies are missing");
+}
+
+function expectedLexicalLength(
+  record: ProjectionConceptRecord,
+  cached: ReadonlyMap<string, number> | undefined,
+): number {
+  const length = cached?.get(record.id);
+  if (length !== undefined) return length;
+  return searchableConceptFields({
+    id: record.id,
+    path: record.path,
+    type: record.type,
+    frontmatter: record.frontmatter,
+    body: record.body,
+  }).reduce((total, field) => total + tokenizeQueryText(field).length, 0);
 }
 
 async function verifyRecordTable(
@@ -1523,23 +1540,6 @@ async function queryRows(
     params === undefined
       ? await connection.query(query)
       : await connection.execute(await prepare(connection, query), params);
-  if (Array.isArray(result)) {
-    closeResult(result);
-    throw new Error("Ladybug returned multiple result sets for a single query");
-  }
-  try {
-    return await result.getAll();
-  } finally {
-    result.close();
-  }
-}
-
-async function queryStatementRows(
-  connection: Connection,
-  statement: Awaited<ReturnType<Connection["prepare"]>>,
-  params: Record<string, LbugValue>,
-): Promise<Record<string, LbugValue>[]> {
-  const result = await connection.execute(statement, params);
   if (Array.isArray(result)) {
     closeResult(result);
     throw new Error("Ladybug returned multiple result sets for a single query");
