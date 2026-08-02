@@ -1,11 +1,11 @@
 ---
 id: LCLI-283.3.1
 title: Define explicit local workspaces and cross-repository identity
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:34'
-updated_date: '2026-08-02 06:58'
+updated_date: '2026-08-02 08:45'
 labels:
   - workspace
   - identity
@@ -39,10 +39,10 @@ Specify an explicit local workspace manifest and namespaced identity model for c
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Workspace membership is explicit, inspectable, portable where appropriate, and never inferred from all repositories on the machine
-- [ ] #2 Concept, task, edge, bundle, repository, commit, export digest, and source identities remain unambiguous across duplicate names and overlapping worktrees
-- [ ] #3 Add, remove, branch-change, missing-repository, renamed-repository, conflicting-link, and stale-snapshot behavior is deterministic
-- [ ] #4 Workspace databases remain disposable projections with documented rebuild, deletion, and privacy boundaries
+- [x] #1 Workspace membership is explicit, inspectable, portable where appropriate, and never inferred from all repositories on the machine
+- [x] #2 Concept, task, edge, bundle, repository, commit, export digest, and source identities remain unambiguous across duplicate names and overlapping worktrees
+- [x] #3 Add, remove, branch-change, missing-repository, renamed-repository, conflicting-link, and stale-snapshot behavior is deterministic
+- [x] #4 Workspace databases remain disposable projections with documented rebuild, deletion, and privacy boundaries
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -65,4 +65,12 @@ Objective evidence: exact Bun 1.2.23 focused suite passes 6 tests / 66 expectati
 Adversarial self-review found and fixed two contract gaps before final verification: workspace snapshot identity initially omitted bundle and explicit-link facts, and the public identity serializer initially trusted its typed input rather than strictly rejecting injected locator/private fields. Focused tests now prove both boundaries. No independent reviewer was used because subagents were not authorized.
 
 Authorization boundary: all ACs have local objective evidence, but the task remains In Progress with criteria unchecked. Real branch-built Lore sync is still required and can create a scoped Backlog commit; local source/docs commits, push, PR, merge, and guarded lease return are not authorized. No commit or remote mutation has occurred.
+
+Authorized local finalization (2026-08-02): Lore created scoped Backlog commit 8cf7ee2dd168e149f38493e043b2bcf94510554c and scoped feature commit 38797b5 records the seven declared implementation, fixture, specification, index, and log paths. Final committed-tree evidence: bunx bun@1.2.23 test --isolate passed 2,387 tests / 7,677 expectations across 70 files; typecheck passed; Biome checked 168 files; build compiled 247 modules; strict Lore validation/check reported zero findings; Lore agent bridges were unchanged; git diff hygiene passed. The guarded branch and lease remain local by design pending separate remote-delivery authority.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Defined a strict versioned local-workspace manifest and identity contract with explicit membership and cross-repository links, collision-safe namespaced provenance, deterministic lifecycle transitions, and disposable privacy-bounded projections. Added a conformance fixture, six focused contract tests, and the M8 Lore specification/roadmap gate. Verified at commit 38797b5 with the full 2,387-test suite, typecheck, lint, build, strict Lore validation/check, agent bridge check, and Git diff hygiene.
+<!-- SECTION:FINAL_SUMMARY:END -->
