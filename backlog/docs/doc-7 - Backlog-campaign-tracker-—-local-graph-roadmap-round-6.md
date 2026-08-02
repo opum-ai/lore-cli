@@ -3,7 +3,7 @@ id: doc-7
 title: Backlog campaign tracker — local graph roadmap (round 6)
 type: other
 created_date: '2026-08-02 03:36'
-updated_date: '2026-08-02 22:50'
+updated_date: '2026-08-02 23:17'
 ---
 # Backlog campaign tracker — local graph roadmap (round 6)
 
@@ -33,12 +33,12 @@ updated_date: '2026-08-02 22:50'
 
 Informational live snapshot only; never a promised next wave:
 
-- **Resolved and integrated:** seven queued leaves (LCLI-283.1.5, LCLI-283.1.4, LCLI-283.2.1, LCLI-283.2.2, LCLI-283.2.3, LCLI-283.3.1, LCLI-283.3.2) plus parent LCLI-283.2. LCLI-283.3.2 PR #281 merged exact head 3cdf87b5a3373dd1d23fbb3eff92010dbfc96bb4 as dev merge 891bdb9d91b7c8fa4388629593b0417262539b7d after all eight required jobs passed in run 30762320389.
-- **Wave 14 delivery settlement:** LCLI-283.3.2 is Done with all four acceptance criteria checked and exact local plus terminal-head verification recorded. Its task and tracker settlement are being delivered from clean integration base 891bdb9 on chore/lcli-283-3-2-delivery-settlement.
-- **In flight:** LCLI-283.3.3 implementation is complete and objectively verified on `feature/lcli-283-3-3-bounded-traversal` from exact integration base `17d19dc5aff8cc4bc81d1607f4dc7f95f96550a4`; it remains intentionally uncommitted pending explicit delivery authority. LCLI-283.3.4 remains dependency-blocked.
-- **Ready-now count:** zero while LCLI-283.3.3 is in flight; LCLI-283.3.4 remains blocked on it.
-- **Primary checkout:** clean dev at `3334f2a841241336c27f21fc7b1aa23834fb0428`, intentionally not fast-forwarded and 18 commits behind verified `origin/dev` `17d19dc5aff8cc4bc81d1607f4dc7f95f96550a4`.
-- **Repository artifacts:** Treehouse slot 1 is leased to lore-cli/LCLI-283.3.3 under exact lease f950113d7717952d34dd67888ddbb960; slots 2-4 remain available. Commit, push, PR, merge, lease return, branch deletion, primary mutation, publication, and later-task dispatch remain separately unauthorized.
+- **Resolved and integrated:** all eight queued leaves through LCLI-283.3.3, plus parent LCLI-283.2. LCLI-283.3.3 PR #283 merged exact head 467d66c09a151e48ec09ccf1b486dc9391f8d4a2 as dev merge b6701d2c65fea43b42f2ad24439f703ae2663740 after all eight required jobs passed in run 30771545848.
+- **Wave 15 delivery settlement:** LCLI-283.3.3 is Done with all four acceptance criteria checked and exact local, terminal-head, CI, merge, ancestry, and guarded lease-return evidence recorded. This task/tracker reconciliation is being delivered from clean integration base b6701d2 on chore/lcli-283-3-3-settlement.
+- **In flight:** only the Wave 15 tracker settlement on `chore/lcli-283-3-3-settlement`; LCLI-283.3.4 is dependency-ready and authorized for dispatch after this settlement lands.
+- **Ready-now count:** one — LCLI-283.3.4, after the serialized Wave 15 settlement lands.
+- **Primary checkout:** clean dev at `3334f2a841241336c27f21fc7b1aa23834fb0428`, intentionally not fast-forwarded and 22 commits behind verified `origin/dev` `b6701d2c65fea43b42f2ad24439f703ae2663740`.
+- **Repository artifacts:** the LCLI-283.3.3 implementation lease f950113d7717952d34dd67888ddbb960 was returned with exact guards. Slot 1 is temporarily leased to `lore-cli/LCLI-283.3.3-settlement` as 4f7aec10de09273c18d0bcdcda65c9a2; slots 2-4 are available. LCLI-283.3.4 dispatch is authorized; branch deletion, primary mutation, and publication remain out of scope.
 
 ## Queue
 
@@ -51,8 +51,8 @@ Informational live snapshot only; never a promised next wave:
 | 4 | LCLI-283.2.3 | explorer hardening | LCLI-283.2.2 (Done) | Done | 9 | accessibility/browser tests, performance fixtures, packaging/workflows, docs | PR #275 merged exact head `e197508` as `44b74ca`; run `30726854290` passed all eight jobs; guarded lease returned with exact guards. |
 | 5 | LCLI-283.3.1 | workspace contract | LCLI-283.2 (Done) | Done — integrated | 12 / delivery wave 13 | workspace contract module, conformance fixture/tests, new Spec, roadmap, generated Lore surfaces, task/tracker records | PR #279 merged exact head `fb930f0` as `3f5de5a`; tracker PR #280 merged as `8ddf465`; both terminal runs passed all eight jobs and the guarded lease was returned. |
 | 6 | LCLI-283.3.2 | workspace indexing | LCLI-283.3.1 (Done) | Done — integrated | 14 | explicit workspace loader, workspace projection/lifecycle/driver/retrieval, graph/query/context CLI and outputs, conformance tests, Lore docs | PR #281 merged exact head `3cdf87b` as `891bdb9`; run `30762320389` passed all eight required jobs; task finalized on the settlement branch. |
-| 7 | LCLI-283.3.3 | bounded traversal | LCLI-283.3.2 (Done) | In Progress — implementation complete, delivery blocked | 15 | path/impact core and CLI, deterministic fixtures, docs | Approved typed traversal contract is implemented and all four ACs are checked; 2,408 full-suite tests plus type/lint/build/strict Lore gates pass. Branch remains uncommitted at base `17d19dc` pending delivery authority. |
-| 8 | LCLI-283.3.4 | snapshots/provenance | LCLI-283.3.3 | To Do — blocked | — | snapshot retention/diff/provenance, CLI/explorer, fixtures, docs | Retention and deletion must remain explicit and bounded. |
+| 7 | LCLI-283.3.3 | bounded traversal | LCLI-283.3.2 (Done) | Done — integrated | 15 | path/impact core and CLI, deterministic fixtures, docs | PR #283 merged exact head `467d66c` as `b6701d2`; run `30771545848` passed all eight required jobs; exact guarded implementation lease returned. |
+| 8 | LCLI-283.3.4 | snapshots/provenance | LCLI-283.3.3 (Done) | To Do — ready | next | snapshot retention/diff/provenance, CLI/explorer, fixtures, docs | Sole ready leaf after Wave 15 settlement; retention and deletion must remain explicit and bounded. |
 
 ## Resolved
 
@@ -66,6 +66,7 @@ Informational live snapshot only; never a promised next wave:
 | LCLI-283.2 | 2026-08-01 / Wave 10 | Parent criteria settled with child-task evidence, 23 focused tests, five local Chromium cases, and exact merged-head CI; PR #276 merged exact head 630ec5e as dev merge de14ffe after all eight jobs passed in run 30729212216. |
 | LCLI-283.3.1 | 2026-08-02 / Wave 12 + delivery wave 13 | Strict explicit workspace membership, namespaced cross-repository identity/provenance, deterministic lifecycle states, and disposable privacy-bounded projection contracts completed with all four ACs checked. PR #279 merged exact head `fb930f0` as `3f5de5a` after all eight required jobs passed in run `30741631484`; tracker PR #280 merged as `8ddf465` after run `30742019710` passed all eight jobs, then the exact guarded lease was returned. |
 | LCLI-283.3.2 | 2026-08-02 / Wave 14 | Explicit workspace indexing and graph/query/context retrieval completed with atomic current-only projections, deterministic repository subsets, complete provenance, and byte-compatible single-repository behavior. PR #281 merged exact head `3cdf87b` as `891bdb9` after all eight required jobs passed in run `30762320389`; all four ACs are checked and the task is Done. |
+| LCLI-283.3.3 | 2026-08-02 / Wave 15 | Bounded typed path and impact traversal completed with deterministic shortest authored-edge evidence, direct/transitive classification, exact provenance, workspace/reference/indexed parity, and hard depth/result/10,000-edge safety bounds. PR #283 merged exact head `467d66c` as `b6701d2` after all eight required jobs passed in run `30771545848`; all four ACs are checked, the task is Done, and the exact guarded implementation lease was returned. |
 
 ## Not queued — blocked, deferred, parent, or separately in flight
 
@@ -76,6 +77,8 @@ Informational live snapshot only; never a promised next wave:
 - **LCLI-283.1:** parent container objectively settled Done and merged through PR #271 as `f892380`. **LCLI-283.2:** objectively settled Done and merged through PR #276 as de14ffe. **LCLI-283 and LCLI-283.3:** remaining parent containers; advance only through objective child-task settlement and never dispatch as implementation units.
 
 ## Wave log
+
+- **2026-08-02 — Wave 15 delivery merged / settlement dispatched:** after explicit user approval, committed and pushed exact clean head `467d66c09a151e48ec09ccf1b486dc9391f8d4a2`, opened PR #283, and verified all eight required jobs passed in run `30771545848`: Ubuntu and Windows lint/typecheck/full tests, compile, MkDocs, Docusaurus, Ladybug smoke, three-engine explorer qualification, and Docker E2E. Merged the exact guarded head as dev merge `b6701d2c65fea43b42f2ad24439f703ae2663740`; fetched origin/dev matches and contains the terminal head. LCLI-283.3.3 is finalized Done with all four ACs checked, and its guarded implementation lease `f950113d7717952d34dd67888ddbb960` was returned with exact guards. This tracker/task reconciliation is being delivered from exact merged dev on `chore/lcli-283-3-3-settlement`; LCLI-283.3.4 is the sole ready next leaf and is authorized for dispatch after settlement. Branch deletion, primary mutation, and publication remain out of scope.
 
 - **2026-08-02 — Wave 15 local settlement / delivery authority blocked:** implemented the approved `lore path` and `lore impact` surface with required typed endpoints and direction, repeatable authored-edge allowlists, depth default 4/hard max 16, result default 20/hard max 100, and a hard 10,000-edge visit budget. The storage-neutral traversal core preserves duplicate authored records, cycles safely, excludes dangling targets from walks, emits deterministic shortest evidence, classifies direct/transitive impact, and carries locator-free endpoint plus edge source provenance through reference, verified Ladybug, repository subset, and explicit workspace paths. Added the bounded traversal Spec and refreshed architecture, CLI, roadmap, generated index, and log. Verification passes: 2,408 full-suite tests, final 10-case traversal suite, typecheck, Biome over 177 files, compiled binary/help smokes, strict Lore validation/check with zero findings, and diff hygiene. `lore sync` unexpectedly created local commit `8f52dcb` after its dry run reported no Backlog commit; that commit was immediately unwound with a mixed reset to exact base `17d19dc`, preserving every change unstaged. LCLI-283.3.3 remains In Progress and `.3.4` remains blocked because commit, push, PR, merge, lease return, branch deletion, primary mutation, publication, and dependent-task dispatch are still separately unauthorized.
 
