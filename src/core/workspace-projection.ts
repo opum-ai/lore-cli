@@ -139,6 +139,7 @@ export function buildWorkspaceProjection(
         from,
         to: to ?? null,
         target: record.dangling ? record.target : qualifyWorkspaceId(member.memberId, record.target),
+        workspaceSourceRecordKey: record.key,
       });
       if (record.kind !== "task") {
         const graphFrom = conceptIdByKey.get(record.from);
@@ -178,6 +179,7 @@ export function buildWorkspaceProjection(
       workspaceFromKind: link.source.from.kind,
       workspaceToKind: link.source.to.kind,
       workspaceLinkKind: link.source.kind,
+      workspaceSourceRecordKey: link.linkId,
     });
     // Context/graph topology is concept-only today. Preserve every exact
     // authored endpoint in the projection while adding a structural edge only

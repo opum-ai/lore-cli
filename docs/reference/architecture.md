@@ -37,7 +37,7 @@ flowchart TD
     end
 
     subgraph Commands["commands/ — one file per CLI command"]
-        CMD["init · new · validate · check · sync<br/>link · unlink · tasks · orphans<br/>query · context · graph · replace<br/>rename · supersede · scaffold · instructions"]
+        CMD["init · new · validate · check · sync<br/>link · unlink · tasks · orphans<br/>query · context · graph · path · impact<br/>replace · rename · supersede · scaffold · instructions"]
     end
 
     subgraph Core["core/ — deterministic library (no LLM, no I/O surprises)"]
@@ -87,7 +87,7 @@ flowchart TD
 |---|---|---|
 | **Surfaces** | `cli.ts` (primary), `mcp.ts` (on hold), generated `SKILL.md` + CLAUDE.md nudge | commands |
 | **Commands** | `commands/*.ts` — argument parsing glue, output formatting, exit codes | core, state, adapters |
-| **Core** | `concept`, `bundle`, `managed-block`, `reconcile`, `links`, `query`, `context`, `retrieval`, `ladybug-*`, `schema` | schema; repository reads; the backlog adapter; the private lazy native boundary |
+| **Core** | `concept`, `bundle`, `managed-block`, `reconcile`, `links`, `query`, `context`, `traversal`, `retrieval`, `ladybug-*`, `schema` | schema; repository reads; the backlog adapter; the private lazy native boundary |
 | **State** | `state.ts` — `.lore/` read/write; lore as sole git committer of `backlog/` | filesystem, git |
 | **Adapters** | `backlog.ts` (JSON), `confluence.ts` (on hold) | external processes / HTTP only |
 
@@ -300,8 +300,8 @@ task (task → doc), then `state.ts` commits `backlog/`. `lore orphans` cross-ch
 both directions: tasks with no owning doc, and docs whose referenced tasks have
 vanished.
 
-### `lore graph / query / context`
-Commander dispatch injects `retrieval.ts` into the three existing thin handlers.
+### `lore graph / path / impact / query / context`
+Commander dispatch injects `retrieval.ts` into the five thin retrieval handlers.
 The resolver computes the current export fingerprint, follows the frozen
 lifecycle policy, and either reads canonical concept/edge records from a fully
 verified immutable generation or loads `bundle.ts` as the reference fallback.
@@ -311,6 +311,13 @@ shape the result, and only a complete result reaches Lore's emitter.
 `query.ts` applies the same BM25 scoring, filters, limits, and code-unit
 tie-breaking to either graph. `context.ts` performs the same nearest-first
 depth walk and budget prefix. Public output does not reveal the selected backend.
+
+`traversal.ts` reads exact typed concept, task, and authored-edge facts beside
+the `BundleGraph`. It provides deterministic breadth-first simple paths and
+canonical shortest impact evidence under depth, result, and edge-visit bounds.
+Indexed and reference readers supply the same storage-neutral snapshot; exact
+edge chains carry locator-free endpoint and source-record provenance. See
+[Bounded path and impact](../specs/bounded-path-and-impact.md).
 
 ### Agent profile context compiler
 
@@ -370,8 +377,8 @@ the [local graph roadmap](../specs/local-graph-platform-roadmap.md).
 
 ### M8 workspace read path
 
-Workspace retrieval is an additive branch before the same graph, query, and
-context shapers. A caller must pass `--workspace <manifest>`; Lore does not
+Workspace retrieval is an additive branch before the same graph, path, impact,
+query, and context shapers. A caller must pass `--workspace <manifest>`; Lore does not
 scan for manifests or repositories. `workspace-source.ts` resolves that real,
 non-symlink JSON file and each explicitly named real repository directory,
 checks optional expected Git refs, and loads every member through the M6
@@ -388,7 +395,7 @@ the current immutable generation.
 `workspace-retrieval.ts` returns either a verified read-only Ladybug reader or
 the deterministic reference projection before output. Repeatable repository
 selectors filter graph topology, exact links, scope, and provenance to the
-requested members. Public results include locator-free workspace scope and
+requested members before traversal. Public results include locator-free workspace scope and
 record provenance; no locator, expected ref, native path, physical identifier,
 or query language crosses the command boundary. See
 [Workspace indexing and retrieval](../specs/workspace-indexing-and-retrieval.md).

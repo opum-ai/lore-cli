@@ -66,6 +66,8 @@
 - 2026-08-02T10:53:09-05:00 4d8675470d25eb635df7715763cca4ec65f7876e feat: index and retrieve workspace repositories
 - 2026-08-02T10:54:09-05:00 3cdf87b5a3373dd1d23fbb3eff92010dbfc96bb4 docs: refresh lore log for workspace indexing
 - 2026-08-02T14:09:29-05:00 a2d747dd28cc0dd87b04e073d9484664de7f5787 docs: refresh lore log for workspace delivery
+- 2026-08-02T14:11:08-05:00 8bfb1f1725a891c52639f403e5936adadc63d9c8 docs: reconcile workspace delivery log
+- 2026-08-02T18:03:34-05:00 1034229ab8ef804498160acefa2f39d613dcb825 feat: add bounded path and impact traversal
 
 ## docs/.obsidian
 
@@ -182,6 +184,7 @@
 - 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
 - 2026-08-01T19:19:30-05:00 a827f7cc7972348377f1edfd2bcc618e75d99c8e feat: add static graph explorer
 - 2026-08-02T10:53:09-05:00 4d8675470d25eb635df7715763cca4ec65f7876e feat: index and retrieve workspace repositories
+- 2026-08-02T18:03:34-05:00 1034229ab8ef804498160acefa2f39d613dcb825 feat: add bounded path and impact traversal
 
 ## docs/runbooks
 
@@ -271,6 +274,7 @@
 - 2026-08-01T20:18:24-05:00 21ca7a90ffa24a80debc7ef8ccc53816a492cdb6 feat: harden graph explorer qualification
 - 2026-08-02T03:42:55-05:00 38797b5e4abaaa432d65d446888515a3cb16b0e0 feat: freeze local workspace identity contract
 - 2026-08-02T10:53:09-05:00 4d8675470d25eb635df7715763cca4ec65f7876e feat: index and retrieve workspace repositories
+- 2026-08-02T18:03:34-05:00 1034229ab8ef804498160acefa2f39d613dcb825 feat: add bounded path and impact traversal
 
 ## docs/stories
 

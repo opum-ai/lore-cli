@@ -49,8 +49,8 @@ describe("core/manifest — shape and invariants", () => {
     }
   });
 
-  test("workspace retrieval flags are exposed only on graph, query, and context", () => {
-    const workspaceCommands = ["graph", "query", "context"];
+  test("workspace retrieval flags are exposed only on retrieval commands", () => {
+    const workspaceCommands = ["graph", "path", "impact", "query", "context"];
     for (const name of workspaceCommands) {
       const command = findManifestCommand(name);
       expect(command?.flags.find((flag) => flag.name === "workspace")).toMatchObject({ takesValue: true });
@@ -94,6 +94,8 @@ describe("core/manifest — shape and invariants", () => {
       schema: [0, 2, 4, 5, 6], // no 3: no read seam / no id lookup
       scaffold: [0, 2, 4, 5, 6], // profile (6) + write (4/5); no 3: no read seam / no id lookup
       graph: [0, 2, 3, 4, 6],
+      path: [0, 2, 3, 4, 6],
+      impact: [0, 2, 3, 4, 6],
       explorer: [0, 2, 3, 4, 5, 6],
       export: [0, 2, 3, 4, 6],
       query: [0, 2, 3, 4, 6],
@@ -133,6 +135,8 @@ describe("core/manifest — shape and invariants", () => {
       schema: "schema.result",
       scaffold: "scaffold.result",
       graph: "graph.export",
+      path: "path.result",
+      impact: "impact.result",
       explorer: "explorer.artifact",
       export: "projection.export",
       query: "query.results",

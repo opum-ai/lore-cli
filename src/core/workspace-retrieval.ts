@@ -12,6 +12,7 @@ import {
 } from "./ladybug-native";
 import { query } from "./query";
 import type { RetrievalGraph, RetrievalPolicy } from "./retrieval";
+import { buildTraversalSnapshot, type TraversalSnapshot, type TraversalSourceRecords } from "./traversal";
 import type { WorkspaceRecordProvenance, WorkspaceResultScope } from "./workspace-contract";
 import type { WorkspaceProjectedLink, WorkspaceProjection } from "./workspace-projection";
 import { selectWorkspaceProjection } from "./workspace-projection";
@@ -38,6 +39,7 @@ export interface LoadWorkspaceRetrievalOptions {
   readonly platform?: NodeJS.Platform;
   readonly loadNativeDriver?: LadybugNativeLoader;
   readonly sourceOptions?: Omit<LoadWorkspaceProjectionOptions, "root" | "manifestPath" | "warnings">;
+  readonly includeTraversal?: boolean;
 }
 
 export async function loadWorkspaceRetrievalGraph(options: LoadWorkspaceRetrievalOptions): Promise<RetrievalGraph> {
@@ -74,12 +76,15 @@ export async function loadWorkspaceRetrievalGraph(options: LoadWorkspaceRetrieva
     });
     if (lifecycle.generation === undefined) {
       if (policy === "indexed") throw indexedUnavailable();
-      return referenceFromProjection(select(latest, options.selection.memberIds));
+      return referenceFromProjection(select(latest, options.selection.memberIds), options.includeTraversal);
     }
     const projection = select(latest, options.selection.memberIds);
     const native = await loadNative();
     const reader = native.openLadybugIndexedReader(lifecycle.generation.databasePath, lifecycle.source);
     const indexed = subsetReader(reader, projection, options.selection.memberIds.length > 0);
+    const traversal = options.includeTraversal
+      ? traversalFor(projection, lifecycle.source, (await reader.readTraversalRecords?.()) ?? lifecycle.source)
+      : undefined;
     // The lifecycle may retry source capture. Publish only the last successful
     // attempt's advisories after the indexed reader has opened completely.
     copyWarnings(latestWarnings, options.warnings);
@@ -96,6 +101,7 @@ export async function loadWorkspaceRetrievalGraph(options: LoadWorkspaceRetrieva
         gitCommit: null,
       },
       workspace: contextFor(projection),
+      ...(traversal !== undefined ? { traversal } : {}),
     };
   } catch (cause) {
     if (policy === "indexed") throw cause;
@@ -117,11 +123,19 @@ async function loadReference(options: LoadWorkspaceRetrievalOptions): Promise<Re
     warnings: options.warnings,
     ...options.sourceOptions,
   });
-  return referenceFromProjection(selectWorkspaceProjection(loaded.projection, options.selection.memberIds));
+  return referenceFromProjection(
+    selectWorkspaceProjection(loaded.projection, options.selection.memberIds),
+    options.includeTraversal,
+  );
 }
 
-function referenceFromProjection(projection: WorkspaceProjection): RetrievalGraph {
-  return { graph: projection.graph, backend: "reference", workspace: contextFor(projection) };
+function referenceFromProjection(projection: WorkspaceProjection, includeTraversal = false): RetrievalGraph {
+  return {
+    graph: projection.graph,
+    backend: "reference",
+    workspace: contextFor(projection),
+    ...(includeTraversal ? { traversal: traversalFor(projection, projection.ladybugSource) } : {}),
+  };
 }
 
 function select(projection: WorkspaceProjection | undefined, memberIds: readonly string[]): WorkspaceProjection {
@@ -135,12 +149,28 @@ function subsetReader(
   selectedSubset: boolean,
 ): LadybugIndexedReader {
   if (!selectedSubset) return reader;
+  const readTraversalRecords = reader.readTraversalRecords?.bind(reader);
   return {
     readBundleGraph: async () => projection.graph,
     readConceptBody: async (id) => projection.graph.concepts.get(id)?.body,
     query: async (options) => query(projection.graph, options),
+    ...(readTraversalRecords !== undefined ? { readTraversalRecords } : {}),
     close: () => reader.close(),
   };
+}
+
+function traversalFor(
+  projection: WorkspaceProjection,
+  source: WorkspaceProjection["ladybugSource"],
+  records: TraversalSourceRecords = source,
+): TraversalSnapshot {
+  const allowedIds = new Set([...projection.provenanceById.keys(), ...projection.taskProvenanceById.keys()]);
+  return buildTraversalSnapshot(source, records, {
+    workspace: projection.scope,
+    conceptProvenanceById: projection.provenanceById,
+    taskProvenanceById: projection.taskProvenanceById,
+    allowedIds,
+  });
 }
 
 function contextFor(projection: WorkspaceProjection): WorkspaceRetrievalContext {

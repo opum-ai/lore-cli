@@ -25,11 +25,13 @@ import { runExplorer } from "./commands/explorer";
 import { runExport } from "./commands/export";
 import { runGraph } from "./commands/graph";
 import { renderTopLevelHelp, runHelp } from "./commands/help";
+import { runImpact } from "./commands/impact";
 import { type AgentAvailability, type InitPrompter, runInit } from "./commands/init";
 import { runInstructions } from "./commands/instructions";
 import { runLink, runUnlink } from "./commands/link";
 import { runNew } from "./commands/new";
 import { runOrphans } from "./commands/orphans";
+import { runPath } from "./commands/path";
 import { runQuery } from "./commands/query";
 import { runRename } from "./commands/rename";
 import { runReplace } from "./commands/replace";
@@ -512,6 +514,26 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
     runScaffold({ root: context.cwd || process.cwd(), output, args, stdout: context.stdout }),
   graph: (args, context, output) =>
     runGraph({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+      adapter: context.adapter,
+      retrieval: context.retrieval ?? loadRetrievalGraph,
+    }),
+  path: (args, context, output) =>
+    runPath({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+      adapter: context.adapter,
+      retrieval: context.retrieval ?? loadRetrievalGraph,
+    }),
+  impact: (args, context, output) =>
+    runImpact({
       root: context.cwd || process.cwd(),
       output,
       args,
