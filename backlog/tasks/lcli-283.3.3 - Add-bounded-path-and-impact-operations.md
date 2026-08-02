@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:34'
-updated_date: '2026-08-02 23:03'
+updated_date: '2026-08-02 23:17'
 labels:
   - ladybugdb
   - path
@@ -86,6 +86,8 @@ Implementation complete on the guarded branch. Added typed path/impact CLI comma
 Final adversarial fixture expansion now passes 10 traversal cases (29 expectations), explicitly proving duplicate authored edges remain distinct, dangling targets are not traversed, and no-path results are deterministic and complete.
 
 Delivery authorized 2026-08-02. Created scoped feature commit 1034229 from exact integration base 17d19dc after revalidating origin/dev, the guarded lease, no duplicate PR, all four checked ACs, no staged drift, and diff hygiene. Push/PR/required-check monitoring/merge are proceeding serially; terminal integration evidence will be appended after GitHub settles.
+
+Delivery settled 2026-08-02: pushed exact terminal head 467d66c09a151e48ec09ccf1b486dc9391f8d4a2, opened PR #283, and verified all eight required CI jobs passed in run 30771545848. GitHub merged the guarded head into dev as b6701d2c65fea43b42f2ad24439f703ae2663740. Fetched origin/dev matches that merge and contains the terminal head as an ancestor. Guarded implementation lease f950113d7717952d34dd67888ddbb960 was returned with exact lease-ID and holder checks. Branch deletion, primary-checkout mutation, and publication remain out of scope.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
@@ -102,10 +104,16 @@ created: 2026-08-02 22:22
 ---
 Approved contract activated: depth default 4/hard maximum 16; result default 20/hard maximum 100; edge-visit hard budget 10,000. Implementation is proceeding on the existing guarded branch and lease.
 ---
+
+author: @codex
+created: 2026-08-02 23:15
+---
+Delivery complete: PR #283 merged exact head 467d66c as b6701d2 after all eight required jobs passed in run 30771545848; exact guarded lease return succeeded.
+---
 <!-- COMMENTS:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Implemented bounded explainable path and impact traversal across exact concept, task, and explicit workspace edges, with depth/result/10,000-edge bounds, deterministic shortest evidence, direct/transitive impact, indexed/reference parity, locator-free endpoint and edge provenance, additive JSON envelopes, CLI help, tests, and Lore documentation. Verified by 2,408 full-suite passes, final 10-case traversal coverage, clean type/lint/build/help smokes, strict Lore validation/check, and diff hygiene. Scoped implementation commit: 1034229; authorized GitHub delivery is in progress.
+Implemented bounded explainable path and impact traversal across exact concept, task, and explicit workspace edges, with depth/result/10,000-edge bounds, deterministic shortest evidence, direct/transitive impact, indexed/reference parity, locator-free endpoint and edge provenance, additive JSON envelopes, CLI help, tests, and Lore documentation. Verified by 2,408 full-suite passes, final 10-case traversal coverage, clean type/lint/build/help smokes, strict Lore validation/check, and diff hygiene. Delivered through PR #283: exact terminal head 467d66c09a151e48ec09ccf1b486dc9391f8d4a2 passed all eight required jobs in run 30771545848 and merged as dev commit b6701d2c65fea43b42f2ad24439f703ae2663740. The exact guarded implementation lease was returned.
 <!-- SECTION:FINAL_SUMMARY:END -->
