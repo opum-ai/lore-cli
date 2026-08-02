@@ -1,11 +1,11 @@
 ---
 id: LCLI-283.3.2
 title: Index and retrieve across workspace repositories
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:34'
-updated_date: '2026-08-02 15:52'
+updated_date: '2026-08-02 19:06'
 labels:
   - workspace
   - ladybugdb
@@ -86,6 +86,8 @@ Approval gate: implementation starts only after the user approves the public CLI
 Local implementation and objective acceptance verification complete in guarded lease e0b342e8cc6d394b528b90fcbf4f0716. Evidence: bun test passed 2398/2398 tests with 7749 assertions; workspace-focused coverage passed 10/10 including add/update/member removal, current-only generation reuse, rejected-candidate preservation, duplicate IDs, exact concept/task cross-repository links, canonical subsets, cross-workspace isolation, bounded ordering, locator redaction, warning-clean fallback, and Windows pre-native fallback. npm run typecheck, npm run lint, npm run build, compiled graph/query/context help smokes, lore validate --strict (54 files, 0 errors/warnings), lore check --strict, and git diff --check passed. lore sync --dry-run remains blocked because the installed Backlog binary is not --json-capable; no generated index/log write was attempted. lore agents --check reports the pre-existing protected .claude/skills/lore/SKILL.md drift and was intentionally not forced. Commit, publication, task closure, tracker settlement, and lease return remain separately unauthorized.
 
 Commit authorization received. Lore sync completed with the repository's documented JSON-capable dist-npm/backlog v1.48.0 binary, regenerated docs/specs/index.md and docs/log.md, and created scoped backlog commit b6c01bc; the immediate follow-up sync dry-run reported zero changes.
+
+Remote delivery completed under explicit user authorization. PR #281 passed all eight required checks on exact head 3cdf87b5a3373dd1d23fbb3eff92010dbfc96bb4 in run 30762320389: Ubuntu and Windows lint/typecheck/full tests, compile smoke, MkDocs, Docusaurus, Ladybug smoke, three-engine explorer qualification, and Docker E2E. The exact head merged into dev as 891bdb9d91b7c8fa4388629593b0417262539b7d.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
@@ -96,3 +98,9 @@ created: 2026-08-02 14:15
 Wave 14 dispatched from exact integrated dev 8ddf465c80d60fcd4e04f6393f9f8ebc7937e4e3 on feature/lcli-283-3-2-workspace-indexing in guarded Treehouse lease e0b342e8cc6d394b528b90fcbf4f0716 held by lore-cli/LCLI-283.3.2. Research is complete; source implementation awaits explicit approval of the recorded public CLI and output contract. No source changes, commits, remote operations, lease return, primary mutation, or later-task dispatch occurred.
 ---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented explicit workspace graph, query, and context indexing/retrieval with atomic current-only projections, deterministic repository subsets and ordering, complete repository/bundle/commit/export/source provenance, and byte-compatible single-repository behavior. Verified locally with 2,398 tests and 7,749 assertions, 10 focused workspace tests, typecheck, Biome, build, compiled help smokes, strict Lore validation/check, and diff hygiene; PR #281 exact head 3cdf87b passed all eight required CI jobs in run 30762320389 and merged as 891bdb9.
+<!-- SECTION:FINAL_SUMMARY:END -->
