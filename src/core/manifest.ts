@@ -404,6 +404,19 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     examples: ["lore graph", "lore graph stories/bulk-archive-orders --dot"],
   },
   {
+    name: "explorer",
+    summary: "Build a deterministic self-contained local graph explorer",
+    args: "",
+    flags: [
+      { name: "out", takesValue: true, summary: "Repository-relative HTML output path" },
+      { name: "force", takesValue: false, summary: "Replace a differing custom output file" },
+    ],
+    json: true,
+    kind: "explorer.artifact",
+    exitCodes: exitCodesFor(["bundle", "backlog", "git", "read", "write"]),
+    examples: ["lore explorer", "lore explorer --out dist/lore-explorer.html"],
+  },
+  {
     name: "export",
     summary: "Emit a deterministic, consumer-neutral OKF projection as JSONL",
     args: "",

@@ -55,6 +55,8 @@
 - 2026-08-01T16:41:57-05:00 1f5114f85efa1c0f758afec0ce2a427156ee7c34 docs: refresh lore log
 - 2026-08-01T16:41:57-05:00 3ec3d77082adb5b7b389588fbc18a58464d636e3 feat: freeze graph explorer contract
 - 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
+- 2026-08-01T17:30:06-05:00 9a22ced4c31baf48579c533d7ce6a3bb0b71a1f0 docs: refresh lore log after agent profile rebase
+- 2026-08-01T19:19:30-05:00 a827f7cc7972348377f1edfd2bcc618e75d99c8e feat: add static graph explorer
 
 ## docs/.obsidian
 
@@ -169,6 +171,7 @@
 - 2026-08-01T07:05:31-05:00 06f58feea2867f98f324b77514775ed293df29f9 perf: reuse Ladybug graph adjacency
 - 2026-08-01T07:15:08-05:00 a5a53bde39cb6121145602dad0f104383bd92ca6 perf: reduce forced GC pauses in Ladybug builds
 - 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
+- 2026-08-01T19:19:30-05:00 a827f7cc7972348377f1edfd2bcc618e75d99c8e feat: add static graph explorer
 
 ## docs/runbooks
 
@@ -254,6 +257,7 @@
 - 2026-08-01T00:02:30-05:00 4f0b69cdb1e3f2ddc2fde4c1dcc474974b6e510a feat: bound Ladybug qualification gate
 - 2026-08-01T16:41:57-05:00 3ec3d77082adb5b7b389588fbc18a58464d636e3 feat: freeze graph explorer contract
 - 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
+- 2026-08-01T19:19:30-05:00 a827f7cc7972348377f1edfd2bcc618e75d99c8e feat: add static graph explorer
 
 ## docs/stories
 
