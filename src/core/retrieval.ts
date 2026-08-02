@@ -23,6 +23,7 @@ import {
 import { loadLadybugProjectionFreshness, loadLadybugProjectionSource } from "./ladybug-source";
 import { loadProfile } from "./profile";
 import { DOCS_DIR } from "./scaffold";
+import { buildTraversalSnapshot, type TraversalSnapshot } from "./traversal";
 import {
   loadWorkspaceRetrievalGraph,
   type WorkspaceRetrievalContext,
@@ -51,6 +52,8 @@ export interface RetrievalGraph {
   readonly provenance?: IndexedRetrievalProvenance;
   /** Explicit multi-repository scope; absent for byte-compatible repository-local retrieval. */
   readonly workspace?: WorkspaceRetrievalContext;
+  /** Exact typed authored facts for bounded path and impact operations. */
+  readonly traversal?: TraversalSnapshot;
 }
 
 export interface RetrievalGraphOptions {
@@ -66,6 +69,8 @@ export interface RetrievalGraphOptions {
   readonly loadNativeDriver?: LadybugNativeLoader;
   /** Explicit workspace selection; absence preserves the repository-local M6 path. */
   readonly workspace?: WorkspaceRetrievalSelection;
+  /** Load the typed authored-edge traversal snapshot beside the concept graph. */
+  readonly includeTraversal?: boolean;
 }
 
 export type RetrievalGraphLoader = (options: RetrievalGraphOptions) => Promise<RetrievalGraph>;
@@ -85,18 +90,21 @@ export async function loadRetrievalGraph(options: RetrievalGraphOptions): Promis
       policy: options.policy,
       platform: options.platform,
       loadNativeDriver: options.loadNativeDriver,
-      sourceOptions: { adapterForRoot: (root) => (root === options.root ? options.adapter : undefined) },
+      sourceOptions: {
+        adapterForRoot: (root) => (root === options.root ? options.adapter : undefined),
+      },
+      includeTraversal: options.includeTraversal,
     });
   }
   const policy = options.policy ?? "auto";
   if (policy === "reference") {
-    return loadReferenceGraph(options.root, options.warnings);
+    return loadReferenceGraph(options);
   }
   if (!supportsLadybugNative(options.platform)) {
     if (policy === "indexed") {
       throw indexedUnavailable();
     }
-    return loadReferenceGraph(options.root, options.warnings);
+    return loadReferenceGraph(options);
   }
 
   let indexedWarnings = new WarningCollector();
@@ -131,13 +139,16 @@ export async function loadRetrievalGraph(options: RetrievalGraphOptions): Promis
     });
     if (lifecycle.generation === undefined) {
       if (policy === "indexed") throw indexedUnavailable();
-      return loadReferenceGraph(options.root, options.warnings);
+      return loadReferenceGraph(options);
     }
     const native = await loadNative();
     indexedWarnings = new WarningCollector();
     for (const warning of lifecycle.source.warnings) indexedWarnings.add(warning);
     const indexed = native.openLadybugIndexedReader(lifecycle.generation.databasePath, lifecycle.source);
     const graph = await indexed.readBundleGraph();
+    const traversal = options.includeTraversal
+      ? buildTraversalSnapshot(lifecycle.source, (await indexed.readTraversalRecords?.()) ?? lifecycle.source)
+      : undefined;
     copyWarnings(indexedWarnings, options.warnings);
     return {
       graph,
@@ -151,23 +162,40 @@ export async function loadRetrievalGraph(options: RetrievalGraphOptions): Promis
         exportDigest: lifecycle.source.exportDigest,
         gitCommit: lifecycle.source.manifest.bundle.gitCommit,
       },
+      ...(traversal !== undefined ? { traversal } : {}),
     };
   } catch {
     if (policy === "indexed") throw indexedUnavailable();
-    return loadReferenceGraph(options.root, options.warnings);
+    return loadReferenceGraph(options);
   }
 }
 
 /** The retained filesystem/in-memory conformance oracle and fallback. */
 export async function loadReferenceRetrievalGraph(options: RetrievalGraphOptions): Promise<RetrievalGraph> {
-  return loadReferenceGraph(options.root, options.warnings);
+  return loadReferenceGraph(options);
 }
 
-function loadReferenceGraph(root: string, warnings?: WarningCollector): RetrievalGraph {
-  const profile = loadProfile({ root });
+async function loadReferenceGraph(options: RetrievalGraphOptions): Promise<RetrievalGraph> {
+  const profile = loadProfile({ root: options.root });
+  const graph = loadBundle(join(options.root, DOCS_DIR), {
+    warnings: options.warnings,
+    profile,
+  });
+  const traversal = options.includeTraversal
+    ? buildTraversalSnapshot(
+        await loadLadybugProjectionSource({
+          root: options.root,
+          ladybugVersion: EXPECTED_LADYBUG_VERSION,
+          ladybugStorageVersion: EXPECTED_LADYBUG_STORAGE_VERSION,
+          adapter: options.adapter,
+          resolveGitCommit: options.resolveGitCommit,
+        }),
+      )
+    : undefined;
   return {
-    graph: loadBundle(join(root, DOCS_DIR), { warnings, profile }),
+    graph,
     backend: "reference",
+    ...(traversal !== undefined ? { traversal } : {}),
   };
 }
 

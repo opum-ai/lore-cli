@@ -6,7 +6,7 @@ description: >-
   The authoritative catalog of every lore subcommand — purpose, arguments,
   key flags, output kind, and exit codes — for the CLI that is lore's primary
   interface for humans, Claude Code, Codex, and CI. Covers init, new, validate,
-  check, sync, link/unlink, tasks, orphans, graph, explorer, query, context, replace,
+  check, sync, link/unlink, tasks, orphans, graph, path, impact, explorer, query, context, replace,
   rename, supersede, scaffold, schema, agents, instructions, help, and the
   deferred publish/mcp commands.
 tags: [reference, cli, commands, flags, exit-codes, agent, ci]
@@ -356,7 +356,7 @@ the doc↔task coupling has gaps.
 These are deterministic, no-LLM operations (see
 [ADR-0014](../adr/0014-core-has-no-llm-dependency.md) and
 [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md)).
-`graph`, `query`, and `context` use canonical records from a fully verified,
+`graph`, `path`, `impact`, `query`, and `context` use canonical records from a fully verified,
 immutable local LadybugDB generation on supported hosts. Missing, stale, known
 incompatible, or corrupt state rebuilds only under the frozen ownership policy;
 contention, a newer unsupported format, an unavailable native backend, or a
@@ -365,7 +365,7 @@ output. The public envelopes, diagnostics, and ordering do not reveal which
 backend was selected. No command accepts Cypher or exposes database paths,
 physical identifiers, or native errors.
 
-All three commands also accept an explicit `--workspace <manifest>` and a
+All five commands also accept an explicit `--workspace <manifest>` and a
 repeatable `--repository <member-id>` subset selector. `--repository` requires
 `--workspace`; Lore never discovers a workspace or member automatically.
 Workspace concept IDs are qualified as `<member-id>::<source-id>`, and JSON
@@ -387,6 +387,39 @@ humans for orientation, by consumers for navigation, and by
 | **Key flags** | `--dot` (emit Graphviz DOT; mutually exclusive with `--json`) · `--depth <n>` (bound subgraph radius) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
 | **Output** | `kind: graph.export` — nodes, edges, token estimates (or DOT text under `--dot`). Workspace JSON adds scope, per-node provenance, and exact explicit workspace links. Machine JSON is the global `--json` envelope, as for every command. |
 | **Exit** | `0` ok · `2` bad usage (`--dot` with `--json`, bad flag/`--depth`) · `3` root `<id>` not found |
+
+### `path`
+
+Find deterministic shortest simple paths across exact authored concept, task,
+and explicit workspace relationships. Every endpoint is typed; the command
+does not guess whether an id names a concept or task.
+
+| | |
+|---|---|
+| **Args** | `<from> <to>` |
+| **Key flags** | required `--from-kind <concept\|task>` · required `--to-kind <concept\|task>` · required `--direction <outbound\|inbound\|either>` · `--edge <kind>` (repeatable allowlist) · `--max-depth <n>` (default 4, max 16) · `--limit <n>` (default 20, max 100) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
+| **Output** | `kind: path.result`, schema `lore-path-result/1` — normalized typed scope, selected edge kinds, effective limits, shortest exact edge chains, endpoint and edge provenance, `shown`, `edgeVisits`, `depthBoundReached`, `truncated`, and `complete` |
+| **Exit** | `0` ok (no path is an empty successful result) · `2` bad/missing kind, direction, edge, depth, limit, or scope · `3` typed endpoint not found · `4` source unavailable · `6` malformed/drifting projection |
+
+### `impact`
+
+Expand one typed endpoint across exact authored relationships. Each affected
+endpoint appears once with a canonical shortest evidence chain and is labeled
+`direct` at depth 1 or `transitive` thereafter.
+
+| | |
+|---|---|
+| **Args** | `<id>` |
+| **Key flags** | required `--kind <concept\|task>` · required `--direction <outbound\|inbound\|either>` · `--edge <kind>` (repeatable allowlist) · `--max-depth <n>` (default 4, max 16) · `--limit <n>` (default 20, max 100) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
+| **Output** | `kind: impact.result`, schema `lore-impact-result/1` — normalized typed root, selected edge kinds, effective limits, direct/transitive impacts, exact evidence chains and provenance, `shown`, `edgeVisits`, `depthBoundReached`, `truncated`, and `complete` |
+| **Exit** | `0` ok (no impacts is successful) · `2` bad/missing kind, direction, edge, depth, limit, or scope · `3` typed root not found · `4` source unavailable · `6` malformed/drifting projection |
+
+Both commands enforce a hard 10,000-edge visit budget in addition to the
+requested depth and result limits. Hitting the result or visit budget sets
+`truncated: true` and `complete: false`; reaching the requested depth is
+reported separately. They preserve duplicate authored edge records, never
+traverse dangling targets, infer no relationships, and expose no Cypher or
+Ladybug-native identifiers. See [Bounded path and impact](../specs/bounded-path-and-impact.md).
 
 ### `explorer`
 

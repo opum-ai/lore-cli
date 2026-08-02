@@ -11,6 +11,7 @@ import { LoreError } from "../errors";
 import type { BundleGraph } from "./bundle";
 import type { LadybugProjectionSource } from "./ladybug-source";
 import type { QueryOptions, QueryResult } from "./query";
+import type { TraversalSourceRecords } from "./traversal";
 
 /** Exact package/runtime version frozen into ladybug-projection/1 fingerprints. */
 export const EXPECTED_LADYBUG_VERSION = "0.19.0";
@@ -38,6 +39,8 @@ export interface LadybugIndexedReader {
   readBundleGraph(bodyId?: string): Promise<BundleGraph>;
   /** Read one body through the concept's primary-key lookup. */
   readConceptBody(id: string): Promise<string | undefined>;
+  /** Read exact typed authored records for storage-neutral bounded traversal. */
+  readTraversalRecords?(): Promise<TraversalSourceRecords>;
   /** Execute Lore's exact deterministic BM25/filter contract through persisted postings. */
   query(options: QueryOptions): Promise<QueryResult>;
   /** Release the native connection and database handle. Safe to call more than once. */

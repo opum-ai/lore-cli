@@ -20,6 +20,7 @@ import {
   type LadybugProjectionSource,
   type ProjectionConceptRecord,
   type ProjectionEdgeRecord,
+  type ProjectionTaskRecord,
 } from "./ladybug-source";
 import {
   type Bm25Index,
@@ -29,6 +30,7 @@ import {
   searchableConceptFields,
   tokenizeQueryText,
 } from "./query";
+import type { TraversalSourceRecords } from "./traversal";
 
 export const LADYBUG_VERSION = String(ladybug.VERSION);
 export const LADYBUG_STORAGE_VERSION = String(ladybug.STORAGE_VERSION);
@@ -614,6 +616,7 @@ export function openLadybugIndexedReader(databasePath: string, source: LadybugPr
       if (body !== null && typeof body !== "string") corrupt("indexed concept body is invalid");
       return body ?? "";
     },
+    readTraversalRecords: () => readIndexedTraversalRecords(source, connection),
     query: (options: QueryOptions) => queryIndexedDatabase(databasePath, source, options, connection),
     close: async () => {
       if (closed) return;
@@ -622,6 +625,45 @@ export function openLadybugIndexedReader(databasePath: string, source: LadybugPr
       await database.close();
     },
   };
+}
+
+async function readIndexedTraversalRecords(
+  source: LadybugProjectionSource,
+  connection: Connection,
+): Promise<TraversalSourceRecords> {
+  const read = async <T extends ProjectionTaskRecord | ProjectionEdgeRecord>(
+    table: "TaskRecord" | "AuthoredEdgeRecord",
+    discriminator: T["record"],
+  ): Promise<T[]> => {
+    const rows = await queryRows(
+      connection,
+      `MATCH (n:${table}) RETURN n.sourceRecordJson AS sourceRecordJson ORDER BY n.recordKey`,
+    );
+    return rows.map((row) => {
+      const record = parseSourceRecord(row.sourceRecordJson);
+      if (record.record !== discriminator) corrupt(`invalid ${table} traversal source record`);
+      return record as unknown as T;
+    });
+  };
+  const conceptRows = await queryRows(
+    connection,
+    `MATCH (n:ConceptRecord)
+     RETURN n.recordKey AS recordKey, n.conceptId AS conceptId, n.path AS path,
+            n.conceptType AS conceptType, n.frontmatterJson AS frontmatterJson,
+            n.body AS body, n.contentHash AS contentHash, n.tokenEstimate AS tokenEstimate
+     ORDER BY n.recordKey`,
+  );
+  const concepts = conceptRows.map(conceptRecordFromPromotedRow);
+  const tasks = await read<ProjectionTaskRecord>("TaskRecord", "task");
+  const authoredEdges = await read<ProjectionEdgeRecord>("AuthoredEdgeRecord", "edge");
+  if (
+    concepts.length !== source.counts.concepts ||
+    tasks.length !== source.counts.tasks ||
+    authoredEdges.length !== source.counts.authoredEdges
+  ) {
+    corrupt("indexed traversal counts differ from the verified source snapshot");
+  }
+  return { concepts, tasks, authoredEdges };
 }
 
 async function readIndexedBundleGraph(

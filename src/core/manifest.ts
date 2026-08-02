@@ -406,6 +406,107 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     examples: ["lore graph", "lore graph stories/bulk-archive-orders --dot"],
   },
   {
+    name: "path",
+    summary: "Find bounded paths across exact authored concept and task edges",
+    args: "<from> <to>",
+    flags: [
+      {
+        name: "from-kind",
+        takesValue: true,
+        summary: "Typed origin: concept or task",
+      },
+      {
+        name: "to-kind",
+        takesValue: true,
+        summary: "Typed destination: concept or task",
+      },
+      {
+        name: "direction",
+        takesValue: true,
+        summary: "Traversal direction: outbound, inbound, or either",
+      },
+      {
+        name: "edge",
+        takesValue: true,
+        repeatable: true,
+        summary: "Allow one authored edge kind",
+      },
+      {
+        name: "max-depth",
+        takesValue: true,
+        summary: "Maximum traversal depth (default 4, max 16)",
+      },
+      {
+        name: "limit",
+        takesValue: true,
+        summary: "Maximum paths (default 20, max 100)",
+      },
+      {
+        name: "workspace",
+        takesValue: true,
+        summary: "Select an explicit workspace manifest",
+      },
+      {
+        name: "repository",
+        takesValue: true,
+        repeatable: true,
+        summary: "Select a workspace member",
+      },
+    ],
+    json: true,
+    kind: "path.result",
+    exitCodes: exitCodesFor(["bundle", "backlog"]),
+    examples: ["lore path stories/orders LCLI-123 --from-kind concept --to-kind task --direction outbound"],
+  },
+  {
+    name: "impact",
+    summary: "Expand bounded impact across exact authored concept and task edges",
+    args: "<id>",
+    flags: [
+      {
+        name: "kind",
+        takesValue: true,
+        summary: "Typed root: concept or task",
+      },
+      {
+        name: "direction",
+        takesValue: true,
+        summary: "Traversal direction: outbound, inbound, or either",
+      },
+      {
+        name: "edge",
+        takesValue: true,
+        repeatable: true,
+        summary: "Allow one authored edge kind",
+      },
+      {
+        name: "max-depth",
+        takesValue: true,
+        summary: "Maximum traversal depth (default 4, max 16)",
+      },
+      {
+        name: "limit",
+        takesValue: true,
+        summary: "Maximum impacts (default 20, max 100)",
+      },
+      {
+        name: "workspace",
+        takesValue: true,
+        summary: "Select an explicit workspace manifest",
+      },
+      {
+        name: "repository",
+        takesValue: true,
+        repeatable: true,
+        summary: "Select a workspace member",
+      },
+    ],
+    json: true,
+    kind: "impact.result",
+    exitCodes: exitCodesFor(["bundle", "backlog"]),
+    examples: ["lore impact LCLI-123 --kind task --direction inbound --max-depth 3"],
+  },
+  {
     name: "explorer",
     summary: "Build a deterministic self-contained local graph explorer",
     args: "",

@@ -179,6 +179,30 @@ describe("workspace source and reference retrieval", () => {
     expect(graphData.nodes[0]?.provenance?.repositoryKey).toMatch(/^sha256:/u);
     expect(graphData.workspaceLinks?.find((link) => link.linkId === "alpha-to-beta")?.kind).toBe("depends_on");
 
+    const path = await invoke(loader, [
+      "path",
+      "alpha::shared",
+      "beta::shared",
+      "--from-kind",
+      "concept",
+      "--to-kind",
+      "concept",
+      "--direction",
+      "outbound",
+      "--edge",
+      "depends_on",
+      "--workspace",
+      manifestPath,
+      "--json",
+    ]);
+    const pathData = envelope<{
+      paths: Array<{ edges: Array<{ edge: { kind: string; provenance: { sourceRecordKey: string } } }> }>;
+      workspace: { workspaceId: string };
+    }>(path.stdout).data;
+    expect(pathData.paths[0]?.edges[0]?.edge.kind).toBe("depends_on");
+    expect(pathData.paths[0]?.edges[0]?.edge.provenance.sourceRecordKey).toBe("alpha-to-beta");
+    expect(pathData.workspace.workspaceId).toBe("fixture");
+
     const query = await invoke(loader, [
       "query",
       "evidence",
@@ -397,6 +421,7 @@ function commandLoader(policy: "reference" | "indexed"): RetrievalGraphLoader {
       selection: options.workspace,
       policy,
       sourceOptions: sourceOptions(),
+      includeTraversal: options.includeTraversal,
     });
   };
 }

@@ -114,6 +114,8 @@ export interface ProjectionEdgeRecord extends ProjectionRecord {
   readonly workspaceFromKind?: "concept" | "task";
   readonly workspaceToKind?: "concept" | "task";
   readonly workspaceLinkKind?: string;
+  /** Original member edge key or manifest link id behind a namespaced workspace record. */
+  readonly workspaceSourceRecordKey?: string;
 }
 
 export interface LadybugProjectionSource {

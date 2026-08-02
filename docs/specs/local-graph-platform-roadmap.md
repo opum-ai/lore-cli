@@ -159,7 +159,10 @@ The baseline deliverable is a read-only static artifact that performs no network
   current-only verified workspace generations, deterministic repository scope,
   exact manifest links, and merged locator-free evidence for graph, query, and
   context.
-- `LCLI-283.3.3` adds bounded path and impact operations with edge allowlists, direction, depth, limits, completeness, truncation, and explainable edge chains.
+- `LCLI-283.3.3` adds the frozen [bounded path and impact](bounded-path-and-impact.md)
+  contract: typed concept/task endpoints, explicit direction, authored-edge
+  allowlists, deterministic shortest evidence, locator-free provenance, depth
+  and result bounds, a hard edge-visit budget, completeness, and truncation.
 - `LCLI-283.3.4` adds explicit snapshot comparison, changed-since, relationship delta, retention, deletion, provenance, CLI, and explorer workflows.
 
 M8 public contracts remain bounded Lore operations. LadybugDB, Cypher, physical table names, and internal identifiers remain replaceable implementation details.
