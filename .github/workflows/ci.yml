@@ -158,6 +158,21 @@ jobs:
           # --help exercises the other output path; assert it emits the banner too.
           ./dist/lore --help | grep -q "OKF-native documentation CLI"
 
+  explorer-browser-qualification:
+    name: explorer browser qualification (chromium · firefox · webkit)
+    if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: .lore/cache/ms-playwright
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: ./.github/actions/setup-bun
+      - name: Install pinned browser engines
+        run: bunx playwright install --with-deps chromium firefox webkit
+      - name: Qualify the static explorer
+        run: bun run test:browser
+
   scaffold-mkdocs:
     name: mkdocs scaffold smoke
     if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true

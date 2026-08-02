@@ -134,7 +134,12 @@ contract. Its contract task may overlap late M6; implementation may not:
 - `LCLI-283.2.1` depends on the frozen projection schema in `LCLI-283.1.1` and may define the explorer snapshot, data, provenance, interaction, accessibility, graph-health, and bounded-rendering contracts while the remaining M6 lanes run.
 - The frozen [graph explorer data and interaction contract](graph-explorer-data-and-interaction-contract.md) defines `lore-explorer-snapshot/1`, separates disposable presentation state, and supplies the executable boundary for the implementation and hardening tasks.
 - `LCLI-283.2.2` depends on both `LCLI-283.2.1` and completion of all `LCLI-283.1` gates. Its `lore explorer` entrypoint builds a deterministic self-contained `.html` artifact with search, kind/status filters, detail/provenance inspection, inbound and outbound highlighting, bounded depth focus, dangling references, and authored supersession chains. The default `.lore/explorer/index.html` output updates atomically; protected source trees are never targets.
-- `LCLI-283.2.3` proves keyboard and screen-reader access, responsive and reduced-motion behavior, offline and credential-free packaging, browser compatibility, reproducible artifacts, and large-graph performance.
+- `LCLI-283.2.3` completes browser hardening with executable keyboard and
+  screen-reader semantics, non-color and high-contrast cues, responsive and
+  reduced-motion behavior, offline and credential-free packaging, reproducible
+  artifacts, and frozen large-graph budgets. Exact Playwright 1.62.1 qualifies
+  Chromium, Firefox, and WebKit against a deterministic 6,000-record/10,000-edge
+  fixture in CI.
 
 The baseline deliverable is a read-only static artifact that performs no network request. A loopback-only live refresh mode is optional and must use the same bounded read contract; it cannot expose database credentials, writes, or arbitrary queries.
 

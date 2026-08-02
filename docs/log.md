@@ -57,6 +57,7 @@
 - 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
 - 2026-08-01T17:30:06-05:00 9a22ced4c31baf48579c533d7ce6a3bb0b71a1f0 docs: refresh lore log after agent profile rebase
 - 2026-08-01T19:19:30-05:00 a827f7cc7972348377f1edfd2bcc618e75d99c8e feat: add static graph explorer
+- 2026-08-01T19:22:13-05:00 235b1166321bbfa38fa2658bf68a58ae2fd5fb7f docs: refresh lore log for graph explorer
 
 ## docs/.obsidian
 

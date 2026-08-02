@@ -6,6 +6,7 @@ import * as yaml from "js-yaml";
 const WORKFLOW_PATH = join(import.meta.dir, "..", ".github", "workflows", "ci.yml");
 
 interface WorkflowJob {
+  env?: Record<string, string>;
   if?: string;
   steps?: Array<{
     name?: string;
@@ -61,6 +62,7 @@ describe("ci.yml exact-host LadybugDB qualification", () => {
       "check",
       "ladybug-benchmark-smoke",
       "build",
+      "explorer-browser-qualification",
       "scaffold-mkdocs",
       "scaffold-docusaurus",
       "docker-e2e",
@@ -71,6 +73,15 @@ describe("ci.yml exact-host LadybugDB qualification", () => {
       if (name === "check") continue;
       expect(job.if).toBe(exactHostSkipGuard);
     }
+  });
+
+  test("the explorer qualification installs and runs all pinned Playwright engines from a repo-local cache", () => {
+    const job = loadWorkflow().jobs["explorer-browser-qualification"];
+    expect(job?.env?.PLAYWRIGHT_BROWSERS_PATH).toBe(".lore/cache/ms-playwright");
+    expect(job?.steps?.find((step) => step.name === "Install pinned browser engines")?.run).toBe(
+      "bunx playwright install --with-deps chromium firefox webkit",
+    );
+    expect(job?.steps?.find((step) => step.name === "Qualify the static explorer")?.run).toBe("bun run test:browser");
   });
 
   test("the slower Darwin x64 runner has a bounded timeout without widening ordinary CI", () => {
