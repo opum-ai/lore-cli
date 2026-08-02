@@ -30,11 +30,12 @@ import type { BacklogAdapter } from "../adapters/backlog";
 import { loadBundle } from "../core/bundle";
 import { loadProfile } from "../core/profile";
 import { type FieldFilter, type QueryResult, query } from "../core/query";
-import type { RetrievalGraphLoader } from "../core/retrieval";
+import { loadRetrievalGraph, type RetrievalGraphLoader } from "../core/retrieval";
 import { DOCS_DIR } from "../core/scaffold";
+import type { WorkspaceRetrievalContext, WorkspaceRetrievalSelection } from "../core/workspace-retrieval";
 import { EXIT_OK, LoreError, singleLine, stripAnsiAndControls, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable, renderTruncationLine, truncation } from "../output";
-import { optionValues, parseCommandArgs, singleOptionValue } from "./args";
+import { optionValues, parseCommandArgs, singleOptionValue, workspaceSelection } from "./args";
 
 /** Options for {@link runQuery}; `root` and the streams are injectable for tests. */
 export interface QueryCommandOptions {
@@ -68,6 +69,7 @@ interface QueryArgs {
   tags: string[];
   /** `--field key=value` filters, in order (repeatable). */
   fields: FieldFilter[];
+  readonly workspace?: WorkspaceRetrievalSelection;
 }
 
 /** The narrow-it hint on the §3 truncation line (AC#2) — the actionable ways to bound a broad result. */
@@ -81,24 +83,28 @@ const NARROW_HINT = "narrow with --type/--tag/--status/--field, or raise --limit
 export function runQuery(options: QueryCommandOptions): number | Promise<number> {
   const parsed = parseQueryArgs(options.args);
   const advisories = new WarningCollector();
-  if (options.retrieval !== undefined) {
-    return options
-      .retrieval({ root: options.root, warnings: advisories, adapter: options.adapter })
-      .then(async (loaded) => {
-        try {
-          const indexedResult = await loaded.indexed?.query({
-            text: parsed.text,
-            type: parsed.type,
-            tags: parsed.tags,
-            status: parsed.status,
-            fields: parsed.fields,
-            limit: parsed.limit,
-          });
-          return finishQuery(options, parsed, loaded.graph, advisories, indexedResult);
-        } finally {
-          await loaded.dispose?.();
-        }
-      });
+  const retrieval = options.retrieval ?? (parsed.workspace !== undefined ? loadRetrievalGraph : undefined);
+  if (retrieval !== undefined) {
+    return retrieval({
+      root: options.root,
+      warnings: advisories,
+      adapter: options.adapter,
+      ...(parsed.workspace !== undefined ? { workspace: parsed.workspace } : {}),
+    }).then(async (loaded) => {
+      try {
+        const indexedResult = await loaded.indexed?.query({
+          text: parsed.text,
+          type: parsed.type,
+          tags: parsed.tags,
+          status: parsed.status,
+          fields: parsed.fields,
+          limit: parsed.limit,
+        });
+        return finishQuery(options, parsed, loaded.graph, advisories, indexedResult, loaded.workspace);
+      } finally {
+        await loaded.dispose?.();
+      }
+    });
   }
   const profile = loadProfile({ root: options.root });
   const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, profile });
@@ -111,6 +117,7 @@ function finishQuery(
   graph: ReturnType<typeof loadBundle>,
   advisories: WarningCollector,
   indexedResult?: QueryResult,
+  workspace?: WorkspaceRetrievalContext,
 ): number {
   advisories.flush({ color: options.output.color, stderr: options.stderr });
 
@@ -124,7 +131,15 @@ function finishQuery(
       fields: parsed.fields,
       limit: parsed.limit,
     });
-  emit(queryRenderable(data), options.output, options.stdout);
+  const scoped: QueryResult =
+    workspace === undefined
+      ? data
+      : {
+          ...data,
+          hits: data.hits.map((hit) => ({ ...hit, provenance: workspace.provenanceById.get(hit.id) })),
+          workspace: workspace.scope,
+        };
+  emit(queryRenderable(scoped), options.output, options.stdout);
   return EXIT_OK;
 }
 
@@ -141,6 +156,7 @@ function finishQuery(
  */
 function parseQueryArgs(args: readonly string[]): QueryArgs {
   const parsed = parseCommandArgs(args, "query");
+  const workspace = workspaceSelection(parsed);
   const positionals = parsed.positionals;
   const trimmed = (name: string): string | undefined => {
     const value = singleOptionValue(parsed, name);
@@ -166,7 +182,7 @@ function parseQueryArgs(args: readonly string[]): QueryArgs {
       'pass one quoted search string, e.g. `lore query "soft delete retention"`',
     );
   }
-  return { text: positionals[0], type, status, limit, tags, fields };
+  return { text: positionals[0], type, status, limit, tags, fields, workspace };
 }
 
 /**
@@ -246,7 +262,12 @@ function queryRenderable(data: QueryResult): Renderable<QueryResult> {
 function renderText(data: QueryResult): string {
   const queryText = data.query !== undefined ? sanitizeField(data.query) : undefined;
   const head = queryText !== undefined ? `query "${queryText}"` : "query (filters)";
-  const lines = [`${head}: ${data.total} ${data.total === 1 ? "match" : "matches"}`];
+  const lines = [
+    ...(data.workspace !== undefined
+      ? [`workspace: ${sanitizeField(data.workspace.workspaceId)} (${data.workspace.repositories.length} repositories)`]
+      : []),
+    `${head}: ${data.total} ${data.total === 1 ? "match" : "matches"}`,
+  ];
   for (const hit of data.hits) {
     const score = queryText !== undefined ? `  (${formatScore(hit.score)})` : "";
     const id = sanitizeField(hit.id);

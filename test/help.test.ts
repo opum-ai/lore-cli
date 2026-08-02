@@ -49,6 +49,21 @@ describe("core/manifest — shape and invariants", () => {
     }
   });
 
+  test("workspace retrieval flags are exposed only on graph, query, and context", () => {
+    const workspaceCommands = ["graph", "query", "context"];
+    for (const name of workspaceCommands) {
+      const command = findManifestCommand(name);
+      expect(command?.flags.find((flag) => flag.name === "workspace")).toMatchObject({ takesValue: true });
+      expect(command?.flags.find((flag) => flag.name === "repository")).toMatchObject({
+        takesValue: true,
+        repeatable: true,
+      });
+    }
+    for (const command of buildManifest().commands.filter((item) => !workspaceCommands.includes(item.name))) {
+      expect(command.flags.some((flag) => flag.name === "workspace" || flag.name === "repository")).toBe(false);
+    }
+  });
+
   test("every per-command exit code is one of the taxonomy's codes", () => {
     const valid = new Set(Object.values(buildManifest().exitCodes)); // {0,1,2,3,4,5,6}
     for (const command of buildManifest().commands) {

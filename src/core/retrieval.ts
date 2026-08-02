@@ -23,6 +23,11 @@ import {
 import { loadLadybugProjectionFreshness, loadLadybugProjectionSource } from "./ladybug-source";
 import { loadProfile } from "./profile";
 import { DOCS_DIR } from "./scaffold";
+import {
+  loadWorkspaceRetrievalGraph,
+  type WorkspaceRetrievalContext,
+  type WorkspaceRetrievalSelection,
+} from "./workspace-retrieval";
 
 export type RetrievalBackend = "indexed" | "reference";
 export type RetrievalPolicy = "auto" | RetrievalBackend;
@@ -44,6 +49,8 @@ export interface RetrievalGraph {
   readonly dispose?: () => Promise<void>;
   readonly backend: RetrievalBackend;
   readonly provenance?: IndexedRetrievalProvenance;
+  /** Explicit multi-repository scope; absent for byte-compatible repository-local retrieval. */
+  readonly workspace?: WorkspaceRetrievalContext;
 }
 
 export interface RetrievalGraphOptions {
@@ -57,6 +64,8 @@ export interface RetrievalGraphOptions {
   readonly platform?: NodeJS.Platform;
   /** Injectable lazy native boundary for load-order and failure tests. */
   readonly loadNativeDriver?: LadybugNativeLoader;
+  /** Explicit workspace selection; absence preserves the repository-local M6 path. */
+  readonly workspace?: WorkspaceRetrievalSelection;
 }
 
 export type RetrievalGraphLoader = (options: RetrievalGraphOptions) => Promise<RetrievalGraph>;
@@ -67,6 +76,18 @@ export type RetrievalGraphLoader = (options: RetrievalGraphOptions) => Promise<R
  * fallback run has exactly the reference path's observable stderr/stdout.
  */
 export async function loadRetrievalGraph(options: RetrievalGraphOptions): Promise<RetrievalGraph> {
+  if (options.workspace !== undefined) {
+    return loadWorkspaceRetrievalGraph({
+      root: options.root,
+      selection: options.workspace,
+      warnings: options.warnings,
+      adapter: options.adapter,
+      policy: options.policy,
+      platform: options.platform,
+      loadNativeDriver: options.loadNativeDriver,
+      sourceOptions: { adapterForRoot: (root) => (root === options.root ? options.adapter : undefined) },
+    });
+  }
   const policy = options.policy ?? "auto";
   if (policy === "reference") {
     return loadReferenceGraph(options.root, options.warnings);

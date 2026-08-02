@@ -36,11 +36,13 @@ import { loadBundle } from "../core/bundle";
 import { idFromPath } from "../core/concept";
 import { buildContext, type ContextExport, DEFAULT_DEPTH } from "../core/context";
 import { loadProfile } from "../core/profile";
-import type { RetrievalGraphLoader } from "../core/retrieval";
+import { loadRetrievalGraph, type RetrievalGraphLoader } from "../core/retrieval";
 import { DOCS_DIR } from "../core/scaffold";
+import { parseQualifiedWorkspaceId, qualifyWorkspaceId } from "../core/workspace-contract";
+import type { WorkspaceRetrievalContext, WorkspaceRetrievalSelection } from "../core/workspace-retrieval";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable, renderTruncationLine, truncation } from "../output";
-import { parseCommandArgs, singleOptionValue } from "./args";
+import { parseCommandArgs, singleOptionValue, workspaceSelection } from "./args";
 
 /** Options for {@link runContext}; `root` and the streams are injectable for tests. */
 export interface ContextOptions {
@@ -68,6 +70,7 @@ interface ContextArgs {
   maxTokens?: number;
   /** The hop radius (`--depth`); `undefined` falls back to {@link DEFAULT_DEPTH}. */
   depth?: number;
+  readonly workspace?: WorkspaceRetrievalSelection;
 }
 
 /**
@@ -79,20 +82,24 @@ interface ContextArgs {
 export function runContext(options: ContextOptions): number | Promise<number> {
   const parsed = parseContextArgs(options.args);
   const advisories = new WarningCollector();
-  if (options.retrieval !== undefined) {
-    return options
-      .retrieval({ root: options.root, warnings: advisories, adapter: options.adapter })
-      .then(async (loaded) => {
-        try {
-          const graph =
-            loaded.indexed === undefined
-              ? loaded.graph
-              : withConceptBody(loaded.graph, parsed.id, await loaded.indexed.readConceptBody(parsed.id));
-          return finishContext(options, parsed, graph, advisories);
-        } finally {
-          await loaded.dispose?.();
-        }
-      });
+  const retrieval = options.retrieval ?? (parsed.workspace !== undefined ? loadRetrievalGraph : undefined);
+  if (retrieval !== undefined) {
+    return retrieval({
+      root: options.root,
+      warnings: advisories,
+      adapter: options.adapter,
+      ...(parsed.workspace !== undefined ? { workspace: parsed.workspace } : {}),
+    }).then(async (loaded) => {
+      try {
+        const graph =
+          loaded.indexed === undefined
+            ? loaded.graph
+            : withConceptBody(loaded.graph, parsed.id, await loaded.indexed.readConceptBody(parsed.id));
+        return finishContext(options, parsed, graph, advisories, loaded.workspace);
+      } finally {
+        await loaded.dispose?.();
+      }
+    });
   }
   const profile = loadProfile({ root: options.root });
   const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, profile });
@@ -117,13 +124,26 @@ function finishContext(
   parsed: ContextArgs,
   graph: ReturnType<typeof loadBundle>,
   advisories: WarningCollector,
+  workspace?: WorkspaceRetrievalContext,
 ): number {
   // Flush load warnings before buildContext, which throws not_found for an unknown
   // target — otherwise an advisory explaining *why* a file is not a concept would be
   // discarded on exactly the path that most needs it (mirrors `lore graph`).
   advisories.flush({ color: options.output.color, stderr: options.stderr });
 
-  const data = buildContext(graph, parsed.id, { depth: parsed.depth, maxTokens: parsed.maxTokens });
+  const base = buildContext(graph, parsed.id, { depth: parsed.depth, maxTokens: parsed.maxTokens });
+  const data: ContextExport =
+    workspace === undefined
+      ? base
+      : {
+          ...base,
+          target: { ...base.target, provenance: workspace.provenanceById.get(base.target.id) },
+          neighbors: base.neighbors.map((neighbor) => ({
+            ...neighbor,
+            provenance: workspace.provenanceById.get(neighbor.id),
+          })),
+          workspace: workspace.scope,
+        };
   emit(contextRenderable(data), options.output, options.stdout);
   return EXIT_OK;
 }
@@ -141,6 +161,7 @@ function finishContext(
  */
 function parseContextArgs(args: readonly string[]): ContextArgs {
   const parsed = parseCommandArgs(args, "context");
+  const workspace = workspaceSelection(parsed);
   const positionals = parsed.positionals;
   const rawMaxTokens = singleOptionValue(parsed, "max-tokens");
   const rawDepth = singleOptionValue(parsed, "depth");
@@ -157,7 +178,22 @@ function parseContextArgs(args: readonly string[]): ContextArgs {
   if (positionals.length > 1) {
     throw usage(`unexpected argument "${positionals[1]}"`, "run `lore context <id> [--max-tokens <n>] [--depth <n>]`");
   }
-  return { id: idFromPath(positionals[0] as string), maxTokens, depth };
+  return {
+    id: normalizeContextId(positionals[0] as string, workspace !== undefined),
+    maxTokens,
+    depth,
+    workspace,
+  };
+}
+
+function normalizeContextId(raw: string, workspace: boolean): string {
+  if (!workspace) return idFromPath(raw);
+  try {
+    const parsed = parseQualifiedWorkspaceId(raw);
+    return qualifyWorkspaceId(parsed.memberId, idFromPath(parsed.sourceId));
+  } catch {
+    throw usage(`invalid workspace concept id "${raw}"`, "use the unambiguous <member-id>::<source-id> form");
+  }
 }
 
 /**
@@ -214,6 +250,9 @@ function contextRenderable(data: ContextExport): Renderable<ContextExport> {
 function renderText(data: ContextExport): string {
   const budget = data.maxTokens !== undefined ? `, budget ${data.maxTokens}` : "";
   const lines = [
+    ...(data.workspace !== undefined
+      ? [`workspace: ${data.workspace.workspaceId} (${data.workspace.repositories.length} repositories)`]
+      : []),
     `context: ${data.root}  [${data.target.type}] — depth ${data.depth}${budget}, ~${data.tokenEstimate} tokens (chars/4)`,
     "",
     data.target.body.replace(/\n+$/, ""),

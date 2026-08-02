@@ -365,6 +365,14 @@ output. The public envelopes, diagnostics, and ordering do not reveal which
 backend was selected. No command accepts Cypher or exposes database paths,
 physical identifiers, or native errors.
 
+All three commands also accept an explicit `--workspace <manifest>` and a
+repeatable `--repository <member-id>` subset selector. `--repository` requires
+`--workspace`; Lore never discovers a workspace or member automatically.
+Workspace concept IDs are qualified as `<member-id>::<source-id>`, and JSON
+results add locator-free workspace scope and per-result provenance. Omitting
+`--workspace` preserves the single-repository output exactly. See
+[Workspace indexing and retrieval](../specs/workspace-indexing-and-retrieval.md).
+
 ### `graph`
 
 Emit the bundle's cross-link graph (concepts as nodes, OKF cross-links and
@@ -375,9 +383,9 @@ humans for orientation, by consumers for navigation, and by
 
 | | |
 |---|---|
-| **Args** | optional `<id>` (subgraph rooted at one concept; normalized like [`rename`](#rename), so path/`.md`/`./` forms resolve) |
-| **Key flags** | `--dot` (emit Graphviz DOT; mutually exclusive with `--json`) · `--depth <n>` (bound subgraph radius) |
-| **Output** | `kind: graph.export` — nodes, edges, token estimates (or DOT text under `--dot`). Machine JSON is the global `--json` envelope, as for every command. |
+| **Args** | optional `<id>` (subgraph rooted at one concept; normalized like [`rename`](#rename), so path/`.md`/`./` forms resolve; workspace mode requires `<member-id>::<source-id>`) |
+| **Key flags** | `--dot` (emit Graphviz DOT; mutually exclusive with `--json`) · `--depth <n>` (bound subgraph radius) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
+| **Output** | `kind: graph.export` — nodes, edges, token estimates (or DOT text under `--dot`). Workspace JSON adds scope, per-node provenance, and exact explicit workspace links. Machine JSON is the global `--json` envelope, as for every command. |
 | **Exit** | `0` ok · `2` bad usage (`--dot` with `--json`, bad flag/`--depth`) · `3` root `<id>` not found |
 
 ### `explorer`
@@ -432,8 +440,8 @@ lore query "archive" --type Story --tag orders --status in-progress
 | | |
 |---|---|
 | **Args** | `"<text>"` (optional; filters alone are valid) |
-| **Key flags** | `--type <T>` · `--tag <t>` (repeatable) · `--status <S>` · `--limit <n>` (default bounded) · `--field k=v` (arbitrary frontmatter filter) |
-| **Output** | `kind: query.results` — ranked `[{ id, type, title, snippet, score }]` with `total`/`shown`/`truncated` |
+| **Key flags** | `--type <T>` · `--tag <t>` (repeatable) · `--status <S>` · `--limit <n>` (default bounded) · `--field k=v` (arbitrary frontmatter filter) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
+| **Output** | `kind: query.results` — ranked `[{ id, type, title, snippet, score }]` with `total`/`shown`/`truncated`; workspace JSON adds scope and per-hit provenance |
 | **Exit** | `0` ok (zero hits is still `0`) · `2` bad filter syntax |
 
 ### `context`
@@ -451,9 +459,9 @@ lore context stories/bulk-archive-orders --max-tokens 4000 --depth 2
 
 | | |
 |---|---|
-| **Args** | `<id>` |
-| **Key flags** | `--max-tokens <n>` (token budget; if omitted, no cap is applied — output is bounded only by `--depth`) · `--depth <n>` (neighbor radius, default 1) |
-| **Output** | `kind: context.export` — target body + neighbor summaries, with `tokenEstimate`/`truncated` |
+| **Args** | `<id>` (workspace mode requires `<member-id>::<source-id>`) |
+| **Key flags** | `--max-tokens <n>` (token budget; if omitted, no cap is applied — output is bounded only by `--depth`) · `--depth <n>` (neighbor radius, default 1) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
+| **Output** | `kind: context.export` — target body + neighbor summaries, with `tokenEstimate`/`truncated`; workspace JSON adds scope and target/neighbor provenance |
 | **Exit** | `0` ok · `2` bad usage (missing `<id>`, unknown/repeated flag, non-integer/out-of-range `--max-tokens`/`--depth`) · `3` `<id>` not found |
 
 ### `agent`

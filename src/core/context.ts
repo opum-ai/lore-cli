@@ -53,6 +53,7 @@ import { singleLine } from "../errors";
 import { type BundleGraph, estimateTokens, frontmatterScalar } from "./bundle";
 import type { Concept } from "./concept";
 import { subgraph } from "./query";
+import type { WorkspaceRecordProvenance, WorkspaceResultScope } from "./workspace-contract";
 
 /** The target concept at the center of a {@link ContextExport} — emitted in full. */
 export interface ContextTarget {
@@ -66,6 +67,8 @@ export interface ContextTarget {
   readonly body: string;
   /** The chars/4 estimate over the target's full serialized bytes (== `lore graph`'s node estimate). */
   readonly tokenEstimate: number;
+  /** Complete locator-free provenance in explicit workspace mode. */
+  readonly provenance?: WorkspaceRecordProvenance;
 }
 
 /** One neighbor in a {@link ContextExport} — compacted to its one-line `summary`. */
@@ -91,6 +94,8 @@ export interface ContextNeighbor {
    * long `title` behind a short/absent `summary` is never undercounted.
    */
   readonly tokenEstimate: number;
+  /** Complete locator-free provenance in explicit workspace mode. */
+  readonly provenance?: WorkspaceRecordProvenance;
 }
 
 /** The `context.export` payload: the target's full body, the neighbor compaction, and the budget accounting. */
@@ -119,6 +124,8 @@ export interface ContextExport {
    * within budget", never a silent overrun.
    */
   readonly truncated: boolean;
+  /** Explicit selected workspace scope; absent for repository-local output. */
+  readonly workspace?: WorkspaceResultScope;
 }
 
 /** Options for {@link buildContext}. */

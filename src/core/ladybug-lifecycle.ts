@@ -125,6 +125,10 @@ export interface LadybugLifecycleHooks {
 
 export interface ReconcileLadybugProjectionOptions {
   readonly root: string;
+  /** Repository-relative cache root; defaults to the frozen single-repository M6 path. */
+  readonly cacheRelRoot?: string;
+  /** Remove every non-current immutable generation after successful reconciliation. */
+  readonly retainOnlyCurrent?: boolean;
   readonly adapter?: BacklogAdapter;
   readonly resolveGitCommit?: (root: string) => string | null;
   readonly warnings?: WarningCollector;
@@ -168,6 +172,7 @@ export async function reconcileLadybugProjection(
   options: ReconcileLadybugProjectionOptions,
 ): Promise<LadybugProjectionLifecycleResult> {
   const root = canonicalRepositoryRoot(options.root);
+  const cacheRelRoot = validateCacheRelRoot(options.cacheRelRoot ?? LADYBUG_CACHE_REL_ROOT);
   const loadNative = onceNativeDriver(options.loadNativeDriver ?? loadLadybugNativeDriver);
   const loadSource =
     options.loadSource ??
@@ -180,8 +185,8 @@ export async function reconcileLadybugProjection(
         resolveGitCommit: options.resolveGitCommit,
         warnings: options.warnings,
       }));
-  const cacheRoot = join(root, LADYBUG_CACHE_REL_ROOT);
-  assertExistingCacheLayoutSafe(root, cacheRoot);
+  const cacheRoot = join(root, cacheRelRoot);
+  assertExistingCacheLayoutSafe(root, cacheRoot, cacheRelRoot);
   const lockState = inspectWriterLock(cacheRoot);
   if (options.loadFreshness !== undefined && hasPotentialGeneration(cacheRoot)) {
     const freshness = await options.loadFreshness();
@@ -224,6 +229,23 @@ export async function reconcileLadybugProjection(
   let inspection = await inspectGeneration(cacheRoot, source, loadNative);
   const initialClassification = inspection.classification;
   if (lockState === "none" && inspection.classification === "reusable" && inspection.generation !== undefined) {
+    if (options.retainOnlyCurrent === true) {
+      ensureCacheLayout(root, cacheRoot, cacheRelRoot);
+      const cleanupLock = acquireWriterLock(cacheRoot);
+      if (cleanupLock === null) {
+        return {
+          classification: "locked",
+          outcome: "unavailable",
+          source,
+          reason: "current-only cleanup could not acquire writer ownership",
+        };
+      }
+      try {
+        pruneOtherGenerations(cacheRoot, source.generationKey);
+      } finally {
+        releaseWriterLock(cleanupLock);
+      }
+    }
     return { classification: "reusable", outcome: "reused", source, generation: inspection.generation };
   }
   if (inspection.classification === "unsupported") {
@@ -243,7 +265,7 @@ export async function reconcileLadybugProjection(
     };
   }
 
-  ensureCacheLayout(root, cacheRoot);
+  ensureCacheLayout(root, cacheRoot, cacheRelRoot);
   const ownedLock = acquireWriterLock(cacheRoot);
   if (ownedLock === null) {
     inspection = await inspectGeneration(cacheRoot, source, loadNative);
@@ -270,6 +292,7 @@ export async function reconcileLadybugProjection(
       assertNativeVersion(source);
       inspection = await inspectGeneration(cacheRoot, source, loadNative);
       if (inspection.classification === "reusable" && inspection.generation !== undefined) {
+        if (options.retainOnlyCurrent === true) pruneOtherGenerations(cacheRoot, source.generationKey);
         return {
           classification: initialClassification,
           outcome: "reused",
@@ -332,6 +355,7 @@ export async function reconcileLadybugProjection(
         removeContained(cacheRoot, stagingPath);
         const existing = await inspectGeneration(cacheRoot, source, loadNative);
         if (existing.classification === "reusable" && existing.generation !== undefined) {
+          if (options.retainOnlyCurrent === true) pruneOtherGenerations(cacheRoot, source.generationKey);
           return {
             classification: initialClassification,
             outcome: "reused",
@@ -346,6 +370,7 @@ export async function reconcileLadybugProjection(
       chmodSync(generationPath, 0o555);
       await options.hooks?.afterPublication?.(generationPath);
       fsyncDirectory(join(cacheRoot, "generations"));
+      if (options.retainOnlyCurrent === true) pruneOtherGenerations(cacheRoot, source.generationKey);
       return {
         classification: initialClassification,
         outcome: "built",
@@ -383,7 +408,7 @@ export function disposeLadybugProjection(rootInput: string): boolean {
   const root = canonicalRepositoryRoot(rootInput);
   const cacheRoot = join(root, LADYBUG_CACHE_REL_ROOT);
   if (!existsSync(cacheRoot)) return false;
-  ensureCacheLayout(root, cacheRoot);
+  ensureCacheLayout(root, cacheRoot, LADYBUG_CACHE_REL_ROOT);
   const lock = acquireWriterLock(cacheRoot);
   if (lock === null) {
     throw new LoreError(
@@ -741,10 +766,10 @@ function writeControlManifestLast(path: string, control: LadybugControlManifest)
   fsyncDirectory(resolve(path, ".."));
 }
 
-function ensureCacheLayout(root: string, cacheRoot: string): void {
+function ensureCacheLayout(root: string, cacheRoot: string, cacheRelRoot: string): void {
   const realRoot = canonicalRepositoryRoot(root);
-  assertExistingCacheLayoutSafe(realRoot, cacheRoot);
-  const segments = [".lore", "cache", "graph", "ladybug", "1"];
+  assertExistingCacheLayoutSafe(realRoot, cacheRoot, cacheRelRoot);
+  const segments = cacheRelRoot.split("/");
   let current = realRoot;
   for (const segment of segments) {
     current = join(current, segment);
@@ -780,8 +805,8 @@ function ensureCacheLayout(root: string, cacheRoot: string): void {
   }
 }
 
-function assertExistingCacheLayoutSafe(root: string, cacheRoot: string): void {
-  const segments = [".lore", "cache", "graph", "ladybug", "1", "generations"];
+function assertExistingCacheLayoutSafe(root: string, cacheRoot: string, cacheRelRoot: string): void {
+  const segments = [...cacheRelRoot.split("/"), "generations"];
   let current = root;
   for (const segment of segments) {
     current = join(current, segment);
@@ -800,9 +825,34 @@ function assertExistingCacheLayoutSafe(root: string, cacheRoot: string): void {
       );
     }
   }
-  if (join(root, LADYBUG_CACHE_REL_ROOT) !== cacheRoot) {
+  if (join(root, cacheRelRoot) !== cacheRoot) {
     throw lifecycleError("resolved cache root does not match the frozen storage path");
   }
+}
+
+function validateCacheRelRoot(value: string): string {
+  const segments = value.split("/");
+  if (
+    value === "" ||
+    isAbsolute(value) ||
+    !value.startsWith(".lore/cache/") ||
+    segments.some((segment) => segment === "" || segment === "." || segment === ".." || segment.includes("\\"))
+  ) {
+    throw new LoreError("denied", "Ladybug cache root must be a contained repository-relative .lore/cache path");
+  }
+  return value;
+}
+
+function pruneOtherGenerations(cacheRoot: string, keepGenerationKey: string): void {
+  const generationsRoot = join(cacheRoot, "generations");
+  for (const entry of readdirSync(generationsRoot, { withFileTypes: true })) {
+    if (entry.name === keepGenerationKey) continue;
+    if (!entry.isDirectory() || entry.isSymbolicLink() || !/^[0-9a-f]{64}$/.test(entry.name)) {
+      throw new LoreError("denied", "refusing current-only cleanup through an unexpected workspace generation entry");
+    }
+    removeContained(cacheRoot, join(generationsRoot, entry.name));
+  }
+  fsyncDirectory(generationsRoot);
 }
 
 function inspectWriterLock(cacheRoot: string): "none" | "stale" | "active" {

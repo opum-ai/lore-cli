@@ -150,6 +150,7 @@ const SCHEMA_QUERIES = [
   "CREATE REL TABLE HAS_TASK(FROM ProjectionSnapshot TO TaskRecord)",
   "CREATE REL TABLE HAS_EDGE(FROM ProjectionSnapshot TO AuthoredEdgeRecord)",
   "CREATE REL TABLE EDGE_SOURCE(FROM ConceptRecord TO AuthoredEdgeRecord)",
+  "CREATE REL TABLE EDGE_TASK_SOURCE(FROM TaskRecord TO AuthoredEdgeRecord)",
   "CREATE REL TABLE EDGE_CONCEPT_TARGET(FROM AuthoredEdgeRecord TO ConceptRecord)",
   "CREATE REL TABLE EDGE_TASK_TARGET(FROM AuthoredEdgeRecord TO TaskRecord)",
   "CREATE REL TABLE HAS_TERM(FROM ConceptRecord TO LexicalTerm, frequency INT64)",
@@ -258,14 +259,26 @@ export async function verifyLadybugDatabase(
       source.counts.authoredEdges,
       "HAS_EDGE",
     );
+    const conceptSources = source.authoredEdges.filter((edge) => edgeSourceKind(edge) === "concept");
+    const taskSources = source.authoredEdges.filter((edge) => edgeSourceKind(edge) === "task");
     await expectCount(
       connection,
       "MATCH ()-[r:EDGE_SOURCE]->() RETURN count(r) AS count",
-      source.counts.authoredEdges,
+      conceptSources.length,
       "EDGE_SOURCE",
     );
-    const conceptTargets = source.authoredEdges.filter((edge) => edge.kind !== "task" && !edge.dangling).length;
-    const taskTargets = source.authoredEdges.filter((edge) => edge.kind === "task" && !edge.dangling).length;
+    if (taskSources.length > 0) {
+      await expectCount(
+        connection,
+        "MATCH ()-[r:EDGE_TASK_SOURCE]->() RETURN count(r) AS count",
+        taskSources.length,
+        "EDGE_TASK_SOURCE",
+      );
+    }
+    const conceptTargets = source.authoredEdges.filter(
+      (edge) => edgeTargetKind(edge) === "concept" && !edge.dangling,
+    ).length;
+    const taskTargets = source.authoredEdges.filter((edge) => edgeTargetKind(edge) === "task" && !edge.dangling).length;
     await expectCount(
       connection,
       "MATCH ()-[r:EDGE_CONCEPT_TARGET]->() RETURN count(r) AS count",
@@ -286,6 +299,16 @@ export async function verifyLadybugDatabase(
       0,
       "EDGE_SOURCE endpoint mismatch",
     );
+    if (taskSources.length > 0) {
+      await expectCount(
+        connection,
+        `MATCH (source:TaskRecord)-[:EDGE_TASK_SOURCE]->(edge:AuthoredEdgeRecord)
+         WHERE source.recordKey <> edge.fromRecordKey
+         RETURN count(edge) AS count`,
+        0,
+        "EDGE_TASK_SOURCE endpoint mismatch",
+      );
+    }
     await expectCount(
       connection,
       `MATCH (edge:AuthoredEdgeRecord)-[:EDGE_CONCEPT_TARGET]->(target:ConceptRecord)
@@ -341,15 +364,24 @@ export async function verifyLadybugDatabase(
       connection,
       `MATCH (a:ConceptRecord)-[:EDGE_SOURCE]->(b:AuthoredEdgeRecord)
        RETURN a.recordKey AS fromKey, b.recordKey AS toKey`,
-      source.authoredEdges.map((record) => [record.from, record.key]),
+      conceptSources.map((record) => [record.from, record.key]),
       "EDGE_SOURCE",
     );
+    if (taskSources.length > 0) {
+      await expectRelationshipPairs(
+        connection,
+        `MATCH (a:TaskRecord)-[:EDGE_TASK_SOURCE]->(b:AuthoredEdgeRecord)
+         RETURN a.recordKey AS fromKey, b.recordKey AS toKey`,
+        taskSources.map((record) => [record.from, record.key]),
+        "EDGE_TASK_SOURCE",
+      );
+    }
     await expectRelationshipPairs(
       connection,
       `MATCH (a:AuthoredEdgeRecord)-[:EDGE_CONCEPT_TARGET]->(b:ConceptRecord)
        RETURN a.recordKey AS fromKey, b.recordKey AS toKey`,
       source.authoredEdges
-        .filter((record) => record.kind !== "task" && !record.dangling && record.to !== null)
+        .filter((record) => edgeTargetKind(record) === "concept" && !record.dangling && record.to !== null)
         .map((record) => [record.key, record.to as string]),
       "EDGE_CONCEPT_TARGET",
     );
@@ -358,7 +390,7 @@ export async function verifyLadybugDatabase(
       `MATCH (a:AuthoredEdgeRecord)-[:EDGE_TASK_TARGET]->(b:TaskRecord)
        RETURN a.recordKey AS fromKey, b.recordKey AS toKey`,
       source.authoredEdges
-        .filter((record) => record.kind === "task" && !record.dangling && record.to !== null)
+        .filter((record) => edgeTargetKind(record) === "task" && !record.dangling && record.to !== null)
         .map((record) => [record.key, record.to as string]),
       "EDGE_TASK_TARGET",
     );
@@ -508,7 +540,7 @@ export async function readLadybugBundleGraph(
 
     const indexedEdges = edgeRows
       .map((row) => parseEdgeSourceRecord(row.sourceRecordJson))
-      .filter((record) => record.kind !== "task")
+      .filter((record) => edgeSourceKind(record) === "concept" && edgeTargetKind(record) === "concept")
       .map((record) => {
         const from = conceptIdsByRecordKey.get(record.from);
         const to = record.to === null ? null : conceptIdsByRecordKey.get(record.to);
@@ -1089,14 +1121,24 @@ async function insertProjection(
     connection,
     databasePath,
     "EDGE_SOURCE",
-    source.authoredEdges.map((record) => [record.from, record.key]),
+    source.authoredEdges
+      .filter((record) => edgeSourceKind(record) === "concept")
+      .map((record) => [record.from, record.key]),
+  );
+  await copyRows(
+    connection,
+    databasePath,
+    "EDGE_TASK_SOURCE",
+    source.authoredEdges
+      .filter((record) => edgeSourceKind(record) === "task")
+      .map((record) => [record.from, record.key]),
   );
   await copyRows(
     connection,
     databasePath,
     "EDGE_CONCEPT_TARGET",
     source.authoredEdges
-      .filter((record) => record.kind !== "task" && !record.dangling && record.to !== null)
+      .filter((record) => edgeTargetKind(record) === "concept" && !record.dangling && record.to !== null)
       .map((record) => [record.key, record.to]),
   );
   await copyRows(
@@ -1104,7 +1146,7 @@ async function insertProjection(
     databasePath,
     "EDGE_TASK_TARGET",
     source.authoredEdges
-      .filter((record) => record.kind === "task" && !record.dangling && record.to !== null)
+      .filter((record) => edgeTargetKind(record) === "task" && !record.dangling && record.to !== null)
       .map((record) => [record.key, record.to]),
   );
   const recordKeys = new Map(source.concepts.map((record) => [record.id, record.key]));
@@ -1692,6 +1734,14 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function isEdgeKind(value: string): value is EdgeKind {
   return value === "link" || value === "specs" || value === "supersedes" || value === "superseded_by";
+}
+
+function edgeSourceKind(record: ProjectionEdgeRecord): "concept" | "task" {
+  return record.workspaceFromKind ?? "concept";
+}
+
+function edgeTargetKind(record: ProjectionEdgeRecord): "concept" | "task" {
+  return record.workspaceToKind ?? (record.kind === "task" ? "task" : "concept");
 }
 
 function corrupt(message: string): never {
