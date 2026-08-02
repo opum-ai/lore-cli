@@ -4,13 +4,15 @@ title: Define explicit local workspaces and cross-repository identity
 status: To Do
 assignee: []
 created_date: '2026-07-30 13:34'
+updated_date: '2026-08-02 02:11'
 labels:
   - workspace
   - identity
   - provenance
   - ladybugdb
 milestone: m-15
-dependencies: []
+dependencies:
+  - LCLI-283.2
 documentation:
   - docs/specs/local-graph-platform-roadmap.md
 parent_task_id: LCLI-283.3
