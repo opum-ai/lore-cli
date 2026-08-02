@@ -41,6 +41,7 @@ detail with `lore instructions <topic>`:
 - `schema`        Export the profile's editor JSON Schemas to .lore/schemas/
 - `scaffold`      Generate a downstream docs consumer's config, additively outside docs/
 - `graph`         Emit the bundle's cross-link graph as json or dot
+- `explorer`      Build a deterministic self-contained local graph explorer
 - `export`        Emit a deterministic, consumer-neutral OKF projection as JSONL
 - `query`         Full-text search the bundle with frontmatter filters
 - `context`       Assemble a concept + neighbor summaries within a token budget

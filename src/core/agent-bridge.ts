@@ -71,6 +71,7 @@ export const LORE_COMMANDS: readonly CommandSummary[] = [
   { name: "schema", summary: "Export the profile's editor JSON Schemas to .lore/schemas/" },
   { name: "scaffold", summary: "Generate a downstream docs consumer's config, additively outside docs/" },
   { name: "graph", summary: "Emit the bundle's cross-link graph as json or dot" },
+  { name: "explorer", summary: "Build a deterministic self-contained local graph explorer" },
   { name: "export", summary: "Emit a deterministic, consumer-neutral OKF projection as JSONL" },
   { name: "query", summary: "Full-text search the bundle with frontmatter filters" },
   { name: "context", summary: "Assemble a concept + neighbor summaries within a token budget" },

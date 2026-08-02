@@ -6,7 +6,7 @@ description: >-
   The authoritative catalog of every lore subcommand — purpose, arguments,
   key flags, output kind, and exit codes — for the CLI that is lore's primary
   interface for humans, Claude Code, Codex, and CI. Covers init, new, validate,
-  check, sync, link/unlink, tasks, orphans, graph, query, context, replace,
+  check, sync, link/unlink, tasks, orphans, graph, explorer, query, context, replace,
   rename, supersede, scaffold, schema, agents, instructions, help, and the
   deferred publish/mcp commands.
 tags: [reference, cli, commands, flags, exit-codes, agent, ci]
@@ -379,6 +379,30 @@ humans for orientation, by consumers for navigation, and by
 | **Key flags** | `--dot` (emit Graphviz DOT; mutually exclusive with `--json`) · `--depth <n>` (bound subgraph radius) |
 | **Output** | `kind: graph.export` — nodes, edges, token estimates (or DOT text under `--dot`). Machine JSON is the global `--json` envelope, as for every command. |
 | **Exit** | `0` ok · `2` bad usage (`--dot` with `--json`, bad flag/`--depth`) · `3` root `<id>` not found |
+
+### `explorer`
+
+Build a deterministic, self-contained, read-only HTML explorer from the same
+validated projection source used by Lore's persistent local index. The default
+artifact is `.lore/explorer/index.html`; it embeds canonical
+`lore-explorer-snapshot/1` bytes, inline styles, and a semantic browser runtime
+under a Content Security Policy whose network and form actions are disabled.
+Opening the file requires no server and performs no network request.
+
+The explorer supports title/summary/id/type/status/tag search, record-kind and
+status filters, bounded depth focus, selected-record details and provenance,
+inbound/outbound relationship highlighting, dangling references, and authored
+supersession chains. Initial and focused views retain the frozen contract's
+node, edge, and depth bounds. The command never writes under `docs/`,
+`backlog/`, or `.git/`; the default Lore-owned artifact updates atomically,
+while a differing custom output requires `--force`.
+
+| | |
+|---|---|
+| **Args** | none |
+| **Key flags** | `--out <file>` (repo-relative `.html`; default `.lore/explorer/index.html`) · `--force` (replace a differing custom output) |
+| **Output** | `kind: explorer.artifact` — artifact/snapshot versions, snapshot key, path, create/update/unchanged action, byte length, SHA-256 digest, and graph-health counts |
+| **Exit** | `0` created, updated, or unchanged · `2` invalid flag/path · `3` source record unavailable · `4` read/write denied · `5` custom-output collision or symlink · `6` malformed bundle/profile/projection |
 
 ### `export`
 

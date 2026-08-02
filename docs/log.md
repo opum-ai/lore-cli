@@ -55,6 +55,7 @@
 - 2026-08-01T16:41:57-05:00 1f5114f85efa1c0f758afec0ce2a427156ee7c34 docs: refresh lore log
 - 2026-08-01T16:41:57-05:00 3ec3d77082adb5b7b389588fbc18a58464d636e3 feat: freeze graph explorer contract
 - 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
+- 2026-08-01T17:30:06-05:00 9a22ced4c31baf48579c533d7ce6a3bb0b71a1f0 docs: refresh lore log after agent profile rebase
 
 ## docs/.obsidian
 

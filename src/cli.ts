@@ -21,6 +21,7 @@ import { runAgents } from "./commands/agents";
 import { commanderOption, commanderUnknownCommand, commanderUsageError } from "./commands/args";
 import { type FetchLike, type ResolveHost, runCheck } from "./commands/check";
 import { runContext } from "./commands/context";
+import { runExplorer } from "./commands/explorer";
 import { runExport } from "./commands/export";
 import { runGraph } from "./commands/graph";
 import { renderTopLevelHelp, runHelp } from "./commands/help";
@@ -518,6 +519,15 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
       stderr: context.stderr,
       adapter: context.adapter,
       retrieval: context.retrieval ?? loadRetrievalGraph,
+    }),
+  explorer: (args, context, output) =>
+    runExplorer({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+      adapter: context.adapter,
     }),
   export: (args, context, output) =>
     runExport({

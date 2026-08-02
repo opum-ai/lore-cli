@@ -21,9 +21,10 @@ portable and independent of LadybugDB. A separately versioned browser-local
 presentation record owns filters, selection, layout coordinates, and viewport
 state; deleting it never changes source facts or snapshot identity.
 
-This contract freezes the boundary consumed by `LCLI-283.2.2` and verified by
-`LCLI-283.2.3`. It does not select a rendering library, implement the explorer,
-or add a network service.
+This contract freezes the boundary implemented by `LCLI-283.2.2` and verified
+further by `LCLI-283.2.3`. The baseline implementation deliberately uses no
+rendering library and adds no network service: `lore explorer` emits one
+self-contained semantic HTML artifact.
 
 ## Requirements
 
@@ -76,10 +77,25 @@ infers a reciprocal or transitive edge.
 
 ### Static export and optional refresh
 
-The required deliverable is a directory of static local files. Opening it
-performs zero network requests. The snapshot is serialized once with
-`serializeExplorerSnapshot`; scripts and styles carry no repository data,
-credential, absolute path, or database handle.
+`lore explorer` writes `.lore/explorer/index.html` by default or one explicit
+repo-relative `.html` path under `--out`. The artifact is a single static file:
+canonical snapshot bytes are base64-embedded, styles and the semantic runtime
+are inline, and a restrictive Content Security Policy sets `connect-src`,
+external resources, forms, and base navigation to none. Opening it performs
+zero network requests. The command refuses output under `docs/`, `backlog/`,
+or `.git/`, uses an atomic sibling-file rename, updates its Lore-owned default
+when source facts change, and requires `--force` before replacing a differing
+custom output.
+
+The implementation renders a semantic record list rather than a canvas-only
+graph. Search covers title, summary, id, type, status, and tags/labels; kind and
+status filters reduce the view; double-click or the explicit focus control
+expands both directions to the selected bounded depth. Selection marks inbound
+and outbound neighbors with redundant labels/colors, while the details panel
+shows source path, commit, export digest, authored relationships, dangling
+targets, and the connected authored supersession chain. The initial view is
+bounded and reports visible versus matching counts rather than silently
+discarding source facts.
 
 A future optional refresh process may bind only to `127.0.0.1` and `::1`, serve
 the artifact from an unguessable per-process path, enforce its own same-origin
@@ -156,9 +172,10 @@ must reconstruct a usable default view solely from the snapshot.
 
 ## Open questions
 
-- Rendering library, worker strategy, and static packaging form remain choices
-  for `LCLI-283.2.2`, subject to these payload and rendering bounds.
 - Browser compatibility, measured large-graph budgets, screen-reader matrix,
   and offline package reproducibility remain qualification work for
   `LCLI-283.2.3`; that task may tighten a limit only through an explicitly
   versioned contract change.
+- A loopback-only live refresh process remains optional and unimplemented. If
+  added later, it must preserve the refresh boundary above; the static artifact
+  remains the baseline and cannot acquire a write or arbitrary-query surface.

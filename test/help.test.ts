@@ -79,6 +79,7 @@ describe("core/manifest — shape and invariants", () => {
       schema: [0, 2, 4, 5, 6], // no 3: no read seam / no id lookup
       scaffold: [0, 2, 4, 5, 6], // profile (6) + write (4/5); no 3: no read seam / no id lookup
       graph: [0, 2, 3, 4, 6],
+      explorer: [0, 2, 3, 4, 5, 6],
       export: [0, 2, 3, 4, 6],
       query: [0, 2, 3, 4, 6],
       context: [0, 2, 3, 4, 6],
@@ -117,6 +118,7 @@ describe("core/manifest — shape and invariants", () => {
       schema: "schema.result",
       scaffold: "scaffold.result",
       graph: "graph.export",
+      explorer: "explorer.artifact",
       export: "projection.export",
       query: "query.results",
       context: "context.export",
