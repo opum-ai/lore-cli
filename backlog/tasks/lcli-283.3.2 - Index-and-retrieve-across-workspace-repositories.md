@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:34'
-updated_date: '2026-08-02 15:12'
+updated_date: '2026-08-02 15:52'
 labels:
   - workspace
   - ladybugdb
@@ -39,8 +39,10 @@ modified_files:
   - src/core/workspace-source.ts
   - test/help.test.ts
   - test/workspace-retrieval.test.ts
+  - docs/log.md
   - docs/reference/architecture.md
   - docs/reference/cli-surface.md
+  - docs/specs/index.md
   - docs/specs/local-graph-platform-roadmap.md
   - docs/specs/local-workspace-identity-contract.md
   - docs/specs/workspace-indexing-and-retrieval.md
@@ -82,6 +84,8 @@ Approval gate: implementation starts only after the user approves the public CLI
 
 <!-- SECTION:NOTES:BEGIN -->
 Local implementation and objective acceptance verification complete in guarded lease e0b342e8cc6d394b528b90fcbf4f0716. Evidence: bun test passed 2398/2398 tests with 7749 assertions; workspace-focused coverage passed 10/10 including add/update/member removal, current-only generation reuse, rejected-candidate preservation, duplicate IDs, exact concept/task cross-repository links, canonical subsets, cross-workspace isolation, bounded ordering, locator redaction, warning-clean fallback, and Windows pre-native fallback. npm run typecheck, npm run lint, npm run build, compiled graph/query/context help smokes, lore validate --strict (54 files, 0 errors/warnings), lore check --strict, and git diff --check passed. lore sync --dry-run remains blocked because the installed Backlog binary is not --json-capable; no generated index/log write was attempted. lore agents --check reports the pre-existing protected .claude/skills/lore/SKILL.md drift and was intentionally not forced. Commit, publication, task closure, tracker settlement, and lease return remain separately unauthorized.
+
+Commit authorization received. Lore sync completed with the repository's documented JSON-capable dist-npm/backlog v1.48.0 binary, regenerated docs/specs/index.md and docs/log.md, and created scoped backlog commit b6c01bc; the immediate follow-up sync dry-run reported zero changes.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
