@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "lore-workspace-conformance/1",
+  "manifest": {
+    "schemaVersion": "lore-workspace-manifest/1",
+    "workspaceId": "lore-platform",
+    "members": [
+      {
+        "memberId": "api-primary",
+        "locator": "../lore-api",
+        "displayName": "Lore API",
+        "expectedRef": "refs/heads/main"
+      },
+      {
+        "memberId": "api-secondary",
+        "locator": "../lore-api-worktree",
+        "displayName": "Lore API",
+        "expectedRef": "refs/heads/feature/provenance"
+      }
+    ],
+    "links": [
+      {
+        "linkId": "api-doc-to-secondary-task",
+        "kind": "depends_on",
+        "from": {
+          "memberId": "api-primary",
+          "kind": "concept",
+          "id": "specs/api"
+        },
+        "to": {
+          "memberId": "api-secondary",
+          "kind": "task",
+          "id": "LAPI-10"
+        }
+      }
+    ]
+  },
+  "sources": [
+    {
+      "memberId": "api-primary",
+      "repositoryScopeKey": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "bundleId": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "gitCommit": "1111111111111111111111111111111111111111",
+      "exportDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "memberId": "api-secondary",
+      "repositoryScopeKey": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "bundleId": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "gitCommit": "2222222222222222222222222222222222222222",
+      "exportDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  ],
+  "record": {
+    "kind": "concept",
+    "sourceRecordKey": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "sourcePath": "docs/specs/api.md"
+  }
+}
