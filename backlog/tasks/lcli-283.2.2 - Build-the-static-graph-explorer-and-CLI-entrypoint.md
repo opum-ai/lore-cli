@@ -1,11 +1,11 @@
 ---
 id: LCLI-283.2.2
 title: Build the static graph explorer and CLI entrypoint
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:33'
-updated_date: '2026-08-01 23:42'
+updated_date: '2026-08-02 00:18'
 labels:
   - graph-explorer
   - frontend
@@ -67,4 +67,12 @@ Generate and open an offline-capable Lore graph explorer from the stable indexed
 
 <!-- SECTION:NOTES:BEGIN -->
 Wave 8 implementation evidence (2026-08-01): implemented the deterministic lore-explorer-snapshot/1 projection, self-contained offline HTML renderer, semantic search/type/status filters, details and provenance, inbound/outbound relationship views, bounded depth focus, dangling and supersession views, and a repository-confined atomic lore explorer command. Full pinned Bun 1.2.23 suite: 2,378 pass, 0 fail, 7,599 expectations across 68 files. TypeScript typecheck passed. Biome checked 162 files with no fixes. Production build compiled 247 modules. Repeated compiled explorer runs were byte-stable and unchanged: snapshot sha256:3a04b9fe072cdc57bd71f1e1bc2415a37bb40c2e6b9e4a39abb9d883e3b31c8a; artifact sha256:3e3178cce8aa512efe648f8975a8835bba9dc1ba0ddec8eb26df5aa0d2989e0b; 1,240,315 bytes; 46 concepts, 318 tasks, 733 authored edges, 26 dangling edges, 307 duplicate edges. Artifact audit found no private absolute paths or database credential/query surfaces. Compiled agents check, strict Lore validation (52 files, 0 errors, 0 warnings), strict Lore check (52 files, 0 errors, 0 warnings), and git diff hygiene passed. Adversarial self-review caught and fixed an invalid embedded-script newline escape and corrected a stale globally generated agent bridge by regenerating from this branch. Lore sync dry-run reports only docs/log.md would change. A real Lore sync is intentionally withheld because it would create a scoped Backlog commit and this restore did not grant commit authority; task remains In Progress pending that authorization.
+
+Authorization boundary resolved (2026-08-01): the user explicitly authorized the real branch-built Lore sync and scoped Backlog commit. Sync commit 60672bdf8c8297905296bd5112ac6fa4cb5ed5a4 contains only this task record and regenerated docs/log.md in the remaining working tree. Post-sync strict Lore validation reported 52 files, 0 errors, 0 warnings; strict Lore check reported 52 files, 0 errors, 0 warnings; generated agent bridge check and git diff hygiene passed. The user then explicitly authorized terminal task finalization, the resulting scoped Lore sync, and the local feature commit. Remote delivery and lease return remain unauthorized.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented the deterministic offline static graph explorer and lore explorer CLI entrypoint. The self-contained artifact provides search, kind/type/status filters, details and provenance, inbound/outbound relationship views, bounded depth focus, dangling references, and supersession chains while exposing no network, write, arbitrary-query, credential, or private-path surface. Repository-confined atomic output handling protects source documentation and custom-path collisions. Verification passed under exact Bun 1.2.23: 2,378 tests with 7,599 expectations, TypeScript typecheck, Biome across 162 files, production build of 247 modules, compiled CLI/help and byte-stable artifact smokes, DOM runtime exercise, strict Lore validation/check, agent-bridge drift check, and diff hygiene. Required empty, single-node, cyclic, disconnected, duplicate-edge, Unicode, and large fixtures all pass.
+<!-- SECTION:FINAL_SUMMARY:END -->
