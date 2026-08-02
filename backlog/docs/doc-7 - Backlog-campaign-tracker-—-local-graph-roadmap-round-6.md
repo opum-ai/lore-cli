@@ -3,7 +3,7 @@ id: doc-7
 title: Backlog campaign tracker — local graph roadmap (round 6)
 type: other
 created_date: '2026-08-02 03:36'
-updated_date: '2026-08-02 19:08'
+updated_date: '2026-08-02 19:10'
 ---
 # Backlog campaign tracker — local graph roadmap (round 6)
 
@@ -65,7 +65,6 @@ Informational live snapshot only; never a promised next wave:
 | LCLI-283.2.3 | 2026-08-01 / Wave 9 | Explorer accessibility, offline packaging, and frozen 6,000-record/10,000-edge qualification completed with all four ACs checked; 2,381 Bun tests and 15 three-engine Playwright cases passed locally; PR #275 merged exact head `e197508` as `44b74ca` after all eight jobs passed in run `30726854290`; guarded lease `6d8667df` returned with exact guards. |
 | LCLI-283.2 | 2026-08-01 / Wave 10 | Parent criteria settled with child-task evidence, 23 focused tests, five local Chromium cases, and exact merged-head CI; PR #276 merged exact head 630ec5e as dev merge de14ffe after all eight jobs passed in run 30729212216. |
 | LCLI-283.3.1 | 2026-08-02 / Wave 12 + delivery wave 13 | Strict explicit workspace membership, namespaced cross-repository identity/provenance, deterministic lifecycle states, and disposable privacy-bounded projection contracts completed with all four ACs checked. PR #279 merged exact head `fb930f0` as `3f5de5a` after all eight required jobs passed in run `30741631484`; tracker PR #280 merged as `8ddf465` after run `30742019710` passed all eight jobs, then the exact guarded lease was returned. |
-
 | LCLI-283.3.2 | 2026-08-02 / Wave 14 | Explicit workspace indexing and graph/query/context retrieval completed with atomic current-only projections, deterministic repository subsets, complete provenance, and byte-compatible single-repository behavior. PR #281 merged exact head `3cdf87b` as `891bdb9` after all eight required jobs passed in run `30762320389`; all four ACs are checked and the task is Done. |
 
 ## Not queued — blocked, deferred, parent, or separately in flight
