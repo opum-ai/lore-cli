@@ -1,11 +1,11 @@
 ---
 id: LCLI-283.3.3
 title: Add bounded path and impact operations
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:34'
-updated_date: '2026-08-02 22:50'
+updated_date: '2026-08-02 23:03'
 labels:
   - ladybugdb
   - path
@@ -84,6 +84,8 @@ The user approved the complete public traversal contract and recommended bounds 
 Implementation complete on the guarded branch. Added typed path/impact CLI commands, storage-neutral bounded BFS, persisted Ladybug traversal reads, repository/workspace selection, exact endpoint and edge source provenance, additive result schemas, and Lore documentation. Objective verification: bun test (2,408 pass, 0 fail); focused traversal/indexed/workspace/help/agent suites (121 pass, 0 fail before final inbound regression); final traversal suite (9 pass, 0 fail); bun run typecheck; bun run lint (177 files); bun run build; compiled path/impact help smokes; lore validate --strict (0 errors, 0 warnings); lore check --strict (0 errors, 0 warnings); git diff --check. Host reported Bun 1.3.14 while the repository remains pinned to Bun 1.2.23. Lore sync unexpectedly created local commit 8f52dcb after its dry-run reported no Backlog commit; the commit was immediately unwound with a mixed reset to exact integration SHA 17d19dc, preserving every file unstaged. No commit, push, publication, lease return, or dependent-task dispatch occurred.
 
 Final adversarial fixture expansion now passes 10 traversal cases (29 expectations), explicitly proving duplicate authored edges remain distinct, dangling targets are not traversed, and no-path results are deterministic and complete.
+
+Delivery authorized 2026-08-02. Created scoped feature commit 1034229 from exact integration base 17d19dc after revalidating origin/dev, the guarded lease, no duplicate PR, all four checked ACs, no staged drift, and diff hygiene. Push/PR/required-check monitoring/merge are proceeding serially; terminal integration evidence will be appended after GitHub settles.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
@@ -105,5 +107,5 @@ Approved contract activated: depth default 4/hard maximum 16; result default 20/
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Implemented bounded explainable path and impact traversal across exact concept, task, and explicit workspace edges, with depth/result/10,000-edge bounds, deterministic shortest evidence, direct/transitive impact, indexed/reference parity, locator-free endpoint and edge provenance, additive JSON envelopes, CLI help, tests, and Lore documentation. Verified by 2,408 full-suite passes, clean type/lint/build/help smokes, strict Lore validation/check, and diff hygiene. Implementation is complete but intentionally remains uncommitted pending explicit delivery authority.
+Implemented bounded explainable path and impact traversal across exact concept, task, and explicit workspace edges, with depth/result/10,000-edge bounds, deterministic shortest evidence, direct/transitive impact, indexed/reference parity, locator-free endpoint and edge provenance, additive JSON envelopes, CLI help, tests, and Lore documentation. Verified by 2,408 full-suite passes, final 10-case traversal coverage, clean type/lint/build/help smokes, strict Lore validation/check, and diff hygiene. Scoped implementation commit: 1034229; authorized GitHub delivery is in progress.
 <!-- SECTION:FINAL_SUMMARY:END -->
