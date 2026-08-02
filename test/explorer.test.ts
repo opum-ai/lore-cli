@@ -138,6 +138,8 @@ describe("self-contained explorer artifact", () => {
     const document = new FakeDocument([
       "provenance",
       "health",
+      "status-heading",
+      "announcement",
       "kind-filters",
       "type-filter",
       "status",
@@ -167,7 +169,9 @@ describe("self-contained explorer artifact", () => {
     firstButton.dispatch("click", { target: firstButton });
     expect(flattenText(document.getElementById("details"))).toContain("Relationships");
     expect(flattenText(document.getElementById("details"))).toContain("Export");
-    const focusButton = findByTag(document.getElementById("details"), "button");
+    const focusButton = findAllByTag(document.getElementById("details"), "button").find((button) =>
+      flattenText(button).includes("Focus this record"),
+    );
     if (focusButton === undefined) throw new Error("focus button missing");
     focusButton.dispatch("click", { target: focusButton });
     const runtime = browserWindow.__LORE_EXPLORER__ as { state: { focus: string | null } };
@@ -176,7 +180,10 @@ describe("self-contained explorer artifact", () => {
 });
 
 class FakeElement {
-  readonly listeners = new Map<string, (event: { target: unknown }) => void>();
+  readonly listeners = new Map<
+    string,
+    (event: { target: unknown; key?: string; preventDefault?: () => void }) => void
+  >();
   readonly attributes = new Map<string, string>();
   readonly children: FakeElement[] = [];
   textContent = "";
@@ -184,6 +191,10 @@ class FakeElement {
   type = "";
   value = "";
   checked = false;
+  disabled = false;
+  hidden = false;
+  tabIndex = 0;
+  focused = false;
 
   constructor(readonly tagName: string) {}
 
@@ -198,11 +209,14 @@ class FakeElement {
     this.children.splice(0, this.children.length, ...children);
   }
 
-  addEventListener(type: string, listener: (event: { target: unknown }) => void): void {
+  addEventListener(
+    type: string,
+    listener: (event: { target: unknown; key?: string; preventDefault?: () => void }) => void,
+  ): void {
     this.listeners.set(type, listener);
   }
 
-  dispatch(type: string, event: { target: unknown }): void {
+  dispatch(type: string, event: { target: unknown; key?: string; preventDefault?: () => void }): void {
     const listener = this.listeners.get(type);
     if (listener === undefined) throw new Error(`listener ${type} missing on ${this.tagName}`);
     listener(event);
@@ -210,6 +224,10 @@ class FakeElement {
 
   setAttribute(name: string, value: string): void {
     this.attributes.set(name, value);
+  }
+
+  focus(): void {
+    this.focused = true;
   }
 }
 
@@ -239,13 +257,11 @@ function flattenText(element: FakeElement): string {
   return [element.textContent, ...element.children.map(flattenText)].join(" ");
 }
 
-function findByTag(element: FakeElement, tagName: string): FakeElement | undefined {
-  if (element.tagName === tagName) return element;
-  for (const child of element.children) {
-    const found = findByTag(child, tagName);
-    if (found !== undefined) return found;
-  }
-  return undefined;
+function findAllByTag(element: FakeElement, tagName: string): FakeElement[] {
+  return [
+    ...(element.tagName === tagName ? [element] : []),
+    ...element.children.flatMap((child) => findAllByTag(child, tagName)),
+  ];
 }
 
 function sourceFromFixture(snapshot: ExplorerSnapshot): LadybugProjectionSource {

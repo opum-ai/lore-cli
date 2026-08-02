@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "lore-explorer-qualification/1",
+  "playwrightVersion": "1.62.1",
+  "browsers": ["chromium", "firefox", "webkit"],
+  "seed": "lore-explorer-large-v1",
+  "records": {
+    "concepts": 5000,
+    "tasks": 1000,
+    "authoredEdges": 10000
+  },
+  "budgets": {
+    "artifactBytes": 33554432,
+    "loadMilliseconds": 15000,
+    "interactionMilliseconds": 2500,
+    "mountedElements": 7500,
+    "heapBytes": 536870912
+  }
+}

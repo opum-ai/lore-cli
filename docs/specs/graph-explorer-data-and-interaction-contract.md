@@ -21,8 +21,8 @@ portable and independent of LadybugDB. A separately versioned browser-local
 presentation record owns filters, selection, layout coordinates, and viewport
 state; deleting it never changes source facts or snapshot identity.
 
-This contract freezes the boundary implemented by `LCLI-283.2.2` and verified
-further by `LCLI-283.2.3`. The baseline implementation deliberately uses no
+This contract freezes the boundary implemented by `LCLI-283.2.2` and qualified
+by `LCLI-283.2.3`. The implementation deliberately uses no
 rendering library and adds no network service: `lore explorer` emits one
 self-contained semantic HTML artifact.
 
@@ -170,12 +170,37 @@ and static export determinism, and invalid when its snapshot key no longer
 matches. The implementation may retain it for convenience, but deleting it
 must reconstruct a usable default view solely from the snapshot.
 
+### Browser and scale qualification
+
+`lore-explorer-qualification/1` freezes the reproducible acceptance fixture,
+supported browser matrix, and performance budgets. The matrix is the Chromium,
+Firefox, and WebKit revisions bundled with exact `@playwright/test@1.62.1`.
+The fixture generator uses seed `lore-explorer-large-v1` to produce 5,000
+concepts, 1,000 tasks, and 10,000 authored edges. It is deterministic: two
+generations must yield byte-identical static artifacts.
+
+The artifact must remain at or below 32 MiB, reach its interactive initial view
+within 15 seconds, complete a search/render interaction within 2.5 seconds,
+mount at most 7,500 elements, and remain within 512 MiB. Chromium enforces the
+available used-JavaScript-heap measurement; Firefox and WebKit enforce a
+deterministic UTF-16 serialized-DOM proxy because those engines do not expose
+the non-standard heap API. Every engine also enforces the 750-record initial
+mount and the visible-versus-total announcement.
+
+The three-engine suite runs the stable interaction identifiers above, including
+keyboard selection and focus return, semantic list/live-region output,
+non-color relationship and health cues, forced colors, reduced motion, 320 CSS
+pixels at 200% zoom, empty/corrupt/stale states, zero network requests,
+credential/path exclusions, artifact reproducibility, and the frozen scale
+budgets. Browser downloads and reports stay under ignored `.lore/cache/`; the
+published artifact remains a single offline HTML file with no runtime package.
+
 ## Open questions
 
-- Browser compatibility, measured large-graph budgets, screen-reader matrix,
-  and offline package reproducibility remain qualification work for
-  `LCLI-283.2.3`; that task may tighten a limit only through an explicitly
-  versioned contract change.
+- Native screen-reader combinations beyond the executable semantic browser
+  contract remain manual release observations. A future expansion must name
+  exact assistive-technology/browser/OS combinations without weakening the
+  automated `SR-01` contract.
 - A loopback-only live refresh process remains optional and unimplemented. If
   added later, it must preserve the refresh boundary above; the static artifact
   remains the baseline and cannot acquire a write or arbitrary-query surface.
