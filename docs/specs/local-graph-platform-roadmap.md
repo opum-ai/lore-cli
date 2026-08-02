@@ -6,8 +6,8 @@ tags:
   - graph-explorer
   - roadmap
   - local-graph
-summary: Tracks the M6 LadybugDB index after verified command routing, with packaging gates next, followed by the M7 graph explorer and M8 indexed capabilities while local MCP remains on hold.
-timestamp: 2026-07-31T00:20:13Z
+summary: Tracks the completed M6 LadybugDB index and M7 explorer, followed by the explicit workspace identity gate and bounded M8 graph capabilities while local MCP remains on hold.
+timestamp: 2026-08-02T06:45:27.142Z
 ---
 
 # Local graph platform roadmap
@@ -147,7 +147,12 @@ The baseline deliverable is a read-only static artifact that performs no network
 
 `LCLI-283.3` begins only after the explorer ships, so new operations are developed against both a stable projection and a visible evidence surface.
 
-- `LCLI-283.3.1` defines explicit workspaces, cross-repository identities, worktree and branch behavior, conflicts, privacy, deletion, and rebuild boundaries.
+- `LCLI-283.3.1` freezes the executable
+  [`lore-workspace-manifest/1` and namespaced identity contract](local-workspace-identity-contract.md):
+  explicit selected members, locator-independent durable identity,
+  member-local authored links, explicit cross-repository endpoints,
+  deterministic lifecycle/conflict states, and disposable privacy-bounded
+  projections.
 - `LCLI-283.3.2` indexes selected repository exports into a workspace projection and extends graph, query, and context with deterministic repository scopes and merged evidence.
 - `LCLI-283.3.3` adds bounded path and impact operations with edge allowlists, direction, depth, limits, completeness, truncation, and explainable edge chains.
 - `LCLI-283.3.4` adds explicit snapshot comparison, changed-since, relationship delta, retention, deletion, provenance, CLI, and explorer workflows.
@@ -158,15 +163,17 @@ M8 public contracts remain bounded Lore operations. LadybugDB, Cypher, physical 
 
 Start a new session from clean context in this order:
 
-1. Preserve the completed and landing-reviewed `LCLI-283.1.3` history, and
-   publish only through the normal protected branch/PR workflow when separately
-   authorized.
-2. Confirm `LCLI-283.1.1`, `LCLI-283.1.2`, `LCLI-283.1.3`, and `LCLI-284`
-   remain Done; do not advance parent `LCLI-283.1`.
-3. Complete `LCLI-283.1.5` to select and qualify the exact supported LadybugDB
-   version, then finish `LCLI-283.1.4` before accepting M6.
-4. `LCLI-283.2.1` may proceed from the frozen contract, but do not begin
-   `LCLI-283.2.2` until M6 is accepted. M8 and local MCP remain out of scope.
+1. Preserve the completed and integrated M6 (`LCLI-283.1`) and M7
+   (`LCLI-283.2`) evidence; do not reopen their frozen projection, qualification,
+   explorer, or browser contracts while advancing M8.
+2. Complete and integrate `LCLI-283.3.1` before workspace implementation. Its
+   executable manifest/identity contract is the phase gate for every later M8
+   task.
+3. Execute `LCLI-283.3.2`, `LCLI-283.3.3`, and `LCLI-283.3.4` strictly through
+   their formal dependency chain. Recompute source-file conflicts and objective
+   evidence before each task.
+4. Keep local MCP (`LCLI-42`) on hold; it is not an M8 dependency or an
+   alternative public workspace transport.
 
 ### Held work
 
@@ -181,6 +188,10 @@ These are stage decisions, not permission to reorder the roadmap:
 - M6 must validate the initial cold-build, warm-open, repeated-query, memory, disk, and small-repository regression thresholds from versioned benchmark baselines; changes to the accepted starting envelope require recorded evidence.
 - M6 must confirm the cross-platform native package and compiled-binary strategy before selecting mandatory versus optional installation behavior.
 - M7 must select the rendering library and static packaging form only after measuring deterministic layout, accessibility, artifact size, and large-graph behavior.
-- M8 must set snapshot retention defaults and workspace portability rules before persisting more than the current verified projection.
+- M8 snapshot retention defaults remain for `LCLI-283.3.4`. Workspace
+  portability is now frozen by `LCLI-283.3.1`: stable workspace/member IDs are
+  portable, relative locators are portable with their layout, absolute locators
+  remain local control-plane data, and no locator enters durable identity or a
+  projection.
 
 The accepted architecture boundary is recorded in [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md).

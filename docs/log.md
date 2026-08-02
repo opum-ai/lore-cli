@@ -59,6 +59,8 @@
 - 2026-08-01T19:19:30-05:00 a827f7cc7972348377f1edfd2bcc618e75d99c8e feat: add static graph explorer
 - 2026-08-01T19:22:13-05:00 235b1166321bbfa38fa2658bf68a58ae2fd5fb7f docs: refresh lore log for graph explorer
 - 2026-08-01T20:18:24-05:00 21ca7a90ffa24a80debc7ef8ccc53816a492cdb6 feat: harden graph explorer qualification
+- 2026-08-01T20:18:40-05:00 e1975086ea476b29cb40e5cc79a07d5d51827c49 docs: refresh lore log for explorer qualification
+- 2026-08-02T03:42:55-05:00 38797b5e4abaaa432d65d446888515a3cb16b0e0 feat: freeze local workspace identity contract
 
 ## docs/.obsidian
 
@@ -261,6 +263,7 @@
 - 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
 - 2026-08-01T19:19:30-05:00 a827f7cc7972348377f1edfd2bcc618e75d99c8e feat: add static graph explorer
 - 2026-08-01T20:18:24-05:00 21ca7a90ffa24a80debc7ef8ccc53816a492cdb6 feat: harden graph explorer qualification
+- 2026-08-02T03:42:55-05:00 38797b5e4abaaa432d65d446888515a3cb16b0e0 feat: freeze local workspace identity contract
 
 ## docs/stories
 
