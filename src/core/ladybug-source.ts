@@ -110,6 +110,10 @@ export interface ProjectionEdgeRecord extends ProjectionRecord {
   readonly target: string;
   readonly ordinal: number;
   readonly dangling: boolean;
+  /** Workspace-only endpoint metadata; absent repository-local records retain M6 defaults. */
+  readonly workspaceFromKind?: "concept" | "task";
+  readonly workspaceToKind?: "concept" | "task";
+  readonly workspaceLinkKind?: string;
 }
 
 export interface LadybugProjectionSource {
@@ -523,8 +527,14 @@ function validateProjection(projection: Projection): {
   const conceptKeys = new Set(concepts.map((record) => record.key));
   const taskKeys = new Set(tasks.map((record) => record.key));
   for (const edge of authoredEdges) {
-    if (!conceptKeys.has(edge.from)) invalidProjection(`edge ${edge.key} has no concept source`);
-    const targetExists = edge.to !== null && (edge.kind === "task" ? taskKeys.has(edge.to) : conceptKeys.has(edge.to));
+    const sourceKeys = edge.workspaceFromKind === "task" ? taskKeys : conceptKeys;
+    const targetKeys =
+      edge.workspaceToKind === "task" || (edge.workspaceToKind === undefined && edge.kind === "task")
+        ? taskKeys
+        : conceptKeys;
+    if (!sourceKeys.has(edge.from))
+      invalidProjection(`edge ${edge.key} has no ${edge.workspaceFromKind ?? "concept"} source`);
+    const targetExists = edge.to !== null && targetKeys.has(edge.to);
     if (edge.dangling !== (edge.to === null) || (edge.to !== null && !targetExists)) {
       invalidProjection(`edge ${edge.key} has inconsistent target/dangling metadata`);
     }
@@ -598,7 +608,14 @@ function isEdge(record: ProjectionRecord): record is ProjectionEdgeRecord {
     typeof record.kind === "string" &&
     typeof record.target === "string" &&
     Number.isSafeInteger(record.ordinal) &&
-    typeof record.dangling === "boolean"
+    typeof record.dangling === "boolean" &&
+    (record.workspaceFromKind === undefined ||
+      record.workspaceFromKind === "concept" ||
+      record.workspaceFromKind === "task") &&
+    (record.workspaceToKind === undefined ||
+      record.workspaceToKind === "concept" ||
+      record.workspaceToKind === "task") &&
+    (record.workspaceLinkKind === undefined || typeof record.workspaceLinkKind === "string")
   );
 }
 

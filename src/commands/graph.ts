@@ -38,11 +38,13 @@ import { idFromPath } from "../core/concept";
 import { buildGraphExport, type GraphExport, toDot } from "../core/graph";
 import { loadProfile } from "../core/profile";
 import { subgraph } from "../core/query";
-import type { RetrievalGraphLoader } from "../core/retrieval";
+import { loadRetrievalGraph, type RetrievalGraphLoader } from "../core/retrieval";
 import { DOCS_DIR } from "../core/scaffold";
+import { parseQualifiedWorkspaceId, qualifyWorkspaceId } from "../core/workspace-contract";
+import type { WorkspaceRetrievalContext, WorkspaceRetrievalSelection } from "../core/workspace-retrieval";
 import { EXIT_OK, LoreError, singleLine, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { assertFlagAtMostOnce, parseCommandArgs, singleOptionValue } from "./args";
+import { assertFlagAtMostOnce, parseCommandArgs, singleOptionValue, workspaceSelection } from "./args";
 
 /** Options for {@link runGraph}; `root` and the streams are injectable for tests. */
 export interface GraphOptions {
@@ -70,6 +72,7 @@ interface GraphArgs {
   dot: boolean;
   /** The hop radius (`--depth`); `undefined` means unbounded. Requires `id`. */
   depth?: number;
+  readonly workspace?: WorkspaceRetrievalSelection;
 }
 
 /**
@@ -85,16 +88,20 @@ export function runGraph(options: GraphOptions): number | Promise<number> {
     throw usage("--dot cannot be combined with --json", "DOT has no JSON envelope; pass one of --dot or --json");
   }
   const advisories = new WarningCollector();
-  if (options.retrieval !== undefined) {
-    return options
-      .retrieval({ root: options.root, warnings: advisories, adapter: options.adapter })
-      .then(async (loaded) => {
-        try {
-          return finishGraph(options, parsed, loaded.graph, advisories);
-        } finally {
-          await loaded.dispose?.();
-        }
-      });
+  const retrieval = options.retrieval ?? (parsed.workspace !== undefined ? loadRetrievalGraph : undefined);
+  if (retrieval !== undefined) {
+    return retrieval({
+      root: options.root,
+      warnings: advisories,
+      adapter: options.adapter,
+      ...(parsed.workspace !== undefined ? { workspace: parsed.workspace } : {}),
+    }).then(async (loaded) => {
+      try {
+        return finishGraph(options, parsed, loaded.graph, advisories, loaded.workspace);
+      } finally {
+        await loaded.dispose?.();
+      }
+    });
   }
   const profile = loadProfile({ root: options.root });
   const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, profile });
@@ -106,6 +113,7 @@ function finishGraph(
   parsed: GraphArgs,
   graph: ReturnType<typeof loadBundle>,
   advisories: WarningCollector,
+  workspace?: WorkspaceRetrievalContext,
 ): number {
   // Flush load warnings before the subgraph lookup, which throws not_found for an
   // unknown root — otherwise an advisory that explains *why* a file is not a
@@ -114,10 +122,15 @@ function finishGraph(
 
   let data: GraphExport;
   if (parsed.id === undefined) {
-    data = buildGraphExport(graph);
+    data = buildGraphExport(graph, workspaceOptions(workspace));
   } else {
     const include = subgraph(graph, parsed.id, parsed.depth ?? Number.POSITIVE_INFINITY);
-    data = buildGraphExport(graph, { include, root: parsed.id, depth: parsed.depth });
+    data = buildGraphExport(graph, {
+      include,
+      root: parsed.id,
+      depth: parsed.depth,
+      ...workspaceOptions(workspace, include),
+    });
   }
 
   emit(graphRenderable(data, parsed.dot), options.output, options.stdout);
@@ -137,6 +150,7 @@ function finishGraph(
  */
 function parseGraphArgs(args: readonly string[]): GraphArgs {
   const parsed = parseCommandArgs(args, "graph");
+  const workspace = workspaceSelection(parsed);
   const positionals = parsed.positionals;
   assertFlagAtMostOnce(parsed, "dot");
   const rawDepth = singleOptionValue(parsed, "depth");
@@ -152,7 +166,39 @@ function parseGraphArgs(args: readonly string[]): GraphArgs {
       "give the concept to bound the radius from, e.g. `lore graph <id> --depth 2`",
     );
   }
-  return { id: raw !== undefined ? idFromPath(raw) : undefined, dot: parsed.flags.has("dot"), depth };
+  return {
+    id: raw !== undefined ? normalizeGraphId(raw, workspace !== undefined) : undefined,
+    dot: parsed.flags.has("dot"),
+    depth,
+    workspace,
+  };
+}
+
+function normalizeGraphId(raw: string, workspace: boolean): string {
+  if (!workspace) return idFromPath(raw);
+  try {
+    const parsed = parseQualifiedWorkspaceId(raw);
+    return qualifyWorkspaceId(parsed.memberId, idFromPath(parsed.sourceId));
+  } catch {
+    throw usage(`invalid workspace concept id "${raw}"`, "use the unambiguous <member-id>::<source-id> form");
+  }
+}
+
+function workspaceOptions(workspace?: WorkspaceRetrievalContext, include?: ReadonlySet<string>) {
+  if (workspace === undefined) return {};
+  const links =
+    include === undefined
+      ? workspace.links
+      : workspace.links.filter(
+          (link) =>
+            include.has(qualifyWorkspaceId(link.from.memberId, link.from.sourceId)) &&
+            include.has(qualifyWorkspaceId(link.to.memberId, link.to.sourceId)),
+        );
+  return {
+    workspace: workspace.scope,
+    provenanceById: workspace.provenanceById,
+    workspaceLinks: links,
+  };
 }
 
 /** Parse a `--depth` value as a non-negative, safe integer (`0` = root only). */
@@ -218,6 +264,9 @@ function renderText(data: GraphExport): string {
   const scope =
     root !== undefined ? ` rooted at ${root}${data.depth !== undefined ? ` (depth ${data.depth})` : ""}` : "";
   const lines = [
+    ...(data.workspace !== undefined
+      ? [`workspace: ${singleLine(data.workspace.workspaceId)} (${data.workspace.repositories.length} repositories)`]
+      : []),
     `${data.nodes.length} ${plural(data.nodes.length, "concept")}, ${data.edges.length} ${plural(data.edges.length, "edge")}, ~${data.tokenEstimate} tokens (chars/4)${scope}`,
   ];
   for (const node of data.nodes) {

@@ -18,6 +18,8 @@
 
 import { type BundleGraph, type EdgeKind, frontmatterScalar } from "./bundle";
 import { compareCodeUnits } from "./order";
+import type { WorkspaceRecordProvenance, WorkspaceResultScope } from "./workspace-contract";
+import type { WorkspaceProjectedLink } from "./workspace-projection";
 
 /** One concept in the exported graph. */
 export interface GraphNode {
@@ -33,6 +35,8 @@ export interface GraphNode {
   readonly title?: string;
   /** This concept's chars/4 token estimate over its canonical serialized bytes. */
   readonly tokenEstimate: number;
+  /** Complete locator-free provenance in explicit workspace mode. */
+  readonly provenance?: WorkspaceRecordProvenance;
 }
 
 /** One directed reference in the exported graph (mirrors a {@link Edge}, with `dangling` made explicit). */
@@ -61,6 +65,10 @@ export interface GraphExport {
   readonly edges: readonly GraphEdge[];
   /** The summed chars/4 token estimate over the included nodes (labeled a heuristic, not a tokenizer). */
   readonly tokenEstimate: number;
+  /** Explicit selected workspace scope; absent for repository-local output. */
+  readonly workspace?: WorkspaceResultScope;
+  /** Exact manifest-authored cross-repository links in workspace mode. */
+  readonly workspaceLinks?: readonly WorkspaceProjectedLink[];
 }
 
 /** Options for {@link buildGraphExport}. */
@@ -74,6 +82,9 @@ export interface GraphExportOptions {
   readonly root?: string;
   /** The hop radius, recorded on the result when the subgraph was bounded. */
   readonly depth?: number;
+  readonly workspace?: WorkspaceResultScope;
+  readonly provenanceById?: ReadonlyMap<string, WorkspaceRecordProvenance>;
+  readonly workspaceLinks?: readonly WorkspaceProjectedLink[];
 }
 
 /**
@@ -113,6 +124,7 @@ export function buildGraphExport(graph: BundleGraph, options: GraphExportOptions
       type: concept.type,
       ...(title !== undefined ? { title } : {}),
       tokenEstimate: tokens,
+      ...(options.provenanceById?.get(id) !== undefined ? { provenance: options.provenanceById.get(id) } : {}),
     });
   }
 
@@ -135,6 +147,8 @@ export function buildGraphExport(graph: BundleGraph, options: GraphExportOptions
     nodes,
     edges,
     tokenEstimate,
+    ...(options.workspace !== undefined ? { workspace: options.workspace } : {}),
+    ...(options.workspaceLinks !== undefined ? { workspaceLinks: options.workspaceLinks } : {}),
   };
 }
 

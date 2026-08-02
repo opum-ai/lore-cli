@@ -153,7 +153,12 @@ The baseline deliverable is a read-only static artifact that performs no network
   member-local authored links, explicit cross-repository endpoints,
   deterministic lifecycle/conflict states, and disposable privacy-bounded
   projections.
-- `LCLI-283.3.2` indexes selected repository exports into a workspace projection and extends graph, query, and context with deterministic repository scopes and merged evidence.
+- `LCLI-283.3.2` implements
+  [workspace indexing and retrieval](workspace-indexing-and-retrieval.md):
+  explicit manifest and repository-subset selection, qualified public IDs,
+  current-only verified workspace generations, deterministic repository scope,
+  exact manifest links, and merged locator-free evidence for graph, query, and
+  context.
 - `LCLI-283.3.3` adds bounded path and impact operations with edge allowlists, direction, depth, limits, completeness, truncation, and explainable edge chains.
 - `LCLI-283.3.4` adds explicit snapshot comparison, changed-since, relationship delta, retention, deletion, provenance, CLI, and explorer workflows.
 

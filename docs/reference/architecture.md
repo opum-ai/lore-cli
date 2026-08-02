@@ -368,6 +368,31 @@ native packaging qualification remains `LCLI-283.1.4` scope. See
 [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md) and
 the [local graph roadmap](../specs/local-graph-platform-roadmap.md).
 
+### M8 workspace read path
+
+Workspace retrieval is an additive branch before the same graph, query, and
+context shapers. A caller must pass `--workspace <manifest>`; Lore does not
+scan for manifests or repositories. `workspace-source.ts` resolves that real,
+non-symlink JSON file and each explicitly named real repository directory,
+checks optional expected Git refs, and loads every member through the M6
+validated export boundary.
+
+`workspace-projection.ts` applies the frozen workspace identity contract to
+concept, task, edge, bundle, commit, export, and source facts. Public IDs become
+`<member-id>::<source-id>`, repository-local links remain local, and only exact
+manifest endpoints produce cross-repository relationships. The resulting
+complete source is reconciled under
+`.lore/cache/workspaces/1/<workspace-key>/`; successful replacement keeps only
+the current immutable generation.
+
+`workspace-retrieval.ts` returns either a verified read-only Ladybug reader or
+the deterministic reference projection before output. Repeatable repository
+selectors filter graph topology, exact links, scope, and provenance to the
+requested members. Public results include locator-free workspace scope and
+record provenance; no locator, expected ref, native path, physical identifier,
+or query language crosses the command boundary. See
+[Workspace indexing and retrieval](../specs/workspace-indexing-and-retrieval.md).
+
 ### `lore rename / supersede / replace`
 Mutation commands continue to load `bundle.ts` directly. `rename` and
 `supersede` rewrite **all inbound links and frontmatter refs** through the graph and set

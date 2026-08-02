@@ -10,6 +10,7 @@ import { posix } from "node:path";
 import { Command, CommanderError, Option } from "commander";
 import { findManifestCommand, type ManifestFlag } from "../core/manifest";
 import { RESERVED_STEMS } from "../core/scaffold";
+import type { WorkspaceRetrievalSelection } from "../core/workspace-retrieval";
 import { LoreError } from "../errors";
 
 /** Commander parse failure enriched by the local subcommand that raised it. */
@@ -163,6 +164,27 @@ export function assertFlagAtMostOnce(parsed: ParsedArgs, name: string): void {
   if ((parsed.counts.get(name) ?? 0) > 1) {
     throw usage(`--${name} given more than once`, `pass --${name} at most once`);
   }
+}
+
+/** Parse the shared explicit workspace/repository selection flags. */
+export function workspaceSelection(parsed: ParsedArgs): WorkspaceRetrievalSelection | undefined {
+  const rawManifest = singleOptionValue(parsed, "workspace");
+  const memberIds = optionValues(parsed, "repository").map((value) => value.trim());
+  if (rawManifest === "" || rawManifest?.trim() === "") {
+    throw usage("--workspace needs a value", "pass an explicit lore-workspace-manifest/1 JSON file");
+  }
+  if (memberIds.some((memberId) => memberId === "")) {
+    throw usage("--repository needs a value", "pass a member id declared by the explicit workspace manifest");
+  }
+  if (rawManifest === undefined) {
+    if (memberIds.length > 0)
+      throw usage("--repository requires --workspace", "select an explicit workspace manifest first");
+    return undefined;
+  }
+  if (new Set(memberIds).size !== memberIds.length) {
+    throw usage("--repository values must be unique", "pass each selected workspace member at most once");
+  }
+  return { manifestPath: rawManifest.trim(), memberIds };
 }
 
 /** A `usage` {@link LoreError} (exit `2`) with an actionable hint. */

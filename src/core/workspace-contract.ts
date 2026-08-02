@@ -167,6 +167,56 @@ export interface WorkspaceRecordIdentity {
   readonly sourcePath: string | null;
 }
 
+/** Public, locator-free scope attached to every workspace command result. */
+export interface WorkspaceResultScope {
+  readonly schemaVersion: "lore-workspace-result-scope/1";
+  readonly workspaceId: string;
+  readonly workspaceKey: string;
+  readonly snapshotKey: string;
+  readonly repositories: readonly WorkspaceResultRepository[];
+}
+
+/** One selected repository in a workspace command result. */
+export interface WorkspaceResultRepository {
+  readonly memberId: string;
+  readonly repositoryKey: string;
+  readonly repositoryScopeKey: string;
+  readonly bundleKey: string;
+  readonly bundleId: string;
+  readonly commitKey: string | null;
+  readonly gitCommit: string | null;
+  readonly exportKey: string;
+  readonly exportDigest: string;
+}
+
+/** Complete namespaced and original provenance for one public workspace record. */
+export interface WorkspaceRecordProvenance extends WorkspaceResultRepository {
+  readonly recordKind: WorkspaceRecordKind;
+  readonly recordKey: string;
+  readonly sourceRecordKey: string;
+  readonly sourceKey: string | null;
+  readonly sourcePath: string | null;
+  readonly sourceId: string;
+}
+
+/** Qualify a repository-local identity for the public workspace id space. */
+export function qualifyWorkspaceId(memberId: string, sourceId: string): string {
+  stableIdSchema.parse(memberId);
+  if (sourceId.length === 0 || sourceId.includes("\0")) throw contractError("workspace source ids must be non-empty");
+  return `${memberId}::${sourceId}`;
+}
+
+/** Split a public workspace id without guessing across repository members. */
+export function parseQualifiedWorkspaceId(value: string): { memberId: string; sourceId: string } {
+  const separator = value.indexOf("::");
+  if (separator <= 0 || separator === value.length - 2) {
+    throw contractError("workspace ids must use <member-id>::<source-id>");
+  }
+  const memberId = value.slice(0, separator);
+  stableIdSchema.parse(memberId);
+  return { memberId, sourceId: value.slice(separator + 2) };
+}
+
 const workspaceRepositoryIdentitySchema = z
   .object({
     memberId: stableIdSchema,

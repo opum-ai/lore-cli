@@ -25,6 +25,7 @@ import { singleLine } from "../errors";
 import { type BundleGraph, conceptNotInBundle, type Edge, frontmatterScalar } from "./bundle";
 import type { Concept } from "./concept";
 import { compareCodeUnits } from "./order";
+import type { WorkspaceRecordProvenance, WorkspaceResultScope } from "./workspace-contract";
 
 /**
  * Collect the ids of every concept within `maxDepth` link-hops of `rootId`,
@@ -167,6 +168,8 @@ export interface QueryHit {
    * **filters-only** query (no text to rank by) — the hits are then ordered by id.
    */
   readonly score: number;
+  /** Complete locator-free provenance in explicit workspace mode. */
+  readonly provenance?: WorkspaceRecordProvenance;
 }
 
 /** The `query.results` payload: the ranked hits (already capped) plus the bounded-output accounting. */
@@ -181,6 +184,8 @@ export interface QueryResult {
   readonly shown: number;
   /** `true` when the cap dropped matches (`shown < total`) — an honest bounded-output signal, never a silent cut. */
   readonly truncated: boolean;
+  /** Explicit selected workspace scope; absent for repository-local output. */
+  readonly workspace?: WorkspaceResultScope;
 }
 
 /** The default `--limit` when none is given — a bounded result so a broad query never floods stdout (cli-surface §query). */

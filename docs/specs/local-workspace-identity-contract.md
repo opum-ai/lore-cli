@@ -160,9 +160,11 @@ inspection command requests them.
 
 ## Open questions
 
-- `LCLI-283.3.2` will select the CLI commands and manifest discovery syntax,
-  implement repository resolution, and build the first workspace projection;
-  it may not weaken this explicit-selection or identity boundary.
+- `LCLI-283.3.2` implements explicit `--workspace <manifest>` selection for
+  `graph`, `query`, and `context`, with repeatable `--repository <member-id>`
+  subsets and no manifest discovery. Its first current-only projection and
+  public provenance contract are specified in
+  [Workspace indexing and retrieval](workspace-indexing-and-retrieval.md).
 - `LCLI-283.3.3` will define bounded traversal over these namespaced facts. It
   cannot infer cross-repository links or expose arbitrary Cypher.
 - `LCLI-283.3.4` will set bounded snapshot retention defaults and comparison

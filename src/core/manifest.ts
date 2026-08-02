@@ -397,6 +397,8 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     flags: [
       { name: "dot", takesValue: false, summary: "Emit Graphviz DOT (mutually exclusive with --json)" },
       { name: "depth", takesValue: true, summary: "Bound the subgraph radius" },
+      { name: "workspace", takesValue: true, summary: "Select an explicit workspace manifest" },
+      { name: "repository", takesValue: true, repeatable: true, summary: "Select a workspace member" },
     ],
     json: true,
     kind: "graph.export",
@@ -442,6 +444,8 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
       { name: "status", takesValue: true, summary: "Filter by status" },
       { name: "limit", takesValue: true, summary: "Cap the number of hits" },
       { name: "field", takesValue: true, repeatable: true, summary: "Arbitrary frontmatter filter (k=v)" },
+      { name: "workspace", takesValue: true, summary: "Select an explicit workspace manifest" },
+      { name: "repository", takesValue: true, repeatable: true, summary: "Select a workspace member" },
     ],
     json: true,
     kind: "query.results",
@@ -455,6 +459,8 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     flags: [
       { name: "max-tokens", takesValue: true, summary: "Token budget (labeled chars/4 estimate)" },
       { name: "depth", takesValue: true, summary: "Neighbor radius (default 1)" },
+      { name: "workspace", takesValue: true, summary: "Select an explicit workspace manifest" },
+      { name: "repository", takesValue: true, repeatable: true, summary: "Select a workspace member" },
     ],
     json: true,
     kind: "context.export",
