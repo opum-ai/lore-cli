@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-03 22:22'
-updated_date: '2026-08-03 22:28'
+updated_date: '2026-08-03 22:32'
 labels:
   - repo-admin
   - repository-migration
@@ -66,4 +66,6 @@ Move the private Lore CLI GitHub repository from salient-data/lore-cli to opum-a
 
 <!-- SECTION:NOTES:BEGIN -->
 2026-08-03 pre-transfer grounding: clean dev at d6dd5f5b4eb1db59742af71da0035bf6e920865a before task creation; source GitHub repository salient-data/lore-cli is private, unarchived, default branch dev, and the authenticated identity has repository admin plus active opum-ai organization admin membership. Target opum-ai/lore-cli returned 404, so the name is available. Pre-transfer controls: three active workflows; release Environment exists with zero protection rules, no deployment policy, and administrator bypass enabled; one active repository branch ruleset protects dev while main is unprotected; one collaborator, zero teams; Actions enabled with all actions allowed and no SHA-pinning requirement; zero Actions secrets, zero hooks, zero releases, and zero tags. Local inventory found current operational references in six package manifests, README, CHANGELOG, ADR-0001, tech-stack, release-publishing, and one repository-slug test. Backlog historical records also contain old identities and will remain provenance unless a live task carries an operational instruction. No transfer, source/docs edit, Lore coupling commit, push, PR, merge, release, or publication has occurred yet.
+
+2026-08-03 authorized transfer completed: GitHub now reports opum-ai/lore-cli as the canonical private repository with dev as default, and the former salient-data/lore-cli API route redirects to the new full name. Local origin now uses git@github.com:opum-ai/lore-cli.git and fetched successfully. Post-transfer comparison matched the entire pre-transfer snapshot: three active workflows; unchanged unprotected release Environment; repository ruleset 19698059 still active on dev; dev protected and main unprotected; one collaborator and zero teams; Actions enabled with all actions allowed and organization-level private-action access; zero Actions secrets, hooks, tags, and releases. No control loss or publication occurred.
 <!-- SECTION:NOTES:END -->
