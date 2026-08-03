@@ -12,7 +12,8 @@ timestamp: 2026-08-03T16:05:16.605Z
 
 # Lore CLI documentation ownership
 
-Lore CLI owns its implementation, package, command behavior, tests,
+The canonical owner repository is `opum-ai/lore-cli`. Lore CLI owns its
+implementation, package, command behavior, tests,
 publication workflow, and immutable component release evidence. It consumes
 Lore-wide and product-family policy from their owner repositories instead of
 copying mutable cross-repository contracts.
@@ -21,7 +22,7 @@ copying mutable cross-repository contracts.
 
 | Concern | Sole owner | Local treatment |
 | --- | --- | --- |
-| Lore CLI command, package, tests, local graph, and release artifacts | This repository | ADRs, Specs, References, Runbooks, Stories, and live Backlog evidence |
+| Lore CLI command, package, tests, local graph, and release artifacts | `opum-ai/lore-cli` (this repository) | ADRs, Specs, References, Runbooks, Stories, and live Backlog evidence |
 | Lore-wide strategy, repository coordination, and Quest release ordering | `salient-data/lore-doc` | Link to the owner record; do not reproduce its mutable gate |
 | Product-family vocabulary, Opum SaaS, and commercial boundaries | `salient-data/opum-doc` | Consume the ownership map and audit; do not promote component plans into product policy |
 | Quest product and execution-graph semantics | `salient-data/quest-doc` | Link when Lore integration requires it; do not maintain a second Quest contract |

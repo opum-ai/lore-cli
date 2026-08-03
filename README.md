@@ -99,12 +99,12 @@ backlog.md`; see the [runbook](docs/runbooks/backlog-json-patch.md).
 
 ### Private-repository CI before npm publication
 
-Repositories inside the `salient-data` organization can run strict Lore gates
+Repositories inside the `opum-ai` organization can run strict Lore gates
 without a cross-repository PAT or a public npm release:
 
 ```yaml
 - uses: actions/checkout@v6
-- uses: salient-data/lore-cli/.github/actions/strict-check@<full-commit-sha>
+- uses: opum-ai/lore-cli/.github/actions/strict-check@<full-commit-sha>
 ```
 
 The private composite action installs Bun 1.2.23 and this action revision's

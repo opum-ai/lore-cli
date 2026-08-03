@@ -23,6 +23,7 @@ released. It makes repo-resident markdown a first-class, agent-readable
 bundle, couples that bundle to [Backlog.md](runbooks/backlog-json-patch.md)
 tasks, and serves it to both humans and coding agents through a deterministic,
 non-interactive CLI. The repository is the single source of truth.
+Its canonical GitHub location is [`opum-ai/lore-cli`](https://github.com/opum-ai/lore-cli).
 
 lore is deliberately **thin** and **zero-config**: it does not reimplement
 Backlog.md, Confluence, or the documentation consumers (MkDocs, Docusaurus,

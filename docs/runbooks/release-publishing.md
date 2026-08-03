@@ -86,7 +86,7 @@ be configured.
   prevent-self-review must remain disabled to avoid deadlocking release
   dispatches; record that accepted weaker control.
 - [ ] **Configure npm Trusted Publishing for all six now-existing packages**,
-  using repository `jeremy-newhouse/lore`, workflow `release.yml`, Environment
+  using repository `opum-ai/lore-cli`, workflow `release.yml`, Environment
   `release`, and allowed action `npm publish`. Future releases use
   `publish: true`; `0.1.0` does not.
 - [ ] **Post-publish smoke install**: from a machine that has never installed
@@ -169,12 +169,12 @@ LCLI-196 and LCLI-257):
   past its rules, PR requirement included. This repo's own
   `require-docker-e2e-on-dev` ruleset, for example, carries a
   `RepositoryRole` id `5` (admin) bypass actor with `bypass_mode: "always"`
-  (`gh api repos/jeremy-newhouse/lore/rulesets/19698059`) — so any
+  (`gh api repos/opum-ai/lore-cli/rulesets/19698059`) — so any
   admin-level actor bypasses it outright regardless of what its rules say;
   check a ruleset's bypass list, not just its rules, before treating it as a
   substitute for required reviewers. **In this repo, today, that
   precondition does not hold**: `main` has no branch protection (`gh api
-  repos/jeremy-newhouse/lore/branches/main/protection` returns 404 "Branch
+  repos/opum-ai/lore-cli/branches/main/protection` returns 404 "Branch
   not protected") and the repo's only ruleset (`require-docker-e2e-on-dev`)
   targets `refs/heads/dev` only and enforces a required status check, not
   PR-only pushes — so a deployment-branch policy restricting to `main` would

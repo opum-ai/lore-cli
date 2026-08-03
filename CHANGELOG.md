@@ -1260,4 +1260,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a predicate-driven `walkFiles`; and `normalizeLink` now rejects absolute operands and computes a
   cwd-independent relative link.
 
-[Unreleased]: https://github.com/jeremy-newhouse/lore/commits/dev
+[Unreleased]: https://github.com/opum-ai/lore-cli/commits/dev

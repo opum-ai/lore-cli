@@ -80,6 +80,9 @@
 - 2026-08-03T11:30:36-05:00 389c8a071e8d9398e666b6c9417fc26e15eaa57a docs: finalize campaign tracker history
 - 2026-08-03T12:17:10-05:00 5d466d3f9a9174231f08b402a0a1d2d40b4c5288 test: align handover contract with current runbook
 - 2026-08-03T12:25:49-05:00 1deea8bcac5e36bfcb1bcb2e061da23312fc3efa docs: settle LCLI-293 remote delivery
+- 2026-08-03T13:29:13-05:00 c8fd3e385941f14596b17c615ab729f5d3cac374 docs: record completed campaign cleanup
+- 2026-08-03T17:40:37-05:00 66498ab3a8055eb27b4e8e62350f44a477328b84 chore: transfer repository ownership to opum-ai
+- 2026-08-03T17:48:20-05:00 b0bc1c46bf1766884093b5eb37734f49922a45a4 docs: close repository transfer task
 
 ## docs/.obsidian
 
@@ -122,6 +125,7 @@
 - 2026-08-01T06:12:24-05:00 36a5cac3f43b78826dec41cf37e1e730a04c3487 perf: accelerate Ladybug indexed retrieval
 - 2026-08-01T06:44:02-05:00 9b6562cd5e4c3070dfed0dbead4dc1e50756ad2b perf: reduce Ladybug cold-build overhead
 - 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
+- 2026-08-03T17:40:37-05:00 66498ab3a8055eb27b4e8e62350f44a477328b84 chore: transfer repository ownership to opum-ai
 
 ## docs/reference
 
@@ -200,6 +204,7 @@
 - 2026-08-02T19:15:38-05:00 242d43ee256a7ba6f54a5ae702daabd41ebea878 chore(LCLI-253): migrate off the pinned-commit Backlog.md build to the published release
 - 2026-08-03T08:39:40-05:00 a98014b4530903e2681c73c6762aa1e70e8aa67c feat: add snapshot change and provenance workflows
 - 2026-08-03T11:24:52-05:00 f90527bb28c07098d30ed91f9480d05fdaf4dc29 docs: reconcile release truth and Story ownership
+- 2026-08-03T17:40:37-05:00 66498ab3a8055eb27b4e8e62350f44a477328b84 chore: transfer repository ownership to opum-ai
 
 ## docs/runbooks
 
@@ -262,6 +267,7 @@
 - 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
 - 2026-08-02T19:15:38-05:00 242d43ee256a7ba6f54a5ae702daabd41ebea878 chore(LCLI-253): migrate off the pinned-commit Backlog.md build to the published release
 - 2026-08-03T11:24:52-05:00 f90527bb28c07098d30ed91f9480d05fdaf4dc29 docs: reconcile release truth and Story ownership
+- 2026-08-03T17:40:37-05:00 66498ab3a8055eb27b4e8e62350f44a477328b84 chore: transfer repository ownership to opum-ai
 
 ## docs/specs
 
@@ -299,3 +305,5 @@
 - 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
 - 2026-08-03T11:24:52-05:00 f90527bb28c07098d30ed91f9480d05fdaf4dc29 docs: reconcile release truth and Story ownership
 - 2026-08-03T11:27:06-05:00 6fa326042c4c8945260f648056a28a1bdb3a7fec docs: record LCLI-293 settlement
+- 2026-08-03T17:40:37-05:00 66498ab3a8055eb27b4e8e62350f44a477328b84 chore: transfer repository ownership to opum-ai
+- 2026-08-03T17:48:20-05:00 b0bc1c46bf1766884093b5eb37734f49922a45a4 docs: close repository transfer task

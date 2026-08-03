@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-28 20:14'
-updated_date: '2026-08-03 16:10'
+updated_date: '2026-08-03 22:32'
 labels:
   - release
   - repo-admin
@@ -43,4 +43,6 @@ GitHub returned HTTP 422 when adding jeremy-newhouse as a required reviewer beca
 
 <!-- SECTION:NOTES:BEGIN -->
 2026-07-27 live audit: GET /repos/jeremy-newhouse/lore/environments reports release environment id 18793755127 with protection_rules: [], deployment_branch_policy: null, and can_admins_bypass: true. The prior statement that no unprotected environment was created was inaccurate; the environment exists but provides no gate.
+
+2026-08-03 repository ownership update: GitHub transferred the repository to the canonical location opum-ai/lore-cli. The earlier audit endpoint under the former owner is retained above as historical evidence and now redirects to the transferred repository. All current Environment, ruleset, branch-protection, Actions, and npm Trusted Publisher instructions must use opum-ai/lore-cli. Post-transfer verification found the release Environment unchanged: zero protection rules, no deployment policy, and administrator bypass enabled, so this blocker remains open.
 <!-- SECTION:NOTES:END -->

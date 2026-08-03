@@ -28,8 +28,9 @@ provenance records and must not be executed.
    dependencies, acceptance criteria, plans, and notes as authoritative.
 4. Follow the owning Story from [Stories](../stories/index.md), and use
    `lore tasks <story>` to reconcile its rollup before acting.
-5. Ground the repository with the current branch, exact HEAD, status, local
-   ahead/behind state, and registered worktrees. Preserve unrelated changes.
+5. Ground the canonical `opum-ai/lore-cli` repository with the current branch,
+   exact HEAD, status, local ahead/behind state, remote URL, and registered
+   worktrees. Preserve unrelated changes.
 6. For release work, read [Lore CLI release truth](../reference/lore-cli-release-truth.md)
    before the [Release publishing](release-publishing.md) procedure. Reverify
    package versions, immutable tags and artifacts, registry availability, and

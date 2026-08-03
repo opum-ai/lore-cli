@@ -12,6 +12,7 @@ status: done
 tasks:
   - lcli-293
   - lcli-292
+  - lcli-294
 ---
 
 # Maintain Lore CLI documentation authority
@@ -41,6 +42,7 @@ product or release state.
 |---|---|---|
 | [LCLI-293](../../backlog/tasks/lcli-293%20-%20Reconcile-Lore-CLI-release-truth-handover-lifecycle-and-Story-ownership.md) | Reconcile Lore CLI release truth handover lifecycle and Story ownership | Done |
 | [LCLI-292](../../backlog/tasks/lcli-292%20-%20Adapt-backlog-handover-skill-for-Lore-CLI.md) | Adapt backlog-handover skill for Lore CLI | Done |
+| [LCLI-294](../../backlog/tasks/lcli-294%20-%20Transfer-Lore-CLI-repository-to-opum-ai-and-reconcile-canonical-location.md) | Transfer Lore CLI repository to opum-ai and reconcile canonical location | Done |
 <!-- lore:tasks:end -->
 
 ## Notes
