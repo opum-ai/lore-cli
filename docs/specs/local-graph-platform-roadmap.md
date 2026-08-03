@@ -163,7 +163,7 @@ The baseline deliverable is a read-only static artifact that performs no network
   contract: typed concept/task endpoints, explicit direction, authored-edge
   allowlists, deterministic shortest evidence, locator-free provenance, depth
   and result bounds, a hard edge-visit budget, completeness, and truncation.
-- `LCLI-283.3.4` adds explicit snapshot comparison, changed-since, relationship delta, retention, deletion, provenance, CLI, and explorer workflows.
+- `LCLI-283.3.4` adds the frozen [snapshot change and provenance workflows](snapshot-change-and-provenance-workflows.md): explicit bounded retention and deletion, same-scope comparison, relationship deltas, exact provenance, CLI commands, and a separate historical explorer contract.
 
 M8 public contracts remain bounded Lore operations. LadybugDB, Cypher, physical table names, and internal identifiers remain replaceable implementation details.
 
@@ -196,10 +196,10 @@ These are stage decisions, not permission to reorder the roadmap:
 - M6 must validate the initial cold-build, warm-open, repeated-query, memory, disk, and small-repository regression thresholds from versioned benchmark baselines; changes to the accepted starting envelope require recorded evidence.
 - M6 must confirm the cross-platform native package and compiled-binary strategy before selecting mandatory versus optional installation behavior.
 - M7 must select the rendering library and static packaging form only after measuring deterministic layout, accessibility, artifact size, and large-graph behavior.
-- M8 snapshot retention defaults remain for `LCLI-283.3.4`. Workspace
-  portability is now frozen by `LCLI-283.3.1`: stable workspace/member IDs are
-  portable, relative locators are portable with their layout, absolute locators
-  remain local control-plane data, and no locator enters durable identity or a
-  projection.
+- M8 retention is explicit-only, capped at 16 snapshots per scope, and never
+  evicts silently. Workspace portability remains frozen by `LCLI-283.3.1`:
+  stable workspace/member IDs are portable, relative locators are portable
+  with their layout, absolute locators remain local control-plane data, and no
+  locator enters durable identity or a retained projection.
 
 The accepted architecture boundary is recorded in [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md).

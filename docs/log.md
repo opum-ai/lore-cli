@@ -68,6 +68,9 @@
 - 2026-08-02T14:09:29-05:00 a2d747dd28cc0dd87b04e073d9484664de7f5787 docs: refresh lore log for workspace delivery
 - 2026-08-02T14:11:08-05:00 8bfb1f1725a891c52639f403e5936adadc63d9c8 docs: reconcile workspace delivery log
 - 2026-08-02T18:03:34-05:00 1034229ab8ef804498160acefa2f39d613dcb825 feat: add bounded path and impact traversal
+- 2026-08-02T18:04:16-05:00 467d66c09a151e48ec09ccf1b486dc9391f8d4a2 docs: refresh lore log for bounded traversal
+- 2026-08-03T08:39:40-05:00 a98014b4530903e2681c73c6762aa1e70e8aa67c feat: add snapshot change and provenance workflows
+- 2026-08-03T08:44:36-05:00 2a0c9693e06d31b4f48e99e49b8e06d3fed300dc docs: refresh lore log for snapshot workflows
 
 ## docs/.obsidian
 
@@ -185,6 +188,8 @@
 - 2026-08-01T19:19:30-05:00 a827f7cc7972348377f1edfd2bcc618e75d99c8e feat: add static graph explorer
 - 2026-08-02T10:53:09-05:00 4d8675470d25eb635df7715763cca4ec65f7876e feat: index and retrieve workspace repositories
 - 2026-08-02T18:03:34-05:00 1034229ab8ef804498160acefa2f39d613dcb825 feat: add bounded path and impact traversal
+- 2026-08-02T19:15:38-05:00 242d43ee256a7ba6f54a5ae702daabd41ebea878 chore(LCLI-253): migrate off the pinned-commit Backlog.md build to the published release
+- 2026-08-03T08:39:40-05:00 a98014b4530903e2681c73c6762aa1e70e8aa67c feat: add snapshot change and provenance workflows
 
 ## docs/runbooks
 
@@ -245,6 +250,7 @@
 - 2026-07-31T20:14:53-05:00 7d1b17459a34e9dff7dee2dbb820b507e5dc87b6 feat: qualify LadybugDB 0.19.0
 - 2026-08-01T00:02:30-05:00 4f0b69cdb1e3f2ddc2fde4c1dcc474974b6e510a feat: bound Ladybug qualification gate
 - 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
+- 2026-08-02T19:15:38-05:00 242d43ee256a7ba6f54a5ae702daabd41ebea878 chore(LCLI-253): migrate off the pinned-commit Backlog.md build to the published release
 
 ## docs/specs
 
@@ -275,6 +281,7 @@
 - 2026-08-02T03:42:55-05:00 38797b5e4abaaa432d65d446888515a3cb16b0e0 feat: freeze local workspace identity contract
 - 2026-08-02T10:53:09-05:00 4d8675470d25eb635df7715763cca4ec65f7876e feat: index and retrieve workspace repositories
 - 2026-08-02T18:03:34-05:00 1034229ab8ef804498160acefa2f39d613dcb825 feat: add bounded path and impact traversal
+- 2026-08-03T08:39:40-05:00 a98014b4530903e2681c73c6762aa1e70e8aa67c feat: add snapshot change and provenance workflows
 
 ## docs/stories
 

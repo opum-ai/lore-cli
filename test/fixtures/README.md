@@ -1,6 +1,11 @@
 # Test fixtures (LORE-13)
 
-Two committed fixture sets used by the golden-fixture suites.
+Committed fixture sets used by the golden-fixture suites.
+
+## `snapshot/` — retained projection history
+
+`v1.json` contains the canonical before/after retained facts shared by snapshot comparison,
+provenance, CLI, and offline explorer conformance tests.
 
 ## `okf-bundle/` — sample OKF bundle (AC#1)
 

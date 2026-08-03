@@ -97,6 +97,16 @@ targets, and the connected authored supersession chain. The initial view is
 bounded and reports visible versus matching counts rather than silently
 discarding source facts.
 
+Historical exploration is an additive M8 mode, not a reinterpretation of this
+schema. `--snapshot` or paired `--from`/`--to` selectors emit the separate
+`lore-explorer-change-snapshot/1` contract defined by
+[snapshot change and provenance workflows](snapshot-change-and-provenance-workflows.md).
+That artifact embeds retained facts and a replay-validated bounded delta,
+supports change/kind/search filters and paired source evidence, and retains the
+same offline CSP and semantic keyboard-accessible list discipline. With no
+historical selector, this document's `lore-explorer-snapshot/1` artifact bytes
+remain unchanged.
+
 A future optional refresh process may bind only to `127.0.0.1` and `::1`, serve
 the artifact from an unguessable per-process path, enforce its own same-origin
 requests, and expose one read operation returning the same canonical snapshot

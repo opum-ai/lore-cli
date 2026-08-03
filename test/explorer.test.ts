@@ -2,17 +2,30 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  buildExplorerChangeSnapshot,
   buildExplorerSnapshot,
   deriveExplorerView,
   explorerArtifactDigest,
   renderExplorerArtifact,
+  renderExplorerChangeArtifact,
 } from "../src/core/explorer";
-import { type ExplorerSnapshot, parseExplorerSnapshot, serializeExplorerSnapshot } from "../src/core/explorer-contract";
+import {
+  type ExplorerSnapshot,
+  parseExplorerChangeSnapshot,
+  parseExplorerSnapshot,
+  serializeExplorerChangeSnapshot,
+  serializeExplorerSnapshot,
+} from "../src/core/explorer-contract";
 import type { LadybugProjectionSource } from "../src/core/ladybug-source";
+import { parseRetainedSnapshot } from "../src/core/snapshot";
 
 const fixture = parseExplorerSnapshot(
   JSON.parse(readFileSync(join(import.meta.dir, "fixtures/explorer/v1.json"), "utf8")),
 );
+const retainedFixture = JSON.parse(readFileSync(join(import.meta.dir, "fixtures/snapshot/v1.json"), "utf8")) as {
+  readonly from: unknown;
+  readonly to: unknown;
+};
 
 describe("explorer production snapshot", () => {
   test("maps the indexed projection source into canonical browser facts and health", () => {
@@ -106,6 +119,27 @@ describe("explorer view model", () => {
 });
 
 describe("self-contained explorer artifact", () => {
+  test("renders replay-validated retained snapshot and comparison evidence under a separate schema", () => {
+    const from = parseRetainedSnapshot(retainedFixture.from);
+    const to = parseRetainedSnapshot(retainedFixture.to);
+    const comparison = buildExplorerChangeSnapshot(from, to, { mode: "comparison" });
+    expect(parseExplorerChangeSnapshot(JSON.parse(serializeExplorerChangeSnapshot(comparison)))).toEqual(comparison);
+    const html = renderExplorerChangeArtifact(comparison);
+    expect(html).toContain("Lore retained snapshot explorer");
+    expect(html).toContain("lore-explorer-artifact/1");
+    expect(html).toContain("connect-src 'none'");
+    expect(html).not.toMatch(/<(?:script|img)[^>]+src=/iu);
+    for (const required of ["Change classification", "Paired evidence", "Source record", "authored value"]) {
+      expect(html).toContain(required);
+    }
+    const tampered = JSON.parse(serializeExplorerChangeSnapshot(comparison));
+    tampered.comparison.totalChanges = 99;
+    expect(() => parseExplorerChangeSnapshot(tampered)).toThrow("comparison does not match");
+
+    const single = buildExplorerChangeSnapshot(to, to, { mode: "snapshot" });
+    expect(renderExplorerChangeArtifact(single)).toContain("retained facts");
+  });
+
   test("embeds canonical bytes under an offline CSP and implements every required interaction", () => {
     const html = renderExplorerArtifact(fixture);
     expect(html).toContain("connect-src 'none'");

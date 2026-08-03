@@ -50,7 +50,7 @@ describe("core/manifest — shape and invariants", () => {
   });
 
   test("workspace retrieval flags are exposed only on retrieval commands", () => {
-    const workspaceCommands = ["graph", "path", "impact", "query", "context"];
+    const workspaceCommands = ["graph", "path", "impact", "changed", "provenance", "explorer", "query", "context"];
     for (const name of workspaceCommands) {
       const command = findManifestCommand(name);
       expect(command?.flags.find((flag) => flag.name === "workspace")).toMatchObject({ takesValue: true });
@@ -59,7 +59,12 @@ describe("core/manifest — shape and invariants", () => {
         repeatable: true,
       });
     }
-    for (const command of buildManifest().commands.filter((item) => !workspaceCommands.includes(item.name))) {
+    expect(findManifestCommand("snapshot")?.flags.find((flag) => flag.name === "workspace")).toMatchObject({
+      takesValue: true,
+    });
+    for (const command of buildManifest().commands.filter(
+      (item) => !workspaceCommands.includes(item.name) && item.name !== "snapshot",
+    )) {
       expect(command.flags.some((flag) => flag.name === "workspace" || flag.name === "repository")).toBe(false);
     }
   });
@@ -96,6 +101,9 @@ describe("core/manifest — shape and invariants", () => {
       graph: [0, 2, 3, 4, 6],
       path: [0, 2, 3, 4, 6],
       impact: [0, 2, 3, 4, 6],
+      snapshot: [0, 2, 3, 4, 5, 6],
+      changed: [0, 2, 3, 4, 5, 6],
+      provenance: [0, 2, 3, 4, 5, 6],
       explorer: [0, 2, 3, 4, 5, 6],
       export: [0, 2, 3, 4, 6],
       query: [0, 2, 3, 4, 6],
@@ -137,6 +145,9 @@ describe("core/manifest — shape and invariants", () => {
       graph: "graph.export",
       path: "path.result",
       impact: "impact.result",
+      snapshot: "snapshot.result",
+      changed: "changed.result",
+      provenance: "provenance.result",
       explorer: "explorer.artifact",
       export: "projection.export",
       query: "query.results",

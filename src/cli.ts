@@ -19,6 +19,7 @@ import type { BacklogAdapter } from "./adapters/backlog";
 import { runAgent } from "./commands/agent";
 import { runAgents } from "./commands/agents";
 import { commanderOption, commanderUnknownCommand, commanderUsageError } from "./commands/args";
+import { runChanged } from "./commands/changed";
 import { type FetchLike, type ResolveHost, runCheck } from "./commands/check";
 import { runContext } from "./commands/context";
 import { runExplorer } from "./commands/explorer";
@@ -32,11 +33,13 @@ import { runLink, runUnlink } from "./commands/link";
 import { runNew } from "./commands/new";
 import { runOrphans } from "./commands/orphans";
 import { runPath } from "./commands/path";
+import { runProvenance } from "./commands/provenance";
 import { runQuery } from "./commands/query";
 import { runRename } from "./commands/rename";
 import { runReplace } from "./commands/replace";
 import { runScaffold } from "./commands/scaffold";
 import { runSchema } from "./commands/schema";
+import { runSnapshot } from "./commands/snapshot";
 import { runSupersede } from "./commands/supersede";
 import { runSync } from "./commands/sync";
 import { runTasks } from "./commands/tasks";
@@ -541,6 +544,33 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
       stderr: context.stderr,
       adapter: context.adapter,
       retrieval: context.retrieval ?? loadRetrievalGraph,
+    }),
+  snapshot: (args, context, output) =>
+    runSnapshot({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+      adapter: context.adapter,
+    }),
+  changed: (args, context, output) =>
+    runChanged({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+      adapter: context.adapter,
+    }),
+  provenance: (args, context, output) =>
+    runProvenance({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
+      adapter: context.adapter,
     }),
   explorer: (args, context, output) =>
     runExplorer({

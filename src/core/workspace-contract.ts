@@ -167,6 +167,12 @@ export interface WorkspaceRecordIdentity {
   readonly sourcePath: string | null;
 }
 
+/** Derive the portable workspace storage identity without resolving a manifest locator. */
+export function workspaceKeyForId(workspaceId: string): string {
+  stableIdSchema.parse(workspaceId);
+  return digest(`lore-workspace/1\0${workspaceId}`);
+}
+
 /** Public, locator-free scope attached to every workspace command result. */
 export interface WorkspaceResultScope {
   readonly schemaVersion: "lore-workspace-result-scope/1";
@@ -308,7 +314,7 @@ export function buildWorkspaceIdentity(manifestValue: unknown, sourceValues: rea
     throw contractError("workspace sources must exactly match explicit manifest membership");
   }
 
-  const workspaceKey = digest(`lore-workspace/1\0${manifest.workspaceId}`);
+  const workspaceKey = workspaceKeyForId(manifest.workspaceId);
   const repositories = sources.map((source): WorkspaceRepositoryIdentity => {
     const memberKey = digest(`lore-workspace-member/1\0${workspaceKey}\0${source.memberId}`);
     const repositoryKey = digest(

@@ -1,9 +1,15 @@
 /// <reference lib="dom" />
 
 import { Buffer } from "node:buffer";
+import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
-import { renderExplorerArtifact } from "../../src/core/explorer";
+import {
+  buildExplorerChangeSnapshot,
+  renderExplorerArtifact,
+  renderExplorerChangeArtifact,
+} from "../../src/core/explorer";
 import { EXPLORER_QUALIFICATION_BUDGETS } from "../../src/core/explorer-qualification";
+import { parseRetainedSnapshot } from "../../src/core/snapshot";
 import {
   buildLargeExplorerFixture,
   corruptExplorerFixture,
@@ -15,6 +21,15 @@ import {
 const smallFixture = loadSmallExplorerFixture();
 const smallHtml = renderExplorerArtifact(smallFixture);
 const largeHtml = renderExplorerArtifact(buildLargeExplorerFixture());
+const retainedFixture = JSON.parse(readFileSync(new URL("../fixtures/snapshot/v1.json", import.meta.url), "utf8")) as {
+  readonly from: unknown;
+  readonly to: unknown;
+};
+const retainedHtml = renderExplorerChangeArtifact(
+  buildExplorerChangeSnapshot(parseRetainedSnapshot(retainedFixture.from), parseRetainedSnapshot(retainedFixture.to), {
+    mode: "comparison",
+  }),
+);
 
 test("KBD-01 and SR-01 provide complete keyboard and semantic detail flows", async ({ page }) => {
   await page.setContent(smallHtml, { waitUntil: "domcontentloaded" });
@@ -105,6 +120,30 @@ test("offline artifact is reproducible, credential-free, and makes zero network 
   expect(smallHtml).not.toMatch(/<(?:script|img)[^>]+src=|<link[^>]+href=/iu);
   expect(smallHtml).not.toMatch(/databasePassword|neo4j:\/\/|\/Users\/|\/home\//u);
   expect(renderExplorerArtifact(loadSmallExplorerFixture())).toBe(smallHtml);
+});
+
+test("retained comparison explorer filters changes and exposes paired provenance without a pointer or network", async ({
+  page,
+}) => {
+  const requests: string[] = [];
+  page.on("request", (request) => requests.push(request.url()));
+  await page.setContent(retainedHtml, { waitUntil: "load" });
+  expect(requests).toEqual([]);
+  await expect(page.getByRole("listbox", { name: "Retained snapshot records" })).toBeVisible();
+  await expect(page.locator("#counts")).toContainText("4 of 4 retained records");
+  await page.getByRole("checkbox", { name: "changed", exact: true }).focus();
+  await page.keyboard.press("Space");
+  await expect(page.locator("#counts")).toContainText("1 of 4 retained records");
+  const option = page.locator('#items [role="option"]');
+  await option.focus();
+  await page.keyboard.press("Enter");
+  await expect(option).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#details")).toContainText("docs/specs/retained-history.md");
+  await expect(page.locator("#details")).toContainText("from authored value");
+  await expect(page.locator("#details")).toContainText("to authored value");
+  await expect(page.locator("#announcement")).toContainText("changed concept specs/history");
+  await page.locator("#search").fill("no retained match");
+  await expect(page.locator("#counts")).toContainText("0 of 4 retained records");
 });
 
 test("SCALE-01 meets frozen load, interaction, mount, artifact, and memory budgets", async ({ page }) => {

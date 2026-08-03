@@ -617,7 +617,7 @@ This design is built in milestone order (see product spec
 | **M5** | Browsable + graph consumers: MkDocs/Docusaurus/Obsidian scaffolds |
 | **M6** | Freeze the LadybugDB contract; migrate CLI parsing/dispatch to Commander and build the projection in independent lanes; then integrate indexed graph/query/context and finish recovery, packaging, benchmark, and scale gates ([ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md)) |
 | **M7** | Read-only offline-capable local graph explorer over the stable indexed projection |
-| **M8** | Explicit multi-repository workspaces plus bounded path, impact, change, and provenance capabilities |
+| **M8** | Explicit multi-repository workspaces plus bounded path/impact and [snapshot change/provenance](snapshot-change-and-provenance-workflows.md) capabilities |
 | **Hold** | Local MCP ([MCP tools](../reference/mcp-tools.md)), Confluence publishing/mirror, and importable-library work remain retained but unscheduled |
 
 ## See also

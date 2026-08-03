@@ -7,5 +7,6 @@
 - [Local graph platform roadmap](local-graph-platform-roadmap.md)
 - [Local workspace identity contract](local-workspace-identity-contract.md)
 - [lore implementation design](lore-design.md)
+- [Snapshot change and provenance workflows](snapshot-change-and-provenance-workflows.md)
 - [Workspace indexing and retrieval](workspace-indexing-and-retrieval.md)
 <!-- lore:index:end -->

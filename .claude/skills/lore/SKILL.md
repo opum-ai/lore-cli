@@ -41,6 +41,11 @@ detail with `lore instructions <topic>`:
 - `schema`        Export the profile's editor JSON Schemas to .lore/schemas/
 - `scaffold`      Generate a downstream docs consumer's config, additively outside docs/
 - `graph`         Emit the bundle's cross-link graph as json or dot
+- `path`          Find bounded paths across exact authored concept and task edges
+- `impact`        Expand bounded impact across exact authored concept and task edges
+- `snapshot`      Explicitly retain, list, or delete bounded projection snapshots
+- `changed`       Compare two retained snapshots with bounded authored-fact deltas
+- `provenance`    Trace one retained concept, task, or edge to exact source evidence
 - `explorer`      Build a deterministic self-contained local graph explorer
 - `export`        Emit a deterministic, consumer-neutral OKF projection as JSONL
 - `query`         Full-text search the bundle with frontmatter filters

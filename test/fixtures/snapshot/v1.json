@@ -1,0 +1,221 @@
+{
+  "schemaVersion": "lore-retained-snapshot-fixture/1",
+  "from": {
+    "schemaVersion": "lore-retained-snapshot/1",
+    "scopeKind": "workspace",
+    "scopeKey": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "workspaceId": "fixture-workspace",
+    "snapshotKey": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "repositories": [
+      {
+        "memberId": "alpha",
+        "repositoryKey": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "repositoryScopeKey": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "bundleKey": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "bundleId": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "commitKey": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "gitCommit": "1111111111111111111111111111111111111111",
+        "exportKey": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "exportDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "memberId": "beta",
+        "repositoryKey": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "repositoryScopeKey": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "bundleKey": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+        "bundleId": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+        "commitKey": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+        "gitCommit": "3333333333333333333333333333333333333333",
+        "exportKey": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+        "exportDigest": "sha256:6666666666666666666666666666666666666666666666666666666666666666"
+      }
+    ],
+    "counts": { "concept": 1, "task": 0, "edge": 0 },
+    "facts": [
+      {
+        "kind": "concept",
+        "id": "specs/history",
+        "recordKey": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "provenance": {
+          "memberId": "alpha",
+          "repositoryKey": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "repositoryScopeKey": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "bundleKey": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "bundleId": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "commitKey": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "gitCommit": "1111111111111111111111111111111111111111",
+          "exportKey": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "exportDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "recordKey": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "sourceRecordKey": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "sourceKey": null,
+          "sourcePath": "docs/specs/history.md"
+        },
+        "value": {
+          "id": "specs/history",
+          "path": "docs/specs/history.md",
+          "type": "Spec",
+          "frontmatter": { "status": "Draft", "title": "History" },
+          "contentHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "tokenEstimate": 10
+        }
+      }
+    ]
+  },
+  "to": {
+    "schemaVersion": "lore-retained-snapshot/1",
+    "scopeKind": "workspace",
+    "scopeKey": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "workspaceId": "fixture-workspace",
+    "snapshotKey": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "repositories": [
+      {
+        "memberId": "alpha",
+        "repositoryKey": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "repositoryScopeKey": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "bundleKey": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "bundleId": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "commitKey": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "gitCommit": "2222222222222222222222222222222222222222",
+        "exportKey": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "exportDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      {
+        "memberId": "beta",
+        "repositoryKey": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "repositoryScopeKey": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "bundleKey": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+        "bundleId": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+        "commitKey": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+        "gitCommit": "4444444444444444444444444444444444444444",
+        "exportKey": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+        "exportDigest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+      }
+    ],
+    "counts": { "concept": 1, "task": 1, "edge": 2 },
+    "facts": [
+      {
+        "kind": "concept",
+        "id": "specs/history",
+        "recordKey": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "provenance": {
+          "memberId": "alpha",
+          "repositoryKey": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "repositoryScopeKey": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "bundleKey": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "bundleId": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "commitKey": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "gitCommit": "2222222222222222222222222222222222222222",
+          "exportKey": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "exportDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "recordKey": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "sourceRecordKey": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "sourceKey": null,
+          "sourcePath": "docs/specs/retained-history.md"
+        },
+        "value": {
+          "id": "specs/history",
+          "path": "docs/specs/retained-history.md",
+          "type": "Spec",
+          "frontmatter": { "status": "Ready", "title": "History" },
+          "contentHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tokenEstimate": 12
+        }
+      },
+      {
+        "kind": "edge",
+        "id": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "recordKey": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "provenance": {
+          "memberId": "alpha",
+          "repositoryKey": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "repositoryScopeKey": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "bundleKey": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "bundleId": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "commitKey": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "gitCommit": "2222222222222222222222222222222222222222",
+          "exportKey": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "exportDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "recordKey": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "sourceRecordKey": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "sourceKey": null,
+          "sourcePath": "docs/specs/retained-history.md"
+        },
+        "value": {
+          "from": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "to": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "supersedes",
+          "target": "beta::LCLI-283.3.4",
+          "ordinal": 0,
+          "dangling": false,
+          "workspaceFromKind": "concept",
+          "workspaceToKind": "task",
+          "workspaceLinkKind": "supersedes"
+        }
+      },
+      {
+        "kind": "edge",
+        "id": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "recordKey": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "provenance": {
+          "memberId": "alpha",
+          "repositoryKey": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "repositoryScopeKey": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "bundleKey": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "bundleId": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "commitKey": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "gitCommit": "2222222222222222222222222222222222222222",
+          "exportKey": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "exportDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "recordKey": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "sourceRecordKey": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "sourceKey": null,
+          "sourcePath": "docs/specs/retained-history.md"
+        },
+        "value": {
+          "from": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "to": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "supersedes",
+          "target": "beta::LCLI-283.3.4",
+          "ordinal": 1,
+          "dangling": false,
+          "workspaceFromKind": "concept",
+          "workspaceToKind": "task",
+          "workspaceLinkKind": "supersedes"
+        }
+      },
+      {
+        "kind": "task",
+        "id": "LCLI-283.3.4",
+        "recordKey": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "provenance": {
+          "memberId": "beta",
+          "repositoryKey": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+          "repositoryScopeKey": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+          "bundleKey": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+          "bundleId": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+          "commitKey": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+          "gitCommit": "4444444444444444444444444444444444444444",
+          "exportKey": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+          "exportDigest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+          "recordKey": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "sourceRecordKey": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "sourceKey": null,
+          "sourcePath": null
+        },
+        "value": {
+          "id": "LCLI-283.3.4",
+          "title": "Retained snapshot provenance",
+          "status": "In Progress",
+          "labels": ["graph"],
+          "priority": "high",
+          "ordinal": 0,
+          "assignees": ["@codex"],
+          "milestone": null,
+          "parentTaskId": "LCLI-283.3",
+          "sourceAdapterVersion": "backlog-cli/1"
+        }
+      }
+    ]
+  }
+}
