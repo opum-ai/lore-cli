@@ -19,18 +19,17 @@ semantic exit codes, machine-readable `--json`).
 
 - Built on **Bun + TypeScript** with an exact-pinned **Commander** parser fed by
   Lore's capability manifest; Lore still owns output, errors, and process lifecycle.
-- Distributed on npm as **`@salient-data/lore`** (bin `lore`) — run it with
-  `npx`/`bunx`, no global install required.
+- Designed for npm distribution as **`@salient-data/lore`** (bin `lore`); the
+  package is not published yet.
 - The agent bridge is a generated **`.claude/skills/lore/SKILL.md`** plus a tiny
   CLAUDE.md nudge and `lore instructions`. An **MCP server is secondary and
   deferred to v2**.
 
-> **Status: 0.1 release candidate.** The v1 CLI implementation and its
-> cross-platform/package pipelines are complete. The blocking dependency — a
-> tagged Backlog.md release containing the upstream JSON contract — shipped
-> 2026-08-02 (v1.49.0); lore now depends on the published `backlog.md` package
-> instead of the interim pinned-commit build (LCLI-253). MCP and Confluence
-> remain deliberately deferred (see [Roadmap](#roadmap)).
+> **Status: unreleased 0.1 candidate.** Package manifests remain at `0.0.0`,
+> the repository has no release tag or artifact, and `@salient-data/lore` is
+> absent from npm. The upstream Backlog.md dependency gate is complete
+> (LCLI-253), but the repository-owner publication-control gate remains open
+> (LCLI-278). See [Lore CLI release truth](docs/reference/lore-cli-release-truth.md).
 
 ---
 
@@ -71,8 +70,12 @@ Full details: [Backlog CLI contract](docs/reference/backlog-cli-contract.md) and
 
 ## Install
 
-`lore` is published as `@salient-data/lore` with the bin name `lore`. Run it
-without installing:
+`@salient-data/lore` is not published. Until the release-truth evidence is
+complete, use a trusted source checkout and its pinned toolchain; do not expect
+these planned registry commands to work.
+
+After a verified release, the intended package and bin are
+`@salient-data/lore` and `lore`:
 
 ```bash
 # Node / npm
@@ -88,8 +91,8 @@ Or add it to a project:
 bun add -d @salient-data/lore   # or: npm i -D @salient-data/lore
 ```
 
-The npm package is a dual artifact: a Node `.cjs` launcher plus a per-platform
-compiled binary delivered as `optionalDependencies` (built with
+The planned npm package is a dual artifact: a Node `.cjs` launcher plus a
+per-platform compiled binary delivered as `optionalDependencies` (built with
 `bun build --compile`, `-baseline` x64 targets). You also need a
 `--json`-capable Backlog.md (>=1.49.0) on `PATH` — e.g. `npm install -g
 backlog.md`; see the [runbook](docs/runbooks/backlog-json-patch.md).
