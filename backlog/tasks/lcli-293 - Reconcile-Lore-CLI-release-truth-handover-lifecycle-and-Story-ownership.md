@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-02 03:36'
-updated_date: '2026-08-03 16:25'
+updated_date: '2026-08-03 17:12'
 labels:
   - audit
   - documentation
@@ -41,6 +41,7 @@ modified_files:
   - docs/reference/
   - docs/runbooks/
   - docs/stories/
+  - test/local-graph-contract.test.ts
 priority: high
 type: docs
 ordinal: 406000
@@ -79,6 +80,8 @@ Resolve the owner-local documentation debt identified by opum-doc OCLI-6 while p
 2026-08-03 implementation: the user explicitly approved the local commits required to complete LCLI-293; that approval does not include push, PR, merge, publication, cleanup, or remote-policy mutation. Created six scoped Story owners, retained LCLI-289 in its existing agent-profile Story, and coupled the other 319 tasks through Lore. Initial `lore orphans --json --limit 400` now reports zero orphan tasks and zero dangling links. Corrected active release claims from live evidence (all six manifests 0.0.0, zero GitHub releases/tags, npm 404, LCLI-253 Done, LCLI-278 To Do), added release-truth and ownership References, replaced three stale runbook handovers with one current route plus two historical capsules, and reduced 120 tracked plus 29 obsolete ignored handovers to non-executable provenance.
 
 Final verification on 2026-08-03: `lore sync --json` was idempotent (0 files changed, no Backlog commit); `lore validate --strict --json` passed 64 concepts with 0 errors/0 warnings; `lore check --strict --json` passed 64 files with 0 errors/0 warnings; `lore agents --check --json` reported both managed files unchanged; `lore orphans --json --limit 400` reported 0 orphan tasks and 0 dangling links; `git diff --check` passed. All seven Story rollups passed: foundation 70 Done, hardening 190 Done, first-release readiness 31 Done/1 To Do, deferred capabilities 4 To Do, local graph 21 Done, agent profiles 1 Done, and documentation authority 1 Done/1 In Progress before closure. Backlog JSON proved all 320 tasks have exactly one `doc:stories/` owner and lifecycle counts remained 314 Done, 5 To Do, 1 intentional In Progress; the task diff contained zero acceptance-checkbox changes. A scripted lifecycle audit found 120/120 tracked archives and 29/29 obsolete ignored handovers classified, one local pointer, exactly one docs handover, and zero prohibited stale-context hits. Release checks confirmed six `0.0.0` manifests, zero local/GitHub tags, zero GitHub releases, npm E404, LCLI-253 Done, and LCLI-278 To Do. The combined diff contained only README, docs, historical handovers, generated Lore bridge, campaign tracker, and Backlog coupling metadata; no product source, package metadata, release state, remote policy, or unrelated worktree changed. Adversarial self-review found and corrected five MDX-sensitive historical titles and the renamed LCLI-289 documentation path. No push, PR, merge, publication, cleanup, or remote mutation was performed.
+
+Remote CI on PR #292 exposed one missed live test reference: test/local-graph-contract.test.ts still opened the retired release-campaign handover and asserted its executable cursor headings. Updated that test to open docs/runbooks/lore-cli-handover.md and enforce the new context-free contract (live-evidence route, authority boundaries, recovery, and no queue or paste-ready prompt). Focused verification passed 4 tests with 39 assertions; full platform CI will be rerun on the corrected head.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
