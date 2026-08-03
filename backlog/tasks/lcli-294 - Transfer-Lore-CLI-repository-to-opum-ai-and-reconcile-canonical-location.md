@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-03 22:22'
-updated_date: '2026-08-03 22:32'
+updated_date: '2026-08-03 22:39'
 labels:
   - repo-admin
   - repository-migration
@@ -25,12 +25,31 @@ documentation:
   - docs/runbooks/release-publishing.md
   - docs/stories/maintain-lore-cli-documentation-authority.md
 modified_files:
-  - package.json
-  - npm
-  - docs
   - README.md
   - CHANGELOG.md
-  - .github
+  - package.json
+  - npm/darwin-arm64/package.json
+  - npm/darwin-x64/package.json
+  - npm/linux-arm64/package.json
+  - npm/linux-x64/package.json
+  - npm/win32-x64/package.json
+  - test/upstream-backlog-watch.test.ts
+  - test/repository-location.test.ts
+  - docs/adr/0001-runtime-build-distribution.md
+  - docs/index.md
+  - docs/log.md
+  - docs/reference/lore-cli-documentation-ownership.md
+  - docs/reference/lore-cli-release-truth.md
+  - docs/reference/tech-stack.md
+  - docs/runbooks/lore-cli-handover.md
+  - docs/runbooks/release-publishing.md
+  - docs/stories/maintain-lore-cli-documentation-authority.md
+  - >-
+    backlog/tasks/lcli-278 -
+    GitHub-billing-plan-blocks-required-reviewer-protection-on-the-release-Environment.md
+  - >-
+    backlog/tasks/lcli-294 -
+    Transfer-Lore-CLI-repository-to-opum-ai-and-reconcile-canonical-location.md
 priority: high
 type: chore
 ordinal: 407000
@@ -68,4 +87,6 @@ Move the private Lore CLI GitHub repository from salient-data/lore-cli to opum-a
 2026-08-03 pre-transfer grounding: clean dev at d6dd5f5b4eb1db59742af71da0035bf6e920865a before task creation; source GitHub repository salient-data/lore-cli is private, unarchived, default branch dev, and the authenticated identity has repository admin plus active opum-ai organization admin membership. Target opum-ai/lore-cli returned 404, so the name is available. Pre-transfer controls: three active workflows; release Environment exists with zero protection rules, no deployment policy, and administrator bypass enabled; one active repository branch ruleset protects dev while main is unprotected; one collaborator, zero teams; Actions enabled with all actions allowed and no SHA-pinning requirement; zero Actions secrets, zero hooks, zero releases, and zero tags. Local inventory found current operational references in six package manifests, README, CHANGELOG, ADR-0001, tech-stack, release-publishing, and one repository-slug test. Backlog historical records also contain old identities and will remain provenance unless a live task carries an operational instruction. No transfer, source/docs edit, Lore coupling commit, push, PR, merge, release, or publication has occurred yet.
 
 2026-08-03 authorized transfer completed: GitHub now reports opum-ai/lore-cli as the canonical private repository with dev as default, and the former salient-data/lore-cli API route redirects to the new full name. Local origin now uses git@github.com:opum-ai/lore-cli.git and fetched successfully. Post-transfer comparison matched the entire pre-transfer snapshot: three active workflows; unchanged unprotected release Environment; repository ruleset 19698059 still active on dev; dev protected and main unprotected; one collaborator and zero teams; Actions enabled with all actions allowed and organization-level private-action access; zero Actions secrets, hooks, tags, and releases. No control loss or publication occurred.
+
+2026-08-03 implementation and local verification: updated all six npm manifest repository URLs, README private-action ownership and action slug, CHANGELOG compare link, active ownership/release/handover/tech-stack/runbook documentation, ADR-0001 historical classification, and the upstream-watch repository fixture. Added test/repository-location.test.ts to pin the exact canonical package URL and active operational documentation while permitting only the classified ADR history. `lore sync --json` reconciled the owner Story and then proved idempotent; strict validation passed 58 concepts with zero findings (64 files checked including indexes/generated files), strict check passed 64 files with zero findings, agent bridge checks were unchanged, and orphans reported zero orphan tasks and zero dangling links. Focused repository/release/watch tests passed 26/26 with 96 expectations. The complete Bun suite passed locally under both the ambient Bun 1.3.14 and pinned Bun 1.2.23; lint checked 186 files clean and TypeScript typecheck passed. `git diff --check` passed. Adversarial self-review found no unclassified old operational self-repository route: the only active-source old slug is explicitly marked as ADR decision-time provenance; remaining Backlog occurrences belong to completed historical records or to LCLI-278/LCLI-294 notes that explicitly route current operations to opum-ai/lore-cli.
 <!-- SECTION:NOTES:END -->
