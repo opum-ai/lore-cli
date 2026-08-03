@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-08-03 02:33'
+updated_date: '2026-08-03 02:40'
 labels:
   - adapter-backlog
   - release
@@ -43,9 +43,9 @@ docs/runbooks/backlog-json-patch.md section 8.1; docs/runbooks/release-publishin
 <!-- AC:BEGIN -->
 - [x] #1 MIN_BACKLOG_VERSION in src/adapters/backlog.ts is raised from 1.47.1 to the tagged release version that ships --json, and the capability probe passes against the real PUBLISHED backlog binary.
 - [x] #2 The RUNBOOK_HINT no longer instructs building from commit 22a091b; it points at installing the published backlog.md at or past that release version.
-- [ ] #3 docker/e2e/Dockerfile no longer pins BACKLOG_COMMIT=22a091b; it uses the released version/tag, and docker-e2e stays green against it.
+- [x] #3 docker/e2e/Dockerfile no longer pins BACKLOG_COMMIT=22a091b; it uses the released version/tag, and docker-e2e stays green against it.
 - [x] #4 docs/runbooks/backlog-json-patch.md and README present the published-package install path as primary; the superseded fork/build-from-source content is clearly demoted or removed.
-- [ ] #5 Full test suite and docker-e2e are green against the real released --json backlog.
+- [x] #5 Full test suite and docker-e2e are green against the real released --json backlog.
 - [x] #6 The .github/actions/strict-check/action.yml composite action no longer builds Backlog.md from a pinned commit on every run; it installs the published backlog.md>=1.49.0 instead
 <!-- AC:END -->
 
@@ -114,4 +114,12 @@ PR #285 opened against dev: https://github.com/salient-data/lore-cli/pull/285. T
 2026-08-03 pre-merge review remediation authorized by the user. Restore references lost by replacement-field mutation, qualify the declared 1.49.0 floor against the real published binary instead of only 1.49.1, correct stale harness comments, and keep terminal task closure after verified merge.
 
 Pre-merge review remediation local evidence on minim4: the exact published backlog.md@1.49.0 binary reports 1.49.0 and successfully drives bun src/cli.ts orphans --json through the real capability probe and list adapter. The focused version-pin guard suite passes 17/17; the full Bun suite passes 2201/2201 with 6279 expectations; Biome checks 118 files clean; TypeScript passes; strict Lore validation and coherence checks pass for 41 docs with 0 errors and 0 warnings; bash -n, compiled build, and git diff --check pass. Docker E2E at the amended head remains gated on replacement PR CI.
+
+GitHub CI run 30779634457 passed all eight required jobs at exact reviewed head ca70bab627f0e2ba2a393221cc9a06ad41151cf0. Docker E2E completed successfully in 4m57s while installing and exercising published backlog.md@1.49.0, directly proving AC #3 and the real-binary portion of AC #5. Ubuntu and Windows full test jobs, compile smoke, both documentation scaffold smokes, three-engine explorer qualification, and Ladybug benchmark smoke also passed. PR #285 is open, mergeable, and CLEAN. Task intentionally remains In Progress until this exact head is authorized and merged.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Migrated Lore from the interim pinned-commit Backlog.md build to the published JSON-capable package, set the adapter floor and operator guidance to 1.49.0, installed the exact published minimum in Docker E2E and the strict-check action, preserved PATH-based adapter ownership, and updated tests and documentation. Verified locally with 2201 tests, lint, typecheck, build, strict Lore checks, and a direct backlog.md@1.49.0 adapter smoke; GitHub CI run 30779634457 passed all eight jobs at ca70bab, including Windows and real Docker E2E. PR #285 remains open pending merge authorization.
+<!-- SECTION:FINAL_SUMMARY:END -->
