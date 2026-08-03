@@ -23,20 +23,20 @@ new ID from the `Created task <ID>` line) live in the companion
 [Backlog.md CLI contract](backlog-cli-contract.md). This page is the data shape
 only.
 
-> **Provenance.** Stock Backlog.md — at `v1.47.1` **or** the current `v1.48.0`
-> tag — has **no `--json` flag**. MrLesk's
-> team shipped their own implementation independently —
+> **Provenance.** Stock Backlog.md — through `v1.48.0` — had **no `--json`
+> flag**. MrLesk's team shipped their own implementation independently —
 > [PR #790](https://github.com/MrLesk/Backlog.md/pull/790), "BACK-545 - Add
 > stable JSON output to read commands", merged 2026-07-16 to `MrLesk/Backlog.md`
 > `main` at commit `22a091b570d44c4f302ca47e7fd36fa28ad8bcb0` — and `lore`
 > adopted that contract (LCLI-5) rather than upstreaming an earlier,
 > differently-shaped fork of its own (`jeremy-newhouse/Backlog.md`; see
-> [§8](#8-migration-history-complete) for that history). As of this writing
-> PR #790 is merged but **not yet in a tagged release** (the latest tag,
-> v1.48.0, predates the merge) — see the
+> [§8](#8-migration-history-complete) for that history). `v1.49.0`, published
+> 2026-08-02, is the first tagged release containing that commit; `lore` now
+> requires a published `backlog.md` at or past that version (LCLI-253) instead
+> of the interim pinned-commit build — see the
 > [patch runbook §8](../runbooks/backlog-json-patch.md#8-migrate-to-upstream-on-release-and-bump-the-floor)
-> for the interim pinned-commit consumption plan. The shape below is upstream's
-> curated serializer output (`src/formatters/json-output.ts`), not a raw
+> for that migration's history. The shape below is upstream's curated
+> serializer output (`src/formatters/json-output.ts`), not a raw
 > `JSON.stringify(task)` — it adds no new fields and no storage changes.
 
 ---
@@ -462,13 +462,16 @@ version-floor bump, split across two tasks:
   detection also flipped from the fork's "exit 0, empty stdout" signal to
   upstream's "exit 1 unconditionally" (§6; [CLI contract §2.2](backlog-cli-contract.md#22-existence-checks--task-views-exit-code-is-meaningful)).
 
-`lore` still consumes upstream via a manually-built binary pinned at commit
-`22a091b570d44c4f302ca47e7fd36fa28ad8bcb0` (no `package.json` dependency yet —
-deliberately deferred until a tagged `MrLesk/Backlog.md` release includes that
-commit; see the
-[patch runbook §8.1](../runbooks/backlog-json-patch.md#81-the-adoption-plan-current)).
-That step — adding a real semver dependency and bumping the capability probe's
-floor once a tag ships — is the only piece of this migration still ahead.
+`v1.49.0`, published 2026-08-02, is the first tagged `MrLesk/Backlog.md`
+release containing that commit. `lore` (LCLI-253) migrated off the
+manually-built pinned-commit binary onto that published release: the
+capability probe's `MIN_BACKLOG_VERSION` now reads `1.49.0` (`src/adapters/backlog.ts`)
+and `docker/e2e/Dockerfile` / the `strict-check` composite action install
+`backlog.md` from npm rather than building it from source — see the
+[patch runbook §8.1](../runbooks/backlog-json-patch.md#81-the-adoption-plan-current)
+for that migration's record. `lore` still carries no `package.json` dependency
+on `backlog.md` (it invokes the PATH-resolved `backlog` binary, same as
+before); that remains a deliberate choice, not an oversight.
 
 ---
 

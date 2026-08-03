@@ -43,7 +43,7 @@ function fail(exitCode: number, stderr: string, stdout = ""): SpawnResult {
 /**
  * A {@link BacklogSpawn} driven by a per-call `script(args, callIndex)`. It records every argv so a test
  * can pin invocation order (probe first) and assert the exact flags. Returning `undefined` from the
- * script falls back to the **default probe** responses (`--version` → `1.47.1`, any `task list --json`
+ * script falls back to the **default probe** responses (`--version` → `1.49.0`, any `task list --json`
  * → the committed `task-list` golden), so most tests only script the command under test. The probe's own
  * dry-run and a real `listTasks()` read issue the identical `["task", "list", "--json"]` argv AND now
  * target the same upstream contract (LORE-54), so one shared golden answers both — no more two-tier fake.
@@ -68,7 +68,7 @@ function scriptedSpawn(
 /** The default responses for the probe's two calls, and any later bare `task list --json` a real read issues. */
 function defaultProbe(argv: string[]): Outcome {
   if (argv[0] === "--version") {
-    return ok("1.47.1\n");
+    return ok("1.49.0\n");
   }
   if (argv[0] === "task" && argv[1] === "list" && argv[2] === "--json") {
     return ok(TASK_LIST);
@@ -441,7 +441,7 @@ describe("the capability probe is wired into every path and memoized (AC#2)", ()
     await adapter.viewTask("LORE-33");
     const cap = await adapter.probe();
 
-    expect(cap).toEqual({ version: "1.47.1", schemaVersion: 1 });
+    expect(cap).toEqual({ version: "1.49.0", schemaVersion: 1 });
     expect(spawn.calls.filter((c) => c[0] === "--version")).toHaveLength(1);
   });
 

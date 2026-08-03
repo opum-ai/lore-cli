@@ -337,10 +337,12 @@ serializer, separate diff) so reviewers see the small scope is deliberate.
 > Net effect: **`src/adapters/backlog.ts` as written would fail its own
 > capability probe against upstream's real output** (wrong `kind` strings, no
 > `data` key to read). Migrating to a real upstream release is an **adapter
-> rewrite against the new contract**, not a version-floor bump. As of this
-> writing PR #790 is merged to `main` but **not yet in a tagged release**
-> (latest tag is still v1.48.0, published 2026-07-12, predating the merge).
+> rewrite against the new contract**, not a version-floor bump.
 > Full comparison and provenance: LCLI-5 implementation notes.
+>
+> **Update (2026-08-02, LCLI-253).** `v1.49.0` — published 2026-08-02 — is the
+> first tagged `MrLesk/Backlog.md` release containing the PR #790 commit; §8.1
+> step 4 below is now complete. See that section for what actually shipped.
 >
 > The steps below describe the *original* plan (this schema shipping
 > verbatim upstream) and are kept for history; do not follow step 3 as
@@ -390,13 +392,21 @@ rather than waiting — same rationale as [ADR-0002's alternative
    LCLI-54, which also merged the probe's formerly-separate
    `PROBE_SCHEMA_VERSION` constant back into the single `EXPECTED_SCHEMA_VERSION`
    now that both sides target the same contract.
-4. **Once a tagged `MrLesk/Backlog.md` release includes the PR #790 commit**,
-   add a real `package.json` dependency on the published package
-   (`"backlog.md": "^<that-release>"`) and bump the capability probe's minimum
-   version to it — this is the only step that still matches the *original*
-   plan's shape (a normal semver floor bump), just against upstream's version
-   instead of the fork's, and the first point a dependency entry is actually
-   added (step 2 above is manual/documented only).
+4. **Done (2026-08-02, LCLI-253).** `v1.49.0` — published 2026-08-02 — is the
+   first tagged `MrLesk/Backlog.md` release containing the PR #790 commit.
+   `src/adapters/backlog.ts`'s `MIN_BACKLOG_VERSION` moved from the `1.47.1`
+   fork floor to `1.49.0`, and `RUNBOOK_HINT` now points at installing the
+   published package instead of building the pinned commit. `docker/e2e/Dockerfile`
+   and `.github/actions/strict-check/action.yml` (the interim per-run pinned-commit
+   build in each) were both retired in favor of `npm install -g backlog.md@<version>`.
+   The dev-tooling equivalent of step 2 above — `test/support/record-backlog-goldens.ts`'s
+   commit-pin guard — became a version-pin guard against the Dockerfile's now
+   version-pinned `backlog` install.
+   **Deliberately still no `package.json` dependency** — the *original* plan's
+   assumption in step 4 (that a real dependency entry would be added once a tag
+   existed) did not hold: `lore` invokes the PATH-resolved `backlog` binary the
+   same way it did during the interim, and that remains the LCLI-53 decision,
+   not something this release changed.
 
 ---
 

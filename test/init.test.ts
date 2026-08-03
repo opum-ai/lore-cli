@@ -562,7 +562,7 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
       adapter: fakeAdapter([], { probe: "ok" }),
     });
     expect(code).toBe(0);
-    expect(result.backlog).toEqual({ checked: true, capable: true, version: "1.47.1" });
+    expect(result.backlog).toEqual({ checked: true, capable: true, version: "1.49.0" });
     expect(stderr).toBe("");
   });
 
@@ -692,7 +692,7 @@ describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the lock
     expect(result.interactive).toBe(true);
     expect(result.agents).toBeDefined();
     expect(result.scaffolds.map((s) => s.target)).toEqual(["mkdocs", "obsidian"]);
-    expect(result.backlog).toEqual({ checked: true, capable: true, version: "1.47.1" });
+    expect(result.backlog).toEqual({ checked: true, capable: true, version: "1.49.0" });
     expect(existsSync(join(root, "mkdocs.yml"))).toBe(true);
     expect(existsSync(join(root, "docs/.obsidian/app.json"))).toBe(true);
   });

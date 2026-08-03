@@ -26,9 +26,11 @@ semantic exit codes, machine-readable `--json`).
   deferred to v2**.
 
 > **Status: 0.1 release candidate.** The v1 CLI implementation and its
-> cross-platform/package pipelines are complete. Publication is waiting on a
-> tagged Backlog.md release containing the upstream JSON contract; MCP and
-> Confluence remain deliberately deferred (see [Roadmap](#roadmap)).
+> cross-platform/package pipelines are complete. The blocking dependency — a
+> tagged Backlog.md release containing the upstream JSON contract — shipped
+> 2026-08-02 (v1.49.0); lore now depends on the published `backlog.md` package
+> instead of the interim pinned-commit build (LCLI-253). MCP and Confluence
+> remain deliberately deferred (see [Roadmap](#roadmap)).
 
 ---
 
@@ -41,12 +43,12 @@ files. It parses a canonical `{schemaVersion, kind, data}` envelope from
 --json`. There is **no `--plain` text-parser fallback** — that is a deliberate
 decision to keep the coupling robust.
 
-Backlog.md did not originally ship this JSON surface. It is now merged upstream
-in MrLesk/Backlog.md as PR #790. Until a tag containing that commit exists,
-development and E2E builds use the upstream repository pinned at the merge
-commit; `lore` has no package or git dependency on Backlog.md and invokes the
-user-installed `backlog` executable on `PATH`. A capability probe enforces the
-JSON contract and **fails loud** when the installed binary cannot provide it.
+Backlog.md did not originally ship this JSON surface. It merged upstream in
+MrLesk/Backlog.md as PR #790 and shipped in the v1.49.0 tagged release
+(2026-08-02). `lore` has no package or git dependency on Backlog.md and invokes
+the user-installed `backlog` executable (>=1.49.0) on `PATH`. A capability
+probe enforces the JSON contract and **fails loud** when the installed binary
+cannot provide it.
 
 See the runbook: [Backlog.md `--json` patch](docs/runbooks/backlog-json-patch.md).
 
@@ -89,8 +91,8 @@ bun add -d @salient-data/lore   # or: npm i -D @salient-data/lore
 The npm package is a dual artifact: a Node `.cjs` launcher plus a per-platform
 compiled binary delivered as `optionalDependencies` (built with
 `bun build --compile`, `-baseline` x64 targets). You also need a
-`--json`-capable Backlog.md on `PATH`; see the
-[runbook](docs/runbooks/backlog-json-patch.md).
+`--json`-capable Backlog.md (>=1.49.0) on `PATH` — e.g. `npm install -g
+backlog.md`; see the [runbook](docs/runbooks/backlog-json-patch.md).
 
 ### Private-repository CI before npm publication
 
@@ -103,11 +105,11 @@ without a cross-repository PAT or a public npm release:
 ```
 
 The private composite action installs Bun 1.2.23 and this action revision's
-frozen dependencies, builds the JSON-capable upstream Backlog.md commit pinned
-by the Docker E2E harness, then runs `lore validate --strict` and `lore check
---strict` against the caller workspace. Consumer workflows must replace the
-placeholder with the full immutable commit SHA. Private-action access remains
-limited to organization repositories.
+frozen dependencies, installs the published JSON-capable `backlog.md` version
+pinned by the Docker E2E harness, then runs `lore validate --strict` and `lore
+check --strict` against the caller workspace. Consumer workflows must replace
+the placeholder with the full immutable commit SHA. Private-action access
+remains limited to organization repositories.
 
 ---
 

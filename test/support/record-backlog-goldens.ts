@@ -1,14 +1,15 @@
 /**
  * record-backlog-goldens.ts — regenerate the committed Backlog.md `--json` golden fixtures
- * (LORE-13 AC#2; migrated to upstream's contract by LORE-54). Run manually when upstream's
- * serializer or the JSON contract changes:
+ * (LORE-13 AC#2; migrated to upstream's contract by LORE-54; migrated off the interim
+ * pinned-commit build to the published `backlog.md` package by LCLI-253). Run manually when
+ * upstream's serializer or the JSON contract changes:
  *
  * ```sh
- * # Point at a local clone of MrLesk/Backlog.md checked out at or past the PR #790 merge commit
- * # (22a091b570d44c4f302ca47e7fd36fa28ad8bcb0; docs/runbooks/backlog-json-patch.md §8.1), with
- * # `bun install` already run. `bun <upstream>/src/cli.ts` works even on the external volume, where
- * # `bun build --compile` silent-fails (LORE-4 build notes).
- * LORE_BACKLOG_UPSTREAM_CLI=~/repos/Backlog.md-upstream/src/cli.ts bun test/support/record-backlog-goldens.ts
+ * # Point at an installed `backlog` binary at or past v1.49.0 (the first tagged MrLesk/Backlog.md
+ * # release containing PR #790 / BACK-545) -- `npm install -g backlog.md@<version>` puts one on
+ * # PATH. LORE_BACKLOG_CLI defaults to "backlog" resolved via PATH, so it only needs setting to
+ * # point at a different binary.
+ * bun test/support/record-backlog-goldens.ts
  * ```
  *
  * It shells the upstream CLI against **this repo's own `backlog/` project** (cwd), captures one
@@ -28,10 +29,10 @@
  * Two guards run BEFORE any golden is written to disk (LORE-106 — a Codex-review follow-up on this
  * script trusting inputs it never verified):
  *
- * 1. **Commit pin** ({@link assertUpstreamCommitPinned}) — `UPSTREAM_CLI` is an arbitrary,
- *    env-overridable path with no default check that its checkout actually sits at the commit
- *    `docker/e2e/Dockerfile` pins (`BACKLOG_COMMIT`). Regenerating against an unpinned/mismatched
- *    revision would silently bake an unreviewed upstream change into the committed goldens.
+ * 1. **Version pin** ({@link assertBacklogVersionPinned}) — `LORE_BACKLOG_CLI` is an arbitrary,
+ *    env-overridable binary path with no default check that it actually reports the version
+ *    `docker/e2e/Dockerfile` pins (`BACKLOG_VERSION`). Regenerating against an unpinned/mismatched
+ *    version would silently bake an unreviewed upstream change into the committed goldens.
  * 2. **Specimen shape** ({@link assertTaskViewSpecimenShape}) — `TASK_VIEW_ID` defaults to `LORE-33`,
  *    a real, mutable task in this repo's own `backlog/`. If its fields ever drift for reasons
  *    unrelated to the upstream contract, a golden-regeneration run would bake that drift into
@@ -41,8 +42,7 @@
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { canonicalize, type EnvelopeKind } from "./backlog-golden";
 
 /** How many entries to keep in the `task-list` / `search` payloads — enough to prove shape, small enough to read. */
@@ -60,14 +60,13 @@ const TASK_VIEW_ID = process.env.LORE_GOLDEN_TASK_ID ?? "LORE-33";
 /** The search query whose hits are frozen as the `search`-kind golden. */
 const SEARCH_QUERY = process.env.LORE_GOLDEN_SEARCH_QUERY ?? "json";
 
-/** The upstream CLI entrypoint — overridable; no fixed conventional path since this is manually built dev tooling. */
-const UPSTREAM_CLI =
-  process.env.LORE_BACKLOG_UPSTREAM_CLI ?? join(homedir(), "repos", "Backlog.md-upstream", "src", "cli.ts");
+/** The `backlog` binary to record goldens against — overridable; defaults to whatever `backlog` resolves to on PATH. */
+const BACKLOG_CLI = process.env.LORE_BACKLOG_CLI ?? "backlog";
 
 /** Where the committed goldens live, resolved relative to this script. */
 const FIXTURES_DIR = join(import.meta.dir, "..", "fixtures", "backlog-json");
 
-/** The Dockerfile that pins the upstream commit goldens must be regenerated against (read-only — never written by this script). */
+/** The Dockerfile that pins the backlog version goldens must be regenerated against (read-only — never written by this script). */
 const DOCKERFILE_PATH = join(import.meta.dir, "..", "..", "docker", "e2e", "Dockerfile");
 
 /** The file each kind is written to, matching upstream's own hyphenated `kind` spelling. */
@@ -79,7 +78,7 @@ const GOLDEN_FILES: Record<EnvelopeKind, string> = {
 
 /** Run the upstream CLI with `args`, returning parsed stdout JSON or throwing with captured stderr. */
 async function upstreamJson(args: readonly string[]): Promise<Record<string, unknown>> {
-  const proc = Bun.spawn(["bun", UPSTREAM_CLI, ...args], { stdout: "pipe", stderr: "pipe" });
+  const proc = Bun.spawn([BACKLOG_CLI, ...args], { stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
@@ -104,59 +103,68 @@ function trimSample(
 }
 
 /**
- * Extract the pinned `BACKLOG_COMMIT` sha from a `docker/e2e/Dockerfile`-shaped file's
- * `ARG BACKLOG_COMMIT=<sha>` line. `dockerfilePath` is a parameter (not a bare closure over
+ * Extract the pinned `BACKLOG_VERSION` from a `docker/e2e/Dockerfile`-shaped file's
+ * `ARG BACKLOG_VERSION=<semver>` line. `dockerfilePath` is a parameter (not a bare closure over
  * {@link DOCKERFILE_PATH}) so the malformed/missing-pin case is unit-testable against a fixture
  * file, without touching the real Dockerfile.
  */
-export function readPinnedBacklogCommit(dockerfilePath: string): string {
+export function readPinnedBacklogVersion(dockerfilePath: string): string {
   const text = readFileSync(dockerfilePath, "utf8");
-  const match = text.match(/^ARG BACKLOG_COMMIT=([0-9a-f]{40})$/m);
+  const match = text.match(/^ARG BACKLOG_VERSION=(\d+\.\d+\.\d+)$/m);
   if (match?.[1] === undefined) {
     throw new Error(
-      `could not find a pinned commit in ${dockerfilePath} (expected a line matching ` +
-        "`ARG BACKLOG_COMMIT=<40-hex-char sha>`)",
+      `could not find a pinned version in ${dockerfilePath} (expected a line matching ` +
+        "`ARG BACKLOG_VERSION=<major.minor.patch>`)",
     );
   }
   return match[1];
 }
 
 /**
- * Resolve the git commit `dir`'s checkout currently has checked out (`git rev-parse HEAD`),
- * throwing with the captured stderr if `dir` isn't inside a git checkout (e.g. `UPSTREAM_CLI`
- * pointing at a plain, non-cloned directory).
+ * Resolve the version `cliPath` reports (`<cliPath> --version`), throwing with the captured
+ * stderr if the spawn itself fails or exits non-zero (e.g. `LORE_BACKLOG_CLI` pointing at a binary
+ * missing from PATH).
  */
-export function resolveGitCommit(dir: string): string {
-  const proc = Bun.spawnSync(["git", "-C", dir, "rev-parse", "HEAD"], { stdout: "pipe", stderr: "pipe" });
+/** `Bun.spawnSync` itself throws (e.g. `ENOENT`) rather than returning a failed result when `cliPath` can't be spawned at all. */
+function trySpawnVersion(cliPath: string) {
+  try {
+    return Bun.spawnSync([cliPath, "--version"], { stdout: "pipe", stderr: "pipe" });
+  } catch (err) {
+    throw new Error(`could not resolve ${cliPath}'s version: \`${cliPath} --version\` failed to spawn: ${err}`);
+  }
+}
+
+export function resolveBacklogVersion(cliPath: string): string {
+  const proc = trySpawnVersion(cliPath);
   if (proc.exitCode !== 0) {
     throw new Error(
-      `could not resolve the checked-out git commit in ${dir}: \`git rev-parse HEAD\` exited ${proc.exitCode}: ${proc.stderr.toString("utf8").trim()}`,
+      `could not resolve ${cliPath}'s version: \`${cliPath} --version\` exited ${proc.exitCode}: ${proc.stderr.toString("utf8").trim()}`,
     );
   }
   return proc.stdout.toString("utf8").trim();
 }
 
 /**
- * Pure comparison half of the commit-pin guard (LORE-106 AC#1): throws a clear, actionable error
- * when `actual` (what `cliPath`'s checkout really has checked out) doesn't match `pinned` (what
- * `docker/e2e/Dockerfile`'s `BACKLOG_COMMIT` documents). Split from I/O so the guard's own
- * decision logic is directly unit-testable with fabricated shas.
+ * Pure comparison half of the version-pin guard (LORE-106 AC#1): throws a clear, actionable error
+ * when `actual` (what `cliPath` really reports) doesn't match `pinned` (what
+ * `docker/e2e/Dockerfile`'s `BACKLOG_VERSION` documents). Split from I/O so the guard's own
+ * decision logic is directly unit-testable with fabricated versions.
  */
-export function assertCommitPinned(actual: string, pinned: string, cliPath: string): void {
+export function assertVersionPinned(actual: string, pinned: string, cliPath: string): void {
   if (actual !== pinned) {
     throw new Error(
-      `UPSTREAM_CLI (${cliPath}) is checked out at ${actual}, but docker/e2e/Dockerfile pins ` +
-        `BACKLOG_COMMIT=${pinned}. Check out the pinned commit before regenerating goldens against it ` +
+      `LORE_BACKLOG_CLI (${cliPath}) reports version ${actual}, but docker/e2e/Dockerfile pins ` +
+        `BACKLOG_VERSION=${pinned}. Install the pinned version before regenerating goldens against it ` +
         "(or update the Dockerfile's pin deliberately, as its own change).",
     );
   }
 }
 
-/** AC#1: abort — writing no golden — unless `UPSTREAM_CLI`'s checkout matches the Dockerfile-pinned commit. */
-function assertUpstreamCommitPinned(): void {
-  const pinned = readPinnedBacklogCommit(DOCKERFILE_PATH);
-  const actual = resolveGitCommit(dirname(UPSTREAM_CLI));
-  assertCommitPinned(actual, pinned, UPSTREAM_CLI);
+/** AC#1: abort — writing no golden — unless `LORE_BACKLOG_CLI` reports the Dockerfile-pinned version. */
+function assertBacklogVersionPinned(): void {
+  const pinned = readPinnedBacklogVersion(DOCKERFILE_PATH);
+  const actual = resolveBacklogVersion(BACKLOG_CLI);
+  assertVersionPinned(actual, pinned, BACKLOG_CLI);
 }
 
 /**
@@ -227,7 +235,7 @@ async function record(
 
 async function main(): Promise<void> {
   // Guard FIRST, before any golden (or even the fixtures directory) is touched.
-  assertUpstreamCommitPinned();
+  assertBacklogVersionPinned();
   mkdirSync(FIXTURES_DIR, { recursive: true });
   await record("task-view", ["task", "view", TASK_VIEW_ID, "--json"], undefined, (raw) =>
     assertTaskViewSpecimenShape(raw, TASK_VIEW_ID),
