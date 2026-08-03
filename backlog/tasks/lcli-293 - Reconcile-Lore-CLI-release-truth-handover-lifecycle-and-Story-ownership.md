@@ -1,9 +1,11 @@
 ---
 id: LCLI-293
 title: Reconcile Lore CLI release truth handover lifecycle and Story ownership
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-02 03:36'
+updated_date: '2026-08-03 16:11'
 labels:
   - audit
   - documentation
@@ -13,6 +15,7 @@ labels:
   - coupling
   - follow-up
   - no-product-code
+  - 'doc:stories/maintain-lore-cli-documentation-authority'
 dependencies: []
 references:
   - ../opum-doc/docs/reference/cross-product-documentation-authority-audit.md
@@ -26,6 +29,7 @@ documentation:
   - docs/index.md
   - docs/runbooks/lore-cli-release-campaign-handover.md
   - docs/runbooks/release-publishing.md
+  - docs/stories/maintain-lore-cli-documentation-authority.md
 priority: high
 type: docs
 ordinal: 406000
@@ -45,3 +49,19 @@ Resolve the owner-local documentation debt identified by opum-doc OCLI-6 while p
 - [ ] #4 The root index reaches the active Story, controlling ADR and Spec, release-truth record, ownership map, and current handover without claiming npm availability from planned release mechanics
 - [ ] #5 Lore sync, strict validation and checking, agent checks, Story/task rollups, orphan checks, and git diff --check pass with no product-source, package, release, remote-policy, or user-worktree changes
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Ground release truth from live package metadata, tags, Backlog gates LCLI-253/LCLI-278, and current local evidence; correct active entry points without changing release state.
+2. Create a Lore Story for LCLI-293 plus owner-scoped release-truth and documentation-ownership references, and route the root index to the active Story, ADR-0001, the release Spec/runbook control set, ownership map, truth record, and one context-free current handover.
+3. Replace the stale release campaign cursor with the single current context-free handover; move obsolete docs handovers to historical Reference capsules and reduce tracked archive and ignored .claude handovers to concise past-tense provenance with no executable cursor.
+4. Create a small, semantically scoped Story set for foundation, hardening, first-release readiness, deferred capabilities, local graph work, agent profiles, and documentation authority; couple every live and historical Backlog task exactly once through lore link while preserving status and acceptance history.
+5. Run lore sync, strict validation/checking, lore agents --check, every Story rollup, lore orphans, stale-language scans, and git diff --check; adversarially review release truth, handover uniqueness, coupling coverage, and scope boundaries before finalization.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-08-03 restore: grounded doc-8 and live git state, dispatched wave 1, and recorded the implementation plan. Paused before documentation edits because acceptance criterion 3 requires `lore link`, whose repository contract automatically commits every affected Backlog task file. The active campaign explicitly grants no commit authority. No source or docs file has been edited, and no commit, push, PR, merge, publication, remote-policy change, or cleanup has been performed. Resume after the user explicitly authorizes the local commits required by Lore coupling (remote delivery remains separately unauthorized).
+<!-- SECTION:NOTES:END -->
