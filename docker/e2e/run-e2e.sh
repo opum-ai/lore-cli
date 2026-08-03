@@ -3,7 +3,7 @@
 # docker/e2e/run-e2e.sh — the E2E test driver for LORE-56.
 #
 # Exercises the full `lore` command surface against a REAL, --json-capable
-# `backlog` binary (built from the MrLesk/Backlog.md pinned commit — see
+# `backlog` binary (installed from the exact published version pinned by
 # docker/e2e/Dockerfile) and a real, mutating scratch backlog project. No
 # mocked adapter anywhere (ADR-0002's JSON-only/fail-loud mandate). Every
 # step's real stdout/stderr/exit code is appended to $RESULTS_DIR/report.jsonl
@@ -610,7 +610,7 @@ step_fail "capability probe: lore fails loud (exit 3, not_found) with no backlog
 # ── Phase 3c: capability probe, PRESENT-but-incapable branch (LORE-62 AC3) ──────────────────
 # The negative tests above only ever exercise the MISSING-binary half of probeBacklog's split
 # (exit 3). The present-but-incapable half (exit 6, validation) never runs in this harness,
-# because the image ships only the capable pinned build. Two PATH-shadowed stub `backlog`
+# because the image ships only the capable published package. Two PATH-shadowed stub `backlog`
 # scripts cover both variants src/adapters/backlog.ts's probeBacklog distinguishes: a version
 # below MIN_BACKLOG_VERSION ("1.49.0"), and a version-capable binary whose `task list --json`
 # still fails to parse. No cross-process probe cache exists today (capability is memoized only

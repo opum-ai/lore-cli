@@ -5,15 +5,18 @@ title: >-
   it (drop build-from-commit hint, bump version floor)
 status: In Progress
 assignee:
-  - '@claude'
+  - '@codex'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-08-03 00:16'
+updated_date: '2026-08-03 02:33'
 labels:
   - adapter-backlog
   - release
   - blocked-upstream
 dependencies: []
 references:
+  - src/adapters/backlog.ts
+  - docs/runbooks/backlog-json-patch.md
+  - 'https://github.com/MrLesk/Backlog.md/pull/790'
   - 'https://github.com/salient-data/lore-cli/pull/285'
 priority: high
 type: task
@@ -49,14 +52,12 @@ docs/runbooks/backlog-json-patch.md section 8.1; docs/runbooks/release-publishin
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. src/adapters/backlog.ts: bump MIN_BACKLOG_VERSION 1.47.1 -> 1.49.0 (first tagged MrLesk/Backlog.md release containing PR #790/BACK-545, released 2026-08-02); rewrite RUNBOOK_HINT to point at installing the published package instead of building commit 22a091b.
-2. Update test fakes that hardcode a passing "1.47.1" --version response (test/backlog-probe.test.ts, test/backlog-adapter.test.ts, test/helpers.ts, test/init.test.ts) to a value >=1.49.0 so they still pass the floor check; leave the intentional below-floor test (1.46.9) alone.
-3. docker/e2e/Dockerfile: replace the git-clone-and-compile-from-commit-22a091b step with installing backlog.md>=1.49.0 via npm; update its accompanying comments.
-4. Update test/record-backlog-goldens-guards.test.ts and test/support/record-backlog-goldens.ts, which assert on / document the Dockerfile's pinned-commit mechanism, to match the new npm-install mechanism.
-5. .github/actions/strict-check/action.yml: same swap as the Dockerfile (npm install instead of clone+compile from commit).
-6. README.md and docs/runbooks/backlog-json-patch.md: update the "no tagged release yet" / pinned-commit language to present the published package as the (only) path; mark runbook SS8.1 step 4 complete.
-7. bun test && bun run lint && bun run typecheck locally. Docker is not available in this execution environment, so docker-e2e cannot be run here -- will note that as an explicit limitation rather than claiming it green.
-8. Record verification evidence in Implementation Notes, check ACs, final summary, move to Done per this repo's own task-finalization guide.
+1. Keep MIN_BACKLOG_VERSION at 1.49.0, the first tagged JSON-capable release, and keep the published-package installation hint.
+2. Qualify the declared minimum directly: pin the Docker E2E harness and published strict-check action to backlog.md 1.49.0, then update the version-pin guard test.
+3. Replace the remaining stale pinned-build comments in docker/e2e/run-e2e.sh with exact published-package language.
+4. Preserve all source, runbook, upstream, and delivery references in the Backlog task.
+5. Run focused tests, lint, typecheck, strict documentation checks, and diff hygiene; commit and push the review corrections to PR #285.
+6. Require replacement CI to pass at the exact amended head. Then check ACs #3 and #5 and write the evidence-backed final summary, while leaving LCLI-253 In Progress until the exact PR head is authorized and merged.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -109,4 +110,8 @@ behavior diffs) is out of this task's scope; only the specific claims that refer
 floor/pinned-commit state were corrected.
 
 PR #285 opened against dev: https://github.com/salient-data/lore-cli/pull/285. Task stays In Progress until CI's docker-e2e job confirms AC#3/#5 -- do not move to Done on the strength of local verification alone.
+
+2026-08-03 pre-merge review remediation authorized by the user. Restore references lost by replacement-field mutation, qualify the declared 1.49.0 floor against the real published binary instead of only 1.49.1, correct stale harness comments, and keep terminal task closure after verified merge.
+
+Pre-merge review remediation local evidence on minim4: the exact published backlog.md@1.49.0 binary reports 1.49.0 and successfully drives bun src/cli.ts orphans --json through the real capability probe and list adapter. The focused version-pin guard suite passes 17/17; the full Bun suite passes 2201/2201 with 6279 expectations; Biome checks 118 files clean; TypeScript passes; strict Lore validation and coherence checks pass for 41 docs with 0 errors and 0 warnings; bash -n, compiled build, and git diff --check pass. Docker E2E at the amended head remains gated on replacement PR CI.
 <!-- SECTION:NOTES:END -->

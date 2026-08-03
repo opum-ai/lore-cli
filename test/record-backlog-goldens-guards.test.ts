@@ -37,7 +37,7 @@ const GOOD_ENVELOPE = JSON.parse(
 
 describe("readPinnedBacklogVersion", () => {
   test("extracts the real pinned BACKLOG_VERSION from docker/e2e/Dockerfile", () => {
-    expect(readPinnedBacklogVersion(REAL_DOCKERFILE)).toBe("1.49.1");
+    expect(readPinnedBacklogVersion(REAL_DOCKERFILE)).toBe("1.49.0");
   });
 
   test("throws a clear error when the file has no ARG BACKLOG_VERSION line", () => {

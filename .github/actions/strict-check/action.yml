@@ -30,7 +30,7 @@ runs:
       # `backlog` bin in the same directory the setup-bun step already put on PATH.
       shell: bash
       env:
-        BACKLOG_VERSION: 1.49.1
+        BACKLOG_VERSION: 1.49.0
       run: |
         bun install --global "backlog.md@${BACKLOG_VERSION}"
         VER="$(backlog --version)"

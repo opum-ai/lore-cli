@@ -39,7 +39,7 @@ RUN apt-get update \
 # docusaurus scaffold step. Pinned to an exact version for byte-for-byte image
 # reproducibility, same rationale as the mkdocs pins above; bump deliberately,
 # not via a floating range.
-ARG BACKLOG_VERSION=1.49.1
+ARG BACKLOG_VERSION=1.49.0
 RUN npm install -g "backlog.md@${BACKLOG_VERSION}" \
     && VER="$(backlog --version)" \
     && echo "backlog --version => '${VER}'" \
