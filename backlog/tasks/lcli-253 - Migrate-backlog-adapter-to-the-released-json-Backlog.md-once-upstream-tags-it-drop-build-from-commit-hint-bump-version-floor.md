@@ -7,16 +7,14 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-08-03 00:14'
+updated_date: '2026-08-03 00:16'
 labels:
   - adapter-backlog
   - release
   - blocked-upstream
 dependencies: []
 references:
-  - src/adapters/backlog.ts
-  - docs/runbooks/backlog-json-patch.md
-  - 'https://github.com/MrLesk/Backlog.md/pull/790'
+  - 'https://github.com/salient-data/lore-cli/pull/285'
 priority: high
 type: task
 ordinal: 355000
@@ -109,4 +107,6 @@ full re-verification of backlog-cli-contract.md's detailed CLI-behavior-at-speci
 against v1.49.0 source -- that document's deep verification (exact source line numbers, flag
 behavior diffs) is out of this task's scope; only the specific claims that referenced the fork
 floor/pinned-commit state were corrected.
+
+PR #285 opened against dev: https://github.com/salient-data/lore-cli/pull/285. Task stays In Progress until CI's docker-e2e job confirms AC#3/#5 -- do not move to Done on the strength of local verification alone.
 <!-- SECTION:NOTES:END -->

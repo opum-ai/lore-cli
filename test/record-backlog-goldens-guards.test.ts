@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -32,14 +32,6 @@ const REAL_DOCKERFILE = join(import.meta.dir, "..", "docker", "e2e", "Dockerfile
 const GOOD_ENVELOPE = JSON.parse(
   readFileSync(join(import.meta.dir, "fixtures", "backlog-json", "task-view.json"), "utf8"),
 ) as Record<string, unknown>;
-
-/** Write an executable stub `backlog` that just echoes `version` to stdout for `--version`. */
-function stubBacklog(dir: string, version: string): string {
-  const path = join(dir, "backlog");
-  writeFileSync(path, `#!/bin/sh\necho "${version}"\n`);
-  chmodSync(path, 0o755);
-  return path;
-}
 
 // ── AC#1: version pin ──────────────────────────────────────────────────────────────
 
@@ -73,13 +65,11 @@ describe("readPinnedBacklogVersion", () => {
 
 describe("resolveBacklogVersion", () => {
   test("returns the version a real binary reports on --version", () => {
-    const dir = mkdtempSync(join(tmpdir(), "lore-backlog-stub-"));
-    try {
-      const bin = stubBacklog(dir, "1.49.1");
-      expect(resolveBacklogVersion(bin)).toBe("1.49.1");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    // process.execPath (the running Bun binary) is a real, cross-platform-safe binary that
+    // genuinely supports --version -- a hand-written #!/bin/sh stub + chmod, tried first, failed
+    // on Windows CI (no shebang, no exec bit). test/backlog-probe.test.ts's "bunBacklogSpawn --
+    // the real Bun.spawn seam" suite already dodges this exact trap the same way.
+    expect(resolveBacklogVersion(process.execPath)).toMatch(/^\d+\.\d+\.\d+/);
   });
 
   test("throws a clear error when the binary can't be run", () => {
