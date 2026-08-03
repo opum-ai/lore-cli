@@ -5,16 +5,19 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:32'
+updated_date: '2026-08-03 16:10'
 labels:
   - cli-ux
   - onboarding
   - agents
+  - 'doc:stories/prepare-the-first-lore-cli-release'
 dependencies: []
 references:
   - src/commands/init.ts
   - src/commands/agents.ts
   - docs/adr/0017-interactive-init-wizard-tty-gated.md
+documentation:
+  - docs/stories/prepare-the-first-lore-cli-release.md
 modified_files:
   - src/commands/init.ts
   - src/commands/codex-bridge.ts

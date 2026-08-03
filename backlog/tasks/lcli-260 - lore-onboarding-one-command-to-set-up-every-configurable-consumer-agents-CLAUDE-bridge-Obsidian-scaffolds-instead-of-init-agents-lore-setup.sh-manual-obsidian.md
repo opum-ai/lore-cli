@@ -8,16 +8,19 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:31'
+updated_date: '2026-08-03 16:10'
 labels:
   - cli-ux
   - onboarding
   - cmd-crud-a
+  - 'doc:stories/prepare-the-first-lore-cli-release'
 dependencies: []
 references:
   - src/commands/init.ts
   - docs/adr/0004-cli-first-skill-bridge-mcp-deferred.md
   - lore-setup.sh
+documentation:
+  - docs/stories/prepare-the-first-lore-cli-release.md
 priority: medium
 type: enhancement
 ordinal: 362000

@@ -5,12 +5,15 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-29 02:27'
-updated_date: '2026-07-29 02:54'
+updated_date: '2026-08-03 16:10'
 labels:
   - ci
   - github-actions
   - consumers
+  - 'doc:stories/prepare-the-first-lore-cli-release'
 dependencies: []
+documentation:
+  - docs/stories/prepare-the-first-lore-cli-release.md
 priority: high
 type: task
 ordinal: 384000

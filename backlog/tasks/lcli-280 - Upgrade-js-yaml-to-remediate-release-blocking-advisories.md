@@ -5,16 +5,19 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:32'
+updated_date: '2026-08-03 16:10'
 labels:
   - security
   - release
   - dependencies
+  - 'doc:stories/prepare-the-first-lore-cli-release'
 dependencies: []
 references:
   - package.json
   - src/core/concept.ts
   - src/adapters/backlog.ts
+documentation:
+  - docs/stories/prepare-the-first-lore-cli-release.md
 modified_files:
   - package.json
   - bun.lock

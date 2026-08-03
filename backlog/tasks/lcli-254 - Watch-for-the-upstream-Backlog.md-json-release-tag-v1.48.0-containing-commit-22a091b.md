@@ -7,13 +7,16 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:30'
+updated_date: '2026-08-03 16:10'
 labels:
   - release
   - tooling
+  - 'doc:stories/prepare-the-first-lore-cli-release'
 dependencies: []
 references:
   - 'https://github.com/MrLesk/Backlog.md/releases'
+documentation:
+  - docs/stories/prepare-the-first-lore-cli-release.md
 priority: medium
 type: chore
 ordinal: 356000

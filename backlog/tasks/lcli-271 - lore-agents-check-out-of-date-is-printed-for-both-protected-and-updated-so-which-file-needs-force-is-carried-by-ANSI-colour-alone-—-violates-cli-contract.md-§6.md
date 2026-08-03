@@ -7,12 +7,15 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:31'
+updated_date: '2026-08-03 16:10'
 labels:
   - cli-ux
   - docs-drift
   - cmd-crud-a
+  - 'doc:stories/prepare-the-first-lore-cli-release'
 dependencies: []
+documentation:
+  - docs/stories/prepare-the-first-lore-cli-release.md
 modified_files:
   - src/commands/agents.ts
   - test/agents.test.ts

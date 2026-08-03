@@ -4,11 +4,14 @@ title: CONTRIBUTING documents bun run build but package.json has no build script
 status: Done
 assignee: []
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:31'
+updated_date: '2026-08-03 16:10'
 labels:
   - build-ci-config
   - docs-drift
+  - 'doc:stories/prepare-the-first-lore-cli-release'
 dependencies: []
+documentation:
+  - docs/stories/prepare-the-first-lore-cli-release.md
 modified_files:
   - package.json
 priority: medium

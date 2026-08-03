@@ -6,11 +6,14 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:31'
+updated_date: '2026-08-03 16:10'
 labels:
   - docs-drift
   - adapter-backlog
+  - 'doc:stories/prepare-the-first-lore-cli-release'
 dependencies: []
+documentation:
+  - docs/stories/prepare-the-first-lore-cli-release.md
 modified_files:
   - README.md
   - docs/reference/tech-stack.md
