@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:34'
-updated_date: '2026-08-03 00:32'
+updated_date: '2026-08-03 13:44'
 labels:
   - ladybugdb
   - history
@@ -91,6 +91,8 @@ Wave 16 dispatch research completed against the exact integrated M6 lifecycle, M
 Contract approved by the user on 2026-08-02. Implementation is authorized for all six recorded plan steps: explicit retained snapshot management, bounded changed/provenance operations, storage-neutral facts and deletion safety, additive Commander/manifest/agent surfaces, separate explorer change mode, shared fixtures, and Lore documentation. Delivery actions remain separately unauthorized.
 
 Implementation and adversarial review complete in the guarded feature worktree. Evidence: Biome checked 185 files clean; TypeScript clean; Bun 2425/2425 tests pass; Playwright 18/18 passes across Chromium, Firefox, and WebKit; compiled binary and new-command help smokes pass; worktree-source Lore sync/validate --strict/check --strict and agents --check pass with 56 docs, 0 errors, 0 warnings; git diff --check passes. Retained parsing rejects mixed/duplicate/unsafe/sensitive evidence and builders recursively omit sensitive frontmatter keys. Delivery remains unauthorized and the source/docs/test changes remain uncommitted. Lore's required link/sync workflow created isolated backlog-only commits 13f3920 and fc1dd66; no implementation commit, push, PR, merge, lease return, primary mutation, branch deletion, publication, or parent settlement occurred.
+
+Delivery authorized by the user on 2026-08-03. Implementation committed and rebased cleanly onto dev 9b02904. Post-rebase verification: focused snapshot/explorer/help suite 61/61; full Bun suite 2425/2425 with 8008 expectations; Biome 185 files clean; TypeScript clean; compiled build 261 modules; Playwright 18/18 across Chromium, Firefox, and WebKit; Lore sync with published backlog.md@1.49.0, strict validation/check for 56 docs with 0 errors and 0 warnings, agent bridge check, and git diff hygiene pass. Task remains In Progress until exact-head PR CI and merge complete.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
