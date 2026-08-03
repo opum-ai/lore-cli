@@ -7,14 +7,17 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:25'
+updated_date: '2026-08-03 16:11'
 labels:
   - backlog-campaign-followup
   - security
   - test-coverage
+  - 'doc:stories/harden-lore-cli-correctness-and-safety'
 dependencies: []
 references:
   - backlog/docs/doc-1 - Backlog campaign tracker.md
+documentation:
+  - docs/stories/harden-lore-cli-correctness-and-safety.md
 priority: low
 type: bug
 ordinal: 108000

@@ -7,10 +7,13 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:27'
+updated_date: '2026-08-03 16:11'
 labels:
   - core-rewrite-engine
+  - 'doc:stories/harden-lore-cli-correctness-and-safety'
 dependencies: []
+documentation:
+  - docs/stories/harden-lore-cli-correctness-and-safety.md
 priority: medium
 ordinal: 190000
 ---

@@ -4,15 +4,18 @@ title: Malformed closing frontmatter fence bleeds bytes into concept body
 status: Done
 assignee: []
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:26'
+updated_date: '2026-08-03 16:10'
 labels:
   - codex-review-followup
   - core-concept-manifest
+  - 'doc:stories/harden-lore-cli-correctness-and-safety'
 dependencies: []
 references:
   - >-
     backlog/docs/reviews/doc-2 -
     Codex-second-opinion-review-—-lore-codebase-2026-07-20.md
+documentation:
+  - docs/stories/harden-lore-cli-correctness-and-safety.md
 priority: medium
 type: bug
 ordinal: 155000

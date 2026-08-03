@@ -8,17 +8,20 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:23'
+updated_date: '2026-08-03 16:09'
 labels:
   - e2e
   - testing
   - cli-contract
+  - 'doc:stories/harden-lore-cli-correctness-and-safety'
 dependencies:
   - LCLI-56
 references:
   - docker/e2e/run-e2e.sh
   - docs/reference/cli-contract.md
   - src/commands/link.ts
+documentation:
+  - docs/stories/harden-lore-cli-correctness-and-safety.md
 priority: high
 ordinal: 75000
 ---

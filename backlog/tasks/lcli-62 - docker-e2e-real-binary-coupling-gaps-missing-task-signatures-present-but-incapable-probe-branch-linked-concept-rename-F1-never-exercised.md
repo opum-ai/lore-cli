@@ -7,12 +7,13 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:23'
+updated_date: '2026-08-03 16:09'
 labels:
   - e2e
   - testing
   - backlog-fork
   - adapter
+  - 'doc:stories/harden-lore-cli-correctness-and-safety'
 dependencies:
   - LCLI-56
   - LCLI-61
@@ -20,6 +21,8 @@ references:
   - docker/e2e/run-e2e.sh
   - src/adapters/backlog.ts
   - src/commands/rename.ts
+documentation:
+  - docs/stories/harden-lore-cli-correctness-and-safety.md
 priority: high
 ordinal: 76000
 ---

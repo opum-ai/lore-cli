@@ -7,12 +7,15 @@ status: Done
 assignee:
   - '@sonnet-worker'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:29'
+updated_date: '2026-08-03 16:12'
 labels:
   - core-replace
   - codex-review-followup
   - test-hygiene
+  - 'doc:stories/harden-lore-cli-correctness-and-safety'
 dependencies: []
+documentation:
+  - docs/stories/harden-lore-cli-correctness-and-safety.md
 priority: low
 type: task
 ordinal: 317000

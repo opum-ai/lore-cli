@@ -8,16 +8,19 @@ status: Done
 assignee:
   - '@jeremy-newhouse'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:24'
+updated_date: '2026-08-03 16:11'
 labels:
   - docs
   - bug
   - cli-contract
+  - 'doc:stories/harden-lore-cli-correctness-and-safety'
 dependencies: []
 references:
   - docs/reference/cli-surface.md
   - src/commands/init.ts
   - src/core/config.ts
+documentation:
+  - docs/stories/harden-lore-cli-correctness-and-safety.md
 priority: low
 ordinal: 81000
 ---

@@ -7,11 +7,14 @@ status: Done
 assignee:
   - '@sonnet-worker'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:28'
+updated_date: '2026-08-03 16:11'
 labels:
   - codex-review-followup
   - cmd-check
+  - 'doc:stories/harden-lore-cli-correctness-and-safety'
 dependencies: []
+documentation:
+  - docs/stories/harden-lore-cli-correctness-and-safety.md
 priority: low
 type: bug
 ordinal: 201000
