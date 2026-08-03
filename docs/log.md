@@ -76,6 +76,7 @@
 - 2026-08-03T09:07:42-05:00 57c5645e43014d592bc82fc017f432a173a3240f docs: record local graph roadmap settlement
 - 2026-08-03T11:24:52-05:00 f90527bb28c07098d30ed91f9480d05fdaf4dc29 docs: reconcile release truth and Story ownership
 - 2026-08-03T11:27:06-05:00 6fa326042c4c8945260f648056a28a1bdb3a7fec docs: record LCLI-293 settlement
+- 2026-08-03T11:28:27-05:00 fcf8e77919c1c7373f66dd720ff412726f8bd0e1 docs: record campaign disposition
 
 ## docs/.obsidian
 
