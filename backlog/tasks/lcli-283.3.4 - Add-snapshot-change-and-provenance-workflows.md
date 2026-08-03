@@ -1,11 +1,11 @@
 ---
 id: LCLI-283.3.4
 title: Add snapshot change and provenance workflows
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:34'
-updated_date: '2026-08-03 13:44'
+updated_date: '2026-08-03 13:53'
 labels:
   - ladybugdb
   - history
@@ -93,6 +93,8 @@ Contract approved by the user on 2026-08-02. Implementation is authorized for al
 Implementation and adversarial review complete in the guarded feature worktree. Evidence: Biome checked 185 files clean; TypeScript clean; Bun 2425/2425 tests pass; Playwright 18/18 passes across Chromium, Firefox, and WebKit; compiled binary and new-command help smokes pass; worktree-source Lore sync/validate --strict/check --strict and agents --check pass with 56 docs, 0 errors, 0 warnings; git diff --check passes. Retained parsing rejects mixed/duplicate/unsafe/sensitive evidence and builders recursively omit sensitive frontmatter keys. Delivery remains unauthorized and the source/docs/test changes remain uncommitted. Lore's required link/sync workflow created isolated backlog-only commits 13f3920 and fc1dd66; no implementation commit, push, PR, merge, lease return, primary mutation, branch deletion, publication, or parent settlement occurred.
 
 Delivery authorized by the user on 2026-08-03. Implementation committed and rebased cleanly onto dev 9b02904. Post-rebase verification: focused snapshot/explorer/help suite 61/61; full Bun suite 2425/2425 with 8008 expectations; Biome 185 files clean; TypeScript clean; compiled build 261 modules; Playwright 18/18 across Chromium, Firefox, and WebKit; Lore sync with published backlog.md@1.49.0, strict validation/check for 56 docs with 0 errors and 0 warnings, agent bridge check, and git diff hygiene pass. Task remains In Progress until exact-head PR CI and merge complete.
+
+Delivery settled 2026-08-03: PR #289 merged exact reviewed head d19c60e907f2ebed6f10075fb6df95f65e0fe645 into dev as cd4e8160cdf6ddea4c61f99d3d18069e0ae76682. GitHub CI run 30819483866 passed all eight required jobs, including Ubuntu and Windows full suites, compile, both documentation scaffolds, three-engine explorer qualification, Ladybug smoke, and real-binary Docker E2E.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
@@ -110,3 +112,9 @@ created: 2026-08-02 23:45
 Approved contract activated. Source, tests, and Lore documentation implementation may proceed on the existing guarded branch and lease.
 ---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added explicit retained repository/workspace snapshots, bounded deterministic changed and exact provenance workflows, and an offline explorer history artifact over one shared storage-neutral conformance contract. Verified post-rebase with 2,425 tests/8,008 expectations, lint, typecheck, compiled build, 18 browser tests, strict Lore validation/check, and exact-head CI run 30819483866; PR #289 merged d19c60e as cd4e816.
+<!-- SECTION:FINAL_SUMMARY:END -->

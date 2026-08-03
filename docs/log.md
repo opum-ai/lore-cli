@@ -71,6 +71,7 @@
 - 2026-08-02T18:04:16-05:00 467d66c09a151e48ec09ccf1b486dc9391f8d4a2 docs: refresh lore log for bounded traversal
 - 2026-08-03T08:39:40-05:00 a98014b4530903e2681c73c6762aa1e70e8aa67c feat: add snapshot change and provenance workflows
 - 2026-08-03T08:44:36-05:00 2a0c9693e06d31b4f48e99e49b8e06d3fed300dc docs: refresh lore log for snapshot workflows
+- 2026-08-03T08:45:25-05:00 d19c60e907f2ebed6f10075fb6df95f65e0fe645 docs: record snapshot workflow delivery evidence
 
 ## docs/.obsidian
 
