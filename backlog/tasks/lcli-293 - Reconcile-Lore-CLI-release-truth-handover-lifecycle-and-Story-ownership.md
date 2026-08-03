@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-02 03:36'
-updated_date: '2026-08-03 16:11'
+updated_date: '2026-08-03 16:12'
 labels:
   - audit
   - documentation
@@ -27,9 +27,20 @@ references:
     Protect-the-release-environment-before-publication.md
 documentation:
   - docs/index.md
-  - docs/runbooks/lore-cli-release-campaign-handover.md
-  - docs/runbooks/release-publishing.md
   - docs/stories/maintain-lore-cli-documentation-authority.md
+  - docs/reference/lore-cli-release-truth.md
+  - docs/reference/lore-cli-documentation-ownership.md
+  - docs/runbooks/lore-cli-handover.md
+  - docs/runbooks/release-publishing.md
+modified_files:
+  - README.md
+  - archive/handovers/
+  - backlog/docs/
+  - backlog/tasks/
+  - docs/index.md
+  - docs/reference/
+  - docs/runbooks/
+  - docs/stories/
 priority: high
 type: docs
 ordinal: 406000
@@ -64,4 +75,6 @@ Resolve the owner-local documentation debt identified by opum-doc OCLI-6 while p
 
 <!-- SECTION:NOTES:BEGIN -->
 2026-08-03 restore: grounded doc-8 and live git state, dispatched wave 1, and recorded the implementation plan. Paused before documentation edits because acceptance criterion 3 requires `lore link`, whose repository contract automatically commits every affected Backlog task file. The active campaign explicitly grants no commit authority. No source or docs file has been edited, and no commit, push, PR, merge, publication, remote-policy change, or cleanup has been performed. Resume after the user explicitly authorizes the local commits required by Lore coupling (remote delivery remains separately unauthorized).
+
+2026-08-03 implementation: the user explicitly approved the local commits required to complete LCLI-293; that approval does not include push, PR, merge, publication, cleanup, or remote-policy mutation. Created six scoped Story owners, retained LCLI-289 in its existing agent-profile Story, and coupled the other 319 tasks through Lore. Initial `lore orphans --json --limit 400` now reports zero orphan tasks and zero dangling links. Corrected active release claims from live evidence (all six manifests 0.0.0, zero GitHub releases/tags, npm 404, LCLI-253 Done, LCLI-278 To Do), added release-truth and ownership References, replaced three stale runbook handovers with one current route plus two historical capsules, and reduced 120 tracked plus 29 obsolete ignored handovers to non-executable provenance.
 <!-- SECTION:NOTES:END -->
