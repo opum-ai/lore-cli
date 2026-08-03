@@ -5,18 +5,20 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 15:27'
-updated_date: '2026-07-30 17:05'
+updated_date: '2026-08-03 16:10'
 labels:
   - dependencies
   - terminal-output
   - unicode
   - maintenance
+  - 'doc:stories/build-the-persistent-local-graph-platform'
 dependencies: []
 references:
   - src/output.ts
   - test/output.test.ts
 documentation:
   - docs/reference/dependency-boundary-audit.md
+  - docs/stories/build-the-persistent-local-graph-platform.md
 modified_files:
   - package.json
   - bun.lock

@@ -5,11 +5,12 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:33'
-updated_date: '2026-08-02 00:18'
+updated_date: '2026-08-03 16:10'
 labels:
   - graph-explorer
   - frontend
   - cli
+  - 'doc:stories/build-the-persistent-local-graph-platform'
 milestone: m-14
 dependencies:
   - LCLI-283.2.1
@@ -18,6 +19,7 @@ documentation:
   - docs/specs/local-graph-platform-roadmap.md
   - docs/specs/graph-explorer-data-and-interaction-contract.md
   - docs/reference/cli-surface.md
+  - docs/stories/build-the-persistent-local-graph-platform.md
 modified_files:
   - .gitignore
   - .claude/skills/lore/SKILL.md

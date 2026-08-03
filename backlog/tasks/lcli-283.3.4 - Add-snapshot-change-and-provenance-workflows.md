@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:34'
-updated_date: '2026-08-03 13:53'
+updated_date: '2026-08-03 16:10'
 labels:
   - ladybugdb
   - history
@@ -13,12 +13,14 @@ labels:
   - provenance
   - graph-explorer
   - 'doc:specs/snapshot-change-and-provenance-workflows'
+  - 'doc:stories/build-the-persistent-local-graph-platform'
 milestone: m-15
 dependencies:
   - LCLI-283.3.3
 documentation:
   - docs/specs/local-graph-platform-roadmap.md
   - docs/specs/snapshot-change-and-provenance-workflows.md
+  - docs/stories/build-the-persistent-local-graph-platform.md
 modified_files:
   - .claude/skills/lore/SKILL.md
   - docs/log.md

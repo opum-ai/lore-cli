@@ -5,17 +5,19 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:33'
-updated_date: '2026-08-02 01:17'
+updated_date: '2026-08-03 16:10'
 labels:
   - graph-explorer
   - accessibility
   - performance
   - packaging
+  - 'doc:stories/build-the-persistent-local-graph-platform'
 milestone: m-14
 dependencies:
   - LCLI-283.2.2
 documentation:
   - docs/specs/local-graph-platform-roadmap.md
+  - docs/stories/build-the-persistent-local-graph-platform.md
 modified_files:
   - package.json
   - bun.lock

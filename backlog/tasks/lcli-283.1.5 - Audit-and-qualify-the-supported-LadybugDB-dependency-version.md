@@ -5,12 +5,13 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-01 00:30'
-updated_date: '2026-08-01 03:53'
+updated_date: '2026-08-03 16:10'
 labels:
   - ladybugdb
   - dependency
   - compatibility
   - packaging
+  - 'doc:stories/build-the-persistent-local-graph-platform'
 milestone: m-13
 dependencies:
   - LCLI-283.1.3
@@ -20,6 +21,7 @@ references:
 documentation:
   - docs/reference/ladybugdb-benchmark-and-scale-acceptance-strategy.md
   - docs/specs/local-graph-platform-roadmap.md
+  - docs/stories/build-the-persistent-local-graph-platform.md
 modified_files:
   - package.json
   - bun.lock

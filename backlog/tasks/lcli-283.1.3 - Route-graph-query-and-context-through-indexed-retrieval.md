@@ -5,17 +5,19 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:33'
-updated_date: '2026-07-31 00:23'
+updated_date: '2026-08-03 16:10'
 labels:
   - ladybugdb
   - retrieval
   - compatibility
+  - 'doc:stories/build-the-persistent-local-graph-platform'
 milestone: m-13
 dependencies:
   - LCLI-283.1.2
   - LCLI-284
 documentation:
   - docs/specs/local-graph-platform-roadmap.md
+  - docs/stories/build-the-persistent-local-graph-platform.md
 modified_files:
   - docs/index.md
   - docs/log.md
