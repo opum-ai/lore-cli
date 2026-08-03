@@ -3,11 +3,11 @@ id: LCLI-253
 title: >-
   Migrate backlog adapter to the released --json Backlog.md once upstream tags
   it (drop build-from-commit hint, bump version floor)
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-08-03 02:40'
+updated_date: '2026-08-03 13:07'
 labels:
   - adapter-backlog
   - release
@@ -116,10 +116,12 @@ PR #285 opened against dev: https://github.com/salient-data/lore-cli/pull/285. T
 Pre-merge review remediation local evidence on minim4: the exact published backlog.md@1.49.0 binary reports 1.49.0 and successfully drives bun src/cli.ts orphans --json through the real capability probe and list adapter. The focused version-pin guard suite passes 17/17; the full Bun suite passes 2201/2201 with 6279 expectations; Biome checks 118 files clean; TypeScript passes; strict Lore validation and coherence checks pass for 41 docs with 0 errors and 0 warnings; bash -n, compiled build, and git diff --check pass. Docker E2E at the amended head remains gated on replacement PR CI.
 
 GitHub CI run 30779634457 passed all eight required jobs at exact reviewed head ca70bab627f0e2ba2a393221cc9a06ad41151cf0. Docker E2E completed successfully in 4m57s while installing and exercising published backlog.md@1.49.0, directly proving AC #3 and the real-binary portion of AC #5. Ubuntu and Windows full test jobs, compile smoke, both documentation scaffold smokes, three-engine explorer qualification, and Ladybug benchmark smoke also passed. PR #285 is open, mergeable, and CLEAN. Task intentionally remains In Progress until this exact head is authorized and merged.
+
+User authorized merge on 2026-08-03. PR #285 merged exact reviewed head 5b879782560be6ab6107096eeef2c5e07d2e3a61 into dev as merge commit 7a5e775e424100700867f6e1a3a3d448ccdb03f6 at 2026-08-03T13:05:45Z. Final exact-head CI run 30779888983 passed all eight jobs, including Windows and Docker E2E against published backlog.md@1.49.0. Delivery state is now satisfied; this settlement marks LCLI-253 Done.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Migrated Lore from the interim pinned-commit Backlog.md build to the published JSON-capable package, set the adapter floor and operator guidance to 1.49.0, installed the exact published minimum in Docker E2E and the strict-check action, preserved PATH-based adapter ownership, and updated tests and documentation. Verified locally with 2201 tests, lint, typecheck, build, strict Lore checks, and a direct backlog.md@1.49.0 adapter smoke; GitHub CI run 30779634457 passed all eight jobs at ca70bab, including Windows and real Docker E2E. PR #285 remains open pending merge authorization.
+Migrated Lore from the interim pinned-commit Backlog.md build to the published JSON-capable package, set the adapter floor and operator guidance to 1.49.0, installed the exact published minimum in Docker E2E and the strict-check action, preserved PATH-based adapter ownership, and updated tests and documentation. Verified locally with 2201 tests, lint, typecheck, build, strict Lore checks, and a direct backlog.md@1.49.0 adapter smoke. Final GitHub CI run 30779888983 passed all eight jobs at exact head 5b87978, including Windows and real Docker E2E. PR #285 merged that exact head into dev as 7a5e775.
 <!-- SECTION:FINAL_SUMMARY:END -->
