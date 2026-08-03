@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:34'
-updated_date: '2026-08-03 00:03'
+updated_date: '2026-08-03 00:32'
 labels:
   - ladybugdb
   - history
@@ -20,31 +20,38 @@ documentation:
   - docs/specs/local-graph-platform-roadmap.md
   - docs/specs/snapshot-change-and-provenance-workflows.md
 modified_files:
-  - src/core/snapshot.ts
-  - src/core/snapshot-store.ts
-  - src/core/explorer-contract.ts
-  - src/core/explorer.ts
-  - src/commands/snapshot.ts
-  - src/commands/changed.ts
-  - src/commands/provenance.ts
-  - src/commands/explorer.ts
-  - src/cli.ts
-  - src/core/manifest.ts
-  - src/core/agent-bridge.ts
-  - test/snapshot.test.ts
-  - test/explorer-contract.test.ts
-  - test/explorer.test.ts
-  - test/browser/explorer.pw.ts
-  - test/help.test.ts
-  - test/agents.test.ts
-  - test/fixtures/snapshot/v1.json
-  - docs/specs/snapshot-change-and-provenance.md
-  - docs/specs/local-graph-platform-roadmap.md
-  - docs/specs/graph-explorer-data-and-interaction-contract.md
+  - .claude/skills/lore/SKILL.md
+  - docs/log.md
   - docs/reference/architecture.md
   - docs/reference/cli-surface.md
+  - docs/specs/graph-explorer-data-and-interaction-contract.md
   - docs/specs/index.md
-  - docs/log.md
+  - docs/specs/local-graph-platform-roadmap.md
+  - docs/specs/lore-design.md
+  - docs/specs/snapshot-change-and-provenance-workflows.md
+  - docs/specs/workspace-indexing-and-retrieval.md
+  - src/cli.ts
+  - src/commands/changed.ts
+  - src/commands/explorer.ts
+  - src/commands/provenance.ts
+  - src/commands/snapshot.ts
+  - src/core/agent-bridge.ts
+  - src/core/explorer-contract.ts
+  - src/core/explorer.ts
+  - src/core/manifest.ts
+  - src/core/snapshot-runtime.ts
+  - src/core/snapshot-store.ts
+  - src/core/snapshot.ts
+  - src/core/workspace-contract.ts
+  - src/meta.ts
+  - test/browser/explorer.pw.ts
+  - test/explorer-command.test.ts
+  - test/explorer.test.ts
+  - test/fixtures/README.md
+  - test/fixtures/snapshot/v1.json
+  - test/help.test.ts
+  - test/snapshot-command.test.ts
+  - test/snapshot.test.ts
 parent_task_id: LCLI-283.3
 priority: medium
 type: enhancement
@@ -59,10 +66,10 @@ Use retained explicit projection snapshots to answer bounded changed-since and p
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Users can compare explicit repository commits or workspace snapshots and retrieve added, removed, changed, and relationship-delta evidence within stable limits
-- [ ] #2 Provenance traces each snapshot and result to repository, commit, export digest, bundle, record identity, and source path without treating derived layout or indexes as authored history
-- [ ] #3 Retention and deletion are explicit and bounded; removed repositories or workspaces leave no unintended snapshot evidence
-- [ ] #4 CLI and explorer views share conformance fixtures for empty diffs, renames, supersession, duplicate links, missing snapshots, truncation, and multi-repository changes
+- [x] #1 Users can compare explicit repository commits or workspace snapshots and retrieve added, removed, changed, and relationship-delta evidence within stable limits
+- [x] #2 Provenance traces each snapshot and result to repository, commit, export digest, bundle, record identity, and source path without treating derived layout or indexes as authored history
+- [x] #3 Retention and deletion are explicit and bounded; removed repositories or workspaces leave no unintended snapshot evidence
+- [x] #4 CLI and explorer views share conformance fixtures for empty diffs, renames, supersession, duplicate links, missing snapshots, truncation, and multi-repository changes
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -82,6 +89,8 @@ Use retained explicit projection snapshots to answer bounded changed-since and p
 Wave 16 dispatch research completed against the exact integrated M6 lifecycle, M7 explorer contract, M8 workspace identity/indexing contracts, bounded traversal contract, current-only workspace reconciliation, and projection identity implementation. The proposed public command, retention, deletion, comparison, provenance, and explorer schemas are material product contracts and await explicit user approval before source or docs implementation. No commit, push, PR, merge, publication, lease return, branch deletion, primary mutation, or parent settlement is authorized by this dispatch record.
 
 Contract approved by the user on 2026-08-02. Implementation is authorized for all six recorded plan steps: explicit retained snapshot management, bounded changed/provenance operations, storage-neutral facts and deletion safety, additive Commander/manifest/agent surfaces, separate explorer change mode, shared fixtures, and Lore documentation. Delivery actions remain separately unauthorized.
+
+Implementation and adversarial review complete in the guarded feature worktree. Evidence: Biome checked 185 files clean; TypeScript clean; Bun 2425/2425 tests pass; Playwright 18/18 passes across Chromium, Firefox, and WebKit; compiled binary and new-command help smokes pass; worktree-source Lore sync/validate --strict/check --strict and agents --check pass with 56 docs, 0 errors, 0 warnings; git diff --check passes. Retained parsing rejects mixed/duplicate/unsafe/sensitive evidence and builders recursively omit sensitive frontmatter keys. Delivery remains unauthorized and the source/docs/test changes remain uncommitted. Lore's required link/sync workflow created isolated backlog-only commits 13f3920 and fc1dd66; no implementation commit, push, PR, merge, lease return, primary mutation, branch deletion, publication, or parent settlement occurred.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
