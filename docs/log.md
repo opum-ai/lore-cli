@@ -72,6 +72,7 @@
 - 2026-08-03T08:39:40-05:00 a98014b4530903e2681c73c6762aa1e70e8aa67c feat: add snapshot change and provenance workflows
 - 2026-08-03T08:44:36-05:00 2a0c9693e06d31b4f48e99e49b8e06d3fed300dc docs: refresh lore log for snapshot workflows
 - 2026-08-03T08:45:25-05:00 d19c60e907f2ebed6f10075fb6df95f65e0fe645 docs: record snapshot workflow delivery evidence
+- 2026-08-03T08:55:36-05:00 234f71d71b5dabd00aec1ac2ff7003c6299b99f8 docs: record local graph capability settlement
 
 ## docs/.obsidian
 
