@@ -3,7 +3,7 @@ id: doc-7
 title: Backlog campaign tracker — local graph roadmap (round 6)
 type: other
 created_date: '2026-08-02 03:36'
-updated_date: '2026-08-03 13:54'
+updated_date: '2026-08-03 14:07'
 ---
 # Backlog campaign tracker — local graph roadmap (round 6)
 
@@ -33,7 +33,7 @@ updated_date: '2026-08-03 13:54'
 
 Informational live snapshot only; never a promised next wave:
 
-- **Campaign leaf queue complete:** all nine executable leaves are Done and integrated. LCLI-283.3 is also objectively settled Done after all four of its child capabilities landed.
+- **Campaign complete:** all nine executable leaves and all four roadmap parent containers are Done and integrated. Top-level LCLI-283 is objectively settled from terminal LCLI-283.1, LCLI-283.2, and LCLI-283.3 evidence.
 - **Wave 16 delivery:** LCLI-283.3.4 PR #289 merged exact reviewed head `d19c60e907f2ebed6f10075fb6df95f65e0fe645` as dev merge `cd4e8160cdf6ddea4c61f99d3d18069e0ae76682` after all eight required jobs passed in run `30819483866`.
 - **Verification:** the cumulative tree passes 2,425 tests / 8,008 expectations, lint, typecheck, a 261-module compiled build, 18/18 browser tests across Chromium/Firefox/WebKit, strict Lore validation/check for 56 docs, and the real-binary Docker E2E job.
 - **Ready-now count:** zero in this completed round. Any next issue must come from a fresh live dependency/conflict recomputation rather than this closed queue.
@@ -69,15 +69,18 @@ Informational live snapshot only; never a promised next wave:
 | LCLI-283.3.3 | 2026-08-02 / Wave 15 | Bounded typed path and impact traversal completed with deterministic shortest authored-edge evidence, direct/transitive classification, exact provenance, workspace/reference/indexed parity, and hard depth/result/10,000-edge safety bounds. PR #283 merged exact head `467d66c` as `b6701d2` after all eight required jobs passed in run `30771545848`; all four ACs are checked, the task is Done, and the exact guarded implementation lease was returned. |
 | LCLI-283.3.4 | 2026-08-03 / Wave 16 | Explicit retained repository/workspace snapshots, bounded change/provenance, and offline explorer history completed with all four ACs checked. PR #289 merged exact head `d19c60e` as `cd4e816` after all eight jobs passed in run `30819483866`; full local verification passed 2,425 tests and 18 browser cases. |
 | LCLI-283.3 | 2026-08-03 / parent settlement | All four capability leaves are Done and integrated. The parent ACs are proven by explicit workspace identity, bounded workspace retrieval/traversal/change/provenance, complete source evidence, storage-neutral contracts, shared fixtures, and the cumulative green verification at `cd4e816`. |
+| LCLI-283 | 2026-08-03 / roadmap parent settlement | Persistent indexing, the dependency-gated local explorer, and bounded indexed capabilities are all Done and integrated through terminal parents LCLI-283.1/.2/.3. Git remains authoritative, provenance and deterministic contracts are preserved, and LCLI-42 remains explicitly deferred/on-hold outside the roadmap dependency chain. |
 
 ## Not queued — blocked, deferred, parent, or separately in flight
 
 - **LCLI-289:** not part of this round. It is Done and integrated through PR #273: exact terminal head 9a22ced merged as 72b622c after all seven required jobs passed in run 30721669444. Its guarded lease da6a255ee4de274fcadf1e0e655b747b was returned during the authorized Wave 11 cleanup. The primary checkout's stale To Do view is branch-local drift and must not overwrite the terminal task record.
 - **LCLI-278:** requires a billing/visibility decision and repository-admin configuration.
 - **LCLI-42, LCLI-43, LCLI-44, LCLI-45:** explicitly deferred/on hold.
-- **LCLI-283.1:** parent container objectively settled Done and merged through PR #271 as `f892380`. **LCLI-283.2:** objectively settled Done and merged through PR #276 as `de14ffe`. **LCLI-283.3:** objectively settled Done after all four child capabilities integrated. **LCLI-283:** remaining roadmap parent container; advance only through objective child-task settlement and never dispatch as an implementation unit.
+- **LCLI-283.1, LCLI-283.2, LCLI-283.3, and LCLI-283:** all roadmap parent containers are objectively settled Done from terminal child evidence; none remains dispatchable.
 
 ## Wave log
+
+- **2026-08-03 — Roadmap parent terminal settlement:** verified LCLI-283.1, LCLI-283.2, and LCLI-283.3 are Done with all criteria checked and integrated; confirmed the ordered dependency chain from persistent indexing to explorer to bounded graph capabilities; and verified LCLI-42 remains explicitly deferred/on-hold, unscheduled, and outside LCLI-283 dependencies. Checked all four LCLI-283 ACs and marked the top-level roadmap parent Done. This final Backlog/tracker-only branch is the campaign's terminal tracked mutation.
 
 - **2026-08-03 — Wave 16 delivery and capability-parent settlement:** user authorized full delivery and cleanup. Rebased the completed implementation conflict-free onto current dev, reran 2,425 tests / 8,008 expectations, lint, typecheck, compiled build, 18 browser cases, strict Lore gates, agent drift, and diff hygiene, then pushed exact reviewed head `d19c60e`. PR #289 passed all eight required jobs in run `30819483866` and merged exact head as `cd4e816`. LCLI-283.3.4 is Done with all four ACs checked; parent LCLI-283.3 is Done with all four cumulative ACs checked. This tracker settlement is the final tracked mutation for the wave; exact lease return and branch/worktree pruning are recorded only in the ignored active handover after merge.
 
