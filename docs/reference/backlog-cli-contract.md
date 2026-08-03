@@ -33,16 +33,20 @@ describes this document's own content. (`task list`'s `-l`/`--labels`
 filter did **not** change between the two tags — see §2.4 — it was already an
 accumulator at v1.47.1.) The **code's** `MIN_BACKLOG_VERSION` constant
 (`src/adapters/backlog.ts`) is a separate, deliberately non-discriminating
-sanity floor and remains `1.47.1` (see §5) — that constant is not evidence
-that any CLI behavior below was verified at v1.47.1.
+sanity floor; LCLI-253 raised it to `1.49.0` (the first tagged release
+containing the PR #790 commit this floor previously predated — see §5) — that
+constant is not evidence that any CLI behavior below was re-verified at
+v1.49.0; the CLI-surface claims in this document are still the v1.48.0/PR #790
+verification described above, not independently re-checked against v1.49.0.
 
 Two facts shape everything below:
 
 1. **Reads are JSON-only.** `lore` reads structured data from a `--json` flag
-   that **stock Backlog.md does not have**. `lore` consumes upstream
-   (`MrLesk/Backlog.md`) pinned at or past the PR #790 merge commit — a
-   manually-built binary during this interim period, since no tagged release
-   contains that commit yet; see the
+   that **stock Backlog.md did not originally have**. `lore` consumes
+   upstream (`MrLesk/Backlog.md`) at or past `v1.49.0` — the first tagged
+   release containing the PR #790 merge commit (published 2026-08-02) — a
+   published `backlog.md` install, no longer the interim manually-built
+   pinned-commit binary (LCLI-253); see the
    [Backlog --json patch runbook §8](../runbooks/backlog-json-patch.md#8-migrate-to-upstream-on-release-and-bump-the-floor)
    and the [Backlog JSON schema](backlog-json-schema.md). There is **no
    `--plain` text-parser fallback** — that is a deliberate rejection (see
@@ -460,8 +464,8 @@ Run once at startup, cached in `.lore/cache/`. See the
   across versions; a `v1.47.1` binary was observed to print exactly the bytes
   `31 2e 34 37 2e 31 0a` (`"1.47.1\n"`) — an example of the format, not a
   claim about what the currently-pinned build's `--version` prints.
-- The **min-version floor** (`MIN_BACKLOG_VERSION`, still `1.47.1`) does **not**
-  by itself distinguish a `--json`-capable binary from one without — a
+- The **min-version floor** (`MIN_BACKLOG_VERSION`, `1.49.0` since LCLI-253)
+  does **not** by itself distinguish a `--json`-capable binary from one without — a
   pre-`--json` release can still report a version at or above it. Step 4's
   envelope parse is the real discriminator: a binary without `--json` support
   rejects the option and step 4 fails its parse. See the
@@ -488,17 +492,19 @@ that `lore` does not recognize fails the probe rather than mis-reads.
 > (`tasks`/`task`/`results`), not the fork's uniform `{schemaVersion: "1",
 > kind, data}` shape. See
 > [backlog-json-schema.md §8](backlog-json-schema.md#8-migration-history-complete)
-> for the full history. `MIN_BACKLOG_VERSION` is unchanged (`1.47.1`): there is
-> still no tagged upstream release containing `--json` to set a real floor
-> against, so it remains the same non-discriminating sanity check described
-> above — no version comparison can yet tell "has upstream's `--json`" apart
-> from "does not." Until a tagged `MrLesk/Backlog.md` release includes the
-> PR #790 commit (`22a091b570d44c4f302ca47e7fd36fa28ad8bcb0`), running `lore`'s
-> coupling commands requires a manually-built `backlog` binary from that pinned
-> commit on PATH (see the [patch runbook §8](../runbooks/backlog-json-patch.md))
-> — deliberately **not** a `package.json` git dependency: `lore` has not
-> shipped yet, so this is dev/test-time-only wiring, deferred until a real
-> release exists (LCLI-53 decision).
+> for the full history. `v1.49.0`, published 2026-08-02, is the first tagged
+> `MrLesk/Backlog.md` release containing the PR #790 commit
+> (`22a091b570d44c4f302ca47e7fd36fa28ad8bcb0`); LCLI-253 raised
+> `MIN_BACKLOG_VERSION` to `1.49.0` accordingly. It remains the same
+> non-discriminating sanity check described above — a version at or above the
+> floor still isn't proof of `--json` support, step 4's envelope parse is —
+> but it is now a real semver floor rather than a placeholder with no tagged
+> release to point at. Running `lore`'s coupling commands now just needs a
+> published `backlog.md` at or past `1.49.0` on PATH (`npm install -g
+> backlog.md`), not the interim manually-built pinned-commit binary (see the
+> [patch runbook §8](../runbooks/backlog-json-patch.md)). `lore` still carries
+> **no** `package.json` dependency on it — that remains a deliberate choice
+> (LCLI-53 decision), not something the release unblocked.
 
 ---
 

@@ -21,18 +21,17 @@ the repo never scan them.
 ## `backlog-json/` — Backlog.md `--json` goldens (AC#2)
 
 Real `{schemaVersion, kind, data}` envelopes captured from upstream, `--json`-capable Backlog.md
-(`MrLesk/Backlog.md`, PR #790, the pinned commit recorded in `docker/e2e/Dockerfile`'s
-`BACKLOG_COMMIT`) — one per kind (`task-view`, `task-list`, `search`). `test/backlog-json-golden.test.ts`
-locks them to the schema of record
+(`MrLesk/Backlog.md`, PR #790, published in the `backlog.md` version recorded in
+`docker/e2e/Dockerfile`'s `BACKLOG_VERSION`) — one per kind (`task-view`, `task-list`, `search`).
+`test/backlog-json-golden.test.ts` locks them to the schema of record
 ([`docs/reference/backlog-json-schema.md`](../../docs/reference/backlog-json-schema.md)) and asserts
 they stay in canonical form.
 
-**Do not hand-edit.** Regenerate with the recorder (which needs a local clone of the upstream CLI at
-or past the pinned commit, not a compiled binary — `bun <upstream>/src/cli.ts` works even on the
-external volume):
+**Do not hand-edit.** Regenerate with the recorder (needs a `backlog` binary on PATH at or past the
+version pinned in `docker/e2e/Dockerfile`, e.g. `npm install -g backlog.md@1.49.1`):
 
 ```sh
-LORE_BACKLOG_UPSTREAM_CLI=~/repos/Backlog.md-upstream/src/cli.ts bun test/support/record-backlog-goldens.ts
+bun test/support/record-backlog-goldens.ts
 ```
 
 No redaction step is needed: unlike the retired fork's shape, upstream's envelope carries no

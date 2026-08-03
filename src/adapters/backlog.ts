@@ -37,8 +37,14 @@ import { deriveMessage, errnoCode, LoreError, readFileIfPresent, stderrHint } fr
  * pre-`--json` stock release can still report a version at or above this floor. The `--json` envelope
  * parse (step 3 below) is the real discriminator — a binary without `--json` support rejects the option
  * and exits non-zero.
+ *
+ * `1.49.0` is upstream's first **tagged release** whose history contains commit 22a091b (PR #790 /
+ * BACK-545, stable `--json` output), published 2026-08-02. Before this floor moved here from the
+ * `1.47.1` fork floor, `lore` had no tagged release to depend on and consumed a locally-built binary
+ * pinned at that commit (LCLI-253; docs/runbooks/backlog-json-patch.md §8.1) — that interim build is
+ * retired now that a real release exists.
  */
-export const MIN_BACKLOG_VERSION = "1.47.1";
+export const MIN_BACKLOG_VERSION = "1.49.0";
 
 /**
  * The `schemaVersion` every `--json` envelope carries — upstream's real envelope, a **number**
@@ -198,8 +204,7 @@ interface Semver {
 }
 
 /** The one hint pointing an operator at how to obtain a `--json`-capable Backlog.md. */
-const RUNBOOK_HINT =
-  "lore needs a --json-capable Backlog.md. Build MrLesk/Backlog.md pinned at or past commit 22a091b570d44c4f302ca47e7fd36fa28ad8bcb0 (PR #790; no tagged release contains it yet) per docs/runbooks/backlog-json-patch.md and put its `backlog` binary on PATH.";
+const RUNBOOK_HINT = `lore needs a --json-capable Backlog.md. Install backlog.md>=${MIN_BACKLOG_VERSION} (npm install -g backlog.md, or your package manager's equivalent) and put its \`backlog\` binary on PATH; see docs/runbooks/backlog-json-patch.md.`;
 
 /**
  * Parse the leading `major.minor.patch` from `backlog --version` output. Backlog prints a **bare**

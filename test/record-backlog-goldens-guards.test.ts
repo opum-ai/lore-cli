@@ -15,18 +15,17 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gitRun as run } from "./helpers";
 import {
-  assertCommitPinned,
   assertTaskViewSpecimenShape,
-  readPinnedBacklogCommit,
-  resolveGitCommit,
+  assertVersionPinned,
+  readPinnedBacklogVersion,
+  resolveBacklogVersion,
 } from "./support/record-backlog-goldens";
 
-/** The real Dockerfile this repo pins `BACKLOG_COMMIT` in — read-only, never written by these tests. */
+/** The real Dockerfile this repo pins `BACKLOG_VERSION` in — read-only, never written by these tests. */
 const REAL_DOCKERFILE = join(import.meta.dir, "..", "docker", "e2e", "Dockerfile");
 
 /** A real, valid `task-view` envelope — the committed golden itself — as the "good" specimen baseline. */
@@ -34,90 +33,78 @@ const GOOD_ENVELOPE = JSON.parse(
   readFileSync(join(import.meta.dir, "fixtures", "backlog-json", "task-view.json"), "utf8"),
 ) as Record<string, unknown>;
 
-function freshRepo(): string {
-  const root = mkdtempSync(join(tmpdir(), "lore-golden-guard-"));
-  run(root, ["init", "-q"]);
-  run(root, ["config", "user.name", "lore test"]);
-  run(root, ["config", "user.email", "lore-test@example.com"]);
-  return root;
+/** Write an executable stub `backlog` that just echoes `version` to stdout for `--version`. */
+function stubBacklog(dir: string, version: string): string {
+  const path = join(dir, "backlog");
+  writeFileSync(path, `#!/bin/sh\necho "${version}"\n`);
+  chmodSync(path, 0o755);
+  return path;
 }
 
-function commit(root: string, path: string, contents: string, message: string): void {
-  writeFileSync(join(root, path), contents);
-  run(root, ["add", "--", path]);
-  run(root, ["commit", "-q", "-m", message]);
-}
+// ── AC#1: version pin ──────────────────────────────────────────────────────────────
 
-// ── AC#1: commit pin ──────────────────────────────────────────────────────────────
-
-describe("readPinnedBacklogCommit", () => {
-  test("extracts the real pinned BACKLOG_COMMIT from docker/e2e/Dockerfile", () => {
-    expect(readPinnedBacklogCommit(REAL_DOCKERFILE)).toBe("22a091b570d44c4f302ca47e7fd36fa28ad8bcb0");
+describe("readPinnedBacklogVersion", () => {
+  test("extracts the real pinned BACKLOG_VERSION from docker/e2e/Dockerfile", () => {
+    expect(readPinnedBacklogVersion(REAL_DOCKERFILE)).toBe("1.49.1");
   });
 
-  test("throws a clear error when the file has no ARG BACKLOG_COMMIT line", () => {
+  test("throws a clear error when the file has no ARG BACKLOG_VERSION line", () => {
     const dir = mkdtempSync(join(tmpdir(), "lore-dockerfile-"));
     try {
       const path = join(dir, "Dockerfile");
       writeFileSync(path, "FROM oven/bun:1.2.23\nRUN echo hi\n");
-      expect(() => readPinnedBacklogCommit(path)).toThrow(/could not find a pinned commit/);
+      expect(() => readPinnedBacklogVersion(path)).toThrow(/could not find a pinned version/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test("throws when the pinned value isn't a well-formed 40-hex-char sha", () => {
+  test("throws when the pinned value isn't a well-formed semver", () => {
     const dir = mkdtempSync(join(tmpdir(), "lore-dockerfile-"));
     try {
       const path = join(dir, "Dockerfile");
-      writeFileSync(path, "ARG BACKLOG_COMMIT=not-a-real-sha\n");
-      expect(() => readPinnedBacklogCommit(path)).toThrow(/could not find a pinned commit/);
+      writeFileSync(path, "ARG BACKLOG_VERSION=not-a-version\n");
+      expect(() => readPinnedBacklogVersion(path)).toThrow(/could not find a pinned version/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 });
 
-describe("resolveGitCommit", () => {
-  test("returns the checked-out HEAD sha of a real git checkout", () => {
-    const root = freshRepo();
+describe("resolveBacklogVersion", () => {
+  test("returns the version a real binary reports on --version", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lore-backlog-stub-"));
     try {
-      commit(root, "cli.ts", "// stub\n", "first");
-      const sha = resolveGitCommit(root);
-      expect(sha).toMatch(/^[0-9a-f]{40}$/);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test("throws a clear error when the directory is not a git checkout at all", () => {
-    const dir = mkdtempSync(join(tmpdir(), "lore-not-a-repo-"));
-    try {
-      expect(() => resolveGitCommit(dir)).toThrow(/could not resolve the checked-out git commit/);
+      const bin = stubBacklog(dir, "1.49.1");
+      expect(resolveBacklogVersion(bin)).toBe("1.49.1");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test("throws a clear error when the binary can't be run", () => {
+    const missing = join(tmpdir(), "lore-no-such-binary-ff3a1c");
+    expect(() => resolveBacklogVersion(missing)).toThrow(/could not resolve/);
+  });
 });
 
-describe("assertCommitPinned", () => {
-  test("does not throw when the checkout matches the pin", () => {
-    const sha = "22a091b570d44c4f302ca47e7fd36fa28ad8bcb0";
-    expect(() => assertCommitPinned(sha, sha, "/some/path/src/cli.ts")).not.toThrow();
+describe("assertVersionPinned", () => {
+  test("does not throw when the resolved version matches the pin", () => {
+    expect(() => assertVersionPinned("1.49.1", "1.49.1", "/usr/local/bin/backlog")).not.toThrow();
   });
 
-  test("aborts with a clear error naming both shas and the checked path when they mismatch", () => {
-    const actual = "1111111111111111111111111111111111111a";
-    const pinned = "22a091b570d44c4f302ca47e7fd36fa28ad8bcb0";
-    expect(() => assertCommitPinned(actual, pinned, "/repos/Backlog.md-upstream/src/cli.ts")).toThrow(
-      /1111111111111111111111111111111111111a.*22a091b570d44c4f302ca47e7fd36fa28ad8bcb0|22a091b570d44c4f302ca47e7fd36fa28ad8bcb0.*1111111111111111111111111111111111111a/s,
+  test("aborts with a clear error naming both versions and the checked path when they mismatch", () => {
+    const actual = "1.49.0";
+    const pinned = "1.49.1";
+    expect(() => assertVersionPinned(actual, pinned, "/usr/local/bin/backlog")).toThrow(
+      /1\.49\.0.*1\.49\.1|1\.49\.1.*1\.49\.0/s,
     );
     try {
-      assertCommitPinned(actual, pinned, "/repos/Backlog.md-upstream/src/cli.ts");
+      assertVersionPinned(actual, pinned, "/usr/local/bin/backlog");
     } catch (err) {
       expect(String(err)).toContain(actual);
       expect(String(err)).toContain(pinned);
-      expect(String(err)).toContain("/repos/Backlog.md-upstream/src/cli.ts");
+      expect(String(err)).toContain("/usr/local/bin/backlog");
     }
   });
 });
