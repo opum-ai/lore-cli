@@ -8,8 +8,10 @@
 
 import { z } from "zod";
 import { compareCodeUnits } from "./order";
+import { type ChangedResult, compareRetainedSnapshots, parseRetainedSnapshot, type RetainedSnapshot } from "./snapshot";
 
 export const EXPLORER_SNAPSHOT_SCHEMA_VERSION = "lore-explorer-snapshot/1" as const;
+export const EXPLORER_CHANGE_SNAPSHOT_SCHEMA_VERSION = "lore-explorer-change-snapshot/1" as const;
 export const EXPLORER_PRESENTATION_SCHEMA_VERSION = "lore-explorer-presentation/1" as const;
 
 export const EXPLORER_RENDER_LIMITS = Object.freeze({
@@ -252,6 +254,65 @@ export const explorerPresentationStateSchema = z
 
 export type ExplorerSnapshot = z.infer<typeof explorerSnapshotSchema>;
 export type ExplorerPresentationState = z.infer<typeof explorerPresentationStateSchema>;
+
+/** Retained facts plus a reproducible bounded delta for offline historical exploration. */
+export interface ExplorerChangeSnapshot {
+  readonly schemaVersion: typeof EXPLORER_CHANGE_SNAPSHOT_SCHEMA_VERSION;
+  readonly mode: "snapshot" | "comparison";
+  readonly from: RetainedSnapshot;
+  readonly to: RetainedSnapshot;
+  readonly comparison: ChangedResult;
+}
+
+const explorerChangeEnvelopeSchema = z
+  .object({
+    schemaVersion: z.literal(EXPLORER_CHANGE_SNAPSHOT_SCHEMA_VERSION),
+    mode: z.enum(["snapshot", "comparison"]),
+    from: z.unknown(),
+    to: z.unknown(),
+    comparison: z.unknown(),
+  })
+  .strict();
+
+const changedReplaySchema = z
+  .object({
+    filters: z
+      .object({
+        repositories: z.array(z.string()),
+        kinds: z.array(z.enum(["concept", "task", "edge"])),
+      })
+      .strict(),
+    limits: z.object({ result: z.number().int(), factScan: z.number().int() }).strict(),
+  })
+  .passthrough();
+
+/** Parse historical explorer input and prove its delta is reproducible from embedded source facts. */
+export function parseExplorerChangeSnapshot(value: unknown): ExplorerChangeSnapshot {
+  const envelope = explorerChangeEnvelopeSchema.parse(value);
+  const from = parseRetainedSnapshot(envelope.from);
+  const to = parseRetainedSnapshot(envelope.to);
+  const replay = changedReplaySchema.parse(envelope.comparison);
+  const comparison = compareRetainedSnapshots(from, to, {
+    limit: replay.limits.result,
+    repositories: replay.filters.repositories,
+    kinds: replay.filters.kinds,
+  });
+  if (canonicalJson(envelope.comparison) !== canonicalJson(comparison)) {
+    throw new Error(
+      `invalid ${EXPLORER_CHANGE_SNAPSHOT_SCHEMA_VERSION}: comparison does not match embedded retained facts`,
+    );
+  }
+  if (envelope.mode === "snapshot" && canonicalJson(from) !== canonicalJson(to)) {
+    throw new Error(
+      `invalid ${EXPLORER_CHANGE_SNAPSHOT_SCHEMA_VERSION}: snapshot mode requires one identical snapshot`,
+    );
+  }
+  return { schemaVersion: envelope.schemaVersion, mode: envelope.mode, from, to, comparison };
+}
+
+export function serializeExplorerChangeSnapshot(value: unknown): string {
+  return `${canonicalJson(parseExplorerChangeSnapshot(value))}\n`;
+}
 
 /** Parse the public snapshot and enforce cross-record determinism/provenance invariants. */
 export function parseExplorerSnapshot(value: unknown): ExplorerSnapshot {

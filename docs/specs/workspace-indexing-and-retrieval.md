@@ -97,6 +97,7 @@ commands follow the unchanged M6 single-repository path and output contract.
 
 - Bounded path and impact traversal over the exact workspace link facts remains
   `LCLI-283.3.3` scope.
-- Historical snapshot retention, comparison, changed-since, and explicit
-  workspace deletion workflows remain `LCLI-283.3.4` scope. This task retains
-  only the current verified generation after a successful replacement.
+- Historical state is now defined by the separate
+  [snapshot change and provenance workflow](snapshot-change-and-provenance-workflows.md).
+  The Ladybug workspace index still retains only the current verified
+  generation; explicit retained snapshots live outside that disposable index.

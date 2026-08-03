@@ -3,14 +3,19 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import {
+  EXPLORER_CHANGE_SNAPSHOT_SCHEMA_VERSION,
   EXPLORER_RENDER_LIMITS,
   EXPLORER_SNAPSHOT_SCHEMA_VERSION,
+  type ExplorerChangeSnapshot,
   type ExplorerSnapshot,
+  parseExplorerChangeSnapshot,
   parseExplorerSnapshot,
+  serializeExplorerChangeSnapshot,
   serializeExplorerSnapshot,
 } from "./explorer-contract";
 import type { LadybugProjectionSource, ProjectionConceptRecord, ProjectionEdgeRecord } from "./ladybug-source";
 import { compareCodeUnits } from "./order";
+import { CHANGED_MAX_LIMIT, compareRetainedSnapshots, type RetainedSnapshot } from "./snapshot";
 
 export const EXPLORER_ARTIFACT_VERSION = "lore-explorer-artifact/1" as const;
 
@@ -61,6 +66,27 @@ export interface ExplorerView {
   readonly supersessionChain: readonly string[];
   readonly totalMatchingNodes: number;
   readonly truncated: boolean;
+}
+
+/** Build the separate historical explorer contract without changing ordinary explorer bytes. */
+export function buildExplorerChangeSnapshot(
+  from: RetainedSnapshot,
+  to: RetainedSnapshot,
+  options: {
+    readonly mode: "snapshot" | "comparison";
+    readonly repositories?: readonly string[];
+  },
+): ExplorerChangeSnapshot {
+  return parseExplorerChangeSnapshot({
+    schemaVersion: EXPLORER_CHANGE_SNAPSHOT_SCHEMA_VERSION,
+    mode: options.mode,
+    from,
+    to,
+    comparison: compareRetainedSnapshots(from, to, {
+      limit: CHANGED_MAX_LIMIT,
+      repositories: options.repositories ?? [],
+    }),
+  });
 }
 
 /** Map the validated projection source used by the persistent index into the frozen browser contract. */
@@ -253,6 +279,50 @@ function renderDetails(visible,total){const root=$("details");root.replaceChildr
 const relationshipLimit=state.focus?LIMITS.maximumVisibleEdges:LIMITS.initialEdgeLimit;const allRelated=SNAPSHOT.facts.authoredEdges.filter(e=>e.fromRecordKey===node.recordKey||e.toRecordKey===node.recordKey);const related=allRelated.slice(0,relationshipLimit);const inbound=allRelated.filter(e=>e.toRecordKey===node.recordKey).length,outbound=allRelated.filter(e=>e.fromRecordKey===node.recordKey).length;root.append(make("h3","Relationships"));const ul=make("ul",undefined,"relation-list");for(const edge of related){const isOutbound=edge.fromRecordKey===node.recordKey;const other=isOutbound?edge.toRecordKey:edge.fromRecordKey;const target=other?byKey.get(other):null;const li=make("li");const label=(isOutbound?"outbound ":"inbound ")+edge.edgeKind+" → "+(target?.title||edge.target)+(edge.dangling?" (dangling)":"");if(target){const button=make("button",label);button.type="button";button.addEventListener("click",()=>selectRecord(target.recordKey,false));button.addEventListener("keydown",event=>{if(event.key==="Escape"){if(event.preventDefault)event.preventDefault();focusRecord(node.recordKey)}});li.append(button)}else li.append(make("span",label,"warning"));ul.append(li)}if(!related.length)ul.append(make("li","No authored relationships.","muted"));if(related.length<allRelated.length)ul.append(make("li",related.length+" of "+allRelated.length+" relationships shown","muted"));root.append(ul);
 const supersession=new Set([node.recordKey]),queue=[node.recordKey];while(queue.length){const key=queue.shift();for(const edge of SNAPSHOT.facts.authoredEdges){if(!["supersedes","superseded_by"].includes(edge.edgeKind)||!edge.toRecordKey)continue;let next=null;if(edge.fromRecordKey===key)next=edge.toRecordKey;else if(edge.toRecordKey===key)next=edge.fromRecordKey;if(next&&!supersession.has(next)){supersession.add(next);queue.push(next)}}}if(supersession.size>1){root.append(make("h3","Supersession chain"));const chain=make("ul");for(const key of [...supersession].sort()){const item=byKey.get(key);chain.append(make("li",item?.title||key))}root.append(chain)}const position=visible.findIndex(item=>item.recordKey===node.recordKey)+1;const flags=flagsFor(node.recordKey);$("announcement").textContent=node.kind+" "+(node.title||node.id)+"; "+inbound+" inbound, "+outbound+" outbound; "+(flags.length?flags.join(", "):"no graph-health flags")+"; position "+position+" of "+total}
 $("status-heading").textContent=SNAPSHOT.health.state==="stale"?"Stale snapshot":"Ready snapshot";$("health").textContent=SNAPSHOT.health.state+": "+SNAPSHOT.health.counts.concepts+" concepts, "+SNAPSHOT.health.counts.tasks+" tasks, "+SNAPSHOT.health.counts.authoredEdges+" edges, "+SNAPSHOT.health.counts.danglingEdges+" dangling edges"+(SNAPSHOT.health.messageCode?" · code "+SNAPSHOT.health.messageCode:"");$("provenance").textContent="Snapshot "+SNAPSHOT.source.snapshotKey+" · commit "+(SNAPSHOT.source.gitCommit||"uncommitted")+" · export "+SNAPSHOT.source.exportDigest+" · schema "+SNAPSHOT.schemaVersion;window.__LORE_EXPLORER__={snapshot:SNAPSHOT,state,render};render();
+</script>
+</body>
+</html>
+`;
+}
+
+/** Render a deterministic offline retained-snapshot/change explorer with paired provenance. */
+export function renderExplorerChangeArtifact(snapshotValue: unknown): string {
+  const snapshot = parseExplorerChangeSnapshot(snapshotValue);
+  const encoded = Buffer.from(serializeExplorerChangeSnapshot(snapshot), "utf8").toString("base64");
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="generator" content="${EXPLORER_ARTIFACT_VERSION}">
+<title>Lore retained snapshot explorer</title>
+<style>
+:root{color-scheme:light dark;font:16px/1.45 ui-sans-serif,system-ui,sans-serif;--bg:#f5f3ed;--panel:#fffdf8;--ink:#20231f;--muted:#565b54;--line:#858a82;--accent:#075e55;--add:#176b36;--remove:#9a2d22;--change:#7c4d00}*{box-sizing:border-box}html,body{max-width:100%;overflow-x:hidden}body{margin:0;background:var(--bg);color:var(--ink)}header{padding:1rem 1.25rem;border-bottom:1px solid var(--line);background:var(--panel)}h1,h2,h3,p{margin:.25rem 0 .75rem}.skip{position:absolute;top:-5rem;left:.5rem;background:var(--panel);padding:.7rem}.skip:focus{top:.5rem}.layout{display:grid;grid-template-columns:minmax(14rem,22rem) minmax(18rem,1fr) minmax(18rem,30rem);gap:1rem;padding:1rem}.panel{min-width:0;padding:1rem;border:1px solid var(--line);border-radius:.6rem;background:var(--panel)}.controls{display:grid;gap:.65rem}.controls label{font-weight:650}.checks{display:flex;flex-wrap:wrap;gap:.55rem}.checks label{font-weight:400}input,select,button{font:inherit;color:inherit}input,select{width:100%;padding:.5rem;background:var(--panel);border:1px solid var(--line);border-radius:.35rem}button{width:100%;padding:.6rem;text-align:left;background:transparent;border:1px solid var(--line);border-radius:.35rem;cursor:pointer}:focus-visible{outline:3px solid var(--accent);outline-offset:2px}ul{list-style:none;margin:0;padding:0;display:grid;gap:.45rem}.badge{display:inline-block;margin-right:.4rem;padding:.05rem .4rem;border:1px solid currentColor;border-radius:999px;font-size:.8rem}.added{border-left:6px solid var(--add)}.removed{border-left:6px double var(--remove)}.changed{border-left:6px dashed var(--change)}.snapshot{border-left:6px solid var(--accent)}.muted{color:var(--muted)}dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:.35rem .75rem}dt{font-weight:700}dd{margin:0;overflow-wrap:anywhere}pre{overflow:auto;max-height:18rem;padding:.65rem;border:1px solid var(--line);white-space:pre-wrap;overflow-wrap:anywhere}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}@media(max-width:950px){.layout{grid-template-columns:1fr 1fr}.details{grid-column:1/-1}}@media(max-width:640px){.layout{grid-template-columns:1fr;padding:.5rem}.details{grid-column:auto}dl{grid-template-columns:1fr}}@media(forced-colors:active){:root{--bg:Canvas;--panel:Canvas;--ink:CanvasText;--muted:CanvasText;--line:CanvasText;--accent:Highlight;--add:LinkText;--remove:MarkText;--change:CanvasText}}@media(prefers-color-scheme:dark){:root{--bg:#171a18;--panel:#202521;--ink:#f2f0e8;--muted:#c7ccc3;--line:#8b918a;--accent:#70d9cc;--add:#86d69c;--remove:#ffaaa0;--change:#f0c277}}
+</style>
+</head>
+<body>
+<a class="skip" href="#records">Skip to retained records</a>
+<header><h1>Lore retained snapshot explorer</h1><p id="scope" class="muted"></p><p id="status" role="status" aria-live="polite"></p><p id="announcement" class="sr-only" role="status" aria-live="polite"></p></header>
+<main class="layout">
+<section class="panel controls" aria-labelledby="filters-title"><h2 id="filters-title">Filter evidence</h2><label for="search">Search</label><input id="search" type="search" autocomplete="off" aria-controls="items"><label for="kind">Fact kind</label><select id="kind"><option value="">All kinds</option><option>concept</option><option>task</option><option>edge</option></select><fieldset><legend>Change classification</legend><div id="change-filters" class="checks"></div></fieldset></section>
+<section id="records" class="panel" tabindex="-1" aria-labelledby="records-title"><h2 id="records-title">Retained records</h2><p id="counts" class="muted"></p><ul id="items" role="listbox" aria-label="Retained snapshot records" aria-describedby="counts"></ul></section>
+<aside class="panel details" aria-labelledby="details-title"><h2 id="details-title">Paired evidence</h2><div id="details"><p class="muted">Select a record to inspect exact source provenance.</p></div></aside>
+</main>
+<script>
+"use strict";
+const SNAPSHOT=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob("${encoded}"),c=>c.charCodeAt(0))));
+const $=id=>document.getElementById(id),make=(tag,text,cls)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(cls)el.className=cls;return el};
+const selectedRepositories=new Set(SNAPSHOT.comparison.filters.repositories);const rows=SNAPSHOT.mode==="snapshot"?SNAPSHOT.to.facts.filter(f=>!selectedRepositories.size||(f.provenance.memberId!==null&&selectedRepositories.has(f.provenance.memberId))).map(f=>({change:"snapshot",recordKind:f.kind,id:f.id,recordKey:f.recordKey,fieldsChanged:[],from:f,to:f})):SNAPSHOT.comparison.changes;
+const state={search:"",kind:"",changes:new Set(),selected:null},buttons=new Map();
+for(const change of ["added","removed","changed",...(SNAPSHOT.mode==="snapshot"?["snapshot"]:[])]){const label=make("label"),input=document.createElement("input");input.type="checkbox";input.value=change;input.addEventListener("change",()=>{input.checked?state.changes.add(change):state.changes.delete(change);render()});label.append(input,document.createTextNode(change));$("change-filters").append(label)}
+$("search").addEventListener("input",e=>{state.search=e.target.value.toLowerCase();render()});$("kind").addEventListener("change",e=>{state.kind=e.target.value;render()});
+function fact(row){return row.to||row.from}function matches(row){const f=fact(row);if(state.kind&&row.recordKind!==state.kind)return false;if(state.changes.size&&!state.changes.has(row.change))return false;if(!state.search)return true;return [row.id,row.recordKey,row.recordKind,row.change,f.provenance.sourcePath||"",f.provenance.memberId||"",JSON.stringify(f.value)].join("\\n").toLowerCase().includes(state.search)}
+function select(key){state.selected=key;render();const button=buttons.get(key);if(button)button.focus()}
+function row(dl,key,value){dl.append(make("dt",key),make("dd",value??"—"))}
+function renderDetails(selected){const root=$("details");root.replaceChildren();if(!selected){root.append(make("p","Select a record to inspect exact source provenance.","muted"));return}const f=fact(selected),p=f.provenance;root.append(make("h3",selected.change+" "+selected.recordKind+" "+selected.id));const dl=make("dl");row(dl,"Record key",selected.recordKey);row(dl,"Member",p.memberId);row(dl,"Source path",p.sourcePath);row(dl,"Source key",p.sourceKey);row(dl,"Source record",p.sourceRecordKey);row(dl,"Repository",p.repositoryScopeKey);row(dl,"Commit",p.gitCommit);row(dl,"Export",p.exportDigest);root.append(dl);if(selected.fieldsChanged.length)root.append(make("p","Fields changed: "+selected.fieldsChanged.join(", ")));for(const side of ["from","to"]){if(!selected[side])continue;root.append(make("h3",side+" authored value"));root.append(make("pre",JSON.stringify(selected[side].value,null,2)))}$("announcement").textContent=selected.change+" "+selected.recordKind+" "+selected.id+", source "+(p.sourcePath||"none")}
+function render(){const visible=rows.filter(matches),list=$("items");list.replaceChildren();buttons.clear();visible.forEach((entry,index)=>{const li=make("li",undefined,entry.change),button=make("button");button.type="button";button.setAttribute("role","option");button.setAttribute("aria-selected",String(state.selected===entry.recordKey));button.tabIndex=state.selected===entry.recordKey||(!state.selected&&index===0)?0:-1;button.append(make("span",entry.change,"badge"),make("span",entry.recordKind,"badge"),document.createTextNode(entry.id));button.addEventListener("click",()=>select(entry.recordKey));button.addEventListener("keydown",event=>{let next=index;if(event.key==="ArrowDown"||event.key==="ArrowRight")next=Math.min(visible.length-1,index+1);else if(event.key==="ArrowUp"||event.key==="ArrowLeft")next=Math.max(0,index-1);else if(event.key==="Home")next=0;else if(event.key==="End")next=visible.length-1;else if(event.key==="Enter"){select(entry.recordKey);return}else return;event.preventDefault();const target=buttons.get(visible[next].recordKey);if(target)target.focus()});buttons.set(entry.recordKey,button);li.append(button);list.append(li)});$("counts").textContent=visible.length+" of "+rows.length+" retained records"+(SNAPSHOT.comparison.truncated?"; comparison truncated at its explicit bound":"");renderDetails(rows.find(entry=>entry.recordKey===state.selected)||null)}
+$("scope").textContent=SNAPSHOT.mode+" · "+SNAPSHOT.from.snapshotKey+(SNAPSHOT.mode==="comparison"?" → "+SNAPSHOT.to.snapshotKey:"")+" · schema "+SNAPSHOT.schemaVersion;$("status").textContent=SNAPSHOT.mode==="snapshot"?rows.length+" retained facts":SNAPSHOT.comparison.totalChanges+" changes, "+SNAPSHOT.comparison.shown+" available offline";window.__LORE_EXPLORER_CHANGE__={snapshot:SNAPSHOT,state,render};render();
 </script>
 </body>
 </html>

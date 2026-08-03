@@ -356,7 +356,7 @@ the doc↔task coupling has gaps.
 These are deterministic, no-LLM operations (see
 [ADR-0014](../adr/0014-core-has-no-llm-dependency.md) and
 [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md)).
-`graph`, `path`, `impact`, `query`, and `context` use canonical records from a fully verified,
+`graph`, `path`, `impact`, `changed`, `provenance`, `query`, and `context` use canonical records from a fully verified,
 immutable local LadybugDB generation on supported hosts. Missing, stale, known
 incompatible, or corrupt state rebuilds only under the frozen ownership policy;
 contention, a newer unsupported format, an unavailable native backend, or a
@@ -365,7 +365,7 @@ output. The public envelopes, diagnostics, and ordering do not reveal which
 backend was selected. No command accepts Cypher or exposes database paths,
 physical identifiers, or native errors.
 
-All five commands also accept an explicit `--workspace <manifest>` and a
+All seven retrieval commands also accept an explicit `--workspace <manifest>` and a
 repeatable `--repository <member-id>` subset selector. `--repository` requires
 `--workspace`; Lore never discovers a workspace or member automatically.
 Workspace concept IDs are qualified as `<member-id>::<source-id>`, and JSON
@@ -421,6 +421,44 @@ reported separately. They preserve duplicate authored edge records, never
 traverse dangling targets, infer no relationships, and expose no Cypher or
 Ladybug-native identifiers. See [Bounded path and impact](../specs/bounded-path-and-impact.md).
 
+### `snapshot`
+
+Explicitly retain, list, or delete immutable projection history. Lore never
+captures or evicts history implicitly; each repository or workspace scope is
+capped at 16 retained snapshots.
+
+| | |
+|---|---|
+| **Args** | `<retain|list|delete> [snapshot-key]` |
+| **Key flags** | `--workspace <manifest>` · `--workspace-id <stable-id>` (list/delete after a manifest is unavailable) · `--all` (delete the entire exact selected scope) |
+| **Output** | `kind: snapshot.result` — retained/unchanged/listed/deleted action, exact snapshot descriptors, count, and maximum |
+| **Exit** | `0` ok · `2` invalid action/selector combination · `3` snapshot or source missing · `4` read/write denied · `5` retention cap, collision, or symlink conflict · `6` malformed source or retained bytes |
+
+### `changed`
+
+Compare two retained snapshots from one exact scope. Stable record keys produce
+changed rows; changed IDs produce remove/add rows. Duplicate authored edges are
+preserved and no rename or relationship is inferred.
+
+| | |
+|---|---|
+| **Args** | `<from> <to>` (exact snapshot key or unambiguous retained commit) |
+| **Key flags** | `--kind <concept|task|edge>` (repeatable) · `--limit <n>` (default 100, max 1,000) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
+| **Output** | `kind: changed.result`, schema `lore-changed-result/1` — normalized filters/bounds, paired fact deltas, shown/total/scanned, truncation, and completeness |
+| **Exit** | `0` ok, including no changes · `2` invalid bounds/filter/scope · `3` snapshot unavailable · `4` denied read · `5` ambiguous commit or cross-scope comparison · `6` malformed retained bytes |
+
+### `provenance`
+
+Resolve one retained fact to exact immutable repository, commit, export,
+record, and source evidence.
+
+| | |
+|---|---|
+| **Args** | `<id>` |
+| **Key flags** | required `--kind <concept|task|edge>` · required `--snapshot <selector>` · `--workspace <manifest>` · `--repository <member-id>` (repeatable scope validation) |
+| **Output** | `kind: provenance.result`, schema `lore-provenance-result/1` — snapshot descriptor, authored fact, and complete locator-free provenance |
+| **Exit** | `0` found · `2` bad/missing kind or selector · `3` fact/snapshot missing · `4` denied read · `5` ambiguous selector · `6` malformed retained bytes |
+
 ### `explorer`
 
 Build a deterministic, self-contained, read-only HTML explorer from the same
@@ -438,10 +476,16 @@ node, edge, and depth bounds. The command never writes under `docs/`,
 `backlog/`, or `.git/`; the default Lore-owned artifact updates atomically,
 while a differing custom output requires `--force`.
 
+Historical selectors switch to the separate
+`lore-explorer-change-snapshot/1` contract. `--snapshot` lists one retained
+snapshot; paired `--from`/`--to` renders replay-validated bounded changes with
+change/kind/search filters and paired authored values/provenance. Omitting
+those selectors preserves the ordinary explorer artifact exactly.
+
 | | |
 |---|---|
 | **Args** | none |
-| **Key flags** | `--out <file>` (repo-relative `.html`; default `.lore/explorer/index.html`) · `--force` (replace a differing custom output) |
+| **Key flags** | `--out <file>` (repo-relative `.html`; default `.lore/explorer/index.html`) · `--force` (replace a differing custom output) · `--snapshot <selector>` or paired `--from <selector> --to <selector>` · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
 | **Output** | `kind: explorer.artifact` — artifact/snapshot versions, snapshot key, path, create/update/unchanged action, byte length, SHA-256 digest, and graph-health counts |
 | **Exit** | `0` created, updated, or unchanged · `2` invalid flag/path · `3` source record unavailable · `4` read/write denied · `5` custom-output collision or symlink · `6` malformed bundle/profile/projection |
 

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ExplorerArtifactResult, runExplorer } from "../src/commands/explorer";
 import { type ExplorerSnapshot, parseExplorerSnapshot } from "../src/core/explorer-contract";
+import { parseRetainedSnapshot, type RetainedSnapshot } from "../src/core/snapshot";
 import { LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
@@ -12,6 +13,14 @@ const JSON_OUTPUT: OutputContext = { mode: "json", color: false };
 const fixture = parseExplorerSnapshot(
   JSON.parse(readFileSync(join(import.meta.dir, "fixtures/explorer/v1.json"), "utf8")),
 );
+const retainedFixtureValue = JSON.parse(readFileSync(join(import.meta.dir, "fixtures/snapshot/v1.json"), "utf8")) as {
+  readonly from: unknown;
+  readonly to: unknown;
+};
+const retainedFixtures = [
+  parseRetainedSnapshot(retainedFixtureValue.from),
+  parseRetainedSnapshot(retainedFixtureValue.to),
+];
 const roots: string[] = [];
 
 afterEach(() => {
@@ -72,6 +81,52 @@ describe("lore explorer command", () => {
       counts: fixture.health.counts,
     });
   });
+
+  test("builds explicit retained snapshot and from/to comparison artifacts", async () => {
+    const root = tempRoot();
+    const single = await invoke(root, [
+      "--snapshot",
+      retainedFixtures[1]?.snapshotKey as string,
+      "--out",
+      "single.html",
+    ]);
+    expect(single).toMatchObject({
+      snapshotSchemaVersion: "lore-explorer-change-snapshot/1",
+      snapshotKey: retainedFixtures[1]?.snapshotKey,
+      counts: { repositories: 2, concepts: 1, tasks: 1, authoredEdges: 2, duplicateEdges: 1 },
+    });
+    expect(readFileSync(join(root, "single.html"), "utf8")).toContain("Lore retained snapshot explorer");
+
+    const comparison = await invoke(root, [
+      "--from",
+      retainedFixtures[0]?.snapshotKey as string,
+      "--to",
+      retainedFixtures[1]?.snapshotKey as string,
+      "--out",
+      "comparison.html",
+    ]);
+    expect(comparison.snapshotSchemaVersion).toBe("lore-explorer-change-snapshot/1");
+    expect(readFileSync(join(root, "comparison.html"), "utf8")).toContain("Paired evidence");
+
+    await expectLoreError(
+      () => invoke(root, ["--from", retainedFixtures[0]?.snapshotKey as string]),
+      "usage",
+      "supplied together",
+    );
+    await expectLoreError(
+      () =>
+        invoke(root, [
+          "--snapshot",
+          retainedFixtures[0]?.snapshotKey as string,
+          "--from",
+          retainedFixtures[0]?.snapshotKey as string,
+          "--to",
+          retainedFixtures[1]?.snapshotKey as string,
+        ]),
+      "usage",
+      "mutually exclusive",
+    );
+  });
 });
 
 function tempRoot(): string {
@@ -88,6 +143,15 @@ async function invoke(root: string, args: string[]): Promise<ExplorerArtifactRes
     args,
     stdout,
     loadSnapshot: async (): Promise<ExplorerSnapshot> => fixture,
+    loadRetainedSnapshot: async (selector: string): Promise<RetainedSnapshot> => {
+      const found = retainedFixtures.find(
+        (snapshot) =>
+          snapshot.snapshotKey === selector ||
+          snapshot.repositories.some((repository) => repository.gitCommit === selector),
+      );
+      if (found === undefined) throw new LoreError("not_found", `fixture snapshot ${selector} missing`);
+      return found;
+    },
   });
   expect(code).toBe(0);
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: ExplorerArtifactResult };

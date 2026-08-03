@@ -37,7 +37,7 @@ flowchart TD
     end
 
     subgraph Commands["commands/ — one file per CLI command"]
-        CMD["init · new · validate · check · sync<br/>link · unlink · tasks · orphans<br/>query · context · graph · path · impact<br/>replace · rename · supersede · scaffold · instructions"]
+        CMD["init · new · validate · check · sync<br/>link · unlink · tasks · orphans<br/>query · context · graph · path · impact<br/>snapshot · changed · provenance · explorer<br/>replace · rename · supersede · scaffold · instructions"]
     end
 
     subgraph Core["core/ — deterministic library (no LLM, no I/O surprises)"]
@@ -50,12 +50,14 @@ flowchart TD
         CONTEXT["context.ts"]
         RETRIEVAL["retrieval.ts<br/>indexed selection + reference fallback"]
         LIFECYCLE["ladybug-lifecycle.ts<br/>verified immutable generations"]
+        SNAPSHOTS["snapshot.ts<br/>retained facts + bounded deltas"]
         SCHEMA["schema.ts (Zod SoT)"]
     end
 
     subgraph State["state.ts — .lore/ + git"]
         STATEIO[".lore/config.toml · cache/ · templates/<br/>git add/commit of backlog/"]
         LADYBUG[".lore/cache/graph/ladybug/1/<br/>disposable derived projection"]
+        HISTORY[".lore/cache/snapshots/1/<br/>explicit immutable retained evidence"]
     end
 
     subgraph Adapters["adapters/ — isolated, lazy-loaded"]
@@ -77,6 +79,8 @@ flowchart TD
     RETRIEVAL --> LIFECYCLE
     RETRIEVAL --> BUNDLE
     LIFECYCLE --> LADYBUG
+    CMD --> SNAPSHOTS
+    SNAPSHOTS --> HISTORY
     RECONCILE --> BACKLOG
     MANAGED --> BACKLOG
     CMD --> Adapters
@@ -87,7 +91,7 @@ flowchart TD
 |---|---|---|
 | **Surfaces** | `cli.ts` (primary), `mcp.ts` (on hold), generated `SKILL.md` + CLAUDE.md nudge | commands |
 | **Commands** | `commands/*.ts` — argument parsing glue, output formatting, exit codes | core, state, adapters |
-| **Core** | `concept`, `bundle`, `managed-block`, `reconcile`, `links`, `query`, `context`, `traversal`, `retrieval`, `ladybug-*`, `schema` | schema; repository reads; the backlog adapter; the private lazy native boundary |
+| **Core** | `concept`, `bundle`, `managed-block`, `reconcile`, `links`, `query`, `context`, `traversal`, `snapshot`, `retrieval`, `ladybug-*`, `schema` | schema; repository reads; the backlog adapter; the private lazy native boundary |
 | **State** | `state.ts` — `.lore/` read/write; lore as sole git committer of `backlog/` | filesystem, git |
 | **Adapters** | `backlog.ts` (JSON), `confluence.ts` (on hold) | external processes / HTTP only |
 
@@ -399,6 +403,19 @@ requested members before traversal. Public results include locator-free workspac
 record provenance; no locator, expected ref, native path, physical identifier,
 or query language crosses the command boundary. See
 [Workspace indexing and retrieval](../specs/workspace-indexing-and-retrieval.md).
+
+### M8 retained history path
+
+Retained history branches from the same validated repository/workspace source
+before any database-specific representation. `snapshot.ts` maps current
+projection records into canonical `lore-retained-snapshot/1` facts;
+`snapshot-store.ts` retains them only on explicit request beneath
+`.lore/cache/snapshots/1/`. The store is scoped, contained, symlink-safe, capped
+at 16 entries per scope, and never evicts. `changed` performs a bounded merge
+over stable fact keys, while `provenance` returns the exact embedded source
+evidence. Historical explorer mode consumes the same facts through a separate
+replay-validated contract; ordinary explorer bytes do not change. See
+[Snapshot change and provenance workflows](../specs/snapshot-change-and-provenance-workflows.md).
 
 ### `lore rename / supersede / replace`
 Mutation commands continue to load `bundle.ts` directly. `rename` and
