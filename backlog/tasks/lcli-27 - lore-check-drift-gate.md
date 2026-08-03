@@ -5,16 +5,18 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:22'
+updated_date: '2026-08-03 16:09'
 labels:
   - cmd
   - ci
+  - 'doc:stories/build-the-lore-cli-foundation'
 milestone: m-3
 dependencies:
   - LCLI-22
   - LCLI-23
 documentation:
   - docs/adr/0007-validation-and-coherence.md
+  - docs/stories/build-the-lore-cli-foundation.md
 priority: high
 ordinal: 27000
 ---

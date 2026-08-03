@@ -5,14 +5,16 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:22'
+updated_date: '2026-08-03 16:09'
 labels:
   - cmd
+  - 'doc:stories/build-the-lore-cli-foundation'
 milestone: m-2
 dependencies:
   - LCLI-15
 documentation:
   - docs/adr/0006-schema-types-templates.md
+  - docs/stories/build-the-lore-cli-foundation.md
 priority: medium
 ordinal: 20000
 ---

@@ -6,15 +6,17 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:23'
+updated_date: '2026-08-03 16:09'
 labels:
   - docs
+  - 'doc:stories/build-the-lore-cli-foundation'
 dependencies: []
 references:
   - 'https://github.com/jeremy-newhouse/lore/pull/50'
 documentation:
   - docs/reference/cli-surface.md
   - docs/reference/cli-contract.md
+  - docs/stories/build-the-lore-cli-foundation.md
 parent_task_id: LCLI-55
 priority: medium
 type: docs

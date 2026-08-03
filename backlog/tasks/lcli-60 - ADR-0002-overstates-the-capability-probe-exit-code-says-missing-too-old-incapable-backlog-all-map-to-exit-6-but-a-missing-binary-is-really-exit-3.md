@@ -7,16 +7,19 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:23'
+updated_date: '2026-08-03 16:10'
 labels:
   - bug
   - docs
   - cli-contract
+  - 'doc:stories/build-the-lore-cli-foundation'
 dependencies:
   - LCLI-56
 references:
   - src/adapters/backlog.ts
   - docs/adr/0002-backlog-integration-json-only.md
+documentation:
+  - docs/stories/build-the-lore-cli-foundation.md
 priority: low
 ordinal: 74000
 ---

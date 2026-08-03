@@ -5,13 +5,15 @@ status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:21'
+updated_date: '2026-08-03 16:09'
 labels:
   - backlog-fork
+  - 'doc:stories/build-the-lore-cli-foundation'
 milestone: m-0
 dependencies: []
 documentation:
   - docs/runbooks/backlog-json-patch.md
+  - docs/stories/build-the-lore-cli-foundation.md
 priority: high
 ordinal: 1000
 ---

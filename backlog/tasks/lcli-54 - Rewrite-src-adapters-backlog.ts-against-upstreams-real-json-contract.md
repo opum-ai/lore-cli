@@ -4,16 +4,18 @@ title: Rewrite src/adapters/backlog.ts against upstream's real --json contract
 status: Done
 assignee: []
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:23'
+updated_date: '2026-08-03 16:09'
 labels:
   - core
   - adapter
+  - 'doc:stories/build-the-lore-cli-foundation'
 milestone: m-0
 dependencies:
   - LCLI-53
 documentation:
   - docs/reference/backlog-json-schema.md
   - docs/reference/backlog-cli-contract.md
+  - docs/stories/build-the-lore-cli-foundation.md
 priority: medium
 ordinal: 57000
 ---

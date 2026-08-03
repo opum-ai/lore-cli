@@ -7,13 +7,16 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:23'
+updated_date: '2026-08-03 16:10'
 labels:
   - docs
   - cmd
+  - 'doc:stories/build-the-lore-cli-foundation'
 dependencies: []
 references:
   - 'https://github.com/jeremy-newhouse/lore/pull/50'
+documentation:
+  - docs/stories/build-the-lore-cli-foundation.md
 modified_files:
   - src/commands/scaffold.ts
 parent_task_id: LCLI-55

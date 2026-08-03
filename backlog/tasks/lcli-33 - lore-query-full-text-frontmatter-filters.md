@@ -5,14 +5,16 @@ status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:22'
+updated_date: '2026-08-03 16:09'
 labels:
   - cmd
+  - 'doc:stories/build-the-lore-cli-foundation'
 milestone: m-4
 dependencies:
   - LCLI-16
 documentation:
   - docs/adr/0015-lightweight-retrieval-no-vectors.md
+  - docs/stories/build-the-lore-cli-foundation.md
 priority: medium
 ordinal: 33000
 ---

@@ -6,17 +6,20 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:23'
+updated_date: '2026-08-03 16:10'
 labels:
   - bug
   - template
   - managed-block
+  - 'doc:stories/build-the-lore-cli-foundation'
 dependencies:
   - LCLI-56
 references:
   - src/core/template.ts
   - src/core/managed-block.ts
   - docs/runbooks/agent-onboarding.md
+documentation:
+  - docs/stories/build-the-lore-cli-foundation.md
 ordinal: 73000
 ---
 

@@ -5,16 +5,18 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:22'
+updated_date: '2026-08-03 16:09'
 labels:
   - cmd
   - agent-api
+  - 'doc:stories/build-the-lore-cli-foundation'
 milestone: m-5
 dependencies:
   - LCLI-37
 documentation:
   - docs/adr/0004-cli-first-skill-bridge-mcp-deferred.md
   - docs/runbooks/agent-onboarding.md
+  - docs/stories/build-the-lore-cli-foundation.md
 priority: high
 ordinal: 36000
 ---

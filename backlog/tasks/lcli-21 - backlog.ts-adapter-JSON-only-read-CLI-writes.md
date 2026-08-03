@@ -5,10 +5,11 @@ status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:22'
+updated_date: '2026-08-03 16:09'
 labels:
   - core
   - adapter
+  - 'doc:stories/build-the-lore-cli-foundation'
 milestone: m-3
 dependencies:
   - LCLI-4
@@ -16,6 +17,7 @@ documentation:
   - docs/reference/backlog-cli-contract.md
   - docs/reference/backlog-json-schema.md
   - docs/adr/0002-backlog-integration-json-only.md
+  - docs/stories/build-the-lore-cli-foundation.md
 priority: high
 ordinal: 21000
 ---
