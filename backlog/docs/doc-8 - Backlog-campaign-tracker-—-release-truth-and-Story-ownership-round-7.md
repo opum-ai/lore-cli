@@ -3,7 +3,7 @@ id: doc-8
 title: Backlog campaign tracker — release truth and Story ownership (round 7)
 type: other
 created_date: '2026-08-03 15:14'
-updated_date: '2026-08-03 16:27'
+updated_date: '2026-08-03 16:29'
 ---
 # Backlog campaign tracker — release truth and Story ownership (round 7)
 
@@ -16,7 +16,7 @@ updated_date: '2026-08-03 16:27'
 Informational snapshot only; never a promised next wave.
 
 - Campaign state: complete; no queued work remains.
-- Delivery disposition: retained intentionally on local branch `docs/lcli-293-release-truth-ownership`; reviewed implementation, task settlement, and generated documentation are committed through `6fa3260`. No push, PR, or merge authority was granted, so remote delivery remains the only missing authority. Tracker/log-only reconciliation may follow this reviewed head.
+- Delivery disposition: retained intentionally on local branch `docs/lcli-293-release-truth-ownership`; reviewed implementation, task settlement, generated documentation, and delivery disposition are committed through `fcf8e77`. No push, PR, or merge authority was granted, so remote delivery remains the only missing authority. This tracker correction and its generated log are bookkeeping-only follow-ups to that reviewed head.
 - Ready now: none.
 - In flight: none.
 - Blocked or human decision required: LCLI-278.
@@ -26,7 +26,7 @@ Informational snapshot only; never a promised next wave.
 ## Queue
 | Order | Task | Cluster | Formal dependencies | State | Wave | Likely files | Note |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | LCLI-293 | release truth, handover lifecycle, Story/task coupling | none | Done | 1 | docs/index.md; docs/runbooks/lore-cli-release-campaign-handover.md; docs/runbooks/release-publishing.md; docs/stories/; archive/handovers/; Lore-managed indexes/log; Backlog task coupling metadata | Documentation-only scope. Preserve task lifecycle history and avoid product source, package, release, remote-policy, and unrelated worktree changes. |
+| 1 | LCLI-293 | release truth, handover lifecycle, Story/task coupling | none | Done | 1 | docs/index.md; docs/runbooks/lore-cli-handover.md; docs/runbooks/release-publishing.md; docs/stories/; archive/handovers/; Lore-managed indexes/log; Backlog task coupling metadata | Documentation-only scope. Preserve task lifecycle history and avoid product source, package, release, remote-policy, and unrelated worktree changes. |
 
 ## Resolved
 | Task | Date/wave | Evidence and disposition |
@@ -42,9 +42,10 @@ Informational snapshot only; never a promised next wave.
 - Quest CLI migration: round 6 records external QCLI-2.5 and QCLI-2.7 as the owners of migration fidelity and Lore activation evidence. No Lore CLI task is manufactured from that external queue.
 
 ## Wave log
-- 2026-08-03 — wave 1 settlement: LCLI-293 reached Done with every criterion checked after adversarial self-review and objective verification. All 320 tasks have exactly one Story owner; 120 tracked archives and 29 obsolete ignored handovers are non-executable provenance; one context-free current handover remains; Lore is truthfully documented as unreleased; strict Lore and Git gates pass. Local implementation is committed through `f90527b`. Task terminal metadata and this tracker settlement are ready for the final Lore reconciliation commit; no push, PR, merge, publication, cleanup, or remote-policy action was performed.
+- 2026-08-03 — wave 1 settlement: LCLI-293 reached Done with every criterion checked after adversarial self-review and objective verification. All 320 tasks have exactly one Story owner; 120 tracked archives and 29 obsolete ignored handovers are non-executable provenance; one context-free current handover remains; Lore is truthfully documented as unreleased; strict Lore and Git gates pass. Local implementation is committed through `f90527b`. Task terminal metadata and the first tracker settlement landed in `80351f4`; Story/log settlement landed in `6fa3260`, with delivery-disposition reconciliation in `ab48740` and `fcf8e77`; no push, PR, merge, publication, cleanup, or remote-policy action was performed.
 - 2026-08-03 — wave 1 dispatch: live restore confirmed `dev` at `03888dadc6b98600dd7672c60be0090ba7c421fd`, equal to locally known `origin/dev`, with one primary worktree and only the campaign-owned untracked `doc-8` path. LCLI-293 remained To Do with no dependencies or overlapping user changes, so the single-task documentation wave was dispatched. No commit, push, PR, merge, publication, remote-policy, or cleanup authority was inferred.
 - 2026-08-03 — init: inventoried all six live non-terminal tasks through Backlog JSON views; classified one agent-resolvable task, one repository-admin decision, and four deferred or on-hold tasks. The user confirmed the one-task LCLI-293 scope with "proceed". Grounding found clean dev at 03888dadc6b98600dd7672c60be0090ba7c421fd, equal to origin/dev, one primary worktree, no Treehouse leases, no dirty paths, 318 orphan tasks, and zero dangling links. Created tracker doc-8. No task was dispatched, no task lifecycle metadata changed, and no push, PR, merge, cleanup, publication, or remote-policy mutation was performed.
+
 
 
 
