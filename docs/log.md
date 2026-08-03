@@ -74,6 +74,7 @@
 - 2026-08-03T08:45:25-05:00 d19c60e907f2ebed6f10075fb6df95f65e0fe645 docs: record snapshot workflow delivery evidence
 - 2026-08-03T08:55:36-05:00 234f71d71b5dabd00aec1ac2ff7003c6299b99f8 docs: record local graph capability settlement
 - 2026-08-03T09:07:42-05:00 57c5645e43014d592bc82fc017f432a173a3240f docs: record local graph roadmap settlement
+- 2026-08-03T11:24:52-05:00 f90527bb28c07098d30ed91f9480d05fdaf4dc29 docs: reconcile release truth and Story ownership
 
 ## docs/.obsidian
 
@@ -193,6 +194,7 @@
 - 2026-08-02T18:03:34-05:00 1034229ab8ef804498160acefa2f39d613dcb825 feat: add bounded path and impact traversal
 - 2026-08-02T19:15:38-05:00 242d43ee256a7ba6f54a5ae702daabd41ebea878 chore(LCLI-253): migrate off the pinned-commit Backlog.md build to the published release
 - 2026-08-03T08:39:40-05:00 a98014b4530903e2681c73c6762aa1e70e8aa67c feat: add snapshot change and provenance workflows
+- 2026-08-03T11:24:52-05:00 f90527bb28c07098d30ed91f9480d05fdaf4dc29 docs: reconcile release truth and Story ownership
 
 ## docs/runbooks
 
@@ -254,6 +256,7 @@
 - 2026-08-01T00:02:30-05:00 4f0b69cdb1e3f2ddc2fde4c1dcc474974b6e510a feat: bound Ladybug qualification gate
 - 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
 - 2026-08-02T19:15:38-05:00 242d43ee256a7ba6f54a5ae702daabd41ebea878 chore(LCLI-253): migrate off the pinned-commit Backlog.md build to the published release
+- 2026-08-03T11:24:52-05:00 f90527bb28c07098d30ed91f9480d05fdaf4dc29 docs: reconcile release truth and Story ownership
 
 ## docs/specs
 
@@ -289,3 +292,4 @@
 ## docs/stories
 
 - 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
+- 2026-08-03T11:24:52-05:00 f90527bb28c07098d30ed91f9480d05fdaf4dc29 docs: reconcile release truth and Story ownership
