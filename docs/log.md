@@ -79,6 +79,7 @@
 - 2026-08-03T11:28:27-05:00 fcf8e77919c1c7373f66dd720ff412726f8bd0e1 docs: record campaign disposition
 - 2026-08-03T11:30:36-05:00 389c8a071e8d9398e666b6c9417fc26e15eaa57a docs: finalize campaign tracker history
 - 2026-08-03T12:17:10-05:00 5d466d3f9a9174231f08b402a0a1d2d40b4c5288 test: align handover contract with current runbook
+- 2026-08-03T12:25:49-05:00 1deea8bcac5e36bfcb1bcb2e061da23312fc3efa docs: settle LCLI-293 remote delivery
 
 ## docs/.obsidian
 
