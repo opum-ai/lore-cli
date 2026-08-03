@@ -1,13 +1,13 @@
 ---
 id: LCLI-163
 title: >-
-  replace: $<name> should stay literal when the regex has no named groups, not
-  expand to ""
+  replace: `$<name>` should stay literal when the regex has no named groups, not
+  expand to empty
 status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-08-03 16:11'
+updated_date: '2026-08-03 16:16'
 labels:
   - codex-review-followup
   - core-replace

@@ -1,11 +1,11 @@
 ---
 id: LCLI-107
-title: lore <command> --help shows generic help instead of the command's own help
+title: '`lore <command> --help` shows generic help instead of the command''s own help'
 status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-08-03 16:10'
+updated_date: '2026-08-03 16:16'
 labels:
   - codex-review-followup
   - cli-entry-state

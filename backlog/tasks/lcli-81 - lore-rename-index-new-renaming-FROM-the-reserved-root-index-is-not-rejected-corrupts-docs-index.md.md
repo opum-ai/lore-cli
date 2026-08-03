@@ -1,13 +1,13 @@
 ---
 id: LCLI-81
 title: >-
-  lore rename index <new> (renaming FROM the reserved root index) is not
+  lore rename index `<new>` (renaming FROM the reserved root index) is not
   rejected, corrupts docs/index.md
 status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-08-03 16:10'
+updated_date: '2026-08-03 16:16'
 labels:
   - codex-review
   - correctness

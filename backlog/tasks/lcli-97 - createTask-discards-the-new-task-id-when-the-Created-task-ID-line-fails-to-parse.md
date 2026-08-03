@@ -1,13 +1,11 @@
 ---
 id: LCLI-97
-title: >-
-  createTask discards the new task id when the 'Created task <ID>' line fails to
-  parse
+title: createTask discards the new task id when `Created task <ID>` fails to parse
 status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-08-03 16:10'
+updated_date: '2026-08-03 16:16'
 labels:
   - codex-review-followup
   - adapter-backlog
