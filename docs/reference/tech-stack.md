@@ -436,7 +436,7 @@ here.
 | **npm package** | `@salient-data/lore` |
 | **`bin`** | `lore` |
 | **License** | MIT — Jeremy Newhouse, 2026 |
-| **Repo** | `github.com/jeremy-newhouse/lore` (private; branches `main` + `dev`, `dev` default) |
+| **Repo** | `github.com/opum-ai/lore-cli` (private; branches `main` + `dev`, `dev` default) |
 
 **Build.** `bun build --compile` produces a self-contained native binary per
 platform (baseline x64 + arm64 targets — see §1).

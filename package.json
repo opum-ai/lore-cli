@@ -14,7 +14,7 @@
   "author": "Jeremy Newhouse",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jeremy-newhouse/lore.git"
+    "url": "git+https://github.com/opum-ai/lore-cli.git"
   },
   "packageManager": "bun@1.2.23",
   "engines": {

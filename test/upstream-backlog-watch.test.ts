@@ -84,7 +84,7 @@ function stubFetcher(handlers: Array<{ match: string; method?: string; response:
 }
 
 describe("watchOnce", () => {
-  const env = { repoSlug: "jeremy-newhouse/lore", token: "test-token" };
+  const env = { repoSlug: "opum-ai/lore-cli", token: "test-token" };
 
   test("already-surfaced: an existing tracking issue short-circuits before any upstream call", async () => {
     const { fetcher, calls } = stubFetcher([

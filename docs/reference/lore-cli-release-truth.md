@@ -23,6 +23,8 @@ an availability claim.
 
 As verified on 2026-08-03, Lore CLI is **unreleased**:
 
+- the canonical GitHub repository is `opum-ai/lore-cli`; the LCLI-294 transfer
+  changed ownership but did not create a tag, release, artifact, or registry package;
 - the root package and all five platform package manifests still use the
   placeholder version `0.0.0`;
 - the local repository and GitHub repository have no release tag;

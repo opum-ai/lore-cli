@@ -116,8 +116,11 @@ machines through the channel they already use (npm / `npx` / `bunx`).
   [release-publishing.md](../runbooks/release-publishing.md) for the exact
   setup steps and the release procedure.
 
-**License & coordinates.** MIT, © Jeremy Newhouse, 2026. Repo
-`github.com/jeremy-newhouse/lore` (private; `main` + `dev`, `dev` is default).
+**License & coordinates.** MIT, © Jeremy Newhouse, 2026. The repository was
+`github.com/jeremy-newhouse/lore` when this decision was accepted. That address
+is historical provenance; after the LCLI-294 ownership transfer, the canonical
+current location is `github.com/opum-ai/lore-cli` (private; `main` + `dev`,
+`dev` is default).
 
 ## Consequences
 
