@@ -75,6 +75,7 @@
 - 2026-08-03T08:55:36-05:00 234f71d71b5dabd00aec1ac2ff7003c6299b99f8 docs: record local graph capability settlement
 - 2026-08-03T09:07:42-05:00 57c5645e43014d592bc82fc017f432a173a3240f docs: record local graph roadmap settlement
 - 2026-08-03T11:24:52-05:00 f90527bb28c07098d30ed91f9480d05fdaf4dc29 docs: reconcile release truth and Story ownership
+- 2026-08-03T11:27:06-05:00 6fa326042c4c8945260f648056a28a1bdb3a7fec docs: record LCLI-293 settlement
 
 ## docs/.obsidian
 
@@ -293,3 +294,4 @@
 
 - 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
 - 2026-08-03T11:24:52-05:00 f90527bb28c07098d30ed91f9480d05fdaf4dc29 docs: reconcile release truth and Story ownership
+- 2026-08-03T11:27:06-05:00 6fa326042c4c8945260f648056a28a1bdb3a7fec docs: record LCLI-293 settlement
