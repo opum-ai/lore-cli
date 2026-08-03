@@ -3,7 +3,7 @@ id: doc-8
 title: Backlog campaign tracker — release truth and Story ownership (round 7)
 type: other
 created_date: '2026-08-03 15:14'
-updated_date: '2026-08-03 17:24'
+updated_date: '2026-08-03 18:28'
 ---
 # Backlog campaign tracker — release truth and Story ownership (round 7)
 
@@ -16,7 +16,7 @@ updated_date: '2026-08-03 17:24'
 Informational snapshot only; never a promised next wave.
 
 - Campaign state: complete; no queued work remains.
-- Delivery disposition: delivered through PR #292. GitHub merged exact corrected head 5d466d3f9a9174231f08b402a0a1d2d40b4c5288 into dev as 1b35408a1227d2635859ae677cc05a1bf37ab45c after all eight CI jobs passed. The main and settlement branches are retained intentionally because branch cleanup was not authorized. No publication, release-state mutation, or remote-policy change occurred.
+- Delivery disposition: delivered through PR #292 with durable settlement through PR #293. After explicit cleanup approval, the verified merged PR #292 and PR #293 source branches were deleted locally and remotely. Clean dev is ready for a newly confirmed issue. No publication, release-state mutation, or remote-policy change occurred.
 - Ready now: none.
 - In flight: none.
 - Blocked or human decision required: LCLI-278.
@@ -42,11 +42,13 @@ Informational snapshot only; never a promised next wave.
 - Quest CLI migration: round 6 records external QCLI-2.5 and QCLI-2.7 as the owners of migration fidelity and Lore activation evidence. No Lore CLI task is manufactured from that external queue.
 
 ## Wave log
+- 2026-08-03 — cleanup: after explicit user approval, verified both delivered source heads were ancestors of current dev and unused by other worktrees, then removed branches docs/lcli-293-release-truth-ownership and docs/lcli-293-delivery-settlement locally and remotely. Clean dev remained equal to origin/dev at 403d2c2bc1efb194fe4ad77bf84c48450a3b647c. No next task was activated: LCLI-278 still requires a human repository-administration decision, and LCLI-42 through LCLI-45 remain deferred or on hold.
 - 2026-08-03 — delivery settlement: PR #292 merged exact corrected head 5d466d3f9a9174231f08b402a0a1d2d40b4c5288 into dev as 1b35408a1227d2635859ae677cc05a1bf37ab45c after all eight CI jobs passed. This follow-up records durable tracker and task evidence only. Branches remain retained pending separate cleanup authority; no package publication, release-state mutation, or remote-policy change occurred.
 - 2026-08-03 — remote delivery: the user authorized push, PR, required-CI wait, and merge. Opened PR #292 at reviewed head 389c8a071e8d9398e666b6c9417fc26e15eaa57a. Its first run passed six jobs and failed the Ubuntu and Windows test jobs because test/local-graph-contract.test.ts still opened the retired release-campaign handover. Corrected that live contract test to enforce the new context-free handover and passed pinned local lint, typecheck, and 2,425 tests before repush.
 - 2026-08-03 — wave 1 settlement: LCLI-293 reached Done with every criterion checked after adversarial self-review and objective verification. All 320 tasks have exactly one Story owner; 120 tracked archives and 29 obsolete ignored handovers are non-executable provenance; one context-free current handover remains; Lore is truthfully documented as unreleased; strict Lore and Git gates pass. Local implementation is committed through `f90527b`. Task terminal metadata and the first tracker settlement landed in `80351f4`; Story/log settlement landed in `6fa3260`, with delivery-disposition reconciliation in `ab48740` and `fcf8e77`; no push, PR, merge, publication, cleanup, or remote-policy action was performed.
 - 2026-08-03 — wave 1 dispatch: live restore confirmed `dev` at `03888dadc6b98600dd7672c60be0090ba7c421fd`, equal to locally known `origin/dev`, with one primary worktree and only the campaign-owned untracked `doc-8` path. LCLI-293 remained To Do with no dependencies or overlapping user changes, so the single-task documentation wave was dispatched. No commit, push, PR, merge, publication, remote-policy, or cleanup authority was inferred.
 - 2026-08-03 — init: inventoried all six live non-terminal tasks through Backlog JSON views; classified one agent-resolvable task, one repository-admin decision, and four deferred or on-hold tasks. The user confirmed the one-task LCLI-293 scope with "proceed". Grounding found clean dev at 03888dadc6b98600dd7672c60be0090ba7c421fd, equal to origin/dev, one primary worktree, no Treehouse leases, no dirty paths, 318 orphan tasks, and zero dangling links. Created tracker doc-8. No task was dispatched, no task lifecycle metadata changed, and no push, PR, merge, cleanup, publication, or remote-policy mutation was performed.
+
 
 
 
