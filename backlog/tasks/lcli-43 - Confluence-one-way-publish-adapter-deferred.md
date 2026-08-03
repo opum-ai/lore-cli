@@ -4,15 +4,17 @@ title: Confluence one-way publish adapter (deferred)
 status: To Do
 assignee: []
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-30 13:29'
+updated_date: '2026-08-03 16:10'
 labels:
   - deferred
   - confluence
+  - 'doc:stories/hold-deferred-lore-capabilities'
 milestone: m-11
 dependencies:
   - LCLI-28
 documentation:
   - docs/adr/0016-confluence-one-way-publish-deferred.md
+  - docs/stories/hold-deferred-lore-capabilities.md
 priority: low
 ordinal: 43000
 ---

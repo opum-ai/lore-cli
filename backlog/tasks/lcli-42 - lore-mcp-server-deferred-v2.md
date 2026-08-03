@@ -4,11 +4,12 @@ title: Local lore MCP server (on hold)
 status: To Do
 assignee: []
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-30 13:50'
+updated_date: '2026-08-03 16:10'
 labels:
   - deferred
   - mcp
   - on-hold
+  - 'doc:stories/hold-deferred-lore-capabilities'
 milestone: m-10
 dependencies:
   - LCLI-21
@@ -18,6 +19,7 @@ documentation:
   - docs/adr/0004-cli-first-skill-bridge-mcp-deferred.md
   - docs/adr/0018-persistent-local-graph-projection-with-ladybugdb.md
   - docs/specs/local-graph-platform-roadmap.md
+  - docs/stories/hold-deferred-lore-capabilities.md
 priority: low
 ordinal: 42000
 ---

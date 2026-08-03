@@ -4,15 +4,17 @@ title: '[Deferred] Typed importable library build (.d.ts + subpath exports)'
 status: To Do
 assignee: []
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-30 13:29'
+updated_date: '2026-08-03 16:10'
 labels:
   - eck-alignment
   - packaging
+  - 'doc:stories/hold-deferred-lore-capabilities'
 milestone: m-12
 dependencies:
   - LCLI-9
 documentation:
   - docs/adr/0001-runtime-build-distribution.md
+  - docs/stories/hold-deferred-lore-capabilities.md
 priority: low
 ordinal: 45000
 ---
