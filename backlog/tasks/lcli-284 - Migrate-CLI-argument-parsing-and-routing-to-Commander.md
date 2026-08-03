@@ -5,12 +5,13 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 14:25'
-updated_date: '2026-07-30 19:46'
+updated_date: '2026-08-03 16:10'
 labels:
   - cli
   - argument-parsing
   - commander
   - developer-experience
+  - 'doc:stories/build-the-persistent-local-graph-platform'
 milestone: m-13
 dependencies:
   - LCLI-283.1.1
@@ -21,6 +22,7 @@ documentation:
   - docs/reference/tech-stack.md
   - docs/reference/cli-contract.md
   - docs/reference/cli-surface.md
+  - docs/stories/build-the-persistent-local-graph-platform.md
 priority: medium
 type: chore
 ordinal: 387500

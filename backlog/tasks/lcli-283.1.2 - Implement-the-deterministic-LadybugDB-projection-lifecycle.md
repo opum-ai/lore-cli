@@ -5,16 +5,18 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:33'
-updated_date: '2026-07-30 22:02'
+updated_date: '2026-08-03 16:10'
 labels:
   - ladybugdb
   - indexing
   - cache
+  - 'doc:stories/build-the-persistent-local-graph-platform'
 milestone: m-13
 dependencies:
   - LCLI-283.1.1
 documentation:
   - docs/specs/local-graph-platform-roadmap.md
+  - docs/stories/build-the-persistent-local-graph-platform.md
 modified_files:
   - package.json
   - bun.lock

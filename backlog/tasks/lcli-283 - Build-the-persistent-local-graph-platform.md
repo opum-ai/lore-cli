@@ -5,16 +5,18 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:32'
-updated_date: '2026-08-03 14:06'
+updated_date: '2026-08-03 16:10'
 labels:
   - local-graph
   - ladybugdb
   - roadmap
+  - 'doc:stories/build-the-persistent-local-graph-platform'
 dependencies: []
 references:
   - docs/adr/0018-persistent-local-graph-projection-with-ladybugdb.md
 documentation:
   - docs/specs/local-graph-platform-roadmap.md
+  - docs/stories/build-the-persistent-local-graph-platform.md
 priority: high
 type: feature
 ordinal: 385000

@@ -1,53 +1,12 @@
-# Handover — Backlog campaign session 1: LCLI-67 (cli-surface.md stale claims)
+# Historical handover provenance
 
-**Date**: 2026-07-19 | **Grounded against**: `dev @ 6d7a38e`, clean (only pre-existing untracked `docs/.obsidian/`), in sync with `origin/dev` | **Tracker**: doc-1 (`backlog doc view doc-1 --plain`)
+This file records a completed or superseded delivery session from 2026-07-19.
 
-## Paste-ready prompt for the next session
+- Original topic: Handover — Backlog campaign session 1: LCLI-67 (cli-surface.md stale claims)
+- History source: fea4509a7a2a9be13a197bff638f03b6bcdb9717
+- Classification: historical and non-executable
+- Current authority route: [Lore CLI handover](../../docs/runbooks/lore-cli-handover.md) plus live Backlog task evidence
 
-```
-Run /backlog-handover restore in /Volumes/external/repos/lore. Tracker: doc-1
-(`backlog doc view doc-1 --plain`). Cursor: LCLI-67 — cli-surface.md documents
-behavior that does not exist (init --force/probe/exit-5, new type shorthands,
-check --fix, replace exit-6 gate) plus two dead validate config knobs
-(src/core/config.ts:65-70). Queue order (67, 61, 62, 63, 64, 65, 66) confirmed
-by the user on 2026-07-19; do not re-ask. Merge gate: self-merge
-(gh pr merge --rebase --delete-branch into dev) confirmed by the user on
-2026-07-19 — the PR is an audit trail, not an approval gate.
-
-LCLI-67 is docs-only: re-verify EVERY stale claim against current source before
-editing (any could have been implemented since filing), drive docs/ edits per
-the repo's lore conventions (run `lore instructions` first; use the lore CLI,
-not a bare editor, where it applies), and follow backlog instructions
-task-execution → task-finalization for the task lifecycle. AC5 leaves the two
-dead validate knobs as an implementation choice (wire up or un-document —
-doc-side expected); document whichever you pick.
-```
-
-## State
-
-| Item | Status |
-| --- | --- |
-| Campaign | Initialized this session. Tracker doc-1 committed on dev @ `6d7a38e`, pushed. |
-| Queue | LCLI-67 → 61 → 62 → 63 → 64 → 65 → 66 (user-confirmed 2026-07-19). All To Do, none started. |
-| LCLI-42/43/44/45 | Parked in tracker "Not queued" — deferred by recorded product decisions. Do not pick up. |
-| Branches / PRs | No `feature/*` branches local or remote; no open PRs. |
-| CHANGELOG convention | Doc-accuracy fixes get an `[Unreleased] → Fixed` entry (LCLI-60 precedent); newest entry leads the subsection. |
-
-## Next steps
-
-1. Per-issue lifecycle on LCLI-67 (`backlog task view LCLI-67 --plain` for the five ACs): branch `feature/LCLI-67` off dev, plan on the task, verify each stale claim against `src/commands/init.ts`, `src/commands/new.ts`, `src/commands/check.ts`, `src/commands/replace.ts`, `src/core/config.ts:65-70`, then correct `docs/reference/cli-surface.md`.
-2. Review the branch diff adversarially, push, open PR into dev, self-merge (rebase), prune.
-3. Advance the tracker cursor to LCLI-61 on the branch (atomic with the fix), append the session-log entry via `backlog doc update doc-1`.
-4. Archive this handover, write the next one pointed at LCLI-61, push dev.
-
-## Critical context / traps
-
-- **Backlog data only via the `backlog` CLI** — never edit `backlog/**` markdown directly; read deps via `backlog task view --plain` (grep on task files falsely reports no deps).
-- **LCLI-61..66 (later sessions) require the real Docker harness for verification** (`docker compose -f docker/e2e/docker-compose.yml up --build`, always `down -v` after); green `bun test` alone is insufficient for harness work. LCLI-67 (this session) is docs-only — no docker needed.
-- `docs/.obsidian/` is untracked, pre-existing, unrelated — leave it alone.
-- LCLI-62 and LCLI-66 depend on LCLI-61's `step_fail` helper — queue order already accounts for this; do not reorder past 61.
-- All seven queue tasks are self-contained (filed from the 2026-07-19 E2E coverage audit at dev @ `305efa8`) — trust the task descriptions' file:line evidence but re-verify line numbers against the current tree before editing.
-
-## Do not repeat
-
-- Nothing failed this session (init only). Historical trap that recurs: do not trust `run-e2e.sh` comments or docs as ground truth for behavior — verify against `src/` (LCLI-60/67 both exist because docs drifted from code).
+The earlier session detail remains available from Git history at the source
+revision above. This capsule grants no implementation, delivery, release,
+cleanup, or remote-state authority.

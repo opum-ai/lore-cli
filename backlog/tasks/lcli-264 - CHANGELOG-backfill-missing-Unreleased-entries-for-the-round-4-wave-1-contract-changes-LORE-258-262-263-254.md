@@ -7,11 +7,14 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:31'
+updated_date: '2026-08-03 16:10'
 labels:
   - docs
   - release
+  - 'doc:stories/prepare-the-first-lore-cli-release'
 dependencies: []
+documentation:
+  - docs/stories/prepare-the-first-lore-cli-release.md
 priority: low
 type: chore
 ordinal: 366000

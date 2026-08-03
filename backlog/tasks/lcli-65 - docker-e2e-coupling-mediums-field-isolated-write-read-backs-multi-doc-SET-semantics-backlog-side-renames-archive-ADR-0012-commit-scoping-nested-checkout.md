@@ -8,18 +8,21 @@ status: Done
 assignee:
   - '@jeremy-newhouse'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:24'
+updated_date: '2026-08-03 16:10'
 labels:
   - e2e
   - testing
   - backlog-fork
   - adapter
+  - 'doc:stories/harden-lore-cli-correctness-and-safety'
 dependencies:
   - LCLI-56
 references:
   - docker/e2e/run-e2e.sh
   - src/adapters/backlog.ts
   - src/core/state.ts
+documentation:
+  - docs/stories/harden-lore-cli-correctness-and-safety.md
 priority: medium
 ordinal: 79000
 ---

@@ -5,18 +5,20 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 15:27'
-updated_date: '2026-07-30 17:18'
+updated_date: '2026-08-03 16:10'
 labels:
   - zod
   - configuration
   - validation
   - maintenance
+  - 'doc:stories/build-the-persistent-local-graph-platform'
 dependencies: []
 references:
   - src/config.ts
   - test/config.test.ts
 documentation:
   - docs/reference/dependency-boundary-audit.md
+  - docs/stories/build-the-persistent-local-graph-platform.md
 modified_files:
   - src/config.ts
   - test/config.test.ts

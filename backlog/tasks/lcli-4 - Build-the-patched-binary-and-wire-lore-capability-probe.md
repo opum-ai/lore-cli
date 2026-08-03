@@ -5,15 +5,17 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:21'
+updated_date: '2026-08-03 16:09'
 labels:
   - backlog-fork
   - build
+  - 'doc:stories/build-the-lore-cli-foundation'
 milestone: m-0
 dependencies:
   - LCLI-2
 documentation:
   - docs/reference/backlog-cli-contract.md
+  - docs/stories/build-the-lore-cli-foundation.md
 priority: medium
 ordinal: 4000
 ---

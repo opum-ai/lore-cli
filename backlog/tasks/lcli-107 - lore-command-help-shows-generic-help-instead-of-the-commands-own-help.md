@@ -1,19 +1,22 @@
 ---
 id: LCLI-107
-title: lore <command> --help shows generic help instead of the command's own help
+title: '`lore <command> --help` shows generic help instead of the command''s own help'
 status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:25'
+updated_date: '2026-08-03 16:16'
 labels:
   - codex-review-followup
   - cli-entry-state
+  - 'doc:stories/harden-lore-cli-correctness-and-safety'
 dependencies: []
 references:
   - >-
     backlog/docs/reviews/doc-2 -
     Codex-second-opinion-review-—-lore-codebase-2026-07-20.md
+documentation:
+  - docs/stories/harden-lore-cli-correctness-and-safety.md
 priority: medium
 type: bug
 ordinal: 121000

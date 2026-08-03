@@ -7,14 +7,17 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:30'
+updated_date: '2026-08-03 16:10'
 labels:
   - build-ci-config
+  - 'doc:stories/prepare-the-first-lore-cli-release'
 dependencies: []
 references:
   - LCLI-196
   - LCLI-100
   - doc-2
+documentation:
+  - docs/stories/prepare-the-first-lore-cli-release.md
 priority: medium
 type: chore
 ordinal: 353000

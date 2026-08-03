@@ -5,9 +5,12 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-02 03:35'
-updated_date: '2026-08-02 03:39'
-labels: []
+updated_date: '2026-08-03 16:11'
+labels:
+  - 'doc:stories/maintain-lore-cli-documentation-authority'
 dependencies: []
+documentation:
+  - docs/stories/maintain-lore-cli-documentation-authority.md
 modified_files:
   - .codex/skills/backlog-handover/SKILL.md
   - .codex/skills/backlog-handover/agents/openai.yaml

@@ -5,15 +5,17 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:22'
+updated_date: '2026-08-03 16:09'
 labels:
   - core
   - agent-api
+  - 'doc:stories/build-the-lore-cli-foundation'
 milestone: m-1
 dependencies: []
 documentation:
   - docs/reference/cli-contract.md
   - docs/adr/0005-cli-contract.md
+  - docs/stories/build-the-lore-cli-foundation.md
 priority: high
 ordinal: 11000
 ---

@@ -7,12 +7,15 @@ status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:24'
+updated_date: '2026-08-03 16:10'
 labels:
   - e2e
   - bug
   - backlog-coupling
+  - 'doc:stories/harden-lore-cli-correctness-and-safety'
 dependencies: []
+documentation:
+  - docs/stories/harden-lore-cli-correctness-and-safety.md
 priority: medium
 ordinal: 82000
 ---

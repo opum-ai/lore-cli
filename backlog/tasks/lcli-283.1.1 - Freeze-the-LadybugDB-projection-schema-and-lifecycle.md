@@ -5,17 +5,19 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:32'
-updated_date: '2026-07-30 18:55'
+updated_date: '2026-08-03 16:10'
 labels:
   - ladybugdb
   - architecture
   - indexing
+  - 'doc:stories/build-the-persistent-local-graph-platform'
 milestone: m-13
 dependencies: []
 references:
   - docs/adr/0018-persistent-local-graph-projection-with-ladybugdb.md
 documentation:
   - docs/specs/local-graph-platform-roadmap.md
+  - docs/stories/build-the-persistent-local-graph-platform.md
 modified_files:
   - docs/adr/0018-persistent-local-graph-projection-with-ladybugdb.md
   - docs/specs/local-graph-platform-roadmap.md

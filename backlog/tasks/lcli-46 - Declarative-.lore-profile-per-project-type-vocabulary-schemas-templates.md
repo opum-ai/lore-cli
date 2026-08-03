@@ -5,16 +5,18 @@ status: Done
 assignee:
   - '@jeremy'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:23'
+updated_date: '2026-08-03 16:09'
 labels:
   - eck-alignment
   - core
   - schema
+  - 'doc:stories/build-the-lore-cli-foundation'
 milestone: m-2
 dependencies:
   - LCLI-15
 documentation:
   - docs/adr/0006-schema-types-templates.md
+  - docs/stories/build-the-lore-cli-foundation.md
 priority: high
 ordinal: 46000
 ---

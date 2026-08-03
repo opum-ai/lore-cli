@@ -5,17 +5,19 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:34'
-updated_date: '2026-08-03 13:53'
+updated_date: '2026-08-03 16:10'
 labels:
   - ladybugdb
   - local-graph
   - workspace
   - capabilities
+  - 'doc:stories/build-the-persistent-local-graph-platform'
 milestone: m-15
 dependencies:
   - LCLI-283.2
 documentation:
   - docs/specs/local-graph-platform-roadmap.md
+  - docs/stories/build-the-persistent-local-graph-platform.md
 parent_task_id: LCLI-283
 priority: medium
 type: feature

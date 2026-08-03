@@ -55,7 +55,7 @@ without absorbing every worker's documents.
 The executable contract is
 [Agent profile context retrieval](../specs/agent-profile-context-retrieval.md).
 The operating procedure is
-[Agent profile implementation and operation](../runbooks/agent-profile-implementation-handover.md).
+[Agent profile implementation and operation](../runbooks/agent-profile-operation.md).
 
 Cross-repository rationale remains recorded in
 `salient-data/lore-doc:docs/adr/define-agent-profiles-as-context-mappings.md`;

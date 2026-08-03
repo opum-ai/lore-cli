@@ -5,14 +5,16 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:22'
+updated_date: '2026-08-03 16:09'
 labels:
   - cmd
   - agent-api
+  - 'doc:stories/build-the-lore-cli-foundation'
 milestone: m-5
 dependencies: []
 documentation:
   - docs/runbooks/agent-onboarding.md
+  - docs/stories/build-the-lore-cli-foundation.md
 priority: medium
 ordinal: 37000
 ---

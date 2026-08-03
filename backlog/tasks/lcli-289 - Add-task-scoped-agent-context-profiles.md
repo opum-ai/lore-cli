@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-31 01:16'
-updated_date: '2026-08-01 22:29'
+updated_date: '2026-08-03 16:20'
 labels:
   - agents
   - context
@@ -23,7 +23,7 @@ references:
 documentation:
   - docs/stories/retrieve-task-scoped-context-with-agent-profiles.md
   - docs/specs/agent-profile-context-retrieval.md
-  - docs/runbooks/agent-profile-implementation-handover.md
+  - docs/runbooks/agent-profile-operation.md
 priority: high
 type: feature
 ordinal: 404000

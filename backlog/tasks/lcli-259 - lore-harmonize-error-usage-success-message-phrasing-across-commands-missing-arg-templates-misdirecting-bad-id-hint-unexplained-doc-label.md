@@ -7,14 +7,17 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:31'
+updated_date: '2026-08-03 16:10'
 labels:
   - cli-ux
   - errors-output
+  - 'doc:stories/prepare-the-first-lore-cli-release'
 dependencies: []
 references:
   - src/commands/link.ts
   - src/commands/tasks.ts
+documentation:
+  - docs/stories/prepare-the-first-lore-cli-release.md
 priority: low
 type: bug
 ordinal: 361000

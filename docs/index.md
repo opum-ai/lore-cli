@@ -1,26 +1,25 @@
 ---
-# yaml-language-server: $schema=../.lore/schemas/reference.schema.json
 type: Reference
 title: lore documentation
-description: >-
-  Root index for the lore documentation bundle — a thin, OKF-native
-  documentation CLI (Bun + TypeScript) that couples repo-resident docs to
-  Backlog.md and serves them to agents and humans. This is the
-  progressive-disclosure entry point into the bundle's references, design,
-  decisions, and runbooks.
-tags: [lore, okf, documentation, cli, backlog, index]
-summary: >-
-  The OKF root index and reading hub for lore's documentation bundle: start
-  here, then follow links into architecture, references, ADRs, and runbooks.
-okf_version: "0.1"
+description: Root index for the lore documentation bundle — a thin, OKF-native documentation CLI (Bun + TypeScript) that couples repo-resident docs to Backlog.md and serves them to agents and humans. This is the progressive-disclosure entry point into the bundle's references, design, decisions, and runbooks.
+tags:
+  - lore
+  - okf
+  - documentation
+  - cli
+  - backlog
+  - index
+summary: "The OKF root index and reading hub for lore's documentation bundle: start here, then follow links into architecture, references, ADRs, and runbooks."
 timestamp: 2026-06-21T00:00:00Z
+okf_version: "0.1"
 ---
 
 # lore documentation
 
-**lore** is a thin, OKF-native documentation CLI — Bun + TypeScript, distributed
-on npm as `@salient-data/lore` (bin `lore`). It makes repo-resident markdown a
-first-class, agent-readable [Open Knowledge Format](reference/okf-conformance.md)
+**lore** is a thin, OKF-native documentation CLI — Bun + TypeScript, designed
+for eventual npm distribution as `@salient-data/lore` (bin `lore`) but not yet
+released. It makes repo-resident markdown a first-class, agent-readable
+[Open Knowledge Format](reference/okf-conformance.md)
 bundle, couples that bundle to [Backlog.md](runbooks/backlog-json-patch.md)
 tasks, and serves it to both humans and coding agents through a deterministic,
 non-interactive CLI. The repository is the single source of truth.
@@ -44,6 +43,22 @@ sections, then follow a link.
 > [agent onboarding](runbooks/agent-onboarding.md) to wire lore into a coding
 > agent.
 
+## Current control set
+
+Use these records before inferring task or release state:
+
+- [Maintain Lore CLI documentation authority](stories/maintain-lore-cli-documentation-authority.md)
+  — the active owner Story for release truth, handover lifecycle, and coupling.
+- [0001 — Runtime, build & distribution](adr/0001-runtime-build-distribution.md)
+  — the controlling distribution decision.
+- [lore design](specs/lore-design.md) — the controlling end-to-end Spec.
+- [Lore CLI release truth](reference/lore-cli-release-truth.md) — the evidence
+  that currently classifies Lore CLI as unreleased.
+- [Lore CLI documentation ownership](reference/lore-cli-documentation-ownership.md)
+  — local and cross-repository authority boundaries.
+- [Lore CLI handover](runbooks/lore-cli-handover.md) — the only current,
+  context-free fresh-session route.
+
 ## Architecture & design
 
 How lore is built and how its pieces fit together.
@@ -51,7 +66,9 @@ How lore is built and how its pieces fit together.
 - [lore design spec](specs/lore-design.md) — the end-to-end design: command
   surface, core data flow, the Backlog.md coupling, and how the OKF bundle is
   produced and kept coherent.
-- [Local graph platform roadmap](specs/local-graph-platform-roadmap.md) — the active M6–M8 sequence: verified indexed `graph`/`query`/`context` routing is complete, followed by packaging gates, the local graph explorer, and indexed capabilities.
+- [Local graph platform roadmap](specs/local-graph-platform-roadmap.md) — the
+  completed M6–M8 sequence for indexed `graph`/`query`/`context`, packaging
+  gates, the local graph explorer, workspace impact, and provenance.
 - [Architecture](reference/architecture.md) — the deterministic-core /
   thin-transport shape: `core/` library, the CLI as primary transport, the
   Backlog and Confluence adapters, and `.lore/` state.
@@ -95,6 +112,11 @@ docs and tools rely on.
 - [OKF conformance](reference/okf-conformance.md) — how lore conforms to OKF
   v0.1, lore's "story convention" producer profile, and the deliberate
   override of OKF §5's `/`-absolute link recommendation.
+- [Lore CLI release truth](reference/lore-cli-release-truth.md) — current
+  version, tag, artifact, registry-install, and owner-gate evidence.
+- [Lore CLI documentation ownership](reference/lore-cli-documentation-ownership.md)
+  — component ownership, external authority routes, and historical provenance
+  boundaries.
 - [MCP tools](reference/mcp-tools.md) — the **on-hold** local MCP design:
   the tools and resources it will expose over the same core functions.
 
@@ -129,23 +151,23 @@ consequences. See the [ADR log](adr/index.md) for the full, ordered index.
 Operational procedures for working on and with lore.
 
 - [Backlog.md `--json` patch](runbooks/backlog-json-patch.md) — the historical
-  fork/upstreaming procedure plus the current migration from upstream PR #790's
-  pinned merge commit to its eventual containing release tag.
+  fork/upstreaming procedure plus the completed migration from upstream PR
+  #790's pinned merge commit to published Backlog.md `v1.49.0`.
 - [Agent onboarding](runbooks/agent-onboarding.md) — how a coding agent (e.g.
   Claude Code) discovers and uses lore: the generated `SKILL.md`, the CLAUDE.md
   nudge, and `lore instructions`.
-- [Developer kickoff](runbooks/dev-kickoff.md) — the handover for starting lore
-  implementation in a fresh session: orientation, constraints, entry points, and
-  the working agreement.
+- [Lore CLI handover](runbooks/lore-cli-handover.md) — the only current,
+  context-free route from a fresh session to live owner evidence.
+- [Historical Lore CLI development kickoff](reference/historical-lore-cli-development-kickoff.md)
+  — non-executable provenance for the superseded development cursor.
 - [Docker E2E testing environment](runbooks/docker-e2e-testing-environment.md) —
   build real `lore`/`backlog` binaries and exercise the full command surface
   against a real, mutating backlog project; how to run it and triage findings.
 - [Release publishing](runbooks/release-publishing.md) — how to configure npm
   trusted publishing and cut a release once the dry-run pipeline is verified.
-- [Upstream Backlog.md --json tag watch](runbooks/upstream-backlog-md-json-tag-watch.md) —
-  how the scheduled `upstream-backlog-watch` workflow detects an upstream
-  `--json`-capable Backlog.md release and where that signal lands (a tracking
-  issue in this repo, linking LCLI-253).
+- [Historical upstream Backlog.md JSON tag watch](reference/historical-upstream-backlog-json-tag-watch.md)
+  — non-executable provenance for the completed LCLI-254/LCLI-253 dependency
+  gate.
 
 ---
 

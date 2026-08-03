@@ -4,11 +4,14 @@ title: lore new default title-slug path bypasses reserved index/log stem policy
 status: Done
 assignee: []
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:27'
+updated_date: '2026-08-03 16:11'
 labels:
   - codex-review-followup
   - cmd-crud-a
+  - 'doc:stories/harden-lore-cli-correctness-and-safety'
 dependencies: []
+documentation:
+  - docs/stories/harden-lore-cli-correctness-and-safety.md
 modified_files:
   - src/commands/new.ts
   - test/new.test.ts

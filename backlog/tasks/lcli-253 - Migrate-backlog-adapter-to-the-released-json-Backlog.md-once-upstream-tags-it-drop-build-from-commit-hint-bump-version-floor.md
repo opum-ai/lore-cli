@@ -7,17 +7,20 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-08-03 13:07'
+updated_date: '2026-08-03 16:10'
 labels:
   - adapter-backlog
   - release
   - blocked-upstream
+  - 'doc:stories/prepare-the-first-lore-cli-release'
 dependencies: []
 references:
   - src/adapters/backlog.ts
   - docs/runbooks/backlog-json-patch.md
   - 'https://github.com/MrLesk/Backlog.md/pull/790'
   - 'https://github.com/salient-data/lore-cli/pull/285'
+documentation:
+  - docs/stories/prepare-the-first-lore-cli-release.md
 priority: high
 type: task
 ordinal: 355000

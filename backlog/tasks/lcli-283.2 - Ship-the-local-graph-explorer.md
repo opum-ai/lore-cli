@@ -5,16 +5,18 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:33'
-updated_date: '2026-08-02 02:37'
+updated_date: '2026-08-03 16:10'
 labels:
   - graph-explorer
   - local-graph
   - visualization
+  - 'doc:stories/build-the-persistent-local-graph-platform'
 milestone: m-14
 dependencies:
   - LCLI-283.1
 documentation:
   - docs/specs/local-graph-platform-roadmap.md
+  - docs/stories/build-the-persistent-local-graph-platform.md
 parent_task_id: LCLI-283
 priority: high
 type: feature

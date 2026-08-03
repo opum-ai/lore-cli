@@ -4,14 +4,16 @@ title: Implement shared task-json serializer and --json on read commands
 status: Done
 assignee: []
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:21'
+updated_date: '2026-08-03 16:09'
 labels:
   - backlog-fork
+  - 'doc:stories/build-the-lore-cli-foundation'
 milestone: m-0
 dependencies:
   - LCLI-1
 documentation:
   - docs/reference/backlog-json-schema.md
+  - docs/stories/build-the-lore-cli-foundation.md
 priority: high
 ordinal: 2000
 ---

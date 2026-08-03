@@ -5,13 +5,14 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:32'
+updated_date: '2026-08-03 16:10'
 labels:
   - projection
   - okf
   - export
   - jsonl
   - release-scope
+  - 'doc:stories/prepare-the-first-lore-cli-release'
 dependencies: []
 references:
   - >-
@@ -19,6 +20,7 @@ references:
     Define-and-upstream-the-lore-projection-export.md
 documentation:
   - /Volumes/external/repos/lore-graph/docs/specs/okf-projection-contract.md
+  - docs/stories/prepare-the-first-lore-cli-release.md
 modified_files:
   - src/core/projection.ts
   - src/commands/export.ts

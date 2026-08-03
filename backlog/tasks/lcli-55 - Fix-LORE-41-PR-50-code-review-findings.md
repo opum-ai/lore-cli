@@ -5,15 +5,18 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:23'
+updated_date: '2026-08-03 16:10'
 labels:
   - cmd
   - core
+  - 'doc:stories/build-the-lore-cli-foundation'
 milestone: m-6
 dependencies:
   - LCLI-41
 references:
   - 'https://github.com/jeremy-newhouse/lore/pull/50'
+documentation:
+  - docs/stories/build-the-lore-cli-foundation.md
 ordinal: 58000
 ---
 

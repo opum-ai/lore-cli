@@ -6,12 +6,15 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:28'
+updated_date: '2026-08-03 16:12'
 labels:
   - needs-human
   - repo-admin
   - build-ci-config
+  - 'doc:stories/harden-lore-cli-correctness-and-safety'
 dependencies: []
+documentation:
+  - docs/stories/harden-lore-cli-correctness-and-safety.md
 priority: low
 type: chore
 ordinal: 206000

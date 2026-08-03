@@ -1,21 +1,24 @@
 ---
 id: LCLI-157
 title: >-
-  PLACEHOLDER regex silently passes through malformed {{...}} tokens instead of
-  flagging them unresolved
+  PLACEHOLDER regex silently passes through malformed `{{...}}` tokens instead
+  of flagging them unresolved
 status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:27'
+updated_date: '2026-08-03 16:16'
 labels:
   - codex-review-followup
   - core-managed-template
+  - 'doc:stories/harden-lore-cli-correctness-and-safety'
 dependencies: []
 references:
   - >-
     backlog/docs/reviews/doc-2 -
     Codex-second-opinion-review-—-lore-codebase-2026-07-20.md
+documentation:
+  - docs/stories/harden-lore-cli-correctness-and-safety.md
 priority: medium
 type: bug
 ordinal: 171000

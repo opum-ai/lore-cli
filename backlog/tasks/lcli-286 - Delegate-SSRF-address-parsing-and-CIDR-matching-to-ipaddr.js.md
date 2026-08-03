@@ -5,13 +5,14 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 15:27'
-updated_date: '2026-07-30 16:34'
+updated_date: '2026-08-03 16:10'
 labels:
   - dependencies
   - security
   - ssrf
   - networking
   - maintenance
+  - 'doc:stories/build-the-persistent-local-graph-platform'
 dependencies: []
 references:
   - src/core/check.ts
@@ -19,6 +20,7 @@ references:
   - test/check.test.ts
 documentation:
   - docs/reference/dependency-boundary-audit.md
+  - docs/stories/build-the-persistent-local-graph-platform.md
 modified_files:
   - package.json
   - bun.lock

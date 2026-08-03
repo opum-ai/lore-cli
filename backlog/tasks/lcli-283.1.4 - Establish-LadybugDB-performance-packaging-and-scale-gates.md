@@ -5,18 +5,20 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:33'
-updated_date: '2026-08-01 16:30'
+updated_date: '2026-08-03 16:10'
 labels:
   - ladybugdb
   - benchmark
   - packaging
   - performance
+  - 'doc:stories/build-the-persistent-local-graph-platform'
 milestone: m-13
 dependencies:
   - LCLI-283.1.3
   - LCLI-283.1.5
 documentation:
   - docs/specs/local-graph-platform-roadmap.md
+  - docs/stories/build-the-persistent-local-graph-platform.md
 modified_files:
   - .github/workflows/ci.yml
   - .github/workflows/release.yml

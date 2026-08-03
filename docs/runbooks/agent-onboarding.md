@@ -1,19 +1,18 @@
 ---
-# yaml-language-server: $schema=../../.lore/schemas/Runbook.schema.json
 type: Runbook
 title: "Agent onboarding: how a coding agent uses lore"
-description: >-
-  The canonical agent loop for working with lore — read the bundle index, follow
-  a Story, check live task status with `lore tasks`, do the work, `lore sync`,
-  then `lore check` as the CI gate. Covers how Claude Code learns lore (the
-  generated SKILL.md, the tiny CLAUDE.md nudge, `lore instructions`, and the
-  `lore help --json` capability manifest), the --json and exit-code contract
-  agents depend on, and the guardrails (lore never auto-authors prose; the CLI
-  is the primary surface).
-tags: [runbook, agents, claude-code, onboarding, skill, cli, json, exit-codes, ci]
-summary: >-
-  Defines the deterministic agent loop and how coding agents discover Lore
-  instructions, machine-readable output, and safety guardrails.
+description: The canonical agent loop for working with lore — read the bundle index, follow a Story, check live task status with `lore tasks`, do the work, `lore sync`, then `lore check` as the CI gate. Covers how Claude Code learns lore (the generated SKILL.md, the tiny CLAUDE.md nudge, `lore instructions`, and the `lore help --json` capability manifest), the --json and exit-code contract agents depend on, and the guardrails (lore never auto-authors prose; the CLI is the primary surface).
+tags:
+  - runbook
+  - agents
+  - claude-code
+  - onboarding
+  - skill
+  - cli
+  - json
+  - exit-codes
+  - ci
+summary: Defines the deterministic agent loop and how coding agents discover Lore instructions, machine-readable output, and safety guardrails.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -295,7 +294,7 @@ The profile supplies bounded documentation context only. Native Claude Code
 and Codex files continue to own behavior, tools, models, permissions, and
 execution. Lore does not generate or patch native subagents or select profiles
 automatically. Use `lore agent list` to discover available profiles and the
-[agent profile runbook](agent-profile-implementation-handover.md) to define one.
+[agent profile runbook](agent-profile-operation.md) to define one.
 
 ---
 

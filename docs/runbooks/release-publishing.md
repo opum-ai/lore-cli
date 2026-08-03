@@ -13,7 +13,10 @@ timestamp: 2026-07-11T17:15:34.083Z
 
 ## Purpose
 
-lore ships as **six** npm packages (ADR-0001 §"Distribution"): the root
+This procedure describes how Lore will ship as **six** npm packages
+(ADR-0001 §"Distribution"). It is not evidence that any package has been
+published. Read [Lore CLI release truth](../reference/lore-cli-release-truth.md)
+before acting or making an availability claim. The planned root package is
 `@salient-data/lore` (the thin Node `.cjs` launcher, `bin/lore.cjs`) plus five
 per-platform binary packages published as its `optionalDependencies` —
 `@salient-data/lore-darwin-arm64`, `-darwin-x64`, `-linux-arm64`, `-linux-x64`,
@@ -40,9 +43,9 @@ package to exist before a Trusted Publisher can be configured, and none of the
 six names exists yet. The exact CI-built tarballs are therefore published
 interactively with 2FA, platform packages first and root last; Trusted
 Publishing is configured immediately afterward for every later release. The
-OIDC publish job is **unprotected** until the repo-admin [`release` GitHub Environment setup
-(LCLI-268)](#repo-admin-setup-for-the-release-environment-lcli-268) is done —
-without it, a future OIDC dispatch can publish without an independent
+LCLI-268 added the `release` Environment hook, but publication remains
+**blocked by LCLI-278** until an accepted out-of-file control is configured.
+Without that control, a future OIDC dispatch can publish without an independent
 workflow-file-external approval. See the [First-release
 checklist](#first-release-checklist) below for the exact mechanical sequence
 to cut the actual first release; the rest of this runbook is the supporting
@@ -92,15 +95,11 @@ be configured.
 
 ## Prerequisites
 
-- **A tagged MrLesk/Backlog.md release containing PR #790 (BACK-545, the
-  --json support lore depends on)** — see [ADR-0002's amendment](../adr/0002-backlog-integration-json-only.md).
-  lore does not cut its first release until this exists: today's adapter
-  (LCLI-53/LCLI-54) targets upstream's real --json contract, but only via an
-  interim pinned-commit build developers must compile themselves (RUNBOOK_HINT
-  in `src/adapters/backlog.ts`) — no package.json dependency, no tagged
-  release to point end users at. Check `gh release list --repo MrLesk/Backlog.md`
-  before starting this runbook; if the latest tag predates that PR's merge
-  commit, stop here.
+- **Published Backlog.md JSON support (satisfied by LCLI-253).** Backlog.md
+  `v1.49.0`, published 2026-08-02, is the first tagged release containing PR
+  #790/BACK-545. Lore requires a published `backlog` binary at or past that
+  version; the interim pinned-commit build is historical only. Reverify the
+  installed binary and the live LCLI-253 evidence before release work.
 - Maintainer access to the `@salient-data` npm org (or user account, if the
   scope is personal), with account-level 2FA — required for the interactive
   bootstrap publish and subsequent Trusted Publisher configuration; this is
@@ -116,7 +115,11 @@ be configured.
 
 ### Repo-admin setup for the release Environment (LCLI-268)
 
-> **Current blocker (2026-07-27, LCLI-278):** GitHub rejected creation of\n> the required-reviewer rule with HTTP 422 because the repository’s current\n> billing plan does not support Environment required reviewers. A `release`\n> Environment now exists, but it has zero protection rules, no deployment branch\n> policy, and administrator bypass enabled. Upgrade/change the plan or
+> **Current blocker (LCLI-278):** GitHub rejected creation of the
+> required-reviewer rule because the repository's current billing/visibility
+> combination does not support Environment required reviewers. A `release`
+> Environment exists but has no effective protection rule. Reverify the live
+> task and remote settings, then upgrade/change the plan or
 > visibility, or approve an equivalent out-of-file control, before any
 > `publish: true` dispatch.
 

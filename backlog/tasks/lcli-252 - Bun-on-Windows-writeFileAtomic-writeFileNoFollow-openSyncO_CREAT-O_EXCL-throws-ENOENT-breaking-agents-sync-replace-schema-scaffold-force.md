@@ -7,15 +7,18 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:30'
+updated_date: '2026-08-03 16:10'
 labels:
   - build-ci-config
   - cross-platform
   - bug
+  - 'doc:stories/prepare-the-first-lore-cli-release'
 dependencies: []
 references:
   - src/commands/fswrite.ts
   - 'https://github.com/jeremy-newhouse/lore/actions/runs/30092891454'
+documentation:
+  - docs/stories/prepare-the-first-lore-cli-release.md
 priority: medium
 type: bug
 ordinal: 354000

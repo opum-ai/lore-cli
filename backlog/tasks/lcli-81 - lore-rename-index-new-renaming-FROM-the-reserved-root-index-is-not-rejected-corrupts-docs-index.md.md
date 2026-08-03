@@ -1,21 +1,24 @@
 ---
 id: LCLI-81
 title: >-
-  lore rename index <new> (renaming FROM the reserved root index) is not
+  lore rename index `<new>` (renaming FROM the reserved root index) is not
   rejected, corrupts docs/index.md
 status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:14'
-updated_date: '2026-07-28 20:24'
+updated_date: '2026-08-03 16:16'
 labels:
   - codex-review
   - correctness
+  - 'doc:stories/harden-lore-cli-correctness-and-safety'
 dependencies: []
 references:
   - >-
     backlog/docs/reviews/doc-2 -
     Codex-second-opinion-review-—-lore-codebase-2026-07-20.md
+documentation:
+  - docs/stories/harden-lore-cli-correctness-and-safety.md
 priority: high
 type: bug
 ordinal: 95000

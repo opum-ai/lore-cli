@@ -5,14 +5,16 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:23'
+updated_date: '2026-08-03 16:09'
 labels:
   - eck-alignment
   - core
+  - 'doc:stories/build-the-lore-cli-foundation'
 milestone: m-2
 dependencies: []
 documentation:
   - docs/adr/0014-core-has-no-llm-dependency.md
+  - docs/stories/build-the-lore-cli-foundation.md
 priority: medium
 ordinal: 47000
 ---

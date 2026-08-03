@@ -5,9 +5,10 @@ import { join } from "node:path";
 const root = join(import.meta.dir, "..");
 const adr = readFileSync(join(root, "docs/adr/0018-persistent-local-graph-projection-with-ladybugdb.md"), "utf8");
 const roadmap = readFileSync(join(root, "docs/specs/local-graph-platform-roadmap.md"), "utf8");
-const handover = readFileSync(join(root, "docs/runbooks/lore-cli-release-campaign-handover.md"), "utf8");
+const handover = readFileSync(join(root, "docs/runbooks/lore-cli-handover.md"), "utf8");
 const adrText = adr.replace(/\s+/g, " ");
 const roadmapText = roadmap.replace(/\s+/g, " ");
+const handoverText = handover.replace(/\s+/g, " ");
 
 describe("frozen local graph contract", () => {
   test("pins the lossless export-to-property-graph schema", () => {
@@ -49,17 +50,13 @@ describe("frozen local graph contract", () => {
     }
   });
 
-  test("keeps the durable campaign cursor fields explicit", () => {
-    for (const heading of [
-      "## Campaign state and cursor",
-      "## Repository state",
-      "## Decisions later tasks must preserve",
-      "## Verification record",
-      "## Remaining blockers",
-      "## Exact next action",
-      "## Paste-ready continuation prompt",
-    ]) {
+  test("keeps the current handover context-free and grounded in live evidence", () => {
+    for (const heading of ["## Purpose", "## Fresh-session route", "## Authority boundaries", "## Recovery"]) {
       expect(handover).toContain(heading);
     }
+    expect(handoverText).toContain("Start a Lore CLI session from live owner evidence");
+    expect(handoverText).toContain("This handover grants none of them");
+    expect(handover).not.toContain("## Queue");
+    expect(handover).not.toContain("## Paste-ready continuation prompt");
   });
 });

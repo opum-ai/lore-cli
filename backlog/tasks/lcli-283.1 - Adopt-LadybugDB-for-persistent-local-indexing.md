@@ -5,12 +5,13 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-30 13:32'
-updated_date: '2026-08-01 21:34'
+updated_date: '2026-08-03 16:10'
 labels:
   - ladybugdb
   - indexing
   - performance
   - local-graph
+  - 'doc:stories/build-the-persistent-local-graph-platform'
 milestone: m-13
 dependencies:
   - LCLI-31
@@ -21,6 +22,7 @@ references:
   - docs/adr/0018-persistent-local-graph-projection-with-ladybugdb.md
 documentation:
   - docs/specs/local-graph-platform-roadmap.md
+  - docs/stories/build-the-persistent-local-graph-platform.md
 parent_task_id: LCLI-283
 priority: high
 type: feature

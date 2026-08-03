@@ -4,10 +4,11 @@ title: Open the upstream --json PR and migrate lore on release
 status: Done
 assignee: []
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:21'
+updated_date: '2026-08-03 16:09'
 labels:
   - backlog-fork
   - upstream
+  - 'doc:stories/build-the-lore-cli-foundation'
 milestone: m-0
 dependencies:
   - LCLI-3
@@ -16,6 +17,7 @@ dependencies:
   - LCLI-54
 documentation:
   - docs/runbooks/backlog-json-patch.md
+  - docs/stories/build-the-lore-cli-foundation.md
 priority: medium
 ordinal: 5000
 ---

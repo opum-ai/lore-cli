@@ -4,13 +4,15 @@ title: lore rename (graph-aware inbound link/ref rewrite)
 status: Done
 assignee: []
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:22'
+updated_date: '2026-08-03 16:10'
 labels:
   - cmd
+  - 'doc:stories/build-the-lore-cli-foundation'
 milestone: m-4
 dependencies: []
 documentation:
   - docs/reference/cli-surface.md
+  - docs/stories/build-the-lore-cli-foundation.md
 parent_task_id: LCLI-35
 ordinal: 50000
 ---

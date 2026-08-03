@@ -6,16 +6,19 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-07-28 20:13'
-updated_date: '2026-07-28 20:23'
+updated_date: '2026-08-03 16:10'
 labels:
   - bug
   - backlog-fork
   - adapter
+  - 'doc:stories/build-the-lore-cli-foundation'
 dependencies:
   - LCLI-56
 references:
   - src/adapters/backlog.ts
   - docs/runbooks/backlog-json-patch.md
+documentation:
+  - docs/stories/build-the-lore-cli-foundation.md
 ordinal: 71000
 ---
 
