@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
@@ -54,6 +55,33 @@ const PACKAGE_OPERATIONAL_FILES = [
 
 function text(path: string): string {
   return readFileSync(join(ROOT, path), "utf8");
+}
+
+/**
+ * Files allowed to carry a superseded identity, each for a stated reason. A
+ * curated *allowlist* is safe where a curated *scan list* is not: adding an entry
+ * here is a visible widening that `the exemption set is exactly what is expected`
+ * fails on, whereas a file omitted from a scan list is simply never examined.
+ */
+const PROVENANCE_EXEMPT = new Map([
+  ["CHANGELOG.md", "records the superseded @salient-data/lore package family as release history"],
+  ["docs/adr/0001-runtime-build-distribution.md", "records jeremy-newhouse/lore as its decision-time repository"],
+  ["test/repository-location.test.ts", "defines the superseded identifiers this gate searches for"],
+]);
+
+/**
+ * Every file Git tracks, excluding `backlog/`, whose task and campaign records are
+ * immutable provenance of past decisions rather than operational instructions.
+ *
+ * Tracked, not on-disk: a brand-new file is invisible here until it is staged,
+ * which is the right boundary for a gate about what this repository *records* and
+ * is exact in CI, where the tree is always committed. `everyDocument` scans the
+ * filesystem instead, so unstaged markdown is still covered.
+ */
+function everyTrackedFile(): string[] {
+  return execFileSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "utf8" })
+    .split("\0")
+    .filter((path) => path !== "" && !path.startsWith("backlog/"));
 }
 
 /** Every tracked markdown document: the whole `docs/` bundle plus root-level markdown. */
@@ -138,6 +166,30 @@ describe("canonical npm package family", () => {
       expect(body).toContain(CANONICAL_NPM_PACKAGE);
       expect(body).not.toContain(STALE_NPM_PACKAGE);
     }
+  });
+
+  test("no tracked file anywhere carries a superseded package or repository identity", () => {
+    const tracked = everyTrackedFile();
+    // Guard the guard: a scan that found nothing to read would pass vacuously.
+    expect(tracked.length).toBeGreaterThan(100);
+    expect(tracked).toContain("package.json");
+
+    // A silently widened exemption set would hide real offenders, so pin it exactly.
+    expect([...PROVENANCE_EXEMPT.keys()].sort()).toEqual([
+      "CHANGELOG.md",
+      "docs/adr/0001-runtime-build-distribution.md",
+      "test/repository-location.test.ts",
+    ]);
+
+    const superseded = [STALE_NPM_PACKAGE, ...STALE_OPERATIONAL_SLUGS];
+    const offenders = tracked
+      .filter((path) => !PROVENANCE_EXEMPT.has(path))
+      .flatMap((path) => {
+        const body = text(path);
+        return superseded.filter((stale) => body.includes(stale)).map((stale) => `${path}: ${stale}`);
+      });
+
+    expect(offenders).toEqual([]);
   });
 
   test("release and qualification code derive tarball names from the @opum-ai scope", () => {

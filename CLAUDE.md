@@ -42,13 +42,21 @@ It is not authoritative for anything else in the estate.
 infrastructure question, read the owner record rather than inferring from local
 context:** `salient-data/opum-doc`, branch `dev`,
 `docs/reference/fleet-peer-routing-and-session-invocation.md`. It maps every peer
-to the concerns it owns and records how a session reaches one. `opum-doc` is
-private; confirm read access when you pull it (`gh api repos/salient-data/opum-doc`).
+to the concerns it owns and records how a session reaches one. **Every repository
+in this estate is private**, so every `github.com` link to one is access-gated
+rather than a destination — confirm access before relying on it
+(`gh api repos/salient-data/opum-doc`), and never put such a link on a public
+surface, where it is broken by construction.
 For any infrastructure, DNS, hosting, deployment-target, environment, or
 secrets-layout question, the authority is that repository's
 `docs/adr/make-saws-the-single-owner-of-infrastructure-and-dns.md` — route to
-`saws`, never to the `*-web` peer that serves a hostname. An infrastructure change
-is not real until it is reflected in `saws`.
+`saws`, never to the `*-web` peer that serves a hostname. Routing the question is
+not the whole rule: **no repository other than `saws` creates, modifies, or
+deletes a DNS record, in any zone, for any provider — preview and ephemeral
+hostnames included.** That prohibition binds this repository too. Record only the
+hostnames, environment variables, and deployment targets Lore CLI consumes, and
+link to `saws` for the authoritative state; an infrastructure change is not real
+until `saws` reflects it.
 
 Five traps that local context will not warn you about:
 
@@ -105,15 +113,17 @@ Five traps that local context will not warn you about:
 
 When this repository and a `*-doc` owner disagree, that is drift and drift is a
 defect. This repository is authoritative for *what currently ships*; the `*-doc`
-owner remains the normative owner of *what the contract is*. Report the
-divergence to both owners instead of silently promoting either — "code wins over
-prose" is not the model. See
+owner remains the normative owner of *what the contract is*. **Do not promote
+either side — not quietly, and not with an announcement.** Report the divergence
+to both owners and leave the conflict standing until an owner resolves it;
+declaring a winner is not yours to do, and "code wins over prose" is not the
+model. See
 [Lore CLI documentation ownership](docs/reference/lore-cli-documentation-ownership.md)
 for the concern-to-owner map this repository consumes.
 
 ### Writing a rule down here
 
-Two failure modes have already bitten this file. Both are cheap to avoid.
+Every failure mode below has already bitten this file. All are cheap to avoid.
 
 **Write pointers, not transcriptions.** Steps copied out of an owner record keep
 reading as correct long after the owner corrects them, because nothing here
@@ -133,4 +143,32 @@ stays true permanently; write what was observed and when.
 reader satisfy this sentence literally and still violate the rule it came from?*
 "Makes no installability claim" is a fact, is satisfiable, and still permits a
 greyed-out install button. If the answer is yes, write the imperative instead —
-name the actions that are forbidden, not just the belief that is wrong.
+name the actions that are forbidden, not just the belief that is wrong. Four
+loophole shapes have shown up here, and each is worth checking by name:
+
+- **An adverb carrying the prohibition.** "Report it rather than *silently*
+  promoting either" forbids the concealment, not the promotion, and is satisfied
+  by promoting one loudly. Forbid the act.
+- **Ownership stated without the act forbidden.** "`saws` owns DNS; route
+  provisioning there" is satisfied by creating a preview record locally — every
+  sentence honoured, the rule broken. Pair the owner with the hard negative.
+- **A description forbidden while the artifact stays permitted.** "Never describe
+  Quest as installable" permits adding the manifest entry, dependency, or
+  lockfile pin that resolves it. Describe nothing, ship the scaffolding. Forbid
+  building the thing.
+- **A gate that enumerates by hand.** A curated file list is satisfiable while
+  the rule it enforces is violated, and a green gate reads as proof — the most
+  confident possible false clear.
+
+**Apply the test to gates before prose.** A defective sentence misleads a reader;
+a defective gate issues a certificate. A gate here must **enumerate** rather than
+list — scan everything matching the pattern, never a curated set; **assert
+non-vacuity**, so an empty or mis-globbed run fails instead of passing;
+**justify each exemption individually and pin the exemption set**, so widening it
+is a visible failure rather than a silent one; and **be proven by a negative
+control** — a deliberate violation that makes the gate fail *and* name the
+offending path. A gate never observed failing is not known to work.
+
+**Do not sweep with grep alone.** These shapes are semantic, so a verbatim search
+misses them by construction — and it also misses literal matches that wrap across
+two lines. Read the record.
