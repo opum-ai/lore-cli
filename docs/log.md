@@ -100,6 +100,7 @@
 - 2026-08-04T09:57:26-05:00 b9a419eb1f63dc561ed9fb3fef0cc9431738d156 docs: sync LCLI-310 provenance log
 - 2026-08-04T10:06:02-05:00 b29a628c095d1ada8159073f182334dc2803b3d4 docs: sync LCLI-311 provenance log
 - 2026-08-04T15:17:39-05:00 964653638becae9961464334517b141672630e31 chore(release): prepare 0.1.1
+- 2026-08-04T15:30:08-05:00 efdc9318e2ced398a691a56dacc31ec48e1c0067 test(e2e): respect task coupling capability
 
 ## docs/.obsidian
 
