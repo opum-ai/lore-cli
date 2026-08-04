@@ -84,11 +84,14 @@ describe("ci.yml exact-host LadybugDB qualification", () => {
     expect(job?.steps?.find((step) => step.name === "Qualify the static explorer")?.run).toBe("bun run test:browser");
   });
 
-  test("the slower Darwin x64 runner has a bounded timeout without widening ordinary CI", () => {
+  test("platform-specific concurrency and timeouts stay explicitly bounded", () => {
     const testScript = loadWorkflow().jobs.check?.steps?.find((step) => step.name === "Test")?.run ?? "";
     expect(testScript).toContain("bun test --isolate --max-concurrency=4 --timeout=45000");
     expect(testScript).toContain('"macos-15-intel"');
     expect(testScript).toContain("bun test --isolate --timeout=40000");
-    expect(testScript).toContain("bun test --isolate --timeout=10000");
+    expect(testScript).toContain('== "ubuntu-latest" ||');
+    expect(testScript).toContain('== "ubuntu-24.04-arm"');
+    expect(testScript).toContain("bun test --isolate --max-concurrency=1 --timeout=10000");
+    expect(testScript).toContain("else\n  bun test --isolate --timeout=10000");
   });
 });

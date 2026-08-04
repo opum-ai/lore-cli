@@ -159,7 +159,9 @@ describe("workspace source and reference retrieval", () => {
     expect(graph.backend).toBe("reference");
     expect(warnings.count).toBe(3);
     expect(warnings.list()).toContain(
-      "native indexed workspace retrieval failed; using the in-memory reference backend",
+      process.platform === "win32"
+        ? "native indexed workspace retrieval is unsupported on this platform; using the in-memory reference backend"
+        : "native indexed workspace retrieval failed; using the in-memory reference backend",
     );
 
     const privateLocator = join(root, "private-location");
