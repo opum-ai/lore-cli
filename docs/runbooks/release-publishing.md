@@ -13,10 +13,10 @@ timestamp: 2026-07-11T17:15:34.083Z
 
 ## Purpose
 
-This procedure describes how Lore will ship as **six** npm packages
+This procedure describes how Lore ships as **six** npm packages
 (ADR-0001 §"Distribution"). It is not evidence that any package has been
 published. Read [Lore CLI release truth](../reference/lore-cli-release-truth.md)
-before acting or making an availability claim. The planned root package is
+before acting or making an availability claim. The root package is
 `@opum-ai/lore` (the thin Node `.cjs` launcher, `bin/lore.cjs`) plus five
 per-platform binary packages published as its `optionalDependencies` —
 `@opum-ai/lore-darwin-arm64`, `-darwin-x64`, `-linux-arm64`, `-linux-x64`,
@@ -64,11 +64,9 @@ be configured.
 - [x] **Verify the `@opum-ai` npm organization exists and the publishing
   account is an owner or member allowed to create public packages in that
   scope.** On 2026-08-03, the repository owner confirmed creating the
-  independent `opum-ai` npm organization. A public registry preflight still
-  returned `E404` for all six planned names, so none is publicly visible yet;
-  authenticate and recheck the publishing account immediately before the
-  bootstrap operation rather than treating organization creation as a
-  reusable credential.
+  independent `opum-ai` npm organization. Immediately before bootstrap, the
+  interactive session authenticated successfully, proved owner permission,
+  and reconfirmed all six exact `0.1.0` names were absent.
 - [x] **Coordinated version bump: all six manifests + the 5
   `optionalDependencies` pins**, root `0.0.0` → `0.1.0` —
   [Step 3, item 2](#3-cut-a-release). This is exactly the 12 values
@@ -83,25 +81,33 @@ be configured.
 - [x] **CHANGELOG.md**: move the `[Unreleased]` section's entries under
   `## [0.1.0] - YYYY-MM-DD`, in the same commit as the version bump,
   so the tag below points at a commit whose CHANGELOG already reflects it.
-- [ ] **Merge to `dev`, fast-forward `main`, and wait for the full `main` CI
-  matrix**, then tag the verified commit: `git tag v0.1.0 && git push --tags`.
-- [ ] **Dispatch `Release` with `publish: false`** on the tag/commit. Download
-  the resulting `npm-packages` artifact; do not rebuild or repack locally.
-- [ ] **Bootstrap-publish the downloaded tarballs interactively with 2FA**:
-  publish the five platform packages first, then `@opum-ai/lore` last.
-  Use `npm publish <tarball>` and stop immediately on any failure.
+- [x] **Merge to `dev`, promote to `main`, and wait for the full `main` CI
+  matrix**, then tag the verified commit. Promotion PR #298 merged as
+  `e621d209be2cc8867d1c38c7c78b4b4acc96d82e`; main CI run `30870114161`
+  passed, and lightweight tag `v0.1.0` resolves directly to that commit.
+- [x] **Dispatch `Release` with `publish: false`** on the tag/commit. Run
+  `30870431925` passed all blocking gates and retained exactly six tarballs in
+  `npm-packages`; the OIDC publish job was skipped.
+- [x] **Bootstrap-publish the downloaded tarballs interactively with 2FA**:
+  the five platform packages were published first and `@opum-ai/lore` last.
+  Only the untouched workflow tarballs were used, and each immutable registry
+  version was checked before any retry or advance.
 - [ ] **Before any future automated publish, protect the existing `release`
   GitHub Environment** with the repository owner as required reviewer. The
   owner chose to keep the repository private for `0.1.0`, so the current plan
   cannot provide that rule; this item remains open under LCLI-278 and does not
   apply to the explicitly authorized interactive bootstrap.
-- [ ] **Configure npm Trusted Publishing for all six now-existing packages**,
+- [x] **Configure npm Trusted Publishing for all six now-existing packages**,
   using repository `opum-ai/lore-cli`, workflow `release.yml`, Environment
   `release`, and allowed action `npm publish`. `0.1.0` does not use OIDC, and
-  later `publish: true` dispatches remain prohibited until LCLI-278 is Done.
-- [ ] **Post-publish smoke install**: from a machine that has never installed
-  lore before, `npx @opum-ai/lore@0.1.0 --version`, on at least one
-  platform other than the one used for local development.
+  all six relationships were independently listed and verified. Later
+  `publish: true` dispatches remain prohibited until LCLI-278 is Done.
+- [x] **Post-publish smoke install**: a fresh npm project installed
+  `@opum-ai/lore@0.1.0` from the public registry, resolved
+  `@opum-ai/lore-darwin-arm64`, and returned `0.1.0` from the installed bin.
+  Registry shasums matched the qualified publish results; Release run
+  `30870431925` separately executed the same retained artifacts on all five
+  matching hosts before publication.
 
 ## Prerequisites
 
@@ -230,14 +236,27 @@ authenticates the publish directly. npm requires a package to exist before its
 trust relationship can be created, so OIDC cannot authenticate lore's first
 publication. See <https://docs.npmjs.com/cli/v11/commands/npm-trust/>.
 
-For `0.1.0`, dispatch `Release` with `publish: false`, download its exact
-`npm-packages` artifact, and publish those tarballs interactively with 2FA.
-Publish all five `@opum-ai/lore-<platform>-<arch>` packages first and
-`@opum-ai/lore` last. Do not rebuild locally: the downloaded tarballs are
-the bytes the workflow compiled, packed, and install-smoke-tested.
+For `0.1.0`, Release run `30870431925` ran with `publish: false`; its exact
+`npm-packages` tarballs were published interactively with 2FA. All five
+`@opum-ai/lore-<platform>-<arch>` packages were published first and
+`@opum-ai/lore` last. No local rebuild or repack was used.
 
-After all six packages exist, for **each package** (`@opum-ai/lore` and the five
-`@opum-ai/lore-<platform>-<arch>` packages), on npmjs.com:
+After all six packages exist, configure **each package** (`@opum-ai/lore` and
+the five `@opum-ai/lore-<platform>-<arch>` packages) with npm CLI 12 or the
+equivalent npmjs.com Settings form. The CLI form used for `0.1.0` was:
+
+```bash
+npm trust github <package> \
+  --repository opum-ai/lore-cli \
+  --file release.yml \
+  --environment release \
+  --allow-publish \
+  --yes
+
+npm trust list <package> --json
+```
+
+For the npmjs.com form:
 
 1. Open the package's Settings page → **Trusted Publisher** section.
 2. **Select your publisher** → **GitHub Actions**.
@@ -260,9 +279,12 @@ After all six packages exist, for **each package** (`@opum-ai/lore` and the five
      the claim in the first place.
 4. Save.
 
-Repeat for all six package names. Validation happens on the next OIDC publish,
-not at save time — a typo here fails silently until the workflow tries to
-publish a later version.
+Repeat for all six package names. For `0.1.0`, `npm trust list` independently
+verified all six relationships as GitHub publishers with repository
+`opum-ai/lore-cli`, file `release.yml`, Environment `release`, and
+`createPackage` permission (the CLI representation of allowed action
+`npm publish`). The next OIDC publish remains prohibited until LCLI-278 is
+resolved; no `publish: true` run was used as a trust test.
 
 ### 2. The `publish` job (already in `release.yml`)
 
@@ -345,12 +367,9 @@ publish is explicitly marked public. Root `package.json` and all five
 
 ### 3. Cut a release
 
-1. **Flip `package.json`'s `bin.lore` from `src/cli.ts` to `bin/lore.cjs`.**
-   It is deliberately **not** flipped yet (LCLI-9): `bin/lore.cjs` only works
-   once the five platform packages it `require.resolve`s are actually
-   published, and flipping it any earlier would break every pre-publish
-   install path (git dependency, `npm`/`bun link`) with no fallback to run
-   from source. This flip is the first-release trigger, not a standing state.
+1. **For the initial release, flip `package.json`'s `bin.lore` from
+   `src/cli.ts` to `bin/lore.cjs`.** `0.1.0` completed this trigger; subsequent
+   releases keep `bin/lore.cjs` and must not revert to the source entry point.
 2. Bump `version` in `package.json` and all five `npm/<platform>/package.json`
    files to the same new value, **and update root `package.json`'s five
    `optionalDependencies` pins to that same exact version**, in one commit —
@@ -359,18 +378,18 @@ publish is explicitly marked public. Root `package.json` and all five
    pin and `license`/`author`/`repository` metadata, are consistent before
    compiling anything, so a missed file fails loud here rather than silently
    skipping an optional dependency later.
-3. Merge to `dev`, fast-forward `main`, and wait for the full `main` CI matrix.
-   Tag that verified commit (`git tag v0.1.0 && git push --tags`) — nothing
-   triggers automatically from the tag.
-4. Run `Release` with `publish: false` on the tag/commit and download the
-   `npm-packages` artifact. Interactively publish its five platform tarballs
-   first and root tarball last with 2FA. This is the one-time bootstrap path;
-   do not dispatch `publish: true` for `0.1.0`.
-5. Configure the `release` Environment and npm Trusted Publishers as described
-   above, then verify `npx @opum-ai/lore@0.1.0 --version` from a machine
-   that has never installed lore before, on a different platform from local
-   development. Later versions use `publish: true` and pause for Environment
-   approval before OIDC publishing.
+3. Merge to `dev`, promote to `main`, and wait for the full `main` CI matrix.
+   Tag that verified commit and push the tag — nothing triggers automatically
+   from the tag.
+4. For the one-time `0.1.0` bootstrap, run `Release` with `publish: false`,
+   download its `npm-packages` artifact, and interactively publish the five
+   platform tarballs first and root last with 2FA. Do not repeat this bootstrap
+   for an already-existing version.
+5. Verify registry metadata and a clean installed CLI, then configure and list
+   every Trusted Publisher as described above. Later versions may use
+   `publish: true` only after LCLI-278 supplies an effective external approval
+   control; until then, OIDC publication remains prohibited despite the valid
+   npm trust relationships.
 
 ## Dry-run rehearsal (verified)
 

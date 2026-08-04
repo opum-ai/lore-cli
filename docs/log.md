@@ -85,6 +85,7 @@
 - 2026-08-03T17:48:20-05:00 b0bc1c46bf1766884093b5eb37734f49922a45a4 docs: close repository transfer task
 - 2026-08-03T17:49:07-05:00 468d510e45c9a14b5d7edf93fc4e8add96aac56e docs: record repository transfer closure
 - 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
+- 2026-08-03T20:31:09-05:00 307a3f428d36dd2669f38a354425fc699a0c24f7 chore: prepare 0.1.0 release
 
 ## docs/.obsidian
 
@@ -209,6 +210,7 @@
 - 2026-08-03T11:24:52-05:00 f90527bb28c07098d30ed91f9480d05fdaf4dc29 docs: reconcile release truth and Story ownership
 - 2026-08-03T17:40:37-05:00 66498ab3a8055eb27b4e8e62350f44a477328b84 chore: transfer repository ownership to opum-ai
 - 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
+- 2026-08-03T20:31:09-05:00 307a3f428d36dd2669f38a354425fc699a0c24f7 chore: prepare 0.1.0 release
 
 ## docs/runbooks
 
@@ -273,6 +275,7 @@
 - 2026-08-03T11:24:52-05:00 f90527bb28c07098d30ed91f9480d05fdaf4dc29 docs: reconcile release truth and Story ownership
 - 2026-08-03T17:40:37-05:00 66498ab3a8055eb27b4e8e62350f44a477328b84 chore: transfer repository ownership to opum-ai
 - 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
+- 2026-08-03T20:31:09-05:00 307a3f428d36dd2669f38a354425fc699a0c24f7 chore: prepare 0.1.0 release
 
 ## docs/specs
 
@@ -313,3 +316,4 @@
 - 2026-08-03T17:40:37-05:00 66498ab3a8055eb27b4e8e62350f44a477328b84 chore: transfer repository ownership to opum-ai
 - 2026-08-03T17:48:20-05:00 b0bc1c46bf1766884093b5eb37734f49922a45a4 docs: close repository transfer task
 - 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
+- 2026-08-03T20:31:09-05:00 307a3f428d36dd2669f38a354425fc699a0c24f7 chore: prepare 0.1.0 release
