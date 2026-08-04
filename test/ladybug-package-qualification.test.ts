@@ -75,6 +75,8 @@ describe("matching-host Ladybug package qualification", () => {
   test("captures output from a launcher whose nested child inherits stdio", async () => {
     const root = mkdtempSync(join(tmpdir(), "lore-inherited-output-test-"));
     try {
+      const node = Bun.which("node");
+      if (node === null) throw new Error("test requires Node on PATH");
       const child = join(root, "child.cjs");
       const launcher = join(root, "launcher.cjs");
       writeFileSync(child, 'process.stdout.write("0.1.1\\n"); process.stderr.write("child-stderr\\n");\n');
@@ -85,7 +87,7 @@ describe("matching-host Ladybug package qualification", () => {
           "process.exit(result.status ?? 1);\n",
       );
 
-      const result = await runWithFileCapture(process.execPath, [launcher, child], { cwd: root }, root);
+      const result = await runWithFileCapture(node, [launcher, child], { cwd: root }, root);
 
       expect(result.stdout).toBe("0.1.1\n");
       expect(result.stderr).toBe("child-stderr\n");
