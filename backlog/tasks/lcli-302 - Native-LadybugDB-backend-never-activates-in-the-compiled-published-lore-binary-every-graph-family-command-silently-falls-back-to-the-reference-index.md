@@ -3,9 +3,11 @@ id: LCLI-302
 title: >-
   Native LadybugDB backend never activates in the compiled/published lore binary
   -- every graph-family command silently falls back to the reference index
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-04 07:23'
+updated_date: '2026-08-04 13:20'
 labels:
   - ladybugdb
   - packaging
@@ -19,6 +21,14 @@ references:
   - >-
     not merged/pushed): see e2e_findings_v2.md and
     docs/runbooks/e2e-verification-v0.1.0.md in that repo.
+modified_files:
+  - .github/workflows/release.yml
+  - src/core/retrieval.ts
+  - src/core/workspace-retrieval.ts
+  - test/ladybug-package-qualification.test.ts
+  - test/release-workflow.test.ts
+  - test/indexed-retrieval.test.ts
+  - test/workspace-retrieval.test.ts
 priority: high
 type: bug
 ordinal: 415000
@@ -53,3 +63,15 @@ This silently defeats ADR-0018's entire persistent-index/performance architectur
 - [ ] #3 If native activation is genuinely unavailable (e.g. a truly unsupported platform), the CLI surfaces a clear, user-visible signal rather than a silent, indistinguishable fallback
 - [ ] #4 LORE_INTERNAL_PACKAGE_QUALIFICATION (or an equivalent diagnostic hook) works against the actual compiled/published binary, not just source
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Make the matching-host package qualification artifact the single source of each release platform tarball; stop assembling publishable packages from separately cross-compiled Ubuntu artifacts. 2. In the package job, download the six exact qualification artifacts, validate each report's platform/version/provenance and SHA-256 against its tarball, then copy those byte-identical platform tarballs into the publish set and pack only the root launcher there. 3. Surface a sanitized advisory whenever automatic repository or workspace retrieval falls back because native indexing is unsupported or failed, while keeping forced indexed qualification fail-closed and preserving successful indexed output. 4. Add regression tests for release artifact lineage, hash enforcement, forced-indexed compiled-binary evidence, and repository/workspace fallback advisories. 5. Run focused tests, a real matching-host package qualification against the compiled/packed/installed binary, full repository gates, diff hygiene, and adversarial self-review; finalize only with objective evidence for all four criteria.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Restore research at dev 405606891a227a9012b87de625d909eba56fec6b found doc-11 as the sole pre-existing dirty artifact, all six campaign tasks live and dependency-free, and LCLI-302 eligible for sequential wave 1. Root cause: package-qualification compiles, packs, installs, and forces indexed retrieval on a matching host, but package later downloads the separate build job's cross-compiled binaries and repacks those instead. A Darwin binary built on Ubuntu cannot embed the matching Darwin @ladybugdb addon present only on the macOS qualification runner, so qualification and publication prove different bytes. Current auto retrieval also deliberately discards native failure warnings before reference fallback, reproducing the silent-user-signal defect.
+<!-- SECTION:NOTES:END -->
