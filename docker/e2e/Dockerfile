@@ -51,6 +51,7 @@ RUN npm install -g "backlog.md@${BACKLOG_VERSION}" \
 # ── Build `lore`: current dev source, compiled the same way ci.yml does ──
 WORKDIR /opt/lore
 COPY package.json bun.lock bunfig.toml tsconfig.json biome.json .bun-version ./
+COPY patches ./patches
 COPY src ./src
 COPY test ./test
 RUN bun install --frozen-lockfile --linker=isolated \
