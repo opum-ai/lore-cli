@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:04'
-updated_date: '2026-08-04 21:18'
+updated_date: '2026-08-04 22:09'
 labels:
   - release
   - publication
@@ -61,4 +61,6 @@ Ship Lore CLI 0.1.1 from the exact verified main commit. Tag and qualify the sev
 Release run 30950940227 used exact tag target 58537a71 with publish=false. Metadata, concurrency, bounded Ladybug, Darwin ARM64/x64, and Linux ARM64/x64 qualifications passed. Windows ARM64 failed before build because the shared frozen install ran @ladybugdb/core source compilation on the unsupported host; Windows x64 compiled with @ladybugdb/core external and the installed dependency-free binary then failed --version resolving that module. These are real release-contract defects, not runner flakes. No package, GitHub Release, or registry version was created. Per the pre-publication rollback procedure, remove v0.1.1, repair through protected delivery, and requalify from a new exact main commit.
 
 Qualification repair implemented. The shared setup action now accepts a default-off ignore-scripts input used only by the Windows ARM64 release matrix entry, preserving frozen dependency metadata without invoking unsupported Ladybug source compilation. A dedicated Bun build helper uses a Windows-only resolver plugin to embed a reference-only @ladybugdb/core module instead of leaving an unresolved external import; non-Windows targets retain the native addon build. Verification passed: focused release suites 28/28 with 223 assertions; full suite 2451/2451 with 8304 assertions; lint across 187 files; typecheck; actionlint; build and dist/lore --version 0.1.1; native macOS package helper execution; 99 MB Windows x64 cross-compile; Biome and diff hygiene. Adversarial self-review confirmed the script skip is scoped only to the unsupported host, native platforms remain unchanged, and the published Windows binaries retain explicit reference-fallback behavior without runtime dependencies.
+
+2026-08-04 qualification attempt 30954518410: five native hosts passed; win32-arm64 built, packed, and installed successfully but the Bun test harness lost stdout across the Node launcher nested stdio-inherit boundary, reporting no version after a zero exit. Packaging and publish jobs did not run; remote/local v0.1.1 tags were rolled back. Repair branch release/0.1.1-win-arm-capture uses disk-backed inherited-output capture for all launcher smoke commands. Local evidence: focused 12/12, full 2452/2452, lint/typecheck, and complete darwin-arm64 package qualification all pass.
 <!-- SECTION:NOTES:END -->

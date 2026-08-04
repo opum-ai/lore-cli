@@ -320,7 +320,9 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
     if (existsSync(join(globalRoot, "@ladybugdb", "core"))) {
       throw new Error("the global Lore install unexpectedly contains @ladybugdb/core");
     }
-    const globalVersion = (await run(node, [globalLauncher, "--version"], { cwd: scratch })).stdout.trim();
+    const globalVersion = (
+      await runWithFileCapture(node, [globalLauncher, "--version"], { cwd: scratch }, scratch)
+    ).stdout.trim();
     if (globalVersion !== expectedVersion) {
       throw new Error(`globally installed Lore reported ${globalVersion || "no version"}, expected ${expectedVersion}`);
     }
@@ -364,7 +366,7 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
     progress("probing the exact native boundary in a sacrificial child");
     const nativeProbe = await runNativeProbe(input, scratch);
     progress("smoking the installed Node launcher");
-    const launcherSmoke = await smoke([node, launcher], fixtureRoot, expectedVersion, smokeEnvironment);
+    const launcherSmoke = await smoke([node, launcher], fixtureRoot, expectedVersion, smokeEnvironment, scratch);
     progress("smoking the relocated standalone Bun executable");
     const standaloneSmoke = await smoke([standaloneBinary], fixtureRoot, expectedVersion, smokeEnvironment);
 
@@ -803,20 +805,24 @@ async function smoke(
   fixtureRoot: string,
   expectedVersion: string,
   environment: Record<string, string | undefined>,
+  inheritedOutputCaptureRoot?: string,
 ): Promise<SmokeCommandEvidence[]> {
   const evidence: SmokeCommandEvidence[] = [];
-  const versionResult = await run(command[0] as string, [...command.slice(1), "--version"], {
-    cwd: fixtureRoot,
-    env: environment,
-  });
+  const execute = (args: readonly string[]) =>
+    inheritedOutputCaptureRoot === undefined
+      ? run(command[0] as string, args, { cwd: fixtureRoot, env: environment })
+      : runWithFileCapture(
+          command[0] as string,
+          args,
+          { cwd: fixtureRoot, env: environment },
+          inheritedOutputCaptureRoot,
+        );
+  const versionResult = await execute([...command.slice(1), "--version"]);
   const version = versionResult.stdout.trim();
   if (version !== expectedVersion)
     throw new Error(`packaged Lore version ${version} does not match ${expectedVersion}`);
   evidence.push({ name: "version", stdoutSha256: digest(versionResult.stdout) });
-  const helpResult = await run(command[0] as string, [...command.slice(1), "--help"], {
-    cwd: fixtureRoot,
-    env: environment,
-  });
+  const helpResult = await execute([...command.slice(1), "--help"]);
   const help = helpResult.stdout;
   if (!help.includes("graph") || !help.includes("query") || !help.includes("context")) {
     throw new Error("packaged Lore help is missing retrieval commands");
@@ -832,10 +838,7 @@ async function smoke(
     },
   ];
   for (const item of commands) {
-    const result = await run(command[0] as string, [...command.slice(1), ...item.args], {
-      cwd: fixtureRoot,
-      env: environment,
-    });
+    const result = await execute([...command.slice(1), ...item.args]);
     const value: unknown = JSON.parse(result.stdout);
     if (
       typeof value !== "object" ||
@@ -918,6 +921,48 @@ async function run(
     new Response(child.stderr).text(),
   ]);
   clearTimeout(timer);
+  if (exitCode !== 0) {
+    throw new Error(
+      `${basename(executable)} ${args.join(" ")} ${timedOut ? `timed out after ${timeoutMs}ms` : `failed with exit ${exitCode}`}\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+    );
+  }
+  return { stdout, stderr };
+}
+
+/**
+ * Capture a command through real files so a nested child using `stdio: "inherit"`
+ * receives Windows-inheritable handles instead of Bun pipe handles. Windows ARM64
+ * otherwise lets the nested binary exit successfully while dropping its output.
+ */
+export async function runWithFileCapture(
+  executable: string,
+  args: readonly string[],
+  options: {
+    readonly cwd: string;
+    readonly env?: Record<string, string | undefined>;
+    readonly timeoutMs?: number;
+  },
+  captureRoot: string,
+): Promise<CommandResult> {
+  const captureDirectory = mkdtempSync(join(captureRoot, "inherited-output-"));
+  const stdoutPath = join(captureDirectory, "stdout.txt");
+  const stderrPath = join(captureDirectory, "stderr.txt");
+  const child = Bun.spawn([executable, ...args], {
+    cwd: options.cwd,
+    env: options.env,
+    stdout: Bun.file(stdoutPath),
+    stderr: Bun.file(stderrPath),
+  });
+  const timeoutMs = options.timeoutMs ?? 120_000;
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    child.kill();
+  }, timeoutMs);
+  const exitCode = await child.exited;
+  clearTimeout(timer);
+  const stdout = existsSync(stdoutPath) ? readFileSync(stdoutPath, "utf8") : "";
+  const stderr = existsSync(stderrPath) ? readFileSync(stderrPath, "utf8") : "";
   if (exitCode !== 0) {
     throw new Error(
       `${basename(executable)} ${args.join(" ")} ${timedOut ? `timed out after ${timeoutMs}ms` : `failed with exit ${exitCode}`}\nstdout:\n${stdout}\nstderr:\n${stderr}`,
