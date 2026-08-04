@@ -1,11 +1,11 @@
 ---
 id: LCLI-296
 title: Publish Lore CLI 0.1.0 and bootstrap npm Trusted Publishing
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04 01:02'
-updated_date: '2026-08-04 01:38'
+updated_date: '2026-08-04 02:55'
 labels:
   - release
   - publication
@@ -52,11 +52,11 @@ Cut Lore CLI's first immutable public release from the private opum-ai/lore-cli 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 All six manifests and the five root optional-dependency pins use exact version 0.1.0, the launcher is packaged through bin/lore.cjs, and release documentation/changelog describe the same immutable version.
-- [ ] #2 Release workflow publish:false passes version metadata, five-host build and executable package qualification, install-sanity, and produces exactly six retained tarballs from the tagged commit.
-- [ ] #3 The five @opum-ai/lore platform packages are bootstrap-published public before @opum-ai/lore, using the qualified workflow artifacts and interactive account authentication without storing a long-lived npm token.
-- [ ] #4 A clean registry install of @opum-ai/lore@0.1.0 resolves the matching platform package, reports 0.1.0, and registry metadata confirms all six packages are public.
-- [ ] #5 Each package has a Trusted Publisher bound to GitHub opum-ai/lore-cli, workflow release.yml, environment release, and the selected allowed action; future automated publish:true remains blocked and documented until LCLI-278 resolves the private-repository Environment protection gap.
-- [ ] #6 The v0.1.0 tag and GitHub release point to the qualified commit, release truth and Lore Story coupling are synchronized, strict project gates pass, and exact publication evidence is recorded without exposing credentials.
+- [x] #2 Release workflow publish:false passes version metadata, five-host build and executable package qualification, install-sanity, and produces exactly six retained tarballs from the tagged commit.
+- [x] #3 The five @opum-ai/lore platform packages are bootstrap-published public before @opum-ai/lore, using the qualified workflow artifacts and interactive account authentication without storing a long-lived npm token.
+- [x] #4 A clean registry install of @opum-ai/lore@0.1.0 resolves the matching platform package, reports 0.1.0, and registry metadata confirms all six packages are public.
+- [x] #5 Each package has a Trusted Publisher bound to GitHub opum-ai/lore-cli, workflow release.yml, environment release, and the selected allowed action; future automated publish:true remains blocked and documented until LCLI-278 resolves the private-repository Environment protection gap.
+- [x] #6 The v0.1.0 tag and GitHub release point to the qualified commit, release truth and Lore Story coupling are synchronized, strict project gates pass, and exact publication evidence is recorded without exposing credentials.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -73,4 +73,14 @@ Cut Lore CLI's first immutable public release from the private opum-ai/lore-cli 
 2026-08-03 release-candidate implementation: set all six manifests and five exact optional-dependency pins to 0.1.0, changed root bin.lore to bin/lore.cjs, opened the 0.1.0 changelog section, and updated pre-publication README/runbook/release truth without claiming a release. The version is deliberately part of deterministic Ladybug export evidence, so the small/large canonical export hashes and the report contract digest changed; source-inventory and task-snapshot hashes remained identical. Verification passed: frozen Bun install with no changes; six npm pack dry-runs with exact opum-ai-lore*-0.1.0.tgz names and root launcher included; 25 focused tests, 8 fixture/report tests, and all 2431 tests; lint, typecheck, actionlint, strict Lore validate/check, zero orphans/dangling links, and diff hygiene.
 
 2026-08-03 PR #297 gate correction: Windows CI completed 2,338 tests but the pinned 700k-row Ladybug fixture took 31.969 seconds and exceeded the existing 30-second per-test ceiling. The candidate now keeps Windows max-concurrency=4 while bounding that host at 45 seconds; a workflow contract assertion protects the limit. Focused CI-workflow tests (5/5), lint, and diff hygiene pass locally. No merge, tag, workflow dispatch, or registry mutation occurred while this gate was red.
+
+2026-08-03 immutable qualification: promotion PR #298 merged to main as e621d209be2cc8867d1c38c7c78b4b4acc96d82e after eight green PR gates; the exact main push run 30870114161 passed all nine jobs including macOS. Lightweight tag v0.1.0 resolves directly to e621d209. Release run 30870431925 was dispatched on that tag with publish=false and ladybug_scale_observation=false; metadata, bounded Ladybug and concurrency evidence, all five compiles, all five matching-host install/launcher qualifications, package install-sanity, and evidence assembly passed, while the OIDC publish job and optional 1 GiB observation were skipped. Artifact npm-packages contained exactly six untouched 0.1.0 tarballs. SHA-256: root 0d7a9ab30afb9c0e52c612355a694823920cebb560c7ba8f88ba5036838a885b; darwin-arm64 e0b63e7f0a5d3bb3173769e625efc67cb90134bf8330ab0caabbc4c9cfb5d127; darwin-x64 698621f3b76a4b48862edc9c30beeba972fdb6f3f6ae05235db1db9b8510b325; linux-arm64 4609256410d7aeb39875d1b19c275cccf846ae2755bac9877bfb54e1ef72c177; linux-x64 7b4ff9e2ca8c1ae527fbe0a624df6887cba1bc5c52a0f527accf57c88384541c; win32-x64 3e90fb51ba76fd6c50a0a19bfed8be561dd8a090be51233503e7a562723e5337. Manifest inspection reconfirmed exact names/versions, root bin/lore.cjs and five exact optional pins, platform os/cpu selectors and binary filenames, and opum-ai/lore-cli repository metadata.
+
+2026-08-04 publication settlement: the five platform tarballs from Release run 30870431925 were published public first and the untouched root tarball last through interactive npm authentication; no long-lived token was stored. All six exact 0.1.0 registry records became anonymously visible, their shasums matched the successful publish output, and each carries SHA-512 integrity metadata. A fresh npm project installed @opum-ai/lore@0.1.0, selected @opum-ai/lore-darwin-arm64, and the installed bin returned 0.1.0. npm trust list verified all six GitHub publisher contracts use opum-ai/lore-cli, release.yml, Environment release, and createPackage permission. The non-draft GitHub Release is https://github.com/opum-ai/lore-cli/releases/tag/v0.1.0 and tag v0.1.0 resolves to e621d209be2cc8867d1c38c7c78b4b4acc96d82e. Closure checks passed: 2431 tests, 0 failures, 8093 assertions, lint, typecheck, actionlint, Lore strict validation and check with zero findings, and git diff hygiene. Source release truth, Story, runbook, index, and README now record the released state. The immutable npm 0.1.0 tarball necessarily retains the conservative pre-publication README from the tagged commit; changing npm's displayed snapshot requires a later version. LCLI-278 remains To Do and publish:true stays prohibited.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Published Lore CLI 0.1.0 from the exact qualified workflow artifacts in platform-first/root-last order, verified all six public registry records and a clean installed CLI, created the v0.1.0 GitHub Release, configured and listed all six Trusted Publishers, and reconciled release documentation while preserving LCLI-278 as the blocker for future automated publication.
+<!-- SECTION:FINAL_SUMMARY:END -->
