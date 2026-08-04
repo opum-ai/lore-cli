@@ -97,6 +97,7 @@
 - 2026-08-04T08:38:30-05:00 bb33bd38a9fec3b582944209ee240d5853dbce76 docs: sync LCLI-308 provenance log
 - 2026-08-04T09:45:54-05:00 ca4221dd7d92a2fe86545a65faf315149c1923bf docs: fix stale herdr derivation and fact-shaped rules (LCLI-309)
 - 2026-08-04T09:47:47-05:00 bc0c135c6ac04f7d5518c95af9c0ebe0c8b62866 docs: sync LCLI-309 provenance log
+- 2026-08-04T09:57:26-05:00 b9a419eb1f63dc561ed9fb3fef0cc9431738d156 docs: sync LCLI-310 provenance log
 
 ## docs/.obsidian
 
