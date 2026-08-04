@@ -84,6 +84,7 @@
 - 2026-08-03T17:40:37-05:00 66498ab3a8055eb27b4e8e62350f44a477328b84 chore: transfer repository ownership to opum-ai
 - 2026-08-03T17:48:20-05:00 b0bc1c46bf1766884093b5eb37734f49922a45a4 docs: close repository transfer task
 - 2026-08-03T17:49:07-05:00 468d510e45c9a14b5d7edf93fc4e8add96aac56e docs: record repository transfer closure
+- 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
 
 ## docs/.obsidian
 
@@ -127,6 +128,7 @@
 - 2026-08-01T06:44:02-05:00 9b6562cd5e4c3070dfed0dbead4dc1e50756ad2b perf: reduce Ladybug cold-build overhead
 - 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
 - 2026-08-03T17:40:37-05:00 66498ab3a8055eb27b4e8e62350f44a477328b84 chore: transfer repository ownership to opum-ai
+- 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
 
 ## docs/reference
 
@@ -206,6 +208,7 @@
 - 2026-08-03T08:39:40-05:00 a98014b4530903e2681c73c6762aa1e70e8aa67c feat: add snapshot change and provenance workflows
 - 2026-08-03T11:24:52-05:00 f90527bb28c07098d30ed91f9480d05fdaf4dc29 docs: reconcile release truth and Story ownership
 - 2026-08-03T17:40:37-05:00 66498ab3a8055eb27b4e8e62350f44a477328b84 chore: transfer repository ownership to opum-ai
+- 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
 
 ## docs/runbooks
 
@@ -269,6 +272,7 @@
 - 2026-08-02T19:15:38-05:00 242d43ee256a7ba6f54a5ae702daabd41ebea878 chore(LCLI-253): migrate off the pinned-commit Backlog.md build to the published release
 - 2026-08-03T11:24:52-05:00 f90527bb28c07098d30ed91f9480d05fdaf4dc29 docs: reconcile release truth and Story ownership
 - 2026-08-03T17:40:37-05:00 66498ab3a8055eb27b4e8e62350f44a477328b84 chore: transfer repository ownership to opum-ai
+- 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
 
 ## docs/specs
 
@@ -308,3 +312,4 @@
 - 2026-08-03T11:27:06-05:00 6fa326042c4c8945260f648056a28a1bdb3a7fec docs: record LCLI-293 settlement
 - 2026-08-03T17:40:37-05:00 66498ab3a8055eb27b4e8e62350f44a477328b84 chore: transfer repository ownership to opum-ai
 - 2026-08-03T17:48:20-05:00 b0bc1c46bf1766884093b5eb37734f49922a45a4 docs: close repository transfer task
+- 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope

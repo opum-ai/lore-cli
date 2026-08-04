@@ -19,15 +19,16 @@ semantic exit codes, machine-readable `--json`).
 
 - Built on **Bun + TypeScript** with an exact-pinned **Commander** parser fed by
   Lore's capability manifest; Lore still owns output, errors, and process lifecycle.
-- Designed for npm distribution as **`@opum-ai/lore`** (bin `lore`); the
-  package is not published yet.
+- Prepared for npm distribution as **`@opum-ai/lore@0.1.0`** (bin `lore`);
+  registry publication is not claimed until the release-truth evidence lands.
 - The agent bridge is a generated **`.claude/skills/lore/SKILL.md`** plus a tiny
   CLAUDE.md nudge and `lore instructions`. An **MCP server is secondary and
   deferred to v2**.
 
-> **Status: unreleased 0.1 candidate.** Package manifests remain at `0.0.0`,
-> the repository has no release tag or artifact, and `@opum-ai/lore` is
-> absent from npm. The upstream Backlog.md dependency gate is complete
+> **Status: prepared 0.1.0 release candidate.** The six manifests and exact
+> optional-dependency pins are set to `0.1.0`, but the repository has no
+> release tag or artifact and `@opum-ai/lore` is absent from npm. The upstream
+> Backlog.md dependency gate is complete
 > (LCLI-253), but the repository-owner publication-control gate remains open
 > (LCLI-278). See [Lore CLI release truth](docs/reference/lore-cli-release-truth.md).
 

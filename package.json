@@ -1,6 +1,6 @@
 {
   "name": "@opum-ai/lore",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Thin, OKF-native documentation CLI that couples repo-resident docs to Backlog.md and serves them to agents and humans.",
   "publishConfig": {
     "access": "public"
@@ -8,7 +8,7 @@
   "type": "module",
   "module": "src/cli.ts",
   "bin": {
-    "lore": "src/cli.ts"
+    "lore": "bin/lore.cjs"
   },
   "license": "MIT",
   "author": "Jeremy Newhouse",
@@ -27,11 +27,11 @@
     "LICENSE"
   ],
   "optionalDependencies": {
-    "@opum-ai/lore-darwin-arm64": "0.0.0",
-    "@opum-ai/lore-darwin-x64": "0.0.0",
-    "@opum-ai/lore-linux-arm64": "0.0.0",
-    "@opum-ai/lore-linux-x64": "0.0.0",
-    "@opum-ai/lore-win32-x64": "0.0.0"
+    "@opum-ai/lore-darwin-arm64": "0.1.0",
+    "@opum-ai/lore-darwin-x64": "0.1.0",
+    "@opum-ai/lore-linux-arm64": "0.1.0",
+    "@opum-ai/lore-linux-x64": "0.1.0",
+    "@opum-ai/lore-win32-x64": "0.1.0"
   },
   "scripts": {
     "lore": "bun run src/cli.ts",

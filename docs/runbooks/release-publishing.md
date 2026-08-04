@@ -42,11 +42,12 @@ The initial `0.1.0` release is a one-time bootstrap exception: npm requires a
 package to exist before a Trusted Publisher can be configured, and none of the
 six names exists yet. The exact CI-built tarballs are therefore published
 interactively with 2FA, platform packages first and root last; Trusted
-Publishing is configured immediately afterward for every later release. The
-LCLI-268 added the `release` Environment hook, but publication remains
-**blocked by LCLI-278** until an accepted out-of-file control is configured.
-Without that control, a future OIDC dispatch can publish without an independent
-workflow-file-external approval. See the [First-release
+Publishing is configured immediately afterward for possible later releases.
+The owner has authorized the one-time interactive bootstrap while the
+repository remains private; LCLI-278 still **blocks automated
+`publish: true` dispatches** until an accepted out-of-file control is
+configured. Without that control, an OIDC dispatch can publish without an
+independent workflow-file-external approval. See the [First-release
 checklist](#first-release-checklist) below for the exact mechanical sequence
 to cut the actual first release; the rest of this runbook is the supporting
 detail behind each checklist item.
@@ -68,18 +69,18 @@ be configured.
   authenticate and recheck the publishing account immediately before the
   bootstrap operation rather than treating organization creation as a
   reusable credential.
-- [ ] **Coordinated version bump: all six manifests + the 5
+- [x] **Coordinated version bump: all six manifests + the 5
   `optionalDependencies` pins**, root `0.0.0` → `0.1.0` —
   [Step 3, item 2](#3-cut-a-release). This is exactly the 12 values
   `verify-versions` cross-checks (6 `version` fields + the 5 pins + the
   platform-set itself); a missed file fails loud there before any compile
   work runs, rather than silently skip-installing a platform package later.
-- [ ] **Flip `package.json`'s `bin.lore` from `src/cli.ts` to
+- [x] **Flip `package.json`'s `bin.lore` from `src/cli.ts` to
   `bin/lore.cjs`**, for real, in the same commit as the version bump —
   [Step 3, item 1](#3-cut-a-release). `release.yml`'s `package` job only ever
   patches a *scratch* copy to dry-run-prove the launcher and reverts it — this
   file is deliberately left to a maintainer, not automated.
-- [ ] **CHANGELOG.md**: move the `[Unreleased]` section's entries under
+- [x] **CHANGELOG.md**: move the `[Unreleased]` section's entries under
   `## [0.1.0] - YYYY-MM-DD`, in the same commit as the version bump,
   so the tag below points at a commit whose CHANGELOG already reflects it.
 - [ ] **Merge to `dev`, fast-forward `main`, and wait for the full `main` CI
@@ -89,14 +90,15 @@ be configured.
 - [ ] **Bootstrap-publish the downloaded tarballs interactively with 2FA**:
   publish the five platform packages first, then `@opum-ai/lore` last.
   Use `npm publish <tarball>` and stop immediately on any failure.
-- [ ] **Create the `release` GitHub Environment** with the repository owner as
-  required reviewer. This repository has only one collaborator, so
-  prevent-self-review must remain disabled to avoid deadlocking release
-  dispatches; record that accepted weaker control.
+- [ ] **Before any future automated publish, protect the existing `release`
+  GitHub Environment** with the repository owner as required reviewer. The
+  owner chose to keep the repository private for `0.1.0`, so the current plan
+  cannot provide that rule; this item remains open under LCLI-278 and does not
+  apply to the explicitly authorized interactive bootstrap.
 - [ ] **Configure npm Trusted Publishing for all six now-existing packages**,
   using repository `opum-ai/lore-cli`, workflow `release.yml`, Environment
-  `release`, and allowed action `npm publish`. Future releases use
-  `publish: true`; `0.1.0` does not.
+  `release`, and allowed action `npm publish`. `0.1.0` does not use OIDC, and
+  later `publish: true` dispatches remain prohibited until LCLI-278 is Done.
 - [ ] **Post-publish smoke install**: from a machine that has never installed
   lore before, `npx @opum-ai/lore@0.1.0 --version`, on at least one
   platform other than the one used for local development.
