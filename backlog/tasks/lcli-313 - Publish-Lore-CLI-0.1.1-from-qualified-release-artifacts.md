@@ -5,6 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:04'
+updated_date: '2026-08-04 21:18'
 labels:
   - release
   - publication
@@ -17,6 +18,16 @@ references:
 documentation:
   - docs/stories/prepare-the-first-lore-cli-release.md
   - docs/runbooks/release-publishing.md
+modified_files:
+  - .github/actions/setup-bun/action.yml
+  - .github/workflows/release.yml
+  - benchmark/ladybug/package-build.ts
+  - benchmark/ladybug/package-qualification.ts
+  - test/ladybug-package-qualification.test.ts
+  - docs/reference/lore-cli-release-truth.md
+  - docs/runbooks/release-publishing.md
+  - docs/stories/prepare-the-first-lore-cli-release.md
+  - docs/log.md
 priority: high
 type: task
 ordinal: 426000
@@ -41,5 +52,13 @@ Ship Lore CLI 0.1.1 from the exact verified main commit. Tag and qualify the sev
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Ground the exact main commit, registry/tag/release absence, live release controls, npm authentication, and prior release procedure. 2. Tag and push v0.1.1, dispatch Release with publish=false on the tag, require every blocking qualification/package job to pass, and download the retained artifacts. 3. Verify exactly seven untouched tarballs, package metadata, checksums, and Windows ARM64 qualification evidence. 4. Re-authenticate interactively, publish absent platform packages first and the root launcher last from those exact artifacts, then configure/list the Windows ARM64 Trusted Publisher. 5. Verify anonymous registry metadata and a clean installed CLI, create the GitHub Release, update release truth through Lore, finalize the task/campaign, deliver the settlement, and prune temporary state.
+1. Ground the exact main commit, registry/tag/release absence, live release controls, npm authentication, and prior release procedure. 2. Tag and dispatch Release with publish=false; if qualification fails before publication, remove the tag, repair the exact blocker through protected dev/main delivery, and re-cut only after fresh CI. 3. Require every blocking qualification/package job to pass, download the retained artifacts, and verify exactly seven untouched tarballs, metadata, checksums, and Windows ARM64 evidence. 4. Re-authenticate interactively, publish absent platform packages first and the root launcher last from those exact artifacts, then configure/list the Windows ARM64 Trusted Publisher. 5. Verify anonymous registry metadata and a clean installed CLI, create the GitHub Release, update release truth through Lore, finalize the task/campaign, deliver the settlement, and prune temporary state.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Release run 30950940227 used exact tag target 58537a71 with publish=false. Metadata, concurrency, bounded Ladybug, Darwin ARM64/x64, and Linux ARM64/x64 qualifications passed. Windows ARM64 failed before build because the shared frozen install ran @ladybugdb/core source compilation on the unsupported host; Windows x64 compiled with @ladybugdb/core external and the installed dependency-free binary then failed --version resolving that module. These are real release-contract defects, not runner flakes. No package, GitHub Release, or registry version was created. Per the pre-publication rollback procedure, remove v0.1.1, repair through protected delivery, and requalify from a new exact main commit.
+
+Qualification repair implemented. The shared setup action now accepts a default-off ignore-scripts input used only by the Windows ARM64 release matrix entry, preserving frozen dependency metadata without invoking unsupported Ladybug source compilation. A dedicated Bun build helper uses a Windows-only resolver plugin to embed a reference-only @ladybugdb/core module instead of leaving an unresolved external import; non-Windows targets retain the native addon build. Verification passed: focused release suites 28/28 with 223 assertions; full suite 2451/2451 with 8304 assertions; lint across 187 files; typecheck; actionlint; build and dist/lore --version 0.1.1; native macOS package helper execution; 99 MB Windows x64 cross-compile; Biome and diff hygiene. Adversarial self-review confirmed the script skip is scoped only to the unsupported host, native platforms remain unchanged, and the published Windows binaries retain explicit reference-fallback behavior without runtime dependencies.
+<!-- SECTION:NOTES:END -->
