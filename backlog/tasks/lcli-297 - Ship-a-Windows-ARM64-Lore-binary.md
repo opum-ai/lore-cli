@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-04 03:59'
-updated_date: '2026-08-04 04:02'
+updated_date: '2026-08-04 04:03'
 labels:
   - 'doc:stories/prepare-the-first-lore-cli-release'
 dependencies: []
@@ -34,5 +34,11 @@ Add Windows ARM64 to Lore’s compiled release and npm distribution matrix so na
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Audit release/package/test assumptions and upstream Bun/LadybugDB Windows ARM64 availability. 2. Add the win32-arm64 package and matrix entry, then replace stale five-platform assertions/messages. 3. Extend automated coverage and update canonical release documentation through Lore conventions. 4. Run focused tests, static checks, packaging verification where feasible, and native winvm qualification if required.
+1. Upgrade the single pinned Bun runtime to 1.3.14, the current tested release with Windows ARM64 runtime and compile-target support, and refresh every executable/toolchain pin. 2. Add win32-arm64 to the npm manifests and the derived release matrix on windows-11-arm. 3. Extend package qualification to represent an intentionally unavailable LadybugDB native addon on Windows ARM64 while proving Lore’s reference fallback, launcher, standalone binary, installation, and cleanup. 4. Replace fixed five-platform assumptions with the six-platform contract, extend tests, and update forward-looking release documentation without rewriting immutable 0.1.0 evidence. 5. Run unit/static/package checks, cross-compile Windows ARM64, and use native hosted qualification because winvm SSH authentication is unavailable.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Research: Bun 1.2.23 publishes no Windows ARM64 runtime asset. Bun Windows ARM64 assets begin at 1.3.10; local 1.3.14 successfully cross-compiled Lore after downloading the target runtime. @ladybugdb/core-win32-arm64@0.19.0 is not published, so Windows ARM64 must retain reference-fallback-only behavior without claiming or requiring a native addon. GitHub currently provides the windows-11-arm hosted ARM64 runner for private repositories. The provided winvm host rejected noninteractive SSH authentication.
+<!-- SECTION:NOTES:END -->
