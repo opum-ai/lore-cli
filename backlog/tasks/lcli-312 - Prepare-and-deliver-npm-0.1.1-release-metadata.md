@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-04 20:00'
-updated_date: '2026-08-04 20:02'
+updated_date: '2026-08-04 20:12'
 labels:
   - release
   - npm
@@ -24,6 +24,10 @@ modified_files:
   - npm/win32-x64/package.json
   - CHANGELOG.md
   - docs/stories/prepare-the-first-lore-cli-release.md
+  - docs/log.md
+  - benchmark/ladybug/fixtures/v1/small.json
+  - benchmark/ladybug/fixtures/v1/large.json
+  - test/ladybug-benchmark-report.test.ts
 priority: high
 ordinal: 425000
 ---
@@ -48,3 +52,11 @@ Prepare the accumulated post-0.1.0 fixes for publication as npm package version 
 <!-- SECTION:PLAN:BEGIN -->
 1. Couple LCLI-312 to the release Story and ground version/publishing constraints against the live registry, fetched origin, and release runbook. 2. Bump the root manifest, six platform manifests, exact optional-dependency pins, and bun.lock to 0.1.1; promote the accumulated changelog entries into a dated 0.1.1 section while preserving Unreleased. 3. Run deterministic version/metadata checks, focused release tests, full tests/typecheck/lint, Lore validation gates, and no-publish package dry runs. 4. Perform an adversarial diff review, finalize task evidence, commit the exact release-preparation state, push the dedicated branch, merge through protected dev and then main, wait for required CI, and prune only verified merged release refs. 5. Re-ground npm, tags, branches, worktrees, and git status to prove the repository is clean and ready for a separately authorized publication.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Initial full suite ran 2,450 tests: 2,448 passed and only the small/large canonical benchmark export digests failed. The version is part of the canonical export, so bumping Lore to 0.1.1 deterministically changed those two hashes while source-inventory and task-snapshot hashes remained stable. Updated only the two expected canonicalExportSha256 values to the observed 0.1.1 outputs; focused and full reruns are required.
+
+After the fixture hashes were updated, the second full suite ran 2,450 tests: 2,449 passed and the sole failure was the benchmark report digest that transitively covers those fixtures. Updated that one expected digest to the deterministic 0.1.1 report output; a focused report test and final full-suite rerun remain required.
+<!-- SECTION:NOTES:END -->
