@@ -177,6 +177,14 @@ manifest accepts those artifacts only when they all pass on one clean commit;
 the matching-host package reports, rather than a duplicate Darwin timing run,
 carry the Darwin executable-platform evidence.
 
+`LCLI-297` subsequently moved Lore's exact Bun pin to `1.3.14` to add the
+`bun-windows-arm64` release target. LadybugDB 0.19.0 does not publish
+`@ladybugdb/core-win32-arm64`, so the six-host package matrix records that
+absence explicitly and proves Lore's reference-only fallback on Windows ARM64;
+it does not invent a native-addon hash or native-index claim. The five audited
+LadybugDB optional artifacts and the immutable `0.1.0` evidence above remain
+historical facts.
+
 ## Sources
 
 - [LadybugDB source repository](https://github.com/LadybugDB/ladybug)

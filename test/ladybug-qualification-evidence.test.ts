@@ -54,12 +54,10 @@ describe("LCLI-283.1.4 qualification evidence mapping", () => {
       LADYBUG_QUALIFICATION_PLATFORMS.map(({ distribution, supportClaim }) => ({ distribution, supportClaim })),
     );
     expect(manifest.platformVerdicts.filter((verdict) => verdict.executableEvidence)).toHaveLength(4);
-    expect(manifest.platformVerdicts.at(-1)).toMatchObject({
-      distribution: "win32-x64",
-      supportClaim: "reference-fallback-only",
-      executableEvidence: false,
-      databaseCreated: false,
-    });
+    expect(manifest.platformVerdicts.filter(({ supportClaim }) => supportClaim === "reference-fallback-only")).toEqual([
+      expect.objectContaining({ distribution: "win32-arm64", executableEvidence: false, databaseCreated: false }),
+      expect.objectContaining({ distribution: "win32-x64", executableEvidence: false, databaseCreated: false }),
+    ]);
     expect(parseLadybugQualificationEvidenceManifest(manifest)).toEqual(manifest);
   });
 
@@ -105,7 +103,7 @@ describe("LCLI-283.1.4 qualification evidence mapping", () => {
     expect(() => buildLadybugQualificationEvidenceManifest(windows)).toThrow("approved native platform verdict");
   });
 
-  test("requires explicit paths for the benchmark, gates, concurrency, five packages, and output", () => {
+  test("requires explicit paths for the benchmark, gates, concurrency, every platform package, and output", () => {
     const args = [
       "--linux-benchmark",
       "linux.json",
@@ -117,8 +115,10 @@ describe("LCLI-283.1.4 qualification evidence mapping", () => {
       "manifest.json",
       ...LADYBUG_QUALIFICATION_PLATFORMS.flatMap(({ distribution }) => ["--package-report", `${distribution}.json`]),
     ];
-    expect(parseLadybugQualificationEvidenceArgs(args).packages).toHaveLength(5);
-    expect(() => parseLadybugQualificationEvidenceArgs(args.slice(0, -2))).toThrow("five --package-report");
+    expect(parseLadybugQualificationEvidenceArgs(args).packages).toHaveLength(LADYBUG_QUALIFICATION_PLATFORMS.length);
+    expect(() => parseLadybugQualificationEvidenceArgs(args.slice(0, -2))).toThrow(
+      `${LADYBUG_QUALIFICATION_PLATFORMS.length} --package-report`,
+    );
     expect(() => parseLadybugQualificationEvidenceArgs([...args, "--simulated", "yes"])).toThrow("unknown");
   });
 });
@@ -163,7 +163,7 @@ function benchmarkReport(platform: NodeJS.Platform, arch: string): LadybugBenchm
     mode: "qualification",
     toolchain: {
       loreVersion: "0.0.0",
-      bunVersion: "1.2.23",
+      bunVersion: "1.3.14",
       nodeVersion: "22.0.0",
       ladybugPackageVersion: "0.19.0",
       ladybugRuntimeVersion: "0.19.0",
@@ -303,16 +303,17 @@ function packageReport(platform: (typeof LADYBUG_QUALIFICATION_PLATFORMS)[number
       distribution: platform.distribution,
       os: platform.os,
       cpu: platform.cpu,
-      bun: "1.2.23",
+      bun: "1.3.14",
       node: "v22.0.0",
     },
     repository: { commit: COMMIT },
     ladybug: {
       core: "0.19.0",
-      optionalPackage: `@ladybugdb/core-${platform.os}-${platform.cpu}`,
-      lockIntegrity: "sha512-YWJjZA==",
-      addonSha256: SHA,
-      copiedAddonMatches: true,
+      optionalPackage: platform.nativeAddonAvailable ? `@ladybugdb/core-${platform.os}-${platform.cpu}` : null,
+      lockIntegrity: platform.nativeAddonAvailable ? "sha512-YWJjZA==" : null,
+      addonSha256: platform.nativeAddonAvailable ? SHA : null,
+      installedCoreAbsent: true,
+      embeddedNativeIndexVerified: !windows,
     },
     package: {
       root: "@opum-ai/lore",
@@ -320,13 +321,15 @@ function packageReport(platform: (typeof LADYBUG_QUALIFICATION_PLATFORMS)[number
       rootTarballSha256: SHA,
       platformTarballSha256: SHA,
       standaloneBinarySha256: SHA,
+      globalInstallScriptPolicyClean: true,
+      globalLauncherSmoke: true,
     },
     smoke: { launcher: commands, standalone: commands, outputsStable: true },
     native: {
       supportClaim: platform.supportClaim,
-      probeMode: windows ? "import" : "indexed",
-      probeOutcome: windows ? "crash" : "pass",
-      exitCode: windows ? 139 : 0,
+      probeMode: platform.nativeAddonAvailable ? (windows ? "import" : "indexed") : "unavailable",
+      probeOutcome: platform.nativeAddonAvailable ? (windows ? "crash" : "pass") : "unavailable",
+      exitCode: platform.nativeAddonAvailable ? (windows ? 139 : 0) : null,
       signal: null,
       stdoutSha256: SHA,
       stderrSha256: SHA,
@@ -358,7 +361,7 @@ function concurrencyReport() {
     ),
   ];
   const report = createLadybugConcurrencyEvidenceReport(records, { commit: COMMIT, dirty: false });
-  return { ...report, toolchain: { ...report.toolchain, bun: "1.2.23" } };
+  return { ...report, toolchain: { ...report.toolchain, bun: "1.3.14" } };
 }
 
 function record(

@@ -77,8 +77,9 @@ export type RetrievalGraphLoader = (options: RetrievalGraphOptions) => Promise<R
 
 /**
  * Select a verified indexed graph when supported and usable, otherwise load the
- * existing in-memory graph. Failed indexed warnings and data are discarded so a
- * fallback run has exactly the reference path's observable stderr/stdout.
+ * existing in-memory graph. Failed indexed warnings and data are discarded; a
+ * single sanitized advisory makes the backend downgrade visible without leaking
+ * native-loader details.
  */
 export async function loadRetrievalGraph(options: RetrievalGraphOptions): Promise<RetrievalGraph> {
   if (options.workspace !== undefined) {
@@ -104,7 +105,9 @@ export async function loadRetrievalGraph(options: RetrievalGraphOptions): Promis
     if (policy === "indexed") {
       throw indexedUnavailable();
     }
-    return loadReferenceGraph(options);
+    const reference = await loadReferenceGraph(options);
+    warnReferenceFallback(options.warnings, "unsupported");
+    return reference;
   }
 
   let indexedWarnings = new WarningCollector();
@@ -164,9 +167,11 @@ export async function loadRetrievalGraph(options: RetrievalGraphOptions): Promis
       },
       ...(traversal !== undefined ? { traversal } : {}),
     };
-  } catch {
-    if (policy === "indexed") throw indexedUnavailable();
-    return loadReferenceGraph(options);
+  } catch (cause) {
+    if (policy === "indexed") throw cause;
+    const reference = await loadReferenceGraph(options);
+    warnReferenceFallback(options.warnings, "failed");
+    return reference;
   }
 }
 
@@ -202,6 +207,14 @@ async function loadReferenceGraph(options: RetrievalGraphOptions): Promise<Retri
 function copyWarnings(from: WarningCollector, to?: WarningCollector): void {
   if (to === undefined) return;
   for (const message of from.list()) to.add(message);
+}
+
+function warnReferenceFallback(warnings: WarningCollector | undefined, reason: "unsupported" | "failed"): void {
+  warnings?.add(
+    reason === "unsupported"
+      ? "native indexed retrieval is unsupported on this platform; using the in-memory reference backend"
+      : "native indexed retrieval failed; using the in-memory reference backend",
+  );
 }
 
 function indexedUnavailable(): LoreError {

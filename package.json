@@ -6,7 +6,6 @@
     "access": "public"
   },
   "type": "module",
-  "module": "src/cli.ts",
   "bin": {
     "lore": "bin/lore.cjs"
   },
@@ -16,12 +15,11 @@
     "type": "git",
     "url": "git+https://github.com/opum-ai/lore-cli.git"
   },
-  "packageManager": "bun@1.2.23",
+  "packageManager": "bun@1.3.14",
   "engines": {
-    "bun": ">=1.2.23"
+    "bun": ">=1.3.14"
   },
   "files": [
-    "src",
     "bin",
     "README.md",
     "LICENSE"
@@ -31,6 +29,7 @@
     "@opum-ai/lore-darwin-x64": "0.1.0",
     "@opum-ai/lore-linux-arm64": "0.1.0",
     "@opum-ai/lore-linux-x64": "0.1.0",
+    "@opum-ai/lore-win32-arm64": "0.1.0",
     "@opum-ai/lore-win32-x64": "0.1.0"
   },
   "scripts": {
@@ -45,23 +44,24 @@
     "test:coverage": "bun test --coverage"
   },
   "devDependencies": {
+    "@ladybugdb/core": "0.19.0",
     "@biomejs/biome": "2.4.12",
     "@playwright/test": "1.62.1",
-    "@types/bun": "^1.2.23",
+    "@types/bun": "^1.3.14",
     "@types/mdast": "4.0.4",
-    "typescript": "^5"
-  },
-  "dependencies": {
-    "@ladybugdb/core": "0.19.0",
     "commander": "15.0.0",
     "github-slugger": "2.0.0",
     "ipaddr.js": "2.4.0",
     "js-yaml": "5.2.2",
     "mdast-util-from-markdown": "2.0.3",
     "string-width": "8.2.2",
+    "typescript": "^5",
     "zod": "4.4.3"
   },
   "trustedDependencies": [
     "@ladybugdb/core"
-  ]
+  ],
+  "patchedDependencies": {
+    "@ladybugdb/core@0.19.0": "patches/@ladybugdb%2Fcore@0.19.0.patch"
+  }
 }

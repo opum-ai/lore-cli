@@ -13,29 +13,29 @@ timestamp: 2026-07-11T17:15:34.083Z
 
 ## Purpose
 
-This procedure describes how Lore ships as **six** npm packages
+This procedure describes how Lore ships as **seven** npm packages
 (ADR-0001 §"Distribution"). It is not evidence that any package has been
 published. Read [Lore CLI release truth](../reference/lore-cli-release-truth.md)
 before acting or making an availability claim. The root package is
-`@opum-ai/lore` (the thin Node `.cjs` launcher, `bin/lore.cjs`) plus five
+`@opum-ai/lore` (the thin Node `.cjs` launcher, `bin/lore.cjs`) plus six
 per-platform binary packages published as its `optionalDependencies` —
 `@opum-ai/lore-darwin-arm64`, `-darwin-x64`, `-linux-arm64`, `-linux-x64`,
-and `-win32-x64`.
+`-win32-arm64`, and `-win32-x64`.
 
 The `.github/workflows/release.yml` workflow (`workflow_dispatch`-only — it never
 fires on a push or tag) first gates the release chain on a 15-minute bounded
 LadybugDB qualification over a deterministic 100 MiB authored fixture and on
-separate real-process concurrency/crash evidence. Five matching-host jobs then
+separate real-process concurrency/crash evidence. Six matching-host jobs then
 prove native package installation, execution, and cleanup, after which a strict
 `lore.ladybug-qualification-evidence/1` manifest hashes the benchmark, gate
-policy, concurrency report, and all five package reports from the same clean
-commit. Only then does the workflow **compile all five platform binaries,
-assemble all six packages, and prove the `npx`/launcher resolution mechanism
+policy, concurrency report, and all six package reports from the same clean
+commit. Only then does the workflow **compile all six platform binaries,
+assemble all seven packages, and prove the `npx`/launcher resolution mechanism
 end-to-end** (LCLI-9/LCLI-283.1.4). The independent
 `ladybug_scale_observation` input adds a non-blocking, 30-minute 1 GiB
 observation; it never weakens or replaces the blocking gates. Only when a
 maintainer manually dispatches with `publish: true` does the workflow
-**publish all six existing packages via npm OIDC Trusted Publishing**
+**publish all seven existing packages via npm OIDC Trusted Publishing**
 (LCLI-255).
 
 The initial `0.1.0` release is a one-time bootstrap exception: npm requires a
@@ -75,9 +75,8 @@ be configured.
   work runs, rather than silently skip-installing a platform package later.
 - [x] **Flip `package.json`'s `bin.lore` from `src/cli.ts` to
   `bin/lore.cjs`**, for real, in the same commit as the version bump —
-  [Step 3, item 1](#3-cut-a-release). `release.yml`'s `package` job only ever
-  patches a *scratch* copy to dry-run-prove the launcher and reverts it — this
-  file is deliberately left to a maintainer, not automated.
+  [Step 3, item 1](#3-cut-a-release). This was completed for `0.1.0`; the
+  release workflow now packs the committed launcher directly.
 - [x] **CHANGELOG.md**: move the `[Unreleased]` section's entries under
   `## [0.1.0] - YYYY-MM-DD`, in the same commit as the version bump,
   so the tag below points at a commit whose CHANGELOG already reflects it.
@@ -108,6 +107,26 @@ be configured.
   Registry shasums matched the qualified publish results; Release run
   `30870431925` separately executed the same retained artifacts on all five
   matching hosts before publication.
+
+### Script-free launcher installation
+
+The next-release package contract keeps all JavaScript and LadybugDB
+libraries in the repository's `devDependencies`. npm therefore installs only
+`@opum-ai/lore`'s dependency-free CommonJS launcher and the matching compiled
+platform package. macOS/Linux binaries embed the exact qualified Ladybug addon
+through the committed `@ladybugdb/core@0.19.0` patch; Windows binaries
+externalize the unreachable import and retain reference fallback. Do not move
+those build dependencies back to `dependencies`: npm's global install-script
+policy would again require users to approve `@ladybugdb/core`.
+
+Each matching-host package job performs both a default isolated `npm install
+--global` and a project-local tarball install. It rejects any lifecycle-script
+approval diagnostic, proves the installed dependency graph contains no
+`@ladybugdb/core`, runs the launcher, and requires the installed macOS/Linux
+binary to build a native index. Windows must leave the native cache absent.
+This is the release gate for the installation failure corrected after `0.1.0`;
+the immutable `0.1.0` package itself may still require npm's
+`--allow-scripts=@ladybugdb/core` exception.
 
 ## Prerequisites
 
@@ -202,7 +221,7 @@ LCLI-196 and LCLI-257):
   references it if it doesn't already exist — but an auto-created
   environment has **no** protection rules by default, so skipping this step
   leaves the `environment: release` line in `release.yml` purely cosmetic.
-- [ ] **Set each of the six packages' npm Trusted Publisher "Environment
+- [ ] **Set each package's npm Trusted Publisher "Environment
   name" field to `release`** (Step 1, below). This is what stops an attacker
   from defeating the environment gate the same way they'd defeat any
   in-file guard — by simply deleting the `environment: release` line from
@@ -286,10 +305,18 @@ verified all six relationships as GitHub publishers with repository
 `npm publish`). The next OIDC publish remains prohibited until LCLI-278 is
 resolved; no `publish: true` run was used as a trust test.
 
+`@opum-ai/lore-win32-arm64` was added after `0.1.0` and is not part of that
+immutable six-package registry set. Before the first release containing it,
+dispatch `Release` with `publish: false`, qualify the retained Windows ARM64
+artifact on `windows-11-arm`, bootstrap-publish only that new platform package
+interactively, and configure its Trusted Publisher with the same exact fields.
+The normal platform-first publish loop is resumable and will skip that already
+published `name@version` when the remaining packages are later published.
+
 ### 2. The `publish` job (already in `release.yml`)
 
 After the interactive `0.1.0` bootstrap and trust configuration,
-`release.yml`'s `publish` job publishes all six packages via npm's OIDC-based
+`release.yml`'s `publish` job publishes all seven packages via npm's OIDC-based
 Trusted Publishing — `permissions: { id-token: write }` set at the **job**
 level (not the workflow level, which stays `contents: read`-only), so only
 this one job ever gets the token. It:
@@ -326,8 +353,8 @@ this one job ever gets the token. It:
   checklist](#first-release-checklist) note above): a `publish: true`
   dispatch made after Trusted Publisher setup but before the version-bump
   checklist item would otherwise pass every other gate.
-- Publishes the **five platform binary packages first, the root launcher
-  last**. Root's `optionalDependencies` pin the five platform packages at an
+- Publishes **every platform binary package first, the root launcher last**.
+  Root's `optionalDependencies` pin the six platform packages at an
   exact version, and `bin/lore.cjs` `require.resolve()`s them at runtime — if
   root published first, `npx @opum-ai/lore` could resolve a launcher
   whose platform deps still 404 (npm silently skips an unresolvable optional
@@ -341,7 +368,7 @@ this one job ever gets the token. It:
   partial failure therefore finishes the remaining packages instead of
   403ing (`EPUBLISHCONFLICT`) on the ones already published — see
   [Rollback](#rollback)'s "Publish job failed partway" entry.
-- Runs `npm publish` against each of the six tarballs — no `NPM_TOKEN`/secret
+- Runs `npm publish` against each release tarball — no `NPM_TOKEN`/secret
   needed once Step 1's Trusted Publisher setup exists for that package; until
   then, that package's `npm publish` call fails with an auth/403 error, which
   is the correct "not ready yet" outcome, not a hazard.
@@ -356,25 +383,25 @@ declaration above actually protective rather than cosmetic. See the
 [First-release checklist](#first-release-checklist) for the bootstrap sequence
 and the handoff to OIDC.
 
-**Scoped-package public access:** all six `@opum-ai/lore*` packages are
+**Scoped-package public access:** all seven `@opum-ai/lore*` packages are
 scoped, and npm defaults a scoped package's first publish to
 restricted/private access — it fails with an access-denied error unless the
-publish is explicitly marked public. Root `package.json` and all five
+publish is explicitly marked public. Root `package.json` and all six
 `npm/<platform>/package.json` manifests already carry `"publishConfig": {
 "access": "public" }` for this reason, so a plain `npm publish` (no
 `--access` flag needed) succeeds; if that key is ever removed, pass
-`--access public` explicitly to `npm publish` for all six packages instead.
+`--access public` explicitly to `npm publish` for all seven packages instead.
 
 ### 3. Cut a release
 
 1. **For the initial release, flip `package.json`'s `bin.lore` from
    `src/cli.ts` to `bin/lore.cjs`.** `0.1.0` completed this trigger; subsequent
    releases keep `bin/lore.cjs` and must not revert to the source entry point.
-2. Bump `version` in `package.json` and all five `npm/<platform>/package.json`
-   files to the same new value, **and update root `package.json`'s five
+2. Bump `version` in `package.json` and all six `npm/<platform>/package.json`
+   files to the same new value, **and update root `package.json`'s six
    `optionalDependencies` pins to that same exact version**, in one commit —
    `release.yml`'s `verify-versions` job (which `build` depends on and
-   therefore gates) asserts all six versions, plus the `optionalDependencies`
+   therefore gates) asserts all seven versions, plus the `optionalDependencies`
    pin and `license`/`author`/`repository` metadata, are consistent before
    compiling anything, so a missed file fails loud here rather than silently
    skipping an optional dependency later.
@@ -403,9 +430,9 @@ publish` — has been manually rehearsed end-to-end against this repo at
   EXDEV/0-byte-trap threshold `release.yml`'s `build` job checks; the
   darwin-arm64 one (matching the rehearsal host) executed natively and
   printed `--version` matching `package.json`.
-- `npm publish --dry-run` for the root package (with a scratch `bin.lore`
-  patch to `bin/lore.cjs`, reverted immediately after, exactly as the
-  `package` job's pack step does) and for all five `npm/<platform>/`
+- `npm publish --dry-run` for the root package (with the pre-`0.1.0` scratch
+  `bin.lore` patch to `bin/lore.cjs`, reverted immediately afterward; current
+  source already commits that launcher) and for all five `npm/<platform>/`
   packages — every one reported the correct package name, version, file
   list (`bin/lore[.exe]` + `package.json` for the platform packages; `src/`,
   `bin/lore.cjs`, `README.md`, `LICENSE`, `package.json` for the root), and

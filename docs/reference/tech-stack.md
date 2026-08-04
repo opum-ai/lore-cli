@@ -66,7 +66,7 @@ runtime is an undeclared dependency. The pin is enforced in CI before any build.
 **Compile targets.** We build with `bun build --compile --target=…` using the
 **baseline** x64 variants (e.g. `bun-linux-x64-baseline`,
 `bun-windows-x64-baseline`) so the binaries run on older/virtualized CPUs that
-lack newer SIMD extensions, plus the arm64 targets (macOS/Linux). Details and the
+lack newer SIMD extensions, plus the arm64 targets (macOS/Linux/Windows). Details and the
 full target matrix live in
 [ADR 0001](../adr/0001-runtime-build-distribution.md).
 
@@ -94,14 +94,18 @@ already documented this failure mode from the "cloned onto an external volume"
 angle; LCLI-14 confirmed the precise trigger is **crossing any filesystem
 boundary** (not that volume specifically) and tightened both notes to match.
 
-**Native-module surface.** None of lore's current runtime dependencies
-(`github-slugger`, `ipaddr.js`, `js-yaml`, `mdast-util-from-markdown`,
-`string-width`, `zod`) ship a native addon (no `.node` binaries, no
-`binding.gyp`) — all pure JS/TS. A same-filesystem `bun build --compile`
-bundles and runs all six with no special handling; the
-"native modules stay optional and lazily required" policy in
-[ADR-0001](../adr/0001-runtime-build-distribution.md) is a forward-looking
-guard for a *future* native dependency, not a caveat any current one triggers.
+**Native-module surface.** Lore's source graph includes exact-pinned
+`@ladybugdb/core@0.19.0`, but it is a build dependency rather than a published
+launcher dependency. Bun's committed patch replaces LadybugDB's computed
+`process.dlopen` path with a statically analyzable
+`require("./lbugjs.node")`; this embeds the qualified matching-host addon into
+macOS/Linux executables and prevents a relocated binary from retaining the
+build checkout's absolute `node_modules` path. Windows builds externalize the
+unreachable package import and select the reference backend before native
+loading. The remaining source libraries are pure JS/TS and are likewise
+build-only. Consequently a global npm install receives only the plain Node
+launcher and matching script-free platform package, with no lifecycle script
+to approve.
 
 ---
 
@@ -332,7 +336,7 @@ parser, agent SDK, tokenizer, embedding, or model dependency.
 |---|---|
 | **Package** | Exact-pinned `@ladybugdb/core@0.19.0` |
 | **Status** | **Shipping dependency; deterministic projection lifecycle and indexed command routing complete.** |
-| **Runtime/storage** | Ladybug `0.19.0` / storage version `43` under pinned Bun 1.2.23 |
+| **Runtime/storage** | Ladybug `0.19.0` / storage version `43` under pinned Bun 1.3.14 |
 | **Role** | Rebuildable persistent local property-graph and lexical projection for `graph`, `query`, and `context` |
 
 **Rationale.** Repeated retrieval, future interactive exploration, and larger
@@ -350,10 +354,11 @@ baseline, then selected 0.19.0. The storage-43 runtime can read a storage-42
 database, but Lore includes package and storage versions in its fingerprint and
 therefore replaces the derived generation instead of migrating it in place.
 
-The native addon is lazy-loaded. Bun 1.2.23's Windows Ladybug addon crashes
-while loading, so Windows-safe non-native/fallback paths must not import it;
-native Windows packaging qualification is explicitly deferred to
-`LCLI-283.1.4`. No embeddings, vector retrieval, inferred edges, raw public
+The native addon is lazy-loaded. Windows selects the reference path before the
+loader: the published x64 addon was unsafe under the former Bun 1.2.23 pin, and
+LadybugDB 0.19.0 publishes no Windows ARM64 addon. Both Windows x64 and ARM64
+package qualifications therefore prove `reference-fallback-only`; Darwin and
+Linux retain the native index. No embeddings, vector retrieval, inferred edges, raw public
 Cypher, or hidden user-global database are introduced. Native packaging,
 memory, disk, benchmark, and scale thresholds remain M6 release gates. See
 [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md) and
@@ -454,20 +459,16 @@ This mirrors Backlog.md's own distribution shape and lets the same codebase be
 consumed three ways: `npx`/`bunx` for ad-hoc use, an installed `lore` binary for
 day-to-day, and a pinned binary release for CI.
 
-**Status (LCLI-9).** The build/package mechanics — the per-platform compile
-matrix, `bin/lore.cjs`, the five `npm/<platform>/` package templates, and a
+**Status (LCLI-9/LCLI-297).** The build/package mechanics — the per-platform
+compile matrix, `bin/lore.cjs`, six `npm/<platform>/` package templates, and a
 `workflow_dispatch`-only pipeline (`.github/workflows/release.yml`) that
-proves the `npx` resolution chain end-to-end — are implemented and verified
-by direct local reproduction of every step (compile, pack, install, run, and
-the missing-platform-package error path). The workflow itself has **not yet
-had a first real GitHub Actions run** — `workflow_dispatch` requires the file
-to exist on the default branch before it can be triggered, so this could only
-happen post-merge; a maintainer should trigger it once and confirm green
-before relying on it for an actual release. The `npm publish` step is now
-implemented (LCLI-255) as a `publish` job gated on an explicit `publish: true`
-`workflow_dispatch` input, with job-scoped `id-token: write` and OIDC trusted
-publishing; it still requires the one-time npm Trusted Publisher configuration
-for all six packages before it can succeed — see
+proves the `npx` resolution chain end-to-end — are implemented. Release
+`0.1.0` qualified and published the original five-platform matrix; Windows
+ARM64 was added afterward and must receive matching-host qualification in the
+next release run. The `npm publish` step is gated on an explicit `publish:
+true` input, with job-scoped `id-token: write` and OIDC trusted publishing; it
+requires npm Trusted Publisher configuration for every package before it can
+succeed — see
 [release-publishing.md](../runbooks/release-publishing.md).
 
 **The Backlog executable boundary.** lore requires a `--json`-capable

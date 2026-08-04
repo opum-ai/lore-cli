@@ -46,7 +46,9 @@ export async function loadWorkspaceRetrievalGraph(options: LoadWorkspaceRetrieva
   const policy = options.policy ?? "auto";
   if (policy === "reference" || !supportsLadybugNative(options.platform)) {
     if (policy === "indexed" && !supportsLadybugNative(options.platform)) throw indexedUnavailable();
-    return loadReference(options);
+    const reference = await loadReference(options);
+    if (policy !== "reference") warnReferenceFallback(options.warnings, "unsupported");
+    return reference;
   }
   const loadNative = memoizeLadybugNativeLoader(options.loadNativeDriver ?? loadLadybugNativeDriver);
   let latest: WorkspaceProjection | undefined;
@@ -109,7 +111,9 @@ export async function loadWorkspaceRetrievalGraph(options: LoadWorkspaceRetrieva
     // reference load applies the same manifest/export validation and never leaks
     // a partial indexed candidate.
     try {
-      return await loadReference(options);
+      const reference = await loadReference(options);
+      warnReferenceFallback(options.warnings, "failed");
+      return reference;
     } catch {
       throw cause;
     }
@@ -185,6 +189,14 @@ function contextFor(projection: WorkspaceProjection): WorkspaceRetrievalContext 
 function copyWarnings(from: WarningCollector, to?: WarningCollector): void {
   if (to === undefined) return;
   to.merge(from);
+}
+
+function warnReferenceFallback(warnings: WarningCollector | undefined, reason: "unsupported" | "failed"): void {
+  warnings?.add(
+    reason === "unsupported"
+      ? "native indexed workspace retrieval is unsupported on this platform; using the in-memory reference backend"
+      : "native indexed workspace retrieval failed; using the in-memory reference backend",
+  );
 }
 
 function indexedUnavailable(): LoreError {

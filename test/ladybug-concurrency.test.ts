@@ -72,6 +72,7 @@ const REPOSITORY_ROOT = resolve(import.meta.dir, "..");
 const WORKER_PATH = join(REPOSITORY_ROOT, "benchmark", "ladybug", "concurrency-worker.ts");
 const SMALL_FIXTURE_PATH = join(REPOSITORY_ROOT, "benchmark", "ladybug", "fixtures", "v1", "small.json");
 const nativeDescribe = process.platform === "win32" ? describe.skip : describe;
+const REPOSITORY_FALLBACK_WARNING = "native indexed retrieval";
 const cleanupRoots: string[] = [];
 const evidenceRecords: LadybugConcurrencyEvidenceRecord[] = [];
 
@@ -262,7 +263,7 @@ nativeDescribe("Ladybug real-process concurrency and crash recovery", () => {
 
     const expected = await invoke(fixture.root, (options) => loadReferenceRetrievalGraph(options));
     const automatic = await invoke(fixture.root);
-    expect(automatic).toEqual(expected);
+    expectAutomaticParity(automatic, expected);
     assertRedacted(`${automatic.stdout}${automatic.stderr}`, fixture.root, ownerToken);
 
     await killWorker(writer);
@@ -381,7 +382,7 @@ nativeDescribe("Ladybug real-process concurrency and crash recovery", () => {
       expect(lstatSync(generation.controlPath).mode & 0o222).toBe(0);
 
       const automatic = await invoke(fixture.root);
-      expect(automatic).toEqual(expected);
+      expectAutomaticParity(automatic, expected);
       assertRedacted(`${automatic.stdout}${automatic.stderr}`, fixture.root, lockOwnerTokenFromStale(cacheRoot));
       const sourceAfter = snapshotLadybugBenchmarkSources(fixture.root);
       assertLadybugBenchmarkSourcesUnchanged(sourceBefore, sourceAfter);
@@ -588,6 +589,23 @@ async function invoke(root: string, retrieval?: RetrievalGraphLoader): Promise<O
     retrieval,
   });
   return { code, stdout: stdout.text(), stderr: stderr.text() };
+}
+
+function expectAutomaticParity(automatic: Observation, expected: Observation): void {
+  expect(automatic.code).toBe(expected.code);
+  expect(automatic.stdout).toBe(expected.stdout);
+
+  const automaticLines = automatic.stderr.split("\n").filter(Boolean);
+  const fallbackLines = automaticLines.filter((line) => line.includes(REPOSITORY_FALLBACK_WARNING));
+  expect(fallbackLines.length).toBeLessThanOrEqual(1);
+  for (const line of fallbackLines) {
+    expect(line).toMatch(
+      /native indexed retrieval (?:failed|is unsupported on this platform); using the in-memory reference backend/,
+    );
+  }
+  expect(automaticLines.filter((line) => !line.includes(REPOSITORY_FALLBACK_WARNING))).toEqual(
+    expected.stderr.split("\n").filter(Boolean),
+  );
 }
 
 function lockOwnerToken(path: string): string {

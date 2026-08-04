@@ -9,8 +9,12 @@ import {
 
 const root = join(import.meta.dir, "..");
 const rootManifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
-  dependencies: Record<string, string>;
+  dependencies?: Record<string, string>;
+  devDependencies: Record<string, string>;
   trustedDependencies: string[];
+  patchedDependencies: Record<string, string>;
+  files: string[];
+  module?: string;
 };
 const installedManifest = JSON.parse(
   readFileSync(join(root, "node_modules", "@ladybugdb", "core", "package.json"), "utf8"),
@@ -63,13 +67,25 @@ const packages = [
 
 describe("LadybugDB dependency qualification", () => {
   test("pins the selected core package and its five exact optional platform packages", () => {
-    expect(rootManifest.dependencies["@ladybugdb/core"]).toBe(VERSION);
+    expect(rootManifest.dependencies).toBeUndefined();
+    expect(rootManifest.module).toBeUndefined();
+    expect(rootManifest.files).not.toContain("src");
+    expect(rootManifest.devDependencies["@ladybugdb/core"]).toBe(VERSION);
     expect(rootManifest.trustedDependencies).toContain("@ladybugdb/core");
     expect(installedManifest.version).toBe(VERSION);
     expect(installedManifest.license).toBe("MIT");
     expect(installedManifest.optionalDependencies).toEqual(
       Object.fromEntries(packages.slice(1).map(({ name }) => [name, VERSION])),
     );
+  });
+
+  test("keeps Ladybug build-only and patches its loader for standalone addon embedding", () => {
+    expect(rootManifest.dependencies).toBeUndefined();
+    const patchPath = rootManifest.patchedDependencies["@ladybugdb/core@0.19.0"] ?? "";
+    expect(patchPath).toBe("patches/@ladybugdb%2Fcore@0.19.0.patch");
+    const patch = readFileSync(join(root, patchPath), "utf8");
+    expect(patch).toContain('module.exports = require("./lbugjs.node")');
+    expect(patch).not.toContain('+const modulePath = join(__dirname, "lbugjs.node")');
   });
 
   test("locks every selected package to the audited registry integrity and platform gate", () => {

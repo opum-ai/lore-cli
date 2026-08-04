@@ -84,14 +84,12 @@ describe("release.yml publish job stays safely gated", () => {
     expect(doc.jobs.publish?.if).toBe("${{ inputs.publish == true }}");
   });
 
-  test("the publish job depends on the package job (so build+verify-versions gate it transitively)", () => {
+  test("the publish job depends on packages produced by matching-host qualification", () => {
     const doc = loadWorkflow();
     expect(doc.jobs.publish?.needs).toContain("package");
-    // `package` itself needs `build`, which needs `verify-versions` — asserted directly
-    // here too, so this test still catches a regression if that chain is ever
-    // shortened even though `publish` itself didn't change.
-    expect(doc.jobs.package?.needs).toContain("build");
-    expect(doc.jobs.build?.needs).toContain("verify-versions");
+    expect(doc.jobs.package?.needs).toContain("package-qualification");
+    expect(doc.jobs["package-qualification"]?.needs).toContain("verify-versions");
+    expect(doc.jobs.build).toBeUndefined();
   });
 
   test("id-token: write is scoped to the publish job only, not the workflow", () => {
@@ -137,7 +135,7 @@ describe("release.yml publish job stays safely gated", () => {
 
     // The regression this guards: `for tgz in dist-npm/*.tgz; do ... npm publish
     // "$tgz" ... done` publishes in filesystem-collation order, which sorts the root
-    // launcher tarball (`opum-ai-lore-<version>.tgz`) BEFORE its five platform
+    // launcher tarball (`opum-ai-lore-<version>.tgz`) BEFORE its platform
     // optionalDependencies (`opum-ai-lore-<platform>-<version>.tgz`) — a digit
     // sorts before a letter. That inverts the required publish order for this
     // distribution shape (root's optionalDependencies pin the platform packages
@@ -167,13 +165,13 @@ describe("release.yml publish job stays safely gated", () => {
     const script = publishStep?.run ?? "";
 
     // The regression this guards: every OTHER precondition in this workflow fails
-    // loud (the npm-floor assertion, the 6/5+1-tarball count asserts, verify-versions'
-    // 12-value cross-check) — but nothing refused the one value that actually matters
+    // loud (the npm-floor assertion, derived tarball-count assertions, and
+    // verify-versions' metadata cross-check) — but nothing refused the one value that actually matters
     // for an irreversible `npm publish`: the placeholder version itself. Because the
     // First-release checklist deliberately orders Trusted Publisher registration
     // (step 1) before the version bump (step 2), a `publish: true` dispatch made
     // between those two steps would otherwise sail through every other check and
-    // genuinely publish six installable `0.0.0` packages.
+    // publish an installable `0.0.0` release.
     expect(script).toMatch(/0\.0\.0/);
     expect(script).toMatch(/refusing to publish version/);
 
@@ -212,5 +210,22 @@ describe("release.yml publish job stays safely gated", () => {
     const exitIndex = script.indexOf("exit 1", guardIndex);
     expect(exitIndex).toBeGreaterThan(guardIndex);
     expect(exitIndex).toBeLessThan(npmViewIndex);
+  });
+
+  test("the publish inventory derives its expected counts from the platform matrix", () => {
+    const doc = loadWorkflow();
+    const publishStep = doc.jobs.publish?.steps?.find((s) => s.run?.includes("npm publish"));
+    const script = publishStep?.run ?? "";
+
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal bash array expansion in release.yml.
+    expect(script).toContain("expected_platform_count=${#platform_names[@]}");
+    expect(script).toContain("expected_total_count=$((expected_platform_count + 1))");
+    expect(script).not.toMatch(/platform_tgz\[@\].*-ne\s+[0-9]/);
+  });
+
+  test("install sanity rejects runtime dependencies and an installed Ladybug package", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    expect(workflow).toContain("published launcher unexpectedly contains runtime dependencies");
+    expect(workflow).toContain("published launcher unexpectedly installed @ladybugdb/core");
   });
 });

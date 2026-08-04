@@ -85,8 +85,13 @@ jobs:
             # hosted runner. Keep its exact-host qualification bounded without
             # weakening the ordinary matrix's per-test timeout.
             bun test --isolate --timeout=40000
+          elif [[ "${{ matrix.os }}" == "ubuntu-latest" || "${{ matrix.os }}" == "ubuntu-24.04-arm" ]]; then
+            # Bun 1.3.14 can race Linux epoll registration when isolated files
+            # concurrently construct streams over the process stdio fds. Keep
+            # file isolation, but serialize this runner until the runtime race
+            # is fixed upstream; coverage and per-test timeouts stay unchanged.
+            bun test --isolate --max-concurrency=1 --timeout=10000
           else
-            # Isolate test files so suites that mutate global process state can't bleed.
             bun test --isolate --timeout=10000
           fi
 

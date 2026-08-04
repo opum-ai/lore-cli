@@ -18,6 +18,7 @@ import { run } from "../src/cli";
 import type { LadybugNativeDriver, LadybugNativeLoader } from "../src/core/ladybug-native";
 import { canonicalJson, LADYBUG_CACHE_REL_ROOT } from "../src/core/ladybug-source";
 import { loadReferenceRetrievalGraph, loadRetrievalGraph, type RetrievalGraphLoader } from "../src/core/retrieval";
+import { WarningCollector } from "../src/errors";
 import { capture, fakeAdapter, gitRun, makeTask } from "./helpers";
 
 const nativeDescribe = process.platform === "win32" ? describe.skip : describe;
@@ -448,7 +449,7 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
     const real = (await import("../src/core/ladybug-driver")) as LadybugNativeDriver;
     const failingRead: LadybugNativeLoader = async () => ({
       ...real,
-      readLadybugBundleGraph: async () => {
+      openLadybugIndexedReader: () => {
         throw new Error("private native read detail");
       },
     });
@@ -463,8 +464,10 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
         }),
       ["graph", "--json"],
     );
-    expect(actual).toEqual(expected);
+    expect(actual.code).toBe(expected.code);
+    expect(actual.stdout).toBe(expected.stdout);
     expect(actual.stdout.split("\n").filter(Boolean)).toHaveLength(1);
+    expect(actual.stderr).toContain("native indexed retrieval failed; using the in-memory reference backend");
     expect(actual.stderr).not.toContain("private native read detail");
 
     const cacheRoot = join(root, LADYBUG_CACHE_REL_ROOT);
@@ -482,7 +485,9 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
         }),
       ["graph", "--json"],
     );
-    expect(unavailable).toEqual(expected);
+    expect(unavailable.code).toBe(expected.code);
+    expect(unavailable.stdout).toBe(expected.stdout);
+    expect(unavailable.stderr).toContain("native indexed retrieval failed; using the in-memory reference backend");
     expect(unavailable.stderr).not.toContain("private native loader detail");
     expect(readdirSync(generationRoot)).toEqual(generations);
     expect(readdirSync(cacheRoot).some((name) => name.startsWith(".corrupt-"))).toBe(false);
@@ -492,9 +497,11 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
 describe("native lazy-loading and fallback boundary", () => {
   test("the Windows policy selects reference retrieval without evaluating the addon loader", async () => {
     let loads = 0;
+    const warnings = new WarningCollector();
     const result = await loadRetrievalGraph({
       root,
       platform: "win32",
+      warnings,
       loadNativeDriver: async () => {
         loads++;
         throw new Error("Windows must not load the native addon");
@@ -502,6 +509,9 @@ describe("native lazy-loading and fallback boundary", () => {
     });
     expect(result.backend).toBe("reference");
     expect(loads).toBe(0);
+    expect(warnings.list()).toContain(
+      "native indexed retrieval is unsupported on this platform; using the in-memory reference backend",
+    );
   });
 
   test("command usage errors are resolved before any retrieval or native boundary", async () => {

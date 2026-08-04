@@ -42,7 +42,7 @@ import {
 
 const REPOSITORY_ROOT = resolve(import.meta.dir, "..", "..");
 const FIXTURE_ROOT = join(import.meta.dir, "fixtures", "v1");
-export const LADYBUG_BENCHMARK_QUALIFICATION_BUN_VERSION = "1.2.23";
+export const LADYBUG_BENCHMARK_QUALIFICATION_BUN_VERSION = "1.3.14";
 
 export interface LadybugBenchmarkCliOptions {
   readonly fixtureNames: readonly ("small" | "large")[];
