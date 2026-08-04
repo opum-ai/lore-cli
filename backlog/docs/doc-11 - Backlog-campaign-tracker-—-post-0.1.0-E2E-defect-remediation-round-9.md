@@ -3,7 +3,7 @@ id: doc-11
 title: Backlog campaign tracker — post-0.1.0 E2E defect remediation (round 9)
 type: other
 created_date: '2026-08-04 12:54'
-updated_date: '2026-08-04 18:47'
+updated_date: '2026-08-04 19:24'
 ---
 # Backlog campaign tracker — post-0.1.0 E2E defect remediation (round 9)
 
@@ -17,10 +17,10 @@ updated_date: '2026-08-04 18:47'
 ## Frontier
 Informational snapshot only; never a promised next wave.
 
-- Ready now: LCLI-306 and LCLI-307 are To Do with no formal dependencies; repository cleanliness must be confirmed before dispatch.
+- Ready now: LCLI-307 is To Do with no formal dependencies; repository cleanliness must be confirmed after settlement before dispatch.
 - In flight: none.
-- Resolved in this campaign: LCLI-302, LCLI-303, LCLI-304, and LCLI-305.
-- Safest next candidate after a fresh restore: LCLI-306 by confirmed order, subject to live git, task, tool, and conflict checks. No later wave is promised.
+- Resolved in this campaign: LCLI-302, LCLI-303, LCLI-304, LCLI-305, and LCLI-306.
+- Safest next candidate after a fresh restore: LCLI-307 by confirmed order, subject to live git, task, tool, and conflict checks. No later wave is promised.
 
 ## Queue
 | Order | Task | Cluster | Formal dependencies | State | Wave | Likely files | Note |
@@ -29,12 +29,13 @@ Informational snapshot only; never a promised next wave.
 | 2 | LCLI-303 | Workspace validation / graph runtime | none | Done | 2 | `src/core/workspace-projection.ts`; `src/core/workspace-retrieval.ts`; `test/workspace-retrieval.test.ts` | Backend-independent selection validation delivered locally as `463a419ba46d4edec480da98640a8107b47e2dc8`. Focused 12/12 and full 2,438/2,438 tests, typecheck, lint, diff hygiene, and adversarial self-review passed; both criteria are checked. |
 | 3 | LCLI-305 | Sync / managed task block drift | none | Done | 3 | `src/commands/reconcile-shared.ts`; `src/commands/check.ts`; `src/core/check.ts`; `test/reconcile-shared.test.ts`; `test/sync.test.ts`; `test/check.test.ts` | Explicit empty-task reconciliation delivered locally as `11764de3a64c68b0200392a1cb1b03146a0a4e51`. Focused 324/324 and full 2,443/2,443 tests, typecheck, lint, diff hygiene, and adversarial self-review passed; both criteria are checked. |
 | 4 | LCLI-304 | Link / unlink / schema capability | none | Done | 4 | `src/commands/link.ts`; `src/commands/sync.ts`; `src/core/check.ts`; schema and managed-block seams; `test/link.test.ts`; `test/sync.test.ts`; `test/check.test.ts` | Active-profile link refusal, explicit check finding, and legacy unlink cleanup delivered locally as `5069dc28c2f205f5382836fb5b3d4945abe26a3a`. Focused 347/347, full suite, typecheck, lint, diff hygiene, and adversarial self-review passed; all three criteria are checked. |
-| 5 | LCLI-306 | New / strict validation parity | none | Ready | — | `src/core/check.ts`; `src/core/schema.ts`; `src/core/template.ts`; new/check command seams; `test/check.test.ts`; `test/template.test.ts` | Low-priority CI-gate parity defect; serialize with the shared check cluster. |
+| 5 | LCLI-306 | New / strict validation parity | none | Done | 5 | `src/core/check.ts`; `src/commands/check.ts`; `src/core/manifest.ts`; `src/core/instructions.ts`; `test/check.test.ts` | Unknown active-profile types now produce warning-tier `unknown-type` findings; ordinary check stays advisory and `check --strict` exits 6. Delivered locally as `31c9403221e2c4b50e6bb935bc2598f911f8a462`; focused 288/288, full suite, typecheck, lint, diff hygiene, and adversarial self-review pass. AC #1 is checked and the task is Done. |
 | 6 | LCLI-307 | Consumer scaffolding / Obsidian | none | Ready | — | `src/commands/scaffold.ts`; `src/core/consumer-scaffold.ts`; `test/scaffold.test.ts`; `test/consumer-scaffold.test.ts` | Mostly isolated, but retained in the confirmed sequential campaign model. |
 
 ## Resolved
 | Task | Date/wave | Evidence and disposition |
 | --- | --- | --- |
+| LCLI-306 | 2026-08-04 / wave 5 | Unknown active-profile types now emit deterministic `unknown-type` warnings without changing `lore new` producer-extension tolerance; `check --strict` returns exit 6 in parity with `validate --strict`, and strict-mode contracts are current. Focused 288/288, full suite, typecheck, lint, diff hygiene, and adversarial self-review passed. Delivered locally as `31c9403221e2c4b50e6bb935bc2598f911f8a462`; AC #1 checked and task Done. No remote mutation occurred. |
 | LCLI-304 | 2026-08-04 / wave 4 | Active-profile schema capability now gates new task links before task or write IO, `check --strict` emits `unsupported-task-coupling`, and `unlink` removes final or already-empty legacy residue. Focused 347/347, full suite, typecheck, lint, diff hygiene, and adversarial self-review passed. Delivered locally as `5069dc28c2f205f5382836fb5b3d4945abe26a3a`; all three criteria checked and task Done. No remote mutation occurred. |
 | LCLI-305 | 2026-08-04 / wave 3 | Explicit empty `tasks:` lists now produce zero-row managed-block targets without status-flow config or Backlog task lookup. `sync` renders `_No linked tasks._`; `check --strict` reports stale zero-task blocks. Focused 324/324, full 2,443/2,443, typecheck, lint, diff hygiene, and adversarial self-review passed. Delivered locally as `11764de3a64c68b0200392a1cb1b03146a0a4e51`; both criteria checked and task Done. No remote mutation occurred. |
 | LCLI-303 | 2026-08-04 / wave 2 | Explicit repository selection now validates before native Ladybug reconciliation, preserving exit 6 / `error_type: validation` and redaction across graph/query/context/path/impact in reference, proven fallback, and active indexed modes. Focused 12/12 with 118 expectations, full 2,438/2,438 with 8,236 expectations, typecheck, lint, diff hygiene, and adversarial self-review passed. Delivered locally as `463a419ba46d4edec480da98640a8107b47e2dc8`; both criteria checked and task Done. No remote mutation occurred. |
@@ -48,6 +49,9 @@ Informational snapshot only; never a promised next wave.
 - LCLI-45: deferred despite completed dependency LCLI-9. Its notes require a concrete in-process import need before reactivation.
 
 ## Wave log
+- 2026-08-04 — wave 5 dispatch: restore found active.md and doc-11 consistent with clean `dev` at `cf20e21b6c28e4f5a67938e269a58d8ade9086a3`, six commits ahead of locally known `origin/dev`, one worktree, no campaign branches, and all queued task states. LCLI-306 is To Do with no formal dependencies, required tools are available, and no dirty-work or in-flight file conflict exists, so it entered the sequential wave. LCLI-307 remains undispatched; no commit, push, PR, merge, publication, or other remote mutation is authorized.
+- 2026-08-04 — wave 5 verification hold: unknown active-profile types now emit deterministic warning-tier `unknown-type` findings from the existing read-only check scan; ordinary check remains exit 0 and `check --strict` returns exit 6 in parity with `validate --strict`. The structural root index retains its built-in judging profile, and user-facing strict-mode contracts were updated. Focused 288/288 with 558 expectations, the full suite, typecheck, lint across 186 files, diff hygiene, and adversarial self-review pass. AC #1 is checked; LCLI-306 remains In Progress because no local commit or remote delivery is authorized.
+- 2026-08-04 — wave 5 local delivery settlement: the user authorized local delivery. Source commit `31c9403221e2c4b50e6bb935bc2598f911f8a462` contains exactly the five verified source/test/contract files; post-commit focused 288/288, typecheck, and committed diff hygiene passed. LCLI-306 received its final summary and moved to Done; LCLI-307 remains undispatched and live readiness must be recomputed after settlement. No push or remote mutation occurred.
 - 2026-08-04 — wave 4 dispatch: restore found the active handover and doc-11 consistent with clean `dev` at `4146c42e2473445383ae20fc85f880d132ac2140`, four commits ahead of locally known `origin/dev`, one worktree, no campaign branches, and live task state. LCLI-304 is To Do with no dependencies and no dirty-work or in-flight conflict, so it entered the sequential wave. LCLI-306 and LCLI-307 remain undispatched; no remote mutation is authorized.
 - 2026-08-04 — wave 4 verification hold: active-profile task-coupling capability now gates `link` before task or write IO; `check --strict` reports `unsupported-task-coupling` directly; and `unlink` removes final or already-empty legacy residue. Focused 347/347 with 797 expectations, the full suite, typecheck, lint across 186 files, diff hygiene, and adversarial self-review pass. All three criteria are checked; LCLI-304 remains In Progress because no local commit or remote delivery was authorized.
 - 2026-08-04 — wave 4 local delivery settlement: the user authorized local delivery. Source commit `5069dc28c2f205f5382836fb5b3d4945abe26a3a` contains only the six verified source/test files; post-commit focused 347/347, typecheck, and committed diff hygiene passed. LCLI-304 received its final summary and moved to Done; LCLI-306 and LCLI-307 remain undispatched. No push or remote mutation occurred.
