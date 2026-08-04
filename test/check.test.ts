@@ -831,6 +831,44 @@ describe("runCheck — exit codes and discovery", () => {
     expect(runCheck(opts(["--strict"]))).toBe(EXIT_CODES.validation);
   });
 
+  test("LCLI-306: an unknown concept type is advisory normally and gates under --strict", () => {
+    mkdirSync(join(root, "docs", "badtype"), { recursive: true });
+    writeFileSync(join(root, "docs", "badtype", "x.md"), "---\ntype: badtype\ncustom: kept\n---\n# X\n");
+
+    const ordinary = opts([], JSON_CTX);
+    expect(runCheck(ordinary)).toBe(EXIT_OK);
+    const ordinaryReport = JSON.parse((ordinary.stdout as ReturnType<typeof capture>).text());
+    expect(ordinaryReport.data).toMatchObject({ errorCount: 0, warningCount: 1, complete: true });
+    expect(ordinaryReport.data.findings).toContainEqual({
+      severity: "warning",
+      rule: "unknown-type",
+      file: "badtype/x.md",
+      message: 'unknown type "badtype" in badtype/x.md; validated on `type` only',
+    });
+
+    const strict = opts(["--strict"]);
+    expect(runCheck(strict)).toBe(EXIT_CODES.validation);
+    expect((strict.stdout as ReturnType<typeof capture>).text()).toContain("[unknown-type]");
+  });
+
+  test("LCLI-306: active-profile types are known while the structural root index keeps its built-in profile", () => {
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      `[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\ntitle = {}\nsummary = {}\ntimestamp = { kind = "datetime" }\n\n[[types]]\nname = "Widget"\n`,
+    );
+    rmSync(join(root, "docs", "reference", "orders.md"));
+    writeFileSync(join(root, "docs", "index.md"), ref("Docs", "Root."));
+    mkdirSync(join(root, "docs", "widgets"), { recursive: true });
+    writeFileSync(join(root, "docs", "widgets", "x.md"), "---\ntype: Widget\ntitle: X\n---\n# X\n");
+
+    const o = opts(["--strict"], JSON_CTX);
+    expect(runCheck(o)).toBe(EXIT_OK);
+    const report = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(report.data.warningCount).toBe(0);
+    expect(report.data.findings.some((finding: { rule: string }) => finding.rule === "unknown-type")).toBe(false);
+  });
+
   test("LORE-239 AC#1: inline formatting before [!type] in ordinary prose does not gate, even under --strict", () => {
     writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "ordinary **bold** [!note] prose"));
     expect(runCheck(opts(["--strict"]))).toBe(EXIT_OK);

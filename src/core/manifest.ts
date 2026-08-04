@@ -249,7 +249,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     summary: "Validate links/anchors + reconciliation drift across the bundle (CI gate)",
     args: "[paths…]",
     flags: [
-      { name: "strict", takesValue: false, summary: "Treat portability warnings as failures for the exit code" },
+      { name: "strict", takesValue: false, summary: "Treat warnings as failures for the exit code" },
       { name: "external", takesValue: false, summary: "Also probe external-URL liveness (advisory; never gates)" },
     ],
     json: true,

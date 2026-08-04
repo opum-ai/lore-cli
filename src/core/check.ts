@@ -65,8 +65,8 @@ export type CheckSeverity = Severity;
 /**
  * Which check produced a {@link CheckFinding}. `broken-link`/`broken-anchor` and
  * `status-drift`/`managed-block-drift`/`unsupported-task-coupling` are all error-tier gate
- * findings; `portability` is the warn-tier lint; `external-link` is the opt-in, non-deterministic liveness advisory
- * (`--external`) that never fails the gate (ADR-0007).
+ * findings; `unknown-type`/`portability` are warn-tier lints; `external-link` is the opt-in,
+ * non-deterministic liveness advisory (`--external`) that never fails the gate (ADR-0007).
  */
 export type CheckRule =
   | "broken-link"
@@ -74,6 +74,7 @@ export type CheckRule =
   | "status-drift"
   | "managed-block-drift"
   | "unsupported-task-coupling"
+  | "unknown-type"
   | "portability"
   | "external-link";
 
@@ -105,7 +106,7 @@ export interface CheckReport {
    * final `check.report` should not assume this counts only link/anchor problems.
    */
   readonly errorCount: number;
-  /** Total warning-severity findings (portability) — advisory. */
+  /** Total deterministic warning-severity findings (unknown type and portability) — advisory. */
   readonly warningCount: number;
   /** Number of files examined. */
   readonly fileCount: number;
