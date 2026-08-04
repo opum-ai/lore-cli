@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-04 20:00'
-updated_date: '2026-08-04 20:12'
+updated_date: '2026-08-04 20:16'
 labels:
   - release
   - npm
@@ -40,11 +40,11 @@ Prepare the accumulated post-0.1.0 fixes for publication as npm package version 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Root and all six platform package manifests declare version 0.1.1, root optional dependency pins match, and the lockfile is consistent
-- [ ] #2 CHANGELOG.md promotes the current Unreleased changes into a dated 0.1.1 release entry and retains an empty Unreleased section
-- [ ] #3 Release metadata checks, focused release tests, full project gates, and package dry-run or equivalent artifact verification pass without publishing
+- [x] #1 Root and all six platform package manifests declare version 0.1.1, root optional dependency pins match, and the lockfile is consistent
+- [x] #2 CHANGELOG.md promotes the current Unreleased changes into a dated 0.1.1 release entry and retains an empty Unreleased section
+- [x] #3 Release metadata checks, focused release tests, full project gates, and package dry-run or equivalent artifact verification pass without publishing
 - [ ] #4 The release-preparation change is committed, merged to the integration branch, pushed, stale release branches are pruned when safe, and the working repository is clean
-- [ ] #5 No npm package, Git tag, or release artifact is published as part of preparation
+- [x] #5 No npm package, Git tag, or release artifact is published as part of preparation
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -59,4 +59,6 @@ Prepare the accumulated post-0.1.0 fixes for publication as npm package version 
 Initial full suite ran 2,450 tests: 2,448 passed and only the small/large canonical benchmark export digests failed. The version is part of the canonical export, so bumping Lore to 0.1.1 deterministically changed those two hashes while source-inventory and task-snapshot hashes remained stable. Updated only the two expected canonicalExportSha256 values to the observed 0.1.1 outputs; focused and full reruns are required.
 
 After the fixture hashes were updated, the second full suite ran 2,450 tests: 2,449 passed and the sole failure was the benchmark report digest that transitively covers those fixtures. Updated that one expected digest to the deterministic 0.1.1 report output; a focused report test and final full-suite rerun remain required.
+
+Pre-delivery verification on release/0.1.1-prep: synchronized version audit passed for root, six platform manifests, exact optional dependency pins, and bun.lock; bun install --frozen-lockfile passed with Bun 1.3.14. CHANGELOG contains an empty Unreleased heading followed by the dated 0.1.1 entry. Focused release/fixture/report suite passed 48/48 with 417 assertions; full suite passed 2,450/2,450 with 8,296 assertions; typecheck, lint across 186 files, actionlint, build, compiled dist/lore --version (0.1.1), Lore validate --strict (64 files, zero errors/warnings), Lore check --strict, and git diff --check passed. npm publish --dry-run produced public 0.1.1 reports for root and all six platform manifests without publishing. Registry audit still shows only 0.1.0 for the existing six packages and 404 for the new win32-arm64 package; no v0.1.1 tag exists. Adversarial self-review verified the exact 14-file implementation/docs diff and found no unrelated paths. AC #4 remains unchecked pending protected delivery, CI, pruning, and final clean-state evidence.
 <!-- SECTION:NOTES:END -->
