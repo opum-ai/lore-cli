@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-04 20:00'
-updated_date: '2026-08-04 20:24'
+updated_date: '2026-08-04 20:28'
 labels:
   - release
   - npm
@@ -64,4 +64,6 @@ After the fixture hashes were updated, the second full suite ran 2,450 tests: 2,
 Pre-delivery verification on release/0.1.1-prep: synchronized version audit passed for root, six platform manifests, exact optional dependency pins, and bun.lock; bun install --frozen-lockfile passed with Bun 1.3.14. CHANGELOG contains an empty Unreleased heading followed by the dated 0.1.1 entry. Focused release/fixture/report suite passed 48/48 with 417 assertions; full suite passed 2,450/2,450 with 8,296 assertions; typecheck, lint across 186 files, actionlint, build, compiled dist/lore --version (0.1.1), Lore validate --strict (64 files, zero errors/warnings), Lore check --strict, and git diff --check passed. npm publish --dry-run produced public 0.1.1 reports for root and all six platform manifests without publishing. Registry audit still shows only 0.1.0 for the existing six packages and 404 for the new win32-arm64 package; no v0.1.1 tag exists. Adversarial self-review verified the exact 14-file implementation/docs diff and found no unrelated paths. AC #4 remains unchecked pending protected delivery, CI, pruning, and final clean-state evidence.
 
 Protected PR #306 CI run 30947227260 passed seven jobs and failed Docker E2E with six linked assertions. Log review showed the first failure was intentional LCLI-304 behavior: the harness attempted lore link against a Spec, whose built-in schema has no tasks capability, so link correctly returned validation/exit 6; five subsequent vanished-task assertions cascaded. Updated only that E2E phase to create a fresh isolated Story, preserving the intended nonexistent/vanished task contracts while respecting schema-capability enforcement. Fresh local and protected verification are required before merge.
+
+Local repair verification passed: the exact Docker Compose E2E harness built real lore/backlog binaries and completed 339/339 assertions with zero failures; the previously failing nonexistent/vanished-task phase passed against the isolated Story. Docker compose down removed the test container and network. Post-E2E checks passed: 24/24 focused host tests with 157 assertions, typecheck, lint across 186 files, bash -n, Lore strict validation/check, and diff hygiene. The repair is ready to commit and push to PR #306 for a fresh protected run.
 <!-- SECTION:NOTES:END -->
