@@ -28,8 +28,10 @@ import { join } from "node:path";
 import type { BacklogAdapter } from "../src/adapters/backlog";
 import { realGitAdapter, resolveHeadSha } from "../src/adapters/git";
 import { run } from "../src/cli";
+import { runUnlink } from "../src/commands/link";
 import { runSync, type SyncOptions, type SyncReport } from "../src/commands/sync";
 import type { GitAdapter, GitCommit, GitLogRange } from "../src/core/log";
+import { regenerateTaskBlock } from "../src/core/managed-block";
 import { builtinTemplateFor, renderTemplate } from "../src/core/template";
 import { EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
@@ -148,6 +150,41 @@ describe("lore sync — AC#1: idempotent", () => {
     const { report } = await syncCmd([], poison);
     expect(readDoc("stories/plain.md")).toBe(doc);
     expect(report.files.map((f) => f.path)).not.toContain("docs/stories/plain.md");
+  });
+
+  test("regenerates a stale managed block after tasks: transitions from one linked task to empty", async () => {
+    const linked = regenerateTaskBlock(
+      storyDoc("X", ["lore-1"], "done"),
+      [{ id: "LORE-1", title: "Removed task", status: "Done", file: "backlog/tasks/lore-1 - removed.md" }],
+      { docPath: "docs/stories/x.md" },
+    );
+    writeDoc("stories/x.md", linked);
+    const adapter = fakeAdapter([], { poisonViews: ["lore-1"] });
+
+    await runUnlink({
+      root,
+      output: JSON_CTX,
+      args: ["stories/x", "lore-1", "--no-back-ref"],
+      adapter,
+      gitSpawn: cleanGitSpawn(),
+      stdout: capture(),
+      stderr: capture(),
+    });
+    expect(readDoc("stories/x.md")).toContain("tasks: []");
+    expect(readDoc("stories/x.md")).toContain("Removed task");
+
+    const first = await syncCmd(["--no-index"], adapter);
+    expect(first.code).toBe(EXIT_OK);
+    expect(first.report.files).toEqual([{ path: "docs/stories/x.md" }]);
+    expect(readDoc("stories/x.md")).toContain("_No linked tasks._");
+    expect(readDoc("stories/x.md")).not.toContain("Removed task");
+    expect(adapter.calls).toEqual([]);
+
+    const after = readDoc("stories/x.md");
+    const second = await syncCmd(["--no-index"], adapter, { gitSpawn: cleanGitSpawn() });
+    expect(second.report.filesChanged).toBe(0);
+    expect(readDoc("stories/x.md")).toBe(after);
+    expect(adapter.calls).toEqual([]);
   });
 });
 

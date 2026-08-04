@@ -16,6 +16,7 @@ import {
   resolveTaskDetails,
   TASK_DETAILS_CONCURRENCY,
   type TaskResolution,
+  taskBlockConcepts,
 } from "../src/commands/reconcile-shared";
 import { LoreError } from "../src/errors";
 import { concept, fakeAdapter, makeTask } from "./helpers";
@@ -38,6 +39,17 @@ describe("linkedConcepts", () => {
   });
 });
 
+describe("taskBlockConcepts", () => {
+  test("includes an explicit empty tasks: field but excludes an absent field", () => {
+    const empty = concept("stories/empty.md", { tasks: [] });
+    expect(taskBlockConcepts([concept("stories/absent.md"), empty])).toEqual([{ concept: empty, linked: [] }]);
+  });
+
+  test("still excludes reserved-stem concepts with an explicit tasks: field", () => {
+    expect(taskBlockConcepts([concept("index.md", { tasks: [] })])).toEqual([]);
+  });
+});
+
 describe("gatherReconciliation", () => {
   let root: string;
 
@@ -53,6 +65,18 @@ describe("gatherReconciliation", () => {
     const poison = fakeAdapter([], { poisonViews: ["lore-1"] });
     const result = await gatherReconciliation(root, [concept("stories/x.md")], poison);
     expect(result).toEqual([]);
+    expect(poison.calls).toEqual([]);
+  });
+
+  test("returns a zero-row target and touches no config or adapter for an explicit empty tasks: field", async () => {
+    mkdirSync(join(root, "backlog"), { recursive: true });
+    writeFileSync(join(root, "backlog", "config.yml"), "statuses: not-a-list\n");
+    const doc = concept("stories/x.md", { tasks: [], status: "done" });
+    const poison = fakeAdapter([], { poisonViews: ["lore-1"] });
+
+    const result = await gatherReconciliation(root, [doc], poison);
+
+    expect(result).toEqual([{ concept: doc, newStatus: null, rows: [] }]);
     expect(poison.calls).toEqual([]);
   });
 

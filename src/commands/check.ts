@@ -31,7 +31,7 @@ import { statSync } from "node:fs";
 import { join, posix } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { loadAgentProfiles, validateAgentProfileReferences } from "../core/agent-profile";
-import { loadBundle, toRefList, walkFiles } from "../core/bundle";
+import { loadBundle, walkFiles } from "../core/bundle";
 import {
   type CheckFinding,
   type CheckInputFile,
@@ -70,6 +70,7 @@ import {
   resolveReconcileConfig,
   resolveTaskDetails,
   type TaskResolution,
+  taskBlockConcepts,
 } from "./reconcile-shared";
 
 /**
@@ -195,10 +196,10 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
   // isolated from every OTHER root's scan, mirroring how the async drift computation below already
   // isolates root failures from each other (an earlier version of this scan used a bare `.map()` that
   // let one root's throw abort every other root's scan too, discarding drift that was never even
-  // computed — LORE-27 round 9). Cheap to check without any Backlog IO: `linkedConcepts` is pure.
+  // computed — LORE-27 round 9). Cheap to check without any Backlog IO: `taskBlockConcepts` is pure.
   const conceptBundleResults = bundles.map((bundle) => tryConceptsForBundle(bundle, profile));
   const needsReconciliation = conceptBundleResults.some(
-    (result) => result.error !== null || linkedConcepts(result.concepts).length > 0,
+    (result) => result.error !== null || taskBlockConcepts(result.concepts).length > 0,
   );
 
   if (!needsReconciliation && !parsed.external) {
@@ -278,7 +279,7 @@ type LivenessResult =
   | { readonly ok: true; readonly findings: CheckFinding[] }
   | { readonly ok: false; readonly err: unknown };
 
-/** One bundle root's concept-scan outcome: the `tasks:`-linked concepts it found, or its own scan failure. */
+/** One bundle root's concept-scan outcome: the `tasks:`-declaring concepts it found, or its own scan failure. */
 interface ConceptBundleResult {
   readonly bundle: Bundle;
   readonly concepts: Concept[];
@@ -286,7 +287,7 @@ interface ConceptBundleResult {
 }
 
 /**
- * Best-effort, per-bundle-root parse of already-read files into `tasks:`-linked {@link Concept}s,
+ * Best-effort, per-bundle-root parse of already-read files into `tasks:`-declaring {@link Concept}s,
  * for deciding reconciliation eligibility. NEVER throws — a scan failure is carried as `error`
  * instead, isolated from every OTHER bundle root's scan and from the already-computed `baseReport`,
  * which must survive regardless of whether any one root's scan fails ({@link computeDriftFindings}
@@ -301,7 +302,7 @@ interface ConceptBundleResult {
  * specs, index/log) is never reconciliation-relevant regardless of whether its frontmatter would
  * otherwise validate, so it is skipped WITHOUT paying for full parse+validation at all.
  *
- * Only a file that DOES declare `tasks:` is fully parsed+validated ({@link parseConcept}, which
+ * Only a file that DOES declare `tasks:` (including an empty list) is fully parsed+validated ({@link parseConcept}, which
  * throws loud on a malformed mapping) — `lore sync` would refuse to touch that exact file too, so
  * silently treating it as un-linked would be a real false-negative against `check`'s own drift gate,
  * the one case where `check` really would otherwise disagree with what `sync` does. An
@@ -320,7 +321,7 @@ function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleRe
   for (const file of bundle.files) {
     try {
       const raw = tryReadFrontmatter(file.path, file.raw);
-      if (raw === null || toRefList(raw.tasks).length === 0) {
+      if (raw === null || !Object.hasOwn(raw, "tasks")) {
         continue;
       }
       concepts.push(parseConcept(file.path, file.raw, { profile }));
@@ -443,7 +444,7 @@ async function resolveSharedReconciliation(
 }
 
 /**
- * The status/managed-block drift findings for every `tasks:`-linked concept across every bundle
+ * The status/managed-block drift findings for every `tasks:`-declaring concept across every bundle
  * root, reusing the same `commands/reconcile-shared.ts` gather `lore sync` writes with. Every root
  * is resolved concurrently (`Promise.allSettled`, mirroring how the raw-file passes already treat
  * roots as independent), sharing one `adapter` instance so its capability probe runs at most once
