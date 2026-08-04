@@ -996,6 +996,24 @@ step "AC4: lore check clean again after removing the multi-root broken-link prob
 # `lore check`'s job, not orphans'). A genuine orphanTasks case needs a task
 # with NO doc: label and no owning tasks: reference at all — TASK3 (seeded in
 # phase 2) has never been linked to anything, so it qualifies as-is.
+# LCLI-300 AC1: the hierarchy-aware path needs a real Backlog parent/subtask relation, not a
+# hand-authored fixture. Link only the parent to the otherwise-empty multi-doc probe Story from
+# Phase 4b; the child deliberately carries no doc: label of its own. `lore orphans` must inherit
+# ownership through parentTaskId while still reporting TASK3, the existing fully-unlinked control.
+ORPHAN_PARENT="$(backlog task create "E2E linked parent for orphans hierarchy" 2>&1 | grep -oE 'Created task [^ ]+' | awk '{print $3}')"
+ORPHAN_CHILD="$(backlog task create --parent "$ORPHAN_PARENT" "E2E unlinked child of linked parent" 2>&1 | grep -oE 'Created task [^ ]+' | awk '{print $3}')"
+check "LCLI-300 AC1: seeded a real Backlog parent and child task" \
+  '[ -n "$ORPHAN_PARENT" ] && [ -n "$ORPHAN_CHILD" ]'
+step_json "LCLI-300 AC1: link only the parent task to the probe Story" \
+  '.data.tasks[] | select(.task == "'"$ORPHAN_PARENT"'") | .backRef == "added"' \
+  -- lore link "$MULTI_STORY_ID" "$ORPHAN_PARENT" --json
+ORPHAN_CHILD_LC="$(printf '%s' "$ORPHAN_CHILD" | tr 'A-Z' 'a-z')"
+TASK3_LC="$(printf '%s' "$TASK3" | tr 'A-Z' 'a-z')"
+step_json "LCLI-300 AC1: linked-parent child is not orphaned, fully-unlinked TASK3 still is" \
+  '.kind == "orphans.report"
+   and ((.data.orphanTasks // [] | map(.id | ascii_downcase) | index("'"$ORPHAN_CHILD_LC"'")) == null)
+   and ((.data.orphanTasks // [] | map(.id | ascii_downcase) | index("'"$TASK3_LC"'")) != null)' \
+  -- lore orphans --json
 step_json "lore orphans: reports TASK3 (seeded, never linked to any doc)" \
   '.kind == "orphans.report" and (.data.orphanTasks // [] | length) >= 1' -- lore orphans --json
 step "lore orphans --tasks-only runs cleanly" 0 -- lore orphans --tasks-only
@@ -1103,13 +1121,28 @@ step_fail "AC1: replace --regex with an invalid pattern is a usage error (exit 2
 # ── Phase 15: rename ───────────────────────────────────────────────────────────
 OLD_REF_ID="${DOC_ID[Reference]}"
 OLD_REF_PATH="${DOC_PATH[Reference]}"
+# LCLI-300 AC3: seed a real third-party inbound link whose visible text deliberately names the
+# old id. The shared rewrite engine must still retarget it, and rename must surface the advisory on
+# stderr. Capture both streams because the stable rename.result remains on stdout while warnings
+# follow the CLI diagnostic contract on stderr.
+printf '\nReview [%s](../%s.md) before the rename.\n' "$OLD_REF_ID" "$OLD_REF_ID" >> "$SPEC_PATH"
+check "LCLI-300 AC3: seeded a rename inbound link whose display text names the old id" \
+  'grep -qF "[$OLD_REF_ID](../$OLD_REF_ID.md)" "$SPEC_PATH"'
 step_json "lore rename --dry-run (reports, moves nothing)" '.kind == "rename.result"' \
   -- lore rename "$OLD_REF_ID" "reference/e2e-renamed" --dry-run --json
 check "dry-run rename did not move the file" '[ -f "$OLD_REF_PATH" ]'
-step_json "lore rename (real move + inbound link repoint)" '.kind == "rename.result"' \
-  -- lore rename "$OLD_REF_ID" "reference/e2e-renamed" --json
+lore rename "$OLD_REF_ID" "reference/e2e-renamed" --json >/tmp/lcli300-rename-out 2>/tmp/lcli300-rename-err
+LCLI300_RENAME_RC=$?
+check "lore rename (real move + inbound link repoint) returns rename.result" \
+  '[ "$LCLI300_RENAME_RC" -eq 0 ] && jq -e ".kind == \"rename.result\"" /tmp/lcli300-rename-out >/dev/null 2>&1'
 check "renamed file exists at the new path" '[ -f "docs/reference/e2e-renamed.md" ]'
 check "old path no longer exists" '[ ! -f "$OLD_REF_PATH" ]'
+check "LCLI-300 AC3: rename retargeted the stale-text link instead of leaving it dangling" \
+  'grep -qF "[$OLD_REF_ID](../reference/e2e-renamed.md)" "$SPEC_PATH" \
+   && ! grep -qF "[$OLD_REF_ID](../$OLD_REF_ID.md)" "$SPEC_PATH"'
+check "LCLI-300 AC3: rename warns that the visible old id now points to the new id" \
+  'grep -qF "warning: link text \"$OLD_REF_ID\" in $SPEC_PATH still names \"$OLD_REF_ID\", but its link now points to \"reference/e2e-renamed\"" /tmp/lcli300-rename-err'
+rm -f /tmp/lcli300-rename-out /tmp/lcli300-rename-err
 
 # ── Phase 15b: LINKED-concept rename exercises Backlog coupling + F1 (LORE-62 AC4) ──────────
 # Phase 15 above only ever renames the unlinked Reference doc (no `tasks:` at all), so
@@ -1272,15 +1305,27 @@ ADR_ID="${DOC_ID[ADR]}"
 printf '\nSee [the ADR under test](../%s.md) for background.\n' "$ADR_ID" >> "$SPEC_PATH"
 check "AC2: seeded a real inbound body link to the ADR in the Spec's body" \
   'grep -qF "../$ADR_ID.md" "$SPEC_PATH"'
+# LCLI-300 AC2: add the contrasting stale-text form beside the ordinary-link control above. The
+# retarget remains mandatory; the new contract is that the mismatch cannot pass silently.
+printf '\nContrast [%s](../%s.md) with its successor.\n' "$ADR_ID" "$ADR_ID" >> "$SPEC_PATH"
+check "LCLI-300 AC2: seeded a supersede inbound link whose display text names the old id" \
+  'grep -qF "[$ADR_ID](../$ADR_ID.md)" "$SPEC_PATH"'
 
 SUCCESSOR="$(lore new ADR "E2E successor decision" --json | jq -r '.data.id')"
 step_json "lore supersede --dry-run" '.kind == "supersede.result"' \
   -- lore supersede "${DOC_ID[ADR]}" "$SUCCESSOR" --dry-run --json
-step_json "lore supersede (real, rewrite-links) genuinely rewrites the Spec's real inbound link" \
-  '.kind == "supersede.result" and .data.rewroteLinks == true' \
-  -- lore supersede "${DOC_ID[ADR]}" "$SUCCESSOR" --rewrite-links --json
+lore supersede "${DOC_ID[ADR]}" "$SUCCESSOR" --rewrite-links --json >/tmp/lcli300-supersede-out 2>/tmp/lcli300-supersede-err
+LCLI300_SUPERSEDE_RC=$?
+check "lore supersede (real, rewrite-links) genuinely rewrites the Spec's inbound links" \
+  '[ "$LCLI300_SUPERSEDE_RC" -eq 0 ] \
+   && jq -e ".kind == \"supersede.result\" and .data.rewroteLinks == true" /tmp/lcli300-supersede-out >/dev/null 2>&1'
 check "AC2: the Spec's inbound link now points at the successor, not the old ADR" \
   '! grep -qF "../$ADR_ID.md" "$SPEC_PATH" && grep -qF "../$SUCCESSOR.md" "$SPEC_PATH"'
+check "LCLI-300 AC2: supersede retargeted the stale-text link too" \
+  'grep -qF "[$ADR_ID](../$SUCCESSOR.md)" "$SPEC_PATH"'
+check "LCLI-300 AC2: supersede warns that the visible old id now points to the successor" \
+  'grep -qF "warning: link text \"$ADR_ID\" in $SPEC_PATH still names \"$ADR_ID\", but its link now points to \"$SUCCESSOR\"" /tmp/lcli300-supersede-err'
+rm -f /tmp/lcli300-supersede-out /tmp/lcli300-supersede-err
 step_fail "AC2: conflict-5 -- re-superseding the same already-superseded ADR fails loud" 5 \
   '.error_type == "conflict"' \
   -- lore supersede "$ADR_ID" "$SUCCESSOR" --json
