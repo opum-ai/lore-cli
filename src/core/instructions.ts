@@ -90,12 +90,12 @@ is needed, not fix it for you.`,
 
 const CHECK: InstructionTopic = {
   key: "check",
-  title: "The CI gate: drift, links, anchors, portability (`lore check`)",
+  title: "The CI gate: types, drift, links, anchors, portability (`lore check`)",
   body: `\`lore check [paths...]\` is lore's read-only CI gate. It always emits the
 full \`check.report\` on stdout (\`kind: check.report\` under \`--json\`) --
 findings for broken internal links, rotted heading anchors, reconciliation
-drift (a Story's written status or managed block gone stale), and, under
-\`--strict\`, portability-lint warnings. It then *returns* exit 6 when any of
+drift (a Story's written status or managed block gone stale), unknown active-
+profile types, and portability-lint warnings. It then *returns* exit 6 when any of
 those is error-tier (or any warning exists under \`--strict\`) -- a plain
 exit code, not a thrown error: nothing throws on this path, so there is no
 \`--json\` error envelope for a failing report (the report itself, already on

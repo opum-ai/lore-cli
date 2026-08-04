@@ -62,7 +62,7 @@ import {
 } from "../adapters/backlog";
 import { type BundleGraph, conceptNotInBundle, loadBundle, toRefList } from "../core/bundle";
 import { type Concept, idFromPath, serializeConcept } from "../core/concept";
-import { loadProfile, type Profile } from "../core/profile";
+import { loadProfile, type Profile, profileTypeDeclaresField } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
@@ -173,6 +173,7 @@ export async function runLink(options: LinkOptions): Promise<number> {
     // resolves `id` to a live concept or throws `not_found` for `link`.
     throw conceptNotInBundle(id);
   }
+  assertTaskCouplingSupported(concept, profile);
   const adapter = options.adapter ?? defaultAdapter(options.root);
   const docPath = repoRelativePath(concept.path);
   const label = backRefLabel(concept.id);
@@ -787,16 +788,41 @@ function writeTasksIfChanged(
   nextTasks: readonly string[],
   profile: Profile,
 ): boolean {
-  if (sameList(existingTasks, nextTasks)) {
+  const removeUnsupportedEmptyField =
+    nextTasks.length === 0 &&
+    Object.hasOwn(concept.frontmatter, "tasks") &&
+    !profileTypeDeclaresField(concept.type, "tasks", profile);
+  if (sameList(existingTasks, nextTasks) && !removeUnsupportedEmptyField) {
     return false;
   }
-  const updated: Concept = { ...concept, frontmatter: { ...concept.frontmatter, tasks: [...nextTasks] } };
+  const frontmatter = { ...concept.frontmatter };
+  if (removeUnsupportedEmptyField) {
+    // Recovery for links created before the capability gate existed: once the final legacy link is
+    // removed, the unsupported key must disappear too or `validate --strict` remains red forever.
+    delete frontmatter.tasks;
+  } else {
+    frontmatter.tasks = [...nextTasks];
+  }
+  const updated: Concept = { ...concept, frontmatter };
   writeFileOverwriting(
     join(docsRoot, concept.path),
     serializeConcept(updated, { profile }),
     repoRelativePath(concept.path),
   );
   return true;
+}
+
+/** Refuse new task coupling when the active profile has no schema contract for `tasks:`. */
+function assertTaskCouplingSupported(concept: Concept, profile: Profile): void {
+  if (profileTypeDeclaresField(concept.type, "tasks", profile)) {
+    return;
+  }
+  throw new LoreError(
+    "validation",
+    `cannot link tasks to ${concept.id}: type ${JSON.stringify(concept.type)} does not declare a \`tasks\` field in the active profile`,
+    "link the task to a concept type whose profile schema declares `tasks` (the built-in Story type), or update the active profile before retrying",
+    { id: concept.id, path: repoRelativePath(concept.path), type: concept.type, field: "tasks" },
+  );
 }
 
 /** Whether two string lists carry the same elements in the same order. */

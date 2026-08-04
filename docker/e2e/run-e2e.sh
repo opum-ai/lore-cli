@@ -736,11 +736,16 @@ check "raw binary: task edit of a nonexistent id reports not-found on stderr" \
 # (not_found/exit 3) and the concept's frontmatter never gets touched.
 SPEC_PATH="${DOC_PATH[Spec]}"
 SPEC_ID="${DOC_ID[Spec]}"
+VANISH_STORY_OUT="$(lore new Story "E2E vanished task story" --json)"
+VANISH_STORY_ID="$(echo "$VANISH_STORY_OUT" | jq -r '.data.id')"
+VANISH_STORY_PATH="$(echo "$VANISH_STORY_OUT" | jq -r '.data.path')"
+check "seeded an isolated task-capable Story for vanished-task behavior" \
+  '[ -n "$VANISH_STORY_ID" ] && [ "$VANISH_STORY_ID" != "null" ] && [ -f "$VANISH_STORY_PATH" ]'
 step_fail "lore link: a nonexistent task id fails before any write (not_found, exit 3)" 3 \
   '.error_type == "not_found"' \
-  -- lore link "$SPEC_ID" "$BOGUS_TASK_ID" --json
-check "lore link's failed validation left the Spec's frontmatter untouched" \
-  '! grep -qi "$BOGUS_TASK_ID" "$SPEC_PATH"'
+  -- lore link "$VANISH_STORY_ID" "$BOGUS_TASK_ID" --json
+check "lore link's failed validation left the Story's frontmatter untouched" \
+  '! grep -qi "$BOGUS_TASK_ID" "$VANISH_STORY_PATH"'
 
 # AC2b/c: a linked task VANISHING from Backlog (its file moved aside, simulating upstream
 # forgetting it) — sync fails loud (exit 3, EMPTY stdout: gatherReconciliation is awaited
@@ -757,9 +762,9 @@ check "seeded TASK5 to vanish" '[ -n "$TASK5" ]'
 # though the CLI displays/creates it uppercased (the "TASK-1" vs. "task-1" distinction noted
 # in Phase 4 above) — a `.message | contains(...)` check needs the lowercase form.
 TASK5_LC="$(printf '%s' "$TASK5" | tr 'A-Z' 'a-z')"
-step_json "lore link: attach TASK5 to the Spec (for the vanishing test)" \
+step_json "lore link: attach TASK5 to the isolated Story (for the vanishing test)" \
   '.data.tasks[] | select(.task == "'"$TASK5"'") | .status == "added"' \
-  -- lore link "$SPEC_ID" "$TASK5" --json
+  -- lore link "$VANISH_STORY_ID" "$TASK5" --json
 TASK5_FILE=""
 [ -n "$TASK5" ] && TASK5_FILE="$(find backlog/tasks -iname "${TASK5} - *.md" | head -1)"
 check "found TASK5's backlog file on disk" '[ -n "${TASK5_FILE:-}" ] && [ -f "$TASK5_FILE" ]'
@@ -767,9 +772,9 @@ mv "$TASK5_FILE" /tmp/vanished-task5.md
 
 step_fail "lore sync: a vanished linked task fails loud (not_found, exit 3, empty stdout)" 3 \
   '.error_type == "not_found" and (.message | contains("'"$TASK5_LC"'"))' \
-  -- lore sync "$SPEC_ID" --json
+  -- lore sync "$VANISH_STORY_ID" --json
 
-lore check docs/specs --json >/tmp/check-vanish-out 2>/tmp/check-vanish-err
+lore check docs/stories --json >/tmp/check-vanish-out 2>/tmp/check-vanish-err
 CHECK_VANISH_RC=$?
 check "lore check: a vanished linked task ALSO exits 3, but (unlike sync) still emits its check.report on stdout first" \
   '[ "$CHECK_VANISH_RC" -eq 3 ] \
@@ -779,18 +784,18 @@ rm -f /tmp/check-vanish-out /tmp/check-vanish-err
 
 # AC2d: `lore tasks` SOFT-drops the dangling id instead of failing: exit 0, the id absent
 # from the rollup, a stderr warning naming it.
-step "lore tasks: soft-drops a dangling linked id (exit 0)" 0 -- lore tasks "$SPEC_ID" --json
-lore tasks "$SPEC_ID" --json >/tmp/tasks-vanish-out 2>/tmp/tasks-vanish-err
+step "lore tasks: soft-drops a dangling linked id (exit 0)" 0 -- lore tasks "$VANISH_STORY_ID" --json
+lore tasks "$VANISH_STORY_ID" --json >/tmp/tasks-vanish-out 2>/tmp/tasks-vanish-err
 check "lore tasks: dangling id dropped from the rollup, with a stderr warning naming it" \
   '! (jq -e ".data.tasks[]? | select(.id == \"$TASK5\")" /tmp/tasks-vanish-out >/dev/null 2>&1) \
    && grep -qi "$TASK5" /tmp/tasks-vanish-err'
 rm -f /tmp/tasks-vanish-out /tmp/tasks-vanish-err
 
-# Restore state so later phases see a clean, unlinked Spec again.
+# Restore state so later phases see a clean, unlinked probe Story again.
 mv /tmp/vanished-task5.md "$TASK5_FILE"
-step_json "lore unlink: detach TASK5 from the Spec (restore state)" \
+step_json "lore unlink: detach TASK5 from the isolated Story (restore state)" \
   '.data.tasks[] | select(.task == "'"$TASK5"'") | .backRef == "removed"' \
-  -- lore unlink "$SPEC_ID" "$TASK5" --json
+  -- lore unlink "$VANISH_STORY_ID" "$TASK5" --json
 
 # ── Phase 6: mutate real backlog status, then sync ──────────────────────────
 backlog task edit "$TASK1" --status "In Progress" >/dev/null 2>&1

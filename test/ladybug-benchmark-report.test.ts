@@ -180,7 +180,7 @@ describe("Ladybug benchmark report contract", () => {
       "fixtures",
       "gates",
     ]);
-    expect(benchmarkDigest(json)).toBe("sha256:dc1d6f662bf1380cbe001dc9f2e575f08bae47ccd325956c1ce6d7050f5c8f85");
+    expect(benchmarkDigest(json)).toBe("sha256:ffb85e53069b19520593ed499fa790264ddc848707808289daf8dbbabc4c768b");
     expect(() => parseLadybugBenchmarkReport({ ...report, unexpected: true })).toThrow();
   });
 });

@@ -269,6 +269,48 @@ describe("lore link — wiring (AC#1)", () => {
     expect(adapter.calls).toHaveLength(0); // no back-ref edits either
   });
 
+  test("refuses a type whose active-profile schema does not declare tasks before task IO or writes (LCLI-304)", async () => {
+    const before = "---\ntype: Runbook\ntitle: Recovery\n---\n# Recovery\n";
+    writeDoc("runbooks/recovery.md", before);
+    let views = 0;
+    const base = fakeAdapter([makeTask("LORE-42")]);
+    const adapter: BacklogAdapter = {
+      ...base,
+      async viewTask(id: string) {
+        views++;
+        return base.viewTask(id);
+      },
+    };
+
+    const err = await expectLinkError(["runbooks/recovery", "lore-42"], adapter);
+
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain('type "Runbook" does not declare a `tasks` field');
+    expect(err.input).toMatchObject({ id: "runbooks/recovery", type: "Runbook", field: "tasks" });
+    expect(views).toBe(0);
+    expect(base.calls).toHaveLength(0);
+    expect(readDoc("runbooks/recovery.md")).toBe(before);
+  });
+
+  test("allows a custom-profile type that explicitly declares tasks (LCLI-304)", async () => {
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      `[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "Runbook"\nfields = { tasks = { kind = "list" } }\n`,
+    );
+    writeDoc(
+      "runbooks/recovery.md",
+      "---\ntype: Runbook\ntasks: []\n---\n# Recovery\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n",
+    );
+    const adapter = fakeAdapter([makeTask("LORE-42")]);
+
+    const { report } = await linkCmd(["runbooks/recovery", "lore-42", "--no-back-ref"], adapter);
+
+    expect(report.changed).toBe(true);
+    const concept = parseConcept("runbooks/recovery.md", readDoc("runbooks/recovery.md"));
+    expect(concept.frontmatter.tasks).toEqual(["lore-42"]);
+  });
+
   test("a missing concept id fails loud (exit 3)", async () => {
     const adapter = fakeAdapter([makeTask("LORE-1")]);
     const err = await expectLinkError(["stories/missing", "lore-1"], adapter);
@@ -340,6 +382,32 @@ describe("lore unlink — removal (AC#2)", () => {
 
     const concept = parseConcept("stories/x.md", readDoc("stories/x.md"));
     expect(concept.frontmatter.tasks).toEqual(["lore-1"]);
+  });
+
+  test("removing the final legacy link from an unsupported type deletes the stray tasks key (LCLI-304)", async () => {
+    writeDoc("runbooks/recovery.md", "---\ntype: Runbook\ntitle: Recovery\ntasks:\n  - lore-1\n---\n# Recovery\n");
+    const adapter = fakeAdapter([]);
+
+    const { code, report } = await unlinkCmd(["runbooks/recovery", "lore-1", "--no-back-ref"], adapter);
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.changed).toBe(true);
+    expect(report.tasks).toEqual([{ task: "lore-1", status: "removed", backRef: "skipped" }]);
+    const concept = parseConcept("runbooks/recovery.md", readDoc("runbooks/recovery.md"));
+    expect(Object.hasOwn(concept.frontmatter, "tasks")).toBe(false);
+    expect(readDoc("runbooks/recovery.md")).not.toContain("tasks:");
+  });
+
+  test("repeating unlink heals an unsupported empty tasks key left by an older binary (LCLI-304)", async () => {
+    writeDoc("runbooks/recovery.md", "---\ntype: Runbook\ntitle: Recovery\ntasks: []\n---\n# Recovery\n");
+    const adapter = fakeAdapter([]);
+
+    const { report } = await unlinkCmd(["runbooks/recovery", "lore-1", "--no-back-ref"], adapter);
+
+    expect(report.changed).toBe(true);
+    expect(report.tasks).toEqual([{ task: "lore-1", status: "not-linked", backRef: "skipped" }]);
+    const concept = parseConcept("runbooks/recovery.md", readDoc("runbooks/recovery.md"));
+    expect(Object.hasOwn(concept.frontmatter, "tasks")).toBe(false);
   });
 
   test("is idempotent: unlinking a task not currently linked writes no doc bytes, but still self-heals a stray label", async () => {
@@ -428,17 +496,15 @@ describe("lore link/unlink — plain rendering and parser edge cases", () => {
     expect(stdout.text()).toBe("lore-1: tasks: added, back-ref: added\ndocs/stories/x.md: updated\n");
   });
 
-  test("reads a bare-scalar tasks: authored value as a single-element list (an undeclared field on a non-Story type is unvalidated passthrough)", async () => {
-    // `Reference` declares no `tasks` field, so it's an unvalidated passthrough key — unlike
-    // `Story`'s schema-enforced array, a hand-authored scalar here is exactly what
-    // frontmatterList's scalar-tolerance branch exists for.
+  test("refuses a bare-scalar legacy tasks field on a type whose schema does not support coupling", async () => {
     writeDoc("reference/x.md", "---\ntype: Reference\ntasks: task-1\n---\nBody.\n");
     const adapter = fakeAdapter([makeTask("LORE-2")]);
+    const before = readDoc("reference/x.md");
 
-    const { report } = await linkCmd(["reference/x", "lore-2"], adapter);
-    expect(report.changed).toBe(true);
-    const concept = parseConcept("reference/x.md", readDoc("reference/x.md"));
-    expect(concept.frontmatter.tasks).toEqual(["task-1", "lore-2"]);
+    const err = await expectLinkError(["reference/x", "lore-2"], adapter);
+    expect(err.type).toBe("validation");
+    expect(readDoc("reference/x.md")).toBe(before);
+    expect(adapter.calls).toHaveLength(0);
   });
 
   test("a `--` end-of-options marker treats every following token as a positional", async () => {
@@ -532,16 +598,15 @@ describe("lore link/unlink — per-task back-ref resilience", () => {
     expect(occurrences).toBe(1);
   });
 
-  test("a non-string tasks: entry (a YAML-coerced number, on a type with no schema-declared tasks field) is preserved, not silently dropped", async () => {
-    // `Reference` declares no `tasks` field, so a numeric entry is unvalidated passthrough —
-    // exactly the case toRefList's scalar coercion (shared with rewrite.ts's ref handling) exists for.
+  test("a non-string legacy tasks entry on an unsupported type is refused without normalization", async () => {
     writeDoc("reference/x.md", "---\ntype: Reference\ntasks:\n  - 42\n  - task-2\n---\nBody.\n");
     const adapter = fakeAdapter([makeTask("LORE-3")]);
+    const before = readDoc("reference/x.md");
 
-    const { report } = await linkCmd(["reference/x", "lore-3"], adapter);
-    expect(report.changed).toBe(true);
-    const concept = parseConcept("reference/x.md", readDoc("reference/x.md"));
-    expect(concept.frontmatter.tasks).toEqual(["42", "task-2", "lore-3"]);
+    const err = await expectLinkError(["reference/x", "lore-3"], adapter);
+    expect(err.type).toBe("validation");
+    expect(readDoc("reference/x.md")).toBe(before);
+    expect(adapter.calls).toHaveLength(0);
   });
 });
 
@@ -749,7 +814,7 @@ describe("lore link/unlink — 2nd-pass code-review fixes", () => {
   });
 
   test("--no-back-ref bypasses the comma-id guard: no Backlog label is ever sent on that path, so the comma problem cannot occur", async () => {
-    writeDoc("notes/release-notes,v2.md", "---\ntype: Reference\n---\nBody.\n");
+    writeDoc("notes/release-notes,v2.md", "---\ntype: Story\n---\nBody.\n");
     const adapter = fakeAdapter([makeTask("LORE-1")]);
 
     const { report } = await linkCmd(["notes/release-notes,v2", "lore-1", "--no-back-ref"], adapter);

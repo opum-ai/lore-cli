@@ -10,7 +10,7 @@
  *
  * `check` is a **gate**, so a coherence failure is not a thrown {@link LoreError}: it emits
  * the full `check.report` on stdout and then *returns* exit `6` when any broken internal
- * link or rotted anchor exists (or any portability warning under `--strict`). Portability
+ * link or rotted anchor exists (or any warning under `--strict`). Unknown-type and portability
  * findings alone are advisory and do not fail the gate (ADR-0007). Only a *usage* error
  * (bad flag) or an *I/O* failure (an unreadable path) throws, funneling through the router's
  * one error seam like every command.
@@ -31,7 +31,7 @@ import { statSync } from "node:fs";
 import { join, posix } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { loadAgentProfiles, validateAgentProfileReferences } from "../core/agent-profile";
-import { loadBundle, toRefList, walkFiles } from "../core/bundle";
+import { effectiveProfileFor, loadBundle, walkFiles } from "../core/bundle";
 import {
   type CheckFinding,
   type CheckInputFile,
@@ -45,8 +45,9 @@ import {
   tallySeverity,
 } from "../core/check";
 import { type Concept, parseConcept, tryReadFrontmatter } from "../core/concept";
-import { loadProfile, type Profile } from "../core/profile";
-import { DOCS_DIR } from "../core/scaffold";
+import { loadProfile, type Profile, profileTypeDeclaresField } from "../core/profile";
+import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
+import { canonicalType } from "../core/schema";
 import {
   ANSI,
   EXIT_CODES,
@@ -70,6 +71,7 @@ import {
   resolveReconcileConfig,
   resolveTaskDetails,
   type TaskResolution,
+  taskBlockConcepts,
 } from "./reconcile-shared";
 
 /**
@@ -117,7 +119,7 @@ export interface CheckOptions {
 interface CheckArgs {
   /** Explicit bundle roots to check; empty means the default `docs/` bundle. */
   paths: string[];
-  /** `--strict`: treat any portability warning as a failure for the exit code. */
+  /** `--strict`: treat any deterministic warning as a failure for the exit code. */
   strict: boolean;
   /** `--external`: opt into non-deterministic external-URL liveness (advisory only; never gates). */
   external: boolean;
@@ -125,9 +127,9 @@ interface CheckArgs {
 
 /**
  * Run `lore check`: parse the arguments, discover and read the bundle's markdown, check it,
- * emit the `check.report`, and return the exit code — `0` when coherent (portability warnings
- * alone are advisory), `6` when any broken internal link/anchor exists (or any warning under
- * `--strict`). A bad flag throws a `usage` {@link LoreError} (exit `2`); an unreadable bundle
+ * emit the `check.report`, and return the exit code — `0` when coherent (warnings alone are
+ * advisory), `6` when any broken internal link/anchor exists (or any warning under `--strict`).
+ * A bad flag throws a `usage` {@link LoreError} (exit `2`); an unreadable bundle
  * root a `not_found`/`denied`.
  *
  * **Return type.** The deterministic gate is synchronous: when nothing discovered links a Backlog
@@ -186,19 +188,26 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
     advisories.flush({ color: options.output.color, stderr: options.stderr });
   }
 
-  const baseReport = checkBundles(bundles);
+  const linkReport = checkBundles(bundles);
 
-  // Reuse the SAME already-read files (no second directory walk, no second read) to find which are
-  // `tasks:`-linked concepts per bundle root, so status/managed-block reconciliation can run the same
-  // way the link/anchor pass already does. `tryConceptsForBundle` NEVER throws — a bundle root's own
+  // Reuse the SAME already-read files (no second directory walk, no second read) to classify unknown
+  // active-profile types and find `tasks:`-linked concepts per bundle root, so strict validation
+  // parity and status/managed-block reconciliation share one scan. `tryConceptsForBundle` NEVER
+  // throws — a bundle root's own
   // scan failure (a malformed-AND-`tasks:`-linked concept) is carried as `error` on its own result,
   // isolated from every OTHER root's scan, mirroring how the async drift computation below already
   // isolates root failures from each other (an earlier version of this scan used a bare `.map()` that
   // let one root's throw abort every other root's scan too, discarding drift that was never even
-  // computed — LORE-27 round 9). Cheap to check without any Backlog IO: `linkedConcepts` is pure.
+  // computed — LORE-27 round 9). This same scan classifies a `tasks:` field whose active-profile
+  // type does not declare it as an explicit gate finding before any Backlog IO.
   const conceptBundleResults = bundles.map((bundle) => tryConceptsForBundle(bundle, profile));
+  const multi = bundles.length > 1;
+  const scanFindings = conceptBundleResults.flatMap((result) =>
+    result.findings.map((finding) => prefixFinding(finding, result.bundle.label, multi)),
+  );
+  const baseReport = mergeFindings(linkReport, scanFindings);
   const needsReconciliation = conceptBundleResults.some(
-    (result) => result.error !== null || linkedConcepts(result.concepts).length > 0,
+    (result) => result.error !== null || taskBlockConcepts(result.concepts).length > 0,
   );
 
   if (!needsReconciliation && !parsed.external) {
@@ -207,7 +216,6 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
   }
 
   const adapter = needsReconciliation ? (options.adapter ?? defaultAdapter(options.root)) : undefined;
-  const multi = bundles.length > 1;
   // `driftPromise` never REJECTS — a per-root failure (a scan failure, a missing linked task, a
   // malformed managed block, a bad status-flow config) is carried as `DriftResult.error` instead, so
   // whatever DID resolve (this root's or another root's drift findings, and the already-computed
@@ -278,16 +286,22 @@ type LivenessResult =
   | { readonly ok: true; readonly findings: CheckFinding[] }
   | { readonly ok: false; readonly err: unknown };
 
-/** One bundle root's concept-scan outcome: the `tasks:`-linked concepts it found, or its own scan failure. */
+/** One bundle root's concept-scan outcome: reconcilable concepts, validation/capability findings, and any scan failure. */
 interface ConceptBundleResult {
   readonly bundle: Bundle;
   readonly concepts: Concept[];
+  readonly findings: CheckFinding[];
   readonly error: unknown | null;
 }
 
 /**
- * Best-effort, per-bundle-root parse of already-read files into `tasks:`-linked {@link Concept}s,
- * for deciding reconciliation eligibility. NEVER throws — a scan failure is carried as `error`
+ * Best-effort, per-bundle-root scan of already-read files for unknown active-profile types and parse
+ * of profile-supported, `tasks:`-declaring {@link Concept}s for reconciliation. An unknown type
+ * becomes an `unknown-type` warning, matching `lore validate`'s producer-extension diagnostic and
+ * therefore gating only under `--strict`. A parsed concept whose type does not declare `tasks`
+ * becomes an `unsupported-task-coupling` finding instead, so the gate reports it without attempting
+ * Backlog resolution or managed-block regeneration. NEVER throws — a scan failure is carried as
+ * `error`
  * instead, isolated from every OTHER bundle root's scan and from the already-computed `baseReport`,
  * which must survive regardless of whether any one root's scan fails ({@link computeDriftFindings}
  * folds this the same way it folds an async per-root failure). Isolated PER FILE too, the same way:
@@ -297,11 +311,11 @@ interface ConceptBundleResult {
  * concept for that root, not just the one that actually failed — LORE-27 round 10).
  *
  * Each file's frontmatter is first PEEKED via the cheap, non-validating {@link tryReadFrontmatter}
- * (no Zod schema check) — a file with no `tasks:` link (the vast majority of any bundle: ADRs,
- * specs, index/log) is never reconciliation-relevant regardless of whether its frontmatter would
- * otherwise validate, so it is skipped WITHOUT paying for full parse+validation at all.
+ * (no Zod schema check). Its `type` is compared with the effective profile used by validation; the
+ * structural root index keeps the built-in profile that wrote it. A file with no `tasks:` link (the
+ * vast majority of any bundle: ADRs, specs, index/log) then skips full parse+validation.
  *
- * Only a file that DOES declare `tasks:` is fully parsed+validated ({@link parseConcept}, which
+ * Only a file that DOES declare `tasks:` (including an empty list) is fully parsed+validated ({@link parseConcept}, which
  * throws loud on a malformed mapping) — `lore sync` would refuse to touch that exact file too, so
  * silently treating it as un-linked would be a real false-negative against `check`'s own drift gate,
  * the one case where `check` really would otherwise disagree with what `sync` does. An
@@ -316,21 +330,48 @@ interface ConceptBundleResult {
  */
 function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleResult {
   const concepts: Concept[] = [];
+  const findings: CheckFinding[] = [];
   let error: unknown | null = null;
   for (const file of bundle.files) {
     try {
       const raw = tryReadFrontmatter(file.path, file.raw);
-      if (raw === null || toRefList(raw.tasks).length === 0) {
+      if (raw === null) {
         continue;
       }
-      concepts.push(parseConcept(file.path, file.raw, { profile }));
+      const judgingProfile = effectiveProfileFor(file.path, "index.md", profile);
+      const authoredType = typeof raw.type === "string" ? raw.type.trim() : "";
+      if (authoredType !== "" && !judgingProfile.types.has(canonicalType(authoredType, judgingProfile))) {
+        findings.push({
+          severity: "warning",
+          rule: "unknown-type",
+          file: file.path,
+          message: `unknown type ${JSON.stringify(authoredType)} in ${file.path}; validated on \`type\` only`,
+        });
+      }
+      if (!Object.hasOwn(raw, "tasks")) {
+        continue;
+      }
+      const concept = parseConcept(file.path, file.raw, { profile });
+      if (RESERVED_STEMS.has(posix.basename(concept.id))) {
+        continue;
+      }
+      if (profileTypeDeclaresField(concept.type, "tasks", profile)) {
+        concepts.push(concept);
+      } else {
+        findings.push({
+          severity: "error",
+          rule: "unsupported-task-coupling",
+          file: file.path,
+          message: `type ${JSON.stringify(concept.type)} does not declare the \`tasks\` field carried by this concept`,
+        });
+      }
     } catch (err) {
       if (error === null) {
         error = err; // first, in file order; keep scanning so later files' concepts still count too
       }
     }
   }
-  return { bundle, concepts, error };
+  return { bundle, concepts, findings, error };
 }
 
 /** The gate's exit code from a {@link CheckReport}: `6` on any error, or any warning under `--strict`. */
@@ -443,7 +484,7 @@ async function resolveSharedReconciliation(
 }
 
 /**
- * The status/managed-block drift findings for every `tasks:`-linked concept across every bundle
+ * The status/managed-block drift findings for every `tasks:`-declaring concept across every bundle
  * root, reusing the same `commands/reconcile-shared.ts` gather `lore sync` writes with. Every root
  * is resolved concurrently (`Promise.allSettled`, mirroring how the raw-file passes already treat
  * roots as independent), sharing one `adapter` instance so its capability probe runs at most once

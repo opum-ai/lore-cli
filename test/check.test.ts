@@ -831,6 +831,44 @@ describe("runCheck — exit codes and discovery", () => {
     expect(runCheck(opts(["--strict"]))).toBe(EXIT_CODES.validation);
   });
 
+  test("LCLI-306: an unknown concept type is advisory normally and gates under --strict", () => {
+    mkdirSync(join(root, "docs", "badtype"), { recursive: true });
+    writeFileSync(join(root, "docs", "badtype", "x.md"), "---\ntype: badtype\ncustom: kept\n---\n# X\n");
+
+    const ordinary = opts([], JSON_CTX);
+    expect(runCheck(ordinary)).toBe(EXIT_OK);
+    const ordinaryReport = JSON.parse((ordinary.stdout as ReturnType<typeof capture>).text());
+    expect(ordinaryReport.data).toMatchObject({ errorCount: 0, warningCount: 1, complete: true });
+    expect(ordinaryReport.data.findings).toContainEqual({
+      severity: "warning",
+      rule: "unknown-type",
+      file: "badtype/x.md",
+      message: 'unknown type "badtype" in badtype/x.md; validated on `type` only',
+    });
+
+    const strict = opts(["--strict"]);
+    expect(runCheck(strict)).toBe(EXIT_CODES.validation);
+    expect((strict.stdout as ReturnType<typeof capture>).text()).toContain("[unknown-type]");
+  });
+
+  test("LCLI-306: active-profile types are known while the structural root index keeps its built-in profile", () => {
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      `[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\ntitle = {}\nsummary = {}\ntimestamp = { kind = "datetime" }\n\n[[types]]\nname = "Widget"\n`,
+    );
+    rmSync(join(root, "docs", "reference", "orders.md"));
+    writeFileSync(join(root, "docs", "index.md"), ref("Docs", "Root."));
+    mkdirSync(join(root, "docs", "widgets"), { recursive: true });
+    writeFileSync(join(root, "docs", "widgets", "x.md"), "---\ntype: Widget\ntitle: X\n---\n# X\n");
+
+    const o = opts(["--strict"], JSON_CTX);
+    expect(runCheck(o)).toBe(EXIT_OK);
+    const report = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(report.data.warningCount).toBe(0);
+    expect(report.data.findings.some((finding: { rule: string }) => finding.rule === "unknown-type")).toBe(false);
+  });
+
   test("LORE-239 AC#1: inline formatting before [!type] in ordinary prose does not gate, even under --strict", () => {
     writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "ordinary **bold** [!note] prose"));
     expect(runCheck(opts(["--strict"]))).toBe(EXIT_OK);
@@ -1502,34 +1540,22 @@ describe("driftFindingsForBundle — docPath agrees with the fixable/isDocsRoot 
   });
 });
 
-describe("reconcileDriftFindings — newStatus: null never drifts either way (LORE-137 regression)", () => {
-  test("returns no findings for a stale managed block AND a disagreeing status once newStatus is null", () => {
-    const row: ManagedTaskRow = {
-      id: "LORE-1",
-      title: "Title for LORE-1",
-      status: "Done",
-      file: "backlog/tasks/lore-1 - title.md",
-    };
-    // The block is the storyDoc default (empty) -- `regenerateTaskBlock` would rewrite it from
-    // `rows` below, which is exactly the condition that otherwise produces a managed-block-drift
-    // finding (see the "a stale managed block is a managed-block-drift error" test above). The
-    // persisted `currentStatus` also disagrees with what a real reconciliation would compute, so
-    // BOTH checks have something to fire on -- proving `newStatus === null` (the interface's own
-    // "the concept has no linked tasks -- never drift either way" contract) suppresses both, not
-    // just the status-drift half the pre-fix code already gated correctly.
-    const original = storyDoc("X", ["lore-1"], "todo");
+describe("reconcileDriftFindings — newStatus: null checks only managed-block drift", () => {
+  test("reports a stale zero-task block without inventing status drift", () => {
+    const original = storyDoc("X", [], "todo");
 
     const findings = reconcileDriftFindings({
       path: "stories/x.md",
       currentStatus: "todo",
       newStatus: null,
       original,
-      rows: [row],
+      rows: [],
       docPath: "docs/stories/x.md",
       fixable: true,
     });
 
-    expect(findings).toEqual([]);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.rule).toBe("managed-block-drift");
   });
 });
 
@@ -1633,6 +1659,24 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     expect(parsed.data.findings[0].rule).toBe("managed-block-drift");
   });
 
+  test("an empty tasks: list with a stale final-task row is managed-block drift without Backlog IO", async () => {
+    const stale = regenerateTaskBlock(storyDoc("X", [], "done"), [doneRow], {
+      docPath: "docs/stories/x.md",
+    });
+    writeDoc("stories/x.md", stale);
+    const adapter = fakeAdapter([], { poisonViews: ["lore-1"] });
+
+    const o = opts(["--strict"], adapter);
+    const code = await runCheck(o);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+
+    expect(code).toBe(EXIT_CODES.validation);
+    expect(parsed.data.findings).toHaveLength(1);
+    expect(parsed.data.findings[0].rule).toBe("managed-block-drift");
+    expect(parsed.data.findings[0].file).toBe("stories/x.md");
+    expect(adapter.calls).toEqual([]);
+  });
+
   test("both status and managed-block drift are reported together", async () => {
     writeDoc("stories/x.md", storyDoc("X", ["lore-1"], "todo")); // stale status AND empty (stale) block
     const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
@@ -1723,6 +1767,35 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     const result = runCheck(opts([], poison));
     expect(typeof result).toBe("number"); // stays fully synchronous: no reconciliation needed at all
     expect(result).toBe(EXIT_OK);
+  });
+
+  test("an unsupported tasks field is an explicit gate finding without Backlog IO (LCLI-304)", () => {
+    writeDoc("runbooks/recovery.md", "---\ntype: Runbook\ntitle: Recovery\ntasks:\n  - lore-1\n---\n# Recovery\n");
+    const poison = new Proxy(
+      {},
+      {
+        get(): never {
+          throw new Error("no adapter method should be called for unsupported task coupling");
+        },
+      },
+    ) as BacklogAdapter;
+
+    const o = opts(["--strict"], poison);
+    const code = runCheck(o);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+
+    expect(code).toBe(EXIT_CODES.validation);
+    expect(parsed.data.complete).toBe(true);
+    expect(parsed.data.errorCount).toBe(1);
+    expect(parsed.data.warningCount).toBe(0);
+    expect(parsed.data.findings).toEqual([
+      {
+        severity: "error",
+        rule: "unsupported-task-coupling",
+        file: "runbooks/recovery.md",
+        message: 'type "Runbook" does not declare the `tasks` field carried by this concept',
+      },
+    ]);
   });
 
   test("a missing linked task rejects with not_found (exit 3), never a soft finding", async () => {
@@ -2006,7 +2079,7 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     mkdirSync(join(root, ".lore"), { recursive: true });
     writeFileSync(
       join(root, ".lore/profile.toml"),
-      `[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "Story"\nfields = { owner = { required = true } }\n`,
+      `[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "Story"\nfields = { owner = { required = true }, tasks = { kind = "list" } }\n`,
     );
     writeDoc(
       "stories/x.md",
@@ -2023,7 +2096,7 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     mkdirSync(join(root, ".lore"), { recursive: true });
     writeFileSync(
       join(root, ".lore/profile.toml"),
-      `[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "Story"\nfields = { owner = { required = true } }\n`,
+      `[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "Story"\nfields = { owner = { required = true }, tasks = { kind = "list" } }\n`,
     );
     const doc = regenerateTaskBlock(
       "---\ntype: Story\ntitle: X\nowner: alice\nstatus: done\ntasks:\n  - lore-1\n---\n# X\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n",

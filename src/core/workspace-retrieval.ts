@@ -15,7 +15,7 @@ import type { RetrievalGraph, RetrievalPolicy } from "./retrieval";
 import { buildTraversalSnapshot, type TraversalSnapshot, type TraversalSourceRecords } from "./traversal";
 import type { WorkspaceRecordProvenance, WorkspaceResultScope } from "./workspace-contract";
 import type { WorkspaceProjectedLink, WorkspaceProjection } from "./workspace-projection";
-import { selectWorkspaceProjection } from "./workspace-projection";
+import { assertWorkspaceProjectionSelection, selectWorkspaceProjection } from "./workspace-projection";
 import { type LoadWorkspaceProjectionOptions, loadWorkspaceProjection } from "./workspace-source";
 
 export interface WorkspaceRetrievalSelection {
@@ -61,6 +61,10 @@ export async function loadWorkspaceRetrievalGraph(options: LoadWorkspaceRetrieva
       warnings: attemptWarnings,
       ...options.sourceOptions,
     });
+    // Explicit selection is a validation boundary, not a backend concern. Check
+    // it before native reconciliation so a loader failure cannot mask the stable
+    // workspace validation error with an uncaught addon exception.
+    assertWorkspaceProjectionSelection(loaded.projection, options.selection.memberIds);
     latest = loaded.projection;
     latestWarnings = attemptWarnings;
     return loaded.projection.ladybugSource;

@@ -64,15 +64,17 @@ export type CheckSeverity = Severity;
 
 /**
  * Which check produced a {@link CheckFinding}. `broken-link`/`broken-anchor` and
- * `status-drift`/`managed-block-drift` are all error-tier gate findings; `portability` is the
- * warn-tier lint; `external-link` is the opt-in, non-deterministic liveness advisory
- * (`--external`) that never fails the gate (ADR-0007).
+ * `status-drift`/`managed-block-drift`/`unsupported-task-coupling` are all error-tier gate
+ * findings; `unknown-type`/`portability` are warn-tier lints; `external-link` is the opt-in,
+ * non-deterministic liveness advisory (`--external`) that never fails the gate (ADR-0007).
  */
 export type CheckRule =
   | "broken-link"
   | "broken-anchor"
   | "status-drift"
   | "managed-block-drift"
+  | "unsupported-task-coupling"
+  | "unknown-type"
   | "portability"
   | "external-link";
 
@@ -104,7 +106,7 @@ export interface CheckReport {
    * final `check.report` should not assume this counts only link/anchor problems.
    */
   readonly errorCount: number;
-  /** Total warning-severity findings (portability) — advisory. */
+  /** Total deterministic warning-severity findings (unknown type and portability) — advisory. */
   readonly warningCount: number;
   /** Number of files examined. */
   readonly fileCount: number;
@@ -348,7 +350,7 @@ export interface ReconcileDriftInput {
   readonly path: string;
   /** The concept's persisted `frontmatter.status`, as currently on disk. */
   readonly currentStatus: unknown;
-  /** The recomputed status (`core/reconcile.ts`'s `reconcileStatus`); `null` only if the caller passes a concept with no linked tasks (never drift either way). */
+  /** The recomputed status (`core/reconcile.ts`'s `reconcileStatus`); `null` when the concept has no linked tasks, so only managed-block drift applies. */
   readonly newStatus: ReconciledStatus | null;
   /** The concept's full raw file bytes, as currently on disk (LF-normalized). */
   readonly original: string;
@@ -383,17 +385,9 @@ export interface ReconcileDriftInput {
  *   finding for it, the read-time mirror of `sync`'s "never writes a partial block."
  */
 export function reconcileDriftFindings(input: ReconcileDriftInput): CheckFinding[] {
-  if (input.newStatus === null) {
-    // No linked tasks to roll up or render a managed block from — the documented "never drift
-    // either way" contract (this interface's own `newStatus` doc comment). Neither drift check
-    // below is meaningful without a recomputed status, so both are skipped together rather than
-    // letting the managed-block regeneration run unconditionally on a concept this function has
-    // nothing to reconcile.
-    return [];
-  }
   const fixable = input.fixable;
   const findings: CheckFinding[] = [];
-  if (input.newStatus !== input.currentStatus) {
+  if (input.newStatus !== null && input.newStatus !== input.currentStatus) {
     // `status:` is schema-nullish (profile.ts's optional fields accept both an OMITTED key --
     // `undefined` -- and an explicit empty/`null` scalar), and `JSON.stringify` renders each
     // inconsistently: `undefined` becomes the bare, unquoted word "undefined" (not a string at all),
