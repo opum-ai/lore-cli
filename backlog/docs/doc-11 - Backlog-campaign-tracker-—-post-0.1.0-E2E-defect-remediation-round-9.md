@@ -3,7 +3,7 @@ id: doc-11
 title: Backlog campaign tracker — post-0.1.0 E2E defect remediation (round 9)
 type: other
 created_date: '2026-08-04 12:54'
-updated_date: '2026-08-04 15:58'
+updated_date: '2026-08-04 16:59'
 ---
 # Backlog campaign tracker — post-0.1.0 E2E defect remediation (round 9)
 
@@ -17,16 +17,16 @@ updated_date: '2026-08-04 15:58'
 ## Frontier
 Informational snapshot only; never a promised next wave.
 
-- Ready now: LCLI-303, LCLI-305, LCLI-304, LCLI-306, and LCLI-307 are To Do with no formal dependencies; repository cleanliness and final branch cleanup must be confirmed before any later dispatch.
+- Ready now: LCLI-305, LCLI-304, LCLI-306, and LCLI-307 are To Do with no formal dependencies; repository cleanliness must be confirmed before dispatch.
 - In flight: none.
-- Resolved in this campaign: LCLI-302.
-- Safest next candidate after a fresh restore: LCLI-303 by confirmed order, subject to live git, task, tool, and conflict checks. No later wave is promised.
+- Resolved in this campaign: LCLI-302 and LCLI-303.
+- Safest next candidate after a fresh restore: LCLI-305 by confirmed order, subject to live git, task, tool, and conflict checks. No later wave is promised.
 
 ## Queue
 | Order | Task | Cluster | Formal dependencies | State | Wave | Likely files | Note |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | LCLI-302 | Ladybug native packaging / release | none | Done | 1 + delivery repair | Release/retrieval files plus `.github/workflows/ci.yml`, `test/ci-workflow.test.ts`, `test/ladybug-concurrency.test.ts`, and `test/workspace-retrieval.test.ts` | Source commits `973075a9a3544458c2d24d91ea1d15aa5f5bd935` and `1c75c8fec8ab1536d135509a9fea4430eb2bc500` passed local and protected CI evidence. PR #303 merged to `dev` as `463305e05382057977103f6918e960c3df4423ef`. |
-| 2 | LCLI-303 | Workspace validation / graph runtime | none | Ready | — | `src/core/workspace-projection.ts`; graph command/runtime seams; `test/workspace-retrieval.test.ts`; `test/cli.test.ts` | Must return validation exit 6 whether native Ladybug is active or falling back. Revalidate overlap against the delivered retrieval changes before dispatch. |
+| 2 | LCLI-303 | Workspace validation / graph runtime | none | Done | 2 | `src/core/workspace-projection.ts`; `src/core/workspace-retrieval.ts`; `test/workspace-retrieval.test.ts` | Backend-independent selection validation delivered locally as `463a419ba46d4edec480da98640a8107b47e2dc8`. Focused 12/12 and full 2,438/2,438 tests, typecheck, lint, diff hygiene, and adversarial self-review passed; both criteria are checked. |
 | 3 | LCLI-305 | Sync / managed task block drift | none | Ready | — | `src/commands/sync.ts`; `src/core/check.ts`; `src/core/managed-block.ts`; `test/sync.test.ts`; `test/check.test.ts` | Focused 1+ → 0 Story task transition. Establish the narrow managed-block invariant before the broader link repair. |
 | 4 | LCLI-304 | Link / unlink / schema capability | none | Ready | — | `src/commands/link.ts`; `src/commands/sync.ts`; `src/core/check.ts`; schema and managed-block seams; `test/link.test.ts`; `test/sync.test.ts`; `test/check.test.ts` | Broader task-coupling validation and reversibility. Conflicts with LCLI-305 and LCLI-306 around sync/check behavior. |
 | 5 | LCLI-306 | New / strict validation parity | none | Ready | — | `src/core/check.ts`; `src/core/schema.ts`; `src/core/template.ts`; new/check command seams; `test/check.test.ts`; `test/template.test.ts` | Low-priority CI-gate parity defect; serialize with the shared check cluster. |
@@ -35,6 +35,7 @@ Informational snapshot only; never a promised next wave.
 ## Resolved
 | Task | Date/wave | Evidence and disposition |
 | --- | --- | --- |
+| LCLI-303 | 2026-08-04 / wave 2 | Explicit repository selection now validates before native Ladybug reconciliation, preserving exit 6 / `error_type: validation` and redaction across graph/query/context/path/impact in reference, proven fallback, and active indexed modes. Focused 12/12 with 118 expectations, full 2,438/2,438 with 8,236 expectations, typecheck, lint, diff hygiene, and adversarial self-review passed. Delivered locally as `463a419ba46d4edec480da98640a8107b47e2dc8`; both criteria checked and task Done. No remote mutation occurred. |
 | LCLI-302 | 2026-08-04 / wave 1 + delivery repair | Real macOS ARM64 package qualification passed compile, pack, install, forced-indexed launcher/standalone execution, generation creation, and cleanup. Local verification passed 2,436 tests, typecheck, lint, actionlint, and diff hygiene. PR #303 head `1c75c8fec8ab1536d135509a9fea4430eb2bc500` passed all eight GitHub jobs in run 30926258495, including Ubuntu, Windows, and Docker E2E, then merged to `dev` as `463305e05382057977103f6918e960c3df4423ef`. Task criteria remain checked and status is Done. |
 
 ## Not queued — blocked, deferred, or human decision required
@@ -51,3 +52,6 @@ Informational snapshot only; never a promised next wave.
 - 2026-08-04 — wave 1 settlement: the user authorized local delivery; proportionate final checks passed; source commit `973075a9a3544458c2d24d91ea1d15aa5f5bd935` delivered the exact eight-file implementation. All four acceptance criteria were checked, LCLI-302 moved to Done with its final summary, and the five remaining queue items were revalidated as To Do with no formal dependencies. No push, PR, merge, publication, or other remote mutation occurred.
 - 2026-08-04 — wave 1 delivery repair: direct push to protected `dev` was rejected because required checks must run on a PR, so the verified 37-commit set was published to `release/post-0.1.0-campaign-sync` and PR #303 opened. Ubuntu CI exposed a Bun 1.3.14 parallel isolated-runner `epoll_ctl` race plus fallback-advisory parity assertions; Windows exposed an unsupported-platform versus failed-native assertion mismatch. LCLI-302 was reopened without bypassing checks. The focused repair serializes only Ubuntu test files, preserves macOS concurrency, and makes advisory assertions platform-aware while retaining stdout parity and redaction. Focused 18/18 and full serialized 2,436/2,436 tests, typecheck, lint, actionlint, and diff hygiene pass locally; protected rerun remains required.
 - 2026-08-04 — wave 1 protected delivery settlement: repair commit `1c75c8fec8ab1536d135509a9fea4430eb2bc500` passed all eight PR #303 checks in run 30926258495: Ubuntu and Windows test matrices, Ladybug benchmark smoke, compile smoke, explorer browser qualification, MkDocs, Docusaurus, and Docker E2E. GitHub merged the exact head to protected `dev` as `463305e05382057977103f6918e960c3df4423ef`. LCLI-302 returned to Done with the CI and merge evidence; no later campaign task was dispatched.
+- 2026-08-04 — wave 2 dispatch: restore reconciled the active handover and doc-11 against clean `dev` at `8dc88bdddfdd142561eb2e1436264250789a7d48`, exact `origin/dev` parity, one worktree, and live task state. LCLI-303 is To Do with no dependencies and no overlap with dirty or in-flight work, so it entered the sequential wave; no later task or remote mutation is authorized.
+- 2026-08-04 — wave 2 verification hold: extracted backend-independent workspace selection validation and applied it before Ladybug reconciliation. All five affected commands return exit 6 / `error_type: validation` with empty stdout and no native-loader detail across reference, proven native-fallback, and active indexed scenarios; a valid indexed subset reuses the full-workspace generation. Focused 12/12, full 2,438/2,438, typecheck, lint, diff hygiene, and adversarial self-review pass. Both acceptance criteria are checked, but LCLI-303 remains In Progress because no local commit or remote delivery was authorized.
+- 2026-08-04 — wave 2 local delivery settlement: the user authorized local delivery. Proportionate pre-commit checks passed; source commit `463a419ba46d4edec480da98640a8107b47e2dc8` contains only the three verified source/test files. LCLI-303 received its final summary and moved to Done; four remaining tasks were revalidated To Do with no dependencies. No push or remote mutation occurred.
