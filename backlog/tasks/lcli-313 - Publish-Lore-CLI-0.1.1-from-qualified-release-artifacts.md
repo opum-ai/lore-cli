@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:04'
-updated_date: '2026-08-04 23:38'
+updated_date: '2026-08-04 23:56'
 labels:
   - release
   - publication
@@ -20,11 +20,14 @@ documentation:
   - docs/runbooks/release-publishing.md
 modified_files:
   - .github/actions/setup-bun/action.yml
+  - .github/workflows/ci.yml
   - .github/workflows/release.yml
   - benchmark/ladybug/package-build.ts
   - benchmark/ladybug/package-qualification.ts
   - benchmark/ladybug/file-capture-helper.cjs
   - bin/lore.cjs
+  - test/ci-workflow.test.ts
+  - test/ladybug-benchmark-fixture.test.ts
   - test/ladybug-package-qualification.test.ts
   - docs/reference/lore-cli-release-truth.md
   - docs/runbooks/release-publishing.md
@@ -71,4 +74,6 @@ Qualification repair implemented. The shared setup action now accepts a default-
 2026-08-04 qualification attempt 30958847529: prerequisites and all four Unix matching-host qualifications passed. Both Windows x64 and ARM64 again built, packed, and installed, then returned exit 0 with empty launcher stdout at the identical global-version assertion. Package assembly and publish remained skipped, nothing was published, and v0.1.1 was removed locally and remotely. The retained artifacts contain both Windows tarballs, confirming this is not an ARM64 or Ladybug build failure. Root cause is the published Node launcher passing redirected Windows handles directly to the compiled Bun child. The next repair keeps POSIX behavior unchanged, but on Windows gives the compiled executable Node-owned stdout/stderr pipes and streams them through the launcher without a spawnSync buffer limit. A Windows-only test now builds and invokes a real Bun executable through the exact published launcher; focused local tests pass 18/18 with one platform skip, plus Biome and diff hygiene.
 
 2026-08-04 qualification attempt 30960331046: exact tag target be96b7d4 passed metadata, Ladybug prerequisites, and all four Unix matching-host qualifications. Both Windows packages again built, packed, and installed, then failed the unchanged empty global-launcher version assertion; assembly and publish stayed skipped, nothing was published, and v0.1.1 was rolled back. Protected Windows CI had already passed the new real compiled-Bun launcher test twice, proving the repaired launcher works when Bun captures it directly. Release alone still routed it through file-capture-helper.cjs, where the launcher's streamed output was lost. The next repair deletes that obsolete helper and makes global/project launcher smoke use the same direct Bun-pipe capture path proven by Windows CI. This remains shared Windows harness behavior and is independent of the Windows ARM64 Ladybug reference-fallback policy.
+
+PR #318 CI run 30960919901 exposed an independent Windows host-speed defect after the direct launcher regression test passed: the 700k-row Ladybug fixture had a hard-coded 30s per-test timeout and exceeded it twice (37.6s, then 46.9s), so the workflow-level 45s allowance could not help. Raised only the Windows fixture timeout to 60s and aligned the Windows CI command timeout; Unix remains 30s. After updating the CI contract guard, the corrected timeout change passes focused tests 8/8 (72 assertions) and the full local suite 2452 pass, 1 Windows-only skip, 0 fail (8306 assertions), plus lint, typecheck, and diff hygiene.
 <!-- SECTION:NOTES:END -->
