@@ -26,8 +26,14 @@ copying mutable cross-repository contracts.
 | Lore-wide strategy, repository coordination, and Quest release ordering | `salient-data/lore-doc` | Link to the owner record; do not reproduce its mutable gate |
 | Product-family vocabulary, Opum SaaS, and commercial boundaries | `salient-data/opum-doc` | Consume the ownership map and audit; do not promote component plans into product policy |
 | Quest product and execution-graph semantics | `salient-data/quest-doc` | Link when Lore integration requires it; do not maintain a second Quest contract |
-| Quest CLI package, migration, implementation, and release | `salient-data/quest-cli` | Treat its evidence as external owner state |
+| Quest CLI package, migration, implementation, and release | `opum-ai/quest-cli` | Treat its evidence as external owner state; `@opum-ai/quest` is unpublished, so never describe Quest as installable |
+| Peer-to-owner routing, session addressing, and canonical GitHub owners | `salient-data/opum-doc` | Consult the routing record before answering a cross-repository question; do not maintain a second peer map |
+| Infrastructure, DNS, hosting, deployment targets, environments, and secrets layout | `jeremy-newhouse/saws` | Record only this repository's local obligations and link to the owner |
 | Historical Lore CLI task and campaign evidence | Live Backlog tasks plus tracked historical capsules in this repository | Preserve status and provenance, but remove executable old cursors |
+
+GitHub owners are not uniform across the estate, and both CLI repositories'
+former `salient-data` routes still redirect. A link that resolves is therefore
+not evidence that a citation names the current owner; verify the owner itself.
 
 ### Local lifecycle
 
@@ -43,6 +49,12 @@ copying mutable cross-repository contracts.
   provenance capsules. They are not instructions, queues, or authorization.
 
 The cross-product control record is the
-[documentation authority audit](https://github.com/salient-data/opum-doc/blob/dev/docs/reference/cross-product-documentation-authority-audit.md).
-If that audit conflicts with a current owner-local contract, the owner-local
-contract controls and the audit should be corrected.
+[documentation authority audit](https://github.com/salient-data/opum-doc/blob/dev/docs/reference/cross-product-documentation-authority-audit.md),
+and the routing record is
+[fleet peer routing and session invocation](https://github.com/salient-data/opum-doc/blob/dev/docs/reference/fleet-peer-routing-and-session-invocation.md).
+Both live in a private repository; confirm read access when consulting them.
+
+A conflict between this repository and an owner record is drift, and drift is a
+defect. This repository is authoritative for what Lore CLI currently ships; the
+owner repository remains the normative owner of what the contract is. Report the
+divergence to both owners rather than silently promoting either.

@@ -92,6 +92,7 @@
 - 2026-08-04T00:43:21-05:00 0b5f50853e1b64aefd5e7e48f80928b1e272a9e0 docs: sync ARM64 release history
 - 2026-08-04T01:30:13-05:00 744c7a4d216b03a7b91b63a7328cb2d8a66a9172 docs: sync LCLI-298 completion
 - 2026-08-04T01:50:02-05:00 187ed8afe6622d0016586533ceea450e20bc15a1 docs: sync LCLI-299 completion
+- 2026-08-04T07:20:16-05:00 18c04690279f0cb4f60939ebfc3a1b485092d4ae docs: sync LCLI-300 completion
 
 ## docs/.obsidian
 
@@ -331,3 +332,4 @@
 - 2026-08-04T00:40:24-05:00 10ecee23dce84d23ee9803b4ab1515465666cf41 feat: add ARM64 Windows and script-free installs
 - 2026-08-04T01:30:13-05:00 744c7a4d216b03a7b91b63a7328cb2d8a66a9172 docs: sync LCLI-298 completion
 - 2026-08-04T01:50:02-05:00 187ed8afe6622d0016586533ceea450e20bc15a1 docs: sync LCLI-299 completion
+- 2026-08-04T07:20:16-05:00 18c04690279f0cb4f60939ebfc3a1b485092d4ae docs: sync LCLI-300 completion

@@ -5,7 +5,7 @@ import { join } from "node:path";
 const ROOT = join(import.meta.dir, "..");
 const CANONICAL_SLUG = "opum-ai/lore-cli";
 const CANONICAL_REPOSITORY_URL = `git+https://github.com/${CANONICAL_SLUG}.git`;
-const STALE_OPERATIONAL_SLUGS = ["jeremy-newhouse/lore", "salient-data/lore-cli"];
+const STALE_OPERATIONAL_SLUGS = ["jeremy-newhouse/lore", "salient-data/lore-cli", "salient-data/quest-cli"];
 const CANONICAL_NPM_PACKAGE = "@opum-ai/lore";
 const STALE_NPM_PACKAGE = "@salient-data/lore";
 const CANONICAL_NPM_TARBALL_PREFIX = "opum-ai-lore";
@@ -13,6 +13,7 @@ const STALE_NPM_TARBALL_PREFIX = "salient-data-lore";
 
 const PLATFORM_PACKAGES = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"];
 const OPERATIONAL_DOCUMENTS = [
+  "CLAUDE.md",
   "README.md",
   "CHANGELOG.md",
   "docs/index.md",
