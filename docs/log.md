@@ -88,6 +88,7 @@
 - 2026-08-03T20:31:09-05:00 307a3f428d36dd2669f38a354425fc699a0c24f7 chore: prepare 0.1.0 release
 - 2026-08-03T21:59:30-05:00 65abf9549a80da275de8d9b016467cf97421ae10 docs: record Lore CLI 0.1.0 release
 - 2026-08-03T22:17:25-05:00 7069c7fd589ecfa85775fbe8de2ef247cce7c8f3 docs: sync corrected campaign tracker
+- 2026-08-04T00:40:24-05:00 10ecee23dce84d23ee9803b4ab1515465666cf41 feat: add ARM64 Windows and script-free installs
 
 ## docs/.obsidian
 
@@ -214,6 +215,7 @@
 - 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
 - 2026-08-03T20:31:09-05:00 307a3f428d36dd2669f38a354425fc699a0c24f7 chore: prepare 0.1.0 release
 - 2026-08-03T21:59:30-05:00 65abf9549a80da275de8d9b016467cf97421ae10 docs: record Lore CLI 0.1.0 release
+- 2026-08-04T00:40:24-05:00 10ecee23dce84d23ee9803b4ab1515465666cf41 feat: add ARM64 Windows and script-free installs
 
 ## docs/runbooks
 
@@ -280,6 +282,7 @@
 - 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
 - 2026-08-03T20:31:09-05:00 307a3f428d36dd2669f38a354425fc699a0c24f7 chore: prepare 0.1.0 release
 - 2026-08-03T21:59:30-05:00 65abf9549a80da275de8d9b016467cf97421ae10 docs: record Lore CLI 0.1.0 release
+- 2026-08-04T00:40:24-05:00 10ecee23dce84d23ee9803b4ab1515465666cf41 feat: add ARM64 Windows and script-free installs
 
 ## docs/specs
 
@@ -322,3 +325,4 @@
 - 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
 - 2026-08-03T20:31:09-05:00 307a3f428d36dd2669f38a354425fc699a0c24f7 chore: prepare 0.1.0 release
 - 2026-08-03T21:59:30-05:00 65abf9549a80da275de8d9b016467cf97421ae10 docs: record Lore CLI 0.1.0 release
+- 2026-08-04T00:40:24-05:00 10ecee23dce84d23ee9803b4ab1515465666cf41 feat: add ARM64 Windows and script-free installs
