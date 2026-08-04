@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:04'
-updated_date: '2026-08-04 22:09'
+updated_date: '2026-08-04 22:45'
 labels:
   - release
   - publication
@@ -23,6 +23,7 @@ modified_files:
   - .github/workflows/release.yml
   - benchmark/ladybug/package-build.ts
   - benchmark/ladybug/package-qualification.ts
+  - benchmark/ladybug/file-capture-helper.cjs
   - test/ladybug-package-qualification.test.ts
   - docs/reference/lore-cli-release-truth.md
   - docs/runbooks/release-publishing.md
@@ -63,4 +64,6 @@ Release run 30950940227 used exact tag target 58537a71 with publish=false. Metad
 Qualification repair implemented. The shared setup action now accepts a default-off ignore-scripts input used only by the Windows ARM64 release matrix entry, preserving frozen dependency metadata without invoking unsupported Ladybug source compilation. A dedicated Bun build helper uses a Windows-only resolver plugin to embed a reference-only @ladybugdb/core module instead of leaving an unresolved external import; non-Windows targets retain the native addon build. Verification passed: focused release suites 28/28 with 223 assertions; full suite 2451/2451 with 8304 assertions; lint across 187 files; typecheck; actionlint; build and dist/lore --version 0.1.1; native macOS package helper execution; 99 MB Windows x64 cross-compile; Biome and diff hygiene. Adversarial self-review confirmed the script skip is scoped only to the unsupported host, native platforms remain unchanged, and the published Windows binaries retain explicit reference-fallback behavior without runtime dependencies.
 
 2026-08-04 qualification attempt 30954518410: five native hosts passed; win32-arm64 built, packed, and installed successfully but the Bun test harness lost stdout across the Node launcher nested stdio-inherit boundary, reporting no version after a zero exit. Packaging and publish jobs did not run; remote/local v0.1.1 tags were rolled back. Repair branch release/0.1.1-win-arm-capture uses disk-backed inherited-output capture for all launcher smoke commands. Local evidence: focused 12/12, full 2452/2452, lint/typecheck, and complete darwin-arm64 package qualification all pass.
+
+2026-08-04 qualification attempt 30956752582: all prerequisites and four Unix native hosts passed. Both Windows hosts built, packed, and installed, then failed identically because the qualification harness captured no version from the Node launcher; package and publish jobs did not run and v0.1.1 was rolled back locally and remotely. This proves the blocker is shared Windows stdio inheritance, not the Windows ARM64 build or its deliberate Ladybug reference fallback. The next repair makes Node own file-backed stdout/stderr handles before it spawns the launcher, avoiding Bun-created Windows handles. Local verification passes: focused 12/12, lint, typecheck, full 2452/2452 with 8306 assertions, diff hygiene, and complete darwin-arm64 build/pack/global install/project install/launcher parity/native probe/uninstall cleanup qualification.
 <!-- SECTION:NOTES:END -->
