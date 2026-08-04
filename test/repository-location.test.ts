@@ -119,7 +119,12 @@ describe("canonical repository location", () => {
     }
   });
 
-  test("no documentation file anywhere cites a former-org CLI route", () => {
+  // Scope: markdown on disk, which is NARROWER than the repository. The
+  // repository-wide guarantee is `no tracked file anywhere carries a superseded
+  // package or repository identity` below; this one adds only the ability to see
+  // an unstaged file, which `git ls-files` cannot. Do not read a pass here as
+  // repository-wide coverage.
+  test("no markdown file on disk cites a former-org CLI route", () => {
     const documents = everyDocument();
     // Guard the guard: a scan that silently found nothing to read would pass vacuously.
     expect(documents.length).toBeGreaterThan(20);

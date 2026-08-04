@@ -143,8 +143,13 @@ stays true permanently; write what was observed and when.
 reader satisfy this sentence literally and still violate the rule it came from?*
 "Makes no installability claim" is a fact, is satisfiable, and still permits a
 greyed-out install button. If the answer is yes, write the imperative instead —
-name the actions that are forbidden, not just the belief that is wrong. Four
-loophole shapes have shown up here, and each is worth checking by name:
+name the actions that are forbidden, not just the belief that is wrong.
+
+**That test is the rule. The list below is not.** These are shapes already found
+in this file — a record, not a checklist. It was written naming four shapes and
+two more arrived the same day, which is the point: *finding none of them is not a
+clear*. Run the test against the sentence in front of you; use the list only to
+recognize a shape faster.
 
 - **An adverb carrying the prohibition.** "Report it rather than *silently*
   promoting either" forbids the concealment, not the promotion, and is satisfied
@@ -158,16 +163,31 @@ loophole shapes have shown up here, and each is worth checking by name:
   building the thing.
 - **A gate that enumerates by hand.** A curated file list is satisfiable while
   the rule it enforces is violated, and a green gate reads as proof — the most
-  confident possible false clear.
+  confident possible false clear. A directory-scoped scan is the same shape in
+  disguise: `docs/`-only is a hand-scoped list wearing an enumeration costume.
+- **A gate reporting the wrong exit code.** `tool | tail -2; echo $?` reports
+  `tail`'s status, so a failing tool reads as a pass and looks identical to a
+  real one. Take the code without a pipe — `tool >/dev/null 2>&1; echo $?` — and
+  do not cite an exit code obtained any other way.
+- **Treating the fix as exempt.** Closing a loophole is an authoring event, so
+  the sentence written to close one is subject to this same test — the shape
+  tends to reappear inside its own remediation. Two further consequences: a
+  full-set replacement **re-authors every element**, including the ones the edit
+  was not about, so re-read what you carried across verbatim; and fixing one
+  instance of a shape is not fixing the shape — find its siblings.
 
 **Apply the test to gates before prose.** A defective sentence misleads a reader;
 a defective gate issues a certificate. A gate here must **enumerate** rather than
-list — scan everything matching the pattern, never a curated set; **assert
-non-vacuity**, so an empty or mis-globbed run fails instead of passing;
-**justify each exemption individually and pin the exemption set**, so widening it
-is a visible failure rather than a silent one; and **be proven by a negative
-control** — a deliberate violation that makes the gate fail *and* name the
-offending path. A gate never observed failing is not known to work.
+list — scan everything matching the pattern, never a curated set, and say so when
+its scope is narrower than the repository so nobody reads it as the whole
+guarantee; **assert non-vacuity**, so an empty or mis-globbed run fails instead of
+passing; **justify each exemption individually and pin the exemption set**, so
+widening it is a visible failure rather than a silent one; **report a real exit
+code**, taken without a pipe; and **be proven by a negative control** — a
+deliberate violation that makes the gate fail *and* name the offending path. A
+gate never observed failing is not known to work. That last step costs about a
+minute: `lore check` was proven here by adding a Reference with a dangling link,
+confirming exit 6 naming both files, and removing it.
 
 **Do not sweep with grep alone.** These shapes are semantic, so a verbatim search
 misses them by construction — and it also misses literal matches that wrap across
