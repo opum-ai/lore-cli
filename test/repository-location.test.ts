@@ -1,11 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 
 const ROOT = join(import.meta.dir, "..");
 const CANONICAL_SLUG = "opum-ai/lore-cli";
 const CANONICAL_REPOSITORY_URL = `git+https://github.com/${CANONICAL_SLUG}.git`;
 const STALE_OPERATIONAL_SLUGS = ["jeremy-newhouse/lore", "salient-data/lore-cli", "salient-data/quest-cli"];
+
+/**
+ * Slugs left behind by the 2026-08 move of both CLI repositories to `opum-ai`.
+ * The former routes still redirect and answer 200, so a stale citation looks
+ * healthy to any existence check; only a literal scan catches it. These carry no
+ * decision-time provenance value — unlike `jeremy-newhouse/lore`, which ADR-0001
+ * legitimately records — so they must appear in no documentation file at all.
+ */
+const ORG_MOVE_STALE_SLUGS = ["salient-data/lore-cli", "salient-data/quest-cli"];
 const CANONICAL_NPM_PACKAGE = "@opum-ai/lore";
 const STALE_NPM_PACKAGE = "@salient-data/lore";
 const CANONICAL_NPM_TARBALL_PREFIX = "opum-ai-lore";
@@ -47,6 +56,23 @@ function text(path: string): string {
   return readFileSync(join(ROOT, path), "utf8");
 }
 
+/** Every tracked markdown document: the whole `docs/` bundle plus root-level markdown. */
+function everyDocument(): string[] {
+  const roots = [join(ROOT, "docs")];
+  const found = readdirSync(ROOT, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+    .map((entry) => entry.name);
+
+  for (const dir of roots) {
+    for (const entry of readdirSync(dir, { recursive: true, withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+      found.push(relative(ROOT, join(entry.parentPath, entry.name)));
+    }
+  }
+
+  return found.sort();
+}
+
 describe("canonical repository location", () => {
   test("every release manifest uses the exact canonical GitHub repository URL", () => {
     const paths = ["package.json", ...PLATFORM_PACKAGES.map((name) => `npm/${name}/package.json`)];
@@ -63,6 +89,20 @@ describe("canonical repository location", () => {
       expect(body).toContain(CANONICAL_SLUG);
       for (const stale of STALE_OPERATIONAL_SLUGS) expect(body).not.toContain(stale);
     }
+  });
+
+  test("no documentation file anywhere cites a former-org CLI route", () => {
+    const documents = everyDocument();
+    // Guard the guard: a scan that silently found nothing to read would pass vacuously.
+    expect(documents.length).toBeGreaterThan(20);
+    expect(documents).toContain("CLAUDE.md");
+
+    const offenders = documents.filter((path) => {
+      const body = text(path);
+      return ORG_MOVE_STALE_SLUGS.some((stale) => body.includes(stale));
+    });
+
+    expect(offenders).toEqual([]);
   });
 
   test("ADR-0001 classifies its decision-time repository as historical provenance", () => {

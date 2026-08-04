@@ -22,7 +22,10 @@ a first-class, agent-readable [Open Knowledge Format](reference/okf-conformance.
 bundle, couples that bundle to [Backlog.md](runbooks/backlog-json-patch.md)
 tasks, and serves it to both humans and coding agents through a deterministic,
 non-interactive CLI. The repository is the single source of truth.
-Its canonical GitHub location is [`opum-ai/lore-cli`](https://github.com/opum-ai/lore-cli).
+Its canonical GitHub location is
+[`opum-ai/lore-cli`](https://github.com/opum-ai/lore-cli), which is **private** —
+the published package is public, the source repository is not, so that URL is
+not a destination to send a reader to.
 
 lore is deliberately **thin** and **zero-config**: it does not reimplement
 Backlog.md, Confluence, or the documentation consumers (MkDocs, Docusaurus,

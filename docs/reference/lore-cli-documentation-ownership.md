@@ -33,7 +33,10 @@ copying mutable cross-repository contracts.
 
 GitHub owners are not uniform across the estate, and both CLI repositories'
 former `salient-data` routes still redirect. A link that resolves is therefore
-not evidence that a citation names the current owner; verify the owner itself.
+not evidence that a citation names the current owner, and neither is an
+existence check: `gh api repos/<old-org>/<repo>` returns 200 through the
+redirect. Read the owner back with `gh api repos/<owner>/<repo> --jq .full_name`
+and compare it to the citation before trusting it.
 
 ### Local lifecycle
 
