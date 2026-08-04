@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Global npm installs for the next release no longer require
+  `--allow-scripts=@ladybugdb/core`; LadybugDB is build-only, its qualified
+  addon is embedded in macOS/Linux executables, and Windows retains the
+  dependency-free reference fallback.
+
+### Added
+
+- **Windows ARM64 is now a first-class compiled release target** (LCLI-297).
+  The launcher selects `@opum-ai/lore-win32-arm64`, the release workflow builds
+  and qualifies it on `windows-11-arm`, and Windows ARM64 uses Lore's
+  reference-index fallback because LadybugDB 0.19.0 publishes no matching
+  native addon.
+
+### Changed
+
+- **The pinned Bun toolchain is now 1.3.14** (LCLI-297), the first qualified
+  project pin with a Windows ARM64 runtime and `bun-windows-arm64` compile
+  target. Runtime, CI, Docker, benchmark, and package qualification pins move
+  together.
+
 ## [0.1.0] - 2026-08-03
 
 ### Added

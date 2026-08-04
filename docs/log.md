@@ -87,6 +87,17 @@
 - 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
 - 2026-08-03T20:31:09-05:00 307a3f428d36dd2669f38a354425fc699a0c24f7 chore: prepare 0.1.0 release
 - 2026-08-03T21:59:30-05:00 65abf9549a80da275de8d9b016467cf97421ae10 docs: record Lore CLI 0.1.0 release
+- 2026-08-03T22:17:25-05:00 7069c7fd589ecfa85775fbe8de2ef247cce7c8f3 docs: sync corrected campaign tracker
+- 2026-08-04T00:40:24-05:00 10ecee23dce84d23ee9803b4ab1515465666cf41 feat: add ARM64 Windows and script-free installs
+- 2026-08-04T00:43:21-05:00 0b5f50853e1b64aefd5e7e48f80928b1e272a9e0 docs: sync ARM64 release history
+- 2026-08-04T01:30:13-05:00 744c7a4d216b03a7b91b63a7328cb2d8a66a9172 docs: sync LCLI-298 completion
+- 2026-08-04T01:50:02-05:00 187ed8afe6622d0016586533ceea450e20bc15a1 docs: sync LCLI-299 completion
+- 2026-08-04T07:20:16-05:00 18c04690279f0cb4f60939ebfc3a1b485092d4ae docs: sync LCLI-300 completion
+- 2026-08-04T08:35:47-05:00 e9731203fa8a4b05cbdd92b0c1cee4fca89cd58b docs: route fleet cross-repo questions to opum-doc (LCLI-308)
+- 2026-08-04T08:38:30-05:00 bb33bd38a9fec3b582944209ee240d5853dbce76 docs: sync LCLI-308 provenance log
+- 2026-08-04T09:45:54-05:00 ca4221dd7d92a2fe86545a65faf315149c1923bf docs: fix stale herdr derivation and fact-shaped rules (LCLI-309)
+- 2026-08-04T09:47:47-05:00 bc0c135c6ac04f7d5518c95af9c0ebe0c8b62866 docs: sync LCLI-309 provenance log
+- 2026-08-04T09:57:26-05:00 b9a419eb1f63dc561ed9fb3fef0cc9431738d156 docs: sync LCLI-310 provenance log
 
 ## docs/.obsidian
 
@@ -213,6 +224,10 @@
 - 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
 - 2026-08-03T20:31:09-05:00 307a3f428d36dd2669f38a354425fc699a0c24f7 chore: prepare 0.1.0 release
 - 2026-08-03T21:59:30-05:00 65abf9549a80da275de8d9b016467cf97421ae10 docs: record Lore CLI 0.1.0 release
+- 2026-08-04T00:40:24-05:00 10ecee23dce84d23ee9803b4ab1515465666cf41 feat: add ARM64 Windows and script-free installs
+- 2026-08-04T08:35:47-05:00 e9731203fa8a4b05cbdd92b0c1cee4fca89cd58b docs: route fleet cross-repo questions to opum-doc (LCLI-308)
+- 2026-08-04T09:45:54-05:00 ca4221dd7d92a2fe86545a65faf315149c1923bf docs: fix stale herdr derivation and fact-shaped rules (LCLI-309)
+- 2026-08-04T09:56:08-05:00 913a04ca6787281098d4a9453095b293828a931d docs: forbid acts, not adverbs; enumerate the package gate (LCLI-310)
 
 ## docs/runbooks
 
@@ -279,6 +294,7 @@
 - 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
 - 2026-08-03T20:31:09-05:00 307a3f428d36dd2669f38a354425fc699a0c24f7 chore: prepare 0.1.0 release
 - 2026-08-03T21:59:30-05:00 65abf9549a80da275de8d9b016467cf97421ae10 docs: record Lore CLI 0.1.0 release
+- 2026-08-04T00:40:24-05:00 10ecee23dce84d23ee9803b4ab1515465666cf41 feat: add ARM64 Windows and script-free installs
 
 ## docs/specs
 
@@ -321,3 +337,7 @@
 - 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
 - 2026-08-03T20:31:09-05:00 307a3f428d36dd2669f38a354425fc699a0c24f7 chore: prepare 0.1.0 release
 - 2026-08-03T21:59:30-05:00 65abf9549a80da275de8d9b016467cf97421ae10 docs: record Lore CLI 0.1.0 release
+- 2026-08-04T00:40:24-05:00 10ecee23dce84d23ee9803b4ab1515465666cf41 feat: add ARM64 Windows and script-free installs
+- 2026-08-04T01:30:13-05:00 744c7a4d216b03a7b91b63a7328cb2d8a66a9172 docs: sync LCLI-298 completion
+- 2026-08-04T01:50:02-05:00 187ed8afe6622d0016586533ceea450e20bc15a1 docs: sync LCLI-299 completion
+- 2026-08-04T07:20:16-05:00 18c04690279f0cb4f60939ebfc3a1b485092d4ae docs: sync LCLI-300 completion

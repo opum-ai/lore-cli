@@ -274,6 +274,74 @@ check "no stale probe result in .lore/cache/ before the first real probe" \
 step_json "lore init: idempotent re-run creates nothing (AC#2)" \
   '(.data.created | length) == 0 and (.data.skipped | length) > 0' -- lore init --json
 
+# ── Phase 1b: explicit Claude/Codex onboarding bridges (LCLI-298) ──────────────
+# Bare non-TTY init intentionally configures neither agent, so the just-created bundle is the
+# real-filesystem fresh state needed to exercise each prompt-free flag. Keep this probe ahead of
+# task seeding, then remove only its generated bridge artifacts so Phase 22 still starts from its
+# long-standing no-Claude-bridge baseline.
+cp AGENTS.md /tmp/lcli-298-agents-baseline.md
+LCLI298_AGENTS_BASELINE_HASH="$(sha256sum AGENTS.md)"
+step_json "LCLI-298 AC1: lore init --codex creates both Codex bridge files on a fresh bundle" \
+  '.kind == "init"
+   and ((.data.codex.files | map(.path) | sort) == [".codex/skills/lore/SKILL.md", "AGENTS.md"])
+   and ([.data.codex.files[] | select(.path == ".codex/skills/lore/SKILL.md")][0].action == "created")
+   and ([.data.codex.files[] | select(.path == "AGENTS.md")][0].action == "updated")' \
+  -- lore init --codex --json
+check "LCLI-298 AC1: Codex SKILL.md and AGENTS.md managed block exist on disk" \
+  '[ -f .codex/skills/lore/SKILL.md ] \
+   && grep -q "^name: lore$" .codex/skills/lore/SKILL.md \
+   && grep -q "<!-- lore:agents:begin -->" AGENTS.md \
+   && grep -q "<!-- lore:agents:end -->" AGENTS.md'
+
+CODEX_BRIDGE_HASH_BEFORE="$(sha256sum .codex/skills/lore/SKILL.md AGENTS.md)"
+step_json "LCLI-298 AC2: a second lore init --codex reports a complete no-op" \
+  '(.data.created | length) == 0
+   and (.data.codex.files | length == 2)
+   and (.data.codex.files | all(.action == "unchanged"))' \
+  -- lore init --codex --json
+CODEX_BRIDGE_HASH_AFTER="$(sha256sum .codex/skills/lore/SKILL.md AGENTS.md)"
+check "LCLI-298 AC2: the idempotent Codex re-run left both files byte-identical" \
+  '[ "$CODEX_BRIDGE_HASH_BEFORE" = "$CODEX_BRIDGE_HASH_AFTER" ]'
+
+step_json "LCLI-298 AC3: lore init --claude creates the Claude Code bridge" \
+  '((.data.agents.files | map(.path) | sort) == [".claude/skills/lore/SKILL.md", "CLAUDE.md"])
+   and (.data.agents.files | all(.action == "created"))' \
+  -- lore init --claude --json
+check "LCLI-298 AC3: both Claude Code bridge files exist on disk" \
+  '[ -f .claude/skills/lore/SKILL.md ] && [ -f CLAUDE.md ]'
+step_json "LCLI-298 AC2: lore agents --check is clean after lore init --claude" \
+  '.kind == "agents.result" and (.data.files | all(.action == "unchanged"))' \
+  -- lore agents --check --json
+
+# AGENTS.md is a surgical managed-block update: prose outside the markers must survive while a
+# stale line inside the markers is restored from the generator on the next --codex run.
+sed -i '/<!-- lore:agents:begin -->/i LCLI-298-CUSTOM-PROSE-BEFORE-THE-BLOCK' AGENTS.md
+sed -i '/<!-- lore:agents:end -->/a LCLI-298-CUSTOM-PROSE-AFTER-THE-BLOCK' AGENTS.md
+sed -i '/<!-- lore:agents:begin -->/,/<!-- lore:agents:end -->/ s/Skill:/CORRUPTED-CODEX-SKILL-LABEL:/' AGENTS.md
+check "LCLI-298 AC4: seeded custom prose around a deliberately stale Codex managed block" \
+  'grep -q "LCLI-298-CUSTOM-PROSE-BEFORE-THE-BLOCK" AGENTS.md \
+   && grep -q "LCLI-298-CUSTOM-PROSE-AFTER-THE-BLOCK" AGENTS.md \
+   && grep -q "CORRUPTED-CODEX-SKILL-LABEL:" AGENTS.md'
+step_json "LCLI-298 AC4: lore init --codex refreshes only the stale AGENTS.md block" \
+  '([.data.codex.files[] | select(.path == "AGENTS.md")][0].action == "updated")
+   and ([.data.codex.files[] | select(.path == ".codex/skills/lore/SKILL.md")][0].action == "unchanged")' \
+  -- lore init --codex --json
+check "LCLI-298 AC4: custom AGENTS.md prose survived and managed content was healed" \
+  'grep -q "LCLI-298-CUSTOM-PROSE-BEFORE-THE-BLOCK" AGENTS.md \
+   && grep -q "LCLI-298-CUSTOM-PROSE-AFTER-THE-BLOCK" AGENTS.md \
+   && ! grep -q "CORRUPTED-CODEX-SKILL-LABEL:" AGENTS.md \
+   && grep -q "Skill:" AGENTS.md'
+
+step "LCLI-298 AC5: remove only the bridge artifacts created by the isolated probe" 0 \
+  -- bash -c 'rm -f CLAUDE.md .codex/skills/lore/SKILL.md .claude/skills/lore/SKILL.md &&
+               cp /tmp/lcli-298-agents-baseline.md AGENTS.md &&
+               rm -f /tmp/lcli-298-agents-baseline.md &&
+               rmdir .codex/skills/lore .codex/skills .codex &&
+               rmdir .claude/skills/lore .claude/skills .claude'
+check "LCLI-298 AC5: bridge probe teardown left no generated agent artifacts" \
+  '[ "$(sha256sum AGENTS.md)" = "$LCLI298_AGENTS_BASELINE_HASH" ] \
+   && [ ! -e CLAUDE.md ] && [ ! -e .codex ] && [ ! -e .claude ]'
+
 # ── Phase 2: seed real backlog tasks ─────────────────────────────────────────
 TASK1="$(backlog task create "Design the archive endpoint" 2>&1 | grep -oE 'Created task [^ ]+' | awk '{print $3}')"
 TASK2="$(backlog task create "Implement the archive job" 2>&1 | grep -oE 'Created task [^ ]+' | awk '{print $3}')"
@@ -803,6 +871,18 @@ check "git status clean under backlog/ after an idempotent sync" \
 
 # ── Phase 8: validate ────────────────────────────────────────────────────────
 step_json "lore validate: clean bundle" '.kind == "validate.report"' -- lore validate --json
+# LCLI-299 AC1: the bundle already contains one freshly-created concept of every built-in type
+# (Phase 3), so this is a genuinely mixed input rather than a one-file assertion. Pin both sides
+# of the filter: the known ADR must be present, the known Reference must be absent, and every
+# reported file must carry the canonical ADR type.
+step_json "LCLI-299 AC1: lore validate --type scopes a mixed bundle to ADR concepts" \
+  '.kind == "validate.report"
+   and .data.errorCount == 0
+   and (.data.files | length) >= 1
+   and all(.data.files[]; .type == "ADR")
+   and ([.data.files[].path] | index("'"${DOC_PATH[ADR]}"'") != null)
+   and ([.data.files[].path] | index("'"${DOC_PATH[Reference]}"'") == null)' \
+  -- lore validate --type ADR --json
 cp "$BROKEN_FIXTURES/missing-type.md" docs/reference/e2e-broken-missing-type.md
 step "lore validate: catches a missing type: (documented hard error)" 6 \
   -- lore validate docs/reference/e2e-broken-missing-type.md
@@ -916,6 +996,24 @@ step "AC4: lore check clean again after removing the multi-root broken-link prob
 # `lore check`'s job, not orphans'). A genuine orphanTasks case needs a task
 # with NO doc: label and no owning tasks: reference at all — TASK3 (seeded in
 # phase 2) has never been linked to anything, so it qualifies as-is.
+# LCLI-300 AC1: the hierarchy-aware path needs a real Backlog parent/subtask relation, not a
+# hand-authored fixture. Link only the parent to the otherwise-empty multi-doc probe Story from
+# Phase 4b; the child deliberately carries no doc: label of its own. `lore orphans` must inherit
+# ownership through parentTaskId while still reporting TASK3, the existing fully-unlinked control.
+ORPHAN_PARENT="$(backlog task create "E2E linked parent for orphans hierarchy" 2>&1 | grep -oE 'Created task [^ ]+' | awk '{print $3}')"
+ORPHAN_CHILD="$(backlog task create --parent "$ORPHAN_PARENT" "E2E unlinked child of linked parent" 2>&1 | grep -oE 'Created task [^ ]+' | awk '{print $3}')"
+check "LCLI-300 AC1: seeded a real Backlog parent and child task" \
+  '[ -n "$ORPHAN_PARENT" ] && [ -n "$ORPHAN_CHILD" ]'
+step_json "LCLI-300 AC1: link only the parent task to the probe Story" \
+  '.data.tasks[] | select(.task == "'"$ORPHAN_PARENT"'") | .backRef == "added"' \
+  -- lore link "$MULTI_STORY_ID" "$ORPHAN_PARENT" --json
+ORPHAN_CHILD_LC="$(printf '%s' "$ORPHAN_CHILD" | tr 'A-Z' 'a-z')"
+TASK3_LC="$(printf '%s' "$TASK3" | tr 'A-Z' 'a-z')"
+step_json "LCLI-300 AC1: linked-parent child is not orphaned, fully-unlinked TASK3 still is" \
+  '.kind == "orphans.report"
+   and ((.data.orphanTasks // [] | map(.id | ascii_downcase) | index("'"$ORPHAN_CHILD_LC"'")) == null)
+   and ((.data.orphanTasks // [] | map(.id | ascii_downcase) | index("'"$TASK3_LC"'")) != null)' \
+  -- lore orphans --json
 step_json "lore orphans: reports TASK3 (seeded, never linked to any doc)" \
   '.kind == "orphans.report" and (.data.orphanTasks // [] | length) >= 1' -- lore orphans --json
 step "lore orphans --tasks-only runs cleanly" 0 -- lore orphans --tasks-only
@@ -1023,13 +1121,28 @@ step_fail "AC1: replace --regex with an invalid pattern is a usage error (exit 2
 # ── Phase 15: rename ───────────────────────────────────────────────────────────
 OLD_REF_ID="${DOC_ID[Reference]}"
 OLD_REF_PATH="${DOC_PATH[Reference]}"
+# LCLI-300 AC3: seed a real third-party inbound link whose visible text deliberately names the
+# old id. The shared rewrite engine must still retarget it, and rename must surface the advisory on
+# stderr. Capture both streams because the stable rename.result remains on stdout while warnings
+# follow the CLI diagnostic contract on stderr.
+printf '\nReview [%s](../%s.md) before the rename.\n' "$OLD_REF_ID" "$OLD_REF_ID" >> "$SPEC_PATH"
+check "LCLI-300 AC3: seeded a rename inbound link whose display text names the old id" \
+  'grep -qF "[$OLD_REF_ID](../$OLD_REF_ID.md)" "$SPEC_PATH"'
 step_json "lore rename --dry-run (reports, moves nothing)" '.kind == "rename.result"' \
   -- lore rename "$OLD_REF_ID" "reference/e2e-renamed" --dry-run --json
 check "dry-run rename did not move the file" '[ -f "$OLD_REF_PATH" ]'
-step_json "lore rename (real move + inbound link repoint)" '.kind == "rename.result"' \
-  -- lore rename "$OLD_REF_ID" "reference/e2e-renamed" --json
+lore rename "$OLD_REF_ID" "reference/e2e-renamed" --json >/tmp/lcli300-rename-out 2>/tmp/lcli300-rename-err
+LCLI300_RENAME_RC=$?
+check "lore rename (real move + inbound link repoint) returns rename.result" \
+  '[ "$LCLI300_RENAME_RC" -eq 0 ] && jq -e ".kind == \"rename.result\"" /tmp/lcli300-rename-out >/dev/null 2>&1'
 check "renamed file exists at the new path" '[ -f "docs/reference/e2e-renamed.md" ]'
 check "old path no longer exists" '[ ! -f "$OLD_REF_PATH" ]'
+check "LCLI-300 AC3: rename retargeted the stale-text link instead of leaving it dangling" \
+  'grep -qF "[$OLD_REF_ID](../reference/e2e-renamed.md)" "$SPEC_PATH" \
+   && ! grep -qF "[$OLD_REF_ID](../$OLD_REF_ID.md)" "$SPEC_PATH"'
+check "LCLI-300 AC3: rename warns that the visible old id now points to the new id" \
+  'grep -qF "warning: link text \"$OLD_REF_ID\" in $SPEC_PATH still names \"$OLD_REF_ID\", but its link now points to \"reference/e2e-renamed\"" /tmp/lcli300-rename-err'
+rm -f /tmp/lcli300-rename-out /tmp/lcli300-rename-err
 
 # ── Phase 15b: LINKED-concept rename exercises Backlog coupling + F1 (LORE-62 AC4) ──────────
 # Phase 15 above only ever renames the unlinked Reference doc (no `tasks:` at all), so
@@ -1192,15 +1305,27 @@ ADR_ID="${DOC_ID[ADR]}"
 printf '\nSee [the ADR under test](../%s.md) for background.\n' "$ADR_ID" >> "$SPEC_PATH"
 check "AC2: seeded a real inbound body link to the ADR in the Spec's body" \
   'grep -qF "../$ADR_ID.md" "$SPEC_PATH"'
+# LCLI-300 AC2: add the contrasting stale-text form beside the ordinary-link control above. The
+# retarget remains mandatory; the new contract is that the mismatch cannot pass silently.
+printf '\nContrast [%s](../%s.md) with its successor.\n' "$ADR_ID" "$ADR_ID" >> "$SPEC_PATH"
+check "LCLI-300 AC2: seeded a supersede inbound link whose display text names the old id" \
+  'grep -qF "[$ADR_ID](../$ADR_ID.md)" "$SPEC_PATH"'
 
 SUCCESSOR="$(lore new ADR "E2E successor decision" --json | jq -r '.data.id')"
 step_json "lore supersede --dry-run" '.kind == "supersede.result"' \
   -- lore supersede "${DOC_ID[ADR]}" "$SUCCESSOR" --dry-run --json
-step_json "lore supersede (real, rewrite-links) genuinely rewrites the Spec's real inbound link" \
-  '.kind == "supersede.result" and .data.rewroteLinks == true' \
-  -- lore supersede "${DOC_ID[ADR]}" "$SUCCESSOR" --rewrite-links --json
+lore supersede "${DOC_ID[ADR]}" "$SUCCESSOR" --rewrite-links --json >/tmp/lcli300-supersede-out 2>/tmp/lcli300-supersede-err
+LCLI300_SUPERSEDE_RC=$?
+check "lore supersede (real, rewrite-links) genuinely rewrites the Spec's inbound links" \
+  '[ "$LCLI300_SUPERSEDE_RC" -eq 0 ] \
+   && jq -e ".kind == \"supersede.result\" and .data.rewroteLinks == true" /tmp/lcli300-supersede-out >/dev/null 2>&1'
 check "AC2: the Spec's inbound link now points at the successor, not the old ADR" \
   '! grep -qF "../$ADR_ID.md" "$SPEC_PATH" && grep -qF "../$SUCCESSOR.md" "$SPEC_PATH"'
+check "LCLI-300 AC2: supersede retargeted the stale-text link too" \
+  'grep -qF "[$ADR_ID](../$SUCCESSOR.md)" "$SPEC_PATH"'
+check "LCLI-300 AC2: supersede warns that the visible old id now points to the successor" \
+  'grep -qF "warning: link text \"$ADR_ID\" in $SPEC_PATH still names \"$ADR_ID\", but its link now points to \"$SUCCESSOR\"" /tmp/lcli300-supersede-err'
+rm -f /tmp/lcli300-supersede-out /tmp/lcli300-supersede-err
 step_fail "AC2: conflict-5 -- re-superseding the same already-superseded ADR fails loud" 5 \
   '.error_type == "conflict"' \
   -- lore supersede "$ADR_ID" "$SUCCESSOR" --json
@@ -1223,6 +1348,55 @@ step_json "lore schema export" '.kind == "schema.result"' -- lore schema export 
 for T in epic story spec adr runbook reference; do
   check "schema export produced valid JSON for $T" "jq -e . .lore/schemas/${T}.schema.json >/dev/null 2>&1"
 done
+
+# LCLI-299 AC2/AC3: isolate both scoping probes from the managed default schema directory. The
+# structured file lists prove where lore says it wrote; the filesystem assertions independently
+# prove the exact files exist and contain valid JSON. Teardown names every created file explicitly.
+LCLI299_TYPE_OUT=".lore/lcli-299-type-schemas"
+check "LCLI-299 AC2: single-type schema probe starts from an absent directory" \
+  '[ ! -e "$LCLI299_TYPE_OUT" ]'
+step_json "LCLI-299 AC2: schema export --type writes exactly the Story schema" \
+  '.kind == "schema.result"
+   and .data.out == "'"$LCLI299_TYPE_OUT"'"
+   and .data.count == 1
+   and (.data.removed | length) == 0
+   and ([.data.files[].path] == ["'"$LCLI299_TYPE_OUT"'/story.schema.json"])' \
+  -- lore schema export --type Story --out "$LCLI299_TYPE_OUT" --json
+check "LCLI-299 AC2: single-type output contains only one valid Story schema" \
+  '[ "$(find "$LCLI299_TYPE_OUT" -maxdepth 1 -type f -name "*.schema.json" | wc -l)" -eq 1 ] \
+   && jq -e . "$LCLI299_TYPE_OUT/story.schema.json" >/dev/null 2>&1'
+
+LCLI299_CUSTOM_OUT=".lore/lcli-299-custom-schemas"
+check "LCLI-299 AC3: custom-output schema probe starts from an absent directory" \
+  '[ ! -e "$LCLI299_CUSTOM_OUT" ]'
+step_json "LCLI-299 AC3: schema export --out writes the full profile outside the default directory" \
+  '.kind == "schema.result"
+   and .data.out == "'"$LCLI299_CUSTOM_OUT"'"
+   and .data.count == 6
+   and (.data.removed | length) == 0
+   and (([.data.files[].path] | sort) == [
+     "'"$LCLI299_CUSTOM_OUT"'/adr.schema.json",
+     "'"$LCLI299_CUSTOM_OUT"'/epic.schema.json",
+     "'"$LCLI299_CUSTOM_OUT"'/reference.schema.json",
+     "'"$LCLI299_CUSTOM_OUT"'/runbook.schema.json",
+     "'"$LCLI299_CUSTOM_OUT"'/spec.schema.json",
+     "'"$LCLI299_CUSTOM_OUT"'/story.schema.json"
+   ])
+   and all(.data.files[]; (.path | startswith(".lore/schemas/") | not))' \
+  -- lore schema export --out "$LCLI299_CUSTOM_OUT" --json
+for T in epic story spec adr runbook reference; do
+  check "LCLI-299 AC3: custom output produced valid JSON for $T" \
+    "jq -e . '$LCLI299_CUSTOM_OUT/${T}.schema.json' >/dev/null 2>&1"
+done
+
+rm -f "$LCLI299_TYPE_OUT/story.schema.json"
+rmdir "$LCLI299_TYPE_OUT"
+for T in epic story spec adr runbook reference; do
+  rm -f "$LCLI299_CUSTOM_OUT/${T}.schema.json"
+done
+rmdir "$LCLI299_CUSTOM_OUT"
+check "LCLI-299 AC4: schema scoping probe teardown removed both exact output directories" \
+  '[ ! -e "$LCLI299_TYPE_OUT" ] && [ ! -e "$LCLI299_CUSTOM_OUT" ]'
 
 # ── Phase 17a: full unscoped `lore check` regression guard (LORE-68 AC3) ────────
 # Nothing before this point ever ran a full, unscoped `lore check` over the whole bundle: every

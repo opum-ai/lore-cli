@@ -62,10 +62,10 @@ describe("Ladybug benchmark report contract", () => {
     const orders = randomizedPolicyOrders(28310401, 5);
     expect(orders).toEqual(randomizedPolicyOrders(28310401, 5));
     expect(new Set(orders.map((order) => order[0]))).toEqual(new Set(["indexed", "reference"]));
-    expect(() => assertLadybugBenchmarkRuntime("qualification", "1.2.23")).not.toThrow();
-    expect(() => assertLadybugBenchmarkRuntime("qualification", "1.3.14")).toThrow("requires Bun 1.2.23");
+    expect(() => assertLadybugBenchmarkRuntime("qualification", "1.3.14")).not.toThrow();
+    expect(() => assertLadybugBenchmarkRuntime("qualification", "1.2.23")).toThrow("requires Bun 1.3.14");
     expect(() => assertLadybugBenchmarkRuntime("smoke", "1.3.14")).not.toThrow();
-    expect(() => assertLadybugBenchmarkRuntime("observation", "1.3.14")).toThrow("requires Bun 1.2.23");
+    expect(() => assertLadybugBenchmarkRuntime("observation", "1.2.23")).toThrow("requires Bun 1.3.14");
   });
 
   test("parses repeatable fixtures, required output, runner identity, and smoke mode", () => {
@@ -134,7 +134,7 @@ describe("Ladybug benchmark report contract", () => {
       mode: "smoke",
       toolchain: {
         loreVersion: "0.0.0",
-        bunVersion: "1.2.23",
+        bunVersion: "1.3.14",
         nodeVersion: "22.0.0",
         ladybugPackageVersion: "0.19.0",
         ladybugRuntimeVersion: "0.19.0",
@@ -180,7 +180,7 @@ describe("Ladybug benchmark report contract", () => {
       "fixtures",
       "gates",
     ]);
-    expect(benchmarkDigest(json)).toBe("sha256:b32cf96126f1914617aa78f7ec62db6c8cdded920df14c8924ed4bc5cde42852");
+    expect(benchmarkDigest(json)).toBe("sha256:dc1d6f662bf1380cbe001dc9f2e575f08bae47ccd325956c1ce6d7050f5c8f85");
     expect(() => parseLadybugBenchmarkReport({ ...report, unexpected: true })).toThrow();
   });
 });

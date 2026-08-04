@@ -8,7 +8,7 @@
 #
 # Single stage: this is a disposable local/CI test image, not a shipped
 # artifact, so there's nothing multi-stage buys here.
-FROM oven/bun:1.2.23@sha256:6ebf306367da43ad75c4d5119563e24de9b66372929ad4fa31546be053a16f74
+FROM oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4
 
 # git: the E2E scenarios themselves (git init/status/diff-tree assertions in
 #   run-e2e.sh exercise lore's real coexistence-with-git behavior).
@@ -51,6 +51,7 @@ RUN npm install -g "backlog.md@${BACKLOG_VERSION}" \
 # ── Build `lore`: current dev source, compiled the same way ci.yml does ──
 WORKDIR /opt/lore
 COPY package.json bun.lock bunfig.toml tsconfig.json biome.json .bun-version ./
+COPY patches ./patches
 COPY src ./src
 COPY test ./test
 RUN bun install --frozen-lockfile --linker=isolated \

@@ -656,7 +656,11 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
 // with a misleading exit code 0. Leaving the exit to the runtime lets pending writes (and
 // any other pending I/O) finish naturally before the process ends with the recorded code.
 if (import.meta.main) {
-  Promise.resolve(run(process.argv)).then(
+  const packageQualificationRetrieval: RetrievalGraphLoader | undefined =
+    process.env.LORE_INTERNAL_PACKAGE_QUALIFICATION === "require-indexed"
+      ? (options) => loadRetrievalGraph({ ...options, policy: "indexed" })
+      : undefined;
+  Promise.resolve(run(process.argv, { retrieval: packageQualificationRetrieval })).then(
     (code) => {
       process.exitCode = code;
     },

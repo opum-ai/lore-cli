@@ -373,9 +373,15 @@ The resolver applies the lifecycle decision before public output:
 
 Native loading stays behind an explicit lazy boundary. Importing the CLI,
 Commander registry, lifecycle classifier, or fallback path does not evaluate
-the addon. Bun 1.2.23 cannot safely load the Ladybug Windows addon in the test
-process, so Windows selects the reference path before the loader; Windows
-native packaging qualification remains `LCLI-283.1.4` scope. See
+the addon. For macOS/Linux release builds, a committed package patch gives Bun
+a literal addon import so the matching `.node` file is embedded in the
+standalone executable; `@ladybugdb/core` remains build-only and never enters
+the installed launcher's dependency graph. Windows builds externalize that
+unreachable import and select the reference path before the loader: the x64
+addon was unsafe under the former Bun 1.2.23 pin, and LadybugDB 0.19.0 has no
+Windows ARM64 addon. Matching-host qualification performs a default global npm
+install without script approval, requires embedded indexed retrieval on
+macOS/Linux, and proves reference fallback on both Windows architectures. See
 [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md) and
 the [local graph roadmap](../specs/local-graph-platform-roadmap.md).
 

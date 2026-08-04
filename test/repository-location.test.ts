@@ -1,18 +1,29 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 
 const ROOT = join(import.meta.dir, "..");
 const CANONICAL_SLUG = "opum-ai/lore-cli";
 const CANONICAL_REPOSITORY_URL = `git+https://github.com/${CANONICAL_SLUG}.git`;
-const STALE_OPERATIONAL_SLUGS = ["jeremy-newhouse/lore", "salient-data/lore-cli"];
+const STALE_OPERATIONAL_SLUGS = ["jeremy-newhouse/lore", "salient-data/lore-cli", "salient-data/quest-cli"];
+
+/**
+ * Slugs left behind by the 2026-08 move of both CLI repositories to `opum-ai`.
+ * The former routes still redirect and answer 200, so a stale citation looks
+ * healthy to any existence check; only a literal scan catches it. These carry no
+ * decision-time provenance value — unlike `jeremy-newhouse/lore`, which ADR-0001
+ * legitimately records — so they must appear in no documentation file at all.
+ */
+const ORG_MOVE_STALE_SLUGS = ["salient-data/lore-cli", "salient-data/quest-cli"];
 const CANONICAL_NPM_PACKAGE = "@opum-ai/lore";
 const STALE_NPM_PACKAGE = "@salient-data/lore";
 const CANONICAL_NPM_TARBALL_PREFIX = "opum-ai-lore";
 const STALE_NPM_TARBALL_PREFIX = "salient-data-lore";
 
-const PLATFORM_PACKAGES = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-x64"];
+const PLATFORM_PACKAGES = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"];
 const OPERATIONAL_DOCUMENTS = [
+  "CLAUDE.md",
   "README.md",
   "CHANGELOG.md",
   "docs/index.md",
@@ -46,8 +57,52 @@ function text(path: string): string {
   return readFileSync(join(ROOT, path), "utf8");
 }
 
+/**
+ * Files allowed to carry a superseded identity, each for a stated reason. A
+ * curated *allowlist* is safe where a curated *scan list* is not: adding an entry
+ * here is a visible widening that `the exemption set is exactly what is expected`
+ * fails on, whereas a file omitted from a scan list is simply never examined.
+ */
+const PROVENANCE_EXEMPT = new Map([
+  ["CHANGELOG.md", "records the superseded @salient-data/lore package family as release history"],
+  ["docs/adr/0001-runtime-build-distribution.md", "records jeremy-newhouse/lore as its decision-time repository"],
+  ["test/repository-location.test.ts", "defines the superseded identifiers this gate searches for"],
+]);
+
+/**
+ * Every file Git tracks, excluding `backlog/`, whose task and campaign records are
+ * immutable provenance of past decisions rather than operational instructions.
+ *
+ * Tracked, not on-disk: a brand-new file is invisible here until it is staged,
+ * which is the right boundary for a gate about what this repository *records* and
+ * is exact in CI, where the tree is always committed. `everyDocument` scans the
+ * filesystem instead, so unstaged markdown is still covered.
+ */
+function everyTrackedFile(): string[] {
+  return execFileSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "utf8" })
+    .split("\0")
+    .filter((path) => path !== "" && !path.startsWith("backlog/"));
+}
+
+/** Every tracked markdown document: the whole `docs/` bundle plus root-level markdown. */
+function everyDocument(): string[] {
+  const roots = [join(ROOT, "docs")];
+  const found = readdirSync(ROOT, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+    .map((entry) => entry.name);
+
+  for (const dir of roots) {
+    for (const entry of readdirSync(dir, { recursive: true, withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+      found.push(relative(ROOT, join(entry.parentPath, entry.name)));
+    }
+  }
+
+  return found.sort();
+}
+
 describe("canonical repository location", () => {
-  test("all six release manifests use the exact canonical GitHub repository URL", () => {
+  test("every release manifest uses the exact canonical GitHub repository URL", () => {
     const paths = ["package.json", ...PLATFORM_PACKAGES.map((name) => `npm/${name}/package.json`)];
 
     for (const path of paths) {
@@ -64,6 +119,25 @@ describe("canonical repository location", () => {
     }
   });
 
+  // Scope: markdown on disk, which is NARROWER than the repository. The
+  // repository-wide guarantee is `no tracked file anywhere carries a superseded
+  // package or repository identity` below; this one adds only the ability to see
+  // an unstaged file, which `git ls-files` cannot. Do not read a pass here as
+  // repository-wide coverage.
+  test("no markdown file on disk cites a former-org CLI route", () => {
+    const documents = everyDocument();
+    // Guard the guard: a scan that silently found nothing to read would pass vacuously.
+    expect(documents.length).toBeGreaterThan(20);
+    expect(documents).toContain("CLAUDE.md");
+
+    const offenders = documents.filter((path) => {
+      const body = text(path);
+      return ORG_MOVE_STALE_SLUGS.some((stale) => body.includes(stale));
+    });
+
+    expect(offenders).toEqual([]);
+  });
+
   test("ADR-0001 classifies its decision-time repository as historical provenance", () => {
     const body = text("docs/adr/0001-runtime-build-distribution.md");
     expect(body).toContain("github.com/jeremy-newhouse/lore");
@@ -73,7 +147,7 @@ describe("canonical repository location", () => {
 });
 
 describe("canonical npm package family", () => {
-  test("the launcher and five platform manifests use the exact @opum-ai names", () => {
+  test("the launcher and all platform manifests use the exact @opum-ai names", () => {
     const root = JSON.parse(text("package.json")) as {
       name?: string;
       optionalDependencies?: Record<string, string>;
@@ -97,6 +171,30 @@ describe("canonical npm package family", () => {
       expect(body).toContain(CANONICAL_NPM_PACKAGE);
       expect(body).not.toContain(STALE_NPM_PACKAGE);
     }
+  });
+
+  test("no tracked file anywhere carries a superseded package or repository identity", () => {
+    const tracked = everyTrackedFile();
+    // Guard the guard: a scan that found nothing to read would pass vacuously.
+    expect(tracked.length).toBeGreaterThan(100);
+    expect(tracked).toContain("package.json");
+
+    // A silently widened exemption set would hide real offenders, so pin it exactly.
+    expect([...PROVENANCE_EXEMPT.keys()].sort()).toEqual([
+      "CHANGELOG.md",
+      "docs/adr/0001-runtime-build-distribution.md",
+      "test/repository-location.test.ts",
+    ]);
+
+    const superseded = [STALE_NPM_PACKAGE, ...STALE_OPERATIONAL_SLUGS];
+    const offenders = tracked
+      .filter((path) => !PROVENANCE_EXEMPT.has(path))
+      .flatMap((path) => {
+        const body = text(path);
+        return superseded.filter((stale) => body.includes(stale)).map((stale) => `${path}: ${stale}`);
+      });
+
+    expect(offenders).toEqual([]);
   });
 
   test("release and qualification code derive tarball names from the @opum-ai scope", () => {

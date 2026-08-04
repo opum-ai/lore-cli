@@ -114,6 +114,7 @@ describe("bin/lore.cjs — missing platform package", () => {
     expect(stdout).toBe("");
     expect(stderr).toContain(PKG_NAME);
     expect(stderr).toContain(`${process.platform}-${process.arch}`);
+    expect(stderr).toContain("Windows x64/arm64");
   });
 });
 

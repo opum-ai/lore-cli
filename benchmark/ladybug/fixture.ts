@@ -162,7 +162,7 @@ export function createLadybugBenchmarkBacklogAdapter(root: string): BacklogAdapt
   };
   return {
     async probe() {
-      return { version: "1.47.1", schemaVersion: 1 };
+      return { version: "1.49.0", schemaVersion: 1 };
     },
     async listTasks(options?: ListTasksOptions) {
       let selected = tasks;

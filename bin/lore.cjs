@@ -11,11 +11,10 @@
  * `os`/`cpu` fields so only the matching one lands in `node_modules`) and exec it,
  * forwarding argv/stdio/exit code verbatim.
  *
- * NOT YET the active `bin` target: `package.json`'s `bin.lore` still points at
- * `src/cli.ts` (the pre-publish install path — git dependency, `npm`/`bun link`), because
- * this file only works once the five platform packages it resolves are actually published.
- * Flipping `bin.lore` to this file is the first step of cutting a real release, not a
- * standing state — see docs/runbooks/release-publishing.md.
+ * This is the active `bin` target since the `0.1.0` release. It resolves only
+ * published platform packages, so source contributors should use `bun run lore`
+ * when exercising an unpublished platform addition; see
+ * docs/runbooks/release-publishing.md.
  *
  * Kept deliberately tiny and dependency-free plain CommonJS (`.cjs`, so it runs as
  * CJS regardless of the package's own `"type": "module"`) — per ADR-0001, "the
@@ -92,7 +91,7 @@ function main() {
       `lore: no compiled binary found for this platform (${process.platform}-${process.arch}).\n` +
         `Expected the optional dependency "${platformPackageName()}" to be installed alongside\n` +
         `@opum-ai/lore, but it is missing. If your platform/architecture is one lore\n` +
-        `ships (macOS x64/arm64, Linux x64/arm64, Windows x64), try reinstalling with npm;\n` +
+        `ships (macOS x64/arm64, Linux x64/arm64, Windows x64/arm64), try reinstalling with npm;\n` +
         `otherwise this platform is not yet supported.\n`,
     );
     process.exit(1);
