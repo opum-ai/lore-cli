@@ -19,18 +19,19 @@ semantic exit codes, machine-readable `--json`).
 
 - Built on **Bun + TypeScript** with an exact-pinned **Commander** parser fed by
   Lore's capability manifest; Lore still owns output, errors, and process lifecycle.
-- Prepared for npm distribution as **`@opum-ai/lore@0.1.0`** (bin `lore`);
-  registry publication is not claimed until the release-truth evidence lands.
+- Published on npm as **`@opum-ai/lore@0.1.0`** (bin `lore`) with five
+  exact-pinned platform packages.
 - The agent bridge is a generated **`.claude/skills/lore/SKILL.md`** plus a tiny
   CLAUDE.md nudge and `lore instructions`. An **MCP server is secondary and
   deferred to v2**.
 
-> **Status: prepared 0.1.0 release candidate.** The six manifests and exact
-> optional-dependency pins are set to `0.1.0`, but the repository has no
-> release tag or artifact and `@opum-ai/lore` is absent from npm. The upstream
-> Backlog.md dependency gate is complete
-> (LCLI-253), but the repository-owner publication-control gate remains open
-> (LCLI-278). See [Lore CLI release truth](docs/reference/lore-cli-release-truth.md).
+> **Status: 0.1.0 released.** Tag `v0.1.0`, the qualified workflow artifacts,
+> all six public `@opum-ai/lore*` npm packages, a clean registry install, and
+> the private repository's GitHub Release agree on `0.1.0`. Trusted Publishing
+> is configured for every package. LCLI-278 still blocks future automated
+> `publish: true` dispatches; it does not invalidate the explicitly authorized
+> interactive `0.1.0` bootstrap. See
+> [Lore CLI release truth](docs/reference/lore-cli-release-truth.md).
 
 ---
 
@@ -71,37 +72,35 @@ Full details: [Backlog CLI contract](docs/reference/backlog-cli-contract.md) and
 
 ## Install
 
-`@opum-ai/lore` is not published. Until the release-truth evidence is
-complete, use a trusted source checkout and its pinned toolchain; do not expect
-these planned registry commands to work.
-
-After a verified release, the intended package and bin are
-`@opum-ai/lore` and `lore`:
+The package and bin are `@opum-ai/lore` and `lore`:
 
 ```bash
 # Node / npm
-npx @opum-ai/lore --help
+npx @opum-ai/lore@0.1.0 --help
 
 # Bun
-bunx @opum-ai/lore --help
+bunx @opum-ai/lore@0.1.0 --help
+
+# Global npm install
+npm install -g @opum-ai/lore@0.1.0
 ```
 
 Or add it to a project:
 
 ```bash
-bun add -d @opum-ai/lore   # or: npm i -D @opum-ai/lore
+bun add -d @opum-ai/lore@0.1.0   # or: npm i -D @opum-ai/lore@0.1.0
 ```
 
-The planned npm package is a dual artifact: a Node `.cjs` launcher plus a
+The npm package is a dual artifact: a Node `.cjs` launcher plus a
 per-platform compiled binary delivered as `optionalDependencies` (built with
 `bun build --compile`, `-baseline` x64 targets). You also need a
 `--json`-capable Backlog.md (>=1.49.0) on `PATH` — e.g. `npm install -g
 backlog.md`; see the [runbook](docs/runbooks/backlog-json-patch.md).
 
-### Private-repository CI before npm publication
+### Private-repository CI
 
 Repositories inside the `opum-ai` organization can run strict Lore gates
-without a cross-repository PAT or a public npm release:
+from the private source repository through the immutable composite action:
 
 ```yaml
 - uses: actions/checkout@v6

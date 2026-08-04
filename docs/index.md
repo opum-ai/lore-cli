@@ -16,10 +16,9 @@ okf_version: "0.1"
 
 # lore documentation
 
-**lore** is a thin, OKF-native documentation CLI — Bun + TypeScript, designed
-for eventual npm distribution as `@opum-ai/lore` (bin `lore`) but not yet
-released. It makes repo-resident markdown a first-class, agent-readable
-[Open Knowledge Format](reference/okf-conformance.md)
+**lore** is a thin, OKF-native documentation CLI — Bun + TypeScript, released
+on npm as `@opum-ai/lore@0.1.0` (bin `lore`). It makes repo-resident markdown
+a first-class, agent-readable [Open Knowledge Format](reference/okf-conformance.md)
 bundle, couples that bundle to [Backlog.md](runbooks/backlog-json-patch.md)
 tasks, and serves it to both humans and coding agents through a deterministic,
 non-interactive CLI. The repository is the single source of truth.
@@ -53,8 +52,8 @@ Use these records before inferring task or release state:
 - [0001 — Runtime, build & distribution](adr/0001-runtime-build-distribution.md)
   — the controlling distribution decision.
 - [lore design](specs/lore-design.md) — the controlling end-to-end Spec.
-- [Lore CLI release truth](reference/lore-cli-release-truth.md) — the evidence
-  that currently classifies Lore CLI as unreleased.
+- [Lore CLI release truth](reference/lore-cli-release-truth.md) — the immutable
+  tag, workflow, registry, install, and owner-control evidence for `0.1.0`.
 - [Lore CLI documentation ownership](reference/lore-cli-documentation-ownership.md)
   — local and cross-repository authority boundaries.
 - [Lore CLI handover](runbooks/lore-cli-handover.md) — the only current,

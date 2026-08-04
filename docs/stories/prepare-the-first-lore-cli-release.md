@@ -5,9 +5,9 @@ tags:
   - release
   - packaging
   - governance
-summary: Qualify packaging, dependencies, CI, governance, and operator gates without claiming publication before immutable evidence exists.
-timestamp: 2026-08-03T16:05:06.655Z
-status: in-progress
+summary: Record the first immutable public package release while retaining the unresolved control gate for future automated publication.
+timestamp: 2026-08-04T02:50:00Z
+status: todo
 tasks:
   - lcli-253
   - lcli-269
@@ -49,19 +49,33 @@ tasks:
 
 ## Goal
 
-Prepare Lore's first public package release while keeping mechanics, readiness,
-and publication as distinct states. A release exists only after a
-non-placeholder version, immutable tag and artifact, clean registry install,
-and every owner gate agree.
+Prepare and record Lore's first public package release while keeping mechanics,
+readiness, publication, and future automation as distinct states. A release
+exists only after a non-placeholder version, immutable tag and artifact, clean
+registry install, and the owner gate for that publication path agrees.
 
 ## Acceptance criteria
 
 - Packaging and CI qualify all declared platform artifacts from one commit.
 - The published Backlog.md dependency gate remains satisfied through LCLI-253.
-- Repository and npm controls remain blocked until LCLI-278 has an accepted
-  owner disposition.
+- The explicitly authorized interactive `0.1.0` bootstrap uses only qualified
+  artifacts, and every resulting npm package has the intended Trusted Publisher.
+- Automated `publish: true` dispatches remain blocked until LCLI-278 has an
+  accepted owner disposition for an effective out-of-file approval control.
 - No install or availability statement is written before immutable public
   evidence exists.
+
+## Release outcome
+
+LCLI-296 published `0.1.0` from the six tarballs produced by qualified Release
+run `30870431925`, platform packages first and root last. All six npm packages
+are public, a clean registry install reports `0.1.0`, all six Trusted Publisher
+contracts are verified, and the private repository has a GitHub Release for
+`v0.1.0`. The exact commit, artifact hashes, and control boundary are recorded
+in [Lore CLI release truth](../reference/lore-cli-release-truth.md).
+
+This Story remains open because LCLI-278 still owns the separate safety gate
+for future automated OIDC publication.
 
 ## Tasks
 
@@ -101,7 +115,7 @@ and every owner gate agree.
 | [LCLI-267](../../backlog/tasks/lcli-267%20-%20lore-agents-renderPretty-a-protected-bridge-file-prints-green-while-lore-init-prints-the-same-action-yellow.md) | lore agents renderPretty: a 'protected' bridge file prints green while lore init prints the same action yellow | Done |
 | [LCLI-275](../../backlog/tasks/lcli-275%20-%20docs-runbooks-docker-e2e-section-still-says-the-harness-is-not-yet-a-required-check-but-LORE-196-shipped-that-ruleset.md) | docs/runbooks: docker-e2e section still says the harness is 'not yet a required check', but LCLI-196 shipped that ruleset | Done |
 | [LCLI-295](../../backlog/tasks/lcli-295%20-%20Rename-unpublished-npm-package-family-to-opum-ai.md) | Rename unpublished npm package family to @opum-ai | Done |
-| [LCLI-296](../../backlog/tasks/lcli-296%20-%20Publish-Lore-CLI-0.1.0-and-bootstrap-npm-Trusted-Publishing.md) | Publish Lore CLI 0.1.0 and bootstrap npm Trusted Publishing | In Progress |
+| [LCLI-296](../../backlog/tasks/lcli-296%20-%20Publish-Lore-CLI-0.1.0-and-bootstrap-npm-Trusted-Publishing.md) | Publish Lore CLI 0.1.0 and bootstrap npm Trusted Publishing | Done |
 <!-- lore:tasks:end -->
 
 ## Notes

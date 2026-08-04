@@ -324,7 +324,7 @@ serializer, separate diff) so reviewers see the small scope is deliberate.
 > [backlog-json-schema.md](../reference/backlog-json-schema.md) in every
 > dimension that matters for the adapter:
 >
-> | | This fork / `src/adapters/backlog.ts` | Upstream PR #790 (unreleased) |
+> | | This fork / `src/adapters/backlog.ts` | Upstream PR #790 (pre-tag contract) |
 > |---|---|---|
 > | Envelope | uniform `{schemaVersion: "1", kind, data}` for all three commands | per-command envelope: `{schemaVersion: 1, kind: "task-list", tasks: [...]}` / `{kind: "task-view", task: {...}}` / `{kind: "search", results: [...]}` |
 > | `schemaVersion` type | string `"1"` | number `1` |
