@@ -871,6 +871,18 @@ check "git status clean under backlog/ after an idempotent sync" \
 
 # ── Phase 8: validate ────────────────────────────────────────────────────────
 step_json "lore validate: clean bundle" '.kind == "validate.report"' -- lore validate --json
+# LCLI-299 AC1: the bundle already contains one freshly-created concept of every built-in type
+# (Phase 3), so this is a genuinely mixed input rather than a one-file assertion. Pin both sides
+# of the filter: the known ADR must be present, the known Reference must be absent, and every
+# reported file must carry the canonical ADR type.
+step_json "LCLI-299 AC1: lore validate --type scopes a mixed bundle to ADR concepts" \
+  '.kind == "validate.report"
+   and .data.errorCount == 0
+   and (.data.files | length) >= 1
+   and all(.data.files[]; .type == "ADR")
+   and ([.data.files[].path] | index("'"${DOC_PATH[ADR]}"'") != null)
+   and ([.data.files[].path] | index("'"${DOC_PATH[Reference]}"'") == null)' \
+  -- lore validate --type ADR --json
 cp "$BROKEN_FIXTURES/missing-type.md" docs/reference/e2e-broken-missing-type.md
 step "lore validate: catches a missing type: (documented hard error)" 6 \
   -- lore validate docs/reference/e2e-broken-missing-type.md
@@ -1291,6 +1303,55 @@ step_json "lore schema export" '.kind == "schema.result"' -- lore schema export 
 for T in epic story spec adr runbook reference; do
   check "schema export produced valid JSON for $T" "jq -e . .lore/schemas/${T}.schema.json >/dev/null 2>&1"
 done
+
+# LCLI-299 AC2/AC3: isolate both scoping probes from the managed default schema directory. The
+# structured file lists prove where lore says it wrote; the filesystem assertions independently
+# prove the exact files exist and contain valid JSON. Teardown names every created file explicitly.
+LCLI299_TYPE_OUT=".lore/lcli-299-type-schemas"
+check "LCLI-299 AC2: single-type schema probe starts from an absent directory" \
+  '[ ! -e "$LCLI299_TYPE_OUT" ]'
+step_json "LCLI-299 AC2: schema export --type writes exactly the Story schema" \
+  '.kind == "schema.result"
+   and .data.out == "'"$LCLI299_TYPE_OUT"'"
+   and .data.count == 1
+   and (.data.removed | length) == 0
+   and ([.data.files[].path] == ["'"$LCLI299_TYPE_OUT"'/story.schema.json"])' \
+  -- lore schema export --type Story --out "$LCLI299_TYPE_OUT" --json
+check "LCLI-299 AC2: single-type output contains only one valid Story schema" \
+  '[ "$(find "$LCLI299_TYPE_OUT" -maxdepth 1 -type f -name "*.schema.json" | wc -l)" -eq 1 ] \
+   && jq -e . "$LCLI299_TYPE_OUT/story.schema.json" >/dev/null 2>&1'
+
+LCLI299_CUSTOM_OUT=".lore/lcli-299-custom-schemas"
+check "LCLI-299 AC3: custom-output schema probe starts from an absent directory" \
+  '[ ! -e "$LCLI299_CUSTOM_OUT" ]'
+step_json "LCLI-299 AC3: schema export --out writes the full profile outside the default directory" \
+  '.kind == "schema.result"
+   and .data.out == "'"$LCLI299_CUSTOM_OUT"'"
+   and .data.count == 6
+   and (.data.removed | length) == 0
+   and (([.data.files[].path] | sort) == [
+     "'"$LCLI299_CUSTOM_OUT"'/adr.schema.json",
+     "'"$LCLI299_CUSTOM_OUT"'/epic.schema.json",
+     "'"$LCLI299_CUSTOM_OUT"'/reference.schema.json",
+     "'"$LCLI299_CUSTOM_OUT"'/runbook.schema.json",
+     "'"$LCLI299_CUSTOM_OUT"'/spec.schema.json",
+     "'"$LCLI299_CUSTOM_OUT"'/story.schema.json"
+   ])
+   and all(.data.files[]; (.path | startswith(".lore/schemas/") | not))' \
+  -- lore schema export --out "$LCLI299_CUSTOM_OUT" --json
+for T in epic story spec adr runbook reference; do
+  check "LCLI-299 AC3: custom output produced valid JSON for $T" \
+    "jq -e . '$LCLI299_CUSTOM_OUT/${T}.schema.json' >/dev/null 2>&1"
+done
+
+rm -f "$LCLI299_TYPE_OUT/story.schema.json"
+rmdir "$LCLI299_TYPE_OUT"
+for T in epic story spec adr runbook reference; do
+  rm -f "$LCLI299_CUSTOM_OUT/${T}.schema.json"
+done
+rmdir "$LCLI299_CUSTOM_OUT"
+check "LCLI-299 AC4: schema scoping probe teardown removed both exact output directories" \
+  '[ ! -e "$LCLI299_TYPE_OUT" ] && [ ! -e "$LCLI299_CUSTOM_OUT" ]'
 
 # ── Phase 17a: full unscoped `lore check` regression guard (LORE-68 AC3) ────────
 # Nothing before this point ever ran a full, unscoped `lore check` over the whole bundle: every
