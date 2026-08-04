@@ -22,6 +22,7 @@ const BACKLOG_SHIM_PATH = join(import.meta.dir, "..", "benchmark", "ladybug", "b
 interface WorkflowStep {
   id?: string;
   if?: string;
+  name?: string;
   uses?: string;
   run?: string;
   with?: Record<string, unknown>;
@@ -231,10 +232,21 @@ describe("matching-host Ladybug package qualification", () => {
 
   test("the canonical package and publish chain cannot bypass matching-host qualification", () => {
     const jobs = loadWorkflow().jobs;
-    expect(needs(jobs.package as WorkflowJob)).toContain("build");
+    expect(jobs.build).toBeUndefined();
     expect(needs(jobs.package as WorkflowJob)).toContain("package-qualification");
     expect(needs(jobs.package as WorkflowJob)).toContain("ladybug-qualification-evidence");
     expect(needs(jobs.publish as WorkflowJob)).toContain("package");
+
+    const download = jobs.package?.steps?.find((step) => step.uses?.startsWith("actions/download-artifact@"));
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal GitHub Actions expression syntax.
+    const qualificationPattern = "ladybug-package-qualification-*-${{ github.run_id }}-${{ github.run_attempt }}";
+    expect(download?.with?.pattern).toBe(qualificationPattern);
+    const assembly = jobs.package?.steps?.find((step) => step.name?.includes("matching-host-qualified"))?.run ?? "";
+    expect(assembly).toContain('const digest = `sha256:${createHash("sha256")');
+    expect(assembly).toContain("report.package?.platformTarballSha256 !== digest");
+    expect(assembly).toContain("report.repository?.commit !== process.env.EXPECTED_COMMIT");
+    expect(assembly).toContain('cp "$tarball" dist-npm/');
+    expect(assembly).not.toContain("npm-artifacts/lore-");
   });
 
   test("the runner argument contract is strict and integrity-bearing", () => {

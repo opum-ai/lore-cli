@@ -157,7 +157,10 @@ describe("workspace source and reference retrieval", () => {
       },
     });
     expect(graph.backend).toBe("reference");
-    expect(warnings.count).toBe(2);
+    expect(warnings.count).toBe(3);
+    expect(warnings.list()).toContain(
+      "native indexed workspace retrieval failed; using the in-memory reference backend",
+    );
 
     const privateLocator = join(root, "private-location");
     const manifest = JSON.parse(await Bun.file(manifestPath).text()) as { members: Array<{ locator: string }> };
@@ -266,10 +269,12 @@ describe("workspace source and reference retrieval", () => {
 
   test("Windows policy falls back before loading the native addon", async () => {
     let loaded = false;
+    const warnings = new WarningCollector();
     const graph = await loadWorkspaceRetrievalGraph({
       root,
       selection: { manifestPath, memberIds: [] },
       platform: "win32",
+      warnings,
       loadNativeDriver: async () => {
         loaded = true;
         throw new Error("must not load");
@@ -278,6 +283,9 @@ describe("workspace source and reference retrieval", () => {
     });
     expect(graph.backend).toBe("reference");
     expect(loaded).toBeFalse();
+    expect(warnings.list()).toEqual([
+      "native indexed workspace retrieval is unsupported on this platform; using the in-memory reference backend",
+    ]);
   });
 });
 

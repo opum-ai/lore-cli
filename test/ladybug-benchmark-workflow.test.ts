@@ -144,11 +144,12 @@ describe("Ladybug benchmark workflow placement", () => {
     expect(upload.with?.["retention-days"]).toBe(90);
   });
 
-  test("the existing build/package/publish chain cannot bypass qualification", () => {
+  test("the package/publish chain cannot bypass matching-host qualification", () => {
     const jobs = loadWorkflow(RELEASE_PATH).jobs;
-    expect(needs(jobs.build as WorkflowJob)).toContain("ladybug-qualification");
-    expect(needs(jobs.build as WorkflowJob)).toContain("ladybug-concurrency-qualification");
-    expect(needs(jobs.package as WorkflowJob)).toContain("build");
+    expect(jobs.build).toBeUndefined();
+    expect(needs(jobs["package-qualification"] as WorkflowJob)).toContain("ladybug-qualification");
+    expect(needs(jobs["package-qualification"] as WorkflowJob)).toContain("ladybug-concurrency-qualification");
+    expect(needs(jobs.package as WorkflowJob)).toContain("package-qualification");
     expect(needs(jobs.package as WorkflowJob)).toContain("ladybug-qualification-evidence");
     expect(needs(jobs.publish as WorkflowJob)).toContain("package");
 

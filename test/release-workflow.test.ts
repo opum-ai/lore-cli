@@ -84,14 +84,12 @@ describe("release.yml publish job stays safely gated", () => {
     expect(doc.jobs.publish?.if).toBe("${{ inputs.publish == true }}");
   });
 
-  test("the publish job depends on the package job (so build+verify-versions gate it transitively)", () => {
+  test("the publish job depends on packages produced by matching-host qualification", () => {
     const doc = loadWorkflow();
     expect(doc.jobs.publish?.needs).toContain("package");
-    // `package` itself needs `build`, which needs `verify-versions` — asserted directly
-    // here too, so this test still catches a regression if that chain is ever
-    // shortened even though `publish` itself didn't change.
-    expect(doc.jobs.package?.needs).toContain("build");
-    expect(doc.jobs.build?.needs).toContain("verify-versions");
+    expect(doc.jobs.package?.needs).toContain("package-qualification");
+    expect(doc.jobs["package-qualification"]?.needs).toContain("verify-versions");
+    expect(doc.jobs.build).toBeUndefined();
   });
 
   test("id-token: write is scoped to the publish job only, not the workflow", () => {

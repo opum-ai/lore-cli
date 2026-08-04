@@ -320,77 +320,6 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
 
-  build:
-    name: "compile (${{ matrix.name }})"
-    needs: [setup, verify-versions, ladybug-qualification, ladybug-concurrency-qualification]
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJson(needs.setup.outputs.matrix) }}
-    # Cross-compiling all supported targets from one ubuntu runner (verified locally,
-    # LCLI-9): Bun downloads the target runtime and compiles without needing a
-    # matching host OS/arch. Only linux-x64 matches this runner natively, so it is
-    # the one target actually executed below; the rest get a non-empty-file check.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - uses: ./.github/actions/setup-bun
-      - name: Compile ${{ matrix.name }}
-        # The outfile is a subdirectory of the checkout — same filesystem as the
-        # source (see docs/reference/tech-stack.md §1 / LCLI-14): a cross-device
-        # --outfile silently produces a 0-byte binary at exit 0.
-        run: |
-          mkdir -p "npm/${{ matrix.name }}/bin"
-          external=()
-          if [ "${{ matrix.os }}" = "win32" ]; then
-            # Windows intentionally selects Lore's reference backend before the
-            # Ladybug driver can load. Keep the build free of a native addon that
-            # is unsupported on ARM64 and unsafe on x64.
-            external+=(--external=@ladybugdb/core)
-          fi
-          bun build --compile --target=${{ matrix.target }} \
-            "${external[@]}" \
-            --outfile="npm/${{ matrix.name }}/bin/${{ matrix.binary }}" src/cli.ts
-      - name: Verify (execute natively where possible, else assert non-empty)
-        shell: bash
-        run: |
-          bin="npm/${{ matrix.name }}/bin/${{ matrix.binary }}"
-          # Asserted for every platform, not just linux-x64: the compile step above writes
-          # directly to this path, so a missing file here means bun produced a
-          # differently-named (or no) output for the `binary` value declared in the setup
-          # job matrix — surface that explicitly rather than letting the `stat` below fail
-          # with a generic "no such file" trace.
-          if [ ! -f "$bin" ]; then
-            echo "::error::expected compiled binary at $bin (matrix.binary=\"${{ matrix.binary }}\") but no file exists there"
-            ls -la "npm/${{ matrix.name }}/bin/" || true
-            exit 1
-          fi
-          size=$(stat -c%s "$bin")
-          echo "compiled $bin: ${size} bytes"
-          if [ "$size" -lt 1000000 ]; then
-            echo "::error::binary suspiciously small (${size} bytes) — likely the EXDEV 0-byte trap"
-            exit 1
-          fi
-          if [ "${{ matrix.name }}" = "linux-x64" ]; then
-            chmod +x "$bin"
-            version="$("$bin" --version)"
-            expected="$(bun -e 'console.log(require("./package.json").version)')"
-            echo "lore --version => '${version}' (package.json: '${expected}')"
-            if [ -z "$version" ]; then
-              echo "::error::linux-x64 binary produced no --version output"
-              exit 1
-            fi
-            if [ "${version}" != "${expected}" ]; then
-              echo "::error::version mismatch: binary='${version}' package.json='${expected}'"
-              exit 1
-            fi
-          fi
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: lore-${{ matrix.name }}
-          path: npm/${{ matrix.name }}/bin/
-          if-no-files-found: error
-
   package-qualification:
     name: "matching-host package qualification (${{ matrix.name }})"
     needs: [setup, verify-versions, ladybug-qualification, ladybug-concurrency-qualification]
@@ -533,7 +462,7 @@ jobs:
 
   package:
     name: package + install-sanity (dry-run, never publishes)
-    needs: [setup, build, package-qualification, ladybug-qualification-evidence]
+    needs: [setup, package-qualification, ladybug-qualification-evidence]
     runs-on: ubuntu-latest
     env:
       PLATFORM_NAMES_SPACE: ${{ needs.setup.outputs.namesSpace }}
@@ -541,28 +470,42 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          path: npm-artifacts
-      - name: Assemble each platform package's binary
-        run: |
-          for name in $PLATFORM_NAMES_SPACE; do
-            mkdir -p "npm/$name/bin"
-            cp -r "npm-artifacts/lore-$name/." "npm/$name/bin/"
-            chmod +x npm/"$name"/bin/lore* 2>/dev/null || true
-          done
-      - name: npm pack every package (LCLI-9 AC#1 — produces all platform artifacts; never publishes)
-        # The committed root package points at bin/lore.cjs, the same launcher every
-        # release ships. Filenames are built from the exact version rather than a
-        # glob: `opum-ai-lore-*.tgz`
-        # also matches every platform package's tarball, and passing THOSE to `npm
-        # install` explicitly (not resolved through optionalDependencies) makes npm
-        # hard-fail EBADPLATFORM on any package.json os/cpu mismatch with the runner.
+          pattern: ladybug-package-qualification-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: qualified-packages
+      - name: Assemble the exact matching-host-qualified platform tarballs
         run: |
           mkdir -p dist-npm
           version="$(node -p "require('./package.json').version")"
-          npm pack --pack-destination "$PWD/dist-npm" .
           for name in $PLATFORM_NAMES_SPACE; do
-            (cd "npm/$name" && npm pack --pack-destination "$PWD/../../dist-npm" .)
+            artifact_dir="qualified-packages/ladybug-package-qualification-${name}-${{ github.run_id }}-${{ github.run_attempt }}"
+            report="${artifact_dir}/ladybug-package-qualification-${name}.json"
+            tarball="${artifact_dir}/opum-ai-lore-${name}-${version}.tgz"
+            # shellcheck disable=SC2016
+            REPORT_PATH="$report" TARBALL_PATH="$tarball" EXPECTED_NAME="$name" EXPECTED_COMMIT="$GITHUB_SHA" node -e '
+              const { createHash } = require("node:crypto");
+              const { readFileSync } = require("node:fs");
+              const report = JSON.parse(readFileSync(process.env.REPORT_PATH, "utf8"));
+              const digest = `sha256:${createHash("sha256").update(readFileSync(process.env.TARBALL_PATH)).digest("hex")}`;
+              if (
+                report.schema !== "lore.ladybug-package-qualification/3" ||
+                report.mode !== "qualification" ||
+                report.platform?.distribution !== process.env.EXPECTED_NAME ||
+                report.repository?.commit !== process.env.EXPECTED_COMMIT ||
+                report.package?.platform !== `@opum-ai/lore-${process.env.EXPECTED_NAME}` ||
+                report.package?.platformTarballSha256 !== digest
+              ) {
+                throw new Error(`qualified platform tarball identity check failed for ${process.env.EXPECTED_NAME}`);
+              }
+            '
+            cp "$tarball" dist-npm/
           done
+      - name: npm pack every package (LCLI-9 AC#1 — produces all platform artifacts; never publishes)
+        # Platform tarballs above are byte-for-byte the artifacts that already ran
+        # the matching-host forced-indexed package qualification. Pack only the root
+        # launcher here so publication cannot substitute an unqualified binary.
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          npm pack --pack-destination "$PWD/dist-npm" .
           ls -la dist-npm
           echo "ROOT_TARBALL=dist-npm/opum-ai-lore-${version}.tgz" >> "$GITHUB_ENV"
           echo "LINUX_X64_TARBALL=dist-npm/opum-ai-lore-linux-x64-${version}.tgz" >> "$GITHUB_ENV"
