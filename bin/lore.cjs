@@ -23,7 +23,7 @@
  * never imports `src/`.
  */
 
-const { spawnSync } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const os = require("node:os");
 const path = require("node:path");
 
@@ -76,6 +76,30 @@ function exitCodeForSignal(signal) {
   return signalNumber === undefined ? 1 : 128 + signalNumber;
 }
 
+/**
+ * Windows Bun executables can lose output when they inherit a redirected file
+ * handle through Node. Give the executable real Node-owned pipes instead, then
+ * stream those pipes to the launcher's own stdout/stderr. This preserves live
+ * output without imposing spawnSync's maxBuffer limit.
+ */
+function spawnWindowsBinary(binaryPath) {
+  const child = spawn(binaryPath, process.argv.slice(2), {
+    stdio: ["inherit", "pipe", "pipe"],
+  });
+  child.stdout.pipe(process.stdout);
+  child.stderr.pipe(process.stderr);
+
+  let spawnFailed = false;
+  child.once("error", (err) => {
+    spawnFailed = true;
+    process.stderr.write(`lore: failed to run the compiled binary at ${binaryPath}: ${err.message}\n`);
+    process.exitCode = 1;
+  });
+  child.once("close", (status, signal) => {
+    if (!spawnFailed) process.exitCode = status === null ? exitCodeForSignal(signal) : status;
+  });
+}
+
 function main() {
   let binaryPath;
   try {
@@ -95,6 +119,11 @@ function main() {
         `otherwise this platform is not yet supported.\n`,
     );
     process.exit(1);
+  }
+
+  if (process.platform === "win32") {
+    spawnWindowsBinary(binaryPath);
+    return;
   }
 
   const result = spawnSync(binaryPath, process.argv.slice(2), { stdio: "inherit" });
