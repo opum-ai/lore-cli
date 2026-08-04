@@ -244,11 +244,9 @@ export function selectWorkspaceProjection(
   projection: WorkspaceProjection,
   memberIds: readonly string[],
 ): WorkspaceProjection {
+  assertWorkspaceProjectionSelection(projection, memberIds);
   if (memberIds.length === 0) return projection;
   const requested = new Set(memberIds);
-  if (requested.size !== memberIds.length) invalidWorkspace("repository selectors must be unique");
-  const known = new Set(projection.identity.repositories.map((repository) => repository.memberId));
-  for (const memberId of requested) if (!known.has(memberId)) invalidWorkspace(`unknown workspace member ${memberId}`);
   const selected = projection.identity.repositories.filter((repository) => requested.has(repository.memberId));
   const allowed = new Set(selected.map((repository) => repository.memberId));
   const concepts = new Map([...projection.graph.concepts].filter(([id]) => allowed.has(memberOfQualifiedId(id))));
@@ -271,6 +269,18 @@ export function selectWorkspaceProjection(
     taskProvenanceById,
     links: projection.links.filter((link) => allowed.has(link.from.memberId) && allowed.has(link.to.memberId)),
   };
+}
+
+/** Validate an explicit repository subset without constructing or activating a backend. */
+export function assertWorkspaceProjectionSelection(
+  projection: WorkspaceProjection,
+  memberIds: readonly string[],
+): void {
+  if (memberIds.length === 0) return;
+  const requested = new Set(memberIds);
+  if (requested.size !== memberIds.length) invalidWorkspace("repository selectors must be unique");
+  const known = new Set(projection.identity.repositories.map((repository) => repository.memberId));
+  for (const memberId of requested) if (!known.has(memberId)) invalidWorkspace(`unknown workspace member ${memberId}`);
 }
 
 function scopeFor(manifest: WorkspaceManifest, identity: WorkspaceIdentity): WorkspaceResultScope {
