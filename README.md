@@ -21,6 +21,8 @@ semantic exit codes, machine-readable `--json`).
   Lore's capability manifest; Lore still owns output, errors, and process lifecycle.
 - Published on npm as **`@opum-ai/lore@0.1.0`** (bin `lore`) with five
   exact-pinned platform packages.
+- The next release matrix adds a sixth native package for **Windows ARM64**;
+  `0.1.0` itself remains the immutable five-platform release described below.
 - The agent bridge is a generated **`.claude/skills/lore/SKILL.md`** plus a tiny
   CLAUDE.md nudge and `lore instructions`. An **MCP server is secondary and
   deferred to v2**.
@@ -85,6 +87,14 @@ bunx @opum-ai/lore@0.1.0 --help
 npm install -g @opum-ai/lore@0.1.0
 ```
 
+`0.1.0` declared LadybugDB as a runtime dependency, so npm versions with
+install-script approval may require
+`npm install -g --allow-scripts=@ladybugdb/core @opum-ai/lore@0.1.0`. The next
+release removes that exception: the launcher installs only the matching
+script-free platform package, while qualified macOS/Linux executables embed
+LadybugDB's native addon at build time. Windows continues to use the reference
+backend and installs no LadybugDB package.
+
 Or add it to a project:
 
 ```bash
@@ -93,7 +103,9 @@ bun add -d @opum-ai/lore@0.1.0   # or: npm i -D @opum-ai/lore@0.1.0
 
 The npm package is a dual artifact: a Node `.cjs` launcher plus a
 per-platform compiled binary delivered as `optionalDependencies` (built with
-`bun build --compile`, `-baseline` x64 targets). You also need a
+`bun build --compile`, `-baseline` x64 targets). Starting with the next release,
+all JavaScript libraries are build-only and are not installed transitively with
+the launcher. You also need a
 `--json`-capable Backlog.md (>=1.49.0) on `PATH` — e.g. `npm install -g
 backlog.md`; see the [runbook](docs/runbooks/backlog-json-patch.md).
 
@@ -107,7 +119,7 @@ from the private source repository through the immutable composite action:
 - uses: opum-ai/lore-cli/.github/actions/strict-check@<full-commit-sha>
 ```
 
-The private composite action installs Bun 1.2.23 and this action revision's
+The private composite action installs Bun 1.3.14 and this action revision's
 frozen dependencies, installs the published JSON-capable `backlog.md` version
 pinned by the Docker E2E harness, then runs `lore validate --strict` and `lore
 check --strict` against the caller workspace. Consumer workflows must replace

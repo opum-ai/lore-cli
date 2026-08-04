@@ -11,7 +11,7 @@ const STALE_NPM_PACKAGE = "@salient-data/lore";
 const CANONICAL_NPM_TARBALL_PREFIX = "opum-ai-lore";
 const STALE_NPM_TARBALL_PREFIX = "salient-data-lore";
 
-const PLATFORM_PACKAGES = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-x64"];
+const PLATFORM_PACKAGES = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"];
 const OPERATIONAL_DOCUMENTS = [
   "README.md",
   "CHANGELOG.md",
@@ -47,7 +47,7 @@ function text(path: string): string {
 }
 
 describe("canonical repository location", () => {
-  test("all six release manifests use the exact canonical GitHub repository URL", () => {
+  test("every release manifest uses the exact canonical GitHub repository URL", () => {
     const paths = ["package.json", ...PLATFORM_PACKAGES.map((name) => `npm/${name}/package.json`)];
 
     for (const path of paths) {
@@ -73,7 +73,7 @@ describe("canonical repository location", () => {
 });
 
 describe("canonical npm package family", () => {
-  test("the launcher and five platform manifests use the exact @opum-ai names", () => {
+  test("the launcher and all platform manifests use the exact @opum-ai names", () => {
     const root = JSON.parse(text("package.json")) as {
       name?: string;
       optionalDependencies?: Record<string, string>;

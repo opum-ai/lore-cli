@@ -5,16 +5,17 @@ name: Release
 # a plain dispatch (or any dispatch that leaves `publish` at its default) only builds
 # and packages every platform artifact and proves the npx/launcher mechanism resolves
 # the right binary end-to-end (LCLI-9 AC#1/AC#2) — the `publish` job below simply does
-# not run. Setting `publish: true` additionally runs that job, publishing all six
-# packages to npm via OIDC Trusted Publishing (LCLI-255) — but only once a maintainer
-# has completed the one-time npmjs.com Trusted Publisher setup for all six packages;
+# not run. Setting `publish: true` additionally runs that job, publishing every
+# platform package and the root launcher to npm via OIDC Trusted Publishing (LCLI-255)
+# — but only once a maintainer has completed the one-time npmjs.com Trusted Publisher
+# setup for every package;
 # see docs/runbooks/release-publishing.md's First-release checklist for the full
 # mechanical sequence (version bump, the bin.lore flip, tag, dispatch).
 on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Publish all six packages to npm via OIDC Trusted Publishing (requires the one-time npmjs.com setup — see docs/runbooks/release-publishing.md). Leave false to only build/package/dry-run."
+        description: "Publish every platform package and the launcher to npm via OIDC Trusted Publishing (requires the one-time npmjs.com setup — see docs/runbooks/release-publishing.md). Leave false to only build/package/dry-run."
         type: boolean
         default: false
       ladybug_scale_observation:
@@ -35,7 +36,7 @@ jobs:
       namesSpace: ${{ steps.matrix.outputs.namesSpace }}
     steps:
       - id: matrix
-        # The ONE place the five platform triples are declared (ADR-0001 §"Build"; x64
+        # The ONE place the supported platform triples are declared (ADR-0001 §"Build"; x64
         # targets are -baseline to avoid AVX2-only SIGILL on older/virtualized CPUs, arm64
         # is standard). `build`'s matrix, `verify-versions`, and `package`'s per-platform
         # loop all derive their platform list from this job's outputs instead of each
@@ -44,7 +45,7 @@ jobs:
         # shell loops, computed once here rather than re-decoded from `names` (JSON) in
         # every consuming step.
         run: |
-          matrix='[{"name":"darwin-arm64","target":"bun-darwin-arm64","binary":"lore","runner":"macos-latest","os":"darwin","cpu":"arm64","ladybugPackage":"@ladybugdb/core-darwin-arm64","ladybugIntegrity":"sha512-3Ut3XL9kowzBoHw0wrN3QnW4xy5wYoPBypeuMtH92j59fol2w9e3lQJ6DM29YJ4F6mAVfW2cYGBXH2l9aXGmmw=="},{"name":"darwin-x64","target":"bun-darwin-x64-baseline","binary":"lore","runner":"macos-15-intel","os":"darwin","cpu":"x64","ladybugPackage":"@ladybugdb/core-darwin-x64","ladybugIntegrity":"sha512-KHuCBx+jkyxdfFEmmbsfUS1f108P4rS+VNkwCrMLvzJmJOZTZgNKeRmT0vO7qRum5KEoHSIPJLj2Le//rCYigQ=="},{"name":"linux-arm64","target":"bun-linux-arm64","binary":"lore","runner":"ubuntu-24.04-arm","os":"linux","cpu":"arm64","ladybugPackage":"@ladybugdb/core-linux-arm64","ladybugIntegrity":"sha512-z4Z67LZlgj6H7YnKMB1PornbdmeszVxfENusfDQ2MFyOyrze1X6c/3MkhVPyunuaTtriN9SBnEdyK39mB7NdyQ=="},{"name":"linux-x64","target":"bun-linux-x64-baseline","binary":"lore","runner":"ubuntu-24.04","os":"linux","cpu":"x64","ladybugPackage":"@ladybugdb/core-linux-x64","ladybugIntegrity":"sha512-aJOh7+XbTzCLNloK+KlDXuRmHgr7nLqyQwR/BR8fP/XsWVnxCKGpVVL8s+Lms7JNQAh6vEsvExttGgUq9hAu1Q=="},{"name":"win32-x64","target":"bun-windows-x64-baseline","binary":"lore.exe","runner":"windows-latest","os":"win32","cpu":"x64","ladybugPackage":"@ladybugdb/core-win32-x64","ladybugIntegrity":"sha512-y2/IOMKmydo4ZfQPDZuZhiFC104VJQ9lwc0w1KVdvb4Z2RIUUL8/tn5QD4Uq8DUrJGxQhoEESPnlkk69cKaaDQ=="}]'
+          matrix='[{"name":"darwin-arm64","target":"bun-darwin-arm64","binary":"lore","runner":"macos-latest","os":"darwin","cpu":"arm64","ladybugPackage":"@ladybugdb/core-darwin-arm64","ladybugIntegrity":"sha512-3Ut3XL9kowzBoHw0wrN3QnW4xy5wYoPBypeuMtH92j59fol2w9e3lQJ6DM29YJ4F6mAVfW2cYGBXH2l9aXGmmw=="},{"name":"darwin-x64","target":"bun-darwin-x64-baseline","binary":"lore","runner":"macos-15-intel","os":"darwin","cpu":"x64","ladybugPackage":"@ladybugdb/core-darwin-x64","ladybugIntegrity":"sha512-KHuCBx+jkyxdfFEmmbsfUS1f108P4rS+VNkwCrMLvzJmJOZTZgNKeRmT0vO7qRum5KEoHSIPJLj2Le//rCYigQ=="},{"name":"linux-arm64","target":"bun-linux-arm64","binary":"lore","runner":"ubuntu-24.04-arm","os":"linux","cpu":"arm64","ladybugPackage":"@ladybugdb/core-linux-arm64","ladybugIntegrity":"sha512-z4Z67LZlgj6H7YnKMB1PornbdmeszVxfENusfDQ2MFyOyrze1X6c/3MkhVPyunuaTtriN9SBnEdyK39mB7NdyQ=="},{"name":"linux-x64","target":"bun-linux-x64-baseline","binary":"lore","runner":"ubuntu-24.04","os":"linux","cpu":"x64","ladybugPackage":"@ladybugdb/core-linux-x64","ladybugIntegrity":"sha512-aJOh7+XbTzCLNloK+KlDXuRmHgr7nLqyQwR/BR8fP/XsWVnxCKGpVVL8s+Lms7JNQAh6vEsvExttGgUq9hAu1Q=="},{"name":"win32-arm64","target":"bun-windows-arm64","binary":"lore.exe","runner":"windows-11-arm","os":"win32","cpu":"arm64","ladybugPackage":null,"ladybugIntegrity":null},{"name":"win32-x64","target":"bun-windows-x64-baseline","binary":"lore.exe","runner":"windows-latest","os":"win32","cpu":"x64","ladybugPackage":"@ladybugdb/core-win32-x64","ladybugIntegrity":"sha512-y2/IOMKmydo4ZfQPDZuZhiFC104VJQ9lwc0w1KVdvb4Z2RIUUL8/tn5QD4Uq8DUrJGxQhoEESPnlkk69cKaaDQ=="}]'
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           names=$(node -e "console.log(JSON.stringify(JSON.parse(process.argv[1]).map((p) => p.name)))" "$matrix")
           echo "names=$names" >> "$GITHUB_OUTPUT"
@@ -52,7 +53,7 @@ jobs:
           echo "namesSpace=$namesSpace" >> "$GITHUB_OUTPUT"
 
   verify-versions:
-    name: assert the six release packages are version + metadata consistent
+    name: assert release package versions + metadata are consistent
     needs: setup
     runs-on: ubuntu-latest
     env:
@@ -164,7 +165,7 @@ jobs:
               for (const p of problems) console.error(`::error::${p}`);
               process.exit(1);
             }
-            console.log(`all six release packages are consistent (version ${root.version})`);
+            console.log(`the launcher and all ${platforms.length} platform packages are consistent (version ${root.version})`);
           '
 
   ladybug-qualification:
@@ -183,8 +184,8 @@ jobs:
         shell: bash
         run: |
           actual_bun="$(bun --version)"
-          if [ "$actual_bun" != "1.2.23" ]; then
-            echo "::error::Ladybug qualification requires Bun 1.2.23, observed $actual_bun"
+          if [ "$actual_bun" != "1.3.14" ]; then
+            echo "::error::Ladybug qualification requires Bun 1.3.14, observed $actual_bun"
             exit 1
           fi
           if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "x86_64" ]; then
@@ -301,7 +302,7 @@ jobs:
             if (!path) throw new Error("concurrency evidence report path is unavailable");
             const report = parseLadybugConcurrencyEvidenceReport(await Bun.file(path).json());
             if (
-              report.toolchain.bun !== "1.2.23" ||
+              report.toolchain.bun !== "1.3.14" ||
               report.repository.commit !== process.env.EXPECTED_COMMIT ||
               report.repository.dirty ||
               report.status !== "pass" ||
@@ -326,7 +327,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJson(needs.setup.outputs.matrix) }}
-    # Cross-compiling all five targets from one ubuntu runner (verified locally,
+    # Cross-compiling all supported targets from one ubuntu runner (verified locally,
     # LCLI-9): Bun downloads the target runtime and compiles without needing a
     # matching host OS/arch. Only linux-x64 matches this runner natively, so it is
     # the one target actually executed below; the rest get a non-empty-file check.
@@ -340,7 +341,15 @@ jobs:
         # --outfile silently produces a 0-byte binary at exit 0.
         run: |
           mkdir -p "npm/${{ matrix.name }}/bin"
+          external=()
+          if [ "${{ matrix.os }}" = "win32" ]; then
+            # Windows intentionally selects Lore's reference backend before the
+            # Ladybug driver can load. Keep the build free of a native addon that
+            # is unsupported on ARM64 and unsafe on x64.
+            external+=(--external=@ladybugdb/core)
+          fi
           bun build --compile --target=${{ matrix.target }} \
+            "${external[@]}" \
             --outfile="npm/${{ matrix.name }}/bin/${{ matrix.binary }}" src/cli.ts
       - name: Verify (execute natively where possible, else assert non-empty)
         shell: bash
@@ -541,27 +550,16 @@ jobs:
             chmod +x npm/"$name"/bin/lore* 2>/dev/null || true
           done
       - name: npm pack every package (LCLI-9 AC#1 — produces all platform artifacts; never publishes)
-        # The root package's COMMITTED `bin` still points at src/cli.ts (see
-        # docs/runbooks/release-publishing.md's release procedure — flipping it to
-        # bin/lore.cjs is a first-release step, not a standing state, so pre-publish
-        # git/link installs keep working). Patch a SCRATCH copy here (reverted via
-        # `git checkout` immediately after) so this dry-run's install-sanity step
-        # proves the launcher exactly as a real release will ship it. Filenames are
-        # built from the exact version rather than a glob: `opum-ai-lore-*.tgz`
+        # The committed root package points at bin/lore.cjs, the same launcher every
+        # release ships. Filenames are built from the exact version rather than a
+        # glob: `opum-ai-lore-*.tgz`
         # also matches every platform package's tarball, and passing THOSE to `npm
         # install` explicitly (not resolved through optionalDependencies) makes npm
         # hard-fail EBADPLATFORM on any package.json os/cpu mismatch with the runner.
         run: |
           mkdir -p dist-npm
           version="$(node -p "require('./package.json').version")"
-          node -e '
-            const fs = require("fs");
-            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-            pkg.bin.lore = "bin/lore.cjs";
-            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
-          '
           npm pack --pack-destination "$PWD/dist-npm" .
-          git checkout -- package.json
           for name in $PLATFORM_NAMES_SPACE; do
             (cd "npm/$name" && npm pack --pack-destination "$PWD/../../dist-npm" .)
           done
@@ -581,6 +579,18 @@ jobs:
           cd /tmp/lore-install-sanity
           npm init -y >/dev/null
           npm install "$GITHUB_WORKSPACE/$ROOT_TARBALL" "$GITHUB_WORKSPACE/$LINUX_X64_TARBALL"
+          node -e '
+            const manifest = require("./node_modules/@opum-ai/lore/package.json");
+            if (manifest.dependencies && Object.keys(manifest.dependencies).length > 0) {
+              throw new Error("published launcher unexpectedly contains runtime dependencies");
+            }
+            try {
+              require.resolve("@ladybugdb/core/package.json");
+              throw new Error("published launcher unexpectedly installed @ladybugdb/core");
+            } catch (error) {
+              if (error.code !== "MODULE_NOT_FOUND") throw error;
+            }
+          '
           version="$(node node_modules/.bin/lore --version)"
           echo "lore --version (via bin/lore.cjs -> the linux-x64 optionalDependency) => '${version}' (package.json: '${expected}')"
           if [ -z "$version" ]; then
@@ -621,7 +631,7 @@ jobs:
     # replaced copy of this file. This line is INERT on its own: referencing an
     # environment that has no protection rules configured auto-creates it with none, and
     # an attacker who deletes this line from their forged copy skips the gate entirely
-    # unless npm's Trusted Publisher config for all six packages also requires this
+    # unless every package's npm Trusted Publisher config also requires this
     # environment's OIDC claim. Both of those are repo-admin actions this workflow change
     # does not and cannot perform — see docs/runbooks/release-publishing.md's "Repo-admin
     # setup for the release Environment (LCLI-268)" section for the exact steps and the
@@ -688,8 +698,8 @@ jobs:
             }
             console.log(`npm ${version} meets the >= 11.5.1 trusted-publishing floor`);
           '
-      - name: Publish 5 platform binaries first, launcher LAST (resumable) via OIDC trusted publishing
-        # ORDER IS LOAD-BEARING: the root launcher's optionalDependencies pin the five
+      - name: Publish platform binaries first, launcher LAST (resumable) via OIDC trusted publishing
+        # ORDER IS LOAD-BEARING: the root launcher's optionalDependencies pin the
         # platform packages at an EXACT version, and bin/lore.cjs require.resolve()s them
         # at runtime. Publishing root first would (a) leave a window where
         # `npx @opum-ai/lore` installs a launcher whose platform deps 404 (npm skips
@@ -757,9 +767,12 @@ jobs:
           }
 
           shopt -s nullglob
+          read -r -a platform_names <<< "$PLATFORM_NAMES_SPACE"
+          expected_platform_count=${#platform_names[@]}
+          expected_total_count=$((expected_platform_count + 1))
           all_tgz=(dist-npm/*.tgz)
-          if [ "${#all_tgz[@]}" -ne 6 ]; then
-            echo "::error::expected 6 tarballs in dist-npm, found ${#all_tgz[@]}"
+          if [ "${#all_tgz[@]}" -ne "$expected_total_count" ]; then
+            echo "::error::expected ${expected_total_count} tarballs in dist-npm (${expected_platform_count} platform + 1 launcher), found ${#all_tgz[@]}"
             ls -la dist-npm
             exit 1
           fi
@@ -768,7 +781,7 @@ jobs:
           platform_tgz=()
           for tgz in "${all_tgz[@]}"; do
             is_platform=false
-            for name in $PLATFORM_NAMES_SPACE; do
+            for name in "${platform_names[@]}"; do
               case "$tgz" in
                 *"-${name}-"*) is_platform=true ;;
               esac
@@ -782,23 +795,23 @@ jobs:
               exit 1
             fi
           done
-          if [ "${#platform_tgz[@]}" -ne 5 ] || [ -z "$root" ]; then
-            echo "::error::expected 5 platform tarballs + 1 root tarball, found ${#platform_tgz[@]} platform (root='${root}')"
+          if [ "${#platform_tgz[@]}" -ne "$expected_platform_count" ] || [ -z "$root" ]; then
+            echo "::error::expected ${expected_platform_count} platform tarballs + 1 root tarball, found ${#platform_tgz[@]} platform (root='${root}')"
             ls -la dist-npm
             exit 1
           fi
 
           # Refuse to publish the pre-release placeholder version. Every other
           # precondition in this workflow fails loud (the npm floor assertion above,
-          # the 6/5+1-tarball count asserts above, verify-versions' 12-value
+          # the derived tarball-count asserts above and verify-versions' metadata
           # cross-check in the `verify-versions` job) — this is the only irreversible
           # action in the repo, and the First-release checklist deliberately orders
           # Trusted Publisher registration (step 1) BEFORE the version bump (step 2),
           # so a `publish: true` dispatch made between those two steps would otherwise
-          # sail through every other check and genuinely publish six installable
-          # `0.0.0` packages, moving `latest` onto them. Checked once against the root
-          # tarball (verify-versions already proved all six manifests share one
-          # version, so any of the six would do).
+          # sail through every other check and publish an installable `0.0.0`
+          # release, moving `latest` onto it. Checked once against the root
+          # tarball (verify-versions already proved every manifest shares one
+          # version, so any artifact would do).
           root_version="$(tar -xzOf "$root" package/package.json | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>console.log(JSON.parse(d).version));')"
           if [ -z "$root_version" ] || [ "$root_version" = "0.0.0" ]; then
             echo "::error::refusing to publish version '${root_version}' — 0.0.0 is the pre-release placeholder. Complete the version-bump item in docs/runbooks/release-publishing.md's First-release checklist first."

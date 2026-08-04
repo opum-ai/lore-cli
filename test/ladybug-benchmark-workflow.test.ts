@@ -86,7 +86,7 @@ describe("Ladybug benchmark workflow placement", () => {
     expect(job?.steps?.some((step) => step.uses === "./.github/actions/setup-bun")).toBe(true);
 
     const hostScript = runStep(job as WorkflowJob, "Ladybug qualification requires Bun").run ?? "";
-    expect(hostScript).toContain('actual_bun" != "1.2.23"');
+    expect(hostScript).toContain('actual_bun" != "1.3.14"');
     expect(hostScript).toContain('"$(uname -s)" != "Linux"');
     expect(hostScript).toContain('"$(uname -m)" != "x86_64"');
 
@@ -134,7 +134,7 @@ describe("Ladybug benchmark workflow placement", () => {
     expect(tests).toContain("test/indexed-retrieval.test.ts");
 
     const assertion = runStep(job as WorkflowJob, "parseLadybugConcurrencyEvidenceReport").run ?? "";
-    expect(assertion).toContain('report.toolchain.bun !== "1.2.23"');
+    expect(assertion).toContain('report.toolchain.bun !== "1.3.14"');
     expect(assertion).toContain("report.repository.commit !== process.env.EXPECTED_COMMIT");
     expect(assertion).toContain("LADYBUG_CONCURRENCY_EVIDENCE_KILL_POINTS");
 

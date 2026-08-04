@@ -164,8 +164,8 @@ export async function loadRetrievalGraph(options: RetrievalGraphOptions): Promis
       },
       ...(traversal !== undefined ? { traversal } : {}),
     };
-  } catch {
-    if (policy === "indexed") throw indexedUnavailable();
+  } catch (cause) {
+    if (policy === "indexed") throw cause;
     return loadReferenceGraph(options);
   }
 }

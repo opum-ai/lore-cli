@@ -24,11 +24,48 @@ import { LADYBUG_BENCHMARK_QUALIFICATION_BUN_VERSION, qualificationRunConfigurat
 export const LADYBUG_QUALIFICATION_EVIDENCE_SCHEMA = "lore.ladybug-qualification-evidence/1";
 
 export const LADYBUG_QUALIFICATION_PLATFORMS = [
-  { distribution: "darwin-arm64", os: "darwin", cpu: "arm64", supportClaim: "native-index" },
-  { distribution: "darwin-x64", os: "darwin", cpu: "x64", supportClaim: "native-index" },
-  { distribution: "linux-arm64", os: "linux", cpu: "arm64", supportClaim: "native-index" },
-  { distribution: "linux-x64", os: "linux", cpu: "x64", supportClaim: "native-index" },
-  { distribution: "win32-x64", os: "win32", cpu: "x64", supportClaim: "reference-fallback-only" },
+  {
+    distribution: "darwin-arm64",
+    os: "darwin",
+    cpu: "arm64",
+    supportClaim: "native-index",
+    nativeAddonAvailable: true,
+  },
+  {
+    distribution: "darwin-x64",
+    os: "darwin",
+    cpu: "x64",
+    supportClaim: "native-index",
+    nativeAddonAvailable: true,
+  },
+  {
+    distribution: "linux-arm64",
+    os: "linux",
+    cpu: "arm64",
+    supportClaim: "native-index",
+    nativeAddonAvailable: true,
+  },
+  {
+    distribution: "linux-x64",
+    os: "linux",
+    cpu: "x64",
+    supportClaim: "native-index",
+    nativeAddonAvailable: true,
+  },
+  {
+    distribution: "win32-arm64",
+    os: "win32",
+    cpu: "arm64",
+    supportClaim: "reference-fallback-only",
+    nativeAddonAvailable: false,
+  },
+  {
+    distribution: "win32-x64",
+    os: "win32",
+    cpu: "x64",
+    supportClaim: "reference-fallback-only",
+    nativeAddonAvailable: true,
+  },
 ] as const;
 
 export interface QualificationEvidenceArtifact<T> {
@@ -89,7 +126,7 @@ export const LadybugQualificationEvidenceManifestSchema = z.strictObject({
   artifacts: z.strictObject({
     linuxBenchmark: ArtifactReferenceSchema,
     gates: ArtifactReferenceSchema,
-    packages: z.array(ArtifactReferenceSchema).length(5),
+    packages: z.array(ArtifactReferenceSchema).length(LADYBUG_QUALIFICATION_PLATFORMS.length),
     concurrency: ArtifactReferenceSchema,
   }),
   platformVerdicts: z
@@ -102,7 +139,7 @@ export const LadybugQualificationEvidenceManifestSchema = z.strictObject({
         cleanupPassed: z.literal(true),
       }),
     )
-    .length(5),
+    .length(LADYBUG_QUALIFICATION_PLATFORMS.length),
   acceptanceCriteria: z.array(
     z.strictObject({
       number: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
@@ -139,7 +176,9 @@ export function buildLadybugQualificationEvidenceManifest(
   }
 
   if (inputs.packages.length !== LADYBUG_QUALIFICATION_PLATFORMS.length) {
-    throw new Error("qualification evidence requires exactly five matching-host package reports");
+    throw new Error(
+      `qualification evidence requires exactly ${LADYBUG_QUALIFICATION_PLATFORMS.length} matching-host package reports`,
+    );
   }
   const packages = inputs.packages.map((artifact) => {
     assertPackageQualificationReport(artifact.value);
@@ -291,7 +330,8 @@ function assertPackageEvidence(
     report.platform.os !== expected.os ||
     report.platform.cpu !== expected.cpu ||
     report.native.supportClaim !== expected.supportClaim ||
-    report.ladybug.optionalPackage !== `@ladybugdb/core-${expected.os}-${expected.cpu}` ||
+    report.ladybug.optionalPackage !==
+      (expected.nativeAddonAvailable ? `@ladybugdb/core-${expected.os}-${expected.cpu}` : null) ||
     report.package.platform !== `@opum-ai/lore-${expected.distribution}`
   ) {
     throw new Error(`${expected.distribution} artifact is not matching-host executable qualification evidence`);
@@ -310,10 +350,10 @@ function assertPackageEvidence(
     report.package.rootTarballSha256,
     report.package.platformTarballSha256,
     report.package.standaloneBinarySha256,
-    report.ladybug.addonSha256,
+    ...(report.ladybug.addonSha256 === null ? [] : [report.ladybug.addonSha256]),
   ];
   if (hashes.some((hash) => !/^sha256:[0-9a-f]{64}$/.test(hash))) {
-    throw new Error(`${expected.distribution} artifact lacks package and native-addon hashes`);
+    throw new Error(`${expected.distribution} artifact lacks required package hashes`);
   }
   if (expected.supportClaim === "native-index") {
     if (!report.native.executableEvidence || !report.native.databaseCreated || report.native.probeOutcome !== "pass") {
@@ -385,7 +425,11 @@ export function parseLadybugQualificationEvidenceArgs(args: readonly string[]): 
     if (value === undefined || value.length === 0) throw new Error(`missing qualification evidence argument: ${key}`);
     return resolve(value);
   };
-  if (packages.length !== 5) throw new Error("qualification evidence requires five --package-report arguments");
+  if (packages.length !== LADYBUG_QUALIFICATION_PLATFORMS.length) {
+    throw new Error(
+      `qualification evidence requires ${LADYBUG_QUALIFICATION_PLATFORMS.length} --package-report arguments`,
+    );
+  }
   return {
     linuxBenchmark: required("--linux-benchmark"),
     gates: required("--gates"),

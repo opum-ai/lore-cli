@@ -47,8 +47,8 @@ interface MatrixEntry {
   runner: string;
   os: string;
   cpu: string;
-  ladybugPackage: string;
-  ladybugIntegrity: string;
+  ladybugPackage: string | null;
+  ladybugIntegrity: string | null;
 }
 
 function loadWorkflow(): WorkflowDoc {
@@ -100,11 +100,15 @@ describe("matching-host Ladybug package qualification", () => {
         "build",
         "--compile",
         "--target=bun-windows-x64-baseline",
+        "--external=@ladybugdb/core",
         "--outfile=C:\\scratch\\lore.exe",
         join("D:\\repo", "src", "cli.ts"),
       ],
       cwd: "C:\\scratch",
     });
+    expect(packageCompileCommand("/repo", "/scratch", "bun-linux-arm64", "/scratch/lore").args).not.toContain(
+      "--external=@ladybugdb/core",
+    );
   });
 
   test("resolves an optional package from Bun's isolated store when no hoisted link exists", () => {
@@ -134,13 +138,14 @@ describe("matching-host Ladybug package qualification", () => {
     }
   });
 
-  test("the existing five distributions map to the five approved matching hosts", () => {
+  test("all supported distributions map to their approved matching hosts", () => {
     const matrix = releaseMatrix(loadWorkflow());
     expect(matrix.map(({ name, runner, os, cpu }) => ({ name, runner, os, cpu }))).toEqual([
       { name: "darwin-arm64", runner: "macos-latest", os: "darwin", cpu: "arm64" },
       { name: "darwin-x64", runner: "macos-15-intel", os: "darwin", cpu: "x64" },
       { name: "linux-arm64", runner: "ubuntu-24.04-arm", os: "linux", cpu: "arm64" },
       { name: "linux-x64", runner: "ubuntu-24.04", os: "linux", cpu: "x64" },
+      { name: "win32-arm64", runner: "windows-11-arm", os: "win32", cpu: "arm64" },
       { name: "win32-x64", runner: "windows-latest", os: "win32", cpu: "x64" },
     ]);
     expect(matrix.map((entry) => entry.target)).toEqual([
@@ -148,20 +153,26 @@ describe("matching-host Ladybug package qualification", () => {
       "bun-darwin-x64-baseline",
       "bun-linux-arm64",
       "bun-linux-x64-baseline",
+      "bun-windows-arm64",
       "bun-windows-x64-baseline",
     ]);
-    expect(matrix.map((entry) => entry.binary)).toEqual(["lore", "lore", "lore", "lore", "lore.exe"]);
+    expect(matrix.map((entry) => entry.binary)).toEqual(["lore", "lore", "lore", "lore", "lore.exe", "lore.exe"]);
   });
 
-  test("every host pins the exact Ladybug optional package and frozen-lock integrity", () => {
+  test("every host records the exact Ladybug addon, or its explicit Windows ARM64 absence", () => {
     const matrix = releaseMatrix(loadWorkflow());
     for (const entry of matrix) {
+      if (entry.name === "win32-arm64") {
+        expect(entry.ladybugPackage).toBeNull();
+        expect(entry.ladybugIntegrity).toBeNull();
+        continue;
+      }
       expect(entry.ladybugPackage).toBe(`@ladybugdb/core-${entry.os}-${entry.cpu}`);
       expect(entry.ladybugIntegrity).toMatch(/^sha512-[A-Za-z0-9+/]+={0,2}$/);
       const lock = readFileSync(join(import.meta.dir, "..", "bun.lock"), "utf8");
       const line = lock.split("\n").find((candidate) => candidate.trimStart().startsWith(`"${entry.ladybugPackage}":`));
       expect(line).toContain(`${entry.ladybugPackage}@0.19.0`);
-      expect(line).toContain(entry.ladybugIntegrity);
+      expect(line).toContain(entry.ladybugIntegrity as string);
     }
   });
 
@@ -248,6 +259,26 @@ describe("matching-host Ladybug package qualification", () => {
     expect(parsed.name).toBe("linux-x64");
     expect(parsed.mode).toBe("qualification");
     expect(parsed.output).toEndWith(join("artifacts", "report.json"));
+    expect(
+      parsePackageQualificationArgs([
+        "--name",
+        "win32-arm64",
+        "--target",
+        "bun-windows-arm64",
+        "--binary",
+        "lore.exe",
+        "--os",
+        "win32",
+        "--cpu",
+        "arm64",
+        "--ladybug-package",
+        "",
+        "--ladybug-integrity",
+        "",
+        "--output",
+        "artifacts/report.json",
+      ]).ladybugPackage,
+    ).toBeNull();
     expect(() => parsePackageQualificationArgs(["--name", "linux-x64", "--unknown", "value"])).toThrow(
       "unknown package qualification argument",
     );
@@ -277,9 +308,17 @@ describe("matching-host Ladybug package qualification", () => {
     const report = {
       schema: LADYBUG_PACKAGE_QUALIFICATION_SCHEMA,
       mode: "qualification",
-      platform: { bun: "1.2.23", os: "linux" },
+      platform: { bun: "1.3.14", os: "linux", cpu: "x64" },
       repository: { commit: "a".repeat(40) },
-      ladybug: { core: "0.19.0", copiedAddonMatches: true },
+      ladybug: {
+        core: "0.19.0",
+        optionalPackage: "@ladybugdb/core-linux-x64",
+        lockIntegrity: "sha512-YWJjZA==",
+        addonSha256: `sha256:${"b".repeat(64)}`,
+        installedCoreAbsent: true,
+        embeddedNativeIndexVerified: true,
+      },
+      package: { globalInstallScriptPolicyClean: true, globalLauncherSmoke: true },
       smoke: { outputsStable: true },
       native: {
         supportClaim: "native-index",
@@ -310,7 +349,8 @@ describe("matching-host Ladybug package qualification", () => {
 
     const windowsFallback = {
       ...report,
-      platform: { bun: "1.2.23", os: "win32" },
+      platform: { bun: "1.3.14", os: "win32", cpu: "x64" },
+      ladybug: { ...report.ladybug, embeddedNativeIndexVerified: false },
       native: {
         ...report.native,
         supportClaim: "reference-fallback-only",
@@ -321,6 +361,25 @@ describe("matching-host Ladybug package qualification", () => {
       },
     };
     expect(() => assertPackageQualificationReport(windowsFallback)).not.toThrow();
+    const windowsArmFallback = {
+      ...windowsFallback,
+      platform: { bun: "1.3.14", os: "win32", cpu: "arm64" },
+      ladybug: {
+        core: "0.19.0",
+        optionalPackage: null,
+        lockIntegrity: null,
+        addonSha256: null,
+        installedCoreAbsent: true,
+        embeddedNativeIndexVerified: false,
+      },
+      native: {
+        ...windowsFallback.native,
+        probeMode: "unavailable",
+        probeOutcome: "unavailable",
+        exitCode: null,
+      },
+    };
+    expect(() => assertPackageQualificationReport(windowsArmFallback)).not.toThrow();
     expect(() =>
       assertPackageQualificationReport({
         ...windowsFallback,
@@ -339,8 +398,12 @@ describe("matching-host Ladybug package qualification", () => {
     expect(runner).toContain("referenceFallbackDatabaseAbsent");
     expect(runner).toContain("commandOutputsStable");
     expect(runner).toContain("createFixtureBacklogEnvironment");
+    expect(runner).toContain('["install", "--global", rootTarball, platformTarball]');
+    expect(runner).toContain("assertNoInstallScriptApproval");
+    expect(runner).toContain("embeddedNativeIndexVerified");
+    expect(runner).toContain("initializeFixtureGitRepository");
     expect(runner).toContain("backlog-shim.ts");
-    expect(backlogShim).toContain('args[0] === "--version"');
+    expect(backlogShim).toContain('process.stdout.write("1.49.0\\n")');
     expect(backlogShim).toContain('args[0] === "task"');
     expect(backlogShim).toContain('kind: "task-list"');
     expect(probe).toContain("loadLadybugNativeDriver");

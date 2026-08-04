@@ -20,7 +20,13 @@ import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { disposeLadybugProjection } from "../../src/core/ladybug-lifecycle";
 import { EXPECTED_LADYBUG_STORAGE_VERSION, EXPECTED_LADYBUG_VERSION } from "../../src/core/ladybug-native";
-import { canonicalJson, digest, LADYBUG_CACHE_REL_ROOT, readSourceInventory } from "../../src/core/ladybug-source";
+import {
+  canonicalJson,
+  digest,
+  LADYBUG_CACHE_REL_ROOT,
+  LADYBUG_CONTROL_FILENAME,
+  readSourceInventory,
+} from "../../src/core/ladybug-source";
 import { generateLadybugBenchmarkFixture, loadLadybugBenchmarkFixtureSpec } from "./fixture";
 import {
   LADYBUG_NATIVE_PROBE_SCHEMA,
@@ -29,7 +35,7 @@ import {
   NATIVE_IMPORT_STARTED_FILENAME,
 } from "./native-probe";
 
-export const LADYBUG_PACKAGE_QUALIFICATION_SCHEMA = "lore.ladybug-package-qualification/1";
+export const LADYBUG_PACKAGE_QUALIFICATION_SCHEMA = "lore.ladybug-package-qualification/3";
 const LADYBUG_VERSION = EXPECTED_LADYBUG_VERSION;
 const REPOSITORY_ROOT = resolve(import.meta.dir, "..", "..");
 
@@ -40,8 +46,8 @@ export interface PackageQualificationInput {
   readonly binary: string;
   readonly os: NodeJS.Platform;
   readonly cpu: string;
-  readonly ladybugPackage: string;
-  readonly ladybugIntegrity: string;
+  readonly ladybugPackage: string | null;
+  readonly ladybugIntegrity: string | null;
   readonly output: string;
 }
 
@@ -69,9 +75,9 @@ interface SmokeEvidence {
 
 interface NativeEvidence {
   readonly supportClaim: "native-index" | "reference-fallback-only";
-  readonly probeMode: "indexed" | "import";
-  readonly probeOutcome: "pass" | "crash";
-  readonly exitCode: number;
+  readonly probeMode: "indexed" | "import" | "unavailable";
+  readonly probeOutcome: "pass" | "crash" | "unavailable";
+  readonly exitCode: number | null;
   readonly signal: NodeJS.Signals | null;
   readonly stdoutSha256: string;
   readonly stderrSha256: string;
@@ -111,10 +117,11 @@ export interface PackageQualificationReport {
   readonly repository: { readonly commit: string | null };
   readonly ladybug: {
     readonly core: string;
-    readonly optionalPackage: string;
-    readonly lockIntegrity: string;
-    readonly addonSha256: string;
-    readonly copiedAddonMatches: boolean;
+    readonly optionalPackage: string | null;
+    readonly lockIntegrity: string | null;
+    readonly addonSha256: string | null;
+    readonly installedCoreAbsent: true;
+    readonly embeddedNativeIndexVerified: boolean;
   };
   readonly package: {
     readonly root: string;
@@ -122,6 +129,8 @@ export interface PackageQualificationReport {
     readonly rootTarballSha256: string;
     readonly platformTarballSha256: string;
     readonly standaloneBinarySha256: string;
+    readonly globalInstallScriptPolicyClean: true;
+    readonly globalLauncherSmoke: true;
   };
   readonly smoke: SmokeEvidence;
   readonly native: NativeEvidence;
@@ -169,8 +178,16 @@ export function parsePackageQualificationArgs(args: readonly string[]): PackageQ
   }
   const os = required("--os");
   if (!isNodePlatform(os)) throw new Error(`unsupported package qualification OS: ${os}`);
-  const ladybugIntegrity = required("--ladybug-integrity");
-  if (!/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(ladybugIntegrity)) {
+  const optionalNativeValue = (key: string): string | null => {
+    if (!values.has(key)) throw new Error(`missing package qualification argument: ${key}`);
+    return values.get(key) || null;
+  };
+  const ladybugPackage = optionalNativeValue("--ladybug-package");
+  const ladybugIntegrity = optionalNativeValue("--ladybug-integrity");
+  if ((ladybugPackage === null) !== (ladybugIntegrity === null)) {
+    throw new Error("Ladybug package and integrity must either both be provided or both be unavailable");
+  }
+  if (ladybugIntegrity !== null && !/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(ladybugIntegrity)) {
     throw new Error("Ladybug package integrity must be a sha512 SRI value");
   }
   return {
@@ -180,7 +197,7 @@ export function parsePackageQualificationArgs(args: readonly string[]): PackageQ
     binary: required("--binary"),
     os,
     cpu: required("--cpu"),
-    ladybugPackage: required("--ladybug-package"),
+    ladybugPackage,
     ladybugIntegrity,
     output: resolve(required("--output")),
   };
@@ -195,7 +212,7 @@ export function assertPackageQualificationReport(value: unknown): asserts value 
   if (report.mode !== "qualification" && report.mode !== "smoke") {
     throw new Error("package qualification report runtime mode is unsupported");
   }
-  if (report.mode === "qualification" && report.platform?.bun !== "1.2.23") {
+  if (report.mode === "qualification" && report.platform?.bun !== "1.3.14") {
     throw new Error("package qualification report does not use the pinned Bun runtime");
   }
   if (!/^[0-9a-f]{40}$/.test(report.repository?.commit ?? "")) {
@@ -215,11 +232,31 @@ export function assertPackageQualificationReport(value: unknown): asserts value 
   ) {
     throw new Error("package qualification report does not carry the approved native platform verdict");
   }
+  const unavailableAddonIsValid =
+    report.platform?.os === "win32" &&
+    report.platform.cpu === "arm64" &&
+    report.ladybug?.optionalPackage === null &&
+    report.ladybug.lockIntegrity === null &&
+    report.ladybug.addonSha256 === null &&
+    report.ladybug.installedCoreAbsent === true &&
+    report.ladybug.embeddedNativeIndexVerified === false &&
+    report.native?.probeMode === "unavailable" &&
+    report.native.probeOutcome === "unavailable" &&
+    report.native.exitCode === null;
+  const installedAddonIsValid =
+    !(report.platform?.os === "win32" && report.platform.cpu === "arm64") &&
+    typeof report.ladybug?.optionalPackage === "string" &&
+    typeof report.ladybug.lockIntegrity === "string" &&
+    typeof report.ladybug.addonSha256 === "string" &&
+    report.ladybug.installedCoreAbsent === true &&
+    report.ladybug.embeddedNativeIndexVerified === (report.platform?.os !== "win32");
   if (
     report.cleanup === undefined ||
     Object.values(report.cleanup).some((passed) => passed !== true) ||
     report.ladybug?.core !== LADYBUG_VERSION ||
-    report.ladybug.copiedAddonMatches !== true
+    report.package?.globalInstallScriptPolicyClean !== true ||
+    report.package.globalLauncherSmoke !== true ||
+    (!unavailableAddonIsValid && !installedAddonIsValid)
   ) {
     throw new Error("package qualification report is not a conclusive cleanup pass");
   }
@@ -252,7 +289,7 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
 
   try {
     progress("asserting isolated global prefix and staging packages");
-    assertIsolatedGlobalClean(join(scratch, "npm-global"));
+    assertIsolatedGlobalClean(join(scratch, "npm-global"), input.os);
     stageRootPackage(rootStage, rootPackage);
     stagePlatformPackage(platformStage, input.name);
     const compiledPath = join(platformStage, "bin", input.binary);
@@ -269,6 +306,30 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
     const platformTarball = join(artifactRoot, `opum-ai-lore-${input.name}-${expectedVersion}.tgz`);
     assertRegularFile(rootTarball, "root launcher tarball");
     assertRegularFile(platformTarball, "platform tarball");
+
+    progress("installing both tarballs into an isolated global npm prefix without script approval");
+    const globalInstall = await run(npm, ["install", "--global", rootTarball, platformTarball], {
+      cwd: scratch,
+      env: npmEnvironment,
+      timeoutMs: 600_000,
+    });
+    assertNoInstallScriptApproval(globalInstall);
+    const globalRoot = globalPackageRoot(join(scratch, "npm-global"), input.os);
+    const globalLauncher = join(globalRoot, "@opum-ai", "lore", "bin", "lore.cjs");
+    assertRegularFile(globalLauncher, "globally installed Lore launcher");
+    if (existsSync(join(globalRoot, "@ladybugdb", "core"))) {
+      throw new Error("the global Lore install unexpectedly contains @ladybugdb/core");
+    }
+    const globalVersion = (await run(node, [globalLauncher, "--version"], { cwd: scratch })).stdout.trim();
+    if (globalVersion !== expectedVersion) {
+      throw new Error(`globally installed Lore reported ${globalVersion || "no version"}, expected ${expectedVersion}`);
+    }
+    await run(npm, ["uninstall", "--global", "@opum-ai/lore", platformPackageName], {
+      cwd: scratch,
+      env: npmEnvironment,
+      timeoutMs: 300_000,
+    });
+    assertIsolatedGlobalClean(join(scratch, "npm-global"), input.os);
 
     mkdirSync(standaloneRoot, { recursive: true });
     const standaloneBinary = join(standaloneRoot, input.binary);
@@ -288,18 +349,16 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
     const launcher = join(installedRoot, "bin", "lore.cjs");
     assertRegularFile(launcher, "installed Node launcher");
     assertRegularFile(join(installedPlatform, "bin", input.binary), "installed platform binary");
-    const installedAddon = join(installRoot, "node_modules", "@ladybugdb", "core", "lbugjs.node");
-    assertRegularFile(installedAddon, "installed Ladybug addon");
-    if (sha256File(installedAddon) !== ladybug.addonSha256) {
-      throw new Error(
-        "the isolated Node install copied a different Ladybug addon than the frozen matching-host install",
-      );
+    const installedCore = join(installRoot, "node_modules", "@ladybugdb", "core");
+    if (existsSync(installedCore)) {
+      throw new Error("the installed Lore launcher unexpectedly contains the build-only @ladybugdb/core package");
     }
 
     const spec = loadLadybugBenchmarkFixtureSpec(
       join(REPOSITORY_ROOT, "benchmark", "ladybug", "fixtures", "v1", "small.json"),
     );
     generateLadybugBenchmarkFixture(spec, fixtureRoot);
+    await initializeFixtureGitRepository(fixtureRoot);
     const smokeEnvironment = await createFixtureBacklogEnvironment(input, scratch);
     const sourceDigestBefore = sourceInventoryDigest(fixtureRoot);
     progress("probing the exact native boundary in a sacrificial child");
@@ -310,11 +369,19 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
     const standaloneSmoke = await smoke([standaloneBinary], fixtureRoot, expectedVersion, smokeEnvironment);
 
     const cacheRoot = join(fixtureRoot, LADYBUG_CACHE_REL_ROOT);
+    const embeddedNativeIndexVerified =
+      input.os !== "win32" && findFiles(cacheRoot, LADYBUG_CONTROL_FILENAME).length > 0;
     const commandOutputsStable = canonicalJson(launcherSmoke) === canonicalJson(standaloneSmoke);
     const referenceFallbackDatabaseAbsent = input.os === "win32" ? !existsSync(cacheRoot) : null;
     if (!commandOutputsStable) throw new Error("Node-launcher and standalone command outputs are not stable");
     if (input.os === "win32" && referenceFallbackDatabaseAbsent !== true) {
       throw new Error("Windows reference fallback unexpectedly created a Ladybug cache database");
+    }
+    if (input.os !== "win32" && !embeddedNativeIndexVerified) {
+      const entries = existsSync(cacheRoot) ? readdirSync(cacheRoot).sort().join(",") : "<missing>";
+      throw new Error(
+        `the dependency-free installed launcher did not create an embedded Ladybug native index (cache: ${entries})`,
+      );
     }
     mkdirSync(cacheRoot, { recursive: true });
     const cacheMarker = join(cacheRoot, "user-cache-marker");
@@ -342,7 +409,7 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
 
     rmSync(installRoot, { recursive: true, force: true });
     const installScratchRemoved = !existsSync(installRoot);
-    const isolatedGlobalClean = assertIsolatedGlobalClean(join(scratch, "npm-global"));
+    const isolatedGlobalClean = assertIsolatedGlobalClean(join(scratch, "npm-global"), input.os);
     report = {
       schema: LADYBUG_PACKAGE_QUALIFICATION_SCHEMA,
       mode: input.mode,
@@ -359,7 +426,8 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
         optionalPackage: input.ladybugPackage,
         lockIntegrity: input.ladybugIntegrity,
         addonSha256: ladybug.addonSha256,
-        copiedAddonMatches: true,
+        installedCoreAbsent: true,
+        embeddedNativeIndexVerified,
       },
       package: {
         root: "@opum-ai/lore",
@@ -367,6 +435,8 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
         rootTarballSha256: sha256File(rootTarball),
         platformTarballSha256: sha256File(platformTarball),
         standaloneBinarySha256: sha256File(standaloneBinary),
+        globalInstallScriptPolicyClean: true,
+        globalLauncherSmoke: true,
       },
       smoke: { launcher: launcherSmoke, standalone: standaloneSmoke, outputsStable: commandOutputsStable },
       native: {
@@ -409,8 +479,8 @@ function assertHost(input: PackageQualificationInput): void {
       `matching-host qualification expected ${input.os}-${input.cpu}, observed ${process.platform}-${process.arch}`,
     );
   }
-  if (input.mode === "qualification" && Bun.version !== "1.2.23") {
-    throw new Error(`matching-host qualification requires Bun 1.2.23, observed ${Bun.version}`);
+  if (input.mode === "qualification" && Bun.version !== "1.3.14") {
+    throw new Error(`matching-host qualification requires Bun 1.3.14, observed ${Bun.version}`);
   }
   if (input.name !== `${input.os}-${input.cpu}`) {
     throw new Error(`distribution ${input.name} does not match host ${input.os}-${input.cpu}`);
@@ -419,13 +489,39 @@ function assertHost(input: PackageQualificationInput): void {
     throw new Error(`distribution ${input.name} declares the wrong binary filename`);
   }
   const expectedLadybugPackage = `@ladybugdb/core-${input.os}-${input.cpu}`;
-  if (input.ladybugPackage !== expectedLadybugPackage) {
+  if (input.os === "win32" && input.cpu === "arm64") {
+    if (input.ladybugPackage !== null || input.ladybugIntegrity !== null) {
+      throw new Error("Windows ARM64 must declare the unavailable Ladybug native addon explicitly");
+    }
+  } else if (input.ladybugPackage !== expectedLadybugPackage || input.ladybugIntegrity === null) {
     throw new Error(`expected Ladybug optional package ${expectedLadybugPackage}, received ${input.ladybugPackage}`);
   }
 }
 
-function assertFrozenLadybugInstall(input: PackageQualificationInput): { addonSha256: string } {
+function assertFrozenLadybugInstall(input: PackageQualificationInput): { addonSha256: string | null } {
   const coreRoot = join(REPOSITORY_ROOT, "node_modules", "@ladybugdb", "core");
+  const corePackage = readJson(join(coreRoot, "package.json"));
+  if (stringField(corePackage, "version", "Ladybug core") !== LADYBUG_VERSION) {
+    throw new Error(`@ladybugdb/core must be exactly ${LADYBUG_VERSION}`);
+  }
+  if (input.ladybugPackage === null || input.ladybugIntegrity === null) {
+    const unavailablePackage = `@ladybugdb/core-${input.os}-${input.cpu}`;
+    const coreOptional = corePackage.optionalDependencies;
+    if (
+      typeof coreOptional !== "object" ||
+      coreOptional === null ||
+      (coreOptional as Record<string, unknown>)[unavailablePackage] !== undefined
+    ) {
+      throw new Error("Ladybug core unexpectedly declares a Windows ARM64 optional package");
+    }
+    const lockDeclaresUnavailablePackage = readFileSync(join(REPOSITORY_ROOT, "bun.lock"), "utf8")
+      .split("\n")
+      .some((line) => line.trimStart().startsWith(`"${unavailablePackage}":`));
+    if (lockDeclaresUnavailablePackage || existsSync(join(coreRoot, "lbugjs.node"))) {
+      throw new Error("the frozen Windows ARM64 install unexpectedly contains a Ladybug native addon");
+    }
+    return { addonSha256: null };
+  }
   const platformPackagePath = resolveInstalledOptionalPackageJson(
     REPOSITORY_ROOT,
     coreRoot,
@@ -433,11 +529,7 @@ function assertFrozenLadybugInstall(input: PackageQualificationInput): { addonSh
     LADYBUG_VERSION,
   );
   const platformRoot = dirname(platformPackagePath);
-  const corePackage = readJson(join(coreRoot, "package.json"));
   const platformPackage = readJson(platformPackagePath);
-  if (stringField(corePackage, "version", "Ladybug core") !== LADYBUG_VERSION) {
-    throw new Error(`@ladybugdb/core must be exactly ${LADYBUG_VERSION}`);
-  }
   if (stringField(platformPackage, "name", "Ladybug platform package") !== input.ladybugPackage) {
     throw new Error("the installed Ladybug optional package does not match the host matrix");
   }
@@ -514,9 +606,17 @@ export function packageCompileCommand(
   target: string,
   output: string,
 ): PackageCompileCommand {
+  const external = target.startsWith("bun-windows-") ? ["--external=@ladybugdb/core"] : [];
   return {
     executable: "bun",
-    args: ["build", "--compile", `--target=${target}`, `--outfile=${output}`, join(repositoryRoot, "src", "cli.ts")],
+    args: [
+      "build",
+      "--compile",
+      `--target=${target}`,
+      ...external,
+      `--outfile=${output}`,
+      join(repositoryRoot, "src", "cli.ts"),
+    ],
     // Bun 1.2 extracts a downloaded target runtime relative to cwd before moving
     // it into the user cache. GitHub's Windows checkout and cache use different
     // drives, so keep extraction beside this same-drive temporary output.
@@ -526,7 +626,6 @@ export function packageCompileCommand(
 
 function stageRootPackage(root: string, sourcePackage: Record<string, unknown>): void {
   mkdirSync(root, { recursive: true });
-  cpSync(join(REPOSITORY_ROOT, "src"), join(root, "src"), { recursive: true });
   cpSync(join(REPOSITORY_ROOT, "bin"), join(root, "bin"), { recursive: true });
   cpSync(join(REPOSITORY_ROOT, "README.md"), join(root, "README.md"));
   cpSync(join(REPOSITORY_ROOT, "LICENSE"), join(root, "LICENSE"));
@@ -541,6 +640,19 @@ function stagePlatformPackage(root: string, name: string): void {
 }
 
 async function runNativeProbe(input: PackageQualificationInput, scratch: string): Promise<NativeProbeProcessEvidence> {
+  if (input.ladybugPackage === null) {
+    return {
+      supportClaim: "reference-fallback-only",
+      probeMode: "unavailable",
+      probeOutcome: "unavailable",
+      exitCode: null,
+      signal: null,
+      stdoutSha256: digest(""),
+      stderrSha256: digest("LadybugDB does not publish a Windows ARM64 native addon"),
+      databaseCreated: false,
+      executableEvidence: false,
+    };
+  }
   const probeMode = input.os === "win32" ? "import" : "indexed";
   const probeRoot = join(scratch, "native-probe");
   const databasePath = join(probeRoot, "native-probe.lbdb");
@@ -759,7 +871,27 @@ async function createFixtureBacklogEnvironment(
   return {
     ...process.env,
     PATH: [binRoot, process.env.PATH].filter((value): value is string => value !== undefined).join(delimiter),
+    LORE_INTERNAL_PACKAGE_QUALIFICATION: input.os === "win32" ? undefined : "require-indexed",
   };
+}
+
+async function initializeFixtureGitRepository(root: string): Promise<void> {
+  const git = requireExecutable("git");
+  await run(git, ["init", "--quiet"], { cwd: root });
+  await run(git, ["add", "--all"], { cwd: root });
+  await run(
+    git,
+    [
+      "-c",
+      "user.name=Lore Package Qualification",
+      "-c",
+      "user.email=lore-package-qualification@example.invalid",
+      "commit",
+      "--quiet",
+      "--message=fixture",
+    ],
+    { cwd: root },
+  );
 }
 
 async function run(
@@ -871,12 +1003,24 @@ function makeTreeWritable(path: string): void {
   chmodSync(path, 0o600);
 }
 
-function assertIsolatedGlobalClean(root: string): true {
+function globalPackageRoot(prefix: string, platform: NodeJS.Platform): string {
+  return platform === "win32" ? join(prefix, "node_modules") : join(prefix, "lib", "node_modules");
+}
+
+function assertNoInstallScriptApproval(result: CommandResult): void {
+  const output = `${result.stdout}\n${result.stderr}`;
+  if (/allow-scripts|unapproved install script|blocked.*install script|@ladybugdb\/core/iu.test(output)) {
+    throw new Error(`global npm install requested lifecycle-script approval:\n${output}`);
+  }
+}
+
+function assertIsolatedGlobalClean(root: string, platform: NodeJS.Platform): true {
   if (existsSync(root) && findFiles(root, "lbugjs.node").length > 0) {
     throw new Error("isolated npm global prefix contains a Ladybug addon");
   }
+  const packageRoot = globalPackageRoot(root, platform);
   for (const fragment of ["@opum-ai/lore", "@ladybugdb/core"]) {
-    if (existsSync(join(root, "lib", "node_modules", ...fragment.split("/")))) {
+    if (existsSync(join(packageRoot, ...fragment.split("/")))) {
       throw new Error(`isolated npm global prefix contains ${fragment}`);
     }
   }

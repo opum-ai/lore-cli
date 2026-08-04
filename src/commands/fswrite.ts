@@ -274,7 +274,7 @@ function renameRetryDelayMs(attempt: number): number {
 
 /**
  * A synchronous, blocking sleep for {@link renameOverDestination}'s backoff — `Bun.sleepSync`, not a
- * busy-wait spin. This package's `src/` runs on Bun only (`package.json` `engines.bun >= 1.2.23`;
+ * busy-wait spin. This package's `src/` runs on Bun only (`package.json` `engines.bun >= 1.3.14`;
  * `src/` already uses `Bun.spawn`, `Bun.spawnSync`, `Bun.Glob`, `Bun.TOML` elsewhere — only
  * `bin/lore.cjs` runs under Node), so `Bun.sleepSync` is a first-party synchronous sleep, not an
  * unverified cross-platform primitive: no busy-wait, no wall-clock (`Date.now()`) dependency, no
