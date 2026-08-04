@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04 07:23'
-updated_date: '2026-08-04 14:34'
+updated_date: '2026-08-04 15:58'
 labels:
   - ladybugdb
   - packaging
@@ -22,11 +22,14 @@ references:
     not merged/pushed): see e2e_findings_v2.md and
     docs/runbooks/e2e-verification-v0.1.0.md in that repo.
 modified_files:
+  - .github/workflows/ci.yml
   - .github/workflows/release.yml
   - src/core/retrieval.ts
   - src/core/workspace-retrieval.ts
+  - test/ci-workflow.test.ts
   - test/indexed-retrieval.test.ts
   - test/ladybug-benchmark-workflow.test.ts
+  - test/ladybug-concurrency.test.ts
   - test/ladybug-package-qualification.test.ts
   - test/release-workflow.test.ts
   - test/workspace-retrieval.test.ts
@@ -68,7 +71,7 @@ This silently defeats ADR-0018's entire persistent-index/performance architectur
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Make the matching-host package qualification artifact the single source of each release platform tarball; stop assembling publishable packages from separately cross-compiled Ubuntu artifacts. 2. In the package job, download the six exact qualification artifacts, validate each report's platform/version/provenance and SHA-256 against its tarball, then copy those byte-identical platform tarballs into the publish set and pack only the root launcher there. 3. Surface a sanitized advisory whenever automatic repository or workspace retrieval falls back because native indexing is unsupported or failed, while keeping forced indexed qualification fail-closed and preserving successful indexed output. 4. Add regression tests for release artifact lineage, hash enforcement, forced-indexed compiled-binary evidence, and repository/workspace fallback advisories. 5. Run focused tests, a real matching-host package qualification against the compiled/packed/installed binary, full repository gates, diff hygiene, and adversarial self-review; finalize only with objective evidence for all four criteria.
+1. Reproduce the protected-check failures with the CI test flags and classify platform policy versus native-runtime failure behavior. 2. Make LCLI-302 fallback-warning assertions platform-aware while preserving the sanitized advisory contract and stdout parity. 3. Constrain the Bun 1.3.14 Linux isolated test runner only as needed to avoid the observed parallel epoll stream collision without reducing test coverage. 4. Run focused platform-sensitive tests plus full tests, typecheck, lint, actionlint, and diff hygiene; update PR #303 and require all GitHub checks before merging.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -83,10 +86,16 @@ Objective evidence on macOS ARM64: the exact package qualification runner compil
 Verification: focused suite 70/70 with 343 expectations; full suite 2,434/2,434 with 8,144 expectations; npm run typecheck passed; npm run lint passed across 186 files; actionlint passed for release.yml; git diff --check passed. Adversarial self-review caught and fixed an initial bare-hex versus sha256:-prefixed digest mismatch before final verification, confirmed the package job downloads only matching-host qualification artifacts, and confirmed fallback tests preserve stdout, emit the advisory, and redact private native errors. During the wave, unrelated LCLI-308 work advanced dev from 405606891a227a9012b87de625d909eba56fec6b to bb33bd38a9fec3b582944209ee240d5853dbce76 and committed the initial tracker/task dispatch; its source/docs paths do not overlap this eight-file implementation. No commit or remote action was authorized for LCLI-302, so acceptance criteria remain unchecked and the task remains In Progress pending explicit local commit authority.
 
 Authorized local delivery completed in source commit 973075a (fix(release): publish qualified native binaries), containing only the eight verified workflow/source/test files. No push or remote mutation was performed.
+
+PR #303 protected checks exposed post-delivery portability gaps at head b29a628. Ubuntu CI: Bun 1.3.14 isolated parallel execution raised repeated EEXIST: file already exists, epoll_ctl errors; Ladybug concurrency assertions also compared automatic fallback (now correctly advisory-bearing) byte-for-byte with explicit reference output. Windows CI: workspace fallback expected the failed-native advisory even though Windows policy correctly emits the unsupported-platform advisory. PR remains open and unmerged; no checks were bypassed.
+
+Repair implemented: Linux CI retains Bun file isolation but serializes isolated files on ubuntu-latest and ubuntu-24.04-arm to avoid Bun 1.3.14's observed parallel epoll stdio race; macOS concurrency is unchanged. Workspace fallback assertions now distinguish unsupported Windows policy from failed native activation. Ladybug concurrency assertions require identical exit/stdout/reference warnings and allow at most one exact sanitized fallback advisory. Focused CI-mode suite passed 18/18 with 207 expectations; the full serialized suite passed 2,436/2,436 with 8,166 expectations; typecheck, lint across 186 files, actionlint, and diff hygiene passed. Awaiting protected PR checks, especially Windows and Ubuntu, before re-finalizing.
+
+Protected delivery evidence: PR #303 at repair head 1c75c8fec8ab1536d135509a9fea4430eb2bc500 passed all eight CI jobs in run 30926258495, including Ubuntu tests (1m38s), Windows tests (2m24s), Ladybug benchmark smoke, compile smoke, explorer browser qualification, MkDocs, Docusaurus, and Docker E2E (5m36s). GitHub merged that exact head into dev as 463305e05382057977103f6918e960c3df4423ef on 2026-08-04. No required check was bypassed.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Fixed the native-package release gap by publishing the exact platform tarballs that pass matching-host forced-indexed qualification, with commit/package/SHA identity checks, and made automatic repository/workspace native fallback emit a sanitized advisory. Verified with a real macOS ARM64 compiled, packed, installed launcher and standalone qualification that created a Ladybug generation and passed cleanup; 2,434 tests, typecheck, lint, actionlint, and diff hygiene also passed. Delivered locally in source commit 973075a; no remote action occurred.
+Fixed native package publication by shipping the exact matching-host-qualified platform tarballs with provenance and digest enforcement, and made automatic native fallback emit a sanitized advisory. Repaired the protected-check portability gaps by serializing Bun 1.3.14 isolated files only on Ubuntu and making fallback assertions platform-aware while preserving stdout parity and redaction. Verified with real macOS ARM64 compiled-package qualification, 2,436 local tests, typecheck, lint, actionlint, and all eight PR #303 CI jobs; delivered to dev in merge 463305e.
 <!-- SECTION:FINAL_SUMMARY:END -->
