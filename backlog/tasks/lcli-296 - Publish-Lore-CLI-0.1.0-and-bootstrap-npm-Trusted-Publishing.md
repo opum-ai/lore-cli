@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-04 01:02'
-updated_date: '2026-08-04 01:17'
+updated_date: '2026-08-04 01:27'
 labels:
   - release
   - publication
@@ -17,6 +17,27 @@ dependencies:
 documentation:
   - docs/stories/prepare-the-first-lore-cli-release.md
   - docs/runbooks/release-publishing.md
+modified_files:
+  - CHANGELOG.md
+  - README.md
+  - backlog/tasks/lcli-295 - Rename-unpublished-npm-package-family-to-opum-ai.md
+  - >-
+    backlog/tasks/lcli-296 -
+    Publish-Lore-CLI-0.1.0-and-bootstrap-npm-Trusted-Publishing.md
+  - benchmark/ladybug/fixtures/v1/large.json
+  - benchmark/ladybug/fixtures/v1/small.json
+  - bun.lock
+  - docs/log.md
+  - docs/reference/lore-cli-release-truth.md
+  - docs/runbooks/release-publishing.md
+  - docs/stories/prepare-the-first-lore-cli-release.md
+  - npm/darwin-arm64/package.json
+  - npm/darwin-x64/package.json
+  - npm/linux-arm64/package.json
+  - npm/linux-x64/package.json
+  - npm/win32-x64/package.json
+  - package.json
+  - test/ladybug-benchmark-report.test.ts
 priority: high
 type: task
 ordinal: 409000
@@ -30,7 +51,7 @@ Cut Lore CLI's first immutable public release from the private opum-ai/lore-cli 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 All six manifests and the five root optional-dependency pins use exact version 0.1.0, the launcher is packaged through bin/lore.cjs, and release documentation/changelog describe the same immutable version.
+- [x] #1 All six manifests and the five root optional-dependency pins use exact version 0.1.0, the launcher is packaged through bin/lore.cjs, and release documentation/changelog describe the same immutable version.
 - [ ] #2 Release workflow publish:false passes version metadata, five-host build and executable package qualification, install-sanity, and produces exactly six retained tarballs from the tagged commit.
 - [ ] #3 The five @opum-ai/lore platform packages are bootstrap-published public before @opum-ai/lore, using the qualified workflow artifacts and interactive account authentication without storing a long-lived npm token.
 - [ ] #4 A clean registry install of @opum-ai/lore@0.1.0 resolves the matching platform package, reports 0.1.0, and registry metadata confirms all six packages are public.
@@ -48,4 +69,6 @@ Cut Lore CLI's first immutable public release from the private opum-ai/lore-cli 
 
 <!-- SECTION:NOTES:BEGIN -->
 2026-08-03 activation grounding: LCLI-295 is Done after PR #296 merged as 4a1cda8dadf591ff33e7c27a8ee60a13258254cc with all eight CI jobs passing. The user explicitly authorized the private-repository manual bootstrap publication. The release Environment remains unprotected, so Release publish:true is out of scope and prohibited; only publish:false qualification plus interactive npm publication is allowed.
+
+2026-08-03 release-candidate implementation: set all six manifests and five exact optional-dependency pins to 0.1.0, changed root bin.lore to bin/lore.cjs, opened the 0.1.0 changelog section, and updated pre-publication README/runbook/release truth without claiming a release. The version is deliberately part of deterministic Ladybug export evidence, so the small/large canonical export hashes and the report contract digest changed; source-inventory and task-snapshot hashes remained identical. Verification passed: frozen Bun install with no changes; six npm pack dry-runs with exact opum-ai-lore*-0.1.0.tgz names and root launcher included; 25 focused tests, 8 fixture/report tests, and all 2431 tests; lint, typecheck, actionlint, strict Lore validate/check, zero orphans/dangling links, and diff hygiene.
 <!-- SECTION:NOTES:END -->
