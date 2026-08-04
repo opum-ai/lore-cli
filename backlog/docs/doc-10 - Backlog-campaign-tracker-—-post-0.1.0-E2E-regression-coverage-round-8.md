@@ -3,7 +3,7 @@ id: doc-10
 title: Backlog campaign tracker — post-0.1.0 E2E regression coverage (round 8)
 type: other
 created_date: '2026-08-04 05:24'
-updated_date: '2026-08-04 06:50'
+updated_date: '2026-08-04 07:23'
 ---
 # Backlog campaign tracker — post-0.1.0 E2E regression coverage (round 8)
 
@@ -18,15 +18,15 @@ updated_date: '2026-08-04 06:50'
 Informational snapshot only; never a promised next wave.
 
 - Resolved: LCLI-298 and LCLI-299 are Done and locally delivered.
-- Formally ready after settlement: LCLI-300. Dependencies LCLI-261 and LCLI-262 are Done.
-- In flight: none. LCLI-300 will not be dispatched until readiness and conflicts are recomputed in a new wave.
+- In flight: LCLI-300 in wave 3 on the clean primary `dev` checkout at dispatch SHA `630acbf556971f4a5d7ff30a10af80e2afa9346c`.
+- Queue after the active wave: empty.
 
 ## Queue
 | Order | Task | Cluster | Formal dependencies | State | Wave | Likely files | Note |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | LCLI-298 | Docker E2E / agent initialization | LCLI-281 (Done) | Done | 1 | docker/e2e/run-e2e.sh; docker/e2e/Dockerfile | Delivered locally in `94cbd23`; full real-binary harness passed 316/316. |
 | 2 | LCLI-299 | Docker E2E / validation and schema | none | Done | 2 | docker/e2e/run-e2e.sh | Delivered locally in `106219c`; full real-binary harness passed 329/329. |
-| 3 | LCLI-300 | Docker E2E / regression backports | LCLI-261 (Done), LCLI-262 (Done) | To Do; ready and next ordered | — | docker/e2e/run-e2e.sh | Persist orphan hierarchy and rewrite-link text-mismatch regressions. |
+| 3 | LCLI-300 | Docker E2E / regression backports | LCLI-261 (Done), LCLI-262 (Done) | In Progress | 3 | docker/e2e/run-e2e.sh | Dispatched after live dependency and conflict recomputation. |
 
 ## Resolved
 | Task | Date/wave | Evidence and disposition |
@@ -44,6 +44,7 @@ Informational snapshot only; never a promised next wave.
 - LCLI-297 and LCLI-301: Done in local commit `10ecee2` and outside this campaign queue.
 
 ## Wave log
+- 2026-08-04 — wave 3 dispatch: restored clean `dev` at `630acbf556971f4a5d7ff30a10af80e2afa9346c`, 0 behind / 17 ahead of locally known `origin/dev`, one worktree, and no in-flight task. Revalidated LCLI-300 To Do with both dependencies Done and no dirty-work or worktree conflict; dispatched it sequentially because it shares `docker/e2e/run-e2e.sh` with the resolved waves. No remote action or new commit authority was inferred.
 - 2026-08-04 — wave 2 delivery settlement: source `106219c`, Backlog reconciliation `3c85ade`, and generated documentation `187ed8a` completed locally. The final tracker-only reconciliation records these immutable SHAs without regenerating docs. LCLI-300 remains undispatched and is the next candidate after a fresh live recomputation.
 - 2026-08-04 — wave 2 verification: the rebuilt real-binary harness passed 329/329, the repository suite passed 2,434/2,434, typecheck/lint/shell parse/diff hygiene passed, all four criteria were checked, and adversarial self-review found no blocker. No remote mutation occurred.
 - 2026-08-04 — wave 2 dispatch: explicit approval to proceed restored a clean `dev` at `3f260d30943d0ce27b0688077b8a0bec42a3bfb5`, 0 behind / 13 ahead of locally known `origin/dev`, one worktree, LCLI-299 To Do with no dependencies, and LCLI-300 formally ready with both dependencies Done. Dispatched only LCLI-299 because both remaining tasks share `docker/e2e/run-e2e.sh`; local task delivery commits and Lore reconciliation were authorized, but no remote action was authorized.
