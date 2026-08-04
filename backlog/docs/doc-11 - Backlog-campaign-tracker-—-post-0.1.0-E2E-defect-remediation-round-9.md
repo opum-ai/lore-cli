@@ -3,7 +3,7 @@ id: doc-11
 title: Backlog campaign tracker — post-0.1.0 E2E defect remediation (round 9)
 type: other
 created_date: '2026-08-04 12:54'
-updated_date: '2026-08-04 19:24'
+updated_date: '2026-08-04 19:54'
 ---
 # Backlog campaign tracker — post-0.1.0 E2E defect remediation (round 9)
 
@@ -17,10 +17,10 @@ updated_date: '2026-08-04 19:24'
 ## Frontier
 Informational snapshot only; never a promised next wave.
 
-- Ready now: LCLI-307 is To Do with no formal dependencies; repository cleanliness must be confirmed after settlement before dispatch.
+- Ready now: none; the confirmed six-task queue is exhausted.
 - In flight: none.
-- Resolved in this campaign: LCLI-302, LCLI-303, LCLI-304, LCLI-305, and LCLI-306.
-- Safest next candidate after a fresh restore: LCLI-307 by confirmed order, subject to live git, task, tool, and conflict checks. No later wave is promised.
+- Resolved in this campaign: LCLI-302, LCLI-303, LCLI-304, LCLI-305, LCLI-306, and LCLI-307.
+- Campaign state: all queued tasks are resolved. LCLI-307 required reconciliation rather than a source change because its fix was already present on `dev` and locally known `origin/dev`; the user authorized local delivery of the dedicated task/tracker settlement on 2026-08-04. No push or other remote mutation is authorized.
 
 ## Queue
 | Order | Task | Cluster | Formal dependencies | State | Wave | Likely files | Note |
@@ -30,11 +30,12 @@ Informational snapshot only; never a promised next wave.
 | 3 | LCLI-305 | Sync / managed task block drift | none | Done | 3 | `src/commands/reconcile-shared.ts`; `src/commands/check.ts`; `src/core/check.ts`; `test/reconcile-shared.test.ts`; `test/sync.test.ts`; `test/check.test.ts` | Explicit empty-task reconciliation delivered locally as `11764de3a64c68b0200392a1cb1b03146a0a4e51`. Focused 324/324 and full 2,443/2,443 tests, typecheck, lint, diff hygiene, and adversarial self-review passed; both criteria are checked. |
 | 4 | LCLI-304 | Link / unlink / schema capability | none | Done | 4 | `src/commands/link.ts`; `src/commands/sync.ts`; `src/core/check.ts`; schema and managed-block seams; `test/link.test.ts`; `test/sync.test.ts`; `test/check.test.ts` | Active-profile link refusal, explicit check finding, and legacy unlink cleanup delivered locally as `5069dc28c2f205f5382836fb5b3d4945abe26a3a`. Focused 347/347, full suite, typecheck, lint, diff hygiene, and adversarial self-review passed; all three criteria are checked. |
 | 5 | LCLI-306 | New / strict validation parity | none | Done | 5 | `src/core/check.ts`; `src/commands/check.ts`; `src/core/manifest.ts`; `src/core/instructions.ts`; `test/check.test.ts` | Unknown active-profile types now produce warning-tier `unknown-type` findings; ordinary check stays advisory and `check --strict` exits 6. Delivered locally as `31c9403221e2c4b50e6bb935bc2598f911f8a462`; focused 288/288, full suite, typecheck, lint, diff hygiene, and adversarial self-review pass. AC #1 is checked and the task is Done. |
-| 6 | LCLI-307 | Consumer scaffolding / Obsidian | none | Ready | — | `src/commands/scaffold.ts`; `src/core/consumer-scaffold.ts`; `test/scaffold.test.ts`; `test/consumer-scaffold.test.ts` | Mostly isolated, but retained in the confirmed sequential campaign model. |
+| 6 | LCLI-307 | Consumer scaffolding / Obsidian | none | Done | 6 reconciliation | `src/commands/scaffold.ts`; `src/commands/fswrite.ts`; `test/consumer-scaffold.test.ts`; `test/fswrite.test.ts` | Existing source commit `88800a44e157dbfb750a83283a52992404a7e1d4` and regression commit `2f05f412fae7e4d81991a6f237ea60f75aefbbdd` already satisfy the task and are ancestors of `dev` and locally known `origin/dev`. Focused 63/63, typecheck, ancestry checks, and adversarial self-review passed; AC #1 is checked and the task is Done. No new source change occurred. |
 
 ## Resolved
 | Task | Date/wave | Evidence and disposition |
 | --- | --- | --- |
+| LCLI-307 | 2026-08-04 / wave 6 reconciliation | The v0.1.0 observation was already fixed on dev before this task was filed. Source commit `88800a44e157dbfb750a83283a52992404a7e1d4` makes byte-identical scaffold re-runs no-op while preserving conflicts for modified files; regression commit `2f05f412fae7e4d81991a6f237ea60f75aefbbdd` proves Obsidian exit 0, zero writes, unchanged bytes, and the no-op message. Both are ancestors of current `dev` and locally known `origin/dev`. Focused 63/63 with 301 expectations, typecheck, and adversarial self-review passed; AC #1 checked and task Done. No new source change or remote mutation occurred. The user authorized local delivery of the dedicated task/tracker settlement; no remote mutation was authorized. |
 | LCLI-306 | 2026-08-04 / wave 5 | Unknown active-profile types now emit deterministic `unknown-type` warnings without changing `lore new` producer-extension tolerance; `check --strict` returns exit 6 in parity with `validate --strict`, and strict-mode contracts are current. Focused 288/288, full suite, typecheck, lint, diff hygiene, and adversarial self-review passed. Delivered locally as `31c9403221e2c4b50e6bb935bc2598f911f8a462`; AC #1 checked and task Done. No remote mutation occurred. |
 | LCLI-304 | 2026-08-04 / wave 4 | Active-profile schema capability now gates new task links before task or write IO, `check --strict` emits `unsupported-task-coupling`, and `unlink` removes final or already-empty legacy residue. Focused 347/347, full suite, typecheck, lint, diff hygiene, and adversarial self-review passed. Delivered locally as `5069dc28c2f205f5382836fb5b3d4945abe26a3a`; all three criteria checked and task Done. No remote mutation occurred. |
 | LCLI-305 | 2026-08-04 / wave 3 | Explicit empty `tasks:` lists now produce zero-row managed-block targets without status-flow config or Backlog task lookup. `sync` renders `_No linked tasks._`; `check --strict` reports stale zero-task blocks. Focused 324/324, full 2,443/2,443, typecheck, lint, diff hygiene, and adversarial self-review passed. Delivered locally as `11764de3a64c68b0200392a1cb1b03146a0a4e51`; both criteria checked and task Done. No remote mutation occurred. |
@@ -49,6 +50,7 @@ Informational snapshot only; never a promised next wave.
 - LCLI-45: deferred despite completed dependency LCLI-9. Its notes require a concrete in-process import need before reactivation.
 
 ## Wave log
+- 2026-08-04 — wave 6 reconciliation settlement: restore found active.md, doc-11, live tasks, clean `dev` at `ebdd6253dbda492a5bd7bccb8b57bff9ce7a0c95`, 0 behind / 8 ahead of locally known `origin/dev`, one worktree, and no campaign branches consistent. LCLI-307 was To Do and dependency-free, but current and locally known remote history already contained source commit `88800a44e157dbfb750a83283a52992404a7e1d4` plus regression commit `2f05f412fae7e4d81991a6f237ea60f75aefbbdd`. Focused consumer-scaffold tests passed 63/63 with 301 expectations, typecheck passed, ancestry checks passed, and adversarial self-review confirmed unchanged Obsidian files no-op while modified files retain conflict protection. AC #1 was checked and LCLI-307 moved to Done without a source change. The six-task queue is exhausted. The user subsequently authorized local delivery of the dedicated task/tracker settlement; no push or remote mutation was authorized.
 - 2026-08-04 — wave 5 dispatch: restore found active.md and doc-11 consistent with clean `dev` at `cf20e21b6c28e4f5a67938e269a58d8ade9086a3`, six commits ahead of locally known `origin/dev`, one worktree, no campaign branches, and all queued task states. LCLI-306 is To Do with no formal dependencies, required tools are available, and no dirty-work or in-flight file conflict exists, so it entered the sequential wave. LCLI-307 remains undispatched; no commit, push, PR, merge, publication, or other remote mutation is authorized.
 - 2026-08-04 — wave 5 verification hold: unknown active-profile types now emit deterministic warning-tier `unknown-type` findings from the existing read-only check scan; ordinary check remains exit 0 and `check --strict` returns exit 6 in parity with `validate --strict`. The structural root index retains its built-in judging profile, and user-facing strict-mode contracts were updated. Focused 288/288 with 558 expectations, the full suite, typecheck, lint across 186 files, diff hygiene, and adversarial self-review pass. AC #1 is checked; LCLI-306 remains In Progress because no local commit or remote delivery is authorized.
 - 2026-08-04 — wave 5 local delivery settlement: the user authorized local delivery. Source commit `31c9403221e2c4b50e6bb935bc2598f911f8a462` contains exactly the five verified source/test/contract files; post-commit focused 288/288, typecheck, and committed diff hygiene passed. LCLI-306 received its final summary and moved to Done; LCLI-307 remains undispatched and live readiness must be recomputed after settlement. No push or remote mutation occurred.
