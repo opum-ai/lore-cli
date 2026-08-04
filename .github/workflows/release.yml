@@ -333,7 +333,11 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       # The shared action is the isolated frozen install. Its Bun pin and
       # --linker=isolated flags are part of the package-qualification contract.
+      # Ladybug publishes no Windows ARM64 addon, so that one host installs the
+      # frozen dependency graph without running its unsupported source-build script.
       - uses: ./.github/actions/setup-bun
+        with:
+          ignore-scripts: ${{ matrix.name == 'win32-arm64' }}
       - name: Build, pack, install, smoke, uninstall, and audit ${{ matrix.name }}
         shell: bash
         run: |
