@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as yaml from "js-yaml";
@@ -95,6 +95,50 @@ describe("matching-host Ladybug package qualification", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test.skipIf(process.platform !== "win32")(
+    "the published launcher streams a real compiled Windows executable through redirected output",
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "lore-windows-launcher-test-"));
+      try {
+        const node = Bun.which("node");
+        if (node === null) throw new Error("test requires Node on PATH");
+        const packageRoot = join(root, "node_modules", "@opum-ai", "lore");
+        const platformRoot = join(root, "node_modules", "@opum-ai", `lore-win32-${process.arch}`);
+        const launcher = join(packageRoot, "bin", "lore.cjs");
+        const entrypoint = join(root, "compiled-child.ts");
+        const binary = join(platformRoot, "bin", "lore.exe");
+        mkdirSync(join(packageRoot, "bin"), { recursive: true });
+        mkdirSync(join(platformRoot, "bin"), { recursive: true });
+        cpSync(join(import.meta.dir, "..", "bin", "lore.cjs"), launcher);
+        writeFileSync(
+          join(platformRoot, "package.json"),
+          `${JSON.stringify({ name: `@opum-ai/lore-win32-${process.arch}`, version: "0.1.1" })}\n`,
+        );
+        writeFileSync(
+          entrypoint,
+          'process.stdout.write("0.1.1\\n"); process.stderr.write("compiled-child-stderr\\n");\n',
+        );
+        const compile = Bun.spawnSync(["bun", "build", "--compile", `--outfile=${binary}`, entrypoint], {
+          cwd: root,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        expect(compile.exitCode).toBe(0);
+
+        const result = Bun.spawnSync([node, launcher, "--version"], {
+          cwd: root,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout.toString()).toBe("0.1.1\n");
+        expect(result.stderr.toString()).toBe("compiled-child-stderr\n");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   test("retries temporary Windows-style scratch locks with bounded linear backoff", async () => {
     const root = mkdtempSync(join(tmpdir(), "lore-ladybug-package-retry-"));

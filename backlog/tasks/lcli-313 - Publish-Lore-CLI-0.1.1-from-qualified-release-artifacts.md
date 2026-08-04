@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:04'
-updated_date: '2026-08-04 22:45'
+updated_date: '2026-08-04 23:12'
 labels:
   - release
   - publication
@@ -24,6 +24,7 @@ modified_files:
   - benchmark/ladybug/package-build.ts
   - benchmark/ladybug/package-qualification.ts
   - benchmark/ladybug/file-capture-helper.cjs
+  - bin/lore.cjs
   - test/ladybug-package-qualification.test.ts
   - docs/reference/lore-cli-release-truth.md
   - docs/runbooks/release-publishing.md
@@ -66,4 +67,6 @@ Qualification repair implemented. The shared setup action now accepts a default-
 2026-08-04 qualification attempt 30954518410: five native hosts passed; win32-arm64 built, packed, and installed successfully but the Bun test harness lost stdout across the Node launcher nested stdio-inherit boundary, reporting no version after a zero exit. Packaging and publish jobs did not run; remote/local v0.1.1 tags were rolled back. Repair branch release/0.1.1-win-arm-capture uses disk-backed inherited-output capture for all launcher smoke commands. Local evidence: focused 12/12, full 2452/2452, lint/typecheck, and complete darwin-arm64 package qualification all pass.
 
 2026-08-04 qualification attempt 30956752582: all prerequisites and four Unix native hosts passed. Both Windows hosts built, packed, and installed, then failed identically because the qualification harness captured no version from the Node launcher; package and publish jobs did not run and v0.1.1 was rolled back locally and remotely. This proves the blocker is shared Windows stdio inheritance, not the Windows ARM64 build or its deliberate Ladybug reference fallback. The next repair makes Node own file-backed stdout/stderr handles before it spawns the launcher, avoiding Bun-created Windows handles. Local verification passes: focused 12/12, lint, typecheck, full 2452/2452 with 8306 assertions, diff hygiene, and complete darwin-arm64 build/pack/global install/project install/launcher parity/native probe/uninstall cleanup qualification.
+
+2026-08-04 qualification attempt 30958847529: prerequisites and all four Unix matching-host qualifications passed. Both Windows x64 and ARM64 again built, packed, and installed, then returned exit 0 with empty launcher stdout at the identical global-version assertion. Package assembly and publish remained skipped, nothing was published, and v0.1.1 was removed locally and remotely. The retained artifacts contain both Windows tarballs, confirming this is not an ARM64 or Ladybug build failure. Root cause is the published Node launcher passing redirected Windows handles directly to the compiled Bun child. The next repair keeps POSIX behavior unchanged, but on Windows gives the compiled executable Node-owned stdout/stderr pipes and streams them through the launcher without a spawnSync buffer limit. A Windows-only test now builds and invokes a real Bun executable through the exact published launcher; focused local tests pass 18/18 with one platform skip, plus Biome and diff hygiene.
 <!-- SECTION:NOTES:END -->
