@@ -100,8 +100,8 @@ and every owner gate agree.
 | [LCLI-266](../../backlog/tasks/lcli-266%20-%20lore-agents-the-pre-write-symlink-sweep-LORE-93-AC5-has-zero-test-coverage-%E2%80%94-deleting-assertNoSymlinkInAnyPath-fails-no-test.md) | lore agents: the pre-write symlink sweep (LCLI-93 AC#5) has zero test coverage — deleting assertNoSymlinkInAnyPath fails no test | Done |
 | [LCLI-267](../../backlog/tasks/lcli-267%20-%20lore-agents-renderPretty-a-protected-bridge-file-prints-green-while-lore-init-prints-the-same-action-yellow.md) | lore agents renderPretty: a 'protected' bridge file prints green while lore init prints the same action yellow | Done |
 | [LCLI-275](../../backlog/tasks/lcli-275%20-%20docs-runbooks-docker-e2e-section-still-says-the-harness-is-not-yet-a-required-check-but-LORE-196-shipped-that-ruleset.md) | docs/runbooks: docker-e2e section still says the harness is 'not yet a required check', but LCLI-196 shipped that ruleset | Done |
-| [LCLI-295](../../backlog/tasks/lcli-295%20-%20Rename-unpublished-npm-package-family-to-opum-ai.md) | Rename unpublished npm package family to @opum-ai | In Progress |
-| [LCLI-296](../../backlog/tasks/lcli-296%20-%20Publish-Lore-CLI-0.1.0-and-bootstrap-npm-Trusted-Publishing.md) | Publish Lore CLI 0.1.0 and bootstrap npm Trusted Publishing | To Do |
+| [LCLI-295](../../backlog/tasks/lcli-295%20-%20Rename-unpublished-npm-package-family-to-opum-ai.md) | Rename unpublished npm package family to @opum-ai | Done |
+| [LCLI-296](../../backlog/tasks/lcli-296%20-%20Publish-Lore-CLI-0.1.0-and-bootstrap-npm-Trusted-Publishing.md) | Publish Lore CLI 0.1.0 and bootstrap npm Trusted Publishing | In Progress |
 <!-- lore:tasks:end -->
 
 ## Notes

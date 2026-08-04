@@ -25,8 +25,9 @@ As verified on 2026-08-03, Lore CLI is **unreleased**:
 
 - the canonical GitHub repository is `opum-ai/lore-cli`; the LCLI-294 transfer
   changed ownership but did not create a tag, release, artifact, or registry package;
-- the root package and all five platform package manifests still use the
-  placeholder version `0.0.0`;
+- the root package, all five platform manifests, and the root's exact
+  optional-dependency pins are prepared at `0.1.0`, and the root bin points to
+  the publishable Node launcher `bin/lore.cjs`;
 - the local repository and GitHub repository have no release tag;
 - GitHub has no Lore release object;
 - a public npm registry preflight returns `404 Not Found` for `@opum-ai/lore`

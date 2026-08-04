@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-03
+
 ### Added
 - **`lore init` now detects and configures Claude Code and Codex independently**
   (LCLI-281). A bare interactive run offers each installed agent separately;
@@ -1269,3 +1271,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cwd-independent relative link.
 
 [Unreleased]: https://github.com/opum-ai/lore-cli/commits/dev
+[0.1.0]: https://github.com/opum-ai/lore-cli/releases/tag/v0.1.0
