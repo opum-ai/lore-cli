@@ -606,16 +606,13 @@ export function packageCompileCommand(
   target: string,
   output: string,
 ): PackageCompileCommand {
-  const external = target.startsWith("bun-windows-") ? ["--external=@ladybugdb/core"] : [];
   return {
     executable: "bun",
     args: [
-      "build",
-      "--compile",
+      join(repositoryRoot, "benchmark", "ladybug", "package-build.ts"),
       `--target=${target}`,
-      ...external,
       `--outfile=${output}`,
-      join(repositoryRoot, "src", "cli.ts"),
+      `--entrypoint=${join(repositoryRoot, "src", "cli.ts")}`,
     ],
     // Bun 1.2 extracts a downloaded target runtime relative to cwd before moving
     // it into the user cache. GitHub's Windows checkout and cache use different
