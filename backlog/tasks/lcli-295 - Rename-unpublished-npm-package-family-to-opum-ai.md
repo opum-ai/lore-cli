@@ -1,11 +1,11 @@
 ---
 id: LCLI-295
 title: Rename unpublished npm package family to @opum-ai
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-03 23:23'
-updated_date: '2026-08-04 01:08'
+updated_date: '2026-08-04 01:17'
 labels:
   - release
   - packaging
@@ -86,4 +86,12 @@ Matching-host package qualification on local darwin-arm64 packed and installed t
 2026-08-03 authority update: the owner confirmed creating the opum-ai npm organization and authorized commit, push, PR/merge, workflow dispatch, and the separate LCLI-296 manual 0.1.0 bootstrap publication. LCLI-295 remains limited to the package-identity migration and will land before any version bump or registry mutation.
 
 2026-08-03 final pre-delivery verification after Story coupling and npm-organization confirmation: focused package/launcher/release/evidence tests passed 25/25; full Bun 1.2.23 suite passed 2431/2431 across 75 files with 8092 assertions; lint, typecheck, actionlint, lore validate --strict, lore check --strict, zero-orphan/zero-dangling checks, and git diff --check all passed. Adversarial self-review found no active legacy package route; retained legacy strings are negative-regression constants or explicitly historical provenance.
+
+Delivery evidence: PR #296 merged exact reviewed head 3f9511e95dd39421bec9eee267e0bcd49224f37b into dev as 4a1cda8dadf591ff33e7c27a8ee60a13258254cc after all eight CI jobs passed, including Windows, Docker E2E, browser qualification, and Ladybug smoke. No tag or npm package was created by LCLI-295.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Renamed the unpublished root launcher and all five platform packages to the @opum-ai family across manifests, lock metadata, runtime resolution, release automation, qualification, tests, and active documentation. Verified 25 focused and 2431 full tests, lint, typecheck, actionlint, six package dry-runs, strict Lore gates, zero orphans/dangling links, and diff hygiene. Delivered exact head 3f9511e95dd39421bec9eee267e0bcd49224f37b through PR #296 after all eight CI jobs passed; merged into dev as 4a1cda8dadf591ff33e7c27a8ee60a13258254cc before any npm publication.
+<!-- SECTION:FINAL_SUMMARY:END -->

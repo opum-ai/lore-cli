@@ -1,10 +1,11 @@
 ---
 id: LCLI-296
 title: Publish Lore CLI 0.1.0 and bootstrap npm Trusted Publishing
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-04 01:02'
-updated_date: '2026-08-04 01:06'
+updated_date: '2026-08-04 01:17'
 labels:
   - release
   - publication
@@ -36,3 +37,15 @@ Cut Lore CLI's first immutable public release from the private opum-ai/lore-cli 
 - [ ] #5 Each package has a Trusted Publisher bound to GitHub opum-ai/lore-cli, workflow release.yml, environment release, and the selected allowed action; future automated publish:true remains blocked and documented until LCLI-278 resolves the private-repository Environment protection gap.
 - [ ] #6 The v0.1.0 tag and GitHub release point to the qualified commit, release truth and Lore Story coupling are synchronized, strict project gates pass, and exact publication evidence is recorded without exposing credentials.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Ground the exact merged base, registry emptiness, npm authentication capability, GitHub release Environment state, and absence of v0.1.0. 2. On an isolated release branch, set root and five platform versions plus exact optional-dependency pins to 0.1.0, flip the root bin to bin/lore.cjs, and update changelog/release documentation without claiming publication. 3. Run frozen install, manifest/package dry-runs, focused/full tests, lint/typecheck/actionlint, strict Lore gates, adversarial review, then deliver through a reviewed PR into dev. 4. Tag the exact merged release commit v0.1.0, dispatch Release with publish:false on that tag, require every five-host executable qualification and package job to pass, download the retained npm-packages artifact, and verify six exact tarballs/checksums/metadata. 5. Using interactive npm authentication and only those workflow tarballs, publish five platform packages first and @opum-ai/lore last, then verify all registry versions and a clean npx install. 6. Create the GitHub v0.1.0 release, configure each package Trusted Publisher for opum-ai/lore-cli release.yml with environment release, keep publish:true blocked by LCLI-278, reconcile release truth/Story/task/tracker state, and deliver the closure documentation.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-08-03 activation grounding: LCLI-295 is Done after PR #296 merged as 4a1cda8dadf591ff33e7c27a8ee60a13258254cc with all eight CI jobs passing. The user explicitly authorized the private-repository manual bootstrap publication. The release Environment remains unprotected, so Release publish:true is out of scope and prohibited; only publish:false qualification plus interactive npm publication is allowed.
+<!-- SECTION:NOTES:END -->
