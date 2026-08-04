@@ -89,6 +89,7 @@
 - 2026-08-03T21:59:30-05:00 65abf9549a80da275de8d9b016467cf97421ae10 docs: record Lore CLI 0.1.0 release
 - 2026-08-03T22:17:25-05:00 7069c7fd589ecfa85775fbe8de2ef247cce7c8f3 docs: sync corrected campaign tracker
 - 2026-08-04T00:40:24-05:00 10ecee23dce84d23ee9803b4ab1515465666cf41 feat: add ARM64 Windows and script-free installs
+- 2026-08-04T00:43:21-05:00 0b5f50853e1b64aefd5e7e48f80928b1e272a9e0 docs: sync ARM64 release history
 
 ## docs/.obsidian
 
