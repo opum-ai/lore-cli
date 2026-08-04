@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-04 01:02'
-updated_date: '2026-08-04 01:27'
+updated_date: '2026-08-04 01:38'
 labels:
   - release
   - publication
@@ -71,4 +71,6 @@ Cut Lore CLI's first immutable public release from the private opum-ai/lore-cli 
 2026-08-03 activation grounding: LCLI-295 is Done after PR #296 merged as 4a1cda8dadf591ff33e7c27a8ee60a13258254cc with all eight CI jobs passing. The user explicitly authorized the private-repository manual bootstrap publication. The release Environment remains unprotected, so Release publish:true is out of scope and prohibited; only publish:false qualification plus interactive npm publication is allowed.
 
 2026-08-03 release-candidate implementation: set all six manifests and five exact optional-dependency pins to 0.1.0, changed root bin.lore to bin/lore.cjs, opened the 0.1.0 changelog section, and updated pre-publication README/runbook/release truth without claiming a release. The version is deliberately part of deterministic Ladybug export evidence, so the small/large canonical export hashes and the report contract digest changed; source-inventory and task-snapshot hashes remained identical. Verification passed: frozen Bun install with no changes; six npm pack dry-runs with exact opum-ai-lore*-0.1.0.tgz names and root launcher included; 25 focused tests, 8 fixture/report tests, and all 2431 tests; lint, typecheck, actionlint, strict Lore validate/check, zero orphans/dangling links, and diff hygiene.
+
+2026-08-03 PR #297 gate correction: Windows CI completed 2,338 tests but the pinned 700k-row Ladybug fixture took 31.969 seconds and exceeded the existing 30-second per-test ceiling. The candidate now keeps Windows max-concurrency=4 while bounding that host at 45 seconds; a workflow contract assertion protects the limit. Focused CI-workflow tests (5/5), lint, and diff hygiene pass locally. No merge, tag, workflow dispatch, or registry mutation occurred while this gate was red.
 <!-- SECTION:NOTES:END -->
