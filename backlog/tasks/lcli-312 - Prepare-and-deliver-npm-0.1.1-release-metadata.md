@@ -1,11 +1,11 @@
 ---
 id: LCLI-312
 title: Prepare and deliver npm 0.1.1 release metadata
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04 20:00'
-updated_date: '2026-08-04 20:28'
+updated_date: '2026-08-04 20:44'
 labels:
   - release
   - npm
@@ -44,7 +44,7 @@ Prepare the accumulated post-0.1.0 fixes for publication as npm package version 
 - [x] #1 Root and all six platform package manifests declare version 0.1.1, root optional dependency pins match, and the lockfile is consistent
 - [x] #2 CHANGELOG.md promotes the current Unreleased changes into a dated 0.1.1 release entry and retains an empty Unreleased section
 - [x] #3 Release metadata checks, focused release tests, full project gates, and package dry-run or equivalent artifact verification pass without publishing
-- [ ] #4 The release-preparation change is committed, merged to the integration branch, pushed, stale release branches are pruned when safe, and the working repository is clean
+- [x] #4 The release-preparation change is committed, merged to the integration branch, pushed, stale release branches are pruned when safe, and the working repository is clean
 - [x] #5 No npm package, Git tag, or release artifact is published as part of preparation
 <!-- AC:END -->
 
@@ -66,4 +66,12 @@ Pre-delivery verification on release/0.1.1-prep: synchronized version audit pass
 Protected PR #306 CI run 30947227260 passed seven jobs and failed Docker E2E with six linked assertions. Log review showed the first failure was intentional LCLI-304 behavior: the harness attempted lore link against a Spec, whose built-in schema has no tasks capability, so link correctly returned validation/exit 6; five subsequent vanished-task assertions cascaded. Updated only that E2E phase to create a fresh isolated Story, preserving the intended nonexistent/vanished task contracts while respecting schema-capability enforcement. Fresh local and protected verification are required before merge.
 
 Local repair verification passed: the exact Docker Compose E2E harness built real lore/backlog binaries and completed 339/339 assertions with zero failures; the previously failing nonexistent/vanished-task phase passed against the isolated Story. Docker compose down removed the test container and network. Post-E2E checks passed: 24/24 focused host tests with 157 assertions, typecheck, lint across 186 files, bash -n, Lore strict validation/check, and diff hygiene. The repair is ready to commit and push to PR #306 for a fresh protected run.
+
+Protected delivery completed. PR #306 merged exact repaired head efdc9318e2ced398a691a56dacc31ec48e1c0067 to dev as 3e6f86ce1cf8c1d2be2b3474515bd48c171bfcd8 after all eight jobs passed in run 30948157679, including Docker E2E. Promotion PR #307 then merged exact dev head 3e6f86ce1cf8c1d2be2b3474515bd48c171bfcd8 to main as 2045084f6f399eb2ff2ef6d12f56fcdfc2e1122e after all eight jobs passed in run 30948679472. The merged release/0.1.1-prep remote and local refs were ancestry-verified and deleted; one clean worktree remains. Final registry audit still reports @opum-ai/lore latest 0.1.0 and no v0.1.1 tag exists, so publication remains a separate explicit action.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Prepared npm 0.1.1 across the root and six platform manifests, synchronized lock pins, cut the dated changelog entry, refreshed version-derived benchmark digests, and repaired the Docker E2E task-coupling fixture exposed by protected CI. Verified 2,450 full tests, seven package dry runs, real Docker E2E 339/339, strict Lore/static/build gates, and two complete eight-job protected CI matrices; merged through dev and main without publishing or tagging.
+<!-- SECTION:FINAL_SUMMARY:END -->
