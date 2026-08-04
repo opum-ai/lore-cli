@@ -315,8 +315,8 @@ function packageReport(platform: (typeof LADYBUG_QUALIFICATION_PLATFORMS)[number
       copiedAddonMatches: true,
     },
     package: {
-      root: "@salient-data/lore",
-      platform: `@salient-data/lore-${platform.distribution}`,
+      root: "@opum-ai/lore",
+      platform: `@opum-ai/lore-${platform.distribution}`,
       rootTarballSha256: SHA,
       platformTarballSha256: SHA,
       standaloneBinarySha256: SHA,

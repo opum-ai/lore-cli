@@ -92,10 +92,10 @@ machines through the channel they already use (npm / `npx` / `bunx`).
 
 **Distribution: dual artifact on npm.**
 
-- Published to npm as **`@salient-data/lore`**, exposing **`bin: lore`**.
+- Published to npm as **`@opum-ai/lore`**, exposing **`bin: lore`**.
 - The published package is a **dual artifact**:
   1. A **thin Node `.cjs` launcher** (`bin/lore.cjs`) that runs under plain
-     Node — this is the entry point npm wires up, so `npx @salient-data/lore`
+     Node — this is the entry point npm wires up, so `npx @opum-ai/lore`
      and a global install work with only Node present. The launcher resolves
      and `exec`s the correct platform binary.
   2. **Per-platform compiled binaries published as `optionalDependencies`**
@@ -132,8 +132,8 @@ current location is `github.com/opum-ai/lore-cli` (private; `main` + `dev`,
   SIGILL on a default Bun compile — a hard requirement for a tool that runs in
   arbitrary CI.
 - **Reach without a Bun prerequisite.** The Node `.cjs` launcher means
-  `npx @salient-data/lore` works for anyone with Node; users with Bun get
-  `bunx @salient-data/lore`. No global Bun install is forced on consumers.
+  `npx @opum-ai/lore` works for anyone with Node; users with Bun get
+  `bunx @opum-ai/lore`. No global Bun install is forced on consumers.
 - **Toolchain parity with Backlog.md.** One bundler, one language, one packaging
   recipe across the two coupled tools; we reuse a battle-tested release shape
   instead of inventing one (see [architecture](../reference/architecture.md)).

@@ -17,7 +17,7 @@ okf_version: "0.1"
 # lore documentation
 
 **lore** is a thin, OKF-native documentation CLI — Bun + TypeScript, designed
-for eventual npm distribution as `@salient-data/lore` (bin `lore`) but not yet
+for eventual npm distribution as `@opum-ai/lore` (bin `lore`) but not yet
 released. It makes repo-resident markdown a first-class, agent-readable
 [Open Knowledge Format](reference/okf-conformance.md)
 bundle, couples that bundle to [Backlog.md](runbooks/backlog-json-patch.md)

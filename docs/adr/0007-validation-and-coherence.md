@@ -74,7 +74,7 @@ Several constraints shape the design:
   would violate the format it claims to enforce. See
   [OKF conformance](../reference/okf-conformance.md).
 - **Zero-config / bunx-friendly is non-negotiable.** lore is meant to run via
-  `bunx @salient-data/lore` with nothing else installed. Any checker that pulls
+  `bunx @opum-ai/lore` with nothing else installed. Any checker that pulls
   in a **Rust/native runtime** (lychee for links, Vale for prose) breaks that
   promise: it adds a non-JS toolchain, platform binaries, and install latency
   to the hot path. See [tech-stack](../reference/tech-stack.md).

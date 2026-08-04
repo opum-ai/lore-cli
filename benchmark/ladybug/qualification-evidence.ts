@@ -292,7 +292,7 @@ function assertPackageEvidence(
     report.platform.cpu !== expected.cpu ||
     report.native.supportClaim !== expected.supportClaim ||
     report.ladybug.optionalPackage !== `@ladybugdb/core-${expected.os}-${expected.cpu}` ||
-    report.package.platform !== `@salient-data/lore-${expected.distribution}`
+    report.package.platform !== `@opum-ai/lore-${expected.distribution}`
   ) {
     throw new Error(`${expected.distribution} artifact is not matching-host executable qualification evidence`);
   }

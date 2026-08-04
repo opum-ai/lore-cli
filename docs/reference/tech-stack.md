@@ -433,7 +433,7 @@ here.
 
 | | |
 |---|---|
-| **npm package** | `@salient-data/lore` |
+| **npm package** | `@opum-ai/lore` |
 | **`bin`** | `lore` |
 | **License** | MIT — Jeremy Newhouse, 2026 |
 | **Repo** | `github.com/opum-ai/lore-cli` (private; branches `main` + `dev`, `dev` default) |
@@ -444,7 +444,7 @@ platform (baseline x64 + arm64 targets — see §1).
 **Dual-artifact npm layout.**
 
 - A small **Node `.cjs` launcher** is the package's `bin` entry. It runs under
-  plain Node (so `npx @salient-data/lore` works without Bun installed) and
+  plain Node (so `npx @opum-ai/lore` works without Bun installed) and
   execs the correct platform binary.
 - **Per-platform binaries** are published as **`optionalDependencies`**. npm
   installs only the one matching the host's OS/arch; the launcher locates and

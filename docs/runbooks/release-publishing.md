@@ -17,9 +17,9 @@ This procedure describes how Lore will ship as **six** npm packages
 (ADR-0001 §"Distribution"). It is not evidence that any package has been
 published. Read [Lore CLI release truth](../reference/lore-cli-release-truth.md)
 before acting or making an availability claim. The planned root package is
-`@salient-data/lore` (the thin Node `.cjs` launcher, `bin/lore.cjs`) plus five
+`@opum-ai/lore` (the thin Node `.cjs` launcher, `bin/lore.cjs`) plus five
 per-platform binary packages published as its `optionalDependencies` —
-`@salient-data/lore-darwin-arm64`, `-darwin-x64`, `-linux-arm64`, `-linux-x64`,
+`@opum-ai/lore-darwin-arm64`, `-darwin-x64`, `-linux-arm64`, `-linux-x64`,
 and `-win32-x64`.
 
 The `.github/workflows/release.yml` workflow (`workflow_dispatch`-only — it never
@@ -60,6 +60,14 @@ repository settings. The `publish` job independently rejects `0.0.0`, but the
 first release deliberately does not use that job because OIDC trust cannot yet
 be configured.
 
+- [x] **Verify the `@opum-ai` npm organization exists and the publishing
+  account is an owner or member allowed to create public packages in that
+  scope.** On 2026-08-03, the repository owner confirmed creating the
+  independent `opum-ai` npm organization. A public registry preflight still
+  returned `E404` for all six planned names, so none is publicly visible yet;
+  authenticate and recheck the publishing account immediately before the
+  bootstrap operation rather than treating organization creation as a
+  reusable credential.
 - [ ] **Coordinated version bump: all six manifests + the 5
   `optionalDependencies` pins**, root `0.0.0` → `0.1.0` —
   [Step 3, item 2](#3-cut-a-release). This is exactly the 12 values
@@ -79,7 +87,7 @@ be configured.
 - [ ] **Dispatch `Release` with `publish: false`** on the tag/commit. Download
   the resulting `npm-packages` artifact; do not rebuild or repack locally.
 - [ ] **Bootstrap-publish the downloaded tarballs interactively with 2FA**:
-  publish the five platform packages first, then `@salient-data/lore` last.
+  publish the five platform packages first, then `@opum-ai/lore` last.
   Use `npm publish <tarball>` and stop immediately on any failure.
 - [ ] **Create the `release` GitHub Environment** with the repository owner as
   required reviewer. This repository has only one collaborator, so
@@ -90,7 +98,7 @@ be configured.
   `release`, and allowed action `npm publish`. Future releases use
   `publish: true`; `0.1.0` does not.
 - [ ] **Post-publish smoke install**: from a machine that has never installed
-  lore before, `npx @salient-data/lore@0.1.0 --version`, on at least one
+  lore before, `npx @opum-ai/lore@0.1.0 --version`, on at least one
   platform other than the one used for local development.
 
 ## Prerequisites
@@ -100,10 +108,11 @@ be configured.
   #790/BACK-545. Lore requires a published `backlog` binary at or past that
   version; the interim pinned-commit build is historical only. Reverify the
   installed binary and the live LCLI-253 evidence before release work.
-- Maintainer access to the `@salient-data` npm org (or user account, if the
-  scope is personal), with account-level 2FA — required for the interactive
-  bootstrap publish and subsequent Trusted Publisher configuration; this is
-  not something CI or an agent can do.
+- The `opum-ai` npm organization exists, separately from the GitHub
+  organization, and the maintainer account can create public packages in the
+  `@opum-ai` scope. Account-level 2FA is required for the interactive bootstrap
+  publish and subsequent Trusted Publisher configuration; neither CI nor an
+  agent can establish or infer this external ownership.
 - npm CLI **>= 11.5.1** on any machine used for a manual/bootstrap publish
   (trusted publishing itself only requires this on the *publishing* side).
   In CI, `release.yml`'s `publish` job does not rely on whatever npm version
@@ -221,18 +230,18 @@ publication. See <https://docs.npmjs.com/cli/v11/commands/npm-trust/>.
 
 For `0.1.0`, dispatch `Release` with `publish: false`, download its exact
 `npm-packages` artifact, and publish those tarballs interactively with 2FA.
-Publish all five `@salient-data/lore-<platform>-<arch>` packages first and
-`@salient-data/lore` last. Do not rebuild locally: the downloaded tarballs are
+Publish all five `@opum-ai/lore-<platform>-<arch>` packages first and
+`@opum-ai/lore` last. Do not rebuild locally: the downloaded tarballs are
 the bytes the workflow compiled, packed, and install-smoke-tested.
 
-After all six packages exist, for **each package** (`@salient-data/lore` and the five
-`@salient-data/lore-<platform>-<arch>` packages), on npmjs.com:
+After all six packages exist, for **each package** (`@opum-ai/lore` and the five
+`@opum-ai/lore-<platform>-<arch>` packages), on npmjs.com:
 
 1. Open the package's Settings page → **Trusted Publisher** section.
 2. **Select your publisher** → **GitHub Actions**.
 3. Fill in (all fields are case-sensitive, exact-match):
-   - **Organization or user**: `jeremy-newhouse`
-   - **Repository**: `lore`
+   - **Organization or user**: `opum-ai`
+   - **Repository**: `lore-cli`
    - **Workflow filename**: `release.yml` (exactly — the filename this repo's
      workflow already uses, so no rename is needed later)
    - **Allowed actions**: `npm publish`
@@ -296,7 +305,7 @@ this one job ever gets the token. It:
 - Publishes the **five platform binary packages first, the root launcher
   last**. Root's `optionalDependencies` pin the five platform packages at an
   exact version, and `bin/lore.cjs` `require.resolve()`s them at runtime — if
-  root published first, `npx @salient-data/lore` could resolve a launcher
+  root published first, `npx @opum-ai/lore` could resolve a launcher
   whose platform deps still 404 (npm silently skips an unresolvable optional
   dependency rather than failing the install, so the failure only surfaces at
   run time as "no compiled binary found"). Publishing root last also means a
@@ -323,7 +332,7 @@ declaration above actually protective rather than cosmetic. See the
 [First-release checklist](#first-release-checklist) for the bootstrap sequence
 and the handoff to OIDC.
 
-**Scoped-package public access:** all six `@salient-data/lore*` packages are
+**Scoped-package public access:** all six `@opum-ai/lore*` packages are
 scoped, and npm defaults a scoped package's first publish to
 restricted/private access — it fails with an access-denied error unless the
 publish is explicitly marked public. Root `package.json` and all five
@@ -356,7 +365,7 @@ publish is explicitly marked public. Root `package.json` and all five
    first and root tarball last with 2FA. This is the one-time bootstrap path;
    do not dispatch `publish: true` for `0.1.0`.
 5. Configure the `release` Environment and npm Trusted Publishers as described
-   above, then verify `npx @salient-data/lore@0.1.0 --version` from a machine
+   above, then verify `npx @opum-ai/lore@0.1.0 --version` from a machine
    that has never installed lore before, on a different platform from local
    development. Later versions use `publish: true` and pause for Environment
    approval before OIDC publishing.
@@ -411,13 +420,13 @@ version-bump item has happened.
   fix the cause (usually a missing or mistyped Trusted Publisher) and
   re-dispatch `Release` with `publish: true` on the **same commit**. The
   publish step skips packages already on the registry and completes the rest.
-  The launcher (`@salient-data/lore`) is published last precisely so a
+  The launcher (`@opum-ai/lore`) is published last precisely so a
   partial failure leaves nothing installable and the same version stays
   retryable. If the launcher itself published and something is still wrong,
   you cannot republish that version — cut `X.Y.Z+1` and `npm deprecate` the
   bad one (see below).
 - **After a bad publish**: npm allows `npm unpublish` only within 72 hours and
   only if no other package depends on the version; prefer publishing a patched
-  version and deprecating the bad one (`npm deprecate @salient-data/lore@X.Y.Z
+  version and deprecating the bad one (`npm deprecate @opum-ai/lore@X.Y.Z
   "broken release, use X.Y.Z+1"`) over unpublishing, which can break anyone who
   already installed it.

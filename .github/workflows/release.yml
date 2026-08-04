@@ -120,7 +120,7 @@ jobs:
             // maintained declarations of "which platforms ship" — nothing else catches them
             // drifting apart (e.g. a 6th platform added to one but not the other).
             const optionalDepNames = Object.keys(root.optionalDependencies || {}).sort();
-            const declaredPkgNames = platforms.map((name) => `@salient-data/lore-${name}`).sort();
+            const declaredPkgNames = platforms.map((name) => `@opum-ai/lore-${name}`).sort();
             if (JSON.stringify(optionalDepNames) !== JSON.stringify(declaredPkgNames)) {
               problems.push(
                 `platform set mismatch: setup job declares [${declaredPkgNames.join(", ")}], but root package.json optionalDependencies has [${optionalDepNames.join(", ")}]`,
@@ -547,7 +547,7 @@ jobs:
         # git/link installs keep working). Patch a SCRATCH copy here (reverted via
         # `git checkout` immediately after) so this dry-run's install-sanity step
         # proves the launcher exactly as a real release will ship it. Filenames are
-        # built from the exact version rather than a glob: `salient-data-lore-*.tgz`
+        # built from the exact version rather than a glob: `opum-ai-lore-*.tgz`
         # also matches every platform package's tarball, and passing THOSE to `npm
         # install` explicitly (not resolved through optionalDependencies) makes npm
         # hard-fail EBADPLATFORM on any package.json os/cpu mismatch with the runner.
@@ -566,8 +566,8 @@ jobs:
             (cd "npm/$name" && npm pack --pack-destination "$PWD/../../dist-npm" .)
           done
           ls -la dist-npm
-          echo "ROOT_TARBALL=dist-npm/salient-data-lore-${version}.tgz" >> "$GITHUB_ENV"
-          echo "LINUX_X64_TARBALL=dist-npm/salient-data-lore-linux-x64-${version}.tgz" >> "$GITHUB_ENV"
+          echo "ROOT_TARBALL=dist-npm/opum-ai-lore-${version}.tgz" >> "$GITHUB_ENV"
+          echo "LINUX_X64_TARBALL=dist-npm/opum-ai-lore-linux-x64-${version}.tgz" >> "$GITHUB_ENV"
       - name: Install-sanity — npx-equivalent resolution through the real launcher (LCLI-9 AC#2)
         run: |
           # Same comparison mechanism as ci.yml's compile-smoke job (ci.yml:56-64):
@@ -692,7 +692,7 @@ jobs:
         # ORDER IS LOAD-BEARING: the root launcher's optionalDependencies pin the five
         # platform packages at an EXACT version, and bin/lore.cjs require.resolve()s them
         # at runtime. Publishing root first would (a) leave a window where
-        # `npx @salient-data/lore` installs a launcher whose platform deps 404 (npm skips
+        # `npx @opum-ai/lore` installs a launcher whose platform deps 404 (npm skips
         # an unresolvable optional dep, so the install "succeeds" and only fails at run
         # time with "no compiled binary found"), and (b) on any mid-loop failure leave the
         # root published at a version that can never be republished — with the first
