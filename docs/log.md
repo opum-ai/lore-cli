@@ -96,6 +96,7 @@
 - 2026-08-04T08:35:47-05:00 e9731203fa8a4b05cbdd92b0c1cee4fca89cd58b docs: route fleet cross-repo questions to opum-doc (LCLI-308)
 - 2026-08-04T08:38:30-05:00 bb33bd38a9fec3b582944209ee240d5853dbce76 docs: sync LCLI-308 provenance log
 - 2026-08-04T09:45:54-05:00 ca4221dd7d92a2fe86545a65faf315149c1923bf docs: fix stale herdr derivation and fact-shaped rules (LCLI-309)
+- 2026-08-04T09:47:47-05:00 bc0c135c6ac04f7d5518c95af9c0ebe0c8b62866 docs: sync LCLI-309 provenance log
 
 ## docs/.obsidian
 
@@ -225,6 +226,7 @@
 - 2026-08-04T00:40:24-05:00 10ecee23dce84d23ee9803b4ab1515465666cf41 feat: add ARM64 Windows and script-free installs
 - 2026-08-04T08:35:47-05:00 e9731203fa8a4b05cbdd92b0c1cee4fca89cd58b docs: route fleet cross-repo questions to opum-doc (LCLI-308)
 - 2026-08-04T09:45:54-05:00 ca4221dd7d92a2fe86545a65faf315149c1923bf docs: fix stale herdr derivation and fact-shaped rules (LCLI-309)
+- 2026-08-04T09:56:08-05:00 913a04ca6787281098d4a9453095b293828a931d docs: forbid acts, not adverbs; enumerate the package gate (LCLI-310)
 
 ## docs/runbooks
 
