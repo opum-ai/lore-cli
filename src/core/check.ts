@@ -64,8 +64,8 @@ export type CheckSeverity = Severity;
 
 /**
  * Which check produced a {@link CheckFinding}. `broken-link`/`broken-anchor` and
- * `status-drift`/`managed-block-drift` are all error-tier gate findings; `portability` is the
- * warn-tier lint; `external-link` is the opt-in, non-deterministic liveness advisory
+ * `status-drift`/`managed-block-drift`/`unsupported-task-coupling` are all error-tier gate
+ * findings; `portability` is the warn-tier lint; `external-link` is the opt-in, non-deterministic liveness advisory
  * (`--external`) that never fails the gate (ADR-0007).
  */
 export type CheckRule =
@@ -73,6 +73,7 @@ export type CheckRule =
   | "broken-anchor"
   | "status-drift"
   | "managed-block-drift"
+  | "unsupported-task-coupling"
   | "portability"
   | "external-link";
 

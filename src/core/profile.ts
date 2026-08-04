@@ -896,6 +896,21 @@ export function defaultProfile(): Profile {
   return DEFAULT_PROFILE;
 }
 
+/**
+ * Whether `type` declares `field` in the active profile, after the same case-insensitive type
+ * canonicalization used by frontmatter validation. Unknown producer-extension types return false:
+ * lore has no schema contract proving that a command-owned field is supported on them.
+ */
+export function profileTypeDeclaresField(type: string, field: string, profile: Profile = defaultProfile()): boolean {
+  return profile.types.get(canonicalProfileType(type, profile))?.declaredFields.has(field) ?? false;
+}
+
+/** Resolve a type token to the active profile's canonical spelling without importing schema.ts. */
+function canonicalProfileType(type: string, profile: Profile): string {
+  const trimmed = type.trim();
+  return profile.byLowerName.get(trimmed.toLowerCase()) ?? trimmed;
+}
+
 // ── Validators (mirroring config.ts's hand-rolled shape checks) ────────────────—
 
 /** Throw a `"validation"` {@link LoreError}; typed `never` so callers can `return fail(...)`. */

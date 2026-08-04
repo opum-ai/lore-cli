@@ -45,8 +45,8 @@ import {
   tallySeverity,
 } from "../core/check";
 import { type Concept, parseConcept, tryReadFrontmatter } from "../core/concept";
-import { loadProfile, type Profile } from "../core/profile";
-import { DOCS_DIR } from "../core/scaffold";
+import { loadProfile, type Profile, profileTypeDeclaresField } from "../core/profile";
+import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
 import {
   ANSI,
   EXIT_CODES,
@@ -187,7 +187,7 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
     advisories.flush({ color: options.output.color, stderr: options.stderr });
   }
 
-  const baseReport = checkBundles(bundles);
+  const linkReport = checkBundles(bundles);
 
   // Reuse the SAME already-read files (no second directory walk, no second read) to find which are
   // `tasks:`-linked concepts per bundle root, so status/managed-block reconciliation can run the same
@@ -196,8 +196,14 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
   // isolated from every OTHER root's scan, mirroring how the async drift computation below already
   // isolates root failures from each other (an earlier version of this scan used a bare `.map()` that
   // let one root's throw abort every other root's scan too, discarding drift that was never even
-  // computed — LORE-27 round 9). Cheap to check without any Backlog IO: `taskBlockConcepts` is pure.
+  // computed — LORE-27 round 9). This same scan classifies a `tasks:` field whose active-profile
+  // type does not declare it as an explicit gate finding before any Backlog IO.
   const conceptBundleResults = bundles.map((bundle) => tryConceptsForBundle(bundle, profile));
+  const multi = bundles.length > 1;
+  const couplingFindings = conceptBundleResults.flatMap((result) =>
+    result.findings.map((finding) => prefixFinding(finding, result.bundle.label, multi)),
+  );
+  const baseReport = mergeFindings(linkReport, couplingFindings);
   const needsReconciliation = conceptBundleResults.some(
     (result) => result.error !== null || taskBlockConcepts(result.concepts).length > 0,
   );
@@ -208,7 +214,6 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
   }
 
   const adapter = needsReconciliation ? (options.adapter ?? defaultAdapter(options.root)) : undefined;
-  const multi = bundles.length > 1;
   // `driftPromise` never REJECTS — a per-root failure (a scan failure, a missing linked task, a
   // malformed managed block, a bad status-flow config) is carried as `DriftResult.error` instead, so
   // whatever DID resolve (this root's or another root's drift findings, and the already-computed
@@ -279,16 +284,19 @@ type LivenessResult =
   | { readonly ok: true; readonly findings: CheckFinding[] }
   | { readonly ok: false; readonly err: unknown };
 
-/** One bundle root's concept-scan outcome: the `tasks:`-declaring concepts it found, or its own scan failure. */
+/** One bundle root's concept-scan outcome: reconcilable concepts, capability findings, and any scan failure. */
 interface ConceptBundleResult {
   readonly bundle: Bundle;
   readonly concepts: Concept[];
+  readonly findings: CheckFinding[];
   readonly error: unknown | null;
 }
 
 /**
- * Best-effort, per-bundle-root parse of already-read files into `tasks:`-declaring {@link Concept}s,
- * for deciding reconciliation eligibility. NEVER throws — a scan failure is carried as `error`
+ * Best-effort, per-bundle-root parse of already-read files into profile-supported, `tasks:`-declaring
+ * {@link Concept}s for reconciliation. A parsed concept whose type does not declare `tasks` becomes
+ * an `unsupported-task-coupling` finding instead, so the gate reports it without attempting Backlog
+ * resolution or managed-block regeneration. NEVER throws — a scan failure is carried as `error`
  * instead, isolated from every OTHER bundle root's scan and from the already-computed `baseReport`,
  * which must survive regardless of whether any one root's scan fails ({@link computeDriftFindings}
  * folds this the same way it folds an async per-root failure). Isolated PER FILE too, the same way:
@@ -317,6 +325,7 @@ interface ConceptBundleResult {
  */
 function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleResult {
   const concepts: Concept[] = [];
+  const findings: CheckFinding[] = [];
   let error: unknown | null = null;
   for (const file of bundle.files) {
     try {
@@ -324,14 +333,27 @@ function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleRe
       if (raw === null || !Object.hasOwn(raw, "tasks")) {
         continue;
       }
-      concepts.push(parseConcept(file.path, file.raw, { profile }));
+      const concept = parseConcept(file.path, file.raw, { profile });
+      if (RESERVED_STEMS.has(posix.basename(concept.id))) {
+        continue;
+      }
+      if (profileTypeDeclaresField(concept.type, "tasks", profile)) {
+        concepts.push(concept);
+      } else {
+        findings.push({
+          severity: "error",
+          rule: "unsupported-task-coupling",
+          file: file.path,
+          message: `type ${JSON.stringify(concept.type)} does not declare the \`tasks\` field carried by this concept`,
+        });
+      }
     } catch (err) {
       if (error === null) {
         error = err; // first, in file order; keep scanning so later files' concepts still count too
       }
     }
   }
-  return { bundle, concepts, error };
+  return { bundle, concepts, findings, error };
 }
 
 /** The gate's exit code from a {@link CheckReport}: `6` on any error, or any warning under `--strict`. */
