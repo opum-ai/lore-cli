@@ -7,12 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- Global npm installs for the next release no longer require
-  `--allow-scripts=@ladybugdb/core`; LadybugDB is build-only, its qualified
-  addon is embedded in macOS/Linux executables, and Windows retains the
-  dependency-free reference fallback.
+## [0.1.1] - 2026-08-04
 
 ### Added
 
@@ -28,6 +23,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   project pin with a Windows ARM64 runtime and `bun-windows-arm64` compile
   target. Runtime, CI, Docker, benchmark, and package qualification pins move
   together.
+
+### Fixed
+
+- Global npm installs for the next release no longer require
+  `--allow-scripts=@ladybugdb/core`; LadybugDB is build-only, its qualified
+  addon is embedded in macOS/Linux executables, and Windows retains the
+  dependency-free reference fallback.
+- Native LadybugDB packages now publish the exact matching-host-qualified
+  binaries, so supported global installs activate the persistent index; an
+  unavailable native backend emits a sanitized fallback advisory instead of
+  failing silently (LCLI-302).
+- Unknown `--repository` selections under an explicit workspace now return a
+  validation error before native retrieval for `graph`, `query`, `context`,
+  `path`, and `impact` (LCLI-303).
+- `lore link` now refuses task coupling for concept types that do not declare a
+  `tasks` field, `lore check --strict` reports legacy unsupported coupling, and
+  `lore unlink` fully removes legacy residue (LCLI-304).
+- `lore sync` now regenerates a Story's managed task block when its final task
+  is unlinked, while `lore check --strict` reports the corresponding stale
+  managed-block drift (LCLI-305).
+- `lore check` now reports unknown active-profile concept types and
+  `lore check --strict` fails on them in parity with `lore validate --strict`
+  (LCLI-306).
 
 ## [0.1.0] - 2026-08-03
 

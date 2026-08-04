@@ -98,6 +98,8 @@
 - 2026-08-04T09:45:54-05:00 ca4221dd7d92a2fe86545a65faf315149c1923bf docs: fix stale herdr derivation and fact-shaped rules (LCLI-309)
 - 2026-08-04T09:47:47-05:00 bc0c135c6ac04f7d5518c95af9c0ebe0c8b62866 docs: sync LCLI-309 provenance log
 - 2026-08-04T09:57:26-05:00 b9a419eb1f63dc561ed9fb3fef0cc9431738d156 docs: sync LCLI-310 provenance log
+- 2026-08-04T10:06:02-05:00 b29a628c095d1ada8159073f182334dc2803b3d4 docs: sync LCLI-311 provenance log
+- 2026-08-04T15:17:39-05:00 964653638becae9961464334517b141672630e31 chore(release): prepare 0.1.1
 
 ## docs/.obsidian
 
@@ -341,3 +343,4 @@
 - 2026-08-04T01:30:13-05:00 744c7a4d216b03a7b91b63a7328cb2d8a66a9172 docs: sync LCLI-298 completion
 - 2026-08-04T01:50:02-05:00 187ed8afe6622d0016586533ceea450e20bc15a1 docs: sync LCLI-299 completion
 - 2026-08-04T07:20:16-05:00 18c04690279f0cb4f60939ebfc3a1b485092d4ae docs: sync LCLI-300 completion
+- 2026-08-04T15:17:39-05:00 964653638becae9961464334517b141672630e31 chore(release): prepare 0.1.1

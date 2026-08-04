@@ -1,7 +1,8 @@
 /**
- * reconcile-shared.ts — resolve every `tasks:`-linked concept's live Backlog data and compute its
- * reconciled status + managed-block rows, shared by `lore sync` (LORE-26, writes the result) and
- * `lore check` (LORE-27, diffs it against disk and never writes — ADR-0007).
+ * reconcile-shared.ts — resolve every concept that declares `tasks:` into a reconciled status and
+ * managed-block rows, shared by `lore sync` (LORE-26, writes the result) and `lore check` (LORE-27,
+ * diffs it against disk and never writes — ADR-0007). A zero-length list produces no status rollup
+ * and zero rows, but still participates so the managed block can converge to `_No linked tasks._`.
  *
  * Both commands need the *identical* gather: skip reserved-stem concepts (`index`/`log`, regenerated
  * wholesale elsewhere), read and validate the project's status flow/overrides **before** spending any
@@ -39,17 +40,34 @@ export type TaskResolution =
 export interface ReconcileTarget {
   /** The concept as loaded (unmodified) — its `frontmatter.status` is the pre-reconciliation value. */
   readonly concept: Concept;
-  /** The rolled-up status (`core/reconcile.ts`), or `null` when the concept links no tasks (never true here). */
+  /** The rolled-up status (`core/reconcile.ts`), or `null` when the concept explicitly links no tasks. */
   readonly newStatus: ReconciledStatus | null;
   /** The linked tasks' live data, in the concept's own `tasks:` order, ready for `regenerateTaskBlock`. */
   readonly rows: ManagedTaskRow[];
 }
 
-/** One concept eligible for reconciliation: not a reserved stem, and linking at least one task. */
+/** One concept carrying a managed `tasks:` field: not a reserved stem, with zero or more linked tasks. */
 export interface EligibleConcept {
   readonly concept: Concept;
   /** Its `tasks:` frontmatter, deduplicated (case-insensitively) but otherwise in authored order. */
   readonly linked: string[];
+}
+
+/**
+ * Filter `concepts` to those that explicitly declare `tasks:`, including an empty list. An empty
+ * list still owns a managed task block: `lore sync` must render the frozen no-tasks paragraph and
+ * `lore check` must detect a stale block left behind by the final unlink. It does not, however,
+ * require status-flow config or any Backlog task lookup.
+ */
+export function taskBlockConcepts(concepts: Iterable<Concept>): EligibleConcept[] {
+  const eligible: EligibleConcept[] = [];
+  for (const concept of concepts) {
+    if (RESERVED_STEMS.has(posix.basename(concept.id)) || !Object.hasOwn(concept.frontmatter, "tasks")) {
+      continue;
+    }
+    eligible.push({ concept, linked: dedupeTaskIds(toRefList(concept.frontmatter.tasks)) });
+  }
+  return eligible;
 }
 
 /**
@@ -67,17 +85,7 @@ export interface EligibleConcept {
  * this module's callers otherwise take pains to avoid — not fix a LORE-27-introduced gap.
  */
 export function linkedConcepts(concepts: Iterable<Concept>): EligibleConcept[] {
-  const eligible: EligibleConcept[] = [];
-  for (const concept of concepts) {
-    if (RESERVED_STEMS.has(posix.basename(concept.id))) {
-      continue;
-    }
-    const linked = dedupeTaskIds(toRefList(concept.frontmatter.tasks));
-    if (linked.length > 0) {
-      eligible.push({ concept, linked });
-    }
-  }
-  return eligible;
+  return taskBlockConcepts(concepts).filter(({ linked }) => linked.length > 0);
 }
 
 /** The project's reconciliation config: its ordered status flow and `[reconcile.overrides]`. */
@@ -117,9 +125,10 @@ export function resolveReconcileConfig(root: string): ReconcileConfig {
 }
 
 /**
- * Resolve every `tasks:`-linked, non-reserved-stem concept in `concepts` to a {@link ReconcileTarget}.
- * Returns `[]` (constructing no adapter at all, mirroring `rename.ts`'s precedent) when nothing in
- * `concepts` links a task — so a bundle with no Story/Spec coupling never shells out to Backlog.
+ * Resolve every `tasks:`-declaring, non-reserved-stem concept in `concepts` to a
+ * {@link ReconcileTarget}. Returns `[]` when no concept declares the field. Explicit empty lists
+ * return zero-row targets without reading config or constructing an adapter; only actual task ids
+ * require Backlog IO.
  *
  * @param root the repo root `backlog/config.yml` / `.lore/config.toml` / the Backlog adapter resolve
  *   against — independent of whichever docs bundle root `concepts` was loaded from.
@@ -154,9 +163,14 @@ export async function gatherReconciliation(
   detailsOverride?: ReadonlyMap<string, TaskResolution>,
   configErrorOverride?: unknown,
 ): Promise<ReconcileTarget[]> {
-  const eligible = linkedConcepts(concepts);
-  if (eligible.length === 0) {
+  const targets = taskBlockConcepts(concepts);
+  if (targets.length === 0) {
     return [];
+  }
+
+  const eligible = targets.filter(({ linked }) => linked.length > 0);
+  if (eligible.length === 0) {
+    return targets.map(({ concept }) => ({ concept, newStatus: null, rows: [] }));
   }
 
   if (configOverride === undefined && configErrorOverride !== undefined) {
@@ -169,7 +183,10 @@ export async function gatherReconciliation(
     ? pickResolved(detailsOverride, allTaskIds)
     : await resolveAllTasks(adapterOverride ?? defaultAdapter(root), allTaskIds);
 
-  return eligible.map(({ concept, linked }) => {
+  return targets.map(({ concept, linked }) => {
+    if (linked.length === 0) {
+      return { concept, newStatus: null, rows: [] };
+    }
     const detailList = linked.map((id) => details.get(id.toLowerCase()) as BacklogTaskDetail);
     const newStatus = reconcileStatus(
       detailList.map((d) => d.status),

@@ -7,7 +7,11 @@ import { type BundleGraph, buildGraph } from "../src/core/bundle";
 import type { Concept } from "../src/core/concept";
 import type { ContextExport } from "../src/core/context";
 import type { GraphExport } from "../src/core/graph";
-import { EXPECTED_LADYBUG_STORAGE_VERSION, EXPECTED_LADYBUG_VERSION } from "../src/core/ladybug-native";
+import {
+  EXPECTED_LADYBUG_STORAGE_VERSION,
+  EXPECTED_LADYBUG_VERSION,
+  type LadybugNativeLoader,
+} from "../src/core/ladybug-native";
 import { type LadybugProjectionSource, prepareLadybugProjectionSource } from "../src/core/ladybug-source";
 import { buildProjection } from "../src/core/projection";
 import type { QueryResult } from "../src/core/query";
@@ -99,6 +103,26 @@ describe("workspace source and reference retrieval", () => {
         sourceOptions: sourceOptions(),
       }),
     ).rejects.toThrow("unknown workspace member missing");
+  });
+
+  test("unknown members fail as validation before reference or failed-native retrieval for every graph command", async () => {
+    await expectUnknownMemberValidation(commandLoader("reference"));
+
+    let nativeLoads = 0;
+    const fallbackLoader = commandLoader("auto", {
+      platform: "darwin",
+      loadNativeDriver: async () => {
+        nativeLoads += 1;
+        throw new Error("private native loader detail: lbugjs.node was not found");
+      },
+    });
+    const fallback = await invoke(fallbackLoader, ["graph", "--workspace", manifestPath, "--json"]);
+    expect(fallback.code).toBe(0);
+    expect(nativeLoads).toBeGreaterThan(0);
+
+    const loadsAfterFallback = nativeLoads;
+    await expectUnknownMemberValidation(fallbackLoader);
+    expect(nativeLoads).toBe(loadsAfterFallback);
   });
 
   test("an explicitly selected manifest cannot return evidence from another workspace", async () => {
@@ -292,6 +316,26 @@ describe("workspace source and reference retrieval", () => {
 });
 
 nativeDescribe("workspace indexed lifecycle", () => {
+  test("unknown members remain validation errors after native indexed retrieval is active", async () => {
+    const active = await indexed();
+    expect(active.backend).toBe("indexed");
+    await active.dispose?.();
+    const generation = generationNames();
+
+    const subset = await loadWorkspaceRetrievalGraph({
+      root,
+      selection: { manifestPath, memberIds: ["beta"] },
+      policy: "indexed",
+      sourceOptions: sourceOptions(),
+    });
+    expect(subset.backend).toBe("indexed");
+    expect([...subset.graph.concepts.keys()]).toEqual(["beta::beta-only", "beta::shared"]);
+    await subset.dispose?.();
+    expect(generationNames()).toEqual(generation);
+
+    await expectUnknownMemberValidation(commandLoader("indexed"));
+  });
+
   test("builds, reuses, updates, and removes old generations without stale selected evidence", async () => {
     const first = await indexed();
     expect(first.backend).toBe("indexed");
@@ -423,17 +467,56 @@ function candidate() {
   return loadWorkspaceProjection({ root, manifestPath, ...sourceOptions() });
 }
 
-function commandLoader(policy: "reference" | "indexed"): RetrievalGraphLoader {
+function commandLoader(
+  policy: "auto" | "reference" | "indexed",
+  overrides: { platform?: NodeJS.Platform; loadNativeDriver?: LadybugNativeLoader } = {},
+): RetrievalGraphLoader {
   return (options) => {
     if (options.workspace === undefined) throw new Error("workspace selection missing");
     return loadWorkspaceRetrievalGraph({
       root: options.root,
       selection: options.workspace,
       policy,
+      ...overrides,
       sourceOptions: sourceOptions(),
       includeTraversal: options.includeTraversal,
     });
   };
+}
+
+async function expectUnknownMemberValidation(loader: RetrievalGraphLoader): Promise<void> {
+  for (const args of unknownMemberCommands()) {
+    const observed = await invoke(loader, args);
+    expect(observed.code).toBe(6);
+    expect(observed.stdout).toBe("");
+    expect(JSON.parse(observed.stderr)).toMatchObject({
+      error_type: "validation",
+      message: expect.stringContaining("unknown workspace member missing"),
+    });
+    expect(observed.stderr).not.toContain("lbugjs.node");
+  }
+}
+
+function unknownMemberCommands(): string[][] {
+  const selection = ["--workspace", manifestPath, "--repository", "missing", "--json"];
+  return [
+    ["graph", ...selection],
+    ["query", "evidence", ...selection],
+    ["context", "alpha::shared", ...selection],
+    [
+      "path",
+      "alpha::shared",
+      "beta::shared",
+      "--from-kind",
+      "concept",
+      "--to-kind",
+      "concept",
+      "--direction",
+      "outbound",
+      ...selection,
+    ],
+    ["impact", "alpha::shared", "--kind", "concept", "--direction", "outbound", ...selection],
+  ];
 }
 
 function indexed() {
