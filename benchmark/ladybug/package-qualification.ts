@@ -242,7 +242,7 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
   const node = requireExecutable("node");
   const rootPackage = readJson(join(REPOSITORY_ROOT, "package.json"));
   const expectedVersion = stringField(rootPackage, "version", "root package");
-  const platformPackageName = `@salient-data/lore-${input.name}`;
+  const platformPackageName = `@opum-ai/lore-${input.name}`;
   const installRoot = join(scratch, "install");
   const fixtureRoot = join(scratch, "fixture");
   const rootStage = join(scratch, "root-package");
@@ -265,8 +265,8 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
     progress("packing root launcher and matching platform package");
     await run(npm, ["pack", "--pack-destination", artifactRoot, "."], { cwd: rootStage, env: npmEnvironment });
     await run(npm, ["pack", "--pack-destination", artifactRoot, "."], { cwd: platformStage, env: npmEnvironment });
-    const rootTarball = join(artifactRoot, `salient-data-lore-${expectedVersion}.tgz`);
-    const platformTarball = join(artifactRoot, `salient-data-lore-${input.name}-${expectedVersion}.tgz`);
+    const rootTarball = join(artifactRoot, `opum-ai-lore-${expectedVersion}.tgz`);
+    const platformTarball = join(artifactRoot, `opum-ai-lore-${input.name}-${expectedVersion}.tgz`);
     assertRegularFile(rootTarball, "root launcher tarball");
     assertRegularFile(platformTarball, "platform tarball");
 
@@ -283,8 +283,8 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
       env: npmEnvironment,
       timeoutMs: 600_000,
     });
-    const installedRoot = join(installRoot, "node_modules", "@salient-data", "lore");
-    const installedPlatform = join(installRoot, "node_modules", "@salient-data", `lore-${input.name}`);
+    const installedRoot = join(installRoot, "node_modules", "@opum-ai", "lore");
+    const installedPlatform = join(installRoot, "node_modules", "@opum-ai", `lore-${input.name}`);
     const launcher = join(installedRoot, "bin", "lore.cjs");
     assertRegularFile(launcher, "installed Node launcher");
     assertRegularFile(join(installedPlatform, "bin", input.binary), "installed platform binary");
@@ -321,7 +321,7 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
     writeFileSync(cacheMarker, "repository-local user cache survives package uninstall\n");
 
     progress("uninstalling packages and auditing launcher, addon, cache, source, and global cleanup");
-    await run(npm, ["uninstall", "@salient-data/lore", platformPackageName], {
+    await run(npm, ["uninstall", "@opum-ai/lore", platformPackageName], {
       cwd: installRoot,
       env: npmEnvironment,
       timeoutMs: 300_000,
@@ -362,7 +362,7 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
         copiedAddonMatches: true,
       },
       package: {
-        root: "@salient-data/lore",
+        root: "@opum-ai/lore",
         platform: platformPackageName,
         rootTarballSha256: sha256File(rootTarball),
         platformTarballSha256: sha256File(platformTarball),
@@ -875,7 +875,7 @@ function assertIsolatedGlobalClean(root: string): true {
   if (existsSync(root) && findFiles(root, "lbugjs.node").length > 0) {
     throw new Error("isolated npm global prefix contains a Ladybug addon");
   }
-  for (const fragment of ["@salient-data/lore", "@ladybugdb/core"]) {
+  for (const fragment of ["@opum-ai/lore", "@ladybugdb/core"]) {
     if (existsSync(join(root, "lib", "node_modules", ...fragment.split("/")))) {
       throw new Error(`isolated npm global prefix contains ${fragment}`);
     }

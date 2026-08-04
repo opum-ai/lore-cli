@@ -19,14 +19,14 @@ semantic exit codes, machine-readable `--json`).
 
 - Built on **Bun + TypeScript** with an exact-pinned **Commander** parser fed by
   Lore's capability manifest; Lore still owns output, errors, and process lifecycle.
-- Designed for npm distribution as **`@salient-data/lore`** (bin `lore`); the
+- Designed for npm distribution as **`@opum-ai/lore`** (bin `lore`); the
   package is not published yet.
 - The agent bridge is a generated **`.claude/skills/lore/SKILL.md`** plus a tiny
   CLAUDE.md nudge and `lore instructions`. An **MCP server is secondary and
   deferred to v2**.
 
 > **Status: unreleased 0.1 candidate.** Package manifests remain at `0.0.0`,
-> the repository has no release tag or artifact, and `@salient-data/lore` is
+> the repository has no release tag or artifact, and `@opum-ai/lore` is
 > absent from npm. The upstream Backlog.md dependency gate is complete
 > (LCLI-253), but the repository-owner publication-control gate remains open
 > (LCLI-278). See [Lore CLI release truth](docs/reference/lore-cli-release-truth.md).
@@ -70,25 +70,25 @@ Full details: [Backlog CLI contract](docs/reference/backlog-cli-contract.md) and
 
 ## Install
 
-`@salient-data/lore` is not published. Until the release-truth evidence is
+`@opum-ai/lore` is not published. Until the release-truth evidence is
 complete, use a trusted source checkout and its pinned toolchain; do not expect
 these planned registry commands to work.
 
 After a verified release, the intended package and bin are
-`@salient-data/lore` and `lore`:
+`@opum-ai/lore` and `lore`:
 
 ```bash
 # Node / npm
-npx @salient-data/lore --help
+npx @opum-ai/lore --help
 
 # Bun
-bunx @salient-data/lore --help
+bunx @opum-ai/lore --help
 ```
 
 Or add it to a project:
 
 ```bash
-bun add -d @salient-data/lore   # or: npm i -D @salient-data/lore
+bun add -d @opum-ai/lore   # or: npm i -D @opum-ai/lore
 ```
 
 The planned npm package is a dual artifact: a Node `.cjs` launcher plus a

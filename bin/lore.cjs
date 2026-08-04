@@ -5,7 +5,7 @@
  * bin/lore.cjs — the published package's future `bin` entry (ADR-0001 §"Distribution", LORE-9).
  *
  * This is the ONLY file that runs under plain Node rather than Bun: it is what makes
- * `npx @salient-data/lore` / a global `npm install -g` work for a user who has Node
+ * `npx @opum-ai/lore` / a global `npm install -g` work for a user who has Node
  * but not Bun. Its entire job is to locate the compiled binary for the current
  * platform (installed as one of the package's `optionalDependencies`, gated by npm's
  * `os`/`cpu` fields so only the matching one lands in `node_modules`) and exec it,
@@ -38,7 +38,7 @@ const BINARY_NAME = process.platform === "win32" ? "lore.exe" : "lore";
  * directories this repo publishes from and to `package.json`'s `optionalDependencies`.
  */
 function platformPackageName() {
-  return `@salient-data/lore-${process.platform}-${process.arch}`;
+  return `@opum-ai/lore-${process.platform}-${process.arch}`;
 }
 
 /**
@@ -91,7 +91,7 @@ function main() {
     process.stderr.write(
       `lore: no compiled binary found for this platform (${process.platform}-${process.arch}).\n` +
         `Expected the optional dependency "${platformPackageName()}" to be installed alongside\n` +
-        `@salient-data/lore, but it is missing. If your platform/architecture is one lore\n` +
+        `@opum-ai/lore, but it is missing. If your platform/architecture is one lore\n` +
         `ships (macOS x64/arm64, Linux x64/arm64, Windows x64), try reinstalling with npm;\n` +
         `otherwise this platform is not yet supported.\n`,
     );

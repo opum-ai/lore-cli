@@ -137,8 +137,8 @@ describe("release.yml publish job stays safely gated", () => {
 
     // The regression this guards: `for tgz in dist-npm/*.tgz; do ... npm publish
     // "$tgz" ... done` publishes in filesystem-collation order, which sorts the root
-    // launcher tarball (`salient-data-lore-<version>.tgz`) BEFORE its five platform
-    // optionalDependencies (`salient-data-lore-<platform>-<version>.tgz`) — a digit
+    // launcher tarball (`opum-ai-lore-<version>.tgz`) BEFORE its five platform
+    // optionalDependencies (`opum-ai-lore-<platform>-<version>.tgz`) — a digit
     // sorts before a letter. That inverts the required publish order for this
     // distribution shape (root's optionalDependencies pin the platform packages
     // exactly; bin/lore.cjs require.resolve()s them at runtime) and, combined with

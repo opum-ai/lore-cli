@@ -159,7 +159,7 @@ rendered consumer's search) — it never becomes a runtime dependency of lore.
   on-disk bundle. Agent loops and CI snapshots get byte-stable results; no model
   version can shift relevance under you.
 - **Zero-config and instant.** No index to build, embed, persist, or
-  invalidate; `bunx @salient-data/lore query …` works with nothing installed,
+  invalidate; `bunx @opum-ai/lore query …` works with nothing installed,
   consistent with the thin single-binary distribution.
 - **Curation-honest.** Relevance is the author-written `type`/`tags`/`summary`/
   links — visible, editable, and reviewable in the repo — instead of opaque

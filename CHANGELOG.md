@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same records in `kind: projection.export`. The command is registered in help and agent
   capability surfaces and documented in `docs/reference/okf-projection-contract.md`.
 
+### Changed
+- **The unpublished npm package family now uses the canonical `@opum-ai` scope** (LCLI-295).
+  The user-facing launcher is `@opum-ai/lore`; its five OS/CPU-specific optional packages,
+  Node launcher resolution, release tarball names, package qualification, install examples,
+  tests, and Trusted Publisher instructions use the same scope. The earlier `@salient-data/lore`
+  names remain only in historical changelog and completed-task evidence; no published package
+  migration is required because both the old and new six-name families were unpublished.
+
 ### Fixed
 - **The release dependency graph no longer carries the vulnerable `js-yaml@4.1.0` parser**
   (LCLI-280). Upgraded to `js-yaml@5.2.2`, migrated ESM imports to its named-export contract, and

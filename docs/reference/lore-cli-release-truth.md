@@ -29,11 +29,18 @@ As verified on 2026-08-03, Lore CLI is **unreleased**:
   placeholder version `0.0.0`;
 - the local repository and GitHub repository have no release tag;
 - GitHub has no Lore release object;
-- the npm registry returns `404 Not Found` for `@salient-data/lore`;
-- a clean `npx @salient-data/lore@<version> --version` registry install is
+- a public npm registry preflight returns `404 Not Found` for `@opum-ai/lore`
+  and each of its five planned platform packages, so none of the six is
+  publicly visible;
+- the repository owner confirmed creating the independent `opum-ai` npm
+  organization on 2026-08-03; the publishing session still must authenticate
+  and prove its current permission immediately before bootstrap publication;
+- a clean `npx @opum-ai/lore@<version> --version` registry install is
   therefore impossible; and
-- LCLI-278 remains `To Do` because the required out-of-file publication control
-  needs a repository-owner decision.
+- the repository owner chose to keep GitHub private and authorized the manual
+  bootstrap path; LCLI-278 remains `To Do`, and future automated
+  `publish: true` dispatches remain blocked while the `release` Environment has
+  no effective protection rule.
 
 LCLI-253 is `Done`: Lore now requires the published JSON-capable Backlog.md
 release at or past `1.49.0`. That closes the upstream dependency gate but does
