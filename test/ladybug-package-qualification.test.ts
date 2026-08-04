@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as yaml from "js-yaml";
+import { packageBuildConfig, windowsReferenceOnlyLadybugPlugin } from "../benchmark/ladybug/package-build";
 import {
   assertPackageQualificationReport,
   isKnownNativeCrash,
@@ -15,6 +16,8 @@ import {
 } from "../benchmark/ladybug/package-qualification";
 
 const RELEASE_PATH = join(import.meta.dir, "..", ".github", "workflows", "release.yml");
+const SETUP_BUN_PATH = join(import.meta.dir, "..", ".github", "actions", "setup-bun", "action.yml");
+const PACKAGE_BUILD_PATH = join(import.meta.dir, "..", "benchmark", "ladybug", "package-build.ts");
 const PACKAGE_RUNNER_PATH = join(import.meta.dir, "..", "benchmark", "ladybug", "package-qualification.ts");
 const NATIVE_PROBE_PATH = join(import.meta.dir, "..", "benchmark", "ladybug", "native-probe.ts");
 const BACKLOG_SHIM_PATH = join(import.meta.dir, "..", "benchmark", "ladybug", "backlog-shim.ts");
@@ -98,18 +101,44 @@ describe("matching-host Ladybug package qualification", () => {
     ).toEqual({
       executable: "bun",
       args: [
-        "build",
-        "--compile",
+        join("D:\\repo", "benchmark", "ladybug", "package-build.ts"),
         "--target=bun-windows-x64-baseline",
-        "--external=@ladybugdb/core",
         "--outfile=C:\\scratch\\lore.exe",
-        join("D:\\repo", "src", "cli.ts"),
+        `--entrypoint=${join("D:\\repo", "src", "cli.ts")}`,
       ],
       cwd: "C:\\scratch",
     });
-    expect(packageCompileCommand("/repo", "/scratch", "bun-linux-arm64", "/scratch/lore").args).not.toContain(
-      "--external=@ladybugdb/core",
-    );
+    expect(packageCompileCommand("/repo", "/scratch", "bun-linux-arm64", "/scratch/lore").args).toEqual([
+      join("/repo", "benchmark", "ladybug", "package-build.ts"),
+      "--target=bun-linux-arm64",
+      "--outfile=/scratch/lore",
+      `--entrypoint=${join("/repo", "src", "cli.ts")}`,
+    ]);
+    const windowsConfig = packageBuildConfig("src/cli.ts", "bun-windows-x64-baseline", "dist/lore.exe");
+    const nativeConfig = packageBuildConfig("src/cli.ts", "bun-linux-arm64", "dist/lore");
+    expect(windowsConfig.plugins).toEqual([windowsReferenceOnlyLadybugPlugin]);
+    expect(nativeConfig.plugins).toEqual([]);
+    expect(readFileSync(PACKAGE_BUILD_PATH, "utf8")).toContain("Ladybug native indexing is unavailable");
+  });
+
+  test("Windows ARM64 skips only unsupported dependency scripts during frozen setup", () => {
+    const job = loadWorkflow().jobs["package-qualification"];
+    const setup = job?.steps?.find((step) => step.uses === "./.github/actions/setup-bun");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal GitHub Actions expression syntax.
+    expect(setup?.with?.["ignore-scripts"]).toBe("${{ matrix.name == 'win32-arm64' }}");
+
+    const action = yaml.load(readFileSync(SETUP_BUN_PATH, "utf8"), { schema: yaml.JSON_SCHEMA }) as {
+      inputs?: Record<string, { default?: string }>;
+      runs?: { steps?: WorkflowStep[] };
+    };
+    expect(action.inputs?.["ignore-scripts"]?.default).toBe("false");
+    const installSteps = action.runs?.steps?.filter((step) => step.run?.startsWith("bun install")) ?? [];
+    expect(installSteps).toHaveLength(2);
+    expect(installSteps.map((step) => step.if)).toEqual([
+      "inputs.ignore-scripts != 'true'",
+      "inputs.ignore-scripts == 'true'",
+    ]);
+    expect(installSteps[1]?.run).toEndWith("--ignore-scripts");
   });
 
   test("resolves an optional package from Bun's isolated store when no hoisted link exists", () => {
