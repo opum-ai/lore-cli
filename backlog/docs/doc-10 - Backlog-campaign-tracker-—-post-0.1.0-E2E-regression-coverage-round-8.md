@@ -3,7 +3,7 @@ id: doc-10
 title: Backlog campaign tracker — post-0.1.0 E2E regression coverage (round 8)
 type: other
 created_date: '2026-08-04 05:24'
-updated_date: '2026-08-04 06:28'
+updated_date: '2026-08-04 06:30'
 ---
 # Backlog campaign tracker — post-0.1.0 E2E regression coverage (round 8)
 
@@ -32,7 +32,7 @@ Informational snapshot only; never a promised next wave.
 ## Resolved
 | Task | Date/wave | Evidence and disposition |
 | --- | --- | --- |
-| LCLI-298 | 2026-08-04 / wave 1 | Done and locally delivered as `94cbd23`. Docker E2E passed 316/316; `bun test`, typecheck, lint, `bash -n`, and diff hygiene passed. No remote mutation occurred. |
+| LCLI-298 | 2026-08-04 / wave 1 | Done and locally delivered as `94cbd23`; Backlog reconciliation `b020ddc`; documentation synchronization `744c7a4`. Docker E2E passed 316/316; `bun test`, typecheck, lint, `bash -n`, and diff hygiene passed. No remote mutation occurred. |
 | Pre-campaign LCLI-297/LCLI-301 residue | 2026-08-04 / cleanup | Verified and committed locally as `10ecee2`. Verification passed 2,434 tests, typecheck, lint, actionlint, strict Lore validation/check, focused patch/package tests, and staged diff hygiene. No remote mutation occurred. |
 
 ## Not queued — blocked, deferred, or human decision required
@@ -44,6 +44,7 @@ Informational snapshot only; never a promised next wave.
 - LCLI-297 and LCLI-301: Done in local commit `10ecee2` and outside this campaign queue.
 
 ## Wave log
+- 2026-08-04 — wave 1 settlement: source commit `94cbd23`, Backlog reconciliation `b020ddc`, and generated documentation commit `744c7a4` are locally complete. The final tracker-only reconciliation follows separately. LCLI-299 is the next safe ordered task; it was not dispatched during settlement.
 - 2026-08-04 — wave 1 local delivery: explicit local commit authority was granted. Committed the verified LCLI-298 source scope as `94cbd23`, marked all five acceptance criteria and the task Done, and opened the post-wave frontier for LCLI-299. No push, PR, merge, publication, or remote mutation occurred.
 - 2026-08-04 — wave 1 verification: implemented real-binary Codex/Claude bridge coverage and the missing Docker image patch copy. Docker E2E passed 316/316; repository tests, typecheck, lint, shell parse, and diff hygiene passed; adversarial self-review found no blocker.
 - 2026-08-04 — wave 1 dispatch: grounded `dev` at `0b5f508`, 0 behind / 9 ahead of locally known `origin/dev`, one worktree, all three queued tasks formally ready, and dispatched only LCLI-298 because every task shares `docker/e2e/run-e2e.sh`.
