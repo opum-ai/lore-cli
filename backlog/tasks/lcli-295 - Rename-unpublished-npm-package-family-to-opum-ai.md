@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-03 23:23'
-updated_date: '2026-08-04 01:05'
+updated_date: '2026-08-04 01:08'
 labels:
   - release
   - packaging
@@ -63,7 +63,7 @@ Align the unpublished Lore npm distribution with the canonical opum-ai organizat
 - [x] #2 Launcher resolution, release automation, tarball handling, tests, install examples, Trusted Publisher instructions, and active Lore documentation use the @opum-ai package family with no stale operational @salient-data/lore references
 - [x] #3 A user installs only @opum-ai/lore while npm selects exactly one matching platform package for every supported OS and CPU target
 - [x] #4 The first-release guidance records that the opum-ai npm scope and publisher permissions are external prerequisites and that all six names are unpublished before bootstrap
-- [ ] #5 Focused package/launcher/release tests, release packaging dry-run coverage, lint, typecheck, full tests, Lore sync, strict validation/checking, and git diff hygiene pass
+- [x] #5 Focused package/launcher/release tests, release packaging dry-run coverage, lint, typecheck, full tests, Lore sync, strict validation/checking, and git diff hygiene pass
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -84,4 +84,6 @@ Align the unpublished Lore npm distribution with the canonical opum-ai organizat
 Matching-host package qualification on local darwin-arm64 packed and installed the renamed Lore tarballs, then stopped at the existing Ladybug native fixture because @ladybugdb/core lacked lbugjs.node in the nested npm install. That environment-specific check is not claimed as passed; the Release workflow publish:false qualification remains the authoritative remote evidence. Lore reports LCLI-295 as the sole orphan because lore link/sync would create commits and commit/delivery authority has not yet been granted.
 
 2026-08-03 authority update: the owner confirmed creating the opum-ai npm organization and authorized commit, push, PR/merge, workflow dispatch, and the separate LCLI-296 manual 0.1.0 bootstrap publication. LCLI-295 remains limited to the package-identity migration and will land before any version bump or registry mutation.
+
+2026-08-03 final pre-delivery verification after Story coupling and npm-organization confirmation: focused package/launcher/release/evidence tests passed 25/25; full Bun 1.2.23 suite passed 2431/2431 across 75 files with 8092 assertions; lint, typecheck, actionlint, lore validate --strict, lore check --strict, zero-orphan/zero-dangling checks, and git diff --check all passed. Adversarial self-review found no active legacy package route; retained legacy strings are negative-regression constants or explicitly historical provenance.
 <!-- SECTION:NOTES:END -->
