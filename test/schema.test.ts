@@ -110,6 +110,18 @@ describe("schema — the warning tier (never throws)", () => {
     expect(err.message).toContain("Story");
   });
 
+  test("a differently-cased known type classifies on its canonical value, not as unknown (LORE-167)", () => {
+    // `type: story` must resolve to Story's real schema (case-insensitive classification),
+    // not fall into the unknown-type branch and skip validation entirely.
+    const warnings = new WarningCollector();
+    const err = expectValidation(() => validateFrontmatter({ type: "story", tags: "orders" }, { warnings }));
+    // It classified as Story (not "unknown type") and ran Story's schema, surfacing the
+    // real field mismatch (`tags` must be a list) rather than silently letting it through.
+    expect(err.message).toContain("Story");
+    expect(err.message).toContain("tags");
+    expect(warnings.list().some((w) => w.includes("unknown type"))).toBe(false);
+  });
+
   test("validateFrontmatter returns the resolved, trimmed type", () => {
     expect(validateFrontmatter({ type: "Reference", summary: "s" })).toBe("Reference");
     expect(validateFrontmatter({ type: " Glossary " })).toBe("Glossary");
@@ -141,13 +153,53 @@ describe("schema — the warning tier (never throws)", () => {
     expect(warnings.list().some((w) => w.includes('unknown key "custom_key"'))).toBe(true);
   });
 
-  test("okf_version is an OKF-reserved key, not flagged as unknown (the root index carries it)", () => {
+  test("okf_version is exempt on the root index (repo-relative `docs/index.md` path form, LORE-168 AC#2)", () => {
+    const warnings = new WarningCollector();
+    validateFrontmatter(
+      { type: "Reference", title: "T", summary: "s", okf_version: defaultProfile().okfVersion },
+      { warnings, path: "docs/index.md" },
+    );
+    expect(warnings.list().some((w) => w.includes("okf_version"))).toBe(false);
+  });
+
+  test("okf_version is exempt on the root index (bundle-root-relative `index.md` path form, LORE-168 AC#2)", () => {
+    // `loadBundle`-backed commands (sync/query/graph/...) reach validateFrontmatter with the root
+    // index's path as bare "index.md" (no `docs/` prefix) — both spellings must recognize the root.
+    const warnings = new WarningCollector();
+    validateFrontmatter(
+      { type: "Reference", title: "T", summary: "s", okf_version: defaultProfile().okfVersion },
+      { warnings, path: "index.md" },
+    );
+    expect(warnings.list().some((w) => w.includes("okf_version"))).toBe(false);
+  });
+
+  test("okf_version on a non-root concept surfaces the extra-key conformance warning (LORE-168 AC#1)", () => {
+    const warnings = new WarningCollector();
+    validateFrontmatter(
+      { type: "Reference", title: "T", summary: "s", okf_version: defaultProfile().okfVersion },
+      { warnings, path: "docs/reference/r.md" },
+    );
+    expect(
+      warnings.list().some((w) => w.includes('unknown key "okf_version"') && w.includes("docs/reference/r.md")),
+    ).toBe(true);
+  });
+
+  test("okf_version on a sub-index (e.g. docs/adr/index.md) also surfaces the warning, not just an ordinary concept (LORE-168 AC#1)", () => {
+    const warnings = new WarningCollector();
+    validateFrontmatter(
+      { type: "Reference", title: "T", summary: "s", okf_version: defaultProfile().okfVersion },
+      { warnings, path: "docs/adr/index.md" },
+    );
+    expect(warnings.list().some((w) => w.includes('unknown key "okf_version"'))).toBe(true);
+  });
+
+  test("okf_version is flagged when no path is given (cannot be proven root, so no longer unconditionally exempt)", () => {
     const warnings = new WarningCollector();
     validateFrontmatter(
       { type: "Reference", title: "T", summary: "s", okf_version: defaultProfile().okfVersion },
       { warnings },
     );
-    expect(warnings.list().some((w) => w.includes("okf_version"))).toBe(false);
+    expect(warnings.list().some((w) => w.includes('unknown key "okf_version"'))).toBe(true);
   });
 
   test("`resource` is OKF-reserved on an ordinary concept (the stamped canonical link)", () => {
@@ -183,6 +235,18 @@ describe("schema — the warning tier (never throws)", () => {
   test("an over-long summary warns with its length", () => {
     const warnings = new WarningCollector();
     validateFrontmatter({ type: "Reference", summary: "x".repeat(250) }, { warnings });
+    expect(warnings.list().some((w) => w.includes("250 chars"))).toBe(true);
+  });
+
+  test("a summary of 150 non-BMP emoji (300 UTF-16 code units, 150 code points) does not warn", () => {
+    const warnings = new WarningCollector();
+    validateFrontmatter({ type: "Reference", summary: "😀".repeat(150) }, { warnings });
+    expect(warnings.list().some((w) => w.includes("chars"))).toBe(false);
+  });
+
+  test("a summary of 250 non-BMP emoji (250 code points) warns and reports 250 chars, not 500", () => {
+    const warnings = new WarningCollector();
+    validateFrontmatter({ type: "Reference", summary: "😀".repeat(250) }, { warnings });
     expect(warnings.list().some((w) => w.includes("250 chars"))).toBe(true);
   });
 

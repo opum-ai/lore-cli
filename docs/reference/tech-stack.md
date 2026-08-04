@@ -4,7 +4,7 @@ type: Reference
 title: Tech Stack
 description: The libraries, runtime, and distribution model behind lore — with pinned versions, rationale, and the dependencies deliberately left out.
 tags: [tech-stack, dependencies, runtime, distribution, build]
-summary: lore runs on a pinned Bun + TypeScript stack (hand-rolled CLI parsing, gray-matter, mdast-util-from-markdown, Zod v4, native TOML) and ships with no vector DB, no Rust binary, no TOML lib, and no LLM.
+summary: Lore runs on pinned Bun and TypeScript; M6 schedules Commander and a derived LadybugDB index while vectors and local MCP remain excluded or held.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -14,7 +14,9 @@ This document is the authoritative inventory of lore's dependencies: what we use
 why, at what version, and — just as importantly — what we deliberately refuse to
 depend on. It expands [the spec's §4 tech-stack table](../specs/lore-design.md)
 and is the reference companion to
-[architecture.md](architecture.md) (how the pieces fit) and
+[architecture.md](architecture.md) (how the pieces fit), the
+[dependency boundary audit](dependency-boundary-audit.md) (what should be
+delegated or retained), and
 [the runtime/build/distribution ADR](../adr/0001-runtime-build-distribution.md).
 
 Guiding constraints, in priority order:
@@ -50,8 +52,8 @@ things we would otherwise pull libraries for:
 - **`Bun.spawn` / `Bun.spawnSync`** — the subprocess primitive the Backlog.md
   adapter uses to shell out to the `backlog` binary. See
   [backlog-cli-contract.md](backlog-cli-contract.md).
-- **Native TOML import** — Bun parses `.toml` natively (`import cfg from
-  "./config.toml"`), so reading `.lore/config.toml` needs **no TOML library**
+- **Native TOML parsing** — `Bun.TOML.parse` parses the text read from
+  `.lore/config.toml`, so configuration needs **no TOML library**
   (see §10).
 - **`Bun.file` / fast FS** — bundle walking and reads.
 - **`bun test`** — the test runner; no separate Jest/Vitest dependency.
@@ -69,7 +71,7 @@ full target matrix live in
 [ADR 0001](../adr/0001-runtime-build-distribution.md).
 
 **Compile-time caveat: `--outfile` must land on the same filesystem as the
-source tree (LORE-14).** `bun build --compile` writes the binary via a
+source tree (LCLI-14).** `bun build --compile` writes the binary via a
 temp-file-then-rename step; when the temp file and the final `--outfile` path
 sit on **different mounted filesystems** (e.g. compiling a checkout on one
 volume to an `--outfile` on another), the rename hits `EXDEV`
@@ -89,13 +91,14 @@ this), and assert the produced binary is non-empty **and** actually runs
 exit code alone — exactly the two checks the `compile smoke` job in `ci.yml`
 already makes. [`DEVELOPMENT.md`](../../DEVELOPMENT.md#local-environment-working-copies-on-an-external-volume)
 already documented this failure mode from the "cloned onto an external volume"
-angle; LORE-14 confirmed the precise trigger is **crossing any filesystem
+angle; LCLI-14 confirmed the precise trigger is **crossing any filesystem
 boundary** (not that volume specifically) and tightened both notes to match.
 
-**Native-module surface.** None of lore's v1 runtime dependencies
-(`gray-matter`, `js-yaml`, `mdast-util-from-markdown`, `zod`) ship a native
-addon (no `.node` binaries, no `binding.gyp`) — all pure JS/TS. A same-filesystem
-`bun build --compile` bundles and runs all four with no special handling; the
+**Native-module surface.** None of lore's current runtime dependencies
+(`github-slugger`, `ipaddr.js`, `js-yaml`, `mdast-util-from-markdown`,
+`string-width`, `zod`) ship a native addon (no `.node` binaries, no
+`binding.gyp`) — all pure JS/TS. A same-filesystem `bun build --compile`
+bundles and runs all six with no special handling; the
 "native modules stay optional and lazily required" policy in
 [ADR-0001](../adr/0001-runtime-build-distribution.md) is a forward-looking
 guard for a *future* native dependency, not a caveat any current one triggers.
@@ -119,24 +122,27 @@ build-/dev-time concern, not a runtime one.
 
 ---
 
-## 3. CLI framework — a hand-rolled router (Commander deferred)
+## 3. CLI framework — Commander
 
 | | |
 |---|---|
-| **Package** | *(none — hand-rolled in `src/cli.ts`)* |
+| **Package** | `commander` |
+| **Version** | **exact `15.0.0`** |
+| **License** | MIT |
 | **Role** | Argument parsing, subcommand dispatch, help text, the entrypoint in `src/cli.ts` |
 
-**Rationale.** Backlog.md uses Commander, and it remains the **named eventual
-entrypoint** for lore too (see `src/cli.ts`'s own module docstring) — but
-adopting it is **deferred until the command count justifies the dependency**.
-While the command surface stays small, a hand-rolled parser keeps the package
-dependency-neutral with respect to the isolated-linker / EXDEV packaging
-constraints ([ADR-0001](../adr/0001-runtime-build-distribution.md)), at the
-cost of a bit more hand-written flag-splitting code per command (mitigated by
-the shared tokenizer in `commands/args.ts` most commands reuse). Every command
-still gets the subcommand structure (`lore new`, `lore validate`, `lore
-check`, …) documented in [cli-surface.md](cli-surface.md), and one stable
-seam — `src/cli.ts`'s router — enforces the cross-cutting output flags:
+**Current state and rationale.** Commander is the shipping parser and router.
+The command count and the number of value-bearing/repeatable options justify a
+declarative parser before indexed retrieval adds more command wiring. The
+existing capability manifest is the declaration source for command names,
+positional signatures, global and command flags, aliases, and generated Lore
+help; a handler registry binds that surface to thin command adapters.
+
+Commander owns token parsing and subcommand selection; it does not own Lore's
+process lifecycle or machine contract. Each invocation creates a local
+Commander graph, uses `exitOverride()`, and suppresses Commander output.
+Failures are translated to `LoreError` and rendered through Lore's injected
+writers and centralized error/output seams. The entrypoint preserves:
 
 - **Output-mode precedence** `--json > --plain > pretty`, with `--plain` forced
   automatically when stdout is non-TTY. Defined in [cli-contract.md](cli-contract.md).
@@ -147,24 +153,37 @@ seam — `src/cli.ts`'s router — enforces the cross-cutting output flags:
 
 ---
 
-## 4. Frontmatter — gray-matter
+## 4. Frontmatter — Lore boundary plus js-yaml
 
 | | |
 |---|---|
-| **Package** | `gray-matter` |
-| **Role** | Parse and serialize the YAML frontmatter block at the top of every concept `.md` |
+| **Package** | `js-yaml` (`5.2.2`, exact-pinned) |
+| **Role** | Parse and emit YAML inside Lore-owned frontmatter fence and body splitting |
 
-**Rationale.** Battle-tested, round-trips YAML frontmatter cleanly, and is the de
-facto choice in the markdown-tooling ecosystem. lore parses with gray-matter,
-validates the parsed object against a Zod schema (§7), and serializes back when
-writing. gray-matter handles the `---` fence detection and the body split; Zod
-handles meaning and shape.
+**Rationale.** `src/core/concept.ts` is the single frontmatter boundary. Lore
+locates and validates the opening and closing `---` fences, separates the
+Markdown body, normalizes accepted BOM and line-ending forms, parses YAML with
+`js-yaml` under `JSON_SCHEMA`, validates known shapes with Zod (§7), and emits
+the fence directly with a frozen dump configuration. Keeping the split and
+serializer policy in one boundary preserves Lore-specific malformed-fence
+diagnostics, alias limits, unknown-key handling, canonical order, and the
+serialize-parse fixpoint.
 
-**Quote-safety note.** gray-matter parses whatever YAML it is given. lore's
+`gray-matter` is not a current dependency. It was removed during dependency
+security maintenance, and direct `js-yaml` ownership now makes the YAML version
+and stability configuration explicit. Historical ADR text records the original
+choice; the current implementation amendment is in
+[ADR-0011](../adr/0011-frontmatter-serialization-stability.md).
+
+**Quote-safety note.** YAML parsing alone cannot prove lossless author intent. lore's
 [`validate`](cli-surface.md) adds a frontmatter **quote-safety** check on top
 (catching values that YAML would silently coerce or that break on re-serialize)
 because "parses today" is not the same as "round-trips losslessly." See
 [okf-conformance.md](okf-conformance.md).
+
+A possible maintained `yaml` plus mdast-frontmatter substitution remains an
+investigation, not an approved migration. Its compatibility gate is recorded in
+the [dependency boundary audit](dependency-boundary-audit.md).
 
 ---
 
@@ -199,7 +218,7 @@ a stringify round-trip risks reflowing or reformatting the author's untouched
 prose (width-wrapping, list-marker normalization, escaping differences), which
 would break the "unchanged input → byte-identical output" guarantee managed
 blocks and link rewrites depend on. See
-[ADR-0008](../adr/0008-managed-block-remark-ast.md) (the LORE-22 amendment
+[ADR-0008](../adr/0008-managed-block-remark-ast.md) (the LCLI-22 amendment
 records this shift from an originally-planned `unified().use(remarkParse)`
 pipeline to the leaner parser-only shape) and
 [ADR-0011](../adr/0011-frontmatter-serialization-stability.md) for the
@@ -211,28 +230,37 @@ no leading slash.
 
 ---
 
-## 6. Internal link & anchor validation — hand-rolled over the parsed mdast
+## 6. Internal link & anchor validation — Lore policy over parsed mdast
 
 | | |
 |---|---|
-| **Package** | *(none — no `remark-validate-links` dependency)* |
+| **Package** | Exact-pinned `github-slugger` `2.0.0` for heading slugs and per-document duplicate state; no `remark-validate-links` dependency |
 | **Role** | Validate internal cross-links and heading-anchor targets across the whole bundle for [`lore check`](cli-surface.md) |
 
 **Rationale.** [`lore check`](cli-surface.md) must verify that every internal
 link resolves and every `#anchor` matches a real heading, across the whole bundle
-in one pass. lore does this in **pure JavaScript**, hand-rolled directly over
-the mdast §5 already parses — `core/bundle.ts`'s `walkMdast`/`extractLinkTargets`
-locate every link/heading node, and `core/check.ts` cross-references them
-against the loaded bundle graph — rather than depending on the
-`remark-validate-links` plugin (which would pull in the full `unified`/`remark`
-pipeline §5 deliberately does not ship). No external binary, no network,
+in one pass. `core/bundle.ts`'s `walkMdast`/`extractLinkTargets` locate every
+link and heading node, and `core/check.ts` cross-references them against the
+loaded bundle. Exact-pinned `github-slugger` owns only GitHub-compatible
+lowercasing, Unicode/punctuation filtering, space conversion, and duplicate
+suffix state; a fresh slugger is created for each document. Lore retains the
+mdast text rule (`text` and `inlineCode`, excluding image alt text), target
+resolution, finding model, output, and link policy. This avoids the
+`remark-validate-links` plugin and the full `unified`/`remark` pipeline §5
+deliberately does not ship. No external binary, no network,
 internal-by-default. External liveness checking is **opt-in** via `--external`
 and is the only mode that touches the network.
 
 This is a deliberate choice over a Rust link checker (e.g. **lychee**): see §10
 and [validation & coherence (ADR-0007)](../adr/0007-validation-and-coherence.md).
-Doing it hand-rolled, in-process, over an AST we already build avoids both a
-Rust toolchain/native binary *and* an extra remark-ecosystem dependency.
+The cross-document traversal, link policy, and finding model remain Lore-owned.
+`LCLI-287` delegates only GitHub-compatible slug and duplicate-anchor state; it
+does not adopt a remark pipeline or move link policy into a package. This
+focused boundary removes generic Unicode/slug drift while keeping the
+deterministic in-process checker.
+
+Keeping the rest in-process over an AST Lore already builds avoids both a Rust
+toolchain/native binary and an extra remark-ecosystem dependency.
 
 ---
 
@@ -241,10 +269,12 @@ Rust toolchain/native binary *and* an extra remark-ecosystem dependency.
 | | |
 |---|---|
 | **Package** | `zod` (**v4**) |
-| **Role** | The **single source of truth** for every frontmatter schema, and the generator for the JSON Schemas used for editor autocomplete |
+| **Role** | Runtime validation compiled from the declarative profile, JSON Schema generation, parsed config shape validation, and reusable boundary validation |
 
-**Rationale.** lore has exactly one place where frontmatter shape is defined:
-Zod schemas, one per `type`. Everything else is derived from them.
+**Rationale.** `.lore/profile.toml` is the source of truth for the type
+vocabulary and field grammar. Lore compiles that profile into Zod validators and
+derives editor JSON Schemas from the same validators. Zod is therefore the one
+runtime shape mechanism, while the profile remains the declarative authority.
 
 - **Strict for known types, lenient for unknown.** Known types
   (`Reference`/`Spec`/`ADR`/`Runbook`/`Epic`/`Story`) get strict per-type schemas
@@ -263,10 +293,14 @@ Zod schemas, one per `type`. Everything else is derived from them.
 - **Dates as ISO strings.** `timestamp` and any date field are ISO-8601 strings,
   validated as such — not `Date` objects — so they serialize deterministically.
 
-Why v4 specifically: native `z.toJSONSchema()` removes a dependency and keeps the
-schema and the emitted JSON Schema guaranteed in lockstep (one source, one
-generator). The schema-to-output story is detailed in
-[cli-contract.md](cli-contract.md).
+Why v4 specifically: native `z.toJSONSchema()` removes a dependency and keeps
+the schema and emitted JSON Schema in lockstep. The same exact-pinned 4.4.3
+dependency now validates the generic parsed-TOML tables, booleans, enums,
+string map, and page-id input type. Loose object schemas preserve additive
+unknown-key tolerance. Lore still owns defaults and snake-case projection,
+recursive secret detection, environment overlay, reserved map keys, page-id
+value/precision rules, failure precedence, and credential-safe error mapping.
+The schema-to-output story is detailed in [cli-contract.md](cli-contract.md).
 
 ---
 
@@ -275,30 +309,71 @@ generator). The schema-to-output story is detailed in
 | | |
 |---|---|
 | **Format** | TOML (`.lore/config.toml`) |
-| **Parser** | **Bun's native TOML import** — `import config from "./config.toml"` |
-| **Library** | **none** |
+| **Parser** | `Bun.TOML.parse` over the explicitly read configuration text |
+| **Shape validator** | Exact-pinned Zod 4.4.3 (§7) |
 
 **Rationale.** lore reads a small config file (`.lore/config.toml`) and Bun parses
-TOML natively at import time. That means **zero** added dependency for config
-parsing — see §10. TOML is human-friendly, comment-friendly, and matches the
-ecosystem's expectation for tool config. Secrets (e.g. the deferred Confluence
-token) are read from environment variables, never the file.
+TOML from explicitly read text via `Bun.TOML.parse`; no parser package is
+added. The already-shipping Zod boundary validates the parsed generic shape.
+TOML is human-friendly, comment-friendly, and matches the ecosystem's
+expectation for tool config. Secrets (e.g. the deferred Confluence token) are
+read from environment variables, never the file, and secret scanning remains
+outside the generic schema.
+
+Agent profiles reuse this exact boundary for `.lore/agents/*.toml`: Bun parses
+the file and Zod validates its strict profile shape. The feature adds no TOML
+parser, agent SDK, tokenizer, embedding, or model dependency.
 
 ---
 
-## 9. MCP SDK — @modelcontextprotocol/sdk (DEFERRED)
+## M6: LadybugDB — `@ladybugdb/core`
+
+| | |
+|---|---|
+| **Package** | Exact-pinned `@ladybugdb/core@0.19.0` |
+| **Status** | **Shipping dependency; deterministic projection lifecycle and indexed command routing complete.** |
+| **Runtime/storage** | Ladybug `0.19.0` / storage version `43` under pinned Bun 1.2.23 |
+| **Role** | Rebuildable persistent local property-graph and lexical projection for `graph`, `query`, and `context` |
+
+**Rationale.** Repeated retrieval, future interactive exploration, and larger
+bundles need a persistent index with measurable warm-query and scale behavior.
+LadybugDB is derived local state built only from deterministic export schema
+`1.0`; Git-tracked OKF and Backlog records remain authoritative. The completed
+`LCLI-283.1.2` lifecycle provides lossless content-addressed source snapshots,
+transactional isolated builds, immutable publication, read-only verification,
+and safe rebuild/recovery. `LCLI-283.1.3` routes the three read commands through
+that projection while the retained in-memory path passes the same deterministic
+conformance fixtures and remains the fallback.
+
+`LCLI-283.1.5` compared stable 0.18.3 and 0.19.0 with the former 0.18.2
+baseline, then selected 0.19.0. The storage-43 runtime can read a storage-42
+database, but Lore includes package and storage versions in its fingerprint and
+therefore replaces the derived generation instead of migrating it in place.
+
+The native addon is lazy-loaded. Bun 1.2.23's Windows Ladybug addon crashes
+while loading, so Windows-safe non-native/fallback paths must not import it;
+native Windows packaging qualification is explicitly deferred to
+`LCLI-283.1.4`. No embeddings, vector retrieval, inferred edges, raw public
+Cypher, or hidden user-global database are introduced. Native packaging,
+memory, disk, benchmark, and scale thresholds remain M6 release gates. See
+[ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md) and
+the [local graph roadmap](../specs/local-graph-platform-roadmap.md).
+
+---
+
+## 9. MCP SDK — @modelcontextprotocol/sdk (ON HOLD)
 
 | | |
 |---|---|
 | **Package** | `@modelcontextprotocol/sdk` |
-| **Status** | **Deferred to v2.** Not shipped in v1. |
+| **Status** | **On hold and unscheduled.** Not shipped. |
 | **Role (when built)** | A stdio MCP transport exposing the *same* `core/` functions the CLI calls |
 
 **Rationale.** The **CLI is primary** for both humans and Claude Code. The MCP
-server is a secondary, deferred *transport* over the identical core functions —
-it adds no new behavior, only a different call path. Because it is deferred, the
-SDK is **not a v1 runtime dependency**; it enters the dependency set only when the
-M6 milestone is built. The intended tool/resource surface is documented now (so
+server is a secondary, on-hold *transport* over the identical core functions —
+it adds no new behavior, only a different call path. The SDK is **not a runtime
+dependency** and enters the dependency set only after an explicit roadmap
+reactivation following M6–M8. The intended tool/resource surface is documented now (so
 the core API is designed transport-agnostic) in
 [mcp-tools.md](mcp-tools.md). Until then, the agent bridge is the generated
 `.claude/skills/lore/SKILL.md`, a small CLAUDE.md nudge, and `lore instructions`
@@ -313,14 +388,14 @@ surface, or a determinism/portability hazard.
 
 | Not used | What we'd "gain" | Why we refuse it |
 |---|---|---|
-| **Vector DB / embeddings / RAG / chunker** (e.g. a local vector store) | semantic retrieval | [`lore query`](cli-surface.md) is in-memory **BM25-style full-text + frontmatter filters**; [`lore context`](cli-surface.md) is **deterministic, depth-bounded graph expansion**. No vectors means no index to build, no model to load, reproducible results, and a deterministic core. |
+| **Embedding/vector retrieval, RAG, or chunk-store dependency** | semantic retrieval | Lore retains deterministic lexical ranking and authored graph expansion. M6 adds a LadybugDB property-graph and lexical index, not embeddings or a vector index; no model loads or network calls enter retrieval, and indexed output must conform to the reference implementation. Agent profiles reuse the mdast parser to partition selected Markdown at heading and top-level block boundaries in memory; they add no overlap chunk store, embedding model, or ranking service. |
 | **Rust link checker at runtime** (e.g. **lychee**) | fast external link checks | We use a pure-JS, hand-rolled validator (§6) on the AST we already have — no `remark-validate-links` dependency either. No Rust toolchain, no native binary to ship per platform, no subprocess. External liveness stays opt-in (`--external`). See [ADR-0007](../adr/0007-validation-and-coherence.md). |
 | **A TOML parsing library** (`@iarna/toml`, `smol-toml`, etc.) | TOML parsing | Bun parses TOML natively (§8). Adding a library would duplicate a runtime capability. |
 | **An LLM / model SDK in `core/`** | "smart" summaries, ranking, link suggestions | The **core is deterministic by mandate**. No network, no model, no nondeterminism. The `summary` field is author-written; the chars/4 token figure is an explicitly *labeled estimate*, not a model call. Any future LLM use lives outside `core/` and is never on the validate/check/sync path. |
 | **A separate test runner / bundler / transpiler** (Jest, Vitest, esbuild, webpack, tsup) | tests, build | Bun provides `bun test` and `bun build --compile`. `tsc` is used for type-checking only. |
-| **A YAML library beyond gray-matter's** | extra YAML control | gray-matter (§4) already owns frontmatter YAML; quote-safety is a lore-level lint, not a new parser. |
+| **A second YAML/frontmatter abstraction** | convenience fence splitting or comment-preserving syntax trees | Exact-pinned `js-yaml` plus the Lore-owned boundary (§4) is the shipping implementation. A `yaml`/mdast-frontmatter alternative must first pass the investigation gate; quote-safety and byte stability remain Lore policy. |
 | **A Confluence SDK** | publish to Confluence | The (deferred) Confluence adapter uses plain `fetch` against the REST API in an isolated module with **zero core dependency**. |
-| **An interactive prompt library** (inquirer, prompts) | nice wizards | Every command is **non-interactive by default** (agent/CI-safe). Scaffolding uses `--template` + `--var k=v`, not prompts. |
+| **An interactive prompt library** (Inquirer, prompts) | richer wizards | Commands remain non-interactive by default. The opt-in TTY-gated `lore init` wizard uses a small `readline/promises` adapter; add a package only if the interaction surface grows enough to justify its dependency and compiled-binary cost. |
 
 ---
 
@@ -358,10 +433,10 @@ here.
 
 | | |
 |---|---|
-| **npm package** | `@salient-data/lore` |
+| **npm package** | `@opum-ai/lore` |
 | **`bin`** | `lore` |
 | **License** | MIT — Jeremy Newhouse, 2026 |
-| **Repo** | `github.com/jeremy-newhouse/lore` (private; branches `main` + `dev`, `dev` default) |
+| **Repo** | `github.com/opum-ai/lore-cli` (private; branches `main` + `dev`, `dev` default) |
 
 **Build.** `bun build --compile` produces a self-contained native binary per
 platform (baseline x64 + arm64 targets — see §1).
@@ -369,7 +444,7 @@ platform (baseline x64 + arm64 targets — see §1).
 **Dual-artifact npm layout.**
 
 - A small **Node `.cjs` launcher** is the package's `bin` entry. It runs under
-  plain Node (so `npx @salient-data/lore` works without Bun installed) and
+  plain Node (so `npx @opum-ai/lore` works without Bun installed) and
   execs the correct platform binary.
 - **Per-platform binaries** are published as **`optionalDependencies`**. npm
   installs only the one matching the host's OS/arch; the launcher locates and
@@ -379,25 +454,29 @@ This mirrors Backlog.md's own distribution shape and lets the same codebase be
 consumed three ways: `npx`/`bunx` for ad-hoc use, an installed `lore` binary for
 day-to-day, and a pinned binary release for CI.
 
-**Status (LORE-9).** The build/package mechanics — the per-platform compile
+**Status (LCLI-9).** The build/package mechanics — the per-platform compile
 matrix, `bin/lore.cjs`, the five `npm/<platform>/` package templates, and a
-`workflow_dispatch`-only, publish-free dry-run pipeline (`.github/workflows/
-release.yml`) that proves the `npx` resolution chain end-to-end — are
-implemented and verified by direct local reproduction of every step (compile,
-pack, install, run, and the missing-platform-package error path). The workflow
-itself has **not yet had a first real GitHub Actions run** — `workflow_dispatch`
-requires the file to exist on the default branch before it can be triggered, so
-this could only happen post-merge; a maintainer should trigger it once and
-confirm green before relying on it for an actual release. The `npm publish`
-step is a deliberate follow-up, gated on configuring npm's Trusted Publisher
-(OIDC) for all six packages: see
+`workflow_dispatch`-only pipeline (`.github/workflows/release.yml`) that
+proves the `npx` resolution chain end-to-end — are implemented and verified
+by direct local reproduction of every step (compile, pack, install, run, and
+the missing-platform-package error path). The workflow itself has **not yet
+had a first real GitHub Actions run** — `workflow_dispatch` requires the file
+to exist on the default branch before it can be triggered, so this could only
+happen post-merge; a maintainer should trigger it once and confirm green
+before relying on it for an actual release. The `npm publish` step is now
+implemented (LCLI-255) as a `publish` job gated on an explicit `publish: true`
+`workflow_dispatch` input, with job-scoped `id-token: write` and OIDC trusted
+publishing; it still requires the one-time npm Trusted Publisher configuration
+for all six packages before it can succeed — see
 [release-publishing.md](../runbooks/release-publishing.md).
 
-**The fork dependency.** lore requires a `--json`-capable Backlog.md, which stock
-v1.47.1 lacks. We consume our fork (`jeremy-newhouse/Backlog.md`) as a
-**locally-compiled git dependency** during development and enforce a minimum
-version via the [capability probe](backlog-cli-contract.md). The fork work and
-upstream PR are described in
+**The Backlog executable boundary.** lore requires a `--json`-capable
+Backlog.md and invokes the user-installed `backlog` executable on `PATH`; it
+does not declare a package or git dependency on Backlog.md. PR #790 is merged
+upstream, and development/E2E currently compile `MrLesk/Backlog.md` at that
+merge commit while lore waits for a containing release tag. The capability
+probe enforces the executable contract. The historical fork work and upstream
+adoption are described in
 [backlog-json-patch.md](../runbooks/backlog-json-patch.md) and
 [ADR 0002 on the Backlog.md integration](../adr/0002-backlog-integration-json-only.md).
 
@@ -409,14 +488,17 @@ upstream PR are described in
 |---|---|---|---|
 | Runtime / build / spawn / TOML / test | Bun | **pinned** (`.bun-version`) | yes |
 | Language | TypeScript | dev-/typecheck-only | yes |
-| CLI parsing | *(hand-rolled; Commander deferred — §3)* | — | yes |
-| Frontmatter parse/serialize | gray-matter | `^` | yes |
-| Markdown AST surgery & links | mdast-util-from-markdown (mdast), parse-only | `^` | yes |
-| Internal link & anchor validation | *(hand-rolled over the parsed mdast — §6)* | — | yes |
-| Schema + JSON Schema emit | Zod **v4** | `^4` | yes |
-| Config parsing | *(Bun native TOML)* | — | yes |
-| MCP transport | @modelcontextprotocol/sdk | — | **deferred (v2)** |
-| Confluence publish | *(plain `fetch`)* | — | **deferred** |
+| CLI parsing | Commander (§3); Lore owns lifecycle, errors, and output | exact `15.0.0` | yes |
+| Frontmatter parse/serialize | Lore fence boundary + `js-yaml` | exact `5.2.2` | yes |
+| Markdown AST surgery & links | `mdast-util-from-markdown` (mdast), parse-only | exact `2.0.3` | yes |
+| Internal link validation | Lore-owned over parsed mdast; slug and per-document duplicate primitive via `github-slugger` (`LCLI-287`) | exact `2.0.0` | yes |
+| Terminal display width | `string-width`; Lore retains field sanitization, padding, and row/output policy (`LCLI-285`) | exact `8.2.2` | yes |
+| SSRF address parsing and CIDR match | `ipaddr.js`; Lore retains explicit block policy, DNS, redirect, timeout, fail-closed, and error behavior (`LCLI-286`) | exact `2.4.0` | yes |
+| Schema + JSON Schema emit | Zod **v4** | exact `4.4.3` | yes |
+| Config parse and shape | Bun native TOML parsing + Zod generic shape; Lore retains security, defaults/projection, page-id precision, and error policy (`LCLI-288`) | pinned Bun + exact Zod `4.4.3` | yes |
+| Local graph and lexical projection | `@ladybugdb/core` | `0.19.0` | **shipping M6 dependency; indexed routing complete** |
+| MCP transport | @modelcontextprotocol/sdk | — | **on hold** |
+| Confluence publish | *(plain `fetch`)* | — | **on hold** |
 
 For how these dependencies are wired together at runtime, see
 [architecture.md](architecture.md). For the build/distribution decision in full,

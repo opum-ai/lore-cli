@@ -5,15 +5,15 @@ title: "ADR-0013: .lore/ state directory"
 description: >-
   Records where lore keeps its own state: a committed `.lore/config.toml`
   (parsed with Bun's native TOML, no dependency) carrying reconcile rules,
-  link/validate options, and Confluence config; a committed
+  link/validate options, and Confluence config; committed Lore-specific agent
+  profiles under `.lore/agents/`; a committed
   `.lore/sync-state.json` for Confluence publish bookkeeping; and a gitignored
   `.lore/cache/` for transient data. Secrets (the Confluence token) are never
   stored — environment-only via LORE_CONFLUENCE_TOKEN.
 tags: [adr, state, config, toml, cache, confluence, sync-state, secrets]
 summary: >-
-  lore keeps its state in `.lore/`: a committed `config.toml` (Bun-native TOML
-  parse, no dependency) and `sync-state.json` publish bookkeeping, plus a
-  gitignored `cache/`; the Confluence token is environment-only and never stored.
+  lore keeps committed configuration, agent profiles, and publish state in
+  `.lore/`, transient data in an ignored cache, and secrets only in the environment.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -23,22 +23,28 @@ timestamp: 2026-06-21T00:00:00Z
 
 Accepted — 2026-06-21.
 
-Amended — 2026-06-25 (LORE-46): `.lore/` gains a second committed TOML, **`profile.toml`** (a
+Amended — 2026-06-25 (LCLI-46): `.lore/` gains a second committed TOML, **`profile.toml`** (a
 `profile.json` form is accepted, lower precedence). It is **separate from `config.toml`**:
 `config.toml` carries operational knobs (reconcile/validate/Confluence), while `profile.toml` is
 the declarative **type system** — the type vocabulary, per-type frontmatter shape, required
 sections, and templates from which lore generates its validators and editor JSON Schemas
 (see [ADR-0006 amendment](0006-schema-types-templates.md)). Its `[profile]` table also carries
 `resource_base`, the prefix for the `resource` link `lore new` stamps (the stamping itself is
-LORE-47). Like `config.toml`, the profile is **zero-config**: absent — or present with every line
+LCLI-47). Like `config.toml`, the profile is **zero-config**: absent — or present with every line
 commented — it falls back to the built-in story-convention profile, so `lore init` scaffolds a
 fully-commented `profile.toml` that changes nothing until a team fills it in.
 
-Amended — 2026-06-26 (LORE-47): the `resource_base` key (a key of `profile.toml` `[profile]`,
+Amended — 2026-06-26 (LCLI-47): the `resource_base` key (a key of `profile.toml` `[profile]`,
 **not** `config.toml`) is now consumed — `lore new` joins it to a concept's repo-relative path to
 stamp the OKF-recommended `resource` link. An **empty** `resource_base` — the default — omits the
 `resource` key entirely, so output stays byte-identical to before; index/sub-index files never carry
 it, and a profile that declares its own `resource` field keeps ownership (lore does not auto-stamp).
+
+Amended — 2026-08-01 (LCLI-289): `.lore/agents/<name>.toml` stores committed,
+vendor-neutral agent context mappings. Explicitly saved task evidence packs may
+use the ignored `.lore/cache/contexts/` directory. Profiles and generated packs
+are Lore state rather than OKF concepts; the exact contract is in
+[Agent profile context retrieval](../specs/agent-profile-context-retrieval.md).
 
 ## Context
 
@@ -102,10 +108,13 @@ three different lifecycles.
   - **Reconcile rules** — the status-rollup policy (`all tasks Done → done`,
     `any In Progress → in-progress`, …) and any per-repo overrides consumed by
     `lore sync` / `lore check`.
-  - **Link & validate options** — toggles such as portability-lint promotion,
-    whether external-link liveness is opt-in, and per-type strictness — the
-    inputs to the tiered validator and the drift gate
-    ([ADR-0007](0007-validation-and-coherence.md)).
+  - **Link & validate options** — an `[validate]` table (`external_links`,
+    `promote_portability`) is parsed and validated, but **not yet consumed by
+    any command**: `lore check`'s equivalent behavior (external-link
+    liveness, promoting portability warnings to errors) is controlled today
+    only by its own `--external`/`--strict` flags
+    ([ADR-0007](0007-validation-and-coherence.md)). Wiring the config table
+    to those defaults, or dropping it, is an open follow-up.
   - **Confluence config** — `base_url`, `space`, `parent_page_id`, and `format`
     (`storage` vs `adf`) for the one-way publish adapter.
 - **Zero-config:** lore runs with no `config.toml` at all; the file exists only to
@@ -118,6 +127,8 @@ three different lifecycles.
 mode = "task-rollup"
 
 [validate]
+# Parsed and validated, but not yet consumed by any command — `lore check`'s
+# --external/--strict flags are the actual current controls.
 external_links = false      # external liveness opt-in only
 promote_portability = false # portability lint stays a warning
 
@@ -142,11 +153,22 @@ format         = "storage"  # or "adf"
 - JSON (not TOML) because it is machine-written and machine-read, never
   hand-authored, and benefits from a trivially serializable shape.
 
+### `.lore/agents/` — committed agent context mappings
+
+- One strict TOML file per named profile maps a native agent role to explicit
+  pinned and task-ranked Lore concept or heading references, or to direct
+  delegate profile names for an orchestrator.
+- Profiles use Bun-native TOML and the existing Zod boundary. They contain no
+  secrets, model settings, tools, permissions, or native-agent prompt body.
+- A missing directory is valid and preserves zero-config behavior.
+
 ### `.lore/cache/` — gitignored transient data
 
 - Holds recomputable, machine-local scratch: the Backlog.md capability-probe
   result, parse/graph caches, and similar. Safe to delete at any time; lore
   regenerates it on demand.
+- Explicitly saved agent evidence packs may live under `cache/contexts/`. They
+  are reproducible handoff artifacts, not canonical documentation.
 - **Gitignored.** It must never appear in diffs or history. lore writes a
   `.lore/.gitignore` (or the repo's root ignore) covering `cache/` so this is
   enforced by default, the same way `backlog/.locks/` is ignored (see
@@ -174,9 +196,12 @@ format         = "storage"  # or "adf"
   costs zero added packages and zero binary weight, honoring the thin-tool
   constraint of [ADR-0001](0001-runtime-build-distribution.md).
 - **Deterministic, reviewable behavior.** Because `config.toml` is committed,
-  reconcile rules and validate options are identical across every developer,
-  agent, and CI run, so `lore check` is reproducible and config changes are
-  diffable and reviewable.
+  reconcile rules are identical across every developer, agent, and CI run, so
+  `lore sync`/`lore check`'s reconciliation is reproducible and config changes
+  are diffable and reviewable.
+- **Portable agent context policy.** A team can review one committed evidence
+  mapping and reuse it from Claude Code or Codex without duplicating
+  host-specific execution settings.
 - **Cheap, idempotent publish.** The committed `sync-state.json` ledger lets
   publish skip unchanged docs with no API call and run safely on every merge from
   any machine.
@@ -249,7 +274,8 @@ format         = "storage"  # or "adf"
 - [ADR-0003 — OKF as the documentation substrate](0003-okf-substrate.md) — why
   lore state must live outside `docs/`.
 - [ADR-0007 — Validation & coherence checking](0007-validation-and-coherence.md)
-  — consumer of the reconcile rules and link/validate options in `config.toml`.
+  — consumer of the reconcile rules in `config.toml` (the `[validate]` table
+  is parsed but not yet consumed — see the Decision section above).
 - [Architecture](../reference/architecture.md) — how `.lore/`, the core, and the
   adapters fit together.
 - [lore design spec](../specs/lore-design.md) — overall design context.

@@ -27,7 +27,7 @@
  */
 
 import { join } from "node:path";
-import yaml from "js-yaml";
+import * as yaml from "js-yaml";
 import { z } from "zod";
 import { deriveMessage, errnoCode, LoreError, readFileIfPresent, stderrHint } from "../errors";
 
@@ -37,8 +37,14 @@ import { deriveMessage, errnoCode, LoreError, readFileIfPresent, stderrHint } fr
  * pre-`--json` stock release can still report a version at or above this floor. The `--json` envelope
  * parse (step 3 below) is the real discriminator — a binary without `--json` support rejects the option
  * and exits non-zero.
+ *
+ * `1.49.0` is upstream's first **tagged release** whose history contains commit 22a091b (PR #790 /
+ * BACK-545, stable `--json` output), published 2026-08-02. Before this floor moved here from the
+ * `1.47.1` fork floor, `lore` had no tagged release to depend on and consumed a locally-built binary
+ * pinned at that commit (LCLI-253; docs/runbooks/backlog-json-patch.md §8.1) — that interim build is
+ * retired now that a real release exists.
  */
-export const MIN_BACKLOG_VERSION = "1.47.1";
+export const MIN_BACKLOG_VERSION = "1.49.0";
 
 /**
  * The `schemaVersion` every `--json` envelope carries — upstream's real envelope, a **number**
@@ -57,6 +63,51 @@ const SEARCH_KIND = "search";
 
 /** The default binary name resolved from PATH. */
 const BACKLOG_BINARY = "backlog";
+
+/**
+ * The environment variable an operator overrides {@link DEFAULT_BACKLOG_TIMEOUT_MS} with (LORE-217
+ * AC #2). Exported so a test can target the exact name {@link bunBacklogSpawn} reads rather than
+ * duplicating the string literal.
+ */
+export const BACKLOG_TIMEOUT_ENV_VAR = "LORE_BACKLOG_TIMEOUT_MS";
+
+/**
+ * The default wall-clock bound, in milliseconds, on one real `backlog` subprocess invocation
+ * (LORE-217 AC #2) — generous enough that a legitimately slow `backlog task list --json` on a large
+ * project never trips it in normal use, while still recovering a wedged/non-terminating process
+ * well within a human agent's patience rather than hanging lore forever.
+ */
+export const DEFAULT_BACKLOG_TIMEOUT_MS = 30_000;
+
+/**
+ * Resolve the timeout bound {@link bunBacklogSpawn} enforces, re-read from
+ * {@link BACKLOG_TIMEOUT_ENV_VAR} on every call (not cached at import time) so an operator — or a
+ * test — can change it between invocations. Unset, blank, non-numeric, or non-positive falls back to
+ * {@link DEFAULT_BACKLOG_TIMEOUT_MS} rather than silently disabling the guard.
+ */
+function resolveBacklogTimeoutMs(): number {
+  const raw = process.env[BACKLOG_TIMEOUT_ENV_VAR];
+  if (raw === undefined || raw.trim() === "") {
+    return DEFAULT_BACKLOG_TIMEOUT_MS;
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_BACKLOG_TIMEOUT_MS;
+}
+
+/**
+ * Build the fail-loud "the real `backlog` subprocess did not exit in time" error (`validation`, exit
+ * 6) — LORE-217 AC #1. Mirrors the wording style of this file's other environment-diagnosis errors
+ * ({@link notJsonCapable}, `configError`): a single-line message plus an actionable hint naming the
+ * override knob.
+ */
+function timeoutError(binary: string, args: readonly string[], timeoutMs: number): LoreError {
+  return new LoreError(
+    "validation",
+    `\`${binary} ${args.join(" ")}\` did not exit within ${timeoutMs}ms and was killed`,
+    `the \`backlog\` process appears wedged; if this is a legitimately slow invocation, raise ${BACKLOG_TIMEOUT_ENV_VAR} (currently ${timeoutMs}ms) — otherwise investigate why \`${binary}\` hung`,
+    { binary, args: [...args], timeoutMs },
+  );
+}
 
 /**
  * The result of one `backlog` invocation as the {@link BacklogSpawn} seam surfaces it. The minimal,
@@ -78,9 +129,62 @@ export interface SpawnResult {
  * (or throwing an `ENOENT`-coded error to simulate a missing binary). `args` are the arguments after
  * the binary name — e.g. `["--version"]` or `["task", "list", "--json"]`; the binary itself is bound
  * inside the implementation. The returned promise **rejects** only when the process could not be
- * spawned at all (e.g. `ENOENT`); a process that ran and failed resolves with a non-zero `exitCode`.
+ * spawned at all (e.g. `ENOENT`) — a process that ran and failed resolves with a non-zero `exitCode`.
+ * The one further rejection case is specific to the real {@link bunBacklogSpawn} implementation, not
+ * this contract in general: a subprocess that runs but does not exit within the operator-overridable
+ * wall-clock bound (LORE-217) is killed and rejects with a typed {@link LoreError} instead of hanging
+ * — fakes are free to ignore this case entirely, since they never spawn a real process.
  */
 export type BacklogSpawn = (args: readonly string[]) => Promise<SpawnResult>;
+
+/**
+ * Wrap a single `spawn(args)` invocation so a **spawn-level** rejection — the process could not be
+ * started at all, as opposed to a process that ran and exited non-zero — always surfaces as a typed
+ * {@link LoreError} instead of an untyped throw (LORE-222). Every call site in this file that invokes
+ * `spawn` directly — the probe's `--version` and dry `task list --json` steps, the `read` helper, and
+ * `viewTask`/`createTask`/`editTask` — routes through this one wrapper, so a `backlog` binary that
+ * disappears mid-run, or a resource-limit/permission spawn failure, maps the same way no matter which
+ * command triggered it, rather than only the probe's very first spawn being covered.
+ *
+ * - An `ENOENT`-coded rejection (the binary is absent from PATH) is `not_found` (exit 3) with the
+ *   install hint — the same mapping the probe's `--version` step already applied.
+ * - An `EACCES`/`EPERM`-coded rejection (present but not executable) is `denied` (exit 4), mirroring
+ *   {@link readFileIfPresent}'s filesystem-errno policy.
+ * - Any other errno-coded rejection (`EMFILE`, `EAGAIN`, …) is `validation` (exit 6), naming the code.
+ * - A rejection carrying no errno `code` at all is not a recognized spawn failure and propagates
+ *   unchanged — including the typed {@link LoreError} {@link bunBacklogSpawn}'s own wall-clock timeout
+ *   already constructs (LORE-217), which carries no `.code` and must not be re-wrapped.
+ *
+ * Every mapped message embeds {@link deriveMessage}'s rendering of the original `cause`, so the
+ * underlying OS diagnostic is never lost — only reclassified from an untyped throw to a typed one.
+ */
+async function spawnOrThrow(spawn: BacklogSpawn, args: readonly string[]): Promise<SpawnResult> {
+  try {
+    return await spawn(args);
+  } catch (cause) {
+    const code = errnoCode(cause);
+    if (code === "ENOENT") {
+      throw new LoreError("not_found", "`backlog` was not found on PATH.", RUNBOOK_HINT, { binary: BACKLOG_BINARY });
+    }
+    if (code === "EACCES" || code === "EPERM") {
+      throw new LoreError(
+        "denied",
+        `spawning \`backlog ${args.join(" ")}\` failed: ${deriveMessage(cause)}`,
+        "check execute permissions on the `backlog` binary",
+        { binary: BACKLOG_BINARY, args: [...args], code },
+      );
+    }
+    if (code !== undefined) {
+      throw new LoreError(
+        "validation",
+        `spawning \`backlog ${args.join(" ")}\` failed (${code}): ${deriveMessage(cause)}`,
+        "check that `backlog` can be spawned in this environment (process/file-descriptor limits, resource availability)",
+        { binary: BACKLOG_BINARY, args: [...args], code },
+      );
+    }
+    throw cause;
+  }
+}
 
 /** What the probe learned about the `backlog` binary once it passes — cached by the caller (§5). */
 export interface BacklogCapability {
@@ -100,8 +204,7 @@ interface Semver {
 }
 
 /** The one hint pointing an operator at how to obtain a `--json`-capable Backlog.md. */
-const RUNBOOK_HINT =
-  "lore needs a --json-capable Backlog.md. Build MrLesk/Backlog.md pinned at or past commit 22a091b570d44c4f302ca47e7fd36fa28ad8bcb0 (PR #790; no tagged release contains it yet) per docs/runbooks/backlog-json-patch.md and put its `backlog` binary on PATH.";
+const RUNBOOK_HINT = `lore needs a --json-capable Backlog.md. Install backlog.md>=${MIN_BACKLOG_VERSION} (npm install -g backlog.md, or your package manager's equivalent) and put its \`backlog\` binary on PATH; see docs/runbooks/backlog-json-patch.md.`;
 
 /**
  * Parse the leading `major.minor.patch` from `backlog --version` output. Backlog prints a **bare**
@@ -154,15 +257,9 @@ function notJsonCapable(reason: string, input?: Record<string, unknown>): never 
 export async function probeBacklog(spawn: BacklogSpawn): Promise<BacklogCapability> {
   // Step 1 — version. A spawn rejection with an ENOENT code means the binary is absent from PATH; that
   // is `not_found` (exit 3) with an install hint, distinct from a present-but-incapable binary (exit 6).
-  let versionResult: SpawnResult;
-  try {
-    versionResult = await spawn(["--version"]);
-  } catch (cause) {
-    if (errnoCode(cause) === "ENOENT") {
-      throw new LoreError("not_found", "`backlog` was not found on PATH.", RUNBOOK_HINT, { binary: BACKLOG_BINARY });
-    }
-    throw cause;
-  }
+  // Routed through spawnOrThrow (LORE-222) so a non-ENOENT-coded rejection is a typed LoreError too,
+  // not an untyped throw.
+  const versionResult = await spawnOrThrow(spawn, ["--version"]);
   if (versionResult.exitCode !== 0) {
     notJsonCapable("`backlog --version` exited non-zero", { exitCode: versionResult.exitCode });
   }
@@ -185,7 +282,7 @@ export async function probeBacklog(spawn: BacklogSpawn): Promise<BacklogCapabili
   // support has no such option, so Commander exits non-zero here. A --json-capable binary emits one
   // parseable envelope in upstream's shape (backlog-json-schema.md §8): {schemaVersion: 1, kind:
   // "task-list", tasks: [...]}.
-  const listResult = await spawn(["task", "list", "--json"]);
+  const listResult = await spawnOrThrow(spawn, ["task", "list", "--json"]);
   if (listResult.exitCode !== 0) {
     notJsonCapable("`task list --json` exited non-zero (binary does not support --json)", {
       exitCode: listResult.exitCode,
@@ -231,16 +328,43 @@ export async function probeBacklog(spawn: BacklogSpawn): Promise<BacklogCapabili
  * install can point at an explicit path. `cwd` defaults to the current process's working directory
  * (`Bun.spawn`'s own default); a caller working against a non-default `root` must pass it explicitly,
  * or the subprocess resolves Backlog's project files against the wrong directory.
+ *
+ * **Wall-clock bound (LORE-217).** Every lore coupling command (link/unlink/rename/sync/reconcile)
+ * ultimately flows through this seam, so a `backlog` invocation that wedges — never printing on
+ * either stream and never exiting — would otherwise leave lore blocked forever with no diagnostic.
+ * A timer armed for {@link resolveBacklogTimeoutMs}'s bound kills the process (`SIGKILL`, so a
+ * process ignoring `SIGTERM` still terminates) and the call rejects with a typed
+ * {@link LoreError} ({@link timeoutError}) instead of awaiting `proc.exited` indefinitely. The
+ * buffered-stream `Promise.all` is otherwise unchanged — a normal exit within the bound clears the
+ * timer and resolves exactly as before.
  */
 export function bunBacklogSpawn(binary: string = BACKLOG_BINARY, cwd?: string): BacklogSpawn {
   return async (args: readonly string[]): Promise<SpawnResult> => {
+    const timeoutMs = resolveBacklogTimeoutMs();
     const proc = Bun.spawn([binary, ...args], { stdout: "pipe", stderr: "pipe", cwd });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    return { exitCode, stdout, stderr };
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      // SIGKILL, not the default SIGTERM: a wedged process may be ignoring or unable to act on
+      // SIGTERM (the very reason it never exited on its own), so only an unmaskable signal
+      // guarantees `proc.exited` below actually resolves instead of also hanging past the bound.
+      proc.kill("SIGKILL");
+    }, timeoutMs);
+    try {
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      if (timedOut) {
+        throw timeoutError(binary, args, timeoutMs);
+      }
+      return { exitCode, stdout, stderr };
+    } finally {
+      // Always disarm: on the normal-exit path this prevents a stray kill() firing after the
+      // process (and possibly its pid, reused by the OS) has already exited.
+      clearTimeout(timer);
+    }
   };
 }
 
@@ -634,12 +758,52 @@ export interface BacklogAdapter {
 const CREATED_ID = /^Created (?:task|draft) (\S+)$/m;
 
 /**
- * Join multiple values for a single-value, last-wins flag into one comma-separated argument (§2.4).
+ * Reject a caller-controlled value that begins with `-` before it reaches a `spawn` argv position.
+ * Backlog's own CLI parses argv positionally: an id, title, label, status, milestone, description, doc
+ * ref, or search query beginning with `-` is read by Backlog's flag parser as an option rather than the
+ * literal data lore intends — with no `--` option-terminator inserted at each call site (several push a
+ * real flag like `--json` immediately after the data position, which a terminator would itself swallow),
+ * a dash-prefixed value could alter or hijack the invoked Backlog command. There is no per-value escape
+ * for this (Backlog looks only at the leading character), so — matching {@link commaJoin}'s existing
+ * policy for an unescapable embedded comma — a dash-prefixed value is rejected outright rather than risking
+ * misinterpretation.
+ */
+function rejectFlagLike(value: string): string {
+  if (value.startsWith("-")) {
+    throw new LoreError(
+      "validation",
+      `cannot send "${value}" to Backlog: a value beginning with "-" would be parsed as a flag, not literal data`,
+      "rename the value so it does not begin with '-'",
+      { value },
+    );
+  }
+  return value;
+}
+
+/**
+ * Comma-join multiple values into a single occurrence of one flag, so lore never has to repeat a
+ * flag to send more than one value (§2.4). This is safe for the label flags this helper actually
+ * serves — `task list`'s `--labels` filter, `task edit`'s `--add-label`/`--remove-label`
+ * (accumulators), and `task create`'s `--labels` (single-value/last-wins): lore always sends exactly
+ * one occurrence, never a repeat, and each of these four flags reads one comma-joined occurrence as
+ * the same intended list either way. This is a per-flag property, not a rule of "multiplicity
+ * family" in general, so do not assume it for a flag not listed above without checking Backlog's
+ * source first — e.g. `--assignee` is single-value/last-wins on both `create` and `edit` (§2.4), yet
+ * only `edit` comma-splits it (`create` takes the option's raw string as one literal value with no
+ * split at all). Dedup is also per-consumer, not per-family: `task list`/`task edit`'s label flags
+ * all dedup repeated values (via upstream's `parseDelimitedStringList`), but `task create --labels`
+ * does not (an inline split with no `Set`) — harmless here because every `commaJoin` caller already
+ * passes a purpose-built, non-repeating value list.
  * Backlog's CLI has no escape for an embedded comma — the comma **is** the delimiter — so a value
  * containing one cannot be sent safely: it would silently split into two (or more) unrelated
- * Backlog-side values instead of the one lore intends. Reject it instead.
+ * Backlog-side values instead of the one lore intends. Reject it instead. Each value is also run
+ * through {@link rejectFlagLike} — the comma-join happens after the flag itself (e.g. `--labels`), but a
+ * leading `-` on any individual label is still ambiguous flag-like data, so it is rejected the same way.
  */
 function commaJoin(values: readonly string[]): string {
+  for (const value of values) {
+    rejectFlagLike(value);
+  }
   const offender = values.find((v) => v.includes(","));
   if (offender !== undefined) {
     throw new LoreError(
@@ -671,31 +835,38 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
   /** Run a read command through the probe gate and return its captured {@link SpawnResult}. */
   async function read(args: readonly string[], command: string): Promise<SpawnResult> {
     await ensureProbed();
-    const result = await spawn(args);
+    const result = await spawnOrThrow(spawn, args);
     if (result.exitCode !== 0) {
       readDrift(`\`${command}\` exited ${result.exitCode}`, { exitCode: result.exitCode });
     }
     return result;
   }
 
+  /**
+   * `task list --json` → the summaries on the current branch, optionally filtered by status/labels.
+   * Closed-over (like {@link read}/{@link ensureProbed}) so {@link BacklogAdapter.searchByLabel} can
+   * invoke it directly instead of going through `this` on the returned object.
+   */
+  async function listTasks(opts?: ListTasksOptions): Promise<BacklogTask[]> {
+    const args = ["task", "list", "--json"];
+    if (opts?.status !== undefined) {
+      args.push("--status", rejectFlagLike(opts.status));
+    }
+    if (opts?.labels !== undefined && opts.labels.length > 0) {
+      args.push("--labels", commaJoin(opts.labels));
+    }
+    const result = await read(args, "task list --json");
+    return parseEnvelope(result.stdout, TASK_LIST_KIND, "tasks", TaskListData, "task list --json").map(mapSummary);
+  }
+
   return {
     probe: ensureProbed,
 
-    async listTasks(opts?: ListTasksOptions): Promise<BacklogTask[]> {
-      const args = ["task", "list", "--json"];
-      if (opts?.status !== undefined) {
-        args.push("--status", opts.status);
-      }
-      if (opts?.labels !== undefined && opts.labels.length > 0) {
-        args.push("--labels", commaJoin(opts.labels));
-      }
-      const result = await read(args, "task list --json");
-      return parseEnvelope(result.stdout, TASK_LIST_KIND, "tasks", TaskListData, "task list --json").map(mapSummary);
-    },
+    listTasks,
 
     async viewTask(id: string): Promise<BacklogTaskDetail | null> {
       await ensureProbed();
-      const result = await spawn(["task", "view", id, "--json"]);
+      const result = await spawnOrThrow(spawn, ["task", "view", rejectFlagLike(id), "--json"]);
       // A missing task exits 1 unconditionally, in every output mode (upstream, PR #790; contract
       // §2.2's migration note) — the fork's old "exit 0, empty stdout" signal no longer applies. Any
       // other nonzero exit, or a 1 that unexpectedly printed something, is a fail-loud drift. This is
@@ -716,11 +887,11 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
     },
 
     async searchByLabel(label: string): Promise<BacklogTask[]> {
-      return this.listTasks({ labels: [label] });
+      return listTasks({ labels: [label] });
     },
 
     async searchTasks(query: string): Promise<BacklogTask[]> {
-      const result = await read(["search", query, "--json"], "search --json");
+      const result = await read(["search", rejectFlagLike(query), "--json"], "search --json");
       const hits = parseEnvelope(result.stdout, SEARCH_KIND, "results", SearchResultData, "search --json");
       // lore consumes only task hits (§5); document/decision hits are Backlog-owned. Re-validate each
       // task hit's loosely-typed `data` against the summary contract before mapping.
@@ -747,20 +918,20 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
       await ensureProbed();
       // Create runs WITHOUT --plain and WITHOUT --json (contract §2.1): --plain suppresses the
       // `Created task <ID>` line lore captures, and create emits no JSON envelope.
-      const args = ["task", "create", input.title];
+      const args = ["task", "create", rejectFlagLike(input.title)];
       if (input.description !== undefined) {
-        args.push("--description", input.description);
+        args.push("--description", rejectFlagLike(input.description));
       }
       if (input.labels !== undefined && input.labels.length > 0) {
         args.push("--labels", commaJoin(input.labels));
       }
       if (input.milestone !== undefined) {
-        args.push("--milestone", input.milestone);
+        args.push("--milestone", rejectFlagLike(input.milestone));
       }
       for (const doc of input.doc ?? []) {
-        args.push("--doc", doc); // --doc is an accumulator (§2.4): repeat, don't comma-join.
+        args.push("--doc", rejectFlagLike(doc)); // --doc is an accumulator (§2.4): repeat, don't comma-join.
       }
-      const result = await spawn(args);
+      const result = await spawnOrThrow(spawn, args);
       if (result.exitCode !== 0) {
         throw new LoreError(
           "validation",
@@ -773,27 +944,36 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
       }
       const newId = CREATED_ID.exec(result.stdout)?.[1];
       if (newId === undefined) {
-        readDrift("`task create` did not print a `Created task <ID>` line to capture the new id");
+        // `task create` already exited 0 — Backlog genuinely created the task — so failing loud with
+        // no context would leave it orphaned and unreferenceable: the caller has no id to look it up
+        // by. Echo the raw stdout (and the title Backlog was given) in the error's `input` so a caller
+        // can still recover the new task, e.g. via `backlog task list --search "<title>"`.
+        readDrift("`task create` exited 0 but did not print a `Created task <ID>` line to capture the new id", {
+          title: input.title,
+          stdout: result.stdout,
+        });
       }
       return newId;
     },
 
     async editTask(id: string, patch: EditTaskPatch): Promise<void> {
       await ensureProbed();
-      const args = ["task", "edit", id];
+      const args = ["task", "edit", rejectFlagLike(id)];
       if (patch.addLabels !== undefined && patch.addLabels.length > 0) {
-        args.push("--add-label", commaJoin(patch.addLabels)); // single-value flag (§2.4): comma-join.
+        // accumulator flag (§2.4): comma-join into one occurrence.
+        args.push("--add-label", commaJoin(patch.addLabels));
       }
       if (patch.removeLabels !== undefined && patch.removeLabels.length > 0) {
+        // accumulator flag (§2.4): comma-join into one occurrence.
         args.push("--remove-label", commaJoin(patch.removeLabels));
       }
       if (patch.status !== undefined) {
-        args.push("--status", patch.status);
+        args.push("--status", rejectFlagLike(patch.status));
       }
       for (const doc of patch.doc ?? []) {
-        args.push("--doc", doc); // accumulator, SET/REPLACE the whole array (§2.4).
+        args.push("--doc", rejectFlagLike(doc)); // accumulator, SET/REPLACE the whole array (§2.4).
       }
-      const result = await spawn(args);
+      const result = await spawnOrThrow(spawn, args);
       // `task edit <missing>` exits 1 (contract §2.2) — the one write whose exit code IS meaningful.
       if (result.exitCode !== 0) {
         const missing = /not found/i.test(result.stderr);
@@ -839,13 +1019,19 @@ const CONFIG_YAML_LOAD_OPTIONS = Object.freeze({ schema: yaml.JSON_SCHEMA });
  *   present but not a list of strings.
  */
 export function parseStatusFlow(yamlText: string): string[] {
+  // js-yaml 5 makes `load("")` a syntax error rather than returning undefined.
+  // Preserve lore's documented fresh-config behavior independently of that
+  // parser-version detail.
+  if (yamlText.trim() === "") {
+    return [...DEFAULT_STATUS_FLOW];
+  }
   let parsed: unknown;
   try {
     parsed = yaml.load(yamlText, CONFIG_YAML_LOAD_OPTIONS);
   } catch (cause) {
     throw configError(`is not valid YAML${reasonSuffix(cause)}`);
   }
-  if (parsed === null || parsed === undefined) {
+  if (parsed === "" || parsed === null || parsed === undefined) {
     return [...DEFAULT_STATUS_FLOW]; // an empty document — Backlog's config carries no keys yet
   }
   if (typeof parsed !== "object" || Array.isArray(parsed)) {

@@ -23,25 +23,42 @@
  *
  * ### What counts as a managed region
  *
- * Today the bundle has exactly one kind of in-file managed region: the `<!-- lore:index:begin -->` …
- * `<!-- lore:index:end -->` listing block that {@link generateIndexes} owns in every `index.md`
- * (lore-design §6.2). {@link managedRanges} locates each registered region with the **same**
- * {@link locateManagedBlock} arithmetic `generateIndexes` splices with (first-begin → last-end,
- * markers included, truncated-to-EOF) — so `replace` protects exactly the span `lore sync` would
- * regenerate, and a refactor can never land in bytes `sync` later reverts. The marker registry
- * ({@link MANAGED_MARKERS}) makes `<!-- lore:tasks -->` (LORE-22) a one-entry addition. The fully
- * machine-generated `log.md` has no in-file markers; it is excluded by the command layer's
+ * The bundle has two kinds of in-file managed region, both registered in
+ * {@link MANAGED_REGION_LOCATORS}: the `<!-- lore:index:begin -->` … `<!-- lore:index:end -->`
+ * listing block that {@link generateIndexes} owns in every `index.md` (lore-design §6.2), and the
+ * `<!-- lore:tasks:begin -->` … `<!-- lore:tasks:end -->` task table that `managed-block.ts` owns in
+ * a `Story`/`Spec` doc (LORE-22). {@link managedRanges} locates each registered region with **that
+ * region's own owner's** location logic — so `replace` protects exactly the span `lore sync` would
+ * regenerate, and a refactor can never land in bytes `sync` later reverts. Each locator is a fail-loud
+ * `validation` error on a malformed layout (a duplicated marker pair, or an unmatched/crossed begin)
+ * rather than a guessed span (LORE-86) — `replace` never has to guess which bytes were meant to stay
+ * protected either. A future managed-block kind is likewise a one-entry addition to the registry. The
+ * fully machine-generated `log.md` has no in-file markers; it is excluded by the command layer's
  * discovery, not here (this engine sees only the bytes it is handed).
  *
- * Per the core contract (lore-design §2.1) everything here is pure: text in, `{ text, count }`
- * out, or a `usage` {@link LoreError} for an unusable pattern (empty, invalid regex, or one that can
- * match the empty string) — no filesystem, no printing, no flags, no `process.exit`. The command
- * layer ({@link commands/replace}) discovers and reads the files, compiles the pattern **once**, and
- * applies it per file.
+ * Two different location strategies, deliberately not unified into one: `lore:index`'s
+ * {@link locateManagedBlock} is a literal `indexOf` scan — safe there only because that marker text
+ * never occurs outside a real index block in practice. `lore:tasks:begin`/`:end`, however, are
+ * routinely *cited* in this project's own prose and fenced code examples documenting the format, so a
+ * literal scan misfires on those (a false "duplicated"/"unmatched" error, or worse, silently
+ * protecting prose that merely mentions the syntax); {@link locateTaskBlock} instead reuses
+ * `managed-block.ts`'s structural, mdast-based marker location (the same one `lore sync`/`lore check`
+ * already trust), where a sentinel inside a code fence or blockquote is never mistaken for a real
+ * marker (LORE-73).
+ *
+ * Per the core contract (lore-design §2.1) everything here is pure: text in, `{ text, count }` out,
+ * or a {@link LoreError} out — `usage` for an unusable pattern (empty, invalid regex, or one that
+ * can match the empty string), or `validation` when a managed region's markers are malformed
+ * (LORE-86, propagated from whichever locator owns that region) — no filesystem, no printing, no
+ * flags, no `process.exit`. The command layer ({@link commands/replace}) discovers and reads the
+ * files, compiles the pattern **once**, and applies it per file; a `validation` error aborts before
+ * any file is written (`commands/replace.ts` only writes after every target has been read and
+ * rewritten).
  */
 
 import { LoreError } from "../errors";
 import { INDEX_BLOCK_BEGIN, INDEX_BLOCK_END, locateManagedBlock } from "./indexes";
+import { locateTaskBlock, TASK_BLOCK_BEGIN, TASK_BLOCK_END } from "./managed-block";
 
 /**
  * A half-open `[start, end)` byte range within a file's text. Used for the spans
@@ -76,29 +93,82 @@ export interface ReplaceOptions {
 export type Replacer = (text: string) => ReplaceResult;
 
 /**
- * The HTML-comment marker pairs that bound a lore-managed region. The single registry every
- * managed-region consumer skips, so a new managed block (e.g. `lore:tasks`, LORE-22) is protected
- * by adding one entry rather than threading a new special case through `replace`. The index block's
- * markers are imported from {@link indexes} so there is one source of truth for their exact bytes.
+ * One entry in {@link MANAGED_REGION_LOCATORS}: the location function for one managed-region kind,
+ * paired with `duplicateProbe` — a synthetic, individually-well-formed *duplicated* instance of that
+ * region (its marker pair written out twice) used only by the LORE-194 regression test
+ * (`replace.test.ts`) to pin the throw-on-duplicate contract documented below. Requiring a probe on
+ * every entry is what makes a new registration prove the contract rather than merely promise it.
  */
-const MANAGED_MARKERS: ReadonlyArray<{ readonly begin: string; readonly end: string }> = [
-  { begin: INDEX_BLOCK_BEGIN, end: INDEX_BLOCK_END },
+interface ManagedRegionLocator {
+  readonly locate: (text: string) => TextRange | null;
+  readonly duplicateProbe: string;
+}
+
+/**
+ * The location functions that find each kind of lore-managed region, one per marker pair. The single
+ * registry every managed-region consumer skips, so a new managed block is protected by adding one
+ * entry rather than threading a new special case through `replace`. Each locator is owned by (and
+ * imported from) the module that owns that region's markers ({@link indexes}, {@link managed-block}),
+ * so `replace` always agrees with `lore sync`/`lore check` on a region's exact extent — including
+ * which location *strategy* (literal scan vs. structural) is safe for that marker pair.
+ *
+ * **Contract (LORE-194): every locator MUST throw a {@link LoreError} — never return the first
+ * span — when its marker occurs more than once, even when each occurrence is individually a
+ * well-formed block.** {@link assertNoInjectedMarker}'s LORE-162 guarantee (a `` $` ``/`$'` expansion
+ * that copies an existing marker into the rewritten result is rejected, not silently written) depends
+ * entirely on this: it re-runs {@link managedRanges} — i.e. every locator here — over the *rewritten*
+ * text and trusts that a newly-duplicated marker surfaces as a thrown error. A locator that instead
+ * returned the first span on duplication would make that re-validation pass silently, reopening
+ * LORE-162 for that marker kind with no existing test failing. {@link locateManagedBlock} and
+ * {@link locateTaskBlock} both satisfy this today; a new entry must too, proven by its
+ * `duplicateProbe` (see `locatorThrowsOnDuplicate` and the registry-iterating test in
+ * `replace.test.ts`) rather than left as an incidental property nothing checks.
+ */
+export const MANAGED_REGION_LOCATORS: ReadonlyArray<ManagedRegionLocator> = [
+  {
+    locate: (text) => locateManagedBlock(text, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END),
+    duplicateProbe: `${INDEX_BLOCK_BEGIN}\na\n${INDEX_BLOCK_END}\n${INDEX_BLOCK_BEGIN}\nb\n${INDEX_BLOCK_END}`,
+  },
+  {
+    locate: (text) => locateTaskBlock(text),
+    duplicateProbe: `${TASK_BLOCK_BEGIN}\na\n${TASK_BLOCK_END}\n${TASK_BLOCK_BEGIN}\nb\n${TASK_BLOCK_END}`,
+  },
 ];
+
+/**
+ * Whether `locate` obeys the throw-on-duplicate contract documented on {@link MANAGED_REGION_LOCATORS}
+ * for its own `duplicateProbe`: throwing a {@link LoreError} (not returning a span, and not returning
+ * `null`) when the probe's marker occurs twice. Exported only for the LORE-194 regression test in
+ * `replace.test.ts` — both to pin the two current registry entries and to prove the check itself flags
+ * a first-span-on-duplicate violation, via a synthetic locator that deliberately breaks the contract.
+ */
+export function locatorThrowsOnDuplicate(locate: (text: string) => TextRange | null, duplicateProbe: string): boolean {
+  try {
+    locate(duplicateProbe);
+  } catch (cause) {
+    return cause instanceof LoreError;
+  }
+  return false; // returned a span (or null) instead of throwing — contract violated
+}
 
 /** A representative probe carrying word boundaries, line ends, digits, and punctuation, for the zero-width guard. */
 const ZERO_WIDTH_PROBE = "a b1\n.x-_/2";
 
 /**
  * Every lore-managed region in `text`, as merged, ascending `[start, end)` ranges. Each registered
- * marker pair is located by the shared {@link locateManagedBlock} (first-begin → last-end, markers
- * included, truncated-to-EOF) so `replace` and `lore sync`/`check` agree byte-for-byte on a region's
- * extent. Ranges from different marker kinds are merged so any overlap/touch collapses, leaving a
- * clean ordered partition for {@link applyReplacement}.
+ * locator finds its own region kind ({@link MANAGED_REGION_LOCATORS}) so `replace` and `lore
+ * sync`/`check` agree byte-for-byte on a region's extent. Ranges from different marker kinds are
+ * merged so any overlap/touch collapses, leaving a clean ordered partition for
+ * {@link applyReplacement}.
+ *
+ * @throws LoreError `validation` when a registered region's markers are malformed (duplicated,
+ *   unmatched, or crossed) — propagated from whichever locator owns that region, rather than
+ *   guessing which bytes to protect (LORE-86).
  */
 export function managedRanges(text: string): TextRange[] {
   const ranges: TextRange[] = [];
-  for (const { begin, end } of MANAGED_MARKERS) {
-    const bounds = locateManagedBlock(text, begin, end);
+  for (const { locate } of MANAGED_REGION_LOCATORS) {
+    const bounds = locate(text);
     if (bounds !== null) {
       ranges.push(bounds);
     }
@@ -146,6 +216,17 @@ export function replaceInText(
  * byte span does **not** overlap a managed region and leaving every other byte verbatim. Because the
  * matcher runs over the full document, anchors/assertions bind to the real document; because skipped
  * matches simply fall inside the verbatim slices, managed regions pass through untouched.
+ *
+ * `overlapsManaged` only screens the ORIGINAL matched span, before `expand` runs — in regex mode the
+ * `` $` ``/`$'` template tokens ({@link expandTemplate}) copy the document's own prefix/suffix
+ * verbatim, so a match sitting entirely outside a managed region can still expand into a splice that
+ * carries an existing managed-block marker into its result. That would leave two copies of the marker
+ * in the rewritten document with no owner able to agree on the region's extent (LORE-86's invariant,
+ * broken from the other direction). So once the full `result` is assembled, it is re-validated with
+ * {@link managedRanges} — the same locators every managed region already trusts — before being
+ * returned (LORE-162); a violation there is surfaced as a `usage` error (this replacement's pattern is
+ * unusable against this document) rather than the `validation` error `managedRanges` would normally
+ * throw for a document that was ALREADY malformed on disk.
  */
 function applyReplacement(
   text: string,
@@ -175,7 +256,36 @@ function applyReplacement(
     count++;
   }
   result += text.slice(last);
-  return count === 0 ? { text, count } : { text: result, count };
+  if (count === 0) {
+    return { text, count };
+  }
+  assertNoInjectedMarker(result);
+  return { text: result, count };
+}
+
+/**
+ * Re-validate a rewritten document against {@link managedRanges} — the same structural/literal
+ * locators {@link MANAGED_REGION_LOCATORS} registers everywhere else — to catch a `` $` ``/`$'`
+ * expansion that spliced a managed-block marker into the result, duplicating (or otherwise
+ * malforming) it (LORE-162). `text` was already validated once, before the replacement loop ran, so
+ * any failure here was newly introduced by splicing `expand`'s output in, never a pre-existing
+ * condition of the input document — re-thrown as a `usage` error (this replacement is what's
+ * unusable) instead of `managedRanges`' own `validation` error (which reads as "the input document is
+ * malformed").
+ */
+function assertNoInjectedMarker(result: string): void {
+  try {
+    managedRanges(result);
+  } catch (cause) {
+    if (cause instanceof LoreError) {
+      throw new LoreError(
+        "usage",
+        `this replacement would leave a lore-managed block marker duplicated or malformed in the result: ${cause.message}`,
+        "rewrite the pattern/replacement so it cannot copy a managed-block marker into the output (e.g. keep $` /$' from spanning a managed region), or narrow --in to skip the affected file",
+      );
+    }
+    throw cause;
+  }
 }
 
 /** Compile a user regex as global, mapping a syntax error to a `usage` {@link LoreError} (exit 2). */
@@ -219,11 +329,17 @@ function zeroWidthError(): LoreError {
 }
 
 /**
- * Expand a regex replacement `template` against one `match` exactly as `String.prototype.replace`
+ * Expand a regex replacement `template` against one `match` mostly as `String.prototype.replace`
  * does: `$$`→`$`, `$&`→the match, `` $` ``→the prefix, `$'`→the suffix, `$<name>`→a named group, and
  * `$n`/`$nn`→a numbered group (greedy two digits when that group exists, else one digit plus the
  * literal digit; an out-of-range number is left literal). This is what lets the single whole-document
  * pass keep native substitution semantics while still skipping managed regions.
+ *
+ * One deliberate divergence: `$<name>` for a name the regex never declares is left as the literal
+ * token `$<name>`, whether the regex has no named groups at all (this matches native behavior) or has
+ * *other* named groups but not this one (native silently substitutes `""` there; this engine does not,
+ * because an unresolvable token silently deleting document text is worse than leaving it visibly
+ * unresolved — LORE-163).
  */
 function expandTemplate(template: string, match: RegExpMatchArray, source: string): string {
   const groups = match.length - 1;
@@ -242,7 +358,18 @@ function expandTemplate(template: string, match: RegExpMatchArray, source: strin
       return source.slice(index + match[0].length);
     }
     if (selector.startsWith("<")) {
-      return match.groups?.[selector.slice(1, -1)] ?? "";
+      const name = selector.slice(1, -1);
+      // Only substitute when this regex actually declares a named group of this name — whether it
+      // participated in the match or not. `match.groups` carries a key for every named group the
+      // *pattern* declares (undefined when that particular group didn't participate), so `in` tells
+      // "declared" apart from "declared but empty". An undeclared name (no named groups at all, or
+      // named groups that don't include this one) leaves the token as literal text, matching what
+      // `String.prototype.replace` does when the regex has zero named groups — and, by design, also
+      // when it has some but not this one, so an unresolvable `$<name>` is never silently deleted.
+      if (match.groups !== undefined && name in match.groups) {
+        return match.groups[name] ?? "";
+      }
+      return whole;
     }
     // Numeric: greedily prefer the two-digit group, then fall back to one digit + the literal digit.
     const n = Number.parseInt(selector, 10);
@@ -266,8 +393,8 @@ function escapeRegExp(literal: string): string {
 
 /**
  * Merge overlapping/touching ranges into a sorted, non-overlapping list (ascending by start).
- * Exported because it is the general invariant {@link managedRanges} relies on once the marker
- * registry holds more than one kind: two different managed blocks (e.g. a future `lore:tasks` block
+ * Exported because it is the general invariant {@link managedRanges} relies on now that the marker
+ * registry holds more than one kind: two different managed blocks (e.g. a `lore:tasks` block
  * adjacent to an `index` block) can produce ranges that touch or nest, and a clean partition for
  * {@link applyReplacement} needs them collapsed. A nested range (fully inside another) is absorbed; a
  * touching one (`start === prev.end`) is joined so no zero-width author gap is left between them.

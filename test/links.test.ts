@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { idFromPath } from "../src/core/concept";
 import {
   decodeTarget,
   isExternalTarget,
@@ -189,6 +190,14 @@ describe("validateLink — missing extension", () => {
     expect(issues("../img/diagram.png")).toEqual([]);
   });
 
+  test("flags a dotted extensionless concept link (orders.v2 for orders.v2.md) as missing-extension (LORE-152)", () => {
+    // "v2" is not a recognized asset extension, so this is presumed a dropped .md suffix rather
+    // than an opaque asset — the shape that used to be invisible to both the portability lint and
+    // the broken-link existence check (bundle.ts/check.ts both gate on a literal .md suffix).
+    expect(issues("orders.v2")).toEqual(["missing-extension"]);
+    expect(issues("../reference/orders.v2")).toEqual(["missing-extension"]);
+  });
+
   test("ignores the fragment when checking the extension", () => {
     expect(validateLink("../reference/orders.md#h")).toEqual([]);
   });
@@ -241,6 +250,34 @@ describe("validateLink — dotfile and directory links", () => {
 
   test("a /-absolute directory link is both leading-slash and directory-link", () => {
     expect(issues("/reference/").sort()).toEqual(["directory-link", "leading-slash"]);
+  });
+
+  test("flags a bare '.' destination as a directory link, not exempted as a dotfile", () => {
+    expect(validateLink(".")).not.toEqual([]);
+    expect(issues(".")).toEqual(["directory-link"]);
+  });
+
+  test("flags a bare '..' destination as a directory link, not exempted as a dotfile", () => {
+    expect(validateLink("..")).not.toEqual([]);
+    expect(issues("..")).toEqual(["directory-link"]);
+  });
+
+  test.each([
+    "../..",
+    "foo/..",
+    "foo/.",
+  ])("flags a destination whose final segment is bare '.'/'..' navigation (%s)", (target) => {
+    expect(validateLink(target)).not.toEqual([]);
+    expect(issues(target)).toEqual(["directory-link"]);
+  });
+
+  test("still does NOT flag a genuine dotfile link (../config/.gitignore) — dotfile exemption intact", () => {
+    expect(validateLink("../config/.gitignore")).toEqual([]);
+  });
+
+  test("still does NOT flag a canonical .md link or a recognized asset link", () => {
+    expect(validateLink("../reference/orders.md")).toEqual([]);
+    expect(validateLink("../img/x.png")).toEqual([]);
   });
 });
 
@@ -301,6 +338,38 @@ describe("validateLink — malformed percent-escape gets its own message", () =>
   });
 });
 
+// ── validateLink: message sanitization (LORE-153) ──────────────────────────────────
+// A finding `message` embeds the raw, bundle-authored `target` verbatim; these messages are
+// printed straight to a terminal by `lore check`/`lore validate`. A control byte or ANSI/OSC
+// escape sequence in a link destination must not survive into `message` — it would otherwise
+// let a crafted file inject terminal escape sequences into the reviewer's session.
+
+describe("validateLink — sanitizes control/ANSI bytes before building the message", () => {
+  test("strips a raw ANSI escape from a leading-slash finding's message", () => {
+    const target = "/\x1b[31mreference/orders.md";
+    const findings = validateLink(target);
+    const finding = findings.find((f) => f.issue === "leading-slash");
+    expect(finding).toBeDefined();
+    expect(finding?.message).not.toContain("\x1b");
+    expect(finding?.message).not.toContain("[31m");
+  });
+
+  test("strips a raw control byte from a missing-extension finding's message", () => {
+    const target = "reference/\x07orders";
+    const findings = validateLink(target);
+    const finding = findings.find((f) => f.issue === "missing-extension");
+    expect(finding).toBeDefined();
+    expect(finding?.message).not.toContain("\x07");
+  });
+
+  test("leaves LinkFinding.target itself raw — only the printable message is sanitized", () => {
+    const target = "/\x1b[31mreference/orders.md";
+    const findings = validateLink(target);
+    const finding = findings.find((f) => f.issue === "leading-slash");
+    expect(finding?.target).toBe(target);
+  });
+});
+
 // ── Shared destination classifiers (the bundle graph reuses these) ────────────────
 
 describe("isExternalTarget", () => {
@@ -343,5 +412,34 @@ describe("decodeTarget", () => {
 
   test("degrades to the raw text on malformed encoding", () => {
     expect(decodeTarget("%2")).toBe("%2");
+  });
+
+  // ── LORE-151: %2F must not forge a structural / boundary ──────────────────────
+
+  test("an encoded slash within a single segment is not decoded into a literal /", () => {
+    expect(decodeTarget("orders%2Fv2.md")).toBe("orders%2Fv2.md");
+  });
+
+  test("a literal orders%2Fv2.md target does not resolve to the concept id orders/v2 (AC#2)", () => {
+    // Mirrors how bundle.ts/check.ts turn a decoded destination into a concept id:
+    // idFromPath(decodeTarget(target)). Before the fix, decodeTarget whole-string-decoded
+    // "orders%2Fv2.md" into "orders/v2.md", so this id came out "orders/v2" — a two-segment
+    // id the link's literal, single-segment text never named.
+    const id = idFromPath(decodeTarget("orders%2Fv2.md"));
+    expect(id).not.toBe("orders/v2");
+  });
+
+  test("an encoded slash does not merge with a real neighboring segment", () => {
+    // Raw target has exactly one *literal* / (between "a%2Fb" and "c.md"); the decoded
+    // result must still have exactly one, not two.
+    expect(decodeTarget("a%2Fb/c.md")).toBe("a%2Fb/c.md");
+  });
+
+  test("real segments on either side of an encoded slash still decode normally", () => {
+    expect(decodeTarget("order%20a/b%2Fc/order%20d.md")).toBe("order a/b%2Fc/order d.md");
+  });
+
+  test("a lowercase %2f is folded back the same way as %2F", () => {
+    expect(decodeTarget("orders%2fv2.md")).toBe("orders%2Fv2.md");
   });
 });

@@ -4,7 +4,7 @@
  * `bin/lore.cjs` is plain Node CommonJS, not part of the `src/` TypeScript program, so it
  * is exercised here as a real subprocess rather than imported. `NODE_PATH` points Node's
  * module resolution at a scratch directory shaped like an installed platform package
- * (`@salient-data/lore-<platform>-<arch>/{package.json,bin/lore}`) — the same resolution
+ * (`@opum-ai/lore-<platform>-<arch>/{package.json,bin/lore}`) — the same resolution
  * mechanism `require.resolve` uses for a real npm install, without needing an actual
  * compiled binary or a real `npm install`. POSIX-only: the stub "binary" here is a
  * shebang script, which Windows cannot exec directly the way `spawnSync` execs a real
@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const LAUNCHER = join(import.meta.dir, "..", "bin", "lore.cjs");
-const PKG_NAME = `@salient-data/lore-${process.platform}-${process.arch}`;
+const PKG_NAME = `@opum-ai/lore-${process.platform}-${process.arch}`;
 
 let nodePathDir: string;
 

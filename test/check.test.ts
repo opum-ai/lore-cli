@@ -1,24 +1,53 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BacklogAdapter } from "../src/adapters/backlog";
 import { run } from "../src/cli";
-import { type FetchLike, isDocsRoot, runCheck } from "../src/commands/check";
+import { driftFindingsForBundle, type FetchLike, isDocsRoot, type ResolveHost, runCheck } from "../src/commands/check";
 import {
+  bodyText,
   type CheckInputFile,
   checkBundle,
+  classifyAddress,
   collectExternalLinks,
   extractHeadingSlugs,
+  reconcileDriftFindings,
   slugify,
 } from "../src/core/check";
 import { type ManagedTaskRow, regenerateTaskBlock } from "../src/core/managed-block";
 import { EXIT_CODES, EXIT_OK, EXIT_UNCAUGHT, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
-import { capture, fakeAdapter, makeTask, storyDoc } from "./helpers";
+import { capture, concept, fakeAdapter, makeTask, storyDoc } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 const PLAIN_CTX: OutputContext = { mode: "plain", color: false };
+
+/**
+ * A DNS fake that resolves every hostname to one real, public, non-blocked address — the default
+ * `resolveHost` for every `--external` test that isn't itself testing LORE-71's SSRF guard (the
+ * `.example` hostnames these fixtures use are RFC 2606-reserved and never resolve for real, so
+ * without this every such test would otherwise hit — and fail against — real DNS).
+ */
+const ALLOW_ALL_HOSTS: ResolveHost = async () => ["93.184.216.34"];
+
+/**
+ * Whether the machine actually running this suite folds filename case (macOS/Windows default) or
+ * not (Linux, including this codebase's ubuntu CI) — probed once via a throwaway temp file rather
+ * than assumed from `process.platform`, so the case-variant bundle-root dedup test below (LORE-225
+ * AC#2) only runs where it can be true, and is skipped rather than false-failing on case-sensitive
+ * CI. `test.skipIf`'s condition is evaluated at registration time (before any `beforeEach`), so this
+ * has to be a standalone probe rather than reusing a per-test `root`.
+ */
+const CASE_INSENSITIVE_FS = (() => {
+  const probeDir = mkdtempSync(join(tmpdir(), "lore-check-case-probe-"));
+  try {
+    writeFileSync(join(probeDir, "probe.tmp"), "");
+    return existsSync(join(probeDir, "PROBE.TMP"));
+  } finally {
+    rmSync(probeDir, { recursive: true, force: true });
+  }
+})();
 
 /** A minimal Reference concept with the given body, for membership/anchor fixtures. */
 function ref(title: string, body: string): string {
@@ -32,20 +61,39 @@ function rules(files: CheckInputFile[]): string[] {
 
 // ── slugify: GitHub-style heading slugs ──────────────────────────────────────────
 
+/**
+ * Versioned pre/post oracle for LCLI-287's stateless primitive. `before` records the
+ * hand-written implementation's output so intentional corrections stay reviewable; `after`
+ * is the exact github-slugger 2.0.0 contract. Unchanged rows guard the surrounding output
+ * surface while leading/trailing whitespace and decomposed marks pin the known drift fixes.
+ */
+const HEADING_SLUG_CONFORMANCE_V1: readonly (readonly [
+  input: string,
+  before: string,
+  after: string,
+  behavior: string,
+])[] = [
+  ["Archival Policy", "archival-policy", "archival-policy", "ordinary ASCII"],
+  ["Hello, World!", "hello-world", "hello-world", "punctuation"],
+  ["Status: Done", "status-done", "status-done", "colon punctuation"],
+  ["  Trim Me  ", "trim-me", "--trim-me--", "leading and trailing whitespace"],
+  ["Multiple   spaces", "multiple---spaces", "multiple---spaces", "repeated spaces"],
+  ["snake_case-and-dash", "snake_case-and-dash", "snake_case-and-dash", "underscore and dash"],
+  ["Café Münü", "café-münü", "café-münü", "composed Unicode"],
+  ["Cafe\u0301", "cafe", "cafe\u0301", "decomposed Unicode"],
+  ["Привет non-latin 你好", "привет-non-latin-你好", "привет-non-latin-你好", "non-Latin text"],
+  ["!!!", "", "", "punctuation-only empty slug"],
+];
+
 describe("slugify — GitHub-style slugs", () => {
-  test.each([
-    ["Archival Policy", "archival-policy"],
-    ["Hello, World!", "hello-world"],
-    ["Status: Done", "status-done"],
-    ["  Trim Me  ", "trim-me"],
-    ["Multiple   spaces", "multiple---spaces"],
-    ["snake_case-and-dash", "snake_case-and-dash"],
-  ])("slugifies %p to %p", (input, expected) => {
-    expect(slugify(input)).toBe(expected);
+  test.each(HEADING_SLUG_CONFORMANCE_V1)("slugifies %p with the before/after oracle", (input, _before, after) => {
+    expect(slugify(input)).toBe(after);
   });
 
-  test("keeps unicode letters (Café stays café, not caf)", () => {
-    expect(slugify("Café Münü")).toBe("café-münü");
+  test("the before/after table isolates the two intentional primitive corrections", () => {
+    expect(
+      HEADING_SLUG_CONFORMANCE_V1.filter(([, before, after]) => before !== after).map(([, , , behavior]) => behavior),
+    ).toEqual(["leading and trailing whitespace", "decomposed Unicode"]);
   });
 });
 
@@ -77,6 +125,191 @@ describe("extractHeadingSlugs", () => {
   test("concatenates inline-code text in a heading", () => {
     const slugs = extractHeadingSlugs("## The `foo` bar\n");
     expect([...slugs]).toEqual(["the-foo-bar"]);
+  });
+
+  test("preserves a leading space around excluded image text (LCLI-136 follow-up correction)", () => {
+    // nodeText deliberately excludes the image, leaving " Leading". The old trim() boundary
+    // returned "leading"; GitHub/github-slugger preserves that leading space as "-leading".
+    expect([...extractHeadingSlugs("## ![Alt](img.png) Leading\n")]).toEqual(["-leading"]);
+  });
+
+  test("preserves a trailing space around excluded image text", () => {
+    expect([...extractHeadingSlugs("## Trailing ![Alt](img.png)\n")]).toEqual(["trailing-"]);
+  });
+
+  test("keeps composed and decomposed Unicode distinct without normalization", () => {
+    expect([...extractHeadingSlugs("## Café\n\n## Cafe\u0301\n")]).toEqual(["café", "cafe\u0301"]);
+  });
+
+  test("retains non-Latin heading text", () => {
+    expect([...extractHeadingSlugs("## Привет non-latin 你好\n")]).toEqual(["привет-non-latin-你好"]);
+  });
+
+  test("a heading made of only an image contributes no text (LORE-136)", () => {
+    // GitHub renders an <img> with empty textContent regardless of its `alt` attribute, so
+    // an image-only heading gets no visible text and no anchor at all (verified empirically
+    // against GitHub's production renderer on 2026-07-22). mdast-util-to-string's
+    // `includeImageAlt: true` default does NOT apply here — that is a remark-ecosystem
+    // convention, not GitHub's actual slugging behavior.
+    const slugs = extractHeadingSlugs("## ![Alt Text](img.png)\n");
+    expect([...slugs]).toEqual([""]);
+  });
+
+  test("an image's alt text does not combine with surrounding heading text (matches GitHub)", () => {
+    // "Before ![Alt Text](img.png) After" renders as "Before  After" (the image contributes
+    // nothing between the two spaces), which GitHub slugs to "before--after" — a double
+    // hyphen from the two adjacent spaces, not "before-alt-text-after".
+    const slugs = extractHeadingSlugs("## Before ![Alt Text](img.png) After\n");
+    expect([...slugs]).toEqual(["before--after"]);
+  });
+
+  test("an imageReference contributes no text the same way", () => {
+    const slugs = extractHeadingSlugs("## ![Alt Text][ref]\n\n[ref]: img.png\n");
+    expect([...slugs]).toEqual([""]);
+  });
+
+  test("empty and punctuation-only headings share per-document duplicate state", () => {
+    expect([...extractHeadingSlugs("##\n\n## !!!\n\n## ![Alt](img.png)\n")]).toEqual(["", "-1", "-2"]);
+  });
+
+  test("duplicate state is fresh for every document and repeated extraction", () => {
+    const source = "## Repeat\n\n## Repeat\n";
+    expect([...extractHeadingSlugs(source)]).toEqual(["repeat", "repeat-1"]);
+    expect([...extractHeadingSlugs(source)]).toEqual(["repeat", "repeat-1"]);
+  });
+});
+
+// ── classifyAddress: LORE-71's SSRF range classifier ──────────────────────────────
+
+/**
+ * Versioned before/after oracle for LCLI-286. This table ran first against the hand-written
+ * BigInt classifier, then unchanged against the ipaddr.js boundary. It deliberately records
+ * Lore policy rather than ipaddr.js's broader built-in special-range opinions: documentation,
+ * multicast, and broadcast addresses remain allowed because LCLI-286 is delegation, not a policy
+ * expansion.
+ */
+const ADDRESS_POLICY_CONFORMANCE_V1: readonly (readonly [
+  address: string,
+  blocked: boolean,
+  reasonSubstring?: string,
+])[] = [
+  // IPv4 explicit-policy boundaries.
+  ["0.0.0.0", true, "this-network"],
+  ["0.255.255.255", true, "this-network"],
+  ["1.0.0.0", false, undefined],
+  ["9.255.255.255", false, undefined],
+  ["10.0.0.0", true, "private"],
+  ["10.255.255.255", true, "private"],
+  ["11.0.0.0", false, undefined],
+  ["100.63.255.255", false, undefined],
+  ["100.64.0.0", true, "carrier-grade NAT"],
+  ["100.127.255.255", true, "carrier-grade NAT"],
+  ["100.128.0.0", false, undefined],
+  ["126.255.255.255", false, undefined],
+  ["127.0.0.0", true, "loopback"],
+  ["127.0.0.1", true, "loopback"],
+  ["127.255.255.255", true, "loopback"],
+  ["128.0.0.0", false, undefined],
+  ["169.253.255.255", false, undefined],
+  ["169.254.0.0", true, "link-local"],
+  ["169.254.169.254", true, "link-local"],
+  ["169.254.255.255", true, "link-local"],
+  ["169.255.0.0", false, undefined],
+  ["172.15.255.255", false, undefined],
+  ["172.16.0.0", true, "private"],
+  ["172.31.255.255", true, "private"],
+  ["172.32.0.0", false, undefined],
+  ["192.167.255.255", false, undefined],
+  ["192.168.0.0", true, "private"],
+  ["192.168.255.255", true, "private"],
+  ["192.169.0.0", false, undefined],
+
+  // IPv6 explicit-policy boundaries.
+  ["::", true, "unspecified"],
+  ["::1", true, "loopback"],
+  ["0:0:0:0:0:0:0:1", true, "loopback"],
+  ["::ffff:ffff", true, "deprecated"],
+  ["::1:0:0", false, undefined],
+  ["64:ff9a:ffff:ffff:ffff:ffff:ffff:ffff", false, undefined],
+  ["64:ff9b::", true, "NAT64"],
+  ["64:ff9b::ffff:ffff", true, "NAT64"],
+  ["64:ff9b::1:0:0", false, undefined],
+  ["fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff", false, undefined],
+  ["fe80::", true, "link-local"],
+  ["fe80::1", true, "link-local"],
+  ["febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff", true, "link-local"],
+  ["fec0::", false, undefined],
+  ["fbff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", false, undefined],
+  ["fc00::", true, "unique-local"],
+  ["fd00::1", true, "unique-local"],
+  ["fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", true, "unique-local"],
+  ["fe00::", false, undefined],
+
+  // IPv4-mapped IPv6 normalization and translation forms.
+  ["::ffff:127.0.0.1", true, "loopback"],
+  ["::ffff:7f00:1", true, "loopback"],
+  ["::ffff:169.254.169.254", true, "link-local"],
+  ["::FFFF:A9FE:A9FE", true, "link-local"],
+  ["::ffff:10.0.0.1", true, "private"],
+  ["::ffff:192.168.1.1", true, "private"],
+  ["::ffff:8.8.8.8", false, undefined],
+  ["::169.254.169.254", true, "deprecated"],
+  ["::127.0.0.1", true, "deprecated"],
+  ["64:ff9b::a9fe:a9fe", true, "NAT64"],
+  ["64:ff9b::169.254.169.254", true, "NAT64"],
+
+  // Explicit non-block decisions: documentation, multicast, broadcast, and public addresses.
+  ["192.0.2.1", false, undefined],
+  ["198.51.100.1", false, undefined],
+  ["203.0.113.1", false, undefined],
+  ["2001:db8::1", false, undefined],
+  ["224.0.0.1", false, undefined],
+  ["239.255.255.255", false, undefined],
+  ["ff02::1", false, undefined],
+  ["ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", false, undefined],
+  ["255.255.255.255", false, undefined],
+  ["8.8.8.8", false, undefined],
+  ["93.184.216.34", false, undefined],
+  ["2001:4860:4860::8888", false, undefined],
+  ["2606:2800:220:1:248:1893:25c8:1946", false, undefined],
+];
+
+describe("classifyAddress — IP-range classification (LORE-71, LCLI-286 policy-v1)", () => {
+  test.each(ADDRESS_POLICY_CONFORMANCE_V1)("%s -> blocked=%p (%s)", (ip, expectedBlocked, expectedReasonSubstring) => {
+    const result = classifyAddress(ip);
+    expect(result.blocked).toBe(expectedBlocked);
+    if (expectedBlocked) {
+      expect(result.reason).toContain(expectedReasonSubstring);
+    } else {
+      expect(result.reason).toBeUndefined();
+    }
+  });
+
+  test.each([
+    "not-an-ip",
+    "",
+    " 127.0.0.1",
+    "127.0.0.1 ",
+    "999.1.1.1",
+    "1.2.3",
+    "127.1",
+    "0177.0.0.1",
+    "0x7f000001",
+    "2130706433",
+    "gggg::1",
+    "127.0.0.1/8",
+    "http://example.com",
+  ])("malformed, ambiguous, or legacy-form literal %p fails closed with the stable reason", (input) => {
+    expect(classifyAddress(input)).toEqual({
+      blocked: true,
+      reason: `"${input}" is not a valid IP address literal`,
+    });
+  });
+
+  test("case, leading-zero, and zone-id spelling variants of the same address all agree", () => {
+    const spellings = ["fe80::1", "FE80::1", "fe80:0000:0000:0000:0000:0000:0000:0001", "fe80::1%eth0"];
+    const verdicts = spellings.map((s) => classifyAddress(s).blocked);
+    expect(new Set(verdicts)).toEqual(new Set([true]));
   });
 });
 
@@ -179,13 +412,54 @@ describe("checkBundle — anchor rot (AC#1)", () => {
     expect(report.findings[0]?.rule).toBe("broken-anchor");
   });
 
-  test("anchor matching is case-insensitive and decode-tolerant", () => {
+  test("anchor matching is decode-tolerant on an exact-case match", () => {
+    const orders2: CheckInputFile = { path: "reference/orders.md", raw: ref("Orders", "## Archival Policy") };
+    const adr: CheckInputFile = {
+      path: "adr/x.md",
+      // The hyphen is percent-encoded but decodes to the real, exact-case slug.
+      raw: ref("X", "See [p](../reference/orders.md#archival%2Dpolicy)."),
+    };
+    expect(checkBundle([adr, orders2]).errorCount).toBe(0);
+  });
+
+  test("AC#1/AC#2: an anchor differing only in case from the heading slug is a broken-anchor error", () => {
     const orders2: CheckInputFile = { path: "reference/orders.md", raw: ref("Orders", "## Archival Policy") };
     const adr: CheckInputFile = {
       path: "adr/x.md",
       raw: ref("X", "See [p](../reference/orders.md#Archival-Policy)."),
     };
-    expect(checkBundle([adr, orders2]).errorCount).toBe(0);
+    const report = checkBundle([adr, orders2]);
+    expect(report.errorCount).toBe(1);
+    expect(report.findings[0]?.rule).toBe("broken-anchor");
+  });
+
+  test("LCLI-287: internal anchor validation uses the corrected image-adjacent leading slug", () => {
+    const target: CheckInputFile = {
+      path: "reference/target.md",
+      raw: ref("Target", "## ![Alt](img.png) Key Features"),
+    };
+    const source: CheckInputFile = {
+      path: "source.md",
+      raw: ref("Source", "See [features](reference/target.md#-key-features)."),
+    };
+    expect(checkBundle([source, target]).errorCount).toBe(0);
+  });
+
+  test("LCLI-287: duplicate state is isolated per document, repeated run, and bundle order", () => {
+    const a: CheckInputFile = {
+      path: "a.md",
+      raw: ref("A", "## Repeat\n\n## Repeat\n\n[second](#repeat-1)"),
+    };
+    const b: CheckInputFile = {
+      path: "b.md",
+      raw: ref("B", "## Repeat\n\n## Repeat\n\n[second](#repeat-1)"),
+    };
+    const first = checkBundle([a, b]);
+    const repeated = checkBundle([a, b]);
+    const reversed = checkBundle([b, a]);
+    expect(first).toEqual({ fileCount: 2, errorCount: 0, warningCount: 0, findings: [], complete: true });
+    expect(repeated).toEqual(first);
+    expect(reversed).toEqual(first);
   });
 });
 
@@ -225,6 +499,39 @@ describe("checkBundle — portability warnings (AC#2)", () => {
   test("a callout `[!type]` mid-prose is NOT a callout (no false positive)", () => {
     const doc: CheckInputFile = { path: "x.md", raw: ref("X", "Please mark it [!important] in the tracker.") };
     expect(checkBundle([doc]).warningCount).toBe(0);
+  });
+
+  // ── LORE-239: callout detection must be structural (blockquote-leading), not per-text-node ──
+
+  test("LORE-239 AC#1: inline formatting before [!type] in ordinary (non-blockquote) prose is NOT a callout", () => {
+    // mdast splits this paragraph into text("ordinary "), strong("bold"), text(" [!note] prose"),
+    // so a per-text-node regex anchored to `^` wrongly matched the trailing text node's start.
+    const doc: CheckInputFile = { path: "x.md", raw: ref("X", "ordinary **bold** [!note] prose") };
+    const report = checkBundle([doc]);
+    expect(report.findings.some((f) => f.message.includes("callout"))).toBe(false);
+    expect(report.warningCount).toBe(0);
+  });
+
+  test("LORE-239 AC#2: a genuine `> [!note]` blockquote-leading callout still warns (no regression)", () => {
+    const doc: CheckInputFile = { path: "x.md", raw: ref("X", "> [!note]\n> body") };
+    const finding = checkBundle([doc]).findings.find((f) => f.message.includes("callout"));
+    expect(finding?.severity).toBe("warning");
+    expect(finding?.message).toContain("[!note]");
+  });
+
+  test("LORE-239 AC#3: a blockquote-leading [!type] followed by more content is still flagged", () => {
+    const doc: CheckInputFile = { path: "x.md", raw: ref("X", "> [!warning] Heads up, this changed.\n> more.") };
+    const finding = checkBundle([doc]).findings.find((f) => f.message.includes("callout"));
+    expect(finding?.severity).toBe("warning");
+    expect(finding?.message).toContain("[!warning]");
+  });
+
+  test("LORE-239 AC#4: a literal [!important] mid-sentence prose stays unflagged (no regression)", () => {
+    const doc: CheckInputFile = {
+      path: "x.md",
+      raw: ref("X", "Some **bold** text with [!important] mid-sentence, not a callout."),
+    };
+    expect(checkBundle([doc]).findings.some((f) => f.message.includes("callout"))).toBe(false);
   });
 
   test("a wikilink inside an inline code span is NOT flagged (code is excluded)", () => {
@@ -393,6 +700,89 @@ describe("checkBundle — clean bundle and aggregation", () => {
     expect(report.errorCount).toBe(1);
     expect(report.findings[0]?.rule).toBe("broken-link");
   });
+
+  // LORE-138: bodyText's catch must only fall back for gray-matter's own unparseable-YAML
+  // failure (a `YAMLException`), not swallow any exception the `matter()` call raises. A fence
+  // whose language annotation names an engine gray-matter has no parser for (e.g. `---toml`)
+  // is a real, unmocked way to drive a *different* error class out of `matter()`: gray-matter's
+  // engine lookup throws a plain `Error` ('gray-matter engine "toml" is not registered') before
+  // it ever reaches YAML parsing. That must propagate, not be absorbed as if it were malformed
+  // YAML.
+  test("a non-YAML-parse-error from gray-matter propagates instead of being swallowed", () => {
+    const doc: CheckInputFile = { path: "x.md", raw: '---toml\nfoo = "bar"\n---\nSee [ghost](ghost.md).\n' };
+    expect(() => checkBundle([doc])).toThrow(/gray-matter engine "toml" is not registered/);
+  });
+
+  test("a non-YAML-parse-error from gray-matter propagates out of collectExternalLinks too", () => {
+    const doc: CheckInputFile = { path: "x.md", raw: '---toml\nfoo = "bar"\n---\nSee https://example.com.\n' };
+    expect(() => collectExternalLinks([doc])).toThrow(/gray-matter engine "toml" is not registered/);
+  });
+});
+
+// ── checkBundle: frontmatter-free leading indented code block (LORE-240) ────────
+//
+// Portability scan (`bodyText`) reused `normalizeInput`'s `.replace(/^\s+/, "")` step, which
+// exists to let a whitespace-*padded* frontmatter fence still parse — but for a file with no
+// fence at all, that same strip deleted the body's own first-line indentation. A file whose very
+// first content was an indented (4-space) code block then lost its indentation and was reparsed
+// as a lazy-continuation prose paragraph, so hazard characters inside it (`{`, `[[…]]`) were
+// scanned as prose and produced spurious `portability` warnings.
+
+describe("checkBundle — frontmatter-free leading indented code block (LORE-240)", () => {
+  test("AC#1: an indented code block opening a frontmatter-free file is parsed as code, not prose — no portability warnings", () => {
+    const doc: CheckInputFile = { path: "x.md", raw: "    Use {braces} and [[wikilink]] here\n" };
+    const report = checkBundle([doc]);
+    expect(report.findings).toEqual([]);
+    expect(report.warningCount).toBe(0);
+  });
+
+  test("AC#2: the same indented code block after a heading still produces no warnings (no regression)", () => {
+    const doc: CheckInputFile = {
+      path: "x.md",
+      raw: "# Title\n\n    Use {braces} and [[wikilink]] here\n",
+    };
+    const report = checkBundle([doc]);
+    expect(report.findings).toEqual([]);
+    expect(report.warningCount).toBe(0);
+  });
+
+  test("AC#3: a concept WITH frontmatter whose body opens with the same indented code block is unaffected (frontmatter path unchanged)", () => {
+    const doc: CheckInputFile = {
+      path: "x.md",
+      raw: "---\ntype: Reference\ntitle: X\nsummary: A ref.\ntimestamp: 2026-06-21T00:00:00Z\n---\n\n    Use {braces} and [[wikilink]] here\n",
+    };
+    const report = checkBundle([doc]);
+    expect(report.findings).toEqual([]);
+    expect(report.warningCount).toBe(0);
+  });
+
+  test("AC#3 (unit level): bodyText's frontmatter path is byte-identical — the body after the fence keeps its own indentation exactly as gray-matter returns it", () => {
+    const raw =
+      "---\ntype: Reference\ntitle: X\nsummary: A ref.\ntimestamp: 2026-06-21T00:00:00Z\n---\n\n    indented body line\nmore\n";
+    expect(bodyText(raw)).toBe("\n    indented body line\nmore\n");
+  });
+
+  test("AC#4 (unit level): the frontmatter-free path still strips a leading BOM and normalizes CRLF, while preserving the body's own leading indentation", () => {
+    const raw = "﻿    Use {braces} and [[wikilink]] here\r\nmore\r\n";
+    expect(bodyText(raw)).toBe("    Use {braces} and [[wikilink]] here\nmore\n");
+  });
+
+  test("AC#4 (integration level): a BOM + CRLF frontmatter-free file with the hazard chars inside the indented block still yields no portability warnings", () => {
+    const doc: CheckInputFile = {
+      path: "x.md",
+      raw: "﻿    Use {braces} and [[wikilink]] here\r\nmore\r\n",
+    };
+    const report = checkBundle([doc]);
+    expect(report.findings).toEqual([]);
+    expect(report.warningCount).toBe(0);
+  });
+
+  test("mutation guard: the same hazard characters in ordinary (unindented) prose in a frontmatter-free file are still flagged (the fix does not blanket-suppress portability findings)", () => {
+    const doc: CheckInputFile = { path: "x.md", raw: "Use {braces} and [[wikilink]] here, not indented.\n" };
+    const report = checkBundle([doc]);
+    expect(report.warningCount).toBeGreaterThan(0);
+    expect(report.findings.some((f) => f.rule === "portability")).toBe(true);
+  });
 });
 
 // ── Command layer: runCheck ──────────────────────────────────────────────────────
@@ -413,7 +803,7 @@ describe("runCheck — exit codes and discovery", () => {
   });
 
   function opts(args: string[], output: OutputContext = PLAIN_CTX) {
-    return { root, output, args, stdout: capture(), stderr: capture() };
+    return { root, output, args, stdout: capture(), stderr: capture(), resolveHost: ALLOW_ALL_HOSTS };
   }
 
   test("exit 0 on a coherent bundle", () => {
@@ -441,6 +831,16 @@ describe("runCheck — exit codes and discovery", () => {
     expect(runCheck(opts(["--strict"]))).toBe(EXIT_CODES.validation);
   });
 
+  test("LORE-239 AC#1: inline formatting before [!type] in ordinary prose does not gate, even under --strict", () => {
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "ordinary **bold** [!note] prose"));
+    expect(runCheck(opts(["--strict"]))).toBe(EXIT_OK);
+  });
+
+  test("LORE-240 AC#1: an indented code block opening a frontmatter-free index.md produces no portability warnings, even under --strict", () => {
+    writeFileSync(join(root, "docs", "index.md"), "    Use {braces} and [[wikilink]] here\n");
+    expect(runCheck(opts(["--strict"]))).toBe(EXIT_OK);
+  });
+
   test("--external reports a dead link as an advisory but keeps the gate exit (AC#1/#2)", async () => {
     writeFileSync(
       join(root, "docs", "adr", "x.md"),
@@ -459,6 +859,140 @@ describe("runCheck — exit codes and discovery", () => {
     writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[down](https://down.example)."));
     const fetchFake: FetchLike = async () => ({ ok: false, status: 500 });
     expect(await runCheck({ ...opts(["--external", "--strict"]), fetch: fetchFake })).toBe(EXIT_OK);
+  });
+
+  // ── LORE-71: --external's SSRF guard ─────────────────────────────────────────
+
+  test("LORE-71 AC1/AC3: a literal cloud-metadata address is never fetched — the task's own repro", async () => {
+    // http://169.254.169.254/... is the task's own example (AWS/GCP/Azure instance metadata).
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[meta](http://169.254.169.254/latest/meta-data/)."));
+    let calls = 0;
+    const fetchFake: FetchLike = async () => {
+      calls++;
+      return { ok: true, status: 200 };
+    };
+    const o = { ...opts(["--external"]), fetch: fetchFake };
+    expect(await runCheck(o)).toBe(EXIT_OK); // liveness never gates
+    expect(calls).toBe(0); // the fetch was never issued at all
+    const out = (o.stdout as ReturnType<typeof capture>).text();
+    expect(out).toContain("[external-link]");
+    expect(out).toContain("was not probed");
+    expect(out).toContain("link-local");
+  });
+
+  test("LORE-71 AC1: loopback, private (RFC1918), and IPv4-mapped-IPv6 literal addresses are all blocked", async () => {
+    writeFileSync(
+      join(root, "docs", "adr", "x.md"),
+      ref(
+        "X",
+        [
+          "[a](http://127.0.0.1/)",
+          "[b](http://10.1.2.3/)",
+          "[c](http://192.168.1.1/)",
+          "[d](http://[::ffff:127.0.0.1]/)", // IPv4-mapped IPv6 — a classic filter-bypass encoding
+        ].join(" "),
+      ),
+    );
+    let calls = 0;
+    const fetchFake: FetchLike = async () => {
+      calls++;
+      return { ok: true, status: 200 };
+    };
+    const o = { ...opts(["--external"]), fetch: fetchFake };
+    await runCheck(o);
+    expect(calls).toBe(0);
+    const out = (o.stdout as ReturnType<typeof capture>).text();
+    expect((out.match(/was not probed/g) ?? []).length).toBe(4);
+  });
+
+  test("LORE-71 AC1: a hostname that RESOLVES to a blocked address is refused before fetching (DNS-based, not just literal-IP)", async () => {
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[internal](http://internal.example/)."));
+    let fetchCalls = 0;
+    const fetchFake: FetchLike = async () => {
+      fetchCalls++;
+      return { ok: true, status: 200 };
+    };
+    const resolveFake: ResolveHost = async (hostname) =>
+      hostname === "internal.example" ? ["169.254.169.254"] : ["93.184.216.34"];
+    const o = { ...opts(["--external"]), fetch: fetchFake, resolveHost: resolveFake };
+    await runCheck(o);
+    expect(fetchCalls).toBe(0);
+    expect((o.stdout as ReturnType<typeof capture>).text()).toContain("was not probed");
+  });
+
+  test("LCLI-286 AC2: a malformed or legacy-form resolver result fails closed with the stable Lore reason", async () => {
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[internal](http://internal.example/)."));
+    let fetchCalls = 0;
+    const fetchFake: FetchLike = async () => {
+      fetchCalls++;
+      return { ok: true, status: 200 };
+    };
+    const resolveFake: ResolveHost = async () => ["127.1"];
+    const o = { ...opts(["--external"]), fetch: fetchFake, resolveHost: resolveFake };
+    await runCheck(o);
+    expect(fetchCalls).toBe(0);
+    expect((o.stdout as ReturnType<typeof capture>).text()).toContain(
+      'resolves to a blocked address (127.1, "127.1" is not a valid IP address literal)',
+    );
+  });
+
+  test("LCLI-286 AC2: a WHATWG-normalized legacy IPv4 URL cannot bypass literal-address blocking", async () => {
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[internal](http://2130706433/)."));
+    let fetchCalls = 0;
+    const fetchFake: FetchLike = async () => {
+      fetchCalls++;
+      return { ok: true, status: 200 };
+    };
+    const o = { ...opts(["--external"]), fetch: fetchFake, resolveHost: ALLOW_ALL_HOSTS };
+    await runCheck(o);
+    expect(fetchCalls).toBe(0);
+    expect((o.stdout as ReturnType<typeof capture>).text()).toContain("loopback");
+  });
+
+  test("LORE-71 AC1: a hostname resolving to MULTIPLE addresses is blocked if ANY of them is disallowed", async () => {
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[multi](http://multi.example/)."));
+    let fetchCalls = 0;
+    const fetchFake: FetchLike = async () => {
+      fetchCalls++;
+      return { ok: true, status: 200 };
+    };
+    const resolveFake: ResolveHost = async () => ["93.184.216.34", "127.0.0.1"]; // one public, one loopback
+    const o = { ...opts(["--external"]), fetch: fetchFake, resolveHost: resolveFake };
+    await runCheck(o);
+    expect(fetchCalls).toBe(0); // blocked BEFORE any hop, since one resolved address is disallowed
+  });
+
+  test("LORE-71 AC2/AC3: a redirect to a blocked destination is rejected, not silently followed — the second (blocked) hop is never fetched", async () => {
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[r](https://redirect.example/)."));
+    const calls: string[] = [];
+    const fetchFake: FetchLike = async (url) => {
+      calls.push(url);
+      if (url === "https://redirect.example/") {
+        return { ok: false, status: 302, location: "http://169.254.169.254/latest/meta-data/" };
+      }
+      return { ok: true, status: 200 }; // would only be reached if the redirect were (wrongly) followed
+    };
+    const o = { ...opts(["--external"]), fetch: fetchFake, resolveHost: ALLOW_ALL_HOSTS };
+    await runCheck(o);
+    expect(calls).toEqual(["https://redirect.example/"]); // the blocked hop was never fetched
+    expect((o.stdout as ReturnType<typeof capture>).text()).toContain("was not probed");
+  });
+
+  test("LORE-71 AC2: a redirect to an ALLOWED destination is followed and the final response wins", async () => {
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[r](https://redirect.example/)."));
+    const calls: string[] = [];
+    const fetchFake: FetchLike = async (url) => {
+      calls.push(url);
+      if (url === "https://redirect.example/") {
+        return { ok: false, status: 302, location: "https://final.example/" };
+      }
+      return { ok: true, status: 200 };
+    };
+    const o = { ...opts(["--external"]), fetch: fetchFake, resolveHost: ALLOW_ALL_HOSTS };
+    expect(await runCheck(o)).toBe(EXIT_OK);
+    expect(calls).toEqual(["https://redirect.example/", "https://final.example/"]);
+    const out = (o.stdout as ReturnType<typeof capture>).text();
+    expect(out).not.toContain("[external-link]"); // the final hop was 200 OK — no finding
   });
 
   test("without --external no network is touched and the run stays synchronous", () => {
@@ -489,6 +1023,32 @@ describe("runCheck — exit codes and discovery", () => {
     expect((out.match(/\[external-link\]/g) ?? []).length).toBe(2); // reported per file
   });
 
+  test("LORE-110: probeLiveness caps the number of distinct URLs it probes and reports the rest as skipped (AC#1-3)", async () => {
+    // Comfortably more distinct URLs than any reasonable cap — proves a bound is enforced without
+    // the test needing to know (and duplicate) the exact cap value baked into check.ts.
+    const total = 800;
+    const links = Array.from({ length: total }, (_, i) => `[l${i}](https://host${i}.example/)`).join(" ");
+    writeFileSync(join(root, "docs", "adr", "many.md"), ref("Many", links));
+    let fetchCalls = 0;
+    const fetchFake: FetchLike = async () => {
+      fetchCalls++;
+      return { ok: true, status: 200 }; // every PROBED url is alive — any finding must come from a skip
+    };
+    const o = { ...opts(["--external"]), fetch: fetchFake };
+    const start = performance.now();
+    await runCheck(o);
+    const elapsedMs = performance.now() - start;
+
+    expect(fetchCalls).toBeGreaterThan(0); // the cap still lets some URLs through
+    expect(fetchCalls).toBeLessThan(total); // but not all `total` distinct URLs were probed
+    expect(elapsedMs).toBeLessThan(5000); // bounded — not one 5s-timeout-per-URL blowup
+
+    const out = (o.stdout as ReturnType<typeof capture>).text();
+    const skippedCount = (out.match(/was not probed: exceeded the liveness cap/g) ?? []).length;
+    expect(skippedCount).toBe(total - fetchCalls); // every un-probed URL surfaces its own advisory finding
+    expect((out.match(/\[external-link\]/g) ?? []).length).toBe(skippedCount); // no OTHER findings (all probed URLs were "alive")
+  });
+
   test("--external classifies a timeout and an unreachable host", async () => {
     writeFileSync(join(root, "docs", "adr", "a.md"), ref("A", "[t](https://slow.example) [u](https://gone.example)"));
     const fetchFake: FetchLike = async (url) => {
@@ -506,10 +1066,52 @@ describe("runCheck — exit codes and discovery", () => {
     expect(out).toContain("is unreachable");
   });
 
+  test("LORE-207: the real-fetch path cancels (never reads) the response body once headers are captured", async () => {
+    // No `fetch` override in `opts(...)` below — this exercises `defaultFetch` itself (the ONLY
+    // path with a real, cancellable `response.body`; every `FetchLike` test fake elsewhere in this
+    // file returns a plain `{ ok, status, location }` object with no body to release).
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[x](https://cancel-body.example)."));
+    let cancelCalls = 0;
+    let bodyRead = false;
+    const fakeResponse = {
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      body: {
+        cancel: () => {
+          cancelCalls++;
+          return Promise.resolve();
+        },
+      },
+      // Present so a regression that starts READING instead of cancelling would be caught too.
+      text: async () => {
+        bodyRead = true;
+        return "";
+      },
+    };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => fakeResponse) as unknown as typeof fetch;
+    try {
+      await runCheck(opts(["--external"]));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(cancelCalls).toBe(1); // the body was released...
+    expect(bodyRead).toBe(false); // ...never read (LORE-71's SSRF invariant: no body content is ever inspected)
+  });
+
   test("--external folds liveness into the --json envelope without changing the gate counts", async () => {
     writeFileSync(join(root, "docs", "adr", "a.md"), ref("A", "[d](https://d.example)"));
     const fetchFake: FetchLike = async () => ({ ok: false, status: 404 });
-    const o = { root, output: JSON_CTX, args: ["--external"], stdout: capture(), stderr: capture(), fetch: fetchFake };
+    const o = {
+      root,
+      output: JSON_CTX,
+      args: ["--external"],
+      stdout: capture(),
+      stderr: capture(),
+      fetch: fetchFake,
+      resolveHost: ALLOW_ALL_HOSTS,
+    };
     await runCheck(o);
     const env = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
     expect(env.data.errorCount).toBe(0);
@@ -579,6 +1181,45 @@ describe("runCheck — exit codes and discovery", () => {
     expect(parsed.data.fileCount).toBe(3); // index.md + orders.md + x.md, each once
   });
 
+  // POSIX-only, matching this codebase's existing symlink tests' own skip guard (e.g. validate.test.ts).
+  test.skipIf(process.platform === "win32")(
+    "a symlink alias of a root de-duplicates: fileCount and errorCount are not doubled (LORE-225 AC#1)",
+    () => {
+      writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[ghost](../reference/ghost.md)."));
+      symlinkSync(join(root, "docs"), join(root, "docs-alias"));
+      const o = opts(["docs", "docs-alias"], JSON_CTX);
+      const code = runCheck(o);
+      const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+      // Two distinct spellings named explicitly — plain string/`join` dedup would NOT collapse
+      // these; only canonicalIdentity's realpath fold (discover.ts:56) does.
+      expect(parsed.data.fileCount).toBe(3); // index.md + orders.md + x.md, each counted once
+      expect(parsed.data.errorCount).toBe(1); // the broken link is reported once, not twice
+      expect(code).toBe(EXIT_CODES.validation);
+    },
+  );
+
+  // Guarded so a case-sensitive host (this codebase's ubuntu CI) never false-fails: on that
+  // filesystem "docs" and "Docs" really are two distinct, and here nonexistent, directories.
+  test.skipIf(!CASE_INSENSITIVE_FS)(
+    "a case-variant alias of a root de-duplicates on a case-insensitive filesystem (LORE-225 AC#2)",
+    () => {
+      writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[ghost](../reference/ghost.md)."));
+      const o = opts(["docs", "Docs"], JSON_CTX);
+      const code = runCheck(o);
+      const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+      expect(parsed.data.fileCount).toBe(3); // index.md + orders.md + x.md, each counted once
+      expect(parsed.data.errorCount).toBe(1); // the broken link is reported once, not twice
+      expect(code).toBe(EXIT_CODES.validation);
+    },
+  );
+
+  test("a nonexistent bundle root among several still throws not_found, not swallowed by dedup (LORE-225 AC#3)", () => {
+    // Guards the ordering the fix depends on: canonicalIdentity's realpath failure on the missing
+    // root falls back to the path itself (never colliding with the real "docs" root's identity),
+    // so expandRoot still runs for it and still raises its own not_found LoreError.
+    expect(() => runCheck(opts(["docs", "does-not-exist"]))).toThrow(/does not exist/);
+  });
+
   test("pretty mode paints the severity token and the error count", () => {
     writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[ghost](../reference/ghost.md)."));
     const o = opts([], { mode: "pretty", color: true });
@@ -586,6 +1227,68 @@ describe("runCheck — exit codes and discovery", () => {
     const text = (o.stdout as ReturnType<typeof capture>).text();
     expect(text).toContain("["); // ANSI escape — color was emitted
     expect(text).toContain("error");
+  });
+
+  // ── LORE-226: control-character sanitization in finding output ────────────────
+
+  test("LORE-226 AC#1/#2: an OSC escape smuggled into a broken-link target is stripped, plain and pretty", () => {
+    // The angle-bracket link-destination form (`<...>`) is the one CommonMark syntax that lets a
+    // raw control byte survive parsing into the link's `url` untouched (a bare, unbracketed
+    // destination rejects ASCII control characters outright) — exactly the vector `core/check.ts`'s
+    // broken-link finding (`message: \`link "${target}" …\``) interpolates verbatim. An OSC
+    // set-title sequence is used (not an SGR color code) so it is unambiguously distinct from the
+    // legitimate `paint()` coloring pretty mode itself emits for the severity token.
+    const payload = "\x1b]0;INJECTED\x07";
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", `See [ghost](<ghost${payload}.md>).`));
+
+    for (const ctx of [PLAIN_CTX, { mode: "pretty", color: true } as OutputContext]) {
+      const o = opts([], ctx);
+      expect(runCheck(o)).toBe(EXIT_CODES.validation);
+      const text = (o.stdout as ReturnType<typeof capture>).text();
+      expect(text).not.toContain("INJECTED"); // the whole OSC sequence, payload included, is gone
+      expect(text).not.toContain("\x1b]"); // no raw OSC introducer survives either
+      expect(text).toContain('link "ghost.md" points at "adr/ghost.md", which is not in the bundle');
+    }
+  });
+
+  test("LORE-226 AC#1: a literal ESC byte via angle-bracket link syntax never reaches plain-mode stdout", () => {
+    // Plain mode never emits ANSI itself (LORE-115's invariant, reused here), so ANY ESC byte
+    // surviving into its stdout is unambiguously an injection, not legitimate coloring.
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "See [ghost](<ghost\x1b[31m.md>)."));
+    const o = opts([]);
+    expect(runCheck(o)).toBe(EXIT_CODES.validation);
+    const text = (o.stdout as ReturnType<typeof capture>).text();
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting the byte is ABSENT from output.
+    expect(text).not.toMatch(/\x1b/);
+    expect(text).toContain('link "ghost.md" points at "adr/ghost.md", which is not in the bundle');
+  });
+
+  test("LORE-226 AC#1: a newline smuggled into a broken-link target via &#10; does not forge a phantom finding row", () => {
+    // CommonMark decodes numeric character references in link destinations — `&#10;` becomes a
+    // literal LF in the parsed target — even though the raw markdown source carries no literal
+    // control byte at all. Unsanitized, that LF would split the ONE broken-link finding (whose
+    // message embeds the raw target twice: once directly, once via the derived target id) into
+    // extra physical lines once `renderReport` joins findings with "\n".
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "See [ghost](x&#10;y.md)."));
+
+    for (const ctx of [PLAIN_CTX, { mode: "pretty", color: true } as OutputContext]) {
+      const o = opts([], ctx);
+      expect(runCheck(o)).toBe(EXIT_CODES.validation);
+      const c = o.stdout as ReturnType<typeof capture>;
+      // 1 broken-link line + 1 portability line + 1 summary line — no extra rows from the embedded LF.
+      expect(c.lines()).toHaveLength(3);
+      expect(c.text()).toContain('link "xy.md" points at "adr/xy.md", which is not in the bundle');
+    }
+  });
+
+  test("LORE-226 AC#3: an ordinary control-character-free finding renders unchanged", () => {
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[ghost](../reference/ghost.md)."));
+    const o = opts([]);
+    expect(runCheck(o)).toBe(EXIT_CODES.validation);
+    const text = (o.stdout as ReturnType<typeof capture>).text();
+    expect(text).toContain(
+      'error adr/x.md [broken-link]: link "../reference/ghost.md" points at "reference/ghost.md", which is not in the bundle',
+    );
   });
 
   test("--json emits the check.report envelope", () => {
@@ -635,6 +1338,19 @@ describe("runCheck — exit codes and discovery", () => {
     expect((o.stderr as ReturnType<typeof capture>).text()).toBe("");
   });
 
+  test("a child index.md and log.md produce no advisory noise either (LORE-258 harmonization)", () => {
+    // check never calls loadBundle() with a warnings collector, so it was always silent about
+    // these reserved-stem non-concept files — unlike link/sync/tasks before LORE-258's fix. This
+    // pins that check's own silence (the target every other command was harmonized towards) stays
+    // exactly that: silent, on the same reserved files (log.md, a child index.md) those commands
+    // now also stop warning about.
+    writeFileSync(join(root, "docs", "adr", "index.md"), "# Generated hub, no frontmatter\n");
+    writeFileSync(join(root, "docs", "log.md"), "# Generated changelog, no frontmatter\n");
+    const o = opts([]);
+    expect(runCheck(o)).toBe(EXIT_OK);
+    expect((o.stderr as ReturnType<typeof capture>).text()).toBe("");
+  });
+
   test("a malformed concept elsewhere in the bundle does not crash the gate (LORE-27 regression)", () => {
     // Before the fix, the reconciliation-eligibility scan used loadBundle(), which THROWS on any
     // schema-invalid frontmatter anywhere in the bundle — even a file with no tasks: link at all —
@@ -646,6 +1362,57 @@ describe("runCheck — exit codes and discovery", () => {
     expect(code).toBe(EXIT_CODES.validation);
     const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
     expect(parsed.data.findings.some((f: { rule: string }) => f.rule === "broken-link")).toBe(true);
+  });
+
+  test("discovery advisories survive a scan-phase throw in checkBundles (LORE-191 regression)", () => {
+    // Post-LORE-138, `bodyText` re-throws a plain Error (not swallowed) for a frontmatter whose
+    // language annotation names a gray-matter engine that isn't registered (e.g. `---toml`) — so
+    // `checkBundles` is no longer guaranteed non-throwing. Before the fix, the discovery advisories
+    // collected during `collectBundles` (this symlink) were only flushed AFTER `checkBundles(bundles)`
+    // ran, so a scan-phase throw meant they were never flushed at all: lost silently alongside the
+    // uncaught exception, no report ever emitted (exit 1).
+    writeFileSync(join(root, "docs", "adr", "real.md"), ref("R", "Body."));
+    symlinkSync(join(root, "docs", "adr", "real.md"), join(root, "docs", "adr", "link.md"));
+    writeFileSync(join(root, "docs", "bad.md"), '---toml\nfoo = "bar"\n---\nSee [ghost](ghost.md).\n');
+    const o = opts([]);
+    expect(() => runCheck(o)).toThrow(/gray-matter engine "toml" is not registered/);
+    const stderrText = (o.stderr as ReturnType<typeof capture>).text();
+    expect(stderrText).toContain("symlink");
+  });
+
+  test("discovery advisories from an earlier root survive a later root's throw inside collectBundles (LORE-197 regression)", () => {
+    // Two bundle roots, processed in order: "docs" (earlier) collects a skipped-symlink advisory
+    // during its own walk; "does-not-exist" (later) then fails collectBundles's statSync entirely,
+    // raising a not_found LoreError before the scan phase (checkBundles) ever runs. Before the fix,
+    // the single advisories.flush() call sat AFTER collectBundles returned, so this throw exited
+    // collectBundles — and runCheck — before that flush ever ran, silently dropping the earlier
+    // root's already-collected symlink advisory alongside the (correctly) propagated error.
+    writeFileSync(join(root, "docs", "adr", "real.md"), ref("R", "Body."));
+    symlinkSync(join(root, "docs", "adr", "real.md"), join(root, "docs", "adr", "link.md"));
+    const o = opts(["docs", "does-not-exist"]);
+
+    let caught: unknown;
+    try {
+      runCheck(o);
+      throw new Error("expected runCheck to throw");
+    } catch (err) {
+      caught = err;
+    }
+
+    // The throw still propagates through the router's one error seam with its unchanged exit
+    // code: a nonexistent bundle root is `not_found` (EXIT_CODES.not_found === 3), unaffected by
+    // whether an earlier root produced an advisory.
+    expect(caught).toBeInstanceOf(LoreError);
+    expect((caught as LoreError).type).toBe("not_found");
+    expect((caught as LoreError).message).toMatch(/does not exist/);
+
+    // The earlier root's advisory survived the later root's throw — flushed via the `finally`
+    // around collectBundles rather than lost when the throw skipped the old post-return flush —
+    // and appears exactly once (no double-flush; WarningCollector.flush is non-draining, so a
+    // second flush site would re-emit this same line).
+    const stderrText = (o.stderr as ReturnType<typeof capture>).text();
+    const lines = stderrText.split("\n").filter((l) => l.includes("skipping symlink"));
+    expect(lines).toHaveLength(1);
   });
 });
 
@@ -671,6 +1438,101 @@ describe("isDocsRoot", () => {
   });
 });
 
+// ── driftFindingsForBundle: docPath/fixable consistency on a non-canonical label (LORE-113) ──────
+
+describe("driftFindingsForBundle — docPath agrees with the fixable/isDocsRoot verdict on a non-canonical label (LORE-113)", () => {
+  /**
+   * One `LORE-1` task whose `file` is deliberately placed INSIDE `docs/` — a real linked task's
+   * `file` never is (it always points at `backlog/tasks/…`), but a docs-relative target is what
+   * makes the managed block's rendered link SENSITIVE to `docPath`'s own directory prefix: with a
+   * canonical `docs/stories/x.md` docPath the link collapses to `../other-task-ref.md`, but a
+   * case-mismatched or literal-backslash-carrying docPath (the pre-fix bug: the raw, un-normalized
+   * `bundle.label`) fails to collapse the shared `docs` prefix and renders a longer, DIFFERENT
+   * link — the only way this internal, never-returned `docPath` value's correctness is observable
+   * from `driftFindingsForBundle`'s own findings.
+   */
+  const row: ManagedTaskRow = {
+    id: "LORE-1",
+    title: "Title for LORE-1",
+    status: "Done",
+    file: "docs/other-task-ref.md",
+  };
+
+  /** Everything one `driftFindingsForBundle` call needs for `stories/x.md`, keyed off `label`. */
+  function fixtureFor(label: string) {
+    // The doc's persisted `status: todo` deliberately disagrees with the `Done` task's reconciled
+    // "done" rollup (a status-drift finding, whose hint text reveals `fixable`), while its managed
+    // block is pre-rendered against the CANONICAL docPath — exactly what a correctly-normalized
+    // `label` must resolve to for the block comparison to see no drift.
+    const original = regenerateTaskBlock(storyDoc("X", ["lore-1"], "todo"), [row], { docPath: "docs/stories/x.md" });
+    const bundle = { label, files: [{ path: "stories/x.md", raw: original }], filenameFindings: [] };
+    const concepts = [concept("stories/x.md", { type: "Story", status: "todo", tasks: ["lore-1"] })];
+    const pooled = {
+      config: { flow: ["To Do", "In Progress", "Done"], overrides: {} },
+      details: new Map([
+        ["lore-1", { ok: true as const, detail: makeTask("LORE-1", { status: row.status, file: row.file }) }],
+      ]),
+      configError: null,
+    };
+    return { bundle, concepts, pooled };
+  }
+
+  test.each([
+    ["Docs", "a different-case spelling"],
+    ["docs\\", "a Windows trailing-backslash idiom"],
+  ])("%p (%s): docPath and fixable are mutually consistent", async (label) => {
+    // Ground truth: this non-canonical label IS the docs root `isDocsRoot` (and so `fixable`)
+    // judges it against.
+    expect(isDocsRoot(label)).toBe(true);
+
+    const { bundle, concepts, pooled } = fixtureFor(label);
+    const result = await driftFindingsForBundle("/fake-root", bundle, concepts, false, fakeAdapter([]), pooled);
+
+    expect(result.error).toBeNull();
+    // Exactly the one expected status-drift finding, carrying the "run `lore sync`" hint that
+    // only appears when `fixable` is true — proving `fixable` was correctly computed for this
+    // label. Critically, there is no SECOND "managed-block-drift" finding alongside it: before
+    // the LORE-113 fix, `docPath` embedded the raw (non-canonical) `label`, so the block's
+    // re-rendered link diverged from the one pre-rendered against the canonical spelling, and a
+    // spurious drift finding appeared here even though `fixable` correctly said this root could be
+    // `sync`'d — the exact inconsistency this test guards against.
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0]?.rule).toBe("status-drift");
+    expect(result.findings[0]?.message).toContain("run `lore sync`");
+  });
+});
+
+describe("reconcileDriftFindings — newStatus: null never drifts either way (LORE-137 regression)", () => {
+  test("returns no findings for a stale managed block AND a disagreeing status once newStatus is null", () => {
+    const row: ManagedTaskRow = {
+      id: "LORE-1",
+      title: "Title for LORE-1",
+      status: "Done",
+      file: "backlog/tasks/lore-1 - title.md",
+    };
+    // The block is the storyDoc default (empty) -- `regenerateTaskBlock` would rewrite it from
+    // `rows` below, which is exactly the condition that otherwise produces a managed-block-drift
+    // finding (see the "a stale managed block is a managed-block-drift error" test above). The
+    // persisted `currentStatus` also disagrees with what a real reconciliation would compute, so
+    // BOTH checks have something to fire on -- proving `newStatus === null` (the interface's own
+    // "the concept has no linked tasks -- never drift either way" contract) suppresses both, not
+    // just the status-drift half the pre-fix code already gated correctly.
+    const original = storyDoc("X", ["lore-1"], "todo");
+
+    const findings = reconcileDriftFindings({
+      path: "stories/x.md",
+      currentStatus: "todo",
+      newStatus: null,
+      original,
+      rows: [row],
+      docPath: "docs/stories/x.md",
+      fixable: true,
+    });
+
+    expect(findings).toEqual([]);
+  });
+});
+
 // ── Command layer: runCheck — status + managed-block drift (LORE-27) ─────────────
 
 describe("runCheck — status + managed-block drift (LORE-27)", () => {
@@ -693,7 +1555,7 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
   }
 
   function opts(args: string[], adapter: BacklogAdapter, output: OutputContext = JSON_CTX) {
-    return { root, output, args, adapter, stdout: capture(), stderr: capture() };
+    return { root, output, args, adapter, stdout: capture(), stderr: capture(), resolveHost: ALLOW_ALL_HOSTS };
   }
 
   /** A doc-LORE-1 row for a Done task, matching `makeTask`'s defaults. */
@@ -801,6 +1663,7 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
       args: ["--external"],
       adapter,
       fetch: fetchFake,
+      resolveHost: ALLOW_ALL_HOSTS,
       stdout: capture(),
       stderr: capture(),
     };
@@ -835,6 +1698,7 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
       args: ["--external"],
       adapter,
       fetch: fetchFake,
+      resolveHost: ALLOW_ALL_HOSTS,
       stdout: capture(),
       stderr: capture(),
     };
@@ -868,6 +1732,34 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     const result = runCheck(opts([], adapter));
     expect(result).toBeInstanceOf(Promise);
     await expect(result).rejects.toThrow(/lore-99/);
+  });
+
+  test("a driftPromise error marks the emitted report complete: false, even with errorCount 0 (LORE-112)", async () => {
+    // The missing linked task makes `gatherReconciliation` throw before any drift finding is ever
+    // produced for this root, so `errorCount` stays 0 -- `complete` is the ONLY signal in the emitted
+    // JSON that distinguishes this partial-failure run from a genuinely clean one.
+    writeDoc("stories/x.md", storyDoc("X", ["lore-99"], "todo"));
+    const adapter = fakeAdapter([]); // lore-99 resolves to null -- rejects with not_found
+
+    const o = opts([], adapter);
+    await expect(runCheck(o)).rejects.toThrow(/lore-99/);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(parsed.data.errorCount).toBe(0);
+    expect(parsed.data.complete).toBe(false);
+  });
+
+  test("a clean, fully reconciled run's emitted report is complete: true (LORE-112)", async () => {
+    const reconciled = regenerateTaskBlock(storyDoc("X", ["lore-1"], "done"), [doneRow], {
+      docPath: "docs/stories/x.md",
+    });
+    writeDoc("stories/x.md", reconciled);
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const o = opts([], adapter);
+    const code = await runCheck(o);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(code).toBe(EXIT_OK);
+    expect(parsed.data.complete).toBe(true);
   });
 
   test("discovery advisories are not lost when reconciliation rejects (LORE-27 regression)", async () => {
@@ -1107,6 +1999,44 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     ).toBe(true);
   });
 
+  test("a tasks:-linked concept violating a custom-profile-required field is caught by check's own scan, matching validate/query/sync (LORE-89)", async () => {
+    // The built-in default Story schema has no "owner" field at all, so this doc would otherwise
+    // pass check silently (the exact false negative LORE-89 fixes) — the project's own profile
+    // requires it, and lore query/validate/sync already correctly reject the identical file.
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      `[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "Story"\nfields = { owner = { required = true } }\n`,
+    );
+    writeDoc(
+      "stories/x.md",
+      "---\ntype: Story\ntasks:\n  - lore-1\n---\n# X\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n",
+    );
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const result = runCheck(opts([], adapter));
+    await expect(result).rejects.toThrow(LoreError);
+    await expect(result).rejects.toThrow(/owner/);
+  });
+
+  test("a tasks:-linked concept satisfying the custom profile's required field passes check cleanly (LORE-89, no regression)", async () => {
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      `[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "Story"\nfields = { owner = { required = true } }\n`,
+    );
+    const doc = regenerateTaskBlock(
+      "---\ntype: Story\ntitle: X\nowner: alice\nstatus: done\ntasks:\n  - lore-1\n---\n# X\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n",
+      [doneRow],
+      { docPath: "docs/stories/x.md" },
+    );
+    writeDoc("stories/x.md", doc);
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const code = await runCheck(opts([], adapter));
+    expect(code).toBe(EXIT_OK);
+  });
+
   test("a reserved-stem concept (index/log) is never reconciled even if it carries tasks:", async () => {
     writeFileSync(
       join(root, "docs", "index.md"),
@@ -1252,7 +2182,7 @@ describe("cli — check dispatch", () => {
   });
 
   function ctx() {
-    return { cwd, env: {}, isTTY: false, stdout: capture(), stderr: capture() };
+    return { cwd, env: {}, isTTY: false, stdout: capture(), stderr: capture(), resolveHost: ALLOW_ALL_HOSTS };
   }
 
   test("`lore check` on a clean bundle exits 0", () => {

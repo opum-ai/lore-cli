@@ -14,6 +14,7 @@ import {
   gatherReconciliation,
   linkedConcepts,
   resolveTaskDetails,
+  TASK_DETAILS_CONCURRENCY,
   type TaskResolution,
 } from "../src/commands/reconcile-shared";
 import { LoreError } from "../src/errors";
@@ -89,6 +90,26 @@ describe("gatherReconciliation", () => {
     const doc = concept("stories/x.md", { tasks: ["lore-99"] });
     const adapter = fakeAdapter([]);
     await expect(gatherReconciliation(root, [doc], adapter)).rejects.toThrow(/lore-99/);
+  });
+
+  test("LORE-122: an adapter returning a mismatched-id detail surfaces as an error, never a silently wrong row", async () => {
+    // A stub adapter whose viewTask always answers with SOME OTHER task's detail, regardless of
+    // what id was requested — the exact failure mode this task guards against: without the
+    // identity check, this concept's managed tasks: block would silently render "Wrong task
+    // entirely" / "Done" under lore-1's own id.
+    const base = fakeAdapter([]);
+    const mismatched = {
+      ...base,
+      async viewTask(): Promise<BacklogTaskDetail | null> {
+        return makeTask("LORE-999", { status: "Done", title: "Wrong task entirely" });
+      },
+    };
+    const doc = concept("stories/x.md", { tasks: ["lore-1"], status: "todo" });
+
+    const err = await gatherReconciliation(root, [doc], mismatched).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LoreError);
+    expect((err as LoreError).message).toContain("lore-1");
+    expect((err as LoreError).message).toContain("LORE-999");
   });
 
   test("configOverride bypasses disk entirely — a broken on-disk config never surfaces", async () => {
@@ -186,6 +207,46 @@ describe("resolveTaskDetails", () => {
     expect(entry?.ok).toBe(false);
   });
 
+  // ── LORE-122: viewTask's returned id must match the requested id ──────────────────────────────
+
+  test("a detail whose id does not match the requested taskId becomes ok:false, not ok:true", async () => {
+    // A stub adapter that always answers with a DIFFERENT task's detail than whatever was asked
+    // for — the exact shape `viewTask` must never be trusted blindly against.
+    const base = fakeAdapter([]);
+    const mismatched: typeof base = {
+      ...base,
+      async viewTask(): Promise<BacklogTaskDetail | null> {
+        return makeTask("LORE-999", { status: "Done", title: "Wrong task entirely" });
+      },
+    };
+
+    const resolved = await resolveTaskDetails(mismatched, ["lore-1"]);
+    const entry = resolved.get("lore-1");
+
+    expect(entry?.ok).toBe(false);
+    expect(entry?.ok === false && entry.error).toBeInstanceOf(LoreError);
+    const err = entry?.ok === false ? (entry.error as LoreError) : undefined;
+    expect(err?.type).toBe("not_found");
+    expect(err?.message).toContain("lore-1");
+    expect(err?.message).toContain("LORE-999");
+  });
+
+  test("an id that matches only case-insensitively is still accepted as ok:true", async () => {
+    // The requested id and the resolved detail's id may legitimately differ in case (Backlog
+    // normalizes casing on write) — only a genuine identity mismatch is a failure.
+    const base = fakeAdapter([]);
+    const differentCase: typeof base = {
+      ...base,
+      async viewTask(): Promise<BacklogTaskDetail | null> {
+        return makeTask("LORE-1", { status: "Done" });
+      },
+    };
+
+    const resolved = await resolveTaskDetails(differentCase, ["lore-1"]);
+    const entry = resolved.get("lore-1");
+    expect(entry?.ok).toBe(true);
+  });
+
   test("calls the adapter exactly once for a single id", async () => {
     let calls = 0;
     const base = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
@@ -214,5 +275,69 @@ describe("resolveTaskDetails", () => {
     };
     await resolveTaskDetails(counting, ["lore-1", "LORE-1"]);
     expect(calls).toBe(2);
+  });
+
+  // ── LORE-111: bounded concurrency ──────────────────────────────────────────────────────────
+
+  test("never runs more than TASK_DETAILS_CONCURRENCY viewTask calls in flight at once", async () => {
+    // Comfortably more distinct ids than the cap, so the pool must refill at least twice — a
+    // single un-bounded burst (the pre-fix Promise.allSettled(...map(...)) behavior) would let
+    // `active` climb past the cap immediately.
+    const total = TASK_DETAILS_CONCURRENCY * 3 + 2;
+    const ids = Array.from({ length: total }, (_, i) => `lore-${i}`);
+    let active = 0;
+    let peak = 0;
+    const base = fakeAdapter([]);
+    const instrumented = {
+      ...base,
+      async viewTask(id: string): Promise<BacklogTaskDetail | null> {
+        active++;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        active--;
+        return makeTask(id.toUpperCase());
+      },
+    };
+
+    const resolved = await resolveTaskDetails(instrumented, ids);
+
+    expect(peak).toBeLessThanOrEqual(TASK_DETAILS_CONCURRENCY);
+    expect(peak).toBe(TASK_DETAILS_CONCURRENCY); // the pool saturates — this isn't just trivially bounded
+    expect(active).toBe(0); // every worker settled
+    expect(resolved.size).toBe(total);
+    for (const id of ids) {
+      expect(resolved.get(id)?.ok).toBe(true);
+    }
+  });
+
+  test("preserves no-throw / per-id ok:false-on-rejection under the concurrency cap", async () => {
+    // A mix of rejected, not-found (null), and successful viewTask calls, at a volume larger than
+    // the cap — resolveTaskDetails must still never throw/reject, and every id must land in the
+    // returned map with the right ok:true/false outcome, regardless of pool scheduling.
+    const total = TASK_DETAILS_CONCURRENCY * 2 + 3;
+    const ids = Array.from({ length: total }, (_, i) => `lore-${i}`);
+    const base = fakeAdapter([]);
+    const instrumented = {
+      ...base,
+      async viewTask(id: string): Promise<BacklogTaskDetail | null> {
+        const i = Number(id.split("-")[1]);
+        if (i % 3 === 0) {
+          throw new Error(`boom for ${id}`); // rejected promise
+        }
+        if (i % 3 === 1) {
+          return null; // not-found
+        }
+        return makeTask(id.toUpperCase());
+      },
+    };
+
+    const resolved = await resolveTaskDetails(instrumented, ids);
+
+    expect(resolved.size).toBe(total);
+    for (const id of ids) {
+      const i = Number(id.split("-")[1]);
+      const entry = resolved.get(id);
+      expect(entry?.ok).toBe(i % 3 === 2);
+    }
   });
 });

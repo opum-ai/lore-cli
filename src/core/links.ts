@@ -47,6 +47,7 @@
  */
 
 import { posix } from "node:path";
+import { singleLine, stripAnsiAndControls } from "../errors";
 import { idFromPath } from "./concept";
 
 // ── Shared patterns ───────────────────────────────────────────────────────────
@@ -246,16 +247,23 @@ export interface LinkFinding {
  *   consumer's differing server root.
  * - **`accidental-colon`** — a relative file whose first segment carries a colon
  *   ({@link accidentalColonFile}), read as a `scheme:` URL and otherwise unlinted.
- * - **`directory-link`** — a non-external destination ending in `/` (`../reference/`):
+ * - **`directory-link`** — a non-external destination ending in `/` (`../reference/`), or
+ *   whose final path segment is bare `.`/`..` navigation (`.`, `..`, `../..`, `foo/..`):
  *   it resolves to a file on no renderer and is almost always a dropped filename.
  * - **`missing-extension`** — an internal target missing the canonical **lowercase**
- *   `.md` suffix ({@link lacksMarkdownSuffix}): either no extension at all
- *   (`../reference/orders`) or a wrong-case `.md` (`orders.MD`), both of which 404
- *   on GitHub/Linux. A directory link is its own `directory-link` finding (above); a
- *   dotfile (`../config/.gitignore`) and any other asset extension (`../img/x.png`) are
- *   left alone — matching the bundle resolver, which treats a non-`.md` target as
- *   simply *not an edge* rather than a broken one. The extension is judged on the
- *   *decoded* path, so the linter and the resolver (which decodes first) agree.
+ *   `.md` suffix ({@link lacksMarkdownSuffix}): no extension at all
+ *   (`../reference/orders`), a wrong-case `.md` (`orders.MD`), or a dotted last
+ *   segment whose "extension" is not on the closed {@link KNOWN_ASSET_EXTENSIONS}
+ *   list (`orders.v2`, presumed a dropped `.md` suffix rather than an opaque asset —
+ *   LORE-152). A directory link is its own `directory-link` finding (above); a
+ *   dotfile (`../config/.gitignore`) and a recognized asset extension
+ *   (`../img/x.png`) are left alone. The third case is the one place this lint and
+ *   the bundle resolver deliberately **disagree**: the resolver still requires a
+ *   literal `.md` suffix to form an edge at all, so it never flags `orders.v2` as
+ *   broken even when no `orders.v2.md` file exists — this finding is the only
+ *   mechanism left to catch that shape. The extension is judged on the *decoded*
+ *   path, so the linter and the resolver (which decodes first) at least agree on
+ *   what the path *is*.
  * - **`unencoded`** — a destination that will not survive a markdown parser
  *   ({@link encodingProblem}): a raw space or paren in the path *or* in the
  *   `#fragment`/`?query`, a malformed `%`-escape, or an interior `//`. A valid but
@@ -280,7 +288,7 @@ export function validateLink(target: string): LinkFinding[] {
       findings.push({
         target,
         issue: "accidental-colon",
-        message: `link "${target}" looks like a relative file whose name contains a ":"; it is read as a "scheme:" URL and skipped by link resolution — remove the colon (lore filenames never contain one)`,
+        message: `link "${sanitizeForMessage(target)}" looks like a relative file whose name contains a ":"; it is read as a "scheme:" URL and skipped by link resolution — remove the colon (lore filenames never contain one)`,
       });
     }
     return findings;
@@ -290,7 +298,7 @@ export function validateLink(target: string): LinkFinding[] {
     findings.push({
       target,
       issue: "leading-slash",
-      message: `link "${target}" is /-absolute; use a relative path (it resolves against each consumer's differing root)`,
+      message: `link "${sanitizeForMessage(target)}" is /-absolute; use a relative path (it resolves against each consumer's differing root)`,
     });
   }
 
@@ -305,13 +313,13 @@ export function validateLink(target: string): LinkFinding[] {
     findings.push({
       target,
       issue: "directory-link",
-      message: `link "${target}" points at a directory (a trailing "/"); name the .md file instead (a directory link resolves on no renderer — likely a dropped filename)`,
+      message: `link "${sanitizeForMessage(target)}" points at a directory (a trailing "/", or a bare "."/".." navigation segment); name the .md file instead (a directory link resolves on no renderer — likely a dropped filename)`,
     });
   } else if (lacksMarkdownSuffix(path)) {
     findings.push({
       target,
       issue: "missing-extension",
-      message: `link "${target}" is missing the .md suffix; GitHub and Obsidian link to the file and need the lowercase .md extension`,
+      message: `link "${sanitizeForMessage(target)}" is missing the .md suffix; GitHub and Obsidian link to the file and need the lowercase .md extension`,
     });
   }
 
@@ -324,30 +332,103 @@ export function validateLink(target: string): LinkFinding[] {
 }
 
 /**
+ * The extensions of non-`.md` files a docs bundle legitimately links to directly:
+ * images, common document/archive/media formats, and the handful of source-file
+ * extensions a doc might reference (this repo's own `docs/adr/0006` links straight at
+ * `../../src/core/profile.ts`). Judged as a **closed, known list** rather than "the
+ * last segment has a dot at all" — the rule {@link lacksMarkdownSuffix} used to apply,
+ * which made a dotted-but-extensionless concept link (`orders.v2`, meant for
+ * `orders.v2.md`) indistinguishable from a real asset link and so let it through in
+ * silence (LORE-152). The trade-off this closed list accepts: a real asset whose
+ * extension is not on it is a false positive {@link lacksMarkdownSuffix} cannot avoid
+ * without a filesystem probe, which {@link validateLink} — pure by contract — does
+ * not have.
+ */
+const KNOWN_ASSET_EXTENSIONS = new Set([
+  // images
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "svg",
+  "webp",
+  "bmp",
+  "ico",
+  "avif",
+  "tif",
+  "tiff",
+  // documents
+  "pdf",
+  "csv",
+  "txt",
+  "rtf",
+  "doc",
+  "docx",
+  "xls",
+  "xlsx",
+  "ppt",
+  "pptx",
+  // data/config
+  "json",
+  "yaml",
+  "yml",
+  "toml",
+  "xml",
+  // archives
+  "zip",
+  "tar",
+  "gz",
+  "tgz",
+  "rar",
+  "7z",
+  // media
+  "mp4",
+  "mp3",
+  "wav",
+  "mov",
+  "webm",
+  // source (a doc legitimately links straight at the code it describes)
+  "ts",
+  "tsx",
+  "js",
+  "jsx",
+  "sh",
+  "py",
+  "go",
+  "rs",
+]);
+
+/**
  * Whether a destination's path part lacks the canonical lowercase `.md` suffix and
  * so looks like a dropped-extension concept link — judged on the **decoded** path
  * (`orders%2Emd` decodes to `orders.md`), so the linter and the bundle resolver,
  * which {@link decodeTarget}s before resolving, agree on what the extension *is*.
  *
- * The canonical form is **lowercase** `.md` only; the rule mirrors how the resolver
- * treats a destination, flagging exactly the two cases that 404 on GitHub/Linux:
+ * The canonical form is **lowercase** `.md` only; three shapes are flagged:
  *
  * - **no extension at all** (`../reference/orders`) — a dropped-suffix concept link;
  * - **a wrong-case `.md`** (`orders.MD`/`orders.Md`) — meant to be the portable
- *   suffix but case-broken on a case-sensitive host.
+ *   suffix but case-broken on a case-sensitive host;
+ * - **a dotted last segment whose "extension" is not on the closed
+ *   {@link KNOWN_ASSET_EXTENSIONS} list** (`orders.v2`) — presumed a dropped `.md`
+ *   suffix rather than an opaque asset (LORE-152).
  *
- * Three shapes are deliberately **left alone**, matching the resolver's "a non-`.md`
- * target is simply not a concept edge" rule, so the lint does not cry wolf:
+ * Two shapes are deliberately **left alone**, so the lint does not cry wolf on a real,
+ * non-concept link:
  *
- * - an empty path (a pure `#fragment`/`?query` destination);
- * - a **directory** link (a trailing `/`, e.g. `../reference/`);
- * - a **dotfile** (`../config/.gitignore`) or any other **asset** extension
- *   (`../img/x.png`), which is a real non-concept link, not a dropped suffix.
+ * - an empty path (a pure `#fragment`/`?query` destination), or a **directory** link
+ *   (a trailing `/`, e.g. `../reference/`, or a bare `.`/`..` navigation segment —
+ *   {@link isDirectoryLink} — which is why this function's own dotfile check below
+ *   never has to tell `.`/`..` apart from a real dotfile: it never sees them);
+ * - a **dotfile** (`../config/.gitignore`) or a recognized **asset** extension
+ *   (`../img/x.png`, {@link KNOWN_ASSET_EXTENSIONS}) — a real non-concept link, not a
+ *   dropped suffix.
  *
- * A dotted filename that *was* meant as a concept (`orders.v2` for `orders.v2.md`)
- * is indistinguishable from an asset and is treated as one — the same call the
- * resolver makes; a genuinely broken such link surfaces as a dangling edge in
- * `lore check`'s link-existence pass, not here.
+ * The third flagged shape is where this function and the bundle resolver part ways:
+ * the resolver still requires a literal `.md` suffix to form an edge at all, so a
+ * genuinely broken `orders.v2` link (no matching `orders.v2.md`) never surfaces as a
+ * dangling edge in `lore check`'s link-existence pass — this finding is the only
+ * mechanism left to catch it.
  */
 function lacksMarkdownSuffix(rawPath: string): boolean {
   const path = decodeTarget(rawPath);
@@ -364,7 +445,13 @@ function lacksMarkdownSuffix(rawPath: string): boolean {
   if (MD_SUFFIX_ANY_CASE.test(last)) {
     return true; // wrong-case .MD/.Md — meant to be .md, 404s on a case-sensitive host
   }
-  return !last.includes("."); // no extension → dropped suffix; any other extension → asset
+  const dot = last.lastIndexOf(".");
+  if (dot === -1) {
+    return true; // no extension at all → dropped suffix
+  }
+  // A recognized asset extension is a real non-.md link, left alone; any other dotted
+  // segment (`orders.v2`) is presumed a dropped .md suffix, not an opaque asset (LORE-152).
+  return !KNOWN_ASSET_EXTENSIONS.has(last.slice(dot + 1).toLowerCase());
 }
 
 /** The URL schemes a docs bundle legitimately links with — never an accidental-colon filename. */
@@ -417,13 +504,29 @@ function accidentalColonFile(target: string): boolean {
 
 /**
  * Whether a (non-external) destination's path part names a **directory** — a trailing `/` after
- * decoding (`../reference/`). Such a link resolves to a file on no renderer and is almost always
- * a dropped filename, so it warns. The pure leading-slash `/` (already flagged `leading-slash`)
- * and an empty path (a bare fragment) are excluded so neither double-reports.
+ * decoding (`../reference/`), *or* a final path segment that is bare navigation, exactly `.` or
+ * `..` (`.`, `..`, `../..`, `foo/..`, `foo/.`). Both shapes name a directory, not the canonical
+ * `.md` file the link form requires, and resolve inconsistently across consumers (GitHub browses
+ * to the directory; Obsidian will not resolve a `..` to a note) — so both warn. The pure
+ * leading-slash `/` (already flagged `leading-slash`) and an empty path (a bare fragment) are
+ * excluded so neither double-reports.
+ *
+ * A bare/trailing `.`/`..` segment is deliberately checked **here**, not left for
+ * {@link lacksMarkdownSuffix}'s dotfile exemption to (mis)judge: that exemption tests
+ * `startsWith(".")`, which would otherwise read a final segment of exactly `.`/`..` as a genuine
+ * dotfile like `.gitignore` and wave it through. Catching it in this earlier check keeps the
+ * dotfile exemption itself unchanged and correct for real dotfiles.
  */
 function isDirectoryLink(rawPath: string): boolean {
   const path = decodeTarget(rawPath);
-  return path !== "" && path !== "/" && path.endsWith("/");
+  if (path === "" || path === "/") {
+    return false;
+  }
+  if (path.endsWith("/")) {
+    return true;
+  }
+  const last = path.slice(path.lastIndexOf("/") + 1);
+  return last === "." || last === "..";
 }
 
 /**
@@ -468,14 +571,36 @@ function encodingProblem(rawPath: string, suffix: string): "empty-segment" | "ma
 
 /** The human-readable message for an {@link encodingProblem} kind, naming the offending `target`. */
 function encodingMessage(target: string, problem: "empty-segment" | "malformed" | "raw"): string {
+  const clean = sanitizeForMessage(target);
   switch (problem) {
     case "empty-segment":
-      return `link "${target}" has an empty path segment ("//"); use a single "/" separator`;
+      return `link "${clean}" has an empty path segment ("//"); use a single "/" separator`;
     case "malformed":
-      return `link "${target}" has a malformed percent-escape (a "%" not followed by two hex digits); fix or remove it`;
+      return `link "${clean}" has a malformed percent-escape (a "%" not followed by two hex digits); fix or remove it`;
     case "raw":
-      return `link "${target}" has an unencoded character; percent-encode reserved characters (e.g. space -> %20)`;
+      return `link "${clean}" has an unencoded character; percent-encode reserved characters (e.g. space -> %20)`;
   }
+}
+
+/**
+ * Collapse a bundle-authored link `target` to a single line with no ANSI escape sequences or
+ * other control bytes, for safe embedding into a {@link LinkFinding} `message`. `target` is a
+ * raw destination string lifted verbatim from a markdown link — `[text](target)` — so nothing
+ * about the bundle guarantees it is display-safe: a crafted or corrupted file can carry an
+ * ESC-led ANSI/OSC sequence or a stray C0/C1/DEL control byte in the destination text, and
+ * `message` is documented as a plain human-readable one-liner for the warning stream, not a
+ * raw byte passthrough. {@link LinkFinding.target} itself is left untouched — it is the
+ * destination *as authored*, for a caller that wants to act on the exact bytes — only the
+ * printable `message` is sanitized (LORE-153).
+ *
+ * Runs {@link singleLine} first (folds line terminators), then strips what it leaves via the
+ * shared {@link stripAnsiAndControls} (LORE-181) — the single home for that two-pass strip,
+ * also used by `output.ts`, `commands/query.ts`, and `core/validate.ts` — imported from
+ * `errors.ts` rather than `output.ts`: this module stays filesystem/output-layer-free by design
+ * (module doc above — pure, no printing), and `errors.ts` is layer-neutral.
+ */
+function sanitizeForMessage(text: string): string {
+  return stripAnsiAndControls(singleLine(text));
 }
 
 /** Whether a string carries a `%` that is not the start of a valid two-hex-digit escape. */
@@ -529,11 +654,28 @@ export function stripQuery(target: string): string {
   return question === -1 ? target : target.slice(0, question);
 }
 
-/** URL-decode a destination, degrading to the raw text if it is not valid percent-encoding. */
+/**
+ * URL-decode a destination **per path segment**, degrading a segment to its raw text
+ * if it is not valid percent-encoding. Splitting on the *literal* `/` first (the only
+ * structural separators the raw target actually has) and decoding each piece in
+ * isolation stops an *encoded* separator — `%2F`/`%2f` — from ever surfacing as a bare
+ * `/` in the result: {@link decodeURIComponent} would otherwise turn a single-segment
+ * target like `orders%2Fv2.md` into `orders/v2.md`, forging a second path segment the
+ * link's literal text never named and letting it resolve to an unrelated concept
+ * (`orders/v2`) the author never linked to. A `/` a segment's decode *does* produce is
+ * re-escaped back to `%2F` before rejoining, so the output always has exactly as many
+ * structural `/` boundaries as the input — legitimately-encoded characters within a
+ * segment (a space, `%23`) still decode normally either way.
+ */
 export function decodeTarget(target: string): string {
+  return target.split("/").map(decodeSegmentKeepingSlash).join("/");
+}
+
+/** Decode one `/`-free destination segment, folding any decoded `/` back to `%2F` so it cannot pass as a structural separator; degrades to the raw segment on malformed percent-encoding. */
+function decodeSegmentKeepingSlash(segment: string): string {
   try {
-    return decodeURIComponent(target);
+    return decodeURIComponent(segment).replace(/\//g, "%2F");
   } catch {
-    return target;
+    return segment;
   }
 }

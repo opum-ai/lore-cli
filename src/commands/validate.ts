@@ -24,6 +24,7 @@ import { canonicalType } from "../core/schema";
 import { type FileReport, type Finding, type ValidateReport, validateFiles } from "../core/validate";
 import { ANSI, EXIT_CODES, EXIT_OK, ioError, LoreError, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { assertFlagAtMostOnce, parseCommandArgs, singleOptionValue } from "./args";
 import { canonicalIdentity, readSource, toRepoRelative } from "./discover";
 
 /** Options for {@link runValidate}; `root` and the streams are injectable for tests. */
@@ -32,7 +33,7 @@ export interface ValidateOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `validate`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -84,58 +85,20 @@ export function runValidate(options: ValidateOptions): number {
 // ── Argument parsing ───────────────────────────────────────────────────────────
 
 /**
- * Parse `validate`'s tokens into target paths and its flags. The router has already stripped
+ * Parse `validate`'s tokens into target paths and its flags. Commander has already resolved
  * lore's global flags, so anything `--`-prefixed here is a command flag: an unrecognized one is a
  * `usage` error. Both `--flag value` and `--flag=value` forms are accepted; `--type`'s value must
  * not itself be a flag-looking token (so a mis-ordered `--type --strict` fails loud rather than
  * eating `--strict`). A `--` ends option parsing so a path may begin with `-`.
  */
 function parseValidateArgs(args: readonly string[]): ValidateArgs {
-  const paths: string[] = [];
-  let type: string | undefined;
-  let strict = false;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      paths.push(...args.slice(i + 1));
-      break;
-    }
-    if (arg.startsWith("--") && arg.length > 2) {
-      const eq = arg.indexOf("=");
-      const name = eq >= 0 ? arg.slice(2, eq) : arg.slice(2);
-      const takeValue = (): string => {
-        if (eq >= 0) {
-          return arg.slice(eq + 1);
-        }
-        const next = args[i + 1];
-        if (next === undefined || (next.startsWith("-") && next !== "-")) {
-          throw usage(`option "--${name}" needs a value`, `pass a value, e.g. --${name}=<value>`);
-        }
-        i++;
-        return next;
-      };
-      switch (name) {
-        case "type":
-          type = takeValue();
-          break;
-        case "strict":
-          strict = true;
-          break;
-        default:
-          throw usage(`unknown option "--${name}"`, "run `lore validate --help` to list options");
-      }
-    } else if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, "run `lore validate --help` to list options");
-    } else {
-      paths.push(arg);
-    }
-  }
-
+  const parsed = parseCommandArgs(args, "validate");
+  const type = singleOptionValue(parsed, "type");
+  assertFlagAtMostOnce(parsed, "strict");
   if (type !== undefined && type.trim() === "") {
     throw usage("`--type` needs a value", "pass a type, e.g. --type ADR");
   }
-  return { paths, type, strict };
+  return { paths: parsed.positionals, type, strict: parsed.flags.has("strict") };
 }
 
 // ── File discovery ─────────────────────────────────────────────────────────────

@@ -25,26 +25,44 @@
  * zero-Backlog-dependency behavior it always did. `--dry-run` skips the Backlog move entirely
  * (it previews the file-level plan only, not a Backlog-side preview).
  *
- * A bad flag or a missing/duplicate id is a `usage` error (exit 2); an absent `oldId` a
- * `not_found` (exit 3, from the engine); an already-taken `newId` a `conflict` (exit 5); a failed
- * back-ref move is `drift` (exit 6, same as `link`/`unlink`) — all funnel through the router's one
- * error seam like every command.
+ * A bad flag, a missing/duplicate id, or a `newId` that escapes the `docs/` bundle root (checked
+ * at argument-parsing time, before any bundle load, as defense-in-depth alongside
+ * `rewriteInbound`'s own identical engine-layer guard — LORE-78/LORE-79/LORE-80) is a `usage`
+ * error (exit 2); an absent `oldId` a `not_found` (exit 3, from the engine); an already-taken
+ * `newId` a `conflict` (exit 5); a failed back-ref move is `drift` (exit 6, same as
+ * `link`/`unlink`) — all funnel through the router's one error seam like every command.
+ *
+ * Every retargeted inbound link is still repointed to the new location — `rename` DELETES the old
+ * file, so skipping a retarget would leave a genuinely dangling link, never an option. But when the
+ * link's visible text still names the OLD id (a citation left over from before the rename), that
+ * would silently leave the prose and the link disagreeing. The engine flags each such
+ * {@link LinkTextMismatch} in the plan; this command renders one stderr `warning:` line per mismatch
+ * via {@link renderLinkTextMismatchWarning} (LORE-262) — purely advisory, no effect on the retarget
+ * or the exit code.
  */
 
 import { existsSync } from "node:fs";
-import { dirname, join, posix } from "node:path";
+import { dirname, join, posix, win32 } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
-import { type BundleGraph, buildGraph, loadBundle, toRefList } from "../core/bundle";
+import { type BundleGraph, buildGraph, loadBundle, toRefList, UNREADABLE_DIRECTORY_WARNING } from "../core/bundle";
 import { type Concept, idFromPath, parseConcept } from "../core/concept";
 import { generateIndexes, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END, locateManagedBlock } from "../core/indexes";
-import { type RewritePlan, rewriteInbound } from "../core/rewrite";
+import { loadProfile, type Profile } from "../core/profile";
+import {
+  escapesRoot,
+  isDriveRelative,
+  type RewritePlan,
+  renderLinkTextMismatchWarning,
+  resolvesToRoot,
+  rewriteInbound,
+} from "../core/rewrite";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_CODES, EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { type BacklogCommitResult, commitBacklogFiles, type GitSpawn, renderBacklogCommitLine } from "../state";
 import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
 import { canonicalIdentity, readIndexBytes } from "./discover";
-import { ensureDir, moveFile, writeFileOverwriting } from "./fswrite";
+import { assertNoSymlinkInAnyPath, ensureDir, moveFile, writeFileOverwriting } from "./fswrite";
 import {
   assertNoCommaInId,
   assertNoLabelCaseCollision,
@@ -63,7 +81,7 @@ export interface RenameOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `rename`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -126,23 +144,66 @@ export async function runRename(options: RenameOptions): Promise<number> {
       id: oldId,
     });
   }
-  // A concept may not be renamed onto a reserved, machine-owned file name (index.md/log.md): those
-  // are regenerated wholesale, so the relocated content would be silently clobbered.
+  // A concept may not be renamed FROM or ONTO a reserved, machine-owned file name (index.md/log.md):
+  // those are regenerated wholesale, so renaming away from one would silently delete it (LORE-81) and
+  // renaming onto one would silently clobber the relocated content. Mirrors supersede.ts's identical
+  // two-sided check.
+  assertNotReservedStem(oldId, "rename from");
   assertNotReservedStem(newId, "rename to");
 
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
-  const graph = loadBundle(docsRoot, { warnings: advisories });
+  // Loaded once and threaded through every downstream serialize/re-parse (rewriteInbound below,
+  // buildPostRenameGraph's own re-parse) so a rewritten concept is never written under one profile
+  // and re-read under another (LORE-88) — before this fix, only this initial load honored a
+  // project's custom `.lore/profile.toml` (LORE-84); rewriteInbound's internal serialize/re-parse
+  // silently fell back to the built-in default, which could reject an inbound concept whose custom-
+  // profile-shaped frontmatter (e.g. a scalar `tasks:` field) is perfectly valid under the project's
+  // own schema.
+  const profile = loadProfile({ root: options.root });
+  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
+  // Flushed immediately (not at the end, as this command previously did) so a skipped-directory
+  // warning naming the exact path/reason survives on the fail-loud path below it feeds (LORE-82),
+  // mirroring how `context.ts`/`graph.ts` flush before a load-warning-explained not_found throw.
+  advisories.flush({ color: options.output.color, stderr: options.stderr });
+  // rewriteInbound can only repoint the inbound links it can SEE — a directory `loadBundle` had to
+  // skip (unreadable) may hide a concept that links to `oldId`, so committing this rewrite would
+  // silently report success while leaving that concept's link stale/broken. Refuse rather than
+  // guess: the graph is not the complete bundle, so no rewrite over it is safe to commit (LORE-82).
+  if (advisories.has(UNREADABLE_DIRECTORY_WARNING)) {
+    throw new LoreError(
+      "validation",
+      "the bundle graph is incomplete: an unreadable directory was skipped while loading it",
+      "fix filesystem permissions on the directory named in the warning above and retry — rename cannot safely rewrite inbound links without a complete view of the bundle",
+      { docsRoot },
+    );
+  }
 
   // Plan the move + inbound rewrite (throws not_found if oldId is absent / conflict if newId is a
   // concept), then regenerate the index hubs against the post-rename graph and merge them over the
   // plan's writes (index regen wins).
-  const plan = rewriteInbound(graph, oldId, newId, { move: true });
+  const plan = rewriteInbound(graph, oldId, newId, { move: true, profile });
   // The engine's conflict check is graph-only; guard the filesystem too, so a target that collides
   // with a NON-concept file (a hand-written index, a doc with no/invalid frontmatter) or with a
   // concept differing only in case (which a case-sensitive `Map.has` misses) is never overwritten.
   // A target resolving to the *same* inode as the source is a legitimate case-only rename, allowed.
   assertTargetFree(plan, docsRoot);
+
+  // Every retargeted inbound link is still repointed exactly as before (LORE-262 AC#2 — no
+  // regression); a link whose visible text still names the OLD id is additionally called out as a
+  // stderr warning so the author can review the prose, rather than the mismatch shipping silently
+  // (LORE-262 AC#1). Skipping the retarget instead is not an option here: `lore rename` DELETES the
+  // old file, so a skipped link would become a genuinely dangling one — worse than a stale-reading
+  // text. A FRESH collector, not `advisories` — that one was already flushed above (LORE-82's
+  // ordering), and `flush()` is non-draining, so reusing it here would re-print the earlier
+  // bundle-load warnings a second time.
+  if (plan.textMismatches.length > 0) {
+    const mismatchWarnings = new WarningCollector();
+    for (const mismatch of plan.textMismatches) {
+      mismatchWarnings.add(renderLinkTextMismatchWarning(mismatch));
+    }
+    mismatchWarnings.flush({ color: options.output.color, stderr: options.stderr });
+  }
 
   // The Backlog back-ref move's own preconditions, checked up front (before any write) — but only
   // when the move will actually be attempted: a linked concept (an unlinked rename never touches
@@ -155,10 +216,10 @@ export async function runRename(options: RenameOptions): Promise<number> {
     assertNoLabelCaseCollision(graph, newId, oldId, "rename to");
   }
 
-  const writes = mergeIndexWrites(plan, graph, docsRoot);
+  const writes = mergeIndexWrites(plan, graph, docsRoot, profile);
 
   if (!parsed.dryRun) {
-    commitWrites(writes, plan, docsRoot);
+    commitWrites(writes, plan, docsRoot, options.root);
   }
 
   // Move every linked task's Backlog back-reference LAST — mirrors link.ts's write-order fix: the
@@ -195,11 +256,12 @@ export async function runRename(options: RenameOptions): Promise<number> {
   const backlogCommit = await commitBacklogFiles(editedTaskFiles, options, RENAME_COMMIT_MESSAGE);
 
   // commitBacklogFiles captures a commit failure into backlogCommit.error rather than throwing, so
-  // the report emit and the advisory flush below always run on the write path — a git failure no
-  // longer skips them (previously it threw here, dropping both the report and the load advisories).
+  // the report emit below always runs on the write path — a git failure no longer skips it
+  // (previously it threw here, dropping the report). Load advisories were already flushed right
+  // after loadBundle (LORE-82), not repeated here (flush is non-draining — a second call would
+  // re-print the same warnings).
   const report = buildReport(plan, writes, backRefs, backlogCommit, parsed.dryRun);
   emit(reportRenderable(report), options.output, options.stdout);
-  advisories.flush({ color: options.output.color, stderr: options.stderr });
   return backRefs.some((b) => b.backRef === "failed") || backlogCommit.error !== undefined ? EXIT_CODES.drift : EXIT_OK;
 }
 
@@ -214,6 +276,12 @@ const RENAME_COMMIT_MESSAGE = "chore(backlog): move doc back-references (lore re
  * closes the two gaps it leaves on a case-insensitive filesystem and against non-concept files. A
  * destination that resolves to the **same physical file** as the source is a case-only rename and
  * is permitted (the relocation renames the inode rather than clobbering it).
+ *
+ * This is a PLAN-TIME check only — it runs once, well before `commitWrites` below actually moves
+ * anything, so it cannot see a destination created during that (potentially I/O-heavy) window
+ * (LORE-132). It still fires early for the common case (fail fast, before any write), but the
+ * guarantee that a raced-in destination is never silently clobbered comes from `moveFile`
+ * (`fswrite.ts`)'s own immediately-before-the-syscall re-check, not from this function.
  */
 function assertTargetFree(plan: RewritePlan, docsRoot: string): void {
   if (plan.rename === null) {
@@ -232,27 +300,45 @@ function assertTargetFree(plan: RewritePlan, docsRoot: string): void {
 }
 
 /**
- * Commit the planned writes to disk. Parent directories are created up front (so a target in a
- * brand-new category directory does not fail with ENOENT), the in-place rewrites are written, and
- * the renamed file is relocated **last** by {@link moveFile} — its new bytes are written into the
- * source path and then the inode is renamed, which is atomic and safe even for a case-only rename
- * on a case-insensitive filesystem. (A mid-commit IO failure can still leave the bundle partially
- * rewritten — cross-file transactional rollback is a shared concern with `lore replace`, deferred.)
+ * Commit the planned writes to disk. Every target is swept for a symlinked ancestor (or, for the
+ * in-place rewrites, a symlinked final component too — {@link writeFileOverwriting} is a plain
+ * `writeFileSync`, which follows a symlink at the final path segment, unlike {@link moveFile}'s
+ * `renameSync`, which atomically replaces whatever is at the destination without ever dereferencing
+ * it) BEFORE any single write begins (LORE-93 AC#5) — `ensureDir`'s own per-call guard alone would
+ * only refuse once the loop below REACHES a bad target, by which point earlier targets in the same
+ * plan may already be on disk. Parent directories are then created (so a target in a brand-new
+ * category directory does not fail with ENOENT), the in-place rewrites are written, and the renamed
+ * file is relocated **last** by {@link moveFile} — its new bytes are written into the source path
+ * and then the inode is renamed, which is atomic and safe even for a case-only rename on a
+ * case-insensitive filesystem. {@link moveFile} itself re-verifies the destination immediately
+ * before that rename (LORE-132), so a destination that appeared after {@link assertTargetFree}'s
+ * earlier plan-time check runs is refused with the same `conflict` rather than silently replaced.
+ * (A mid-commit IO failure UNRELATED to a symlink can still leave the bundle partially rewritten —
+ * cross-file transactional rollback for that case is a shared concern with `lore replace`, deferred;
+ * the preflight sweep above only closes the symlink-specific gap.)
  */
-function commitWrites(writes: Map<string, string>, plan: RewritePlan, docsRoot: string): void {
+function commitWrites(writes: Map<string, string>, plan: RewritePlan, docsRoot: string, root: string): void {
   const movedTo = plan.rename?.to;
+  // `writes` already carries the moved file's new bytes keyed at `plan.rename.to` (RewritePlan's
+  // own contract) — only `plan.rename.from` (the source, written-then-renamed) isn't a `writes` key.
+  const targets = [...writes.keys()].map((path) => `${DOCS_DIR}/${path}`);
+  if (plan.rename !== null) {
+    targets.push(`${DOCS_DIR}/${plan.rename.from}`);
+  }
+  assertNoSymlinkInAnyPath(root, targets);
+
   for (const [path, bytes] of writes) {
     if (path === movedTo) {
       continue; // the moved file is relocated below, not written at its new path here
     }
     const abs = join(docsRoot, path);
-    ensureDir(dirname(abs), `${DOCS_DIR}/${path}`);
+    ensureDir(root, dirname(`${DOCS_DIR}/${path}`));
     writeFileOverwriting(abs, bytes, `${DOCS_DIR}/${path}`);
   }
   if (plan.rename !== null) {
     const absFrom = join(docsRoot, plan.rename.from);
     const absTo = join(docsRoot, plan.rename.to);
-    ensureDir(dirname(absTo), `${DOCS_DIR}/${plan.rename.to}`);
+    ensureDir(root, dirname(`${DOCS_DIR}/${plan.rename.to}`));
     // Write the new bytes into the source file, then rename the source to its destination — never
     // write-new-then-delete-old, which would destroy a case-only rename's single inode.
     writeFileOverwriting(absFrom, writes.get(plan.rename.to) ?? "", `${DOCS_DIR}/${plan.rename.from}`);
@@ -270,7 +356,12 @@ function commitWrites(writes: Map<string, string>, plan: RewritePlan, docsRoot: 
  * whose regenerated bytes equal the on-disk bytes is dropped, so an unrelated canonical index is
  * never written.
  */
-function mergeIndexWrites(plan: RewritePlan, graph: BundleGraph, docsRoot: string): Map<string, string> {
+function mergeIndexWrites(
+  plan: RewritePlan,
+  graph: BundleGraph,
+  docsRoot: string,
+  profile: Profile,
+): Map<string, string> {
   const planByPath = new Map(plan.writes.map((w) => [w.path, w.bytes] as const));
 
   // Current on-disk bytes of every index file, the determinism seam generateIndexes splices into —
@@ -283,7 +374,7 @@ function mergeIndexWrites(plan: RewritePlan, graph: BundleGraph, docsRoot: strin
     }
   }
 
-  const postRename = buildPostRenameGraph(graph, plan);
+  const postRename = buildPostRenameGraph(graph, plan, profile);
   const regenerated = generateIndexes(postRename, { existing });
 
   // Start from the plan's writes, then let index regeneration win for any index path. An index
@@ -356,9 +447,10 @@ function spliceEmptyListing(content: string): string {
  * Rebuild the bundle graph as it will be **after** the rename, so index regeneration lists the
  * renamed concept at its new path. Every concept the plan rewrote is re-parsed from its new bytes
  * (the moved concept from its new path, so it re-ids to `newId`); every untouched concept is
- * carried over verbatim. The plan's bytes came from a validating serialize, so re-parse cannot fail.
+ * carried over verbatim. The plan's bytes came from a validating serialize against `profile` — the
+ * SAME profile passed here (LORE-88) — so re-parse cannot fail.
  */
-function buildPostRenameGraph(graph: BundleGraph, plan: RewritePlan): BundleGraph {
+function buildPostRenameGraph(graph: BundleGraph, plan: RewritePlan, profile: Profile): BundleGraph {
   const newBytesByPath = new Map(plan.writes.map((w) => [w.path, w.bytes] as const));
   const movedFrom = plan.rename?.from;
   const movedTo = plan.rename?.to;
@@ -366,10 +458,10 @@ function buildPostRenameGraph(graph: BundleGraph, plan: RewritePlan): BundleGrap
   const concepts: Concept[] = [];
   for (const concept of graph.concepts.values()) {
     if (concept.path === movedFrom && movedTo !== undefined) {
-      concepts.push(parseConcept(movedTo, newBytesByPath.get(movedTo) ?? "")); // moved → new path/id
+      concepts.push(parseConcept(movedTo, newBytesByPath.get(movedTo) ?? "", { profile })); // moved → new path/id
     } else {
       const rewritten = newBytesByPath.get(concept.path);
-      concepts.push(rewritten === undefined ? concept : parseConcept(concept.path, rewritten));
+      concepts.push(rewritten === undefined ? concept : parseConcept(concept.path, rewritten, { profile }));
     }
   }
   return buildGraph(concepts);
@@ -378,12 +470,47 @@ function buildPostRenameGraph(graph: BundleGraph, plan: RewritePlan): BundleGrap
 // ── Argument parsing ───────────────────────────────────────────────────────────
 
 /**
+ * Reject a `newId` that would resolve outside the `docs/` bundle root, confining the destination
+ * at the ARGUMENT-PARSING layer — before {@link runRename}'s body runs at all — as defense-in-depth
+ * alongside {@link rewriteInbound}'s own identical engine-layer guard (LORE-80), and with a clearer
+ * `usage` error (exit 2) here versus its `validation` (exit 6), mirroring `new.ts`'s
+ * `resolveOutPath` in spirit (fail fast at the earliest possible point, don't rely on a downstream
+ * engine's own guard). The algorithm itself mirrors LORE-80's `escapesRoot`/`assertConfinedToBundle`,
+ * not `resolveOutPath`: `rename` operates on bundle-relative concept ids, not real filesystem paths,
+ * so there is no `resolve`+`relative`-against-a-real-directory step that fits here — `escapesRoot`
+ * is reused (not re-derived) from `core/rewrite.ts` for that reason, keeping the one
+ * security-sensitive segment walk in a single place. Called from {@link parseRenameArgs} itself
+ * (LORE-78) rather than by its caller, so a confined `newId` is `parseRenameArgs`'s own guarantee,
+ * not a follow-up check `runRename` happens to make (LORE-79's original call site).
+ *
+ * Checked on the RAW `newId` (before {@link idFromPath} runs), mirroring `assertConfinedToBundle`'s
+ * own documented reasoning for checking pre-normalize.
+ */
+function assertDestinationConfined(newId: string): void {
+  if (
+    posix.isAbsolute(newId) ||
+    win32.isAbsolute(newId) ||
+    escapesRoot(newId) ||
+    isDriveRelative(newId) ||
+    resolvesToRoot(newId)
+  ) {
+    throw usage(
+      `newId "${newId}" resolves outside the docs/ bundle root`,
+      "pass a destination id that stays inside docs/ (no absolute path, no `..` segments, not empty or self-cancelling)",
+      { id: newId },
+    );
+  }
+}
+
+/**
  * Parse `rename`'s tokens into its two positionals (`<oldId> <newId>`) and `--dry-run`, via the
- * shared {@link parseCommandArgs} tokenizer (mirrors `commands/supersede.ts`/`commands/link.ts`'s
- * parsers). Positional arity is validated here since it differs per command.
+ * shared {@link parseCommandArgs} parser (mirrors `commands/supersede.ts`/`commands/link.ts`'s
+ * parsers). Positional arity is validated here since it differs per command. `newId` is also
+ * confined to the `docs/` bundle root here (LORE-78) — before this function returns, so a
+ * traversal/absolute destination never reaches `runRename`'s body as a "parsed" value.
  */
 function parseRenameArgs(args: readonly string[]): RenameArgs {
-  const { positionals, flags } = parseCommandArgs(args, "rename", ["dry-run"]);
+  const { positionals, flags } = parseCommandArgs(args, "rename");
 
   const oldId = positionals[0];
   if (oldId === undefined) {
@@ -399,6 +526,7 @@ function parseRenameArgs(args: readonly string[]): RenameArgs {
       "pass exactly an old and a new id; scope nothing else (rename rewrites the whole bundle)",
     );
   }
+  assertDestinationConfined(newId);
   return { oldId, newId, dryRun: flags.has("dry-run") };
 }
 

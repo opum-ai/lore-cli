@@ -18,7 +18,16 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { load as yamlLoad } from "js-yaml";
@@ -31,6 +40,7 @@ import {
   DOCUSAURUS_CONFIG_REL_PATH,
   MKDOCS_CONFIG_REL_PATH,
   OBSIDIAN_APP_JSON_REL_PATH,
+  OBSIDIAN_GITIGNORE_REL_PATH,
   OBSIDIAN_GUIDANCE_NOTES,
   SIDEBARS_REL_PATH,
   TAGS_INDEX_REL_PATH,
@@ -43,6 +53,11 @@ import { capture, expectError } from "./helpers";
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 const PLAIN_CTX: OutputContext = { mode: "plain", color: false };
 const FIXED_CLOCK = (): Date => new Date("2026-07-11T12:00:00Z");
+// A second, later clock — distinct from FIXED_CLOCK — used to prove a bare mkdocs re-run's
+// idempotency does NOT depend on the wall clock standing still between runs (LORE-263 follow-up:
+// a real re-run a second later must still be a no-op, not just a re-run under an injected clock
+// that happens to match).
+const SECOND_CLOCK = (): Date => new Date("2026-07-11T12:00:05Z");
 
 let root: string;
 
@@ -143,20 +158,113 @@ describe("lore scaffold mkdocs — fresh scaffold", () => {
   });
 });
 
-describe("lore scaffold mkdocs — never-silent-clobber (AC: user-owned, never re-overwritten)", () => {
-  test("a re-run without --force refuses with a conflict (exit 5) and touches nothing", () => {
+describe("lore scaffold mkdocs — idempotent when unchanged (LORE-263)", () => {
+  test("a bare re-run over byte-identical on-disk config is a no-op: exit 0, writes nothing, 'nothing to do'", () => {
     scaffold(["mkdocs"]);
     const yamlBefore = readFileSync(join(root, MKDOCS_CONFIG_REL_PATH), "utf8");
     const tagsBefore = readFileSync(join(root, TAGS_INDEX_REL_PATH), "utf8");
 
-    const err = expectError("conflict", () =>
-      runScaffold({ root, output: JSON_CTX, args: ["mkdocs"], stdout: capture() }),
-    );
-    expect(err.message).toContain(MKDOCS_CONFIG_REL_PATH);
-    expect(err.message).toContain(TAGS_INDEX_REL_PATH);
-    expect(err.hint).toContain("--force");
+    const { code, result } = scaffold(["mkdocs"]);
+    expect(code).toBe(0);
+    expect(result.files).toEqual([]);
     expect(readFileSync(join(root, MKDOCS_CONFIG_REL_PATH), "utf8")).toBe(yamlBefore);
     expect(readFileSync(join(root, TAGS_INDEX_REL_PATH), "utf8")).toBe(tagsBefore);
+
+    const stdout = capture();
+    runScaffold({ root, output: PLAIN_CTX, args: ["mkdocs"], stdout, clock: FIXED_CLOCK });
+    expect(stdout.lines()).toEqual(["mkdocs config already up to date — nothing to do"]);
+  });
+
+  test("only the file that was hand-deleted is recreated — the untouched sibling is left alone", () => {
+    scaffold(["mkdocs"]);
+    const yamlBefore = readFileSync(join(root, MKDOCS_CONFIG_REL_PATH), "utf8");
+    rmSync(join(root, TAGS_INDEX_REL_PATH));
+
+    const { code, result } = scaffold(["mkdocs"]);
+    expect(code).toBe(0);
+    expect(result.files).toEqual([{ path: TAGS_INDEX_REL_PATH, action: "created" }]);
+    expect(readFileSync(join(root, MKDOCS_CONFIG_REL_PATH), "utf8")).toBe(yamlBefore);
+    expect(existsSync(join(root, TAGS_INDEX_REL_PATH))).toBe(true);
+  });
+
+  test("a bare re-run under a DIFFERENT (later) clock is still a no-op — the on-disk timestamp is preserved, not re-stamped (LORE-263 follow-up)", () => {
+    // Regression: docs/tags.md embeds clock().toISOString() in its frontmatter. Before this fix,
+    // a bare re-run always stamped a FRESH timestamp, so a real re-run any time after the first
+    // (even a second later) regenerated different bytes purely from wall-clock drift and
+    // classifyExistingFile reported "differs" — hard-erroring exit 5 on a bundle the user never
+    // touched. This is the same-class bug LORE-263 exists to fix; a two-clock test is required
+    // because a same-clock re-run can pass even with the bug still present.
+    runScaffold({ root, output: JSON_CTX, args: ["mkdocs"], stdout: capture(), clock: FIXED_CLOCK });
+    const tagsBefore = readFileSync(join(root, TAGS_INDEX_REL_PATH), "utf8");
+    expect(tagsBefore).toContain("timestamp: 2026-07-11T12:00:00.000Z");
+
+    const stdout = capture();
+    const code = runScaffold({ root, output: JSON_CTX, args: ["mkdocs"], stdout, clock: SECOND_CLOCK });
+    const envelope = JSON.parse(stdout.text()) as { data: ScaffoldResult };
+    expect(code).toBe(0);
+    expect(envelope.data.files).toEqual([]);
+    // The on-disk file is untouched — still carrying the FIRST run's timestamp, not the second
+    // clock's, and not rewritten at all (byte-for-byte identical to before this second run).
+    expect(readFileSync(join(root, TAGS_INDEX_REL_PATH), "utf8")).toBe(tagsBefore);
+  });
+
+  test("a docs/tags.md with unparseable YAML frontmatter falls back to a fresh timestamp — still a clean conflict, not a crash", () => {
+    // preservedTagsTimestamp's own unparseable-YAML fallback: a malformed on-disk tags.md must
+    // never throw out of runScaffold entirely — it flows through to the ordinary "differs"
+    // collision path instead (with a fresh timestamp built into the plan, since there was nothing
+    // valid on disk to preserve).
+    scaffold(["mkdocs"]);
+    writeFileSync(join(root, TAGS_INDEX_REL_PATH), "---\ntitle: [unterminated\n---\nbody\n");
+    const yamlBefore = readFileSync(join(root, MKDOCS_CONFIG_REL_PATH), "utf8");
+
+    const err = expectError("conflict", () =>
+      runScaffold({ root, output: JSON_CTX, args: ["mkdocs"], stdout: capture(), clock: SECOND_CLOCK }),
+    );
+    expect(err.message).toContain(TAGS_INDEX_REL_PATH);
+    expect(err.message).not.toContain(MKDOCS_CONFIG_REL_PATH);
+    expect(readFileSync(join(root, MKDOCS_CONFIG_REL_PATH), "utf8")).toBe(yamlBefore);
+    expect(readFileSync(join(root, TAGS_INDEX_REL_PATH), "utf8")).toBe("---\ntitle: [unterminated\n---\nbody\n");
+  });
+});
+
+describe("lore scaffold mkdocs — never-silent-clobber (AC: user-owned, never re-overwritten)", () => {
+  test("a re-run over a HAND-MODIFIED config still refuses with a conflict (exit 5) and touches nothing", () => {
+    scaffold(["mkdocs"]);
+    writeFileSync(join(root, MKDOCS_CONFIG_REL_PATH), "site_name: hand-edited\n");
+    const tagsBefore = readFileSync(join(root, TAGS_INDEX_REL_PATH), "utf8");
+
+    // Re-run under a DIFFERENT (later) clock than the initial scaffold() above — not the same one
+    // (LORE-263 follow-up): with the on-disk timestamp now preserved by `preservedTagsTimestamp`,
+    // docs/tags.md's regenerated bytes match what's on disk regardless of clock drift, so this
+    // still isolates the hand-edit to mkdocs.yml as the only genuine collision, without relying on
+    // an injected clock that happens to equal the first run's.
+    const err = expectError("conflict", () =>
+      runScaffold({ root, output: JSON_CTX, args: ["mkdocs"], stdout: capture(), clock: SECOND_CLOCK }),
+    );
+    expect(err.message).toContain(MKDOCS_CONFIG_REL_PATH);
+    expect(err.message).not.toContain(TAGS_INDEX_REL_PATH); // tags.md itself is unchanged — not a collision
+    expect(err.hint).toContain("--force");
+    expect(readFileSync(join(root, MKDOCS_CONFIG_REL_PATH), "utf8")).toBe("site_name: hand-edited\n");
+    expect(readFileSync(join(root, TAGS_INDEX_REL_PATH), "utf8")).toBe(tagsBefore);
+  });
+
+  test("a genuine hand-edit to docs/tags.md ITSELF (under a different clock) still conflicts, naming only tags.md", () => {
+    // The mirror of the test above: this time mkdocs.yml is untouched and docs/tags.md is the
+    // hand-edited file, proving preservedTagsTimestamp's on-disk-timestamp reuse never masks a
+    // real edit to tags.md's own body/content — only a byte-identical regenerate (differing
+    // solely by an advancing clock) is treated as "nothing to do".
+    scaffold(["mkdocs"]);
+    writeFileSync(join(root, TAGS_INDEX_REL_PATH), "hand-edited body, not a valid regenerate\n");
+    const yamlBefore = readFileSync(join(root, MKDOCS_CONFIG_REL_PATH), "utf8");
+
+    const err = expectError("conflict", () =>
+      runScaffold({ root, output: JSON_CTX, args: ["mkdocs"], stdout: capture(), clock: SECOND_CLOCK }),
+    );
+    expect(err.message).toContain(TAGS_INDEX_REL_PATH);
+    expect(err.message).not.toContain(MKDOCS_CONFIG_REL_PATH);
+    expect(err.hint).toContain("--force");
+    expect(readFileSync(join(root, MKDOCS_CONFIG_REL_PATH), "utf8")).toBe(yamlBefore);
+    expect(readFileSync(join(root, TAGS_INDEX_REL_PATH), "utf8")).toBe("hand-edited body, not a valid regenerate\n");
   });
 
   test("a hand-authored mkdocs.yml alone (tags.md absent) still refuses without --force", () => {
@@ -178,6 +286,24 @@ describe("lore scaffold mkdocs — never-silent-clobber (AC: user-owned, never r
       { path: MKDOCS_CONFIG_REL_PATH, action: "updated" },
       { path: TAGS_INDEX_REL_PATH, action: "updated" },
     ]);
+  });
+
+  test("a structural directory blocker AND a pre-existing file together yield a hint conveying both remedies (LORE-238)", () => {
+    // MKDOCS_CONFIG_REL_PATH ("mkdocs.yml") is a top-level file, independent of docs/, so it can
+    // pre-exist as a genuine file collision at the same time docs/ is blocked by a plain file —
+    // exercising AC#3's "both" case in one run.
+    writeFileSync(join(root, "docs"), "not a directory\n");
+    writeFileSync(join(root, MKDOCS_CONFIG_REL_PATH), "site_name: hand-authored\n");
+    const err = expectError("conflict", () =>
+      runScaffold({ root, output: JSON_CTX, args: ["mkdocs"], stdout: capture() }),
+    );
+    expect(err.message).toContain("docs");
+    expect(err.message).toContain(MKDOCS_CONFIG_REL_PATH);
+    // Both remedies must be conveyed: --force for the file, remove/rename for the dir-blocker.
+    expect(err.hint).toContain("--force");
+    expect(err.hint).toContain("remove or rename");
+    expect(readFileSync(join(root, "docs"), "utf8")).toBe("not a directory\n");
+    expect(readFileSync(join(root, MKDOCS_CONFIG_REL_PATH), "utf8")).toBe("site_name: hand-authored\n");
   });
 
   test("--force on a fresh repo still reports `created` (not `updated`)", () => {
@@ -276,6 +402,59 @@ describe("lore scaffold mkdocs — never-silent-clobber (AC: user-owned, never r
   });
 });
 
+describe("lore scaffold mkdocs — refuses to write through a symlink (LORE-76)", () => {
+  let outside: string;
+
+  beforeEach(() => {
+    outside = mkdtempSync(join(tmpdir(), "lore-scaffold-outside-"));
+  });
+  afterEach(() => {
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  test("a symlinked docs/ ancestor directory is refused, not followed — nothing is written outside the repo", () => {
+    // docs/ doesn't need to pre-exist for buildMkdocsScaffold's plan, but the plan's OWN dirs list
+    // includes it (see the fresh-scaffold test above) — a symlink standing in for it is exactly the
+    // "symlinked ancestor" case AC1 names, since docs/tags.md's write walks through it.
+    symlinkSync(outside, join(root, "docs"));
+    const err = expectError("conflict", () =>
+      runScaffold({ root, output: JSON_CTX, args: ["mkdocs"], stdout: capture() }),
+    );
+    expect(err.message).toContain("docs");
+    expect(err.message.toLowerCase()).toContain("symlink");
+    // Confirms the guard, not a coincidental EEXIST, is what stopped this: without LORE-76's fix,
+    // `mkdirSync(docs, {recursive:true})` + a `docs/tags.md` write would transparently follow the
+    // symlink and land the generated file inside `outside` (the task's own live repro).
+    expect(existsSync(join(outside, "tags.md"))).toBe(false);
+    expect(existsSync(join(root, "mkdocs.yml"))).toBe(false); // all-or-nothing: nothing else written either
+  });
+
+  test("a symlinked mkdocs.yml final target is refused under --force — the outside file's content is untouched", () => {
+    const outsideFile = join(outside, "mkdocs.yml");
+    writeFileSync(outsideFile, "SENSITIVE PRE-EXISTING CONTENT — must never be overwritten\n");
+    symlinkSync(outsideFile, join(root, MKDOCS_CONFIG_REL_PATH));
+    const err = expectError("conflict", () =>
+      runScaffold({ root, output: JSON_CTX, args: ["mkdocs", "--force"], stdout: capture() }),
+    );
+    expect(err.message).toContain(MKDOCS_CONFIG_REL_PATH);
+    expect(err.message.toLowerCase()).toContain("symlink");
+    // The task's own live repro: without LORE-76's fix, `--force`'s overwrite branch follows the
+    // symlink (existsSync/readFileSync/writeFileSync all resolve through it) and clobbers whatever
+    // real file the symlink points at, anywhere on disk.
+    expect(readFileSync(outsideFile, "utf8")).toBe("SENSITIVE PRE-EXISTING CONTENT — must never be overwritten\n");
+    expect(existsSync(join(root, TAGS_INDEX_REL_PATH))).toBe(false); // all-or-nothing: nothing else written
+  });
+
+  test("a symlinked ancestor is refused even under --force (the guard runs regardless of the write discipline)", () => {
+    symlinkSync(outside, join(root, "docs"));
+    const err = expectError("conflict", () =>
+      runScaffold({ root, output: JSON_CTX, args: ["mkdocs", "--force"], stdout: capture() }),
+    );
+    expect(err.message.toLowerCase()).toContain("symlink");
+    expect(existsSync(join(outside, "tags.md"))).toBe(false);
+  });
+});
+
 describe("core/consumer-scaffold — buildDocusaurusScaffold (pure)", () => {
   test("is deterministic: identical options produce identical bytes", () => {
     const opts = { timestamp: "2026-07-11T12:00:00.000Z", siteName: "lore" };
@@ -357,15 +536,33 @@ describe("lore scaffold docusaurus — fresh scaffold", () => {
   });
 });
 
-describe("lore scaffold docusaurus — never-silent-clobber (AC: user-owned, never re-overwritten)", () => {
-  test("a re-run without --force refuses with a conflict (exit 5) and touches nothing", () => {
+describe("lore scaffold docusaurus — idempotent when unchanged (LORE-263)", () => {
+  test("a bare re-run over byte-identical on-disk config is a no-op: exit 0, writes nothing, 'nothing to do'", () => {
     scaffold(["docusaurus"]);
+    const configBefore = readFileSync(join(root, DOCUSAURUS_CONFIG_REL_PATH), "utf8");
+
+    const { code, result } = scaffold(["docusaurus"]);
+    expect(code).toBe(0);
+    expect(result.files).toEqual([]);
+    expect(readFileSync(join(root, DOCUSAURUS_CONFIG_REL_PATH), "utf8")).toBe(configBefore);
+
+    const stdout = capture();
+    runScaffold({ root, output: PLAIN_CTX, args: ["docusaurus"], stdout, clock: FIXED_CLOCK });
+    expect(stdout.lines()).toEqual(["docusaurus config already up to date — nothing to do"]);
+  });
+});
+
+describe("lore scaffold docusaurus — never-silent-clobber (AC: user-owned, never re-overwritten)", () => {
+  test("a re-run over a HAND-MODIFIED config still refuses with a conflict (exit 5) and touches nothing", () => {
+    scaffold(["docusaurus"]);
+    writeFileSync(join(root, WEBSITE_PACKAGE_JSON_REL_PATH), '{"name":"hand-edited"}\n');
     const configBefore = readFileSync(join(root, DOCUSAURUS_CONFIG_REL_PATH), "utf8");
 
     const err = expectError("conflict", () =>
       runScaffold({ root, output: JSON_CTX, args: ["docusaurus"], stdout: capture() }),
     );
     expect(err.message).toContain(WEBSITE_PACKAGE_JSON_REL_PATH);
+    expect(err.message).not.toContain(DOCUSAURUS_CONFIG_REL_PATH); // unchanged — not a collision
     expect(err.hint).toContain("--force");
     expect(readFileSync(join(root, DOCUSAURUS_CONFIG_REL_PATH), "utf8")).toBe(configBefore);
   });
@@ -387,7 +584,23 @@ describe("lore scaffold docusaurus — never-silent-clobber (AC: user-owned, nev
       runScaffold({ root, output: JSON_CTX, args: ["docusaurus"], stdout: capture() }),
     );
     expect(err.message).toContain("website");
-    expect(err.hint).toContain("--force");
+    // A structural directory blocker is NOT fixed by --force (LORE-238): the hint must not claim
+    // it, and must instead direct the user to remove/rename the non-directory entry.
+    expect(err.hint).not.toContain("--force");
+    expect(err.hint).toContain("remove or rename");
+    expect(readFileSync(join(root, "website"), "utf8")).toBe("not a directory\n");
+  });
+
+  test("--force does NOT fix a structural directory blocker and still fails with a conflict (LORE-238)", () => {
+    // Regression: --force skips this command's own preflight entirely, so a plain file occupying
+    // website/ is only caught later by writeAllOrRollback -> ensureDir's mkdirSync, which throws
+    // EEXIST on the same entry — remapped to a second `conflict`, never a successful overwrite.
+    // This is the reason the preflight hint above must never tell the user --force will help.
+    writeFileSync(join(root, "website"), "not a directory\n");
+    const err = expectError("conflict", () =>
+      runScaffold({ root, output: JSON_CTX, args: ["docusaurus", "--force"], stdout: capture() }),
+    );
+    expect(err.type).toBe("conflict");
     expect(readFileSync(join(root, "website"), "utf8")).toBe("not a directory\n");
   });
 });
@@ -423,13 +636,13 @@ describe("core/consumer-scaffold — buildObsidianScaffold (pure)", () => {
     expect(buildObsidianScaffold(opts)).toEqual(buildObsidianScaffold(opts));
   });
 
-  test("plans exactly docs/.obsidian/app.json, and carries the Files & Links guidance notes", () => {
+  test("plans exactly docs/.obsidian/app.json and docs/.obsidian/.gitignore, and carries the Files & Links guidance notes", () => {
     const plan = buildObsidianScaffold({ timestamp: "2026-07-11T12:00:00.000Z", siteName: "lore" });
     // dirs lists every ancestor level (parent before child), matching buildScaffold's own
     // pattern (e.g. ".lore" and ".lore/schemas" as separate entries) — so writeAllOrRollback
     // tracks the implicitly-created "docs" for cleanup, not just the nested ".obsidian" leaf.
     expect(plan.dirs).toEqual(["docs", "docs/.obsidian"]);
-    expect(plan.files.map((f) => f.path)).toEqual([OBSIDIAN_APP_JSON_REL_PATH]);
+    expect(plan.files.map((f) => f.path)).toEqual([OBSIDIAN_APP_JSON_REL_PATH, OBSIDIAN_GITIGNORE_REL_PATH]);
     expect(plan.notes).toEqual(OBSIDIAN_GUIDANCE_NOTES);
   });
 
@@ -443,6 +656,20 @@ describe("core/consumer-scaffold — buildObsidianScaffold (pure)", () => {
       newLinkFormat: "relative",
       alwaysUpdateLinks: true,
     });
+  });
+
+  test("gitignore excludes everything under docs/.obsidian/ except itself and app.json (LORE-166; consumer-compatibility.md §3.2)", () => {
+    // Regression: buildObsidianScaffold used to emit no `.gitignore` at all, despite
+    // consumer-compatibility.md §3.2 documenting one — Obsidian's `workspace*.json`/cache files
+    // were left untracked-but-not-ignored in a consumer's project. The exclude-all-except pattern
+    // (not an enumerated `workspace*.json`/cache list) is a strict superset of that literal
+    // wording, matching the pattern this repo's own root .gitignore hand-maintains for its
+    // own docs/.obsidian/.
+    const plan = buildObsidianScaffold({ timestamp: "2026-07-11T12:00:00.000Z", siteName: "lore" });
+    const raw = plan.files.find((f) => f.path === OBSIDIAN_GITIGNORE_REL_PATH)?.contents ?? "";
+    expect(raw.endsWith("\n")).toBe(true);
+    const patternLines = raw.split("\n").filter((line) => line !== "" && !line.startsWith("#"));
+    expect(patternLines).toEqual(["*", "!.gitignore", "!app.json"]);
   });
 
   test("notes is frozen, so a downstream mutation attempt cannot corrupt the shared constant across calls", () => {
@@ -459,41 +686,71 @@ describe("core/consumer-scaffold — buildObsidianScaffold (pure)", () => {
 });
 
 describe("lore scaffold obsidian — fresh scaffold", () => {
-  test("creates the file and exits 0", () => {
+  test("creates both files and exits 0", () => {
     const { code, result } = scaffold(["obsidian"]);
     expect(code).toBe(0);
     expect(result.target).toBe("obsidian");
     expect(result.force).toBe(false);
-    expect(result.files).toEqual([{ path: OBSIDIAN_APP_JSON_REL_PATH, action: "created" }]);
+    expect(result.files).toEqual([
+      { path: OBSIDIAN_APP_JSON_REL_PATH, action: "created" },
+      { path: OBSIDIAN_GITIGNORE_REL_PATH, action: "created" },
+    ]);
     expect(existsSync(join(root, OBSIDIAN_APP_JSON_REL_PATH))).toBe(true);
+    expect(existsSync(join(root, OBSIDIAN_GITIGNORE_REL_PATH))).toBe(true);
   });
 
   test("creates the docs/.obsidian directory when the bundle was never initialized", () => {
     expect(existsSync(join(root, "docs"))).toBe(false);
     scaffold(["obsidian"]);
     expect(existsSync(join(root, OBSIDIAN_APP_JSON_REL_PATH))).toBe(true);
+    expect(existsSync(join(root, OBSIDIAN_GITIGNORE_REL_PATH))).toBe(true);
+  });
+});
+
+describe("lore scaffold obsidian — idempotent when unchanged (LORE-263)", () => {
+  test("a bare re-run over byte-identical on-disk config is a no-op: exit 0, writes nothing, 'nothing to do'", () => {
+    scaffold(["obsidian"]);
+    const beforeAppJson = readFileSync(join(root, OBSIDIAN_APP_JSON_REL_PATH), "utf8");
+    const beforeGitignore = readFileSync(join(root, OBSIDIAN_GITIGNORE_REL_PATH), "utf8");
+
+    const { code, result } = scaffold(["obsidian"]);
+    expect(code).toBe(0);
+    expect(result.files).toEqual([]);
+    expect(readFileSync(join(root, OBSIDIAN_APP_JSON_REL_PATH), "utf8")).toBe(beforeAppJson);
+    expect(readFileSync(join(root, OBSIDIAN_GITIGNORE_REL_PATH), "utf8")).toBe(beforeGitignore);
+
+    // Guidance notes are still worth printing even though nothing was written this run.
+    const stdout = capture();
+    runScaffold({ root, output: PLAIN_CTX, args: ["obsidian"], stdout, clock: FIXED_CLOCK });
+    expect(stdout.lines()).toEqual(["obsidian config already up to date — nothing to do", ...OBSIDIAN_GUIDANCE_NOTES]);
   });
 });
 
 describe("lore scaffold obsidian — never-silent-clobber (AC: user-owned, never re-overwritten)", () => {
-  test("a re-run without --force refuses with a conflict (exit 5) and touches nothing", () => {
+  test("a re-run over a HAND-MODIFIED config still refuses with a conflict (exit 5) and touches nothing", () => {
     scaffold(["obsidian"]);
-    const before = readFileSync(join(root, OBSIDIAN_APP_JSON_REL_PATH), "utf8");
+    writeFileSync(join(root, OBSIDIAN_APP_JSON_REL_PATH), '{"useMarkdownLinks":false}\n');
+    const beforeGitignore = readFileSync(join(root, OBSIDIAN_GITIGNORE_REL_PATH), "utf8");
 
     const err = expectError("conflict", () =>
       runScaffold({ root, output: JSON_CTX, args: ["obsidian"], stdout: capture() }),
     );
     expect(err.message).toContain(OBSIDIAN_APP_JSON_REL_PATH);
+    expect(err.message).not.toContain(OBSIDIAN_GITIGNORE_REL_PATH); // unchanged — not a collision
     expect(err.hint).toContain("--force");
-    expect(readFileSync(join(root, OBSIDIAN_APP_JSON_REL_PATH), "utf8")).toBe(before);
+    expect(readFileSync(join(root, OBSIDIAN_APP_JSON_REL_PATH), "utf8")).toBe('{"useMarkdownLinks":false}\n');
+    expect(readFileSync(join(root, OBSIDIAN_GITIGNORE_REL_PATH), "utf8")).toBe(beforeGitignore);
   });
 
-  test("--force overwrites the existing file and reports `updated`", () => {
+  test("--force overwrites both existing files and reports `updated`", () => {
     scaffold(["obsidian"]);
     const { code, result } = scaffold(["obsidian", "--force"]);
     expect(code).toBe(0);
     expect(result.force).toBe(true);
-    expect(result.files).toEqual([{ path: OBSIDIAN_APP_JSON_REL_PATH, action: "updated" }]);
+    expect(result.files).toEqual([
+      { path: OBSIDIAN_APP_JSON_REL_PATH, action: "updated" },
+      { path: OBSIDIAN_GITIGNORE_REL_PATH, action: "updated" },
+    ]);
   });
 
   test("a pre-existing non-directory file occupying docs/ is reported as a friendly conflict, not a deep crash (review #2)", () => {
@@ -509,7 +766,22 @@ describe("lore scaffold obsidian — never-silent-clobber (AC: user-owned, never
       runScaffold({ root, output: JSON_CTX, args: ["obsidian"], stdout: capture() }),
     );
     expect(err.message).toContain("docs");
-    expect(err.hint).toContain("--force");
+    // A structural directory blocker is NOT fixed by --force (LORE-238): the hint must not claim
+    // it, and must instead direct the user to remove/rename the non-directory entry.
+    expect(err.hint).not.toContain("--force");
+    expect(err.hint).toContain("remove or rename");
+    expect(readFileSync(join(root, "docs"), "utf8")).toBe("not a directory\n");
+  });
+
+  test("--force does NOT fix a structural directory blocker and still fails with a conflict (LORE-238)", () => {
+    // Regression: --force skips this command's own preflight entirely, so a plain file occupying
+    // docs/ is only caught later by writeAllOrRollback -> ensureDir's mkdirSync, which throws
+    // EEXIST on the same entry — remapped to a second `conflict`, never a successful overwrite.
+    writeFileSync(join(root, "docs"), "not a directory\n");
+    const err = expectError("conflict", () =>
+      runScaffold({ root, output: JSON_CTX, args: ["obsidian", "--force"], stdout: capture() }),
+    );
+    expect(err.type).toBe("conflict");
     expect(readFileSync(join(root, "docs"), "utf8")).toBe("not a directory\n");
   });
 
@@ -546,7 +818,8 @@ describe("lore scaffold obsidian — output rendering", () => {
     // prints the notes before or interleaved with the file/summary lines fails this test.
     expect(stdout.lines()).toEqual([
       `created ${OBSIDIAN_APP_JSON_REL_PATH}`,
-      "scaffolded obsidian config (1 file)",
+      `created ${OBSIDIAN_GITIGNORE_REL_PATH}`,
+      "scaffolded obsidian config (2 files)",
       ...OBSIDIAN_GUIDANCE_NOTES,
     ]);
   });

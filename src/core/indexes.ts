@@ -52,9 +52,10 @@
  */
 
 import { posix } from "node:path";
-import { singleLine } from "../errors";
-import type { BundleGraph } from "./bundle";
+import { LoreError, singleLine } from "../errors";
+import { type BundleGraph, frontmatterScalar } from "./bundle";
 import type { Concept } from "./concept";
+import { encodePathSegments } from "./links";
 import { compareCodeUnits } from "./order";
 
 /** The reserved index file name — the per-directory navigable hub (one per dir, plus the bundle root). */
@@ -121,12 +122,7 @@ export function generateIndexes(g: BundleGraph, options: GenerateIndexesOptions 
 
   // Every directory that needs an index: each dir holding a concept, plus all of its ancestors up
   // to the root (so an intermediate dir with concepts only deeper still gets a hub that links down).
-  const indexDirs = new Set<string>([""]);
-  for (const dir of conceptsByDir.keys()) {
-    for (const ancestor of ancestorsInclusive(dir)) {
-      indexDirs.add(ancestor);
-    }
-  }
+  const indexDirs = liveIndexDirs(g);
 
   // Immediate child directories of each index dir (only dirs that themselves get an index).
   const childDirs = new Map<string, string[]>();
@@ -151,6 +147,57 @@ export function generateIndexes(g: BundleGraph, options: GenerateIndexesOptions 
     result.set(indexPath, render(existing.get(indexPath), block, dir));
   }
   return result;
+}
+
+/**
+ * Every directory that needs a **live** index for `g`: the bundle root, every directory holding a
+ * concept directly (excluding the reserved `index.md`/`log.md`), plus each such directory's
+ * ancestors up to the root — so an intermediate directory with concepts only deeper still counts as
+ * live (it gets a hub that links down to them). This is exactly {@link generateIndexes}'s own
+ * `indexDirs` derivation, factored out so {@link orphanedIndexPaths} can compare against the same
+ * live set without duplicating (and risking drift from) the ancestor-walk logic.
+ */
+function liveIndexDirs(g: BundleGraph): Set<string> {
+  const dirs = new Set<string>([""]);
+  for (const concept of g.concepts.values()) {
+    if (RESERVED_FILES.has(posix.basename(concept.path))) {
+      continue;
+    }
+    for (const ancestor of ancestorsInclusive(dirOf(concept.path))) {
+      dirs.add(ancestor);
+    }
+  }
+  return dirs;
+}
+
+/**
+ * The bundle-relative paths of every `index.md` present in `existing` whose directory {@link
+ * generateIndexes} did **not** regenerate for `g` — a directory holding no concept, directly or via
+ * any descendant (LORE-150). This is the stale-index detection `generateIndexes` itself never
+ * performed: it derives `indexDirs` solely from the live graph and simply never emits an entry for a
+ * directory outside that set, so a caller iterating only its *returned* map has no way to tell "this
+ * on-disk index was never regenerated because its directory is orphaned" apart from "this on-disk
+ * index was never regenerated because nothing has changed" — both look identical from that map
+ * alone. Diffing `existing`'s keys against the live set here makes that distinction explicit and
+ * queryable, so `lore sync` (the one caller with a `existing` map sourced from disk) can report an
+ * orphan instead of silently leaving it untouched and unmentioned.
+ *
+ * `generateIndexes`'s own signature and behavior are deliberately unchanged (its returned map is
+ * still keyed only by live directories, exactly as before) — this is a separate, additive query so
+ * every existing caller (`lore rename`'s `mergeIndexWrites`, which has its own established
+ * empty-listing strategy for a directory a rename itself empties) keeps compiling and behaving
+ * identically; only `lore sync` needs to ask this new question.
+ *
+ * Pure and total, sorted with {@link compareCodeUnits} (matching {@link generateIndexes}'s own
+ * ordering) so a caller's report is byte-stable regardless of `existing`'s iteration order.
+ */
+export function orphanedIndexPaths(g: BundleGraph, existing: ReadonlyMap<string, string>): string[] {
+  const live = liveIndexDirs(g);
+  const livePaths = new Set<string>();
+  for (const dir of live) {
+    livePaths.add(dir === "" ? INDEX_FILE : `${dir}/${INDEX_FILE}`);
+  }
+  return [...existing.keys()].filter((path) => !livePaths.has(path)).sort(compareCodeUnits);
 }
 
 /**
@@ -183,6 +230,12 @@ function buildListing(concepts: readonly Concept[], childDirSet: readonly string
  *
  * - **Single-line** ({@link singleLine}, as `log.ts` does for commit subjects) — a title carrying a
  *   newline (a YAML block scalar) would otherwise split the entry out of the list.
+ * - **Escape `\`** — done *first*, before the `[`/`]` escape below. A pre-existing literal backslash
+ *   immediately before a bracket (e.g. a title `Plan \]B\[`) would otherwise combine with the
+ *   bracket-escape's inserted backslash into CommonMark's `\\` (an escaped backslash) followed by a
+ *   live, link-syntax bracket — shifting text into a real `[text](link)` boundary (same class of bug
+ *   as {@link cell}, LORE-154). Doubling backslashes first means the later step's own backslashes are
+ *   never mistaken for source content and never re-escaped.
  * - **Escape `[` / `]`** — an unbalanced bracket would truncate or break the `[text](link)` syntax,
  *   leaving the entry as literal text that links nowhere.
  * - **Neutralize HTML-comment sentinels** (`<!--` / `-->` → entities) — a title literally containing
@@ -193,22 +246,23 @@ function buildListing(concepts: readonly Concept[], childDirSet: readonly string
  */
 function linkText(title: string): string {
   return singleLine(title)
+    .replace(/\\/g, "\\\\")
     .replace(/[[\]]/g, (c) => `\\${c}`)
     .replace(/<!--/g, "&lt;!--")
     .replace(/-->/g, "--&gt;");
 }
 
 /**
- * A concept's display title: its frontmatter `title` when that is a non-empty string, else the
- * file's base name (the id's last segment). Falling back to the file name keeps the listing total
- * for a title-less or unknown-type concept (OKF tolerance) without inventing prose.
+ * A concept's display title: its frontmatter `title` via the shared {@link frontmatterScalar}
+ * (a non-empty string verbatim, or a finite number/boolean coerced to its string form) when that
+ * yields a value, else the file's base name (the id's last segment). Falling back to the file
+ * name keeps the listing total for a title-less or unknown-type concept (OKF tolerance) without
+ * inventing prose. Sharing `frontmatterScalar` keeps this in lockstep with `graph.ts`/`query.ts`/
+ * `context.ts`, so the same concept never shows one title in the generated index and another
+ * everywhere else (LORE-244).
  */
 function conceptTitle(concept: Concept): string {
-  const title = concept.frontmatter.title;
-  if (typeof title === "string" && title.trim() !== "") {
-    return title.trim();
-  }
-  return posix.basename(concept.path, ".md");
+  return frontmatterScalar(concept.frontmatter.title) ?? posix.basename(concept.path, ".md");
 }
 
 /**
@@ -249,50 +303,99 @@ function render(current: string | undefined, block: string, dir: string): string
 
 /**
  * Locate the managed block in `content` as a `[start, end)` byte range, or `null` when no begin
- * marker is present (an unmanaged file the caller appends to). The range runs from the **first**
- * begin marker to the **last** end marker after it, and excludes the end marker's trailing newline
- * (the caller's `slice(end)` preserves it and any prose below). Two deliberate choices make
- * regeneration converge to a byte-level fixpoint (AC#1) even from a corrupted file:
- *
- * - **first-begin → last-end** collapses *duplicate* well-formed blocks (a 3-way-merge artifact)
- *   into the single regenerated block, so a stale second block can't survive and silently pass the
- *   `lore check` drift gate.
- * - **begin with no following end → to end-of-file**: a *truncated* region (end marker lost to a
- *   merge/interrupted write) is rewritten whole rather than leaving an orphan begin that the next
- *   run would pair with the freshly-appended end (which would make one sync never converge).
- *
- * The unavoidable cost of literal markers (no AST): a begin/end the *author* wrote in prose — e.g. a
- * doc demonstrating this very format — is treated as a real boundary, so content between an authored
- * marker and a real one is collapsed. That ambiguity is what LORE-22's mdast-based managed-block
- * resolves; here it is a documented limitation of the string splice.
+ * marker is present (an unmanaged file the caller appends to). See {@link locateManagedBlock} for
+ * the full contract, including the malformed-layout cases that are a fail-loud `validation` error
+ * (LORE-86).
  */
 function blockBounds(content: string): { start: number; end: number } | null {
   return locateManagedBlock(content, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END);
 }
 
 /**
- * The generic first-begin → last-end block locator behind {@link blockBounds}, exported as the **one**
- * rule for where a lore-managed region lives in raw text — `[start, end)` spanning the first `begin`
- * marker to the last `end` marker (markers included), or to end-of-file when no `end` follows the
- * begin (a truncated region), or `null` when no `begin` is present.
+ * The generic managed-block locator behind {@link blockBounds}, exported as the **one** rule for
+ * where a lore-managed region lives in raw text — `[start, end)` spanning the `begin` marker to the
+ * `end` marker (markers included), or `null` when no `begin` is present (an unmanaged file the
+ * caller appends to).
  *
- * Exported so every consumer that must agree on a managed region's extent uses the *same* arithmetic:
- * index regeneration ({@link generateIndexes}) splices it, and `lore replace` (LORE-35) protects it.
- * Sharing this is what keeps `replace` from editing a span that `lore sync` would later regenerate —
- * the first-begin → last-end collapse (which folds a duplicated/merge-artifact block into one region)
- * must be identical on both sides, or a refactor could land in bytes `sync` silently reverts.
+ * A well-formed file carries exactly one `begin` and one `end`, with the `end` at or after the
+ * `begin`. Anything else is a **malformed layout** — a duplicated pair (both markers appear more
+ * than once, e.g. a 3-way-merge artifact) or an unmatched `begin` (no `end` after it, e.g. an
+ * interrupted write, or an `end` marker that precedes it) — and is a fail-loud `validation`
+ * {@link LoreError} (exit 6) rather than a guessed range. This module previously collapsed a
+ * duplicated pair to its first-begin→last-end span and extended an unmatched begin to end-of-file,
+ * both to keep regeneration converging to a byte-level fixpoint even from a corrupted file — but a
+ * duplicated pair's collapse silently deleted any hand-authored prose sitting between the two
+ * blocks (LORE-86), and a guessed range is exactly the ambiguity {@link findMarkers} in
+ * `managed-block.ts` already refuses for the sibling `lore:tasks` block. This function now matches
+ * that same fail-loud contract instead of guessing.
+ *
+ * Exported so every consumer that must agree on a managed region's extent (and its validation) uses
+ * the *same* rule: index regeneration ({@link generateIndexes}) splices it, and `lore replace`
+ * (LORE-35) protects it. Sharing this is what keeps `replace` from editing a span that `lore sync`
+ * would later regenerate.
+ *
+ * The unavoidable cost of literal markers (no AST): a begin/end the *author* wrote in prose — e.g. a
+ * doc demonstrating this very format — is treated as a real marker occurrence, contributing to the
+ * duplicate count above. That ambiguity is what LORE-22's mdast-based `managed-block.ts` resolves
+ * structurally; here it remains a documented limitation of the string splice.
  */
 export function locateManagedBlock(content: string, begin: string, end: string): { start: number; end: number } | null {
-  const start = content.indexOf(begin);
-  if (start === -1) {
-    return null;
+  const begins = allIndicesOf(content, begin);
+  if (begins.length === 0) {
+    return null; // no managed block yet — the caller appends one
   }
-  const lastEnd = content.lastIndexOf(end);
-  // No end marker after the begin (truncated region): the region runs to end-of-file.
-  if (lastEnd < start + begin.length) {
-    return { start, end: content.length };
+  const ends = allIndicesOf(content, end);
+  if (begins.length > 1 || ends.length > 1) {
+    throw managedBlockError(
+      begin,
+      end,
+      `the managed block is duplicated (found ${begins.length} begin and ${ends.length} end markers; expected exactly one of each)`,
+      { begins: begins.length, ends: ends.length },
+    );
   }
-  return { start, end: lastEnd + end.length };
+  const start = begins[0] as number;
+  if (ends.length === 0) {
+    throw managedBlockError(begin, end, "the begin marker has no matching end marker after it", {
+      begins: begins.length,
+      ends: ends.length,
+    });
+  }
+  const endStart = ends[0] as number;
+  if (endStart < start + begin.length) {
+    throw managedBlockError(begin, end, "the markers are crossed (the end marker precedes the begin marker)", {
+      begin: start,
+      end: endStart,
+    });
+  }
+  return { start, end: endStart + end.length };
+}
+
+/** Every (non-overlapping) occurrence of `marker` in `content`, in ascending order. */
+function allIndicesOf(content: string, marker: string): number[] {
+  const indices: number[] = [];
+  let from = 0;
+  for (;;) {
+    const at = content.indexOf(marker, from);
+    if (at === -1) {
+      return indices;
+    }
+    indices.push(at);
+    from = at + marker.length;
+  }
+}
+
+/**
+ * Build the fail-loud "malformed managed-block markers" error {@link locateManagedBlock} throws
+ * (`validation`, exit 6) — the same category and shape `managed-block.ts`'s marker validation uses
+ * for the sibling `lore:tasks` block, so both engines refuse to guess in the same voice.
+ */
+function managedBlockError(begin: string, end: string, reason: string, input: Record<string, unknown>): LoreError {
+  return new LoreError(
+    "validation",
+    `cannot locate the managed block bounded by \`${begin}\` / \`${end}\`: ${reason}`,
+    `place exactly one \`${begin}\` and one \`${end}\` on their own lines, in that order`,
+    input,
+  );
 }
 
 /** The synthesized heading for a brand-new index: the directory's base name, or `index` for the root. */
@@ -330,27 +433,4 @@ function ancestorsInclusive(dir: string): string[] {
   }
   chain.push("");
   return chain;
-}
-
-/**
- * Percent-encode each `/`-separated segment of a relative path for a portable markdown link
- * destination (relative, URL-encoded, `.md`-suffixed, no leading slash — ADR-0010).
- * `encodeURIComponent` leaves `! ' ( ) *` raw, and a raw `)` would truncate the destination on
- * CommonMark/MkDocs, so those five are additionally escaped — matching links.ts's `encodePathSegments`
- * exactly (LORE-28).
- *
- * TODO(LORE-28): once PR #19 lands on `dev`, delete this and import `encodePathSegments` from
- * `./links` so the encoder has a single home and can never drift. Kept as a faithful copy here only
- * because `links.ts` is not yet on `dev` and this module must build off `dev` (LORE-29 branch).
- */
-function encodePathSegments(path: string): string {
-  return path
-    .split("/")
-    .map((segment) => encodeURIComponent(segment).replace(/[!'()*]/g, escapePercent))
-    .join("/");
-}
-
-/** Percent-escape one character left raw by `encodeURIComponent` (`! ' ( ) *`), uppercase hex. */
-function escapePercent(c: string): string {
-  return `%${c.charCodeAt(0).toString(16).toUpperCase()}`;
 }

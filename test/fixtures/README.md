@@ -1,6 +1,11 @@
 # Test fixtures (LORE-13)
 
-Two committed fixture sets used by the golden-fixture suites.
+Committed fixture sets used by the golden-fixture suites.
+
+## `snapshot/` — retained projection history
+
+`v1.json` contains the canonical before/after retained facts shared by snapshot comparison,
+provenance, CLI, and offline explorer conformance tests.
 
 ## `okf-bundle/` — sample OKF bundle (AC#1)
 
@@ -20,18 +25,20 @@ the repo never scan them.
 
 ## `backlog-json/` — Backlog.md `--json` goldens (AC#2)
 
-Real `{schemaVersion, kind, data}` envelopes captured from the forked, `--json`-capable Backlog.md
-(`jeremy-newhouse/Backlog.md@tasks/back-510-json-output`) — one per kind (`task`, `taskList`,
-`searchResult`). `test/backlog-json-golden.test.ts` locks them to the schema of record
+Real `{schemaVersion, kind, data}` envelopes captured from upstream, `--json`-capable Backlog.md
+(`MrLesk/Backlog.md`, PR #790, published in the `backlog.md` version recorded in
+`docker/e2e/Dockerfile`'s `BACKLOG_VERSION`) — one per kind (`task-view`, `task-list`, `search`).
+`test/backlog-json-golden.test.ts` locks them to the schema of record
 ([`docs/reference/backlog-json-schema.md`](../../docs/reference/backlog-json-schema.md)) and asserts
 they stay in canonical form.
 
-**Do not hand-edit.** Regenerate with the recorder (which needs the fork CLI, not a compiled
-binary — `bun <fork>/src/cli.ts` works even on the external volume):
+**Do not hand-edit.** Regenerate with the recorder (needs a `backlog` binary on PATH at or past the
+version pinned in `docker/e2e/Dockerfile`, e.g. `npm install -g backlog.md@1.49.1`):
 
 ```sh
-LORE_BACKLOG_FORK_CLI=~/repos/Backlog.md/src/cli.ts bun test/support/record-backlog-goldens.ts
+bun test/support/record-backlog-goldens.ts
 ```
 
-The recorder redacts the host-specific absolute `filePath` to `{REPO}` and canonicalizes to 2-space
-JSON, so regeneration against the same backlog state is byte-identical.
+No redaction step is needed: unlike the retired fork's shape, upstream's envelope carries no
+absolute, host-specific field — `task view`'s `path` is already project-relative. The recorder
+canonicalizes to 2-space JSON, so regeneration against the same backlog state is byte-identical.

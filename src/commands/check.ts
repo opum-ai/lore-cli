@@ -26,37 +26,72 @@
  * even under `--strict`, ADR-0007) with its IO living here, never in pure `core/` (ADR-0014).
  */
 
+import { lookup as dnsLookup } from "node:dns/promises";
 import { statSync } from "node:fs";
 import { join, posix } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
-import { toRefList, walkFiles } from "../core/bundle";
+import { loadAgentProfiles, validateAgentProfileReferences } from "../core/agent-profile";
+import { loadBundle, toRefList, walkFiles } from "../core/bundle";
 import {
   type CheckFinding,
   type CheckInputFile,
   type CheckReport,
   checkBundle,
+  classifyAddress,
   collectExternalLinks,
   type ExternalLink,
+  isAddressLiteral,
   reconcileDriftFindings,
   tallySeverity,
 } from "../core/check";
 import { type Concept, parseConcept, tryReadFrontmatter } from "../core/concept";
+import { loadProfile, type Profile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
-import { ANSI, EXIT_CODES, EXIT_OK, ioError, LoreError, paint, WarningCollector, type Writer } from "../errors";
+import {
+  ANSI,
+  EXIT_CODES,
+  EXIT_OK,
+  ioError,
+  LoreError,
+  paint,
+  stripAnsiAndControls,
+  WarningCollector,
+  type Writer,
+} from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { readSource } from "./discover";
+import { parseCommandArgs } from "./args";
+import { canonicalIdentity, readSource } from "./discover";
 import { dedupeTaskIds, defaultAdapter } from "./link";
 import {
   gatherReconciliation,
   linkedConcepts,
+  mapWithConcurrency,
   type ReconcileConfig,
   resolveReconcileConfig,
   resolveTaskDetails,
   type TaskResolution,
 } from "./reconcile-shared";
 
-/** A minimal fetch — the global `fetch` satisfies it, and tests inject a deterministic fake. */
-export type FetchLike = (url: string, init?: { signal?: AbortSignal }) => Promise<{ ok: boolean; status: number }>;
+/**
+ * A minimal fetch — the global `fetch` satisfies it, and tests inject a deterministic fake.
+ * `redirect` (when passed `"manual"`) asks the implementation NOT to auto-follow a 3xx; the
+ * response then carries `location` (the raw `Location` header, if any) so the caller — LORE-71's
+ * SSRF guard — can re-validate the redirect's destination before deciding whether to follow it
+ * itself. Both are optional so every pre-existing fake (which only ever returns `{ ok, status }`
+ * and never redirects) still satisfies the type unchanged.
+ */
+export type FetchLike = (
+  url: string,
+  init?: { signal?: AbortSignal; redirect?: "manual" },
+) => Promise<{ ok: boolean; status: number; location?: string | null }>;
+
+/**
+ * Resolves a hostname to its IP address(es) — the injectable DNS seam LORE-71's SSRF guard uses
+ * to classify a URL's REAL destination before fetching it (a hostname alone reveals nothing; an
+ * attacker-controlled DNS record is exactly what needs checking). Defaults to real `node:dns`;
+ * tests inject a fake so a "this hostname resolves to a blocked address" case needs no live DNS.
+ */
+export type ResolveHost = (hostname: string) => Promise<readonly string[]>;
 
 /** Options for {@link runCheck}; `root`, the streams, and `fetch` are injectable for tests. */
 export interface CheckOptions {
@@ -64,7 +99,7 @@ export interface CheckOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `check`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -72,6 +107,8 @@ export interface CheckOptions {
   stderr?: Writer;
   /** The fetch used by `--external` liveness; defaults to the global `fetch`. Injected in tests so they touch no network. */
   fetch?: FetchLike;
+  /** DNS resolution for `--external` liveness's SSRF guard (LORE-71); defaults to real `node:dns`. Injected in tests so a blocked-hostname case needs no live DNS. */
+  resolveHost?: ResolveHost;
   /** The Backlog adapter for status/managed-block reconciliation; defaults to the real `backlog` binary on PATH. Only constructed when at least one discovered concept links a task. */
   adapter?: BacklogAdapter;
 }
@@ -105,12 +142,50 @@ interface CheckArgs {
  * error seam still catches them either way.
  *
  * Discovery advisories (a `.md` skipped behind a symlink, an unreadable sub-directory) are flushed
- * to stderr — never silently swallowed — but, like every advisory, do not change the exit code.
+ * to stderr immediately after discovery — before the scan phase even runs — so they survive even
+ * when `checkBundles` throws in the scan phase or reconciliation later rejects (LORE-191); never
+ * silently swallowed, but, like every advisory, do not change the exit code. The flush itself runs
+ * in a `finally` around `collectBundles` (LORE-197): `collectBundles` walks its bundle roots
+ * SEQUENTIALLY, feeding `advisories` as it goes, and a LATER root's `not_found`/`denied`/`usage`
+ * throw (or a late `readSource` throw) must not discard an EARLIER root's already-collected
+ * advisories — the `finally` guarantees the one flush still runs before that throw propagates.
  */
 export function runCheck(options: CheckOptions): number | Promise<number> {
   const parsed = parseCheckArgs(options.args);
+  // Loaded once, up front — mirrors `context.ts`/`graph.ts`'s own LORE-84 precedent of failing
+  // loud on a malformed profile before any other work runs. `collectBundles`'s file discovery
+  // below is a single repo (`options.root`) with possibly several bundle DIRECTORIES within it
+  // (`--external`/multi-path), never several separate repos with their own profiles, so one load
+  // covers every root this command can ever scan (LORE-89).
+  const profile = loadProfile({ root: options.root });
+  const agentProfiles = loadAgentProfiles(options.root);
+  if (agentProfiles.profiles.size > 0) {
+    validateAgentProfileReferences(agentProfiles, loadBundle(join(options.root, DOCS_DIR), { profile }));
+  }
   const advisories = new WarningCollector();
-  const bundles = collectBundles(options.root, parsed.paths, advisories);
+  let bundles: Bundle[];
+  try {
+    bundles = collectBundles(options.root, parsed.paths, advisories);
+  } finally {
+    // Every discovery-time advisory that COULD be collected by now already is — `collectBundles`'s
+    // own walk is the only source that ever feeds `advisories` (nothing past this point adds to
+    // it) — so flush once, right here, in a `finally` so it runs on BOTH the return path (before
+    // the scan phase below even starts: `checkBundles` is NOT guaranteed non-throwing — post-
+    // LORE-138 a real input, e.g. a `---toml` frontmatter fence, makes `bodyText` re-throw a plain
+    // `Error` out of the scan — and reconciliation further below can reject too) AND the throw path
+    // (a LATER bundle root's `not_found`/`denied`/`usage` failure inside `collectBundles` itself
+    // must not silently discard an EARLIER root's already-collected advisories — LORE-197, the one
+    // gap LORE-191 left open one grain earlier than the scan phase). `advisories.flush` is
+    // non-draining, so this must be the ONLY flush site for `advisories` — flushing it again later
+    // would re-emit every already-flushed line. This means stderr (advisories) is written BEFORE
+    // stdout (the report) — the opposite of this command's pre-LORE-27 order — deliberately: mirrors
+    // `sync.ts`'s own precedent (it flushes right after `loadBundle`, well before its own final
+    // `emit`), and "advisories survive a later throw" is a stronger guarantee to keep than "stdout
+    // precedes stderr" (already an unreliable assumption for any CLI merging two independently-
+    // buffered streams).
+    advisories.flush({ color: options.output.color, stderr: options.stderr });
+  }
+
   const baseReport = checkBundles(bundles);
 
   // Reuse the SAME already-read files (no second directory walk, no second read) to find which are
@@ -121,21 +196,10 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
   // isolates root failures from each other (an earlier version of this scan used a bare `.map()` that
   // let one root's throw abort every other root's scan too, discarding drift that was never even
   // computed — LORE-27 round 9). Cheap to check without any Backlog IO: `linkedConcepts` is pure.
-  const conceptBundleResults = bundles.map(tryConceptsForBundle);
+  const conceptBundleResults = bundles.map((bundle) => tryConceptsForBundle(bundle, profile));
   const needsReconciliation = conceptBundleResults.some(
     (result) => result.error !== null || linkedConcepts(result.concepts).length > 0,
   );
-
-  // Every discovery-time advisory is known by now — flush once, immediately, for every path
-  // uniformly (the scan above can no longer throw, so there is no special-cased branch to keep this
-  // in sync with): `advisories.flush` is non-draining, so flushing more than once would re-emit the
-  // same lines, and deferring risks losing them entirely if reconciliation later rejects. This means
-  // stderr (advisories) is now written BEFORE stdout (the report) — the opposite of this command's
-  // pre-LORE-27 order — deliberately: mirrors `sync.ts`'s own precedent (it flushes right after
-  // `loadBundle`, well before its own final `emit`), and "advisories survive a later rejection" is a
-  // stronger guarantee to keep than "stdout precedes stderr" (already an unreliable assumption for
-  // any CLI merging two independently-buffered streams).
-  advisories.flush({ color: options.output.color, stderr: options.stderr });
 
   if (!needsReconciliation && !parsed.external) {
     emit(reportRenderable(baseReport), options.output, options.stdout);
@@ -155,7 +219,11 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
 
   if (!parsed.external) {
     return driftPromise.then(({ findings, error }) => {
-      const report = mergeFindings(baseReport, findings);
+      // `complete: false` whenever this root's (or another root's) reconciliation errored mid-run
+      // (LORE-112) — the ONLY signal in the emitted report that distinguishes a partial-failure run
+      // from a genuinely clean one, since a short-circuited failure can still leave `errorCount === 0`
+      // (the failure happened before any finding was ever produced for it).
+      const report = { ...mergeFindings(baseReport, findings), complete: error === null };
       emit(reportRenderable(report), options.output, options.stdout);
       if (error !== null) {
         throw error;
@@ -172,12 +240,18 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
   // so serializing them would needlessly inflate `--external`'s wall-clock time on any bundle that
   // also reconciles.
   const worklist = bundles.flatMap((bundle) => prefixLinks(collectExternalLinks(bundle.files), bundle.label, multi));
-  const livenessPromise = probeLiveness(worklist, options.fetch ?? defaultFetch).then(
+  const livenessPromise = probeLiveness(
+    worklist,
+    options.fetch ?? defaultFetch,
+    options.resolveHost ?? defaultResolveHost,
+  ).then(
     (findings): LivenessResult => ({ ok: true, findings }),
     (err: unknown): LivenessResult => ({ ok: false, err }),
   );
   return Promise.all([driftPromise, livenessPromise]).then(([{ findings, error }, liveness]) => {
-    const report = mergeFindings(baseReport, findings);
+    // Same `complete: false` rule as the non-`--external` path above (LORE-112) — liveness's own
+    // best-effort outcome never affects this; only `driftPromise`'s error does.
+    const report = { ...mergeFindings(baseReport, findings), complete: error === null };
     if (liveness.ok) {
       emit(reportRenderable({ ...report, externalFindings: liveness.findings }), options.output, options.stdout);
     } else {
@@ -233,8 +307,14 @@ interface ConceptBundleResult {
  * the one case where `check` really would otherwise disagree with what `sync` does. An
  * unparseable-YAML file (`tryReadFrontmatter` itself throws — there is no mapping to peek a `tasks:`
  * field from, so it cannot be assumed innocent) is treated the same as "declares `tasks:`".
+ *
+ * `parseConcept` is given the project's own `profile` (LORE-89) so this scan validates against the
+ * SAME schema `lore query`/`validate`/`sync` already do (`loadBundle`, LORE-84) — before this fix it
+ * always fell back to the built-in default profile, so a project-defined required field could pass
+ * `check` silently while `validate`/`query`/`sync` correctly rejected the identical file, the exact
+ * three-way disagreement ADR-0007 designed `check` to never have with the rest of the toolchain.
  */
-function tryConceptsForBundle(bundle: Bundle): ConceptBundleResult {
+function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleResult {
   const concepts: Concept[] = [];
   let error: unknown | null = null;
   for (const file of bundle.files) {
@@ -243,7 +323,7 @@ function tryConceptsForBundle(bundle: Bundle): ConceptBundleResult {
       if (raw === null || toRefList(raw.tasks).length === 0) {
         continue;
       }
-      concepts.push(parseConcept(file.path, file.raw));
+      concepts.push(parseConcept(file.path, file.raw, { profile }));
     } catch (err) {
       if (error === null) {
         error = err; // first, in file order; keep scanning so later files' concepts still count too
@@ -439,7 +519,7 @@ async function computeDriftFindings(
  * throws it immediately — the same fail-fast point a fresh config read would have hit for this root,
  * without a second read; a root with no eligible concept never reaches that check regardless.
  */
-async function driftFindingsForBundle(
+export async function driftFindingsForBundle(
   root: string,
   bundle: Bundle,
   concepts: readonly Concept[],
@@ -457,10 +537,16 @@ async function driftFindingsForBundle(
   );
   const rawByPath = new Map(bundle.files.map((f) => [f.path, f.raw]));
   const fixable = isDocsRoot(bundle.label);
+  // Built from the SAME normalized form `isDocsRoot` compared against `DOCS_DIR` (LORE-113) — not
+  // the raw `bundle.label` — so a non-canonical-but-equivalent label (a trailing slash, a
+  // backslash, or a different case) can never yield a `docPath` at odds with the `fixable` verdict
+  // just computed from that identical label, two treatments of one string diverging within this
+  // same function.
+  const normalizedLabel = normalizeBundleLabel(bundle.label);
   const findings: CheckFinding[] = [];
   let error: unknown | null = null;
   for (const { concept, newStatus, rows } of targets) {
-    const docPath = `${bundle.label}/${concept.path}`;
+    const docPath = `${normalizedLabel}/${concept.path}`;
     const original = rawByPath.get(concept.path) as string;
     try {
       const drift = reconcileDriftFindings({
@@ -490,60 +576,49 @@ function prefixFinding<T extends { readonly file: string }>(finding: T, label: s
 }
 
 /**
+ * Canonicalize a bundle root label so an equivalent-but-non-canonical spelling (`./docs`, a
+ * trailing slash OR backslash, a different case) collapses to the same string as any other
+ * spelling of the identical root: backslashes to forward slashes FIRST (`posix.normalize` only
+ * recognizes `/` as a separator, so a Windows-idiom trailing `docs\` would otherwise survive
+ * untouched), redundant segments collapsed, any trailing slash(es) stripped, then lowercased — on
+ * the case-insensitive filesystems most local dev happens on (macOS, Windows), a differently-cased
+ * spelling (`Docs`) resolves to the identical directory as `docs`, so treating it as a *different*
+ * root would be the misleading answer, not the careful one.
+ *
+ * Shared by {@link isDocsRoot}'s comparison against `DOCS_DIR` and `driftFindingsForBundle`'s
+ * `docPath` construction (LORE-113) — both read `bundle.label`, and must agree on what it
+ * canonicalizes to, or `docPath` could embed a spelling `isDocsRoot`/`fixable` disagrees with.
+ */
+function normalizeBundleLabel(label: string): string {
+  return posix.normalize(label.replace(/\\/g, "/")).replace(/\/+$/, "").toLowerCase();
+}
+
+/**
  * Whether a bundle root (as the user named it — or the default) IS the `docs/` bundle `lore sync`
- * operates on, canonicalized so an equivalent-but-non-canonical spelling (`./docs`, a trailing
- * slash OR backslash) is still recognized — a literal string-prefix match against a compound
- * `docPath` would miss these and silently omit `reconcileDriftFindings`' "run `lore sync`" hint for
- * a root it actually can fix. Backslashes are normalized to forward slashes FIRST (`posix.normalize`
- * only recognizes `/` as a separator, so a Windows-idiom trailing `docs\` would otherwise survive
- * untouched). Compared case-insensitively: on the case-insensitive filesystems most local dev
- * happens on (macOS, Windows), a differently-cased spelling (`Docs`) resolves to the identical
- * directory `sync` operates on, so judging it "unfixable" would be the misleading answer, not the
- * careful one.
+ * operates on, canonicalized ({@link normalizeBundleLabel}) so an equivalent-but-non-canonical
+ * spelling is still recognized — a literal string-prefix match against a compound `docPath` would
+ * miss these and silently omit `reconcileDriftFindings`' "run `lore sync`" hint for a root it
+ * actually can fix.
  */
 export function isDocsRoot(label: string): boolean {
-  return posix.normalize(label.replace(/\\/g, "/")).replace(/\/+$/, "").toLowerCase() === DOCS_DIR.toLowerCase();
+  return normalizeBundleLabel(label) === DOCS_DIR.toLowerCase();
 }
 
 // ── Argument parsing ───────────────────────────────────────────────────────────
 
 /**
- * Parse `check`'s tokens into target bundle roots and its flags. The router has already
+ * Parse `check`'s tokens into target bundle roots and its flags. Commander has already
  * stripped lore's global flags, so anything `--`-prefixed here is a command flag: an
  * unrecognized one is a `usage` error. A `--` ends option parsing so a path may begin with
  * `-`.
  */
 function parseCheckArgs(args: readonly string[]): CheckArgs {
-  const paths: string[] = [];
-  let strict = false;
-  let external = false;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      paths.push(...args.slice(i + 1));
-      break;
-    }
-    if (arg.startsWith("--") && arg.length > 2) {
-      const name = arg.slice(2);
-      switch (name) {
-        case "strict":
-          strict = true;
-          break;
-        case "external":
-          external = true;
-          break;
-        default:
-          throw usage(`unknown option "--${name}"`, "run `lore check --help` to list options");
-      }
-    } else if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, "run `lore check --help` to list options");
-    } else {
-      paths.push(arg);
-    }
-  }
-
-  return { paths, strict, external };
+  const parsed = parseCommandArgs(args, "check");
+  return {
+    paths: parsed.positionals,
+    strict: parsed.flags.has("strict"),
+    external: parsed.flags.has("external"),
+  };
 }
 
 // ── File discovery ─────────────────────────────────────────────────────────────
@@ -570,6 +645,14 @@ interface Bundle {
  * Each root is a separate bundle with its **own id namespace** — so two roots that share a
  * relative path (e.g. a per-bundle `index.md`) never collide or shadow one another, and each is
  * checked in full. Cross-root links are out of scope, the same as any bundle-escaping link.
+ *
+ * Roots are de-duplicated by {@link canonicalIdentity} (the same realpath-fold `replace.ts`,
+ * `validate.ts`, and `rename.ts` already dedup file paths with) — not by the raw joined string —
+ * so a symlink alias or a case-variant spelling on a case-insensitive filesystem (`check docs
+ * Docs`) that reaches the same physical directory is walked once, not twice. `canonicalIdentity`
+ * swallows its own `realpath` failure and falls back to the path verbatim, so a **nonexistent**
+ * root's identity is just its own joined path (never collides with anything else already seen)
+ * and dedup never short-circuits {@link expandRoot}'s `not_found`/`denied` classification below.
  */
 function collectBundles(root: string, paths: readonly string[], warnings: WarningCollector): Bundle[] {
   const roots = paths.length > 0 ? paths : [DOCS_DIR];
@@ -577,10 +660,11 @@ function collectBundles(root: string, paths: readonly string[], warnings: Warnin
   const seenRoots = new Set<string>();
   for (const bundleRoot of roots) {
     const absRoot = join(root, bundleRoot);
-    if (seenRoots.has(absRoot)) {
-      continue; // the same root named twice is one bundle, not two
+    const identity = canonicalIdentity(absRoot);
+    if (seenRoots.has(identity)) {
+      continue; // the same physical root named twice (directly, via symlink, or case) is one bundle
     }
-    seenRoots.add(absRoot);
+    seenRoots.add(identity);
     const docFiles = expandRoot(absRoot, bundleRoot, warnings);
     const files = docFiles
       .filter(isMarkdownPath)
@@ -610,7 +694,10 @@ function checkBundles(bundles: readonly Bundle[]): CheckReport {
     }
   }
   const { errorCount, warningCount } = tallySeverity(findings);
-  return { findings, errorCount, warningCount, fileCount };
+  // No reconciliation has run yet at this point (this is `baseReport`, the link/anchor + portability
+  // pass only) — definitionally complete; `runCheck` is the only place that ever downgrades this to
+  // `false`, once `driftPromise` resolves with a non-null error (LORE-112).
+  return { findings, errorCount, warningCount, fileCount, complete: true };
 }
 
 /** Whether a discovered doc path is a content-checkable `.md` (lowercase, matching the bundle loader) rather than a `.mdx`. */
@@ -688,9 +775,43 @@ function isDocName(name: string): boolean {
 const LIVENESS_TIMEOUT_MS = 5000;
 /** How many liveness probes run at once — bounded so a large bundle does not open a socket per URL. */
 const LIVENESS_CONCURRENCY = 8;
+/** Redirects a single URL may FOLLOW before the probe gives up (so up to `MAX_REDIRECTS + 1` fetches total: the original request plus this many hops) — bounds a malicious/misconfigured redirect chain, mirroring browsers' own conservative caps. */
+const MAX_REDIRECTS = 10;
+/**
+ * The most DISTINCT URLs a single `--external` pass will actually probe. `LIVENESS_CONCURRENCY`
+ * and `LIVENESS_TIMEOUT_MS` only bound how FAST the worklist drains, not how BIG it may be — a
+ * bundle with tens of thousands of external links would still enqueue and probe every one of
+ * them, so the whole pass's wall-clock time (and open-socket count) would scale unboundedly with
+ * the bundle's size. URLs beyond this cap are never probed; each is instead reported as its own
+ * advisory `external-link` finding ({@link probeLiveness}) so an oversized worklist degrades
+ * visibly rather than just running for an unbounded amount of time.
+ */
+const LIVENESS_MAX_URLS = 500;
 
-/** The real network probe: the global `fetch`, narrowed to the {@link FetchLike} the prober needs. */
-const defaultFetch: FetchLike = (url, init) => fetch(url, init);
+/**
+ * The real network probe: the global `fetch`, always requesting manual redirect handling (never
+ * `"follow"`) so LORE-71's SSRF guard in {@link probeOne} sees — and re-validates — every hop
+ * itself, rather than letting `fetch()` silently chase a redirect to a blocked destination.
+ */
+const defaultFetch: FetchLike = async (url, init) => {
+  const response = await fetch(url, { signal: init?.signal, redirect: "manual" });
+  const result = { ok: response.ok, status: response.status, location: response.headers.get("location") };
+  // Release the underlying socket WITHOUT reading it, once headers/status/location are captured.
+  // This function is called once per hop (`probeOne` re-invokes it for a followed 3xx redirect and
+  // again for the terminal response), so this single, unconditional cancel covers BOTH paths —
+  // there's no separate "redirect" vs. "terminal" branch here to duplicate it into. Left undrained,
+  // each of up to `LIVENESS_MAX_URLS` responses per `--external` pass would retain its connection
+  // until GC. Cancelling (not reading) preserves LORE-71's SSRF invariant (`probeOne`'s own docs,
+  // above): the probe still never reads or reports a byte of body content.
+  await response.body?.cancel().catch(() => {});
+  return result;
+};
+
+/** The real DNS resolver: `node:dns`'s `lookup`, narrowed to the {@link ResolveHost} the SSRF guard needs (every address a hostname resolves to, not just the first). */
+const defaultResolveHost: ResolveHost = async (hostname) => {
+  const records = await dnsLookup(hostname, { all: true });
+  return records.map((record) => record.address);
+};
 
 /** Prefix each external link's `file` with its bundle label in multi-bundle mode, matching the gate findings. */
 function prefixLinks(links: ExternalLink[], label: string, multi: boolean): ExternalLink[] {
@@ -699,21 +820,36 @@ function prefixLinks(links: ExternalLink[], label: string, multi: boolean): Exte
 
 /**
  * Probe every external URL in the worklist for liveness and return one advisory `external-link`
- * warning per dead/unreachable occurrence (a live URL yields none). Each **distinct** URL is
- * fetched once (deduplicated), under a bounded concurrency and a per-request timeout, then the
- * result is fanned back out to every `(file, url)` that referenced it — so a URL linked from five
- * files is fetched once but reported five times. Pure-ish: all network goes through the injected
- * `fetchFn`, and a fetch rejection becomes a finding, never a throw.
+ * warning per dead/unreachable/blocked/skipped occurrence (a live, allowed URL yields none). Each
+ * **distinct** URL is probed at most once (deduplicated), under a bounded concurrency and a
+ * per-request timeout, then the result is fanned back out to every `(file, url)` that referenced
+ * it — so a URL linked from five files is probed once but reported five times. Pure-ish: all
+ * network goes through the injected `fetchFn`/`resolveHost`, and a probe rejection becomes a
+ * finding, never a throw.
+ *
+ * The worklist's distinct URLs are capped at {@link LIVENESS_MAX_URLS}: anything beyond the first
+ * `LIVENESS_MAX_URLS` (in first-seen order) is never probed at all — it is reported directly as a
+ * "was not probed: exceeded the liveness cap" finding, the same way a blocked or dead URL is
+ * reported, so an oversized worklist is visible in the report rather than just making the whole
+ * pass run for an unbounded amount of time.
  */
-async function probeLiveness(links: readonly ExternalLink[], fetchFn: FetchLike): Promise<CheckFinding[]> {
+async function probeLiveness(
+  links: readonly ExternalLink[],
+  fetchFn: FetchLike,
+  resolveHost: ResolveHost,
+): Promise<CheckFinding[]> {
   const uniqueUrls = [...new Set(links.map((link) => link.url))];
+  const probedUrls = uniqueUrls.slice(0, LIVENESS_MAX_URLS);
+  const skippedUrls = new Set(uniqueUrls.slice(LIVENESS_MAX_URLS));
   const failureByUrl = new Map<string, string | null>(); // null = alive; string = the failure reason
-  await mapWithConcurrency(uniqueUrls, LIVENESS_CONCURRENCY, async (url) => {
-    failureByUrl.set(url, await probeOne(url, fetchFn));
+  await mapWithConcurrency(probedUrls, LIVENESS_CONCURRENCY, async (url) => {
+    failureByUrl.set(url, await probeOne(url, fetchFn, resolveHost));
   });
   const findings: CheckFinding[] = [];
   for (const link of links) {
-    const failure = failureByUrl.get(link.url);
+    const failure = skippedUrls.has(link.url)
+      ? `was not probed: exceeded the liveness cap of ${LIVENESS_MAX_URLS} distinct URLs`
+      : failureByUrl.get(link.url);
     if (failure != null) {
       findings.push({
         severity: "warning",
@@ -726,33 +862,100 @@ async function probeLiveness(links: readonly ExternalLink[], fetchFn: FetchLike)
   return findings;
 }
 
-/** Probe one URL: `null` when it answers `2xx`, else a short reason (a non-OK status, a timeout, or an unreachable host). */
-async function probeOne(url: string, fetchFn: FetchLike): Promise<string | null> {
+/**
+ * Whether `url`'s destination (its hostname, resolved to every IP address it answers to) is
+ * loopback/link-local/private/reserved (LORE-71's SSRF guard) — `null` when it's allowed. An
+ * unparseable URL or a non-`http(s)` scheme is treated as blocked too (belt-and-braces: the
+ * worklist only ever contains `http(s)` links per {@link collectExternalLinks}'s own filter, so
+ * this should never actually fire, but the guard must never assume its only caller is honest). A
+ * DNS-resolution failure is NOT blocked here — that's an ordinary liveness failure ({@link
+ * probeOne}'s own catch already reports "is unreachable"), not a security refusal, so it
+ * deliberately propagates rather than being swallowed into a false "blocked" verdict.
+ *
+ * **Known, accepted limitation** (confirmed by independent adversarial review, not a gap this
+ * function can close on its own): this validates the address(es) `resolveHost` returns RIGHT NOW,
+ * but the actual `fetch()` a hop later does its OWN independent DNS resolution when it connects —
+ * a classic TOCTOU/DNS-rebinding window (a short-TTL record answering safely here and differently
+ * at connect time). Accepted because `--external` is advisory-only CI liveness (never gates, and
+ * `probeOne` never reads/reports a response body — only `status`/`location`), so the worst a
+ * successful rebind achieves is a bare GET landing on an internal host, not data exfiltration
+ * through the report. Fully closing this would need pinning the actual socket connection to the
+ * validated address (e.g. a custom low-level dispatcher), which is a materially bigger change than
+ * this task's own AC calls for.
+ */
+async function blockedDestination(url: string, resolveHost: ResolveHost): Promise<string | null> {
+  let parsed: URL;
   try {
-    const response = await fetchFn(url, { signal: AbortSignal.timeout(LIVENESS_TIMEOUT_MS) });
-    return response.ok ? null : `is dead (HTTP ${response.status})`;
-  } catch (cause) {
-    if (cause instanceof Error && cause.name === "TimeoutError") {
-      return `did not respond within ${LIVENESS_TIMEOUT_MS}ms`;
-    }
-    return `is unreachable (${cause instanceof Error ? cause.message : String(cause)})`;
+    parsed = new URL(url);
+  } catch {
+    return "has an unparseable URL";
   }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return `uses a disallowed scheme "${parsed.protocol}"`;
+  }
+  // `URL#hostname` keeps an IPv6 literal's brackets (e.g. "[::1]") — the package-backed literal
+  // parser/classifier need the bare address. A literal IP is classified DIRECTLY, never through
+  // `resolveHost`: it is not a name to resolve, and deferring to `resolveHost` here would let an
+  // injected DNS fake that ignores its `hostname` argument (a reasonable "allow everything" test
+  // default) accidentally paper over a literal blocked-IP URL — the guard's correctness must not
+  // depend on `resolveHost` actually inspecting its input.
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
+  const addresses = isAddressLiteral(hostname) ? [hostname] : await resolveHost(hostname);
+  // The real `node:dns` resolver throws (never resolves empty) when a hostname has no records, so
+  // this shouldn't fire against `defaultResolveHost` — but a custom `ResolveHost` returning `[]`
+  // for "nothing found" (a plausible alternative contract) must fail CLOSED, not vacuously pass
+  // the `for` loop below and let the fetch through unvalidated.
+  if (addresses.length === 0) {
+    return "resolved to no addresses";
+  }
+  for (const address of addresses) {
+    const verdict = classifyAddress(address);
+    if (verdict.blocked) {
+      return `resolves to a blocked address (${address}, ${verdict.reason})`;
+    }
+  }
+  return null;
 }
 
-/** Run `fn` over `items` with at most `limit` in flight at once — a tiny worker-pool over a shared cursor. */
-async function mapWithConcurrency<T>(
-  items: readonly T[],
-  limit: number,
-  fn: (item: T) => Promise<void>,
-): Promise<void> {
-  let cursor = 0;
-  const worker = async (): Promise<void> => {
-    while (cursor < items.length) {
-      const item = items[cursor++] as T;
-      await fn(item);
+/**
+ * Probe one URL: `null` when it (or the live end of a redirect chain starting from it) answers
+ * `2xx`, else a short reason (blocked, a non-OK status, a timeout, or an unreachable host).
+ *
+ * SSRF guard (LORE-71): EVERY hop — the original URL and each redirect target — is destination-
+ * checked via {@link blockedDestination} BEFORE `fetchFn` is ever called for it. `fetchFn` is
+ * always asked for manual redirect handling ({@link FetchLike}'s `redirect: "manual"`), so a 3xx
+ * response's `Location` is inspected and re-validated by THIS function rather than silently
+ * auto-followed by the underlying HTTP client (AC2) — a blocked redirect target stops the chain
+ * immediately, with no request ever issued for it (AC1/AC3). Bounded to {@link MAX_REDIRECTS}
+ * hops so a redirect loop can't hang the probe forever.
+ */
+async function probeOne(url: string, fetchFn: FetchLike, resolveHost: ResolveHost): Promise<string | null> {
+  let current = url;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    try {
+      // The destination check and the fetch share ONE try/catch: a DNS-resolution fault (a
+      // genuinely non-existent host, a resolver timeout) is an ordinary liveness failure, not a
+      // security refusal — it must land in the same "is unreachable" bucket a fetch fault would,
+      // never escape uncaught (which would silently drop this URL's finding — see LORE-71 notes).
+      const blocked = await blockedDestination(current, resolveHost);
+      if (blocked !== null) {
+        return `was not probed: ${blocked}`;
+      }
+      const response = await fetchFn(current, { signal: AbortSignal.timeout(LIVENESS_TIMEOUT_MS), redirect: "manual" });
+      if (response.status >= 300 && response.status < 400 && response.location) {
+        // Resolve a relative Location against the CURRENT url (redirects are commonly relative).
+        current = new URL(response.location, current).toString();
+        continue;
+      }
+      return response.ok ? null : `is dead (HTTP ${response.status})`;
+    } catch (cause) {
+      if (cause instanceof Error && cause.name === "TimeoutError") {
+        return `did not respond within ${LIVENESS_TIMEOUT_MS}ms`;
+      }
+      return `is unreachable (${cause instanceof Error ? cause.message : String(cause)})`;
     }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  }
+  return `exceeded ${MAX_REDIRECTS} redirects`;
 }
 
 // ── Output ─────────────────────────────────────────────────────────────────────
@@ -779,10 +982,23 @@ function renderReport(data: CheckReport, color: boolean): string {
   return lines.join("\n");
 }
 
-/** One finding line: `<severity> <file> [<rule>]: <message>`. */
+/**
+ * One finding line: `<severity> <file> [<rule>]: <message>`.
+ *
+ * `finding.file` and `finding.message` are untrusted: `message` embeds a raw link target or
+ * fragment lifted verbatim from authored markdown (`core/check.ts`'s broken-link/broken-anchor
+ * findings), so either field can carry an ANSI escape sequence or an embedded newline. Left
+ * unstripped, an escape sequence could repaint or move the cursor, and a newline would forge an
+ * extra finding row once `renderReport` joins lines with `\n`. Both fields are run through the
+ * shared {@link stripAnsiAndControls} (LORE-181's single home for this strip) before
+ * interpolation, matching every sibling surface (`output.ts`, `commands/query.ts`,
+ * `core/validate.ts`, `core/links.ts`).
+ */
 function findingLine(finding: CheckFinding, color: boolean): string {
   const tone = finding.severity === "error" ? ANSI.red : ANSI.yellow;
-  return `${paint(finding.severity, tone, color)} ${finding.file} [${finding.rule}]: ${finding.message}`;
+  const file = stripAnsiAndControls(finding.file);
+  const message = stripAnsiAndControls(finding.message);
+  return `${paint(finding.severity, tone, color)} ${file} [${finding.rule}]: ${message}`;
 }
 
 /**

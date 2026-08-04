@@ -16,7 +16,9 @@
  * the fully-generated `log.md` is excluded (it is regenerated wholesale, so editing it is futile); and
  * an absolute `--in` glob resolves correctly. Reads and replacements for **all** files complete before
  * **any** write, so a bad pattern or an unreadable file aborts the run before it has changed a single
- * file on disk.
+ * file on disk. Each individual write in that commit phase is itself atomic (LORE-116,
+ * `writeFileAtomic`'s temp-file+rename discipline), so a crash or I/O error partway through a single
+ * file's write can never leave that file truncated or half-written.
  *
  * A bad flag, an invalid/empty/zero-width pattern is a `usage` error (exit 2); an unreadable path an
  * I/O failure — both funnel through the router's one error seam like every command.
@@ -27,10 +29,11 @@ import { basename, join, resolve } from "node:path";
 import { walkMarkdown } from "../core/bundle";
 import { compileReplacer, type Replacer } from "../core/replace";
 import { DOCS_DIR } from "../core/scaffold";
-import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
+import { EXIT_OK, LoreError, singleLine, stripAnsiAndControls, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { optionValues, parseCommandArgs } from "./args";
 import { canonicalIdentity, readSource, toRepoRelative, withinRepo } from "./discover";
-import { writeFileOverwriting } from "./fswrite";
+import { writeFileAtomic } from "./fswrite";
 
 /** The reserved, fully git-derived file `lore` regenerates wholesale; editing it via `replace` is futile. */
 const GENERATED_FILE = "log.md";
@@ -41,7 +44,7 @@ export interface ReplaceOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `replace`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -129,10 +132,18 @@ export function runReplace(options: ReplaceOptions): number {
     planned.push({ display: target.display, abs: target.abs, text, count });
   }
 
-  // Phase 2 — commit the writes (unless dry-run).
+  // Phase 2 — commit the writes (unless dry-run). Each file goes through writeFileAtomic (LORE-116)
+  // rather than the plain writeFileOverwriting: a crash, kill, or I/O error (e.g. disk full) partway
+  // through a single file's write must never leave that target truncated or half-written — the same
+  // temp-file+rename discipline `lore sync` already relies on for the identical reason. This is
+  // per-file atomicity only, not a whole-run transaction: a failure partway through this loop still
+  // leaves earlier files in this run already committed (by design — there is no cross-file rollback
+  // here, matching `writeAllOrRollback`'s docstring, which notes that broader transactional rollback
+  // for `lore replace` is a separate, deferred concern) and the loop's own error propagates uncaught
+  // so the failure is never silently swallowed.
   if (!parsed.dryRun) {
     for (const change of planned) {
-      writeFileOverwriting(change.abs, change.text, change.display);
+      writeFileAtomic(change.abs, change.text, change.display);
     }
   }
 
@@ -157,51 +168,8 @@ export function runReplace(options: ReplaceOptions): number {
  * not itself be a flag), and a `--` ends option parsing so a `find`/`replace` may begin with `-`.
  */
 function parseReplaceArgs(args: readonly string[]): ReplaceArgs {
-  const positionals: string[] = [];
-  const ins: string[] = [];
-  let regex = false;
-  let dryRun = false;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      positionals.push(...args.slice(i + 1));
-      break;
-    }
-    if (arg.startsWith("--") && arg.length > 2) {
-      const eq = arg.indexOf("=");
-      const name = eq >= 0 ? arg.slice(2, eq) : arg.slice(2);
-      const takeValue = (): string => {
-        if (eq >= 0) {
-          return arg.slice(eq + 1);
-        }
-        const next = args[i + 1];
-        if (next === undefined || (next.startsWith("-") && next !== "-")) {
-          throw usage(`option "--${name}" needs a value`, `pass a value, e.g. --${name}=<value>`);
-        }
-        i++;
-        return next;
-      };
-      switch (name) {
-        case "regex":
-          regex = true;
-          break;
-        case "dry-run":
-          dryRun = true;
-          break;
-        case "in":
-          ins.push(takeValue());
-          break;
-        default:
-          throw usage(`unknown option "--${name}"`, "run `lore replace --help` to list options");
-      }
-    } else if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, "run `lore replace --help` to list options");
-    } else {
-      positionals.push(arg);
-    }
-  }
-
+  const parsed = parseCommandArgs(args, "replace");
+  const positionals = parsed.positionals;
   const find = positionals[0];
   if (find === undefined) {
     throw usage("`lore replace` needs a find and a replace argument", 'run `lore replace "<find>" "<replace>"`');
@@ -219,7 +187,13 @@ function parseReplaceArgs(args: readonly string[]): ReplaceArgs {
       "pass exactly a find and a replace; quote values containing spaces, and scope with --in <glob>",
     );
   }
-  return { find, replace, regex, in: ins, dryRun };
+  return {
+    find,
+    replace,
+    regex: parsed.flags.has("regex"),
+    in: [...optionValues(parsed, "in")],
+    dryRun: parsed.flags.has("dry-run"),
+  };
 }
 
 // ── File discovery ─────────────────────────────────────────────────────────────
@@ -303,12 +277,27 @@ function reportRenderable(data: ReplaceReport): Renderable<ReplaceReport> {
   };
 }
 
-/** One line per changed file, then a summary line. (No color: the report carries no severities.) */
+/**
+ * One line per changed file, then a summary line. (No color: the report carries no severities.)
+ * Each file's `path` is sanitized ({@link sanitizeField}) before interpolation — it is a discovered
+ * display path derived from real filesystem entries, so a crafted/unusual filename could otherwise
+ * smuggle an ANSI escape sequence or an embedded newline into the rendered report (LORE-229).
+ */
 function render(data: ReplaceReport): string {
   const verb = data.dryRun ? "would replace" : "replaced";
-  const lines = data.files.map((f) => `${verb} ${f.count} in ${f.path}`);
+  const lines = data.files.map((f) => `${verb} ${f.count} in ${sanitizeField(f.path)}`);
   lines.push(summaryLine(data));
   return lines.join("\n");
+}
+
+/**
+ * Sanitize a discovered file path before it is interpolated into the plain/pretty report: collapse
+ * it to one line ({@link singleLine}) and strip ANSI escape sequences plus residual C0/C1 control
+ * bytes ({@link stripAnsiAndControls}) — mirrors `query.ts`'s `sanitizeField` (LORE-118), for the
+ * same reason: an untrusted, filesystem-derived path can carry attacker-influenced bytes.
+ */
+function sanitizeField(text: string): string {
+  return stripAnsiAndControls(singleLine(text));
 }
 
 /** The trailing summary: total matches, files changed of scanned, and a `(dry-run)` marker. */

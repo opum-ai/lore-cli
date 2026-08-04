@@ -3,7 +3,7 @@ type: ADR
 title: "ADR-0010: Multi-consumer docs layer & link convention"
 description: Generated cross-links are relative, URL-encoded, .md-suffixed, with no leading slash and no wikilinks — the one form that resolves across GitHub, Obsidian, MkDocs/Material, and Docusaurus — and lore scaffolds per-tool configs additively outside docs/ while linting for non-portable syntax without guaranteeing cross-renderer parity.
 tags: [adr, links, portability, consumers, mkdocs, docusaurus, obsidian, scaffolding]
-summary: lore emits relative, URL-encoded, .md-suffixed cross-links with no leading slash and no wikilinks, scaffolds MkDocs/Docusaurus/Obsidian configs outside docs/, and lints non-portable syntax without promising cross-renderer parity.
+summary: lore emits portable relative Markdown links, scaffolds consumer configuration, and warns about renderer-specific syntax.
 timestamp: 2026-06-21T00:00:00Z
 ---
 

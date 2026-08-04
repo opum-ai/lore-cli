@@ -43,7 +43,7 @@ function fail(exitCode: number, stderr: string, stdout = ""): SpawnResult {
 /**
  * A {@link BacklogSpawn} driven by a per-call `script(args, callIndex)`. It records every argv so a test
  * can pin invocation order (probe first) and assert the exact flags. Returning `undefined` from the
- * script falls back to the **default probe** responses (`--version` → `1.47.1`, any `task list --json`
+ * script falls back to the **default probe** responses (`--version` → `1.49.0`, any `task list --json`
  * → the committed `task-list` golden), so most tests only script the command under test. The probe's own
  * dry-run and a real `listTasks()` read issue the identical `["task", "list", "--json"]` argv AND now
  * target the same upstream contract (LORE-54), so one shared golden answers both — no more two-tier fake.
@@ -68,7 +68,7 @@ function scriptedSpawn(
 /** The default responses for the probe's two calls, and any later bare `task list --json` a real read issues. */
 function defaultProbe(argv: string[]): Outcome {
   if (argv[0] === "--version") {
-    return ok("1.47.1\n");
+    return ok("1.49.0\n");
   }
   if (argv[0] === "task" && argv[1] === "list" && argv[2] === "--json") {
     return ok(TASK_LIST);
@@ -110,7 +110,7 @@ describe("listTasks — task list --json → mapped summaries (AC#1)", () => {
     expect(Object.keys(tasks[0] ?? {})).not.toContain("file");
   });
 
-  test("passes --status and comma-joins multiple --labels (single-value flag, §2.4)", async () => {
+  test("passes --status and comma-joins multiple --labels into one accumulator occurrence (§2.4)", async () => {
     const spawn = scriptedSpawn((argv) =>
       argv[0] === "task" && argv[1] === "list" && argv.length > 3 ? ok(TASK_LIST) : undefined,
     );
@@ -127,6 +127,15 @@ describe("listTasks — task list --json → mapped summaries (AC#1)", () => {
     const spawn = scriptedSpawn((argv) => (argv.includes("--labels") ? ok(TASK_LIST) : undefined));
     const adapter = createBacklogAdapter(spawn);
     const tasks = await adapter.searchByLabel("doc:stories/x");
+
+    expect(spawn.calls.at(-1)).toEqual(["task", "list", "--json", "--labels", "doc:stories/x"]);
+    expect(tasks).toHaveLength(3);
+  });
+
+  test("searchByLabel works destructured off the adapter (no `this` dependency, LORE-218)", async () => {
+    const spawn = scriptedSpawn((argv) => (argv.includes("--labels") ? ok(TASK_LIST) : undefined));
+    const { searchByLabel } = createBacklogAdapter(spawn);
+    const tasks = await searchByLabel("doc:stories/x");
 
     expect(spawn.calls.at(-1)).toEqual(["task", "list", "--json", "--labels", "doc:stories/x"]);
     expect(tasks).toHaveLength(3);
@@ -325,6 +334,22 @@ describe("createTask — CLI write, id captured from the stdout line (§2.1)", (
     expect(err.message).toContain("Created task");
   });
 
+  test("fail-loud (drift) on an unparseable id still echoes the raw stdout and title so the caller can recover the orphaned task", async () => {
+    // `task create` exited 0 — Backlog genuinely created the task — but its stdout doesn't carry a
+    // `Created task <ID>` line the CREATED_ID regex can capture. The task now exists in Backlog with
+    // no id lore parsed; the caller must not be left with zero trace of it (LORE-97).
+    const spawn = scriptedSpawn((argv) =>
+      argv[1] === "create" ? ok("Task queued for background processing.\n") : undefined,
+    );
+    const err = await loreError(() => createBacklogAdapter(spawn).createTask({ title: "orphan-prone task" }));
+
+    expect(err.type).toBe("drift");
+    expect(err.input).toMatchObject({
+      title: "orphan-prone task",
+      stdout: "Task queued for background processing.\n",
+    });
+  });
+
   test("fail-loud (validation) on a non-zero create exit, surfacing stderr as the hint", async () => {
     const spawn = scriptedSpawn((argv) => (argv[1] === "create" ? fail(1, "lock held") : undefined));
     const err = await loreError(() => createBacklogAdapter(spawn).createTask({ title: "x" }));
@@ -416,7 +441,7 @@ describe("the capability probe is wired into every path and memoized (AC#2)", ()
     await adapter.viewTask("LORE-33");
     const cap = await adapter.probe();
 
-    expect(cap).toEqual({ version: "1.47.1", schemaVersion: 1 });
+    expect(cap).toEqual({ version: "1.49.0", schemaVersion: 1 });
     expect(spawn.calls.filter((c) => c[0] === "--version")).toHaveLength(1);
   });
 
@@ -426,5 +451,105 @@ describe("the capability probe is wired into every path and memoized (AC#2)", ()
     const err = await loreError(() => createBacklogAdapter(spawn).listTasks());
     expect(err.type).toBe("not_found");
     expect(exitCodeFor(err)).toBe(3);
+  });
+
+  // LORE-222: previously only the probe's own `--version` spawn wrapped a rejection into a typed
+  // LoreError — a rejection on any LATER spawn (once the probe had already passed) escaped untyped.
+  // Here the probe passes cleanly (both `--version` and `task list --json` succeed) and only the
+  // subsequent `task view` spawn — issued well after `ensureProbed()` already resolved — rejects.
+  test("an ENOENT rejection on a call AFTER the probe already passed still maps to not_found (not just the probe's own spawn)", async () => {
+    const enoent = Object.assign(new Error("spawn backlog ENOENT"), { code: "ENOENT" });
+    const spawn = scriptedSpawn((argv) => (argv[0] === "task" && argv[1] === "view" ? enoent : undefined));
+
+    const err = await loreError(() => createBacklogAdapter(spawn).viewTask("LORE-1"));
+
+    expect(err.type).toBe("not_found");
+    expect(exitCodeFor(err)).toBe(3);
+    // Proves the probe itself ran to completion (both its calls) BEFORE the later, distinct `task
+    // view` spawn rejected — so this exercises the read-adapter's own wrapping, not the probe's.
+    expect(spawn.calls).toEqual([["--version"], ["task", "list", "--json"], ["task", "view", "LORE-1", "--json"]]);
+  });
+});
+
+describe("flag injection (LORE-96): a dash-prefixed value is rejected before it reaches spawn's argv", () => {
+  test("viewTask rejects a dash-prefixed id and never spawns `task view`", async () => {
+    const spawn = scriptedSpawn((argv) => (argv[1] === "view" ? ok(TASK) : undefined));
+    const err = await loreError(() => createBacklogAdapter(spawn).viewTask("--force"));
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("--force");
+    expect(spawn.calls.some((c) => c[0] === "task" && c[1] === "view")).toBe(false);
+  });
+
+  test("listTasks rejects a dash-prefixed --status value before any spawn call", async () => {
+    const spawn = scriptedSpawn();
+    const err = await loreError(() => createBacklogAdapter(spawn).listTasks({ status: "-x" }));
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("-x");
+    expect(spawn.calls).toHaveLength(0); // rejected while building argv, before even the probe
+  });
+
+  test("listTasks/searchByLabel reject a dash-prefixed label before any spawn call", async () => {
+    const spawn = scriptedSpawn();
+    const err = await loreError(() => createBacklogAdapter(spawn).searchByLabel("--force"));
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("--force");
+    expect(spawn.calls).toHaveLength(0);
+  });
+
+  test("searchTasks rejects a dash-prefixed query before any spawn call", async () => {
+    const spawn = scriptedSpawn((argv) => (argv[0] === "search" ? ok(SEARCH) : undefined));
+    const err = await loreError(() => createBacklogAdapter(spawn).searchTasks("--force"));
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("--force");
+    expect(spawn.calls.some((c) => c[0] === "search")).toBe(false);
+  });
+
+  test("createTask rejects a dash-prefixed title and never spawns `task create`", async () => {
+    const spawn = scriptedSpawn((argv) => (argv[1] === "create" ? ok("Created task LORE-99\n") : undefined));
+    const err = await loreError(() => createBacklogAdapter(spawn).createTask({ title: "-x" }));
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("-x");
+    expect(spawn.calls.some((c) => c[0] === "task" && c[1] === "create")).toBe(false);
+  });
+
+  test("createTask rejects a dash-prefixed label passed via commaJoin", async () => {
+    const spawn = scriptedSpawn((argv) => (argv[1] === "create" ? ok("Created task LORE-99\n") : undefined));
+    const err = await loreError(() =>
+      createBacklogAdapter(spawn).createTask({ title: "fine", labels: ["ok", "--force"] }),
+    );
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("--force");
+    expect(spawn.calls.some((c) => c[0] === "task" && c[1] === "create")).toBe(false);
+  });
+
+  test("editTask rejects a dash-prefixed id and never spawns `task edit`", async () => {
+    const spawn = scriptedSpawn((argv) => (argv[1] === "edit" ? ok("Updated task LORE-1") : undefined));
+    const err = await loreError(() => createBacklogAdapter(spawn).editTask("--force", { status: "Done" }));
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("--force");
+    expect(spawn.calls.some((c) => c[0] === "task" && c[1] === "edit")).toBe(false);
+  });
+
+  test("editTask rejects a dash-prefixed --status value and never spawns `task edit`", async () => {
+    const spawn = scriptedSpawn((argv) => (argv[1] === "edit" ? ok("Updated task LORE-1") : undefined));
+    const err = await loreError(() => createBacklogAdapter(spawn).editTask("LORE-1", { status: "--force" }));
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("--force");
+    expect(spawn.calls.some((c) => c[0] === "task" && c[1] === "edit")).toBe(false);
+  });
+
+  test("editTask rejects a dash-prefixed --add-label value and never spawns `task edit`", async () => {
+    const spawn = scriptedSpawn((argv) => (argv[1] === "edit" ? ok("Updated task LORE-1") : undefined));
+    const err = await loreError(() => createBacklogAdapter(spawn).editTask("LORE-1", { addLabels: ["-x"] }));
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("-x");
+    expect(spawn.calls.some((c) => c[0] === "task" && c[1] === "edit")).toBe(false);
+  });
+
+  test("no regression: valid, non-dash-prefixed values still spawn unchanged", async () => {
+    const spawn = scriptedSpawn((argv) => (argv[1] === "view" ? ok(TASK) : undefined));
+    const task = await createBacklogAdapter(spawn).viewTask("LORE-33");
+    expect(task?.id).toBe("LORE-33");
+    expect(spawn.calls.at(-1)).toEqual(["task", "view", "LORE-33", "--json"]);
   });
 });

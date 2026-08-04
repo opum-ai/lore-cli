@@ -1,17 +1,24 @@
-name: Release (dry-run)
+name: Release
 
 # Manual-only trigger (workflow_dispatch) — never fires on a push or tag, so simply
-# committing/tagging code can never kick off a release. `publish` defaults to false
-# and, as of this workflow, publishing is not wired at all (see the TODO at the
-# bottom): this workflow only builds and packages every platform artifact and
-# proves the npx/launcher mechanism resolves the right binary end-to-end
-# (LORE-9 AC#1/AC#2). See docs/runbooks/release-publishing.md for what a maintainer
-# still needs to configure on npmjs.com before a real publish step can be added.
+# committing/tagging code can never kick off a release. `publish` defaults to false:
+# a plain dispatch (or any dispatch that leaves `publish` at its default) only builds
+# and packages every platform artifact and proves the npx/launcher mechanism resolves
+# the right binary end-to-end (LCLI-9 AC#1/AC#2) — the `publish` job below simply does
+# not run. Setting `publish: true` additionally runs that job, publishing all six
+# packages to npm via OIDC Trusted Publishing (LCLI-255) — but only once a maintainer
+# has completed the one-time npmjs.com Trusted Publisher setup for all six packages;
+# see docs/runbooks/release-publishing.md's First-release checklist for the full
+# mechanical sequence (version bump, the bin.lore flip, tag, dispatch).
 on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Reserved for a future publish step (not implemented yet — see docs/runbooks/release-publishing.md). Has no effect today."
+        description: "Publish all six packages to npm via OIDC Trusted Publishing (requires the one-time npmjs.com setup — see docs/runbooks/release-publishing.md). Leave false to only build/package/dry-run."
+        type: boolean
+        default: false
+      ladybug_scale_observation:
+        description: "Run the non-blocking 1 GiB Ladybug scale observation (30-minute time box)."
         type: boolean
         default: false
 
@@ -37,7 +44,7 @@ jobs:
         # shell loops, computed once here rather than re-decoded from `names` (JSON) in
         # every consuming step.
         run: |
-          matrix='[{"name":"darwin-arm64","target":"bun-darwin-arm64","binary":"lore"},{"name":"darwin-x64","target":"bun-darwin-x64-baseline","binary":"lore"},{"name":"linux-arm64","target":"bun-linux-arm64","binary":"lore"},{"name":"linux-x64","target":"bun-linux-x64-baseline","binary":"lore"},{"name":"win32-x64","target":"bun-windows-x64-baseline","binary":"lore.exe"}]'
+          matrix='[{"name":"darwin-arm64","target":"bun-darwin-arm64","binary":"lore","runner":"macos-latest","os":"darwin","cpu":"arm64","ladybugPackage":"@ladybugdb/core-darwin-arm64","ladybugIntegrity":"sha512-3Ut3XL9kowzBoHw0wrN3QnW4xy5wYoPBypeuMtH92j59fol2w9e3lQJ6DM29YJ4F6mAVfW2cYGBXH2l9aXGmmw=="},{"name":"darwin-x64","target":"bun-darwin-x64-baseline","binary":"lore","runner":"macos-15-intel","os":"darwin","cpu":"x64","ladybugPackage":"@ladybugdb/core-darwin-x64","ladybugIntegrity":"sha512-KHuCBx+jkyxdfFEmmbsfUS1f108P4rS+VNkwCrMLvzJmJOZTZgNKeRmT0vO7qRum5KEoHSIPJLj2Le//rCYigQ=="},{"name":"linux-arm64","target":"bun-linux-arm64","binary":"lore","runner":"ubuntu-24.04-arm","os":"linux","cpu":"arm64","ladybugPackage":"@ladybugdb/core-linux-arm64","ladybugIntegrity":"sha512-z4Z67LZlgj6H7YnKMB1PornbdmeszVxfENusfDQ2MFyOyrze1X6c/3MkhVPyunuaTtriN9SBnEdyK39mB7NdyQ=="},{"name":"linux-x64","target":"bun-linux-x64-baseline","binary":"lore","runner":"ubuntu-24.04","os":"linux","cpu":"x64","ladybugPackage":"@ladybugdb/core-linux-x64","ladybugIntegrity":"sha512-aJOh7+XbTzCLNloK+KlDXuRmHgr7nLqyQwR/BR8fP/XsWVnxCKGpVVL8s+Lms7JNQAh6vEsvExttGgUq9hAu1Q=="},{"name":"win32-x64","target":"bun-windows-x64-baseline","binary":"lore.exe","runner":"windows-latest","os":"win32","cpu":"x64","ladybugPackage":"@ladybugdb/core-win32-x64","ladybugIntegrity":"sha512-y2/IOMKmydo4ZfQPDZuZhiFC104VJQ9lwc0w1KVdvb4Z2RIUUL8/tn5QD4Uq8DUrJGxQhoEESPnlkk69cKaaDQ=="}]'
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           names=$(node -e "console.log(JSON.stringify(JSON.parse(process.argv[1]).map((p) => p.name)))" "$matrix")
           echo "names=$names" >> "$GITHUB_OUTPUT"
@@ -49,10 +56,10 @@ jobs:
     needs: setup
     runs-on: ubuntu-latest
     env:
-      PLATFORM_NAMES: ${{ needs.setup.outputs.names }}
+      PLATFORM_MATRIX: ${{ needs.setup.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v6
-      - name: Assert version, license, author, repository, and the optionalDependencies pin all match
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Assert version, license, author, repository, os/cpu, binary filename, and the optionalDependencies pin all match
         # bin/lore.cjs resolves a platform optionalDependency purely by name; npm silently
         # SKIPS it if the installed version doesn't satisfy root's pinned range — for an
         # exact pin, "doesn't exactly match." A missed version bump on any of: the root
@@ -60,8 +67,11 @@ jobs:
         # for that package, would surface as "no compiled binary found" for a fully
         # supported platform, indistinguishable from a genuinely unsupported one. license/
         # author/repository drift is lower-stakes (cosmetic/registry-page metadata) but
-        # checked here too since it is duplicated the same way. Fail loud, before any
-        # compile work, naming every mismatch found (not just the first).
+        # checked here too since it is duplicated the same way. os/cpu drift is higher-stakes
+        # again: it is what gates npm's optionalDependencies install decision, so a wrong
+        # value either silently skip-installs a platform package on its own matching host or
+        # wrongly installs it elsewhere. Fail loud, before any compile work, naming every
+        # mismatch found (not just the first).
         run: |
           # The ${...} below are JS template literals for `node -e`, not shell
           # interpolation — single-quoting is intentional.
@@ -69,7 +79,8 @@ jobs:
           node -e '
             const fs = require("fs");
             const root = JSON.parse(fs.readFileSync("package.json", "utf8"));
-            const platforms = JSON.parse(process.env.PLATFORM_NAMES);
+            const matrix = JSON.parse(process.env.PLATFORM_MATRIX);
+            const platforms = matrix.map((p) => p.name);
             const fields = ["version", "license", "author"];
             const problems = [];
 
@@ -86,19 +97,37 @@ jobs:
               return true;
             }
 
+            function sameStringArray(actual, expected) {
+              return (
+                Array.isArray(actual) &&
+                actual.length === expected.length &&
+                expected.every((value, i) => actual[i] === value)
+              );
+            }
+
+            // The platform name is the single source of truth for its npm os/cpu gate and
+            // its compiled binary filename: the segment before/after the first "-" (e.g.
+            // "darwin-arm64" -> os "darwin", cpu "arm64"; "win32-x64" -> os "win32", cpu
+            // "x64") already uses the npm-style os token ("win32", not "windows"), matching
+            // what npm/<name>/package.json declares.
+            function expectedOsCpu(name) {
+              const dash = name.indexOf("-");
+              return { os: name.slice(0, dash), cpu: name.slice(dash + 1) };
+            }
+
             // Cross-check the platform SET itself, not just per-platform fields: the setup
             // job matrix literal and the optionalDependencies keys are two independently
             // maintained declarations of "which platforms ship" — nothing else catches them
             // drifting apart (e.g. a 6th platform added to one but not the other).
             const optionalDepNames = Object.keys(root.optionalDependencies || {}).sort();
-            const declaredPkgNames = platforms.map((name) => `@salient-data/lore-${name}`).sort();
+            const declaredPkgNames = platforms.map((name) => `@opum-ai/lore-${name}`).sort();
             if (JSON.stringify(optionalDepNames) !== JSON.stringify(declaredPkgNames)) {
               problems.push(
                 `platform set mismatch: setup job declares [${declaredPkgNames.join(", ")}], but root package.json optionalDependencies has [${optionalDepNames.join(", ")}]`,
               );
             }
 
-            for (const name of platforms) {
+            for (const { name, binary } of matrix) {
               const pkg = JSON.parse(fs.readFileSync(`npm/${name}/package.json`, "utf8"));
               for (const field of fields) {
                 if (pkg[field] !== root[field]) {
@@ -112,6 +141,24 @@ jobs:
               if (pin !== pkg.version) {
                 problems.push(`root package.json optionalDependencies["${pkg.name}"] is "${pin}", but npm/${name}/package.json version is "${pkg.version}"`);
               }
+
+              const { os: expectedOs, cpu: expectedCpu } = expectedOsCpu(name);
+              if (!sameStringArray(pkg.os, [expectedOs])) {
+                problems.push(`npm/${name}/package.json: os is ${JSON.stringify(pkg.os)}, expected ["${expectedOs}"] (derived from platform name "${name}")`);
+              }
+              if (!sameStringArray(pkg.cpu, [expectedCpu])) {
+                problems.push(`npm/${name}/package.json: cpu is ${JSON.stringify(pkg.cpu)}, expected ["${expectedCpu}"] (derived from platform name "${name}")`);
+              }
+
+              // The setup job per-entry `binary` is what the build job --outfile AND
+              // bin/lore.cjs own hardcoded BINARY_NAME must agree on ("lore.exe" only for
+              // win32, "lore" everywhere else) — assert it here, before any compile work,
+              // rather than only implicitly via the build job writing to whatever path it
+              // was given.
+              const expectedBinary = expectedOs === "win32" ? "lore.exe" : "lore";
+              if (binary !== expectedBinary) {
+                problems.push(`setup job matrix entry "${name}": binary is "${binary}", expected "${expectedBinary}" for os "${expectedOs}"`);
+              }
             }
             if (problems.length > 0) {
               for (const p of problems) console.error(`::error::${p}`);
@@ -120,24 +167,176 @@ jobs:
             console.log(`all six release packages are consistent (version ${root.version})`);
           '
 
+  ladybug-qualification:
+    name: Ladybug bounded 100 MiB qualification (ubuntu-24.04 x64)
+    needs: verify-versions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # A second dispatch queues instead of overlapping the bounded timing gate.
+    concurrency:
+      group: ladybug-release-qualification
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: ./.github/actions/setup-bun
+      - name: Assert the qualification host and toolchain
+        shell: bash
+        run: |
+          actual_bun="$(bun --version)"
+          if [ "$actual_bun" != "1.2.23" ]; then
+            echo "::error::Ladybug qualification requires Bun 1.2.23, observed $actual_bun"
+            exit 1
+          fi
+          if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "x86_64" ]; then
+            echo "::error::Ladybug release qualification requires Linux x64"
+            exit 1
+          fi
+          if [ -z "${ImageOS:-}" ] || [ -z "${ImageVersion:-}" ]; then
+            echo "::error::GitHub runner image identity is unavailable"
+            exit 1
+          fi
+      - name: Run the bounded paired Ladybug qualification
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          bun benchmark/ladybug/run.ts \
+            --fixture large \
+            --output artifacts/ladybug-benchmark-v1.json \
+            --runner-image "${ImageOS}-${ImageVersion}"
+      - name: Assert conclusive threshold success
+        shell: bash
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          # The ${...} below is a JavaScript template literal inside the single-quoted
+          # bun program, not shell interpolation.
+          # shellcheck disable=SC2016
+          bun -e '
+            const report = await Bun.file("artifacts/ladybug-benchmark-v1.json").json();
+            const fixtures = report.fixtures?.map((fixture) => fixture.name);
+            if (
+              report.schema !== "lore.ladybug-benchmark/1" ||
+              report.mode !== "qualification" ||
+              report.host?.platform !== "linux" ||
+              report.host?.arch !== "x64" ||
+              report.repository?.commit !== process.env.EXPECTED_COMMIT ||
+              report.repository?.dirty !== false ||
+              JSON.stringify(fixtures) !== JSON.stringify(["large"]) ||
+              report.gates?.evaluation?.status !== "pass"
+            ) {
+              console.error("::error::Ladybug qualification artifact is not a conclusive Linux-x64 pass");
+              process.exit(1);
+            }
+            console.log(`Ladybug qualification passed ${report.gates.results.length} approved gates`);
+          '
+      - name: Upload qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ladybug-benchmark-qualification-linux-x64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/ladybug-benchmark-v1.json
+            benchmark/ladybug/gates/v1.json
+          if-no-files-found: warn
+          retention-days: 90
+
+  ladybug-scale-observation:
+    name: Ladybug optional 1 GiB observation (ubuntu-24.04 x64)
+    if: inputs.ladybug_scale_observation == true
+    continue-on-error: true
+    needs: verify-versions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: ./.github/actions/setup-bun
+      - name: Run the informational 1 GiB observation
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          bun benchmark/ladybug/run.ts \
+            --fixture large \
+            --observation-1gib \
+            --output artifacts/ladybug-benchmark-observation-1gib-v1.json \
+            --runner-image "${ImageOS}-${ImageVersion}"
+      - name: Upload informational observation
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ladybug-benchmark-observation-1gib-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/ladybug-benchmark-observation-1gib-v1.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  ladybug-concurrency-qualification:
+    name: Ladybug concurrency and crash qualification (ubuntu-24.04 x64)
+    needs: verify-versions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: ./.github/actions/setup-bun
+      - name: Run focused multi-process contention, crash, lifecycle, and indexed retrieval tests
+        shell: bash
+        env:
+          LADYBUG_CONCURRENCY_EVIDENCE: artifacts/ladybug-concurrency-evidence-v1.json
+        run: |
+          mkdir -p artifacts
+          bun test --isolate \
+            test/ladybug-concurrency.test.ts \
+            test/ladybug-lifecycle.test.ts \
+            test/indexed-retrieval.test.ts
+      - name: Assert complete sanitized concurrency evidence
+        shell: bash
+        env:
+          REPORT_PATH: artifacts/ladybug-concurrency-evidence-v1.json
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          bun -e '
+            import {
+              LADYBUG_CONCURRENCY_EVIDENCE_KILL_POINTS,
+              parseLadybugConcurrencyEvidenceReport,
+            } from "./benchmark/ladybug/concurrency-evidence";
+            const path = process.env.REPORT_PATH;
+            if (!path) throw new Error("concurrency evidence report path is unavailable");
+            const report = parseLadybugConcurrencyEvidenceReport(await Bun.file(path).json());
+            if (
+              report.toolchain.bun !== "1.2.23" ||
+              report.repository.commit !== process.env.EXPECTED_COMMIT ||
+              report.repository.dirty ||
+              report.status !== "pass" ||
+              JSON.stringify(report.coverage.killPoints) !== JSON.stringify(LADYBUG_CONCURRENCY_EVIDENCE_KILL_POINTS)
+            ) {
+              throw new Error("concurrency artifact is not clean pinned-Bun executable evidence");
+            }
+          '
+      - name: Upload concurrency and crash evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ladybug-concurrency-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/ladybug-concurrency-evidence-v1.json
+          if-no-files-found: warn
+          retention-days: 90
+
   build:
     name: "compile (${{ matrix.name }})"
-    needs: [setup, verify-versions]
+    needs: [setup, verify-versions, ladybug-qualification, ladybug-concurrency-qualification]
     strategy:
       fail-fast: false
       matrix:
         include: ${{ fromJson(needs.setup.outputs.matrix) }}
     # Cross-compiling all five targets from one ubuntu runner (verified locally,
-    # LORE-9): Bun downloads the target runtime and compiles without needing a
+    # LCLI-9): Bun downloads the target runtime and compiles without needing a
     # matching host OS/arch. Only linux-x64 matches this runner natively, so it is
     # the one target actually executed below; the rest get a non-empty-file check.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/setup-bun
       - name: Compile ${{ matrix.name }}
         # The outfile is a subdirectory of the checkout — same filesystem as the
-        # source (see docs/reference/tech-stack.md §1 / LORE-14): a cross-device
+        # source (see docs/reference/tech-stack.md §1 / LCLI-14): a cross-device
         # --outfile silently produces a 0-byte binary at exit 0.
         run: |
           mkdir -p "npm/${{ matrix.name }}/bin"
@@ -147,6 +346,16 @@ jobs:
         shell: bash
         run: |
           bin="npm/${{ matrix.name }}/bin/${{ matrix.binary }}"
+          # Asserted for every platform, not just linux-x64: the compile step above writes
+          # directly to this path, so a missing file here means bun produced a
+          # differently-named (or no) output for the `binary` value declared in the setup
+          # job matrix — surface that explicitly rather than letting the `stat` below fail
+          # with a generic "no such file" trace.
+          if [ ! -f "$bin" ]; then
+            echo "::error::expected compiled binary at $bin (matrix.binary=\"${{ matrix.binary }}\") but no file exists there"
+            ls -la "npm/${{ matrix.name }}/bin/" || true
+            exit 1
+          fi
           size=$(stat -c%s "$bin")
           echo "compiled $bin: ${size} bytes"
           if [ "$size" -lt 1000000 ]; then
@@ -156,27 +365,172 @@ jobs:
           if [ "${{ matrix.name }}" = "linux-x64" ]; then
             chmod +x "$bin"
             version="$("$bin" --version)"
-            echo "lore --version => '${version}'"
+            expected="$(bun -e 'console.log(require("./package.json").version)')"
+            echo "lore --version => '${version}' (package.json: '${expected}')"
             if [ -z "$version" ]; then
               echo "::error::linux-x64 binary produced no --version output"
               exit 1
             fi
+            if [ "${version}" != "${expected}" ]; then
+              echo "::error::version mismatch: binary='${version}' package.json='${expected}'"
+              exit 1
+            fi
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: lore-${{ matrix.name }}
           path: npm/${{ matrix.name }}/bin/
           if-no-files-found: error
 
+  package-qualification:
+    name: "matching-host package qualification (${{ matrix.name }})"
+    needs: [setup, verify-versions, ladybug-qualification, ladybug-concurrency-qualification]
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.setup.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      # The shared action is the isolated frozen install. Its Bun pin and
+      # --linker=isolated flags are part of the package-qualification contract.
+      - uses: ./.github/actions/setup-bun
+      - name: Build, pack, install, smoke, uninstall, and audit ${{ matrix.name }}
+        shell: bash
+        run: |
+          bun benchmark/ladybug/package-qualification.ts \
+            --name "${{ matrix.name }}" \
+            --target "${{ matrix.target }}" \
+            --binary "${{ matrix.binary }}" \
+            --os "${{ matrix.os }}" \
+            --cpu "${{ matrix.cpu }}" \
+            --ladybug-package "${{ matrix.ladybugPackage }}" \
+            --ladybug-integrity "${{ matrix.ladybugIntegrity }}" \
+            --output "artifacts/ladybug-package-qualification-${{ matrix.name }}.json"
+      - name: Assert the approved native platform verdict
+        shell: bash
+        env:
+          REPORT_PATH: artifacts/ladybug-package-qualification-${{ matrix.name }}.json
+          EXPECTED_OS: ${{ matrix.os }}
+          EXPECTED_CPU: ${{ matrix.cpu }}
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          bun -e '
+            import { assertPackageQualificationReport } from "./benchmark/ladybug/package-qualification";
+            const path = process.env.REPORT_PATH;
+            if (!path) throw new Error("package qualification report path is unavailable");
+            const report = await Bun.file(path).json();
+            assertPackageQualificationReport(report);
+            if (
+              report.mode !== "qualification" ||
+              report.platform.os !== process.env.EXPECTED_OS ||
+              report.platform.cpu !== process.env.EXPECTED_CPU ||
+              report.repository.commit !== process.env.EXPECTED_COMMIT
+            ) {
+              throw new Error("package qualification artifact does not match its matrix host");
+            }
+            if (
+              process.env.EXPECTED_OS === "win32"
+                ? report.native.supportClaim !== "reference-fallback-only" ||
+                  report.native.referenceFallbackDatabaseAbsent !== true ||
+                  report.native.databaseCreated
+                : report.native.supportClaim !== "native-index" ||
+                  report.native.probeOutcome !== "pass" ||
+                  !report.native.executableEvidence ||
+                  !report.native.databaseCreated
+            ) {
+              throw new Error("package qualification artifact violates the approved native support policy");
+            }
+          '
+      - name: Upload matching-host package evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ladybug-package-qualification-${{ matrix.name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 90
+
+  ladybug-qualification-evidence:
+    name: Assemble Ladybug acceptance evidence
+    needs: [ladybug-qualification, ladybug-concurrency-qualification, package-qualification]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: ./.github/actions/setup-bun
+      - name: Download bounded benchmark evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ladybug-benchmark-qualification-linux-x64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: qualification-inputs/benchmark
+      - name: Download concurrency evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ladybug-concurrency-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: qualification-inputs/concurrency
+      - name: Download all matching-host package evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: ladybug-package-qualification-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: qualification-inputs/packages
+          merge-multiple: true
+      - name: Build the strict task-level evidence manifest
+        shell: bash
+        run: |
+          benchmark_report="$(find qualification-inputs/benchmark -type f -name 'ladybug-benchmark-v1.json' -print -quit)"
+          gate_policy="$(find qualification-inputs/benchmark -type f -name 'v1.json' -print -quit)"
+          concurrency_report="$(find qualification-inputs/concurrency -type f -name 'ladybug-concurrency-evidence-v1.json' -print -quit)"
+          if [ -z "$benchmark_report" ] || [ -z "$gate_policy" ] || [ -z "$concurrency_report" ]; then
+            echo "::error::required Ladybug qualification input is missing"
+            exit 1
+          fi
+          package_reports=()
+          while IFS= read -r report; do
+            package_reports+=(--package-report "$report")
+          done < <(find qualification-inputs/packages -type f -name 'ladybug-package-qualification-*.json' -print | sort)
+          bun benchmark/ladybug/qualification-evidence.ts \
+            --linux-benchmark "$benchmark_report" \
+            --gates "$gate_policy" \
+            --concurrency "$concurrency_report" \
+            "${package_reports[@]}" \
+            --output artifacts/ladybug-qualification-evidence-v1.json
+      - name: Assert the final manifest maps all acceptance criteria to this commit
+        shell: bash
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          bun -e '
+            import { parseLadybugQualificationEvidenceManifest } from "./benchmark/ladybug/qualification-evidence";
+            const manifest = parseLadybugQualificationEvidenceManifest(
+              await Bun.file("artifacts/ladybug-qualification-evidence-v1.json").json(),
+            );
+            if (
+              manifest.repository.commit !== process.env.EXPECTED_COMMIT ||
+              manifest.status !== "pass" ||
+              manifest.acceptanceCriteria.map(({ number }) => number).join(",") !== "1,2,3,4"
+            ) {
+              throw new Error("Ladybug qualification manifest does not map a clean passing evidence set");
+            }
+          '
+      - name: Upload final Ladybug qualification manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ladybug-qualification-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/ladybug-qualification-evidence-v1.json
+          if-no-files-found: error
+          retention-days: 90
+
   package:
     name: package + install-sanity (dry-run, never publishes)
-    needs: [setup, build]
+    needs: [setup, build, package-qualification, ladybug-qualification-evidence]
     runs-on: ubuntu-latest
     env:
       PLATFORM_NAMES_SPACE: ${{ needs.setup.outputs.namesSpace }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: npm-artifacts
       - name: Assemble each platform package's binary
@@ -186,14 +540,14 @@ jobs:
             cp -r "npm-artifacts/lore-$name/." "npm/$name/bin/"
             chmod +x npm/"$name"/bin/lore* 2>/dev/null || true
           done
-      - name: npm pack every package (LORE-9 AC#1 — produces all platform artifacts; never publishes)
+      - name: npm pack every package (LCLI-9 AC#1 — produces all platform artifacts; never publishes)
         # The root package's COMMITTED `bin` still points at src/cli.ts (see
         # docs/runbooks/release-publishing.md's release procedure — flipping it to
         # bin/lore.cjs is a first-release step, not a standing state, so pre-publish
         # git/link installs keep working). Patch a SCRATCH copy here (reverted via
         # `git checkout` immediately after) so this dry-run's install-sanity step
         # proves the launcher exactly as a real release will ship it. Filenames are
-        # built from the exact version rather than a glob: `salient-data-lore-*.tgz`
+        # built from the exact version rather than a glob: `opum-ai-lore-*.tgz`
         # also matches every platform package's tarball, and passing THOSE to `npm
         # install` explicitly (not resolved through optionalDependencies) makes npm
         # hard-fail EBADPLATFORM on any package.json os/cpu mismatch with the runner.
@@ -212,32 +566,247 @@ jobs:
             (cd "npm/$name" && npm pack --pack-destination "$PWD/../../dist-npm" .)
           done
           ls -la dist-npm
-          echo "ROOT_TARBALL=dist-npm/salient-data-lore-${version}.tgz" >> "$GITHUB_ENV"
-          echo "LINUX_X64_TARBALL=dist-npm/salient-data-lore-linux-x64-${version}.tgz" >> "$GITHUB_ENV"
-      - name: Install-sanity — npx-equivalent resolution through the real launcher (LORE-9 AC#2)
+          echo "ROOT_TARBALL=dist-npm/opum-ai-lore-${version}.tgz" >> "$GITHUB_ENV"
+          echo "LINUX_X64_TARBALL=dist-npm/opum-ai-lore-linux-x64-${version}.tgz" >> "$GITHUB_ENV"
+      - name: Install-sanity — npx-equivalent resolution through the real launcher (LCLI-9 AC#2)
         run: |
+          # Same comparison mechanism as ci.yml's compile-smoke job (ci.yml:56-64):
+          # read package.json's version, compare strictly, hard-fail naming both
+          # values on mismatch. This job has no bun toolchain (no setup-bun step),
+          # so `node -p` reads package.json here — matching the `node -p` already
+          # used earlier in this same job — rather than the `bun -e` the build job
+          # uses (which does have bun via setup-bun).
+          expected="$(node -p "require('./package.json').version")"
           rm -rf /tmp/lore-install-sanity && mkdir -p /tmp/lore-install-sanity
           cd /tmp/lore-install-sanity
           npm init -y >/dev/null
           npm install "$GITHUB_WORKSPACE/$ROOT_TARBALL" "$GITHUB_WORKSPACE/$LINUX_X64_TARBALL"
           version="$(node node_modules/.bin/lore --version)"
-          echo "lore --version (via bin/lore.cjs -> the linux-x64 optionalDependency) => '${version}'"
+          echo "lore --version (via bin/lore.cjs -> the linux-x64 optionalDependency) => '${version}' (package.json: '${expected}')"
           if [ -z "$version" ]; then
             echo "::error::the launcher did not resolve/run the installed platform binary"
             exit 1
           fi
-      - uses: actions/upload-artifact@v4
+          if [ "${version}" != "${expected}" ]; then
+            echo "::error::version mismatch: binary='${version}' package.json='${expected}'"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: npm-packages-dry-run
+          name: npm-packages
           path: dist-npm/
           if-no-files-found: error
 
-# TODO(LORE-9 follow-up, not this task): add a `publish` job gated on
-# `inputs.publish == true` with `permissions: { id-token: write }`, using npm's
-# OIDC-based trusted publishing. Requires configuring the npm trusted publisher for
-# this repo + this workflow file once on npmjs.com first (a maintainer-only step —
-# see docs/runbooks/release-publishing.md for the exact steps and commands). Also
-# flip package.json's bin.lore to bin/lore.cjs for real as part of that same release
-# (see docs/runbooks/release-publishing.md's release procedure) — the `package` job
-# above only patches a scratch copy to dry-run-verify the launcher, never the
-# committed file.
+  publish:
+    name: publish (npm, OIDC trusted publishing)
+    # Only runs on an explicit `publish: true` dispatch (the input defaults to
+    # false) — this workflow is itself workflow_dispatch-only (never fires on a
+    # push or tag), so a real publish always requires a maintainer to
+    # deliberately opt in on that one run, never as a side effect of any other
+    # trigger.
+    if: ${{ inputs.publish == true }}
+    needs: [setup, package]
+    runs-on: ubuntu-latest
+    # LCLI-268: an OUT-OF-FILE gate, on top of (not instead of) the `if:` guard above.
+    # npm Trusted Publishing (LCLI-255) matches OIDC tokens on repo + WORKFLOW FILENAME,
+    # not a ref, and this workflow is workflow_dispatch-reachable on any branch — so an
+    # actor with write access could push a branch carrying a release.yml with every
+    # in-file guard stripped (the `if:` above, the 0.0.0 refusal, the npm-version floor)
+    # and dispatch it there. An in-workflow `if: github.ref == …` guard would NOT close
+    # that: it lives in the exact file the attacker already controls, so it is trivially
+    # deleted along with everything else. `environment: release` instead ties this job to
+    # GitHub Environment protection rules (required reviewers / allowed deployment
+    # branches), which are repo Settings configuration evaluated by GitHub's deployment
+    # subsystem, not workflow content — they still apply to a run using a wholesale-
+    # replaced copy of this file. This line is INERT on its own: referencing an
+    # environment that has no protection rules configured auto-creates it with none, and
+    # an attacker who deletes this line from their forged copy skips the gate entirely
+    # unless npm's Trusted Publisher config for all six packages also requires this
+    # environment's OIDC claim. Both of those are repo-admin actions this workflow change
+    # does not and cannot perform — see docs/runbooks/release-publishing.md's "Repo-admin
+    # setup for the release Environment (LCLI-268)" section for the exact steps and the
+    # residual risk until they're done.
+    environment: release
+    # Job-scoped (not workflow-scoped): only serializes overlapping runs of THIS job —
+    # two `publish: true` dispatches queued back-to-back run one after the other rather
+    # than interleaving their `npm publish` calls, which the resumable skip-check
+    # (below) tolerates but does not need to race against. Dry-run-only dispatches
+    # (the common case) never touch this job, so they are unaffected and can still run
+    # concurrently. `cancel-in-progress: false` because canceling a real publish
+    # mid-flight is worse than queuing behind it.
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
+    # id-token: write is scoped to ONLY this job — the workflow-level
+    # `permissions:` block above stays `contents: read`, so no other job in
+    # this workflow (including this one's own upstream dependencies) can mint
+    # an OIDC token.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-packages
+          path: dist-npm
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Upgrade npm to meet the OIDC trusted-publishing floor
+        # Trusted publishing needs npm >= 11.5.1. `node-version: 24` above resolves to
+        # whatever the latest 24.x ships, which is not guaranteed to bundle a new-enough
+        # npm — upgrade here so the floor is actually MET, not merely checked below. Cheap
+        # (npm is already on PATH from setup-node) and keeps this job self-sufficient
+        # rather than depending on a future Node release to happen to bundle the floor.
+        # Pinned to the `^11` major (not `@latest`): this is the only job with
+        # `id-token: write`, so an unpinned global install of npm's own CLI would let a
+        # compromised npm release run with publish capability the moment it ships —
+        # `^11` keeps the auto-upgrade intent (still tracks patch/minor fixes, still
+        # satisfies the floor assertion below) while narrowing that window to versions
+        # that predate any such compromise landing on a new major.
+        run: npm install -g npm@^11
+      - name: Assert npm CLI meets the OIDC trusted-publishing floor (docs/runbooks/release-publishing.md Prerequisites)
+        # Post-condition check for the upgrade step above — fail loud here, before
+        # touching the registry, rather than letting an unmet floor surface as a
+        # confusing mid-publish auth error. A non-numeric prerelease segment (e.g.
+        # "11.5.1-pre.0") makes `Number(...)` yield NaN, and every NaN comparison below
+        # is false, so `meetsFloor` is false — this deliberately fails CLOSED (reported
+        # as "older than the floor") rather than risking a false pass.
+        run: |
+          # The ${...} below are JS template literals for `node -e`, not shell
+          # interpolation — single-quoting is intentional.
+          # shellcheck disable=SC2016
+          node -e '
+            const { execSync } = require("node:child_process");
+            const version = execSync("npm --version").toString().trim();
+            const [major, minor, patch] = version.split(".").map(Number);
+            const meetsFloor = major > 11 || (major === 11 && (minor > 5 || (minor === 5 && patch >= 1)));
+            if (!meetsFloor) {
+              console.error(`::error::npm ${version} is older than the >= 11.5.1 floor OIDC trusted publishing requires`);
+              process.exit(1);
+            }
+            console.log(`npm ${version} meets the >= 11.5.1 trusted-publishing floor`);
+          '
+      - name: Publish 5 platform binaries first, launcher LAST (resumable) via OIDC trusted publishing
+        # ORDER IS LOAD-BEARING: the root launcher's optionalDependencies pin the five
+        # platform packages at an EXACT version, and bin/lore.cjs require.resolve()s them
+        # at runtime. Publishing root first would (a) leave a window where
+        # `npx @opum-ai/lore` installs a launcher whose platform deps 404 (npm skips
+        # an unresolvable optional dep, so the install "succeeds" and only fails at run
+        # time with "no compiled binary found"), and (b) on any mid-loop failure leave the
+        # root published at a version that can never be republished — with the first
+        # publish having already set the `latest` dist-tag. Root last means a partial
+        # failure leaves nothing users can install, so the same version can be retried
+        # after fixing the cause (see docs/runbooks/release-publishing.md Rollback).
+        #
+        # RESUMABLE: `run:` blocks execute under `bash -e`, so the first failing `npm
+        # publish` aborts the loop. Re-dispatching would otherwise 403 (EPUBLISHCONFLICT)
+        # on the packages already published. `publish_or_skip` checks the registry first
+        # and skips anything already there, so re-dispatching after a partial failure
+        # completes the rest instead of being permanently stuck.
+        #
+        # This job has no checkout (only the packed tarballs), so the platform set comes
+        # from `needs.setup.outputs.namesSpace` (the same single source of truth every
+        # other job derives its platform list from) rather than re-deriving it from
+        # package.json here. The root/launcher tarball is whatever tarball's name does
+        # NOT match any `-<platform>-` segment — asserted to be exactly one, so a
+        # naming/count drift fails loud instead of silently publishing the wrong thing
+        # last (or not at all).
+        env:
+          PLATFORM_NAMES_SPACE: ${{ needs.setup.outputs.namesSpace }}
+        run: |
+          publish_or_skip() {
+            local tgz="$1"
+            local name version
+            # Here-string (not a heredoc): the RHS is a command substitution whose
+            # output ("name version", space-separated) `read` splits into the two
+            # variables below.
+            read -r name version <<< "$(tar -xzOf "$tgz" package/package.json | node -e '
+              let data = "";
+              process.stdin.on("data", (chunk) => { data += chunk; });
+              process.stdin.on("end", () => {
+                const pkg = JSON.parse(data);
+                console.log(pkg.name, pkg.version);
+              });
+            ')"
+            # `read ... <<< "$(cmd)"` fails OPEN if `cmd` errors: a here-string always
+            # supplies a trailing newline, so `read` sees at least one (empty) line and
+            # returns 0 regardless of whether `tar`/`node` above actually produced
+            # anything — and `run:` steps execute under `bash -e` WITHOUT `pipefail`, so
+            # neither a `tar` extraction failure nor a `node` JSON-parse crash aborts
+            # this function on their own. Without this guard, `name`/`version` silently
+            # become empty, `npm view "@" version` fails (indistinguishable from "not
+            # published"), and the tarball below gets published unconditionally —
+            # turning a resumable re-dispatch back into the EPUBLISHCONFLICT abort this
+            # function exists to prevent.
+            if [ -z "$name" ] || [ -z "$version" ]; then
+              echo "::error::could not read name/version from $tgz (unexpected tarball layout?)"
+              exit 1
+            fi
+            # `npm view` exits non-zero for a name@version that has never been published —
+            # that is the expected/common case, hence the explicit guard rather than
+            # letting `bash -e` treat it as a failure.
+            if npm view "${name}@${version}" version >/dev/null 2>&1; then
+              echo "${name}@${version} already published — skipping (resuming a partially-failed publish)"
+              return 0
+            fi
+            echo "::group::npm publish $tgz ($name@$version)"
+            npm publish "$tgz"
+            echo "::endgroup::"
+          }
+
+          shopt -s nullglob
+          all_tgz=(dist-npm/*.tgz)
+          if [ "${#all_tgz[@]}" -ne 6 ]; then
+            echo "::error::expected 6 tarballs in dist-npm, found ${#all_tgz[@]}"
+            ls -la dist-npm
+            exit 1
+          fi
+
+          root=""
+          platform_tgz=()
+          for tgz in "${all_tgz[@]}"; do
+            is_platform=false
+            for name in $PLATFORM_NAMES_SPACE; do
+              case "$tgz" in
+                *"-${name}-"*) is_platform=true ;;
+              esac
+            done
+            if [ "$is_platform" = true ]; then
+              platform_tgz+=("$tgz")
+            elif [ -z "$root" ]; then
+              root="$tgz"
+            else
+              echo "::error::found two candidate root/launcher tarballs: $root and $tgz"
+              exit 1
+            fi
+          done
+          if [ "${#platform_tgz[@]}" -ne 5 ] || [ -z "$root" ]; then
+            echo "::error::expected 5 platform tarballs + 1 root tarball, found ${#platform_tgz[@]} platform (root='${root}')"
+            ls -la dist-npm
+            exit 1
+          fi
+
+          # Refuse to publish the pre-release placeholder version. Every other
+          # precondition in this workflow fails loud (the npm floor assertion above,
+          # the 6/5+1-tarball count asserts above, verify-versions' 12-value
+          # cross-check in the `verify-versions` job) — this is the only irreversible
+          # action in the repo, and the First-release checklist deliberately orders
+          # Trusted Publisher registration (step 1) BEFORE the version bump (step 2),
+          # so a `publish: true` dispatch made between those two steps would otherwise
+          # sail through every other check and genuinely publish six installable
+          # `0.0.0` packages, moving `latest` onto them. Checked once against the root
+          # tarball (verify-versions already proved all six manifests share one
+          # version, so any of the six would do).
+          root_version="$(tar -xzOf "$root" package/package.json | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>console.log(JSON.parse(d).version));')"
+          if [ -z "$root_version" ] || [ "$root_version" = "0.0.0" ]; then
+            echo "::error::refusing to publish version '${root_version}' — 0.0.0 is the pre-release placeholder. Complete the version-bump item in docs/runbooks/release-publishing.md's First-release checklist first."
+            exit 1
+          fi
+          echo "publishing version ${root_version}"
+
+          for tgz in "${platform_tgz[@]}"; do
+            publish_or_skip "$tgz"
+          done
+          publish_or_skip "$root"

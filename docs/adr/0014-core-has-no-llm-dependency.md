@@ -17,7 +17,7 @@ timestamp: 2026-06-21T00:00:00Z
 
 Accepted — 2026-06-21.
 
-Amended — 2026-06-26 (LORE-47): names **`git`** as a third deterministic input, read through an
+Amended — 2026-06-26 (LCLI-47): names **`git`** as a third deterministic input, read through an
 injectable **`GitAdapter`** seam alongside the clock and the Backlog subprocess (lore-design §8).
 `git log` over a **pinned commit range** is local, reproducible computation — not a network-model
 call — so deriving the bundle's `log.md` from commit history (`core/log.ts`) upholds every guarantee

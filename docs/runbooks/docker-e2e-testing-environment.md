@@ -25,21 +25,54 @@ upstream `MrLesk/Backlog.md` pinned at the PR #790 merge commit
 [backlog-json-patch runbook](backlog-json-patch.md) §8.1) — and runs every `lore` command against a
 real, mutating scratch backlog project built through real `backlog init`/`task create`/`task edit`
 calls. No mocking anywhere, matching [ADR-0002](../adr/0002-backlog-integration-json-only.md)'s
-JSON-only, fail-loud design. LORE-56 first ran this and found four real defects
-(LORE-57/58/59/60) that 1497 passing mocked-adapter tests had missed entirely.
+JSON-only, fail-loud design. LCLI-56 first ran this and found four real defects
+(LCLI-57/58/59/60) that 1497 passing mocked-adapter tests had missed entirely.
+
+## CI gate (required on `dev`; LCLI-100 / LCLI-196)
+
+This harness is no longer local-only. `.github/workflows/ci.yml` runs it as the `docker-e2e` job
+on every PR and on code pushes to `main` (docs/backlog-only pushes are path-ignored), invoking the same compose file and harness as the
+manual steps below as `PUID="$(id -u)" PGID="$(id -g)" docker compose -f
+docker/e2e/docker-compose.yml up --build --exit-code-from e2e` — the extra `PUID`/`PGID`
+are CI-specific (see `ci.yml`'s inline comments: `--exit-code-from` is required
+because plain `up` always exits 0 regardless of the service's own exit code, and `PUID`/`PGID`
+must match the runner's real uid/gid so writes to the bind-mounted report file don't EACCES). A
+regression anywhere the harness covers now fails CI instead of merging silently. The steps in this
+runbook remain the way to reproduce and triage a failure by hand; they are no longer the only way
+the harness gets run.
+
+The active `require-docker-e2e-on-dev` repository ruleset requires the exact
+`docker e2e harness (real lore + backlog binaries)` context on `dev`. Its
+`RepositoryRole` admin bypass is configured as `always`, so repository admins
+can deliberately merge without the check; ordinary contributors cannot.
+
+The CI job always uploads `docker/e2e/results/report.jsonl` (when it exists) as the
+`docker-e2e-report` build artifact, so a CI failure can be triaged from the workflow run's
+Artifacts panel using the same "Triage every `FAIL`" process below, without re-running the
+harness locally first.
 
 ## Prerequisites
 
 - Docker Desktop (or another Docker Engine) running locally.
 - Network access during the image build (clones `MrLesk/Backlog.md`, `apt-get`/`pip`/`npm` installs).
 - Run from the repo root — the compose file's build context is `../..` relative to `docker/e2e/`.
+- These prerequisites apply to a manual/local run only; the CI job above provisions its own
+  Docker Engine and network access on `ubuntu-latest`.
+- **Never invoke `docker/e2e/run-e2e.sh` directly on the host** (e.g. `bash docker/e2e/run-e2e.sh`)
+  — always go through the `docker compose` command below. The script performs real, mutating
+  filesystem operations (`git init`, `backlog init`, `lore init`, and much more) rooted at its cwd;
+  inside its container that cwd is the disposable `/workspace`, but on a host it would be wherever
+  the script happened to be invoked from. The script refuses to run outside its container (LCLI-269:
+  it checks for a container-only marker before doing anything else and exits 1 with a pointer back
+  to this command), so a mistaken direct invocation now fails closed instead of silently mutating
+  the caller's working tree.
 
 ## Steps
 
 1. Build and run:
 
    ```sh
-   docker compose -f docker/e2e/docker-compose.yml up --build
+   docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e
    ```
 
    The build stage fails loud (non-zero exit) if either binary doesn't compile to real, working
@@ -69,33 +102,43 @@ JSON-only, fail-loud design. LORE-56 first ran this and found four real defects
 
 ## Known, already-filed regressions baked into the script
 
-One step in `run-e2e.sh` still deliberately asserts the *current, buggy* exit code rather than the
-desired one, so the harness both proves the bug is real on every run and still lets downstream
-phases exercise the rest of the surface via a documented workaround:
+One finding from the same LCLI-56 run is tracked but doesn't have a dedicated `run-e2e.sh`
+regression step (nothing in the script's own exit-code assertions currently encodes it):
 
-- **LORE-59** — `lore new Story` doesn't scaffold the `<!-- lore:tasks:begin/end -->` managed
-  block, so `lore sync` fails once tasks are linked; the script appends the markers manually
-  afterward so sync/check/idempotency can still be exercised for real.
-
-Two more findings from the same LORE-56 run are tracked but don't have a dedicated `run-e2e.sh`
-regression step (nothing in the script's own exit-code assertions currently encodes them):
-
-- **LORE-58** — `lore link`/`unlink --json` would emit a full success-shaped envelope on stdout
-  even on a nonzero exit, if any per-task write fails. LORE-57 (below) removed the only trigger
+- **LCLI-58** — `lore link`/`unlink --json` would emit a full success-shaped envelope on stdout
+  even on a nonzero exit, if any per-task write fails. LCLI-57 (below) removed the only trigger
   path currently exercised by this script, but the structural gap in `link.ts` remains — any
   future per-task write failure would still reproduce it.
-- **LORE-60** — a fully missing `backlog` binary is `not_found`/exit `3` (not `6` as
-  [ADR-0002](../adr/0002-backlog-integration-json-only.md) currently states) — a doc-accuracy gap,
-  not a code bug; the code's own inline comment explains the distinction is deliberate.
 
-**LORE-57 (fixed)** — `lore link`/`unlink`'s Backlog `doc:` back-ref write used to fail
+**LCLI-57 (fixed)** — `lore link`/`unlink`'s Backlog `doc:` back-ref write used to fail
 (`editTask` sent `--json` to `backlog task edit`, which doesn't support it) and exit `6`; the
 frontmatter `tasks:` list was still written correctly. Phase 4's steps now assert the fixed
 behavior (exit `0`, real `backRef` add/remove) instead of the regression baseline.
 
+**LCLI-60 (fixed)** — a fully missing `backlog` binary is `not_found`/exit `3`, distinct from a
+present-but-too-old-or-non-`--json`-capable binary (`validation`/exit `6`); the code's own inline
+comment explains the split is deliberate. [ADR-0002](../adr/0002-backlog-integration-json-only.md)
+previously collapsed both cases into a single "exit `6`" claim — a doc-accuracy gap, not a code
+bug — now corrected to match the real exit codes.
+
 When any of the remaining findings are fixed, flip the corresponding `step`'s expected exit code
 (and delete the now-unneeded workaround) in the same change that fixes the underlying bug — a
 passing run with the old expectation still in place would silently mask a regression.
+
+## Known not-coverable in this harness
+
+A few command-surface behaviors cannot be exercised here at all — documented so a future audit
+does not treat their absence as a gap to fill:
+
+- **Exit-1 uncaught faults** — `EXIT_UNCAUGHT` (`cli.ts`'s last-ditch backstop) fires only when
+  `reportError` itself throws; there is no supported way to induce that from outside the process.
+- **Live Obsidian consumer verification** — Obsidian has no headless mode this harness can drive.
+  `lore scaffold obsidian`'s unit tests already pin the exact `app.json`/plugin config values; the
+  documented path for a real render/link/backlink check is the `obsidian` CLI against a running
+  Obsidian.app instance, outside this container.
+- **True TTY pretty-mode rendering** — the container's stdout is always piped, so `--plain`
+  auto-selection is what this harness can prove; genuine ANSI/color output only renders at a real
+  TTY (partially closable via `script(1)` if ever worth the added complexity).
 
 ## Rollback
 

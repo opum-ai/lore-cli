@@ -23,18 +23,26 @@
  *   probe mean, unambiguously, "this linked id is a dangling reference" — dropped from the
  *   rollup with a stderr advisory, exit 0 — rather than "Backlog is broken". `orphans`
  *   (LORE-32) is the dedicated dangling-link report; `tasks` only notes them so its rollup
- *   shows just the live tasks. A per-task read that *fails* (Backlog drift) still propagates.
+ *   shows just the live tasks. A per-task read that *fails* (Backlog drift) still propagates;
+ *   a per-task read that *succeeds* but answers with a DIFFERENT task's id than requested is
+ *   also a hard `not_found` error (exit 3), never silently attributed to the requested row —
+ *   via the same shared guard `commands/link.ts`'s `verifiedViewTask` exports (LORE-183; this
+ *   module no longer hand-maintains its own copy, LORE-125) — the SAME guard `reconcile-shared.ts`'s
+ *   `resolveTaskDetails` (originally LORE-122) now also delegates to (LORE-183), so the
+ *   comparison/`LoreError` lives in exactly one place across `link.ts`/`tasks.ts`/`reconcile-shared.ts`.
  */
 
 import { join } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { conceptNotInBundle, loadBundle, toRefList } from "../core/bundle";
 import { idFromPath } from "../core/concept";
+import { loadProfile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { ANSI, EXIT_OK, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable, renderTaskSummaryRows, type TaskSummaryRow } from "../output";
-import { usage } from "./args";
-import { dedupeTaskIds, defaultAdapter } from "./link";
+import { parseCommandArgs, singleOptionValue, usage } from "./args";
+import { mapWithConcurrency, TASK_DETAILS_CONCURRENCY } from "./concurrency";
+import { dedupeTaskIds, defaultAdapter, verifiedViewTask } from "./link";
 
 /** Options for {@link runTasks}; `root`, the streams, and the adapter are injectable for tests. */
 export interface TasksOptions {
@@ -42,7 +50,7 @@ export interface TasksOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `tasks`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -82,7 +90,8 @@ export async function runTasks(options: TasksOptions): Promise<number> {
   const parsed = parseTasksArgs(options.args);
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
-  const graph = loadBundle(docsRoot, { warnings: advisories });
+  const profile = loadProfile({ root: options.root });
+  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
   // Flush load warnings before the not_found throw below, so an advisory explaining *why* a
   // file is not a concept survives on exactly the path that most needs it (mirrors `lore context`).
   advisories.flush({ color: options.output.color, stderr: options.stderr });
@@ -122,11 +131,24 @@ function echoedStatus(filter: string | undefined, tasks: readonly TaskRollupRow[
  *
  * The Backlog capability probe runs UP FRONT so a missing/incapable binary fails fast (exit 3/6)
  * before any per-task read — the disambiguation the module docstring relies on. Reads then run
- * concurrently via `allSettled` (mirroring `resolveTaskDetails`, so a second failing read never
- * escapes as an unhandled rejection): the FIRST read that *fails* — in `tasks:` order — is rethrown
- * as a hard error (Backlog drift), exactly as `lore check`/`sync` treat it, while a clean `null` — a
- * task Backlog does not know — is soft: dropped from the rollup with a stderr advisory (`orphans`
- * owns the dangling-link report). The `--status` filter is applied last, to the live rows only.
+ * concurrently, bounded to {@link TASK_DETAILS_CONCURRENCY} in flight at once via the shared
+ * {@link mapWithConcurrency} worker-pool (mirroring `resolveTaskDetails`'s own LORE-111 fix, so a
+ * concept whose `tasks:` list links many ids never fans out one Backlog CLI subprocess per id fully
+ * concurrently). Each read's outcome is captured into a settled-result array, in `tasks:` order, so a
+ * second failing read never escapes as an unhandled rejection: the FIRST read that *fails* — in
+ * `tasks:` order — is rethrown as a hard error (Backlog drift), exactly as `lore check`/`sync` treat
+ * it, while a clean `null` — a task Backlog does not know — is soft: dropped from the rollup with a
+ * stderr advisory (`orphans` owns the dangling-link report).
+ *
+ * Each read goes through `commands/link.ts`'s exported {@link verifiedViewTask} (LORE-183), not a
+ * raw `adapter.viewTask` call: it checks the returned detail's own `id` against the id actually
+ * requested at that position (case-insensitively) and throws before this function ever sees a
+ * mismatched detail — `viewTask` is keyed by id, but nothing enforces that the detail it returns
+ * actually carries that id back, and trusting it blindly would let a mismatch silently attribute
+ * another task's title/status to this row. That thrown `LoreError` surfaces here as an ordinary
+ * rejected settle, handled identically to any other failed read (a hard `not_found` failure,
+ * exactly as before LORE-125 folded this module's own copy of the check into the shared helper).
+ * The `--status` filter is applied last, to the live rows only.
  */
 async function resolveRollup(
   linked: readonly string[],
@@ -139,13 +161,26 @@ async function resolveRollup(
   const adapter = options.adapter ?? defaultAdapter(options.root);
   await adapter.probe();
 
-  const settled = await Promise.allSettled(linked.map((id) => adapter.viewTask(id)));
+  const settled: PromiseSettledResult<Awaited<ReturnType<typeof verifiedViewTask>>>[] = new Array(linked.length);
+  await mapWithConcurrency(
+    linked.map((id, index) => ({ id, index })),
+    TASK_DETAILS_CONCURRENCY,
+    async ({ id, index }) => {
+      try {
+        const value = await verifiedViewTask(adapter, id);
+        settled[index] = { status: "fulfilled", value };
+      } catch (reason) {
+        settled[index] = { status: "rejected", reason };
+      }
+    },
+  );
   const dangling: string[] = [];
   const rows: TaskRollupRow[] = [];
   for (let i = 0; i < linked.length; i++) {
-    const result = settled[i] as PromiseSettledResult<Awaited<ReturnType<BacklogAdapter["viewTask"]>>>;
+    const result = settled[i] as PromiseSettledResult<Awaited<ReturnType<typeof verifiedViewTask>>>;
     if (result.status === "rejected") {
-      // A read that FAILED (not a clean not-found null) is Backlog drift — hard-fail on the first,
+      // A read that FAILED — Backlog drift, or `verifiedViewTask`'s own id-mismatch guard refusing
+      // an adapter detail that doesn't belong to the requested task — is hard-failed on the first,
       // in tasks: order, before any partial rollup or advisory is emitted.
       throw result.reason;
     }
@@ -180,70 +215,28 @@ function warnDangling(ids: readonly string[], options: TasksOptions): void {
 
 /**
  * Parse `tasks`'s tokens into the required `<id>` positional and the value flag `--status <S>` (also
- * accepting the `--status=value` form). The router has already stripped lore's global flags, so a
+ * accepting the `--status=value` form). Commander has already resolved Lore's global flags, so a
  * `--`-prefixed token here is a command flag: an unrecognized one, a repeated/value-less `--status`, a
  * missing `<id>`, or a second positional is a `usage` error (exit 2). A `--` ends option parsing. The
  * `<id>` is {@link idFromPath}-normalized so path/`.md`/`./` forms resolve (mirrors `lore context`).
  */
 function parseTasksArgs(args: readonly string[]): TasksArgs {
-  const positionals: string[] = [];
-  let status: string | undefined;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      positionals.push(...args.slice(i + 1));
-      break;
-    }
-    if (arg.startsWith("--") && arg.length > 2) {
-      const body = arg.slice(2);
-      const eq = body.indexOf("=");
-      const name = eq === -1 ? body : body.slice(0, eq);
-      const inline = eq === -1 ? undefined : body.slice(eq + 1);
-      if (name === "status") {
-        if (status !== undefined) {
-          throw usage("--status given more than once", "pass --status at most once");
-        }
-        status = readValue("--status", inline, args, i);
-        if (inline === undefined) {
-          i++;
-        }
-      } else {
-        throw usage(`unknown option "--${name}"`, "run `lore tasks --help` to list options");
-      }
-    } else if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, "run `lore tasks --help` to list options");
-    } else {
-      positionals.push(arg);
-    }
+  const parsed = parseCommandArgs(args, "tasks");
+  const positionals = parsed.positionals;
+  const status = singleOptionValue(parsed, "status");
+  if (status === "") {
+    throw usage("--status needs a value", 'pass a value, e.g. `--status "In Progress"`');
   }
-
   if (positionals.length === 0) {
-    throw usage("missing concept <id>", "give the concept whose task rollup to show, e.g. `lore tasks stories/x`");
+    throw usage(
+      "`lore tasks` needs a concept id",
+      "give the concept whose task rollup to show, e.g. `lore tasks stories/x`",
+    );
   }
   if (positionals.length > 1) {
     throw usage(`unexpected argument "${positionals[1]}"`, "run `lore tasks <id> [--status <S>]`");
   }
   return { id: idFromPath(positionals[0] as string), status };
-}
-
-/**
- * Read a value flag's argument: its inline `--flag=value` form when present, else the **next** token.
- * A missing/empty value — or a next token that is itself an option — is a `usage` error rather than a
- * silently swallowed flag (mirrors `lore context`'s value-flag guard).
- */
-function readValue(flag: string, inline: string | undefined, args: readonly string[], i: number): string {
-  if (inline !== undefined) {
-    if (inline === "") {
-      throw usage(`${flag} needs a value`, `pass a value, e.g. \`${flag} "In Progress"\``);
-    }
-    return inline;
-  }
-  const next = args[i + 1];
-  if (next === undefined || next === "" || (next.startsWith("-") && next !== "-")) {
-    throw usage(`${flag} needs a value`, `pass a value, e.g. \`${flag} "In Progress"\``);
-  }
-  return next;
 }
 
 // ── Output ─────────────────────────────────────────────────────────────────────

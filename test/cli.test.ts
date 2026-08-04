@@ -2,10 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type RunContext, run } from "../src/cli";
+import { coerceRealTTY, type RunContext, run } from "../src/cli";
+import type { InitPrompter } from "../src/commands/init";
 import { EXIT_CODES } from "../src/errors";
 import { VERSION } from "../src/meta";
-import { capture } from "./helpers";
+import { capture, fakeAdapter } from "./helpers";
 
 /** Build an argv (`["bun", "lore", ...args]`) the way `run` slices it. */
 function argv(...args: string[]): string[] {
@@ -102,6 +103,25 @@ describe("cli — usage errors (exit 2)", () => {
     expect(envelope.error_type).toBe("usage");
     expect(c.stdout.text()).toBe(""); // stdout stays silent on error
   });
+
+  test("a Commander missing-value failure uses Lore's JSON error seam", () => {
+    const c = ctx();
+    expect(run(argv("new", "adr", "Title", "--summary", "--json"), c)).toBe(EXIT_CODES.usage);
+    const envelope = JSON.parse(c.stderr.text()) as { error_type: string; message: string; hint: string };
+    expect(envelope.error_type).toBe("usage");
+    expect(envelope.message).toContain("--summary needs a value");
+    expect(envelope.hint).toContain("--summary=<value>");
+    expect(c.stdout.text()).toBe("");
+  });
+
+  test("a boolean inline value is translated from Commander into Lore's compatibility error", () => {
+    const c = ctx();
+    expect(run(argv("init", "--yes=true", "--json"), c)).toBe(EXIT_CODES.usage);
+    const envelope = JSON.parse(c.stderr.text()) as { error_type: string; message: string };
+    expect(envelope.error_type).toBe("usage");
+    expect(envelope.message).toContain("--yes takes no value");
+    expect(c.stdout.text()).toBe("");
+  });
 });
 
 describe("cli — init dispatch", () => {
@@ -126,6 +146,89 @@ describe("cli — init dispatch", () => {
     const c = ctx({ cwd });
     expect(run(argv("init", "--"), c)).toBe(0);
     expect(existsSync(join(cwd, "docs/index.md"))).toBe(true);
+  });
+
+  test("the router wires stdinIsTTY + stderrIsTTY + a fake prompter through to the wizard end-to-end (LORE-260)", async () => {
+    // Proves cli.ts's own wiring (not just runInit called directly, as init.test.ts does): a bare
+    // `lore init` through the REAL router, with BOTH streams TTY and an injected prompter, actually
+    // engages the interactive wizard rather than the flag-driven default path. Deliberately does NOT
+    // pass `--json` (review round 2, BLOCKING-1's sibling finding: a machine-readable run must never
+    // prompt) — this scenario can only legitimately happen on the plain/pretty path, so the wizard's
+    // engagement is proved via the async return shape and a real filesystem side effect instead of
+    // parsing a JSON envelope.
+    const prompter: InitPrompter = {
+      confirm: async (_q, defaultValue) => defaultValue,
+      choose: async (_q, _choices, defaultValue) => defaultValue,
+      close: () => {},
+    };
+    // The wizard always runs the (advisory-only) backlog check, so a fake adapter is injected here
+    // too — a real, host-dependent `backlog` subprocess must never be reachable from a unit test.
+    const c = ctx({
+      cwd,
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      adapter: fakeAdapter([], { probe: "ok" }),
+      agentAvailability: () => ({ claude: true, codex: false }),
+    });
+    const result = run(argv("init"), c);
+    expect(result).toBeInstanceOf(Promise); // only the wizard (or an implied backlog check) returns a Promise
+    expect(await result).toBe(0);
+    // Every confirm/choose call above resolves to its own default; the agent-bridge question
+    // defaults to "yes", so the bridge was actually applied — the strongest proof the wizard ran.
+    expect(existsSync(join(cwd, ".claude/skills/lore/SKILL.md"))).toBe(true);
+  });
+
+  test("stdinIsTTY defaults to non-TTY when omitted, even with isTTY:true for stdout (independent axes)", () => {
+    // ctx() always sets isTTY (stdout) per its own default; without an explicit stdinIsTTY override
+    // the router must still resolve stdin as non-interactive (an injected stdout sink implies a
+    // test harness, never a real terminal on any stream) — plain init, no wizard, a plain number.
+    const c = ctx({ cwd });
+    const result = run(argv("init", "--json"), c);
+    expect(result).toBe(0); // NOT a Promise -- proves the wizard never engaged
+    const envelope = JSON.parse(c.stdout.text()) as { kind: string; data: { interactive: boolean } };
+    expect(envelope.data.interactive).toBe(false);
+  });
+
+  test("BLOCKING-1 (round 2): a TTY stdin with a non-TTY stderr never engages the wizard through the real router", () => {
+    // The router's own reproduction of the exact bug confirmed live against `lore-setup.sh`'s
+    // `cmd >/dev/null 2>&1` idiom: stdin stays a readable TTY, stderr is redirected. A prompter that
+    // throws on any call proves the wizard is genuinely unreachable, not just answered fast.
+    const forbidden: InitPrompter = {
+      confirm: () => {
+        throw new Error("the wizard must not run");
+      },
+      choose: () => {
+        throw new Error("the wizard must not run");
+      },
+      close: () => {
+        throw new Error("the wizard must not run");
+      },
+    };
+    const c = ctx({ cwd, stdinIsTTY: true, stderrIsTTY: false, prompter: forbidden });
+    const result = run(argv("init", "--json"), c);
+    expect(result).toBe(0); // NOT a Promise -- the flag-free, non-interactive path
+    const envelope = JSON.parse(c.stdout.text()) as { kind: string; data: { interactive: boolean } };
+    expect(envelope.data.interactive).toBe(false);
+  });
+
+  test("BLOCKING-1's sibling (round 2): `lore init --json` never engages the wizard even with both streams TTY", () => {
+    const forbidden: InitPrompter = {
+      confirm: () => {
+        throw new Error("the wizard must not run");
+      },
+      choose: () => {
+        throw new Error("the wizard must not run");
+      },
+      close: () => {
+        throw new Error("the wizard must not run");
+      },
+    };
+    const c = ctx({ cwd, stdinIsTTY: true, stderrIsTTY: true, prompter: forbidden });
+    const result = run(argv("init", "--json"), c);
+    expect(result).toBe(0); // NOT a Promise -- a machine-readable run must never prompt
+    const envelope = JSON.parse(c.stdout.text()) as { kind: string; data: { interactive: boolean } };
+    expect(envelope.data.interactive).toBe(false);
   });
 });
 
@@ -156,6 +259,15 @@ describe("cli — new dispatch", () => {
     writeFileSync(join(tmplDir, "reference.md"), "\n# {{title}}\n\nOwner: {{owner}}\n");
     expect(run(argv("new", "reference", "Orders", "--var", "owner=payments", "--json"), c)).toBe(0);
     expect(readFileSync(join(cwd, "docs/reference/orders.md"), "utf8")).toContain("Owner: payments");
+  });
+
+  test("global-before-command plus repeatable equals options preserve parser compatibility", () => {
+    const c = ctx({ cwd });
+    const tmplDir = join(cwd, ".lore/templates");
+    mkdirSync(tmplDir, { recursive: true });
+    writeFileSync(join(tmplDir, "reference.md"), "\n# {{title}}\n\nOwner: {{owner}}\nRegion: {{region}}\n");
+    expect(run(argv("--json", "new", "reference", "Orders", "--var=owner=payments", "--var=region=us"), c)).toBe(0);
+    expect(readFileSync(join(cwd, "docs/reference/orders.md"), "utf8")).toContain("Owner: payments\nRegion: us");
   });
 
   test("an unknown flag on `new` is a usage error", () => {
@@ -244,6 +356,224 @@ describe("cli — option terminator and bare dash", () => {
     const c = ctx();
     expect(run(argv("-"), c)).toBe(EXIT_CODES.usage);
     expect(c.stderr.text()).toContain("unknown command");
+  });
+});
+
+describe("cli — post-`--` tokens are positionals, not re-scanned flags (LORE-223)", () => {
+  test("`--version <command> -- -x` still prints the version: a `-`-prefixed token after `--` is a positional", () => {
+    const c = ctx();
+    expect(run(argv("--version", "tasks", "--", "-x"), c)).toBe(0);
+    expect(c.stdout.text()).toBe(`${VERSION}\n`);
+  });
+
+  test("`--help <command> -- -x` still renders that command's help: a `-`-prefixed token after `--` is a positional", () => {
+    const c = ctx();
+    expect(run(argv("--help", "tasks", "--", "-x"), c)).toBe(0);
+    // Command-specific help (not the top-level catalog): has the command's own usage/flags.
+    expect(c.stdout.text()).toContain("lore tasks <id>");
+    expect(c.stdout.text()).toContain("--status");
+    expect(c.stdout.text()).not.toContain("Commands:");
+  });
+
+  test("`init -- -bar` still errors, but classifies `-bar` as an unexpected argument, not an unknown option", () => {
+    const c = ctx();
+    expect(run(argv("init", "--", "-bar"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).toContain("takes no arguments");
+    expect(c.stderr.text()).not.toContain("unknown option");
+  });
+
+  test("`init --json -- -bar` reports the same classification under the `--json` error envelope's `unexpected` key", () => {
+    const c = ctx();
+    expect(run(argv("init", "--json", "--", "-bar"), c)).toBe(EXIT_CODES.usage);
+    const envelope = JSON.parse(c.stderr.text()) as { message: string; input: Record<string, unknown> };
+    expect(envelope.message).toContain("takes no arguments");
+    expect(envelope.input).toEqual({ command: "init", unexpected: ["-bar"] });
+    expect(envelope.input.options).toBeUndefined();
+  });
+
+  test("regression guard: a stray flag BEFORE any `--` is still rejected on the version path", () => {
+    const c = ctx();
+    expect(run(argv("--version", "--bogus"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).toContain('unknown option "--bogus"');
+  });
+
+  test("regression guard: a stray flag BEFORE any `--`, after a command, is still rejected on the version path", () => {
+    const c = ctx();
+    expect(run(argv("--version", "tasks", "--bogus"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).toContain('unknown option "--bogus"');
+  });
+
+  test("regression guard: a stray flag BEFORE any `--` is still rejected on init as an unknown option", () => {
+    const c = ctx();
+    expect(run(argv("init", "--bogus"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).toContain('unknown option "--bogus"');
+    expect(c.stderr.text()).not.toContain("takes no arguments");
+  });
+});
+
+describe("cli — stderr diagnostic color is independent of stdout's TTY state (LORE-250)", () => {
+  test("AC#4: stdout TTY + non-TTY stderr + NO_COLOR unset → a reported LoreError writes no ESC byte to stderr", () => {
+    const c = ctx({ isTTY: true, stderrIsTTY: false });
+    expect(run(argv("frobnicate"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).not.toContain("\x1b");
+    expect(c.stderr.text()).toContain("unknown command");
+  });
+
+  test("AC#5: both stdout and stderr TTYs + NO_COLOR unset → the stderr error head is still colored", () => {
+    const c = ctx({ isTTY: true, stderrIsTTY: true });
+    expect(run(argv("frobnicate"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).toContain("\x1b[31m"); // red error head
+  });
+
+  test("AC#2 (independence direction): stdout's own output is byte-identical regardless of stderrIsTTY — stdout's mode/color resolution never consults stderr's TTY state at all", () => {
+    // The direct AC#2 claim (stdout at a TTY with NO_COLOR unset still emits color
+    // to stdout) is `resolveOutput`'s pre-existing, untouched-by-LORE-250 contract
+    // (see "pretty on a TTY with NO_COLOR unset enables color (§6)" in
+    // output.test.ts); this end-to-end check adds the router-level guarantee that
+    // varying stderrIsTTY cannot perturb stdout's bytes in either direction.
+    const withTtyStderr = ctx({ isTTY: true, stderrIsTTY: true });
+    const withoutTtyStderr = ctx({ isTTY: true, stderrIsTTY: false });
+    expect(run(argv("--version"), withTtyStderr)).toBe(0);
+    expect(run(argv("--version"), withoutTtyStderr)).toBe(0);
+    expect(withTtyStderr.stdout.text()).toBe(withoutTtyStderr.stdout.text());
+  });
+
+  test("AC#3: NO_COLOR (including empty string) suppresses stderr color even with both streams at a TTY", () => {
+    const c = ctx({ isTTY: true, stderrIsTTY: true, env: { NO_COLOR: "" } });
+    expect(run(argv("frobnicate"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).not.toContain("\x1b");
+  });
+
+  test("omitting stderrIsTTY with an injected stderr sink defaults to non-TTY (no color leak by surprise)", () => {
+    const c = ctx({ isTTY: true }); // no stderrIsTTY override; ctx() always injects a stderr sink
+    expect(run(argv("frobnicate"), c)).toBe(EXIT_CODES.usage);
+    expect(c.stderr.text()).not.toContain("\x1b");
+  });
+});
+
+describe("cli — WarningCollector.flush through a real command honors the stderr TTY gate (LORE-250 AC#1)", () => {
+  // Regression for the production leak Fable's review caught: every command's
+  // `advisories.flush({ color: options.output.color, stderr })` call site reads
+  // `options.output.color` directly — never `errorRenderOpts` — so this exercises
+  // the router's real `dispatch()` seam end-to-end (not `errorRenderOpts`'s
+  // arithmetic in isolation, which output.test.ts already covers) to prove the
+  // fix lands where production code actually reads it.
+  let cwd: string;
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), "lore-cli-flush-tty-"));
+  });
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  /** Scaffold a bundle, then add a frontmatter-free file so `graph` emits a real advisory. */
+  function scaffoldWithStray(): void {
+    expect(run(argv("init"), ctx({ cwd }))).toBe(0);
+    writeFileSync(join(cwd, "docs/stray.md"), "# Stray\n\nA plain file with no frontmatter.\n");
+  }
+
+  test("stdout TTY + non-TTY stderr + NO_COLOR unset → a real command's advisory warning writes no ESC byte to stderr", async () => {
+    scaffoldWithStray();
+    const c = ctx({ cwd, isTTY: true, stderrIsTTY: false });
+    expect(await run(argv("graph"), c)).toBe(0);
+    // Confirms the warning was actually emitted (not silently dropped) before asserting on its bytes.
+    expect(c.stderr.text()).toContain("warning: skipping stray.md: no frontmatter mapping");
+    expect(c.stderr.text()).not.toContain("\x1b");
+  });
+
+  test("both stdout and stderr TTYs + NO_COLOR unset → the same advisory warning is still colored", async () => {
+    scaffoldWithStray();
+    const c = ctx({ cwd, isTTY: true, stderrIsTTY: true });
+    expect(await run(argv("graph"), c)).toBe(0);
+    expect(c.stderr.text()).toContain("\x1b[33m"); // yellow "warning:" prefix
+    expect(c.stderr.text()).toContain("skipping stray.md");
+  });
+});
+
+describe("cli — real-process stderrIsTTY fallback coerces an absent .isTTY to false (LORE-250, round 3)", () => {
+  // Round 2's fallback — `context.stderrIsTTY ?? (context.stderr ? false : process.stderr.isTTY)`
+  // — leaked in the one code path no other test in this file reaches: an *uninjected*
+  // context, where the real `process.stderr.isTTY` is read directly. Node/Bun leave that
+  // property `undefined` (not `false`) on a non-TTY stream, and `resolveOutput`'s/
+  // `errorRenderOpts`'s `?? true` back-compat defaults treat an absent value as "omitted",
+  // not "false" — so the uncoerced `undefined` silently re-enabled color on a redirected
+  // stderr in the shipped binary even though every test here (which always injects a
+  // `stderr` capture sink via `ctx()`) stayed green. This block exercises the real,
+  // uninjected path directly.
+
+  /** Monkeypatch a stream's `.isTTY` to `value`, returning a restorer to call in `finally`. */
+  function stubIsTTY(stream: NodeJS.WriteStream, value: boolean | undefined): () => void {
+    const original = Object.getOwnPropertyDescriptor(stream, "isTTY");
+    Object.defineProperty(stream, "isTTY", { value, configurable: true });
+    return () => {
+      if (original) {
+        Object.defineProperty(stream, "isTTY", original);
+      } else {
+        delete (stream as { isTTY?: boolean }).isTTY;
+      }
+    };
+  }
+
+  test("coerceRealTTY: only a literal `true` reading is a TTY — an absent (undefined) or `false` reading is not", () => {
+    // The unit-level guarantee the production fallback depends on: `undefined` (what
+    // Node/Bun actually leave on a non-TTY `process.stderr.isTTY`) must coerce to `false`,
+    // never fall through to a `?? true` default further down the pipeline.
+    expect(coerceRealTTY(undefined)).toBe(false);
+    expect(coerceRealTTY(false)).toBe(false);
+    expect(coerceRealTTY(true)).toBe(true);
+  });
+
+  test("production leak repro: stdout TTY + stderr's real .isTTY absent (a redirected 2>) writes no ESC byte to stderr with NO injected context", () => {
+    const restoreStdout = stubIsTTY(process.stdout, true);
+    // `undefined` (a genuinely absent property), not `false` — this is exactly what
+    // Node/Bun leave on `process.stderr.isTTY` when stderr is piped or redirected, and is
+    // the reading round 2's fallback failed to coerce.
+    const restoreStderr = stubIsTTY(process.stderr, undefined);
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    let captured = "";
+    // biome-ignore lint/suspicious/noExplicitAny: matching Node's overloaded WriteStream#write signature for a test-only stub.
+    (process.stderr as any).write = (chunk: unknown, ...rest: unknown[]) => {
+      captured += typeof chunk === "string" ? chunk : String(chunk);
+      const cb = rest.find((a) => typeof a === "function") as (() => void) | undefined;
+      cb?.();
+      return true;
+    };
+    try {
+      // No `context` at all: exercises `run(process.argv)`'s exact real-process seam
+      // (cli.ts:429), only with a controlled `env` so a stray `NO_COLOR` in the ambient
+      // test environment cannot make this test flaky in either direction.
+      const code = run(argv("frobnicate"), { env: {} });
+      expect(code).toBe(EXIT_CODES.usage);
+      expect(captured).toContain("unknown command"); // the warning was actually emitted...
+      expect(captured).not.toContain("\x1b"); // ...and carries no ANSI byte.
+    } finally {
+      process.stderr.write = originalWrite;
+      restoreStderr();
+      restoreStdout();
+    }
+  });
+
+  test("production, both real TTYs: stdout TTY + stderr's real .isTTY true still colors the stderr error head", () => {
+    const restoreStdout = stubIsTTY(process.stdout, true);
+    const restoreStderr = stubIsTTY(process.stderr, true);
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    let captured = "";
+    // biome-ignore lint/suspicious/noExplicitAny: matching Node's overloaded WriteStream#write signature for a test-only stub.
+    (process.stderr as any).write = (chunk: unknown, ...rest: unknown[]) => {
+      captured += typeof chunk === "string" ? chunk : String(chunk);
+      const cb = rest.find((a) => typeof a === "function") as (() => void) | undefined;
+      cb?.();
+      return true;
+    };
+    try {
+      const code = run(argv("frobnicate"), { env: {} });
+      expect(code).toBe(EXIT_CODES.usage);
+      expect(captured).toContain("\x1b[31m"); // red error head, proving this isn't a blanket suppression
+    } finally {
+      process.stderr.write = originalWrite;
+      restoreStderr();
+      restoreStdout();
+    }
   });
 });
 

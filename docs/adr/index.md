@@ -38,4 +38,6 @@ as of 2026-06-21.
 - [ADR-0014: Core lore has no LLM dependency](0014-core-has-no-llm-dependency.md)
 - [ADR-0015: Lightweight retrieval: full-text + graph context, no vectors](0015-lightweight-retrieval-no-vectors.md)
 - [ADR-0016: Confluence publish: one-way, Cloud/ADF, deferred](0016-confluence-one-way-publish-deferred.md)
+- [ADR-0017: Interactive `lore init` wizard, TTY-gated](0017-interactive-init-wizard-tty-gated.md)
+- [ADR-0018: Persistent local graph projection with LadybugDB](0018-persistent-local-graph-projection-with-ladybugdb.md)
 <!-- lore:index:end -->

@@ -4,7 +4,7 @@ type: Spec
 title: lore implementation design
 description: The implementation design for lore — module responsibilities and boundaries, command sequence flows, the error/exit-code model, the idempotency strategy, git-native versioning, the output-mode layer, and the testing strategy — elaborating the product spec into a buildable plan.
 tags: [design, spec, core, commands, idempotency, testing, exit-codes]
-summary: "How lore is built: a deterministic core/ library returning structured objects, thin commands over it, byte-stable serialization, git-native versioning, and a layered output/error model — with the testing strategy that locks it all down."
+summary: "Describes lore's deterministic core, thin commands, stable serialization, Git-native versioning, output model, and testing strategy."
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -64,11 +64,12 @@ seams, the Backlog adapter); nothing lower knows about anything higher.
 
 ```
 src/
-├── cli.ts            # hand-rolled CLI entrypoint (PRIMARY surface)
+├── cli.ts            # Commander entrypoint; manifest declarations + Lore lifecycle/output seams
 ├── mcp.ts            # MCP server entrypoint (DEFERRED, v2)
 ├── core/             # deterministic library — returns structured objects
-│   ├── schema.ts     # Zod source of truth; emits JSON Schema + modeline
-│   ├── concept.ts    # frontmatter <-> object (gray-matter + zod), stable serialize
+│   ├── profile.ts    # compile declarative profile into Zod validators
+│   ├── schema.ts     # emit JSON Schema + modeline from generated validators
+│   ├── concept.ts    # Lore fence split + js-yaml + generated Zod, stable serialize
 │   ├── bundle.ts     # walk docs/, build graph, generate index/log, token estimates
 │   ├── managed-block.ts  # mdast surgery (mdast-util-from-markdown) on <!-- lore:tasks --> regions
 │   ├── reconcile.ts  # status roll-up rules
@@ -104,7 +105,7 @@ interface Concept {
   frontmatter: Record<string, unknown>;  // validated where known, passthrough where not
   body: string;               // markdown after frontmatter
 }
-function parseConcept(path: string, raw: string): Concept;     // gray-matter + zod
+function parseConcept(path: string, raw: string): Concept;     // Lore fence split + js-yaml + generated Zod
 function serializeConcept(c: Concept): string;                 // STABLE bytes (§6)
 
 // bundle.ts — the whole docs/ tree as a graph
@@ -135,7 +136,10 @@ and what exit code to map a thrown `LoreError` to.
 
 A `commands/*.ts` handler does exactly four things, in order:
 
-1. **Parse** the already-validated flags the hand-rolled router hands it (no business logic).
+1. **Accept** Commander-parsed arguments from the CLI surface with no business
+   logic. The capability manifest declares commands, positional signatures,
+   options, aliases, and generated Lore help; `exitOverride()` and injected
+   writers keep lifecycle and output in Lore's seams.
 2. **Call** one or more core functions (and, where needed, an adapter), passing
    injectable dependencies — the `clock`, the `BacklogAdapter`, the bundle root.
 3. **Map** the structured result, or a caught `LoreError`, to an output payload
@@ -215,6 +219,11 @@ cli → commands/new
 The new concept is **not** committed automatically — it is yours to edit
 ([ADR-0006](../adr/0006-schema-types-templates.md)). A missing or oversized
 `summary` is warned about, not blocked.
+
+The built-in `Story` template also ships an empty
+`<!-- lore:tasks:begin -->…<!-- lore:tasks:end -->` managed block (LCLI-59), so
+a fresh Story is immediately `lore sync`-able once linked, with no
+hand-authored markup.
 
 ### 3.3 `lore validate`
 
@@ -462,6 +471,10 @@ The `<!-- lore:tasks:begin -->…<!-- lore:tasks:end -->` block is the sole regi
 lore regenerates inside a Story; everything outside is the author's and is never
 touched ([ADR-0008](../adr/0008-managed-block-remark-ast.md)). `replace` and
 `rename` skip these regions so user refactors and lore regeneration never fight.
+`lore new Story` scaffolds this region empty by default, so the first
+`lore sync` after linking a task fills it in rather than erroring; a Story that
+is missing the markers entirely (e.g. hand-deleted after creation) still fails
+loud at exit 6 (ADR-0008 §2) — lore never guesses where to insert them.
 
 ### 6.3 Golden tests pin the bytes
 
@@ -602,13 +615,18 @@ This design is built in milestone order (see product spec
 | **M3** | Navigability/search/refactoring: index/log gen, `graph`, `query`, `context`, `replace`, `rename`, `supersede` |
 | **M4** | Agent bridge: generated `SKILL.md`, CLAUDE.md nudge, `lore instructions` ([agent onboarding](../runbooks/agent-onboarding.md)) |
 | **M5** | Browsable + graph consumers: MkDocs/Docusaurus/Obsidian scaffolds |
-| **M6–M8** | **Deferred** — MCP server ([MCP tools](../reference/mcp-tools.md)), Confluence publish, Confluence mirror |
+| **M6** | Freeze the LadybugDB contract; migrate CLI parsing/dispatch to Commander and build the projection in independent lanes; then integrate indexed graph/query/context and finish recovery, packaging, benchmark, and scale gates ([ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md)) |
+| **M7** | Read-only offline-capable local graph explorer over the stable indexed projection |
+| **M8** | Explicit multi-repository workspaces plus bounded path/impact and [snapshot change/provenance](snapshot-change-and-provenance-workflows.md) capabilities |
+| **Hold** | Local MCP ([MCP tools](../reference/mcp-tools.md)), Confluence publishing/mirror, and importable-library work remain retained but unscheduled |
 
 ## See also
 
 - [Product spec — `lore-spec.md`](../../lore-spec.md) — the narrative origin this design elaborates
 - [System architecture](../reference/architecture.md) — the layered map this spec implements
-- [Tech stack](../reference/tech-stack.md) — Bun, a hand-rolled CLI router, gray-matter, mdast-util-from-markdown, Zod
+- [Local graph platform roadmap](local-graph-platform-roadmap.md) — the active M6–M8 sequence and task gates
+- [Tech stack](../reference/tech-stack.md) — Bun, exact-pinned Commander with Lore-owned lifecycle/output, the `js-yaml` frontmatter boundary, mdast parsing, and Zod
+- [Dependency boundary audit](../reference/dependency-boundary-audit.md) — approved generic primitive delegation, compatibility gates, future investigations, and retained custom boundaries
 - [CLI surface](../reference/cli-surface.md) and [CLI contract](../reference/cli-contract.md)
 - [Backlog JSON schema](../reference/backlog-json-schema.md) and [Backlog CLI contract](../reference/backlog-cli-contract.md)
 - [OKF conformance](../reference/okf-conformance.md) and [portable Markdown](../reference/portable-markdown.md)

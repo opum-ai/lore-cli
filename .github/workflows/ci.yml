@@ -2,23 +2,74 @@ name: CI
 
 on:
   push:
-    branches: [dev, main]
+    # Was [dev, main]. `dev` dropped deliberately (LCLI-251): every change reaches
+    # dev through a PR that already runs full CI pre-merge, so the post-merge dev
+    # push just re-ran the identical bytes (444 redundant runs in the last
+    # campaign). `main` stays as the cross-OS + e2e integration checkpoint
+    # (dev is fast-forwarded onto main).
+    branches: [main]
+    # Docs/metadata-only pushes to main don't need the compute pipeline. NOTE:
+    # applied to `push` ONLY — `pull_request` is intentionally left unfiltered
+  # below (see its comment) so the required status check can never be skipped
+    # into a permanent "pending" that deadlocks a PR.
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "backlog/**"
+      - ".claude/**"
   # Unfiltered so PRs to dev (and stacked feature-branch PRs) all get CI.
+  # Deliberately NOT paths-ignore'd: the docker-e2e job is a required status
+  # check on dev (LCLI-196), and a workflow skipped by a path filter
+  # leaves its required checks permanently pending, blocking the merge. The
+  # per-PR matrix is ubuntu+windows only (macOS is push/dispatch-gated below),
+  # so an all-docs PR still runs cheaply rather than being skipped.
   pull_request:
+  # Manual full-matrix run (includes the 10x-billed macOS leg) on demand. The
+  # narrow Ladybug qualification mode runs only the two exact host/architecture
+  # combinations that the normal matrix does not cover.
+  workflow_dispatch:
+    inputs:
+      ladybug_exact_hosts_only:
+        description: "Run only LadybugDB qualification on Darwin x64 and Linux arm64"
+        type: boolean
+        default: false
+
+# Cancel superseded in-flight PR runs so rapid review fix-up pushes stop instead
+# of running the whole pipeline (10x macOS leg + docker-e2e cold build) to
+# completion. Key PR runs by PR NUMBER (unique — the same branch name PR'd to two
+# bases or arriving from a fork can't collide into one group). push and
+# workflow_dispatch fall back to the unique run_id, so every push/dispatch run
+# gets its OWN group: it is never grouped with — hence never cancelled by, nor
+# left pending-then-superseded behind — another push or dispatch. (GitHub cancels
+# a *queued* run in a shared group even when cancel-in-progress is false, so a
+# per-ref key could drop a main-integration SHA's run; a per-run key can't.) A
+# main-integration run and a manual full-matrix dispatch therefore always run to
+# completion; cancel-in-progress only ever applies to PR runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
   check:
+    # OS list is computed inline by event: pull requests verify on ubuntu + windows
+    # (the OSes this codebase's path/FS handling actually breaks on); macOS — billed
+    # at 10x Linux and ~half a run's cost for ~40s of work — is added only on a
+    # push (integration to main) or a manual workflow_dispatch, never on a PR
+    # (LCLI-251). Done as an inline fromJSON expression, NOT a needs: setup job, so
+    # no upstream job can fail/skip and silently drop these (soon-to-be-required,
+    # LCLI-196) legs.
     name: "lint · typecheck · test (${{ matrix.os }})"
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","windows-latest"]' || github.event_name == 'workflow_dispatch' && inputs.ladybug_exact_hosts_only == true && '["macos-15-intel","ubuntu-24.04-arm"]' || '["ubuntu-latest","windows-latest","macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/setup-bun
       - run: bun run lint
       - run: bun run typecheck
@@ -26,29 +77,72 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            # Windows runners hit FS/resource pressure under default parallelism (AC#2).
-            bun test --isolate --max-concurrency=4 --timeout=30000
+            # Windows runners hit FS/resource pressure under default parallelism, and
+            # the pinned 700k-row Ladybug fixture can take just over 30 seconds there.
+            bun test --isolate --max-concurrency=4 --timeout=45000
+          elif [[ "${{ matrix.os }}" == "macos-15-intel" ]]; then
+            # The 700k-row orphan-render regression takes ~30s on the slower Intel
+            # hosted runner. Keep its exact-host qualification bounded without
+            # weakening the ordinary matrix's per-test timeout.
+            bun test --isolate --timeout=40000
           else
             # Isolate test files so suites that mutate global process state can't bleed.
             bun test --isolate --timeout=10000
           fi
 
+  ladybug-benchmark-smoke:
+    # Functional evidence only: --smoke uses one measured repetition, reports
+    # every gate as inconclusive, and exits successfully when parity/schema/
+    # accounting all hold. Timing thresholds remain release-only (LCLI-283.1.4).
+    name: ladybug benchmark smoke (non-timing)
+    if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: ./.github/actions/setup-bun
+      - name: Run the complete small-fixture one-repetition smoke
+        shell: bash
+        run: |
+          if [ -z "${ImageOS:-}" ] || [ -z "${ImageVersion:-}" ]; then
+            echo "::error::GitHub runner image identity is unavailable"
+            exit 1
+          fi
+          mkdir -p artifacts
+          bun benchmark/ladybug/run.ts \
+            --fixture small \
+            --output artifacts/ladybug-benchmark-smoke-v1.json \
+            --runner-image "${ImageOS}-${ImageVersion}" \
+            --smoke
+      - name: Upload functional benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ladybug-benchmark-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/ladybug-benchmark-smoke-v1.json
+            benchmark/ladybug/gates/v1.json
+          if-no-files-found: warn
+          retention-days: 30
+
   build:
     name: compile smoke (ubuntu)
+    if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/setup-bun
       # Lightweight buildability smoke (host-native compile only). The
       # release-grade -baseline per-platform matrix and npm dual-artifact
-      # packaging are in .github/workflows/release.yml (LORE-9).
+      # packaging are in .github/workflows/release.yml (LCLI-9).
       - name: Compile and smoke-test the binary
         shell: bash
         run: |
           # `--outfile` inside the checkout keeps this on the runner's single filesystem —
           # do not redirect it to a separately-mounted volume/tmpfs: a cross-device rename
           # during `bun build --compile` can silently produce a 0-byte binary at exit 0
-          # (see docs/reference/tech-stack.md §1, LORE-14).
+          # (see docs/reference/tech-stack.md §1, LCLI-14).
           bun build --compile src/cli.ts --outfile dist/lore
           # Assert the binary WORKS, not merely that it exits 0. A broken compile
           # (e.g. the 0-byte binary `bun build --compile` silently emits on some
@@ -65,17 +159,34 @@ jobs:
           # --help exercises the other output path; assert it emits the banner too.
           ./dist/lore --help | grep -q "OKF-native documentation CLI"
 
+  explorer-browser-qualification:
+    name: explorer browser qualification (chromium · firefox · webkit)
+    if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: .lore/cache/ms-playwright
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: ./.github/actions/setup-bun
+      - name: Install pinned browser engines
+        run: bunx playwright install --with-deps chromium firefox webkit
+      - name: Qualify the static explorer
+        run: bun run test:browser
+
   scaffold-mkdocs:
     name: mkdocs scaffold smoke
+    if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/setup-bun
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.x"
       - run: pip install "mkdocs>=1.6" "mkdocs-material>=9"
-      # Real end-to-end smoke (LORE-39 AC#1): scaffold against this repo's own bundle,
+      # Real end-to-end smoke (LCLI-39 AC#1): scaffold against this repo's own bundle,
       # then actually build it. A generated-bytes unit test alone can't catch a config
       # setting that mkdocs itself rejects or a plugin that silently no-ops.
       #
@@ -90,14 +201,16 @@ jobs:
 
   scaffold-docusaurus:
     name: docusaurus scaffold smoke
+    if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/setup-bun
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
-      # Real end-to-end smoke (LORE-40 AC#1/AC#2): scaffold against this repo's own bundle,
+      # Real end-to-end smoke (LCLI-40 AC#1/AC#2): scaffold against this repo's own bundle,
       # then actually build it with real Docusaurus + webpack. A generated-bytes unit test
       # alone can't catch a config setting Docusaurus itself rejects, or the raw `<`/`{` in
       # OKF prose (e.g. `<!-- lore:tasks:begin -->`) being parsed as MDX/JSX and breaking the
@@ -113,3 +226,51 @@ jobs:
           cd website
           npm install
           npm run build
+
+  docker-e2e:
+    name: docker e2e harness (real lore + backlog binaries)
+    if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
+    runs-on: ubuntu-latest
+    # Intentionally runs on every pull_request (no event/paths gating): this job is
+    # the required dev merge-gate status check (LCLI-196), so it must report
+    # on every PR. Its check-run context name above must stay byte-identical to the
+    # string a human selects in branch protection — do not rename it.
+    #
+    # A full cold build (Backlog.md clone + build, lore compile, apt/pip/npm installs) plus
+    # ~300 real-binary assertions measured ~5m on GH-hosted 2-core ubuntu runners (2026-07,
+    # no docker layer cache). 20m bounds a genuinely hung step (e.g. a stalled network fetch)
+    # at ~4x the observed cold build — ample for network variance yet failing far faster than
+    # the 360m default (and the earlier unmeasured 45m guess). A docker layer cache is a
+    # deferred follow-up (LCLI-251).
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      # The ~1500-line hermetic E2E harness under docker/e2e/ (LCLI-56..68) builds real `lore`
+      # and `backlog` binaries and drives the full `lore` command surface against a real,
+      # mutating backlog project — no mocked adapter (ADR-0002). It was previously runnable
+      # only by hand (docs/runbooks/docker-e2e-testing-environment.md) and never wired into
+      # any workflow, so a regression anywhere it covers (LCLI-61..68) could merge cleanly
+      # (LCLI-100). `--exit-code-from e2e` is required, not cosmetic: plain `docker compose
+      # up` always exits 0 regardless of the service's own exit code (LCLI-104), which would
+      # silently turn this into a no-op smoke test that never fails the job.
+      # PUID/PGID must match the runner's real uid/gid: ubuntu-latest runs as 1001:1001,
+      # not the container's default 1000:1000 (docker-compose.yml's own header documents
+      # this exact invocation). Without it, every write to the bind-mounted
+      # docker/e2e/results/report.jsonl EACCESes (that dir is tracked via .gitkeep and
+      # checked out owned by the runner's uid), and run-e2e.sh Phase 25 deliberately exits
+      # 1 whenever REPORT_WRITE_FAILURES>0 (LCLI-103 AC1) — so the job fails even when
+      # every scenario passes, and the report artifact never exists on the host.
+      - name: Build and run the E2E harness
+        run: PUID="$(id -u)" PGID="$(id -g)" docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e
+      # Always attempt this (even after a failing run above) — the structured
+      # docker/e2e/results/report.jsonl (one JSON object per step) is the fastest way to see
+      # which scenario(s) failed without re-running the whole harness locally. Best-effort:
+      # a build-time failure (before run-e2e.sh's entrypoint ever executes) leaves no report
+      # file, so a missing file here is expected, not itself a workflow failure.
+      - name: Upload E2E report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: docker-e2e-report
+          path: docker/e2e/results/report.jsonl
+          if-no-files-found: warn

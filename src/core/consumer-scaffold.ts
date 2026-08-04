@@ -4,9 +4,10 @@
  *
  * Each target's config is generated **additively, outside `docs/`** so the OKF bundle stays
  * the single source of truth (ADR-0010 §2) — with one intentional exception: {@link buildObsidianScaffold}
- * writes `docs/.obsidian/app.json` *inside* `docs/`, because Obsidian's vault-scoping requirement
- * (consumer-compatibility.md §3.2) needs `docs/` itself to be the vault root. Every other target's
- * output, and everything else under `docs/`, is never mutated to satisfy a consumer.
+ * writes `docs/.obsidian/app.json` and `docs/.obsidian/.gitignore` *inside* `docs/`, because
+ * Obsidian's vault-scoping requirement (consumer-compatibility.md §3.2) needs `docs/` itself to be
+ * the vault root. Every other target's output, and everything else under `docs/`, is never mutated
+ * to satisfy a consumer.
  * Like {@link buildScaffold} (`lore init`'s pure plan builder), these functions touch no
  * filesystem and read no clock; the side effects (never-clobber vs. `--force` overwrite) live
  * in `commands/scaffold.ts`.
@@ -71,13 +72,27 @@ export const WEBSITE_PACKAGE_JSON_REL_PATH = `${WEBSITE_DIR}/package.json`;
 export const OBSIDIAN_DIR = `${DOCS_DIR}/.obsidian`;
 
 /**
- * The repo-relative path of the scaffolded Obsidian vault config. Only this file is committed —
- * `.gitignore` excludes everything under `docs/.obsidian/` *except* it (`docs/.obsidian/*` plus
- * a `!docs/.obsidian/app.json` negation), rather than enumerating the rest of Obsidian's per-user
- * vault state file by file, since Obsidian creates more of those than any fixed list can keep up
- * with. A future file scaffolded under `docs/.obsidian/` needs its own negation line to be committed.
+ * The repo-relative path of the scaffolded Obsidian vault config. Only this file (plus
+ * {@link OBSIDIAN_GITIGNORE_REL_PATH} itself) is meant to be committed — the scaffolded
+ * `.gitignore` excludes everything under `docs/.obsidian/` *except* the two of them
+ * (`*` plus `!app.json`/`!.gitignore` negations), rather than enumerating the rest of Obsidian's
+ * per-user vault state file by file, since Obsidian creates more of those than any fixed list can
+ * keep up with. A future file scaffolded under `docs/.obsidian/` needs its own negation line to
+ * be committed.
  */
 export const OBSIDIAN_APP_JSON_REL_PATH = `${OBSIDIAN_DIR}/app.json`;
+
+/**
+ * The repo-relative path of the scaffolded, self-contained Obsidian `.gitignore`
+ * (consumer-compatibility.md §3.2: "A `.gitignore` entry for `docs/.obsidian/workspace*.json` and
+ * the cache (commit `app.json` only)"). Scoped *inside* `docs/.obsidian/` rather than appended to
+ * a repo-root `.gitignore` — every pattern below is relative to this file's own directory — so
+ * scaffolding it never has to read, merge into, or risk clobbering a consumer's pre-existing
+ * root `.gitignore`; it fits the same create-fresh/`--force`-to-overwrite model every other
+ * scaffolded file already uses. Its exclude-all-except pattern is a strict superset of the doc's
+ * literal `workspace*.json`/cache wording — see {@link OBSIDIAN_APP_JSON_REL_PATH}'s own doc for why.
+ */
+export const OBSIDIAN_GITIGNORE_REL_PATH = `${OBSIDIAN_DIR}/.gitignore`;
 
 /** The exact, lockstep-pinned Docusaurus version this scaffold was verified against. */
 const DOCUSAURUS_VERSION = "3.10.2";
@@ -164,8 +179,10 @@ export function buildDocusaurusScaffold(options: ConsumerScaffoldOptions): Consu
 }
 
 /**
- * Build the {@link ConsumerScaffoldPlan} for `lore scaffold obsidian` (LORE-41): a single
- * `docs/.obsidian/app.json` preset (consumer-compatibility.md §3.2), plus {@link OBSIDIAN_GUIDANCE_NOTES}.
+ * Build the {@link ConsumerScaffoldPlan} for `lore scaffold obsidian` (LORE-41): the
+ * `docs/.obsidian/app.json` preset plus the scoped `docs/.obsidian/.gitignore` that keeps
+ * Obsidian's per-user vault state (workspace layout, cache, plugins/, ...) untracked while still
+ * committing the two of them (consumer-compatibility.md §3.2), plus {@link OBSIDIAN_GUIDANCE_NOTES}.
  * Pure — identical `options` always produce identical bytes; unlike {@link buildMkdocsScaffold}, no
  * OKF concept file is emitted, so every `options` field goes unused here, the same reason
  * {@link buildDocusaurusScaffold} ignores `timestamp`/`profile`.
@@ -173,7 +190,10 @@ export function buildDocusaurusScaffold(options: ConsumerScaffoldOptions): Consu
 export function buildObsidianScaffold(_options: ConsumerScaffoldOptions): ConsumerScaffoldPlan {
   return {
     dirs: [DOCS_DIR, OBSIDIAN_DIR],
-    files: [{ path: OBSIDIAN_APP_JSON_REL_PATH, contents: obsidianAppJson() }],
+    files: [
+      { path: OBSIDIAN_APP_JSON_REL_PATH, contents: obsidianAppJson() },
+      { path: OBSIDIAN_GITIGNORE_REL_PATH, contents: obsidianGitignore() },
+    ],
     notes: OBSIDIAN_GUIDANCE_NOTES,
   };
 }
@@ -392,4 +412,22 @@ function obsidianAppJson(): string {
     alwaysUpdateLinks: true,
   };
   return `${JSON.stringify(config, null, 2)}\n`;
+}
+
+/**
+ * The scaffolded `docs/.obsidian/.gitignore` bytes ({@link OBSIDIAN_GITIGNORE_REL_PATH}):
+ * exclude-all-except, scoped to `docs/.obsidian/` itself so every pattern below is relative to
+ * that directory rather than the repo root. `*` ignores everything Obsidian writes there
+ * (`workspace.json`, `workspace-mobile.json`, `cache/`, `plugins/`, `snippets/`, ...) — a strict
+ * superset of consumer-compatibility.md §3.2's literal `workspace*.json`/cache wording, chosen for
+ * the same reason this repo's own root `.gitignore` uses it for its own `docs/.obsidian/`: Obsidian
+ * creates more per-user state files than any fixed list can keep up with. `!.gitignore` and
+ * `!app.json` re-include the two files this scaffold actually wants committed.
+ */
+function obsidianGitignore(): string {
+  return `${generatedHeader("#", "obsidian", "§3.2")}
+*
+!.gitignore
+!app.json
+`;
 }

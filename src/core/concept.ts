@@ -36,13 +36,12 @@
  *   BOM, LF, fence-first) on read, so such a file is *accepted* (not rejected) and
  *   reaches a fixpoint after one write rather than churning or erroring.
  *
- * Serialization composes the fence directly (`---` + dumped YAML + `---` + body)
- * rather than going through gray-matter's `stringify`: that helper internally does
- * `Object.assign({}, data)`, whose `[[Set]]` semantics **silently drop an own
+ * Serialization composes the fence directly (`---` + dumped YAML + `---` + body).
+ * This avoids object-copy helpers whose `Object.assign({}, data)` semantics **silently drop an own
  * `__proto__` data key** (a tolerated OKF producer extension) and reflow the body —
  * both of which would break the no-key-dropped (ADR-0011 §5) and byte-stability
- * guarantees this module exists to provide. gray-matter remains the *parse* boundary
- * (it splits the fence from the body).
+ * guarantees this module exists to provide. The fence split and YAML parse therefore share this
+ * module as one hardened boundary.
  *
  * Per the core contract (design §2.1) this module is a pure library: it returns a
  * {@link Concept} or throws a {@link LoreError}; it never prints, reads flags, or
@@ -74,9 +73,8 @@
  */
 
 import { posix } from "node:path";
-import matter from "gray-matter";
-import type { DumpOptions, LoadOptions } from "js-yaml";
-import yaml from "js-yaml";
+import type { Document, DumpOptions, LoadOptions, Node } from "js-yaml";
+import * as yaml from "js-yaml";
 import { deriveMessage, LoreError, singleLine, type WarningCollector } from "../errors";
 import { defaultProfile, type Profile } from "./profile";
 import { validateFrontmatter } from "./schema";
@@ -131,28 +129,147 @@ const YAML_LOAD_OPTIONS: LoadOptions = Object.freeze({ schema: yaml.JSON_SCHEMA 
  * - `lineWidth: -1` — never wrap/reflow long strings or lists into different bytes.
  * - `sortKeys: false` — we control key order ourselves (the active profile's canonical key order).
  * - `noRefs: true` — never emit YAML anchors/aliases for a shared object.
- * - `quotingType: '"'` + `forceQuotes: false` — when a value *must* be quoted, use
+ * - `quoteStyle: "double"` + `forceQuotes: false` — when a value *must* be quoted, use
  *   double quotes; otherwise leave it unquoted (don't gratuitously re-quote).
- * - `noCompatMode: true` — don't quote for YAML-1.1 compatibility (e.g. `yes`/`on`).
+ * - `transform: quoteLeadingZeroStrings` — retain js-yaml 4's stable treatment
+ *   of digit strings such as `"007"` after js-yaml 5 stopped quoting them.
  */
 const YAML_DUMP_OPTIONS: DumpOptions = Object.freeze({
   schema: yaml.JSON_SCHEMA,
   lineWidth: -1,
   sortKeys: false,
   noRefs: true,
-  quotingType: '"',
+  quoteStyle: "double",
   forceQuotes: false,
-  noCompatMode: true,
+  transform: quoteLeadingZeroStrings,
 });
 
 /**
- * gray-matter options carrying the frozen parse engine. Only `parse` is used:
- * serialization composes the fence itself (see the module header), so gray-matter's
- * `stringify` is never invoked.
+ * js-yaml 5 resolves an omitted mapping value (`status:`) to an empty string,
+ * while js-yaml 4 and YAML's null semantics resolved it to `null`. Restore that
+ * boundary behavior without changing an explicitly quoted empty string.
  */
-const MATTER_OPTIONS = {
-  engines: { yaml: { parse: (input: string): object => yaml.load(input, YAML_LOAD_OPTIONS) as object } },
-} as const;
+function normalizeEmptyYamlScalars(input: string): string {
+  return input.replace(
+    /^([ \t]*[A-Za-z_][A-Za-z0-9_-]*:)[ \t]*(#.*)?$(?!\n[ \t]+(?:-|[A-Za-z_][A-Za-z0-9_-]*:))/gm,
+    (_line, prefix, comment = "") => `${prefix} null${comment ? ` ${comment}` : ""}`,
+  );
+}
+
+/** Preserve strings whose plain form is unstable or ambiguous for YAML consumers. */
+function quoteLeadingZeroStrings(documents: Document[]): void {
+  const stack: Node[] = documents.flatMap((document) => (document.contents ? [document.contents] : []));
+  while (stack.length > 0) {
+    const node = stack.pop() as Node;
+    if (node.kind === "scalar") {
+      if (node.tag === "tag:yaml.org,2002:str" && (/^[-+]?0[0-9]+$/.test(node.value) || /^[-?:]/.test(node.value))) {
+        node.style.doubleQuoted = true;
+      }
+    } else if (node.kind === "sequence") {
+      stack.push(...node.items);
+    } else if (node.kind === "mapping") {
+      for (const item of node.items) {
+        stack.push(item.key, item.value);
+      }
+    }
+  }
+}
+
+/**
+ * `assertBoundedYamlExpansion` runs on every parsed document at the single choke point
+ * every read path (`parseConcept`/`tryParseConcept`/
+ * `tryReadFrontmatter`, all via {@link splitFrontmatter}) shares, so a malicious file is
+ * rejected the moment it is first read, before any downstream consumer (validation, the
+ * bundle graph, a later `serializeConcept` dump) can ever touch the dangerous object
+ * (LORE-85). A thrown error here is caught and path-annotated by `splitFrontmatter`'s
+ * existing try/catch, exactly like a plain YAML syntax error.
+ */
+function parseYamlFrontmatter(input: string): unknown {
+  const parsed = yaml.load(normalizeEmptyYamlScalars(input), YAML_LOAD_OPTIONS);
+  assertBoundedYamlExpansion(parsed);
+  return parsed;
+}
+
+/**
+ * The budget {@link assertBoundedYamlExpansion} enforces, in "expanded units" (roughly
+ * chars — see its own doc for the exact accounting). Frontmatter is metadata, never
+ * prose (the body carries that) — real frontmatter is at most a few KB even for a
+ * concept with a long tags/list field, so this leaves generous headroom (hundreds of
+ * KB) while still aborting a doubling-anchor attack within a couple dozen levels,
+ * almost instantly (LORE-85).
+ */
+const MAX_EXPANDED_YAML_UNITS = 100_000;
+
+/**
+ * Reject a parsed YAML document whose anchor/alias structure would expand to an
+ * unreasonable size or contains a cycle, **before** anything downstream (validation,
+ * canonicalization, a later `noRefs: true` {@link YAML_DUMP_OPTIONS} dump) ever walks it
+ * naively and pays the cost.
+ *
+ * js-yaml's `load` never expands an alias (`*a`) — it points the SAME JS object
+ * reference back at its anchor (`&a`), so parsing a doubling-anchor chain is always
+ * fast regardless of depth (LORE-85's own repro: an 18-level, ~400-byte chain loads in
+ * ~1ms). The danger is downstream: any code that walks the result treating shared
+ * references as if they were distinct subtrees — exactly what `yaml.dump({noRefs:
+ * true})` does, by design, so a re-serialize never emits `&`/`*` — re-visits each
+ * shared subtree once per incoming reference, and a chain of `n` doubling levels
+ * revisits the base subtree `2^n` times: ~400 bytes of source YAML can demand
+ * megabytes-to-gigabytes of work.
+ *
+ * This walker performs the SAME kind of naive, reference-blind traversal (deliberately
+ * NOT memoizing by object identity — a memoized walk would undercount the very
+ * blowup a real `dump` would suffer), but tracks a running total and aborts the
+ * instant it crosses {@link MAX_EXPANDED_YAML_UNITS} — since the total at least
+ * doubles every level in an exponential attack, the walk itself never runs longer
+ * than a small multiple of the budget, however deep the malicious chain goes.
+ *
+ * A **cycle** (an anchor referencing one of its own ancestors — legal under js-yaml's
+ * `JSON_SCHEMA`, confirmed empirically: `a: &a {b: *a}` loads with `doc.a === doc.a.b`)
+ * is a distinct, unbounded hazard a size budget alone cannot catch (an unmemoized walk
+ * of a true cycle never terminates) — detected via a path-scoped ancestor set (added on
+ * entering a node, removed on leaving it), which correctly tells a real cycle apart
+ * from harmless DAG-style sharing (the same anchor reused by two unrelated siblings,
+ * an ordinary and safe YAML pattern that must not be rejected).
+ *
+ * @throws Error when the budget is exceeded or a cycle is found; caught and
+ *   path-annotated by {@link splitFrontmatter}'s surrounding `matter(...)` try/catch.
+ */
+function assertBoundedYamlExpansion(value: unknown): void {
+  const ancestors = new Set<object>();
+  let units = 0;
+
+  const walk = (node: unknown): void => {
+    if (typeof node === "string") {
+      units += node.length;
+    } else if (typeof node !== "object" || node === null) {
+      units += 1; // number, boolean, null — a fixed small cost
+    } else {
+      if (ancestors.has(node)) {
+        throw new Error("frontmatter contains a cyclic YAML anchor (an anchor referencing one of its own ancestors)");
+      }
+      ancestors.add(node);
+      if (Array.isArray(node)) {
+        units += 1;
+        for (const item of node) {
+          walk(item);
+        }
+      } else {
+        units += 1;
+        for (const [key, val] of Object.entries(node)) {
+          units += key.length;
+          walk(val);
+        }
+      }
+      ancestors.delete(node);
+    }
+    if (units > MAX_EXPANDED_YAML_UNITS) {
+      throw new Error(
+        `frontmatter's YAML anchors/aliases would expand to over ${MAX_EXPANDED_YAML_UNITS.toLocaleString()} characters when fully resolved — refusing rather than risk unbounded memory/CPU use`,
+      );
+    }
+  };
+  walk(value);
+}
 
 /** Options for {@link parseConcept}. */
 export interface ParseConceptOptions {
@@ -166,7 +283,7 @@ export interface ParseConceptOptions {
  * Parse a concept file's raw bytes into a typed {@link Concept}.
  *
  * Normalizes the input ({@link normalizeInput}), splits the frontmatter via
- * gray-matter (under the frozen YAML engine), validates it against the lore profile
+ * the frozen YAML engine, validates it against the lore profile
  * ({@link validateFrontmatter} — throws a `validation` {@link LoreError} on a missing
  * `type` or a mistyped known field; warns on unknown types/keys), and returns the
  * **verbatim** frontmatter object so a later {@link serializeConcept} can reproduce
@@ -288,12 +405,27 @@ export interface SerializeConceptOptions {
  *
  * Round-trip caveat (ADR-0011 §2): js-yaml drops the in-fence comment if the file is
  * ever re-serialized, so a doc written this way is emitted once, not rewritten in place.
+ *
+ * `modeline` must be a single line: it is spliced in verbatim (never content-searched
+ * or escaped), so a `modeline` containing a line break would inject arbitrary extra
+ * lines inside/after the opening fence and corrupt the emitted document. Every caller
+ * today passes `schema.schemaModeline` output, which is single-line by construction —
+ * this check is fail-loud contract enforcement for a case no current caller can
+ * reach, matching the rest of this module's throw-before-corrupt invariants.
  */
 export function serializeConceptWithModeline(
   concept: Concept,
   modeline: string,
   options: SerializeConceptOptions = {},
 ): string {
+  if (/[\r\n\u2028\u2029]/.test(modeline)) {
+    throw new LoreError(
+      "validation",
+      `modeline must be a single line, but contained a line break: ${singleLine(modeline)}`,
+      "pass a one-line modeline (e.g. schema.schemaModeline output) with no embedded line break",
+      { modeline },
+    );
+  }
   const serialized = serializeConcept(concept, options);
   return `${FENCE}${modeline}\n${serialized.slice(FENCE.length)}`;
 }
@@ -337,10 +469,11 @@ interface PresentSplit {
 type FrontmatterSplit = PresentSplit | { readonly present: false; readonly reason: "non-mapping" | "missing" };
 
 /**
- * Split normalized bytes into a frontmatter mapping + body via gray-matter.
+ * Split normalized bytes into a frontmatter mapping + body.
  *
- * It **throws** a `validation` {@link LoreError} only for genuinely malformed YAML
- * inside a fence. The two *not-a-concept* shapes — a non-mapping fence (a bare
+ * It **throws** a `validation` {@link LoreError} for genuinely malformed YAML
+ * inside a fence, or for a malformed *closing* fence (LORE-141). The two
+ * *not-a-concept* shapes — a non-mapping fence (a bare
  * scalar/list, which is what a leading `---` thematic break parses to) and a
  * missing/empty/`null` fence — are returned as `present: false`, **not** thrown, so
  * a caller can decide: {@link parseConcept} turns them into the matching error,
@@ -348,9 +481,27 @@ type FrontmatterSplit = PresentSplit | { readonly present: false; readonly reaso
  * thematic-break doc from aborting a whole {@link loadBundle}.
  */
 function splitFrontmatter(path: string, raw: string): FrontmatterSplit {
-  let file: matter.GrayMatterFile<string>;
+  const opening = /^---[ \t]*\n/.exec(raw);
+  if (opening === null) return { present: false, reason: "missing" };
+  const openEnd = opening[0].length;
+  const closeStart = raw.indexOf("\n---", openEnd);
+  const cleanClose = closeStart < 0 || raw.charAt(closeStart + 4) === "" || raw.charAt(closeStart + 4) === "\n";
+  if (!cleanClose) {
+    throw new LoreError(
+      "validation",
+      `frontmatter in ${path} has a malformed closing fence (extra characters after the closing ---)`,
+      "close the frontmatter with a line containing exactly `---` and nothing else",
+      { path },
+    );
+  }
+
+  const yamlText = closeStart < 0 ? raw.slice(openEnd) : raw.slice(openEnd, closeStart);
+  if (yamlText.replace(/^[ \t]*#.*$/gm, "").trim() === "") {
+    return { present: false, reason: "missing" };
+  }
+  let data: unknown;
   try {
-    file = matter(raw, MATTER_OPTIONS);
+    data = parseYamlFrontmatter(yamlText);
   } catch (cause) {
     throw new LoreError(
       "validation",
@@ -360,16 +511,17 @@ function splitFrontmatter(path: string, raw: string): FrontmatterSplit {
     );
   }
 
-  const data: unknown = file.data;
-  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+  if (data === null || data === undefined) return { present: false, reason: "missing" };
+  if (typeof data !== "object" || Array.isArray(data)) {
     return { present: false, reason: "non-mapping" };
   }
   if (Object.getOwnPropertyNames(data).length === 0) {
-    // gray-matter maps a missing fence, an empty fence, AND a fence holding a bare
-    // `null` all to `{}` — one "no usable frontmatter mapping" outcome.
+    // A missing fence, an empty fence, and a bare `null` share one
+    // "no usable frontmatter mapping" outcome.
     return { present: false, reason: "missing" };
   }
-  return { present: true, frontmatter: data as Record<string, unknown>, body: file.content };
+  const bodyStart = closeStart < 0 ? raw.length : closeStart + (raw.charAt(closeStart + 4) === "\n" ? 5 : 4);
+  return { present: true, frontmatter: data as Record<string, unknown>, body: raw.slice(bodyStart) };
 }
 
 /**

@@ -63,6 +63,12 @@ import { deriveMessage, ioError, LoreError, type WarningCollector } from "../err
 import { type Concept, idFromPath, serializeConcept, tryParseConcept } from "./concept";
 import { decodeTarget, isExternalTarget, pathPart } from "./links";
 import { compareCodeUnits } from "./order";
+import { defaultProfile, type Profile } from "./profile";
+import { RESERVED_STEMS } from "./scaffold";
+
+// Bun.gc(true) is synchronous. Large projection loads retain bounded cleanup
+// points without pausing once per small group of authored concepts.
+const BOUNDED_MEMORY_GC_CONCEPT_INTERVAL = 1024;
 
 /**
  * The kind of a concept→concept reference. `"link"` is a body markdown
@@ -110,6 +116,13 @@ export interface BundleGraph {
    */
   readonly edges: readonly Edge[];
   /**
+   * Optional precomputed undirected neighbor lookup. Persistent retrieval backends
+   * can provide this while materializing their edge index so bounded graph and
+   * context traversals do not rebuild the same O(E) adjacency map per command.
+   * The returned order must match first appearance in {@link edges}.
+   */
+  readonly neighbors?: (id: string) => Iterable<string>;
+  /**
    * A token-count **estimate** (chars/4 heuristic, not a real tokenizer) over the
    * canonical serialized bytes of one concept (`id` given) or the whole bundle
    * (`id` omitted). Throws `not_found` if `id` names no loaded concept. Results are
@@ -126,6 +139,16 @@ export interface BundleGraph {
 export interface LoadBundleOptions {
   /** Sink for advisory warnings (unknown type, extra keys, skipped fence-less/symlink files). */
   warnings?: WarningCollector;
+  /**
+   * The active profile every parsed concept's frontmatter is validated against; defaults to the
+   * built-in {@link defaultProfile} (mirroring {@link ParseConceptOptions.profile}'s own default)
+   * when omitted. A project declaring a custom `.lore/profile.toml` must pass its compiled
+   * {@link Profile} here — the caller loads it (`loadProfile({ root })`) and forwards it, since this
+   * module reads only the filesystem tree under `root`, never `.lore/` itself (LORE-84).
+   */
+  profile?: Profile;
+  /** Internal large-snapshot mode that bounds transient parser allocations. */
+  boundedMemory?: boolean;
 }
 
 /**
@@ -137,14 +160,26 @@ export interface LoadBundleOptions {
  *
  * - a file that is **not a concept** (no frontmatter, an empty fence, or a fence
  *   holding a bare scalar/list — e.g. a hand-written `index.md`/`log.md`, or a doc
- *   that merely opens with a `---` thematic break) returns `null` and is skipped,
- *   warned about if a collector is provided;
+ *   that merely opens with a `---` thematic break) returns `null` and is skipped —
+ *   warned about if a collector is provided, **unless** the file's stem is a
+ *   {@link RESERVED_STEMS} entry (`index`/`log`): those are lore's own
+ *   machine-generated hubs (`indexes.ts`/`log.ts` regenerate them wholesale, always
+ *   frontmatter-free below the bundle root), so skipping one is never a surprise
+ *   worth an advisory — every `loadBundle`-backed command warning about it trains
+ *   users to ignore the warning entirely (LORE-258). A genuinely unexpected
+ *   non-concept file (any other stem) still warns; only the two known-reserved
+ *   stems are silent, matching `lore check`'s own scan (which never parses through
+ *   `loadBundle` and so never raised this noise to begin with);
  * - a **malformed concept** (a frontmatter *mapping* that fails the lore profile,
  *   or unparseable YAML) throws its `validation` {@link LoreError} (path included)
  *   rather than being silently dropped.
  *
  * Drawing that line needs the YAML parsed (a prefix check cannot tell an HR from
- * real frontmatter), so each file is parsed exactly once here.
+ * real frontmatter), so each file is parsed exactly once here. "The lore profile"
+ * above is {@link LoadBundleOptions.profile} when given, else the built-in default
+ * (LORE-84) — every concept in one `loadBundle` call validates against the same
+ * profile, so a project's custom `.lore/profile.toml` types/fields/enums are
+ * honored only when the caller loads and forwards it.
  *
  * Concept ids are **bundle-root-relative** (e.g. `docs/adr/0010-x.md` →
  * `adr/0010-x`), which is the id space the relative cross-link form resolves
@@ -156,17 +191,72 @@ export interface LoadBundleOptions {
  *   a fenced concept is malformed.
  */
 export function loadBundle(root: string, options: LoadBundleOptions = {}): BundleGraph {
+  const profile = options.profile ?? defaultProfile();
   const concepts: Concept[] = [];
   for (const rel of walkMarkdown(root, options.warnings)) {
-    // `rel` is bundle-root-relative, so tryParseConcept derives a bundle-relative id.
-    const concept = tryParseConcept(rel, readConcept(root, rel), { warnings: options.warnings });
+    // `rel` is bundle-root-relative, so tryParseConcept derives a bundle-relative id — and so is
+    // the reserved root index it is judged against (LORE-192): see effectiveProfileFor.
+    const concept = tryParseConcept(rel, readConcept(root, rel), {
+      warnings: options.warnings,
+      profile: effectiveProfileFor(rel, BUNDLE_ROOT_INDEX_PATH, profile),
+    });
     if (concept === null) {
-      options.warnings?.add(`skipping ${rel}: no frontmatter mapping, treated as a non-concept file`);
+      // A known-reserved stem (index/log) skips silently — see the docstring above (LORE-258).
+      if (!RESERVED_STEMS.has(posix.basename(rel, ".md"))) {
+        options.warnings?.add(`skipping ${rel}: no frontmatter mapping, treated as a non-concept file`);
+      }
       continue;
     }
     concepts.push(concept);
+    if (options.boundedMemory === true && concepts.length % BOUNDED_MEMORY_GC_CONCEPT_INTERVAL === 0) Bun.gc(true);
   }
   return buildGraph(concepts);
+}
+
+/**
+ * {@link loadBundle}'s own spelling of the reserved bundle-root index, in **its** path space:
+ * bundle-root-relative (`"index.md"`), not `scaffold.ts`'s repo-relative {@link
+ * import("./scaffold").ROOT_INDEX_PATH} (`"docs/index.md"`, threaded by `core/validate.ts`
+ * instead — LORE-144). Every `loadBundle`-backed command (`graph`/`query`/`sync`/`link`/`context`/…)
+ * joins its `root` argument from `DOCS_DIR` before calling in (e.g. `commands/graph.ts`), so
+ * {@link walkMarkdown}'s own relative-path space always yields this bare stem for the one file
+ * `scaffold.ts`'s `serializeStructuralConcept` ever writes there.
+ */
+const BUNDLE_ROOT_INDEX_PATH = "index.md";
+
+/**
+ * The {@link Profile} a concept at `path` is validated against while loading: `defaultProfile()`
+ * when `path` names `rootIndexPath` — the bundle's one reserved, always-scaffolded structural
+ * concept — else `profile` (the caller's active one) unchanged.
+ *
+ * `scaffold.ts`'s `serializeStructuralConcept` always **writes** the root index against the
+ * built-in default profile — deliberately ignoring the active one, so a custom profile can never
+ * break `lore init` (its own docstring). Judging that same file on **read** against the active
+ * profile with no carve-out reintroduces the write/read asymmetry LORE-144 fixed for `lore
+ * validate`: a profile that adds a required field to `Reference` makes a freshly scaffolded
+ * bundle fail its very first `loadBundle`-backed command (`lore graph` et al., LORE-192), because
+ * the file lore just wrote could never satisfy a schema it was never written against. Judging the
+ * root index under the identical profile it was serialized with restores the write/read symmetry
+ * every other concept already has (each is both written and read against the one active profile) —
+ * the root index is simply pinned to a fixed profile on both sides, not left inconsistent between
+ * them.
+ *
+ * Exported (and generalized over `rootIndexPath`, rather than hardcoding one spelling) so this one
+ * algorithm serves both reserved-root carve-outs without letting them drift apart: `core/
+ * validate.ts`'s `validateConceptText` threads its own **repo-relative** constant (`"docs/
+ * index.md"`), while this module's {@link loadBundle} threads its own **bundle-relative** one
+ * ({@link BUNDLE_ROOT_INDEX_PATH}, `"index.md"`) — `validate.ts` cannot spell `loadBundle`'s form
+ * itself (it already imports {@link nodeText} from here, so the reverse import would cycle), so it
+ * imports this function instead and supplies its own path-space constant.
+ *
+ * Scoped to exactly one path, not the whole `RESERVED_STEMS` family (`index`/`log`): every *other*
+ * reserved file — a sub-directory `index.md`, `log.md` — is generated frontmatter-free
+ * (`indexes.ts`/`log.ts`), so `tryParseConcept` already treats it as a skipped non-concept and it
+ * never reaches a profile-driven check in the first place. The bundle-root index is the only
+ * reserved file that is itself a concept.
+ */
+export function effectiveProfileFor(path: string, rootIndexPath: string, profile: Profile): Profile {
+  return path === rootIndexPath ? defaultProfile() : profile;
 }
 
 /**
@@ -219,6 +309,18 @@ export function buildGraph(concepts: readonly Concept[]): BundleGraph {
 }
 
 // ── Filesystem walk ────────────────────────────────────────────────────────────
+
+/**
+ * The {@link WarningCollector} `kind` tag on a "skipping unreadable directory" warning
+ * ({@link walkFiles}). A caller whose mutation depends on a **complete** view of the bundle
+ * graph — `lore rename`/`lore supersede`'s inbound-link rewrite, which can only repoint the
+ * links it can see — tests for this with `warnings.has(UNREADABLE_DIRECTORY_WARNING)` and
+ * refuses to commit rather than silently reporting success over an incomplete rewrite (LORE-82).
+ * A caller without that completeness dependency (`query`, `sync`'s per-concept reconciliation, …)
+ * has no reason to check it — the walk itself stays tolerant either way (LORE-82 doesn't change
+ * loading behavior, only what a caller may choose to do with the signal).
+ */
+export const UNREADABLE_DIRECTORY_WARNING = "unreadable-directory";
 
 /**
  * Recursively collect every `.md` file under `root`, returned as
@@ -278,7 +380,7 @@ export function walkFiles(
       }
       // A nested unreadable directory skips (with a warning), so one restricted
       // folder doesn't take the whole bundle down with it.
-      warnings?.add(`skipping unreadable directory ${relDir}: ${deriveMessage(cause)}`);
+      warnings?.add(`skipping unreadable directory ${relDir}: ${deriveMessage(cause)}`, UNREADABLE_DIRECTORY_WARNING);
       return;
     }
     for (const entry of entries) {
@@ -372,20 +474,37 @@ function collectBodyEdges(concept: Concept, dir: string, byId: ReadonlyMap<strin
  * The canonical `not_found` {@link LoreError} (exit 3) for a concept id absent from the bundle —
  * the single source of its message and hint so the graph-aware refactoring commands (`lore rename`,
  * `lore supersede`) and the rewrite engine all surface the same wording, whichever layer detects the
- * absence.
+ * absence. The hint points at `lore query`/`lore graph` (LORE-259) — both list every known concept
+ * id when run with no arguments — never `lore check`, which only prints a pass/fail summary count
+ * and lists no ids at all.
  */
 export function conceptNotInBundle(id: string): LoreError {
-  return new LoreError("not_found", `concept "${id}" is not in the bundle`, "run `lore check` to list concept ids", {
-    id,
-  });
+  return new LoreError(
+    "not_found",
+    `concept "${id}" is not in the bundle`,
+    "run `lore query` or `lore graph` to see known concept ids",
+    { id },
+  );
 }
 
 /**
  * Resolve a frontmatter concept reference to a concept id, or `null` if it
  * dangles. A ref may be authored as a **bundle-relative id** (how `lore supersede`
- * writes it, e.g. `adr/0009-x`) or as a **relative path** (e.g. `../adr/0009-x.md`);
- * the id form is tried first, then the path form resolved against the referring
- * file's directory.
+ * writes it, and what `lore rename`'s rewrite engine (rewrite.ts's `remapRefItem`)
+ * canonicalizes every moved ref to, e.g. `adr/0009-x`) or as a **relative path**
+ * (e.g. `../adr/0009-x.md`). Which interpretation is tried first is decided by the ref's
+ * own **shape** ({@link isPathShapedRef}), not a blanket precedence — trying one
+ * fixed order first for every ref shape cannot be correct for both forms at once
+ * (LORE-184): a bare id is dir-joinable (`resolvePath` will happily join it to
+ * `dir` and `idFromPath` tolerates its missing suffix), so path-first would let a
+ * concept that merely happens to sit at the dir-joined location shadow the bare id
+ * `lore` itself writes; conversely a `.md`-suffixed/`./`-relative ref that
+ * coincidentally also equals some unrelated concept's bundle-root id must not
+ * resolve to that decoy (LORE-134). Shape removes the ambiguity: only a path-shaped
+ * ref is dir-joined first, only a bare ref is looked up as a root id first — each
+ * form still falls back to the other interpretation if its primary one misses, so
+ * a legitimately dir-relative bare ref (or a `.md` ref that happens to equal a root
+ * id with no dir-relative match) still resolves.
  *
  * Unlike a body link ({@link internalTarget}), a ref is **not** required to carry a
  * `.md` suffix — the bare-id form is exactly what lore writes — which is why the
@@ -412,11 +531,37 @@ export function resolveRef(ref: string, dir: string, byId: ReadonlyMap<string, C
   if (decoded === "") {
     return null;
   }
+  if (isPathShapedRef(decoded)) {
+    const asPath = resolvePath(decoded, dir, byId);
+    if (asPath !== null) {
+      return asPath; // relative-path form, dir-joined — wins over a same-string root id (LORE-134)
+    }
+    const asId = idFromPath(decoded);
+    return byId.has(asId) ? asId : null;
+  }
+  // Bare (suffix-less, non-`./`/`../`-prefixed) ref: this is the canonical id form
+  // `lore` itself writes, so try it as a bundle-root id FIRST — a concept that
+  // merely happens to live at the dir-joined location must not shadow it (LORE-184).
   const asId = idFromPath(decoded);
   if (byId.has(asId)) {
-    return asId; // bundle-relative id form
+    return asId;
   }
-  return resolvePath(decoded, dir, byId); // relative-path form
+  return resolvePath(decoded, dir, byId); // fallback: a dir-relative bare ref with no root-id match
+}
+
+/**
+ * Whether a decoded ref string is unambiguously a **path** form — a `.md` suffix
+ * (case-insensitive, matching {@link idFromPath}'s own suffix test) or a `./`/`../`
+ * relative-segment prefix — as opposed to the bare bundle-root **id** form `lore`
+ * itself writes (`adr/0009-x`, no suffix, no leading dot-segment). Every id in
+ * {@link BundleGraph.concepts} is derived through {@link idFromPath}'s
+ * `posix.normalize`, which collapses `..`/`.` segments, so a real id can never
+ * itself start with `./` or `../` — classifying such a ref as path-shaped costs
+ * nothing on the id side and correctly prioritizes the dir-relative interpretation
+ * for the form a human author would actually write that way.
+ */
+function isPathShapedRef(ref: string): boolean {
+  return /\.md$/i.test(ref) || ref.startsWith("./") || ref.startsWith("../");
 }
 
 /**
@@ -427,6 +572,16 @@ export function resolveRef(ref: string, dir: string, byId: ReadonlyMap<string, C
  * agrees byte-for-byte with how the id was derived. A target that escapes the
  * bundle root (a leading `../`) simply matches nothing.
  *
+ * A **`/`-absolute** `path` (a bundle-root-absolute target, e.g. `/foo/bar.md`) is
+ * resolved against the bundle root instead of `dir`: the leading `/` is stripped and
+ * the remainder used as-is, mirroring core/check.ts's `linkFindings`, the link-check
+ * gate's own resolver. `dir` is already a bundle-root-relative path (every caller
+ * derives it as `posix.dirname(concept.path)` / `posix.dirname(file.path)`), so "the
+ * bundle root" needs no separate parameter — it is simply the empty prefix a
+ * root-relative path is already relative to. Without this special case, a
+ * `/`-absolute ref/link would join onto `dir` like any other relative segment and
+ * disagree with the link-check gate on the same input.
+ *
  * Lookup is **case-sensitive** (a plain `Map.has`), which is deliberate: it is the
  * only choice that is deterministic across platforms (a case-insensitive match
  * would resolve differently on Linux vs macOS for the same files), and the lore
@@ -435,7 +590,8 @@ export function resolveRef(ref: string, dir: string, byId: ReadonlyMap<string, C
  * case-sensitive filesystem.
  */
 export function resolvePath(path: string, dir: string, byId: ReadonlyMap<string, Concept>): string | null {
-  const id = idFromPath(posix.join(dir, path));
+  const joined = path.startsWith("/") ? path.slice(1) : posix.join(dir, path);
+  const id = idFromPath(joined);
   return byId.has(id) ? id : null;
 }
 
@@ -621,7 +777,29 @@ export function walkMdast(root: Nodes, visit: (node: Nodes) => void): void {
  * them; the anchor check needs them).
  */
 export function extractBodyTargets(body: string): string[] {
-  return extractLinkTargets(fromMarkdown(body));
+  return extractLinkTargets(fromMarkdown(compactPlainTextLines(body)));
+}
+
+/**
+ * Replace exceptionally long syntax-free lines before CommonMark tokenization.
+ * Their exact prose cannot affect link destinations, while retaining more than
+ * CommonMark's 999-character link-label ceiling prevents an invalid oversized
+ * label from becoming valid. Definition destinations on a following line remain
+ * byte-exact because their text is itself the value we return.
+ */
+function compactPlainTextLines(body: string): string {
+  const lines = body.split("\n");
+  let changed = false;
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index] as string;
+    if (line.length <= 4096 || /[^\p{L}\p{N} \t]/u.test(line)) continue;
+    const previous = lines[index - 1]?.trimEnd();
+    if (previous?.endsWith("]:") === true) continue;
+    const indentation = line.match(/^[ \t]*/u)?.[0] ?? "";
+    lines[index] = `${indentation}${"x".repeat(1000)}`;
+    changed = true;
+  }
+  return changed ? lines.join("\n") : body;
 }
 
 /**
@@ -667,6 +845,12 @@ export function extractLinkTargets(tree: Nodes): string[] {
  * concatenated in document order, via the stack-safe {@link walkMdast}. Exported as the one
  * "what text does this node render" rule so heading-anchor slugging (`lore check`) and
  * required-section matching (`lore validate`) cannot drift apart on what a heading *says*.
+ *
+ * Deliberately excludes `image`/`imageReference` `alt` text: GitHub — lore's reference
+ * renderer (portable-markdown.md) — renders an `<img>` with empty `textContent` no matter
+ * its `alt`, so an image contributes nothing to the *visible* heading text GitHub slugs from
+ * (verified empirically against GitHub's rendered output; `mdast-util-to-string`'s
+ * `includeImageAlt: true` default diverges from GitHub here and does not apply).
  */
 export function nodeText(node: Nodes): string {
   let text = "";

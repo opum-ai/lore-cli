@@ -1,20 +1,18 @@
 ---
-# yaml-language-server: $schema=../../.lore/schemas/Runbook.schema.json
 type: Runbook
 title: "Agent onboarding: how a coding agent uses lore"
-description: >-
-  The canonical agent loop for working with lore — read the bundle index, follow
-  a Story, check live task status with `lore tasks`, do the work, `lore sync`,
-  then `lore check` as the CI gate. Covers how Claude Code learns lore (the
-  generated SKILL.md, the tiny CLAUDE.md nudge, `lore instructions`, and the
-  `lore help --json` capability manifest), the --json and exit-code contract
-  agents depend on, and the guardrails (lore never auto-authors prose; the CLI
-  is the primary surface).
-tags: [runbook, agents, claude-code, onboarding, skill, cli, json, exit-codes, ci]
-summary: >-
-  The canonical, deterministic agent loop (index → Story → lore tasks → work →
-  lore sync → lore check) plus how Claude Code discovers lore via SKILL.md, the
-  CLAUDE.md nudge, lore instructions, and the --json/exit-code contract.
+description: The canonical agent loop for working with lore — read the bundle index, follow a Story, check live task status with `lore tasks`, do the work, `lore sync`, then `lore check` as the CI gate. Covers how Claude Code learns lore (the generated SKILL.md, the tiny CLAUDE.md nudge, `lore instructions`, and the `lore help --json` capability manifest), the --json and exit-code contract agents depend on, and the guardrails (lore never auto-authors prose; the CLI is the primary surface).
+tags:
+  - runbook
+  - agents
+  - claude-code
+  - onboarding
+  - skill
+  - cli
+  - json
+  - exit-codes
+  - ci
+summary: Defines the deterministic agent loop and how coding agents discover Lore instructions, machine-readable output, and safety guardrails.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -26,10 +24,7 @@ agent loop that the generated `.claude/skills/lore/SKILL.md` mirrors and that
 `lore agents` and `lore instructions` teach on demand.
 
 lore is **CLI-primary** for both humans and agents — there is no behavior
-reachable only through a non-CLI surface, and the MCP server is a deferred v2
-transport over the same core (see
-[ADR-0004: CLI-first; SKILL.md bridge; MCP deferred](../adr/0004-cli-first-skill-bridge-mcp-deferred.md)
-and [MCP tools (deferred)](../reference/mcp-tools.md)). An agent therefore works
+reachable only through a non-CLI surface, and the local MCP server is an on-hold transport over the same core (see [ADR-0004: CLI-first; SKILL.md bridge; MCP deferred](../adr/0004-cli-first-skill-bridge-mcp-deferred.md), [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md), and [MCP tools (on hold)](../reference/mcp-tools.md)). An agent therefore works
 with lore exactly the way a CI pipeline or a shell script does: it **shells out**
 and reads structured output. Everything an agent relies on — the output modes,
 the `{schemaVersion, kind, data}` envelope, the semantic exit codes, the
@@ -42,6 +37,39 @@ lore's core is **deterministic and has no LLM dependency**
 so an agent may treat lore as a **pure function of repo state**: the same inputs
 against an unchanged bundle always produce the same output and the same exit
 code. That determinism is what makes the loop below safe to run unattended.
+
+---
+
+## 0. Bootstrapping a brand-new repo
+
+Everything below assumes a bundle already exists. Bringing lore into a repo
+that has none is **one command**: `lore init`. On a real (interactive)
+terminal it detects installed Claude Code and Codex executables, then offers each
+available agent as an independent bridge choice. It also offers a downstream
+doc-site scaffold (mkdocs/docusaurus), an Obsidian vault config, and a backlog
+`--json`-capability check — replacing the older
+`init` → `agents` → external `lore-setup.sh` → manual-Obsidian sequence
+([ADR-0017](../adr/0017-interactive-init-wizard-tty-gated.md)).
+
+```sh
+lore init                                       # interactive wizard on a TTY
+lore init --yes                                 # skip the wizard, bare scaffold only
+lore init --claude --codex --scaffold mkdocs    # explicit agents, zero prompts
+```
+
+The wizard is **strictly TTY-gated** — this is the one place lore is
+interactive at all, and it never compromises the rest of the CLI's
+non-interactive contract (§3 below): whenever stdin or stderr is not a TTY
+(CI, a pipe, this repo's own docker e2e harness), `--json` is passed, or any
+flag is passed, `init` runs fully non-interactively with defaults and no
+prompt can block it. Every wizard agent choice has a 1:1 flag equivalent (`--claude` and `--codex`; legacy
+`--agents` remains an alias for `--claude`), so an agent scripting a fresh
+repo never needs the wizard at all — pass the flags for the consumers you want
+and `lore init` finishes with zero prompts, exactly as every other lore command
+does. See [CLI surface: `init`](../reference/cli-surface.md#init) for the
+full flag reference. Both bridges are idempotent: Lore refreshes only its managed block in
+`CLAUDE.md` or `AGENTS.md`, while a differing whole-file skill is treated as a
+hand edit and left protected.
 
 ---
 
@@ -68,6 +96,11 @@ lore sync              5. reconcile status + rewrite managed blocks + regen inde
    ▼
 lore check             6. CI gate — exit 6 on drift/broken-link/anchor/portability
 ```
+
+Starting from scratch instead of an existing Story? `lore new Story "<title>"`
+scaffolds the doc — including an empty `<!-- lore:tasks:begin -->` /
+`<!-- lore:tasks:end -->` managed block — so it drops straight into step 2 with
+no hand-authored markup.
 
 Each step in detail:
 
@@ -146,8 +179,9 @@ lore sync --json
 `lore sync` is the **write** step that makes the bundle coherent: it recomputes
 each Story's `status` from its tasks (the reconciliation rules in
 [ADR-0009](../adr/0009-story-task-coupling-reconciliation.md)), rewrites the
-`<!-- lore:tasks -->` managed blocks from live Backlog data, and regenerates the
-index/log. It is **idempotent**: with no upstream change it produces
+`<!-- lore:tasks -->` managed blocks from live Backlog data — including filling
+in, for the first time, the empty block `lore new Story` scaffolds by default —
+and regenerates the index/log. It is **idempotent**: with no upstream change it produces
 byte-identical output, so running it in a loop yields clean, empty diffs. The
 `--json` payload is `kind: "sync.summary"` and reports exactly what changed
 (status rewrites, managed-block diffs, regenerated files).
@@ -247,6 +281,21 @@ probe lore runs against Backlog.md (it fails loud below the minimum `--json`
 version; see [Backlog CLI contract](../reference/backlog-cli-contract.md)), an
 agent can verify its whole toolchain is capable before starting work.
 
+### 2.5 Opt in to a task-scoped Lore profile
+
+When the repository defines `.lore/agents/<name>.toml`, an existing native
+agent can add one small adapter instruction:
+
+> Lore profile: `frontend-dev`. Before working, run `lore agent context
+> frontend-dev --task "<assigned task>"` and ground decisions in the returned
+> source IDs.
+
+The profile supplies bounded documentation context only. Native Claude Code
+and Codex files continue to own behavior, tools, models, permissions, and
+execution. Lore does not generate or patch native subagents or select profiles
+automatically. Use `lore agent list` to discover available profiles and the
+[agent profile runbook](agent-profile-operation.md) to define one.
+
 ---
 
 ## 3. The contract agents rely on
@@ -334,7 +383,7 @@ non-destructive.
   metadata never lives on tasks — see
   [ADR-0002](../adr/0002-backlog-integration-json-only.md) and
   [ADR-0012](../adr/0012-backlog-coexistence-git-ownership.md)). There is no
-  hidden non-CLI surface to use; the deferred MCP server, when it lands, will
+  hidden non-CLI surface to use; the on-hold MCP server, if explicitly reactivated, will
   drive the same core functions ([MCP tools](../reference/mcp-tools.md)).
 
 - **Respect managed regions.** Never write inside `<!-- lore:tasks:begin -->` …
@@ -369,6 +418,7 @@ non-destructive.
 | Discover the surface | `lore help --json` | capability manifest in the canonical envelope |
 | Refactor across docs | `lore replace` / `lore rename` / `lore supersede` | graph-aware; skips managed regions |
 | Get bounded context for an id | `lore context <id> --max-tokens N` | body + 1-line neighbor summaries |
+| Get task-scoped context for a role | `lore agent context <profile> --task "<text>"` | deterministic evidence from a committed profile allowlist |
 
 ---
 

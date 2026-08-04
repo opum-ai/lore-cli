@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  asText,
   type ErrorType,
   EXIT_CODES,
   EXIT_OK,
@@ -9,6 +10,7 @@ import {
   ioError,
   LoreError,
   reportError,
+  stderrHint,
   toErrorEnvelope,
   WarningCollector,
 } from "../src/errors";
@@ -70,6 +72,35 @@ describe("LoreError", () => {
     const err = new LoreError("usage", "unknown flag --frob");
     expect(err.hint).toBeUndefined();
     expect(err.input).toBeUndefined();
+  });
+});
+
+describe("asText", () => {
+  // LORE-171: JSON.stringify returns runtime `undefined` (not a thrown error)
+  // for a bare Symbol or bare function, so the safeStringify fast path used to
+  // pass that undefined straight through — asText silently broke its own
+  // `string`-returning contract for exactly these input types.
+  test("a Symbol input returns an actual string, never runtime undefined", () => {
+    const result = asText(Symbol("x"));
+    expect(typeof result).toBe("string");
+    expect(result).not.toBeUndefined();
+  });
+
+  test("a bare function input returns an actual string, never runtime undefined", () => {
+    const result = asText(() => {});
+    expect(typeof result).toBe("string");
+    expect(result).not.toBeUndefined();
+  });
+
+  test("still passes through ordinary strings and coerces nullish to empty", () => {
+    expect(asText("already a string")).toBe("already a string");
+    expect(asText(undefined)).toBe("");
+    expect(asText(null)).toBe("");
+  });
+
+  test("still stringifies ordinary JSON-safe values (numbers, objects)", () => {
+    expect(asText(42)).toBe("42");
+    expect(asText({ a: 1 })).toBe('{"a":1}');
   });
 });
 
@@ -517,6 +548,62 @@ describe("ioError — the shared fs-errno policy (LORE-48)", () => {
   });
 });
 
+describe("stderrHint — ANSI/control-byte stripping and length cap (LORE-249)", () => {
+  test("returns undefined for empty stderr", () => {
+    expect(stderrHint("")).toBeUndefined();
+  });
+
+  test("returns undefined for whitespace-only stderr, including newlines/tabs (existing contract preserved)", () => {
+    expect(stderrHint("   ")).toBeUndefined();
+    expect(stderrHint("\n\t \r\n")).toBeUndefined();
+  });
+
+  test("trims and collapses internal whitespace runs to a single space", () => {
+    expect(stderrHint("  fatal:   not a git   repository  \n")).toBe("fatal: not a git repository");
+  });
+
+  test("collapses a line break into a single space, not a glued word (whitespace collapses before the control-byte strip)", () => {
+    expect(stderrHint("first line\nsecond line")).toBe("first line second line");
+  });
+
+  test("strips ANSI CSI/SGR sequences and a bare BEL, leaving no control byte behind (AC#1/AC#4)", () => {
+    const stderr = "fatal: \x1b[31mrejected\x1b[0m\x07 push";
+    const hint = stderrHint(stderr);
+    expect(hint).toBeDefined();
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting the ABSENCE of control bytes.
+    expect(/[\x00-\x1f\x7f-\x9f]/.test(hint as string)).toBe(false);
+    expect(hint).not.toContain("\x1b");
+    expect(hint).toBe("fatal: rejected push");
+  });
+
+  test("strips an OSC hyperlink sequence terminated by BEL", () => {
+    const hint = stderrHint("see \x1b]8;;http://evil\x07link\x07 for detail");
+    expect(hint).toBeDefined();
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting the ABSENCE of control bytes.
+    expect(/[\x00-\x1f\x7f-\x9f]/.test(hint as string)).toBe(false);
+  });
+
+  test("returns undefined when the stderr is control bytes/ANSI only (nothing survives the strip)", () => {
+    expect(stderrHint("\x1b[31m\x1b[0m")).toBeUndefined();
+    expect(stderrHint("\x07")).toBeUndefined();
+  });
+
+  test("caps an over-length stderr to the bounded max, with a truncation indicator (AC#2/AC#5)", () => {
+    const huge = "x".repeat(5000);
+    const hint = stderrHint(huge) as string;
+    expect(hint).toBeDefined();
+    expect(hint.length).toBeLessThanOrEqual(501); // cap + 1-char truncation indicator
+    expect(hint.length).toBeLessThan(huge.length);
+    expect(hint.endsWith("…")).toBe(true);
+  });
+
+  test("does not add a truncation indicator when stderr is within the cap", () => {
+    const short = "fatal: something went wrong";
+    expect(stderrHint(short)).toBe(short);
+    expect((stderrHint(short) as string).endsWith("…")).toBe(false);
+  });
+});
+
 describe("WarningCollector", () => {
   test("starts empty", () => {
     const warnings = new WarningCollector();
@@ -525,7 +612,7 @@ describe("WarningCollector", () => {
     expect(warnings.list()).toEqual([]);
   });
 
-  test("accumulates in insertion order and reports a snapshot copy", () => {
+  test("accumulates and merges in insertion order while reporting a snapshot copy", () => {
     const warnings = new WarningCollector();
     warnings.add("unknown type 'Widget'");
     warnings.add("missing summary");
@@ -536,6 +623,14 @@ describe("WarningCollector", () => {
     // list() is a copy: mutating it must not affect the collector.
     (snapshot as string[]).push("tampered");
     expect(warnings.count).toBe(2);
+
+    const more = new WarningCollector();
+    more.add("unreadable directory", "unreadable-directory");
+    warnings.merge(more);
+    more.add("late mutation", "late");
+    expect(warnings.list()).toEqual(["unknown type 'Widget'", "missing summary", "unreadable directory"]);
+    expect(warnings.has("unreadable-directory")).toBe(true);
+    expect(warnings.has("late")).toBe(false);
   });
 
   test("flush writes each warning to stderr and returns the count", () => {
@@ -576,6 +671,41 @@ describe("WarningCollector", () => {
     expect(b.lines()).toEqual(["warning: first", "warning: second"]);
     expect(warnings.count).toBe(2);
     expect(warnings.list()).toEqual(["first", "second"]);
+  });
+
+  test("flush collapses a message with embedded newlines to one stderr line (LORE-172)", () => {
+    const warnings = new WarningCollector();
+    warnings.add("first line\nsecond line");
+    const stderr = capture();
+    expect(warnings.flush({ stderr })).toBe(1);
+    // Same single-line normalization formatErrorText/toErrorEnvelope apply to a
+    // LoreError's message/hint (§5.2/§5.4): one warning → exactly one stderr line.
+    expect(stderr.lines()).toEqual(["warning: first line second line"]);
+  });
+
+  test("flush strips embedded ANSI/OSC/control bytes from the message body (LORE-236)", () => {
+    const warnings = new WarningCollector();
+    // A CSI "erase screen" sequence, an OSC hyperlink sequence (BEL-terminated), and a bare
+    // BEL — none of these are line terminators, so singleLine alone would let them through;
+    // flush must also route the body through the shared stripAnsiAndControls (errors.ts:168).
+    warnings.add("before\x1b[2Jmid\x1b]8;;http://evil\x07link\x07after");
+    const stderr = capture();
+    expect(warnings.flush({ stderr })).toBe(1);
+    expect(stderr.lines()).toEqual(["warning: beforemidlinkafter"]);
+    // No raw escape/control byte survived into the emitted line — exclude the trailing `\n`
+    // line terminator `write` itself appends, which is expected and not part of the message body.
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting the ABSENCE of control bytes.
+    expect(/[\x00-\x09\x0b-\x1f\x7f-\x9f]/.test(stderr.text())).toBe(false);
+  });
+
+  test("flush sanitizes the message body but leaves the painted warning: prefix and its color intact (LORE-236, AC#2)", () => {
+    const warnings = new WarningCollector();
+    warnings.add("danger\x1b[2Jzone");
+    const colored = capture();
+    expect(warnings.flush({ stderr: colored, color: true })).toBe(1);
+    // The prefix keeps its yellow SGR sequence and reset — sanitization never touches it,
+    // only the message body that follows it.
+    expect(colored.text()).toBe("\x1b[33mwarning:\x1b[0m dangerzone\n");
   });
 });
 

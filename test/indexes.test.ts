@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { buildGraph } from "../src/core/bundle";
-import { generateIndexes, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END } from "../src/core/indexes";
+import {
+  generateIndexes,
+  INDEX_BLOCK_BEGIN,
+  INDEX_BLOCK_END,
+  locateManagedBlock,
+  orphanedIndexPaths,
+} from "../src/core/indexes";
+import { LoreError } from "../src/errors";
 import { concept } from "./helpers";
 
 /** Wrap listing lines in the canonical managed block. */
@@ -52,6 +59,27 @@ describe("generateIndexes — graph-derived navigable hubs (LORE-29)", () => {
     expect(out.get("notes/index.md")).toContain("- [raw-note](raw-note.md)");
   });
 
+  test("title also falls back for a non-scalar frontmatter title (null/list/object), matching frontmatterScalar", () => {
+    const out = generateIndexes(
+      buildGraph([
+        concept("notes/null-title.md", { title: null }),
+        concept("notes/list-title.md", { title: ["a", "b"] }),
+      ]),
+    );
+    expect(out.get("notes/index.md")).toContain("- [list-title](list-title.md)");
+    expect(out.get("notes/index.md")).toContain("- [null-title](null-title.md)");
+  });
+
+  test("LORE-244: an unquoted numeric frontmatter title (js-yaml → number) coerces to its string form via frontmatterScalar, matching graph/query/context", () => {
+    const out = generateIndexes(buildGraph([concept("notes/dated.md", { title: 2024 })]));
+    expect(out.get("notes/index.md")).toContain("- [2024](dated.md)");
+  });
+
+  test("LORE-244: a boolean frontmatter title coerces to its string form via frontmatterScalar", () => {
+    const out = generateIndexes(buildGraph([concept("notes/flag.md", { title: true })]));
+    expect(out.get("notes/index.md")).toContain("- [true](flag.md)");
+  });
+
   test("link path segments are percent-encoded (portable markdown form)", () => {
     const out = generateIndexes(buildGraph([concept("guides/getting started.md", { title: "Getting started" })]));
     expect(out.get("guides/index.md")).toContain("- [Getting started](getting%20started.md)");
@@ -73,6 +101,41 @@ describe("generateIndexes — graph-derived navigable hubs (LORE-29)", () => {
   test("title text is escaped so brackets cannot break the markdown link", () => {
     const out = generateIndexes(buildGraph([concept("adr/0001-x.md", { title: "Plan [B] (draft)" })]));
     expect(out.get("adr/index.md")).toContain("- [Plan \\[B\\] (draft)](0001-x.md)");
+  });
+
+  test("a pre-existing backslash-escaped bracket is not re-escaped into a live link boundary (LORE-149)", () => {
+    const out = generateIndexes(buildGraph([concept("adr/0001-x.md", { title: "Plan \\]B\\[ (draft)" })]));
+    const line = out.get("adr/index.md") ?? "";
+    // The backslash is doubled *before* the bracket is escaped, so the title's own `\]`/`\[` render
+    // as a literal backslash (`\\`) followed by a literal, non-delimiting bracket (`\]`/`\[`) —
+    // reproducing `Plan \]B\[ (draft)` verbatim instead of shifting text into a real `](` boundary.
+    expect(line).toContain("- [Plan \\\\\\]B\\\\\\[ (draft)](0001-x.md)");
+    // Exactly one real `](` link boundary — the title's escaped brackets must not open another.
+    expect(line.split("](").length).toBe(2);
+  });
+
+  test("a minimal backslash-before-bracket title doubles the backslash before escaping the bracket (LORE-186)", () => {
+    const out = generateIndexes(buildGraph([concept("adr/0001-x.md", { title: "a\\[b" })]));
+    const line = out.get("adr/index.md") ?? "";
+    // Source is `a` + one backslash + `[` + `b`. Doubling first turns the one backslash into two,
+    // *then* the bracket-escape inserts its own backslash before `[` — three backslashes total,
+    // an odd count, so the trailing backslash correctly escapes the bracket into literal text
+    // rather than leaving it live (which a doubling-less escaper would do: two backslashes, an
+    // even/cancelling count, leaving `[` live).
+    expect(line).toContain("- [a\\\\\\[b](0001-x.md)");
+    expect(line.split("](").length).toBe(2);
+  });
+
+  test("a title ending in a lone backslash does not escape away the template's own closing bracket (LORE-186)", () => {
+    const out = generateIndexes(buildGraph([concept("adr/0001-x.md", { title: "trailing\\" })]));
+    const line = out.get("adr/index.md") ?? "";
+    // The title's single trailing backslash sits immediately before the `]` that `buildListing`'s
+    // own `- [${linkText(title)}](${link})` template inserts — not one the escaper itself adds. If
+    // linkText didn't double pre-existing backslashes first, that lone backslash would escape the
+    // template's `]` into literal text, corrupting the entry's link boundary. Doubled, it becomes a
+    // complete escaped-backslash pair, leaving the template's `]` live and the link intact.
+    expect(line).toContain("- [trailing\\\\](0001-x.md)");
+    expect(line.split("](").length).toBe(2);
   });
 
   test("a title is single-lined so a newline cannot split the entry out of the list", () => {
@@ -119,29 +182,48 @@ describe("generateIndexes — managed-region splice preserves authored bytes (lo
     expect(root).toContain(block("- [adr](adr/index.md)", "- [reference](reference/index.md)"));
   });
 
-  test("a truncated block (begin marker, no end marker) is rewritten whole and then converges (fixpoint)", () => {
+  test("a truncated block (begin marker, no end marker) is a validation error, not silently rewritten whole (LORE-86)", () => {
     const g = buildGraph([concept("adr/0001-x.md", { title: "X" })]);
     const existing = new Map([["adr/index.md", `# ADRs\n\nProse.\n\n${INDEX_BLOCK_BEGIN}\n- [stale](stale.md)\n`]]);
-    const first = generateIndexes(g, { existing }).get("adr/index.md") ?? "";
-    // The orphan begin is absorbed (region runs to EOF), leaving exactly one well-formed block...
-    expect(first).toBe(`# ADRs\n\nProse.\n\n${block("- [X](0001-x.md)")}\n`);
-    expect(first).not.toContain("stale");
-    // ...and re-running over that output is a byte-level no-op (the truncated state never recurs).
-    const second = generateIndexes(g, { existing: new Map([["adr/index.md", first]]) }).get("adr/index.md");
-    expect(second).toBe(first);
+    // Previously the orphan begin was silently absorbed (region extended to end-of-file); LORE-86
+    // makes this a fail-loud error instead of guessing that the whole tail was machine-owned.
+    expect(() => generateIndexes(g, { existing })).toThrow(LoreError);
   });
 
-  test("duplicate well-formed blocks (a merge artifact) collapse into one — no stale region survives", () => {
+  test("duplicate marker pairs with real prose between them is a validation error, not a silent collapse-and-delete (LORE-86)", () => {
     const g = buildGraph([concept("adr/0001-x.md", { title: "X" })]);
+    const proseBetween = "Hand-authored prose a merge conflict left between two duplicate blocks.";
     const existing = new Map([
-      ["adr/index.md", `# ADRs\n\n${block("- [live](live.md)")}\n\nmid\n\n${block("- [stale2](s2.md)")}\n`],
+      ["adr/index.md", `# ADRs\n\n${block("- [live](live.md)")}\n\n${proseBetween}\n\n${block("- [stale2](s2.md)")}\n`],
     ]);
-    const first = generateIndexes(g, { existing }).get("adr/index.md") ?? "";
-    expect(first).toBe(`# ADRs\n\n${block("- [X](0001-x.md)")}\n`);
-    expect(first).not.toContain("stale2");
-    // Converges.
-    const second = generateIndexes(g, { existing: new Map([["adr/index.md", first]]) }).get("adr/index.md");
-    expect(second).toBe(first);
+    // Previously first-begin→last-end collapsed both blocks AND the prose between them into one
+    // regenerated block, silently deleting `proseBetween` with no warning (LORE-86's exact repro:
+    // a merge conflict/hand edit leaving duplicate `lore:index` markers). Now it fails loud instead
+    // of ever writing over that prose.
+    expect(() => generateIndexes(g, { existing })).toThrow(LoreError);
+  });
+
+  test("locateManagedBlock: well-formed, no-markers, truncated, duplicated, and crossed-marker contracts", () => {
+    const BEGIN = "<!-- x:begin -->";
+    const END = "<!-- x:end -->";
+
+    // No markers at all: null (an unmanaged file the caller appends to).
+    expect(locateManagedBlock("plain prose", BEGIN, END)).toBeNull();
+
+    // Exactly one well-formed pair: the `[start, end)` span, markers included.
+    const wellFormed = `pre\n${BEGIN}\nbody\n${END}\npost`;
+    const bounds = locateManagedBlock(wellFormed, BEGIN, END);
+    expect(bounds).not.toBeNull();
+    expect(wellFormed.slice(bounds?.start, bounds?.end)).toBe(`${BEGIN}\nbody\n${END}`);
+
+    // A begin with no end anywhere: validation error, not a guessed to-EOF span.
+    expect(() => locateManagedBlock(`${BEGIN}\nbody, no end`, BEGIN, END)).toThrow(LoreError);
+
+    // Two begins and two ends: validation error, not a collapsed first-begin→last-end span.
+    expect(() => locateManagedBlock(`${BEGIN}\na\n${END}\nmid\n${BEGIN}\nb\n${END}`, BEGIN, END)).toThrow(LoreError);
+
+    // An end that precedes the begin (crossed): validation error.
+    expect(() => locateManagedBlock(`${END}\nmid\n${BEGIN}`, BEGIN, END)).toThrow(LoreError);
   });
 
   test("a present-but-empty index file is synthesized like an absent one (heading, no leading blanks)", () => {
@@ -176,5 +258,61 @@ describe("generateIndexes — determinism (AC#1)", () => {
     const first = generateIndexes(g, { existing: new Map([["index.md", ROOT_AUTHORED]]) });
     const second = generateIndexes(g, { existing: first });
     expect([...second.entries()]).toEqual([...first.entries()]);
+  });
+});
+
+describe("orphanedIndexPaths — stale on-disk index detection (LORE-150)", () => {
+  test("AC#2: an index.md whose directory holds no concept at all is flagged as orphaned", () => {
+    const g = buildGraph(SAMPLE); // no concepts anywhere under "orphan/"
+    const existing = new Map([
+      ["index.md", ROOT_AUTHORED],
+      ["adr/index.md", generateIndexes(g).get("adr/index.md") as string],
+      ["orphan/index.md", `# orphan\n\n${block("- [stale](stale.md)")}\n`],
+    ]);
+    expect(orphanedIndexPaths(g, existing)).toEqual(["orphan/index.md"]);
+  });
+
+  test("an index.md orphaned only via its descendants (a deeper dir lost its last concept) is flagged too", () => {
+    // "a" still holds a concept directly ("a/keep.md"); "a/b" holds none, directly or via any
+    // descendant of ITS OWN — even though "a/b" is nested under the still-live "a".
+    const g = buildGraph([concept("a/keep.md", { title: "Keep" })]);
+    const existing = new Map([
+      ["index.md", ROOT_AUTHORED],
+      ["a/index.md", generateIndexes(g).get("a/index.md") as string],
+      ["a/b/index.md", `# b\n\n${block("- [gone](gone.md)")}\n`],
+    ]);
+    expect(orphanedIndexPaths(g, existing)).toEqual(["a/b/index.md"]);
+  });
+
+  test("a directory that still holds a concept only via a descendant (an intermediate hub) is never flagged", () => {
+    const g = buildGraph([concept("a/b/c/deep.md", { title: "Deep" })]);
+    const out = generateIndexes(g);
+    const existing = new Map([
+      ["index.md", out.get("index.md") as string],
+      ["a/index.md", out.get("a/index.md") as string],
+      ["a/b/index.md", out.get("a/b/index.md") as string],
+      ["a/b/c/index.md", out.get("a/b/c/index.md") as string],
+    ]);
+    expect(orphanedIndexPaths(g, existing)).toEqual([]);
+  });
+
+  test("an existing map with no stale entries reports no orphans", () => {
+    const g = buildGraph(SAMPLE);
+    const out = generateIndexes(g);
+    expect(orphanedIndexPaths(g, out)).toEqual([]);
+  });
+
+  test("multiple orphans are reported sorted by path, matching generateIndexes's own ordering", () => {
+    const g = buildGraph(SAMPLE);
+    const existing = new Map([
+      ["zzz/index.md", `# zzz\n\n${block()}\n`],
+      ["aaa/index.md", `# aaa\n\n${block()}\n`],
+      ["adr/index.md", generateIndexes(g).get("adr/index.md") as string], // still live, never flagged
+    ]);
+    expect(orphanedIndexPaths(g, existing)).toEqual(["aaa/index.md", "zzz/index.md"]);
+  });
+
+  test("an empty existing map has nothing to flag", () => {
+    expect(orphanedIndexPaths(buildGraph(SAMPLE), new Map())).toEqual([]);
   });
 });

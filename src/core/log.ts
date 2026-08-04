@@ -67,8 +67,15 @@ export interface GitLogRange {
  * tests inject a fake returning a fixed fake history. Core knows only this interface.
  */
 export interface GitAdapter {
-  /** The commits touching the repository within `range`, in any order. */
-  history(range: GitLogRange): readonly GitCommit[];
+  /**
+   * The commits touching `root` within `range`, in any order. `root` is a **pathspec**, not a
+   * post-filter hint: an implementation is expected to scope the underlying `git log` walk itself
+   * (e.g. `-- docs`) so a commit that never touched anything under `root` is never even considered,
+   * let alone returned — the real adapter (`adapters/git.ts`) does exactly that, so `lore sync`
+   * never walks or buffers unrelated repository history just to build a docs-scoped `log.md`.
+   * Optional only so a fake ignoring it stays a one-liner; {@link buildLog} always passes it.
+   */
+  history(range: GitLogRange, root?: string): readonly GitCommit[];
 }
 
 /** Options for {@link generateLog}. */
@@ -101,11 +108,13 @@ interface LogEntry {
 /**
  * Build a `log.md`'s bytes from a {@link GitAdapter} over a pinned range — the function `lore sync`
  * calls with the real adapter and tests call with a fake one, so the seam is exercised end-to-end.
- * The pure {@link generateLog} does the byte computation; this only resolves the history through
- * the seam.
+ * The same resolved `root` that scopes `log.md`'s content is also passed to `adapter.history` as a
+ * pathspec, so the real adapter can scope the underlying `git log` walk itself — not just the
+ * `generateLog` grouping below — to the bundle root (LORE-143). The pure {@link generateLog} does
+ * the byte computation; this only resolves the history through the seam.
  */
 export function buildLog(adapter: GitAdapter, range: GitLogRange, options: GenerateLogOptions = {}): string {
-  return generateLog(adapter.history(range), options);
+  return generateLog(adapter.history(range, resolveRoot(options.root)), options);
 }
 
 /**
@@ -119,10 +128,7 @@ export function buildLog(adapter: GitAdapter, range: GitLogRange, options: Gener
  * the heading, so the file is always well-formed.
  */
 export function generateLog(commits: readonly GitCommit[], options: GenerateLogOptions = {}): string {
-  // Strip trailing slash(es) so a root authored as `docs/` matches `docs/x.md` (the `${root}/`
-  // probe would otherwise compare against `docs//` and match nothing — a silently empty log). A
-  // root that is only slashes, like the empty string, falls back to the default bundle root.
-  const root = (options.root || DOCS_DIR).replace(/\/+$/, "") || DOCS_DIR;
+  const root = resolveRoot(options.root);
   const title = options.title ?? "Change log";
 
   // folder → the commits touching it. `foldersTouched` already returns a *set* of folders, so each
@@ -159,6 +165,24 @@ export function generateLog(commits: readonly GitCommit[], options: GenerateLogO
     });
 
   return [`# ${title}\n`, ...sections].join("\n");
+}
+
+/**
+ * Normalize a {@link GenerateLogOptions.root}/{@link GitAdapter.history} root to the bundle root it
+ * denotes, so equivalent spellings of the same root canonicalize identically (LORE-243): a leading
+ * `./`, a trailing `/.`, and internal redundant separators (`//`, `/./`) are all collapsed via
+ * {@link posix.normalize} before the trailing slash(es) are stripped — so `./docs`, `docs/.`,
+ * `./docs/`, and `docs//adr`/`docs/./adr` all resolve exactly like `docs`/`docs/adr`. Without the
+ * `posix.normalize` pass, the `${root}/` probe in {@link isUnderRoot} would compare against the
+ * un-normalized root and match nothing — a silently empty log. Falls back to {@link DOCS_DIR} for an
+ * absent, empty, or all-slashes root (`normalize` reduces those to `"."` or `"/"`, neither of which
+ * would match anything as a bundle root). Shared by {@link generateLog} (post-filtering) and
+ * {@link buildLog} (the pathspec handed to {@link GitAdapter.history}) so the two always agree on
+ * exactly which root scopes a given `log.md`.
+ */
+function resolveRoot(root: string | undefined): string {
+  const normalized = posix.normalize(root || DOCS_DIR).replace(/\/+$/, "");
+  return normalized === "" || normalized === "." ? DOCS_DIR : normalized;
 }
 
 /**

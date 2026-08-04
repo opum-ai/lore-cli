@@ -86,6 +86,35 @@ describe("renderTemplate", () => {
   test("an inherited key (e.g. __proto__) is treated as unresolved, not silently resolved", () => {
     expect(renderTemplate("{{__proto__}}", {}).unresolved).toEqual(["__proto__"]);
   });
+
+  test("a malformed brace-shaped token is reported unresolved and left verbatim, never silently passed through (LORE-157)", () => {
+    // Internal whitespace: not a legal `[A-Za-z0-9_.-]+` name even though the strict grammar's
+    // own `\s*` padding is optional whitespace only at the boundaries.
+    const owner = renderTemplate("Owner: {{owner name}}", { "owner name": "ignored" });
+    expect(owner.unresolved).toEqual(["owner name"]);
+    expect(owner.text).toBe("Owner: {{owner name}}");
+
+    // Empty: no name at all.
+    const empty = renderTemplate("[{{}}]", {});
+    expect(empty.unresolved).toEqual([""]);
+    expect(empty.text).toBe("[{{}}]");
+
+    // A disallowed character (`/`) even after trimming the padding.
+    const slash = renderTemplate("{{ owner/name }}", {});
+    expect(slash.unresolved).toEqual(["owner/name"]);
+    expect(slash.text).toBe("{{ owner/name }}");
+  });
+
+  test("a malformed token is reported even when vars happens to hold a matching raw key", () => {
+    // Providing vars["owner name"] must not resolve it — the grammar rejects the shape outright,
+    // independent of what `vars` holds.
+    expect(renderTemplate("{{owner name}}", { "owner name": "Payments" }).unresolved).toEqual(["owner name"]);
+  });
+
+  test("a malformed token is deduped like a legitimate unresolved key, in first-seen order", () => {
+    const result = renderTemplate("{{owner name}} {{owner name}} {{b}}", {});
+    expect(result.unresolved).toEqual(["owner name", "b"]);
+  });
 });
 
 describe("buildNewConcept — known types validate clean by construction (AC#1)", () => {
@@ -128,6 +157,12 @@ describe("buildNewConcept — frontmatter is structural, never substituted", () 
     const concept = parseConcept("docs/stories/sample.md", result.contents);
     expect(concept.frontmatter.tags).toEqual(["retention", "orders"]);
   });
+
+  test("the Story template ships the lore:tasks managed-block markers (LORE-59)", () => {
+    const body = builtinTemplateFor("Story");
+    expect(body).toContain("<!-- lore:tasks:begin -->");
+    expect(body).toContain("<!-- lore:tasks:end -->");
+  });
 });
 
 describe("buildNewConcept — unknown types are tolerated (no modeline)", () => {
@@ -167,6 +202,30 @@ describe("buildNewConcept — unfilled body placeholders fail loud (exit 6)", ()
       return;
     }
     throw new Error("expected an unfilled-placeholder LoreError, but build returned");
+  });
+
+  test.each([
+    ["internal whitespace", "\n# {{title}}\n\nOwner: {{owner name}}\n", "{{owner name}}"],
+    ["empty", "\n# {{title}}\n\n{{}}\n", "{{}}"],
+    ["a disallowed character", "\n# {{title}}\n\nOwner: {{ owner/name }}\n", "{{owner/name}}"],
+  ])("a malformed brace-shaped token (%s) fails loud exactly like an unresolved placeholder, not written verbatim (LORE-157 AC#1)", (_label, bodyTemplate, expectedToken) => {
+    try {
+      buildNewConcept({
+        docPath: "docs/reference/sample.md",
+        type: "Reference",
+        title: "Orders table",
+        summary: "The orders table.",
+        timestamp: TIMESTAMP,
+        bodyTemplate,
+        vars: Object.create(null),
+      });
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("validation");
+      expect((err as LoreError).message).toContain(expectedToken);
+      return;
+    }
+    throw new Error(`expected a malformed-placeholder LoreError for ${expectedToken}, but build returned`);
   });
 
   test("the auto tokens (title/type/timestamp/summary) override a same-named --var", () => {
@@ -229,6 +288,25 @@ describe("resourceFor — base + repo-rel path, one slash, URL-encoded segments 
 
   test("trims surrounding whitespace on the base so no space is embedded at the seam", () => {
     expect(resourceFor("  https://x.dev/  ", "docs/a.md")).toBe("https://x.dev/docs/a.md");
+  });
+
+  test("a base carrying a query string is joined verbatim, not re-parsed as a query (opaque-prefix contract)", () => {
+    // No trailing slash to trim and no URL parsing: `?lang=en` is just trailing characters of the
+    // string, so the doc path is appended straight after it — the caller's problem if that yields
+    // an unintended URL, per the deferred validation question at src/core/template.ts:66.
+    expect(resourceFor("https://x/base?lang=en", "docs/a.md")).toBe("https://x/base?lang=en/docs/a.md");
+  });
+
+  test("a base carrying a fragment is joined verbatim, not re-parsed as a fragment", () => {
+    expect(resourceFor("https://x/base#section", "docs/a.md")).toBe("https://x/base#section/docs/a.md");
+  });
+
+  test("a non-https / non-hierarchical scheme base is joined verbatim with exactly one seam slash, no scheme validation", () => {
+    // `mailto:`/`urn:` have no authority or hierarchical path (no `//`), so there is no trailing
+    // slash for the trim step to find; the join still contributes exactly one `/` at the seam,
+    // producing a string that is not a well-formed URL of any kind — resourceFor does not care.
+    expect(resourceFor("mailto:docs@example.com", "docs/a.md")).toBe("mailto:docs@example.com/docs/a.md");
+    expect(resourceFor("urn:isbn:0451450523", "docs/a.md")).toBe("urn:isbn:0451450523/docs/a.md");
   });
 });
 
@@ -337,6 +415,31 @@ describe("buildNewConcept — resource stamping is profile-gated (AC#4)", () => 
     const result = build("docs/reference/orders.md", profileWithResourceBase("  https://docs.example.com/  "));
     const concept = parseConcept("docs/reference/orders.md", result.contents);
     expect(concept.frontmatter.resource).toBe("https://docs.example.com/docs/reference/orders.md");
+  });
+});
+
+describe("buildNewConcept — the new-path section boundary", () => {
+  test("a custom bodyTemplate that omits a type's required section renders without throwing (section enforcement is `lore check`'s job, not `new`'s — validate.ts:requiredSectionFindings)", () => {
+    // ADR's required sections (src/core/profile.ts) are Status/Context/Decision/Consequences; this
+    // template supplies only Status and Context, entirely omitting Decision and Consequences. Do
+    // NOT re-assert that the *built-in* ADR template carries all four — that invariant is already
+    // pinned by test/validate.test.ts:452-460. This test is about the `new` path tolerating a
+    // caller-supplied template that does not, since `buildNewConcept` has no notion of "required
+    // section" at all — that check lives only in `lore validate`/`lore check`.
+    const result = buildNewConcept({
+      docPath: "docs/adr/sample.md",
+      type: "ADR",
+      title: "Pick a queue",
+      summary: "Which queue to use.",
+      timestamp: TIMESTAMP,
+      bodyTemplate: "\n# {{title}}\n\n## Status\n\nProposed\n\n## Context\n",
+      vars: Object.create(null),
+    });
+    expect(result.type).toBe("ADR");
+    expect(result.contents).toContain("## Status");
+    expect(result.contents).toContain("## Context");
+    expect(result.contents).not.toContain("## Decision");
+    expect(result.contents).not.toContain("## Consequences");
   });
 });
 

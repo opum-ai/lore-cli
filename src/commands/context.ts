@@ -2,12 +2,13 @@
  * commands/context.ts — `lore context <id> [--max-tokens <n>] [--depth <n>]`.
  *
  * The thin, read-only layer that emits a **token-budgeted context pack** for one
- * concept (cli-surface §context; LORE-34). It loads the `docs/` bundle into a
- * {@link BundleGraph}, then hands the target id, the neighbor radius (`--depth`,
- * default {@link DEFAULT_DEPTH}), and the budget (`--max-tokens`) to the pure
- * {@link buildContext} shaper — which gathers the target's neighborhood via the
- * shared {@link subgraph} traversal and compacts it to the target's full body plus
- * one-line neighbor summaries.
+ * concept (cli-surface §context; LORE-34). Commander supplies a verified indexed
+ * {@link BundleGraph} with automatic reference fallback; direct core callers
+ * retain the reference loader. It then hands the target id, neighbor radius
+ * (`--depth`, default {@link DEFAULT_DEPTH}), and budget (`--max-tokens`) to the
+ * pure {@link buildContext} shaper, which gathers the target's neighborhood via
+ * the shared {@link subgraph} traversal and compacts it to the target's full body
+ * plus one-line neighbor summaries.
  *
  * Output follows the uniform CLI modes: the `{schemaVersion, kind:
  * "context.export", data}` envelope under the global `--json`, and otherwise a
@@ -30,12 +31,18 @@
  */
 
 import { join } from "node:path";
+import type { BacklogAdapter } from "../adapters/backlog";
 import { loadBundle } from "../core/bundle";
 import { idFromPath } from "../core/concept";
 import { buildContext, type ContextExport, DEFAULT_DEPTH } from "../core/context";
+import { loadProfile } from "../core/profile";
+import { loadRetrievalGraph, type RetrievalGraphLoader } from "../core/retrieval";
 import { DOCS_DIR } from "../core/scaffold";
+import { parseQualifiedWorkspaceId, qualifyWorkspaceId } from "../core/workspace-contract";
+import type { WorkspaceRetrievalContext, WorkspaceRetrievalSelection } from "../core/workspace-retrieval";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable, renderTruncationLine, truncation } from "../output";
+import { parseCommandArgs, singleOptionValue, workspaceSelection } from "./args";
 
 /** Options for {@link runContext}; `root` and the streams are injectable for tests. */
 export interface ContextOptions {
@@ -43,12 +50,16 @@ export interface ContextOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `context`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
   /** stderr sink for advisory warnings; defaults to `process.stderr`. */
   stderr?: Writer;
+  /** Backlog snapshot seam used only by indexed projection freshness/builds. */
+  adapter?: BacklogAdapter;
+  /** Indexed/reference selector injected by the Commander handler or conformance tests. */
+  retrieval?: RetrievalGraphLoader;
 }
 
 /** The parsed form of `lore context`'s arguments. */
@@ -59,6 +70,7 @@ interface ContextArgs {
   maxTokens?: number;
   /** The hop radius (`--depth`); `undefined` falls back to {@link DEFAULT_DEPTH}. */
   depth?: number;
+  readonly workspace?: WorkspaceRetrievalSelection;
 }
 
 /**
@@ -67,17 +79,71 @@ interface ContextArgs {
  * {@link LoreError} (exit `2`); an `<id>` not in the bundle a `not_found` one (exit
  * `3`).
  */
-export function runContext(options: ContextOptions): number {
+export function runContext(options: ContextOptions): number | Promise<number> {
   const parsed = parseContextArgs(options.args);
-  const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
-  const graph = loadBundle(docsRoot, { warnings: advisories });
+  const retrieval = options.retrieval ?? (parsed.workspace !== undefined ? loadRetrievalGraph : undefined);
+  if (retrieval !== undefined) {
+    return retrieval({
+      root: options.root,
+      warnings: advisories,
+      adapter: options.adapter,
+      ...(parsed.workspace !== undefined ? { workspace: parsed.workspace } : {}),
+    }).then(async (loaded) => {
+      try {
+        const graph =
+          loaded.indexed === undefined
+            ? loaded.graph
+            : withConceptBody(loaded.graph, parsed.id, await loaded.indexed.readConceptBody(parsed.id));
+        return finishContext(options, parsed, graph, advisories, loaded.workspace);
+      } finally {
+        await loaded.dispose?.();
+      }
+    });
+  }
+  const profile = loadProfile({ root: options.root });
+  const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, profile });
+  return finishContext(options, parsed, graph, advisories);
+}
+
+function withConceptBody(
+  graph: ReturnType<typeof loadBundle>,
+  id: string,
+  body: string | undefined,
+): ReturnType<typeof loadBundle> {
+  if (body === undefined) return graph;
+  const concept = graph.concepts.get(id);
+  if (concept === undefined) return graph;
+  const concepts = new Map(graph.concepts);
+  concepts.set(id, { ...concept, body });
+  return { ...graph, concepts };
+}
+
+function finishContext(
+  options: ContextOptions,
+  parsed: ContextArgs,
+  graph: ReturnType<typeof loadBundle>,
+  advisories: WarningCollector,
+  workspace?: WorkspaceRetrievalContext,
+): number {
   // Flush load warnings before buildContext, which throws not_found for an unknown
   // target — otherwise an advisory explaining *why* a file is not a concept would be
   // discarded on exactly the path that most needs it (mirrors `lore graph`).
   advisories.flush({ color: options.output.color, stderr: options.stderr });
 
-  const data = buildContext(graph, parsed.id, { depth: parsed.depth, maxTokens: parsed.maxTokens });
+  const base = buildContext(graph, parsed.id, { depth: parsed.depth, maxTokens: parsed.maxTokens });
+  const data: ContextExport =
+    workspace === undefined
+      ? base
+      : {
+          ...base,
+          target: { ...base.target, provenance: workspace.provenanceById.get(base.target.id) },
+          neighbors: base.neighbors.map((neighbor) => ({
+            ...neighbor,
+            provenance: workspace.provenanceById.get(neighbor.id),
+          })),
+          workspace: workspace.scope,
+        };
   emit(contextRenderable(data), options.output, options.stdout);
   return EXIT_OK;
 }
@@ -87,61 +153,47 @@ export function runContext(options: ContextOptions): number {
 /**
  * Parse `context`'s tokens into the required `<id>` positional and the value flags
  * `--max-tokens <n>` / `--depth <n>` (also accepting the `--flag=value` form). The
- * router has already stripped lore's global flags, so a `--`-prefixed token here is
+ * Commander has already resolved Lore's global flags, so a `--`-prefixed token here is
  * a command flag: an unrecognized one is a `usage` error, as is a repeated or
  * value-less value flag, a non-integer/out-of-range value, a missing `<id>`, or a
  * second positional. A `--` ends option parsing. The `<id>` is
  * {@link idFromPath}-normalized so path/`.md`/`./` forms resolve.
  */
 function parseContextArgs(args: readonly string[]): ContextArgs {
-  const positionals: string[] = [];
-  let maxTokens: number | undefined;
-  let depth: number | undefined;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      positionals.push(...args.slice(i + 1));
-      break;
-    }
-    if (arg.startsWith("--") && arg.length > 2) {
-      const body = arg.slice(2);
-      const eq = body.indexOf("=");
-      const name = eq === -1 ? body : body.slice(0, eq);
-      const inline = eq === -1 ? undefined : body.slice(eq + 1);
-      if (name === "max-tokens") {
-        if (maxTokens !== undefined) {
-          throw usage("--max-tokens given more than once", "pass --max-tokens at most once");
-        }
-        maxTokens = parseCount("--max-tokens", readValue("--max-tokens", inline, args, i), { min: 1 });
-        if (inline === undefined) {
-          i++;
-        }
-      } else if (name === "depth") {
-        if (depth !== undefined) {
-          throw usage("--depth given more than once", "pass --depth at most once");
-        }
-        depth = parseCount("--depth", readValue("--depth", inline, args, i), { min: 0 });
-        if (inline === undefined) {
-          i++;
-        }
-      } else {
-        throw usage(`unknown option "--${name}"`, "run `lore context --help` to list options");
-      }
-    } else if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, "run `lore context --help` to list options");
-    } else {
-      positionals.push(arg);
-    }
-  }
-
+  const parsed = parseCommandArgs(args, "context");
+  const workspace = workspaceSelection(parsed);
+  const positionals = parsed.positionals;
+  const rawMaxTokens = singleOptionValue(parsed, "max-tokens");
+  const rawDepth = singleOptionValue(parsed, "depth");
+  if (rawMaxTokens === "") throw usage("--max-tokens needs a value", "pass a value, e.g. `--max-tokens 2`");
+  if (rawDepth === "") throw usage("--depth needs a value", "pass a value, e.g. `--depth 2`");
+  const maxTokens = rawMaxTokens === undefined ? undefined : parseCount("--max-tokens", rawMaxTokens, { min: 1 });
+  const depth = rawDepth === undefined ? undefined : parseCount("--depth", rawDepth, { min: 0 });
   if (positionals.length === 0) {
-    throw usage("missing concept <id>", "give the concept to build context for, e.g. `lore context stories/x`");
+    throw usage(
+      "`lore context` needs a concept id",
+      "give the concept to build context for, e.g. `lore context stories/x`",
+    );
   }
   if (positionals.length > 1) {
     throw usage(`unexpected argument "${positionals[1]}"`, "run `lore context <id> [--max-tokens <n>] [--depth <n>]`");
   }
-  return { id: idFromPath(positionals[0] as string), maxTokens, depth };
+  return {
+    id: normalizeContextId(positionals[0] as string, workspace !== undefined),
+    maxTokens,
+    depth,
+    workspace,
+  };
+}
+
+function normalizeContextId(raw: string, workspace: boolean): string {
+  if (!workspace) return idFromPath(raw);
+  try {
+    const parsed = parseQualifiedWorkspaceId(raw);
+    return qualifyWorkspaceId(parsed.memberId, idFromPath(parsed.sourceId));
+  } catch {
+    throw usage(`invalid workspace concept id "${raw}"`, "use the unambiguous <member-id>::<source-id> form");
+  }
 }
 
 /**
@@ -153,7 +205,10 @@ function parseContextArgs(args: readonly string[]): ContextArgs {
  */
 function parseCount(flag: string, value: string, opts: { min: number }): number {
   if (!/^\d+$/.test(value)) {
-    throw usage(`invalid ${flag} "${value}"`, `pass an integer ≥ ${opts.min}, e.g. \`${flag} ${opts.min + 1}\``);
+    throw usage(
+      `invalid ${flag} "${value}"`,
+      `pass an integer ≥ ${opts.min}, e.g. \`${flag} ${opts.min + 1}\`; ${flag} needs a value before a separate flag-looking token`,
+    );
   }
   const count = Number.parseInt(value, 10);
   if (!Number.isSafeInteger(count)) {
@@ -171,20 +226,6 @@ function parseCount(flag: string, value: string, opts: { min: number }): number 
  * option (`--depth --max-tokens`) — is a `usage` error rather than a silently
  * swallowed flag (mirroring `lore graph`'s value-flag guard).
  */
-function readValue(flag: string, inline: string | undefined, args: readonly string[], i: number): string {
-  if (inline !== undefined) {
-    if (inline === "") {
-      throw usage(`${flag} needs a value`, `pass a value, e.g. \`${flag} 2\``);
-    }
-    return inline;
-  }
-  const next = args[i + 1];
-  if (next === undefined || next === "" || (next.startsWith("-") && next !== "-")) {
-    throw usage(`${flag} needs a value`, `pass a value, e.g. \`${flag} 2\``);
-  }
-  return next;
-}
-
 // ── Output ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -209,6 +250,9 @@ function contextRenderable(data: ContextExport): Renderable<ContextExport> {
 function renderText(data: ContextExport): string {
   const budget = data.maxTokens !== undefined ? `, budget ${data.maxTokens}` : "";
   const lines = [
+    ...(data.workspace !== undefined
+      ? [`workspace: ${data.workspace.workspaceId} (${data.workspace.repositories.length} repositories)`]
+      : []),
     `context: ${data.root}  [${data.target.type}] — depth ${data.depth}${budget}, ~${data.tokenEstimate} tokens (chars/4)`,
     "",
     data.target.body.replace(/\n+$/, ""),

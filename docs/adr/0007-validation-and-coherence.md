@@ -3,7 +3,7 @@ type: ADR
 title: "ADR-0007: Validation & coherence checking"
 description: Why lore splits document checking into a tiered, schema-driven `lore validate` and a deterministic CI drift gate `lore check`, both pure-JS with no Rust runtime dependency.
 tags: [adr, validation, coherence, check, ci, links, okf]
-summary: lore validates documents with a tiered `lore validate` (OKF conformance + per-type shape as errors, extensions as warnings) and gates CI with a deterministic, pure-JS `lore check` that reconciles status, validates internal links/anchors, and lints portability.
+summary: lore separates per-document validation from deterministic cross-bundle coherence checks for status, links, anchors, and portability.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -13,7 +13,7 @@ timestamp: 2026-06-21T00:00:00Z
 
 Accepted — 2026-06-21
 
-Amended — 2026-06-25 (LORE-46): the **Tier-2 per-type contract is now profile-driven**. A type's
+Amended — 2026-06-25 (LCLI-46): the **Tier-2 per-type contract is now profile-driven**. A type's
 required body sections come from the `sections` array of its `[[types]]` entry in
 `.lore/profile.toml` (see [ADR-0006 amendment](0006-schema-types-templates.md) and
 [ADR-0013](0013-lore-state-directory.md)), and its frontmatter shape from the generated per-type
@@ -23,7 +23,7 @@ tiers themselves are unchanged: a missing required section / mistyped known fiel
 (heading text, depth ≤2, order not enforced). A type with no declared `sections` (and every
 unknown type) has no section contract, preserving OKF tolerance.
 
-Amended — 2026-06-26 (LORE-47): the bundle's **`log.md` is a `sync`-time materialized artifact,
+Amended — 2026-06-26 (LCLI-47): the bundle's **`log.md` is a `sync`-time materialized artifact,
 excluded from `lore check`'s regenerate-and-compare drift gate.** Unlike `index.md` and the
 `<!-- lore:tasks -->` managed blocks — which are deterministic functions of the bundle/Backlog state
 and stay gated — `log.md` is derived from git commit history (via the `GitAdapter` seam, see
@@ -31,16 +31,25 @@ and stay gated — `log.md` is derived from git commit history (via the `GitAdap
 the gate's own. Gating it would report permanent drift and break on shallow/read-only CI checkouts
 that lack full history. `lore sync` writes `log.md`; `lore check` neither regenerates nor compares it.
 
-Amended — 2026-07-19 (LORE-52): every mention below of `remark-validate-links`, `remark-lint`,
+Amended — 2026-07-19 (LCLI-52): every mention below of `remark-validate-links`, `remark-lint`,
 or "the remark/mdast pipeline" describes this ADR's original 2026-06-21 plan, not what shipped.
 lore has never depended on the `remark`, `unified`, `remark-validate-links`, or `remark-lint`
 npm packages (verified against `package.json` and every `src/` import — see
-[tech-stack](../reference/tech-stack.md), LORE-14). Internal link/anchor validation and the
+[tech-stack](../reference/tech-stack.md), LCLI-14). Internal link/anchor validation and the
 portability lint are hand-rolled directly over the mdast tree `mdast-util-from-markdown` produces
 (`src/core/bundle.ts`, `src/core/check.ts`, `src/core/links.ts`), not a call into any remark
 package. The decision itself is unaffected: pure-JS, no Rust/native runtime, MDX-safe (unlike
 markdownlint), and a deterministic internal-by-default gate — only the specific tooling named
 below was never actually adopted; hand-rolled code achieves the same properties.
+
+Amended — 2026-07-30 (dependency-boundary reconciliation): package-specific
+`gray-matter` references below are historical. The current quote-safety and
+frontmatter validation paths use the Lore-owned fence boundary plus exact-pinned
+`js-yaml`, as recorded by the ADR-0011 amendment. The validation tiers and
+byte-stability requirements are unchanged. `LCLI-287` may delegate only the
+generic GitHub slug/duplicate primitive to `github-slugger`; cross-document
+checking, portable-link policy, and finding semantics remain Lore-owned. See the
+[dependency boundary audit](../reference/dependency-boundary-audit.md).
 
 ## Context
 
@@ -65,7 +74,7 @@ Several constraints shape the design:
   would violate the format it claims to enforce. See
   [OKF conformance](../reference/okf-conformance.md).
 - **Zero-config / bunx-friendly is non-negotiable.** lore is meant to run via
-  `bunx @salient-data/lore` with nothing else installed. Any checker that pulls
+  `bunx @opum-ai/lore` with nothing else installed. Any checker that pulls
   in a **Rust/native runtime** (lychee for links, Vale for prose) breaks that
   promise: it adds a non-JS toolchain, platform binaries, and install latency
   to the hot path. See [tech-stack](../reference/tech-stack.md).

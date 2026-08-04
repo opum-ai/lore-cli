@@ -38,37 +38,52 @@ import { LoreError, type WarningCollector } from "../errors";
 import { type CompiledType, defaultProfile, type Profile, slugForTypeName } from "./profile";
 
 /**
- * OKF-reserved frontmatter keys that pass validation without an "unknown key" warning even
- * on a known type. Both are legitimate, recognized fields — not stray producer extensions —
- * so flagging them as unknown (as the generic extra-key check otherwise would) is a false
- * positive on lore's own conformant output:
- *
- * - `okf_version` is the bundle-root index's conformance marker. Its placement discipline —
- *   only the root index may carry it — is a whole-bundle conformance check
- *   (`lore validate`/`lore check`), not a per-file extra-key warning.
- * - `resource` is the OKF-recommended canonical link `lore new` stamps from the profile's
- *   `resource_base` (LORE-47). It is a producer-stamped, recognized key rather than a profile
- *   field: keeping it here — instead of in `[base.fields]` — means it never changes a type's
- *   generated validator or the committed `.lore/schemas/*.json` (it is advisory metadata, not a
- *   shape constraint), while still suppressing the extra-key warning on lore's own output.
- *   **Index files are the exception** ({@link isReservedKey}): lore never stamps `resource` on an
- *   `index.md` (it is a structure page, not a cited concept — LORE-47 AC#4/#5), so a `resource:`
- *   hand-authored onto one is not lore's recognized output and is warned like any other extra key.
+ * The bundle-root index's path, in the two conventions a caller of {@link validateFrontmatter} may
+ * pass for the identical physical file: **bundle-root-relative** (`"index.md"` — every
+ * {@link import("./bundle").loadBundle}-backed command (`sync`/`query`/`graph`/`link`/…) reaches
+ * this module through {@link import("./concept").parseConcept}/`tryParseConcept`, fed
+ * bundle-root-relative paths by `loadBundle`'s own walk) and **repo-relative**
+ * (`"docs/index.md"` — `core/validate.ts`'s `validateConceptText` threads this form instead; see
+ * its own `ROOT_INDEX_PATH`, LORE-144). Both name the one file `lore init` ever stamps
+ * `okf_version` onto, so both must be recognized as "the root" here. This module cannot import
+ * `scaffold.ts`'s `ROOT_INDEX_PATH` directly — `scaffold.ts` already imports from this module, and
+ * doing so would be a circular import — so the two literal spellings are pinned locally instead.
  */
-const OKF_RESERVED_KEYS: ReadonlySet<string> = new Set(["okf_version", "resource"]);
+const ROOT_INDEX_PATHS: ReadonlySet<string> = new Set(["index.md", "docs/index.md"]);
+
+/** Whether `path` names the bundle-root index, under either convention {@link ROOT_INDEX_PATHS} pins. */
+function isRootIndexPath(path: string | undefined): boolean {
+  return path !== undefined && ROOT_INDEX_PATHS.has(path);
+}
 
 /**
- * Whether `key` is an OKF-reserved key that passes the extra-key warning on a known type. All
- * {@link OKF_RESERVED_KEYS} are reserved on an ordinary concept; on an **index file** `resource` is
- * *not* reserved — an index carries no lore-stamped `resource`, so a hand-authored one there is a
- * genuine extra key the author should see, while `okf_version` (the root index's own conformance
- * marker) stays reserved.
+ * Whether `key` is an OKF-reserved key that passes the extra-key warning on a known type. Both
+ * `resource` and `okf_version` are legitimate, lore-recognized fields — not stray producer
+ * extensions — so flagging either as unknown (as the generic extra-key check otherwise would)
+ * would be a false positive on lore's own conformant output, but each is reserved only in the
+ * ONE position lore itself ever writes it:
+ *
+ * - `resource` is the OKF-recommended canonical link `lore new` stamps from the profile's
+ *   `resource_base` (LORE-47) onto an ordinary concept. **Index files are the exception**: lore
+ *   never stamps `resource` on an `index.md` (it is a structure page, not a cited concept —
+ *   LORE-47 AC#4/#5), so a `resource:` hand-authored onto one (`isIndex`) is not lore's
+ *   recognized output and is warned like any other extra key.
+ * - `okf_version` is the bundle-root index's conformance marker (OKF §4) — a whole-bundle
+ *   conformance property, not a per-concept one. Only the bundle-ROOT index
+ *   ({@link isRootIndexPath}) — the one file `lore init`'s `serializeStructuralConcept` ever
+ *   stamps it onto — is exempt. A hand-authored `okf_version` anywhere else (an ordinary
+ *   concept, or a *sub*-index like `docs/adr/index.md`) is not lore's own output and is warned
+ *   like any other extra key (LORE-168; previously this was unconditionally exempt everywhere,
+ *   contradicting the conformance check `docs/reference/okf-conformance.md` documents).
  */
-function isReservedKey(key: string, isIndex: boolean): boolean {
+function isReservedKey(key: string, isIndex: boolean, isRootIndex: boolean): boolean {
   if (key === "resource") {
     return !isIndex;
   }
-  return OKF_RESERVED_KEYS.has(key);
+  if (key === "okf_version") {
+    return isRootIndex;
+  }
+  return false;
 }
 
 /** The longest a `summary` should be before lore warns it is no longer a one-liner (ADR-0006 §5). */
@@ -151,8 +166,11 @@ export function typeDirectory(type: string): string {
  * - Unknown `type` → warn; the type-only floor already passed, so nothing else is checked and
  *   every key is preserved (OKF tolerance).
  * - Known `type` with a mistyped field → throw (`validation`) citing the field(s). A `type`
- *   carrying surrounding whitespace classifies on its trimmed value and then fails the literal
- *   check loudly here, rather than being silently demoted to an unvalidated unknown type.
+ *   carrying surrounding whitespace, or spelled in a different casing than the profile's
+ *   canonical form (`story` for `Story`), classifies via {@link canonicalType} — so it is
+ *   looked up and validated against that type's *real* schema — and then fails the schema's
+ *   `type` literal check loudly here, rather than being silently demoted to an unvalidated
+ *   unknown type. Only the lookup key is folded; `fm` itself is never rewritten (ADR-0011).
  * - Known `type` with extra keys → one warning per extra key.
  * - Missing or over-long (~{@link SUMMARY_SOFT_LIMIT}-char) `summary` → warn.
  */
@@ -161,7 +179,7 @@ export function validateFrontmatter(fm: Record<string, unknown>, options: Valida
   const where = options.path ? ` in ${options.path}` : "";
   const type = requireType(fm, where, options.path);
 
-  const compiled = profile.types.get(type);
+  const compiled = profile.types.get(canonicalType(type, profile));
   if (compiled === undefined) {
     // Unknown type: the non-empty-`type` floor (OKF §9) is already satisfied, so this is a
     // tolerated producer extension — warn, validate nothing further, leave every key untouched.
@@ -180,7 +198,8 @@ export function validateFrontmatter(fm: Record<string, unknown>, options: Valida
   }
 
   const isIndex = options.path !== undefined && posix.basename(options.path) === "index.md";
-  warnExtraKeys(fm, compiled, where, options.warnings, isIndex);
+  const isRootIndex = isRootIndexPath(options.path);
+  warnExtraKeys(fm, compiled, where, options.warnings, isIndex, isRootIndex);
   warnSummary(fm.summary, where, options.warnings);
   return type;
 }
@@ -224,12 +243,13 @@ function warnExtraKeys(
   where: string,
   warnings: WarningCollector | undefined,
   isIndex: boolean,
+  isRootIndex: boolean,
 ): void {
   if (warnings === undefined) {
     return;
   }
   for (const key of Object.getOwnPropertyNames(fm)) {
-    if (!compiled.declaredFields.has(key) && !isReservedKey(key, isIndex)) {
+    if (!compiled.declaredFields.has(key) && !isReservedKey(key, isIndex, isRootIndex)) {
       warnings.add(`unknown key "${key}"${where}; preserved but not validated`);
     }
   }
@@ -244,8 +264,13 @@ function warnSummary(summary: unknown, where: string, warnings: WarningCollector
     warnings.add(`missing \`summary\`${where}; add a one-line summary for indexes and query snippets`);
     return;
   }
-  if (typeof summary === "string" && summary.length > SUMMARY_SOFT_LIMIT) {
-    warnings.add(`\`summary\`${where} is ${summary.length} chars; keep it under ~${SUMMARY_SOFT_LIMIT} (one sentence)`);
+  if (typeof summary === "string") {
+    const codePointLength = [...summary].length;
+    if (codePointLength > SUMMARY_SOFT_LIMIT) {
+      warnings.add(
+        `\`summary\`${where} is ${codePointLength} chars; keep it under ~${SUMMARY_SOFT_LIMIT} (one sentence)`,
+      );
+    }
   }
 }
 

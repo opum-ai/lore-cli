@@ -1,4 +1,4 @@
-import pkg from "../package.json";
+import pkg from "../package.json" with { type: "json" };
 
 /** The package name as presented by the CLI. */
 export const NAME = "lore";

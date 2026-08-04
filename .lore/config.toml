@@ -18,5 +18,5 @@ external_links = false      # external-link liveness is opt-in (`lore check --ex
 promote_portability = false # the portability lint stays a warning, not an error
 
 # [confluence] — omitted: lore does not publish to Confluence (the one-way
-# publish adapter is deferred, LORE-43). When enabled, set base_url / space /
+# publish adapter is deferred, LCLI-43). When enabled, set base_url / space /
 # parent_page_id / format here and provide the token via $LORE_CONFLUENCE_TOKEN.

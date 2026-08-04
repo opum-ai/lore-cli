@@ -2,9 +2,9 @@
 # yaml-language-server: $schema=../../.lore/schemas/reference.schema.json
 type: Reference
 title: System architecture
-description: How lore is layered — the CLI as the primary surface over a deterministic core/ library, isolated adapters for Backlog.md and Confluence, and a deferred MCP transport that reuses the same core.
-tags: [architecture, core, adapters, cli, mcp, design]
-summary: lore is a thin CLI over a deterministic core/ library, with Backlog.md and Confluence behind isolated adapters and a deferred MCP transport reusing the same core.
+description: How lore is layered — the CLI over deterministic indexed and reference retrieval, the LadybugDB derived projection, isolated adapters, and an on-hold MCP transport that would reuse the same behavior.
+tags: [architecture, core, adapters, cli, mcp, ladybugdb, local-graph, design]
+summary: lore is a deterministic CLI whose graph, query, and context commands use a verified LadybugDB projection with an in-memory fallback; Backlog remains isolated and local MCP stays on hold.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -31,13 +31,13 @@ knows about a higher one.
 ```mermaid
 flowchart TD
     subgraph Surfaces["Surfaces (transports)"]
-        CLI["cli.ts — hand-rolled CLI entrypoint<br/>PRIMARY"]
-        MCP["mcp.ts — MCP server<br/>DEFERRED (v2)"]
+        CLI["cli.ts — CLI entrypoint<br/>Commander + capability manifest<br/>PRIMARY"]
+        MCP["mcp.ts — MCP server<br/>ON HOLD"]
         SKILL[".claude/skills/lore/SKILL.md<br/>+ CLAUDE.md nudge (generated)"]
     end
 
     subgraph Commands["commands/ — one file per CLI command"]
-        CMD["init · new · validate · check · sync<br/>link · unlink · tasks · orphans<br/>query · context · graph · replace<br/>rename · supersede · scaffold · instructions"]
+        CMD["init · new · validate · check · sync<br/>link · unlink · tasks · orphans<br/>query · context · graph · path · impact<br/>snapshot · changed · provenance · explorer<br/>replace · rename · supersede · scaffold · instructions"]
     end
 
     subgraph Core["core/ — deterministic library (no LLM, no I/O surprises)"]
@@ -48,16 +48,21 @@ flowchart TD
         LINKS["links.ts"]
         QUERY["query.ts"]
         CONTEXT["context.ts"]
+        RETRIEVAL["retrieval.ts<br/>indexed selection + reference fallback"]
+        LIFECYCLE["ladybug-lifecycle.ts<br/>verified immutable generations"]
+        SNAPSHOTS["snapshot.ts<br/>retained facts + bounded deltas"]
         SCHEMA["schema.ts (Zod SoT)"]
     end
 
     subgraph State["state.ts — .lore/ + git"]
         STATEIO[".lore/config.toml · cache/ · templates/<br/>git add/commit of backlog/"]
+        LADYBUG[".lore/cache/graph/ladybug/1/<br/>disposable derived projection"]
+        HISTORY[".lore/cache/snapshots/1/<br/>explicit immutable retained evidence"]
     end
 
     subgraph Adapters["adapters/ — isolated, lazy-loaded"]
         BACKLOG["backlog.ts<br/>(backlog … --json)"]
-        CONFLUENCE["confluence.ts<br/>DEFERRED (v2)"]
+        CONFLUENCE["confluence.ts<br/>ON HOLD"]
     end
 
     CLI --> CMD
@@ -70,30 +75,40 @@ flowchart TD
     BUNDLE --> LINKS
     QUERY --> BUNDLE
     CONTEXT --> BUNDLE
+    CMD --> RETRIEVAL
+    RETRIEVAL --> LIFECYCLE
+    RETRIEVAL --> BUNDLE
+    LIFECYCLE --> LADYBUG
+    CMD --> SNAPSHOTS
+    SNAPSHOTS --> HISTORY
     RECONCILE --> BACKLOG
     MANAGED --> BACKLOG
     CMD --> Adapters
-    CONFLUENCE -. "v2, zero core dep" .-> Core
+    CONFLUENCE -. "on hold, zero core dep" .-> Core
 ```
 
 | Layer | What lives here | Knows about |
 |---|---|---|
-| **Surfaces** | `cli.ts` (primary), `mcp.ts` (deferred), generated `SKILL.md` + CLAUDE.md nudge | commands |
+| **Surfaces** | `cli.ts` (primary), `mcp.ts` (on hold), generated `SKILL.md` + CLAUDE.md nudge | commands |
 | **Commands** | `commands/*.ts` — argument parsing glue, output formatting, exit codes | core, state, adapters |
-| **Core** | `concept`, `bundle`, `managed-block`, `reconcile`, `links`, `query`, `context`, `schema` | schema; the filesystem; the backlog adapter (for reconcile/managed-block) |
+| **Core** | `concept`, `bundle`, `managed-block`, `reconcile`, `links`, `query`, `context`, `traversal`, `snapshot`, `retrieval`, `ladybug-*`, `schema` | schema; repository reads; the backlog adapter; the private lazy native boundary |
 | **State** | `state.ts` — `.lore/` read/write; lore as sole git committer of `backlog/` | filesystem, git |
-| **Adapters** | `backlog.ts` (JSON), `confluence.ts` (deferred) | external processes / HTTP only |
+| **Adapters** | `backlog.ts` (JSON), `confluence.ts` (on hold) | external processes / HTTP only |
 
 The shape mirrors spec [§8 project structure](../specs/lore-design.md), with two
 deliberate departures driven by the locked decisions: the Backlog adapter is
 **JSON-only** (no `--plain` text parser — see §3), and the **MCP server is
-secondary and deferred to v2** (see §6).
+secondary and on hold** (see §6). The active M6 LadybugDB projection is derived
+state below the existing command contract, not a new source of truth.
 
 ## 2. The CLI is primary
 
-`cli.ts` is a [hand-rolled CLI router](tech-stack.md) (Commander is deferred; see tech-stack.md §3). It owns global flags, dispatches
-to a `commands/*.ts` handler, and renders the handler's result in one of three
-output modes with strict precedence `--json > --plain > pretty`:
+`cli.ts` uses exact-pinned [Commander](tech-stack.md) for parsing and subcommand
+selection. The capability manifest supplies the command catalog, positional
+signatures, global flags, command flags, aliases, and generated Lore help; a
+data-driven handler registry connects those declarations to `commands/*.ts`.
+The command result is rendered in one of three output modes with strict precedence
+`--json > --plain > pretty`:
 
 - **pretty** — color on a TTY, the default for humans;
 - **--plain** — ANSI-free stable text, auto-selected when stdout is not a TTY;
@@ -106,11 +121,25 @@ the machine contract — see [CLI contract](cli-contract.md) and
 [ADR-0005](../adr/0005-cli-contract.md). The full command list is the
 [CLI surface](cli-surface.md).
 
+`output.ts` is the shared rendering seam. Exact-pinned `string-width` owns
+Unicode grapheme segmentation and terminal display-column measurement for the
+task-summary rows shared by `tasks` and `orphans`. Lore sanitizes fields before
+measurement, retains the column-padding and row-composition policy, and owns
+all JSON/plain/pretty, stream, color, exit, and ordering contracts.
+
 Commands are thin. A handler parses flags, calls one or more **core** functions
 (which do the real work and return plain data structures), then formats. Handlers
 never embed business logic that a future MCP tool would need to reimplement —
 that logic lives in core, so the deferred MCP transport (§6) is genuinely the
 *same code* behind a different door.
+
+Commander does not move business rules or process lifecycle into the surface
+layer. Every invocation builds a local program with `exitOverride()` and
+injected no-op Commander writers; parser failures are translated into
+`LoreError` before Lore's output seam renders them. Command handlers remain
+adapters over structured core inputs and results, while injected streams,
+semantic exit codes, JSON envelopes, TTY behavior, and `NO_COLOR` stay
+Lore-owned.
 
 ## 3. The Backlog.md adapter (`adapters/backlog.ts`)
 
@@ -120,6 +149,26 @@ The single boundary to Backlog.md. It is **JSON-only**: lore invokes
 `{schemaVersion, kind, data}` envelope. There is **no `--plain` text-parser
 fallback** — that omission is deliberate
 ([ADR-0002](../adr/0002-backlog-integration-json-only.md)).
+
+> **The sketch below is illustrative, not authoritative — it predates the
+> LCLI-54 migration and does not track the current adapter.** It omits
+> `labels` from `listTasks`'s filter options and the `searchTasks` capability
+> entirely, and gives `BacklogTask` a `file` field the real `task list`/
+> `search` JSON summaries do not carry (see
+> [backlog-json-schema.md §4](backlog-json-schema.md#4-kind-task-list),
+> "No path field" — only `task view` carries a path, under the `file`/`path`
+> key). It also still reflects the **pre-migration fork-based integration**
+> (a compiled fork consumed as a git dependency, and `task view` exiting `0`
+> on a missing task) — superseded, since `lore` now consumes upstream
+> `MrLesk/Backlog.md` directly, and `task view <missing>` exits `1`. The
+> "Reads"/"Writes" bullets below have already been corrected in place for the
+> current integration (see
+> [backlog-cli-contract.md §2.2](backlog-cli-contract.md#22-existence-checks--task-views-exit-code-is-meaningful)
+> for the exit-code contract they cite).
+> For the authoritative adapter surface, read `src/adapters/backlog.ts`
+> directly; for the operational contract, read
+> [backlog-cli-contract.md](backlog-cli-contract.md) and
+> [backlog-json-schema.md](backlog-json-schema.md).
 
 ```ts
 interface BacklogTask {
@@ -143,20 +192,22 @@ interface BacklogAdapter {
 
 Critical implementation rules, each from a locked decision:
 
-- **Reads** go through the `--json` envelope. Stock Backlog.md v1.47.1 has **no**
-  `--json` flag, so lore consumes a fork
-  ([jeremy-newhouse/Backlog.md](../runbooks/backlog-json-patch.md)) that adds
-  minimal `--json` to `task list/view/search`, compiled as a local git
-  dependency, with a minimal upstream PR. See the
-  [Backlog JSON schema](backlog-json-schema.md) for the envelope and the
-  [Backlog CLI contract](backlog-cli-contract.md) for the invocation surface.
+- **Reads** go through the `--json` envelope. Stock Backlog.md lacked
+  `--json` prior to upstream PR #790; `lore` now consumes upstream
+  `MrLesk/Backlog.md` pinned at or past that merge commit (see
+  [backlog-cli-contract.md](backlog-cli-contract.md) for the current pin and
+  [the patch runbook](../runbooks/backlog-json-patch.md) for how the feature
+  was upstreamed). See the [Backlog JSON schema](backlog-json-schema.md) for
+  the envelope and the [Backlog CLI contract](backlog-cli-contract.md) for
+  the invocation surface.
 - **Capability probe** runs once at startup, caches in `.lore/cache/`, enforces a
   minimum `--json`-capable version, and **fails loud** rather than silently
   mis-parsing.
 - **Writes** go through `backlog task create` / `backlog task edit` only — never a
   direct write to `backlog/tasks/*.md`. New task IDs are captured by parsing the
-  `Created task <ID>` line. Existence is checked via `viewTask` returning data,
-  **never** via `task view`'s exit code (it exits `0` when the task is missing).
+  `Created task <ID>` line. Existence **is** checked via `task view`'s exit
+  code: it exits `1` unconditionally when the task is missing (see
+  [backlog-cli-contract.md §2.2](backlog-cli-contract.md#22-existence-checks--task-views-exit-code-is-meaningful)).
 - **Back-references** from a task to a doc are stored as a queryable label
   `doc:<conceptId>` (plus a `--doc` display affordance), because Backlog.md
   **drops unknown frontmatter keys on edit** — so lore never stores its own
@@ -180,18 +231,27 @@ byte-identical outputs (the property that makes agent loops and CI gates safe).
 
 | Module | Responsibility |
 |---|---|
-| `schema.ts` | **The single source of truth for types.** Per-`type` Zod schemas (strict for the known story-convention types; lenient `type`-only for unknown types, per OKF tolerance). Emits Draft-7 JSON Schema via `z.toJSONSchema()` and injects the `# yaml-language-server: $schema=…` modeline for editor autocomplete. See [ADR-0006](../adr/0006-schema-types-templates.md). |
-| `concept.ts` | Frontmatter ⇄ object. Wraps gray-matter to parse/serialize a single `.md` concept, validates frontmatter against `schema.ts`, and serializes back **stably** (quote-safety, deterministic key order) so unchanged docs round-trip byte-identically — [ADR-0011](../adr/0011-frontmatter-serialization-stability.md). User-defined types and custom keys pass through untouched. |
-| `bundle.ts` | Walks `docs/`, loads every concept, and builds the in-memory **bundle graph** (nodes = concepts, edges = cross-links + frontmatter refs). Generates the root `index.md`, sub-index files, and `log.md`. Computes per-doc / per-bundle token **estimates** (chars/4 heuristic, labeled). The graph is the substrate `query`, `context`, `graph`, `rename`, and `supersede` all reuse. |
+| `profile.ts` / `schema.ts` | `.lore/profile.toml` is the declarative type source of truth. Lore compiles it into per-type Zod validators, emits Draft-7 JSON Schema via `z.toJSONSchema()`, and injects the `# yaml-language-server: $schema=…` modeline for editor autocomplete while retaining OKF tolerance. See [ADR-0006](../adr/0006-schema-types-templates.md). |
+| `concept.ts` | Frontmatter ⇄ object. Owns fence/body splitting and uses exact-pinned `js-yaml` under a frozen configuration, validates frontmatter against generated Zod schemas, and serializes back **stably** so unchanged docs reach a byte-identical fixpoint — [ADR-0011](../adr/0011-frontmatter-serialization-stability.md). User-defined types and custom keys pass through untouched. |
+| `bundle.ts` | Walks `docs/`, loads every concept, and builds the reference in-memory **bundle graph** (nodes = concepts, edges = cross-links + frontmatter refs). Generates the root `index.md`, sub-index files, and `log.md`. Computes per-doc / per-bundle token **estimates** (chars/4 heuristic, labeled). It remains the conformance oracle and fallback for retrieval and the direct substrate for mutation commands. |
 | `managed-block.ts` | mdast-based surgery (via `mdast-util-from-markdown`, never `remark`) on the `<!-- lore:tasks:begin -->…<!-- lore:tasks:end -->` region of a Story. Regenerates the live task table from the Backlog adapter; **idempotent** (no upstream change → byte-identical output). Hand edits inside the markers are overwritten; everything outside is preserved. See [ADR-0008](../adr/0008-managed-block-remark-ast.md). |
 | `reconcile.ts` | Status rules. Rolls a Story's `status` up from its tasks (all Done → `done`; any In Progress → `in-progress`; else if tasks exist → `todo`; no tasks → author's value). `sync` writes the result; `check` reports drift without writing. See [ADR-0009](../adr/0009-story-task-coupling-reconciliation.md). |
-| `links.ts` | OKF cross-link resolution and rewriting. Enforces the lore link form — **relative, URL-encoded, `.md`-suffixed, no leading slash** — resolves targets against the bundle graph, validates internal links and heading anchors (hand-rolled over the shared mdast tree, not remark-validate-links), and runs the portability lint. Powers `rename`/`supersede` inbound-link rewrites and `replace`. See [ADR-0010](../adr/0010-multi-consumer-docs-layer.md). |
-| `query.ts` | In-memory full-text retrieval (BM25-style) over the loaded bundle, plus frontmatter-field filters. **No vectors, no RAG, no chunking** — [ADR-0015](../adr/0015-lightweight-retrieval-no-vectors.md). Uses each concept's `summary` for snippets. |
+| `links.ts` | OKF cross-link normalization and rewriting. Enforces the lore link form — **relative, URL-encoded, `.md`-suffixed, no leading slash** — and powers `rename`/`supersede` inbound-link rewrites plus `replace`. See [ADR-0010](../adr/0010-multi-consumer-docs-layer.md). |
+| `check.ts` | Resolves internal links against the whole bundle, validates fragments against headings, and runs the portability lint over the shared mdast tree. Exact-pinned `github-slugger` owns only GitHub-compatible slug and per-document duplicate state; Lore retains mdast heading-text extraction, link policy, findings, and output. |
+| `query.ts` | Deterministic lexical retrieval (BM25-style) over a `BundleGraph`, plus frontmatter-field filters. The graph may come from a verified projection or the reference loader; scoring and tie-breaking are identical. **No vectors, no RAG, no chunking** — [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md). |
 | `context.ts` | Deterministic, depth-bounded **graph-expansion export** for a concept id with a `--max-tokens` budget: full body of the target concept plus one-line `summary` neighbors, walking the bundle graph. No ranking heuristics. |
+| `retrieval.ts` / `ladybug-native.ts` | Selects a fully verified indexed `BundleGraph` or the reference fallback before output begins. The exact Ladybug compatibility facts and platform gate are import-safe; `@ladybugdb/core` is dynamically evaluated only after a supported indexed operation is selected. |
+| `ladybug-source.ts` / `ladybug-lifecycle.ts` / `ladybug-driver.ts` | Builds the export-1.0 source snapshot, classifies and reconciles immutable content-addressed generations, verifies native metadata and structure read-only, and reconstructs Lore concepts and authored edges from canonical source records. Cypher, physical schema, database paths, and native ids stay private. |
 
 `state.ts` sits beside core: it reads/writes `.lore/` (`config.toml`, `cache/`,
 `templates/`) per [ADR-0013](../adr/0013-lore-state-directory.md) and performs the
 git operations for `backlog/` ownership (§3.1).
+
+`config.ts` reads and parses `.lore/config.toml` with Bun, then uses reusable
+loose Zod schemas for the generic parsed table/primitive shape. Lore code
+retains recursive committed-token scanning, environment overlay,
+defaults/snake-case projection, reserved override-key defense, page-id value
+and precision rules, failure precedence, and the credential-safe error model.
 
 ## 5. Data flow for the key commands
 
@@ -202,7 +262,10 @@ formatted output + exit code. The flows below trace the load-bearing ones.
 `commands/init` → `state.ts` scaffolds `.lore/` (config, schemas, templates) and
 `bundle.ts` writes a minimal `docs/index.md` carrying `okf_version: "0.1"` (the
 **only** file with that key — [ADR-0003](../adr/0003-okf-substrate.md)). Idempotent:
-re-running on an existing bundle is a no-op, not an error.
+re-running on an existing bundle is a no-op, not an error. On a bare invocation
+with both stdin and stderr as TTYs, this same command also runs a TTY-gated
+wizard that folds in `commands/agents`, `commands/scaffold`, and a backlog
+capability probe — [ADR-0017](../adr/0017-interactive-init-wizard-tty-gated.md).
 
 ### `lore new <type> "<title>"`
 `commands/new` → `schema.ts` (resolve the type) + a `.lore/templates/<type>.md`
@@ -241,32 +304,132 @@ task (task → doc), then `state.ts` commits `backlog/`. `lore orphans` cross-ch
 both directions: tasks with no owning doc, and docs whose referenced tasks have
 vanished.
 
-### `lore query / context`
-`commands/query` → `bundle.ts` loads → `query.ts` BM25 + filters → bounded output
-with truncation hints (e.g. `showing 30 of 120 — narrow with --type story`).
-`commands/context` → `context.ts` walks the graph from the given id within the
-`--max-tokens` budget and emits body + neighbor summaries. Both are pure reads.
+### `lore graph / path / impact / query / context`
+Commander dispatch injects `retrieval.ts` into the five thin retrieval handlers.
+The resolver computes the current export fingerprint, follows the frozen
+lifecycle policy, and either reads canonical concept/edge records from a fully
+verified immutable generation or loads `bundle.ts` as the reference fallback.
+Only then do the unchanged `graph.ts`, `query.ts`, and `context.ts` algorithms
+shape the result, and only a complete result reaches Lore's emitter.
 
-### `lore graph / rename / supersede / replace`
-All reuse `bundle.ts`'s graph. `graph` emits the cross-link graph (`--format
-dot|json`) with token estimates; `rename` and `supersede` rewrite **all inbound
-links and frontmatter refs** through the graph and set
+`query.ts` applies the same BM25 scoring, filters, limits, and code-unit
+tie-breaking to either graph. `context.ts` performs the same nearest-first
+depth walk and budget prefix. Public output does not reveal the selected backend.
+
+`traversal.ts` reads exact typed concept, task, and authored-edge facts beside
+the `BundleGraph`. It provides deterministic breadth-first simple paths and
+canonical shortest impact evidence under depth, result, and edge-visit bounds.
+Indexed and reference readers supply the same storage-neutral snapshot; exact
+edge chains carry locator-free endpoint and source-record provenance. See
+[Bounded path and impact](../specs/bounded-path-and-impact.md).
+
+### Agent profile context compiler
+
+The singular `lore agent` family loads strict, committed
+`.lore/agents/<name>.toml` mappings and compiles task-scoped evidence through a
+pure core pipeline. Profiles constrain retrieval to explicit pinned and ranked
+concept or heading references. The compiler reserves profile/catalog metadata,
+includes mandatory pins, partitions long Markdown sources at heading and
+top-level block boundaries, applies deterministic BM25 scoring only within the
+allowed records, and fills the remaining chars-per-four budget with complete
+provenance and omission accounting.
+
+The command layer owns flags, rendering, task-file reads, and optional atomic
+output. The core does not read native Claude Code or Codex agent files, call a
+model, use a network, or spawn a worker. An orchestrator pack contains only its
+own evidence plus a compact direct-delegate roster; each native worker invokes
+the CLI independently for its own specialist profile. The plural `lore agents`
+bridge command remains the separate native-guidance generator.
+
+### M6 indexed read path
+
+M6 keeps these command and core contracts and uses exact-pinned
+`@ladybugdb/core@0.19.0` (storage version `43`) behind deterministic export
+schema `1.0`. `graph`,
+`query`, and `context` now consume a `BundleGraph` reconstructed from canonical
+records in a fully verified read-only generation. The current in-memory loader
+remains the conformance oracle and documented fallback. Git and OKF remain
+authoritative; database files are ignored, disposable, immutable after
+publication, and never returned as provenance.
+
+The package/runtime/storage facts are part of the source fingerprint and
+control manifest. Although the selected 0.19.0 runtime can read the former
+storage-42 format, the 0.18.x to 0.19.0 transition is rebuild-only: Lore builds
+and verifies a new immutable storage-43 generation and never upgrades a
+published database in place.
+
+The resolver applies the lifecycle decision before public output:
+
+- reusable generations are verified read-only and served, including under a
+  live writer lock when the exact generation remains safe;
+- missing, stale, and known-incompatible generations rebuild under exclusive
+  ownership;
+- corrupt generations are never served and are quarantined only under that
+  ownership before rebuild;
+- active contention without an exact verified generation and newer unsupported
+  formats use the in-memory fallback, preserving the unsupported bytes;
+- any native build/read failure falls back before warnings or results are
+  emitted, so partial indexed output is impossible.
+
+Native loading stays behind an explicit lazy boundary. Importing the CLI,
+Commander registry, lifecycle classifier, or fallback path does not evaluate
+the addon. Bun 1.2.23 cannot safely load the Ladybug Windows addon in the test
+process, so Windows selects the reference path before the loader; Windows
+native packaging qualification remains `LCLI-283.1.4` scope. See
+[ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md) and
+the [local graph roadmap](../specs/local-graph-platform-roadmap.md).
+
+### M8 workspace read path
+
+Workspace retrieval is an additive branch before the same graph, path, impact,
+query, and context shapers. A caller must pass `--workspace <manifest>`; Lore does not
+scan for manifests or repositories. `workspace-source.ts` resolves that real,
+non-symlink JSON file and each explicitly named real repository directory,
+checks optional expected Git refs, and loads every member through the M6
+validated export boundary.
+
+`workspace-projection.ts` applies the frozen workspace identity contract to
+concept, task, edge, bundle, commit, export, and source facts. Public IDs become
+`<member-id>::<source-id>`, repository-local links remain local, and only exact
+manifest endpoints produce cross-repository relationships. The resulting
+complete source is reconciled under
+`.lore/cache/workspaces/1/<workspace-key>/`; successful replacement keeps only
+the current immutable generation.
+
+`workspace-retrieval.ts` returns either a verified read-only Ladybug reader or
+the deterministic reference projection before output. Repeatable repository
+selectors filter graph topology, exact links, scope, and provenance to the
+requested members before traversal. Public results include locator-free workspace scope and
+record provenance; no locator, expected ref, native path, physical identifier,
+or query language crosses the command boundary. See
+[Workspace indexing and retrieval](../specs/workspace-indexing-and-retrieval.md).
+
+### M8 retained history path
+
+Retained history branches from the same validated repository/workspace source
+before any database-specific representation. `snapshot.ts` maps current
+projection records into canonical `lore-retained-snapshot/1` facts;
+`snapshot-store.ts` retains them only on explicit request beneath
+`.lore/cache/snapshots/1/`. The store is scoped, contained, symlink-safe, capped
+at 16 entries per scope, and never evicts. `changed` performs a bounded merge
+over stable fact keys, while `provenance` returns the exact embedded source
+evidence. Historical explorer mode consumes the same facts through a separate
+replay-validated contract; ordinary explorer bytes do not change. See
+[Snapshot change and provenance workflows](../specs/snapshot-change-and-provenance-workflows.md).
+
+### `lore rename / supersede / replace`
+Mutation commands continue to load `bundle.ts` directly. `rename` and
+`supersede` rewrite **all inbound links and frontmatter refs** through the graph and set
 `superseded_by`/`supersedes`/`status`; `replace` does literal/regex find-replace
 (`--in` glob, `--dry-run`) and **skips lore-managed regions**.
 
-## 6. The deferred MCP transport (`mcp.ts`)
+## 6. The on-hold MCP transport (`mcp.ts`)
 
-The MCP server is **secondary and deferred to v2**
-([ADR-0004](../adr/0004-cli-first-skill-bridge-mcp-deferred.md)). When built, it
-is *only a transport*: each MCP tool is a thin wrapper over the **same core
-functions** the CLI commands call — no duplicated logic, no second source of
-truth. The deferred tool/resource design is documented in the
-[MCP tools reference](mcp-tools.md). Because core returns plain data and commands
-are thin, adding the MCP surface is additive, not a refactor.
+The MCP server is **secondary, retained, and on hold**. ADR-0004 records the original CLI-first deferral; [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md) removes it from the scheduled M6 slot. If reactivated, it remains only a transport: each MCP tool wraps the same core functions as the CLI with no duplicated logic or second source of truth. The retained contract is documented in the [MCP tools reference](mcp-tools.md). No M6–M8 task depends on MCP.
 
 ## 7. The agent bridge (primary, today)
 
-Until the MCP transport ships, the agent surface is the CLI plus three generated
+While the MCP transport remains on hold, the agent surface is the CLI plus three generated
 artifacts that teach an agent to drive it:
 
 - **`.claude/skills/lore/SKILL.md`** — a generated Claude Code skill describing
@@ -297,7 +460,8 @@ beyond the two narrow seams it needs:
 ## See also
 
 - [lore design spec](../specs/lore-design.md) — the full design, including spec §8 structure
-- [Tech stack](tech-stack.md) — Bun, a hand-rolled CLI router, gray-matter, mdast-util-from-markdown, Zod
+- [Tech stack](tech-stack.md) — Bun, exact-pinned Commander with Lore-owned lifecycle/output, the `js-yaml` frontmatter boundary, mdast parsing, and Zod
+- [Dependency boundary audit](dependency-boundary-audit.md) — focused package delegation, compatibility gates, future filesystem/frontmatter investigations, and retained Lore-owned behavior
 - [CLI surface](cli-surface.md) and [CLI contract](cli-contract.md)
 - [Backlog JSON schema](backlog-json-schema.md) and [Backlog CLI contract](backlog-cli-contract.md)
 - [Consumer compatibility](consumer-compatibility.md) and [portable markdown](portable-markdown.md)

@@ -17,18 +17,20 @@ core is **deterministic with no LLM dependency** — every command is
 reproducible, idempotent, and CI/agent-safe (non-interactive by default, stable
 semantic exit codes, machine-readable `--json`).
 
-- Built on **Bun + TypeScript** with **Commander.js**, matching Backlog.md's own
-  stack.
-- Distributed on npm as **`@salient-data/lore`** (bin `lore`) — run it with
-  `npx`/`bunx`, no global install required.
+- Built on **Bun + TypeScript** with an exact-pinned **Commander** parser fed by
+  Lore's capability manifest; Lore still owns output, errors, and process lifecycle.
+- Prepared for npm distribution as **`@opum-ai/lore@0.1.0`** (bin `lore`);
+  registry publication is not claimed until the release-truth evidence lands.
 - The agent bridge is a generated **`.claude/skills/lore/SKILL.md`** plus a tiny
   CLAUDE.md nudge and `lore instructions`. An **MCP server is secondary and
   deferred to v2**.
 
-> **Status: pre-1.0, bootstrap.** This repo currently holds the spec, the OKF
-> documentation bundle (`docs/`), and the Backlog.md milestones. The
-> implementation is being built milestone by milestone (see
-> [Roadmap](#roadmap)).
+> **Status: prepared 0.1.0 release candidate.** The six manifests and exact
+> optional-dependency pins are set to `0.1.0`, but the repository has no
+> release tag or artifact and `@opum-ai/lore` is absent from npm. The upstream
+> Backlog.md dependency gate is complete
+> (LCLI-253), but the repository-owner publication-control gate remains open
+> (LCLI-278). See [Lore CLI release truth](docs/reference/lore-cli-release-truth.md).
 
 ---
 
@@ -41,11 +43,12 @@ files. It parses a canonical `{schemaVersion, kind, data}` envelope from
 --json`. There is **no `--plain` text-parser fallback** — that is a deliberate
 decision to keep the coupling robust.
 
-The catch: stock Backlog.md v1.47.1 does **not** ship a `--json` flag. So `lore`
-**forks** MrLesk/Backlog.md → `jeremy-newhouse/Backlog.md`, adds a minimal
-`--json` to `task list`/`view`/`search`, consumes the fork as a locally-compiled
-git dependency, and upstreams a minimal PR. A capability probe enforces a
-minimum `--json`-capable version and **fails loud** on anything older.
+Backlog.md did not originally ship this JSON surface. It merged upstream in
+MrLesk/Backlog.md as PR #790 and shipped in the v1.49.0 tagged release
+(2026-08-02). `lore` has no package or git dependency on Backlog.md and invokes
+the user-installed `backlog` executable (>=1.49.0) on `PATH`. A capability
+probe enforces the JSON contract and **fails loud** when the installed binary
+cannot provide it.
 
 See the runbook: [Backlog.md `--json` patch](docs/runbooks/backlog-json-patch.md).
 
@@ -68,35 +71,62 @@ Full details: [Backlog CLI contract](docs/reference/backlog-cli-contract.md) and
 
 ## Install
 
-`lore` is published as `@salient-data/lore` with the bin name `lore`. Run it
-without installing:
+`@opum-ai/lore` is not published. Until the release-truth evidence is
+complete, use a trusted source checkout and its pinned toolchain; do not expect
+these planned registry commands to work.
+
+After a verified release, the intended package and bin are
+`@opum-ai/lore` and `lore`:
 
 ```bash
 # Node / npm
-npx @salient-data/lore --help
+npx @opum-ai/lore --help
 
 # Bun
-bunx @salient-data/lore --help
+bunx @opum-ai/lore --help
 ```
 
 Or add it to a project:
 
 ```bash
-bun add -d @salient-data/lore   # or: npm i -D @salient-data/lore
+bun add -d @opum-ai/lore   # or: npm i -D @opum-ai/lore
 ```
 
-The npm package is a dual artifact: a Node `.cjs` launcher plus a per-platform
-compiled binary delivered as `optionalDependencies` (built with
+The planned npm package is a dual artifact: a Node `.cjs` launcher plus a
+per-platform compiled binary delivered as `optionalDependencies` (built with
 `bun build --compile`, `-baseline` x64 targets). You also need a
-`--json`-capable Backlog.md on `PATH`; see the
-[runbook](docs/runbooks/backlog-json-patch.md).
+`--json`-capable Backlog.md (>=1.49.0) on `PATH` — e.g. `npm install -g
+backlog.md`; see the [runbook](docs/runbooks/backlog-json-patch.md).
+
+### Private-repository CI before npm publication
+
+Repositories inside the `opum-ai` organization can run strict Lore gates
+without a cross-repository PAT or a public npm release:
+
+```yaml
+- uses: actions/checkout@v6
+- uses: opum-ai/lore-cli/.github/actions/strict-check@<full-commit-sha>
+```
+
+The private composite action installs Bun 1.2.23 and this action revision's
+frozen dependencies, installs the published JSON-capable `backlog.md` version
+pinned by the Docker E2E harness, then runs `lore validate --strict` and `lore
+check --strict` against the caller workspace. Consumer workflows must replace
+the placeholder with the full immutable commit SHA. Private-action access
+remains limited to organization repositories.
 
 ---
 
 ## Quickstart (CLI-first)
 
-Every command is non-interactive, idempotent, and emits stable exit codes.
-Output has three modes with precedence `--json` > `--plain` > pretty:
+Every command is idempotent and emits stable exit codes. All of them are
+non-interactive by default — the one exception is `lore init`, which runs a
+guided wizard on a bare, interactive-terminal invocation (detecting and offering
+Claude Code and Codex agent bridges, downstream doc-site scaffolds, and a backlog
+capability check); it is strictly TTY-gated, so a non-TTY stdin or stderr,
+`--json`, or any of its own flags runs it fully non-interactively too — see
+[ADR-0017](docs/adr/0017-interactive-init-wizard-tty-gated.md). Output has
+three modes with precedence `--json` > `--plain` > pretty:
 
 - **pretty** — default; color on a TTY, honoring `NO_COLOR`.
 - **`--plain`** — ANSI-free, stable text; the automatic mode when stdout is not
@@ -105,7 +135,10 @@ Output has three modes with precedence `--json` > `--plain` > pretty:
   stderr as `{error_type, message, hint, input}`.
 
 ```bash
-# 1. Scaffold the OKF bundle (docs/, .lore/, root index.md).
+# 1. Scaffold the OKF bundle (docs/, .lore/, root index.md). On a bare TTY
+#    invocation this runs a guided wizard for the rest of onboarding too
+#    (agent bridge, doc-site scaffolds, backlog check); off a TTY (CI, this
+#    snippet) it's exactly this — the bundle only, non-interactively.
 lore init
 
 # 2. Create typed concepts from frontmatter templates.
@@ -167,7 +200,9 @@ flag.
 ### Refactoring and navigation
 
 ```bash
-lore graph --format json|dot          # cross-link graph + token estimates
+lore graph --json                     # cross-link graph + token estimates
+lore graph --dot                      # Graphviz DOT
+lore export > lore-projection.jsonl   # full consumer-neutral OKF/task projection
 lore orphans                          # tasks with no owning doc; docs whose tasks vanished
 lore replace "OldName" "NewName" --in 'reference/**' --dry-run
 lore rename reference/orders reference/order-lines   # graph-aware: rewrites inbound links
@@ -179,16 +214,17 @@ graph to rewrite all inbound links and frontmatter refs.
 
 ---
 
-## How Claude Code uses lore
+## How coding agents use lore
 
-`lore` is CLI-first for humans **and** agents. The agent bridge is generated,
+`lore` is CLI-first for humans **and** agents. Its agent bridges are generated,
 not bespoke:
 
-- `lore scaffold agent` (and `lore init`) emit `.claude/skills/lore/SKILL.md` —
-  a skill that teaches Claude Code when and how to drive `lore` (always with
-  `--json` for structured results).
-- A tiny CLAUDE.md nudge points the agent at the skill; an AGENTS.md `@import`
-  shim is deferred.
+- `lore agents` emits `.claude/skills/lore/SKILL.md` — a skill that teaches
+  Claude Code when and how to drive `lore` (always with `--json` for
+  structured results).
+- `lore init --codex` emits `.codex/skills/lore/SKILL.md`; a managed block in
+  `AGENTS.md` points Codex at that skill without overwriting repository guidance.
+- A tiny managed block in `CLAUDE.md` points Claude Code at its skill.
 - `lore instructions` prints task-shaped guidance on demand for any agent or
   human.
 
@@ -232,7 +268,7 @@ Tracked as Backlog.md milestones, built in order:
 
 | Milestone | Scope |
 |---|---|
-| **BJP** | Fork Backlog.md, add minimal `--json` to `task list`/`view`/`search`, consume the fork, upstream a PR |
+| **BJP** | Upstream stable JSON for Backlog.md reads (completed in PR #790; tagged-release adoption gates lore 0.1) |
 | **M0** | Foundations: repo, runtime pin, build/distribution skeleton |
 | **M1** | Core + scaffolding: `init`, `new`, `validate`, concept/frontmatter lib (gray-matter + Zod), bundle walk |
 | **M2** | Backlog coupling: `link`, `sync`, `check`, managed block (remark), status reconciliation |

@@ -24,13 +24,13 @@ The output of this runbook is twofold:
    in a stock release, after which `lore` migrates to the published package and
    bumps its minimum-version probe.
 
-> **Superseded (2026-07-17, LORE-5).** Outcome 2 above didn't happen the way
+> **Superseded (2026-07-17, LCLI-5).** Outcome 2 above didn't happen the way
 > planned: MrLesk's team shipped their **own** independent `--json`
 > implementation ([PR #790](https://github.com/MrLesk/Backlog.md/pull/790),
 > BACK-545) before we opened one. `lore` is **adopting that implementation
 > directly** instead of upstreaming this fork's patch. Sections 1–7 below are
 > kept as a historical record of what was actually built and shipped in
-> `src/adapters/backlog.ts` (LORE-2/4/21) — they are **not** the path forward.
+> `src/adapters/backlog.ts` (LCLI-2/4/21) — they are **not** the path forward.
 > Skip to [§8](#8-migrate-to-upstream-on-release-and-bump-the-floor) for the
 > current adoption plan.
 
@@ -313,7 +313,7 @@ serializer, separate diff) so reviewers see the small scope is deliberate.
 
 ## 8. Migrate to upstream on release (and bump the floor)
 
-> **Correction (2026-07-17, LORE-5).** Step 3 below assumed upstream would
+> **Correction (2026-07-17, LCLI-5).** Step 3 below assumed upstream would
 > converge on *this* schema. That assumption is **falsified**: MrLesk's team
 > shipped their own independent implementation —
 > [PR #790](https://github.com/MrLesk/Backlog.md/pull/790), "BACK-545 - Add
@@ -332,15 +332,17 @@ serializer, separate diff) so reviewers see the small scope is deliberate.
 > | Payload key | always `data` | `tasks` / `task` / `results` per command |
 > | Task fields | includes `source`, `branch`, `onStatusChange`, `filePath` (absolute) + `filePathRelative` | excludes branch/internal fields by design (`path`, project-relative only); adds `type`, `reporter` at summary level |
 > | Search hit shape | `{type, score, item}` | `{type, data}` — **no `score`** (explicitly out of v1) |
-> | `task view`/`<id>` not-found | fork: exit 0, empty stdout, stderr message (adapter treats this as the clean "missing" signal) | exit 1 unconditionally (any output mode), matching `task archive`'s convention — closes the exact gap our LORE-5 prior-art reply flagged |
+> | `task view`/`<id>` not-found | fork: exit 0, empty stdout, stderr message (adapter treats this as the clean "missing" signal) | exit 1 unconditionally (any output mode), matching `task archive`'s convention — closes the exact gap our LCLI-5 prior-art reply flagged |
 >
 > Net effect: **`src/adapters/backlog.ts` as written would fail its own
 > capability probe against upstream's real output** (wrong `kind` strings, no
 > `data` key to read). Migrating to a real upstream release is an **adapter
-> rewrite against the new contract**, not a version-floor bump. As of this
-> writing PR #790 is merged to `main` but **not yet in a tagged release**
-> (latest tag is still v1.48.0, published 2026-07-12, predating the merge).
-> Full comparison and provenance: LORE-5 implementation notes.
+> rewrite against the new contract**, not a version-floor bump.
+> Full comparison and provenance: LCLI-5 implementation notes.
+>
+> **Update (2026-08-02, LCLI-253).** `v1.49.0` — published 2026-08-02 — is the
+> first tagged `MrLesk/Backlog.md` release containing the PR #790 commit; §8.1
+> step 4 below is now complete. See that section for what actually shipped.
 >
 > The steps below describe the *original* plan (this schema shipping
 > verbatim upstream) and are kept for history; do not follow step 3 as
@@ -369,13 +371,13 @@ rather than waiting — same rationale as [ADR-0002's alternative
 
 1. **Retire this fork as the plan of record.** `jeremy-newhouse/Backlog.md`
    (`tasks/back-510-json-output` @ `a80b7a1`) is no longer rebased or extended.
-   It remains as a historical reference for what LORE-2/4/21 originally shipped
+   It remains as a historical reference for what LCLI-2/4/21 originally shipped
    against.
 2. **Build a `backlog` binary from upstream, not the fork, pinned to a commit
    at or past the PR #790 merge** (`22a091b570d44c4f302ca47e7fd36fa28ad8bcb0` on
    `MrLesk/Backlog.md#main`) — same manual clone/build/PATH convention as §6
    above, repointed at upstream's checkout instead of the fork's. **Deliberately
-   no `package.json` dependency yet** (decided on LORE-53): `lore` has not
+   no `package.json` dependency yet** (decided on LCLI-53): `lore` has not
    shipped, so this is dev/test-time-only wiring; a real dependency entry is
    deferred to step 4 below, once a tagged release exists to depend on normally.
 3. **Rewrite `src/adapters/backlog.ts`'s envelope parsing, Zod schemas, and
@@ -385,18 +387,26 @@ rather than waiting — same rationale as [ADR-0002's alternative
    fields, search hit shape, and not-found exit code than this fork emitted.
    This was a contract migration, not a floor bump. **Split across two tasks,
    both done:** the capability probe (`probeBacklog`, `EXPECTED_SCHEMA_VERSION`,
-   `TASK_LIST_KIND`) — LORE-53; the full read adapter (`EnvelopeSchema`,
+   `TASK_LIST_KIND`) — LCLI-53; the full read adapter (`EnvelopeSchema`,
    `parseEnvelope`, `listTasks`/`viewTask`/`searchTasks`, golden fixtures) —
-   LORE-54, which also merged the probe's formerly-separate
+   LCLI-54, which also merged the probe's formerly-separate
    `PROBE_SCHEMA_VERSION` constant back into the single `EXPECTED_SCHEMA_VERSION`
    now that both sides target the same contract.
-4. **Once a tagged `MrLesk/Backlog.md` release includes the PR #790 commit**,
-   add a real `package.json` dependency on the published package
-   (`"backlog.md": "^<that-release>"`) and bump the capability probe's minimum
-   version to it — this is the only step that still matches the *original*
-   plan's shape (a normal semver floor bump), just against upstream's version
-   instead of the fork's, and the first point a dependency entry is actually
-   added (step 2 above is manual/documented only).
+4. **Done (2026-08-02, LCLI-253).** `v1.49.0` — published 2026-08-02 — is the
+   first tagged `MrLesk/Backlog.md` release containing the PR #790 commit.
+   `src/adapters/backlog.ts`'s `MIN_BACKLOG_VERSION` moved from the `1.47.1`
+   fork floor to `1.49.0`, and `RUNBOOK_HINT` now points at installing the
+   published package instead of building the pinned commit. `docker/e2e/Dockerfile`
+   and `.github/actions/strict-check/action.yml` (the interim per-run pinned-commit
+   build in each) were both retired in favor of `npm install -g backlog.md@<version>`.
+   The dev-tooling equivalent of step 2 above — `test/support/record-backlog-goldens.ts`'s
+   commit-pin guard — became a version-pin guard against the Dockerfile's now
+   version-pinned `backlog` install.
+   **Deliberately still no `package.json` dependency** — the *original* plan's
+   assumption in step 4 (that a real dependency entry would be added once a tag
+   existed) did not hold: `lore` invokes the PATH-resolved `backlog` binary the
+   same way it did during the interim, and that remains the LCLI-53 decision,
+   not something this release changed.
 
 ---
 

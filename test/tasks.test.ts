@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { BacklogTaskDetail } from "../src/adapters/backlog";
 import { run } from "../src/cli";
+import { TASK_DETAILS_CONCURRENCY } from "../src/commands/concurrency";
 import { runTasks, type TaskRollup, type TasksOptions } from "../src/commands/tasks";
 import { LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
@@ -32,6 +34,23 @@ function writeDoc(rel: string, contents: string): void {
 /** A Story linking `taskIds`, written at `docs/stories/<stem>.md`. */
 function writeStory(stem: string, taskIds: string[]): void {
   writeDoc(`stories/${stem}.md`, storyDoc(stem, taskIds));
+}
+
+/**
+ * Like {@link writeStory}, but with a `summary:` present in the frontmatter — {@link storyDoc}
+ * omits one, which is fine for every other test here, but it makes `loadBundle` add its own
+ * unrelated "missing `summary`" advisory to stderr (schema.ts's `warnSummary`). The two
+ * empty-stderr tests below (LORE-211) need stderr to carry ONLY what the assertion is about —
+ * whether a dangling advisory leaked — so they use this instead of picking that load-time noise
+ * apart from the thing under test.
+ */
+function writeStoryWithSummary(stem: string, taskIds: string[]): void {
+  const tasksYaml = taskIds.map((t) => `\n  - ${t}`).join("");
+  writeDoc(
+    `stories/${stem}.md`,
+    `---\ntype: Story\ntitle: ${stem}\nsummary: A summary for ${stem}.\ntasks:${tasksYaml}\n---\n` +
+      `# ${stem}\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n`,
+  );
 }
 
 /** A {@link fakeAdapter} whose capability probe passes — `lore tasks` probes Backlog up front. */
@@ -130,6 +149,41 @@ describe("runTasks — the live rollup (AC#1, AC#2)", () => {
   });
 });
 
+// ── LORE-235: bounded concurrency ───────────────────────────────────────────────────────────
+
+describe("runTasks — resolveRollup's viewTask fan-out is bounded (AC#1, AC#3)", () => {
+  test("never runs more than TASK_DETAILS_CONCURRENCY viewTask calls in flight at once, and saturates the cap", async () => {
+    // Comfortably more distinct linked ids than the cap, so the pool must refill at least twice —
+    // a single un-bounded burst (the pre-fix Promise.allSettled(...map(...)) behavior) would let
+    // `active` climb past the cap immediately. Mirrors reconcile-shared.test.ts's own
+    // TASK_DETAILS_CONCURRENCY cap test (LORE-111) for `resolveTaskDetails`.
+    const total = TASK_DETAILS_CONCURRENCY * 3 + 2;
+    const ids = Array.from({ length: total }, (_, i) => `LORE-${i}`);
+    writeStory("bulk", ids);
+    const base = okAdapter(ids.map((id) => makeTask(id, { status: "Done" })));
+    let active = 0;
+    let peak = 0;
+    const instrumented = {
+      ...base,
+      async viewTask(id: string): Promise<BacklogTaskDetail | null> {
+        active++;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        active--;
+        return base.viewTask(id);
+      },
+    };
+
+    const { code, data } = await rollupJson(["stories/bulk"], { adapter: instrumented });
+
+    expect(code).toBe(0);
+    expect(peak).toBeLessThanOrEqual(TASK_DETAILS_CONCURRENCY);
+    expect(peak).toBe(TASK_DETAILS_CONCURRENCY); // the pool saturates — this isn't just trivially bounded
+    expect(active).toBe(0); // every worker settled
+    expect(data.tasks.map((t) => t.id)).toEqual(ids); // linked-order preserved despite pooled scheduling
+  });
+});
+
 describe("runTasks — dangling links (soft) vs failures (hard)", () => {
   test("a tasks: id Backlog no longer knows is dropped from the rollup with a stderr advisory, exit 0", async () => {
     writeStory("bulk", ["LORE-1", "GONE-9"]);
@@ -140,6 +194,31 @@ describe("runTasks — dangling links (soft) vs failures (hard)", () => {
     expect(stderr).toContain("GONE-9");
     expect(stderr.toLowerCase()).toContain("not in backlog");
     expect(stderr.startsWith("warning:")).toBe(true); // routed through the shared WarningCollector
+  });
+
+  test("a dangling id containing embedded ANSI/control bytes emits the stripped advisory (LORE-236, AC#3)", async () => {
+    // The second `tasks:` id is written as a double-quoted YAML scalar using the `\e` escape
+    // (ESC, 0x1b) — a RAW control byte in a plain or double-quoted scalar is rejected outright by
+    // the YAML parser (verified empirically), but this JSON-style escape survives it, so it is a
+    // realistic vector for a crafted/corrupted `tasks:` id to carry a CSI "erase screen" sequence
+    // (`\x1b[2J`) through frontmatter parsing intact and into `warnDangling`'s interpolated message.
+    writeDoc(
+      "stories/bulk.md",
+      '---\ntype: Story\ntitle: bulk\nsummary: A summary for bulk.\ntasks:\n  - LORE-1\n  - "LORE\\e[2J-9"\n---\n' +
+        "# bulk\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n",
+    );
+    const adapter = okAdapter([makeTask("LORE-1", { status: "Done" })]); // the escaped id is unseeded → dangling
+    const { code, data, stderr } = await rollupJson(["stories/bulk"], { adapter });
+    expect(code).toBe(0);
+    expect(data.tasks.map((t) => t.id)).toEqual(["LORE-1"]);
+    expect(stderr.startsWith("warning:")).toBe(true);
+    // The CSI sequence is stripped (WarningCollector.flush, errors.ts), leaving the surrounding
+    // text joined rather than the raw escape bytes reaching stderr.
+    expect(stderr).toBe("warning: 1 linked task not in Backlog, dropped from the rollup: LORE-9\n");
+    // Excludes the trailing `\n` line terminator `flush` itself appends, which is expected and
+    // not part of the sanitized message body.
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting the ABSENCE of control bytes.
+    expect(/[\x00-\x09\x0b-\x1f\x7f-\x9f]/.test(stderr)).toBe(false);
   });
 
   test("a Backlog READ failure (drift) propagates as a hard error, never a dangling advisory", async () => {
@@ -154,6 +233,74 @@ describe("runTasks — dangling links (soft) vs failures (hard)", () => {
     await expectRejection("drift", () =>
       runTasks({ root, output: JSON_CTX, stdout: capture(), stderr: capture(), args: ["stories/bulk"], adapter }),
     );
+  });
+
+  test("LORE-211: a failing id BEFORE a co-present dangling id still hard-fails, with NO dangling advisory leaked (AC#1, AC#2)", async () => {
+    // tasks: order is [LORE-1 (fails), GONE-9 (dangling, unseeded)]. resolveRollup's in-order scan
+    // must hit the LORE-1 rejection at i=0 and throw immediately — never reaching GONE-9's dangling
+    // branch or the post-loop warnDangling call — so nothing is ever written to either stream.
+    writeStoryWithSummary("bulk", ["LORE-1", "GONE-9"]);
+    const base = okAdapter([]); // GONE-9 stays dangling via the base's unseeded viewTask (-> null)
+    const adapter = {
+      ...base,
+      async viewTask(id: string): Promise<BacklogTaskDetail | null> {
+        if (id.toLowerCase() === "lore-1") {
+          throw new LoreError("drift", "backlog read drift", "");
+        }
+        return base.viewTask(id);
+      },
+    };
+    const stdout = capture();
+    const stderr = capture();
+    await expectRejection("drift", () =>
+      runTasks({ root, output: JSON_CTX, stdout, stderr, args: ["stories/bulk"], adapter }),
+    );
+    expect(stdout.text()).toBe("");
+    expect(stderr.text()).toBe("");
+  });
+
+  test("LORE-211: a dangling id BEFORE a co-present failing id STILL hard-fails (order-independent), with NO dangling advisory leaked (AC#1, AC#2)", async () => {
+    // Same pair, reversed tasks: order: [GONE-9 (dangling, unseeded), LORE-1 (fails)]. The in-order
+    // scan pushes GONE-9 onto the dangling list at i=0 (a fulfilled null, not a rejection) and only
+    // THEN reaches LORE-1's rejection at i=1 and throws — proving warnDangling (which runs only
+    // after the whole loop completes) never fires, regardless of which side of the pair fails.
+    writeStoryWithSummary("bulk", ["GONE-9", "LORE-1"]);
+    const base = okAdapter([]);
+    const adapter = {
+      ...base,
+      async viewTask(id: string): Promise<BacklogTaskDetail | null> {
+        if (id.toLowerCase() === "lore-1") {
+          throw new LoreError("drift", "backlog read drift", "");
+        }
+        return base.viewTask(id);
+      },
+    };
+    const stdout = capture();
+    const stderr = capture();
+    await expectRejection("drift", () =>
+      runTasks({ root, output: JSON_CTX, stdout, stderr, args: ["stories/bulk"], adapter }),
+    );
+    expect(stdout.text()).toBe("");
+    expect(stderr.text()).toBe("");
+  });
+
+  test("LORE-125: a viewTask detail whose id disagrees with the requested id is a hard not_found error, never a silently wrong row", async () => {
+    // A stub adapter that always answers with SOME OTHER task's detail, regardless of what id was
+    // requested — resolveRollup must not trust `result.value.id` blindly, or this concept's rollup
+    // would silently attribute "Wrong task entirely" / "Done" to lore-1's own row.
+    writeStory("bulk", ["LORE-1"]);
+    const base = okAdapter([]);
+    const adapter = {
+      ...base,
+      async viewTask(): Promise<BacklogTaskDetail | null> {
+        return makeTask("LORE-999", { status: "Done", title: "Wrong task entirely" });
+      },
+    };
+    const err = await expectRejection("not_found", () =>
+      runTasks({ root, output: JSON_CTX, stdout: capture(), stderr: capture(), args: ["stories/bulk"], adapter }),
+    );
+    expect(err.message).toContain("LORE-1");
+    expect(err.message).toContain("LORE-999");
   });
 });
 
@@ -183,8 +330,11 @@ describe("runTasks — resolution and parse errors", () => {
     expect(err.message).toContain("stories/ghost");
   });
 
-  test("a missing <id> is a usage error (exit 2)", async () => {
-    await expectRejection("usage", () => runTasks({ root, output: JSON_CTX, stdout: capture(), args: [] }));
+  test("a missing <id> is a usage error (exit 2) naming the command (LORE-259)", async () => {
+    const err = await expectRejection("usage", () => runTasks({ root, output: JSON_CTX, stdout: capture(), args: [] }));
+    // Matches the same "`lore <command>` needs a <thing>" template `lore link`/`lore rename`/
+    // etc. already use (LORE-259) — `tasks` used to diverge with a bare "missing concept <id>".
+    expect(err.message).toBe("`lore tasks` needs a concept id");
   });
 
   test("a second positional is a usage error (exit 2)", async () => {
@@ -207,6 +357,33 @@ describe("runTasks — resolution and parse errors", () => {
     await expectRejection("usage", () =>
       runTasks({ root, output: JSON_CTX, stdout: capture(), args: ["stories/bulk", "--status"] }),
     );
+  });
+});
+
+describe("runTasks — reserved-stem non-concept files stay silent (LORE-258)", () => {
+  // `docs/log.md` and a child `index.md` are lore's own machine-generated hubs, always
+  // frontmatter-less — loadBundle used to warn "no frontmatter mapping" for them on every
+  // `lore tasks` run, spurious noise `lore check` never raised for the same bundle. Only the
+  // two reserved stems (index/log) go quiet; a genuinely unexpected non-concept file still warns.
+  test("emits no advisory for docs/log.md or a child docs/adr/index.md", async () => {
+    writeStory("bulk", ["LORE-1"]);
+    writeDoc("log.md", "# Generated changelog, no frontmatter\n");
+    writeDoc("adr/index.md", "# Generated hub, no frontmatter\n");
+    const adapter = okAdapter([makeTask("LORE-1", { title: "First", status: "Done" })]);
+
+    const { code, stderr } = await rollupJson(["stories/bulk"], { adapter });
+    expect(code).toBe(0);
+    expect(stderr).not.toContain("no frontmatter mapping");
+  });
+
+  test("still warns about a genuinely unexpected non-concept file (not a reserved stem)", async () => {
+    writeStory("bulk", ["LORE-1"]);
+    writeDoc("stray.md", "# Unexpected, no frontmatter\n");
+    const adapter = okAdapter([makeTask("LORE-1", { title: "First", status: "Done" })]);
+
+    const { code, stderr } = await rollupJson(["stories/bulk"], { adapter });
+    expect(code).toBe(0);
+    expect(stderr).toContain("skipping stray.md: no frontmatter mapping");
   });
 });
 

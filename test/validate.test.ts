@@ -5,11 +5,11 @@ import { join } from "node:path";
 import { runInit } from "../src/commands/init";
 import { runNew } from "../src/commands/new";
 import { runValidate, type ValidateOptions } from "../src/commands/validate";
-import { compileProfile, defaultProfile, parseProfile } from "../src/core/profile";
+import { compileProfile, defaultProfile, PROFILE_REL_PATH, parseProfile } from "../src/core/profile";
 import { requiredSectionsFor } from "../src/core/schema";
 import { builtinTemplateFor } from "../src/core/template";
 import { quoteSafetyFindings, type ValidateReport, validateConceptText, validateFiles } from "../src/core/validate";
-import { EXIT_CODES, LoreError } from "../src/errors";
+import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
 
@@ -232,6 +232,50 @@ summary: A short summary.
     const report = validateConceptText("docs/adr/x.md", raw);
     expect(report.findings.some((f) => f.rule === "required-section" && /Consequences/.test(f.message))).toBe(true);
   });
+
+  test("a `## ` heading nested inside a blockquote is not a top-level section", () => {
+    const raw = `---
+type: ADR
+summary: A short summary.
+---
+
+# X
+
+## Status
+
+## Context
+
+## Decision
+
+> ## Consequences
+`;
+    // The only "## Consequences" is nested inside a blockquote, not a direct child of the
+    // document root, so it does not satisfy the required section.
+    const report = validateConceptText("docs/adr/x.md", raw);
+    expect(report.findings.some((f) => f.rule === "required-section" && /Consequences/.test(f.message))).toBe(true);
+  });
+
+  test("a `## ` heading nested inside a list item is not a top-level section", () => {
+    const raw = `---
+type: ADR
+summary: A short summary.
+---
+
+# X
+
+## Status
+
+## Context
+
+## Decision
+
+- ## Consequences
+`;
+    // The only "## Consequences" is nested inside a list item, not a direct child of the
+    // document root, so it does not satisfy the required section.
+    const report = validateConceptText("docs/adr/x.md", raw);
+    expect(report.findings.some((f) => f.rule === "required-section" && /Consequences/.test(f.message))).toBe(true);
+  });
 });
 
 // ── Core engine: quote-safety (cross-cutting) ──────────────────────────────────
@@ -252,6 +296,16 @@ describe("validate (core) — quote-safety", () => {
       rule: "quote-safety",
     });
     expect(quoteSafetyFindings(block("ref: *anchor"))[0]?.severity).toBe("error");
+  });
+
+  test("a value starting with a bare leading colon is an error (ADR-0007)", () => {
+    // Distinct from the ": " mid-value colon-space check below: here the colon is the value's
+    // *first* character with no trailing space (e.g. `label: :foo`), which only the
+    // INDICATOR_CHARS branch catches.
+    expect(quoteSafetyFindings(block("label: :foo"))[0]).toMatchObject({
+      severity: "error",
+      rule: "quote-safety",
+    });
   });
 
   test("a colon-space inside an unquoted value is an error", () => {
@@ -344,6 +398,25 @@ describe("validate (core) — resource drift", () => {
     const raw = conceptWith("https://docs.example.com/docs/STALE.md");
     expect(resourceFindings("docs/index.md", raw)).toEqual([]);
   });
+
+  test("a stale `resource` carrying an embedded newline/ANSI escape yields a single-line, control-byte-free message (LORE-161)", () => {
+    // A YAML double-quoted scalar can smuggle a real newline (`\n`) and ESC-led ANSI sequence
+    // (`\x1b[...`) without breaking the frontmatter's own line structure — an author-controlled
+    // `resource` is not trustworthy input for a `Finding.message`, which the type documents as
+    // "a single-line, actionable description".
+    const raw = conceptWith('"https://docs.example.com/docs/reference/orders.md\\nEvil\\x1b[31m: injected\\x1b[0m"');
+    const findings = resourceFindings("docs/reference/orders.md", raw);
+    expect(findings).toHaveLength(1);
+    const message = findings[0]?.message ?? "";
+    // The offending bytes are gone...
+    expect(message).not.toContain("\n");
+    expect(message).not.toContain("\x1b");
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting control bytes are absent.
+    expect(message).not.toMatch(/[\x00-\x1f\x7f-\x9f]/);
+    // ...but the finding is still legible and identifies the stale resource.
+    expect(message).toContain("https://docs.example.com/docs/reference/orders.md");
+    expect(message).toContain("is stale");
+  });
 });
 
 // ── Core engine: aggregation + --type filter ───────────────────────────────────
@@ -431,6 +504,43 @@ describe("validate (command) — rendering", () => {
     writeFileSync(join(root, "docs/adr/bad.md"), "---\ntype: ADR\nsummary: A short summary.\n---\n\n# X\n");
     const { text } = render(["docs/adr/bad.md"], { mode: "pretty", color: true });
     expect(text).toContain("\x1b[31m"); // red error token
+  });
+
+  test("a `resource` finding carrying an embedded newline/ANSI escape stays one line in plain-mode text output (LORE-161)", () => {
+    // A `resource_base`-bearing profile so `resourceDriftFindings` actually judges the value.
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      [
+        "[profile]",
+        'name = "rp"',
+        'okf_version = "0.1"',
+        'resource_base = "https://docs.example.com/"',
+        "[base.fields]",
+        "type = { required = true }",
+        "title = {}",
+        "summary = {}",
+        "[[types]]",
+        'name = "Reference"',
+      ].join("\n"),
+    );
+    // Same YAML double-quoted-scalar trick as the core test: `\n` and `\x1b[...` decode to a real
+    // newline and ANSI escape in the parsed `resource` string, though the frontmatter itself is
+    // still one line on disk.
+    writeFileSync(
+      join(root, "docs/adr/orders.md"),
+      '---\ntype: Reference\ntitle: Orders\nsummary: The orders.\nresource: "https://docs.example.com/docs/adr/orders.md\\nEvil\\x1b[31m: injected\\x1b[0m"\n---\n\n# Orders\n',
+    );
+    const { text } = render([], { mode: "plain", color: false });
+    const lines = text.split("\n").filter((line) => line.length > 0);
+    // One line per file's finding (the resource-drift warning) plus one summary line — an embedded
+    // newline in the finding's message would inflate this count and split the finding mid-line.
+    expect(lines).toHaveLength(2);
+    const findingLine = lines[0] ?? "";
+    expect(findingLine).toMatch(/^warning docs\/adr\/orders\.md \[resource\]: resource ".*" is stale/);
+    expect(findingLine).not.toContain("\x1b["); // no ANSI smuggled through in plain mode
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting control bytes are absent.
+    expect(findingLine).not.toMatch(/[\x00-\x1f\x7f-\x9f]/);
   });
 });
 
@@ -550,6 +660,47 @@ describe("validate (command)", () => {
     }
   });
 
+  test("--strict=<value> (an inline value on a boolean flag) is a usage error (LORE-228)", () => {
+    try {
+      runValidate({ root, output: JSON_CTX, args: ["--strict=false"], stdout: capture() });
+      throw new Error("expected a LoreError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("usage");
+      expect((err as LoreError).message).toContain("--strict takes no value");
+    }
+  });
+
+  test("repeated `--strict` (LORE-237) is a usage error", () => {
+    try {
+      runValidate({ root, output: JSON_CTX, args: ["--strict", "--strict"], stdout: capture() });
+      throw new Error("expected a LoreError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("usage");
+      expect((err as LoreError).message).toContain("--strict given more than once");
+    }
+  });
+
+  test("repeated `--type` (LORE-237) is a usage error, not last-value-wins", () => {
+    try {
+      runValidate({ root, output: JSON_CTX, args: ["--type", "ADR", "--type", "Story"], stdout: capture() });
+      throw new Error("expected a LoreError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("usage");
+      expect((err as LoreError).message).toContain("--type given more than once");
+    }
+  });
+
+  test("a single `--strict` and a single `--type ADR` are still accepted (LORE-237)", () => {
+    mkdirSync(join(root, "docs/adr"), { recursive: true });
+    writeFileSync(join(root, "docs/adr/x.md"), CLEAN_ADR);
+    expect(validateCmd(["--strict"]).code).toBe(0);
+    const { report } = validateCmd(["--type", "ADR"]);
+    expect(report.files.every((f) => f.type === "ADR")).toBe(true);
+  });
+
   test("`--` ends option parsing so a dash-leading path is a positional", () => {
     // After `--`, `--strict` would be a path; it does not exist, so discovery fails not_found
     // (proving it was treated as a path, not the flag).
@@ -559,6 +710,82 @@ describe("validate (command)", () => {
     } catch (err) {
       expect((err as LoreError).type).toBe("not_found");
     }
+  });
+});
+
+// ── LORE-144: reserved root index vs. a custom profile ─────────────────────────
+
+describe("validate (command) — LORE-144 reserved root index under a custom profile", () => {
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "lore-validate-lore144-"));
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  /**
+   * A custom `.lore/profile.toml` that redefines `Reference` with an `owner` field required —
+   * the scaffolded root index (whose frontmatter carries only lore's own fixed fields) never sets
+   * it, so this is the AC's "active profile adds a required field to Reference".
+   */
+  const CUSTOM_PROFILE_TOML = [
+    "[profile]",
+    'name = "custom"',
+    'okf_version = "0.1"',
+    "",
+    "[base.fields]",
+    "type = { required = true }",
+    "",
+    "[[types]]",
+    'name = "Reference"',
+    "fields = { owner = { required = true } }",
+  ].join("\n");
+
+  test("AC#1: `lore init` then `lore validate` succeeds under a profile requiring an extra Reference field", () => {
+    // The custom profile is already active (as it would be for a real project) *before* `lore
+    // init` scaffolds the root index — mirroring `runInit`'s own `loadProfile({ root })` read.
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(join(root, PROFILE_REL_PATH), CUSTOM_PROFILE_TOML);
+
+    runInit({ root, output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
+
+    const stdout = capture();
+    const code = runValidate({ root, output: JSON_CTX, args: [], stdout } satisfies ValidateOptions);
+    const envelope = JSON.parse(stdout.text()) as { kind: string; data: ValidateReport };
+
+    expect(code).toBe(0);
+    expect(envelope.data.errorCount).toBe(0);
+    const indexReport = envelope.data.files.find((f) => f.path === "docs/index.md");
+    expect(indexReport).toBeDefined();
+    expect(indexReport?.skipped).toBe(false);
+    expect(indexReport?.ok).toBe(true);
+    expect(indexReport?.findings.some((f) => /owner/.test(f.message))).toBe(false);
+  });
+
+  test("AC#2 (core): the scaffolded root index validates clean against defaultProfile() even when handed the custom profile", () => {
+    const custom = compileProfile(parseProfile(Bun.TOML.parse(CUSTOM_PROFILE_TOML) as Record<string, unknown>, "rp"));
+    const rootIndexRaw =
+      "---\n" +
+      "type: Reference\n" +
+      "title: Documentation\n" +
+      "summary: Root index of this OKF documentation bundle, created by `lore init`.\n" +
+      `timestamp: ${FIXED_CLOCK().toISOString()}\n` +
+      'okf_version: "0.1"\n' +
+      "---\n\n# Documentation\n";
+
+    const report = validateConceptText("docs/index.md", rootIndexRaw, custom);
+    expect(report.skipped).toBe(false);
+    expect(report.ok).toBe(true);
+    expect(report.findings.filter((f) => f.severity === "error")).toEqual([]);
+  });
+
+  test("the same custom profile still enforces `owner` on an ordinary Reference concept (the exemption is root-index-only)", () => {
+    const custom = compileProfile(parseProfile(Bun.TOML.parse(CUSTOM_PROFILE_TOML) as Record<string, unknown>, "rp"));
+    const raw = "---\ntype: Reference\ntitle: Orders\nsummary: The orders.\n---\n\n# Orders\n";
+    const report = validateConceptText("docs/reference/orders.md", raw, custom);
+    expect(report.ok).toBe(false);
+    expect(report.findings.some((f) => f.severity === "error" && /owner/.test(f.message))).toBe(true);
   });
 });
 
@@ -642,6 +869,22 @@ describe("validate (command) — discovery hardening", () => {
     expect(report.files).toHaveLength(1);
   });
 
+  // POSIX-only, matching this codebase's existing symlink tests' own skip guard (e.g. init.test.ts).
+  test.skipIf(process.platform === "win32")(
+    "a real file and a symlink alias to it are validated once (realpath de-dup folds through canonicalIdentity)",
+    () => {
+      writeFileSync(join(root, "docs/real.md"), "---\ntype: Reference\nsummary: A short summary.\n---\n\n# R\n");
+      symlinkSync(join(root, "docs/real.md"), join(root, "docs/link.md"));
+      const stdout = capture();
+      // Two distinct paths named explicitly — resolve() alone would NOT collapse these; only
+      // canonicalIdentity's realpath fold (discover.ts:56) does, so this kills the mutant where
+      // canonicalIdentity is degraded to return its input unchanged.
+      runValidate({ root, output: JSON_CTX, args: ["docs/real.md", "docs/link.md"], stdout });
+      const report = (JSON.parse(stdout.text()) as { data: ValidateReport }).data;
+      expect(report.files).toHaveLength(1);
+    },
+  );
+
   test("a `.md` concept skipped behind a symlink is surfaced on stderr, not silently dropped", () => {
     writeFileSync(join(root, "docs/real.md"), "---\ntype: Reference\nsummary: A short summary.\n---\n\n# R\n");
     symlinkSync(join(root, "docs/real.md"), join(root, "docs/link.md"));
@@ -650,5 +893,26 @@ describe("validate (command) — discovery hardening", () => {
     runValidate({ root, output: { mode: "plain", color: false }, args: ["docs"], stdout, stderr });
     expect(stderr.text()).toContain("symlink");
     expect(stderr.text()).toContain("link.md");
+  });
+
+  test("a reserved-stem non-concept (index.md/log.md) is counted in `skippedCount`, with no stderr advisory (LORE-258 harmonization)", () => {
+    // Unlike link/sync/tasks (which route their non-concept skip through loadBundle's own
+    // advisories collector — the source of LORE-258's spurious per-file warning), `validate` never
+    // calls loadBundle at all: it already counts every skip silently through `skippedCount` and
+    // never prints an individual "no frontmatter mapping" line, reserved stem or not. This pins
+    // that pre-existing behavior stays the reconciliation target: silent, counted, never a stderr
+    // advisory — for the exact reserved files (log.md, a child index.md) the other commands were
+    // harmonized towards.
+    writeFileSync(join(root, "docs/real.md"), "---\ntype: Reference\nsummary: A short summary.\n---\n\n# R\n");
+    mkdirSync(join(root, "docs/adr"), { recursive: true });
+    writeFileSync(join(root, "docs/adr/index.md"), "# Generated hub, no frontmatter\n");
+    writeFileSync(join(root, "docs/log.md"), "# Generated changelog, no frontmatter\n");
+    const stdout = capture();
+    const stderr = capture();
+    const code = runValidate({ root, output: JSON_CTX, args: [], stdout, stderr });
+    const report = (JSON.parse(stdout.text()) as { data: ValidateReport }).data;
+    expect(code).toBe(EXIT_OK);
+    expect(report.skippedCount).toBe(2);
+    expect(stderr.text()).toBe("");
   });
 });

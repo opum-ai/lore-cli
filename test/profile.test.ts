@@ -10,6 +10,7 @@ import {
   PROFILE_REL_PATH,
   parseProfile,
   slugForTypeName,
+  templateConfinementViolation,
 } from "../src/core/profile";
 import { validateFrontmatter } from "../src/core/schema";
 import { LoreError, WarningCollector } from "../src/errors";
@@ -236,6 +237,28 @@ describe("parseProfile — grammar errors throw (exit 6)", () => {
     expect(err.message).toContain("enum");
   });
 
+  test("an empty enum (`enum = []`) is a parse-time error naming the offending field (LORE-140)", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", fields: { status: { enum: [] } } }],
+      }),
+    );
+    expect(err.message).toContain("types[0].fields.status.enum");
+  });
+
+  test("a list field's `items = { enum = [] }` is a parse-time error naming the offending field (LORE-193)", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", fields: { tags: { kind: "list", items: { enum: [] } } } }],
+      }),
+    );
+    expect(err.message).toContain("types[0].fields.tags.items.enum");
+  });
+
   test("a type name with no slug-able characters is an error", () => {
     expectValidation(() =>
       parse({
@@ -329,6 +352,221 @@ describe("parseProfile — grammar errors throw (exit 6)", () => {
       expect(err.message).toContain("reserved object key");
     }
   });
+
+  test("a misspelled field-spec attribute (`require` for `required`) is an error, not silent tolerance (LORE-83)", () => {
+    // An otherwise-complete, valid profile (a real [[types]] declared) — pre-fix this parsed
+    // clean, silently defaulting `owner.required` to `false` instead of erroring on the typo.
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true }, owner: { require: true } } },
+        types: [{ name: "T" }],
+      }),
+    );
+    expect(err.message).toContain("base.fields.owner");
+    expect(err.message).toContain('"require"');
+  });
+
+  test("an unrecognized key in a [[types]] table is an error, not silently ignored (LORE-83)", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", sction: ["Oops"] }],
+      }),
+    );
+    expect(err.message).toContain("types[0]");
+    expect(err.message).toContain('"sction"');
+  });
+
+  test("an unrecognized key in an `items` table is an error, not silently ignored (LORE-83)", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", fields: { tags: { kind: "list", items: { knd: "string" } } } }],
+      }),
+    );
+    expect(err.message).toContain("items");
+    expect(err.message).toContain('"knd"');
+  });
+
+  test("a string `default` on an `integer` field is an error naming the field (LORE-242 AC#1)", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", fields: { count: { kind: "integer", default: "not-a-number" } } }],
+      }),
+    );
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("types[0].fields.count.default");
+  });
+
+  test("a string `default` on a `boolean` field is an error naming the field (LORE-242 AC#1)", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", fields: { flag: { kind: "boolean", default: "yes" } } }],
+      }),
+    );
+    expect(err.message).toContain("types[0].fields.flag.default");
+  });
+
+  test("a string `default` on a `datetime` field is an error naming the field (LORE-242 AC#1)", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", fields: { when: { kind: "datetime", default: "not-a-datetime" } } }],
+      }),
+    );
+    expect(err.message).toContain("types[0].fields.when.default");
+  });
+
+  test("a `default` outside the field's `enum` is an error naming the field (LORE-242 AC#2)", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", fields: { color: { enum: ["red", "green"], default: "purple" } } }],
+      }),
+    );
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("types[0].fields.color.default");
+  });
+
+  test("a list field's `default` is checked against the whole-list shape, not merely 'is it an array' (LORE-242 AC#4)", () => {
+    // The list itself is an array (would pass an "is it an array" check), but an element value
+    // falls outside the declared `items.enum` — the whole-list shape must still be judged element
+    // by element, exactly as a written concept's `labels` value would be at runtime.
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", fields: { labels: { kind: "list", items: { enum: ["a", "b"] }, default: ["a", "z"] } } }],
+      }),
+    );
+    expect(err.message).toContain("types[0].fields.labels.default");
+  });
+
+  test("a non-array `default` on a `list` field is an error naming the field (LORE-242 AC#4)", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", fields: { labels: { kind: "list", default: "a" } } }],
+      }),
+    );
+    expect(err.message).toContain("types[0].fields.labels.default");
+  });
+});
+
+describe("parseProfile — a [[types]].template value is confined to .lore/templates/ (LORE-139)", () => {
+  function parse(doc: Record<string, unknown>): unknown {
+    return parseProfile(doc, "test-profile");
+  }
+
+  test("a `..`-traversal template value is rejected at parse time, not read later", () => {
+    // Reproduces the task's own live repro shape: a profile type declaring a `template` that
+    // climbs out of `.lore/templates/` to an arbitrary file elsewhere on disk. Rejected here
+    // (profile PARSE time) means `lore new` can never reach `resolveTemplate` with it at all.
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", template: "../../../secret_outside/leak" }],
+      }),
+    );
+    expect(err.message).toContain("types[0].template");
+    expect(err.message.toLowerCase()).toContain("escape");
+  });
+
+  test("a template value nested under a subdirectory that then traverses out is rejected", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", template: "sub/../../../outside" }],
+      }),
+    );
+    expect(err.message.toLowerCase()).toContain("escape");
+  });
+
+  test("an absolute-path template value is rejected", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", template: "/etc/passwd" }],
+      }),
+    );
+    expect(err.message.toLowerCase()).toContain("absolute");
+  });
+
+  test("a Windows-style absolute template value is rejected regardless of host platform", () => {
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true } } },
+        types: [{ name: "T", template: "C:\\Windows\\System32\\drivers\\etc\\hosts" }],
+      }),
+    );
+    expect(err.message.toLowerCase()).toContain("absolute");
+  });
+
+  test("a name merely starting with `..` (not a real `..` segment) is still a legitimate template", () => {
+    // Mirrors commands/new.ts's own --template precedent: `..custom` is one path component, not
+    // an escape, so it must not be a false positive.
+    const profile = compileProfile(
+      parseProfile(
+        {
+          profile: { name: "x", okf_version: "0.1" },
+          base: { fields: { type: { required: true } } },
+          types: [{ name: "T", template: "..custom" }],
+        },
+        "test-profile",
+      ),
+    );
+    expect(profile.types.get("T")?.template).toBe("..custom");
+  });
+});
+
+describe("templateConfinementViolation — the shared guard both new.ts and profile.ts consume (LORE-185)", () => {
+  // Direct unit coverage of the pure predicate itself, consolidated out of the two edge-case-
+  // divergent implementations `assertTemplateConfined` (here) and `commands/new.ts`'s
+  // `assertTemplateNameConfined` used to each carry. `commands/new.ts`'s own describe blocks
+  // ("--template is confined to .lore/templates/", "--template refuses to read through a
+  // symlink") exercise the SAME function through the `--template` flag call path; this block
+  // exercises it directly, and through the profile-declared call path above.
+
+  test("a bare name is confined (no violation)", () => {
+    expect(templateConfinementViolation("adr")).toBeUndefined();
+  });
+
+  test("a `..`-prefixed but non-escaping segment is confined (no false positive)", () => {
+    expect(templateConfinementViolation("..custom")).toBeUndefined();
+  });
+
+  test("a `..` traversal is an escape violation", () => {
+    expect(templateConfinementViolation("../../../secret")).toBe("escape");
+  });
+
+  test("a backslash-separated (Windows-style) traversal is an escape violation on every host", () => {
+    // The property that used to differ between the two implementations: profile.ts always
+    // normalized backslashes to `/` before resolving; new.ts's old `assertTemplateNameConfined`
+    // used the host path module and did not, so this input only escaped on an actual win32 run.
+    expect(templateConfinementViolation("..\\..\\secret")).toBe("escape");
+  });
+
+  test("a POSIX absolute path is an absolute violation", () => {
+    expect(templateConfinementViolation("/etc/passwd")).toBe("absolute");
+  });
+
+  test("a Windows drive-letter absolute path is an absolute violation regardless of host", () => {
+    expect(templateConfinementViolation("C:\\Windows\\System32\\drivers\\etc\\hosts")).toBe("absolute");
+  });
 });
 
 describe("compileProfile — field kinds generate the right validators", () => {
@@ -384,6 +622,42 @@ describe("compileProfile — field kinds generate the right validators", () => {
   });
 });
 
+describe("parseFieldSpec — a `default` consistent with kind/enum still loads unchanged (LORE-242 AC#3)", () => {
+  function buildProfile(doc: Record<string, unknown>) {
+    return compileProfile(parseProfile(doc, "consistent-defaults"));
+  }
+
+  test('`{ kind = "integer", default = 3 }` loads and is emitted into the JSON Schema exactly as before', () => {
+    const profile = buildProfile({
+      profile: { name: "x", okf_version: "0.1" },
+      base: { fields: { type: { required: true } } },
+      types: [{ name: "T", fields: { count: { kind: "integer", default: 3 } } }],
+    });
+    const json = profile.types.get("T")?.jsonSchema as { properties: Record<string, { default?: unknown }> };
+    expect(json.properties.count?.default).toBe(3);
+  });
+
+  test('`{ enum = ["red","green"], default = "red" }` loads and is emitted unchanged', () => {
+    const profile = buildProfile({
+      profile: { name: "x", okf_version: "0.1" },
+      base: { fields: { type: { required: true } } },
+      types: [{ name: "T", fields: { color: { enum: ["red", "green"], default: "red" } } }],
+    });
+    const json = profile.types.get("T")?.jsonSchema as { properties: Record<string, { default?: unknown }> };
+    expect(json.properties.color?.default).toBe("red");
+  });
+
+  test("a list field's `default` consistent with its `items` shape loads and is emitted unchanged", () => {
+    const profile = buildProfile({
+      profile: { name: "x", okf_version: "0.1" },
+      base: { fields: { type: { required: true } } },
+      types: [{ name: "T", fields: { labels: { kind: "list", items: { enum: ["a", "b"] }, default: ["a", "b"] } } }],
+    });
+    const json = profile.types.get("T")?.jsonSchema as { properties: Record<string, { default?: unknown }> };
+    expect(json.properties.labels?.default).toEqual(["a", "b"]);
+  });
+});
+
 describe("loadProfile — JSON form errors", () => {
   let root: string;
   beforeEach(() => {
@@ -392,15 +666,46 @@ describe("loadProfile — JSON form errors", () => {
   });
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-  test("malformed JSON throws a validation error naming the file", () => {
+  test("malformed JSON throws the 'is not valid JSON' diagnostic naming the file, with a syntax hint (LORE-241 AC#2)", () => {
     writeFileSync(join(root, PROFILE_JSON_REL_PATH), "{ not json");
     const err = expectValidation(() => loadProfile({ root }));
-    expect(err.message).toContain(PROFILE_JSON_REL_PATH);
+    expect(err.message).toBe(`${PROFILE_JSON_REL_PATH} is not valid JSON: JSON Parse error: Expected '}'`);
+    expect(err.hint).toBe(`fix the JSON syntax in ${PROFILE_JSON_REL_PATH}`);
   });
 
-  test("a JSON profile that is not an object is an error", () => {
+  test("a JSON array profile is the object-shape error, not a syntax error (LORE-241 AC#1)", () => {
     writeFileSync(join(root, PROFILE_JSON_REL_PATH), "[1, 2, 3]");
-    expectValidation(() => loadProfile({ root }));
+    const err = expectValidation(() => loadProfile({ root }));
+    expect(err.message).toBe(`${PROFILE_JSON_REL_PATH} must be a JSON object`);
+    expect(err.hint).toBe(`make ${PROFILE_JSON_REL_PATH} a JSON object`);
+  });
+
+  test("a JSON string profile is the object-shape error, not a syntax error (LORE-241 AC#1)", () => {
+    writeFileSync(join(root, PROFILE_JSON_REL_PATH), '"hello"');
+    const err = expectValidation(() => loadProfile({ root }));
+    expect(err.message).toBe(`${PROFILE_JSON_REL_PATH} must be a JSON object`);
+    expect(err.hint).toBe(`make ${PROFILE_JSON_REL_PATH} a JSON object`);
+  });
+
+  test("a JSON number profile is the object-shape error, not a syntax error (LORE-241 AC#1)", () => {
+    writeFileSync(join(root, PROFILE_JSON_REL_PATH), "42");
+    const err = expectValidation(() => loadProfile({ root }));
+    expect(err.message).toBe(`${PROFILE_JSON_REL_PATH} must be a JSON object`);
+    expect(err.hint).toBe(`make ${PROFILE_JSON_REL_PATH} a JSON object`);
+  });
+
+  test("a JSON boolean profile is the object-shape error, not a syntax error (LORE-241 AC#1)", () => {
+    writeFileSync(join(root, PROFILE_JSON_REL_PATH), "true");
+    const err = expectValidation(() => loadProfile({ root }));
+    expect(err.message).toBe(`${PROFILE_JSON_REL_PATH} must be a JSON object`);
+    expect(err.hint).toBe(`make ${PROFILE_JSON_REL_PATH} a JSON object`);
+  });
+
+  test("a JSON null profile is the object-shape error, not a syntax error (LORE-241 AC#1)", () => {
+    writeFileSync(join(root, PROFILE_JSON_REL_PATH), "null");
+    const err = expectValidation(() => loadProfile({ root }));
+    expect(err.message).toBe(`${PROFILE_JSON_REL_PATH} must be a JSON object`);
+    expect(err.hint).toBe(`make ${PROFILE_JSON_REL_PATH} a JSON object`);
   });
 });
 

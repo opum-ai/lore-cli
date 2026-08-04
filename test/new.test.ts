@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { runInit } from "../src/commands/init";
 import { type NewResult, runNew } from "../src/commands/new";
 import { loadBundle } from "../src/core/bundle";
@@ -230,6 +230,194 @@ describe("lore new — user templates override built-ins (AC#2)", () => {
   });
 });
 
+describe("lore new — --template is confined to .lore/templates/ (LORE-72)", () => {
+  test("regression: a `..`-traversal --template value is refused, never reads or embeds the outside file", () => {
+    // Reproduces the task's own live repro shape (`--template ../../../../../../tmp/outside_secret`):
+    // a relative path climbing out of .lore/templates/ to an arbitrary file elsewhere on disk.
+    const outsideDir = mkdtempSync(join(tmpdir(), "lore-new-outside-"));
+    const secretPath = join(outsideDir, "outside_secret.md");
+    writeFileSync(secretPath, "SUPER SECRET DATA — must never leak into a generated concept\n");
+    const traversal = relative(join(root, ".lore/templates"), secretPath).replace(/\.md$/, "");
+
+    const err = expectError(["adr", "Test", "--template", traversal, "--out", "docs/adr/test.md"]);
+    expect(err.type).toBe("usage");
+    expect(err.message).toContain("escape");
+    // No partial artifact was ever written — the traversal is refused before any file is created.
+    expect(existsSync(join(root, "docs/adr/test.md"))).toBe(false);
+
+    rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  test("an absolute-path --template value is refused", () => {
+    const err = expectError(["adr", "Test", "--template", "/etc/passwd"]);
+    expect(err.type).toBe("usage");
+    expect(err.message).toContain("absolute");
+  });
+
+  test("a Windows-style absolute --template value is refused regardless of host platform", () => {
+    const err = expectError(["adr", "Test", "--template", "C:\\Windows\\System32\\drivers\\etc\\hosts"]);
+    expect(err.type).toBe("usage");
+  });
+
+  test("a name merely starting with `..` (not a real `..` segment) is a legitimate template, not a false escape", () => {
+    // Mirrors the same distinction --out's own confinement guard already makes: `..custom` is one
+    // real path segment, not a parent-directory escape.
+    writeFileSync(join(root, ".lore/templates/..custom.md"), "\n# {{title}}\n\nfrom dotdot-prefixed template\n");
+    const { result } = newCmd(["adr", "Title", "--template", "..custom"]);
+    expect(readFileSync(join(root, result.path), "utf8")).toContain("from dotdot-prefixed template");
+  });
+
+  test("a nested traversal (subdir then climbing back out) is refused the same way", () => {
+    const err = expectError(["adr", "Test", "--template", "sub/../../../outside"]);
+    expect(err.type).toBe("usage");
+    expect(err.message).toContain("escape");
+  });
+
+  test("regression: a Windows-style backslash traversal is refused on every host, not just win32 (LORE-185)", () => {
+    // Before LORE-185, this function resolved with the host path module and never normalized
+    // backslashes, so `--template ..\\..\\secret` only actually escaped on a real win32 run — a
+    // POSIX host (like this test, CI's default) saw one inert, non-traversing filename segment
+    // and let it through. The shared `templateConfinementViolation` predicate (moved from
+    // `core/profile.ts`'s own backslash-normalizing implementation) now catches it everywhere.
+    const err = expectError(["adr", "Test", "--template", "..\\..\\secret"]);
+    expect(err.type).toBe("usage");
+    expect(err.message).toContain("escape");
+  });
+});
+
+describe("lore new — --template refuses to read through a symlink (LORE-91)", () => {
+  let outsideDir: string;
+  let secretPath: string;
+
+  beforeEach(() => {
+    outsideDir = mkdtempSync(join(tmpdir(), "lore-new-outside-"));
+    secretPath = join(outsideDir, "outside_secret.md");
+    writeFileSync(secretPath, "SUPER SECRET DATA — must never leak into a generated concept\n");
+  });
+  afterEach(() => {
+    rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  // POSIX-only, matching this codebase's existing symlink tests' own skip guard (e.g. init.test.ts).
+  test.skipIf(process.platform === "win32")(
+    "regression: a symlinked template at the top level is refused, never reads or embeds the outside file (AC#1)",
+    () => {
+      symlinkSync(secretPath, join(root, ".lore/templates/evil.md"));
+      const err = expectError(["adr", "Test", "--template", "evil", "--out", "docs/adr/test-evil.md"]);
+      expect(err.type).toBe("conflict");
+      expect(err.message.toLowerCase()).toContain("symlink");
+      // No partial artifact was ever written, and the built-in template was never silently used instead (AC#3).
+      expect(existsSync(join(root, "docs/adr/test-evil.md"))).toBe(false);
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "regression: a symlinked template nested in a subdirectory is refused the same way (AC#2)",
+    () => {
+      mkdirSync(join(root, ".lore/templates/sub"), { recursive: true });
+      symlinkSync(secretPath, join(root, ".lore/templates/sub/evil.md"));
+      const err = expectError(["adr", "Test", "--template", "sub/evil", "--out", "docs/adr/test-evil.md"]);
+      expect(err.type).toBe("conflict");
+      expect(err.message.toLowerCase()).toContain("symlink");
+      expect(existsSync(join(root, "docs/adr/test-evil.md"))).toBe(false);
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "a symlinked template directory ancestor is refused too, not just the final file (AC#1/AC#2)",
+    () => {
+      symlinkSync(outsideDir, join(root, ".lore/templates/sub"));
+      const err = expectError(["adr", "Test", "--template", "sub/evil", "--out", "docs/adr/test-evil.md"]);
+      expect(err.type).toBe("conflict");
+      expect(err.message.toLowerCase()).toContain("symlink");
+      expect(existsSync(join(root, "docs/adr/test-evil.md"))).toBe(false);
+    },
+  );
+
+  test("a profile-declared template that is a real file is read normally (AC#2/AC#4)", () => {
+    // A non-symlinked declared template is unaffected by LORE-185's AC#2 widening — the check only
+    // ever refuses an actual symlink, never a real file.
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      '[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "ADR"\ntemplate = "declared"\n',
+    );
+    writeFileSync(join(root, ".lore/templates/declared.md"), "\n# {{title}}\n\nfrom a real declared template\n");
+    const { result } = newCmd(["adr", "Title"]);
+    expect(readFileSync(join(root, result.path), "utf8")).toContain("from a real declared template");
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "regression: a SYMLINKED profile-declared template is now refused too (LORE-185 AC#2)",
+    () => {
+      // Before LORE-185, `checkSymlink` was scoped to the explicit --template flag only (LORE-91
+      // AC#4) and a profile-declared template's symlink was silently followed. LORE-185 widens the
+      // refusal to the declared source too, closing that asymmetry.
+      writeFileSync(
+        join(root, ".lore/profile.toml"),
+        '[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "ADR"\ntemplate = "declared"\n',
+      );
+      symlinkSync(secretPath, join(root, ".lore/templates/declared.md"));
+      const err = expectError(["adr", "Title"]);
+      expect(err.type).toBe("conflict");
+      expect(err.message.toLowerCase()).toContain("symlink");
+    },
+  );
+});
+
+describe("lore new — a profile-declared `template` traversal is rejected (LORE-139)", () => {
+  test("regression: a profile type whose declared template contains `../` fails, never reads or embeds the outside file", () => {
+    // Reproduces the task's own live repro: a .lore/profile.toml type declaring a `template`
+    // that climbs out of `.lore/templates/` to an arbitrary file elsewhere on disk. Unlike the
+    // explicit --template flag, this is repo config lore.ts previously trusted with no
+    // confinement check at all — profile.ts now rejects it at profile PARSE time.
+    const outsideDir = mkdtempSync(join(tmpdir(), "lore-new-outside-"));
+    const secretPath = join(outsideDir, "leak.md");
+    writeFileSync(secretPath, "SUPER SECRET DATA — must never leak into a generated concept\n");
+    // Normalize to `/` before writing it into the TOML: `relative()` returns `\`-separated
+    // segments on Windows, and splicing THOSE raw into a TOML basic (double-quoted) string would
+    // have the TOML parser itself consume the backslashes as escapes (e.g. `\.` -> `.`), silently
+    // mangling the value into a harmless non-traversal string — a test-harness-only bug (caught by
+    // an independent review) that would falsely mask this test's own regression coverage on CI's
+    // windows-latest leg, NOT a gap in `assertTemplateConfined` itself (which already normalizes
+    // `\` to `/` on the production side before checking).
+    const traversal = relative(join(root, ".lore/templates"), secretPath).replace(/\.md$/, "").split(sep).join("/");
+
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      [
+        "[profile]",
+        'name = "custom"',
+        'okf_version = "0.1"',
+        "",
+        "[base.fields]",
+        "type = { required = true }",
+        "",
+        "[[types]]",
+        'name = "ADR"',
+        `template = "${traversal}"`,
+      ].join("\n"),
+    );
+
+    const err = expectError(["adr", "Test", "--out", "docs/adr/test.md"]);
+    expect(err.type).toBe("validation");
+    expect(err.message.toLowerCase()).toContain("escape");
+    // No partial artifact was ever written — the traversal is refused before any file is created.
+    expect(existsSync(join(root, "docs/adr/test.md"))).toBe(false);
+
+    rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  test("regression: a profile type whose declared template is an absolute path fails the same way", () => {
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      '[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "ADR"\ntemplate = "/etc/passwd"\n',
+    );
+    const err = expectError(["adr", "Test"]);
+    expect(err.type).toBe("validation");
+    expect(err.message.toLowerCase()).toContain("absolute");
+  });
+});
+
 describe("lore new — unknown types are accepted (OKF tolerance)", () => {
   test("an unknown type scaffolds under its lowercased name, warns, and omits the modeline", () => {
     const { code, result, stderr } = newCmd(["Decision", "Pick a queue"]);
@@ -260,6 +448,17 @@ describe("lore new — never clobbers an existing target (exit 5)", () => {
 describe("lore new — usage errors (exit 2)", () => {
   test("a missing type is a usage error", () => {
     expect(expectError([]).type).toBe("usage");
+  });
+
+  test("regression: a missing type is still a usage error even with a syntactically invalid .lore/profile.toml (LORE-227)", () => {
+    // Before LORE-227, `loadProfile` ran before `parseNewArgs`, so a broken profile.toml's
+    // `validation` error (profile.ts's parseToml) masked this obvious usage mistake. Argument
+    // parsing must win regardless of profile state — no positionals is never a config problem.
+    writeFileSync(join(root, ".lore/profile.toml"), "a = = 1");
+    const err = expectError([]);
+    expect(err.type).toBe("usage");
+    expect(err.message).toBe("`lore new` needs a type");
+    expect(err.message).not.toContain("TOML");
   });
 
   test("a missing title is a usage error", () => {
@@ -327,6 +526,30 @@ describe("lore new — output path is confined to the bundle root", () => {
     expect(readFileSync(join(root, "docs/index.md"), "utf8")).toBe(before);
   });
 
+  test("regression: --out onto a nested index.md/log.md basename is a usage error, matching assertNotReservedStem (LORE-114)", () => {
+    const indexErr = expectError(["reference", "Sub Home", "--out", "docs/sub/index.md"]);
+    expect(indexErr.type).toBe("usage");
+    expect(indexErr.message).toContain("reserved, machine-generated file name");
+    expect(existsSync(join(root, "docs/sub/index.md"))).toBe(false);
+
+    const logErr = expectError(["reference", "Sub Log", "--out", "docs/sub/log.md"]);
+    expect(logErr.type).toBe("usage");
+    expect(logErr.message).toContain("reserved, machine-generated file name");
+    expect(existsSync(join(root, "docs/sub/log.md"))).toBe(false);
+  });
+
+  test("regression: a default-path (no --out) title slugifying to index or log is a usage error, matching assertNotReservedStem (LORE-174)", () => {
+    const indexErr = expectError(["reference", "Index"]);
+    expect(indexErr.type).toBe("usage");
+    expect(indexErr.message).toContain("reserved, machine-generated file name");
+    expect(existsSync(join(root, "docs/reference/index.md"))).toBe(false);
+
+    const logErr = expectError(["reference", "Log"]);
+    expect(logErr.type).toBe("usage");
+    expect(logErr.message).toContain("reserved, machine-generated file name");
+    expect(existsSync(join(root, "docs/reference/log.md"))).toBe(false);
+  });
+
   test("a path segment merely starting with `..` is confined by docs/, not the escape guard", () => {
     // `..notes` is a real segment, not a `..` parent escape: outside docs/ it fails the bundle
     // check (not a false 'escapes the repo'), and under docs/ it is a legitimate directory name.
@@ -334,6 +557,26 @@ describe("lore new — output path is confined to the bundle root", () => {
     const { result } = newCmd(["adr", "Title", "--out", "docs/..notes/x"]);
     expect(result.path).toBe("docs/..notes/x.md");
   });
+
+  // POSIX-only, matching this codebase's existing symlink tests' own skip guard (e.g. init.test.ts).
+  test.skipIf(process.platform === "win32")(
+    "regression: docs/evil symlinked outside the bundle refuses --out through it, no file appears outside docs/ (LORE-93)",
+    () => {
+      // Reproduces the filing task's own live repro: `lore new reference "New Evil Doc"
+      // --out docs/evil/newevil.md` against a docs/evil -> outside-directory symlink.
+      const outsideDir = mkdtempSync(join(tmpdir(), "lore-new-outside-"));
+      try {
+        symlinkSync(outsideDir, join(root, "docs/evil"));
+        const err = expectError(["reference", "New Evil Doc", "--out", "docs/evil/newevil.md"]);
+        expect(err.type).toBe("conflict");
+        expect(err.message.toLowerCase()).toContain("symlink");
+        expect(existsSync(join(outsideDir, "newevil.md"))).toBe(false);
+        expect(existsSync(join(root, "docs/evil"))).toBe(true); // the pre-existing symlink itself survives
+      } finally {
+        rmSync(outsideDir, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("lore new — output rendering", () => {

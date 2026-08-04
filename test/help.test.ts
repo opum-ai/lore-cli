@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { run } from "../src/cli";
+import { commandHandlerNames, run } from "../src/cli";
 import { type HelpOptions, renderTopLevelHelp, runHelp } from "../src/commands/help";
 import { LORE_COMMANDS } from "../src/core/agent-bridge";
 import { buildManifest, findManifestCommand, type Manifest, manifestCommandNames } from "../src/core/manifest";
@@ -50,6 +49,26 @@ describe("core/manifest — shape and invariants", () => {
     }
   });
 
+  test("workspace retrieval flags are exposed only on retrieval commands", () => {
+    const workspaceCommands = ["graph", "path", "impact", "changed", "provenance", "explorer", "query", "context"];
+    for (const name of workspaceCommands) {
+      const command = findManifestCommand(name);
+      expect(command?.flags.find((flag) => flag.name === "workspace")).toMatchObject({ takesValue: true });
+      expect(command?.flags.find((flag) => flag.name === "repository")).toMatchObject({
+        takesValue: true,
+        repeatable: true,
+      });
+    }
+    expect(findManifestCommand("snapshot")?.flags.find((flag) => flag.name === "workspace")).toMatchObject({
+      takesValue: true,
+    });
+    for (const command of buildManifest().commands.filter(
+      (item) => !workspaceCommands.includes(item.name) && item.name !== "snapshot",
+    )) {
+      expect(command.flags.some((flag) => flag.name === "workspace" || flag.name === "repository")).toBe(false);
+    }
+  });
+
   test("every per-command exit code is one of the taxonomy's codes", () => {
     const valid = new Set(Object.values(buildManifest().exitCodes)); // {0,1,2,3,4,5,6}
     for (const command of buildManifest().commands) {
@@ -80,8 +99,16 @@ describe("core/manifest — shape and invariants", () => {
       schema: [0, 2, 4, 5, 6], // no 3: no read seam / no id lookup
       scaffold: [0, 2, 4, 5, 6], // profile (6) + write (4/5); no 3: no read seam / no id lookup
       graph: [0, 2, 3, 4, 6],
+      path: [0, 2, 3, 4, 6],
+      impact: [0, 2, 3, 4, 6],
+      snapshot: [0, 2, 3, 4, 5, 6],
+      changed: [0, 2, 3, 4, 5, 6],
+      provenance: [0, 2, 3, 4, 5, 6],
+      explorer: [0, 2, 3, 4, 5, 6],
+      export: [0, 2, 3, 4, 6],
       query: [0, 2, 3, 4, 6],
       context: [0, 2, 3, 4, 6],
+      agent: [0, 2, 3, 4, 5, 6],
       instructions: [0, 2, 3],
       agents: [0, 2, 4, 5, 6], // no 3: readFileIfPresent maps ENOENT→undefined
       help: [0, 2, 3],
@@ -93,10 +120,136 @@ describe("core/manifest — shape and invariants", () => {
     }
   });
 
+  test("each command's declared kind matches the live handler's emitted kind (golden cross-check)", () => {
+    // The golden set is transcribed directly from each command handler's own `kind: "…"`
+    // literal (e.g. src/commands/check.ts's `kind: "check.report"`, src/commands/link.ts's
+    // `reportRenderable("link.result", …)` call site). It is INDEPENDENT of manifest.ts's
+    // `kind` field — mirroring the exitCodes golden cross-check above — so a manifest entry
+    // hand-edited (or left stale) to a `kind` the handler doesn't actually emit fails here,
+    // where test/help.test.ts:45-51 only ever checked `kind.length > 0`.
+    const golden: Record<string, string> = {
+      init: "init",
+      new: "new",
+      validate: "validate.report",
+      check: "check.report",
+      replace: "replace.result",
+      rename: "rename.result",
+      supersede: "supersede.result",
+      link: "link.result",
+      unlink: "unlink.result",
+      sync: "sync.result",
+      tasks: "tasks.rollup",
+      orphans: "orphans.report",
+      schema: "schema.result",
+      scaffold: "scaffold.result",
+      graph: "graph.export",
+      path: "path.result",
+      impact: "impact.result",
+      snapshot: "snapshot.result",
+      changed: "changed.result",
+      provenance: "provenance.result",
+      explorer: "explorer.artifact",
+      export: "projection.export",
+      query: "query.results",
+      context: "context.export",
+      agent: "agent.context.export",
+      instructions: "instructions.text",
+      agents: "agents.result",
+      help: "help.manifest",
+    };
+    expect(Object.keys(golden).sort()).toEqual([...manifestCommandNames()].sort());
+    for (const command of buildManifest().commands) {
+      // Key by name so a mismatch names the offending command in the failure output.
+      expect({ [command.name]: command.kind }).toEqual({ [command.name]: golden[command.name] as string });
+    }
+  });
+
   test("--json is universally available (self-describing per entry)", () => {
     for (const command of buildManifest().commands) {
       expect(command.json).toBe(true);
     }
+  });
+});
+
+describe("core/manifest — deep immutability (LORE-220 AC#1/#2)", () => {
+  // These tests exercise the exact hazard the task describes: a type-bypassing
+  // (`as any`) or plain-JS consumer mutating the singleton the `readonly` TS
+  // modifiers alone can't stop. `bun test` runs ESM, which is strict-mode by
+  // default, so a mutation on a frozen object throws a TypeError rather than
+  // silently no-op'ing.
+
+  test("mutating the top-level envelope throws and leaves it unaffected", () => {
+    const m = buildManifest();
+    expect(() => {
+      (m as unknown as { schemaVersion: number }).schemaVersion = 999;
+    }).toThrow(TypeError);
+    expect(m.schemaVersion).toBe(1);
+  });
+
+  test("pushing onto the commands array throws and leaves the array unaffected", () => {
+    const m = buildManifest();
+    const before = m.commands.length;
+    expect(() => {
+      (m.commands as unknown[]).push({ ...m.commands[0] });
+    }).toThrow(TypeError);
+    expect(m.commands.length).toBe(before);
+  });
+
+  test("reassigning a command's kind throws and leaves it unaffected", () => {
+    const m = buildManifest();
+    const command = m.commands.find((c) => c.name === "new");
+    expect(command).toBeDefined();
+    expect(() => {
+      (command as unknown as { kind: string }).kind = "poisoned";
+    }).toThrow(TypeError);
+    expect(command?.kind).toBe("new");
+  });
+
+  test("mutating a command's flags array/entry throws and leaves it unaffected", () => {
+    const m = buildManifest();
+    const command = m.commands.find((c) => c.name === "new");
+    expect(command?.flags.length).toBeGreaterThan(0);
+    const flagsBefore = command?.flags.length;
+    expect(() => {
+      (command?.flags as unknown[] | undefined)?.push({ name: "bogus", takesValue: false, summary: "x" });
+    }).toThrow(TypeError);
+    expect(command?.flags.length).toBe(flagsBefore);
+
+    const flag = command?.flags[0];
+    expect(() => {
+      (flag as unknown as { name: string }).name = "poisoned";
+    }).toThrow(TypeError);
+    expect(flag?.name).not.toBe("poisoned");
+  });
+
+  test("mutating globalFlags array/entry throws and leaves it unaffected", () => {
+    const m = buildManifest();
+    const before = m.globalFlags.length;
+    expect(() => {
+      (m.globalFlags as unknown[]).push({ name: "bogus", takesValue: false, summary: "x" });
+    }).toThrow(TypeError);
+    expect(m.globalFlags.length).toBe(before);
+
+    const flag = m.globalFlags[0];
+    expect(() => {
+      (flag as unknown as { takesValue: boolean }).takesValue = true;
+    }).toThrow(TypeError);
+    expect(flag?.takesValue).toBe(false);
+  });
+
+  test("a mutation attempt on one buildManifest() call cannot poison a subsequent call", () => {
+    const first = buildManifest();
+    expect(() => {
+      (first.commands as unknown[]).push({ ...first.commands[0], name: "poisoned" });
+    }).toThrow(TypeError);
+    expect(() => {
+      (first.commands[0] as unknown as { kind: string }).kind = "poisoned";
+    }).toThrow(TypeError);
+
+    const second = buildManifest();
+    expect(second.commands.map((c) => c.name)).toEqual(manifestCommandNames() as string[]);
+    expect(second.commands.find((c) => c.name === first.commands[0]?.name)?.kind).toBe(first.commands[0]?.kind);
+    expect(second.commands.some((c) => c.name === "poisoned")).toBe(false);
   });
 });
 
@@ -135,19 +288,10 @@ describe("manifest ⇔ router — bidirectional lockstep guard", () => {
     }
   });
 
-  test("reverse: every dispatch case in cli.ts appears in the manifest", () => {
-    // Grounded in the router source, scoped to the `switch (parsed.command)` block
-    // (so an unrelated switch/case elsewhere in cli.ts can't pollute the set): a
-    // command added to the router but omitted from the manifest fails here.
-    const source = readFileSync(new URL("../src/cli.ts", import.meta.url), "utf8");
-    const switchStart = source.indexOf("switch (parsed.command)");
-    const dispatchBlock = source.slice(switchStart, source.indexOf("default:", switchStart));
-    // Capture the full quoted token (not just [a-z]+) so a hyphenated/digit command can't slip the guard.
-    const dispatched = [...dispatchBlock.matchAll(/case "([^"]+)":/g)].map((m) => m[1] as string);
-    expect(dispatched.length).toBeGreaterThan(10); // sanity: the switch block was located and parsed
-    // Order-sensitive: pins both membership AND the "in cli.ts dispatch order" claim the manifest makes,
-    // which the hand-ordered self-contained array no longer guarantees mechanically.
-    expect([...manifestCommandNames()]).toEqual(dispatched);
+  test("reverse: every Commander handler appears in the manifest", () => {
+    const dispatched = commandHandlerNames();
+    expect(dispatched.length).toBeGreaterThan(10);
+    expect([...manifestCommandNames()]).toEqual([...dispatched]);
   });
 
   test("each command's summary is sourced from LORE_COMMANDS (no re-transcription drift)", () => {
@@ -266,5 +410,35 @@ describe("cli — help wiring", () => {
     const viaFlag = capture();
     run(argv("--help"), { stdout: viaFlag, stderr: capture(), isTTY: false, env: {} });
     expect(viaCommand.text()).toBe(viaFlag.text());
+  });
+
+  test("`lore <command> --help` renders that command's own help, not the top-level catalog (LORE-107)", () => {
+    const viaFlag = capture();
+    const code = run(argv("query", "--help"), { stdout: viaFlag, stderr: capture(), isTTY: false, env: {} });
+    expect(code).toBe(0);
+    const viaHelpCommand = capture();
+    run(argv("help", "query"), { stdout: viaHelpCommand, stderr: capture(), isTTY: false, env: {} });
+    expect(viaFlag.text()).toBe(viaHelpCommand.text());
+    // Guard against the regression: the generic catalog's usage line must not appear.
+    expect(viaFlag.text()).not.toContain("lore <command> [options]");
+    expect(viaFlag.text()).toContain("lore query");
+  });
+
+  test("`lore <command> -h` behaves the same as `lore <command> --help`", () => {
+    const viaShort = capture();
+    const code = run(argv("query", "-h"), { stdout: viaShort, stderr: capture(), isTTY: false, env: {} });
+    expect(code).toBe(0);
+    const viaLong = capture();
+    run(argv("query", "--help"), { stdout: viaLong, stderr: capture(), isTTY: false, env: {} });
+    expect(viaShort.text()).toBe(viaLong.text());
+  });
+
+  test("`lore --help` and `lore help` (no command token) keep rendering the top-level catalog unchanged", () => {
+    const viaFlag = capture();
+    run(argv("--help"), { stdout: viaFlag, stderr: capture(), isTTY: false, env: {} });
+    const viaCommand = capture();
+    run(argv("help"), { stdout: viaCommand, stderr: capture(), isTTY: false, env: {} });
+    expect(viaFlag.text()).toContain("lore <command> [options]");
+    expect(viaCommand.text()).toContain("lore <command> [options]");
   });
 });

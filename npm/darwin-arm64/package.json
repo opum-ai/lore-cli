@@ -1,13 +1,16 @@
 {
-  "name": "@salient-data/lore-darwin-arm64",
-  "version": "0.0.0",
-  "description": "lore compiled binary for macOS (Apple Silicon, arm64). Do not depend on this directly — install @salient-data/lore.",
+  "name": "@opum-ai/lore-darwin-arm64",
+  "version": "0.1.0",
+  "description": "lore compiled binary for macOS (Apple Silicon, arm64). Do not depend on this directly — install @opum-ai/lore.",
+  "publishConfig": {
+    "access": "public"
+  },
   "os": ["darwin"],
   "cpu": ["arm64"],
   "license": "MIT",
   "author": "Jeremy Newhouse",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jeremy-newhouse/lore.git"
+    "url": "git+https://github.com/opum-ai/lore-cli.git"
   }
 }

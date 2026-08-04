@@ -70,6 +70,7 @@ function exportQuery(args: string[], options?: Partial<QueryCommandOptions>): { 
   const stdout = capture();
   const stderr = capture();
   const code = runQuery({ root, output: JSON_CTX, stdout, stderr, args, ...options });
+  if (code instanceof Promise) throw new Error("reference query helper unexpectedly selected async retrieval");
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: QueryResult };
   expect(envelope.kind).toBe("query.results");
   return { code, data: envelope.data };
@@ -202,6 +203,29 @@ describe("query — frontmatter filters", () => {
     ]);
   });
 
+  test("--field matches ANY case-variant frontmatter key, not only the first-enumerated one (LORE-246)", () => {
+    // YAML keys are case-sensitive, so a concept can carry two distinct own keys that
+    // are the same logical field under different case — both survive parsing. The
+    // match must not depend on which case-variant enumeration reaches first, so this
+    // is checked with the matching key BOTH first and second in insertion order.
+    writeDoc("first.md", "---\ntype: Widget\nStatus: draft\nstatus: done\n---\nFirst.\n");
+    writeDoc("second.md", "---\ntype: Widget\nstatus: done\nStatus: draft\n---\nSecond.\n");
+    const data = query(graph(), { fields: [{ key: "status", value: "done" }] });
+    expect(data.hits.map((h) => h.id).sort()).toEqual(["first", "second"]);
+
+    // The same all-case-variants semantics apply through --status (AC#2), and through
+    // a case-variant match hiding inside a list rather than a scalar (AC#3).
+    expect(
+      query(graph(), { status: "done" })
+        .hits.map((h) => h.id)
+        .sort(),
+    ).toEqual(["first", "second"]);
+
+    writeDoc("listed.md", "---\ntype: Widget\nTags:\n  - alpha\ntags: []\n---\nListed.\n");
+    expect(query(graph(), { fields: [{ key: "tags", value: "alpha" }] }).hits.map((h) => h.id)).toEqual(["listed"]);
+    expect(query(graph(), { tags: ["alpha"] }).hits.map((h) => h.id)).toEqual(["listed"]);
+  });
+
   test("filters compose (AND) and combine with a text query", () => {
     writeMixedBundle();
     // Only the story is a Story tagged orders AND mentions archive.
@@ -309,6 +333,57 @@ describe("lore query — command", () => {
     expect(stdout.text()).toContain("query (filters): 1 match");
   });
 
+  // ── LORE-118: renderText sanitizes ANSI/control bytes before interpolation ──────
+
+  test("plain mode strips an ANSI escape sequence embedded in the raw --query text", () => {
+    writeMixedBundle();
+    const stdout = capture();
+    // The header echoes `data.query` verbatim (the trimmed --query text) — an ANSI
+    // escape sequence smuggled in via the CLI argument must not survive into the
+    // rendered header line.
+    runQuery({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: ["\x1b[31marchive\x1b[0m"] });
+    const text = stdout.text();
+    expect(text).not.toContain("\x1b");
+    expect(text).toContain('query "archive": ');
+  });
+
+  test("plain mode strips ANSI escape sequences embedded in a hit's type and snippet", () => {
+    // `type` and `summary` are passthrough frontmatter scalars (LORE-118) — a crafted
+    // bundle file can carry raw control bytes in either; writeDoc below embeds one via a
+    // YAML double-quoted unicode escape, so js-yaml parses it into a literal ESC control
+    // byte, exercising the same attacker-influenced-bytes path a real malicious file would.
+    writeDoc(
+      "ansi/hack.md",
+      '---\ntype: "Widget\\u001b[31m"\nsummary: "note \\u001b[31mred\\u001b[0m end"\n---\nBody mentions archive.\n',
+    );
+    const stdout = capture();
+    runQuery({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: ["archive"] });
+    const text = stdout.text();
+    expect(text).not.toContain("\x1b");
+    expect(text).toContain("ansi/hack");
+    expect(text).toContain("[Widget]");
+    expect(text).toContain("note red end");
+  });
+
+  // Windows forbids control characters (here, a raw ESC byte) in filenames, so this fixture cannot be
+  // created there — `writeDoc` ENOENTs at setup (LORE-252). The id-sanitization behavior under test is
+  // platform-independent and stays fully covered on POSIX; skip only the impossible fixture on win32.
+  test.skipIf(process.platform === "win32")(
+    "plain mode strips an ANSI escape sequence embedded in a hit's id (LORE-158)",
+    () => {
+      // Unlike `type`/`summary`, `concept.id` derives straight from the file's relative
+      // path (idFromPath just POSIX-normalizes and strips `.md`) — and POSIX filenames
+      // may contain a raw ESC byte, so a crafted bundle path is a real path to a
+      // control-byte-laden `hit.id`, distinct from the frontmatter-sourced fields above.
+      writeDoc("ansi-id/hack\x1b[31mident.md", "---\ntype: Widget\n---\nBody mentions archive.\n");
+      const stdout = capture();
+      runQuery({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: ["archive"] });
+      const text = stdout.text();
+      expect(text).not.toContain("\x1b");
+      expect(text).toContain("ansi-id/hackident");
+    },
+  );
+
   test("`--` ends option parsing so a following dash-token is the search text", () => {
     writeMixedBundle();
     const { data } = exportQuery(["--", "archive"]);
@@ -330,6 +405,12 @@ describe("lore query — command", () => {
     [["--limit", "abc"], 'invalid --limit "abc"'],
     [["--limit"], "--limit needs a value"],
     [["--limit", "99999999999999999999"], "too large"],
+    // AC#4: --limit's space-padded rejection is unchanged (readValue is not trimmed).
+    [["--limit", " 2 "], 'invalid --limit " 2 "'],
+    // AC#2: a whitespace-only --status/--tag is rejected like an empty one (trimmed).
+    [["--status", "  "], "--status needs a value"],
+    [["--status", "   "], "--status needs a value"],
+    [["--tag", "  "], "--tag needs a value"],
     [["--tag"], "--tag needs a value"],
     [["--field"], "--field needs a value"],
     [["--field", "novalue"], 'invalid --field "novalue"'],
@@ -355,6 +436,24 @@ describe("lore query — command", () => {
     const { data } = exportQuery(["--field", "status=  In Progress  "]);
     expect(data.hits.map((h) => h.id)).toEqual(["stories/bulk-archive"]);
   });
+
+  // ── LORE-232: --type/--status/--tag trim like --field does ─────────────────────
+
+  test("--type/--status/--tag trim a space-padded value so it still matches (LORE-232)", () => {
+    writeMixedBundle();
+    // AC#1: a padded --type selects the same concepts as the untrimmed value.
+    expect(exportQuery(["--type", " Story "]).data.hits.map((h) => h.id)).toEqual(
+      exportQuery(["--type", "Story"]).data.hits.map((h) => h.id),
+    );
+    // A padded --status likewise still matches.
+    expect(exportQuery(["--status", "  In Progress  "]).data.hits.map((h) => h.id)).toEqual(
+      exportQuery(["--status", "In Progress"]).data.hits.map((h) => h.id),
+    );
+    // AC#3: a padded --tag matches the same concepts as the untrimmed value.
+    expect(exportQuery(["--tag", "  archive  "]).data.hits.map((h) => h.id)).toEqual(
+      exportQuery(["--tag", "archive"]).data.hits.map((h) => h.id),
+    );
+  });
 });
 
 // ── command: score formatting ────────────────────────────────────────────────────
@@ -370,10 +469,10 @@ describe("formatScore", () => {
 // ── router: cli dispatch ─────────────────────────────────────────────────────────
 
 describe("cli — query dispatch", () => {
-  test("`lore query <text> --json` routes to runQuery and emits the envelope", () => {
+  test("`lore query <text> --json` routes to runQuery and emits the envelope", async () => {
     writeMixedBundle();
     const stdout = capture();
-    const code = run(["bun", "cli", "query", "archive", "--json"], {
+    const code = await run(["bun", "cli", "query", "archive", "--json"], {
       stdout,
       stderr: capture(),
       cwd: root,

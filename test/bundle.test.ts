@@ -2,8 +2,17 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildGraph, type Edge, loadBundle } from "../src/core/bundle";
+import {
+  buildGraph,
+  conceptNotInBundle,
+  type Edge,
+  extractBodyTargets,
+  loadBundle,
+  resolvePath,
+} from "../src/core/bundle";
+import { type CheckInputFile, checkBundle } from "../src/core/check";
 import { parseConcept } from "../src/core/concept";
+import { compileProfile, parseProfile } from "../src/core/profile";
 import { LoreError, WarningCollector } from "../src/errors";
 
 // ── Fixtures ───────────────────────────────────────────────────────────────────
@@ -157,6 +166,18 @@ describe("buildGraph — CommonMark link extraction", () => {
     expect(edgesFrom(g.edges, "doc").map((e) => e.to)).toEqual(["a"]);
   });
 
+  test("long syntax-free prose does not make link extraction scan irrelevant bytes", () => {
+    const filler = "a".repeat(25_000);
+    const g = buildGraph([ref("doc", `[a](a.md)\n${filler}`), ref("a")]);
+    expect(edgesFrom(g.edges, "doc").map((e) => e.to)).toEqual(["a"]);
+  });
+
+  test("a long reference-definition destination remains byte-exact", () => {
+    const destination = "a".repeat(5_000);
+    const targets = extractBodyTargets(`[target][id]\n\n[id]:\n${destination}`);
+    expect(targets).toEqual([destination]);
+  });
+
   test("a protocol-relative URL (//host/x.md) is external, not an internal edge", () => {
     const g = buildGraph([ref("y/doc", "[cdn](//cdn.example.com/x.md)"), ref("x")]);
     expect(edgesFrom(g.edges, "y/doc")).toEqual([]);
@@ -241,6 +262,61 @@ describe("buildGraph — frontmatter refs", () => {
   });
 });
 
+// ── resolveRef: dir-relative path wins over a same-string root id (LORE-134) ─────
+
+describe("resolveRef — dir-relative path is tried before the bundle-root id", () => {
+  test("a relative/.md-suffixed ref resolves dir-relative even when the same string also names a distinct root id", () => {
+    // "sibling.md" is authored as a path relative to "notes/". Read bare (stripped of
+    // its ".md"), it also equals the *different*, unrelated root concept "sibling".
+    // Both concepts exist here: the intended dir-relative target "notes/sibling" must win.
+    const g = buildGraph([
+      concept("notes/x", "type: ADR\nsupersedes: sibling.md"),
+      ref("notes/sibling"), // the intended dir-relative target
+      ref("sibling"), // the decoy root id an id-first lookup would wrongly hit
+    ]);
+    expect(edgesFrom(g.edges, "notes/x")).toEqual([
+      { from: "notes/x", to: "notes/sibling", target: "sibling.md", kind: "supersedes" },
+    ]);
+  });
+
+  test("a bundle-relative id ref with no dir-relative match still falls back to id-form resolution", () => {
+    // Regression guard: reordering must not break the legitimate id-authored form (what
+    // `lore supersede` itself writes) when dir-joining the ref produces no real concept.
+    const g = buildGraph([concept("notes/x", "type: ADR\nsupersedes: adr/old"), ref("adr/old")]);
+    expect(edgesFrom(g.edges, "notes/x")).toEqual([
+      { from: "notes/x", to: "adr/old", target: "adr/old", kind: "supersedes" },
+    ]);
+  });
+});
+
+// ── resolveRef: a bare bundle-root id is not shadowed by a mirroring dir (LORE-184) ─
+
+describe("resolveRef — a suffix-less bare id wins over a dir-joined shadow", () => {
+  test("a bare id ref resolves to the bundle-root concept even when a mirroring directory shadows it", () => {
+    // "adr/old" is authored bare (the canonical `lore supersede`/rename form) by a concept
+    // living in "notes/". Dir-joining it against "notes/" lands on "notes/adr/old", which
+    // ALSO happens to be a real concept here (e.g. an archive/ tree mirroring the live one).
+    // The bare id must still win — the shadow must not silently steal the ref.
+    const g = buildGraph([
+      concept("notes/x", "type: ADR\nsupersedes: adr/old"),
+      ref("adr/old"), // the true, intended target of the bare id
+      ref("notes/adr/old"), // the shadow at the dir-joined location
+    ]);
+    expect(edgesFrom(g.edges, "notes/x")).toEqual([
+      { from: "notes/x", to: "adr/old", target: "adr/old", kind: "supersedes" },
+    ]);
+  });
+
+  test("a dir-relative bare id with no root-id match still falls back to the dir-joined concept", () => {
+    // Regression guard: the shape-first classifier must still resolve a bare ref that has
+    // no matching root id but genuinely does dir-join to a real concept.
+    const g = buildGraph([concept("notes/x", "type: ADR\nsupersedes: sibling"), ref("notes/sibling")]);
+    expect(edgesFrom(g.edges, "notes/x")).toEqual([
+      { from: "notes/x", to: "notes/sibling", target: "sibling", kind: "supersedes" },
+    ]);
+  });
+});
+
 // ── Cycle tolerance ──────────────────────────────────────────────────────────────
 
 describe("buildGraph — cycle tolerance", () => {
@@ -278,6 +354,62 @@ describe("buildGraph — path normalization", () => {
   });
 });
 
+// ── resolvePath: leading-`/` bundle-root resolution (LORE-133) ───────────────────
+
+describe("resolvePath — leading-`/` targets resolve against the bundle root", () => {
+  test("a /-absolute path resolves against the bundle root, not `dir`", () => {
+    const byId = buildGraph([ref("reference/orders")]).concepts;
+    expect(resolvePath("/reference/orders.md", "adr", byId)).toBe("reference/orders");
+  });
+
+  test("a plain relative path still resolves against `dir` unchanged (non-slash targets are unaffected)", () => {
+    const byId = buildGraph([ref("adr/orders")]).concepts;
+    expect(resolvePath("orders.md", "adr", byId)).toBe("adr/orders");
+  });
+
+  test("a /-absolute target is NOT the dir-joined concept, even when that concept also exists", () => {
+    // Without the leading-`/` special case, resolvePath would join "adr" + "/reference/orders.md"
+    // via posix.join — which does not treat an embedded leading slash as root-absolute — into
+    // "adr/reference/orders.md", a real, *different* concept that also exists in this bundle. The
+    // fix must resolve to the bundle-root concept instead of this dir-joined decoy.
+    const g = buildGraph([
+      ref("adr/x", "See [o](/reference/orders.md)."),
+      ref("reference/orders"),
+      ref("adr/reference/orders"), // the decoy a naive dir-join would hit
+    ]);
+    expect(edgesFrom(g.edges, "adr/x")).toEqual([
+      { from: "adr/x", to: "reference/orders", target: "/reference/orders.md", kind: "link" },
+    ]);
+  });
+
+  test("resolvePath (bundle.ts) and the check.ts link-check gate agree on the same concept for a /-absolute target", () => {
+    // Same directory shape as above: a linking file two directories deep, a bundle-root concept
+    // named by the /-absolute target, and a decoy at the dir-joined path — root-relative and
+    // dir-relative resolution disagree here (they name two different, both-real concepts). The
+    // fingerprint for "which concept did check.ts's gate resolve to" is the heading anchor: checkBundle
+    // never exposes a resolved id directly, but a broken-anchor finding reveals a wrong resolution
+    // (the decoy's heading slug does not match "root-heading").
+    const linkBody = "See [o](/reference/orders.md#root-heading).";
+    const rootFile: CheckInputFile = {
+      path: "reference/orders.md",
+      raw: "---\ntype: Reference\n---\n\n## Root Heading\n",
+    };
+    const decoyFile: CheckInputFile = {
+      path: "adr/reference/orders.md",
+      raw: "---\ntype: Reference\n---\n\n## Decoy Heading\n",
+    };
+    const linkingFile: CheckInputFile = { path: "adr/x.md", raw: `---\ntype: Reference\n---\n\n${linkBody}\n` };
+
+    // check.ts's own gate: resolves cleanly, anchored against the root concept's heading.
+    expect(checkBundle([linkingFile, rootFile, decoyFile]).errorCount).toBe(0);
+
+    // bundle.ts's resolver, over the identical directory shape: lands on the same
+    // "reference/orders" concept — not the decoy at the dir-joined path.
+    const g = buildGraph([ref("adr/x", linkBody), ref("reference/orders"), ref("adr/reference/orders")]);
+    expect(edgesFrom(g.edges, "adr/x")[0]?.to).toBe("reference/orders");
+  });
+});
+
 // ── Token estimate ───────────────────────────────────────────────────────────────
 
 describe("buildGraph — tokenEstimate", () => {
@@ -306,6 +438,23 @@ describe("buildGraph — tokenEstimate", () => {
       return;
     }
     throw new Error("expected a not_found LoreError");
+  });
+});
+
+// ── conceptNotInBundle: the shared not_found hint ─────────────────────────────────
+
+describe("conceptNotInBundle", () => {
+  test("hints at `lore query`/`lore graph`, never `lore check` (LORE-259)", () => {
+    // `link`/`unlink`, `tasks`, `supersede`, `lore rename`'s rewrite engine, and `lore graph`/
+    // `context`'s subgraph traversal all surface a bad id through this ONE function — `lore check`
+    // only prints a pass/fail summary count, never a concept-id listing, so pointing there was a
+    // misdirecting hint; `lore query`/`lore graph` (run with no args) both actually list every id.
+    const err = conceptNotInBundle("stories/ghost");
+    expect(err.type).toBe("not_found");
+    expect(err.message).toContain("stories/ghost");
+    expect(err.hint).toContain("lore query");
+    expect(err.hint).toContain("lore graph");
+    expect(err.hint).not.toContain("lore check");
   });
 });
 
@@ -348,13 +497,33 @@ describe("loadBundle — filesystem", () => {
   test("skips non-.md files and frontmatter-less markdown, warning on the latter", () => {
     const root = fixture({
       "index.md": "---\ntype: Reference\n---\nok",
-      "adr/index.md": "# Plain index, no frontmatter\n",
+      "adr/notes.md": "# Plain notes, no frontmatter\n",
       "notes.txt": "not markdown",
     });
     const warnings = new WarningCollector();
     const g = loadBundle(root, { warnings });
     expect([...g.concepts.keys()]).toEqual(["index"]);
-    expect(warnings.list().some((w) => w.includes("adr/index.md") && w.includes("no frontmatter"))).toBe(true);
+    expect(warnings.list().some((w) => w.includes("adr/notes.md") && w.includes("no frontmatter"))).toBe(true);
+  });
+
+  test("skips a known-reserved stem (index/log) SILENTLY — no advisory, unlike a genuine non-concept file (LORE-258)", () => {
+    // `adr/index.md` and `log.md` are lore's own machine-generated hubs (indexes.ts/log.ts) —
+    // always frontmatter-less below the bundle root — so warning about them on every
+    // loadBundle-backed command was spurious noise (LORE-258). A stray, unexpected non-concept
+    // file (`adr/stray.md`) still warns: only the two reserved stems go quiet.
+    const root = fixture({
+      "index.md": "---\ntype: Reference\n---\nok",
+      "adr/index.md": "# Generated hub, no frontmatter\n",
+      "log.md": "# Generated changelog, no frontmatter\n",
+      "adr/stray.md": "# An unexpected non-concept file\n",
+    });
+    const warnings = new WarningCollector();
+    const g = loadBundle(root, { warnings });
+    expect([...g.concepts.keys()]).toEqual(["index"]);
+    const list = warnings.list();
+    expect(list.some((w) => w.startsWith("skipping adr/index.md:"))).toBe(false);
+    expect(list.some((w) => w.startsWith("skipping log.md:"))).toBe(false);
+    expect(list.some((w) => w.includes("adr/stray.md") && w.includes("no frontmatter"))).toBe(true);
   });
 
   test("a malformed (mapping but invalid) concept throws validation, not a silent skip", () => {
@@ -491,5 +660,55 @@ describe("loadBundle — filesystem", () => {
     expect(g.concepts.size).toBeGreaterThan(10);
     expect(g.concepts.has("reference/architecture")).toBe(true);
     expect(g.tokenEstimate()).toBeGreaterThan(0);
+  });
+
+  test("validates against the passed-in custom profile, not the built-in default (LORE-84)", () => {
+    // A "Widget" concept missing its custom-required "owner" field: the built-in default profile
+    // doesn't know the "Widget" type at all, so it's tolerated (unknown-type warning only, no
+    // field check) — the very silent-pass this bug produced. Passing the custom profile that DOES
+    // declare Widget.owner as required must make the exact same file fail validation instead.
+    const root = fixture({ "widget.md": "---\ntype: Widget\n---\nbody" });
+    const profile = compileProfile(
+      parseProfile(
+        {
+          profile: { name: "custom", okf_version: "0.1" },
+          base: { fields: { type: { required: true } } },
+          types: [{ name: "Widget", fields: { owner: { required: true } } }],
+        },
+        "test-profile",
+      ),
+    );
+
+    // Without the custom profile: silently tolerated as an unknown type — the pre-fix behavior for
+    // every loadBundle caller, since loadBundle never had a way to receive a project's profile.
+    const withoutProfile = loadBundle(root);
+    expect(withoutProfile.concepts.has("widget")).toBe(true);
+
+    // With the custom profile forwarded: the now-known "Widget" type's required "owner" is enforced.
+    try {
+      loadBundle(root, { profile });
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("validation");
+      expect((err as LoreError).message).toContain("owner");
+      return;
+    }
+    throw new Error("expected a validation LoreError");
+  });
+
+  test("a concept satisfying the custom profile's required field loads cleanly", () => {
+    const root = fixture({ "widget.md": "---\ntype: Widget\nowner: alice\n---\nbody" });
+    const profile = compileProfile(
+      parseProfile(
+        {
+          profile: { name: "custom", okf_version: "0.1" },
+          base: { fields: { type: { required: true } } },
+          types: [{ name: "Widget", fields: { owner: { required: true } } }],
+        },
+        "test-profile",
+      ),
+    );
+    const g = loadBundle(root, { profile });
+    expect(g.concepts.get("widget")?.type).toBe("Widget");
   });
 });

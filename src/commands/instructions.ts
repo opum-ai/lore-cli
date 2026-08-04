@@ -8,7 +8,7 @@
  *
  * With no `<topic>` it prints `overview` (the canonical loop + a topic index);
  * an unrecognized `<topic>` is a `not_found` error (exit 3) whose hint lists
- * the valid keys. Argument parsing goes through `args.ts`'s shared tokenizer
+ * the valid keys. Argument parsing goes through `args.ts`'s shared Commander parser
  * with no known flags, so any `-`-prefixed token or a second positional is a
  * `usage` error (exit 2), matching every other command's strict parsing.
  */
@@ -22,14 +22,14 @@ import { parseCommandArgs, usage } from "./args";
 export interface InstructionsOptions {
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional tokens (everything after `instructions`), as split by the router. */
+  /** The command's normalized positional tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
 }
 
 /** The `instructions.text` payload: the requested topic plus the full topic index, so a `--json` caller can discover the other keys without a second request. */
-interface InstructionsData {
+export interface InstructionsData {
   /** The topic actually served (`overview` when no `<topic>` was given). */
   topic: string;
   /** The topic's one-line heading. */
@@ -57,9 +57,9 @@ export function runInstructions(options: InstructionsOptions): number {
   return EXIT_OK;
 }
 
-/** Parse `instructions`' tokens via the shared tokenizer (no known flags): at most one positional (the topic key, defaulting to `overview`); any flag or second positional is a `usage` error. */
+/** Parse `instructions`' tokens via the shared parser (no known flags): at most one positional (the topic key, defaulting to `overview`); any flag or second positional is a `usage` error. */
 function parseInstructionsArgs(args: readonly string[]): string {
-  const { positionals } = parseCommandArgs(args, "instructions", []);
+  const { positionals } = parseCommandArgs(args, "instructions");
   if (positionals.length > 1) {
     throw usage(`unexpected argument "${positionals[1]}"`, "run `lore instructions [<topic>]`");
   }

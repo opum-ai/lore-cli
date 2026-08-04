@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/cli";
 import { type GraphOptions, runGraph } from "../src/commands/graph";
+import { runInit } from "../src/commands/init";
 import { loadBundle } from "../src/core/bundle";
 import { buildGraphExport, type GraphExport, toDot } from "../src/core/graph";
+import { compileProfile, PROFILE_REL_PATH, parseProfile } from "../src/core/profile";
 import { subgraph } from "../src/core/query";
 import type { OutputContext } from "../src/output";
 import { capture, expectError } from "./helpers";
@@ -48,7 +50,7 @@ function writeStandardBundle(): void {
     "---\ntype: Story\nspecs:\n  - ../specs/archive.md\n---\nUses [orders](../reference/orders.md).\n",
   );
   writeDoc("specs/archive.md", "---\ntype: Spec\ntitle: Archive\n---\nArchive spec.\n");
-  writeDoc("adr/0001-x.md", "---\ntype: Adr\n---\nSee [gone](./missing.md).\n");
+  writeDoc("adr/0001-x.md", "---\ntype: ADR\n---\nSee [gone](./missing.md).\n");
 }
 
 /** Run `graph` in JSON mode and return the parsed `data` payload plus the exit code. */
@@ -56,10 +58,66 @@ function exportGraph(args: string[], options?: Partial<GraphOptions>): { code: n
   const stdout = capture();
   const stderr = capture();
   const code = runGraph({ root, output: JSON_CTX, stdout, stderr, args, ...options });
+  if (code instanceof Promise) throw new Error("reference graph helper unexpectedly selected async retrieval");
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: GraphExport };
   expect(envelope.kind).toBe("graph.export");
   return { code, data: envelope.data };
 }
+
+// ── LORE-192: loadBundle profile asymmetry — the root index vs. a custom profile ──
+//
+// Sibling of LORE-144 (`validate.test.ts`), one seam lower: `loadBundle` (not just `lore
+// validate`) must exempt the reserved root index from a custom profile's required fields — and
+// in loadBundle's own **bundle-relative** path space ("index.md", never "docs/index.md").
+
+describe("loadBundle — LORE-192 reserved root index under a custom profile", () => {
+  const FIXED_CLOCK = (): Date => new Date("2026-06-25T12:00:00Z");
+
+  /**
+   * A custom `.lore/profile.toml` that redefines `Reference` with an `owner` field required —
+   * mirrors `validate.test.ts`'s LORE-144 fixture: the scaffolded root index (whose frontmatter
+   * carries only lore's own fixed fields) never sets `owner`, so this is the AC's "active profile
+   * adds a required field to the Reference type".
+   */
+  const CUSTOM_PROFILE_TOML = [
+    "[profile]",
+    'name = "custom"',
+    'okf_version = "0.1"',
+    "",
+    "[base.fields]",
+    "type = { required = true }",
+    "",
+    "[[types]]",
+    'name = "Reference"',
+    "fields = { owner = { required = true } }",
+  ].join("\n");
+
+  test("AC#1: `lore init` then `lore graph` succeeds under a profile requiring an extra Reference field", () => {
+    // The custom profile is already active (as it would be for a real project) *before* `lore
+    // init` scaffolds the root index — mirroring `runInit`'s own `loadProfile({ root })` read.
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(join(root, PROFILE_REL_PATH), CUSTOM_PROFILE_TOML);
+    runInit({ root, output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
+
+    // Before LORE-192 this threw a `validation` LoreError (exit 6) — "invalid Reference
+    // frontmatter in index.md: owner: expected string, received undefined" — on the very file
+    // `lore init` had just scaffolded, even though `lore validate` (LORE-144) already passed it:
+    // loadBundle's path space is bundle-relative ("index.md"), so validate.ts's own
+    // repo-relative ("docs/index.md") carve-out never matched it.
+    const { code, data } = exportGraph([]);
+    expect(code).toBe(0);
+    const indexNode = data.nodes.find((n) => n.id === "index");
+    expect(indexNode).toBeDefined();
+    expect(indexNode?.type).toBe("Reference");
+  });
+
+  test("a non-root Reference concept still fails the required `owner` field under that profile (root-index-only exemption)", () => {
+    const custom = compileProfile(parseProfile(Bun.TOML.parse(CUSTOM_PROFILE_TOML) as Record<string, unknown>, "rp"));
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntitle: Orders\n---\nOrders reference.\n");
+    const err = expectError("validation", () => loadBundle(join(root, "docs"), { profile: custom }));
+    expect(err.message).toContain("owner");
+  });
+});
 
 // ── core/query: subgraph traversal ───────────────────────────────────────────────
 
@@ -92,6 +150,33 @@ describe("subgraph — depth-bounded undirected traversal", () => {
     writeDoc("b.md", "---\ntype: Story\n---\nBack to [a](./a.md).\n"); // a↔b cycle
     const reached = [...subgraph(graph(), "a", Number.POSITIVE_INFINITY)].sort();
     expect(reached).toEqual(["a", "b"]); // no "missing"; cycle did not loop
+  });
+
+  test("uses a backend-provided neighbor index without rebuilding adjacency from edges", () => {
+    writeStandardBundle();
+    const loaded = graph();
+    const lookups: string[] = [];
+    const neighbors = new Map<string, readonly string[]>([
+      ["reference/orders", ["stories/bulk"]],
+      ["stories/bulk", ["reference/orders", "specs/archive"]],
+      ["specs/archive", ["stories/bulk"]],
+    ]);
+    const indexed = {
+      ...loaded,
+      // Deliberately empty: traversal can succeed only through the supplied index.
+      edges: [],
+      neighbors: (id: string): Iterable<string> => {
+        lookups.push(id);
+        return neighbors.get(id) ?? [];
+      },
+    };
+
+    expect([...subgraph(indexed, "reference/orders", 2)]).toEqual([
+      "reference/orders",
+      "stories/bulk",
+      "specs/archive",
+    ]);
+    expect(lookups).toEqual(["reference/orders", "stories/bulk"]);
   });
 });
 
@@ -176,10 +261,53 @@ describe("toDot — Graphviz serialization", () => {
     expect(dot).not.toContain("missing"); // dangling edge omitted
   });
 
-  test("escapes quotes and backslashes in labels", () => {
+  test("escapes quotes and doubles a lone backslash in labels (LORE-145)", () => {
+    // Graphviz's quoted-ID lexer (lib/cgraph/scan.l) recognizes exactly two
+    // escapes — `\"` and `\\` — and otherwise drops a backslash that precedes
+    // any other character, so a literal `\` must be doubled to survive; leaving
+    // it unchanged (the previous bug here) corrupts the label and can even
+    // produce DOT `dot` rejects outright.
     writeDoc("weird.md", '---\ntype: Story\ntitle: a"b\\c\n---\nText.\n');
     const dot = toDot(buildGraphExport(graph()));
     expect(dot).toContain('[label="a\\"b\\\\c"];');
+  });
+
+  test("a value containing a backslash is doubled in toDot() output so it renders as a literal backslash (LORE-145)", () => {
+    // A Windows-style path fragment is the canonical real-world case: doubling
+    // is the escString encoding for "one literal backslash", not corruption.
+    writeDoc("weird-path.md", '---\ntype: Story\ntitle: "C:\\\\Users\\\\name"\n---\nText.\n');
+    const dot = toDot(buildGraphExport(graph()));
+    expect(dot).toContain('[label="C:\\\\Users\\\\name"];');
+  });
+
+  test("a title ending in a literal backslash still produces well-formed DOT (LORE-145)", () => {
+    // Regression for the worse-than-original bug: an unescaped trailing `\`
+    // escapes the appended closing quote and dot rejects the whole file with a
+    // syntax error. Verified with real graphviz 15.1.0 (`dot -Tcanon`): parses
+    // clean and renders the label as `abc\` unchanged.
+    writeDoc("weird-trailing.md", "---\ntype: Story\ntitle: abc\\\n---\nText.\n");
+    const dot = toDot(buildGraphExport(graph()));
+    expect(dot).toContain('[label="abc\\\\"];');
+  });
+
+  test("a backslash immediately before a quote still produces well-formed DOT (LORE-145)", () => {
+    // Regression: `[\\][\\]` is a lexer rule of its own in scan.l, so an
+    // unescaped `\"` combination reads as backslash-pair-then-terminate,
+    // spilling the rest of the label outside the quoted ID. Verified with real
+    // graphviz 15.1.0 (`dot -Tcanon`): parses clean and renders `a\"b` unchanged.
+    writeDoc("weird-bq.md", '---\ntype: Story\ntitle: a\\"b\n---\nText.\n');
+    const dot = toDot(buildGraphExport(graph()));
+    expect(dot).toContain('[label="a\\\\\\"b"];');
+  });
+
+  test("escapes an embedded newline in a title so the label stays one quoted DOT statement (LORE-145)", () => {
+    writeDoc("weird-nl.md", '---\ntype: Story\ntitle: "Line one\\nline two"\n---\nText.\n');
+    const dot = toDot(buildGraphExport(graph()));
+    // The whole node statement — id and label — lands on exactly one physical line;
+    // a raw newline surviving inside the quoted label would split it across two. The
+    // newline is preserved as the `\n` escape (the same one Graphviz itself uses to
+    // force a line break inside a label) rather than lost to a collapsed space.
+    expect(dot.split("\n")).toContain('  "weird-nl" [label="Line one\\nline two"];');
   });
 });
 
@@ -223,6 +351,53 @@ describe("lore graph — command", () => {
     const stdout = capture();
     runGraph({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: ["--dot"] });
     expect(stdout.text().startsWith("digraph lore {")).toBe(true);
+  });
+
+  test("an embedded newline in a title cannot split a node into two plain-output lines (LORE-126)", () => {
+    writeStandardBundle();
+    writeDoc("weird-nl.md", '---\ntype: Story\ntitle: "Line one\\nline two"\n---\nText.\n');
+    const stdout = capture();
+    runGraph({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: [] });
+    // 1 header + 5 nodes + 3 edges = 9 physical lines (plus the trailing newline `emit`
+    // always appends); a smuggled newline in the title would add a 10th content line.
+    const lines = stdout.text().split("\n");
+    expect(lines.at(-1)).toBe("");
+    expect(lines.slice(0, -1)).toHaveLength(9);
+    const nodeLine = lines.find((line) => line.includes("weird-nl"));
+    expect(nodeLine).toMatch(/^ {2}weird-nl {2}\[Story\] {2}~\d+ {2}Line one line two$/);
+  });
+
+  test("an embedded newline in an unknown type cannot split a node into two plain-output lines (LORE-126)", () => {
+    // requireType (core/schema.ts) only trims the ends of `type`, and an unknown type is
+    // warn-only (validateFrontmatter never rejects it), so a multiline `type:` scalar
+    // survives bundle load unchanged — the node.type analog of the title case above.
+    writeStandardBundle();
+    writeDoc("weird-type.md", '---\ntype: "Story\\nEVIL INJECTED TYPE LINE"\n---\nText.\n');
+    const stdout = capture();
+    runGraph({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: [] });
+    // 1 header + 5 nodes + 3 edges = 9 physical lines (plus the trailing newline `emit`
+    // always appends); a smuggled newline in the type would add a 10th content line.
+    const lines = stdout.text().split("\n");
+    expect(lines.at(-1)).toBe("");
+    expect(lines.slice(0, -1)).toHaveLength(9);
+    const nodeLine = lines.find((line) => line.includes("weird-type"));
+    expect(nodeLine).toMatch(/^ {2}weird-type {2}\[Story EVIL INJECTED TYPE LINE\] {2}~\d+$/);
+  });
+
+  test("an embedded newline in a dangling ref cannot split an edge into two plain-output lines (LORE-126)", () => {
+    // scalarToRef (core/bundle.ts) only trims the ends of a frontmatter ref, so a
+    // double-quoted YAML scalar's escaped `\n` survives as a literal newline into
+    // the dangling edge's `target` — the edge-line analog of the node-line title case above.
+    writeDoc("stories/bulk.md", '---\ntype: Story\nspecs:\n  - "evil\\ninjected line"\n---\nText.\n');
+    const stdout = capture();
+    runGraph({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: [] });
+    // 1 header + 1 node + 1 edge = 3 content lines; a smuggled newline in the
+    // dangling target would add a 4th.
+    const lines = stdout.text().split("\n");
+    expect(lines.at(-1)).toBe("");
+    expect(lines.slice(0, -1)).toHaveLength(3);
+    const edgeLine = lines.find((line) => line.includes("-specs->"));
+    expect(edgeLine).toBe("  stories/bulk -specs-> (dangling: evil injected line)");
   });
 
   test("--dot combined with --json is a usage error (DOT has no envelope)", () => {
@@ -270,17 +445,22 @@ describe("lore graph — command", () => {
 // ── router: cli dispatch ─────────────────────────────────────────────────────────
 
 describe("cli — graph dispatch", () => {
-  test("`lore graph --json` routes to runGraph and emits the envelope", () => {
+  test("`lore graph --json` routes to runGraph and emits the envelope", async () => {
     writeStandardBundle();
     const stdout = capture();
-    const code = run(["bun", "cli", "graph", "--json"], { stdout, stderr: capture(), cwd: root, isTTY: false });
+    const code = await run(["bun", "cli", "graph", "--json"], {
+      stdout,
+      stderr: capture(),
+      cwd: root,
+      isTTY: false,
+    });
     expect(code).toBe(0);
     expect(JSON.parse(stdout.text()).kind).toBe("graph.export");
   });
 
-  test("`lore graph <missing>` exits 3 (not found)", () => {
+  test("`lore graph <missing>` exits 3 (not found)", async () => {
     writeStandardBundle();
-    const code = run(["bun", "cli", "graph", "nope/x"], {
+    const code = await run(["bun", "cli", "graph", "nope/x"], {
       stdout: capture(),
       stderr: capture(),
       cwd: root,

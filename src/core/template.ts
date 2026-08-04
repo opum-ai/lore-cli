@@ -67,14 +67,30 @@ export function resourceFor(resourceBase: string, docPath: string): string {
   return `${base}/${encodePathSegments(docPath)}`;
 }
 
-/** The `{{ key }}` token grammar: a name of word chars, dots, and dashes, with optional inner padding. */
-const PLACEHOLDER = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
+/**
+ * Any brace-shaped `{{…}}` token — matches regardless of what the inside holds, so a malformed
+ * shape ({@link PLACEHOLDER_NAME} rejects it) is still captured for {@link renderTemplate} to
+ * flag rather than falling through the old strict-grammar-only match untouched (LORE-157).
+ */
+const PLACEHOLDER = /\{\{([^{}]*)\}\}/g;
+
+/**
+ * The strict `{{ key }}` name grammar: word chars, dots, and dashes, once a token's inner text
+ * is trimmed of its optional padding. A brace-shaped token whose trimmed inner text fails this —
+ * internal whitespace (`{{owner name}}`), empty (`{{}}`), or a disallowed character
+ * (`{{ owner/name }}`) — is not a legitimate placeholder (LORE-157).
+ */
+const PLACEHOLDER_NAME = /^[A-Za-z0-9_.-]+$/;
 
 /** The outcome of {@link renderTemplate}: the filled text and any placeholders no value covered. */
 export interface RenderResult {
   /** The template with every resolved `{{key}}` substituted; unresolved tokens are left verbatim. */
   text: string;
-  /** Distinct placeholder names that had no value in `vars`, in first-seen order. */
+  /**
+   * Distinct placeholder names that had no value in `vars`, in first-seen order — plus any
+   * malformed brace-shaped token (LORE-157), reported by its trimmed inner text since it can
+   * never be resolved regardless of what `vars` holds.
+   */
   unresolved: string[];
 }
 
@@ -85,18 +101,30 @@ export interface RenderResult {
  * (intentional) while a key that is merely inherited (or absent) is reported unresolved —
  * the caller turns a non-empty {@link RenderResult.unresolved} into a fail-loud error so a
  * literal `{{…}}` never reaches a written file.
+ *
+ * A brace-shaped token whose trimmed inner text fails {@link PLACEHOLDER_NAME} is never
+ * resolvable no matter what `vars` holds, so it is always reported unresolved (LORE-157) instead
+ * of silently reaching `text` verbatim the way a strict-grammar-only match would miss it.
  */
 export function renderTemplate(template: string, vars: Record<string, string>): RenderResult {
   const unresolved: string[] = [];
   const seen = new Set<string>();
-  const text = template.replace(PLACEHOLDER, (match: string, key: string) => {
-    if (Object.hasOwn(vars, key)) {
-      return vars[key] as string;
-    }
+  const report = (key: string): void => {
     if (!seen.has(key)) {
       seen.add(key);
       unresolved.push(key);
     }
+  };
+  const text = template.replace(PLACEHOLDER, (match: string, inner: string) => {
+    const key = inner.trim();
+    if (!PLACEHOLDER_NAME.test(key)) {
+      report(key);
+      return match;
+    }
+    if (Object.hasOwn(vars, key)) {
+      return vars[key] as string;
+    }
+    report(key);
     return match;
   });
   return { text, unresolved };
@@ -350,13 +378,24 @@ const EPIC_TEMPLATE = `
 ## Stories
 `;
 
-/** Story: a unit of deliverable work with acceptance criteria. */
+/**
+ * Story: a unit of deliverable work with acceptance criteria. Ships the empty
+ * `<!-- lore:tasks:begin -->`/`<!-- lore:tasks:end -->` managed block (LORE-59) so a
+ * freshly-created Story is immediately `lore sync`-able once linked to a task, with no
+ * hand-authored markup step — `lore sync`/`managed-block.ts` still fail loud (exit `6`) for
+ * any doc whose block is totally absent, e.g. one where the markers were hand-deleted.
+ */
 const STORY_TEMPLATE = `
 # {{title}}
 
 ## Goal
 
 ## Acceptance criteria
+
+## Tasks
+
+<!-- lore:tasks:begin -->
+<!-- lore:tasks:end -->
 
 ## Notes
 `;

@@ -18,7 +18,27 @@
  *   when `NO_COLOR` is unset (§6). This module reads the TTY and `NO_COLOR`;
  *   {@link errors} deliberately does not — it takes an already-resolved
  *   `{ json, color }`, which {@link errorRenderOpts} derives from an
- *   {@link OutputContext} for `reportError`/`WarningCollector.flush`.
+ *   {@link OutputContext} for `reportError`/`WarningCollector.flush`. Because
+ *   that pair writes to **stderr**, a redirected `2>` must never receive ANSI
+ *   just because stdout happens to be a terminal (LORE-250, cli-contract §6):
+ *   `resolveOutput` takes stderr's own TTY state (independent of the stdout TTY
+ *   state `mode` is resolved from) and folds it into {@link OutputContext.color}
+ *   at the source, so every consumer that reads `ctx.color` — including the
+ *   `WarningCollector.flush({ color: options.output.color, ... })` call sites in
+ *   `commands/*.ts`, which never round-trip through `errorRenderOpts` — gets the
+ *   already-stderr-safe value with no call-site change of their own.
+ *   {@link OutputContext.stdoutColor} carries the un-gated sibling so stdout's
+ *   own pretty rendering ({@link emit}) is provably unaffected by stderr's TTY
+ *   state (§6, AC#2). `errorRenderOpts` still exists for a caller that holds a
+ *   hand-built (not `resolveOutput`-derived) context and needs the gate applied
+ *   explicitly. Both `stderrIsTTY` inputs default an *absent* value to `true`
+ *   (a no-op, for a caller that never passes the field at all) — a caller that
+ *   *does* source it from a real stream must hand in an already-coerced
+ *   boolean (cli.ts's `coerceRealTTY`), never a bare `.isTTY` read: Node/Bun
+ *   leave that property `undefined` (not `false`) on a non-TTY stream, and an
+ *   uncoerced `undefined` is indistinguishable from "omitted", silently
+ *   re-triggering the `?? true` default and reopening the leak (LORE-250,
+ *   round 3).
  * - **Emit the success envelope** `{ schemaVersion, kind, data }` on stdout in
  *   `--json` mode (§2), and the pretty/plain text otherwise.
  * - **Keep the streams disciplined.** Only the payload goes to stdout; all
@@ -33,7 +53,9 @@
  * Design: docs/specs/lore-design.md §5. Rationale: docs/adr/0005-cli-contract.md.
  */
 
-import { asText, singleLine, type Writer } from "./errors";
+import stringWidth from "string-width";
+
+import { asText, singleLine, stripAnsiAndControls, type Writer } from "./errors";
 
 // Re-exported so a command author gets the write sink type from the rendering
 // seam itself, without a second import from errors.ts.
@@ -100,14 +122,71 @@ export function resolveMode(inputs: ModeInputs): OutputMode {
  */
 export interface OutputContext {
   readonly mode: OutputMode;
-  /** Whether ANSI color may be emitted. Only ever `true` in pretty mode. */
+  /**
+   * Whether ANSI color may be emitted, for the single color signal a caller that
+   * only ever reads one field gets. Only ever `true` in pretty mode with
+   * `NO_COLOR` unset.
+   *
+   * For a context built by {@link resolveOutput} (the real dispatch path in
+   * cli.ts), this is the stdout color decision further AND-gated by **stderr's
+   * own TTY state** (LORE-250 AC#1) — the value that is safe to hand to a
+   * stderr writer without checking anything else. That is exactly what every
+   * `WarningCollector.flush({ color: options.output.color, stderr })` call site
+   * across `commands/*.ts` already reads (unchanged since before LORE-250), and
+   * what {@link errorRenderOpts} multiplies again (a harmless no-op — see
+   * there) for `reportError`. A hand-built context — most command-level unit
+   * tests construct `{ mode, color }` directly and never route through
+   * `resolveOutput` — has no independent stderr TTY state to gate on, so
+   * `color` there is simply the one signal the test set, used as-is; this is
+   * unchanged, pre-LORE-250 behavior for every such test.
+   *
+   * A caller that specifically needs stdout's own decision, un-narrowed by
+   * stderr's TTY state, wants {@link OutputContext.stdoutColor} instead —
+   * {@link emit} is the only one.
+   */
   readonly color: boolean;
+  /**
+   * Stdout's own color decision — `mode === "pretty"` with `NO_COLOR` unset —
+   * **never** further gated by stderr's TTY state. Set by {@link resolveOutput}
+   * on every context it builds; {@link emit}'s pretty branch reads this (falling
+   * back to {@link OutputContext.color} when absent) specifically so a
+   * still-colored TTY stdout is provably unaffected by stderr being redirected
+   * (LORE-250 AC#2) even though `color` above may have been narrowed for
+   * stderr's sake on the very same context.
+   *
+   * Optional, not required: dozens of existing tests hand-build `{ mode, color }`
+   * literals to unit-test one command's rendering in isolation from
+   * `resolveOutput`'s stderr gate entirely: they never set this field, and
+   * `emit`'s fallback to `color` reproduces their exact pre-existing behavior.
+   */
+  readonly stdoutColor?: boolean;
 }
 
 /** {@link ModeInputs} plus the environment, for the full color-aware resolution. */
 export interface ResolveInputs extends ModeInputs {
   /** The environment to read `NO_COLOR` from. Defaults to `process.env`. */
   env?: Record<string, string | undefined>;
+  /**
+   * Whether **stderr** (not stdout) is a TTY — independent of `isTTY`, which is
+   * stdout's own state and the only one {@link resolveMode}'s `mode` consults.
+   * Defaults to `true`, a no-op that makes the returned `color` equal
+   * `stdoutColor` exactly — every caller that predates this field (and any test
+   * that only ever inspects `.color`) keeps its exact prior behavior. Only
+   * cli.ts's real dispatch passes the actual stderr TTY state (LORE-250 AC#1).
+   *
+   * Danger for any future caller: the `true` default is a "field omitted"
+   * no-op, not a safety fallback — it is the **unsafe** direction (assume TTY,
+   * allow color) precisely because omitting the field is the common case. A
+   * caller that *does* source this from a real stream must pass an
+   * already-coerced boolean (cli.ts's `coerceRealTTY`), never a bare
+   * `process.stderr.isTTY` read: Node/Bun leave that property `undefined` —
+   * not `false` — on a non-TTY stream, and an uncoerced `undefined` is
+   * indistinguishable from "the field was never passed", silently
+   * re-triggering this default and reopening the leak this field exists to
+   * close (LORE-250, round 3 — confirmed live under a real pty; see
+   * `coerceRealTTY`'s doc in cli.ts).
+   */
+  stderrIsTTY?: boolean;
 }
 
 /**
@@ -123,24 +202,55 @@ export interface ResolveInputs extends ModeInputs {
  * rather than truthiness (which would let `NO_COLOR=` slip through).
  * `--plain`/`--json` are always ANSI-free, which falls out for free since
  * neither yields the pretty mode.
+ *
+ * `stdoutColor` is exactly that mode/NO_COLOR decision, untouched by anything
+ * stream-specific. `color` is the same decision additionally AND-gated by
+ * `stderrIsTTY` (LORE-250 AC#1): a `lore <cmd> 2>err.log` invocation run from a
+ * terminal (stdout a TTY, stderr redirected) resolves `stdoutColor: true` (so
+ * stdout keeps its color, AC#2) but `color: false` (so nothing that reads the
+ * shared `color` field — every `WarningCollector.flush`/`reportError` call site
+ * — can paint the redirected stderr). `stderrIsTTY` defaults to `true`, making
+ * `color === stdoutColor`, matching every pre-LORE-250 caller exactly.
  */
 export function resolveOutput(inputs: ResolveInputs): OutputContext {
   const mode = resolveMode(inputs);
   const env = inputs.env ?? process.env;
-  const color = mode === "pretty" && env.NO_COLOR === undefined;
-  return { mode, color };
+  const stdoutColor = mode === "pretty" && env.NO_COLOR === undefined;
+  const stderrIsTTY = inputs.stderrIsTTY ?? true;
+  return { mode, color: stdoutColor && stderrIsTTY, stdoutColor };
 }
 
 /**
  * Derive the `{ json, color }` pair {@link errors.reportError} and
- * `WarningCollector.flush` consume from a resolved {@link OutputContext}. `json`
- * is computed from `mode` here rather than stored on the context, so the success
- * path (routed by `mode`) and the error path (routed by `json`) cannot disagree.
- * Usage in a command's catch block: `reportError(err, { ...errorRenderOpts(ctx),
- * stderr })` (or `flush` likewise).
+ * `WarningCollector.flush` consume, for a caller holding an {@link OutputContext}
+ * it needs to apply an *explicit* stderr-TTY gate to. `json` is computed from
+ * `mode` here rather than stored on the context, so the success path (routed by
+ * `mode`) and the error path (routed by `json`) cannot disagree.
+ *
+ * For a context {@link resolveOutput} built, `ctx.color` is **already** gated by
+ * the real stderr TTY state it was constructed with (LORE-250 AC#1, see
+ * {@link resolveOutput}) — cli.ts's two `reportError` call sites pass that same
+ * real `stderrIsTTY` here too, which is a harmless no-op re-application (ANDing
+ * a boolean with the value it was already ANDed with changes nothing). This
+ * function's load-bearing case is a **hand-built** `ctx` — e.g. a unit test that
+ * constructs `{ mode, color }` directly rather than via `resolveOutput` — where
+ * `ctx.color` is a bare, ungated boolean and `stderrIsTTY` is the *only* place
+ * the gate is applied.
+ *
+ * `stderrIsTTY` defaults to `true` — a no-op gate — so every call site that
+ * predates this parameter (and any test that only cares about `ctx.color`)
+ * keeps its exact prior behavior. As with {@link ResolveInputs.stderrIsTTY},
+ * that default is a "parameter omitted" no-op, not a safe fallback: a caller
+ * passing a real stream's `.isTTY` must coerce it first (cli.ts's
+ * `coerceRealTTY`) — an uncoerced `undefined` (Node/Bun's non-TTY reading) is
+ * indistinguishable from an omitted argument and silently re-enables color
+ * (LORE-250, round 3).
+ *
+ * Usage: `reportError(err, { ...errorRenderOpts(ctx, stderrIsTTY), stderr })`
+ * (or `flush` likewise).
  */
-export function errorRenderOpts(ctx: OutputContext): { json: boolean; color: boolean } {
-  return { json: ctx.mode === "json", color: ctx.color };
+export function errorRenderOpts(ctx: OutputContext, stderrIsTTY = true): { json: boolean; color: boolean } {
+  return { json: ctx.mode === "json", color: ctx.color && stderrIsTTY };
 }
 
 /**
@@ -273,7 +383,11 @@ export interface Renderable<T> {
  *   success.
  * - **plain / pretty:** the renderer's text via {@link writeBody}, normalized to
  *   exactly one trailing newline (an empty/whitespace-only body writes nothing,
- *   so stdout stays clean). Pretty receives the resolved `color`.
+ *   so stdout stays clean). Pretty receives {@link OutputContext.stdoutColor} —
+ *   stdout's own, never-stderr-gated decision — falling back to
+ *   {@link OutputContext.color} only for a hand-built context that predates the
+ *   `stdoutColor` field, so a still-TTY stdout is never dimmed by a redirected
+ *   stderr (LORE-250 AC#2).
  *
  * The `switch` is exhaustive over {@link OutputMode}: the `never` default makes
  * adding a mode without handling it here a compile error. stdout-only by
@@ -296,7 +410,7 @@ export function emit<T>(renderable: Renderable<T>, ctx: OutputContext, out: Writ
       return;
     }
     case "pretty": {
-      writeBody(renderable.pretty(renderable.data, { color: ctx.color }), out);
+      writeBody(renderable.pretty(renderable.data, { color: ctx.stdoutColor ?? ctx.color }), out);
       return;
     }
     default: {
@@ -394,16 +508,66 @@ export function maxLen<T>(items: readonly T[], length: (item: T) => number): num
 }
 
 /**
+ * Terminal display width of `text` — the number of terminal columns it occupies when printed, not
+ * `text.length` (UTF-16 code units). `string-width` owns Unicode grapheme segmentation,
+ * East_Asian_Width data, combining/default-ignorable handling, and emoji-sequence width. Keeping
+ * the dependency behind this wrapper preserves the output layer's single measurement seam and
+ * makes ASCII-only strings byte-compatible (`displayWidth(text) === text.length`) while correctly
+ * treating emoji variation, regional-indicator, keycap, and ZWJ sequences as terminal graphemes.
+ * Callers sanitize fields before measurement, so Lore's stricter ANSI/control policy remains owned
+ * by {@link renderTaskSummaryRows} rather than delegated to the dependency (LORE-221, LCLI-285).
+ */
+export function displayWidth(text: string): number {
+  return stringWidth(text);
+}
+
+/**
+ * Pad `text` with trailing spaces until it reaches `width` terminal columns
+ * ({@link displayWidth}), not `width` UTF-16 code units the way `String.prototype.padEnd` does —
+ * `padEnd` over/under-shoots once `text` contains a East Asian wide or zero-width/combining
+ * character. Padding characters are plain ASCII spaces (always display width 1), so the width
+ * deficit maps directly to a character count. Returns `text` unchanged once it is already at or
+ * past `width`.
+ */
+function padEndDisplay(text: string, width: number): string {
+  const deficit = width - displayWidth(text);
+  return deficit > 0 ? text + " ".repeat(deficit) : text;
+}
+
+/**
  * Render `rows` as aligned `  <id>  <status>  <title>` lines, one per row, with the id/status
  * columns padded to the widest cell in each (via the spread-free {@link maxLen}). Shared by `lore
  * tasks`'s rollup table and `lore orphans`' orphan-task block, so a column-layout change (an extra
  * column, truncation, a width cap) is a one-place edit instead of two independently-drifting copies.
  * Returns `[]` for an empty `rows` — the caller decides what an empty section renders as.
+ *
+ * Each field is coerced ({@link asText}), collapsed to one line ({@link singleLine}), and stripped
+ * of ANSI escape sequences and residual control characters ({@link stripAnsiAndControls}) before
+ * padding/joining. `id`/`status`/`title` come from a Backlog task file, which a crafted or
+ * corrupted file could load with an embedded newline, CR, ANSI escape sequence, or other control
+ * character — without this, that would split a plain-mode row across lines, inject cursor-moving
+ * escape sequences, or otherwise break the single-line, ANSI-free-per-row output guarantee
+ * (cli-contract.md §6). Sanitizing before {@link maxLen} also keeps the column widths measuring the
+ * same text that is actually printed, so a stripped character cannot desync the padding from the
+ * rendered length.
+ *
+ * Column width is measured and padded by terminal *display* width ({@link displayWidth} /
+ * {@link padEndDisplay}), not UTF-16 code-unit count — the realistic vector is `status` (the raw
+ * configured Backlog status), which a full-width CJK status or a combining-mark status could
+ * otherwise under- or over-pad relative to what a terminal actually renders (LORE-221). `id` is
+ * always ASCII in practice, and `title` is the unpadded last column either way.
  */
 export function renderTaskSummaryRows(rows: readonly TaskSummaryRow[]): string[] {
-  const idWidth = maxLen(rows, (row) => row.id.length);
-  const statusWidth = maxLen(rows, (row) => row.status.length);
-  return rows.map((row) => `  ${row.id.padEnd(idWidth)}  ${row.status.padEnd(statusWidth)}  ${row.title}`);
+  const clean = rows.map((row) => ({
+    id: stripAnsiAndControls(singleLine(asText(row.id))),
+    status: stripAnsiAndControls(singleLine(asText(row.status))),
+    title: stripAnsiAndControls(singleLine(asText(row.title))),
+  }));
+  const idWidth = maxLen(clean, (row) => displayWidth(row.id));
+  const statusWidth = maxLen(clean, (row) => displayWidth(row.status));
+  return clean.map(
+    (row) => `  ${padEndDisplay(row.id, idWidth)}  ${padEndDisplay(row.status, statusWidth)}  ${row.title}`,
+  );
 }
 
 /**

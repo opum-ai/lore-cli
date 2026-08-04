@@ -2,9 +2,20 @@
 type: ADR
 title: "ADR-0015: Lightweight retrieval: full-text + graph context, no vectors"
 description: Why lore's retrieval surface is in-memory BM25-style full-text search plus frontmatter filtering (`lore query`) and a deterministic, depth-bounded, token-budgeted graph export (`lore context`), with no vector database, embeddings, RAG, or chunking subsystem.
-tags: [adr, retrieval, query, context, search, graph, no-rag, no-vectors, agent]
-summary: lore retrieves with in-memory full-text (BM25) plus frontmatter filters and a deterministic depth-bounded graph context export, treating the typed graph as the curation layer instead of building a vector/RAG/chunking stack.
+tags:
+  - adr
+  - retrieval
+  - query
+  - context
+  - search
+  - graph
+  - no-rag
+  - no-vectors
+  - agent
+summary: lore combines in-memory full-text search, frontmatter filters, and deterministic graph expansion without a vector stack.
 timestamp: 2026-06-21T00:00:00Z
+status: superseded
+superseded_by: adr/0018-persistent-local-graph-projection-with-ladybugdb
 ---
 
 # ADR-0015: Lightweight retrieval: full-text + graph context, no vectors
@@ -12,6 +23,13 @@ timestamp: 2026-06-21T00:00:00Z
 ## Status
 
 Accepted — 2026-06-21
+
+Superseded for persistence and indexed routing by
+[ADR-0018](0018-persistent-local-graph-projection-with-ladybugdb.md). Its
+deterministic lexical and no-vector boundary remains active. LCLI-289 extends
+that boundary with Markdown-section selection inside an explicit agent-profile
+allowlist. This is AST-based evidence packing, not an embedding system,
+semantic reranker, overlap chunk store, or model-backed RAG pipeline.
 
 ## Context
 
@@ -141,7 +159,7 @@ rendered consumer's search) — it never becomes a runtime dependency of lore.
   on-disk bundle. Agent loops and CI snapshots get byte-stable results; no model
   version can shift relevance under you.
 - **Zero-config and instant.** No index to build, embed, persist, or
-  invalidate; `bunx @salient-data/lore query …` works with nothing installed,
+  invalidate; `bunx @opum-ai/lore query …` works with nothing installed,
   consistent with the thin single-binary distribution.
 - **Curation-honest.** Relevance is the author-written `type`/`tags`/`summary`/
   links — visible, editable, and reviewable in the repo — instead of opaque

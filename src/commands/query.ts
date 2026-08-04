@@ -1,12 +1,14 @@
 /**
  * commands/query.ts — `lore query ["<text>"] [--type <T>] [--tag <t>]… [--status <S>] [--field k=v]… [--limit <n>]`.
  *
- * The thin, read-only layer behind the bundle's full-text search (cli-surface §query;
- * LORE-33). It loads the `docs/` bundle into a {@link BundleGraph}, then hands the
- * optional search text and the frontmatter filters to the pure {@link query} engine —
- * which keeps the concepts matching every filter, ranks them by BM25 relevance to the
- * text (when given), and returns the top `--limit` hits with a bounded-output signal.
- * **No vectors, RAG, or chunking** (ADR-0015): a deterministic in-memory lexical index.
+ * The thin, read-only layer behind the bundle's full-text search (cli-surface
+ * §query; LORE-33). Commander supplies a verified indexed {@link BundleGraph}
+ * with automatic reference fallback; direct core callers retain the reference
+ * loader. The optional search text and frontmatter filters then go to the pure
+ * {@link query} engine, which keeps concepts matching every filter, ranks them
+ * by BM25 relevance, and returns the top `--limit` hits with a bounded-output
+ * signal. **No vectors, RAG, or chunking** (ADR-0018): the lexical index remains
+ * deterministic and in memory.
  *
  * Output follows the uniform CLI modes: the `{schemaVersion, kind: "query.results",
  * data}` envelope under the global `--json`, otherwise a ranked listing — one
@@ -24,11 +26,16 @@
  */
 
 import { join } from "node:path";
+import type { BacklogAdapter } from "../adapters/backlog";
 import { loadBundle } from "../core/bundle";
+import { loadProfile } from "../core/profile";
 import { type FieldFilter, type QueryResult, query } from "../core/query";
+import { loadRetrievalGraph, type RetrievalGraphLoader } from "../core/retrieval";
 import { DOCS_DIR } from "../core/scaffold";
-import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
+import type { WorkspaceRetrievalContext, WorkspaceRetrievalSelection } from "../core/workspace-retrieval";
+import { EXIT_OK, LoreError, singleLine, stripAnsiAndControls, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable, renderTruncationLine, truncation } from "../output";
+import { optionValues, parseCommandArgs, singleOptionValue, workspaceSelection } from "./args";
 
 /** Options for {@link runQuery}; `root` and the streams are injectable for tests. */
 export interface QueryCommandOptions {
@@ -36,12 +43,16 @@ export interface QueryCommandOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `query`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
   /** stderr sink for advisory warnings; defaults to `process.stderr`. */
   stderr?: Writer;
+  /** Backlog snapshot seam used only by indexed projection freshness/builds. */
+  adapter?: BacklogAdapter;
+  /** Indexed/reference selector injected by the Commander handler or conformance tests. */
+  retrieval?: RetrievalGraphLoader;
 }
 
 /** The parsed form of `lore query`'s arguments. */
@@ -58,6 +69,7 @@ interface QueryArgs {
   tags: string[];
   /** `--field key=value` filters, in order (repeatable). */
   fields: FieldFilter[];
+  readonly workspace?: WorkspaceRetrievalSelection;
 }
 
 /** The narrow-it hint on the §3 truncation line (AC#2) — the actionable ways to bound a broad result. */
@@ -68,22 +80,66 @@ const NARROW_HINT = "narrow with --type/--tag/--status/--field, or raise --limit
  * `query.results`, and return `0`. A bad flag/positional throws a `usage`
  * {@link LoreError} (exit `2`); there is no not-found path (zero hits is a normal `0`).
  */
-export function runQuery(options: QueryCommandOptions): number {
+export function runQuery(options: QueryCommandOptions): number | Promise<number> {
   const parsed = parseQueryArgs(options.args);
-  const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
-  const graph = loadBundle(docsRoot, { warnings: advisories });
+  const retrieval = options.retrieval ?? (parsed.workspace !== undefined ? loadRetrievalGraph : undefined);
+  if (retrieval !== undefined) {
+    return retrieval({
+      root: options.root,
+      warnings: advisories,
+      adapter: options.adapter,
+      ...(parsed.workspace !== undefined ? { workspace: parsed.workspace } : {}),
+    }).then(async (loaded) => {
+      try {
+        const indexedResult = await loaded.indexed?.query({
+          text: parsed.text,
+          type: parsed.type,
+          tags: parsed.tags,
+          status: parsed.status,
+          fields: parsed.fields,
+          limit: parsed.limit,
+        });
+        return finishQuery(options, parsed, loaded.graph, advisories, indexedResult, loaded.workspace);
+      } finally {
+        await loaded.dispose?.();
+      }
+    });
+  }
+  const profile = loadProfile({ root: options.root });
+  const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, profile });
+  return finishQuery(options, parsed, graph, advisories);
+}
+
+function finishQuery(
+  options: QueryCommandOptions,
+  parsed: QueryArgs,
+  graph: ReturnType<typeof loadBundle>,
+  advisories: WarningCollector,
+  indexedResult?: QueryResult,
+  workspace?: WorkspaceRetrievalContext,
+): number {
   advisories.flush({ color: options.output.color, stderr: options.stderr });
 
-  const data = query(graph, {
-    text: parsed.text,
-    type: parsed.type,
-    tags: parsed.tags,
-    status: parsed.status,
-    fields: parsed.fields,
-    limit: parsed.limit,
-  });
-  emit(queryRenderable(data), options.output, options.stdout);
+  const data =
+    indexedResult ??
+    query(graph, {
+      text: parsed.text,
+      type: parsed.type,
+      tags: parsed.tags,
+      status: parsed.status,
+      fields: parsed.fields,
+      limit: parsed.limit,
+    });
+  const scoped: QueryResult =
+    workspace === undefined
+      ? data
+      : {
+          ...data,
+          hits: data.hits.map((hit) => ({ ...hit, provenance: workspace.provenanceById.get(hit.id) })),
+          workspace: workspace.scope,
+        };
+  emit(queryRenderable(scoped), options.output, options.stdout);
   return EXIT_OK;
 }
 
@@ -92,88 +148,41 @@ export function runQuery(options: QueryCommandOptions): number {
 /**
  * Parse `query`'s tokens into the optional text positional and the value flags
  * (`--type`/`--status`/`--limit` at most once each; `--tag`/`--field` repeatable),
- * also accepting the `--flag=value` form. The router has already stripped lore's
+ * also accepting the `--flag=value` form. Commander has already resolved Lore's
  * global flags, so a `--`-prefixed token here is a command flag: an unrecognized one
  * is a `usage` error, as is a repeated single-value flag, a value-less value flag, a
  * non-integer/out-of-range `--limit`, a malformed `--field`, or a second positional.
  * A `--` ends option parsing.
  */
 function parseQueryArgs(args: readonly string[]): QueryArgs {
-  const positionals: string[] = [];
-  let type: string | undefined;
-  let status: string | undefined;
-  let limit: number | undefined;
-  const tags: string[] = [];
-  const fields: FieldFilter[] = [];
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      positionals.push(...args.slice(i + 1));
-      break;
-    }
-    if (arg.startsWith("--") && arg.length > 2) {
-      const body = arg.slice(2);
-      const eq = body.indexOf("=");
-      const name = eq === -1 ? body : body.slice(0, eq);
-      const inline = eq === -1 ? undefined : body.slice(eq + 1);
-      switch (name) {
-        case "type":
-          if (type !== undefined) {
-            throw usage("--type given more than once", "pass --type at most once");
-          }
-          type = readValue("--type", inline, args, i);
-          if (inline === undefined) {
-            i++;
-          }
-          break;
-        case "status":
-          if (status !== undefined) {
-            throw usage("--status given more than once", "pass --status at most once");
-          }
-          status = readValue("--status", inline, args, i);
-          if (inline === undefined) {
-            i++;
-          }
-          break;
-        case "limit":
-          if (limit !== undefined) {
-            throw usage("--limit given more than once", "pass --limit at most once");
-          }
-          limit = parseCount("--limit", readValue("--limit", inline, args, i));
-          if (inline === undefined) {
-            i++;
-          }
-          break;
-        case "tag":
-          tags.push(readValue("--tag", inline, args, i));
-          if (inline === undefined) {
-            i++;
-          }
-          break;
-        case "field":
-          fields.push(parseFieldFilter(readValue("--field", inline, args, i)));
-          if (inline === undefined) {
-            i++;
-          }
-          break;
-        default:
-          throw usage(`unknown option "--${name}"`, "run `lore query --help` to list options");
-      }
-    } else if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, "run `lore query --help` to list options");
-    } else {
-      positionals.push(arg);
-    }
-  }
-
+  const parsed = parseCommandArgs(args, "query");
+  const workspace = workspaceSelection(parsed);
+  const positionals = parsed.positionals;
+  const trimmed = (name: string): string | undefined => {
+    const value = singleOptionValue(parsed, name);
+    if (value === undefined) return undefined;
+    const result = value.trim();
+    if (result === "") throw usage(`--${name} needs a value`, `pass a value, e.g. \`--${name} orders\``);
+    return result;
+  };
+  const type = trimmed("type");
+  const status = trimmed("status");
+  const rawLimit = singleOptionValue(parsed, "limit");
+  if (rawLimit === "") throw usage("--limit needs a value", "pass a value, e.g. `--limit orders`");
+  const limit = rawLimit === undefined ? undefined : parseCount("--limit", rawLimit);
+  const tags = optionValues(parsed, "tag").map((value) => {
+    const tag = value.trim();
+    if (tag === "") throw usage("--tag needs a value", "pass a value, e.g. `--tag orders`");
+    return tag;
+  });
+  const fields = optionValues(parsed, "field").map(parseFieldFilter);
   if (positionals.length > 1) {
     throw usage(
       `unexpected argument "${positionals[1]}"`,
       'pass one quoted search string, e.g. `lore query "soft delete retention"`',
     );
   }
-  return { text: positionals[0], type, status, limit, tags, fields };
+  return { text: positionals[0], type, status, limit, tags, fields, workspace };
 }
 
 /**
@@ -227,20 +236,6 @@ function parseCount(flag: string, value: string): number {
  * (`--type --tag`) — is a `usage` error rather than a silently swallowed flag
  * (mirroring `lore graph`/`context`'s value-flag guard).
  */
-function readValue(flag: string, inline: string | undefined, args: readonly string[], i: number): string {
-  if (inline !== undefined) {
-    if (inline === "") {
-      throw usage(`${flag} needs a value`, `pass a value, e.g. \`${flag} orders\``);
-    }
-    return inline;
-  }
-  const next = args[i + 1];
-  if (next === undefined || next === "" || (next.startsWith("-") && next !== "-")) {
-    throw usage(`${flag} needs a value`, `pass a value, e.g. \`${flag} orders\``);
-  }
-  return next;
-}
-
 // ── Output ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -259,21 +254,44 @@ function queryRenderable(data: QueryResult): Renderable<QueryResult> {
  * (<score>)  — <snippet>` line per hit (the `(<score>)` shown only under a text query;
  * the `— <snippet>` dropped when the concept has neither summary nor title), and the
  * trailing §3 truncation footer when the `--limit` cap dropped matches. ANSI-free and
- * deterministic.
+ * deterministic: the query text and every hit's `id`/`type`/`snippet` are sanitized
+ * ({@link sanitizeField}) before interpolation, so a crafted concept file (an id, a
+ * `type`/`summary` frontmatter scalar) or the raw `--query` argument cannot smuggle an
+ * ANSI escape sequence or other control byte into the rendered line (LORE-118).
  */
 function renderText(data: QueryResult): string {
-  const head = data.query !== undefined ? `query "${data.query}"` : "query (filters)";
-  const lines = [`${head}: ${data.total} ${data.total === 1 ? "match" : "matches"}`];
+  const queryText = data.query !== undefined ? sanitizeField(data.query) : undefined;
+  const head = queryText !== undefined ? `query "${queryText}"` : "query (filters)";
+  const lines = [
+    ...(data.workspace !== undefined
+      ? [`workspace: ${sanitizeField(data.workspace.workspaceId)} (${data.workspace.repositories.length} repositories)`]
+      : []),
+    `${head}: ${data.total} ${data.total === 1 ? "match" : "matches"}`,
+  ];
   for (const hit of data.hits) {
-    const score = data.query !== undefined ? `  (${formatScore(hit.score)})` : "";
-    const snippet = hit.snippet !== undefined ? `  — ${hit.snippet}` : "";
-    lines.push(`  ${hit.id}  [${hit.type}]${score}${snippet}`);
+    const score = queryText !== undefined ? `  (${formatScore(hit.score)})` : "";
+    const id = sanitizeField(hit.id);
+    const type = sanitizeField(hit.type);
+    const snippet = hit.snippet !== undefined ? `  — ${sanitizeField(hit.snippet)}` : "";
+    lines.push(`  ${id}  [${type}]${score}${snippet}`);
   }
   const footer = renderTruncationLine(truncation(data.total, data.shown, NARROW_HINT));
   if (footer !== "") {
     lines.push(footer);
   }
   return lines.join("\n");
+}
+
+/**
+ * Sanitize a field before it is interpolated into the plain/pretty listing: collapse
+ * it to one line ({@link singleLine}) and strip ANSI escape sequences plus residual C0/C1
+ * control bytes ({@link stripAnsiAndControls}) — every source here (a concept `id`, its
+ * `type`/`summary` frontmatter, or the raw `--query` text) can carry attacker-influenced
+ * bytes (a crafted bundle file, or the CLI argument itself), and without this a CSI
+ * sequence could rewrite terminal state or forge output (LORE-118).
+ */
+function sanitizeField(text: string): string {
+  return stripAnsiAndControls(singleLine(text));
 }
 
 /**

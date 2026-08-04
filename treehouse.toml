@@ -1,0 +1,6 @@
+max_trees = 4
+root = "../"
+
+# Keep reusable worktrees beside this repository on the same filesystem.
+# Acquire campaign worktrees with durable, task-scoped leases and return them
+# only with matching lease-id and lease-holder guards after settlement.

@@ -2,7 +2,9 @@
  * commands/graph.ts — `lore graph [<id>] [--dot] [--depth <n>]`.
  *
  * The thin, read-only layer that emits the bundle's cross-link graph (cli-surface
- * §graph; LORE-31). It loads the `docs/` bundle into a {@link BundleGraph}, then:
+ * §graph; LORE-31). Commander supplies a verified indexed {@link BundleGraph}
+ * with automatic reference fallback; direct core callers retain the reference
+ * loader. The selected graph is then shaped as follows:
  *
  * - with **no `<id>`** exports the whole bundle;
  * - with an `<id>` exports the **subgraph** rooted there, bounded to `--depth`
@@ -30,13 +32,19 @@
  */
 
 import { join } from "node:path";
+import type { BacklogAdapter } from "../adapters/backlog";
 import { loadBundle } from "../core/bundle";
 import { idFromPath } from "../core/concept";
 import { buildGraphExport, type GraphExport, toDot } from "../core/graph";
+import { loadProfile } from "../core/profile";
 import { subgraph } from "../core/query";
+import { loadRetrievalGraph, type RetrievalGraphLoader } from "../core/retrieval";
 import { DOCS_DIR } from "../core/scaffold";
-import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
+import { parseQualifiedWorkspaceId, qualifyWorkspaceId } from "../core/workspace-contract";
+import type { WorkspaceRetrievalContext, WorkspaceRetrievalSelection } from "../core/workspace-retrieval";
+import { EXIT_OK, LoreError, singleLine, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { assertFlagAtMostOnce, parseCommandArgs, singleOptionValue, workspaceSelection } from "./args";
 
 /** Options for {@link runGraph}; `root` and the streams are injectable for tests. */
 export interface GraphOptions {
@@ -44,12 +52,16 @@ export interface GraphOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `graph`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
   /** stderr sink for advisory warnings; defaults to `process.stderr`. */
   stderr?: Writer;
+  /** Backlog snapshot seam used only by indexed projection freshness/builds. */
+  adapter?: BacklogAdapter;
+  /** Indexed/reference selector injected by the Commander handler or conformance tests. */
+  retrieval?: RetrievalGraphLoader;
 }
 
 /** The parsed form of `lore graph`'s arguments. */
@@ -60,6 +72,7 @@ interface GraphArgs {
   dot: boolean;
   /** The hop radius (`--depth`); `undefined` means unbounded. Requires `id`. */
   depth?: number;
+  readonly workspace?: WorkspaceRetrievalSelection;
 }
 
 /**
@@ -69,14 +82,39 @@ interface GraphArgs {
  * a `usage` {@link LoreError} (exit `2`); an `<id>` not in the bundle a
  * `not_found` one (exit `3`).
  */
-export function runGraph(options: GraphOptions): number {
+export function runGraph(options: GraphOptions): number | Promise<number> {
   const parsed = parseGraphArgs(options.args);
   if (parsed.dot && options.output.mode === "json") {
     throw usage("--dot cannot be combined with --json", "DOT has no JSON envelope; pass one of --dot or --json");
   }
-  const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
-  const graph = loadBundle(docsRoot, { warnings: advisories });
+  const retrieval = options.retrieval ?? (parsed.workspace !== undefined ? loadRetrievalGraph : undefined);
+  if (retrieval !== undefined) {
+    return retrieval({
+      root: options.root,
+      warnings: advisories,
+      adapter: options.adapter,
+      ...(parsed.workspace !== undefined ? { workspace: parsed.workspace } : {}),
+    }).then(async (loaded) => {
+      try {
+        return finishGraph(options, parsed, loaded.graph, advisories, loaded.workspace);
+      } finally {
+        await loaded.dispose?.();
+      }
+    });
+  }
+  const profile = loadProfile({ root: options.root });
+  const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, profile });
+  return finishGraph(options, parsed, graph, advisories);
+}
+
+function finishGraph(
+  options: GraphOptions,
+  parsed: GraphArgs,
+  graph: ReturnType<typeof loadBundle>,
+  advisories: WarningCollector,
+  workspace?: WorkspaceRetrievalContext,
+): number {
   // Flush load warnings before the subgraph lookup, which throws not_found for an
   // unknown root — otherwise an advisory that explains *why* a file is not a
   // concept would be discarded on exactly the path that most needs it.
@@ -84,10 +122,15 @@ export function runGraph(options: GraphOptions): number {
 
   let data: GraphExport;
   if (parsed.id === undefined) {
-    data = buildGraphExport(graph);
+    data = buildGraphExport(graph, workspaceOptions(workspace));
   } else {
     const include = subgraph(graph, parsed.id, parsed.depth ?? Number.POSITIVE_INFINITY);
-    data = buildGraphExport(graph, { include, root: parsed.id, depth: parsed.depth });
+    data = buildGraphExport(graph, {
+      include,
+      root: parsed.id,
+      depth: parsed.depth,
+      ...workspaceOptions(workspace, include),
+    });
   }
 
   emit(graphRenderable(data, parsed.dot), options.output, options.stdout);
@@ -99,54 +142,20 @@ export function runGraph(options: GraphOptions): number {
 /**
  * Parse `graph`'s tokens into the optional root `<id>` positional, the boolean
  * `--dot`, and the value flag `--depth <n>` (also accepting `--depth=<n>`). The
- * router has already stripped lore's global flags, so a `--`-prefixed token here
+ * Commander has already resolved Lore's global flags, so a `--`-prefixed token here
  * is a command flag: an unrecognized one is a `usage` error, as is a repeated or
  * value-bearing `--dot`, a repeated/value-less/non-integer/too-large `--depth`, a
  * `--depth` with no root, or a second positional. A `--` ends option parsing. The
  * `<id>` is {@link idFromPath}-normalized so path/`.md`/`./` forms resolve.
  */
 function parseGraphArgs(args: readonly string[]): GraphArgs {
-  const positionals: string[] = [];
-  let dot = false;
-  let depth: number | undefined;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      positionals.push(...args.slice(i + 1));
-      break;
-    }
-    if (arg.startsWith("--") && arg.length > 2) {
-      const body = arg.slice(2);
-      const eq = body.indexOf("=");
-      const name = eq === -1 ? body : body.slice(0, eq);
-      const inline = eq === -1 ? undefined : body.slice(eq + 1);
-      if (name === "dot") {
-        if (inline !== undefined) {
-          throw usage("--dot takes no value", "pass --dot on its own to emit Graphviz DOT");
-        }
-        if (dot) {
-          throw usage("--dot given more than once", "pass --dot at most once");
-        }
-        dot = true;
-      } else if (name === "depth") {
-        if (depth !== undefined) {
-          throw usage("--depth given more than once", "pass --depth at most once");
-        }
-        depth = parseDepth(readValue("--depth", inline, args, i));
-        if (inline === undefined) {
-          i++;
-        }
-      } else {
-        throw usage(`unknown option "--${name}"`, "run `lore graph --help` to list options");
-      }
-    } else if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, "run `lore graph --help` to list options");
-    } else {
-      positionals.push(arg);
-    }
-  }
-
+  const parsed = parseCommandArgs(args, "graph");
+  const workspace = workspaceSelection(parsed);
+  const positionals = parsed.positionals;
+  assertFlagAtMostOnce(parsed, "dot");
+  const rawDepth = singleOptionValue(parsed, "depth");
+  if (rawDepth === "") throw usage("--depth needs a value", "pass a value, e.g. `--depth 2`");
+  const depth = rawDepth === undefined ? undefined : parseDepth(rawDepth);
   if (positionals.length > 1) {
     throw usage(`unexpected argument "${positionals[1]}"`, "run `lore graph [<id>] [--dot] [--depth <n>]`");
   }
@@ -157,14 +166,49 @@ function parseGraphArgs(args: readonly string[]): GraphArgs {
       "give the concept to bound the radius from, e.g. `lore graph <id> --depth 2`",
     );
   }
-  return { id: raw !== undefined ? idFromPath(raw) : undefined, dot, depth };
+  return {
+    id: raw !== undefined ? normalizeGraphId(raw, workspace !== undefined) : undefined,
+    dot: parsed.flags.has("dot"),
+    depth,
+    workspace,
+  };
+}
+
+function normalizeGraphId(raw: string, workspace: boolean): string {
+  if (!workspace) return idFromPath(raw);
+  try {
+    const parsed = parseQualifiedWorkspaceId(raw);
+    return qualifyWorkspaceId(parsed.memberId, idFromPath(parsed.sourceId));
+  } catch {
+    throw usage(`invalid workspace concept id "${raw}"`, "use the unambiguous <member-id>::<source-id> form");
+  }
+}
+
+function workspaceOptions(workspace?: WorkspaceRetrievalContext, include?: ReadonlySet<string>) {
+  if (workspace === undefined) return {};
+  const links =
+    include === undefined
+      ? workspace.links
+      : workspace.links.filter(
+          (link) =>
+            include.has(qualifyWorkspaceId(link.from.memberId, link.from.sourceId)) &&
+            include.has(qualifyWorkspaceId(link.to.memberId, link.to.sourceId)),
+        );
+  return {
+    workspace: workspace.scope,
+    provenanceById: workspace.provenanceById,
+    workspaceLinks: links,
+  };
 }
 
 /** Parse a `--depth` value as a non-negative, safe integer (`0` = root only). */
 function parseDepth(value: string): number {
   // Accept only a bare run of digits — Number() would coerce "1.5"/"0x2"/" 2 "/"1e3".
   if (!/^\d+$/.test(value)) {
-    throw usage(`invalid --depth "${value}"`, "pass a non-negative integer, e.g. `--depth 2`");
+    throw usage(
+      `invalid --depth "${value}"`,
+      "pass a non-negative integer, e.g. `--depth 2`; --depth needs a value before a separate flag-looking token",
+    );
   }
   const depth = Number.parseInt(value, 10);
   // A >2^53 run of digits parses without error but loses precision, so the echoed
@@ -181,20 +225,6 @@ function parseDepth(value: string): number {
  * option (`--depth --dot`) — is a `usage` error rather than a silently swallowed
  * flag (mirroring `lore schema`'s value-flag guard).
  */
-function readValue(flag: string, inline: string | undefined, args: readonly string[], i: number): string {
-  if (inline !== undefined) {
-    if (inline === "") {
-      throw usage(`${flag} needs a value`, "pass a value, e.g. `--depth 2`");
-    }
-    return inline;
-  }
-  const next = args[i + 1];
-  if (next === undefined || next === "" || (next.startsWith("-") && next !== "-")) {
-    throw usage(`${flag} needs a value`, "pass a value, e.g. `--depth 2`");
-  }
-  return next;
-}
-
 // ── Output ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -214,20 +244,38 @@ function graphRenderable(data: GraphExport, dot: boolean): Renderable<GraphExpor
  * (annotating the scope when it is a subgraph), one `<id>  [type]  ~<tok>` line
  * per node, then one `<from> -<kind>-> <to>` line per edge (`(dangling: <target>)`
  * for a broken reference). ANSI-free and deterministic.
+ *
+ * `node.id`/`node.type`/`node.title`/edge endpoints all come from bundle-controlled
+ * frontmatter (an edge's `from`/`to` are concept ids; `target` is the reference
+ * as parsed, which for a dangling `specs`/frontmatter edge can carry whatever a
+ * YAML scalar allows — including an embedded newline; `node.type` mirrors
+ * `frontmatter.type`, and `requireType` (schema.ts) only trims the *ends* of the
+ * value while unknown types are warn-only, so an interior newline in `type:`
+ * survives bundle load unchanged), so each is run through {@link singleLine}
+ * before it lands in a line — the same guard every other bundle-text renderer
+ * applies (managed-block.ts, indexes.ts, context.ts, query.ts, log.ts) — so an
+ * embedded newline/control character cannot split one node or edge into extra
+ * physical lines. `data.root` is included for the same reason: though only
+ * reachable via a concept id that itself embeds a newline, guarding it keeps
+ * the header consistent with every id printed below it.
  */
 function renderText(data: GraphExport): string {
+  const root = data.root !== undefined ? singleLine(data.root) : undefined;
   const scope =
-    data.root !== undefined ? ` rooted at ${data.root}${data.depth !== undefined ? ` (depth ${data.depth})` : ""}` : "";
+    root !== undefined ? ` rooted at ${root}${data.depth !== undefined ? ` (depth ${data.depth})` : ""}` : "";
   const lines = [
+    ...(data.workspace !== undefined
+      ? [`workspace: ${singleLine(data.workspace.workspaceId)} (${data.workspace.repositories.length} repositories)`]
+      : []),
     `${data.nodes.length} ${plural(data.nodes.length, "concept")}, ${data.edges.length} ${plural(data.edges.length, "edge")}, ~${data.tokenEstimate} tokens (chars/4)${scope}`,
   ];
   for (const node of data.nodes) {
-    const title = node.title !== undefined ? `  ${node.title}` : "";
-    lines.push(`  ${node.id}  [${node.type}]  ~${node.tokenEstimate}${title}`);
+    const title = node.title !== undefined ? `  ${singleLine(node.title)}` : "";
+    lines.push(`  ${singleLine(node.id)}  [${singleLine(node.type)}]  ~${node.tokenEstimate}${title}`);
   }
   for (const edge of data.edges) {
-    const dest = edge.to !== null ? edge.to : `(dangling: ${edge.target})`;
-    lines.push(`  ${edge.from} -${edge.kind}-> ${dest}`);
+    const dest = edge.to !== null ? singleLine(edge.to) : `(dangling: ${singleLine(edge.target)})`;
+    lines.push(`  ${singleLine(edge.from)} -${edge.kind}-> ${dest}`);
   }
   return lines.join("\n");
 }

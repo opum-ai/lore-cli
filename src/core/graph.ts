@@ -18,6 +18,8 @@
 
 import { type BundleGraph, type EdgeKind, frontmatterScalar } from "./bundle";
 import { compareCodeUnits } from "./order";
+import type { WorkspaceRecordProvenance, WorkspaceResultScope } from "./workspace-contract";
+import type { WorkspaceProjectedLink } from "./workspace-projection";
 
 /** One concept in the exported graph. */
 export interface GraphNode {
@@ -25,10 +27,16 @@ export interface GraphNode {
   readonly id: string;
   /** The concept's resolved `type` (mirrors `frontmatter.type`). */
   readonly type: string;
-  /** The concept's `title` frontmatter, when present and a string; omitted otherwise. */
+  /**
+   * The concept's optional `title` frontmatter, via {@link frontmatterScalar}: a
+   * finite number or boolean value is coerced to its string form, and the field
+   * is omitted only for a missing/empty/whitespace/non-scalar value.
+   */
   readonly title?: string;
   /** This concept's chars/4 token estimate over its canonical serialized bytes. */
   readonly tokenEstimate: number;
+  /** Complete locator-free provenance in explicit workspace mode. */
+  readonly provenance?: WorkspaceRecordProvenance;
 }
 
 /** One directed reference in the exported graph (mirrors a {@link Edge}, with `dangling` made explicit). */
@@ -57,6 +65,10 @@ export interface GraphExport {
   readonly edges: readonly GraphEdge[];
   /** The summed chars/4 token estimate over the included nodes (labeled a heuristic, not a tokenizer). */
   readonly tokenEstimate: number;
+  /** Explicit selected workspace scope; absent for repository-local output. */
+  readonly workspace?: WorkspaceResultScope;
+  /** Exact manifest-authored cross-repository links in workspace mode. */
+  readonly workspaceLinks?: readonly WorkspaceProjectedLink[];
 }
 
 /** Options for {@link buildGraphExport}. */
@@ -70,6 +82,9 @@ export interface GraphExportOptions {
   readonly root?: string;
   /** The hop radius, recorded on the result when the subgraph was bounded. */
   readonly depth?: number;
+  readonly workspace?: WorkspaceResultScope;
+  readonly provenanceById?: ReadonlyMap<string, WorkspaceRecordProvenance>;
+  readonly workspaceLinks?: readonly WorkspaceProjectedLink[];
 }
 
 /**
@@ -109,6 +124,7 @@ export function buildGraphExport(graph: BundleGraph, options: GraphExportOptions
       type: concept.type,
       ...(title !== undefined ? { title } : {}),
       tokenEstimate: tokens,
+      ...(options.provenanceById?.get(id) !== undefined ? { provenance: options.provenanceById.get(id) } : {}),
     });
   }
 
@@ -131,6 +147,8 @@ export function buildGraphExport(graph: BundleGraph, options: GraphExportOptions
     nodes,
     edges,
     tokenEstimate,
+    ...(options.workspace !== undefined ? { workspace: options.workspace } : {}),
+    ...(options.workspaceLinks !== undefined ? { workspaceLinks: options.workspaceLinks } : {}),
   };
 }
 
@@ -158,7 +176,26 @@ export function toDot(data: GraphExport): string {
   return lines.join("\n");
 }
 
-/** Quote a string as a DOT double-quoted ID, escaping backslashes and quotes (the only two DOT requires). */
+/**
+ * Quote a string as a DOT double-quoted ID (an escString, per the Graphviz
+ * language spec). Graphviz's lexer (`lib/cgraph/scan.l`) recognizes exactly
+ * two escapes inside a quoted string — `\"` for a literal quote and `\\` for
+ * a literal backslash — and otherwise **drops** a backslash that precedes
+ * any other character (so an *unescaped* `\` is not safe passthrough; it is
+ * silently eaten, or worse, combines with the following character). A literal
+ * backslash therefore must be doubled to `\\` so it survives the round trip,
+ * and that doubling must happen **first**, before any escape sequence this
+ * function injects (`\"`, `\n`) — otherwise the backslash the doubling itself
+ * introduces would be doubled again. A raw line break cannot survive inside a
+ * quoted ID without splitting `toDot()`'s one-statement-per-line output
+ * across two physical lines, so an embedded newline (`value` is
+ * bundle-controlled — a concept id or frontmatter scalar, either of which can
+ * carry one) is rewritten to the two-character escape `\n` — the same escape
+ * Graphviz itself uses to force a line break inside a label.
+ */
 function quote(value: string): string {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  return `"${value
+    .replace(/\\/g, "\\\\")
+    .replace(/\r\n|\r|\n/g, "\\n")
+    .replace(/"/g, '\\"')}"`;
 }

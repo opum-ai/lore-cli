@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/cli";
 import { runSupersede, type SupersedeReport } from "../src/commands/supersede";
+import { loadBundle } from "../src/core/bundle";
 import { parseConcept, serializeConcept } from "../src/core/concept";
 import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
@@ -33,13 +34,14 @@ function readDoc(rel: string): string {
   return readFileSync(join(root, "docs", rel), "utf8");
 }
 
-/** Run `supersede` in JSON mode and return the parsed `data` payload plus the exit code. */
-function supersedeCmd(args: string[]): { code: number; report: SupersedeReport } {
+/** Run `supersede` in JSON mode and return the parsed `data` payload, the exit code, and any stderr text. */
+function supersedeCmd(args: string[]): { code: number; report: SupersedeReport; stderr: string } {
   const stdout = capture();
-  const code = runSupersede({ root, output: JSON_CTX, args, stdout, stderr: capture() });
+  const stderr = capture();
+  const code = runSupersede({ root, output: JSON_CTX, args, stdout, stderr });
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: SupersedeReport };
   expect(envelope.kind).toBe("supersede.result");
-  return { code, report: envelope.data };
+  return { code, report: envelope.data, stderr: stderr.text() };
 }
 
 /** Run `supersede` expecting a thrown {@link LoreError}, returned for assertions. */
@@ -81,7 +83,7 @@ describe("lore supersede — frontmatter wiring (AC#1)", () => {
 
   test("the body is preserved verbatim; only frontmatter changes", () => {
     const body = "# Old decision\n\nA *careful*  paragraph with  double  spaces.\n\n- one\n- two\n";
-    writeDoc("adr/0007-old.md", "---\ntype: ADR\ntitle: Old\n---\n" + body);
+    writeDoc("adr/0007-old.md", `---\ntype: ADR\ntitle: Old\n---\n${body}`);
     writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
     supersedeCmd(["adr/0007-old", "adr/0012-new"]);
     expect(readDoc("adr/0007-old.md").endsWith(body)).toBe(true);
@@ -130,6 +132,22 @@ describe("lore supersede — supersedes append (don't clobber)", () => {
     expect(report.files.map((f) => f.path)).toEqual(["docs/adr/0007-old.md"]);
     expect(report.filesChanged).toBe(1);
   });
+
+  test("does not duplicate an old id already referenced bare, even when a mirroring directory shadows it (LORE-184)", () => {
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n"); // the true target
+    // A shadow sitting exactly at the dir-joined path a path-first resolver would (wrongly)
+    // compute for the bare ref "adr/0007-old" authored from "adr/" itself.
+    writeDoc("adr/adr/0007-old.md", "---\ntype: ADR\n---\nShadow at the dir-joined path.\n");
+    // the new doc already references the old one in the canonical bare-id form
+    const newBytes = "---\ntype: ADR\nsupersedes: adr/0007-old\n---\nNew.\n";
+    writeDoc("adr/0012-new.md", newBytes);
+    const { report } = supersedeCmd(["adr/0007-old", "adr/0012-new"]);
+    // The bare ref already names the true old concept — wireNew must recognize that (not the
+    // shadow) and treat this as a no-op, not append a duplicate "adr/0007-old" entry.
+    expect(readDoc("adr/0012-new.md")).toBe(newBytes); // byte-identical, not even re-canonicalized
+    expect(report.files.map((f) => f.path)).toEqual(["docs/adr/0007-old.md"]);
+    expect(report.filesChanged).toBe(1);
+  });
 });
 
 // ── AC#2: --rewrite-links repoints inbound references to the successor ─────────────
@@ -152,6 +170,33 @@ describe("lore supersede — --rewrite-links (AC#2)", () => {
     expect(report.rewroteLinks).toBe(false);
     expect(readDoc("stories/use.md")).toContain("[the decision](../adr/0007-old.md)"); // untouched
     expect(report.files.map((f) => f.path)).not.toContain("docs/stories/use.md");
+  });
+
+  test("--rewrite-links refuses to commit when an unreadable nested directory left the bundle graph incomplete (LORE-82)", () => {
+    // A concept inside `locked/` links to the old concept — rewriteInbound can never see that
+    // inbound link once `locked/` is unreadable, so committing --rewrite-links would silently
+    // leave it stale/broken while still reporting success.
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
+    writeDoc("locked/linker.md", "---\ntype: Story\n---\nPer [the decision](../adr/0007-old.md).\n");
+    const locked = join(root, "docs", "locked");
+    try {
+      chmodSync(locked, 0o000);
+    } catch {
+      return; // chmod unavailable in this environment — skip
+    }
+    try {
+      if (loadBundle(join(root, "docs")).concepts.has("locked/linker")) {
+        return; // running as root ignores permissions — the refusal this test targets never applies
+      }
+      const err = expectError(["adr/0007-old", "adr/0012-new", "--rewrite-links"]);
+      expect(err.type).toBe("validation");
+      expect(err.message).toContain("incomplete");
+      // No partial write: the old concept was never wired to superseded (only committed after the check).
+      expect(readDoc("adr/0007-old.md")).not.toContain("status: superseded");
+    } finally {
+      chmodSync(locked, 0o755); // restore so afterEach cleanup can remove it
+    }
   });
 
   test("does NOT self-redirect the successor's own link to its predecessor (the overlap)", () => {
@@ -203,6 +248,43 @@ describe("lore supersede — --rewrite-links (AC#2)", () => {
     const { report } = supersedeCmd(["adr/0007-old", "adr/0012-new", "--rewrite-links"]);
     expect(readDoc("index.md")).toBe(rootIndex); // the hub is excluded — listings are unchanged
     expect(report.files.map((f) => f.path)).not.toContain("docs/index.md");
+  });
+});
+
+// ── link text still names the old id (LORE-262) ─────────────────────────────────
+
+describe("lore supersede — link text still names the old id (LORE-262)", () => {
+  test("--rewrite-links retargets AND warns on stderr when the inbound link's text still names the old id", () => {
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
+    writeDoc(
+      "stories/discuss.md",
+      "---\ntype: Story\n---\nWe replaced [ADR-0007](../adr/0007-old.md) because of a flaw.\n",
+    );
+    const { report, stderr } = supersedeCmd(["adr/0007-old", "adr/0012-new", "--rewrite-links"]);
+    expect(report.rewroteLinks).toBe(true);
+    // Still retargeted exactly as before — the warning is advisory, not a behavior change (AC#2).
+    expect(readDoc("stories/discuss.md")).toContain("[ADR-0007](../adr/0012-new.md)");
+    expect(stderr).toContain('warning: link text "ADR-0007"');
+    expect(stderr).toContain("docs/stories/discuss.md");
+    expect(stderr).toContain("adr/0007-old");
+    expect(stderr).toContain("adr/0012-new");
+  });
+
+  test("an ordinary inbound link's text produces no warning", () => {
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
+    writeDoc("stories/use.md", "---\ntype: Story\n---\nPer [the decision](../adr/0007-old.md).\n");
+    const { stderr } = supersedeCmd(["adr/0007-old", "adr/0012-new", "--rewrite-links"]);
+    expect(stderr).not.toContain("link text");
+  });
+
+  test("without --rewrite-links, no warning is emitted (nothing was retargeted)", () => {
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
+    writeDoc("stories/discuss.md", "---\ntype: Story\n---\n[ADR-0007](../adr/0007-old.md) was replaced.\n");
+    const { stderr } = supersedeCmd(["adr/0007-old", "adr/0012-new"]);
+    expect(stderr).not.toContain("link text");
   });
 });
 
@@ -332,6 +414,27 @@ describe("lore supersede — active profile", () => {
     const err = expectError(["adr/0007-old", "adr/0012-new"]);
     expect(err.type).toBe("validation");
     expect(readDoc("adr/0007-old.md")).toBe(oldBytes); // failed before writing — nothing stamped
+  });
+
+  test("--rewrite-links honors the project profile when re-serializing an inbound concept it reshapes (LORE-88, AC#2)", () => {
+    // A Story whose custom-profile-only scalar `tasks:` field is repointed by --rewrite-links (an
+    // INBOUND concept, not one of the two supersede principals) — before LORE-88, rewriteInbound's
+    // internal re-serialize always fell back to the built-in default profile (tasks as a list),
+    // rejecting this file even though it is fully valid per the project's own committed schema.
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      '[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "Story"\nfields = { tasks = { kind = "string" } }\n',
+    );
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
+    writeDoc("stories/bulk.md", "---\ntype: Story\ntasks: T-1\n---\nUses [old](../adr/0007-old.md).\n");
+
+    const { code, report } = supersedeCmd(["adr/0007-old", "adr/0012-new", "--rewrite-links"]);
+    expect(code).toBe(EXIT_OK);
+    expect(report.rewroteLinks).toBe(true);
+    expect(readDoc("stories/bulk.md")).toContain("[old](../adr/0012-new.md)");
+    expect(readDoc("stories/bulk.md")).toContain("tasks: T-1"); // custom scalar shape survived, not coerced
   });
 });
 

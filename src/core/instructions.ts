@@ -43,10 +43,15 @@ anything if one doesn't. \`lore unlink <story> <taskId...>\` removes the
 coupling the same way, but is more forgiving: a task id no longer present
 in Backlog is simply skipped (exit 0), not an error.
 
-\`lore link\`/\`lore unlink\` edit \`backlog/tasks/*.md\` directly but do not
-commit it -- only \`lore sync\` commits \`backlog/\` (it commits whatever
-either command left dirty). Never hand-edit or \`git add\` files under
-\`backlog/tasks/\` yourself; let \`lore sync\` commit them.
+\`lore link\`/\`lore unlink\` edit \`backlog/tasks/*.md\` directly and commit
+those edits themselves -- each calls \`commitBacklogFiles\`, scoped to
+exactly the files it touched, right after writing them, so nothing is left
+pending for \`lore sync\` on their account. \`lore sync\`'s own commit step
+is now a catch-all sweep: it still commits anything left dirty under
+\`backlog/\` from another source (a human's direct \`backlog task edit\`, or
+a prior run's commit that failed). Never hand-edit or \`git add\` files
+under \`backlog/tasks/\` yourself; whichever command touches them commits
+them.
 
 See ADR-0009 (Story <-> Task coupling & reconciliation) and ADR-0012
 (Backlog coexistence & git ownership).`,
@@ -65,13 +70,18 @@ if \`lore link\`/\`lore unlink\` left it dirty.
 It is idempotent: run it again with no upstream change and it produces
 byte-identical output -- a clean, empty diff. The \`--json\` payload is
 \`kind: sync.result\` and reports exactly what changed (status rewrites,
-managed-block diffs, regenerated files).
+managed-block diffs, regenerated files), plus \`orphanedIndexes\`:
+repo-relative paths of on-disk \`index.md\` files whose directory no longer
+holds any concept (e.g. after a manual \`rm\`/\`mv\` outside \`lore rename\`) --
+reported so they're never silently unmentioned, but left untouched on disk,
+not auto-written or removed.
 
 Never hand-edit inside a managed block: the next \`lore sync\` silently
 overwrites it, and \`lore replace\` silently skips any match inside one --
-neither errors. (Malformed markers themselves -- missing, duplicated, or
-crossed begin/end -- are a \`validation\` error, exit 6; that's a different
-failure than an ordinary hand-edit.) Author prose only outside the markers.
+neither errors. (Malformed markers themselves -- missing, duplicated,
+crossed, or a collapsed same-line begin/end pair -- are a \`validation\`
+error, exit 6; that's a different failure than an ordinary hand-edit.)
+Author prose only outside the markers.
 
 Run \`lore sync\` after any task status change or after linking/unlinking a
 task, before \`lore check\` -- check is read-only and will only tell you sync
@@ -94,9 +104,25 @@ stdout, is the payload). cli-contract.md's exit table labels this condition
 \`validation\` -- \`lore validate\`'s own error_type for a different command;
 check has no error_type split of its own to branch on.
 
-check's \`usage\` (exit 2, a bad flag) and \`not_found\` (exit 3, a given
-bundle-root path argument that doesn't exist) are the only cases that
-actually throw and carry a \`--json\` error envelope.
+check's throws (each carries a \`--json\` error envelope) are \`usage\`
+(exit 2, a bad flag, or a bundle-root path argument that exists but isn't a
+directory), \`not_found\` (exit 3, a given bundle-root path that doesn't
+exist, or, when a discovered concept links a Backlog task, that task's id no
+longer existing), \`denied\` (exit 4, a bundle-root path that exists but
+can't be read), and \`validation\` (exit 6; its causes include a malformed
+status flow or override in the reconcile config, validated up front before
+any task resolution; malformed frontmatter on a \`tasks:\`-linked concept,
+caught per-file while scanning for reconciliation eligibility -- before any
+task resolution runs, but not re-thrown until after the report has already
+emitted; a resolved task whose live status is in neither the configured
+status flow nor its \`[reconcile.overrides]\`, discovered only once that
+task's own detail has already been resolved; and corrupted managed-block
+markers, hit per-concept while regenerating that concept's
+\`<!-- lore:tasks -->\` region during drift detection -- i.e. *after* that
+concept's own tasks are already resolved). \`validation\`'s exit code
+coincides with the drift-tier report's exit 6 above, but the two are
+distinct: \`validation\` is a thrown error with a \`--json\` envelope; the
+report's exit 6 is a plain returned code with no throw.
 
 Because check writes nothing and lore's core has no LLM dependency, it is
 deterministic: a clean \`lore check\` locally means a clean \`lore check\` in
@@ -124,9 +150,12 @@ frontmatter passes through untouched); a stale \`resource:\` value that no
 longer matches what the profile computes for the concept's current path as
 a warning (rule "resource"); and frontmatter values that would serialize
 ambiguously as quote-safety findings -- mostly errors (an unquoted YAML
-indicator char, a YAML-1.1 boolean like bare \`no\`/\`yes\`, or a
-colon-containing value all fail unconditionally), with only a bare
-\`YYYY-MM-DD\` date downgraded to a warning.
+indicator char, a YAML-1.1 boolean like bare \`no\`/\`yes\`, or a colon
+followed by a space, which YAML would otherwise misread as a nested
+mapping), with only a bare \`YYYY-MM-DD\` date downgraded to a warning. A
+colon with no trailing space is not flagged -- a URL like \`https://...\`
+or an ISO timestamp like \`2024-01-01T00:00:00\` is accepted even though
+it contains a colon.
 
 With no path arguments it walks the whole bundle; pass explicit \`[paths...]\`
 to scope it (e.g. from a pre-commit hook checking only staged files).

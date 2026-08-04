@@ -4,7 +4,7 @@ type: Reference
 title: "lore CLI contract (the agent/CI API)"
 description: The normative machine-facing contract for the lore CLI — the three output modes and their precedence, the canonical --json envelope, the semantic exit-code table, the --json error envelope, stdout/stderr discipline, NO_COLOR handling, bounded output with truncation hints, and the additive-only versioning policy that downstream agents and CI gates depend on.
 tags: [reference, cli, contract, json, exit-codes, agent, ci, versioning]
-summary: Defines lore's stable machine-facing contract — output modes (--json > --plain > pretty), the {schemaVersion,kind,data} envelope, six semantic exit codes, the {error_type,message,hint,input} error envelope, stdout/stderr discipline, and additive-only versioning.
+summary: Defines lore's stable output modes, JSON envelopes, semantic exit codes, stream discipline, and additive versioning.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -121,7 +121,7 @@ the [CLI surface](cli-surface.md):
 | `kind` | Emitted by | `data` shape (summary) |
 |---|---|---|
 | `version` / `help` | `lore --version` / `lore --help` (global flags) | the version string / the top-level usage text |
-| `init` | `lore init` | created/skipped paths, bundle root |
+| `init` | `lore init` | created/skipped paths, bundle root, `interactive`/`scaffolds` always, `agents` (Claude), `codex`, and `backlog` only when those steps ran |
 | `new` | `lore new` | new concept id, path, applied template/vars |
 | `validate.report` | `lore validate` | tiered findings (errors/warnings), counts |
 | `check.report` | `lore check` | drift, broken-link, anchor, portability findings; token estimates |
@@ -232,7 +232,7 @@ still a command failure, never a special case. If any item's back-reference
 edit fails, the command exits `6` (`drift`) with stdout **empty**; the
 per-item detail that would otherwise sit in the success envelope's `data`
 moves into the standard error envelope's `input` (§5.2) instead — it is never
-emitted as a success-shaped envelope on a nonzero exit (LORE-58).
+emitted as a success-shaped envelope on a nonzero exit (LCLI-58).
 
 ### 4.1 Warnings do not, by themselves, change the exit code
 
@@ -357,7 +357,9 @@ In pretty and `--plain` modes a failure prints a human-readable diagnostic to
 - `--plain` and `--json` are **always** ANSI-free regardless of `NO_COLOR`.
 - Color is purely cosmetic and **never load-bearing**: no status, severity, or
   result is conveyed by color alone, so a non-color or piped consumer loses no
-  information.
+  information. For example, `lore agents --check` renders a protected bridge
+  file as `out of date (protected; needs --force)` in pretty output and
+  `out-of-date-protected` in `--plain`; its yellow color is redundant.
 
 ---
 

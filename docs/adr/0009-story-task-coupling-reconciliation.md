@@ -3,7 +3,7 @@ type: ADR
 title: "ADR-0009: Story↔Task coupling & status reconciliation"
 description: "How lore couples a Story doc to Backlog.md tasks (doc→task via the Story's tasks: frontmatter, task→doc via a queryable doc:<conceptId> label), and how it reconciles a Story's status from live task statuses using the status set read from Backlog config rather than a hardcoded list."
 tags: [adr, backlog, coupling, status, reconciliation, labels, story]
-summary: "A Story's tasks: frontmatter is the doc→task source of truth, the task→doc back-reference is a queryable Backlog label doc:<conceptId>, and a Story's status is reconciled from live task statuses using the status set from Backlog config, with tasks linked by ID and paths resolved fresh each run."
+summary: "Story task IDs are the coupling source of truth, Backlog labels provide back-references, and live task statuses determine Story status."
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -37,10 +37,12 @@ Several hard constraints, fixed by earlier decisions, shape the answers:
   carries `tasks: [task-42, task-57]`. This is human-authored, diffable, and
   versioned with the narrative it belongs to.
 - **A display-only annotation is not an index.** Backlog supports a free-text
-  `--doc` annotation on a task, but free text is not reliably queryable. To find
-  "every task with no owning doc" (orphans) or to unlink a doc from many tasks,
-  lore needs a field it can *query* through `backlog task list --json` /
-  `backlog search --json`.
+  `--doc` annotation on a task, but free text is not reliably queryable. lore
+  needs a field that *is* queryable — a Backlog label, unlike free text, can be
+  matched exactly (`backlog task list --json --labels`) — to make "does some
+  doc already own this task" a well-defined question. See §2 for what
+  `orphans`/`unlink` actually read today; neither currently issues that
+  filtered query.
 - **Task IDs are stable; on-disk paths are not.** Backlog.md task files are
   named `task-42 - <title>.md`; renaming the task renames the file. Any link
   keyed on the *path* breaks the moment a title changes.
@@ -84,18 +86,26 @@ label**:
 doc:stories/bulk-archive-orders
 ```
 
-- `lore link` calls `backlog task edit <id> --label doc:<conceptId>`; `lore
-  unlink` removes it. The label lives in Backlog.md's own metadata, set the
-  Backlog-approved way, so it **survives `backlog task edit`** — unlike any
-  custom frontmatter key, which Backlog would drop.
-- The label is **the index for the reverse direction.** `lore orphans` queries
-  `backlog task list --json` (and `backlog search --json`) for tasks lacking any
-  `doc:` label to find tasks with no owning doc, and conversely flags docs whose
-  `tasks:` reference IDs that no longer exist. Bulk unlink also keys off the
-  label set.
+- `lore link` calls `backlog task edit <id> --add-label doc:<conceptId>`;
+  `lore unlink` removes it (`--remove-label`). The label lives in Backlog.md's
+  own metadata, set the Backlog-approved way, so it **survives
+  `backlog task edit`** — unlike any custom frontmatter key, which Backlog
+  would drop.
+- The label is **the index for the reverse direction.** `lore orphans` reads a
+  single `backlog task list --json` snapshot — never `backlog search --json`;
+  no lore command currently calls that adapter method — and, from it, treats a
+  task as owned (not reported as an orphan) when **any** of three conditions
+  holds: the task itself carries a `doc:` label, some concept's `tasks:` list
+  forward-references it, or an ancestor in its Backlog `parentTaskId` chain
+  satisfies either of the first two (LCLI-261) — a subtask of an
+  already-linked parent is not reported, since linking the parent does not
+  stamp each subtask with its own back-reference. The same snapshot
+  conversely flags docs whose `tasks:` reference IDs that no longer exist.
+  `lore unlink` does not query the label to discover its targets: it removes
+  the label only from the task ids named explicitly on its command line.
 - `--doc` (the free-text display annotation) is set **in addition**, purely for
   human readability in `backlog task view`. It is explicitly **not** the index:
-  free text is not reliably searchable, so it is never the thing lore queries.
+  free text is not reliably searchable, so it is never the thing lore reads.
   The label carries the machine-readable coupling; `--doc` carries the pretty
   name.
 - `<conceptId>` is the concept ID (path minus `.md`), **case-preserved** —
@@ -139,7 +149,7 @@ live statuses of its owning tasks:
   CI gate. See [ADR-0007: Validation & coherence](0007-validation-and-coherence.md).
 - Reconciliation is pure and deterministic: a graph + JSON operation with no
   LLM, no heuristics, and no ranking.
-- **Per-repo overrides (LORE-26) can map a status straight to a rollup value,
+- **Per-repo overrides (LCLI-26) can map a status straight to a rollup value,
   bypassing flow position entirely.** `.lore/config.toml`'s `[reconcile.overrides]`
   (`config.ts`'s `ReconcileConfig.overrides`, a `Backlog status → "todo"|
   "in-progress"|"done"` map) exists precisely for a status the ordered flow
@@ -223,7 +233,7 @@ see [ADR-0006: Schema, types & templates](0006-schema-types-templates.md).
   mode, so a *live* concept whose id collides with `<oldId>` case-
   insensitively is still protected. Recognizing *that* this drift exists
   in the first place (as opposed to repairing it once found) remains
-  `lore orphans`/`lore check`'s job (LORE-26/27).
+  `lore orphans`/`lore check`'s job (LCLI-26/27).
 
 ## Alternatives considered
 

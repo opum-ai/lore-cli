@@ -9,9 +9,8 @@ description: >-
   GitHub, Obsidian, MkDocs, and Docusaurus.
 tags: [markdown, portability, obsidian, mdx, docusaurus, mkdocs, lint, links]
 summary: >-
-  lore writes and lints a portable GitHub-flavored Markdown subset — relative,
-  URL-encoded, .md-suffixed links and no Obsidian-isms or MDX-unsafe raw
-  characters — and detects (but does not auto-convert) non-portable syntax.
+  lore writes portable relative Markdown links and detects renderer-specific
+  syntax without automatically converting user content.
 timestamp: 2026-06-21T00:00:00Z
 ---
 

@@ -1,0 +1,55 @@
+name: Strict Lore check
+description: >
+  Run the Lore source from this immutable action revision against a checked-out
+  caller repository. Consumers must pin the action to a full commit SHA.
+
+inputs:
+  working-directory:
+    description: Repository-relative bundle root to validate.
+    required: false
+    default: .
+
+runs:
+  using: composite
+  steps:
+    - name: Set up pinned Bun
+      uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      with:
+        bun-version: 1.2.23
+
+    - name: Install pinned Lore dependencies
+      shell: bash
+      working-directory: ${{ github.action_path }}/../../..
+      run: bun install --frozen-lockfile --linker=isolated
+
+    - name: Install published Backlog CLI
+      # v1.49.0 is upstream's first tagged release containing PR #790 / BACK-545 (--json output),
+      # published 2026-08-02 -- this step used to clone and compile MrLesk/Backlog.md from a pinned
+      # pre-release commit on every run; that interim build is retired now that a real release
+      # exists (LCLI-253; docs/runbooks/backlog-json-patch.md §8.1). `bun install --global` puts the
+      # `backlog` bin in the same directory the setup-bun step already put on PATH.
+      shell: bash
+      env:
+        BACKLOG_VERSION: 1.49.0
+      run: |
+        bun install --global "backlog.md@${BACKLOG_VERSION}"
+        VER="$(backlog --version)"
+        echo "backlog --version => '${VER}'"
+        if [[ "$VER" != "$BACKLOG_VERSION" ]]; then
+          echo "backlog installed the wrong version (wanted '${BACKLOG_VERSION}', got '${VER}')" >&2
+          exit 1
+        fi
+
+    - name: Validate OKF documents
+      shell: bash
+      working-directory: ${{ github.workspace }}/${{ inputs.working-directory }}
+      env:
+        LORE_ACTION_ENTRYPOINT: ${{ github.action_path }}/../../../src/cli.ts
+      run: bun "$LORE_ACTION_ENTRYPOINT" validate --strict
+
+    - name: Check Lore coherence
+      shell: bash
+      working-directory: ${{ github.workspace }}/${{ inputs.working-directory }}
+      env:
+        LORE_ACTION_ENTRYPOINT: ${{ github.action_path }}/../../../src/cli.ts
+      run: bun "$LORE_ACTION_ENTRYPOINT" check --strict

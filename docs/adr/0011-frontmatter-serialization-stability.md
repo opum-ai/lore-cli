@@ -3,7 +3,7 @@ type: ADR
 title: "ADR-0011: Frontmatter serialization & diff stability"
 description: lore parses and re-serializes concept frontmatter with gray-matter under a frozen, stability-oriented configuration so that round-tripping an unchanged document is byte-identical — preserving key order, quoting, and unknown keys — and never stores bespoke lore metadata on Backlog.md tasks (which drop unknown keys on edit).
 tags: [adr, frontmatter, gray-matter, serialization, idempotency, diff-stability, drift, backlog]
-summary: lore round-trips concept frontmatter byte-identically via gray-matter with a frozen serializer config (stable key order, quoting, and unknown-key preservation), and keeps all lore metadata in docs rather than on Backlog tasks because Backlog drops unknown frontmatter keys.
+summary: lore preserves stable frontmatter ordering, quoting, and unknown keys while keeping documentation metadata in the docs bundle.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -13,7 +13,7 @@ timestamp: 2026-06-21T00:00:00Z
 
 Accepted — 2026-06-21
 
-Amended — 2026-06-25 (LORE-46): the **canonical key order is profile-driven**. The "append-slot"
+Amended — 2026-06-25 (LCLI-46): the **canonical key order is profile-driven**. The "append-slot"
 for lore-written keys (§3) is the active profile's **field declaration order** — base fields in
 declaration order, then each type's own fields, then lore's reserved coupling fields
 (`supersedes`/`superseded_by`) — derived from `.lore/profile.toml`
@@ -21,6 +21,19 @@ declaration order, then each type's own fields, then lore's reserved coupling fi
 keys emit in this fixed order, **authored unknown keys follow verbatim**, no key is dropped, and
 there is **no global re-sort**. The byte-stable fixpoint and `__proto__`-safe ordering still hold;
 only the *source* of the known-key order moved from a hard-coded list to the compiled profile.
+
+Amended — 2026-07-30 (implementation reconciliation): commit `047857c`
+removed `gray-matter` while remediating YAML dependency advisories. The
+frontmatter boundary now detects and validates fences in `src/core/concept.ts`
+and parses/emits the YAML payload directly through exact-pinned `js-yaml` under
+the same frozen stability policy. This supersedes the package-specific
+`gray-matter` statements in the original decision, which remain below as the
+historical record. The decision’s load-bearing invariants remain unchanged:
+one boundary, deterministic fence/body handling, JSON-schema scalar behavior,
+canonical key order, unknown-key preservation, alias limits, stable quoting,
+and a serialize-parse fixpoint. A future `yaml` or mdast-frontmatter migration
+requires the compatibility proof recorded in the
+[dependency boundary audit](../reference/dependency-boundary-audit.md).
 
 ## Context
 
@@ -100,7 +113,7 @@ Concretely:
    and no key sorting. This is the frontmatter analogue of the frozen-format
    string managed blocks are spliced from ([ADR-0008](0008-managed-block-remark-ast.md)) —
    both trade a general-purpose serializer for a fixed, hand-controlled output shape;
-   lore ships no markdown serializer at all (LORE-22).
+   lore ships no markdown serializer at all (LCLI-22).
 
 3. **Key order is preserved, never sorted.** lore emits keys in the order they
    were read from disk; newly added keys (e.g. a `status` lore computes, or a

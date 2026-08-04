@@ -144,15 +144,72 @@ export function singleLine(text: string): string {
 }
 
 /**
+ * Strip ANSI escape sequences and residual C0/C1 control characters from `text`. Meant to run
+ * *after* {@link singleLine}, which only collapses line terminators (CR/LF/U+2028/U+2029) — it
+ * leaves ESC (`\x1b`)-led sequences and other control bytes (BEL, backspace, …) untouched. A CSI
+ * sequence (`ESC [ … final byte`) can move the cursor or erase lines, so passing one through into
+ * rendered output would let a crafted/corrupted source field forge terminal rows even though the
+ * text is already single-line (LORE-115).
+ *
+ * Two passes: first drop full ANSI escape sequences — CSI (`ESC [ … @-~`), OSC (`ESC ] …`
+ * terminated by BEL or `ESC \`), and the general two-byte form (`ESC` + one printable byte, for
+ * everything else) — then drop any remaining C0 (`\x00`-`\x1f`) or C1/DEL (`\x7f`-`\x9f`) control
+ * byte that wasn't part of a recognized escape sequence (e.g. a bare BEL).
+ *
+ * The single shared home for this strip (LORE-181): it used to be reimplemented byte-identically
+ * in `output.ts` (`renderTaskSummaryRows`, LORE-115), `commands/query.ts` (`sanitizeField`,
+ * LORE-118), `core/validate.ts` (`sanitizeForMessage`, LORE-161), and `core/links.ts`
+ * (`sanitizeForMessage`, LORE-153) — four independently-drifting copies of the same two regexes.
+ * It lives here, layer-neutral beside {@link singleLine}, rather than in `output.ts`, so
+ * `core/`-layer callers (which must stay filesystem/output-layer-free) can import it too. Callers
+ * that need `singleLine` composed with the strip do so at the call site — this function is the raw
+ * primitive only, so a caller that must NOT single-line first (none currently do) still can.
+ */
+export function stripAnsiAndControls(text: string): string {
+  const withoutAnsi = text.replace(
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
+    /\x1b(?:\[[0-9;:<=>?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[ -~])/g,
+    "",
+  );
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
+  return withoutAnsi.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
+}
+
+/**
+ * The maximum length {@link stderrHint} returns (truncation indicator included). A crashing or
+ * hostile subprocess can write an unbounded amount to stderr; without a cap that entire blob
+ * becomes a single unbounded `LoreError.hint` line (LORE-249).
+ */
+const STDERR_HINT_MAX_LENGTH = 500;
+
+/** Appended to a {@link stderrHint} result cut short by {@link STDERR_HINT_MAX_LENGTH}. */
+const STDERR_HINT_TRUNCATION_INDICATOR = "…";
+
+/**
  * Collapse a failed subprocess invocation's stderr to a one-line hint, or `undefined` when it
  * carried no content — the shared policy behind every `LoreError` hint built from a subprocess
  * failure (`adapters/backlog.ts`'s Backlog spawn, `state.ts`'s git-write seam, `adapters/git.ts`'s
  * real `GitAdapter`), so a future change to how stderr is condensed (stripping ANSI, capping
  * length, …) has one home instead of three independently-drifting copies.
+ *
+ * Whitespace (including line breaks) is collapsed to single spaces *before* the ANSI/control-byte
+ * strip, not after: {@link stripAnsiAndControls} deletes C0 bytes outright — including `\n`/`\t`,
+ * which are also C0 bytes — so stripping first would glue words that were separated only by a
+ * line break (`"foo\nbar"` → `"foobar"`) instead of the space the previous behavior preserved. A
+ * second collapse+trim pass afterward mops up any doubled space left where an excised escape
+ * sequence had sat between two words (LORE-181's {@link stripAnsiAndControls} was never applied
+ * here — LORE-249). The result is then capped to {@link STDERR_HINT_MAX_LENGTH}, so an unbounded
+ * subprocess stderr cannot produce an unbounded hint.
  */
 export function stderrHint(stderr: string): string | undefined {
-  const trimmed = stderr.trim().replace(/\s+/g, " ");
-  return trimmed === "" ? undefined : trimmed;
+  const collapsed = stderr.trim().replace(/\s+/g, " ");
+  const cleaned = stripAnsiAndControls(collapsed).trim().replace(/\s+/g, " ");
+  if (cleaned === "") {
+    return undefined;
+  }
+  return cleaned.length > STDERR_HINT_MAX_LENGTH
+    ? `${cleaned.slice(0, STDERR_HINT_MAX_LENGTH)}${STDERR_HINT_TRUNCATION_INDICATOR}`
+    : cleaned;
 }
 
 /**
@@ -439,13 +496,30 @@ function toJsonSafe(value: unknown, ancestors: Set<object>, key = ""): unknown {
  * (`error_type`/`message`/`hint`) intact. Callers pass an object envelope, whose
  * own keys are enumerable, so the walk cannot throw and the result is a string;
  * the inner guard is an absolute last resort for a hostile top-level value.
+ *
+ * `JSON.stringify` doesn't only fail by throwing — for a bare `Symbol`, a bare
+ * function, or a value whose `toJSON` returns one of those, it silently returns
+ * runtime `undefined` instead of a string (its documented behavior for values it
+ * cannot encode). A caller here always expects a real string back — `asText`
+ * exists specifically to guarantee that — so an `undefined` result for a
+ * non-nullish `value` is treated as a failure too, routed through the same
+ * degrade-to-`toJsonSafe` fallback as a thrown error. That fallback can itself
+ * still bottom out at `undefined` (a *top-level* Symbol/function degrades to
+ * `undefined` by design, mirroring `JSON.stringify`'s own semantics — see
+ * {@link toJsonSafe}), so the final `"[unserializable]"` string is the backstop
+ * for that case too.
  */
 function safeStringify(value: unknown): string {
   try {
-    return JSON.stringify(value);
+    const result = JSON.stringify(value);
+    if (result === undefined) {
+      throw new Error("JSON.stringify produced no output for a non-nullish value");
+    }
+    return result;
   } catch {
     try {
-      return JSON.stringify(toJsonSafe(value, new Set()));
+      const degraded = JSON.stringify(toJsonSafe(value, new Set()));
+      return degraded === undefined ? JSON.stringify("[unserializable]") : degraded;
     } catch {
       return JSON.stringify("[unserializable]");
     }
@@ -536,16 +610,33 @@ export function reportError(err: unknown, opts: { json: boolean; color?: boolean
 /**
  * Accumulates advisory warnings (unknown OKF `type`, missing `summary`,
  * non-portable link syntax, …). Per cli-contract §4.1 warnings go to stderr and
- * **do not, by themselves, change the exit code**; gate commands
- * (`validate`/`check`) may inspect {@link count}/{@link list} to decide whether
- * to fail with exit `6`.
+ * **do not, by themselves, change the exit code** — `count`/`list` are for
+ * display only. A caller whose mutation depends on a specific advisory (e.g. a
+ * complete bundle graph) tests for it with the machine-readable {@link has}
+ * tag instead (LORE-82); as of writing, `rename`/`supersede` are the only such
+ * callers — `validate`/`check` do not currently gate on any warning.
  */
 export class WarningCollector {
   private readonly messages: string[] = [];
+  /** Machine-readable tags attached to warnings via {@link add}'s optional `kind`, for {@link has}. */
+  private readonly kinds = new Set<string>();
 
-  /** Record an advisory warning. */
-  add(message: string): void {
+  /**
+   * Record an advisory warning. `kind` is an optional machine-readable tag (distinct from the
+   * human-readable `message`) a caller can later test for with {@link has} — e.g. a bundle-load
+   * caller that must refuse to proceed on an incomplete graph, not just display it. Most callers
+   * only ever need the free-text `message`; `kind` is opt-in and does not change `list()`/`flush()`.
+   */
+  add(message: string, kind?: string): void {
     this.messages.push(message);
+    if (kind !== undefined) {
+      this.kinds.add(kind);
+    }
+  }
+
+  /** Whether any warning was recorded with the given machine-readable `kind` tag. */
+  has(kind: string): boolean {
+    return this.kinds.has(kind);
   }
 
   /** How many warnings have been collected. */
@@ -563,9 +654,29 @@ export class WarningCollector {
     return [...this.messages];
   }
 
+  /** Append another collector's messages and machine-readable kinds in order. */
+  merge(other: WarningCollector): void {
+    this.messages.push(...other.messages);
+    for (const kind of other.kinds) this.kinds.add(kind);
+  }
+
   /**
    * Write each collected warning to stderr as `warning: <message>` and return
    * the number flushed. Color is applied only when `opts.color` is true.
+   *
+   * Each message is coerced and single-lined via {@link asText}/{@link singleLine} —
+   * the same normalization `formatErrorText`/`toErrorEnvelope` apply to a
+   * `LoreError`'s message/hint — and then run through the shared
+   * {@link stripAnsiAndControls}, the same ANSI/OSC/control-byte strip `output.ts`'s
+   * `renderTaskSummaryRows` applies to table fields (LORE-115/LORE-181). So a warning
+   * containing embedded newlines, ESC-led CSI/OSC sequences, or bare control bytes
+   * (e.g. `\x1b[2J`, BEL) still emits as exactly one plain stderr line, preserving
+   * the one-warning-per-line contract and closing — centrally, for every caller of
+   * this collector (dangling task ids, Backlog titles/statuses, …) — the escape
+   * forgery a crafted/corrupted source field could otherwise smuggle onto stderr.
+   * Sanitization runs on the message body only: the painted `warning:` prefix is
+   * built once below, from a fixed literal, and never passed through the strip, so
+   * its color/escape sequence is unaffected.
    *
    * This is **non-draining**: it does not clear the collected warnings, so a
    * second `flush` re-emits them and {@link list}/{@link count} stay valid
@@ -578,7 +689,8 @@ export class WarningCollector {
     // The painted prefix is loop-invariant — build it once, not once per warning.
     const prefix = paint("warning:", ANSI.yellow, color);
     for (const message of this.messages) {
-      stderr.write(`${prefix} ${message}\n`);
+      const body = stripAnsiAndControls(singleLine(asText(message)));
+      stderr.write(`${prefix} ${body}\n`);
     }
     return this.messages.length;
   }

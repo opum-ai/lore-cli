@@ -18,13 +18,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { idFromPath } from "../core/concept";
-import { loadProfile, type Profile } from "../core/profile";
+import { loadProfile, type Profile, templateConfinementViolation } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { canonicalType, isKnownType, SCHEMAS_DIR, schemaFileName, schemaModeline, typeDirectory } from "../core/schema";
 import { buildNewConcept, builtinTemplateFor, slugify } from "../core/template";
 import { EXIT_OK, errnoCode, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { createIfAbsent, ensureDir } from "./fswrite";
+import { assertNotReservedStem, optionValues, parseCommandArgs } from "./args";
+import { createIfAbsent, ensureDir, findSymlinkSegment } from "./fswrite";
 
 /** Where user templates live, relative to the repo root. */
 const TEMPLATES_DIR = ".lore/templates";
@@ -58,7 +59,7 @@ export interface NewOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `new`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** Clock seam for the `timestamp` token; defaults to the real wall clock. */
   clock?: () => Date;
@@ -87,8 +88,8 @@ interface NewArgs {
  */
 export function runNew(options: NewOptions): number {
   const clock = options.clock ?? (() => new Date());
-  const profile = loadProfile({ root: options.root });
   const parsed = parseNewArgs(options.args);
+  const profile = loadProfile({ root: options.root });
   const type = canonicalType(parsed.type, profile);
   // A profile-declared type is valid by definition — including a multi-word/space-containing name
   // like "QA Plan" (its path segments come from the LOWER-KEBAB slug, which is always safe). The
@@ -124,7 +125,7 @@ export function runNew(options: NewOptions): number {
   if (existsSync(absPath)) {
     throw conflict(docPath);
   }
-  ensureDir(join(options.root, posix.dirname(docPath)), posix.dirname(docPath));
+  ensureDir(options.root, posix.dirname(docPath));
   if (!createIfAbsent(absPath, build.contents, docPath)) {
     throw conflict(docPath);
   }
@@ -172,62 +173,14 @@ function resolveModeline(type: string, docPath: string, root: string, profile: P
  * title may begin with `-` (`lore new adr -- "-5 minute timeout"`).
  */
 function parseNewArgs(args: readonly string[]): NewArgs {
-  const positionals: string[] = [];
+  const parsed = parseCommandArgs(args, "new");
+  const positionals = parsed.positionals;
   const vars: Record<string, string> = Object.create(null);
-  let template: string | undefined;
-  let summary: string | undefined;
-  let tags: string | undefined;
-  let out: string | undefined;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
-    if (arg === "--") {
-      // End of options: every remaining token is a positional, even if it looks like a flag.
-      positionals.push(...args.slice(i + 1));
-      break;
-    }
-    if (arg.startsWith("--") && arg.length > 2) {
-      const eq = arg.indexOf("=");
-      const name = eq >= 0 ? arg.slice(2, eq) : arg.slice(2);
-      // Consume the flag's value: the inline `=` form, else the next token — which must exist
-      // and must not itself be a flag (a following `--json`/`--tags`/`--` is a missing value,
-      // not the value), so a mis-ordered flag fails loud instead of silently binding.
-      const takeValue = (): string => {
-        if (eq >= 0) {
-          return arg.slice(eq + 1);
-        }
-        const next = args[i + 1];
-        if (next === undefined || (next.startsWith("-") && next !== "-")) {
-          throw usage(`option "--${name}" needs a value`, `pass a value, e.g. --${name}=<value>`);
-        }
-        i++;
-        return next;
-      };
-      switch (name) {
-        case "var":
-          addVar(vars, takeValue());
-          break;
-        case "template":
-          template = takeValue();
-          break;
-        case "summary":
-          summary = takeValue();
-          break;
-        case "tags":
-          tags = takeValue();
-          break;
-        case "out":
-          out = takeValue();
-          break;
-        default:
-          throw usage(`unknown option "--${name}"`, "run `lore new --help` to list options");
-      }
-    } else if (arg.startsWith("-") && arg !== "-") {
-      throw usage(`unknown option "${arg}"`, "run `lore new --help` to list options");
-    } else {
-      positionals.push(arg);
-    }
-  }
+  for (const raw of optionValues(parsed, "var")) addVar(vars, raw);
+  const template = optionValues(parsed, "template").at(-1);
+  const summary = optionValues(parsed, "summary").at(-1);
+  const tags = optionValues(parsed, "tags").at(-1);
+  const out = optionValues(parsed, "out").at(-1);
 
   const type = positionals[0];
   if (type === undefined || type.trim() === "") {
@@ -285,6 +238,15 @@ function parseTags(tags: string | undefined): string[] | undefined {
  * (resolved and confined to the repo by {@link resolveOutPath}); otherwise it is the
  * conventional `docs/<typeDirectory>/<slug-of-title>.md`. A title with no slug-able content
  * and no `--out` is a `usage` error rather than a `-.md` file.
+ *
+ * The default path is checked against the same {@link assertNotReservedStem} guard
+ * {@link resolveOutPath} applies (LORE-174): a title that slugifies to `index` or `log` (e.g.
+ * `lore new reference "Index"`) would otherwise land on a stem `rename`/`supersede`/`link` treat
+ * as lore-generated and refuse to touch, bypassing the policy LORE-114 added only on the `--out`
+ * path. The default path always carries a non-empty type-directory segment (every known
+ * {@link typeDirectory} maps to a non-empty string, and every ad-hoc type's slug is non-empty
+ * since `VALID_TYPE` requires a leading letter), so it can never collide with the bundle-root
+ * index `resolveOutPath` guards separately — no `RESERVED_ROOT_INDEX` check is needed here.
  */
 function resolveDocPath(parsed: NewArgs, type: string, root: string): string {
   if (parsed.out !== undefined) {
@@ -294,7 +256,9 @@ function resolveDocPath(parsed: NewArgs, type: string, root: string): string {
   if (slug === "") {
     throw usage(`could not derive a filename from title "${parsed.title}"`, "pass an explicit path with --out <path>");
   }
-  return posix.join(DOCS_DIR, typeDirectory(type), `${slug}.md`);
+  const docPath = posix.join(DOCS_DIR, typeDirectory(type), `${slug}.md`);
+  assertNotReservedStem(idFromPath(docPath), "create");
+  return docPath;
 }
 
 /**
@@ -305,6 +269,12 @@ function resolveDocPath(parsed: NewArgs, type: string, root: string): string {
  * can never write an orphaned file the bundle walk won't see, nor clobber the conformance root.
  * The `..` escape is matched by path **segment** (`..` exactly or a leading `../`), so a real
  * in-repo path whose first segment merely starts with `..` (e.g. `..notes/x`) is not rejected.
+ *
+ * Beyond the root index, ANY basename of `index`/`log` — at any nesting depth — is also rejected,
+ * via the same {@link assertNotReservedStem} `rename`/`supersede`/`link` share (LORE-114): those
+ * stems are lore's own generated file names wherever they sit, not just at the bundle root, so
+ * `lore new` must not let a user create a doc that collides with one. Checked AFTER the
+ * root-index-specific check above, so `docs/index.md` keeps its own message unaffected.
  */
 function resolveOutPath(out: string, root: string): string {
   const rel = relative(root, resolve(root, out));
@@ -327,6 +297,7 @@ function resolveOutPath(out: string, root: string): string {
       "choose another path; `lore init` owns the root index that carries okf_version",
     );
   }
+  assertNotReservedStem(idFromPath(posixRel), "create");
   return posixRel;
 }
 
@@ -340,13 +311,30 @@ function resolveOutPath(out: string, root: string): string {
  * the schema filenames). A present file is the user template (override, AC#2). If none exists: an
  * explicit `--template` is a `not_found` error (the caller asked for a specific template); a
  * profile-declared-but-missing template, like the default, falls back to the built-in body.
+ *
+ * An explicit `--template` is a user-facing CLI flag (unlike `declared`, a repo-config value) and
+ * is validated with {@link assertTemplateNameConfined} BEFORE it ever reaches a file path (LORE-69):
+ * `--template` is documented as a bare name, never a path, so a `..` segment or an absolute value
+ * is rejected outright rather than spliced into `${TEMPLATES_DIR}/${base}.md` and hoped safe. The
+ * profile-declared `template` went through the analogous {@link templateConfinementViolation}
+ * check already, at profile PARSE time (LORE-139), so it is not re-checked for confinement here —
+ * only the two named-by-user-or-repo-config sources (`--template`, `declared`) get the symlink
+ * refusal below; the bare-type-name convention lookup (neither given) does not (LORE-91 scope).
  */
 function resolveTemplate(parsed: NewArgs, type: string, root: string, profile: Profile): string {
+  const explicitTemplate = parsed.template !== undefined;
+  if (parsed.template !== undefined) {
+    assertTemplateNameConfined(parsed.template);
+  }
   const declared = profile.types.get(type)?.template?.replace(/\.md$/i, "");
   const base = parsed.template ?? declared ?? type;
+  // A named template source — the CLI flag or a profile's own declared filename — is refused if
+  // it resolves through a symlink (LORE-91, widened to `declared` by LORE-185's AC#2); the bare
+  // type-name convention lookup below carries no such refusal, matching the pre-LORE-185 scope.
+  const checkSymlink = explicitTemplate || declared !== undefined;
   for (const candidate of templateCandidates(base)) {
     const relPath = `${TEMPLATES_DIR}/${candidate}.md`;
-    const text = readTemplateFile(join(root, relPath), relPath);
+    const text = readTemplateFile(join(root, relPath), relPath, root, checkSymlink);
     if (text !== undefined) {
       return text;
     }
@@ -362,6 +350,33 @@ function resolveTemplate(parsed: NewArgs, type: string, root: string, profile: P
   return builtinTemplateFor(type);
 }
 
+/**
+ * Reject a `--template` value that could escape `.lore/templates/` once spliced into a file
+ * path, via the shared {@link templateConfinementViolation} predicate `core/profile.ts` also uses
+ * for the profile-declared `[[types]].template` value (LORE-139) — LORE-185 consolidated what
+ * used to be this function's own host-`resolve()`/`relative()` arithmetic (no backslash
+ * normalization) onto that one pure-posix, backslash-aware implementation, closing a cross-host
+ * drift: a Windows-style `--template ..\..\secret` escape was only ever caught on an actual win32
+ * run before — a POSIX test/CI run saw it as one inert, non-escaping filename segment — and is now
+ * rejected identically on every host. See {@link templateConfinementViolation}'s own docstring for
+ * the absolute-path and `..`-escape rationale in full (both apply unchanged here).
+ */
+function assertTemplateNameConfined(name: string): void {
+  const violation = templateConfinementViolation(name);
+  if (violation === "absolute") {
+    throw usage(
+      `--template value "${name}" must not be an absolute path`,
+      "pass a bare template name, e.g. --template adr",
+    );
+  }
+  if (violation === "escape") {
+    throw usage(
+      `--template value "${name}" must not escape ${TEMPLATES_DIR}/`,
+      "pass a bare template name, e.g. --template adr",
+    );
+  }
+}
+
 /** The template filenames to try for a base, the name as given first then its lower-cased form (deduped). */
 function templateCandidates(base: string): string[] {
   const lower = base.toLowerCase();
@@ -372,8 +387,37 @@ function templateCandidates(base: string): string[] {
  * Read a template file as UTF-8, returning `undefined` when it does not exist (`ENOENT`) so
  * the caller can fall back to a built-in. A permission failure becomes a `denied`
  * {@link LoreError}; any other read fault propagates as an uncaught error.
+ *
+ * `checkSymlink` (true for an explicit `--template` (LORE-91) AND, as of LORE-185's AC#2, a
+ * profile-declared `template` — `resolveTemplate`'s `declared` fallback) refuses — rather than
+ * silently reading through — a symlinked candidate anywhere in `relPath`'s segments, closing an
+ * information-disclosure gap the purely syntactic {@link templateConfinementViolation} containment
+ * check cannot: a bare, unsuspicious `--template evil` (or a profile declaring `template = "evil"`)
+ * whose resolved `.lore/templates/evil.md` is itself a symlink to an arbitrary file outside the
+ * repo would otherwise have that file's exact content silently embedded in the generated concept.
+ * Mirrors this codebase's established write-path precedent (`fswrite.ts`'s
+ * `assertNoSymlinkInPath`/`findSymlinkSegment`, LORE-76/77) rather than inventing a new pattern,
+ * and its own READ-path precedent (`core/bundle.ts`'s `walkMarkdown`, `commands/replace.ts`) of
+ * never following a symlink that could resolve outside the repo. `checkSymlink` is still `false`
+ * for the bare-type-name convention lookup (neither `--template` nor a profile `declared` value) —
+ * LORE-139 hardened that path's PARSE-time traversal check (via the profile's own compiled
+ * `template`, confined before `resolveTemplate` ever sees it) but, unlike the two named sources
+ * above, that implicit lookup names no untrusted value at all, so it was intentionally left out of
+ * this task's AC#2 scope rather than "left untouched" wholesale, as an earlier draft of this
+ * comment (pre-LORE-185) claimed.
  */
-function readTemplateFile(absPath: string, relPath: string): string | undefined {
+function readTemplateFile(absPath: string, relPath: string, root: string, checkSymlink: boolean): string | undefined {
+  if (checkSymlink) {
+    const symlink = findSymlinkSegment(root, relPath);
+    if (symlink !== null) {
+      throw new LoreError(
+        "conflict",
+        `refusing to read ${relPath}: "${symlink}" is a symlink, not a real directory or file`,
+        "lore does not read through a symlink (it may resolve outside the repo) — remove or replace it, then re-run",
+        { path: relPath, symlink },
+      );
+    }
+  }
   try {
     return readFileSync(absPath, "utf8");
   } catch (cause) {

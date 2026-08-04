@@ -38,12 +38,13 @@
  */
 
 import { fromMarkdown } from "mdast-util-from-markdown";
-import { LoreError, WarningCollector } from "../errors";
-import { nodeText, walkMdast } from "./bundle";
+import { LoreError, singleLine, stripAnsiAndControls, WarningCollector } from "../errors";
+import { effectiveProfileFor, nodeText } from "./bundle";
 import { type Concept, tryParseConcept } from "./concept";
 import type { Finding as BaseFinding, Severity } from "./finding";
 import { decodeTarget } from "./links";
 import { defaultProfile, type Profile } from "./profile";
+import { ROOT_INDEX_PATH } from "./scaffold";
 import { requiredSectionsFor } from "./schema";
 import { expectedResource } from "./template";
 
@@ -92,17 +93,25 @@ export interface ValidateReport {
  * On a clean parse the two ADR-0007 additions run: {@link requiredSectionFindings} and
  * {@link quoteSafetyFindings}.
  *
+ * `path` is resolved to its **judging profile** via {@link import("./bundle").effectiveProfileFor}
+ * before any of that runs: the bundle-root {@link ROOT_INDEX_PATH} (this module's repo-relative
+ * spelling) is always judged against the built-in {@link defaultProfile}, never `profile`
+ * (LORE-144) — see that helper for why, and for why it lives in `bundle.ts` rather than here
+ * (LORE-192: this module already imports {@link nodeText} from `bundle.ts`, so the reverse import
+ * would cycle).
+ *
  * A non-{@link LoreError} (a genuine bug) is *not* swallowed — it propagates, so a crash is
  * never silently dressed up as a validation finding.
  */
 export function validateConceptText(path: string, raw: string, profile: Profile = defaultProfile()): FileReport {
+  const effective = effectiveProfileFor(path, ROOT_INDEX_PATH, profile);
   // Parse exactly once. tryParseConcept fills the collector with tier-3 warnings, returns null for
   // a non-concept (skip), and throws a `validation` LoreError for a real-but-malformed concept —
   // so a single call draws every distinction the reporter needs without re-parsing the same bytes.
   const warnings = new WarningCollector();
   let concept: Concept | null;
   try {
-    concept = tryParseConcept(path, raw, { warnings, profile });
+    concept = tryParseConcept(path, raw, { warnings, profile: effective });
   } catch (err) {
     // A genuine bug (a non-LoreError) must never be dressed up as a validation finding — propagate
     // it (the invariant this module states). A malformed concept becomes one error finding; its
@@ -126,8 +135,8 @@ export function validateConceptText(path: string, raw: string, profile: Profile 
   for (const message of warnings.list()) {
     findings.push({ severity: "warning", rule: "frontmatter", message });
   }
-  findings.push(...requiredSectionFindings(concept.type, concept.body, profile));
-  findings.push(...resourceDriftFindings(path, concept, profile));
+  findings.push(...requiredSectionFindings(concept.type, concept.body, effective));
+  findings.push(...resourceDriftFindings(path, concept, effective));
   findings.push(...quoteSafetyFindings(raw));
 
   return finalize(path, concept.type, findings);
@@ -305,9 +314,33 @@ function resourceDriftFindings(path: string, concept: Concept, profile: Profile)
     {
       severity: "warning",
       rule: "resource",
-      message: `resource "${actual}" is stale; this path under the profile's resource_base is "${expected}" — update it or remove the \`resource\` key`,
+      // `actual` is sanitized here, not above: the drift comparisons must judge the *raw*
+      // bundle-authored value (sanitizing first could mask real drift or falsely collapse two
+      // distinct URLs into one), but `Finding.message` is documented as "a single-line, actionable
+      // description" and every other finding builder only ever interpolates lore-computed values
+      // (`type`, `expected`) — `resource` is the one message that embeds an author-controlled raw
+      // string straight from frontmatter. Sanitizing once here, at the only place that string
+      // reaches a message, keeps that contract for every consumer (CLI text, `--json`, a future
+      // renderer) instead of trusting each print site to re-derive the same defense (LORE-161).
+      message: `resource "${sanitizeForMessage(actual)}" is stale; this path under the profile's resource_base is "${expected}" — update it or remove the \`resource\` key`,
     },
   ];
+}
+
+/**
+ * Collapse an author-controlled frontmatter string to a single line with no ANSI escape sequences
+ * or other control bytes, for safe embedding into a {@link Finding} `message`. {@link singleLine}
+ * (cli-contract §5.2's own single-line discipline) only folds line *terminators* (CR/LF/U+2028/
+ * U+2029); a YAML double-quoted scalar can also smuggle an ESC-led ANSI sequence or another C0/C1/
+ * DEL control byte (e.g. `resource: "…\x1b[31m…"`), which `singleLine` leaves untouched. Runs
+ * `singleLine` first, then strips what it leaves via the shared {@link stripAnsiAndControls}
+ * (LORE-181) — the single home for that two-pass strip, also used by `output.ts`,
+ * `commands/query.ts`, and `core/links.ts` — imported from `errors.ts` rather than `output.ts`:
+ * this module must stay filesystem/output-layer-free (module doc above), and `errors.ts` is
+ * layer-neutral.
+ */
+function sanitizeForMessage(text: string): string {
+  return stripAnsiAndControls(singleLine(text));
 }
 
 /** Normalize a heading or section name for comparison: trim, collapse interior whitespace, lower-case. */
@@ -316,26 +349,30 @@ function normalizeHeading(text: string): string {
 }
 
 /**
- * The text of every depth-2 (`##`) heading in a markdown body, in document order. Extraction
- * defers to a CommonMark parser (`mdast-util-from-markdown`) so a `## ` that appears inside a
- * fenced/indented code block is **not** mistaken for a heading — matching how {@link loadBundle}
- * extracts links. The traversal reuses bundle.ts's stack-safe {@link walkMdast}, so a
- * pathologically deep body cannot overflow the call stack.
+ * The text of every depth-2 (`##`) heading that is a **direct, top-level child of the document
+ * root** — i.e. a genuine section heading, not one nested inside a blockquote or list item —
+ * in document order. Extraction defers to a CommonMark parser (`mdast-util-from-markdown`) so a
+ * `## ` that appears inside a fenced/indented code block is **not** mistaken for a heading —
+ * matching how {@link loadBundle} extracts links. Unlike {@link nodeText}'s own traversal (which
+ * still walks a matched heading's inline children to assemble its text), this only iterates the
+ * root's immediate `children` — it does not recurse into container nodes — so `> ## Status`
+ * (inside a blockquote) or a `## `-looking line inside a list item never counts as a top-level
+ * section, even though both nest a real `heading` node somewhere in the tree.
  */
 function h2Headings(body: string): string[] {
   const headings: string[] = [];
-  walkMdast(fromMarkdown(body), (node) => {
+  for (const node of fromMarkdown(body).children) {
     if (node.type === "heading" && node.depth === 2) {
       headings.push(nodeText(node));
     }
-  });
+  }
   return headings;
 }
 
 // ── Cross-cutting: frontmatter quote-safety ────────────────────────────────────—
 
 /** YAML indicator characters that make an unquoted scalar parser-dependent or reserved. */
-const INDICATOR_CHARS: ReadonlySet<string> = new Set(["@", "`", "!", "&", "*", "|", ">"]);
+const INDICATOR_CHARS: ReadonlySet<string> = new Set(["@", "`", "!", "&", "*", "|", ">", ":"]);
 
 /** A bare YAML-1.1 boolean alias a non-1.2 consumer coerces away from a string. */
 const YAML11_BOOLEAN = /^(yes|no|on|off|y|n)$/i;

@@ -26,7 +26,7 @@ detail with `lore instructions <topic>`:
 
 ## Commands
 
-- `init`          Scaffold an empty, conformant OKF bundle
+- `init`          Scaffold an OKF bundle; a bare TTY run also wizards the agent bridge/scaffolds/backlog check
 - `new`           Scaffold a typed concept from a template
 - `validate`      Check concept files against OKF + the lore profile (per-file)
 - `check`         Validate links/anchors + reconciliation drift across the bundle (CI gate)
@@ -41,10 +41,12 @@ detail with `lore instructions <topic>`:
 - `schema`        Export the profile's editor JSON Schemas to .lore/schemas/
 - `scaffold`      Generate a downstream docs consumer's config, additively outside docs/
 - `graph`         Emit the bundle's cross-link graph as json or dot
+- `export`        Emit a deterministic, consumer-neutral OKF projection as JSONL
 - `query`         Full-text search the bundle with frontmatter filters
 - `context`       Assemble a concept + neighbor summaries within a token budget
 - `instructions`  Print task-scoped agent guidance on demand
 - `agents`        Regenerate this bridge (SKILL.md + the CLAUDE.md nudge)
+- `help`          Show help, or the machine-readable command manifest under --json
 
 ## Machine contract
 

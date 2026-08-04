@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { type Concept, parseConcept, serializeConcept, serializeConceptWithModeline } from "../src/core/concept";
+import {
+  type Concept,
+  parseConcept,
+  serializeConcept,
+  serializeConceptWithModeline,
+  tryParseConcept,
+} from "../src/core/concept";
 import { LoreError, WarningCollector } from "../src/errors";
 
 /** A leading UTF-8 BOM, built ASCII-safely so there is no literal U+FEFF in source. */
@@ -139,6 +145,97 @@ describe("parseConcept — error tier (throws validation, exit 6)", () => {
   });
 });
 
+describe("parseConcept — malformed closing fence (LORE-141)", () => {
+  // gray-matter's closing-delimiter search is a plain `str.indexOf('\n---')` substring
+  // match, not an exact-line match, so a closing fence with extra trailing characters
+  // (e.g. `----` instead of `---`) is silently accepted and a few stray bytes from the
+  // fence bleed into the parsed body instead of raising an error. Live repro from the
+  // task: parsing `---\ntype: Reference\n----\nbody text here\n` used to yield
+  // `body: "-\nbody text here\n"` — a leaked leading `-`. These pin that the malformed
+  // fence is now rejected outright (never both a false-success AND a corrupted body).
+
+  test("a closing fence with extra trailing dashes (----) throws instead of leaking a stray '-' into the body", () => {
+    const raw = "---\ntype: Reference\n----\nbody text here\n";
+    const err = expectValidation(() => parseConcept("x.md", raw));
+    expect(err.message).toContain("malformed closing fence");
+    expect(err.message).toContain("x.md");
+  });
+
+  test("tryParseConcept also throws (not swallowed as a non-concept) for the same malformed fence", () => {
+    const raw = "---\ntype: Reference\n----\nbody text here\n";
+    expectValidation(() => tryParseConcept("x.md", raw));
+  });
+
+  test("a closing fence with other trailing junk (not just dashes) is rejected the same way", () => {
+    const raw = "---\ntype: Reference\n---junk\nbody text here\n";
+    const err = expectValidation(() => parseConcept("x.md", raw));
+    expect(err.message).toContain("malformed closing fence");
+  });
+
+  test("a well-formed bare closing fence still parses normally — no regression (AC#3)", () => {
+    const raw = "---\ntype: Reference\n---\nbody text here\n";
+    const concept = parseConcept("x.md", raw);
+    expect(concept.frontmatter.type).toBe("Reference");
+    expect(concept.body).toBe("body text here\n");
+  });
+
+  test("a body that legitimately opens with a dash (a markdown list) is left untouched", () => {
+    const raw = "---\ntype: Reference\n---\n- item one\n- item two\n";
+    expect(parseConcept("x.md", raw).body).toBe("- item one\n- item two\n");
+  });
+
+  test("an unterminated fence (no closing --- at all) is unaffected — pre-existing behavior, not this bug", () => {
+    const raw = "---\ntype: Reference\n";
+    expect(parseConcept("x.md", raw).body).toBe("");
+  });
+});
+
+describe("parseConcept — bounded YAML anchor/alias expansion (LORE-85 anchor-bomb guard)", () => {
+  /** A frontmatter body with `levels` anchors, each aliasing the previous one TWICE (doubling chain). */
+  function doublingAnchorFrontmatter(levels: number): string {
+    const lines = ["type: Reference", 'a0: &a0 ["x"]'];
+    for (let i = 1; i <= levels; i++) {
+      lines.push(`a${i}: &a${i} [*a${i - 1}, *a${i - 1}]`);
+    }
+    return lines.join("\n");
+  }
+
+  test("a crafted doubling-anchor chain is rejected cleanly and fast, not a crash or multi-second expansion", () => {
+    // 18 levels over ~400 bytes of source is the task's own repro; it fully expands to tens of
+    // megabytes via yaml.dump({noRefs: true}) if ever allowed through unchecked.
+    const raw = `---\n${doublingAnchorFrontmatter(18)}\n---\nBody.\n`;
+    const start = performance.now();
+    const err = expectValidation(() => parseConcept("bomb.md", raw));
+    const elapsedMs = performance.now() - start;
+    expect(err.message).toContain("not valid YAML");
+    expect(elapsedMs).toBeLessThan(1000); // bounded, not the multi-second blowup AC2 rules out
+  });
+
+  test("a much deeper doubling-anchor chain (40 levels, still under 1KB of source) is rejected just as fast", () => {
+    // 2^40 would be ~1 trillion naive expansion steps if the guard didn't exit early — proves the
+    // walk's own cost is bounded by the budget, not by how deep the malicious chain goes.
+    const raw = `---\n${doublingAnchorFrontmatter(40)}\n---\nBody.\n`;
+    const start = performance.now();
+    expectValidation(() => parseConcept("deep-bomb.md", raw));
+    expect(performance.now() - start).toBeLessThan(1000);
+  });
+
+  test("a cyclic anchor (referencing its own ancestor) is rejected, not an infinite loop or stack overflow", () => {
+    const raw = "---\ntype: Reference\na: &a\n  b: *a\n---\nBody.\n";
+    const err = expectValidation(() => parseConcept("cycle.md", raw));
+    expect(err.message).toContain("cyclic");
+  });
+
+  test("ordinary, harmless anchor reuse (a DAG, not exponential) still parses normally", () => {
+    // The same anchor referenced by two unrelated siblings is a common, safe YAML pattern — the
+    // guard must not mistake this for the attack shape.
+    const raw = "---\ntype: Reference\ntags: &t\n  - a\n  - b\nmore_tags: *t\n---\nBody.\n";
+    const concept = parseConcept("dag.md", raw);
+    expect(concept.frontmatter.tags).toEqual(["a", "b"]);
+    expect(concept.frontmatter.more_tags).toEqual(["a", "b"]);
+  });
+});
+
 describe("serializeConcept — golden byte-exactness (design §9.2)", () => {
   test("a Story serializes to its exact golden bytes", () => {
     expect(serializeConcept(parseConcept("stories/bulk-archive.md", STORY_GOLDEN))).toBe(STORY_GOLDEN);
@@ -211,6 +308,15 @@ describe("serializeConceptWithModeline — modeline spliced inside the opening f
     // `---` is untouched further down.
     expect(out.split("\n")[1]).toBe(MODELINE);
     expect(out.endsWith("a thematic break in the body\n")).toBe(true);
+  });
+
+  test("rejects a multi-line modeline instead of splicing it verbatim", () => {
+    // A modeline containing a newline would inject arbitrary extra lines inside/after
+    // the opening fence if spliced verbatim — reject it before splicing (LORE-219).
+    const concept = parseConcept("reference/x.md", MINIMAL_GOLDEN);
+    const evilModeline = `${MODELINE}\ntype: Injected`;
+    const err = expectValidation(() => serializeConceptWithModeline(concept, evilModeline));
+    expect(err.message).toContain("single line");
   });
 });
 

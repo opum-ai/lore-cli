@@ -40,7 +40,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, posix, win32 } from "node:path";
 import { z } from "zod";
 import { errnoCode, LoreError } from "../errors";
 
@@ -87,7 +87,15 @@ export interface FieldSpec {
   readonly enum?: readonly string[];
   /** For a `list`, the element kind/enum (default: string elements; no nested lists). */
   readonly items?: { readonly kind: ScalarKind; readonly enum?: readonly string[] };
-  /** Editor-advertised default surfaced in the JSON Schema — **never** stamped onto a concept (byte-stability). */
+  /**
+   * Editor-advertised default surfaced in the JSON Schema — **never** stamped onto a concept
+   * (byte-stability). Validated at PARSE time ({@link assertDefaultMatchesShape}, LORE-242)
+   * against this same spec's `kind`/`enum`/`items` — a `default` that contradicts its own
+   * field's declared shape is a load-time `validation` error, not a silently-emitted lie in the
+   * editor schema. For a `list` field the whole-list shape is checked (an array whose elements
+   * satisfy `items`), not merely "is it an array" — the same {@link baseKindToZod} an element/
+   * scalar field's own default is checked against, so list and scalar defaults share one rule.
+   */
   readonly default?: unknown;
 }
 
@@ -282,14 +290,9 @@ function isEmptyDoc(doc: Record<string, unknown>): boolean {
 
 /** Parse the JSON profile form, surfacing the parser's message on failure. */
 function parseJson(raw: string): Record<string, unknown> {
+  let value: unknown;
   try {
-    const value = JSON.parse(raw) as unknown;
-    if (typeof value !== "object" || value === null || Array.isArray(value)) {
-      return fail(`${PROFILE_JSON_REL_PATH} must be a JSON object`, `make ${PROFILE_JSON_REL_PATH} a JSON object`, {
-        path: PROFILE_JSON_REL_PATH,
-      });
-    }
-    return value as Record<string, unknown>;
+    value = JSON.parse(raw);
   } catch (cause) {
     return fail(
       withReason(`${PROFILE_JSON_REL_PATH} is not valid JSON`, cause),
@@ -297,6 +300,12 @@ function parseJson(raw: string): Record<string, unknown> {
       { path: PROFILE_JSON_REL_PATH },
     );
   }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return fail(`${PROFILE_JSON_REL_PATH} must be a JSON object`, `make ${PROFILE_JSON_REL_PATH} a JSON object`, {
+      path: PROFILE_JSON_REL_PATH,
+    });
+  }
+  return value as Record<string, unknown>;
 }
 
 // ── Parse (grammar → ParsedProfile) ───────────────────────────────────────────—
@@ -343,6 +352,9 @@ export function parseProfile(doc: Record<string, unknown>, source: string): Pars
   return { name, okfVersion, case: caseStyle, resourceBase, baseFields, types };
 }
 
+/** The keys a `[[types]]` table may declare. */
+const TYPE_TABLE_KEYS = ["name", "fields", "sections", "template"] as const;
+
 /** Parse the `[[types]]` array-of-tables into {@link ParsedType}s, rejecting a duplicate type name. */
 function parseTypes(value: unknown, source: string): ParsedType[] {
   if (value === undefined) {
@@ -363,6 +375,7 @@ function parseTypes(value: unknown, source: string): ParsedType[] {
         key: `types[${i}]`,
       });
     }
+    rejectUnknownKeys(table, TYPE_TABLE_KEYS, `types[${i}]`, source);
     const name = requireString(table.name, `types[${i}].name`, source).trim();
     const slug = slugForTypeName(name);
     if (slug === "") {
@@ -398,9 +411,77 @@ function parseTypes(value: unknown, source: string): ParsedType[] {
     );
     const sections = asStringArray(table.sections, `types[${i}].sections`, source) ?? [];
     const template = asString(table.template, `types[${i}].template`, source);
+    if (template !== undefined) {
+      assertTemplateConfined(template, `types[${i}].template`, source);
+    }
     types.push(template === undefined ? { name, fields, sections } : { name, fields, sections, template });
   }
   return types;
+}
+
+/**
+ * The way a template name/path value can fail {@link templateConfinementViolation}'s containment
+ * check: an absolute path, or a value that resolves outside `.lore/templates/` via a `..` escape.
+ */
+export type TemplateConfinementViolation = "absolute" | "escape";
+
+/**
+ * The single containment check shared by every place lore resolves a template name/path into a
+ * file under `.lore/templates/` — the profile-declared `[[types]].template` value (LORE-139) and
+ * `commands/new.ts`'s `--template` CLI flag (LORE-69). Both used to run their own edge-case-
+ * divergent copy of this arithmetic (one normalized backslashes and needed no real `root`, the
+ * other used the host `resolve()`/`relative()` and did not); LORE-185 consolidates them onto this
+ * one pure predicate so the invariant can never again drift between call sites. Left unchecked, a
+ * `.lore/profile.toml` type table declaring `template = "../../../secret/leak"` — or a
+ * `lore new --template ../../../secret/leak` — would have `lore new` read and embed an arbitrary
+ * file's contents into the generated concept, exit `0`, no error.
+ *
+ * Absolute paths are rejected on the host `isAbsolute` AND both `posix.isAbsolute`/
+ * `win32.isAbsolute` explicitly: lore ships as a compiled binary for both POSIX and win32 from the
+ * same source, so a Windows drive-letter path must be caught even when this runs on a POSIX host
+ * (it is otherwise inert syntax there), and a POSIX-style absolute path must be caught even when
+ * this runs on the win32 binary. A `..`-segment escape is then caught by resolving the value
+ * (backslash segments normalized to `/` first, so a Windows-style `..\..\secret` traversal is
+ * caught even when parsed on a POSIX host — the cross-host drift LORE-69's own host-`resolve()`
+ * implementation had) against a fixed anchor and confirming the result stays inside it — no real
+ * `root` is needed: the check is pure path arithmetic, identical however the anchor is spelled, so
+ * it holds regardless of where the caller's templates directory is ultimately loaded from.
+ *
+ * Returns the violation kind rather than throwing, so each call site can raise its own typed
+ * error: a profile-declared value is a `validation` {@link LoreError} at profile PARSE time
+ * (repo config, wrong exit code for a CLI mistake), while a `--template` flag value is a `usage`
+ * error (a user-typed CLI argument) — those exit codes are part of each command's own observable
+ * contract and must not collapse into one just because the underlying arithmetic is now shared.
+ */
+export function templateConfinementViolation(value: string): TemplateConfinementViolation | undefined {
+  if (isAbsolute(value) || posix.isAbsolute(value) || win32.isAbsolute(value)) {
+    return "absolute";
+  }
+  const anchor = "/.lore/templates";
+  const resolved = posix.resolve(anchor, value.replace(/\\/g, "/"));
+  const rel = posix.relative(anchor, resolved);
+  return rel === ".." || rel.startsWith("../") ? "escape" : undefined;
+}
+
+/**
+ * Reject a `[[types]].template` value that could escape `.lore/templates/` once `commands/new.ts`
+ * joins it into a file path (LORE-139), via the shared {@link templateConfinementViolation}
+ * predicate. Checked here, at profile PARSE time, so every current and future consumer of a
+ * compiled type's `template` is protected, not just `resolveTemplate`'s one call site.
+ */
+function assertTemplateConfined(value: string, key: string, source: string): void {
+  const violation = templateConfinementViolation(value);
+  if (violation === "absolute") {
+    fail(`${source}: ${key} "${value}" must not be an absolute path`, `declare a bare template name for ${key}`, {
+      key,
+    });
+  } else if (violation === "escape") {
+    fail(
+      `${source}: ${key} "${value}" must not escape .lore/templates/`,
+      `declare a bare template name for ${key}, without any ".." segment`,
+      { key },
+    );
+  }
 }
 
 /**
@@ -431,6 +512,9 @@ function parseFieldTable(table: Record<string, unknown>, where: string, source: 
   return fields;
 }
 
+/** The attribute keys a field spec inline table (`{ required = ..., kind = ..., ... }`) may declare. */
+const FIELD_SPEC_KEYS = ["required", "kind", "enum", "items", "default"] as const;
+
 /** Parse one inline-table field spec, defaulting and cross-checking its attributes. */
 function parseFieldSpec(raw: unknown, where: string, source: string): FieldSpec {
   const table = asTable(raw, where, source);
@@ -439,8 +523,10 @@ function parseFieldSpec(raw: unknown, where: string, source: string): FieldSpec 
       key: where,
     });
   }
+  rejectUnknownKeys(table, FIELD_SPEC_KEYS, where, source);
   const required = asBoolean(table.required, `${where}.required`, source) ?? false;
   const enumValues = asStringArray(table.enum, `${where}.enum`, source);
+  assertNonEmptyEnum(enumValues, where, source);
   const declaredKind = asEnum(table.kind, `${where}.kind`, FIELD_KINDS, source);
   if (enumValues !== undefined && declaredKind !== undefined && declaredKind !== "string") {
     fail(
@@ -464,10 +550,63 @@ function parseFieldSpec(raw: unknown, where: string, source: string): FieldSpec 
     spec.items = parseItems(table.items, `${where}.items`, source);
   }
   if ("default" in table) {
+    assertDefaultMatchesShape(spec as FieldSpec, table.default, where, source);
     spec.default = table.default;
   }
   return spec;
 }
+
+/**
+ * Reject an `enum` attribute that parsed to a zero-length array (LORE-140), shared by both
+ * {@link parseFieldSpec} (a scalar field's own `enum`) and {@link parseItems} (a list field's
+ * `items.enum`, LORE-193) — `baseKindToZod`/`itemToZod` pass the value straight to
+ * `z.enum([...enumValues])`; Zod's `z.enum([])` rejects every possible value, so `enum = []`
+ * would otherwise compile cleanly here and only surface later as a field or list element
+ * (required or not) that can never validate, with no error pointing at the actual mistake.
+ * Checked at parse time, right where `where` still names the offending field, so the error
+ * lands where the author can fix it instead of at some unrelated concept's validation failure.
+ */
+function assertNonEmptyEnum(enumValues: readonly string[] | undefined, where: string, source: string): void {
+  if (enumValues !== undefined && enumValues.length === 0) {
+    fail(
+      `${source}: ${where}.enum must not be empty`,
+      `declare at least one allowed value for ${where}.enum, or remove the enum attribute`,
+      { key: `${where}.enum` },
+    );
+  }
+}
+
+/**
+ * Reject a `default` attribute whose value contradicts the field's own declared `kind`/`enum`/
+ * `items` shape (LORE-242) — same class of author-mistake cross-check as
+ * {@link assertNonEmptyEnum}, the enum-implies-kind-"string" check, and
+ * {@link assertTemplateConfined}, each raising a `validation` {@link LoreError} that names the
+ * offending field. Without this, `{ kind = "integer", default = "x" }` or
+ * `{ enum = ["red","green"], default = "purple" }` loaded clean and `buildJsonSchema` emitted the
+ * bad `default` verbatim into the editor-facing JSON Schema — an internally-inconsistent schema
+ * that misleads autocompletion.
+ *
+ * Judges the default with {@link baseKindToZod} — the SAME kind→Zod predicates
+ * {@link buildJsonSchema}'s emitted `type`/`enum`/`items` ultimately derive from (via
+ * `z.toJSONSchema`) — rather than a second, hand-rolled kind→JS-type mapping that could drift
+ * from it. This one call also covers AC#4 for free: `baseKindToZod` returns `z.array(itemToZod(…))`
+ * for a `kind: "list"` field, so a list's `default` is validated as a WHOLE LIST (every element
+ * checked against `items`), not merely checked for being an array.
+ */
+function assertDefaultMatchesShape(spec: FieldSpec, defaultValue: unknown, where: string, source: string): void {
+  const result = baseKindToZod(spec).safeParse(defaultValue);
+  if (!result.success) {
+    const shape = spec.enum !== undefined ? "enum" : spec.kind;
+    fail(
+      `${source}: ${where}.default (${JSON.stringify(defaultValue)}) does not match its declared ${shape}`,
+      `set ${where}.default to a value valid for its ${shape}, or remove the default attribute`,
+      { key: `${where}.default` },
+    );
+  }
+}
+
+/** The attribute keys a list field's `items` inline table (`{ kind = ..., enum = ... }`) may declare. */
+const ITEMS_TABLE_KEYS = ["kind", "enum"] as const;
 
 /** Parse a list field's `items` element spec (default: string elements). Only `kind`/`enum` apply to an element. */
 function parseItems(raw: unknown, where: string, source: string): { kind: ScalarKind; enum?: readonly string[] } {
@@ -480,7 +619,9 @@ function parseItems(raw: unknown, where: string, source: string): { kind: Scalar
       key: where,
     });
   }
+  rejectUnknownKeys(table, ITEMS_TABLE_KEYS, where, source);
   const enumValues = asStringArray(table.enum, `${where}.enum`, source);
+  assertNonEmptyEnum(enumValues, where, source);
   const kind =
     enumValues !== undefined ? "string" : (asEnum(table.kind, `${where}.kind`, FIELD_KINDS, source) ?? "string");
   if (kind === "list") {
@@ -769,6 +910,31 @@ function withReason(base: string, cause: unknown): string {
       ? (cause as { message: string }).message.replace(/\s*[\r\n]+\s*/g, " ").trim()
       : "";
   return reason ? `${base}: ${reason}` : base;
+}
+
+/**
+ * Fail when `table` carries a key outside `allowed` — the closed-vocabulary gate for a field
+ * spec, a `[[types]]` table, or an `items` table (LORE-83). Unlike the top-level/`[profile]`
+ * table (documented forward-compatible tolerance, {@link parseProfile}'s own docstring), these
+ * nested tables have a small, fixed attribute set with no forward-compat need — so a typo
+ * (`require` for `required`) is a `validation` error rather than a silently-ignored no-op that
+ * leaves the intended attribute at its default (every concept then validating clean despite
+ * missing a field the author believed was required).
+ */
+function rejectUnknownKeys(
+  table: Record<string, unknown>,
+  allowed: readonly string[],
+  where: string,
+  source: string,
+): void {
+  const unknown = Object.keys(table).filter((key) => !allowed.includes(key));
+  if (unknown.length > 0) {
+    fail(
+      `${source}: ${where} has unrecognized key${unknown.length === 1 ? "" : "s"} ${unknown.map((k) => `"${k}"`).join(", ")}`,
+      `${where} only accepts: ${allowed.join(", ")} — fix the typo or remove the key`,
+      { key: where, unknown },
+    );
+  }
 }
 
 /** Require a table (plain object) when present; `undefined` passes through for "absent". */

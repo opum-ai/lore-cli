@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import {
+  BACKLOG_TIMEOUT_ENV_VAR,
   type BacklogCapability,
   type BacklogSpawn,
   bunBacklogSpawn,
@@ -70,29 +71,29 @@ async function probeError(spawn: BacklogSpawn): Promise<LoreError> {
 describe("probeBacklog — passes on a --json-capable upstream build (AC#2)", () => {
   test("returns the version and schemaVersion when --version and task list --json both succeed", async () => {
     const spawn = fakeSpawn({
-      version: ok("1.47.1\n"),
+      version: ok("1.49.0\n"),
       list: ok(envelope("task-list", [{ id: "BACK-1" }])),
     });
 
     const capability: BacklogCapability = await probeBacklog(spawn);
 
-    expect(capability).toEqual({ version: "1.47.1", schemaVersion: EXPECTED_SCHEMA_VERSION });
+    expect(capability).toEqual({ version: "1.49.0", schemaVersion: EXPECTED_SCHEMA_VERSION });
     // Order and fail-forward: --version first, then the dry task list probe.
     expect(spawn.calls).toEqual([["--version"], ["task", "list", "--json"]]);
   });
 
   test("tolerates a version above the floor and an empty task list", async () => {
-    const spawn = fakeSpawn({ version: ok("1.48.0\n"), list: ok(envelope("task-list", [])) });
-    expect(await probeBacklog(spawn)).toEqual({ version: "1.48.0", schemaVersion: EXPECTED_SCHEMA_VERSION });
+    const spawn = fakeSpawn({ version: ok("1.49.1\n"), list: ok(envelope("task-list", [])) });
+    expect(await probeBacklog(spawn)).toEqual({ version: "1.49.1", schemaVersion: EXPECTED_SCHEMA_VERSION });
   });
 
   test("drops pre-release/build metadata and extra envelope keys", async () => {
     const spawn = fakeSpawn({
-      version: ok("1.47.1-beta.2+build5\n"),
+      version: ok("1.49.0-beta.2+build5\n"),
       // A future additive key on the envelope must be tolerated, not rejected.
       list: ok(JSON.stringify({ schemaVersion: 1, kind: "task-list", tasks: [], generatedAt: "whenever" })),
     });
-    expect(await probeBacklog(spawn)).toEqual({ version: "1.47.1", schemaVersion: EXPECTED_SCHEMA_VERSION });
+    expect(await probeBacklog(spawn)).toEqual({ version: "1.49.0", schemaVersion: EXPECTED_SCHEMA_VERSION });
   });
 });
 
@@ -118,7 +119,7 @@ describe("probeBacklog — fails loud on a missing binary (AC#2, exit 3)", () =>
 describe("probeBacklog — fails loud on a non-json-capable binary (AC#2, exit 6)", () => {
   test("a binary without --json support rejects it (task list exits non-zero) → validation", async () => {
     const spawn = fakeSpawn({
-      version: ok("1.47.1\n"),
+      version: ok("1.49.0\n"),
       list: { exitCode: 1, stdout: "", stderr: "error: unknown option '--json'" },
     });
 
@@ -138,7 +139,7 @@ describe("probeBacklog — fails loud on a non-json-capable binary (AC#2, exit 6
   });
 
   test("a --version line that is not a bare semver is fail-loud", async () => {
-    const err = await probeError(fakeSpawn({ version: ok("backlog version 1.47.1\n") }));
+    const err = await probeError(fakeSpawn({ version: ok("backlog version 1.49.0\n") }));
     expect(err.type).toBe("validation");
     expect(err.message).toContain("did not print a bare semver");
   });
@@ -151,14 +152,14 @@ describe("probeBacklog — fails loud on a non-json-capable binary (AC#2, exit 6
   });
 
   test("unparseable task list stdout is fail-loud", async () => {
-    const spawn = fakeSpawn({ version: ok("1.47.1\n"), list: ok("not json at all") });
+    const spawn = fakeSpawn({ version: ok("1.49.0\n"), list: ok("not json at all") });
     const err = await probeError(spawn);
     expect(err.type).toBe("validation");
     expect(err.message).toContain("did not print parseable JSON");
   });
 
   test("a JSON array (not an envelope object) is fail-loud", async () => {
-    const spawn = fakeSpawn({ version: ok("1.47.1\n"), list: ok("[1,2,3]") });
+    const spawn = fakeSpawn({ version: ok("1.49.0\n"), list: ok("[1,2,3]") });
     const err = await probeError(spawn);
     expect(err.type).toBe("validation");
     expect(err.message).toContain("envelope object");
@@ -167,28 +168,28 @@ describe("probeBacklog — fails loud on a non-json-capable binary (AC#2, exit 6
   test("the wrong envelope kind is fail-loud (guards the hyphenated `task-list` discriminator)", async () => {
     // Upstream emits the hyphenated "task-list"; this fork's camelCase "taskList" must be rejected —
     // this pins the probe to the real (upstream) value, not the fork's.
-    const spawn = fakeSpawn({ version: ok("1.47.1\n"), list: ok(envelope("taskList", [])) });
+    const spawn = fakeSpawn({ version: ok("1.49.0\n"), list: ok(envelope("taskList", [])) });
     const err = await probeError(spawn);
     expect(err.type).toBe("validation");
     expect(err.message).toContain("task-list");
   });
 
   test("a non-array `tasks` is fail-loud", async () => {
-    const spawn = fakeSpawn({ version: ok("1.47.1\n"), list: ok(envelope("task-list", { not: "an array" })) });
+    const spawn = fakeSpawn({ version: ok("1.49.0\n"), list: ok(envelope("task-list", { not: "an array" })) });
     const err = await probeError(spawn);
     expect(err.type).toBe("validation");
     expect(err.message).toContain("`tasks` was not an array");
   });
 
   test("an unrecognized schemaVersion is fail-loud rather than mis-read", async () => {
-    const spawn = fakeSpawn({ version: ok("1.47.1\n"), list: ok(envelope("task-list", [], 2)) });
+    const spawn = fakeSpawn({ version: ok("1.49.0\n"), list: ok(envelope("task-list", [], 2)) });
     const err = await probeError(spawn);
     expect(err.type).toBe("validation");
     expect(err.message).toContain("schemaVersion");
   });
 
   test('the fork\'s string schemaVersion "1" is also an unrecognized (non-numeric) schemaVersion', async () => {
-    const spawn = fakeSpawn({ version: ok("1.47.1\n"), list: ok(envelope("task-list", [], "1")) });
+    const spawn = fakeSpawn({ version: ok("1.49.0\n"), list: ok(envelope("task-list", [], "1")) });
     const err = await probeError(spawn);
     expect(err.type).toBe("validation");
     expect(err.message).toContain("schemaVersion");
@@ -227,6 +228,43 @@ describe("bunBacklogSpawn — the real Bun.spawn seam", () => {
       expect(result.stdout.trim()).toBe(dir);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("kills a deliberately non-terminating process and rejects with a typed timeout error within the bound (LORE-217)", async () => {
+    // Same portable pattern as the cwd test above: the current runtime binary itself with an
+    // inline script, not an external `sleep` (not reliably on PATH on Windows CI runners). The
+    // busy loop never yields to the event loop and has no other way to exit — if the timeout
+    // guard did not kill it, this test would hang until bun's own per-test timeout fired.
+    const previous = process.env[BACKLOG_TIMEOUT_ENV_VAR];
+    process.env[BACKLOG_TIMEOUT_ENV_VAR] = "200";
+    try {
+      const start = Date.now();
+      const spawn = bunBacklogSpawn(process.execPath);
+      let caught: unknown;
+      try {
+        await spawn(["-e", "while (true) {}"]);
+      } catch (err) {
+        caught = err;
+      }
+      const elapsed = Date.now() - start;
+
+      // Terminates well within the bound (generous margin over the 200ms timeout for process
+      // start/teardown overhead) rather than hanging — the property the AC requires.
+      expect(elapsed).toBeLessThan(4_000);
+
+      expect(caught).toBeInstanceOf(LoreError);
+      const err = caught as LoreError;
+      expect(err.type).toBe("validation");
+      expect(exitCodeFor(err)).toBe(6);
+      expect(err.message).toContain("did not exit within 200ms");
+      expect(err.hint).toContain(BACKLOG_TIMEOUT_ENV_VAR);
+    } finally {
+      if (previous === undefined) {
+        delete process.env[BACKLOG_TIMEOUT_ENV_VAR];
+      } else {
+        process.env[BACKLOG_TIMEOUT_ENV_VAR] = previous;
+      }
     }
   });
 });

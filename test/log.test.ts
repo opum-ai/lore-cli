@@ -28,13 +28,22 @@ const FAKE_HISTORY: readonly GitCommit[] = [
   },
 ];
 
-/** A fake {@link GitAdapter} that returns the fixed history regardless of range (records the range it saw). */
-function fakeAdapter(history: readonly GitCommit[] = FAKE_HISTORY): GitAdapter & { seen: GitLogRange[] } {
+/**
+ * A fake {@link GitAdapter} that returns the fixed history regardless of range (records the range
+ * AND the root/pathspec it saw — LORE-143 — so tests can assert `buildLog` actually forwards the
+ * resolved root into the seam, not just into `generateLog`'s own post-filtering).
+ */
+function fakeAdapter(
+  history: readonly GitCommit[] = FAKE_HISTORY,
+): GitAdapter & { seen: GitLogRange[]; seenRoots: (string | undefined)[] } {
   const seen: GitLogRange[] = [];
+  const seenRoots: (string | undefined)[] = [];
   return {
     seen,
-    history(range: GitLogRange): readonly GitCommit[] {
+    seenRoots,
+    history(range: GitLogRange, root?: string): readonly GitCommit[] {
       seen.push(range);
+      seenRoots.push(root);
       return history;
     },
   };
@@ -184,6 +193,22 @@ describe("generateLog — determinism edge cases", () => {
     expect(generateLog(FAKE_HISTORY, { root: "docs///" })).toBe(generateLog(FAKE_HISTORY));
   });
 
+  test("LORE-243: equivalent spellings of the root — './docs', 'docs/.', './docs/' — canonicalize identically to 'docs' (none silently empty)", () => {
+    const canonical = generateLog(FAKE_HISTORY);
+    expect(generateLog(FAKE_HISTORY, { root: "./docs" })).toBe(canonical);
+    expect(generateLog(FAKE_HISTORY, { root: "docs/." })).toBe(canonical);
+    expect(generateLog(FAKE_HISTORY, { root: "./docs/" })).toBe(canonical);
+  });
+
+  test("LORE-243: internal redundant separators — 'docs//adr' and 'docs/./adr' — resolve to the same bundle root as 'docs/adr'", () => {
+    const canonical = generateLog(FAKE_HISTORY, { root: "docs/adr" });
+    // Sanity: the canonical root actually scopes to a non-empty section, so the equality below is
+    // meaningful (not two empty logs agreeing vacuously).
+    expect(canonical).toContain("## docs/adr");
+    expect(generateLog(FAKE_HISTORY, { root: "docs//adr" })).toBe(canonical);
+    expect(generateLog(FAKE_HISTORY, { root: "docs/./adr" })).toBe(canonical);
+  });
+
   test("offset-less timestamps order by text, not a host-local-TZ parse (machine-independent)", () => {
     // Neither carries an offset, so neither is trusted as an absolute instant; they order by
     // deterministic code-unit text, identically on every machine and time zone.
@@ -213,5 +238,28 @@ describe("buildLog — the GitAdapter seam is exercised (AC#1)", () => {
     const range: GitLogRange = { from: "v0.1", to: "HEADSHA" };
     expect(buildLog(adapter, range)).toBe(generateLog(FAKE_HISTORY));
     expect(adapter.seen).toEqual([range]);
+  });
+
+  test("LORE-143: passes the default bundle root to adapter.history as a pathspec (not only to generateLog)", () => {
+    const adapter = fakeAdapter();
+    buildLog(adapter, { to: "HEADSHA" });
+    expect(adapter.seenRoots).toEqual(["docs"]);
+  });
+
+  test("LORE-143: a custom `options.root` is forwarded to adapter.history, resolved the same way generateLog resolves it", () => {
+    const adapter = fakeAdapter();
+    buildLog(adapter, { to: "HEADSHA" }, { root: "wiki/" });
+    // Same normalization `generateLog` applies (trailing slash stripped) — the two must always agree
+    // on which root scopes a given `log.md`, or the pathspec would prune commits generateLog still
+    // expected to see.
+    expect(adapter.seenRoots).toEqual(["wiki"]);
+  });
+
+  test("LORE-243: an equivalent-spelling root resolves to the same canonicalized pathspec generateLog's post-filter uses", () => {
+    const adapter = fakeAdapter();
+    buildLog(adapter, { to: "HEADSHA" }, { root: "./docs/" });
+    // './docs/' must canonicalize to exactly 'docs' — the same root generateLog resolves it to — so
+    // the adapter's pathspec-scoped walk and generateLog's post-filter never disagree on scope.
+    expect(adapter.seenRoots).toEqual(["docs"]);
   });
 });

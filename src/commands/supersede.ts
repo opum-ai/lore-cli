@@ -28,6 +28,13 @@
  *   intact (else the successor links to itself), and a generated hub is never hand-rewritten (its
  *   file listing is unchanged, since supersede moves nothing).
  *
+ * Every retargeted link is still repointed to the successor — but when its visible text still names
+ * the OLD id (e.g. `[ADR-0005](…)`, now pointing at ADR-0006 — a supersession doc frequently cites
+ * its predecessor by name to explain the change), that would silently leave the prose and the link
+ * disagreeing. The engine flags each such {@link LinkTextMismatch} in the plan; this command renders
+ * one stderr `warning:` line per mismatch via {@link renderLinkTextMismatchWarning} (LORE-262) — the
+ * retarget and the exit code are unaffected, so this is purely advisory.
+ *
  * Validation lives here, because the engine's `move:false` path checks only that `oldId` exists (its
  * conflict guard is move-only): both ids must name concepts (`not_found`, exit 3); neither may be a
  * reserved hub name (`usage`, exit 2); and the old concept must not already be superseded —
@@ -38,10 +45,10 @@
  */
 
 import { join, posix } from "node:path";
-import { conceptNotInBundle, loadBundle, resolveRef } from "../core/bundle";
+import { conceptNotInBundle, loadBundle, resolveRef, UNREADABLE_DIRECTORY_WARNING } from "../core/bundle";
 import { type Concept, idFromPath, serializeConcept } from "../core/concept";
 import { loadProfile } from "../core/profile";
-import { rewriteInbound } from "../core/rewrite";
+import { renderLinkTextMismatchWarning, rewriteInbound } from "../core/rewrite";
 import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
@@ -57,7 +64,7 @@ export interface SupersedeOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `supersede`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -121,8 +128,13 @@ export function runSupersede(options: SupersedeOptions): number {
 
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
-  const graph = loadBundle(docsRoot, { warnings: advisories });
   const profile = loadProfile({ root: options.root });
+  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
+  // Flushed immediately (not at the end, as this command previously did) so a skipped-directory
+  // warning naming the exact path/reason survives on the fail-loud `--rewrite-links` path below it
+  // feeds (LORE-82), mirroring how `context.ts`/`graph.ts` flush before a load-warning-explained
+  // not_found throw.
+  advisories.flush({ color: options.output.color, stderr: options.stderr });
 
   // The command owns all validation: the engine's `move:false` path checks only that `oldId` exists.
   const oldConcept = graph.concepts.get(oldId);
@@ -141,15 +153,44 @@ export function runSupersede(options: SupersedeOptions): number {
   const writes = new Map<string, string>();
   let rewroteLinks = false;
   if (parsed.rewriteLinks) {
+    // rewriteInbound can only repoint the inbound links it can SEE — a directory `loadBundle` had
+    // to skip (unreadable) may hide a concept that links to `oldId`, so committing this rewrite
+    // would silently report success while leaving that concept's link stale/broken. Refuse rather
+    // than guess: the graph is not the complete bundle, so no rewrite over it is safe to commit
+    // (LORE-82). Gated on `--rewrite-links` specifically — without it, supersede only edits the two
+    // principals' own frontmatter, which has no dependency on the rest of the bundle being visible.
+    if (advisories.has(UNREADABLE_DIRECTORY_WARNING)) {
+      throw new LoreError(
+        "validation",
+        "the bundle graph is incomplete: an unreadable directory was skipped while loading it",
+        "fix filesystem permissions on the directory named in the warning above and retry — --rewrite-links cannot safely repoint inbound links without a complete view of the bundle",
+        { docsRoot },
+      );
+    }
     const plan = rewriteInbound(graph, oldId, newId, {
       move: false,
       rewriteFrontmatterRefs: false,
       exclude: excludedFromRewrite(graph, oldConcept.path, newConcept.path),
+      profile,
     });
     for (const w of plan.writes) {
       writes.set(w.path, w.bytes);
     }
     rewroteLinks = writes.size > 0;
+
+    // Every retargeted inbound link is still repointed exactly as before (LORE-262 AC#2 — no
+    // regression); a link whose visible text still names the OLD id is additionally called out as a
+    // stderr warning so the author can review the prose, rather than the mismatch shipping silently
+    // (LORE-262 AC#1). A FRESH collector, not `advisories` — that one was already flushed above
+    // (LORE-82's ordering), and `flush()` is non-draining, so reusing it here would re-print the
+    // earlier bundle-load warnings a second time.
+    if (plan.textMismatches.length > 0) {
+      const mismatchWarnings = new WarningCollector();
+      for (const mismatch of plan.textMismatches) {
+        mismatchWarnings.add(renderLinkTextMismatchWarning(mismatch));
+      }
+      mismatchWarnings.flush({ color: options.output.color, stderr: options.stderr });
+    }
   }
 
   // Wire the principals' frontmatter (cloned, never mutating the graph snapshot) and serialize under
@@ -171,7 +212,8 @@ export function runSupersede(options: SupersedeOptions): number {
 
   const report = buildReport(oldConcept, newConcept, sorted, { rewroteLinks, dryRun: parsed.dryRun });
   emit(reportRenderable(report), options.output, options.stdout);
-  advisories.flush({ color: options.output.color, stderr: options.stderr });
+  // Load advisories were already flushed right after loadBundle (LORE-82), not repeated here
+  // (flush is non-draining — a second call would re-print the same warnings).
   return EXIT_OK;
 }
 
@@ -286,12 +328,12 @@ function statusIsSuperseded(concept: Concept): boolean {
 
 /**
  * Parse `supersede`'s tokens into its two positionals (`<oldId> <newId>`), `--rewrite-links`, and
- * `--dry-run`, via the shared {@link parseCommandArgs} tokenizer (mirrors
+ * `--dry-run`, via the shared {@link parseCommandArgs} parser (mirrors
  * `commands/rename.ts`/`commands/link.ts`'s parsers). Positional arity is validated here since it
  * differs per command.
  */
 function parseSupersedeArgs(args: readonly string[]): SupersedeArgs {
-  const { positionals, flags } = parseCommandArgs(args, "supersede", ["rewrite-links", "dry-run"]);
+  const { positionals, flags } = parseCommandArgs(args, "supersede");
 
   const oldId = positionals[0];
   if (oldId === undefined) {

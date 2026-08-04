@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runOrphans } from "../src/commands/orphans";
+import { runTasks } from "../src/commands/tasks";
 import { LoreError, reportError, WarningCollector } from "../src/errors";
 import {
+  displayWidth,
   emit,
   errorRenderOpts,
   maxLen,
@@ -16,7 +22,7 @@ import {
   type Truncation,
   truncation,
 } from "../src/output";
-import { capture } from "./helpers";
+import { capture, fakeAdapter, makeTask, storyDoc } from "./helpers";
 
 // Build a Renderable with default text renderers; override per test as needed.
 function renderable<T>(kind: string, data: T, over: Partial<Renderable<T>> = {}): Renderable<T> {
@@ -73,7 +79,7 @@ describe("resolveMode — precedence --json > --plain > pretty", () => {
 
 describe("resolveOutput — color policy and context shape", () => {
   test("pretty on a TTY with NO_COLOR unset enables color (§6)", () => {
-    expect(resolveOutput({ isTTY: true, env: {} })).toEqual({ mode: "pretty", color: true });
+    expect(resolveOutput({ isTTY: true, env: {} })).toEqual({ mode: "pretty", color: true, stdoutColor: true });
   });
 
   test("NO_COLOR set to ANY value — including empty — disables color (§6)", () => {
@@ -90,10 +96,10 @@ describe("resolveOutput — color policy and context shape", () => {
     expect(resolveOutput({ isTTY: false, env: {} }).color).toBe(false);
   });
 
-  test("returns a { mode, color } context with no separate, drift-prone json field", () => {
-    expect(resolveOutput({ json: true, env: {} })).toEqual({ mode: "json", color: false });
-    expect(resolveOutput({ plain: true, env: {} })).toEqual({ mode: "plain", color: false });
-    expect(resolveOutput({ isTTY: true, env: {} })).toEqual({ mode: "pretty", color: true });
+  test("returns a { mode, color, stdoutColor } context with no separate, drift-prone json field", () => {
+    expect(resolveOutput({ json: true, env: {} })).toEqual({ mode: "json", color: false, stdoutColor: false });
+    expect(resolveOutput({ plain: true, env: {} })).toEqual({ mode: "plain", color: false, stdoutColor: false });
+    expect(resolveOutput({ isTTY: true, env: {} })).toEqual({ mode: "pretty", color: true, stdoutColor: true });
   });
 
   test("env defaults to process.env when not provided", () => {
@@ -111,6 +117,38 @@ describe("resolveOutput — color policy and context shape", () => {
         delete process.env.NO_COLOR;
       }
     }
+  });
+
+  // LORE-250 AC#1/AC#2: `color` and `stdoutColor` diverge only when `stderrIsTTY`
+  // is explicitly `false` — this is the seam every `WarningCollector.flush`/
+  // `reportError` call site across `commands/*.ts` relies on without knowing it,
+  // since they all read `options.output.color` directly (never `stdoutColor`).
+  describe("stderrIsTTY folds into `color` but never into `stdoutColor` (LORE-250)", () => {
+    test("omitting stderrIsTTY is a no-op: color === stdoutColor, matching every pre-LORE-250 caller", () => {
+      const ctx = resolveOutput({ isTTY: true, env: {} });
+      expect(ctx).toEqual({ mode: "pretty", color: true, stdoutColor: true });
+    });
+
+    test("stderrIsTTY: false narrows color but leaves stdoutColor (and thus stdout's own rendering) untouched", () => {
+      const ctx = resolveOutput({ isTTY: true, env: {}, stderrIsTTY: false });
+      expect(ctx.stdoutColor).toBe(true);
+      expect(ctx.color).toBe(false);
+    });
+
+    test("stderrIsTTY: true on an already-TTY stdout keeps color === stdoutColor", () => {
+      const ctx = resolveOutput({ isTTY: true, env: {}, stderrIsTTY: true });
+      expect(ctx).toEqual({ mode: "pretty", color: true, stdoutColor: true });
+    });
+
+    test("stderrIsTTY has no effect when stdout itself would not be colored (NO_COLOR set)", () => {
+      const ctx = resolveOutput({ isTTY: true, env: { NO_COLOR: "1" }, stderrIsTTY: true });
+      expect(ctx).toEqual({ mode: "pretty", color: false, stdoutColor: false });
+    });
+
+    test("stderrIsTTY has no effect in plain/json mode — both fields already false", () => {
+      expect(resolveOutput({ plain: true, env: {}, stderrIsTTY: true }).color).toBe(false);
+      expect(resolveOutput({ json: true, env: {}, stderrIsTTY: true }).color).toBe(false);
+    });
   });
 });
 
@@ -146,6 +184,57 @@ describe("errorRenderOpts bridges a context to errors.ts", () => {
     const n = wc.flush({ ...errorRenderOpts(ctx), stderr: cap });
     expect(n).toBe(1);
     expect(cap.text()).toBe("warning: heads up\n"); // plain context → no ANSI
+  });
+
+  // LORE-250: a colored (pretty) context must not paint stderr when the stderr
+  // sink itself is not a TTY, independent of the stdout TTY state `ctx.color` was
+  // derived from — and `stderrIsTTY` defaults to `true` so every call site above
+  // (predating this parameter) keeps its exact prior behavior.
+  describe("stderr's own TTY state gates the derived color independently of stdout's (LORE-250)", () => {
+    test("omitting stderrIsTTY is a no-op gate: behavior matches the pre-LORE-250 default", () => {
+      expect(errorRenderOpts(PRETTY_CTX)).toEqual({ json: false, color: true });
+      expect(errorRenderOpts(PLAIN_CTX)).toEqual({ json: false, color: false });
+    });
+
+    test("a pretty (stdout-colored) context with a non-TTY stderr suppresses color", () => {
+      expect(errorRenderOpts(PRETTY_CTX, false)).toEqual({ json: false, color: false });
+    });
+
+    test("a pretty context with a TTY stderr keeps color", () => {
+      expect(errorRenderOpts(PRETTY_CTX, true)).toEqual({ json: false, color: true });
+    });
+
+    test("a non-pretty context stays color-free regardless of stderrIsTTY", () => {
+      expect(errorRenderOpts(PLAIN_CTX, true).color).toBe(false);
+      expect(errorRenderOpts(JSON_CTX, true).color).toBe(false);
+    });
+
+    test("reportError writes no ESC byte to stderr when stdout is colored but stderr is not a TTY", () => {
+      const cap = capture();
+      reportError(new LoreError("usage", "bad flag"), { ...errorRenderOpts(PRETTY_CTX, false), stderr: cap });
+      expect(cap.text()).not.toContain("\x1b");
+      expect(cap.text()).toContain("bad flag");
+    });
+
+    test("reportError still colors the error head when both stdout and stderr are TTYs", () => {
+      const cap = capture();
+      reportError(new LoreError("usage", "bad flag"), { ...errorRenderOpts(PRETTY_CTX, true), stderr: cap });
+      expect(cap.text()).toContain("\x1b[31m");
+    });
+
+    test("WarningCollector.flush honors the same stderr-TTY-gated color", () => {
+      const wc = new WarningCollector();
+      wc.add("heads up");
+      const capNoTty = capture();
+      wc.flush({ ...errorRenderOpts(PRETTY_CTX, false), stderr: capNoTty });
+      expect(capNoTty.text()).not.toContain("\x1b");
+
+      const wc2 = new WarningCollector();
+      wc2.add("heads up");
+      const capTty = capture();
+      wc2.flush({ ...errorRenderOpts(PRETTY_CTX, true), stderr: capTty });
+      expect(capTty.text()).toContain("\x1b");
+    });
   });
 });
 
@@ -525,8 +614,194 @@ describe("renderTaskSummaryRows — shared id/status/title alignment (LORE-51)",
     expect(renderTaskSummaryRows([])).toEqual([]);
   });
 
-  test("`lore tasks` and `lore orphans` render byte-identical rows for the same data (the whole point of sharing)", () => {
-    const row: TaskSummaryRow = { id: "LORE-42", title: "Bulk archive orders", status: "To Do" };
-    expect(renderTaskSummaryRows([row])).toEqual(renderTaskSummaryRows([row]));
+  test("`lore tasks` and `lore orphans` render byte-identical rows for the same data (the whole point of sharing)", async () => {
+    // Not renderTaskSummaryRows(x) === renderTaskSummaryRows(x) (an f(x)===f(x) tautology that can
+    // never catch a command whose OWN render path stopped routing through the shared helper). This
+    // drives the two commands' actual entry points — runTasks' renderTable (tasks.ts:296) and
+    // runOrphans' renderReport (orphans.ts:406) — end to end against equivalent {id,status,title}
+    // data, then also pins each extracted row against renderTaskSummaryRows itself, so the test
+    // fails if either command's path drifts from the shared `  <id>  <status>  <title>` layout.
+    const id = "LORE-42";
+    const title = "Bulk archive orders";
+    const status = "To Do";
+    const plain: OutputContext = { mode: "plain", color: false };
+
+    // `lore tasks <concept>`: the id is linked from a Story's `tasks:` frontmatter, so its row comes
+    // from tasks.ts's renderTable, not orphans.ts.
+    const tasksRoot = mkdtempSync(join(tmpdir(), "lore-output-tasks-"));
+    let tasksLine: string | undefined;
+    try {
+      mkdirSync(join(tasksRoot, "docs", "stories"), { recursive: true });
+      writeFileSync(join(tasksRoot, "docs", "stories", "bulk.md"), storyDoc("bulk", [id]));
+      const stdout = capture();
+      const code = await runTasks({
+        root: tasksRoot,
+        output: plain,
+        stdout,
+        stderr: capture(),
+        args: ["stories/bulk"],
+        adapter: fakeAdapter([makeTask(id, { title, status })], { probe: "ok" }),
+      });
+      expect(code).toBe(0);
+      tasksLine = stdout.lines().find((l) => l.includes(id));
+    } finally {
+      rmSync(tasksRoot, { recursive: true, force: true });
+    }
+
+    // `lore orphans --tasks-only`: the SAME id, but linked from no doc, so it surfaces as an orphan
+    // task and its row comes from orphans.ts's renderReport, a genuinely different render path.
+    const orphansRoot = mkdtempSync(join(tmpdir(), "lore-output-orphans-"));
+    let orphansLine: string | undefined;
+    try {
+      mkdirSync(join(orphansRoot, "docs"), { recursive: true });
+      const stdout = capture();
+      const code = await runOrphans({
+        root: orphansRoot,
+        output: plain,
+        stdout,
+        stderr: capture(),
+        args: ["--tasks-only"],
+        adapter: fakeAdapter([makeTask(id, { title, status })], { probe: "ok", listTasks: "ok" }),
+      });
+      expect(code).toBe(0);
+      orphansLine = stdout.lines().find((l) => l.includes(id));
+    } finally {
+      rmSync(orphansRoot, { recursive: true, force: true });
+    }
+
+    expect(tasksLine).toBeDefined();
+    expect(orphansLine).toBeDefined();
+    const row: TaskSummaryRow = { id, title, status };
+    const [sharedRow] = renderTaskSummaryRows([row]);
+    // Byte-identical to each other AND to the shared helper's own output — a command that inlined a
+    // divergent row formatter would break this even if it happened to still match the other command.
+    expect(tasksLine).toBe(sharedRow);
+    expect(orphansLine).toBe(sharedRow);
+  });
+
+  test("collapses an embedded newline in id, status, or title to one sanitized line (LORE-115)", () => {
+    const row: TaskSummaryRow = {
+      id: "LORE-1\n99",
+      title: "Evil title\r\nwith a fake second line",
+      status: "In\nProgress",
+    };
+    const [line] = renderTaskSummaryRows([row]);
+    expect(line).toBeDefined();
+    // Single physical line: no line terminator survives the sanitization.
+    expect(line).not.toMatch(/[\r\n]/);
+    // Matches the same singleLine(asText(...)) collapse used elsewhere in output.ts —
+    // the run of line breaks becomes a single space, not silently dropped.
+    expect(line).toBe("  LORE-1 99  In Progress  Evil title with a fake second line");
+  });
+
+  test("strips ANSI escape sequences and bare C0 control characters from id, status, or title (LORE-115)", () => {
+    const row: TaskSummaryRow = {
+      id: "LORE-1",
+      title: "evil \x1b[31mred\x1b[0m title \x07bell",
+      status: "To Do",
+    };
+    const [line] = renderTaskSummaryRows([row]);
+    expect(line).toBeDefined();
+    // No ESC byte and no other C0/C1 control byte survives — a CSI sequence can move the
+    // cursor or erase lines, and a bare BEL/backspace is still a forged-row vector even
+    // without ESC, so both must be gone from the rendered row.
+    expect(line?.includes("\x1b")).toBe(false);
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting control bytes are absent.
+    expect(line).not.toMatch(/[\x00-\x1f\x7f-\x9f]/);
+    expect(line).toBe("  LORE-1  To Do  evil red title bell");
+  });
+
+  test("aligns the title column when a status contains a full-width CJK character (LORE-221)", () => {
+    // "処理中" is 3 code points / 3 UTF-16 units but 6 terminal columns (each is East Asian Wide).
+    // A UTF-16-length-based pad (the old `.length`/`padEnd`) would treat it as narrower than
+    // "In Progress"-length statuses and under-pad it, desyncing the title column.
+    const rows: TaskSummaryRow[] = [
+      { id: "LORE-1", title: "Short", status: "処理中" },
+      { id: "LORE-100", title: "A longer title", status: "Done" },
+    ];
+    const lines = renderTaskSummaryRows(rows);
+    expect(lines).toHaveLength(2);
+    // Terminal display width of everything before the (unpadded) title column must match across
+    // rows — that IS "the title column begins at the same offset" in terminal columns, not JS
+    // string-index units, which a full-width character makes different from display columns.
+    const prefixWidths = lines.map((line, i) =>
+      displayWidth(line.slice(0, line.length - (rows[i]?.title.length ?? 0))),
+    );
+    expect(prefixWidths[0]).toBe(prefixWidths[1]);
+    // Pin the exact bytes too, not just the derived equality.
+    expect(lines).toEqual(["  LORE-1    処理中  Short", "  LORE-100  Done    A longer title"]);
+  });
+
+  test("aligns the title column when a status contains a combining mark (LORE-221)", () => {
+    // "Cafe" + U+0301 (combining acute accent) — 5 code points/UTF-16 units but 4 terminal
+    // columns, since the combining mark stacks on the preceding "e" instead of advancing the
+    // cursor. A UTF-16-length-based pad would treat this as *wider* than its true display width
+    // and over-pad it relative to a same-display-width ASCII status.
+    const combiningStatus = `Cafe${"́"}`;
+    expect(combiningStatus.length).toBe(5); // UTF-16 length: 4 base chars + 1 combining mark.
+    const rows: TaskSummaryRow[] = [
+      { id: "LORE-1", title: "Short", status: combiningStatus },
+      { id: "LORE-100", title: "A longer title", status: "In Progress" },
+    ];
+    const lines = renderTaskSummaryRows(rows);
+    expect(lines).toHaveLength(2);
+    const prefixWidths = lines.map((line, i) =>
+      displayWidth(line.slice(0, line.length - (rows[i]?.title.length ?? 0))),
+    );
+    expect(prefixWidths[0]).toBe(prefixWidths[1]);
+    expect(lines).toEqual(["  LORE-1    Café         Short", "  LORE-100  In Progress  A longer title"]);
+  });
+
+  test.each([
+    ["ordinary emoji", "😀"],
+    ["emoji variation sequence", "❤️"],
+    ["regional-indicator flag", "🇺🇸"],
+    ["short ZWJ sequence", "👩‍💻"],
+    ["multi-person ZWJ sequence", "👨‍👩‍👧‍👦"],
+    ["keycap sequence", "1️⃣"],
+  ])("aligns exact row bytes for a %s status (LCLI-285)", (_kind, status) => {
+    const emojiRow: TaskSummaryRow = { id: "LORE-1", title: "Emoji", status };
+    const asciiRow: TaskSummaryRow = { id: "LORE-100", title: "ASCII", status: "Done" };
+    const lines = renderTaskSummaryRows([emojiRow, asciiRow]);
+
+    expect(lines).toEqual([`  LORE-1    ${status}    Emoji`, "  LORE-100  Done  ASCII"]);
+    expect(displayWidth(lines[0]?.slice(0, -(emojiRow.title.length ?? 0)) ?? "")).toBe(
+      displayWidth(lines[1]?.slice(0, -(asciiRow.title.length ?? 0)) ?? ""),
+    );
+  });
+});
+
+describe("displayWidth — terminal column count, not UTF-16 length (LORE-221)", () => {
+  const DISPLAY_WIDTH_CONFORMANCE_V1 = [
+    { kind: "empty", input: "", before: 0, after: 0 },
+    { kind: "ASCII", input: "LORE-100", before: 8, after: 8 },
+    { kind: "East Asian wide", input: "処理中", before: 6, after: 6 },
+    { kind: "East Asian fullwidth", input: "Ａ", before: 2, after: 2 },
+    { kind: "combining mark", input: `e${"́"}`, before: 1, after: 1 },
+    { kind: "ordinary emoji", input: "😀", before: 1, after: 2 },
+    { kind: "emoji variation sequence", input: "❤️", before: 1, after: 2 },
+    { kind: "regional-indicator flag", input: "🇺🇸", before: 2, after: 2 },
+    { kind: "short ZWJ sequence", input: "👩‍💻", before: 2, after: 2 },
+    { kind: "multi-person ZWJ sequence", input: "👨‍👩‍👧‍👦", before: 4, after: 2 },
+    { kind: "keycap sequence", input: "1️⃣", before: 1, after: 2 },
+  ] as const;
+
+  test("matches every versioned post-boundary width", () => {
+    for (const { kind, input, after } of DISPLAY_WIDTH_CONFORMANCE_V1) {
+      expect(displayWidth(input), kind).toBe(after);
+    }
+  });
+
+  test("isolates the intentional behavior changes from the pinned pre-change oracle", () => {
+    expect(DISPLAY_WIDTH_CONFORMANCE_V1.filter(({ before, after }) => before !== after)).toEqual([
+      { kind: "ordinary emoji", input: "😀", before: 1, after: 2 },
+      { kind: "emoji variation sequence", input: "❤️", before: 1, after: 2 },
+      { kind: "multi-person ZWJ sequence", input: "👨‍👩‍👧‍👦", before: 4, after: 2 },
+      { kind: "keycap sequence", input: "1️⃣", before: 1, after: 2 },
+    ]);
+  });
+
+  test("keeps package-level ANSI width handling compatible with sanitized row inputs", () => {
+    expect(displayWidth("\x1b[31m処理中\x1b[39m")).toBe(6);
   });
 });

@@ -7,7 +7,7 @@
  * ### Why a surgical string splice, not parse→stringify
  *
  * lore deliberately ships **no markdown serializer** (deps are only `mdast-util-from-markdown`
- * for parsing, plus gray-matter/js-yaml/zod for frontmatter — ADR-0001 packaging constraint).
+ * for parsing, plus js-yaml/zod for frontmatter — ADR-0001 packaging constraint).
  * Re-emitting a body through a stringifier would reflow prose — reindenting lists, normalizing
  * emphasis, rewrapping — which ADR-0008 §7 forbids and AC#3 pins against. So a link's
  * destination is rewritten by **splicing the new bytes over the old destination's byte range**,
@@ -38,9 +38,11 @@
  *   arithmetic, so it corrects even links that dangle (resolve to no concept).
  *
  * Resolution mirrors the bundle graph's own rules byte-for-byte ({@link bundle}'s
- * `internalTarget` + path-join + {@link idFromPath}, and `resolveRef` for frontmatter), so this
- * engine rewrites exactly the edges the graph counts — case-sensitively, leading-slash absorbed,
- * no `/`-absolute special case (unlike `lore check`'s portability view).
+ * `internalTarget` + {@link resolvePath} for a body link, `resolveRef` for frontmatter), so this
+ * engine rewrites exactly the edges the graph counts — case-sensitively, and including
+ * `resolvePath`'s `/`-absolute special case (a leading `/` resolves against the bundle root,
+ * stripped, instead of joining onto the referring file's directory — the same rule `check.ts`'s
+ * link gate applies, LORE-180).
  *
  * The rewritten bytes are produced by {@link serializeConcept} (frontmatter in canonical,
  * byte-stable form; body verbatim with the splices applied), so an already-canonical concept's
@@ -58,13 +60,26 @@
  *   independent) id. A frontmatter ref that *dangles* (resolves to no concept) is left as-is, the
  *   same broken signal `lore check` already reports.
  *
+ * ### Text/target mismatch reporting (LORE-262)
+ *
+ * An inbound link is always retargeted exactly as described above — the engine never *skips* a
+ * retarget, because for `lore rename` the old file is deleted, and a skipped link would become a
+ * genuinely dangling one (worse than a stale-reading text). But a link whose *visible display
+ * text* still names the OLD id (e.g. a supersession doc's own `[ADR-0005](…)` citation, now
+ * pointing at ADR-0006) is easy to leave silently misleading, so every such retarget is *also*
+ * surfaced as a {@link LinkTextMismatch} in {@link RewritePlan.textMismatches} — advisory data
+ * only, the same shape as everything else this module returns (pure, no I/O). The command layer
+ * renders each one as a stderr warning via {@link renderLinkTextMismatchWarning}. Scoped to
+ * **inbound** files only (not the moved file's own self-link retarget in `move` mode) — see
+ * {@link computeBodyEdits}'s doc comment for why.
+ *
  * Per the core contract (lore-design §2.1) everything here is pure: a {@link BundleGraph} in, a
  * {@link RewritePlan} out, or a `not_found`/`conflict` {@link LoreError}. No filesystem, no
  * printing, no flags, no `process.exit` — the command layer reads the bundle, writes the plan's
  * bytes, and performs the move/delete.
  */
 
-import { posix } from "node:path";
+import { posix, win32 } from "node:path";
 import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { LoreError } from "../errors";
@@ -72,6 +87,7 @@ import {
   type BundleGraph,
   conceptNotInBundle,
   internalTarget,
+  nodeText,
   REF_FIELDS,
   resolvePath,
   resolveRef,
@@ -80,6 +96,8 @@ import {
 import { type Concept, idFromPath, serializeConcept } from "./concept";
 import { normalizeLink } from "./links";
 import { compareCodeUnits } from "./order";
+import type { Profile } from "./profile";
+import { DOCS_DIR } from "./scaffold";
 
 /** A half-open `[start, end)` byte range within a body, locating a link destination to splice. */
 interface ByteRange {
@@ -96,6 +114,36 @@ export interface RewriteWrite {
 }
 
 /**
+ * One retargeted **inbound** body link whose visible display text still names the OLD id — a
+ * text/target mismatch a naive retarget would otherwise leave silently in place (LORE-262). The
+ * link's destination is always still repointed to `to` (skipping it would leave a genuinely
+ * *dangling* link once `lore rename` deletes the old file — worse than a stale-reading text), so
+ * this is advisory data only: the caller (`commands/supersede.ts`/`commands/rename.ts`) surfaces
+ * it as a stderr warning via {@link renderLinkTextMismatchWarning} so the author can review the
+ * prose, not something the engine acts on itself.
+ */
+export interface LinkTextMismatch {
+  /** Bundle-relative path of the concept file containing the mismatched link. */
+  readonly path: string;
+  /** The link's visible display text, verbatim as authored (e.g. `"ADR-0005"`). */
+  readonly text: string;
+  /** The old id the text names (bare id, no `.md`). */
+  readonly from: string;
+  /** The new id the link's destination now points to (bare id, no `.md`). */
+  readonly to: string;
+}
+
+/**
+ * The stderr warning line for one {@link LinkTextMismatch} (LORE-262). Exported so
+ * `commands/supersede.ts` and `commands/rename.ts` — the two callers that can produce one — render
+ * byte-identical wording through a single shared function, rather than two independently-drifting
+ * copies (mirrors `state.ts`'s `renderBacklogCommitLine`, reused the same way by `rename.ts`).
+ */
+export function renderLinkTextMismatchWarning(m: LinkTextMismatch): string {
+  return `link text "${m.text}" in ${DOCS_DIR}/${m.path} still names "${m.from}", but its link now points to "${m.to}" — review the prose`;
+}
+
+/**
  * The result of {@link rewriteInbound}: the optional file move and every file whose bytes change.
  * `rename` is non-null only in `move` mode — it tells the command which file to write at the new
  * path and delete at the old; the moved file's new bytes are in `writes` under its new path.
@@ -106,6 +154,12 @@ export interface RewritePlan {
   readonly rename: { readonly from: string; readonly to: string } | null;
   /** Each changed file's new bytes, ascending by path. */
   readonly writes: readonly RewriteWrite[];
+  /**
+   * Every retargeted inbound link whose text names the old id, ascending by path (each file's own
+   * entries keep document order — LORE-262). Empty when no such link was found — the overwhelmingly
+   * common case, so an ordinary rewrite carries no advisory data at all.
+   */
+  readonly textMismatches: readonly LinkTextMismatch[];
 }
 
 /** Options for {@link rewriteInbound}. */
@@ -132,9 +186,22 @@ export interface RewriteInboundOptions {
    * (it wires their frontmatter directly — repointing the successor's own link to its predecessor,
    * or the preserved old doc's self-link, would be wrong) and the machine-owned `index.md`/`log.md`
    * hubs (regenerated by `lore sync`, never hand-rewritten). Empty by default (`lore rename` rewrites
-   * everything its graph reaches).
+   * everything its graph reaches). If this set contains `fromId` itself in `move` mode, the returned
+   * plan's `rename` is `null` too (LORE-164) — the caller owns that file entirely, including whether
+   * it moves, so the engine cannot claim a move it never wrote the destination bytes for.
    */
   readonly exclude?: ReadonlySet<string>;
+  /**
+   * The active profile, forwarded to every {@link serializeConcept} call this engine makes so a
+   * rewritten concept's re-emitted frontmatter validates against the SAME profile the caller's own
+   * `loadBundle` used to read the bundle in the first place — never silently falling back to the
+   * built-in default when the caller has a project-specific `.lore/profile.toml` (LORE-88). Also the
+   * profile a caller should re-parse these bytes with afterward (e.g. `rename.ts`'s
+   * `buildPostRenameGraph`), so a concept is never written under one profile and re-read under
+   * another. Defaults to {@link serializeConcept}'s own default (the built-in profile), so a caller
+   * that does not opt in is unaffected (LORE-88 AC#5).
+   */
+  readonly profile?: Profile;
 }
 
 /** The shared empty exclude set, so the common (no-exclude) path allocates nothing. */
@@ -160,6 +227,9 @@ export function rewriteInbound(
   const move = options.move ?? false;
   const rewriteRefs = options.rewriteFrontmatterRefs ?? true;
   const exclude = options.exclude ?? NO_EXCLUDE;
+  const profile = options.profile;
+  assertConfinedToBundle(fromId, "fromId");
+  assertConfinedToBundle(toId, "toId");
   const from = idFromPath(fromId);
   const to = idFromPath(toId);
 
@@ -192,6 +262,7 @@ export function rewriteInbound(
   }
 
   const writes: RewriteWrite[] = [];
+  const textMismatches: LinkTextMismatch[] = [];
   for (const id of affected) {
     if (exclude.has(id)) {
       continue; // the caller rewrites this file itself — never parse, serialize, or plan it here
@@ -201,16 +272,133 @@ export function rewriteInbound(
       continue; // an edge's `from` is always a real concept; this is unreachable belt-and-braces
     }
     const isMoved = move && id === from;
-    const rewritten = rewriteConcept(concept, graph, { from, to, fromPath, toPath, isMoved, rewriteRefs });
-    if (rewritten === null && !isMoved) {
+    const rewritten = rewriteConcept(concept, graph, { from, to, fromPath, toPath, isMoved, rewriteRefs }, profile);
+    if (rewritten.bytes === null && !isMoved) {
       continue; // nothing changed in this file and it does not move — leave it untouched
     }
-    const bytes = rewritten ?? serializeConcept(concept);
+    const bytes = rewritten.bytes ?? serializeConcept(concept, { profile });
     writes.push({ path: isMoved ? toPath : concept.path, bytes });
+    textMismatches.push(...rewritten.textMismatches);
   }
 
   writes.sort((a, b) => compareCodeUnits(a.path, b.path));
-  return { rename: move ? { from: fromPath, to: toPath } : null, writes };
+  // Stable sort: each file's own mismatches keep the document order they were collected in.
+  textMismatches.sort((a, b) => compareCodeUnits(a.path, b.path));
+  // `rename` must only claim the move when the source's own rewrite actually ran: if `exclude`
+  // contains `from`, the loop above `continue`d past it before ever pushing its destination write
+  // (the exclude contract — never parsed, serialized, or planned here), so a `rename` announcing the
+  // move would leave `writes` with no entry at `toPath` for a caller to act on (LORE-164).
+  const rename = move && !exclude.has(from) ? { from: fromPath, to: toPath } : null;
+  return { rename, writes, textMismatches };
+}
+
+/**
+ * Reject a `fromId`/`toId` that would resolve outside the `docs/` bundle root — closes the
+ * traversal gap for every {@link rewriteInbound} caller (`lore rename`, `lore supersede`) at the
+ * one shared layer both funnel through (LORE-80). Checked on the RAW caller-supplied value,
+ * before {@link idFromPath} ever runs.
+ *
+ * An absolute path is checked against BOTH `posix.isAbsolute` and `win32.isAbsolute` — this ships
+ * as a compiled binary for both platforms from the same source, so a Windows drive-letter id
+ * (inert POSIX-side, genuinely absolute on a win32 run) must be rejected regardless of which
+ * platform is running (the LORE-69 cross-platform-normalize convention).
+ *
+ * A relative escape is caught by {@link escapesRoot}, which walks segments split on EITHER `/` or
+ * `\` — not just `posix.normalize`'s own forward-slash-only splitting. `idFromPath`'s
+ * `posix.normalize` treats a backslash as an ordinary filename character, not a separator, so a
+ * relative traversal spelled `..\pwned` survives it completely unchanged and would trip neither
+ * `posix.isAbsolute` (it isn't) nor `win32.isAbsolute` (it's relative, not absolute — that check
+ * only matches a drive-letter/UNC/leading-separator *absolute* form). Yet the command layer's
+ * eventual write (`commands/rename.ts`, via the platform-native `path.join`) treats `\` as a
+ * separator on an actual Windows run, so `..\pwned` is exactly as real an escape there as
+ * `../pwned` is everywhere else — this check must catch it on every platform it runs on, not only
+ * the one it happens to be compiled for.
+ */
+function assertConfinedToBundle(id: string, label: "fromId" | "toId"): void {
+  if (posix.isAbsolute(id) || win32.isAbsolute(id) || escapesRoot(id) || isDriveRelative(id) || resolvesToRoot(id)) {
+    throw new LoreError(
+      "validation",
+      `${label} "${id}" resolves outside the docs/ bundle root`,
+      "pass an id that stays inside the docs/ bundle",
+      { id },
+    );
+  }
+}
+
+/**
+ * Whether `id` is a Windows drive-relative reference — a drive letter and colon with **no**
+ * following separator (e.g. `"C:foo"`, real Windows syntax meaning "relative to that drive's
+ * current directory"). Distinct from an absolute `"C:\\foo"`/`"C:/foo"` form, which
+ * `win32.isAbsolute` already rejects: `win32.isAbsolute("C:foo")` is `false` (Node correctly
+ * implements this Windows quirk), and `posix.isAbsolute("C:foo")` is also `false`, so nothing
+ * else {@link assertConfinedToBundle} already checks catches this shape (LORE-95). Exported so
+ * `commands/rename.ts`'s own argument-parsing-layer guard can reuse this exact check, mirroring
+ * how {@link escapesRoot} itself is already shared rather than re-derived per call site.
+ */
+export function isDriveRelative(id: string): boolean {
+  return /^[A-Za-z]:(?![\\/])/.test(id);
+}
+
+/**
+ * Whether `id` normalizes to the bundle root itself — an empty string, `"."`, or a self-cancelling
+ * relative path like `"sub/.."` whose segments net out to zero remaining depth. {@link escapesRoot}
+ * alone doesn't catch this: none of these ever climb *above* where they started (the property
+ * `escapesRoot` checks) — they simply cancel out to nothing. Left uncaught, `idFromPath`'s
+ * `posix.normalize` folds any of these to `"."`, and a caller building `` `${to}.md` `` from that
+ * gets the literal string `"..md"` — a hidden dotfile silently created at the bundle root instead
+ * of a rejection (LORE-95). Shares `escapesRoot`'s own segment-walk convention (split on either
+ * `/` or `\`) for the identical cross-platform reason documented there; a segment that merely
+ * *starts with* `".."` (e.g. `"..foo"`) is a real, non-cancelling segment and does not count
+ * towards depth going down, matching `escapesRoot`'s own exact-match care. Exported for reuse by
+ * `commands/rename.ts`'s own argument-parsing-layer guard, mirroring how `escapesRoot` itself is
+ * already shared.
+ */
+export function resolvesToRoot(id: string): boolean {
+  let depth = 0;
+  for (const segment of id.split(/[\\/]+/)) {
+    if (segment === "" || segment === ".") {
+      continue;
+    }
+    if (segment === "..") {
+      // A genuine climb-above-start is escapesRoot's own concern, already checked separately;
+      // clamping at 0 here keeps this function correct standalone regardless of call order.
+      depth = Math.max(0, depth - 1);
+    } else {
+      depth++;
+    }
+  }
+  return depth === 0;
+}
+
+/**
+ * Whether walking `id`'s segments — split on a run of either `/` or `\`, since either can act as
+ * a separator depending on which platform's binary eventually resolves it (see
+ * {@link assertConfinedToBundle}) — climbs above the directory `id` starts in. A literal `..`
+ * segment always means "parent directory": no real filesystem, on either platform, permits a
+ * file or directory literally named `..`, so this can never misfire on a genuine bundle id — nor
+ * reject a real segment that merely *starts* with `..` (e.g. `..foo/bar`), since that segment
+ * does not equal `..` exactly (mirrors `new.ts`'s `resolveOutPath`'s own documented care).
+ *
+ * Exported so a command layer can reuse this exact, already-review-tested traversal check for its
+ * own defense-in-depth confinement guard (e.g. `commands/rename.ts`'s `newId`, LORE-79) instead of
+ * re-deriving the same security-sensitive segment walk a second time.
+ */
+export function escapesRoot(id: string): boolean {
+  let depth = 0;
+  for (const segment of id.split(/[\\/]+/)) {
+    if (segment === "" || segment === ".") {
+      continue;
+    }
+    if (segment === "..") {
+      if (depth === 0) {
+        return true;
+      }
+      depth--;
+    } else {
+      depth++;
+    }
+  }
+  return false;
 }
 
 /** The resolved coordinates one concept's rewrite needs (`from`/`to` are normalized ids). */
@@ -225,14 +413,26 @@ interface RewriteContext {
   readonly rewriteRefs: boolean;
 }
 
+/** {@link rewriteConcept}'s result: the new bytes (`null` when nothing changed) plus any {@link LinkTextMismatch}es found. */
+interface ConceptRewrite {
+  readonly bytes: string | null;
+  readonly textMismatches: readonly LinkTextMismatch[];
+}
+
 /**
- * Rewrite one affected concept, returning its new serialized bytes, or `null` when nothing in it
- * changed (no body destination and no frontmatter ref needed rewriting). The moved file always
- * yields bytes from its caller even on a `null` here, because it still relocates.
+ * Rewrite one affected concept, returning its new serialized bytes (`null` when nothing in it
+ * changed — no body destination and no frontmatter ref needed rewriting) plus every
+ * {@link LinkTextMismatch} its body edits surfaced. The moved file always yields bytes from its
+ * caller even on a `null` here, because it still relocates.
  */
-function rewriteConcept(concept: Concept, graph: BundleGraph, ctx: RewriteContext): string | null {
+function rewriteConcept(
+  concept: Concept,
+  graph: BundleGraph,
+  ctx: RewriteContext,
+  profile: Profile | undefined,
+): ConceptRewrite {
   const dir = posix.dirname(concept.path);
-  const edits = computeBodyEdits(concept.body, concept.path, ctx);
+  const { edits, textMismatches } = computeBodyEdits(concept.body, concept.path, ctx, graph.concepts);
   const newBody = applyBodyEdits(concept.body, edits);
 
   // `lore supersede` (rewriteRefs=false) preserves the old file, so a third party's frontmatter ref
@@ -241,14 +441,14 @@ function rewriteConcept(concept: Concept, graph: BundleGraph, ctx: RewriteContex
   const frontmatterChanged = newFrontmatter !== null;
 
   if (newBody === concept.body && !frontmatterChanged) {
-    return null;
+    return { bytes: null, textMismatches: [] };
   }
   const next: Concept = {
     ...concept,
     frontmatter: frontmatterChanged ? newFrontmatter : concept.frontmatter,
     body: newBody,
   };
-  return serializeConcept(next);
+  return { bytes: serializeConcept(next, { profile }), textMismatches };
 }
 
 // ── Body link rewriting ──────────────────────────────────────────────────────────
@@ -256,6 +456,12 @@ function rewriteConcept(concept: Concept, graph: BundleGraph, ctx: RewriteContex
 /** A planned destination splice: the source byte range to replace and its replacement text. */
 interface BodyEdit extends ByteRange {
   readonly dest: string;
+}
+
+/** {@link computeBodyEdits}'s result: the destination splices plus any {@link LinkTextMismatch}es they surfaced. */
+interface BodyEditsResult {
+  readonly edits: BodyEdit[];
+  readonly textMismatches: LinkTextMismatch[];
 }
 
 /**
@@ -266,18 +472,41 @@ interface BodyEdit extends ByteRange {
  * an inbound file, only links that resolve to `fromId` are repointed. An edit is emitted only when
  * the new destination differs from the authored bytes, so a canonical link the move leaves in
  * place produces no churn.
+ *
+ * For an **inbound** file (`!ctx.isMoved`) — the code path both `lore supersede --rewrite-links`
+ * and `lore rename` funnel every *other* affected concept through — each emitted edit is also
+ * checked against {@link textNamesOldId}: if the link's visible display text still names the OLD
+ * id, a {@link LinkTextMismatch} is recorded alongside it. The destination is retargeted exactly
+ * as before either way (LORE-262 AC#2: no regression) — this only adds advisory data the caller
+ * surfaces, never changes what gets rewritten. The moved file's own outbound links are exempt: a
+ * self-link's destination follows the file to its new location by construction, and most of the
+ * candidates recomputed there aren't edges to `fromId` at all (see {@link newDestPathFor}), so
+ * "does this text name the old id" isn't a meaningful question to ask there.
  */
-function computeBodyEdits(body: string, conceptPath: string, ctx: RewriteContext): BodyEdit[] {
+function computeBodyEdits(
+  body: string,
+  conceptPath: string,
+  ctx: RewriteContext,
+  byId: ReadonlyMap<string, Concept>,
+): BodyEditsResult {
   const tree = fromMarkdown(body);
   const links: Nodes[] = [];
   const usedIdentifiers = new Set<string>();
   const firstDefinition = new Map<string, Nodes>();
   const allDefinitions: Nodes[] = [];
+  // The visible text of a reference-style link lives on its `linkReference` node, not on the
+  // `definition` it resolves to — collected here, first occurrence wins, while the tree is walked
+  // anyway for `usedIdentifiers` (LORE-262: needed only to check a definition-candidate's text
+  // below, but cheap to always collect).
+  const linkRefText = new Map<string, string>();
   walkMdast(tree, (node) => {
     if (node.type === "link") {
       links.push(node);
     } else if (node.type === "linkReference") {
       usedIdentifiers.add(node.identifier);
+      if (!linkRefText.has(node.identifier)) {
+        linkRefText.set(node.identifier, nodeText(node));
+      }
     } else if (node.type === "definition") {
       allDefinitions.push(node);
       if (!firstDefinition.has(node.identifier)) {
@@ -307,9 +536,14 @@ function computeBodyEdits(body: string, conceptPath: string, ctx: RewriteContext
     }
   }
 
+  // Only an inbound file's retargets are checked for a stale text citation (see the doc comment
+  // above) — computed once, not per-candidate.
+  const oldIdCandidates = ctx.isMoved ? null : oldIdNameCandidates(ctx.from);
+
   const edits: BodyEdit[] = [];
+  const textMismatches: LinkTextMismatch[] = [];
   for (const { node, isDefinition } of candidates) {
-    const newPath = newDestPathFor((node as { url: string }).url, conceptPath, ctx);
+    const newPath = newDestPathFor((node as { url: string }).url, conceptPath, ctx, byId);
     if (newPath === null) {
       continue; // external/non-.md, or (inbound) not a link to the renamed concept
     }
@@ -326,36 +560,137 @@ function computeBodyEdits(body: string, conceptPath: string, ctx: RewriteContext
       continue; // already the canonical bytes — no edit (the move left this link in place)
     }
     edits.push({ start: range.start, end: range.end, dest: newDest });
+
+    if (oldIdCandidates !== null) {
+      // Reference-style: the visible text is the linkReference's, looked up by identifier — a
+      // definition candidate here always has one (only *used* definitions are candidates when
+      // `!ctx.isMoved`), so this lookup cannot miss. Inline: the text lives on the link node itself.
+      const text = isDefinition ? (linkRefText.get((node as { identifier: string }).identifier) ?? "") : nodeText(node);
+      if (textNamesOldId(text, oldIdCandidates)) {
+        textMismatches.push({ path: conceptPath, text, from: ctx.from, to: ctx.to });
+      }
+    }
   }
-  return edits;
+  return { edits, textMismatches };
+}
+
+/**
+ * Candidate substrings a link's visible text might contain to be "naming" `fromId` (LORE-262): the
+ * bare id itself, its basename, and — for an `NNNN-slug` id (lore's ADR/RFC-style numbering
+ * convention, e.g. `adr/0005-cli-contract`) — the bare digits and `<dirname>-<digits>` (so a prose
+ * citation like `"ADR-0005"` is caught even though the id's own basename is `0005-cli-contract`,
+ * not `adr-0005`). This is a deliberately pragmatic heuristic, not a full NLP match: it cannot
+ * catch every phrasing (a citation with no digits at all, an id with no numeric prefix referenced
+ * only by an unrelated-looking title) — see {@link textNamesOldId} for how each candidate is
+ * matched against the text.
+ */
+function oldIdNameCandidates(fromId: string): string[] {
+  const candidates = new Set<string>([fromId]);
+  const base = posix.basename(fromId);
+  candidates.add(base);
+  const numeric = base.match(/^(\d+)-/);
+  if (numeric?.[1] !== undefined) {
+    const digits = numeric[1];
+    candidates.add(digits);
+    const dir = posix.basename(posix.dirname(fromId));
+    if (dir !== "" && dir !== ".") {
+      candidates.add(`${dir}-${digits}`);
+    }
+  }
+  // A short candidate (e.g. a one/two-character id or digit run) is dropped: matching it against
+  // arbitrary prose would produce far more noise than signal.
+  return [...candidates].filter((c) => c.length >= 3);
+}
+
+/**
+ * Whether `text` names one of `candidates` — a case-insensitive check, applied as a plain
+ * substring for a candidate containing `/` (a full bundle id, which essentially never collides
+ * with unrelated prose) and as a **word-boundary** regex match otherwise (a bare id/digits/slug
+ * candidate, which — unlike a full id — could otherwise false-positive inside a longer unrelated
+ * word or number).
+ */
+function textNamesOldId(text: string, candidates: readonly string[]): boolean {
+  const lower = text.toLowerCase();
+  for (const candidate of candidates) {
+    if (candidate.includes("/")) {
+      if (lower.includes(candidate.toLowerCase())) {
+        return true;
+      }
+      continue;
+    }
+    if (new RegExp(`\\b${escapeRegExp(candidate)}\\b`, "i").test(text)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Escape every regex metacharacter in `s`, so a candidate built from arbitrary id text is safe to interpolate into a `RegExp`. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**
  * The canonical **path** (no `#fragment`/`?query`) one link should point at after the rename, or
  * `null` when the link is not a target: external, non-`.md`, or — for an inbound file — not a link
  * to the renamed concept. Classification and id derivation reuse the bundle graph's own
- * {@link internalTarget}/{@link resolvePath}, so it rewrites exactly the edges the graph counts.
+ * {@link internalTarget}/{@link resolvePath} — including `resolvePath`'s `/`-absolute special
+ * case (leading `/` strips and resolves against the bundle root, rather than joining onto `dir`
+ * like a relative segment) — so this rewrites exactly the edges the graph counts, and a `/`-absolute
+ * link is never mis-classified against a same-string decoy that merely happens to sit at the
+ * dir-joined path (LORE-180).
  */
-function newDestPathFor(url: string, conceptPath: string, ctx: RewriteContext): string | null {
+function newDestPathFor(
+  url: string,
+  conceptPath: string,
+  ctx: RewriteContext,
+  byId: ReadonlyMap<string, Concept>,
+): string | null {
   const decoded = internalTarget(url);
   if (decoded === null) {
     return null; // external, anchor-only, or non-.md — not an internal concept link
   }
   const dir = posix.dirname(conceptPath);
-  const targetId = idFromPath(posix.join(dir, decoded));
+  const targetId = resolvePath(decoded, dir, byId);
+
+  // normalizeLink's precondition is the repo-relative coordinate space (both operands rooted at
+  // the repo, `docs/…`), not the bundle-relative one `conceptPath`/`ctx.to` use as graph ids. The
+  // two coincide for a link that stays inside the bundle (a constant `docs/` prefix cancels out of
+  // a relative-path computation), which is why this only ever surfaced for a link that escapes the
+  // bundle root — e.g. a Story's managed task block linking `backlog/tasks/…` (LORE-68): resolving
+  // `decoded`/`ctx.toPath` in bundle-relative space silently drops the `docs/` hop, truncating the
+  // rewritten link by one `../` segment.
+  const repoDir = `${DOCS_DIR}/${dir}`;
+  const repoToPath = `${DOCS_DIR}/${ctx.toPath}`;
 
   if (ctx.isMoved) {
     // The file moves: recompute the link against its new directory. A self-link follows the file
     // to its new path; any other target keeps its location (pure path arithmetic, so a dangling
-    // link is corrected too).
-    const targetPath = targetId === ctx.from ? ctx.toPath : posix.normalize(posix.join(dir, decoded));
-    return normalizeLink(ctx.toPath, targetPath);
+    // link is corrected too) — joined with the same leading-`/`-aware rule as `targetId` above, so
+    // a `/`-absolute sibling link isn't mis-resolved into the file's old directory (LORE-180: plain
+    // `posix.join(repoDir, decoded)` does NOT treat an absolute second segment specially — it just
+    // concatenates — so this must special-case it explicitly rather than lean on `posix.join`).
+    const targetPath =
+      targetId === ctx.from
+        ? repoToPath
+        : posix.normalize(decoded.startsWith("/") ? `${DOCS_DIR}/${decoded.slice(1)}` : posix.join(repoDir, decoded));
+    // A link authored with more `../` segments than the file's depth resolves ABOVE the repo
+    // root: `targetPath` (already normalized, repo-relative) equals `..` or starts with `../`.
+    // normalizeLink roots both operands at a fixed virtual `/` (links.ts) and would silently
+    // clamp that surplus `..`, quietly retargeting an already-non-portable link rather than
+    // preserving it. Bail out with no edit instead, so the original authored bytes survive the
+    // move verbatim (the `decoded.startsWith("/")` sub-branch above always yields a `docs/…`
+    // path and can never trigger this).
+    if (targetPath === ".." || targetPath.startsWith("../")) {
+      return null;
+    }
+    return normalizeLink(repoToPath, targetPath);
   }
   if (targetId !== ctx.from) {
     return null; // an inbound file only repoints links to the renamed concept
   }
   // An inbound link is recomputed from *this* file's location to the moved concept's new path.
-  return normalizeLink(conceptPath, ctx.toPath);
+  return normalizeLink(`${DOCS_DIR}/${conceptPath}`, repoToPath);
 }
 
 /**
@@ -414,13 +749,20 @@ function destRangeForLink(body: string, node: Nodes): ByteRange | null {
  * "title"`), located structurally from the node's offsets. Unlike an inline link, the raw form
  * has no enclosing `()`, so the destination ends at whitespace (a following title) or the node's
  * end — not at a closing paren. `null` if the structure cannot be located.
+ *
+ * Unlike {@link destRangeForLink}, a `definition` node carries no parsed `children` to derive the
+ * label's end from structurally (mdast gives only its decoded `identifier`/`label` strings, whose
+ * lengths are not byte-equal to the raw source once escapes are involved — the same reason
+ * `node.url` can't drive a text search, see the module header) — so the closing `]` is located by
+ * an escape-aware raw scan ({@link findLabelClose}) instead of a plain `indexOf`, which would
+ * match an escaped `\]` *inside* the label rather than the real closing bracket (LORE-87).
  */
 function destRangeForDefinition(body: string, node: Nodes): ByteRange | null {
   const span = positionOf(node);
   if (span === null) {
     return null;
   }
-  const rb = body.indexOf("]", span.start); // the label's closing `]`
+  const rb = findLabelClose(body, span.start + 1, span.end); // the label's closing `]`
   if (rb === -1) {
     return null;
   }
@@ -429,6 +771,27 @@ function destRangeForDefinition(body: string, node: Nodes): ByteRange | null {
     return null;
   }
   return scanDestination(body, colon + 1, span.end, false);
+}
+
+/**
+ * The index of a reference definition's label-closing `]`, scanned from just after the opening
+ * `[` (`from`) and honoring `\` escapes — the same escape convention {@link scanDestination}
+ * applies to a destination, so `\]` inside the label is skipped rather than mistaken for the real
+ * closing bracket (LORE-87). `-1` if none is found before `end`.
+ */
+function findLabelClose(body: string, from: number, end: number): number {
+  let j = from;
+  while (j < end) {
+    if (body[j] === "\\") {
+      j += 2;
+      continue;
+    }
+    if (body[j] === "]") {
+      return j;
+    }
+    j++;
+  }
+  return -1;
 }
 
 /**

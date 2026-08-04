@@ -6,7 +6,7 @@ dist/
 build/
 *.tsbuildinfo
 
-# Per-platform compiled binaries (release build artifacts — LORE-9). Only the
+# Per-platform compiled binaries (release build artifacts — LCLI-9). Only the
 # npm/<platform>/package.json templates are committed; the release workflow
 # builds and places the actual binary at npm/<platform>/bin/lore[.exe].
 npm/*/bin/
@@ -17,13 +17,19 @@ dist-npm/
 coverage/
 .nyc_output/
 
-# Docker E2E harness output (LORE-56) — the Dockerfile/compose/script are
+# Local investigation/onboarding scratch retained outside the shipped CLI.
+.repro-scratch/
+lore-e2e-test.sh
+lore-setup.sh
+
+# Docker E2E harness output (LCLI-56) — the Dockerfile/compose/script are
 # committed; each run's report is generated, not durable.
 docker/e2e/results/*
 !docker/e2e/results/.gitkeep
 
-# lore CLI state (config.toml and sync-state.json ARE committed; cache is not)
+# lore CLI state (config.toml and sync-state.json ARE committed; generated state is not)
 .lore/cache/
+.lore/explorer/
 
 # Backlog.md transient lockfiles
 backlog/.locks/

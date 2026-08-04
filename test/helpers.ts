@@ -57,17 +57,16 @@ export function cleanGitSpawn(): GitSpawn & { calls: string[][] } {
 
 /**
  * A scripted {@link GitSpawn} reporting **one dirty** `backlog/` file, then succeeding `add`/`commit`.
- * Mirrors `commitBacklogIfDirty`'s call sequence: call 1 is `git rev-parse --show-prefix` (answered
- * `""` — not a nested bundle), call 2 is `git status` (answered with the given `-z`/NUL-terminated
- * porcelain entry), calls 3+ (`add`, `commit`) succeed. Records every call's args on `.calls`.
+ * Mirrors `commitBacklogIfDirty`'s call sequence: `git rev-parse --show-prefix` (answered `""` — not
+ * a nested bundle), `git status` (identified by inspecting `args[0]`, answered with the given
+ * `-z`/NUL-terminated porcelain entry regardless of call position), then `add`/`commit` succeed.
+ * Records every call's args on `.calls`.
  */
 export function dirtyGitSpawn(porcelainEntry: string): GitSpawn & { calls: string[][] } {
   const calls: string[][] = [];
-  let call = 0;
   const spawn = (async (args: readonly string[]): Promise<GitSpawnResult> => {
     calls.push([...args]);
-    call++;
-    return call === 2 ? gitOk(`${porcelainEntry}\0`) : gitOk("");
+    return args[0] === "status" ? gitOk(`${porcelainEntry}\0`) : gitOk("");
   }) as GitSpawn & { calls: string[][] };
   spawn.calls = calls;
   return spawn;
@@ -81,11 +80,9 @@ export function dirtyGitSpawn(porcelainEntry: string): GitSpawn & { calls: strin
  */
 export function failingCommitGitSpawn(porcelainEntry: string): GitSpawn & { calls: string[][] } {
   const calls: string[][] = [];
-  let call = 0;
   const spawn = (async (args: readonly string[]): Promise<GitSpawnResult> => {
     calls.push([...args]);
-    call++;
-    if (call === 2) return gitOk(`${porcelainEntry}\0`);
+    if (args[0] === "status") return gitOk(`${porcelainEntry}\0`);
     if (args[0] === "commit") return { exitCode: 1, stdout: "", stderr: "hook rejected" };
     return gitOk("");
   }) as GitSpawn & { calls: string[][] };
@@ -249,7 +246,7 @@ export function fakeAdapter(
             if (probeOpt instanceof Error) {
               throw probeOpt;
             }
-            return { version: "1.47.1", schemaVersion: 1 };
+            return { version: "1.49.0", schemaVersion: 1 };
           },
     listTasks:
       opts.listTasks === undefined

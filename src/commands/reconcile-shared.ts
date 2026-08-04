@@ -20,7 +20,15 @@ import type { ManagedTaskRow } from "../core/managed-block";
 import { type ReconciledStatus, reconcileStatus, validateReconcileInputs } from "../core/reconcile";
 import { RESERVED_STEMS } from "../core/scaffold";
 import { LoreError } from "../errors";
-import { dedupeTaskIds, defaultAdapter } from "./link";
+// `mapWithConcurrency`/`TASK_DETAILS_CONCURRENCY` moved to the neutral `./concurrency` module
+// (LORE-233) so `link.ts` can share them too without a `link -> reconcile-shared -> link` import
+// cycle (this file already imports `dedupeTaskIds`/`defaultAdapter`/`verifiedViewTask` FROM
+// `link.ts`). Re-exported here so `check.ts` and `reconcile-shared.test.ts`, which import both
+// from this module, keep working unchanged.
+import { mapWithConcurrency, TASK_DETAILS_CONCURRENCY } from "./concurrency";
+import { dedupeTaskIds, defaultAdapter, verifiedViewTask } from "./link";
+
+export { mapWithConcurrency, TASK_DETAILS_CONCURRENCY };
 
 /** The outcome of resolving one task id: its live detail, or the error resolving it hit. */
 export type TaskResolution =
@@ -135,7 +143,8 @@ export function resolveReconcileConfig(root: string): ReconcileConfig {
  *   reconcile) or when `configOverride` is given (a caller with a genuinely resolved config, like
  *   `lore sync`, never also carries a cached failure).
  * @throws LoreError `validation` if the status flow/overrides are malformed (before any task
- *   resolution); `not_found` (exit 3) naming the first linked task id that no longer exists.
+ *   resolution); `not_found` (exit 3) naming the first linked task id that no longer exists, OR
+ *   whose resolved detail's `id` does not case-insensitively match the requested id.
  */
 export async function gatherReconciliation(
   root: string,
@@ -178,41 +187,52 @@ export async function gatherReconciliation(
 }
 
 /**
- * Resolve every task id to a {@link TaskResolution}, keyed by lowercase id — a not-found or
- * rejected `viewTask` becomes an `ok: false` entry rather than a thrown error, so a caller
- * resolving ids shared across several independent groups (bundle roots, in `lore check`'s
- * multi-root drift pass) can fetch each distinct id exactly once and let EACH group decide for
- * itself whether ids IT needs failed, instead of one failing id aborting every group's resolution.
- * Reads run concurrently (`allSettled`); this never throws.
+ * Resolve every task id to a {@link TaskResolution}, keyed by lowercase id — a not-found, an
+ * identity-mismatched, or a rejected `viewTask` all become an `ok: false` entry rather than a
+ * thrown error, so a caller resolving ids shared across several independent groups (bundle roots,
+ * in `lore check`'s multi-root drift pass) can fetch each distinct id exactly once and let EACH
+ * group decide for itself whether ids IT needs failed, instead of one failing id aborting every
+ * group's resolution. Reads run concurrently, bounded to {@link TASK_DETAILS_CONCURRENCY} in
+ * flight at once (via {@link mapWithConcurrency}); this never throws.
+ *
+ * Every resolved detail's own `id` is checked (case-insensitively) against the requested `taskId`
+ * via `link.ts`'s shared {@link verifiedViewTask} — a mismatch is treated exactly like a not-found
+ * rather than stored as `ok: true` (it throws a `LoreError`, caught below and stored verbatim, same
+ * as any other `viewTask` rejection). Nothing downstream (`gatherReconciliation`'s
+ * `details.get(id.toLowerCase())` lookup keys purely on the REQUESTED id) would otherwise notice an
+ * adapter handing back the wrong task's detail, and a mismatch here would silently attribute
+ * another task's title/status to this concept's managed `tasks:` block. This is the ONE place the
+ * check lives — `verifiedViewTask` — shared with `link.ts`'s own `viewTask` consumers and
+ * `tasks.ts`'s `resolveRollup` (LORE-125), so the comparison/`LoreError` never drifts between sites.
  */
 export async function resolveTaskDetails(
   adapter: BacklogAdapter,
   taskIds: readonly string[],
 ): Promise<Map<string, TaskResolution>> {
-  const results = await Promise.allSettled(taskIds.map((id) => adapter.viewTask(id)));
   const resolved = new Map<string, TaskResolution>();
-  for (let i = 0; i < taskIds.length; i++) {
-    const taskId = taskIds[i] as string;
-    const result = results[i] as PromiseSettledResult<BacklogTaskDetail | null>;
-    if (result.status === "rejected") {
+  await mapWithConcurrency(taskIds, TASK_DETAILS_CONCURRENCY, async (taskId) => {
+    try {
+      const detail = await verifiedViewTask(adapter, taskId);
+      if (detail === null) {
+        resolved.set(taskId.toLowerCase(), {
+          ok: false,
+          error: new LoreError(
+            "not_found",
+            `task "${taskId}" does not exist`,
+            "a linked concept's tasks: list must reference only live Backlog tasks — check the id, or unlink it",
+            { taskId },
+          ),
+        });
+      } else {
+        resolved.set(taskId.toLowerCase(), { ok: true, detail });
+      }
+    } catch (cause) {
       resolved.set(taskId.toLowerCase(), {
         ok: false,
-        error: result.reason instanceof Error ? result.reason : new Error(String(result.reason)),
+        error: cause instanceof Error ? cause : new Error(String(cause)),
       });
-    } else if (result.value === null) {
-      resolved.set(taskId.toLowerCase(), {
-        ok: false,
-        error: new LoreError(
-          "not_found",
-          `task "${taskId}" does not exist`,
-          "a linked concept's tasks: list must reference only live Backlog tasks — check the id, or unlink it",
-          { taskId },
-        ),
-      });
-    } else {
-      resolved.set(taskId.toLowerCase(), { ok: true, detail: result.value });
     }
-  }
+  });
   return resolved;
 }
 

@@ -9,9 +9,8 @@ description: >-
   per-platform compiled binaries as optionalDependencies).
 tags: [adr, runtime, build, distribution, bun, typescript, npm, packaging]
 summary: >-
-  lore is built on Bun + TypeScript and shipped as a `bun build --compile`
-  -baseline binary, distributed on npm as a Node .cjs launcher plus
-  per-platform binary optionalDependencies under @salient-data/lore (bin `lore`).
+  lore uses Bun and TypeScript and ships through npm as a Node launcher with
+  optional per-platform compiled binaries.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
@@ -93,10 +92,10 @@ machines through the channel they already use (npm / `npx` / `bunx`).
 
 **Distribution: dual artifact on npm.**
 
-- Published to npm as **`@salient-data/lore`**, exposing **`bin: lore`**.
+- Published to npm as **`@opum-ai/lore`**, exposing **`bin: lore`**.
 - The published package is a **dual artifact**:
   1. A **thin Node `.cjs` launcher** (`bin/lore.cjs`) that runs under plain
-     Node — this is the entry point npm wires up, so `npx @salient-data/lore`
+     Node — this is the entry point npm wires up, so `npx @opum-ai/lore`
      and a global install work with only Node present. The launcher resolves
      and `exec`s the correct platform binary.
   2. **Per-platform compiled binaries published as `optionalDependencies`**
@@ -109,13 +108,19 @@ machines through the channel they already use (npm / `npx` / `bunx`).
   postinstall compilation, and `npx`/`bunx` "just work".
 - The build mechanics (per-platform compile matrix, the launcher, the package
   layout, and a dry-run pipeline that proves `npx` resolution end-to-end) are
-  implemented (LORE-9); the actual `npm publish` step — and the npm Trusted
-  Publisher (OIDC) configuration it depends on — is a deliberate follow-up. See
+  implemented (LCLI-9). **Amendment — 2026-07-25 (LCLI-255):** the actual `npm publish`
+  step is now implemented too, as a `publish` job gated on an explicit
+  `publish: true` `workflow_dispatch` input with job-scoped `id-token: write`
+  and OIDC trusted publishing; it still requires the one-time npm Trusted
+  Publisher configuration for all six packages before it can succeed. See
   [release-publishing.md](../runbooks/release-publishing.md) for the exact
   setup steps and the release procedure.
 
-**License & coordinates.** MIT, © Jeremy Newhouse, 2026. Repo
-`github.com/jeremy-newhouse/lore` (private; `main` + `dev`, `dev` is default).
+**License & coordinates.** MIT, © Jeremy Newhouse, 2026. The repository was
+`github.com/jeremy-newhouse/lore` when this decision was accepted. That address
+is historical provenance; after the LCLI-294 ownership transfer, the canonical
+current location is `github.com/opum-ai/lore-cli` (private; `main` + `dev`,
+`dev` is default).
 
 ## Consequences
 
@@ -127,8 +132,8 @@ machines through the channel they already use (npm / `npx` / `bunx`).
   SIGILL on a default Bun compile — a hard requirement for a tool that runs in
   arbitrary CI.
 - **Reach without a Bun prerequisite.** The Node `.cjs` launcher means
-  `npx @salient-data/lore` works for anyone with Node; users with Bun get
-  `bunx @salient-data/lore`. No global Bun install is forced on consumers.
+  `npx @opum-ai/lore` works for anyone with Node; users with Bun get
+  `bunx @opum-ai/lore`. No global Bun install is forced on consumers.
 - **Toolchain parity with Backlog.md.** One bundler, one language, one packaging
   recipe across the two coupled tools; we reuse a battle-tested release shape
   instead of inventing one (see [architecture](../reference/architecture.md)).

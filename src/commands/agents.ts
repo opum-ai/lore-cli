@@ -19,7 +19,7 @@ import { type BridgeAction, CLAUDE_MD_REL_PATH, planBridge, SKILL_REL_PATH } fro
 import { ANSI, EXIT_CODES, EXIT_OK, paint, readFileIfPresent, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { parseCommandArgs, usage } from "./args";
-import { ensureDir, writeFileAtomic } from "./fswrite";
+import { assertNoSymlinkInAnyPath, ensureDir, writeFileAtomic } from "./fswrite";
 
 /** Options for {@link runAgents}; `root` and the stdout stream are injectable for tests. */
 export interface AgentsOptions {
@@ -27,7 +27,7 @@ export interface AgentsOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's tokens (everything after `agents`), as split by the router. */
+  /** The command's normalized tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -45,51 +45,90 @@ export interface AgentsResult {
   files: ReadonlyArray<{ path: string; action: BridgeAction }>;
 }
 
+/** The parsed, validated arguments {@link applyAgentsBridge} needs — `root` plus `--force`/`--check`. */
+export interface ApplyAgentsOptions {
+  /** The repo root the bridge is written into (or checked against). */
+  root: string;
+  /** `--force`: overwrite a differing (possibly hand-edited) SKILL.md. */
+  force: boolean;
+  /** `--check`: report drift without writing. */
+  check: boolean;
+}
+
 /**
- * Run `lore agents`: plan both bridge files from their on-disk bytes, apply the writes (unless
- * `--check`), render the result, and return the exit code. `--check` writes nothing and returns
- * `6` (`drift`) when any file is out of date, `0` otherwise; a normal run returns `0` (a differing
- * SKILL.md left `protected` for lack of `--force` is reported, not an error — `--check` is the gate).
+ * Plan both bridge files from their on-disk bytes and apply the writes (unless `check`) — the pure
+ * side-effecting core of `lore agents`, extracted (LORE-260) so `lore init`'s wizard/flags can fold
+ * the agent bridge into one onboarding run without going through `runAgents`' own arg-parsing/emit
+ * (which would print a second, separate envelope onto the SAME stdout `lore init` owns — the
+ * `--json` contract requires stdout be exclusively `init`'s own envelope, cli-contract §4). Returns
+ * the {@link AgentsResult}; the caller decides what to do with it (emit it directly for `lore agents`
+ * itself, or fold it into a larger structured result for `lore init`).
  */
-export function runAgents(options: AgentsOptions): number {
-  const { force, check } = parseAgentsArgs(options.args);
+export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
+  const { root, force, check } = options;
 
-  const skillOnDisk = normalizeOnDisk(readFileIfPresent(join(options.root, SKILL_REL_PATH), SKILL_REL_PATH));
-  const claudeOnDisk = normalizeOnDisk(readFileIfPresent(join(options.root, CLAUDE_MD_REL_PATH), CLAUDE_MD_REL_PATH));
+  const skillOnDisk = normalizeOnDisk(readFileIfPresent(join(root, SKILL_REL_PATH), SKILL_REL_PATH));
+  const claudeRaw = readFileIfPresent(join(root, CLAUDE_MD_REL_PATH), CLAUDE_MD_REL_PATH);
+  const claudeOnDisk = normalizeOnDisk(claudeRaw);
+  // Detected from the RAW (pre-normalization) bytes, so a refresh of just the managed block can
+  // re-apply the file's own BOM/EOL convention instead of silently rewriting it to LF/no-BOM
+  // (LORE-128) — see reapplyDiskStyle below.
+  const claudeStyle = detectDiskStyle(claudeRaw);
 
-  // Plan with the real `--force` flag in every mode: a differing SKILL.md is `protected` (consistent
-  // with `force:false` in the payload) unless `--force` was given. --check never writes, so the
-  // protection has no write to gate — it only affects the reported action.
-  const plan = planBridge({ skillOnDisk, claudeOnDisk, force });
-  const drift = plan.files.some((file) => file.action !== "unchanged");
+  // Pass both flags through: a differing SKILL.md is `protected` unless `--force` was given, AND
+  // `--check` is not in effect. `--check` never writes, so `--force` cannot actually take effect
+  // during one — `planBridge` must not report `updated` (a claimed write) for a run that performs
+  // none, or the printed trailer falls through to the inert plain-`lore agents` remedy, which
+  // leaves the file `protected` again and CI stays red (LORE-129).
+  const plan = planBridge({ skillOnDisk, claudeOnDisk, force, check });
 
   if (!check) {
+    const targets = plan.files.filter((file) => file.contents !== null).map((file) => file.path);
+    // Swept as a whole before either file is written (LORE-93 AC#5) — `lore agents` writes two
+    // files per run, and a bad target reached second in the loop must not leave the first already
+    // written; ensureDir's own per-call guard alone is reactive to loop order.
+    assertNoSymlinkInAnyPath(root, targets);
     for (const file of plan.files) {
       if (file.contents === null) {
         continue; // unchanged, or protected without --force — leave the file untouched
       }
-      const absPath = join(options.root, file.path);
-      ensureDir(dirname(absPath), dirname(file.path));
+      const absPath = join(root, file.path);
+      ensureDir(root, dirname(file.path));
+      // CLAUDE.md is a managed-block refresh over a user's hand-authored file: re-apply its
+      // original BOM/EOL convention before writing (LORE-128). SKILL.md is wholesale-regenerated
+      // (planSkill), so no such preservation applies there.
+      const contents = file.path === CLAUDE_MD_REL_PATH ? reapplyDiskStyle(file.contents, claudeStyle) : file.contents;
       // Atomic (temp-write + rename): `lore agents` writes two files per run, one of them the user's
       // hand-authored root CLAUDE.md — a crash mid-write must never leave it truncated (fswrite.ts).
-      writeFileAtomic(absPath, file.contents, file.path);
+      writeFileAtomic(absPath, contents, file.path);
     }
   }
 
-  const result: AgentsResult = {
-    root: options.root,
+  return {
+    root,
     check,
     force,
     files: plan.files.map((file) => ({ path: file.path, action: file.action })),
   };
-  emit(agentsRenderable(result), options.output, options.stdout);
+}
 
+/**
+ * Run `lore agents`: the thin CLI layer over {@link applyAgentsBridge} — parse the arguments, apply
+ * the bridge, render the result, and return the exit code. `--check` writes nothing and returns `6`
+ * (`drift`) when any file is out of date, `0` otherwise; a normal run returns `0` (a differing
+ * SKILL.md left `protected` for lack of `--force` is reported, not an error — `--check` is the gate).
+ */
+export function runAgents(options: AgentsOptions): number {
+  const { force, check } = parseAgentsArgs(options.args);
+  const result = applyAgentsBridge({ root: options.root, force, check });
+  const drift = result.files.some((file) => file.action !== "unchanged");
+  emit(agentsRenderable(result), options.output, options.stdout);
   return check && drift ? EXIT_CODES.drift : EXIT_OK;
 }
 
 /** Parse `agents`' tokens: no positionals; boolean `--force`/`--check`. A positional or unknown flag is a `usage` error (exit 2). */
 function parseAgentsArgs(args: readonly string[]): { force: boolean; check: boolean } {
-  const { positionals, flags } = parseCommandArgs(args, "agents", ["force", "check"]);
+  const { positionals, flags } = parseCommandArgs(args, "agents");
   if (positionals.length > 0) {
     throw usage(
       `\`lore agents\` takes no arguments, got "${positionals[0]}"`,
@@ -113,6 +152,46 @@ function normalizeOnDisk(raw: string | undefined): string | null {
   return raw === undefined ? null : raw.replace(/^\uFEFF+/, "").replace(/\r\n?/g, "\n");
 }
 
+/** A file's on-disk BOM presence and dominant line-ending convention, detected from its RAW bytes. */
+interface DiskStyle {
+  /** Whether the raw file began with a UTF-8 BOM (`\uFEFF`). */
+  readonly bom: boolean;
+  /** The dominant EOL sequence: `\r\n` (CRLF) or `\r` (lone CR) if either appears, else `\n` (LF). */
+  readonly eol: "\n" | "\r\n" | "\r";
+}
+
+/** The default style: no BOM, LF endings — a no-op for {@link reapplyDiskStyle}, and what a freshly-created file gets. */
+const LF_NO_BOM_STYLE: DiskStyle = { bom: false, eol: "\n" };
+
+/**
+ * Detect `raw`'s BOM + dominant EOL convention from its UN-normalized bytes (before
+ * {@link normalizeOnDisk} strips/collapses them), so a managed-block refresh can re-apply the
+ * file's own convention on write-back instead of silently rewriting it (LORE-128). An absent file
+ * reports {@link LF_NO_BOM_STYLE} — nothing to preserve, so a fresh file is written LF/no-BOM as
+ * before. CRLF is checked before lone CR since every `\r\n` also contains a `\r`.
+ */
+function detectDiskStyle(raw: string | undefined): DiskStyle {
+  if (raw === undefined) {
+    return LF_NO_BOM_STYLE;
+  }
+  const bom = raw.startsWith("\uFEFF");
+  const eol = raw.includes("\r\n") ? "\r\n" : raw.includes("\r") ? "\r" : "\n";
+  return { bom, eol };
+}
+
+/**
+ * Re-apply a detected {@link DiskStyle} to freshly-planned (LF, no-BOM) `contents` before writing
+ * it back, so refreshing just the `lore:agents` managed block does not silently rewrite a CRLF
+ * and/or BOM-prefixed CLAUDE.md to LF-only / BOM-stripped beyond the block itself (LORE-128).
+ * `contents` itself is always pure LF (built from {@link normalizeOnDisk}'d input plus template
+ * strings that only ever use `\n`), so a blanket `\n` -> `style.eol` replace is safe and exact. A
+ * no-op for {@link LF_NO_BOM_STYLE}.
+ */
+function reapplyDiskStyle(contents: string, style: DiskStyle): string {
+  const withEol = style.eol === "\n" ? contents : contents.replace(/\n/g, style.eol);
+  return style.bom ? `\uFEFF${withEol}` : withEol;
+}
+
 /** Build the `agents.result` {@link Renderable}. */
 function agentsRenderable(data: AgentsResult): Renderable<AgentsResult> {
   return { kind: "agents.result", data, pretty: renderPretty, plain: renderPlain };
@@ -121,9 +200,49 @@ function agentsRenderable(data: AgentsResult): Renderable<AgentsResult> {
 /** The per-action verb shown for a file: the drift status (`--check`) or the applied action (write path). */
 function actionLabel(action: BridgeAction, check: boolean): string {
   if (check) {
+    if (action === "protected") {
+      return "out of date (protected; needs --force)";
+    }
     return action === "unchanged" ? "up to date" : "out of date";
   }
   return action;
+}
+
+/** Stable, token-shaped equivalent of {@link actionLabel} for `--plain`. */
+function plainActionLabel(action: BridgeAction, check: boolean): string {
+  if (check && action === "protected") {
+    return "out-of-date-protected";
+  }
+  return actionLabel(action, check).replace(/ /g, "-");
+}
+
+/**
+ * The colour each {@link BridgeAction} paints in `pretty` mode: `unchanged` is dim (nothing
+ * happened), `protected` is a warning (a hand-edited file was deliberately left untouched — see
+ * {@link renderTrailer}), and `created`/`updated` are a success green. A total `Record`, not a
+ * chain of `===` checks with a trailing fallback: TypeScript requires every {@link BridgeAction}
+ * literal as a key, so a sixth/future variant added to that union without a matching entry here is
+ * a compile error (`bun run typecheck` fails), not a silent runtime fall-through to some default
+ * colour. That total mapping is also why there is no fallback to reconsider — an action outside the
+ * union cannot reach {@link bridgeActionColor} at all, well-typed callers included.
+ */
+const BRIDGE_ACTION_COLOR: Record<BridgeAction, string> = {
+  unchanged: ANSI.dim,
+  protected: ANSI.yellow,
+  created: ANSI.green,
+  updated: ANSI.green,
+};
+
+/**
+ * The colour a bridge file's {@link BridgeAction} paints in `pretty` mode — see
+ * {@link BRIDGE_ACTION_COLOR}. Exported (LORE-267) so `lore init`'s own renderer (init.ts) paints
+ * the exact same {@link BridgeAction} in the exact same colour, instead of keeping a second,
+ * hand-maintained copy of this mapping that can silently drift from this one — which is exactly how
+ * `protected` came to render green here (the old two-way `unchanged`-or-green split) while `init`
+ * already painted it yellow.
+ */
+export function bridgeActionColor(action: BridgeAction): string {
+  return BRIDGE_ACTION_COLOR[action];
 }
 
 /** Human view: a heading, one line per file, and an actionable trailer for stale/protected state. */
@@ -132,7 +251,7 @@ function renderPretty(data: AgentsResult, opts: { color: boolean }): string {
   const lines = [head];
   for (const file of data.files) {
     const label = actionLabel(file.action, data.check);
-    const color = file.action === "unchanged" ? ANSI.dim : ANSI.green;
+    const color = bridgeActionColor(file.action);
     lines.push(`  ${paint(label, color, opts.color)} ${file.path}`);
   }
   const trailer = renderTrailer(data);
@@ -144,7 +263,7 @@ function renderPretty(data: AgentsResult, opts: { color: boolean }): string {
 
 /** ANSI-free, diff-stable view: one `<action> <path>` line each, plus any trailer as a plain line. */
 function renderPlain(data: AgentsResult): string {
-  const lines = data.files.map((file) => `${actionLabel(file.action, data.check).replace(/ /g, "-")} ${file.path}`);
+  const lines = data.files.map((file) => `${plainActionLabel(file.action, data.check)} ${file.path}`);
   const trailer = renderTrailer(data);
   if (trailer !== undefined) {
     lines.push(trailer);
@@ -158,8 +277,13 @@ function renderPlain(data: AgentsResult): string {
  * `--force` (a plain `lore agents` would leave it untouched), so the hint must say `--force` whenever a
  * protected file is present — under `--check` (where the inert plain remedy would otherwise keep CI
  * red) and on a normal run alike.
+ *
+ * Exported (LORE-260 review round 2, MINOR-4) so `lore init`'s own renderers can reuse this EXACT
+ * trailer for the agent-bridge step it folds in, instead of dropping it: LORE-129 established this
+ * line as load-bearing (a `protected` file with no visible remedy reads as silent success), and
+ * `init`'s own rendering must not regress it just because it's a second, thinner caller.
  */
-function renderTrailer(data: AgentsResult): string | undefined {
+export function renderTrailer(data: AgentsResult): string | undefined {
   const hasProtected = data.files.some((file) => file.action === "protected");
   if (data.check) {
     const stale = data.files.some((file) => file.action !== "unchanged");

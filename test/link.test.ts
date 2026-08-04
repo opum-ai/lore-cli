@@ -16,11 +16,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { BacklogAdapter, EditTaskPatch } from "../src/adapters/backlog";
+import type { BacklogAdapter, BacklogTaskDetail, EditTaskPatch } from "../src/adapters/backlog";
+import { TASK_DETAILS_CONCURRENCY } from "../src/commands/concurrency";
 import {
   assertNoLabelCaseCollision,
   type LinkOptions,
   type LinkReport,
+  moveBackRefs,
   runLink,
   runUnlink,
   type UnlinkReport,
@@ -183,6 +185,41 @@ describe("lore link — wiring (AC#1)", () => {
     expect(adapter.calls[0]?.patch.doc).toEqual(["docs/stories/x.md"]); // --doc silently repaired
   });
 
+  test("a casing-variant --doc entry is recognized, not duplicated, when the doc: label is already present (LORE-234)", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - task-42\n---\nBody.\n");
+    const before = readDoc("stories/x.md");
+    // The label is present and --doc already carries a case-variant of the computed docPath
+    // (docs/stories/x.md) — this must be recognized as already-current, not forced through an
+    // unnecessary edit that would append a second, differently-cased entry.
+    const adapter = fakeAdapter([
+      makeTask("TASK-42", { labels: ["doc:stories/x"], documentation: ["docs/Stories/X.md"] }),
+    ]);
+
+    const { report } = await linkCmd(["stories/x", "task-42"], adapter);
+    expect(report.changed).toBe(false);
+    expect(report.tasks).toEqual([{ task: "task-42", status: "already-linked", backRef: "already-present" }]);
+    expect(readDoc("stories/x.md")).toBe(before);
+    expect(adapter.calls).toHaveLength(0); // no edit at all — the casing variant already covers it
+  });
+
+  test("a casing-variant --doc entry is recognized, not duplicated, when the doc: label is absent (LORE-234)", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - task-42\n---\nBody.\n");
+    const before = readDoc("stories/x.md");
+    // The label is missing (so the label side still needs repair), but --doc already carries a
+    // case-variant of the computed docPath. Before the fix, addDoc's exact-case `includes` would
+    // append a second, differently-cased documentation entry alongside the repaired label.
+    const adapter = fakeAdapter([makeTask("TASK-42", { documentation: ["docs/Stories/X.md"] })]);
+
+    const { report } = await linkCmd(["stories/x", "task-42"], adapter);
+    expect(report.changed).toBe(false);
+    expect(report.tasks).toEqual([{ task: "task-42", status: "already-linked", backRef: "added" }]);
+    expect(readDoc("stories/x.md")).toBe(before);
+    // The label is repaired, but --doc carries exactly one entry for the doc — the pre-existing
+    // casing variant is preserved as-is, not duplicated with a freshly-cased second entry.
+    expect(adapter.calls).toHaveLength(1);
+    expect(adapter.calls[0]?.patch.doc).toEqual(["docs/Stories/X.md"]);
+  });
+
   test("matches an existing id case-insensitively (ADR-0009: ids compared case-insensitively)", async () => {
     writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - task-42\n---\nBody.\n");
     const adapter = fakeAdapter([makeTask("TASK-42")]);
@@ -236,6 +273,10 @@ describe("lore link — wiring (AC#1)", () => {
     const adapter = fakeAdapter([makeTask("LORE-1")]);
     const err = await expectLinkError(["stories/missing", "lore-1"], adapter);
     expect(err.type).toBe("not_found");
+    // LORE-259: the hint points at a command that actually lists concept ids — `lore query`
+    // and `lore graph` (run with no args) both do; `lore check` only prints a summary count.
+    expect(err.hint).toContain("lore query");
+    expect(err.hint).not.toContain("lore check");
   });
 
   test("usage errors: missing concept id, missing task ids, unknown flag", async () => {
@@ -350,7 +391,7 @@ describe("lore link/unlink — plain rendering and parser edge cases", () => {
       adapter,
       gitSpawn: cleanGitSpawn(),
     });
-    expect(stdout.text()).toBe("lore-1: added (doc), back-ref added\ndocs/stories/x.md: updated\n");
+    expect(stdout.text()).toBe("lore-1: tasks: added, back-ref: added\ndocs/stories/x.md: updated\n");
   });
 
   test("plain mode renders unlink's report the same way", async () => {
@@ -367,7 +408,7 @@ describe("lore link/unlink — plain rendering and parser edge cases", () => {
       adapter,
       gitSpawn: cleanGitSpawn(),
     });
-    expect(stdout.text()).toBe("lore-1: removed (doc), back-ref already-absent\ndocs/stories/x.md: updated\n");
+    expect(stdout.text()).toBe("lore-1: tasks: removed, back-ref: already-absent\ndocs/stories/x.md: updated\n");
   });
 
   test("pretty (color) mode renders the same report body", async () => {
@@ -384,7 +425,7 @@ describe("lore link/unlink — plain rendering and parser edge cases", () => {
       adapter,
       gitSpawn: cleanGitSpawn(),
     });
-    expect(stdout.text()).toBe("lore-1: added (doc), back-ref added\ndocs/stories/x.md: updated\n");
+    expect(stdout.text()).toBe("lore-1: tasks: added, back-ref: added\ndocs/stories/x.md: updated\n");
   });
 
   test("reads a bare-scalar tasks: authored value as a single-element list (an undeclared field on a non-Story type is unvalidated passthrough)", async () => {
@@ -501,6 +542,83 @@ describe("lore link/unlink — per-task back-ref resilience", () => {
     expect(report.changed).toBe(true);
     const concept = parseConcept("reference/x.md", readDoc("reference/x.md"));
     expect(concept.frontmatter.tasks).toEqual(["42", "task-2", "lore-3"]);
+  });
+});
+
+// ── viewTask identity verification (LORE-177, sibling of LORE-122/125) ────────────
+
+describe("lore link/unlink — viewTask identity verification (LORE-177)", () => {
+  test("link's pre-write validation refuses a task id whose resolved detail belongs to a different task, before any write", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    const before = readDoc("stories/x.md");
+    // A stub adapter that always answers with a DIFFERENT task's detail than whatever was asked
+    // for — the exact shape `viewTask` must never be trusted blindly against (mirrors
+    // reconcile-shared.test.ts's LORE-122 coverage of the same failure mode).
+    const base = fakeAdapter([]);
+    const mismatched: typeof base = {
+      ...base,
+      async viewTask(): Promise<BacklogTaskDetail | null> {
+        return makeTask("LORE-999", { status: "Done", title: "Wrong task entirely" });
+      },
+    };
+
+    const err = await expectLinkError(["stories/x", "lore-1"], mismatched);
+    expect(err.type).toBe("not_found");
+    expect(err.message).toContain("lore-1");
+    expect(err.message).toContain("LORE-999");
+    expect(readDoc("stories/x.md")).toBe(before); // untouched — refused before any write
+    expect(mismatched.calls).toHaveLength(0); // no back-ref edit either
+  });
+
+  test("link's back-ref edit refuses a task whose fresh re-read resolves to a different task, never borrowing its documentation", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+    let viewCount = 0;
+    const originalViewTask = adapter.viewTask.bind(adapter);
+    adapter.viewTask = async (id: string) => {
+      viewCount++;
+      // 1st read: the up-front existence check — genuine. 2nd read: the back-ref edit's fresh
+      // re-read — an adapter bug/id-collision hands back an entirely different task's detail.
+      if (viewCount === 2) {
+        return makeTask("LORE-999", { status: "Done", documentation: ["docs/other/wrong.md"] });
+      }
+      return originalViewTask(id);
+    };
+
+    const err = await expectLinkError(["stories/x", "lore-1"], adapter);
+    expect(err.type).toBe("drift");
+    const input = err.input as LinkReport;
+    expect(input.tasks[0]).toMatchObject({ backRef: "failed" });
+    expect(input.tasks[0]?.error).toContain("LORE-999");
+    // Refusing the mismatched detail means no editTask call is ever made — lore-1's real
+    // documentation/labels can never be overwritten with LORE-999's borrowed data.
+    expect(adapter.calls).toHaveLength(0);
+  });
+
+  test("unlink refuses to remove a back-reference when the resolved detail belongs to a different task", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    const base = fakeAdapter([]);
+    const mismatched: typeof base = {
+      ...base,
+      async viewTask(): Promise<BacklogTaskDetail | null> {
+        return makeTask("LORE-999", {
+          status: "Done",
+          labels: ["doc:stories/x"],
+          documentation: ["docs/other/wrong.md"],
+        });
+      },
+    };
+
+    const err = await expectUnlinkError(["stories/x", "lore-1"], mismatched);
+    expect(err.type).toBe("drift");
+    const input = err.input as UnlinkReport;
+    expect(input.tasks[0]).toMatchObject({ backRef: "failed" });
+    expect(input.tasks[0]?.error).toContain("LORE-999");
+    // Refused before any editTask call — never computes a removal from LORE-999's borrowed labels/docs.
+    expect(mismatched.calls).toHaveLength(0);
+    // The doc-side tasks: removal is independent of the Backlog-side outcome and already happened.
+    const concept = parseConcept("stories/x.md", readDoc("stories/x.md"));
+    expect(concept.frontmatter.tasks).toEqual([]);
   });
 });
 
@@ -682,6 +800,68 @@ describe("lore link/unlink — 2nd-pass code-review fixes", () => {
   });
 });
 
+// ── runLink's up-front existence check: bounded concurrency (LORE-233) ────────────
+
+describe("lore link — up-front existence check runs bounded, not fully unbounded (LORE-233)", () => {
+  test("never runs more than TASK_DETAILS_CONCURRENCY viewTask calls in flight, saturates the cap, and a valid multi-id link still writes every back-reference (AC#1/#3/#4)", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    // Comfortably more distinct ids than the cap, so the pool must refill at least twice — a
+    // single unbounded burst (the pre-fix `Promise.allSettled(taskIds.map(...))` behavior) would
+    // let `active` climb past the cap immediately instead of ever waiting on the gate below.
+    const total = TASK_DETAILS_CONCURRENCY * 3 + 2;
+    const ids = Array.from({ length: total }, (_, i) => `lore-${i}`);
+    const adapter = fakeAdapter(ids.map((id) => makeTask(id.toUpperCase())));
+
+    let active = 0;
+    let peak = 0;
+    let started = 0;
+    // Every in-flight call blocks on this single shared gate, released only once the pool has
+    // saturated at the cap — proving the pool actually overlaps that many calls, rather than
+    // merely never happening (by luck of scheduling) to exceed the cap.
+    let releaseGate: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    const originalViewTask = adapter.viewTask.bind(adapter);
+    adapter.viewTask = async (id: string) => {
+      active++;
+      peak = Math.max(peak, active);
+      started++;
+      if (started === TASK_DETAILS_CONCURRENCY) {
+        releaseGate();
+      }
+      await gate;
+      active--;
+      return originalViewTask(id);
+    };
+
+    const { report } = await linkCmd(["stories/x", ...ids], adapter);
+
+    expect(peak).toBeLessThanOrEqual(TASK_DETAILS_CONCURRENCY);
+    expect(peak).toBe(TASK_DETAILS_CONCURRENCY); // the pool saturates — this isn't just trivially bounded
+    expect(active).toBe(0); // every worker settled
+    expect(report.tasks).toHaveLength(total);
+    expect(report.tasks.every((t) => t.status === "added" && t.backRef === "added")).toBe(true);
+    expect(adapter.calls).toHaveLength(total); // every task's back-reference was actually written
+  });
+
+  test("still reports the first invalid id in argument order under a fan-out larger than the cap", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    const total = TASK_DETAILS_CONCURRENCY * 2 + 3;
+    const ids = Array.from({ length: total }, (_, i) => `lore-${i}`);
+    // Seed every id EXCEPT "lore-1" (the second in argument order), which stays not-found — the
+    // first invalid id must still be reported even though it resolves well after the pool has
+    // already moved past the first worker batch.
+    const seeded = ids.filter((id) => id !== "lore-1");
+    const adapter = fakeAdapter(seeded.map((id) => makeTask(id.toUpperCase())));
+
+    const err = await expectLinkError(["stories/x", ...ids], adapter);
+    expect(err.type).toBe("not_found");
+    expect(err.message).toContain("lore-1");
+    expect(adapter.calls).toHaveLength(0); // no back-reference was ever written on a failed pre-check
+  });
+});
+
 // ── unlink --allow-missing: clean up a stale label after a hand-relocation ────────
 
 describe("lore unlink --allow-missing", () => {
@@ -832,19 +1012,57 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
     expect(git.calls).toHaveLength(0);
   });
 
-  test("a fully idempotent link (every id already linked) writes nothing and does not commit", async () => {
+  test("a fully idempotent link (every id already linked) against a genuinely CLEAN tree is a true no-op (LORE-121 AC#3)", async () => {
     writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
-    // Already carries the label + --doc, so the edit is skipped (already-present) — a true no-op.
+    // Already carries the label + --doc, so the edit is skipped (already-present) — a true no-op,
+    // since the file itself is also clean on disk (never touched by a prior run either).
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", { labels: ["doc:stories/x"], documentation: ["docs/stories/x.md"] }),
+    ]);
+    const git = cleanGitSpawn();
+
+    const { code, report } = await linkCmd(["stories/x", "lore-1"], adapter, git);
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks[0]?.backRef).toBe("already-present");
+    expect(report.backlogCommit).toEqual({ committed: false, files: [] });
+  });
+
+  test("a retry after a failed backlog/ commit recommits the still-dirty task file instead of silently no-opping (LORE-121 AC#1/#2)", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    // Simulates a PRIOR `lore link` run: its Backlog edit (label + --doc) already succeeded — the
+    // task already carries both — but that run's own `commitBacklogFiles` call failed (e.g. a
+    // rejected pre-commit hook), leaving `DIRTY_PATH` uncommitted on disk. `wasPresent && !docChanged`
+    // is true, so this retry skips the Backlog edit (rightly — it's already applied), but must still
+    // discover and commit the leftover drift rather than reporting a false no-op success.
     const adapter = fakeAdapter([
       makeTask("LORE-1", { labels: ["doc:stories/x"], documentation: ["docs/stories/x.md"] }),
     ]);
     const git = dirtyGitSpawn(DIRTY);
 
-    const { report } = await linkCmd(["stories/x", "lore-1"], adapter, git);
+    const { code, report } = await linkCmd(["stories/x", "lore-1"], adapter, git);
 
-    expect(report.tasks[0]?.backRef).toBe("already-present");
-    expect(report.backlogCommit.committed).toBe(false);
-    expect(git.calls).toHaveLength(0); // a no-op link never sweeps an unrelated dirty backlog/ edit
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks[0]?.backRef).toBe("already-present"); // no Backlog edit was needed or made
+    expect(adapter.calls).toHaveLength(0); // confirms no editTask call — the drift is purely git-side
+    expect(report.backlogCommit).toEqual({ committed: true, files: [DIRTY_PATH] }); // but it IS committed
+    // Scoped to exactly lore-1's own file, same as a normal edit's commit — never a bundle-wide sweep.
+    expect(git.calls[1]).toEqual([
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--untracked-files=all",
+      "--",
+      `:(literal)${DIRTY_PATH}`,
+    ]);
+    expect(git.calls[2]).toEqual(["add", "--", `:(literal)${DIRTY_PATH}`]);
+    expect(git.calls[3]).toEqual([
+      "commit",
+      "-m",
+      "chore(backlog): add doc back-references (lore link)",
+      "--",
+      `:(literal)${DIRTY_PATH}`,
+    ]);
   });
 
   test("a partial back-ref failure still commits the successful writes and throws drift (LORE-58)", async () => {
@@ -891,6 +1109,107 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
     ]);
   });
 
+  test("unlink: an already-absent back-ref against a genuinely CLEAN tree is a true no-op (LORE-179 AC#3)", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    // The task never carried the label/doc — already-absent, so the edit is skipped — and the file
+    // itself is also clean on disk, so this stays a true no-op.
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+    const git = cleanGitSpawn();
+
+    const { code, report } = await unlinkCmd(["stories/x", "lore-1"], adapter, git);
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks[0]?.backRef).toBe("already-absent");
+    expect(report.backlogCommit).toEqual({ committed: false, files: [] });
+  });
+
+  test("unlink: a retry after a failed backlog/ commit recommits the still-dirty task file instead of silently no-opping (LORE-179 AC#1)", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    // Simulates a PRIOR `lore unlink` run: its Backlog edit (label + --doc removal) already
+    // succeeded — the task already carries neither — but that run's own `commitBacklogFiles` call
+    // failed (e.g. a rejected pre-commit hook), leaving `DIRTY_PATH` uncommitted on disk.
+    // `!hadLabel && !hadDoc` is true, so this retry skips the Backlog edit (rightly — it's already
+    // applied), but must still discover and commit the leftover drift rather than reporting a false
+    // no-op success.
+    const adapter = fakeAdapter([makeTask("LORE-1")]); // no label, no documentation — already absent
+    const git = dirtyGitSpawn(DIRTY);
+
+    const { code, report } = await unlinkCmd(["stories/x", "lore-1"], adapter, git);
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks[0]?.backRef).toBe("already-absent"); // no Backlog edit was needed or made
+    expect(adapter.calls).toHaveLength(0); // confirms no editTask call — the drift is purely git-side
+    expect(report.backlogCommit).toEqual({ committed: true, files: [DIRTY_PATH] }); // but it IS committed
+    // Scoped to exactly lore-1's own file, same as a normal edit's commit — never a bundle-wide sweep.
+    expect(git.calls[1]).toEqual([
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--untracked-files=all",
+      "--",
+      `:(literal)${DIRTY_PATH}`,
+    ]);
+    expect(git.calls[2]).toEqual(["add", "--", `:(literal)${DIRTY_PATH}`]);
+    expect(git.calls[3]).toEqual([
+      "commit",
+      "-m",
+      "chore(backlog): remove doc back-references (lore unlink)",
+      "--",
+      `:(literal)${DIRTY_PATH}`,
+    ]);
+  });
+
+  // `moveBackRefs` is `lore rename`'s back-reference-move engine (called by `commands/rename.ts`,
+  // exercised end-to-end in `rename.test.ts`) but this file is the single owner of the
+  // `doc:<conceptId>` coupling contract it implements, so its "already fully migrated" no-edit
+  // outcome is unit-tested directly here, alongside its `runLink`/`runUnlink` siblings.
+  test("moveBackRefs: a retry after a failed backlog/ commit surfaces the still-dirty task file as a commit candidate instead of silently no-opping (LORE-179 AC#2)", async () => {
+    // Simulates a PRIOR `lore rename` run: its Backlog edit (new label + doc, old label/doc
+    // removed) already succeeded — the task is already fully migrated to the new id/path — but
+    // that run's own `commitBacklogFiles` call failed, leaving the task's file uncommitted on
+    // disk. The "already fully migrated" branch must surface the file as a commit candidate
+    // rather than silently no-opping; `commands/rename.ts` forwards `editedFiles` straight into
+    // `commitBacklogFiles`, whose own `git status` (dirty, per the retry premise, or clean — see
+    // rename.test.ts's paired "genuinely CLEAN tree" test, LORE-179 AC#3) is what actually decides
+    // whether to stage and commit it — `moveBackRefs` itself never touches git.
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", { labels: ["doc:stories/y"], documentation: ["docs/stories/y.md"] }),
+    ]);
+
+    const { outcomes, editedFiles } = await moveBackRefs(
+      adapter,
+      ["lore-1"],
+      "stories/x",
+      "stories/y",
+      "docs/stories/x.md",
+      "docs/stories/y.md",
+    );
+
+    expect(outcomes).toEqual([{ task: "lore-1", backRef: "already-current" }]);
+    expect(adapter.calls).toHaveLength(0); // confirms no editTask call — a retry makes none
+    expect(editedFiles).toEqual(["backlog/tasks/lore-1 - title.md"]); // but IS a commit candidate
+  });
+
+  test("moveBackRefs: a task never given a back-ref at all contributes no commit candidate (unlike the fully-migrated retry case)", async () => {
+    // No trace of this concept's back-reference, old or new — e.g. linked with `--no-back-ref`.
+    // Unlike the fully-migrated case above, no prior run of THIS move could ever have applied an
+    // edit here, so there is no leftover drift of this kind for it to hide — must NOT be pushed as
+    // a candidate (would risk sweeping in an unrelated dirty edit on a task this move never touched).
+    const adapter = fakeAdapter([makeTask("LORE-1")]); // no labels, no documentation at all
+
+    const { outcomes, editedFiles } = await moveBackRefs(
+      adapter,
+      ["lore-1"],
+      "stories/x",
+      "stories/y",
+      "docs/stories/x.md",
+      "docs/stories/y.md",
+    );
+
+    expect(outcomes).toEqual([{ task: "lore-1", backRef: "already-current" }]);
+    expect(editedFiles).toEqual([]);
+  });
+
   test("a successfully-edited task with an empty file path is skipped, never passed as an empty git pathspec", async () => {
     writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
     // filePathRelative is nullable/possibly-empty (backlog.ts) — a "" path must not become an empty
@@ -922,7 +1241,7 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
     });
 
     expect(stdout.text()).toBe(
-      "lore-1: added (doc), back-ref added\ndocs/stories/x.md: updated\ncommitted backlog/: 1 file\n",
+      "lore-1: tasks: added, back-ref: added\ndocs/stories/x.md: updated\ncommitted backlog/: 1 file\n",
     );
   });
 
@@ -969,5 +1288,44 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
     expect(thrown).toBeInstanceOf(LoreError);
     expect((thrown as LoreError).type).toBe("drift");
     expect(stdout.text()).toBe("");
+  });
+});
+
+describe("lore link/unlink — reserved-stem non-concept files stay silent (LORE-258)", () => {
+  // `docs/log.md` and a child `index.md` are lore's own machine-generated hubs, always
+  // frontmatter-less — loadBundle used to warn "no frontmatter mapping" for them on every
+  // link/unlink run, spurious noise `lore check` never raised for the same bundle. Only the
+  // two reserved stems (index/log) go quiet; a genuinely unexpected non-concept file still warns.
+  test("lore link emits no advisory for docs/log.md or a child docs/adr/index.md", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    writeDoc("log.md", "# Generated changelog, no frontmatter\n");
+    writeDoc("adr/index.md", "# Generated hub, no frontmatter\n");
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+
+    const { code } = await linkCmd(["stories/x", "lore-1"], adapter);
+    expect(code).toBe(EXIT_OK);
+  });
+
+  test("lore link/unlink still warn about a genuinely unexpected non-concept file (not a reserved stem)", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    writeDoc("stray.md", "# Unexpected, no frontmatter\n");
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+
+    const stderr = capture();
+    const code = await runLink({ ...opts(["stories/x", "lore-1"], adapter), stderr });
+    expect(code).toBe(EXIT_OK);
+    expect(stderr.text()).toContain("skipping stray.md: no frontmatter mapping");
+  });
+
+  test("lore unlink emits no advisory for docs/log.md or a child docs/adr/index.md", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    writeDoc("log.md", "# Generated changelog, no frontmatter\n");
+    writeDoc("adr/index.md", "# Generated hub, no frontmatter\n");
+    const adapter = fakeAdapter([makeTask("LORE-1", { labels: ["doc:stories/x"] })]);
+
+    const stderr = capture();
+    const code = await runUnlink({ ...opts(["stories/x", "lore-1"], adapter), stderr });
+    expect(code).toBe(EXIT_OK);
+    expect(stderr.text()).not.toContain("no frontmatter mapping");
   });
 });

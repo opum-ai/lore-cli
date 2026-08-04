@@ -20,15 +20,17 @@
  *   the `env` — are injectable seams (lore-design §8), so tests drive the loader
  *   without touching the real working directory or `process.env`.
  *
- * Config parsing adds **no dependency**: Bun parses TOML natively
- * (`Bun.TOML.parse`), and shape/enum validation is hand-rolled here (Zod is the
- * frontmatter source of truth, introduced later with LORE-15). Bad config is a
- * {@link LoreError} of type `"validation"` (exit 6), keeping the diagnostic
- * contract identical to the rest of lore.
+ * Bun parses TOML natively (`Bun.TOML.parse`), then Zod validates only the
+ * generic parsed shape. Lore retains defaults/projection, committed-secret
+ * scanning, reserved override-key policy, page-id precision, environment
+ * overlay, and the stable {@link LoreError} mapping. Bad config is a
+ * `"validation"` error (exit 6), keeping the diagnostic contract identical to
+ * the rest of lore.
  */
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { z } from "zod";
 import { errnoCode, LoreError } from "./errors";
 
 /** Where lore's config lives, relative to the repo root. Exported so the `lore init` scaffolder writes to the exact path the loader reads. */
@@ -42,6 +44,39 @@ const RECONCILE_MODES = ["task-rollup"] as const;
 
 /** The Confluence wire formats the (deferred) publish adapter understands (ADR-0013). */
 const CONFLUENCE_FORMATS = ["storage", "adf"] as const;
+
+/** Generic parsed-TOML shape for `[reconcile]`; unknown future keys remain tolerated. */
+const ReconcileTableSchema = z.looseObject({
+  mode: z.enum(RECONCILE_MODES).optional(),
+  overrides: z.record(z.string(), z.string()).optional(),
+});
+
+/** Generic parsed-TOML shape for `[validate]`; projection/default policy stays below. */
+const ValidateTableSchema = z.looseObject({
+  external_links: z.boolean().optional(),
+  promote_portability: z.boolean().optional(),
+});
+
+/** Generic parsed-TOML shape for `[confluence]`; secret and page-id policy stay outside Zod. */
+const ConfluenceTableSchema = z.looseObject({
+  format: z.enum(CONFLUENCE_FORMATS).optional(),
+  base_url: z.string().optional(),
+  space: z.string().optional(),
+  parent_page_id: z.union([z.string(), z.number()]).optional(),
+});
+
+/**
+ * The single declarative shape boundary for Bun's parsed TOML value. Loose
+ * objects preserve Lore's additive unknown-key tolerance at every known table.
+ */
+const ParsedConfigSchema = z.looseObject({
+  reconcile: ReconcileTableSchema.optional(),
+  validate: ValidateTableSchema.optional(),
+  confluence: ConfluenceTableSchema.optional(),
+});
+
+type ParsedConfig = z.infer<typeof ParsedConfigSchema>;
+type ParsedConfluenceTable = z.infer<typeof ConfluenceTableSchema>;
 
 /** The status roll-up policy applied by `lore sync` / `lore check`. */
 export type ReconcileMode = (typeof RECONCILE_MODES)[number];
@@ -106,7 +141,9 @@ export interface LoadConfigOptions {
  * Load and validate `.lore/config.toml` under `root` (default cwd), overlaying
  * the Confluence token from `env` (default `process.env`). A missing file yields
  * the zero-config {@link defaultConfig}; malformed TOML or an out-of-contract
- * value throws a {@link LoreError} of type `"validation"`.
+ * value throws a {@link LoreError} of type `"validation"`; a file that exists
+ * but cannot be read (`EACCES`/`EPERM`) throws a `"denied"` {@link LoreError}
+ * instead (see {@link readConfigText}).
  */
 export function loadConfig(options: LoadConfigOptions = {}): LoreConfig {
   const root = options.root ?? process.cwd();
@@ -136,9 +173,11 @@ function parseConfigFile(path: string): LoreConfig {
 /**
  * Read the config file as UTF-8. One read is the sole source of truth for
  * absent-vs-unreadable: `ENOENT` → `undefined` (the zero-config case — no
- * separate `existsSync`, so no time-of-check/time-of-use window), while any
- * other failure (a directory at the path, a permissions error, …) is surfaced
- * with its OS reason instead of a blanket "check file permissions".
+ * separate `existsSync`, so no time-of-check/time-of-use window); `EACCES`/`EPERM`
+ * → a `denied` {@link LoreError} (the codebase-wide permissions contract — see
+ * `errors.ts`'s `ioError`/`readFileIfPresent`); any other failure (a directory
+ * at the path, …) is a `validation` error surfaced with its OS reason instead
+ * of a blanket "check file permissions".
  */
 function readConfigText(path: string): string | undefined {
   try {
@@ -146,6 +185,16 @@ function readConfigText(path: string): string | undefined {
   } catch (cause) {
     if (isErrnoCode(cause, "ENOENT")) {
       return undefined;
+    }
+    if (isErrnoCode(cause, "EACCES") || isErrnoCode(cause, "EPERM")) {
+      throw new LoreError(
+        "denied",
+        withReason(`${CONFIG_REL_PATH} could not be read`, cause),
+        `check filesystem permissions on ${CONFIG_REL_PATH}`,
+        // Attach the errno `code` (matching errors.ts's ioError/readFileIfPresent),
+        // so a --json consumer reading envelope.input.code gets it here too.
+        { path: CONFIG_REL_PATH, code: errnoCode(cause) },
+      );
     }
     return fail(
       withReason(`${CONFIG_REL_PATH} could not be read`, cause),
@@ -179,45 +228,82 @@ function parseToml(raw: string): Record<string, unknown> {
 
 /** Project the parsed TOML table onto a {@link LoreConfig}, validating known keys and merging over defaults. */
 function validateConfig(root: Record<string, unknown>): LoreConfig {
+  const parsed = parseConfigShape(root);
   const defaults = defaultConfig();
 
-  const reconcileTable = asTable(root.reconcile, "reconcile");
   const reconcile: ReconcileConfig = {
-    mode: asEnum(reconcileTable?.mode, "reconcile.mode", RECONCILE_MODES) ?? defaults.reconcile.mode,
-    overrides: asStringMap(reconcileTable?.overrides, "reconcile.overrides") ?? defaults.reconcile.overrides,
+    mode: parsed.reconcile?.mode ?? defaults.reconcile.mode,
+    overrides: copyOverrideMap(parsed.reconcile?.overrides) ?? defaults.reconcile.overrides,
   };
 
-  const validateTable = asTable(root.validate, "validate");
   const validate: ValidateConfig = {
-    externalLinks:
-      asBoolean(validateTable?.external_links, "validate.external_links") ?? defaults.validate.externalLinks,
-    promotePortability:
-      asBoolean(validateTable?.promote_portability, "validate.promote_portability") ??
-      defaults.validate.promotePortability,
+    externalLinks: parsed.validate?.external_links ?? defaults.validate.externalLinks,
+    promotePortability: parsed.validate?.promote_portability ?? defaults.validate.promotePortability,
   };
 
-  // Scan for a committed token across whatever shape `confluence` takes — a
-  // table, or an array of tables on a `[[confluence]]` typo — BEFORE the
-  // table-shape check below, so a committed secret always gets the fail-loud
-  // token diagnostic with the env-var pointer, not a generic "must be a table".
-  assertNoCommittedToken(root.confluence, "confluence");
   return {
     reconcile,
     validate,
-    confluence: validateConfluence(asTable(root.confluence, "confluence"), defaults.confluence),
+    confluence: validateConfluence(parsed.confluence, defaults.confluence),
   };
 }
 
+/**
+ * Validate the generic parsed-TOML shape once. Zod owns recognition; Lore owns
+ * the stable public diagnostic contract through {@link failConfigShape}.
+ */
+function parseConfigShape(root: Record<string, unknown>): ParsedConfig {
+  const result = ParsedConfigSchema.safeParse(root);
+  if (result.success) {
+    // Inspect the raw parsed map before Zod copies it: assigning `__proto__` to
+    // a normal object can erase that entry, which must not bypass Lore's policy.
+    assertNoReservedOverrideKey(root.reconcile, "reconcile.overrides");
+    assertNoCommittedToken(root.confluence, "confluence");
+    return result.data;
+  }
+
+  // Preserve the hand-written validator's public failure precedence:
+  // reconcile shape → reserved override policy → validate shape → committed
+  // token policy → confluence shape. Zod recognizes every generic issue in one
+  // pass; Lore chooses which established diagnostic to expose.
+  const reconcileIssue = result.error.issues.find((issue) => issue.path[0] === "reconcile");
+  if (reconcileIssue !== undefined) {
+    if (reconcileIssue.path[1] === "overrides" && reconcileIssue.path.length >= 3) {
+      assertNoReservedOverrideKey(root.reconcile, "reconcile.overrides", String(reconcileIssue.path[2]));
+    }
+    return failConfigShape(root, reconcileIssue);
+  }
+  assertNoReservedOverrideKey(root.reconcile, "reconcile.overrides");
+
+  const validateIssue = result.error.issues.find((issue) => issue.path[0] === "validate");
+  if (validateIssue !== undefined) {
+    return failConfigShape(root, validateIssue);
+  }
+
+  // Scan whatever shape `confluence` takes — including an array on a
+  // `[[confluence]]` typo — before exposing its generic table/type failure.
+  assertNoCommittedToken(root.confluence, "confluence");
+  const confluenceIssue = result.error.issues.find((issue) => issue.path[0] === "confluence");
+  if (confluenceIssue !== undefined) {
+    return failConfigShape(root, confluenceIssue);
+  }
+
+  if (result.error.issues.length === 0) {
+    return fail(`${CONFIG_REL_PATH}: config has an invalid value`, `fix ${CONFIG_REL_PATH}`, { path: CONFIG_REL_PATH });
+  }
+  return failConfigShape(root, result.error.issues[0] as z.core.$ZodIssue);
+}
+
 /** Project the `[confluence]` table over defaults. The committed-token guard runs in {@link validateConfig}. */
-function validateConfluence(table: Record<string, unknown> | undefined, defaults: ConfluenceConfig): ConfluenceConfig {
+function validateConfluence(table: ParsedConfluenceTable | undefined, defaults: ConfluenceConfig): ConfluenceConfig {
   const confluence: ConfluenceConfig = {
-    format: asEnum(table?.format, "confluence.format", CONFLUENCE_FORMATS) ?? defaults.format,
+    format: table?.format ?? defaults.format,
   };
-  const baseUrl = asString(table?.base_url, "confluence.base_url");
+  const baseUrl = table?.base_url;
   if (baseUrl !== undefined) {
     confluence.baseUrl = baseUrl;
   }
-  const space = asString(table?.space, "confluence.space");
+  const space = table?.space;
   if (space !== undefined) {
     confluence.space = space;
   }
@@ -337,58 +423,75 @@ function causeMessage(cause: unknown): string {
   return typeof cause === "string" ? cause : String(cause);
 }
 
-/** Require a TOML table (plain object) when present; `undefined` passes through for "absent". */
-function asTable(value: unknown, name: string): Record<string, unknown> | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    fail(
-      `${CONFIG_REL_PATH}: ${name} must be a table`,
-      `make ${name} a TOML table ([${name}] with key = value lines)`,
-      {
-        key: name,
-      },
-    );
-  }
-  return value as Record<string, unknown>;
-}
+/**
+ * Translate Zod's first deterministic shape issue into Lore's established
+ * credential-safe config diagnostic. This is error-policy mapping, not a
+ * second validator: recognition occurs only in {@link ParsedConfigSchema}.
+ */
+function failConfigShape(root: Record<string, unknown>, issue: z.core.$ZodIssue): never {
+  const path = issue.path.map(String);
+  const key = path.join(".");
+  const value = configValueAtPath(root, issue.path);
 
-/** Require a boolean when present. */
-function asBoolean(value: unknown, key: string): boolean | undefined {
-  if (value === undefined) {
-    return undefined;
+  if (path.length === 1 || key === "reconcile.overrides") {
+    fail(`${CONFIG_REL_PATH}: ${key} must be a table`, `make ${key} a TOML table ([${key}] with key = value lines)`, {
+      key,
+    });
   }
-  if (typeof value !== "boolean") {
+
+  if (key === "validate.external_links" || key === "validate.promote_portability") {
     fail(`${CONFIG_REL_PATH}: ${key} must be a boolean`, `set ${key} to true or false`, { key, value });
   }
-  return value;
-}
 
-/** Require a string when present. */
-function asString(value: unknown, key: string): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== "string") {
+  if (
+    key === "confluence.base_url" ||
+    key === "confluence.space" ||
+    (path[0] === "reconcile" && path[1] === "overrides")
+  ) {
     fail(`${CONFIG_REL_PATH}: ${key} must be a string`, `quote ${key} as a string`, { key, value });
   }
-  return value;
-}
 
-/** Require one of `allowed` when present. */
-function asEnum<T extends string>(value: unknown, key: string, allowed: readonly T[]): T | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== "string" || !allowed.includes(value as T)) {
+  if (key === "reconcile.mode") {
     fail(
-      `${CONFIG_REL_PATH}: ${key} must be one of ${allowed.map((a) => `"${a}"`).join(", ")}`,
-      `set ${key} to one of: ${allowed.join(", ")}`,
+      `${CONFIG_REL_PATH}: ${key} must be one of ${RECONCILE_MODES.map((allowed) => `"${allowed}"`).join(", ")}`,
+      `set ${key} to one of: ${RECONCILE_MODES.join(", ")}`,
       { key, value },
     );
   }
-  return value as T;
+
+  if (key === "confluence.format") {
+    fail(
+      `${CONFIG_REL_PATH}: ${key} must be one of ${CONFLUENCE_FORMATS.map((allowed) => `"${allowed}"`).join(", ")}`,
+      `set ${key} to one of: ${CONFLUENCE_FORMATS.join(", ")}`,
+      { key, value },
+    );
+  }
+
+  if (key === "confluence.parent_page_id") {
+    fail(
+      `${CONFIG_REL_PATH}: ${key} must be a positive integer page id`,
+      `set ${key} to a positive integer page id (a quoted string or an unquoted integer)`,
+      { key, value },
+    );
+  }
+
+  return fail(
+    `${CONFIG_REL_PATH}: ${key || "config"} has an invalid value`,
+    `fix ${key || CONFIG_REL_PATH}`,
+    key ? { key, value } : { path: CONFIG_REL_PATH },
+  );
+}
+
+/** Read a parsed value for structured error input without changing or coercing it. */
+function configValueAtPath(root: Record<string, unknown>, path: PropertyKey[]): unknown {
+  let value: unknown = root;
+  for (const part of path) {
+    if (value === null || typeof value !== "object") {
+      return undefined;
+    }
+    value = (value as Record<PropertyKey, unknown>)[part];
+  }
+  return value;
 }
 
 /**
@@ -401,34 +504,44 @@ function isUnsafeMapKey(key: string): boolean {
   return key === "prototype" || key in Object.prototype;
 }
 
-/** Require a table whose every value is a string when present (e.g. `[reconcile.overrides]`). */
-function asStringMap(value: unknown, key: string): Record<string, string> | undefined {
-  const table = asTable(value, key);
-  if (table === undefined) {
+/**
+ * Enforce Lore's reserved-key policy against the raw parsed table before Zod
+ * copies it. Non-table shapes and non-string values are left to the generic
+ * schema so their existing type diagnostics retain precedence.
+ */
+function assertNoReservedOverrideKey(reconcile: unknown, key: string, stopAtEntry?: string): void {
+  if (reconcile === null || typeof reconcile !== "object" || Array.isArray(reconcile)) {
+    return;
+  }
+  const value = (reconcile as Record<string, unknown>).overrides;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return;
+  }
+  for (const [entryKey, entryValue] of Object.entries(value)) {
+    // The old validator checked entries in source order, validating each value
+    // before its key policy. Stop where Zod found the first bad value so a
+    // preceding reserved key still wins, while a later one cannot jump ahead.
+    if (entryKey === stopAtEntry || typeof entryValue !== "string") {
+      return;
+    }
+    if (!isUnsafeMapKey(entryKey)) {
+      continue;
+    }
+    fail(
+      `${CONFIG_REL_PATH}: ${key}.${entryKey} uses a reserved object key`,
+      `rename the "${entryKey}" entry under [${key}] to a real status name`,
+      { key: `${key}.${entryKey}`, value: entryValue },
+    );
+  }
+}
+
+/** Return Zod's validated string map on a normal plain object. */
+function copyOverrideMap(value: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (value === undefined) {
     return undefined;
   }
   const out: Record<string, string> = {};
-  for (const [entryKey, entryValue] of Object.entries(table)) {
-    if (typeof entryValue !== "string") {
-      fail(`${CONFIG_REL_PATH}: ${key}.${entryKey} must be a string`, `quote ${key}.${entryKey} as a string`, {
-        key: `${key}.${entryKey}`,
-        value: entryValue,
-      });
-    }
-    // Reject any key that names an `Object.prototype` member (`__proto__`,
-    // `constructor`, `toString`, `hasOwnProperty`, …) or `prototype`: assigning it
-    // with `=` is silently dropped (the `__proto__` setter) or shadows that member
-    // as a string on the returned map, which would crash a later consumer that
-    // calls it. A Backlog status is never legitimately one of these, so failing
-    // loud keeps the map a normal, fully-typed `Record<string,string>` with no
-    // dropped or shadowing keys.
-    if (isUnsafeMapKey(entryKey)) {
-      fail(
-        `${CONFIG_REL_PATH}: ${key}.${entryKey} uses a reserved object key`,
-        `rename the "${entryKey}" entry under [${key}] to a real status name`,
-        { key: `${key}.${entryKey}`, value: entryValue },
-      );
-    }
+  for (const [entryKey, entryValue] of Object.entries(value)) {
     out[entryKey] = entryValue;
   }
   return out;

@@ -57,7 +57,7 @@ function writeChainBundle(): void {
     "---\ntype: Reference\ntitle: Orders\nsummary: The orders domain reference.\n---\nOrders reference body.\n",
   );
   writeDoc("specs/archive.md", "---\ntype: Spec\ntitle: Archive\n---\nArchive spec. See [adr](../adr/0001-x.md).\n");
-  writeDoc("adr/0001-x.md", "---\ntype: Adr\n---\nADR body.\n");
+  writeDoc("adr/0001-x.md", "---\ntype: ADR\n---\nADR body.\n");
 }
 
 /** Run `context` in JSON mode and return the parsed `data` payload plus the exit code. */
@@ -65,6 +65,7 @@ function exportContext(args: string[], options?: Partial<ContextOptions>): { cod
   const stdout = capture();
   const stderr = capture();
   const code = runContext({ root, output: JSON_CTX, stdout, stderr, args, ...options });
+  if (code instanceof Promise) throw new Error("reference context helper unexpectedly selected async retrieval");
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: ContextExport };
   expect(envelope.kind).toBe("context.export");
   return { code, data: envelope.data };
@@ -114,8 +115,8 @@ describe("buildContext — neighbor compaction", () => {
     writeChainBundle();
     const data = buildContext(graph(), "stories/bulk", { depth: 2 });
     const adr = data.neighbors.find((n) => n.id === "adr/0001-x");
-    // No summary, but the always-emitted id + type still carry a (charged) cost.
-    expect(adr).toMatchObject({ type: "Adr", tokenEstimate: estimateTokens("adr/0001-x Adr ") });
+    // No title, no summary, but the always-emitted id + type still carry a (charged) cost.
+    expect(adr).toMatchObject({ type: "ADR", tokenEstimate: estimateTokens("adr/0001-x ADR") });
     expect(adr).not.toHaveProperty("summary");
   });
 
@@ -130,15 +131,43 @@ describe("buildContext — neighbor compaction", () => {
     expect(data.neighbors.find((n) => n.id === "flag")?.summary).toBe("2024");
   });
 
-  test("each neighbor's estimate is chars/4 of its id+type+summary, and the total sums target + included", () => {
+  test("each neighbor's estimate is chars/4 of its id+type+title+summary, and the total sums target + included", () => {
     writeChainBundle();
     const data = buildContext(graph(), "stories/bulk", { depth: 2 });
     const ref = data.neighbors.find((n) => n.id === "reference/orders");
-    // The whole emitted entry (id, type, summary) is charged — not the summary alone —
-    // so a wide neighborhood of short summaries can't silently overrun the budget.
-    expect(ref?.tokenEstimate).toBe(estimateTokens("reference/orders Reference The orders domain reference."));
+    // The whole emitted entry (id, type, title, summary) is charged — not the summary
+    // alone — so a wide neighborhood of short summaries (behind long titles) can't
+    // silently overrun the budget.
+    expect(ref?.tokenEstimate).toBe(estimateTokens("reference/orders Reference Orders The orders domain reference."));
     const sum = data.target.tokenEstimate + data.neighbors.reduce((acc, n) => acc + n.tokenEstimate, 0);
     expect(data.tokenEstimate).toBe(sum);
+  });
+
+  test("a neighbor's tokenEstimate includes its title even behind a short summary (LORE-148)", () => {
+    // Two otherwise-identical neighbors (same short summary), differing only in
+    // whether they carry a long title. Before the fix, tokenEstimate was computed
+    // from id+type+summary only, so a long title contributed nothing and both
+    // neighbors cost the same — letting a bundle of long-titled, short-summarized
+    // concepts blow well past --max-tokens without the accounting ever noticing.
+    writeDoc("hub.md", "---\ntype: Story\n---\nTo [titled](./titled.md) and [bare](./bare.md).\n");
+    writeDoc(
+      "titled.md",
+      '---\ntype: Widget\ntitle: "A Very Long Title That Should Count Toward The Token Budget"\nsummary: "Short."\n---\nText.\n',
+    );
+    writeDoc("bare.md", '---\ntype: Widget\nsummary: "Short."\n---\nText.\n');
+    const data = buildContext(graph(), "hub", { depth: 1 });
+    const titled = data.neighbors.find((n) => n.id === "titled");
+    const bare = data.neighbors.find((n) => n.id === "bare");
+    expect(titled?.title).toBe("A Very Long Title That Should Count Toward The Token Budget");
+    expect(titled?.summary).toBe("Short.");
+    expect(bare?.title).toBeUndefined();
+    expect(bare?.summary).toBe("Short.");
+    // Same id length ("titled" vs "bare" differ by 2 chars) and identical summary,
+    // yet the titled neighbor's cost must be substantially higher — the title's
+    // bytes are actually counted, not silently dropped.
+    expect(titled?.tokenEstimate).toBeGreaterThan((bare?.tokenEstimate as number) + 10);
+    expect(titled?.tokenEstimate).toBe(estimateTokens(`titled Widget ${titled?.title} Short.`));
+    expect(bare?.tokenEstimate).toBe(estimateTokens("bare Widget Short."));
   });
 
   test("the target's and a neighbor's `title` are kept verbatim, matching `lore graph`", () => {
@@ -267,7 +296,7 @@ describe("lore context — command", () => {
   });
 
   test.each([
-    [[], "missing concept <id>"],
+    [[], "`lore context` needs a concept id"],
     [["--bogus", "x"], "unknown option"],
     [["-x", "x"], 'unknown option "-x"'],
     [["a", "b"], 'unexpected argument "b"'],
@@ -299,10 +328,10 @@ describe("lore context — command", () => {
 // ── router: cli dispatch ─────────────────────────────────────────────────────────
 
 describe("cli — context dispatch", () => {
-  test("`lore context <id> --json` routes to runContext and emits the envelope", () => {
+  test("`lore context <id> --json` routes to runContext and emits the envelope", async () => {
     writeChainBundle();
     const stdout = capture();
-    const code = run(["bun", "cli", "context", "stories/bulk", "--json"], {
+    const code = await run(["bun", "cli", "context", "stories/bulk", "--json"], {
       stdout,
       stderr: capture(),
       cwd: root,
@@ -312,9 +341,9 @@ describe("cli — context dispatch", () => {
     expect(JSON.parse(stdout.text()).kind).toBe("context.export");
   });
 
-  test("`lore context <missing>` exits 3 (not found)", () => {
+  test("`lore context <missing>` exits 3 (not found)", async () => {
     writeChainBundle();
-    const code = run(["bun", "cli", "context", "nope/x"], {
+    const code = await run(["bun", "cli", "context", "nope/x"], {
       stdout: capture(),
       stderr: capture(),
       cwd: root,

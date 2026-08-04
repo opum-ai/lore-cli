@@ -62,12 +62,17 @@ import {
 } from "../adapters/backlog";
 import { type BundleGraph, conceptNotInBundle, loadBundle, toRefList } from "../core/bundle";
 import { type Concept, idFromPath, serializeConcept } from "../core/concept";
-import { loadProfile } from "../core/profile";
+import { loadProfile, type Profile } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { type BacklogCommitResult, commitBacklogFiles, type GitSpawn, renderBacklogCommitLine } from "../state";
 import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
+// The pure worker-pool + shared cap live in the neutral `./concurrency` module (LORE-233), not
+// `./reconcile-shared` — `reconcile-shared.ts` already imports `verifiedViewTask`/`dedupeTaskIds`/
+// `defaultAdapter` FROM this file, so importing back from it here would create a
+// `link -> reconcile-shared -> link` cycle.
+import { mapWithConcurrency, TASK_DETAILS_CONCURRENCY } from "./concurrency";
 import { writeFileOverwriting } from "./fswrite";
 
 /** Options shared by {@link runLink} and {@link runUnlink}; `root`, the streams, and `adapter` are injectable for tests. */
@@ -76,7 +81,7 @@ export interface LinkOptions {
   root: string;
   /** The resolved output mode/color (from `output.ts`). */
   output: OutputContext;
-  /** The command's positional + flag tokens (everything after `link`/`unlink`), as split by the router. */
+  /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
@@ -162,7 +167,7 @@ export interface UnlinkReport {
  *   `drift` (exit 6) {@link LoreError} instead — see {@link backRefFailure}.
  */
 export async function runLink(options: LinkOptions): Promise<number> {
-  const { concept, id, taskIds, noBackRef, docsRoot } = await prepare(options, "link");
+  const { concept, id, taskIds, noBackRef, docsRoot, profile } = await prepare(options, "link");
   if (concept === undefined) {
     // Unreachable: `--allow-missing` is `unlink`-only (see `parseLinkArgs`), so `prepare` always
     // resolves `id` to a live concept or throws `not_found` for `link`.
@@ -173,11 +178,30 @@ export async function runLink(options: LinkOptions): Promise<number> {
   const label = backRefLabel(concept.id);
 
   // Validate every task exists BEFORE any write — a missing id fails the whole command loud,
-  // rather than leaving the doc half-linked. Reads are independent so they run concurrently
-  // (`allSettled`, not `all`: a rejection must not race ahead of an earlier id's not-found), but the
-  // FIRST invalid id in argument order — not-found or a genuine read failure — is what gets
-  // reported, decided by an in-order scan after every read has settled.
-  const detailResults = await Promise.allSettled(taskIds.map((taskId) => adapter.viewTask(taskId)));
+  // rather than leaving the doc half-linked. Reads are independent so they run concurrently, but
+  // bounded to TASK_DETAILS_CONCURRENCY in flight at once (`mapWithConcurrency`, LORE-233) rather
+  // than firing the entire task-id list as one `Promise.allSettled(...map(...))` burst — a large
+  // id list would otherwise spawn that many `backlog task view` subprocesses simultaneously
+  // (process/file-descriptor exhaustion). Each outcome is written into `detailResults` by its
+  // ORIGINAL index (never push order, which would follow completion order under the pool), so a
+  // rejection never races ahead of an earlier id's not-found: the FIRST invalid id in argument
+  // order — not-found or a genuine read failure — is still what gets reported, decided by the same
+  // in-order scan below after every read has settled, byte-for-byte the same contract
+  // `Promise.allSettled` gave. `verifiedViewTask` (LORE-177) also rejects a detail whose own `id`
+  // doesn't match the requested `taskId` — surfaced here as a rejected settle, reported identically
+  // to a genuine read failure.
+  const detailResults: PromiseSettledResult<BacklogTaskDetail | null>[] = new Array(taskIds.length);
+  await mapWithConcurrency(
+    taskIds.map((taskId, index) => ({ taskId, index })),
+    TASK_DETAILS_CONCURRENCY,
+    async ({ taskId, index }) => {
+      try {
+        detailResults[index] = { status: "fulfilled", value: await verifiedViewTask(adapter, taskId) };
+      } catch (reason) {
+        detailResults[index] = { status: "rejected", reason };
+      }
+    },
+  );
   for (let i = 0; i < taskIds.length; i++) {
     const taskId = taskIds[i] as string;
     const result = detailResults[i] as PromiseSettledResult<BacklogTaskDetail | null>;
@@ -198,25 +222,46 @@ export async function runLink(options: LinkOptions): Promise<number> {
   });
   const nextTasks = [...existingTasks, ...tasks.filter((t) => t.status === "added").map((t) => t.task.toLowerCase())];
 
-  const changed = writeTasksIfChanged(options.root, docsRoot, concept, existingTasks, nextTasks);
+  const changed = writeTasksIfChanged(docsRoot, concept, existingTasks, nextTasks, profile);
 
   let anyBackRefFailed = false;
-  // The `backlog/` task files this run actually edited — the exact (and only) paths its commit
-  // stages (never a bundle-wide sweep). Populated inside the loop, right after each successful edit.
+  // The candidate `backlog/` task file paths this run's commit stages — never a bundle-wide sweep.
+  // Populated inside the loop after either a successful edit, or an "already-present" no-edit
+  // outcome whose file might still carry a prior run's uncommitted drift (LORE-121); either way,
+  // `commitBacklogFiles`'s own `git status` (scoped to exactly these paths) is what decides which
+  // of them, if any, are actually dirty and worth staging — a failed edit never reaches either push,
+  // so it stays excluded (see the "partial back-ref failure" test).
   const editedFiles: string[] = [];
   if (!noBackRef) {
     const outcomes = await runSequentially(taskIds, async (taskId) => {
       // Re-read fresh right before editing (not the up-front validation snapshot): matches
       // runUnlink's freshness and closes a narrow race where the task changed out-of-band
-      // between the existence check above and this edit.
-      const detail = await adapter.viewTask(taskId);
+      // between the existence check above and this edit. `verifiedViewTask` (LORE-177) also
+      // refuses a detail whose own `id` doesn't match `taskId` — never used to compute
+      // `desiredDocs`/labels below, which would otherwise borrow another task's data.
+      const detail = await verifiedViewTask(adapter, taskId);
       if (detail === null) {
         throw new Error(`task "${taskId}" no longer exists in Backlog`);
       }
       const wasPresent = hasLabel(detail, label);
-      const docChanged = !detail.documentation.includes(docPath);
+      // Matched case-insensitively, like `hasLabel` and `removeBackRefs`'s `hadDoc` — an existing
+      // documentation entry that differs from `docPath` only by case (a hand-edit or out-of-band
+      // move) already reflects this link, so it must not be treated as changed (which would force
+      // an unnecessary edit) nor fall through to `addDoc` appending a casing-variant duplicate.
+      const docChanged = !containsCaseInsensitive(detail.documentation, docPath);
       if (wasPresent && !docChanged) {
-        return "already-present" as const; // both the label and --doc already reflect this link
+        // Both the label and --doc already reflect this link, so there is no Backlog edit to make
+        // — but the task's file can still be dirty and uncommitted on disk if a PRIOR `lore link`
+        // run already applied that same edit and then its own `commitBacklogFiles` call failed
+        // (e.g. a rejected pre-commit hook, LORE-121). Recording the path here, even though this
+        // run makes no edit, lets `commitBacklogFiles`'s own `git status` (scoped to exactly this
+        // path) decide whether there is real drift to stage and commit: a clean file reports
+        // nothing dirty and stays a true no-op (AC#3), while a dirty one gets picked up and
+        // committed by this retry (AC#1/#2) instead of silently no-opping forever.
+        if (detail.file) {
+          editedFiles.push(detail.file);
+        }
+        return "already-present" as const;
       }
       const desiredDocs = addDoc(detail.documentation, docPath);
       await adapter.editTask(taskId, { addLabels: [label], doc: desiredDocs });
@@ -240,10 +285,12 @@ export async function runLink(options: LinkOptions): Promise<number> {
     });
   }
 
-  // Commit exactly the task files this run edited — lore is the sole committer of `backlog/`
-  // (ADR-0012, design §3.6), so a `link` no longer leaves them uncommitted until the next `lore
-  // sync`. Scoped to `editedFiles`, so a `--no-back-ref`/no-op run (empty) commits nothing and an
-  // unrelated dirty `backlog/` edit is never swept in (ADR-0012 §1).
+  // Commit whatever of this run's candidate task files (`editedFiles`) turns out to actually be
+  // dirty — lore is the sole committer of `backlog/` (ADR-0012, design §3.6), so a `link` no longer
+  // leaves an edit (this run's, or a prior run's uncommitted drift, LORE-121) sitting uncommitted
+  // until the next `lore sync`. Scoped to `editedFiles`, so a `--no-back-ref` run (empty) commits
+  // nothing, a genuinely clean run finds nothing dirty among its candidates and stays a true no-op,
+  // and an unrelated dirty `backlog/` edit to some OTHER task's file is never swept in (ADR-0012 §1).
   const backlogCommit = await commitBacklogFiles(editedFiles, options, LINK_COMMIT_MESSAGE);
   const report: LinkReport = { concept: docPath, tasks, changed, backlogCommit };
   // A captured commit failure (backlogCommit.error) is drift too — routed through the same
@@ -273,7 +320,7 @@ export async function runLink(options: LinkOptions): Promise<number> {
  *   `drift` (exit 6) {@link LoreError} instead — see {@link backRefFailure}.
  */
 export async function runUnlink(options: LinkOptions): Promise<number> {
-  const { concept, id, taskIds, noBackRef, docsRoot } = await prepare(options, "unlink");
+  const { concept, id, taskIds, noBackRef, docsRoot, profile } = await prepare(options, "unlink");
   const adapter = options.adapter ?? defaultAdapter(options.root);
   const docPath = concept !== undefined ? repoRelativePath(concept.path) : `${DOCS_DIR}/${id}.md`;
   const label = backRefLabel(concept?.id ?? id);
@@ -292,7 +339,7 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
     // round-trip and never depends on any back-reference edit's outcome, so committing it before
     // the per-task Backlog edits means a failure on the Backlog side can never strand it (the
     // reverse order would leave already-applied Backlog mutations unreported if this write failed).
-    changed = writeTasksIfChanged(options.root, docsRoot, concept, existingTasks, nextTasks);
+    changed = writeTasksIfChanged(docsRoot, concept, existingTasks, nextTasks, profile);
   } else {
     // --allow-missing, id doesn't resolve: no concept file exists to carry a tasks: list at all.
     tasks = taskIds.map((taskId) => ({ task: taskId, status: "not-linked", backRef: "skipped" }));
@@ -339,11 +386,17 @@ async function removeBackRefs(
   readonly outcomes: readonly PromiseSettledResult<"removed" | "already-absent" | "skipped">[];
   readonly editedFiles: readonly string[];
 }> {
-  // The task files actually edited, for the caller's scoped commit — populated only after a
-  // successful `editTask`, so a skip/no-op contributes nothing (mirrors runLink's editedFiles).
+  // The candidate task files for the caller's scoped commit — populated after either a successful
+  // `editTask`, or an "already-absent" no-edit outcome whose file might still carry a prior run's
+  // uncommitted drift (LORE-121's pattern, applied here per LORE-179); either way,
+  // `commitBacklogFiles`'s own `git status` (scoped to exactly these paths) is what decides which
+  // of them, if any, are actually dirty and worth staging (mirrors runLink's editedFiles).
   const editedFiles: string[] = [];
   const outcomes = await runSequentially(taskIds, async (taskId) => {
-    const detail = await adapter.viewTask(taskId);
+    // `verifiedViewTask` (LORE-177) refuses a detail whose own `id` doesn't match `taskId` — never
+    // used below to decide `hadLabel`/`hadDoc` or compute `removeDoc`'s result, which would
+    // otherwise borrow (and remove from) another task's documentation entirely.
+    const detail = await verifiedViewTask(adapter, taskId);
     if (detail === null) {
       return "skipped" as const; // the task no longer exists in Backlog — nothing to clean up
     }
@@ -355,6 +408,17 @@ async function removeBackRefs(
     // case-collide, so a case-insensitive match here can't strip a different concept's real entry.
     const hadDoc = containsCaseInsensitive(detail.documentation, docPath);
     if (!hadLabel && !hadDoc) {
+      // Neither the label nor the doc entry is present, so there is no Backlog edit to make — but
+      // the task's file can still be dirty and uncommitted on disk if a PRIOR `lore unlink` run
+      // already applied this exact removal and then its own `commitBacklogFiles` call failed (e.g.
+      // a rejected pre-commit hook — LORE-121's pattern, LORE-179). Recording the path here, even
+      // though this run makes no edit, lets `commitBacklogFiles`'s own `git status` (scoped to
+      // exactly this path) decide whether there is real drift to stage and commit: a clean file
+      // reports nothing dirty and stays a true no-op (AC#3), while a dirty one gets picked up and
+      // committed by this retry (AC#1) instead of silently no-opping forever.
+      if (detail.file) {
+        editedFiles.push(detail.file);
+      }
       return "already-absent" as const; // nothing to remove — skip the edit entirely
     }
     // An empty `desiredDocs` is not special-cased: the real adapter's `--doc` accumulator
@@ -390,6 +454,13 @@ export interface MovedBackRef {
  * old id, so *moving* one never introduces a new one it didn't already have. Otherwise mirrors
  * `runLink`/`runUnlink`'s per-task resilience: edits run sequentially, never concurrently
  * (ADR-0012 §5), and a single task's failure is caught and reported without blocking the rest.
+ *
+ * Reads through {@link verifiedViewTask} (LORE-183), never a raw `adapter.viewTask` call: a
+ * mismatched/ambiguous adapter detail is refused rather than trusted to compute the `editTask`
+ * write below, which would otherwise borrow another task's labels/documentation while still
+ * writing under the REQUESTED `taskId` — the same hazard class this function already guards
+ * against for a genuinely-missing task. The refusal surfaces through the same per-task `"failed"`
+ * outcome as any other rejected edit, degrading gracefully rather than corrupting the doc list.
  */
 export async function moveBackRefs(
   adapter: BacklogAdapter,
@@ -401,11 +472,17 @@ export async function moveBackRefs(
 ): Promise<{ readonly outcomes: readonly MovedBackRef[]; readonly editedFiles: readonly string[] }> {
   const oldLabel = backRefLabel(oldConceptId);
   const newLabel = backRefLabel(newConceptId);
-  // The task files actually edited, for the caller's scoped commit — populated only after a
-  // successful `editTask` (a `"moved"` outcome), so `already-current`/failed contribute nothing.
+  // The candidate task files for the caller's scoped commit — populated after a successful
+  // `editTask` (a `"moved"` outcome), AND after the "already fully migrated" no-edit outcome below
+  // whose file might still carry a prior run's uncommitted drift (LORE-121's pattern, applied here
+  // per LORE-179); `commitBacklogFiles`'s own `git status` (scoped to exactly these paths) is what
+  // decides which of them, if any, are actually dirty and worth staging. The OTHER `already-current`
+  // outcome (no trace of a back-ref at all — never linked) contributes nothing: unlike a completed
+  // migration, no prior run of *this* move could ever have applied an edit here, so there is no
+  // drift of this kind for it to hide. A `failed` edit likewise contributes nothing.
   const editedFiles: string[] = [];
   const settled = await runSequentially(taskIds, async (taskId) => {
-    const detail = await adapter.viewTask(taskId);
+    const detail = await verifiedViewTask(adapter, taskId);
     if (detail === null) {
       return "already-current" as const; // the task no longer exists in Backlog — nothing to move
     }
@@ -429,6 +506,17 @@ export async function moveBackRefs(
       return "already-current" as const;
     }
     if (hasExactNewLabel && staleLabel === undefined && hasNewDoc && !hasOldDoc) {
+      // Already fully migrated to the new label/doc, so there is no Backlog edit to make — but the
+      // task's file can still be dirty and uncommitted on disk if a PRIOR `lore rename` run already
+      // applied this exact move and then its own `commitBacklogFiles` call failed (e.g. a rejected
+      // pre-commit hook — LORE-121's pattern, LORE-179). Recording the path here, even though this
+      // run makes no edit, lets `commitBacklogFiles`'s own `git status` (scoped to exactly this
+      // path) decide whether there is real drift to stage and commit: a clean file reports nothing
+      // dirty and stays a true no-op (AC#3), while a dirty one gets picked up and committed by this
+      // retry (AC#2) instead of silently no-opping forever.
+      if (detail.file) {
+        editedFiles.push(detail.file);
+      }
       return "already-current" as const; // already fully migrated — nothing to move
     }
     const docs = detail.documentation.filter((d) => d !== oldDocPath);
@@ -469,6 +557,41 @@ export function defaultAdapter(root: string): BacklogAdapter {
   return createBacklogAdapter(bunBacklogSpawn(undefined, root));
 }
 
+/**
+ * Call `adapter.viewTask(taskId)` and verify the returned detail's own `id` matches the requested
+ * `taskId` case-insensitively before trusting it (originally introduced alongside
+ * `reconcile-shared.ts`'s `resolveTaskDetails`, LORE-122). A misbehaving or ambiguous adapter
+ * handing back a DIFFERENT task's detail must never be trusted to decide a label/`--doc` edit or
+ * the `tasks:` pre-write check: every one of this module's `viewTask` consumers — the pre-write
+ * existence check, the back-reference edit's fresh re-read, `unlink`'s removal read, and
+ * `moveBackRefs`'s move read (LORE-183; the last of these was an unguarded gap until then) — uses
+ * the RETURNED detail's own `title`/`status`/`labels`/`documentation` to decide what to write, so
+ * a mismatch left unchecked would silently borrow another task's data while still writing under
+ * the REQUESTED `taskId`. Exported so `commands/tasks.ts`'s `resolveRollup` (LORE-125) AND
+ * `reconcile-shared.ts`'s `resolveTaskDetails` (LORE-183) share this exact guard as the ONE place
+ * the comparison/`LoreError` lives, instead of each hand-maintaining its own byte-identical copy.
+ *
+ * Returns the verified detail, or `null` when the task genuinely doesn't exist (unchanged from
+ * `adapter.viewTask`'s own contract) — a mismatch is a THIRD outcome, always a thrown `LoreError`
+ * `not_found`, never folded into the `null` case (so a caller can't mistake "wrong task" for
+ * "no task" and silently skip a back-reference cleanup it should have refused outright instead).
+ */
+export async function verifiedViewTask(adapter: BacklogAdapter, taskId: string): Promise<BacklogTaskDetail | null> {
+  const detail = await adapter.viewTask(taskId);
+  if (detail === null) {
+    return null;
+  }
+  if (detail.id.toLowerCase() !== taskId.toLowerCase()) {
+    throw new LoreError(
+      "not_found",
+      `task "${taskId}" resolved to a different task ("${detail.id}") — refusing to use it`,
+      "this points at a Backlog adapter bug or an id collision, not a missing task — verify the task id with `backlog task view` and report the mismatch",
+      { taskId, resolvedId: detail.id },
+    );
+  }
+  return detail;
+}
+
 /** The `git`-authored commit message for `lore link`'s `backlog/` writes (its `doc:` label additions). */
 const LINK_COMMIT_MESSAGE = "chore(backlog): add doc back-references (lore link)";
 
@@ -486,6 +609,7 @@ interface Prepared {
   readonly taskIds: string[];
   readonly noBackRef: boolean;
   readonly docsRoot: string;
+  readonly profile: Profile;
 }
 
 /**
@@ -508,7 +632,8 @@ async function prepare(options: LinkOptions, command: "link" | "unlink"): Promis
   }
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
-  const graph = loadBundle(docsRoot, { warnings: advisories });
+  const profile = loadProfile({ root: options.root });
+  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
   advisories.flush({ color: options.output.color, stderr: options.stderr });
 
   const concept = graph.concepts.get(id);
@@ -520,14 +645,21 @@ async function prepare(options: LinkOptions, command: "link" | "unlink"): Promis
       if (!parsed.noBackRef) {
         assertNoLabelCaseCollision(graph, id, id, command);
       }
-      return { concept: undefined, id, taskIds: dedupeTaskIds(parsed.taskIds), noBackRef: parsed.noBackRef, docsRoot };
+      return {
+        concept: undefined,
+        id,
+        taskIds: dedupeTaskIds(parsed.taskIds),
+        noBackRef: parsed.noBackRef,
+        docsRoot,
+        profile,
+      };
     }
     throw conceptNotInBundle(id);
   }
   if (!parsed.noBackRef) {
     assertNoLabelCaseCollision(graph, concept.id, concept.id, command);
   }
-  return { concept, id, taskIds: dedupeTaskIds(parsed.taskIds), noBackRef: parsed.noBackRef, docsRoot };
+  return { concept, id, taskIds: dedupeTaskIds(parsed.taskIds), noBackRef: parsed.noBackRef, docsRoot, profile };
 }
 
 /**
@@ -625,9 +757,13 @@ function hasLabel(detail: BacklogTaskDetail, label: string): boolean {
   return containsCaseInsensitive(detail.labels, label);
 }
 
-/** The desired full `documentation` array after adding `docPath` (SET/REPLACE-safe: preserves every other entry). */
+/**
+ * The desired full `documentation` array after adding `docPath` (SET/REPLACE-safe: preserves every
+ * other entry). Matched case-insensitively, like `removeDoc` — an existing entry differing from
+ * `docPath` only by case already covers it, so it is left as-is rather than gaining a duplicate.
+ */
 function addDoc(existing: readonly string[], docPath: string): string[] {
-  return existing.includes(docPath) ? [...existing] : [...existing, docPath];
+  return containsCaseInsensitive(existing, docPath) ? [...existing] : [...existing, docPath];
 }
 
 /**
@@ -645,16 +781,15 @@ function removeDoc(existing: readonly string[], docPath: string): string[] {
  * round-trip byte-for-byte and the `tasks:` edit is the only diff (ADR-0011).
  */
 function writeTasksIfChanged(
-  root: string,
   docsRoot: string,
   concept: Concept,
   existingTasks: readonly string[],
   nextTasks: readonly string[],
+  profile: Profile,
 ): boolean {
   if (sameList(existingTasks, nextTasks)) {
     return false;
   }
-  const profile = loadProfile({ root });
   const updated: Concept = { ...concept, frontmatter: { ...concept.frontmatter, tasks: [...nextTasks] } };
   writeFileOverwriting(
     join(docsRoot, concept.path),
@@ -673,15 +808,12 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
 
 /**
  * Parse `link`/`unlink`'s tokens into `<id> <taskId…>` and `--no-back-ref`, via the shared
- * {@link parseCommandArgs} tokenizer (mirrors `commands/rename.ts`/`commands/supersede.ts`'s
+ * {@link parseCommandArgs} parser (mirrors `commands/rename.ts`/`commands/supersede.ts`'s
  * parsers). Positional arity is validated here since it differs per command (a variadic task-id
  * tail, not a fixed count).
  */
 function parseLinkArgs(args: readonly string[], command: "link" | "unlink"): LinkArgs {
-  // `--allow-missing` is unlink-only: `link` fundamentally needs a live concept to add `tasks:`
-  // to, so tolerating a miss would be meaningless there.
-  const knownFlags = command === "unlink" ? ["no-back-ref", "allow-missing"] : ["no-back-ref"];
-  const { positionals, flags } = parseCommandArgs(args, command, knownFlags);
+  const { positionals, flags } = parseCommandArgs(args, command);
 
   const id = positionals[0];
   if (id === undefined) {
@@ -717,11 +849,18 @@ interface TaskReportLike {
   }[];
 }
 
-/** One line per task's doc-side + back-ref outcome (with its error, if any), the concept-write line, then the `backlog/` commit line if one was made. Shared by `link` and `unlink` — the two reports render identically. */
+/**
+ * One line per task's doc-side + back-ref outcome (with its error, if any), the concept-write
+ * line, then the `backlog/` commit line if one was made. Shared by `link` and `unlink` — the two
+ * reports render identically. Both halves of each task line are named explicitly (`tasks:` for
+ * the concept's own frontmatter list, `back-ref` for the Backlog `doc:<conceptId>` label/`--doc`
+ * side) rather than the old bare `(doc)` qualifier, which read as unexplained shorthand without
+ * already knowing the `doc:` label convention (LORE-259).
+ */
 function renderTaskReport(data: TaskReportLike): string {
   const lines = data.tasks.map((t) => {
     const suffix = t.error !== undefined ? ` (${t.error})` : "";
-    return `${t.task}: ${t.status} (doc), back-ref ${t.backRef}${suffix}`;
+    return `${t.task}: tasks: ${t.status}, back-ref: ${t.backRef}${suffix}`;
   });
   lines.push(`${data.concept}: ${data.changed ? "updated" : "unchanged"}`);
   const commitLine = renderBacklogCommitLine(data.backlogCommit);

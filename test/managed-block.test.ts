@@ -14,6 +14,7 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  locateTaskBlock,
   type ManagedTaskRow,
   regenerateTaskBlock,
   TASK_BLOCK_BEGIN,
@@ -38,6 +39,29 @@ function block(...lines: string[]): string {
 function doc(inner = ""): string {
   const region = inner === "" ? `${TASK_BLOCK_BEGIN}\n${TASK_BLOCK_END}` : block(inner);
   return `---\ntype: Story\ntitle: Bulk archive\n---\n\n# Bulk archive\n\nIntro prose.\n\n${region}\n\nOutro prose.\n`;
+}
+
+/**
+ * Count the real, cell-delimiting `|` characters in a GFM table row: a `|` is a delimiter unless an
+ * *odd* number of consecutive backslashes immediately precede it (CommonMark escape semantics — `\|`
+ * is a literal pipe, `\\|` is a literal backslash followed by a live delimiter, `\\\|` is a literal
+ * backslash followed by a literal pipe, and so on).
+ */
+function countUnescapedPipes(line: string): number {
+  let count = 0;
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] !== "|") {
+      continue;
+    }
+    let backslashes = 0;
+    for (let j = i - 1; j >= 0 && line[j] === "\\"; j--) {
+      backslashes++;
+    }
+    if (backslashes % 2 === 0) {
+      count++;
+    }
+  }
+  return count;
 }
 
 /** Run the thunk and return the {@link LoreError} it throws, failing the test if it does not throw. */
@@ -119,6 +143,18 @@ describe("regenerateTaskBlock — tolerance and cell hardening", () => {
     expect(out).toContain("| a \\| b | Done |");
   });
 
+  test("a pre-existing backslash immediately before a pipe does not combine with the pipe-escape into a live delimiter (LORE-154)", () => {
+    const out = regenerateTaskBlock(doc(), [row("LORE-1", "x\\|y", "Done", "backlog/tasks/lore-1 - x.md")], OPTS);
+    const line = out.split("\n").find((l) => l.includes("LORE-1"));
+    expect(line).toBeDefined();
+    // Row shape is `| [id](link) | title | status |` — exactly 4 real, cell-delimiting pipes; the
+    // title's own escaped `\|` must not count as a 5th.
+    expect(countUnescapedPipes(line as string)).toBe(4);
+    // The backslash is doubled *before* the pipe is escaped, so the cell renders as a literal
+    // backslash (`\\`) followed by a literal, non-delimiting pipe (`\|`) — reproducing `x\|y` verbatim.
+    expect(out).toContain("| x\\\\\\|y | Done |");
+  });
+
   test("brackets in the link-text id are escaped so they cannot break the `[text](…)` syntax", () => {
     const out = regenerateTaskBlock(doc(), [row("A[1]", "T", "Done", "backlog/tasks/a-1.md")], OPTS);
     expect(out).toContain("[A\\[1\\]](../../backlog/tasks/a-1.md)");
@@ -177,7 +213,7 @@ describe("regenerateTaskBlock — idempotency and boundary safety (AC#1)", () =>
       "```\n";
     const out = regenerateTaskBlock(withFence, [], OPTS);
     // Only the real top-level block was regenerated; the fenced example survives byte-for-byte.
-    expect(out).toContain("```markdown\n" + `${TASK_BLOCK_BEGIN}\nexample in a doc\n${TASK_BLOCK_END}\n` + "```");
+    expect(out).toContain(`\`\`\`markdown\n${TASK_BLOCK_BEGIN}\nexample in a doc\n${TASK_BLOCK_END}\n\`\`\``);
     expect(out).toContain(block("_No linked tasks._"));
     expect(regenerateTaskBlock(out, [], OPTS)).toBe(out); // still a fixpoint with the fence present
   });
@@ -226,6 +262,75 @@ describe("regenerateTaskBlock — marker validation (ADR-0008 §2 → validation
     const err = loreError(() => regenerateTaskBlock(crossed, TASKS, OPTS));
     expect(err.type).toBe("validation");
     expect(err.message).toContain("crossed");
+  });
+});
+
+/**
+ * locateTaskBlock — the `[start, end)` span `core/replace.ts` protects (LORE-73). Exercises the
+ * exact failure modes a literal `indexOf` scan would get wrong but the structural, mdast-based
+ * location here does not: marker text cited in prose or a fenced code example (this project's own
+ * docs do both, to document the format) must never be mistaken for a real block, whether that
+ * mistake would surface as a false "duplicated" validation error or as silent false-positive
+ * protection of ordinary prose.
+ */
+describe("locateTaskBlock", () => {
+  test("no markers at all is null, not an error — most docs have no lore:tasks block", () => {
+    expect(locateTaskBlock("# Just prose, no block.\n")).toBeNull();
+  });
+
+  test("locates a well-formed block, span covers both markers", () => {
+    const text = `intro\n\n${block("row")}\n\noutro`;
+    const span = locateTaskBlock(text);
+    if (span === null) {
+      throw new Error("expected a located span");
+    }
+    expect(text.slice(span.start, span.end)).toBe(block("row"));
+  });
+
+  test("a marker pair cited inside a fenced code example is not a real block (null, no throw)", () => {
+    // The exact shape docs/adr/0008-managed-block-remark-ast.md uses to document the format.
+    const text = `prose\n\n\`\`\`markdown\n${block("example")}\n\`\`\`\n`;
+    expect(locateTaskBlock(text)).toBeNull();
+  });
+
+  test("a single begin/end pair cited inline in one sentence is not a real block (null, no throw)", () => {
+    // The exact shape docs/adr/0007-validation-and-coherence.md uses: both markers as inline code
+    // spans in one sentence, not on their own line — never a top-level html node.
+    const text = `Re-render every \`${TASK_BLOCK_BEGIN}\` … \`${TASK_BLOCK_END}\` region on sync.\n`;
+    expect(locateTaskBlock(text)).toBeNull();
+  });
+
+  test("a doc with a real block AND a fenced citation elsewhere locates only the real block", () => {
+    const text = `${block("row")}\n\nSee the format:\n\n\`\`\`markdown\n${block("example")}\n\`\`\`\n`;
+    const span = locateTaskBlock(text);
+    if (span === null) {
+      throw new Error("expected a located span");
+    }
+    expect(text.slice(span.start, span.end)).toBe(block("row")); // the real, top-level block only
+  });
+
+  test("three prose/fenced citations of the marker text (no real block) is null, not a 'duplicated' error", () => {
+    // Reproduces docs/adr/0008-managed-block-remark-ast.md's exact shape: the marker syntax quoted
+    // three times (a fenced example plus inline-code citations) with no real top-level block. A
+    // literal indexOf scan sees 3 begins/3 ends and throws "duplicated"; the structural scan must not.
+    const text =
+      "```markdown\n" +
+      block("example") +
+      "\n```\n\n" +
+      `Also written as \`${TASK_BLOCK_BEGIN}\` … \`${TASK_BLOCK_END}\`.\n`;
+    expect(locateTaskBlock(text)).toBeNull();
+  });
+
+  test("markers present but malformed (duplicated, top-level) is still a fail-loud validation error", () => {
+    const dup = `${block("a")}\n\n${block("b")}`;
+    const err = loreError(() => locateTaskBlock(dup));
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("duplicated");
+  });
+
+  test("an unbalanced pair (begin without end) is still a fail-loud validation error", () => {
+    const err = loreError(() => locateTaskBlock(`${TASK_BLOCK_BEGIN}\nrows\n`));
+    expect(err.type).toBe("validation");
   });
 });
 
@@ -319,6 +424,68 @@ describe("upsertManagedBlock — update when present", () => {
     // The real block is appended after the code fence; the fenced text is left intact.
     expect(out).toContain("```\n<!-- lore:agents:begin -->\n<!-- lore:agents:end -->\n```");
     expect(out.endsWith(`${agentBlock("hello body")}\n`)).toBe(true);
+  });
+
+  test("a body that opens an unterminated code fence fails loud instead of returning corrupted content (LORE-155)", () => {
+    // The new body's unclosed ``` fence swallows everything after it — including the `:end` marker and
+    // the trailing prose — into a single code node, so the result no longer parses as a clean top-level
+    // marker pair. The update branch must re-locate and throw, mirroring the insert branch's guard,
+    // rather than silently splicing and returning a document whose managed block is now unbalanced.
+    const before = `head prose\n\n${agentBlock("OLD")}\n\ntail prose\n`;
+    const err = loreError(() => upsertManagedBlock(before, { label: LABEL, body: "```js\nconst x = 1;" }));
+    expect(err.type).toBe("validation");
+    expect(exitCodeFor(err)).toBe(6);
+    expect(err.message).toContain(LABEL);
+  });
+});
+
+describe("upsertManagedBlock — a same-line marker pair is malformed, not absent (LORE-156)", () => {
+  // mdast's fromMarkdown collapses a begin+end pair with no separating newline into ONE top-level
+  // `html` node whose trimmed value matches neither the anchored begin nor end sentinel regex, so a
+  // naive scan sees 0 begins and 0 ends — the same signal as "no block yet". Confirmed via mdast
+  // directly: parsing `<!-- lore:agents:begin --><!-- lore:agents:end -->` yields a single html node
+  // with that exact combined value. Before this fix, locateLabeledMarkers returned null for that
+  // signal, so upsertManagedBlock's insert branch appended a second, well-formed block after the
+  // untouched malformed pair — leaving the file with two block instances.
+
+  test("throws a validation error identifying the malformed same-line markers, instead of returning null", () => {
+    const sameLine = `# Notes\n\n<!-- ${LABEL}:begin --><!-- ${LABEL}:end -->\n\nTrailing prose.\n`;
+    const err = loreError(() => upsertManagedBlock(sameLine, UP));
+    expect(err.type).toBe("validation");
+    expect(exitCodeFor(err)).toBe(6);
+    expect(err.message).toContain(LABEL);
+  });
+
+  test("never yields two block instances (one malformed, one freshly appended) — AC#2", () => {
+    const sameLine = `<!-- ${LABEL}:begin --><!-- ${LABEL}:end -->\n`;
+    let out: string | undefined;
+    let thrown: unknown;
+    try {
+      out = upsertManagedBlock(sameLine, UP);
+    } catch (err) {
+      thrown = err;
+    }
+    if (thrown !== undefined) {
+      // The chosen strategy: fail loud rather than guess. Nothing is written, so the file on disk
+      // (whatever the caller passed as `content`) is never touched — it cannot end up duplicated.
+      expect(thrown).toBeInstanceOf(LoreError);
+      expect((thrown as LoreError).type).toBe("validation");
+    } else {
+      // Defensive: if a future implementation instead repairs the pair in place, the result must
+      // still carry exactly one begin and one end marker for the label — never the original malformed
+      // pair PLUS a freshly appended second block.
+      expect((out as string).match(new RegExp(`<!--\\s*${LABEL}:begin\\s*-->`, "g"))?.length).toBe(1);
+      expect((out as string).match(new RegExp(`<!--\\s*${LABEL}:end\\s*-->`, "g"))?.length).toBe(1);
+    }
+  });
+
+  test("a same-line pair for an unrelated label does not block insertion of this label's block", () => {
+    // The malformed-detection is label-scoped: a same-line collision for a *different* managed block
+    // (e.g. Backlog.md's own guidelines block) must not stop `lore:agents` from being inserted.
+    const existing = "<!-- OTHER:begin --><!-- OTHER:end -->\n\nprose\n";
+    const out = upsertManagedBlock(existing, UP);
+    expect(out).toContain("<!-- OTHER:begin --><!-- OTHER:end -->");
+    expect(out).toContain(agentBlock("hello body"));
   });
 });
 

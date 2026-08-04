@@ -5,8 +5,8 @@ title: "CLI surface: the complete lore command catalog"
 description: >-
   The authoritative catalog of every lore subcommand — purpose, arguments,
   key flags, output kind, and exit codes — for the CLI that is lore's primary
-  interface for humans, Claude Code, and CI. Covers init, new, validate,
-  check, sync, link/unlink, tasks, orphans, graph, query, context, replace,
+  interface for humans, Claude Code, Codex, and CI. Covers init, new, validate,
+  check, sync, link/unlink, tasks, orphans, graph, path, impact, explorer, query, context, replace,
   rename, supersede, scaffold, schema, agents, instructions, help, and the
   deferred publish/mcp commands.
 tags: [reference, cli, commands, flags, exit-codes, agent, ci]
@@ -20,7 +20,7 @@ timestamp: 2026-06-21T00:00:00Z
 # CLI surface: the complete lore command catalog
 
 The **CLI is lore's primary interface** — for humans at a terminal, for Claude
-Code through the generated agent bridge, and for CI gates. (The MCP server is
+Code and Codex through generated agent bridges, and for CI gates. (The MCP server is
 [secondary and deferred to v2](./mcp-tools.md); when it ships it will wrap the
 same `core/` functions these commands call.) This page is the command catalog:
 what each subcommand does, its arguments and key flags, the shape of its
@@ -31,6 +31,13 @@ govern **how every command behaves** — the three output modes, the six
 semantic exit codes, the stdout/stderr discipline, the `--json` envelope and
 error envelope, truncation hints, and the `kind` taxonomy — are specified once
 in the [CLI contract](./cli-contract.md) and are not repeated per command here.
+
+The implementation parses this surface with exact-pinned Commander, using the
+capability manifest as its declarative command/flag source and a data-driven
+handler registry for dispatch. Lore—not Commander—still owns help rendering,
+injected streams, JSON/error envelopes, semantic exit codes, TTY/`NO_COLOR`
+behavior, and process lifecycle. The parser library does not change the public
+surface recorded here.
 
 ## Global behavior (applies to every command)
 
@@ -70,20 +77,57 @@ is not repeated. A concept `<id>` is a bundle path **minus** the `.md` suffix
 ### `init`
 
 Initialize a lore bundle in the current repo: create the `docs/` OKF bundle
-with a root `index.md` (the only file carrying `okf_version`), seed the
-sub-index files, create the `.lore/` [state directory](../adr/0013-lore-state-directory.md)
-(`config.toml`, `templates/`, exported JSON `schemas/`), and wire Backlog
-coexistence (set `auto_commit=false`, `check_active_branches=false`,
-`remote_operations=false`; gitignore `backlog/.locks/`). Runs the Backlog.md
-capability probe and fails loud if the installed Backlog.md lacks the required
-`--json` support (see [backlog CLI contract](./backlog-cli-contract.md)).
+with a root `index.md` (the only file carrying `okf_version`), and create the
+`.lore/` [state directory](../adr/0013-lore-state-directory.md) (`config.toml`,
+`profile.toml`, `.gitignore`, `templates/`, exported JSON `schemas/`). Runs
+**idempotently**: every file is created only when absent (an atomic write, so
+there is no clobber of a user's edits), so a re-run with no intervening change
+creates nothing and still exits `0` with everything reported `skipped`; a run
+after a partial delete fills in only the missing pieces.
+
+**On a bare, interactive-terminal invocation, `init` also runs a guided
+wizard** that folds the rest of onboarding into this one command — independently
+detected Claude Code and Codex agent bridges, a downstream doc-site scaffold (mkdocs/docusaurus), an
+Obsidian vault config, and a backlog `--json`-capability check — instead of
+the older `init` → `agents` → external `lore-setup.sh` → manual-Obsidian
+sequence ([ADR-0017](../adr/0017-interactive-init-wizard-tty-gated.md)).
+
+The wizard is **strictly TTY-gated**: it runs only when **both stdin and
+stderr** are interactive terminals (every wizard question is written to
+stderr, so a redirected stderr alone is enough to veto it — e.g.
+`lore init >out 2>/dev/null`, or the shell idiom `cmd >/dev/null 2>&1`),
+`--json` was not requested, *and* none of `init`'s own flags was passed.
+Whenever stdin or stderr is **not** a TTY (CI, pipes, a subprocess), `--json`
+is given, or **any** flag below is given, `init` runs fully
+non-interactively with defaults and no prompt can ever block it — the
+npm-init pattern. Every wizard question has a 1:1 flag equivalent, so a
+script can reach every option the wizard offers with zero prompts — but
+`--yes`/`--non-interactive` is npm's `-y` ("skip the wizard, run the bare
+default"), **not** "answer every question with its own default"; the two
+diverge on the agent-bridge question in particular (its wizard default is
+yes, but `--yes` installs nothing). A bare `lore init` off a TTY with no
+flags behaves exactly as it always has (scaffold only, nothing else) — the
+agent bridge/scaffolds/backlog check are strictly opt-in there.
+
+Hitting EOF (Ctrl-D) mid-wizard is a `usage` error (exit `2`) with a rendered
+diagnostic, never a silent success — see
+[ADR-0017](../adr/0017-interactive-init-wizard-tty-gated.md).
+
+**Partial application on an interrupted run.** The agent bridge (when
+requested) is applied before scaffold targets are pre-flighted, so a scaffold
+conflict — or an EOF mid-wizard after the bridge question was already
+answered — can leave the bridge already written to disk while the run still
+exits non-zero. This is safe: every step `init` performs is independently
+idempotent, so re-running `lore init` (via the wizard or the same flags)
+picks up exactly where the interrupted run left off — it detects and skips
+whatever already succeeded rather than erroring or duplicating anything.
 
 | | |
 |---|---|
 | **Args** | none |
-| **Key flags** | `--force` (re-seed missing scaffold without overwriting authored content) |
-| **Output** | `kind: init.result` — what was created/skipped |
-| **Exit** | `0` ok · `5` already initialized (without `--force`) · `6` Backlog.md probe failed |
+| **Key flags** | `--yes` / `--non-interactive` (skip the wizard even on a TTY) · `--claude` (Claude Code bridge; `--agents` alias) · `--codex` (Codex bridge: `AGENTS.md` + `.codex/skills/lore/`) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-backlog` / `--no-backlog` (force/skip the backlog capability check) |
+| **Output** | `kind: init` — created/skipped scaffold paths, plus `interactive`/`scaffolds` always present (`false`/`[]` on the default path) and `agents` (Claude), `codex`, and `backlog` present only when those steps ran |
+| **Exit** | `0` ok (the backlog check is advisory-only and never changes this) · `2` usage (bad flag/unknown `--scaffold` target, or the wizard's stdin closed before finishing) · `4` permission denied · `5` a non-regular entry (directory/symlink) blocks a scaffold path, or a scaffold target collides with a differing hand-edited file · `6` a malformed `.lore/profile.toml` |
 
 ### `new`
 
@@ -96,7 +140,7 @@ concept id.
 ```
 lore new <type> "<title>" [flags]
 lore new story "Bulk archive completed orders"
-lore new spec  "Order archival"  --story stories/bulk-archive-orders
+lore new spec  "Order archival"
 lore new adr   "Use soft deletes" --tags retention,orders
 lore new reference "Orders table" --template reference --var owner=payments
 ```
@@ -108,7 +152,7 @@ accepted (OKF tolerance) and scaffolded with the lenient `type`-only shape.
 | | |
 |---|---|
 | **Args** | `<type>` `"<title>"` |
-| **Key flags** | `--tags a,b` · `--epic <id>` · `--story <id>` · `--resource <url>` · `--template <name>` (file under `.lore/templates/`) · `--var k=v` (repeatable; fills `{{k}}`) · `--summary "<sentence>"` |
+| **Key flags** | `--tags a,b` · `--template <name>` (file under `.lore/templates/`) · `--var k=v` (repeatable; fills `{{k}}`) · `--summary "<sentence>"` |
 | **Output** | `kind: new.result` — `{ id, path, type }` |
 | **Exit** | `0` ok · `2` bad type/var syntax · `5` target path already exists · `6` template missing required `{{var}}` |
 
@@ -168,13 +212,11 @@ The **drift gate** — read-only, never writes. Aggregates:
   trailing-slash directory links); and MDX hazards (raw `<`/`{` in prose, raw
   HTML, leading-underscore and `.mdx` file names).
 
-Also surfaces per-doc and bundle **token estimates** (labeled chars/4 heuristic).
-
 | | |
 |---|---|
 | **Args** | optional `[paths…]` (default: whole bundle) |
-| **Key flags** | `--strict` (treat portability warnings as failures for the exit code) · `--external` (also probe external-URL liveness — advisory, never gates) · `--fix` (where safe, defer to `sync` for managed-block/status — `check` itself never writes) |
-| **Output** | `kind: check.report` — drift, broken links/anchors, portability findings, token estimates; plus advisory `externalFindings` when `--external` ran |
+| **Key flags** | `--strict` (treat portability warnings as failures for the exit code) · `--external` (also probe external-URL liveness — advisory, never gates) |
+| **Output** | `kind: check.report` — `findings`, `errorCount`, `warningCount`, `fileCount`, `complete`; plus optional `externalFindings` when `--external` ran |
 | **Exit** | `0` no broken internal links/anchors, no status/managed-block drift · `3` a linked task id no longer exists · `6` any broken internal link/anchor, any status/managed-block drift (or any portability warning under `--strict`). External-liveness results never affect the exit. |
 
 ---
@@ -239,7 +281,7 @@ lore link stories/bulk-archive-orders task-42 task-57
 |---|---|
 | **Args** | `<id>` `<taskId…>` |
 | **Key flags** | `--no-back-ref` (skip the `doc:` label write to the task) |
-| **Output** | `kind: link.result` — links added / already present, plus the `backlog/` commit outcome. Emitted **only on exit `0`**; if any task's back-reference edit (or the `backlog/` commit) fails, stdout stays empty and the same per-task detail moves into the standard `--json` error envelope's `input` on stderr (cli-contract §4/§5) — never a partial-success envelope on stdout (LORE-58). |
+| **Output** | `kind: link.result` — links added / already present, plus the `backlog/` commit outcome. Emitted **only on exit `0`**; if any task's back-reference edit (or the `backlog/` commit) fails, stdout stays empty and the same per-task detail moves into the standard `--json` error envelope's `input` on stderr (cli-contract §4/§5) — never a partial-success envelope on stdout (LCLI-58). |
 | **Exit** | `0` ok · `2` usage (bad flag, comma-bearing id) · `3` concept or task id not found · `4` writing into a managed region denied · `5` `<id>` collides case-insensitively with another concept · `6` a task's back-reference edit failed, or the `backlog/` commit failed (drift) |
 
 ### `unlink`
@@ -269,7 +311,7 @@ lore unlink stories/bulk-archive-orders task-42 --allow-missing
 |---|---|
 | **Args** | `<id>` `<taskId…>` |
 | **Key flags** | `--no-back-ref` (leave the `doc:` label on the task) · `--allow-missing` (tolerate `<id>` not resolving to a live concept) |
-| **Output** | `kind: unlink.result` — links removed / already absent, plus the `backlog/` commit outcome. Emitted **only on exit `0`**; if any task's back-reference edit (or the `backlog/` commit) fails, stdout stays empty and the same per-task detail moves into the standard `--json` error envelope's `input` on stderr (cli-contract §4/§5) — never a partial-success envelope on stdout (LORE-58). |
+| **Output** | `kind: unlink.result` — links removed / already absent, plus the `backlog/` commit outcome. Emitted **only on exit `0`**; if any task's back-reference edit (or the `backlog/` commit) fails, stdout stays empty and the same per-task detail moves into the standard `--json` error envelope's `input` on stderr (cli-contract §4/§5) — never a partial-success envelope on stdout (LCLI-58). |
 | **Exit** | `0` ok · `2` usage (bad flag, comma-bearing id) · `3` concept not found (unless `--allow-missing`) · `5` `<id>` collides case-insensitively with a live concept · `6` a task's back-reference edit failed, or the `backlog/` commit failed (drift) |
 
 ### `tasks`
@@ -294,15 +336,17 @@ lore tasks stories/bulk-archive-orders
 ### `orphans`
 
 Bidirectional orphan report: **tasks with no owning doc** (no concept lists
-them and no task carries a `doc:` label) and **docs whose linked tasks have
+them, no task carries a `doc:` label, and no ancestor in the task's Backlog
+parent/subtask chain is owned either (LCLI-261), so a subtask of an
+already-linked parent is not reported) and **docs whose linked tasks have
 vanished** (a `tasks:` id Backlog no longer knows). The agent/CI signal that
 the doc↔task coupling has gaps.
 
 | | |
 |---|---|
 | **Args** | none |
-| **Key flags** | `--tasks-only` · `--docs-only` |
-| **Output** | `kind: orphans.report` — `{ orphanTasks[], danglingLinks[] }` |
+| **Key flags** | `--tasks-only` · `--docs-only` · `--limit <n>` (caps each requested section independently; default 20) |
+| **Output** | `kind: orphans.report` — `{ orphanTasks[], orphanTasksTotal, orphanTasksShown, orphanTasksTruncated, danglingLinks[], danglingLinksTotal, danglingLinksShown, danglingLinksTruncated }` (bounded per §3; each pair of `total`/`shown`/`truncated` fields is present only alongside its own array) |
 | **Exit** | `0` ok (report emitted even when non-empty; `orphans` is a report, not a gate) |
 
 ---
@@ -311,7 +355,23 @@ the doc↔task coupling has gaps.
 
 These are deterministic, no-LLM operations (see
 [ADR-0014](../adr/0014-core-has-no-llm-dependency.md) and
-[ADR-0015](../adr/0015-lightweight-retrieval-no-vectors.md)).
+[ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md)).
+`graph`, `path`, `impact`, `changed`, `provenance`, `query`, and `context` use canonical records from a fully verified,
+immutable local LadybugDB generation on supported hosts. Missing, stale, known
+incompatible, or corrupt state rebuilds only under the frozen ownership policy;
+contention, a newer unsupported format, an unavailable native backend, or a
+failed indexed operation selects the reference in-memory implementation before
+output. The public envelopes, diagnostics, and ordering do not reveal which
+backend was selected. No command accepts Cypher or exposes database paths,
+physical identifiers, or native errors.
+
+All seven retrieval commands also accept an explicit `--workspace <manifest>` and a
+repeatable `--repository <member-id>` subset selector. `--repository` requires
+`--workspace`; Lore never discovers a workspace or member automatically.
+Workspace concept IDs are qualified as `<member-id>::<source-id>`, and JSON
+results add locator-free workspace scope and per-result provenance. Omitting
+`--workspace` preserves the single-repository output exactly. See
+[Workspace indexing and retrieval](../specs/workspace-indexing-and-retrieval.md).
 
 ### `graph`
 
@@ -323,14 +383,128 @@ humans for orientation, by consumers for navigation, and by
 
 | | |
 |---|---|
-| **Args** | optional `<id>` (subgraph rooted at one concept; normalized like [`rename`](#rename), so path/`.md`/`./` forms resolve) |
-| **Key flags** | `--dot` (emit Graphviz DOT; mutually exclusive with `--json`) · `--depth <n>` (bound subgraph radius) |
-| **Output** | `kind: graph.export` — nodes, edges, token estimates (or DOT text under `--dot`). Machine JSON is the global `--json` envelope, as for every command. |
+| **Args** | optional `<id>` (subgraph rooted at one concept; normalized like [`rename`](#rename), so path/`.md`/`./` forms resolve; workspace mode requires `<member-id>::<source-id>`) |
+| **Key flags** | `--dot` (emit Graphviz DOT; mutually exclusive with `--json`) · `--depth <n>` (bound subgraph radius) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
+| **Output** | `kind: graph.export` — nodes, edges, token estimates (or DOT text under `--dot`). Workspace JSON adds scope, per-node provenance, and exact explicit workspace links. Machine JSON is the global `--json` envelope, as for every command. |
 | **Exit** | `0` ok · `2` bad usage (`--dot` with `--json`, bad flag/`--depth`) · `3` root `<id>` not found |
+
+### `path`
+
+Find deterministic shortest simple paths across exact authored concept, task,
+and explicit workspace relationships. Every endpoint is typed; the command
+does not guess whether an id names a concept or task.
+
+| | |
+|---|---|
+| **Args** | `<from> <to>` |
+| **Key flags** | required `--from-kind <concept\|task>` · required `--to-kind <concept\|task>` · required `--direction <outbound\|inbound\|either>` · `--edge <kind>` (repeatable allowlist) · `--max-depth <n>` (default 4, max 16) · `--limit <n>` (default 20, max 100) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
+| **Output** | `kind: path.result`, schema `lore-path-result/1` — normalized typed scope, selected edge kinds, effective limits, shortest exact edge chains, endpoint and edge provenance, `shown`, `edgeVisits`, `depthBoundReached`, `truncated`, and `complete` |
+| **Exit** | `0` ok (no path is an empty successful result) · `2` bad/missing kind, direction, edge, depth, limit, or scope · `3` typed endpoint not found · `4` source unavailable · `6` malformed/drifting projection |
+
+### `impact`
+
+Expand one typed endpoint across exact authored relationships. Each affected
+endpoint appears once with a canonical shortest evidence chain and is labeled
+`direct` at depth 1 or `transitive` thereafter.
+
+| | |
+|---|---|
+| **Args** | `<id>` |
+| **Key flags** | required `--kind <concept\|task>` · required `--direction <outbound\|inbound\|either>` · `--edge <kind>` (repeatable allowlist) · `--max-depth <n>` (default 4, max 16) · `--limit <n>` (default 20, max 100) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
+| **Output** | `kind: impact.result`, schema `lore-impact-result/1` — normalized typed root, selected edge kinds, effective limits, direct/transitive impacts, exact evidence chains and provenance, `shown`, `edgeVisits`, `depthBoundReached`, `truncated`, and `complete` |
+| **Exit** | `0` ok (no impacts is successful) · `2` bad/missing kind, direction, edge, depth, limit, or scope · `3` typed root not found · `4` source unavailable · `6` malformed/drifting projection |
+
+Both commands enforce a hard 10,000-edge visit budget in addition to the
+requested depth and result limits. Hitting the result or visit budget sets
+`truncated: true` and `complete: false`; reaching the requested depth is
+reported separately. They preserve duplicate authored edge records, never
+traverse dangling targets, infer no relationships, and expose no Cypher or
+Ladybug-native identifiers. See [Bounded path and impact](../specs/bounded-path-and-impact.md).
+
+### `snapshot`
+
+Explicitly retain, list, or delete immutable projection history. Lore never
+captures or evicts history implicitly; each repository or workspace scope is
+capped at 16 retained snapshots.
+
+| | |
+|---|---|
+| **Args** | `<retain|list|delete> [snapshot-key]` |
+| **Key flags** | `--workspace <manifest>` · `--workspace-id <stable-id>` (list/delete after a manifest is unavailable) · `--all` (delete the entire exact selected scope) |
+| **Output** | `kind: snapshot.result` — retained/unchanged/listed/deleted action, exact snapshot descriptors, count, and maximum |
+| **Exit** | `0` ok · `2` invalid action/selector combination · `3` snapshot or source missing · `4` read/write denied · `5` retention cap, collision, or symlink conflict · `6` malformed source or retained bytes |
+
+### `changed`
+
+Compare two retained snapshots from one exact scope. Stable record keys produce
+changed rows; changed IDs produce remove/add rows. Duplicate authored edges are
+preserved and no rename or relationship is inferred.
+
+| | |
+|---|---|
+| **Args** | `<from> <to>` (exact snapshot key or unambiguous retained commit) |
+| **Key flags** | `--kind <concept|task|edge>` (repeatable) · `--limit <n>` (default 100, max 1,000) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
+| **Output** | `kind: changed.result`, schema `lore-changed-result/1` — normalized filters/bounds, paired fact deltas, shown/total/scanned, truncation, and completeness |
+| **Exit** | `0` ok, including no changes · `2` invalid bounds/filter/scope · `3` snapshot unavailable · `4` denied read · `5` ambiguous commit or cross-scope comparison · `6` malformed retained bytes |
+
+### `provenance`
+
+Resolve one retained fact to exact immutable repository, commit, export,
+record, and source evidence.
+
+| | |
+|---|---|
+| **Args** | `<id>` |
+| **Key flags** | required `--kind <concept|task|edge>` · required `--snapshot <selector>` · `--workspace <manifest>` · `--repository <member-id>` (repeatable scope validation) |
+| **Output** | `kind: provenance.result`, schema `lore-provenance-result/1` — snapshot descriptor, authored fact, and complete locator-free provenance |
+| **Exit** | `0` found · `2` bad/missing kind or selector · `3` fact/snapshot missing · `4` denied read · `5` ambiguous selector · `6` malformed retained bytes |
+
+### `explorer`
+
+Build a deterministic, self-contained, read-only HTML explorer from the same
+validated projection source used by Lore's persistent local index. The default
+artifact is `.lore/explorer/index.html`; it embeds canonical
+`lore-explorer-snapshot/1` bytes, inline styles, and a semantic browser runtime
+under a Content Security Policy whose network and form actions are disabled.
+Opening the file requires no server and performs no network request.
+
+The explorer supports title/summary/id/type/status/tag search, record-kind and
+status filters, bounded depth focus, selected-record details and provenance,
+inbound/outbound relationship highlighting, dangling references, and authored
+supersession chains. Initial and focused views retain the frozen contract's
+node, edge, and depth bounds. The command never writes under `docs/`,
+`backlog/`, or `.git/`; the default Lore-owned artifact updates atomically,
+while a differing custom output requires `--force`.
+
+Historical selectors switch to the separate
+`lore-explorer-change-snapshot/1` contract. `--snapshot` lists one retained
+snapshot; paired `--from`/`--to` renders replay-validated bounded changes with
+change/kind/search filters and paired authored values/provenance. Omitting
+those selectors preserves the ordinary explorer artifact exactly.
+
+| | |
+|---|---|
+| **Args** | none |
+| **Key flags** | `--out <file>` (repo-relative `.html`; default `.lore/explorer/index.html`) · `--force` (replace a differing custom output) · `--snapshot <selector>` or paired `--from <selector> --to <selector>` · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
+| **Output** | `kind: explorer.artifact` — artifact/snapshot versions, snapshot key, path, create/update/unchanged action, byte length, SHA-256 digest, and graph-health counts |
+| **Exit** | `0` created, updated, or unchanged · `2` invalid flag/path · `3` source record unavailable · `4` read/write denied · `5` custom-output collision or symlink · `6` malformed bundle/profile/projection |
+
+### `export`
+
+Emit the complete repository OKF and task snapshot as deterministic, consumer-neutral JSONL for downstream indexes. The export preserves full concept frontmatter/body, authored concept and task edges (including duplicates and dangling targets), stable SHA-256 hashes, bundle identity, and Git provenance; it contains no database-specific labels, identifiers, embeddings, or inferred relationships.
+
+| | |
+|---|---|
+| **Args** | none |
+| **Key flags** | `--schema-version 1.0` (the only supported breaking-contract version) |
+| **Output** | JSONL by default: manifest, concepts, concept edges, tasks, task edges, trailer. Global `--json` emits `kind: projection.export` with the same records. |
+| **Exit** | `0` ok · `2` bad/unsupported schema or flag · `3` missing bundle/Backlog · `4` denied read · `6` malformed bundle, Backlog drift, or Git failure |
+
+See [OKF projection contract](okf-projection-contract.md).
 
 ### `query`
 
-In-memory full-text search over the bundle (BM25-style ranking) with
+Deterministic lexical search over the selected bundle graph (BM25-style ranking) with
 frontmatter-field filters. **No vectors, RAG, or chunking.** Returns ranked
 hits with a `summary`-derived snippet; output is bounded with a truncation hint
 (`showing 30 of 120 — narrow with --type story`).
@@ -343,8 +517,8 @@ lore query "archive" --type Story --tag orders --status in-progress
 | | |
 |---|---|
 | **Args** | `"<text>"` (optional; filters alone are valid) |
-| **Key flags** | `--type <T>` · `--tag <t>` (repeatable) · `--status <S>` · `--limit <n>` (default bounded) · `--field k=v` (arbitrary frontmatter filter) |
-| **Output** | `kind: query.results` — ranked `[{ id, type, title, snippet, score }]` with `total`/`shown`/`truncated` |
+| **Key flags** | `--type <T>` · `--tag <t>` (repeatable) · `--status <S>` · `--limit <n>` (default bounded) · `--field k=v` (arbitrary frontmatter filter) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
+| **Output** | `kind: query.results` — ranked `[{ id, type, title, snippet, score }]` with `total`/`shown`/`truncated`; workspace JSON adds scope and per-hit provenance |
 | **Exit** | `0` ok (zero hits is still `0`) · `2` bad filter syntax |
 
 ### `context`
@@ -362,10 +536,38 @@ lore context stories/bulk-archive-orders --max-tokens 4000 --depth 2
 
 | | |
 |---|---|
-| **Args** | `<id>` |
-| **Key flags** | `--max-tokens <n>` (budget; default bounded) · `--depth <n>` (neighbor radius, default 1) |
-| **Output** | `kind: context.export` — target body + neighbor summaries, with `tokenEstimate`/`truncated` |
+| **Args** | `<id>` (workspace mode requires `<member-id>::<source-id>`) |
+| **Key flags** | `--max-tokens <n>` (token budget; if omitted, no cap is applied — output is bounded only by `--depth`) · `--depth <n>` (neighbor radius, default 1) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
+| **Output** | `kind: context.export` — target body + neighbor summaries, with `tokenEstimate`/`truncated`; workspace JSON adds scope and target/neighbor provenance |
 | **Exit** | `0` ok · `2` bad usage (missing `<id>`, unknown/repeated flag, non-integer/out-of-range `--max-tokens`/`--depth`) · `3` `<id>` not found |
+
+### `agent`
+
+Discovers committed `.lore/agents/*.toml` profiles and compiles deterministic,
+task-ranked evidence from each profile's explicit Lore source allowlist. The
+singular family is distinct from the plural [`agents`](#agents) bridge command:
+it does not create, patch, or run native Claude Code or Codex agents.
+
+```text
+lore agent list
+lore agent show frontend-dev
+lore agent context frontend-dev --task "Add accessible dialog focus management"
+lore agent context frontend-dev --task-file task.txt --max-tokens 6000
+```
+
+| Subcommand | Contract |
+|---|---|
+| `list` | Stable profile summaries; `kind: agent.profiles` |
+| `show <name>` | One normalized profile; `kind: agent.profile` |
+| `context <name>` | Exactly one of `--task <text>` or `--task-file <repo-relative-path|->`; optional `--max-tokens <n>`, `--out <repo-relative-path>`, and `--force`; `kind: agent.context.export` |
+
+`context` reserves space for metadata and mandatory pins, then ranks complete
+heading/top-level-block records from `sources`. Task-file and output paths are
+confined to the repository and reject symlink traversal. Outputs write
+atomically and require
+`--force` to replace different bytes. Common exits are `0` success, `2` usage,
+`3` unknown profile/source, `4` denied I/O, `5` output conflict, and `6`
+profile/reference validation or mandatory-budget failure.
 
 ---
 
@@ -387,7 +589,7 @@ lore replace --regex "v0\.1" "v0.2" --dry-run
 | **Args** | `<find>` `<replace>` |
 | **Key flags** | `--regex` (treat `<find>` as a regex) · `--in <glob>` (scope; default whole bundle) · `--dry-run` (show matches, write nothing) |
 | **Output** | `kind: replace.result` — per-file match/replacement counts |
-| **Exit** | `0` ok · `2` invalid regex · `6` `--dry-run` reported changes and `--check`-style gating requested |
+| **Exit** | `0` ok (including a no-op `--dry-run`) · `2` bad flag, or an invalid/empty/zero-width pattern |
 
 ### `rename`
 
@@ -397,7 +599,7 @@ graph, then update sub-indexes. Links remain
 [portable](./portable-markdown.md) (relative, URL-encoded, `.md`-suffixed).
 
 If the renamed concept has `tasks:` entries, every linked task's `doc:<id>`
-label and `--doc` path are moved to the new id/path too (LORE-24, ADR-0009
+label and `--doc` path are moved to the new id/path too (LCLI-24, ADR-0009
 §2) — the file move commits first, then the Backlog-side move runs, so a
 Backlog failure never strands an already-renamed file. That Backlog-side move is
 then committed in one `lore`-authored commit (ADR-0012: lore is the sole committer
@@ -451,15 +653,21 @@ lore scaffold docusaurus
 lore scaffold obsidian
 ```
 
-- **`mkdocs`** *(shipped, LORE-39)* — `mkdocs.yml` pointing at `docs/` plus a
+- **`mkdocs`** *(shipped, LCLI-39)* — `mkdocs.yml` pointing at `docs/` plus a
   `docs/tags.md` tag-index page; broken-links set to warn.
-- **`docusaurus`** *(shipped, LORE-40)* — a `website/` directory (`package.json`,
+- **`docusaurus`** *(shipped, LCLI-40)* — a `website/` directory (`package.json`,
   `docusaurus.config.js`, `sidebars.js`) with `markdown.format: 'detect'`
   (raw `<`/`{` safety) and broken-links → warn.
-- **`obsidian`** *(shipped, LORE-41)* — `.obsidian/` vault config tuned for
+- **`obsidian`** *(shipped, LCLI-41)* — `.obsidian/` vault config tuned for
   graph/backlinks over the relative-link convention (no wikilinks).
 
-An unrecognized target string (e.g. `hugo`) is a `usage` error (exit `2`).
+An unrecognized target string (e.g. `hugo`) is a `usage` error (exit `2`). A
+bare re-run is idempotent when nothing changed: a planned file already on disk
+with byte-identical content is left untouched, so a re-run against an
+unmodified scaffold writes nothing and still exits `0`; a `5` conflict names
+every planned file whose on-disk bytes actually differ (a user edit) and
+points at `--force`; a non-directory entry blocking a planned directory is
+the same exit `5`.
 
 lore **detects** non-portable syntax (portability lint, in [`check`](#check))
 but does **not** guarantee cross-renderer parity — that is the consumer's job.
@@ -468,8 +676,8 @@ but does **not** guarantee cross-renderer parity — that is the consumer's job.
 |---|---|
 | **Args** | `<target>` = `mkdocs` \| `docusaurus` \| `obsidian` |
 | **Key flags** | `--force` (overwrite an existing generated config) |
-| **Output** | `kind: scaffold.result` — files written |
-| **Exit** | `0` ok · `2` unknown target · `5` config exists (without `--force`) |
+| **Output** | `kind: scaffold.result` — files written (empty when already up to date) |
+| **Exit** | `0` ok (already up to date is a no-op) · `2` unknown target · `5` an existing file's bytes differ from what this run would generate (without `--force`), or a non-directory entry blocks a planned directory |
 
 ### `schema`
 
@@ -554,7 +762,7 @@ lore --version            # version string
 These are part of the designed surface but **not implemented in the initial
 milestones**. They are documented so the contract is stable when they land.
 
-### `publish confluence` — DEFERRED
+### `publish confluence` — ON HOLD
 
 One-way publish of the bundle to Confluence (Cloud / ADF target). Isolated
 adapter with **zero core dependency**; Server/DC is deferred-not-dropped. See
@@ -566,18 +774,18 @@ lore publish confluence [paths…] --space KEY --parent PAGE_ID --dry-run --all 
 
 | | |
 |---|---|
-| **Status** | implementation deferred (M7) |
+| **Status** | on hold; retained but unscheduled |
 | **Args** | optional `[paths…]` (default: changed-only) |
 | **Key flags** | `--space <KEY>` · `--parent <PAGE_ID>` · `--all` · `--prune` · `--dry-run` |
 | **Output** | `kind: publish.result` — created/updated/skipped pages |
 | **Exit** | `0` ok · `4` auth/token denied · `5` remote version conflict |
 
-### `mcp` — DEFERRED (v2)
+### `mcp` — ON HOLD
 
 Start the lore MCP server (stdio transport) exposing the same `core/` functions
 as agent-callable tools/resources. Secondary to the CLI. Full design in the
 [MCP tools reference](./mcp-tools.md); decision in
-[ADR-0004](../adr/0004-cli-first-skill-bridge-mcp-deferred.md).
+[ADR-0004](../adr/0004-cli-first-skill-bridge-mcp-deferred.md), with the current hold and successor sequence controlled by [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md).
 
 ```
 lore mcp
@@ -585,7 +793,7 @@ lore mcp
 
 | | |
 |---|---|
-| **Status** | deferred to v2 (M6) |
+| **Status** | on hold; retained by LCLI-42 without a scheduled milestone |
 | **Args** | none |
 | **Key flags** | (transport flags TBD with the server) |
 | **Output** | a long-running stdio MCP server (not a one-shot payload) |

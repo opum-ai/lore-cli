@@ -24,7 +24,7 @@
  *   - `backlog` (the Backlog adapter)           → 3 not_found, 6 validation/drift
  *   - `git`     (git log / commit seams)        → 6 drift
  *
- * plus `0` (success) and the universal `2` (usage, from the router's flag parsing)
+ * plus `0` (success) and the universal `2` (usage, from Commander parsing)
  * on every command, and any command-specific `extra` code that is the command's own
  * logic rather than an I/O seam — a `not_found` for an unknown `instructions` topic,
  * or a gate/validation return (`validate`/`check`/`new`/`agents` all pass their
@@ -41,8 +41,8 @@
  * runtime import, so the two agent catalogs can't drift while the live CLI stays
  * decoupled from the SKILL generator. `--json` availability is universal, carried
  * per entry so a single entry is self-describing. Every entry is a real `cli.ts`
- * dispatch case (never an aspirational `scaffold`), pinned to the
- * router both directions by the lockstep test.
+ * handler (never an aspirational `scaffold`), pinned to the handler registry
+ * in both directions by the lockstep test.
  */
 
 import { EXIT_CODES, EXIT_OK, EXIT_UNCAUGHT } from "../errors";
@@ -64,7 +64,7 @@ export interface ManifestFlag {
 
 /** One command in the manifest: everything an agent needs to invoke it correctly. */
 export interface ManifestCommand {
-  /** The subcommand token, exactly as `cli.ts` dispatches it. */
+  /** The subcommand token, exactly as Commander and `cli.ts` dispatch it. */
   readonly name: string;
   /** One-line description of what the command does (kept in sync with `LORE_COMMANDS`). */
   readonly summary: string;
@@ -88,9 +88,9 @@ export interface Manifest {
   readonly schemaVersion: number;
   /** The semantic exit-code taxonomy: name → code, sourced from `errors.ts` so it cannot drift. */
   readonly exitCodes: Readonly<Record<string, number>>;
-  /** The flags accepted in any position on every command (resolved by the router, not the command). */
+  /** The flags accepted in supported positions on every command (resolved by Commander, not the handler). */
   readonly globalFlags: readonly ManifestFlag[];
-  /** Every shipped command, in `cli.ts` dispatch order. */
+  /** Every shipped command, in `cli.ts` handler-registry order. */
   readonly commands: readonly ManifestCommand[];
 }
 
@@ -122,8 +122,34 @@ function exitCodesFor(seams: readonly Seam[], extra: readonly number[] = []): re
   return [...codes].sort((a, b) => a - b);
 }
 
-/** The four global flags the router resolves for every invocation (cli-contract §1). */
-const GLOBAL_FLAGS: readonly ManifestFlag[] = [
+/**
+ * Recursively `Object.freeze`s an array/object graph — the container itself plus
+ * every nested array/object it holds — so no level of the structure can be
+ * mutated after construction (a mutation attempt throws in strict-mode JS/TS,
+ * the module default, instead of silently corrupting the shared singleton).
+ * Mirrors the codebase's own `Object.freeze` convention (YAML_LOAD_OPTIONS /
+ * YAML_DUMP_OPTIONS in core/concept.ts, L124/L138) extended to nested structures,
+ * since the manifest's `readonly` TS modifiers are compile-time-only and don't
+ * stop an `as any`/plain-JS caller from mutating the singleton in place.
+ */
+function deepFreeze<T>(value: T): T {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      deepFreeze(item);
+    }
+    return Object.freeze(value) as T;
+  }
+  if (value !== null && typeof value === "object") {
+    for (const key of Object.keys(value)) {
+      deepFreeze((value as Record<string, unknown>)[key]);
+    }
+    return Object.freeze(value) as T;
+  }
+  return value;
+}
+
+/** The four global flags Commander resolves for every invocation (cli-contract §1). */
+const GLOBAL_FLAGS: readonly ManifestFlag[] = deepFreeze([
   {
     name: "json",
     takesValue: false,
@@ -132,25 +158,55 @@ const GLOBAL_FLAGS: readonly ManifestFlag[] = [
   { name: "plain", takesValue: false, summary: "ANSI-free text output (auto-selected when stdout is piped)" },
   { name: "version", alias: "v", takesValue: false, summary: "Print the version and exit" },
   { name: "help", alias: "h", takesValue: false, summary: "Show help and exit" },
-];
+]);
 
 /**
- * Every shipped command, in `cli.ts` dispatch order. Flags, `kind` values, and the
+ * Every shipped command, in `cli.ts` handler-registry order. Flags, `kind` values, and the
  * seam declarations behind `exitCodes` are transcribed from live source
  * (`commands/*.ts` call chains and `kind:` literals); summaries are kept identical
  * to `LORE_COMMANDS` (guarded by a test). The seam list passed to
  * {@link exitCodesFor} is the exit-code rationale — no hand-listed code needs a comment.
  */
-const LORE_MANIFEST: readonly ManifestCommand[] = [
+const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
   {
     name: "init",
-    summary: "Scaffold an empty, conformant OKF bundle",
+    summary: "Scaffold an OKF bundle; a bare TTY run also wizards the agent bridge/scaffolds/backlog check",
     args: "",
-    flags: [],
+    flags: [
+      {
+        name: "yes",
+        takesValue: false,
+        summary: "Skip the interactive wizard even on a TTY; use flag defaults (alias: --non-interactive)",
+      },
+      { name: "non-interactive", takesValue: false, summary: "Alias for --yes" },
+      { name: "agents", takesValue: false, summary: "Alias for --claude" },
+      { name: "claude", takesValue: false, summary: "Set up the Claude Code bridge (SKILL.md + CLAUDE.md)" },
+      { name: "codex", takesValue: false, summary: "Set up the Codex bridge (SKILL.md + AGENTS.md)" },
+      {
+        name: "scaffold",
+        takesValue: true,
+        repeatable: true,
+        summary: "Also scaffold a downstream doc consumer (mkdocs|docusaurus|obsidian)",
+      },
+      {
+        name: "obsidian",
+        takesValue: false,
+        summary: "Also scaffold an Obsidian vault config (shorthand for --scaffold obsidian)",
+      },
+      {
+        name: "check-backlog",
+        takesValue: false,
+        summary: "Check --json-capable backlog coupling even with no other flag",
+      },
+      { name: "no-backlog", takesValue: false, summary: "Skip the backlog-coupling capability check entirely" },
+    ],
     json: true,
     kind: "init",
+    // The backlog-coupling check is ADVISORY ONLY (LORE-260): a missing/incapable `backlog` becomes
+    // a stderr warning plus a `backlog: {capable: false}` field, never a thrown error — so no
+    // `backlog` seam code is added here despite `runInit` calling `adapter.probe()`.
     exitCodes: exitCodesFor(["profile", "write"]),
-    examples: ["lore init"],
+    examples: ["lore init", "lore init --claude --codex", "lore init --yes --scaffold mkdocs"],
   },
   {
     name: "new",
@@ -300,6 +356,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = [
     flags: [
       { name: "tasks-only", takesValue: false, summary: "Report only tasks with no owning doc" },
       { name: "docs-only", takesValue: false, summary: "Report only docs whose linked task vanished" },
+      { name: "limit", takesValue: true, summary: "Cap each section's rows (default 20)" },
     ],
     json: true,
     kind: "orphans.report",
@@ -340,11 +397,196 @@ const LORE_MANIFEST: readonly ManifestCommand[] = [
     flags: [
       { name: "dot", takesValue: false, summary: "Emit Graphviz DOT (mutually exclusive with --json)" },
       { name: "depth", takesValue: true, summary: "Bound the subgraph radius" },
+      { name: "workspace", takesValue: true, summary: "Select an explicit workspace manifest" },
+      { name: "repository", takesValue: true, repeatable: true, summary: "Select a workspace member" },
     ],
     json: true,
     kind: "graph.export",
     exitCodes: exitCodesFor(["bundle"]),
     examples: ["lore graph", "lore graph stories/bulk-archive-orders --dot"],
+  },
+  {
+    name: "path",
+    summary: "Find bounded paths across exact authored concept and task edges",
+    args: "<from> <to>",
+    flags: [
+      {
+        name: "from-kind",
+        takesValue: true,
+        summary: "Typed origin: concept or task",
+      },
+      {
+        name: "to-kind",
+        takesValue: true,
+        summary: "Typed destination: concept or task",
+      },
+      {
+        name: "direction",
+        takesValue: true,
+        summary: "Traversal direction: outbound, inbound, or either",
+      },
+      {
+        name: "edge",
+        takesValue: true,
+        repeatable: true,
+        summary: "Allow one authored edge kind",
+      },
+      {
+        name: "max-depth",
+        takesValue: true,
+        summary: "Maximum traversal depth (default 4, max 16)",
+      },
+      {
+        name: "limit",
+        takesValue: true,
+        summary: "Maximum paths (default 20, max 100)",
+      },
+      {
+        name: "workspace",
+        takesValue: true,
+        summary: "Select an explicit workspace manifest",
+      },
+      {
+        name: "repository",
+        takesValue: true,
+        repeatable: true,
+        summary: "Select a workspace member",
+      },
+    ],
+    json: true,
+    kind: "path.result",
+    exitCodes: exitCodesFor(["bundle", "backlog"]),
+    examples: ["lore path stories/orders LCLI-123 --from-kind concept --to-kind task --direction outbound"],
+  },
+  {
+    name: "impact",
+    summary: "Expand bounded impact across exact authored concept and task edges",
+    args: "<id>",
+    flags: [
+      {
+        name: "kind",
+        takesValue: true,
+        summary: "Typed root: concept or task",
+      },
+      {
+        name: "direction",
+        takesValue: true,
+        summary: "Traversal direction: outbound, inbound, or either",
+      },
+      {
+        name: "edge",
+        takesValue: true,
+        repeatable: true,
+        summary: "Allow one authored edge kind",
+      },
+      {
+        name: "max-depth",
+        takesValue: true,
+        summary: "Maximum traversal depth (default 4, max 16)",
+      },
+      {
+        name: "limit",
+        takesValue: true,
+        summary: "Maximum impacts (default 20, max 100)",
+      },
+      {
+        name: "workspace",
+        takesValue: true,
+        summary: "Select an explicit workspace manifest",
+      },
+      {
+        name: "repository",
+        takesValue: true,
+        repeatable: true,
+        summary: "Select a workspace member",
+      },
+    ],
+    json: true,
+    kind: "impact.result",
+    exitCodes: exitCodesFor(["bundle", "backlog"]),
+    examples: ["lore impact LCLI-123 --kind task --direction inbound --max-depth 3"],
+  },
+  {
+    name: "snapshot",
+    summary: "Explicitly retain, list, or delete bounded projection snapshots",
+    args: "<retain|list|delete> [snapshot-key]",
+    flags: [
+      { name: "workspace", takesValue: true, summary: "Select an explicit workspace manifest" },
+      { name: "workspace-id", takesValue: true, summary: "Select a workspace scope after its manifest is removed" },
+      { name: "all", takesValue: false, summary: "Delete every explicitly retained snapshot in the selected scope" },
+    ],
+    json: true,
+    kind: "snapshot.result",
+    exitCodes: exitCodesFor(["bundle", "backlog", "git", "read", "write"]),
+    examples: ["lore snapshot retain", "lore snapshot list --workspace lore-workspace.json"],
+  },
+  {
+    name: "changed",
+    summary: "Compare two retained snapshots with bounded authored-fact deltas",
+    args: "<from> <to>",
+    flags: [
+      { name: "kind", takesValue: true, repeatable: true, summary: "Select concept, task, or edge changes" },
+      { name: "limit", takesValue: true, summary: "Maximum returned changes (default 100, max 1000)" },
+      { name: "workspace", takesValue: true, summary: "Select an explicit workspace manifest" },
+      { name: "repository", takesValue: true, repeatable: true, summary: "Select a workspace member" },
+    ],
+    json: true,
+    kind: "changed.result",
+    exitCodes: exitCodesFor(["bundle", "backlog", "git", "read"], [5]),
+    examples: ["lore changed <from-snapshot> <to-snapshot>", "lore changed <from> <to> --kind edge --limit 200"],
+  },
+  {
+    name: "provenance",
+    summary: "Trace one retained concept, task, or edge to exact source evidence",
+    args: "<id>",
+    flags: [
+      { name: "kind", takesValue: true, summary: "Retained fact kind: concept, task, or edge" },
+      { name: "snapshot", takesValue: true, summary: "Exact retained snapshot key or unambiguous commit" },
+      { name: "workspace", takesValue: true, summary: "Select an explicit workspace manifest" },
+      { name: "repository", takesValue: true, repeatable: true, summary: "Select a workspace member" },
+    ],
+    json: true,
+    kind: "provenance.result",
+    exitCodes: exitCodesFor(["bundle", "backlog", "git", "read"], [5]),
+    examples: ["lore provenance stories/orders --kind concept --snapshot <snapshot-key>"],
+  },
+  {
+    name: "explorer",
+    summary: "Build a deterministic self-contained local graph explorer",
+    args: "",
+    flags: [
+      { name: "out", takesValue: true, summary: "Repository-relative HTML output path" },
+      { name: "force", takesValue: false, summary: "Replace a differing custom output file" },
+      { name: "snapshot", takesValue: true, summary: "Explore one retained snapshot" },
+      { name: "from", takesValue: true, summary: "Comparison source retained snapshot" },
+      { name: "to", takesValue: true, summary: "Comparison target retained snapshot" },
+      { name: "workspace", takesValue: true, summary: "Select an explicit workspace manifest" },
+      { name: "repository", takesValue: true, repeatable: true, summary: "Select a workspace member" },
+    ],
+    json: true,
+    kind: "explorer.artifact",
+    exitCodes: exitCodesFor(["bundle", "backlog", "git", "read", "write"]),
+    examples: [
+      "lore explorer",
+      "lore explorer --snapshot <snapshot-key>",
+      "lore explorer --from <snapshot> --to <snapshot>",
+    ],
+  },
+  {
+    name: "export",
+    summary: "Emit a deterministic, consumer-neutral OKF projection as JSONL",
+    args: "",
+    flags: [
+      {
+        name: "schema-version",
+        takesValue: true,
+        summary: "Projection schema version (currently 1.0)",
+      },
+    ],
+    json: true,
+    kind: "projection.export",
+    exitCodes: exitCodesFor(["bundle", "backlog", "git"]),
+    examples: ["lore export", "lore export --schema-version 1.0"],
   },
   {
     name: "query",
@@ -356,6 +598,8 @@ const LORE_MANIFEST: readonly ManifestCommand[] = [
       { name: "status", takesValue: true, summary: "Filter by status" },
       { name: "limit", takesValue: true, summary: "Cap the number of hits" },
       { name: "field", takesValue: true, repeatable: true, summary: "Arbitrary frontmatter filter (k=v)" },
+      { name: "workspace", takesValue: true, summary: "Select an explicit workspace manifest" },
+      { name: "repository", takesValue: true, repeatable: true, summary: "Select a workspace member" },
     ],
     json: true,
     kind: "query.results",
@@ -369,11 +613,35 @@ const LORE_MANIFEST: readonly ManifestCommand[] = [
     flags: [
       { name: "max-tokens", takesValue: true, summary: "Token budget (labeled chars/4 estimate)" },
       { name: "depth", takesValue: true, summary: "Neighbor radius (default 1)" },
+      { name: "workspace", takesValue: true, summary: "Select an explicit workspace manifest" },
+      { name: "repository", takesValue: true, repeatable: true, summary: "Select a workspace member" },
     ],
     json: true,
     kind: "context.export",
     exitCodes: exitCodesFor(["bundle"]),
     examples: ["lore context stories/bulk-archive-orders --max-tokens 4000 --depth 2"],
+  },
+  {
+    name: "agent",
+    summary: "List context profiles or compile bounded task-scoped evidence",
+    args: "<list|show|context> [args…]",
+    flags: [
+      { name: "task", takesValue: true, summary: "Assigned task text for context compilation" },
+      { name: "task-file", takesValue: true, summary: "Read task text from a repo-relative path or stdin (-)" },
+      { name: "max-tokens", takesValue: true, summary: "Override the profile's chars/4 token budget" },
+      { name: "out", takesValue: true, summary: "Atomically save canonical Markdown to a repo-relative path" },
+      { name: "force", takesValue: false, summary: "Replace a differing regular --out file" },
+    ],
+    json: true,
+    kind: "agent.context.export",
+    // Profile/reference validation is command-owned (extra 6), unknown profiles are
+    // command-owned not_found (extra 3), and task-file/output paths reach read/write.
+    exitCodes: exitCodesFor(["bundle", "read", "write"], [3, 6]),
+    examples: [
+      "lore agent list",
+      "lore agent show frontend-dev",
+      'lore agent context frontend-dev --task "implement the checkout form"',
+    ],
   },
   {
     name: "instructions",
@@ -411,7 +679,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = [
     exitCodes: exitCodesFor([], [3]),
     examples: ["lore help", "lore help new", "lore help --json"],
   },
-];
+]);
 
 /**
  * The semantic exit-code taxonomy, name → code, built from the `errors.ts`
@@ -422,14 +690,21 @@ export function exitCodeTaxonomy(): Record<string, number> {
   return { ok: EXIT_OK, uncaught: EXIT_UNCAUGHT, ...EXIT_CODES };
 }
 
-/** Build the full {@link Manifest} for `lore help --json`. */
+/**
+ * Build the full {@link Manifest} for `lore help --json`. The returned envelope is
+ * deeply frozen (AC#1): `globalFlags`/`commands` are the already-frozen module
+ * singletons ({@link GLOBAL_FLAGS}/{@link LORE_MANIFEST}), `exitCodes` is a fresh
+ * object frozen here, and the envelope itself is frozen last — so no caller,
+ * however it bypasses the compile-time `readonly` modifiers, can mutate a manifest
+ * returned by this function or poison a later call's read.
+ */
 export function buildManifest(): Manifest {
-  return {
+  return deepFreeze({
     schemaVersion: SCHEMA_VERSION,
     exitCodes: exitCodeTaxonomy(),
     globalFlags: GLOBAL_FLAGS,
     commands: LORE_MANIFEST,
-  };
+  });
 }
 
 /** Look up one command by its exact dispatch name (case-sensitive), or `undefined` if unknown. */
