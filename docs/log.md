@@ -105,6 +105,7 @@
 - 2026-08-04T16:20:23-05:00 1f0c2c621754083a1b10be85e1c8c37acb4edd5b docs: track 0.1.1 publication
 - 2026-08-04T21:40:39-05:00 4ded93c0c67250928d1e382f9ca3b6105511d693 docs: record Lore CLI 0.1.1 release
 - 2026-08-05T06:40:08-05:00 90c5655cd37d3e5ddb11e8ed5aaa8d63e88fcdf3 feat: negotiate OKF bundle versions
+- 2026-08-05T06:45:22-05:00 5024767e6f66573bb7dd3dfb39a407bac62a9648 chore: reconcile backlog campaign wave 2
 
 ## docs/.obsidian
 
