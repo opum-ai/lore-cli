@@ -2,7 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { LADYBUG_BENCHMARK_TASK_SNAPSHOT_REL_PATH, LADYBUG_BENCHMARK_TASK_SNAPSHOT_SCHEMA } from "./fixture";
+import { LADYBUG_BENCHMARK_TASK_SNAPSHOT_REL_PATH, LADYBUG_BENCHMARK_TASK_SNAPSHOT_SCHEMA } from "./fixture-contract";
 
 const args = process.argv.slice(2);
 
