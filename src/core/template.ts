@@ -10,7 +10,7 @@
  * the per-type required sections; the **body** is rendered from `.lore/templates/<type>.md`"):
  *
  * - **lore owns the frontmatter.** {@link buildNewConcept} builds the frontmatter mapping
- *   *structurally* from typed inputs (type/title/summary/timestamp/tags) and serializes it
+ *   *structurally* from typed inputs (type/title/summary/versioned provenance/tags) and serializes it
  *   through the byte-stable concept boundary, so js-yaml quotes whatever needs quoting — a
  *   title or summary containing `:`, `#`, or a leading `-` can never corrupt the YAML the way
  *   raw string substitution into a `key: {{value}}` line would.
@@ -26,9 +26,10 @@
 
 import { posix } from "node:path";
 import { LoreError, WarningCollector } from "../errors";
+import { VERSION } from "../meta";
 import { type Concept, idFromPath, serializeConcept, serializeConceptWithModeline } from "./concept";
 import { encodePathSegments } from "./links";
-import type { BundleState } from "./okf-version";
+import type { BundleState, OkfVersion } from "./okf-version";
 import { defaultProfile, type Profile, profileForBundle, slugForTypeName } from "./profile";
 import { validateFrontmatter } from "./schema";
 
@@ -141,7 +142,7 @@ export interface BuildNewConceptInput {
   title: string;
   /** The one-line summary — set on `summary:` and available as `{{summary}}` in the body. */
   summary: string;
-  /** The ISO-8601 creation timestamp — set on `timestamp:` and available as `{{timestamp}}`. */
+  /** The ISO-8601 creation instant — emitted as versioned provenance and available as `{{timestamp}}`. */
   timestamp: string;
   /** Optional `--tags` list, set on `tags:` as a YAML sequence (built structurally, never substituted). */
   tags?: readonly string[];
@@ -194,18 +195,19 @@ export function buildNewConcept(input: BuildNewConceptInput): BuildNewConceptRes
   warnShadowedVars(input.vars, input.docPath, warnings);
   const body = renderBody(input);
 
+  const baseProfile = input.profile ?? defaultProfile();
+  const profile = input.bundleState === undefined ? baseProfile : profileForBundle(baseProfile, input.bundleState);
+
   const frontmatter: Record<string, unknown> = {
     type: input.type,
     title: input.title,
     summary: input.summary,
-    timestamp: input.timestamp,
+    ...versionedProvenance(input.timestamp, profile.okfVersion),
   };
   if (input.tags && input.tags.length > 0) {
     frontmatter.tags = [...input.tags];
   }
 
-  const baseProfile = input.profile ?? defaultProfile();
-  const profile = input.bundleState === undefined ? baseProfile : profileForBundle(baseProfile, input.bundleState);
   stampResource(frontmatter, input.type, input.docPath, profile);
   const resolvedType = validateFrontmatter(frontmatter, {
     warnings,
@@ -226,6 +228,11 @@ export function buildNewConcept(input: BuildNewConceptInput): BuildNewConceptRes
       ? serializeConceptWithModeline(concept, input.modeline, { profile })
       : serializeConcept(concept, { profile });
   return { contents, type: resolvedType, warnings: warnings.list() };
+}
+
+/** Frontmatter provenance lore emits for one supported OKF target. */
+export function versionedProvenance(timestamp: string, okfVersion: OkfVersion): Record<string, unknown> {
+  return okfVersion === "0.2" ? { generated: { by: `lore/${VERSION}`, at: timestamp } } : { timestamp };
 }
 
 /**

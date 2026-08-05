@@ -130,7 +130,13 @@ describe("schema — the warning tier (never throws)", () => {
   test("a fully-valid known concept produces no warnings", () => {
     const warnings = new WarningCollector();
     validateFrontmatter(
-      { type: "Story", title: "T", summary: "One line.", timestamp: "2026-06-21T00:00:00Z", tasks: ["LORE-1"] },
+      {
+        type: "Story",
+        title: "T",
+        summary: "One line.",
+        generated: { by: "lore/0.1.1", at: "2026-06-21T00:00:00Z" },
+        tasks: ["LORE-1"],
+      },
       { warnings },
     );
     expect(warnings.isEmpty).toBe(true);

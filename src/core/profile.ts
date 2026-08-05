@@ -858,6 +858,8 @@ function storyConventionProfile(): ParsedProfile {
       description: optionalString,
       tags: optionalStringList,
       summary: optionalString,
+      // Retained as the legacy 0.1 validator and 0.2 fallback. The versioned core seam validates
+      // `generated` separately so adding the nested mapping does not reorder this declared profile.
       timestamp: { required: false, kind: "datetime" },
       status: optionalString,
       // supersedes / superseded_by are reserved coupling fields (RESERVED_FIELDS): their

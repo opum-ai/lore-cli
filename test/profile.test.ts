@@ -61,7 +61,8 @@ describe("defaultProfile — the built-in story convention (AC#3)", () => {
   test("canonical key order: base, then Story's own fields, then the reserved coupling fields LAST", () => {
     // Reserved coupling fields trail per-type fields, matching the order lore emitted before the
     // profile existed (ADR-0011 byte-stability), so a Story with tasks/specs AND supersedes keeps
-    // its on-disk key order.
+    // its on-disk key order. OKF 0.2 `generated` uses the existing append path rather than moving any
+    // of these declared fields.
     expect(defaultProfile().canonicalKeyOrder).toEqual([
       "type",
       "title",

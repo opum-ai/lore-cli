@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { parseConcept } from "../src/core/concept";
 import { compileProfile, parseProfile } from "../src/core/profile";
 import { buildScaffold, type ScaffoldFile } from "../src/core/scaffold";
+import { VERSION } from "../src/meta";
 
 /** A fixed ISO timestamp so every plan in this suite is byte-deterministic. */
 const TS = "2026-06-25T12:00:00.000Z";
@@ -109,6 +110,14 @@ describe("scaffold — exported JSON Schemas", () => {
     expect(Object.keys(schema.properties)).toContain("tasks");
     expect(Object.keys(schema.properties)).toContain("specs");
   });
+
+  test("OKF 0.2 editor schemas recognize the generated provenance mapping", () => {
+    const schema = JSON.parse(fileNamed(".lore/schemas/reference.schema.json").contents) as {
+      properties: Record<string, { required?: string[]; properties?: Record<string, unknown> }>;
+    };
+    expect(schema.properties.generated?.required).toEqual(["by"]);
+    expect(Object.keys(schema.properties.generated?.properties ?? {})).toEqual(["by", "at"]);
+  });
 });
 
 describe("scaffold — the reserved root index", () => {
@@ -117,7 +126,9 @@ describe("scaffold — the reserved root index", () => {
 type: Reference
 title: Documentation
 summary: Root index of this OKF documentation bundle, created by \`lore init\`.
-timestamp: 2026-06-25T12:00:00.000Z
+generated:
+  by: lore/${VERSION}
+  at: 2026-06-25T12:00:00.000Z
 okf_version: "0.2"
 ---
 
@@ -138,8 +149,8 @@ entry point and the only one that carries \`okf_version\`.
     expect(concept.frontmatter.okf_version).toBe("0.2");
   });
 
-  test("stamps the injected timestamp verbatim", () => {
-    expect(fileNamed("docs/index.md").contents).toContain(`timestamp: ${TS}`);
+  test("stamps the injected instant as generated.at", () => {
+    expect(fileNamed("docs/index.md").contents).toContain(`generated:\n  by: lore/${VERSION}\n  at: ${TS}`);
   });
 
   test.each(["0.1", "0.2"] as const)("honors a custom profile targeting OKF %s", (okfVersion) => {
@@ -156,5 +167,6 @@ entry point and the only one that carries \`okf_version\`.
     const plan = buildScaffold({ timestamp: TS, profile });
     const index = plan.files.find((file) => file.path === "docs/index.md");
     expect(index?.contents).toContain(`okf_version: "${okfVersion}"`);
+    expect(index?.contents).toContain(okfVersion === "0.1" ? `timestamp: ${TS}` : `generated:\n  by: lore/${VERSION}`);
   });
 });

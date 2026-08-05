@@ -33,7 +33,7 @@
  */
 
 import { posix } from "node:path";
-import type { z } from "zod";
+import { z } from "zod";
 import { LoreError, type WarningCollector } from "../errors";
 import type { BundleState } from "./okf-version";
 import { type CompiledType, defaultProfile, type Profile, profileForBundle, slugForTypeName } from "./profile";
@@ -58,8 +58,8 @@ function isRootIndexPath(path: string | undefined): boolean {
 }
 
 /**
- * Whether `key` is an OKF-reserved key that passes the extra-key warning on a known type. Both
- * `resource` and `okf_version` are legitimate, lore-recognized fields — not stray producer
+ * Whether `key` is an OKF-reserved key that passes the extra-key warning on a known type.
+ * `resource`, root-only `okf_version`, and 0.2-only `generated` are lore-recognized fields, not stray producer
  * extensions — so flagging either as unknown (as the generic extra-key check otherwise would)
  * would be a false positive on lore's own conformant output, but each is reserved only in the
  * ONE position lore itself ever writes it:
@@ -77,15 +77,27 @@ function isRootIndexPath(path: string | undefined): boolean {
  *   like any other extra key (LORE-168; previously this was unconditionally exempt everywhere,
  *   contradicting the conformance check `docs/reference/okf-conformance.md` documents).
  */
-function isReservedKey(key: string, isIndex: boolean, isRootIndex: boolean): boolean {
+function isReservedKey(key: string, isIndex: boolean, isRootIndex: boolean, profile: Profile): boolean {
   if (key === "resource") {
     return !isIndex;
   }
   if (key === "okf_version") {
     return isRootIndex;
   }
+  if (key === "generated") {
+    return profile.okfVersion === "0.2";
+  }
   return false;
 }
+
+/** OKF 0.2's generated provenance mapping; JSON_SCHEMA keeps `at` a string before this check. */
+const GENERATED_SCHEMA = z.looseObject({
+  by: z.string().trim().min(1),
+  at: z.iso.datetime({ offset: true }).nullish(),
+});
+
+/** The editor form is derived from the same runtime schema, never hand-maintained in parallel. */
+const GENERATED_JSON_SCHEMA = z.toJSONSchema(GENERATED_SCHEMA, { target: "draft-7" });
 
 /** The longest a `summary` should be before lore warns it is no longer a one-liner (ADR-0006 §5). */
 const SUMMARY_SOFT_LIMIT = 200;
@@ -183,6 +195,8 @@ export function validateFrontmatter(fm: Record<string, unknown>, options: Valida
   const where = options.path ? ` in ${options.path}` : "";
   const type = requireType(fm, where, options.path);
 
+  validateVersionedProvenance(fm, profile, where, options.path, options.warnings);
+
   const compiled = profile.types.get(canonicalType(type, profile));
   if (compiled === undefined) {
     // Unknown type: the non-empty-`type` floor (OKF §9) is already satisfied, so this is a
@@ -203,9 +217,36 @@ export function validateFrontmatter(fm: Record<string, unknown>, options: Valida
 
   const isIndex = options.path !== undefined && posix.basename(options.path) === "index.md";
   const isRootIndex = isRootIndexPath(options.path);
-  warnExtraKeys(fm, compiled, where, options.warnings, isIndex, isRootIndex);
+  warnExtraKeys(fm, compiled, where, options.warnings, isIndex, isRootIndex, profile);
   warnSummary(fm.summary, where, options.warnings);
   return type;
+}
+
+/** Validate and classify the OKF 0.2 provenance seam without mutating authored frontmatter. */
+function validateVersionedProvenance(
+  fm: Record<string, unknown>,
+  profile: Profile,
+  where: string,
+  path: string | undefined,
+  warnings: WarningCollector | undefined,
+): void {
+  if (profile.okfVersion !== "0.2") {
+    return;
+  }
+  if (Object.hasOwn(fm, "generated") && fm.generated !== null) {
+    const result = GENERATED_SCHEMA.safeParse(fm.generated);
+    if (!result.success) {
+      throw new LoreError(
+        "validation",
+        `invalid generated provenance${where}: ${describeIssues(result.error)}`,
+        "set `generated.by` to a non-empty actor and `generated.at` to an ISO-8601 datetime",
+        { path, issues: issueList(result.error) },
+      );
+    }
+  }
+  if (Object.hasOwn(fm, "timestamp")) {
+    warnings?.add(`legacy key "timestamp"${where}; tolerated under OKF 0.2, but new content should use generated.at`);
+  }
 }
 
 /**
@@ -248,12 +289,13 @@ function warnExtraKeys(
   warnings: WarningCollector | undefined,
   isIndex: boolean,
   isRootIndex: boolean,
+  profile: Profile,
 ): void {
   if (warnings === undefined) {
     return;
   }
   for (const key of Object.getOwnPropertyNames(fm)) {
-    if (!compiled.declaredFields.has(key) && !isReservedKey(key, isIndex, isRootIndex)) {
+    if (!compiled.declaredFields.has(key) && !isReservedKey(key, isIndex, isRootIndex, profile)) {
       warnings.add(`unknown key "${key}"${where}; preserved but not validated`);
     }
   }
@@ -365,6 +407,21 @@ export function emitSchemaFiles(profile: Profile, options: EmitSchemaFilesOption
   const types = options.only ? [options.only] : [...profile.types.values()];
   return types.map((type) => ({
     path: posix.join(dir, schemaFileName(type.name)),
-    contents: `${JSON.stringify(type.jsonSchema, null, 2)}\n`,
+    contents: `${JSON.stringify(schemaForVersion(type.jsonSchema, profile), null, 2)}\n`,
   }));
+}
+
+/** Add the 0.2 provenance family to editor schemas without changing the 0.1 profile grammar. */
+function schemaForVersion(schema: Record<string, unknown>, profile: Profile): Record<string, unknown> {
+  if (profile.okfVersion !== "0.2") {
+    return schema;
+  }
+  const properties = (schema.properties ?? {}) as Record<string, unknown>;
+  return {
+    ...schema,
+    properties: {
+      ...properties,
+      generated: GENERATED_JSON_SCHEMA,
+    },
+  };
 }

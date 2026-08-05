@@ -4,6 +4,7 @@ import { compileProfile, defaultProfile, type Profile, parseProfile } from "../s
 import { canonicalType, isKnownType, schemaModeline, typeDirectory } from "../src/core/schema";
 import { buildNewConcept, builtinTemplateFor, renderTemplate, resourceFor, slugify } from "../src/core/template";
 import { LoreError, WarningCollector } from "../src/errors";
+import { VERSION } from "../src/meta";
 
 /**
  * Compile a minimal one-type (`Reference`) profile carrying `resourceBase`, for the
@@ -131,7 +132,8 @@ describe("buildNewConcept — known types validate clean by construction (AC#1)"
       expect(concept.type).toBe(type);
       expect(concept.frontmatter.title).toBe("Sample Title");
       expect(concept.frontmatter.summary).toBe("A one-line summary.");
-      expect(concept.frontmatter.timestamp).toBe(TIMESTAMP);
+      expect(concept.frontmatter.generated).toEqual({ by: `lore/${VERSION}`, at: TIMESTAMP });
+      expect(concept.frontmatter.timestamp).toBeUndefined();
       expect(warnings.list()).toEqual([]);
     });
   }
@@ -141,6 +143,53 @@ describe("buildNewConcept — known types validate clean by construction (AC#1)"
     expect(contents.startsWith("---\n# yaml-language-server: $schema=../../.lore/schemas/adr.schema.json\n")).toBe(
       true,
     );
+  });
+
+  test("OKF 0.2 emission is byte-exact, ordered, and keeps generated.at a string", () => {
+    const result = buildBuiltin("Reference");
+    expect(result.contents).toBe(`---
+# yaml-language-server: $schema=../../.lore/schemas/reference.schema.json
+type: Reference
+title: Sample Title
+summary: A one-line summary.
+generated:
+  by: lore/${VERSION}
+  at: ${TIMESTAMP}
+---
+
+# Sample Title
+
+Describe the subject of this reference here.
+
+## Details
+`);
+    const generated = parseConcept("docs/reference/sample.md", result.contents).frontmatter.generated as {
+      by: string;
+      at: unknown;
+    };
+    expect(generated.by).toBe(`lore/${VERSION}`);
+    expect(generated.at).toBe(TIMESTAMP);
+    expect(typeof generated.at).toBe("string");
+  });
+
+  test("OKF 0.1 emission retains the legacy timestamp bytes", () => {
+    const result = buildNewConcept({
+      docPath: "docs/reference/sample.md",
+      type: "Reference",
+      title: "Sample Title",
+      summary: "A one-line summary.",
+      timestamp: TIMESTAMP,
+      bodyTemplate: builtinTemplateFor("Reference"),
+      vars: Object.create(null),
+      bundleState: { okfVersion: "0.1", source: "declared" },
+    });
+    expect(result.contents).toContain(`summary: A one-line summary.\ntimestamp: ${TIMESTAMP}\n`);
+    expect(result.contents).not.toContain("generated:");
+    expect(
+      parseConcept("docs/reference/sample.md", result.contents, {
+        bundleState: { okfVersion: "0.1", source: "declared" },
+      }).frontmatter.timestamp,
+    ).toBe(TIMESTAMP);
   });
 });
 

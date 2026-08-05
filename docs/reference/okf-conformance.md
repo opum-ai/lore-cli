@@ -49,6 +49,22 @@ explicit user action in the corresponding OKF 0.2 migration work. This
 repository therefore remains a declared `0.1` bundle until such an action is
 requested.
 
+### Versioned provenance emission
+
+`lore new` and `lore init` select provenance from the bundle's negotiated
+version:
+
+- Under `0.2`, lore emits `generated.by` as `lore/<package-version>` and
+  `generated.at` as the injected ISO-8601 instant. The actor therefore follows
+  OKF 0.2 section 7's `<producer>/<version>` convention, and the JSON-schema
+  parser keeps `generated.at` a string rather than coercing it to a `Date`.
+- Under `0.1`, lore continues to emit and accept the legacy `timestamp`
+  string with its existing key order and bytes.
+- A `0.2` concept that still carries `timestamp` is accepted with an
+  advisory. lore neither removes nor converts that field on read, validation,
+  check, serialization, or sync. No timestamp migration command exists today;
+  any future conversion must be an explicit user action.
+
 ## What OKF v0.1 actually requires
 
 OKF is intentionally minimal. A bundle is a directory tree of Markdown files,

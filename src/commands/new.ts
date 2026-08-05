@@ -62,7 +62,7 @@ export interface NewOptions {
   output: OutputContext;
   /** The command's normalized positional + flag tokens from Commander. */
   args: readonly string[];
-  /** Clock seam for the `timestamp` token; defaults to the real wall clock. */
+  /** Clock seam for version-specific provenance and the `timestamp` body token; defaults to wall clock. */
   clock?: () => Date;
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;

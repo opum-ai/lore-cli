@@ -24,7 +24,9 @@ const CLEAN_ADR = `---
 type: ADR
 title: Use soft deletes
 summary: A short summary.
-timestamp: 2026-06-25T12:00:00Z
+generated:
+  by: lore/0.1.1
+  at: 2026-06-25T12:00:00Z
 ---
 
 # Use soft deletes
@@ -484,9 +486,10 @@ describe("validate (command) — rendering", () => {
   }
 
   test("plain mode prints one line per finding plus an ok line and a summary", () => {
+    writeFileSync(join(root, "docs/index.md"), '---\ntype: Reference\nokf_version: "0.2"\n---\n# Docs\n');
     writeFileSync(join(root, "docs/adr/ok.md"), CLEAN_ADR);
     writeFileSync(join(root, "docs/adr/bad.md"), "---\ntype: ADR\nsummary: A short summary.\n---\n\n# X\n");
-    const { code, text } = render([], { mode: "plain", color: false });
+    const { code, text } = render(["docs/adr"], { mode: "plain", color: false });
     expect(code).toBe(EXIT_CODES.validation);
     expect(text).toContain("ok docs/adr/ok.md");
     expect(text).toContain('error docs/adr/bad.md [required-section]: ADR is missing the required "## Status" section');

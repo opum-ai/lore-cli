@@ -148,9 +148,9 @@ describe("lore init — fresh bundle (AC#1)", () => {
     expect(warnings.list()).toEqual([]);
   });
 
-  test("stamps the index timestamp from the injected clock", async () => {
+  test("stamps the index generated.at from the injected clock", async () => {
     await init({ clock: () => new Date("2026-01-02T03:04:05Z") });
-    expect(readFileSync(join(root, "docs/index.md"), "utf8")).toContain("timestamp: 2026-01-02T03:04:05.000Z");
+    expect(readFileSync(join(root, "docs/index.md"), "utf8")).toContain("at: 2026-01-02T03:04:05.000Z");
   });
 
   test("creates the gitignored cache directory", async () => {

@@ -6,6 +6,7 @@ import { runInit } from "../src/commands/init";
 import { type NewResult, runNew } from "../src/commands/new";
 import { loadBundle } from "../src/core/bundle";
 import { LoreError, WarningCollector } from "../src/errors";
+import { VERSION } from "../src/meta";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
 
@@ -66,6 +67,21 @@ describe("lore new — scaffolding a known type", () => {
     const graph = loadBundle(join(root, "docs"), { warnings });
     expect(graph.concepts.has("reference/orders-table")).toBe(true);
     expect(warnings.list()).toEqual([]);
+  });
+
+  test("an OKF 0.2 bundle stamps generated provenance from lore's package version", () => {
+    const { result } = newCmd(["reference", "Orders table"]);
+    const raw = readFileSync(join(root, result.path), "utf8");
+    expect(raw).toContain(`generated:\n  by: lore/${VERSION}\n  at: 2026-06-25T12:00:00.000Z\n`);
+    expect(raw).not.toContain("timestamp:");
+  });
+
+  test("a declared OKF 0.1 bundle still stamps timestamp and never generated", () => {
+    writeFileSync(join(root, "docs/index.md"), '---\ntype: Reference\nokf_version: "0.1"\n---\n# Documentation\n');
+    const { result } = newCmd(["reference", "Legacy orders"]);
+    const raw = readFileSync(join(root, result.path), "utf8");
+    expect(raw).toContain("timestamp: 2026-06-25T12:00:00.000Z\n");
+    expect(raw).not.toContain("generated:");
   });
 
   test("a multi-word profile-declared type (e.g. 'QA Plan') scaffolds under its slug directory", () => {
