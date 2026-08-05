@@ -3,11 +3,11 @@ id: LCLI-314.2
 title: >-
   Replace the timestamp frontmatter key with generated: { by, at } (OKF 0.2
   breaking change)
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:47'
-updated_date: '2026-08-05 12:10'
+updated_date: '2026-08-05 12:37'
 labels: []
 dependencies:
   - LCLI-314.1
@@ -78,7 +78,7 @@ Migration of existing concepts is a real question, not an assumption: decide and
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented and acceptance-verified locally on dev at base 970097df328e8108d00dddc68f5b206d7ca348bf.
+Implemented and delivered locally on dev in commit 5ca160d.
 
 - OKF 0.2 creation and root scaffolding emit generated.by as lore/<package-version> and generated.at as the injected ISO timestamp; timestamp is not emitted.
 - OKF 0.1 emission and validation retain timestamp unchanged.
@@ -87,9 +87,17 @@ Implemented and acceptance-verified locally on dev at base 970097df328e8108d00dd
 - Canonical frontmatter ordering was deliberately left unchanged; byte-stable and fixpoint tests cover the version-specific append behavior.
 - Conformance documentation records the explicit-only migration policy.
 
-Evidence: focused suites 420/420 pass plus validate.test.ts 67/67 after the final correction; npm run lint passes; npm run typecheck passes; full bun test --dots passes with 2481 pass, 1 skip, 0 fail across 76 files and 8382 expect calls; lore validate --strict --json reports 0 errors and 0 warnings; lore check --strict --json reports 0 findings across 64 files; git diff --check passes.
+Verification before delivery: focused suites 420/420 plus validate.test.ts 67/67; full suite 2481 pass, 1 skip, 0 fail; lint, typecheck, strict Lore validate/check, and git diff --check passed.
+
+Post-commit verification on 5ca160d: npm run lint passed across 191 files; npm run typecheck passed; bun test --dots passed with 2481 pass, 1 skip, 0 fail across 76 files and 8382 expect calls; lore validate --strict --json reported 0 errors and 0 warnings; lore check --strict --json reported 0 findings across 64 files; git diff --check passed.
 
 Adversarial review removed a proposed canonical-order change that could have reordered custom 0.1 profiles. The final design uses the existing recognized-key append seam and preserves prior ordering.
 
-Settlement is intentionally retained In Progress: lore sync --dry-run --json reports only docs/log.md would change, but actual lore sync would create a commit containing dirty Backlog state. No wave-3 commit authority exists, and unrelated untracked LCLI-317, LCLI-318, and LCLI-319 task files appeared concurrently. They were not touched.
+Unrelated concurrent LCLI-317, LCLI-318, and LCLI-319 task files were preserved byte-for-byte and excluded from the delivery commit. No remote action was taken.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added version-specific provenance for OKF 0.2 using generated.by and string-valued generated.at while preserving unchanged OKF 0.1 timestamp behavior, advisory-only legacy handling, explicit-only migration, and ADR-0011 ordering. Delivered locally in 5ca160d; post-commit lint, typecheck, 2481/1/0 full tests, strict Lore validation/checking, and diff checks pass.
+<!-- SECTION:FINAL_SUMMARY:END -->
