@@ -86,7 +86,7 @@ describe("ci.yml exact-host LadybugDB qualification", () => {
 
   test("platform-specific concurrency and timeouts stay explicitly bounded", () => {
     const testScript = loadWorkflow().jobs.check?.steps?.find((step) => step.name === "Test")?.run ?? "";
-    expect(testScript).toContain("bun test --isolate --max-concurrency=4 --timeout=45000");
+    expect(testScript).toContain("bun test --isolate --max-concurrency=4 --timeout=60000");
     expect(testScript).toContain('"macos-15-intel"');
     expect(testScript).toContain("bun test --isolate --timeout=40000");
     expect(testScript).toContain('== "ubuntu-latest" ||');

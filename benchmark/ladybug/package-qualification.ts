@@ -320,9 +320,7 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
     if (existsSync(join(globalRoot, "@ladybugdb", "core"))) {
       throw new Error("the global Lore install unexpectedly contains @ladybugdb/core");
     }
-    const globalVersion = (
-      await runWithFileCapture(node, [globalLauncher, "--version"], { cwd: scratch }, scratch)
-    ).stdout.trim();
+    const globalVersion = (await run(node, [globalLauncher, "--version"], { cwd: scratch })).stdout.trim();
     if (globalVersion !== expectedVersion) {
       throw new Error(`globally installed Lore reported ${globalVersion || "no version"}, expected ${expectedVersion}`);
     }
@@ -366,7 +364,7 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
     progress("probing the exact native boundary in a sacrificial child");
     const nativeProbe = await runNativeProbe(input, scratch);
     progress("smoking the installed Node launcher");
-    const launcherSmoke = await smoke([node, launcher], fixtureRoot, expectedVersion, smokeEnvironment, scratch);
+    const launcherSmoke = await smoke([node, launcher], fixtureRoot, expectedVersion, smokeEnvironment);
     progress("smoking the relocated standalone Bun executable");
     const standaloneSmoke = await smoke([standaloneBinary], fixtureRoot, expectedVersion, smokeEnvironment);
 
@@ -805,18 +803,9 @@ async function smoke(
   fixtureRoot: string,
   expectedVersion: string,
   environment: Record<string, string | undefined>,
-  inheritedOutputCaptureRoot?: string,
 ): Promise<SmokeCommandEvidence[]> {
   const evidence: SmokeCommandEvidence[] = [];
-  const execute = (args: readonly string[]) =>
-    inheritedOutputCaptureRoot === undefined
-      ? run(command[0] as string, args, { cwd: fixtureRoot, env: environment })
-      : runWithFileCapture(
-          command[0] as string,
-          args,
-          { cwd: fixtureRoot, env: environment },
-          inheritedOutputCaptureRoot,
-        );
+  const execute = (args: readonly string[]) => run(command[0] as string, args, { cwd: fixtureRoot, env: environment });
   const versionResult = await execute([...command.slice(1), "--version"]);
   const version = versionResult.stdout.trim();
   if (version !== expectedVersion)
@@ -924,57 +913,6 @@ async function run(
   if (exitCode !== 0) {
     throw new Error(
       `${basename(executable)} ${args.join(" ")} ${timedOut ? `timed out after ${timeoutMs}ms` : `failed with exit ${exitCode}`}\nstdout:\n${stdout}\nstderr:\n${stderr}`,
-    );
-  }
-  return { stdout, stderr };
-}
-
-/**
- * Capture a command through files opened by Node so a nested child using
- * `stdio: "inherit"` receives Windows-inheritable handles. Bun-created pipe and
- * file handles both let the nested Windows binary exit successfully while
- * dropping its output, so Node must own the first spawn in this process chain.
- */
-export async function runWithFileCapture(
-  executable: string,
-  args: readonly string[],
-  options: {
-    readonly cwd: string;
-    readonly env?: Record<string, string | undefined>;
-    readonly timeoutMs?: number;
-  },
-  captureRoot: string,
-): Promise<CommandResult> {
-  const captureDirectory = mkdtempSync(join(captureRoot, "inherited-output-"));
-  const stdoutPath = join(captureDirectory, "stdout.txt");
-  const stderrPath = join(captureDirectory, "stderr.txt");
-  const configPath = join(captureDirectory, "config.json");
-  writeFileSync(configPath, `${JSON.stringify({ executable, args, cwd: options.cwd, stdoutPath, stderrPath })}\n`);
-  const node = requireExecutable("node");
-  const helper = join(REPOSITORY_ROOT, "benchmark", "ladybug", "file-capture-helper.cjs");
-  const child = Bun.spawn([node, helper, configPath], {
-    cwd: captureDirectory,
-    env: options.env,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const timeoutMs = options.timeoutMs ?? 120_000;
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    child.kill();
-  }, timeoutMs);
-  const [exitCode, helperStdout, helperStderr] = await Promise.all([
-    child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ]);
-  clearTimeout(timer);
-  const stdout = existsSync(stdoutPath) ? readFileSync(stdoutPath, "utf8") : "";
-  const stderr = existsSync(stderrPath) ? readFileSync(stderrPath, "utf8") : "";
-  if (exitCode !== 0) {
-    throw new Error(
-      `${basename(executable)} ${args.join(" ")} ${timedOut ? `timed out after ${timeoutMs}ms` : `failed with exit ${exitCode}`}\nstdout:\n${stdout}\nstderr:\n${stderr}\nfile-capture helper stdout:\n${helperStdout}\nfile-capture helper stderr:\n${helperStderr}`,
     );
   }
   return { stdout, stderr };

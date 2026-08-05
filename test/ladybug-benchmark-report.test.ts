@@ -14,6 +14,7 @@ import {
 } from "../benchmark/ladybug/report";
 import {
   assertLadybugBenchmarkRuntime,
+  ladybugBenchmarkExitCode,
   parseLadybugBenchmarkCliArgs,
   qualificationRunConfiguration,
   randomizedPolicyOrders,
@@ -182,6 +183,27 @@ describe("Ladybug benchmark report contract", () => {
     ]);
     expect(benchmarkDigest(json)).toBe("sha256:ffb85e53069b19520593ed499fa790264ddc848707808289daf8dbbabc4c768b");
     expect(() => parseLadybugBenchmarkReport({ ...report, unexpected: true })).toThrow();
+
+    const noisySmoke = {
+      ...report,
+      calibration: calibrationReport([1, 100, 1, 100], 1),
+    };
+    expect(ladybugBenchmarkExitCode(noisySmoke)).toBe(0);
+    expect(ladybugBenchmarkExitCode({ ...report, mode: "qualification" })).toBe(2);
+    expect(
+      ladybugBenchmarkExitCode({
+        ...report,
+        mode: "qualification",
+        gates: { ...report.gates, evaluation: { status: "fail", reasons: ["regression"] } },
+      }),
+    ).toBe(1);
+    expect(
+      ladybugBenchmarkExitCode({
+        ...report,
+        mode: "qualification",
+        gates: { ...report.gates, evaluation: { status: "pass", reasons: [] } },
+      }),
+    ).toBe(0);
   });
 });
 

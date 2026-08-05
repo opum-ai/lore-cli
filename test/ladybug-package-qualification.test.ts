@@ -13,7 +13,6 @@ import {
   parsePackageQualificationArgs,
   removeQualificationScratch,
   resolveInstalledOptionalPackageJson,
-  runWithFileCapture,
 } from "../benchmark/ladybug/package-qualification";
 
 const RELEASE_PATH = join(import.meta.dir, "..", ".github", "workflows", "release.yml");
@@ -72,30 +71,6 @@ function needs(job: WorkflowJob): string[] {
 }
 
 describe("matching-host Ladybug package qualification", () => {
-  test("captures output from a launcher whose nested child inherits stdio", async () => {
-    const root = mkdtempSync(join(tmpdir(), "lore-inherited-output-test-"));
-    try {
-      const node = Bun.which("node");
-      if (node === null) throw new Error("test requires Node on PATH");
-      const child = join(root, "child.cjs");
-      const launcher = join(root, "launcher.cjs");
-      writeFileSync(child, 'process.stdout.write("0.1.1\\n"); process.stderr.write("child-stderr\\n");\n');
-      writeFileSync(
-        launcher,
-        'const { spawnSync } = require("node:child_process");\n' +
-          'const result = spawnSync(process.execPath, [process.argv[2]], { stdio: "inherit" });\n' +
-          "process.exit(result.status ?? 1);\n",
-      );
-
-      const result = await runWithFileCapture(node, [launcher, child], { cwd: root }, root);
-
-      expect(result.stdout).toBe("0.1.1\n");
-      expect(result.stderr).toBe("child-stderr\n");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   test.skipIf(process.platform !== "win32")(
     "the published launcher streams a real compiled Windows executable through redirected output",
     () => {
