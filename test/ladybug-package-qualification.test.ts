@@ -16,11 +16,14 @@ import {
 } from "../benchmark/ladybug/package-qualification";
 
 const RELEASE_PATH = join(import.meta.dir, "..", ".github", "workflows", "release.yml");
+const CI_PATH = join(import.meta.dir, "..", ".github", "workflows", "ci.yml");
 const SETUP_BUN_PATH = join(import.meta.dir, "..", ".github", "actions", "setup-bun", "action.yml");
 const PACKAGE_BUILD_PATH = join(import.meta.dir, "..", "benchmark", "ladybug", "package-build.ts");
 const PACKAGE_RUNNER_PATH = join(import.meta.dir, "..", "benchmark", "ladybug", "package-qualification.ts");
 const NATIVE_PROBE_PATH = join(import.meta.dir, "..", "benchmark", "ladybug", "native-probe.ts");
 const BACKLOG_SHIM_PATH = join(import.meta.dir, "..", "benchmark", "ladybug", "backlog-shim.ts");
+const COMPILED_ENTRYPOINT_PATH = join(import.meta.dir, "..", "src", "compiled.ts");
+const DOCKER_E2E_PATH = join(import.meta.dir, "..", "docker", "e2e", "Dockerfile");
 
 interface WorkflowStep {
   id?: string;
@@ -72,7 +75,7 @@ function needs(job: WorkflowJob): string[] {
 
 describe("matching-host Ladybug package qualification", () => {
   test.skipIf(process.platform !== "win32")(
-    "the published launcher streams a real compiled Windows executable through redirected output",
+    "the published launcher reports the real compiled Lore version through synchronous redirected output",
     () => {
       const root = mkdtempSync(join(tmpdir(), "lore-windows-launcher-test-"));
       try {
@@ -81,7 +84,6 @@ describe("matching-host Ladybug package qualification", () => {
         const packageRoot = join(root, "node_modules", "@opum-ai", "lore");
         const platformRoot = join(root, "node_modules", "@opum-ai", `lore-win32-${process.arch}`);
         const launcher = join(packageRoot, "bin", "lore.cjs");
-        const entrypoint = join(root, "compiled-child.ts");
         const binary = join(platformRoot, "bin", "lore.exe");
         mkdirSync(join(packageRoot, "bin"), { recursive: true });
         mkdirSync(join(platformRoot, "bin"), { recursive: true });
@@ -90,25 +92,25 @@ describe("matching-host Ladybug package qualification", () => {
           join(platformRoot, "package.json"),
           `${JSON.stringify({ name: `@opum-ai/lore-win32-${process.arch}`, version: "0.1.1" })}\n`,
         );
-        writeFileSync(
-          entrypoint,
-          'process.stdout.write("0.1.1\\n"); process.stderr.write("compiled-child-stderr\\n");\n',
-        );
-        const compile = Bun.spawnSync(["bun", "build", "--compile", `--outfile=${binary}`, entrypoint], {
-          cwd: root,
+        const target = process.arch === "arm64" ? "bun-windows-arm64" : "bun-windows-x64-baseline";
+        const compileCommand = packageCompileCommand(join(import.meta.dir, ".."), root, target, binary);
+        const compile = Bun.spawnSync([compileCommand.executable, ...compileCommand.args], {
+          cwd: compileCommand.cwd,
           stdout: "pipe",
           stderr: "pipe",
+          timeout: 120_000,
         });
-        expect(compile.exitCode).toBe(0);
+        expect(compile.exitCode, compile.stderr.toString()).toBe(0);
 
         const result = Bun.spawnSync([node, launcher, "--version"], {
           cwd: root,
           stdout: "pipe",
           stderr: "pipe",
+          timeout: 120_000,
         });
         expect(result.exitCode).toBe(0);
         expect(result.stdout.toString()).toBe("0.1.1\n");
-        expect(result.stderr.toString()).toBe("compiled-child-stderr\n");
+        expect(result.stderr.toString()).toBe("");
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
@@ -148,7 +150,7 @@ describe("matching-host Ladybug package qualification", () => {
         join("D:\\repo", "benchmark", "ladybug", "package-build.ts"),
         "--target=bun-windows-x64-baseline",
         "--outfile=C:\\scratch\\lore.exe",
-        `--entrypoint=${join("D:\\repo", "src", "cli.ts")}`,
+        `--entrypoint=${join("D:\\repo", "src", "compiled.ts")}`,
       ],
       cwd: "C:\\scratch",
     });
@@ -156,13 +158,26 @@ describe("matching-host Ladybug package qualification", () => {
       join("/repo", "benchmark", "ladybug", "package-build.ts"),
       "--target=bun-linux-arm64",
       "--outfile=/scratch/lore",
-      `--entrypoint=${join("/repo", "src", "cli.ts")}`,
+      `--entrypoint=${join("/repo", "src", "compiled.ts")}`,
     ]);
-    const windowsConfig = packageBuildConfig("src/cli.ts", "bun-windows-x64-baseline", "dist/lore.exe");
-    const nativeConfig = packageBuildConfig("src/cli.ts", "bun-linux-arm64", "dist/lore");
+    const windowsConfig = packageBuildConfig("src/compiled.ts", "bun-windows-x64-baseline", "dist/lore.exe");
+    const nativeConfig = packageBuildConfig("src/compiled.ts", "bun-linux-arm64", "dist/lore");
     expect(windowsConfig.plugins).toEqual([windowsReferenceOnlyLadybugPlugin]);
     expect(nativeConfig.plugins).toEqual([]);
     expect(readFileSync(PACKAGE_BUILD_PATH, "utf8")).toContain("Ladybug native indexing is unavailable");
+  });
+
+  test("every compiled distribution uses the unconditional compiled entrypoint", () => {
+    const rootPackage = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as {
+      scripts?: { build?: string };
+    };
+    expect(rootPackage.scripts?.build).toContain("src/compiled.ts");
+    expect(readFileSync(CI_PATH, "utf8")).toContain("bun build --compile src/compiled.ts --outfile dist/lore");
+    expect(readFileSync(DOCKER_E2E_PATH, "utf8")).toContain(
+      "bun build --compile src/compiled.ts --outfile /usr/local/bin/lore",
+    );
+    expect(readFileSync(COMPILED_ENTRYPOINT_PATH, "utf8")).toContain('import { main } from "./cli";');
+    expect(readFileSync(COMPILED_ENTRYPOINT_PATH, "utf8")).toContain("await main();");
   });
 
   test("Windows ARM64 skips only unsupported dependency scripts during frozen setup", () => {

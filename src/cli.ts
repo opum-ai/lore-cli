@@ -642,30 +642,42 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
   return handler(parsed.commandArgs, { ...context, cwd: root }, output);
 }
 
-// Only drive the real process when executed directly (not when imported by tests). `run` returns a
-// number for synchronous commands and a Promise for the async ones; it funnels
-// its own async rejections through `reportError`, so `Promise.resolve(...).then`
-// normally receives a numeric exit code. The `.catch` is a last-ditch backstop
-// (e.g. `reportError` itself throwing) — `EXIT_UNCAUGHT` (1), the uncaught-fault
-// code, not the validation gate's `6`.
+// Only drive the real process when executed directly (not when imported by tests).
+// `src/compiled.ts` calls the same main function unconditionally because Bun's
+// Windows compiled runtime does not reliably preserve `import.meta.main` for an
+// absolute build entrypoint. `run` returns a number for synchronous commands and a
+// Promise for async ones; its own rejections normally flow through `reportError`,
+// while this boundary retains `EXIT_UNCAUGHT` (1) as the last-ditch backstop.
 //
 // Setting `process.exitCode` rather than calling `process.exit()` is deliberate (LORE-70):
 // `emit`/`reportError`'s writes to `process.stdout`/`process.stderr` are async for a piped
 // destination, and `process.exit()` tears the process down without waiting for them to
 // drain — a large `--json` payload silently truncates at the pipe's internal buffer size
-// with a misleading exit code 0. Leaving the exit to the runtime lets pending writes (and
-// any other pending I/O) finish naturally before the process ends with the recorded code.
-if (import.meta.main) {
+// with a misleading exit code 0. Bun's compiled Windows runtime can also exit naturally
+// before queued redirected output becomes visible to the parent, so the real-process path
+// adds an explicit zero-byte write barrier before recording the final exit code.
+function drainProcessOutput(): Promise<void> {
+  const drain = (stream: NodeJS.WriteStream) =>
+    new Promise<void>((resolve) => {
+      stream.write("", () => resolve());
+    });
+  return Promise.all([drain(process.stdout), drain(process.stderr)]).then(() => undefined);
+}
+
+export async function main(): Promise<void> {
   const packageQualificationRetrieval: RetrievalGraphLoader | undefined =
     process.env.LORE_INTERNAL_PACKAGE_QUALIFICATION === "require-indexed"
       ? (options) => loadRetrievalGraph({ ...options, policy: "indexed" })
       : undefined;
-  Promise.resolve(run(process.argv, { retrieval: packageQualificationRetrieval })).then(
-    (code) => {
-      process.exitCode = code;
-    },
-    () => {
-      process.exitCode = EXIT_UNCAUGHT;
-    },
-  );
+  let code = EXIT_UNCAUGHT;
+  try {
+    code = await Promise.resolve(run(process.argv, { retrieval: packageQualificationRetrieval }));
+  } catch {
+    code = EXIT_UNCAUGHT;
+  } finally {
+    await drainProcessOutput();
+    process.exitCode = code;
+  }
 }
+
+if (import.meta.main) await main();
