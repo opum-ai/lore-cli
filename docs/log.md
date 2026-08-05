@@ -107,6 +107,7 @@
 - 2026-08-05T06:40:08-05:00 90c5655cd37d3e5ddb11e8ed5aaa8d63e88fcdf3 feat: negotiate OKF bundle versions
 - 2026-08-05T06:45:22-05:00 5024767e6f66573bb7dd3dfb39a407bac62a9648 chore: reconcile backlog campaign wave 2
 - 2026-08-05T06:47:43-05:00 970097df328e8108d00dddc68f5b206d7ca348bf docs: refresh generated log after wave 2
+- 2026-08-05T07:34:03-05:00 5ca160df987ef547bebb5c72e42d0dfa31668545 feat: add OKF 0.2 generated provenance
 
 ## docs/.obsidian
 
@@ -239,6 +240,7 @@
 - 2026-08-04T09:56:08-05:00 913a04ca6787281098d4a9453095b293828a931d docs: forbid acts, not adverbs; enumerate the package gate (LCLI-310)
 - 2026-08-04T21:40:39-05:00 4ded93c0c67250928d1e382f9ca3b6105511d693 docs: record Lore CLI 0.1.1 release
 - 2026-08-05T06:40:08-05:00 90c5655cd37d3e5ddb11e8ed5aaa8d63e88fcdf3 feat: negotiate OKF bundle versions
+- 2026-08-05T07:34:03-05:00 5ca160df987ef547bebb5c72e42d0dfa31668545 feat: add OKF 0.2 generated provenance
 
 ## docs/runbooks
 
