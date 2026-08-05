@@ -1,11 +1,11 @@
 ---
 id: LCLI-314.1
 title: 'Negotiate okf_version: emit 0.2, keep reading 0.1 bundles'
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:46'
-updated_date: '2026-08-05 11:25'
+updated_date: '2026-08-05 11:40'
 labels: []
 dependencies: []
 references:
@@ -85,5 +85,11 @@ Open decision for the implementer to research and record: whether `lore` should 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Verification 2026-08-05: full suite 2474 pass, 1 skip, 0 fail across 76 files; focused version, bundle, check, and scaffold suite 370 pass; npm run lint and npm run typecheck pass; lore validate --strict and lore check --strict report zero findings; git diff --check passes. Acceptance evidence covers typed state propagation, default 0.2 init, declared 0.1 strict-clean byte stability, explicit missing/malformed/future handling, supported custom producer targets, and unsupported target validation mapped to exit 6. Decision: no automatic or in-place migration; the repository docs root remains authored as 0.1. Future declarations are retained and consumed best-effort with a warning, matching upstream OKF versioning guidance. Documentation was updated through lore replace. lore sync dry-run reports only docs/log.md would change; actual sync is intentionally pending because it would commit the currently dirty Backlog campaign files and wave 2 has no local commit authorization.
+Verification 2026-08-05: full suite 2474 pass, 1 skip, 0 fail across 76 files; focused version, bundle, check, and scaffold suite 370 pass; npm run lint and npm run typecheck pass; lore validate --strict and lore check --strict report zero findings; git diff --check passes. Acceptance evidence covers typed state propagation, default 0.2 init, declared 0.1 strict-clean byte stability, explicit missing/malformed/future handling, supported custom producer targets, and unsupported target validation mapped to exit 6. Decision: no automatic or in-place migration; the repository docs root remains authored as 0.1. Future declarations are retained and consumed best-effort with a warning, matching upstream OKF versioning guidance. Documentation was updated through lore replace and the required lore sync completed. Lore committed the pre-delivery Backlog evidence as da3d308; the verified implementation, documentation, generated log, and tests were committed locally as 90c5655. No remote action was taken.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added typed OKF version negotiation across bundle, schema, template, check, validation, and projection paths. New bundles emit 0.2; declared 0.1 bundles remain strict-clean and byte-stable; malformed or unsupported producer declarations fail validation. Verified by 2474 passing tests with 1 skip, a 370-test focused suite, lint, typecheck, strict Lore validation/checking, and diff checks. Delivered locally in 90c5655.
+<!-- SECTION:FINAL_SUMMARY:END -->
