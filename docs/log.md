@@ -117,6 +117,7 @@
 - 2026-08-05T11:30:59-05:00 b5eb101d7bac31331b358ab2a38c775f19f492c1 docs: refresh generated log after wave 6
 - 2026-08-05T11:32:55-05:00 b19b839c1a0acff9a33ce7ad2b8c62429c31d6c4 docs: reconcile generated log after wave 6
 - 2026-08-05T13:09:24-05:00 825e0b9421afe892c07ca31ccda3fdf017cf42dd feat: close OKF 0.2 conformance tiers
+- 2026-08-05T13:15:52-05:00 186d53aa266f50c6b4f6c7930e6ef828ec733d45 docs: refresh generated log after wave 7
 
 ## docs/.obsidian
 
