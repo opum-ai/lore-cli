@@ -22,6 +22,7 @@ const PACKAGE_BUILD_PATH = join(import.meta.dir, "..", "benchmark", "ladybug", "
 const PACKAGE_RUNNER_PATH = join(import.meta.dir, "..", "benchmark", "ladybug", "package-qualification.ts");
 const NATIVE_PROBE_PATH = join(import.meta.dir, "..", "benchmark", "ladybug", "native-probe.ts");
 const BACKLOG_SHIM_PATH = join(import.meta.dir, "..", "benchmark", "ladybug", "backlog-shim.ts");
+const FIXTURE_CONTRACT_PATH = join(import.meta.dir, "..", "benchmark", "ladybug", "fixture-contract.ts");
 const COMPILED_ENTRYPOINT_PATH = join(import.meta.dir, "..", "src", "compiled.ts");
 const DOCKER_E2E_PATH = join(import.meta.dir, "..", "docker", "e2e", "Dockerfile");
 
@@ -492,6 +493,7 @@ describe("matching-host Ladybug package qualification", () => {
     const runner = readFileSync(PACKAGE_RUNNER_PATH, "utf8");
     const probe = readFileSync(NATIVE_PROBE_PATH, "utf8");
     const backlogShim = readFileSync(BACKLOG_SHIM_PATH, "utf8");
+    const fixtureContract = readFileSync(FIXTURE_CONTRACT_PATH, "utf8");
     expect(runner).toContain('input.os === "win32" ? "import" : "indexed"');
     expect(runner).toContain("child.signalCode");
     expect(runner).toContain("isKnownNativeCrash");
@@ -506,6 +508,9 @@ describe("matching-host Ladybug package qualification", () => {
     expect(backlogShim).toContain('process.stdout.write("1.49.0\\n")');
     expect(backlogShim).toContain('args[0] === "task"');
     expect(backlogShim).toContain('kind: "task-list"');
+    expect(backlogShim).toContain('from "./fixture-contract"');
+    expect(backlogShim).not.toContain('from "./fixture"');
+    expect(fixtureContract).not.toMatch(/^import /m);
     expect(probe).toContain("loadLadybugNativeDriver");
     expect(probe).toContain("NATIVE_IMPORT_STARTED_FILENAME");
     expect(probe).toContain("NATIVE_IMPORT_COMPLETED_FILENAME");

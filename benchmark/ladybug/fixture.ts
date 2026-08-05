@@ -22,10 +22,14 @@ import {
 } from "../../src/core/ladybug-source";
 import { buildProjection } from "../../src/core/projection";
 import { VERSION } from "../../src/meta";
+import { LADYBUG_BENCHMARK_TASK_SNAPSHOT_REL_PATH, LADYBUG_BENCHMARK_TASK_SNAPSHOT_SCHEMA } from "./fixture-contract";
+
+export {
+  LADYBUG_BENCHMARK_TASK_SNAPSHOT_REL_PATH,
+  LADYBUG_BENCHMARK_TASK_SNAPSHOT_SCHEMA,
+} from "./fixture-contract";
 
 export const LADYBUG_BENCHMARK_FIXTURE_SCHEMA = "ladybug-benchmark-fixture/1";
-export const LADYBUG_BENCHMARK_TASK_SNAPSHOT_SCHEMA = "ladybug-benchmark-task-snapshot/1";
-export const LADYBUG_BENCHMARK_TASK_SNAPSHOT_REL_PATH = "backlog/ladybug-benchmark-tasks-v1.json";
 export const LADYBUG_BENCHMARK_FIXTURE_EXPORTER_VERSION = VERSION;
 export const LADYBUG_BENCHMARK_FIXTURE_COMMIT = null;
 export const LADYBUG_BENCHMARK_FIXTURE_BODY_BYTES_PER_CONCEPT = 16 * 1024;
