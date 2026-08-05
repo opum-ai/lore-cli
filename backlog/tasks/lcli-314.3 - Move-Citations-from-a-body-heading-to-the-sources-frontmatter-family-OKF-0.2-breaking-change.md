@@ -3,11 +3,11 @@ id: LCLI-314.3
 title: >-
   Move Citations from a body heading to the sources frontmatter family (OKF 0.2
   breaking change)
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:47'
-updated_date: '2026-08-05 13:00'
+updated_date: '2026-08-05 13:10'
 labels: []
 dependencies:
   - LCLI-314.1
@@ -83,4 +83,12 @@ Implementation and acceptance verification 2026-08-05:
 - Focused suite: 636 pass, 0 fail. Full suite: 2493 pass, 1 skip, 0 fail across 76 files with 8418 expect calls. npm run lint, npm run typecheck, lore validate --strict --json, lore check --strict --json, lore sync --dry-run, and git diff --check passed.
 - Adversarial self-review specifically exercised resolved vs dangling vs external/scope resources, rename preservation, 0.1 byte stability, and legacy body preservation. No independent reviewer was authorized.
 Delivery blocker: actual lore sync/local commit delivery is not authorized, and lore sync can commit all dirty backlog paths including unrelated untracked LCLI-317 through LCLI-319. The task remains In Progress pending explicit local commit authority; no remote action is requested.
+
+Delivery completed 2026-08-05: preliminary Lore Backlog evidence commit fe77c0093a938b854f7a1ce0fed28055a3dcda9d; implementation and generated documentation commit 7a97b13. Post-commit verification passed: bun test --dots (2493 pass, 1 skip, 0 fail, 8418 expects), npm run lint, npm run typecheck, lore validate --strict --json (0 errors/warnings), lore check --strict --json (0 findings), and git diff --check. The prior delivery blocker is resolved. No remote action was taken.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented OKF 0.2 sources and usage-window schemas, provenance graph/check/rename behavior, legacy Citations and 0.1 compatibility, documentation, and regression coverage. Delivered locally in 7a97b13 after 2493 tests plus lint, typecheck, and strict Lore gates passed.
+<!-- SECTION:FINAL_SUMMARY:END -->
