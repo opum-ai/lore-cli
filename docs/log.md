@@ -111,6 +111,7 @@
 - 2026-08-05T07:40:28-05:00 4955830476f0833ade57be85c6fcdb299bcc174c docs: refresh generated log after wave 3
 - 2026-08-05T08:07:58-05:00 7a97b131822508b497e7fa14c8da1ffccda3dc58 feat: add OKF 0.2 sources provenance
 - 2026-08-05T08:14:15-05:00 dae32ed73bfedbc0f40bb3eb1c886a2dbb5499eb docs: refresh generated log after wave 4
+- 2026-08-05T10:40:30-05:00 0b31a9344268d81ae4f2ae6a276e51f0153edced feat: add OKF 0.2 trust and lifecycle
 
 ## docs/.obsidian
 
@@ -155,6 +156,7 @@
 - 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
 - 2026-08-03T17:40:37-05:00 66498ab3a8055eb27b4e8e62350f44a477328b84 chore: transfer repository ownership to opum-ai
 - 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
+- 2026-08-05T10:40:30-05:00 0b31a9344268d81ae4f2ae6a276e51f0153edced feat: add OKF 0.2 trust and lifecycle
 
 ## docs/reference
 
@@ -245,6 +247,7 @@
 - 2026-08-05T06:40:08-05:00 90c5655cd37d3e5ddb11e8ed5aaa8d63e88fcdf3 feat: negotiate OKF bundle versions
 - 2026-08-05T07:34:03-05:00 5ca160df987ef547bebb5c72e42d0dfa31668545 feat: add OKF 0.2 generated provenance
 - 2026-08-05T08:07:58-05:00 7a97b131822508b497e7fa14c8da1ffccda3dc58 feat: add OKF 0.2 sources provenance
+- 2026-08-05T10:40:30-05:00 0b31a9344268d81ae4f2ae6a276e51f0153edced feat: add OKF 0.2 trust and lifecycle
 
 ## docs/runbooks
 
