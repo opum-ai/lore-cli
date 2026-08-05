@@ -580,6 +580,20 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
     expect(stderr).toContain("backlog coupling unavailable");
   });
 
+  test("an uninitialized Backlog.md project recommends backlog init in JSON and stderr without failing init", async () => {
+    const warning =
+      "The `backlog` binary supports --json, but no Backlog.md project is initialized in this directory; run `backlog init` to initialize one.";
+    const { code, result, stderr } = await init({
+      args: ["--agents"],
+      adapter: fakeAdapter([], { probe: new LoreError("validation", warning) }),
+    });
+
+    expect(code).toBe(0);
+    expect(result.backlog).toEqual({ checked: true, capable: false, warning });
+    expect(stderr).toContain(`backlog coupling unavailable: ${warning}`);
+    expect(stderr).not.toContain("Install backlog.md");
+  });
+
   test("--no-backlog skips the check even when --agents would otherwise imply it", async () => {
     const { result, stderr } = await init({
       args: ["--agents", "--no-backlog"],

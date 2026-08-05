@@ -206,6 +206,9 @@ interface Semver {
 /** The one hint pointing an operator at how to obtain a `--json`-capable Backlog.md. */
 const RUNBOOK_HINT = `lore needs a --json-capable Backlog.md. Install backlog.md>=${MIN_BACKLOG_VERSION} (npm install -g backlog.md, or your package manager's equivalent) and put its \`backlog\` binary on PATH; see docs/runbooks/backlog-json-patch.md.`;
 
+/** Upstream's stable diagnostic when a capable binary is invoked outside an initialized project. */
+const NO_BACKLOG_PROJECT_DIAGNOSTIC = /No Backlog\.md project found\b/i;
+
 /**
  * Parse the leading `major.minor.patch` from `backlog --version` output. Backlog prints a **bare**
  * semver plus a trailing newline (`"1.47.1\n"`) — no `v` prefix, no program name — so we anchor at the
@@ -237,6 +240,16 @@ function notJsonCapable(reason: string, input?: Record<string, unknown>): never 
   throw new LoreError("validation", `The \`backlog\` binary is not --json-capable: ${reason}`, RUNBOOK_HINT, input);
 }
 
+/** Report an uninitialized project without misdiagnosing the already-capable binary. */
+function noBacklogProject(input?: Record<string, unknown>): never {
+  throw new LoreError(
+    "validation",
+    "The `backlog` binary supports --json, but no Backlog.md project is initialized in this directory; run `backlog init` to initialize one.",
+    undefined,
+    input,
+  );
+}
+
 /**
  * The capability probe (contract §5), run once at startup and cached by the caller in `.lore/cache/`.
  * Fail-loud: it either returns the {@link BacklogCapability} of a `--json`-capable binary or throws a
@@ -247,10 +260,11 @@ function notJsonCapable(reason: string, input?: Record<string, unknown>): never 
  * 1. `backlog --version` — a missing binary (`ENOENT`) is `not_found` (exit 3) with an install hint;
  *    a non-zero exit or non-semver output is fail-loud.
  * 2. Compare the reported version against {@link MIN_BACKLOG_VERSION}; below the floor is fail-loud.
- * 3. `backlog task list --json` — a non-zero exit (a binary without `--json` rejects the unknown
- *    option), unparseable stdout, the wrong `kind`, a non-array `tasks`, or an unrecognized
- *    `schemaVersion` are all fail-loud "not --json-capable" (exit 6). This step, not the version, is
- *    what proves `--json` support.
+ * 3. `backlog task list --json` — a non-zero exit caused by a missing project gets its own actionable
+ *    classification; a binary without `--json` still rejects the unknown option as fail-loud "not
+ *    --json-capable" (exit 6). Unparseable stdout, the wrong `kind`, a non-array `tasks`, or an
+ *    unrecognized `schemaVersion` remain fail-loud too. This step, not the version, proves `--json`
+ *    support.
  *
  * The `spawn` seam is injected so tests exercise every branch without a real subprocess.
  */
@@ -284,6 +298,9 @@ export async function probeBacklog(spawn: BacklogSpawn): Promise<BacklogCapabili
   // "task-list", tasks: [...]}.
   const listResult = await spawnOrThrow(spawn, ["task", "list", "--json"]);
   if (listResult.exitCode !== 0) {
+    if (NO_BACKLOG_PROJECT_DIAGNOSTIC.test(listResult.stderr)) {
+      noBacklogProject({ exitCode: listResult.exitCode });
+    }
     notJsonCapable("`task list --json` exited non-zero (binary does not support --json)", {
       exitCode: listResult.exitCode,
     });
