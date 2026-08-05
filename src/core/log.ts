@@ -160,11 +160,33 @@ export function generateLog(commits: readonly GitCommit[], options: GenerateLogO
   const sections = [...byFolder.entries()]
     .sort(([a], [b]) => compareCodeUnits(a, b))
     .map(([folder, entries]) => {
-      const lines = entries.sort(compareEntries).map((e) => `- ${e.timestamp} ${e.hash} ${e.subject}`);
+      const lines = entries.sort(compareEntries).map((e) => `- ${e.timestamp} ${e.hash} ${renderSubject(e.subject)}`);
       return `## ${folder}\n\n${lines.join("\n")}\n`;
     });
 
   return [`# ${title}\n`, ...sections].join("\n");
+}
+
+/**
+ * Render a commit subject without letting git history create prose that lore's own MDX portability
+ * check rejects. Ordinary subjects stay byte-identical. A subject containing one of the two raw
+ * characters MDX interprets specially (`<` for JSX/HTML and `{` for an expression) becomes a
+ * CommonMark code span, which presents a commit subject as literal text and is deliberately outside
+ * the portability scanner's prose walk.
+ *
+ * The delimiter is one backtick longer than the subject's longest backtick run, so even a commit
+ * subject that already contains inline-code-looking text remains one well-formed code span. Padding
+ * the content with one space follows CommonMark's code-span normalization and preserves the visible
+ * subject without requiring any lossy character replacement.
+ */
+function renderSubject(subject: string): string {
+  if (!/[<{]/.test(subject)) {
+    return subject;
+  }
+
+  const longestBacktickRun = Math.max(0, ...(subject.match(/`+/g)?.map((run) => run.length) ?? []));
+  const delimiter = "`".repeat(longestBacktickRun + 1);
+  return `${delimiter} ${subject} ${delimiter}`;
 }
 
 /**

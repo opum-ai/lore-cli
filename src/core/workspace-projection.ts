@@ -14,6 +14,7 @@ import {
   type ProjectionTaskRecord,
   prepareLadybugProjectionSource,
 } from "./ladybug-source";
+import { CURRENT_OKF_VERSION } from "./okf-version";
 import { type ProjectionRecord, projectionStreamHash } from "./projection";
 import {
   buildWorkspaceIdentity,
@@ -331,6 +332,11 @@ function workspaceGraph(
 ): BundleGraph {
   let total: number | undefined;
   return {
+    state: {
+      okfVersion: CURRENT_OKF_VERSION,
+      source: "future-best-effort",
+      declaredVersion: "workspace/1",
+    },
     concepts,
     edges,
     tokenEstimate(id?: string): number {

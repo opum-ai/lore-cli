@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { checkBundle } from "../src/core/check";
 import { buildLog, type GitAdapter, type GitCommit, type GitLogRange, generateLog } from "../src/core/log";
 
 /**
@@ -106,6 +107,20 @@ describe("generateLog — per-folder, directory-sorted, byte-stable (AC#3)", () 
       { hash: "f6", timestamp: "2026-06-20T00:00:00Z", subject: "first\n\nbody leaked", files: ["docs/x.md"] },
     ]);
     expect(out).toContain("- 2026-06-20T00:00:00Z f6 first body leaked");
+  });
+
+  test("MDX-hazardous subjects render as collision-safe code spans that pass the portability scan", () => {
+    const out = generateLog([
+      {
+        hash: "safe7",
+        timestamp: "2026-06-20T00:00:00Z",
+        subject: "docs: sync Story<->Task {coupling} after `literal` fix",
+        files: ["docs/x.md"],
+      },
+    ]);
+
+    expect(out).toContain("`` docs: sync Story<->Task {coupling} after `literal` fix ``");
+    expect(checkBundle([{ path: "log.md", raw: out }])).toMatchObject({ errorCount: 0, warningCount: 0 });
   });
 
   test("honors a custom root and title", () => {

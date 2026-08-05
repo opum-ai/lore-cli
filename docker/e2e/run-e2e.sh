@@ -835,21 +835,22 @@ check "managed block renders TASK2's live status (Done)" \
 
 # ── Phase 6b: sync --dry-run, sync --no-index (LORE-66 AC4) ──────────────────────────────────
 # `--dry-run` (report what would change, write nothing) was never exercised -- needs genuine
-# PENDING drift to be non-vacuous. Corrupt the frontmatter status: field directly (the same lever
-# Phase 9 below uses for its own drift-detection test) rather than touching either live task's real
-# Backlog status, which Phase 9's managed-block body-drift induction depends on staying exactly as
-# this phase left it.
-sed -i 's/^status: .*/status: bogus-drifted-status-dryrun-probe/' "$STORY_PATH" || true
-check "AC4: seeded a genuine frontmatter status drift for the dry-run probe" \
-  'grep -q "^status: bogus-drifted-status-dryrun-probe" "$STORY_PATH"'
+# PENDING drift to be non-vacuous. Corrupt the version-selected task-rollup field directly (the
+# same lever Phase 9 below uses for its own drift-detection test) rather than touching either live
+# task's real Backlog status, which Phase 9's managed-block body-drift induction depends on staying
+# exactly as this phase left it. New harness bundles are OKF 0.2, so reconciliation owns
+# `lore_task_status`; lifecycle `status` must remain independent.
+sed -i 's/^lore_task_status: .*/lore_task_status: todo/' "$STORY_PATH" || true
+check "AC4: seeded a genuine frontmatter task-status drift for the dry-run probe" \
+  'grep -q "^lore_task_status: todo" "$STORY_PATH"'
 step_json "AC4: lore sync --dry-run reports the pending drift without writing" \
   '.data.dryRun == true and (.data.filesChanged >= 1)' -- lore sync --dry-run --json
-check "AC4: --dry-run wrote NOTHING -- the bogus status is still on disk, untouched" \
-  'grep -q "^status: bogus-drifted-status-dryrun-probe" "$STORY_PATH"'
+check "AC4: --dry-run wrote NOTHING -- the stale task status is still on disk, untouched" \
+  'grep -q "^lore_task_status: todo" "$STORY_PATH"'
 step_json "AC4: the real (non-dry-run) sync now heals the same drift" \
   '.data.dryRun == false and (.data.filesChanged >= 1)' -- lore sync --json
-check "AC4: the bogus status is gone after the real sync (healed to live data)" \
-  '! grep -q "^status: bogus-drifted-status-dryrun-probe" "$STORY_PATH"'
+check "AC4: the stale task status is gone after the real sync (healed to live data)" \
+  '! grep -q "^lore_task_status: todo" "$STORY_PATH"'
 
 # `--no-index` skips both index.md and log.md regeneration. Corrupt docs/log.md directly (genuine
 # staleness relative to what regeneration would produce) rather than relying on ambient drift.
@@ -899,40 +900,43 @@ rm -f docs/reference/e2e-broken-missing-type.md
 STRICT_PROBE_OUT="$(lore new Reference "E2E validate --strict probe" --json)"
 STRICT_PROBE_PATH="$(echo "$STRICT_PROBE_OUT" | jq -r '.data.path')"
 check "AC4: seeded the --strict probe doc" '[ -f "$STRICT_PROBE_PATH" ]'
-sed -i '/^timestamp:/a e2e_unknown_key: probe-value' "$STRICT_PROBE_PATH"
+sed -i '/^type:/a e2e_unknown_key: probe-value' "$STRICT_PROBE_PATH"
 step_json "AC4: bare validate reports the unknown-key warning but stays a clean run (no --strict)" \
   '.data.warningCount >= 1 and .data.errorCount == 0' -- lore validate "$STRICT_PROBE_PATH" --json
 step "AC4: the SAME bare validate exits 0 (a warning alone never gates)" 0 \
   -- lore validate "$STRICT_PROBE_PATH"
 step "AC4: validate --strict promotes the SAME warning to a gate failure (exit 6)" 6 \
   -- lore validate "$STRICT_PROBE_PATH" --strict
+rm -f "$STRICT_PROBE_PATH"
 
 # ── Phase 9: check — the drift-gate loop ─────────────────────────────────────
-# `check`'s positional args are bundle DIRECTORIES to scope to, not individual
-# file paths ("check validates the whole bundle" — confirmed via its own
-# usage-error hint text); `sync` takes a concept id, same as phase 4 above.
+# `check`'s positional args are bundle roots, not individual files. Run the reconciliation drift
+# loop from the actual bundle root so `docs/index.md` supplies `okf_version: 0.2`; treating
+# `docs/stories` as a standalone root would intentionally select legacy-missing 0.1 semantics.
+# `sync` takes a concept id, same as phase 4 above.
 step "lore check: clean bundle" 0 -- lore check
 cp "$BROKEN_FIXTURES/dangling-link.md" docs/reference/e2e-broken-dangling-link.md
 step "lore check: catches a dangling link" 6 -- lore check docs/reference
 rm -f docs/reference/e2e-broken-dangling-link.md
 step "lore check: clean again once the broken doc is removed" 0 -- lore check
 
-# Genuine Story-status drift, healed by `lore sync` (the documented loop).
-sed -i 's/^status: .*/status: bogus-drifted-status/' "$STORY_PATH" || true
-step "lore check: catches real Story status drift" 6 -- lore check docs/stories
+# Genuine Story task-status drift, healed by `lore sync` (the documented loop). Under OKF 0.2,
+# lifecycle `status` is authored state and the Backlog rollup lives in `lore_task_status`.
+sed -i 's/^lore_task_status: .*/lore_task_status: todo/' "$STORY_PATH" || true
+step "lore check: catches real Story status drift" 6 -- lore check
 step "lore sync: heals the drift" 0 -- lore sync "$STORY_ID"
-step "lore check: clean again after healing" 0 -- lore check docs/stories
+step "lore check: clean again after healing" 0 -- lore check
 
 # LORE-63 AC2: managed-BLOCK BODY drift -- the other half of check's drift detection, never
 # exercised before now (the only induction above is a frontmatter sed). Corrupt a rendered status
 # cell directly: "In Progress" (capital, TASK1's live Backlog status) only ever appears inside the
-# block's own row, never in the (lowercased) frontmatter `status:` value, so this touches only the
-# block body, not the frontmatter drift check just healed above.
+# block's own row, never in the (lowercased) frontmatter `lore_task_status:` value, so this touches
+# only the block body, not the frontmatter drift check just healed above.
 sed -i 's/In Progress/CORRUPTED-STATUS/' "$STORY_PATH" || true
 step "lore check: catches managed-block BODY drift (distinct from frontmatter status drift)" 6 \
-  -- lore check docs/stories
+  -- lore check
 step "lore sync: heals the managed-block body drift" 0 -- lore sync "$STORY_ID"
-step "lore check: clean again after healing the block-body drift" 0 -- lore check docs/stories
+step "lore check: clean again after healing the block-body drift" 0 -- lore check
 
 # ── Phase 9b: check --json F2 dual-stream (validation half), --external, multi-root (LORE-66 AC3/AC4) ──
 # AC3: the F2 dual-stream shape (check.report on stdout PLUS an ErrorEnvelope on stderr, src/commands/
@@ -951,7 +955,7 @@ check "AC3: check --json's F2 dual-stream shape on a deferred validation error: 
 rm -f /tmp/check-f2-out /tmp/check-f2-err
 cp /tmp/config-yml-before-ac3-f2.yml backlog/config.yml
 rm -f /tmp/config-yml-before-ac3-f2.yml
-step "AC3: lore check clean again after restoring backlog/config.yml" 0 -- lore check docs/stories
+step "AC3: lore check clean again after restoring backlog/config.yml" 0 -- lore check
 
 # AC4: `check --external` (opt-in liveness probe) -- prove failures are ALWAYS advisory and NEVER
 # gate, even when every probed URL fails (this container has no real internet egress, so a
@@ -1055,7 +1059,16 @@ step_json "AC4: lore query --tag genuinely filters (matches the tagged Spec, exc
 step_json "AC4: lore query --field genuinely filters (matches a Spec, excludes a known Story)" \
   '.kind == "query.results" and (.data.hits | any(.id == "specs/e2e-custom-out-path")) and (.data.hits | any(.id == "'"$STORY_ID"'") | not)' \
   -- lore query --field type=Spec --json
-CURRENT_STORY_STATUS="$(grep '^status:' "$STORY_PATH" | head -1 | sed 's/^status: *//')"
+# `--status` is the OKF lifecycle-status filter, not Lore's Backlog-derived task rollup. Seed a
+# lifecycle value explicitly and prove sync left it independent from `lore_task_status`.
+if grep -q '^status:' "$STORY_PATH"; then
+  sed -i 's/^status: .*/status: stable/' "$STORY_PATH"
+else
+  sed -i '/^lore_task_status:/i status: stable' "$STORY_PATH"
+fi
+CURRENT_STORY_STATUS="stable"
+check "AC4: seeded an OKF lifecycle status without disturbing the task rollup" \
+  'grep -q "^status: stable" "$STORY_PATH" && grep -q "^lore_task_status:" "$STORY_PATH"'
 # MULTI_STORY_ID (Phase 4b) was never itself reconciled (its own tasks: link was added then
 # removed before any `lore sync` touched it), so it carries NO status: frontmatter field at all --
 # a genuine negative control that can never coincidentally match any --status value.
@@ -1233,7 +1246,7 @@ step_json "lore link: attach TASK6 (status Review) to the fresh Story" \
 step_json "lore sync: a non-default status (Review) flows through reconciliation end-to-end" \
   '.kind == "sync.result"' -- lore sync "$CUSTOM_STORY_ID" --json
 check "Story status reconciled to in-progress via the custom flow (Review is active, non-terminal)" \
-  'grep -q "^status: in-progress" "$CUSTOM_STORY_PATH"'
+  'grep -q "^lore_task_status: in-progress" "$CUSTOM_STORY_PATH"'
 # Anchored on "[$TASK6]" (the row's link text) for the same reason as the Phase 6 checks above --
 # a bare `grep -i "$TASK6"` would also hit the frontmatter `tasks:` line.
 check "managed block renders the live custom status Review, not a default-flow guess" \
@@ -1262,7 +1275,7 @@ TOMLEOF
 step_json "lore sync: [reconcile.overrides] Review->done takes precedence over flow position" \
   '.kind == "sync.result"' -- lore sync "$CUSTOM_STORY_ID" --json
 check "Story status flips to done via the override (proves overrides win over flow position)" \
-  'grep -q "^status: done" "$CUSTOM_STORY_PATH"'
+  'grep -q "^lore_task_status: done" "$CUSTOM_STORY_PATH"'
 
 # A malformed override target (not one of todo/in-progress/done) is core/reconcile.ts's OWN
 # validation (validateOverrides), distinct from a bare TOML syntax error -- fails loud the same way.
@@ -1275,14 +1288,14 @@ step_fail "exit 6: [reconcile.overrides] target must be a valid rollup status (v
   -- lore sync "$CUSTOM_STORY_ID" --json
 rm -f .lore/config.toml
 
-# Leave no induced state behind: the probe Story's on-disk status still reads "done" from the
-# override test above, which no longer matches TASK6's real "Review" status now that no override
-# is active -- re-heal it against live data, then restore backlog/config.yml's original status
-# flow so this phase's custom flow does not silently outlive it.
+# Leave no induced state behind: the probe Story's on-disk `lore_task_status` still reads "done"
+# from the override test above, which no longer matches TASK6's real "Review" status now that no
+# override is active -- re-heal it against live data, then restore backlog/config.yml's original
+# status flow so this phase's custom flow does not silently outlive it.
 step "lore sync: re-heal the probe Story back to live data now the override is gone" 0 \
   -- lore sync "$CUSTOM_STORY_ID"
 check "probe Story re-healed to in-progress (Review's flow-position classification, no override)" \
-  'grep -q "^status: in-progress" "$CUSTOM_STORY_PATH"'
+  'grep -q "^lore_task_status: in-progress" "$CUSTOM_STORY_PATH"'
 cp /tmp/config-yml-original.yml backlog/config.yml
 rm -f /tmp/config-yml-original.yml
 
@@ -1291,14 +1304,15 @@ rm -f /tmp/config-yml-original.yml
 # a dormant landmine: the first full-bundle reconciliation pass to touch this Story again (Phase
 # 17a's unscoped `lore check`, LORE-68 AC3) fails loud (validation) trying to reconcile it --
 # discovered by that guard's own first real run, the same way LORE-68's original bug was. Reset
-# TASK6 to a status the default flow recognizes and re-sync so the probe Story's on-disk status
-# matches live data one final time -- completing the "leave no induced state behind" cleanup above.
+# TASK6 to a status the default flow recognizes and re-sync so the probe Story's on-disk task
+# status matches live data one final time -- completing the "leave no induced state behind"
+# cleanup above.
 step "backlog task edit: reset TASK6 off the now-unrecognized custom status Review" 0 \
   -- backlog task edit "$TASK6" --status "Done"
 step "lore sync: re-heal the probe Story after TASK6's status reset" 0 \
   -- lore sync "$CUSTOM_STORY_ID"
 check "probe Story settles to done (TASK6's real, now-default-flow-recognized status)" \
-  'grep -q "^status: done" "$CUSTOM_STORY_PATH"'
+  'grep -q "^lore_task_status: done" "$CUSTOM_STORY_PATH"'
 
 # ── Phase 16: supersede ────────────────────────────────────────────────────────
 # LORE-66 AC2: the OLD version of this step gave the ADR under test zero real inbound links, so
@@ -1350,7 +1364,7 @@ step_fail "AC4: --depth without a root <id> is a usage error (exit 2)" 2 \
 
 # ── Phase 17: schema export ─────────────────────────────────────────────────────
 step_json "lore schema export" '.kind == "schema.result"' -- lore schema export --json
-for T in epic story spec adr runbook reference; do
+for T in epic story spec adr runbook reference attested-computation; do
   check "schema export produced valid JSON for $T" "jq -e . .lore/schemas/${T}.schema.json >/dev/null 2>&1"
 done
 
@@ -1377,10 +1391,11 @@ check "LCLI-299 AC3: custom-output schema probe starts from an absent directory"
 step_json "LCLI-299 AC3: schema export --out writes the full profile outside the default directory" \
   '.kind == "schema.result"
    and .data.out == "'"$LCLI299_CUSTOM_OUT"'"
-   and .data.count == 6
+   and .data.count == 7
    and (.data.removed | length) == 0
    and (([.data.files[].path] | sort) == [
      "'"$LCLI299_CUSTOM_OUT"'/adr.schema.json",
+     "'"$LCLI299_CUSTOM_OUT"'/attested-computation.schema.json",
      "'"$LCLI299_CUSTOM_OUT"'/epic.schema.json",
      "'"$LCLI299_CUSTOM_OUT"'/reference.schema.json",
      "'"$LCLI299_CUSTOM_OUT"'/runbook.schema.json",
@@ -1389,14 +1404,14 @@ step_json "LCLI-299 AC3: schema export --out writes the full profile outside the
    ])
    and all(.data.files[]; (.path | startswith(".lore/schemas/") | not))' \
   -- lore schema export --out "$LCLI299_CUSTOM_OUT" --json
-for T in epic story spec adr runbook reference; do
+for T in epic story spec adr runbook reference attested-computation; do
   check "LCLI-299 AC3: custom output produced valid JSON for $T" \
     "jq -e . '$LCLI299_CUSTOM_OUT/${T}.schema.json' >/dev/null 2>&1"
 done
 
 rm -f "$LCLI299_TYPE_OUT/story.schema.json"
 rmdir "$LCLI299_TYPE_OUT"
-for T in epic story spec adr runbook reference; do
+for T in epic story spec adr runbook reference attested-computation; do
   rm -f "$LCLI299_CUSTOM_OUT/${T}.schema.json"
 done
 rmdir "$LCLI299_CUSTOM_OUT"
@@ -1495,7 +1510,7 @@ TOMLEOF
 
 step "AC2: lore validate fails (exit 6) once the type gains a required field the doc lacks" 6 \
   -- lore validate "$CUSTOM_PATH"
-sed -i '/^timestamp:/a owner: jeremy' "$CUSTOM_PATH"
+sed -i '/^type:/a owner: jeremy' "$CUSTOM_PATH"
 step "AC2: lore validate passes once the required custom field is present" 0 \
   -- lore validate "$CUSTOM_PATH"
 
@@ -1548,18 +1563,18 @@ step_json "profile restored: lore schema export succeeds again (loadProfile reco
   '.kind == "schema.result"' -- lore schema export --json
 
 # Leave no induced state behind (LORE-63's convention): a custom profile.toml REPLACES the
-# default six-type vocabulary wholesale, and a full `lore schema export` PRUNES any
+# default seven-type vocabulary wholesale, and a full `lore schema export` PRUNES any
 # *.schema.json whose type the active profile no longer declares -- so both schema exports
-# above already pruned Phase 17's six default schema files. Deleting the custom profile and
-# re-exporting once more (now back on the zero-config default) regenerates the six defaults
+# above already pruned Phase 17's seven default schema files. Deleting the custom profile and
+# re-exporting once more (now back on the zero-config default) regenerates the seven defaults
 # AND prunes the orphaned custom one in the same step, leaving Phase 18+ the bundle state they
 # already expect.
 rm -f .lore/profile.toml .lore/templates/e2e-custom-type.md
-step_json "profile removed: lore schema export regenerates the six default schemas" \
+step_json "profile removed: lore schema export regenerates the seven default schemas" \
   '.kind == "schema.result"' -- lore schema export --json
 check "the orphaned custom schema was pruned on the default-profile re-export" \
   '[ ! -f .lore/schemas/e2e-custom-type.schema.json ]'
-for T in epic story spec adr runbook reference; do
+for T in epic story spec adr runbook reference attested-computation; do
   check "default schema for $T restored after the profile subsystem probe" \
     "jq -e . .lore/schemas/${T}.schema.json >/dev/null 2>&1"
 done

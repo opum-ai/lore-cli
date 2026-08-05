@@ -12,7 +12,7 @@ provenance, CLI, and offline explorer conformance tests.
 A real, walkable OKF bundle exercised by `test/okf-fixture.test.ts`:
 
 - One **clean** concept per known type in the built-in profile
-  (`Epic`, `Story`, `Spec`, `ADR`, `Runbook`, `Reference`) — the coverage assertion fails if a
+  (`Epic`, `Story`, `Spec`, `ADR`, `Runbook`, `Reference`, `Attested Computation`) — the coverage assertion fails if a
   type is added without a fixture.
 - A `broken/` wing of deliberately malformed concepts, each tripping one representative finding of
   the real `lore validate` / `lore check` engines: missing `type`, a mistyped known field, a missing

@@ -201,10 +201,11 @@ export async function loadLadybugProjectionSource(
       graph,
       tasks,
       docsRoot: DOCS_DIR,
-      okfVersion: profile.okfVersion,
+      okfVersion: graph.state.okfVersion,
       exporterVersion: VERSION,
       gitCommit,
       generatedAt: null,
+      profile,
       materializeJsonl: false,
     });
     const finalInventory = readSourceInventory(options.root);

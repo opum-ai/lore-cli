@@ -62,7 +62,7 @@ import {
 } from "../adapters/backlog";
 import { type BundleGraph, conceptNotInBundle, loadBundle, toRefList } from "../core/bundle";
 import { type Concept, idFromPath, serializeConcept } from "../core/concept";
-import { loadProfile, type Profile, profileTypeDeclaresField } from "../core/profile";
+import { loadProfile, type Profile, profileForBundle, profileTypeDeclaresField } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
@@ -633,8 +633,9 @@ async function prepare(options: LinkOptions, command: "link" | "unlink"): Promis
   }
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
-  const profile = loadProfile({ root: options.root });
-  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
+  const producerProfile = loadProfile({ root: options.root });
+  const graph = loadBundle(docsRoot, { warnings: advisories, profile: producerProfile });
+  const profile = profileForBundle(producerProfile, graph.state);
   advisories.flush({ color: options.output.color, stderr: options.stderr });
 
   const concept = graph.concepts.get(id);

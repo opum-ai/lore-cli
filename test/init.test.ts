@@ -118,6 +118,7 @@ describe("lore init — fresh bundle (AC#1)", () => {
       ".lore/schemas/adr.schema.json",
       ".lore/schemas/runbook.schema.json",
       ".lore/schemas/reference.schema.json",
+      ".lore/schemas/attested-computation.schema.json",
       ".lore/templates/.gitkeep",
       "docs/index.md",
     ]);
@@ -131,7 +132,7 @@ describe("lore init — fresh bundle (AC#1)", () => {
     const indexRaw = readFileSync(join(root, "docs/index.md"), "utf8");
     const concept = parseConcept("docs/index.md", indexRaw);
     expect(concept.type).toBe("Reference");
-    expect(concept.frontmatter.okf_version).toBe("0.1");
+    expect(concept.frontmatter.okf_version).toBe("0.2");
     // No other emitted doc carries okf_version (reserved-root discipline).
     for (const path of [".lore/schemas/reference.schema.json", ".lore/config.toml"]) {
       expect(readFileSync(join(root, path), "utf8")).not.toContain("okf_version");
@@ -148,9 +149,9 @@ describe("lore init — fresh bundle (AC#1)", () => {
     expect(warnings.list()).toEqual([]);
   });
 
-  test("stamps the index timestamp from the injected clock", async () => {
+  test("stamps the index generated.at from the injected clock", async () => {
     await init({ clock: () => new Date("2026-01-02T03:04:05Z") });
-    expect(readFileSync(join(root, "docs/index.md"), "utf8")).toContain("timestamp: 2026-01-02T03:04:05.000Z");
+    expect(readFileSync(join(root, "docs/index.md"), "utf8")).toContain("at: 2026-01-02T03:04:05.000Z");
   });
 
   test("creates the gitignored cache directory", async () => {
@@ -193,7 +194,7 @@ describe("lore init — idempotent re-run (AC#2)", () => {
     const { code, result } = await init({ clock: () => new Date("2030-12-31T23:59:59Z") });
     expect(code).toBe(0);
     expect(result.created).toEqual([]);
-    expect(result.skipped.length).toBe(11);
+    expect(result.skipped.length).toBe(12);
     expect(readFileSync(join(root, "docs/index.md"), "utf8")).toBe(before);
   });
 

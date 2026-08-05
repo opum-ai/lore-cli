@@ -10,7 +10,7 @@
  * the per-type required sections; the **body** is rendered from `.lore/templates/<type>.md`"):
  *
  * - **lore owns the frontmatter.** {@link buildNewConcept} builds the frontmatter mapping
- *   *structurally* from typed inputs (type/title/summary/timestamp/tags) and serializes it
+ *   *structurally* from typed inputs (type/title/summary/versioned provenance/tags) and serializes it
  *   through the byte-stable concept boundary, so js-yaml quotes whatever needs quoting — a
  *   title or summary containing `:`, `#`, or a leading `-` can never corrupt the YAML the way
  *   raw string substitution into a `key: {{value}}` line would.
@@ -26,9 +26,11 @@
 
 import { posix } from "node:path";
 import { LoreError, WarningCollector } from "../errors";
+import { VERSION } from "../meta";
 import { type Concept, idFromPath, serializeConcept, serializeConceptWithModeline } from "./concept";
 import { encodePathSegments } from "./links";
-import { defaultProfile, type Profile, slugForTypeName } from "./profile";
+import type { BundleState, OkfVersion } from "./okf-version";
+import { ATTESTED_COMPUTATION_TYPE, defaultProfile, type Profile, profileForBundle, slugForTypeName } from "./profile";
 import { validateFrontmatter } from "./schema";
 
 /**
@@ -140,7 +142,7 @@ export interface BuildNewConceptInput {
   title: string;
   /** The one-line summary — set on `summary:` and available as `{{summary}}` in the body. */
   summary: string;
-  /** The ISO-8601 creation timestamp — set on `timestamp:` and available as `{{timestamp}}`. */
+  /** The ISO-8601 creation instant — emitted as versioned provenance and available as `{{timestamp}}`. */
   timestamp: string;
   /** Optional `--tags` list, set on `tags:` as a YAML sequence (built structurally, never substituted). */
   tags?: readonly string[];
@@ -157,6 +159,8 @@ export interface BuildNewConceptInput {
   modeline?: string;
   /** The active profile to validate/serialize against; defaults to the built-in {@link defaultProfile}. */
   profile?: Profile;
+  /** Typed semantics resolved from the bundle-root index; controls version-specific emission. */
+  bundleState?: BundleState;
 }
 
 /** The result of {@link buildNewConcept}: the bytes to write and any advisory warnings raised on validation. */
@@ -191,19 +195,31 @@ export function buildNewConcept(input: BuildNewConceptInput): BuildNewConceptRes
   warnShadowedVars(input.vars, input.docPath, warnings);
   const body = renderBody(input);
 
+  const baseProfile = input.profile ?? defaultProfile();
+  const profile = input.bundleState === undefined ? baseProfile : profileForBundle(baseProfile, input.bundleState);
+
   const frontmatter: Record<string, unknown> = {
     type: input.type,
     title: input.title,
     summary: input.summary,
-    timestamp: input.timestamp,
+    ...(profile.okfVersion === "0.2" &&
+    input.type === ATTESTED_COMPUTATION_TYPE &&
+    profile.types.has(ATTESTED_COMPUTATION_TYPE)
+      ? { runtime: "TODO" }
+      : {}),
+    ...versionedProvenance(input.timestamp, profile.okfVersion),
   };
   if (input.tags && input.tags.length > 0) {
     frontmatter.tags = [...input.tags];
   }
 
-  const profile = input.profile ?? defaultProfile();
   stampResource(frontmatter, input.type, input.docPath, profile);
-  const resolvedType = validateFrontmatter(frontmatter, { warnings, path: input.docPath, profile });
+  const resolvedType = validateFrontmatter(frontmatter, {
+    warnings,
+    path: input.docPath,
+    profile,
+    bundleState: input.bundleState,
+  });
   const concept: Concept = {
     id: idFromPath(input.docPath),
     path: input.docPath,
@@ -217,6 +233,11 @@ export function buildNewConcept(input: BuildNewConceptInput): BuildNewConceptRes
       ? serializeConceptWithModeline(concept, input.modeline, { profile })
       : serializeConcept(concept, { profile });
   return { contents, type: resolvedType, warnings: warnings.list() };
+}
+
+/** Frontmatter provenance lore emits for one supported OKF target. */
+export function versionedProvenance(timestamp: string, okfVersion: OkfVersion): Record<string, unknown> {
+  return okfVersion === "0.2" ? { generated: { by: `lore/${VERSION}`, at: timestamp } } : { timestamp };
 }
 
 /**
@@ -401,7 +422,19 @@ const STORY_TEMPLATE = `
 `;
 
 /**
- * The built-in body template content lore ships for the six story-convention types — the
+ * Attested Computation: representation-only scaffold. The text fence is deliberately inert;
+ * Lore writes and validates this contract but never binds parameters or executes its content.
+ */
+const ATTESTED_COMPUTATION_TEMPLATE = `
+# Computation
+
+\`\`\`text
+Replace this placeholder with the sanctioned computation for {{title}}.
+\`\`\`
+`;
+
+/**
+ * The built-in body template content lore ships for its story-convention and OKF types — the
  * zero-config fallback when no `.lore/templates/<type>.md` is present. Keyed by canonical type
  * name (a plain string map, **independent of the active profile**): a custom-profile type lore
  * ships no body for falls back to {@link GENERIC_TEMPLATE}, and the project supplies its own
@@ -415,6 +448,7 @@ const BUILTIN_TEMPLATES: Readonly<Record<string, string>> = Object.freeze({
   Runbook: RUNBOOK_TEMPLATE,
   Epic: EPIC_TEMPLATE,
   Story: STORY_TEMPLATE,
+  [ATTESTED_COMPUTATION_TYPE]: ATTESTED_COMPUTATION_TEMPLATE,
 });
 
 /**

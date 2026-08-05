@@ -9,6 +9,7 @@ import {
   PROFILE_JSON_REL_PATH,
   PROFILE_REL_PATH,
   parseProfile,
+  profileForBundle,
   slugForTypeName,
   templateConfinementViolation,
 } from "../src/core/profile";
@@ -46,13 +47,27 @@ describe("slugForTypeName — LOWER-KEBAB slug (AC#7)", () => {
 });
 
 describe("defaultProfile — the built-in story convention (AC#3)", () => {
-  test("compiles the six story types in declaration order", () => {
-    expect([...defaultProfile().types.keys()]).toEqual(["Epic", "Story", "Spec", "ADR", "Runbook", "Reference"]);
+  test("compiles the story types followed by OKF 0.2 Attested Computation", () => {
+    expect([...defaultProfile().types.keys()]).toEqual([
+      "Epic",
+      "Story",
+      "Spec",
+      "ADR",
+      "Runbook",
+      "Reference",
+      "Attested Computation",
+    ]);
   });
 
-  test("carries okf_version 0.1, Title case, and an empty resource_base", () => {
+  test("the built-in OKF 0.1 consumer profile retains only the legacy six types", () => {
+    const legacy = profileForBundle(defaultProfile(), { okfVersion: "0.1", source: "declared" });
+    expect([...legacy.types.keys()]).toEqual(["Epic", "Story", "Spec", "ADR", "Runbook", "Reference"]);
+    expect(legacy.okfVersion).toBe("0.1");
+  });
+
+  test("carries okf_version 0.2, Title case, and an empty resource_base", () => {
     const p = defaultProfile();
-    expect(p.okfVersion).toBe("0.1");
+    expect(p.okfVersion).toBe("0.2");
     expect(p.case).toBe("Title");
     expect(p.resourceBase).toBe("");
     expect(p.name).toBe("story-convention");
@@ -61,7 +76,8 @@ describe("defaultProfile — the built-in story convention (AC#3)", () => {
   test("canonical key order: base, then Story's own fields, then the reserved coupling fields LAST", () => {
     // Reserved coupling fields trail per-type fields, matching the order lore emitted before the
     // profile existed (ADR-0011 byte-stability), so a Story with tasks/specs AND supersedes keeps
-    // its on-disk key order.
+    // its on-disk key order. OKF 0.2 `generated` uses the existing append path rather than moving any
+    // of these declared fields.
     expect(defaultProfile().canonicalKeyOrder).toEqual([
       "type",
       "title",

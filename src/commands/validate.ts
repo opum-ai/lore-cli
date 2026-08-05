@@ -17,8 +17,8 @@
 
 import { statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { walkMarkdown } from "../core/bundle";
-import { loadProfile } from "../core/profile";
+import { loadBundleState, walkMarkdown } from "../core/bundle";
+import { loadProfile, profileForBundle } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { canonicalType } from "../core/schema";
 import { type FileReport, type Finding, type ValidateReport, validateFiles } from "../core/validate";
@@ -69,14 +69,18 @@ interface SourceFile {
  */
 export function runValidate(options: ValidateOptions): number {
   const parsed = parseValidateArgs(options.args);
-  const profile = loadProfile({ root: options.root });
+  const configuredProfile = loadProfile({ root: options.root });
+  const versionWarnings = new WarningCollector();
+  const bundleState = loadBundleState(join(options.root, DOCS_DIR), versionWarnings);
+  const profile = profileForBundle(configuredProfile, bundleState);
   const type = parsed.type === undefined ? undefined : canonicalType(parsed.type, profile);
   const walkWarnings = new WarningCollector();
   const files = collectFiles(options.root, parsed.paths, walkWarnings);
 
-  const report = validateFiles(files, type, profile);
+  const report = validateFiles(files, type, profile, bundleState);
   emit(reportRenderable(report), options.output, options.stdout);
   walkWarnings.flush({ color: options.output.color, stderr: options.stderr });
+  versionWarnings.flush({ color: options.output.color, stderr: options.stderr });
 
   const failed = report.errorCount > 0 || (parsed.strict && report.warningCount > 0);
   return failed ? EXIT_CODES.validation : EXIT_OK;

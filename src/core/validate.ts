@@ -20,7 +20,7 @@
  *
  * The tiers (ADR-0007 "How lore checks conformance"):
  *
- * - **Tier 1 — OKF §9 (error):** frontmatter parses and `type` is present/non-empty. Reuses
+ * - **Tier 1 — OKF 0.2 §11 / 0.1 §9 (error):** frontmatter parses and `type` is present/non-empty. Reuses
  *   {@link tryParseConcept}, whose thrown `validation` {@link LoreError} becomes one finding.
  * - **Tier 2 — per-type shape (error):** a *known* type's strict Zod schema (surfaced through
  *   the same {@link tryParseConcept} throw) **plus** its {@link requiredSectionsFor required
@@ -43,6 +43,7 @@ import { effectiveProfileFor, nodeText } from "./bundle";
 import { type Concept, tryParseConcept } from "./concept";
 import type { Finding as BaseFinding, Severity } from "./finding";
 import { decodeTarget } from "./links";
+import type { BundleState } from "./okf-version";
 import { defaultProfile, type Profile } from "./profile";
 import { ROOT_INDEX_PATH } from "./scaffold";
 import { requiredSectionsFor } from "./schema";
@@ -103,7 +104,12 @@ export interface ValidateReport {
  * A non-{@link LoreError} (a genuine bug) is *not* swallowed — it propagates, so a crash is
  * never silently dressed up as a validation finding.
  */
-export function validateConceptText(path: string, raw: string, profile: Profile = defaultProfile()): FileReport {
+export function validateConceptText(
+  path: string,
+  raw: string,
+  profile: Profile = defaultProfile(),
+  bundleState?: BundleState,
+): FileReport {
   const effective = effectiveProfileFor(path, ROOT_INDEX_PATH, profile);
   // Parse exactly once. tryParseConcept fills the collector with tier-3 warnings, returns null for
   // a non-concept (skip), and throws a `validation` LoreError for a real-but-malformed concept —
@@ -111,7 +117,7 @@ export function validateConceptText(path: string, raw: string, profile: Profile 
   const warnings = new WarningCollector();
   let concept: Concept | null;
   try {
-    concept = tryParseConcept(path, raw, { warnings, profile: effective });
+    concept = tryParseConcept(path, raw, { warnings, profile: effective, bundleState });
   } catch (err) {
     // A genuine bug (a non-LoreError) must never be dressed up as a validation finding — propagate
     // it (the invariant this module states). A malformed concept becomes one error finding; its
@@ -155,11 +161,12 @@ export function validateFiles(
   files: readonly { path: string; raw: string }[],
   type?: string,
   profile: Profile = defaultProfile(),
+  bundleState?: BundleState,
 ): ValidateReport {
   const wanted = type?.toLowerCase();
   const reports: FileReport[] = [];
   for (const file of files) {
-    const report = validateConceptText(file.path, file.raw, profile);
+    const report = validateConceptText(file.path, file.raw, profile, bundleState);
     if (wanted !== undefined && !keepForType(report, wanted)) {
       continue;
     }
