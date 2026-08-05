@@ -20,7 +20,7 @@
  *
  * The tiers (ADR-0007 "How lore checks conformance"):
  *
- * - **Tier 1 — OKF §9 (error):** frontmatter parses and `type` is present/non-empty. Reuses
+ * - **Tier 1 — OKF 0.2 §11 / 0.1 §9 (error):** frontmatter parses and `type` is present/non-empty. Reuses
  *   {@link tryParseConcept}, whose thrown `validation` {@link LoreError} becomes one finding.
  * - **Tier 2 — per-type shape (error):** a *known* type's strict Zod schema (surfaced through
  *   the same {@link tryParseConcept} throw) **plus** its {@link requiredSectionsFor required

@@ -323,11 +323,21 @@ describe("checkBundle — internal cross-link existence (error tier)", () => {
     expect(checkBundle([adr, orders]).errorCount).toBe(0);
   });
 
-  test("a link to a missing file is a broken-link error", () => {
+  test("a broken cross-link is a Lore coherence error, not an OKF §11 frontmatter rejection", () => {
     const adr: CheckInputFile = { path: "adr/x.md", raw: ref("X", "See [ghost](../reference/ghost.md).") };
     const report = checkBundle([adr, orders]);
     expect(report.errorCount).toBe(1);
     expect(report.findings[0]?.rule).toBe("broken-link");
+  });
+
+  test("OKF 0.2 §11 optional fields and index files remain optional to the check pass", () => {
+    const minimal: CheckInputFile = {
+      path: "reference/minimal.md",
+      raw: "---\ntype: Reference\n---\n\n# Minimal\n",
+    };
+    const report = checkBundle([minimal], { okfVersion: "0.2", source: "declared" });
+    expect(report.findings).toEqual([]);
+    expect(report.errorCount).toBe(0);
   });
 
   test("an unresolved OKF 0.2 internal source is a warning, not a default gate error", () => {

@@ -171,7 +171,7 @@ failure, making them drop-in CI gates. See
 
 Tiered per-file validation:
 
-- **OKF §9 conformance** — frontmatter parses and `type` is present/non-empty
+- **OKF 0.2 §11 / 0.1 §9 conformance floor** — frontmatter parses and `type` is present/non-empty
   → **error** if violated.
 - **Per-type frontmatter shape + required sections** — for known types,
   validated against the strict [Zod schema](../adr/0006-schema-types-templates.md)
@@ -200,7 +200,9 @@ The **drift gate** — read-only, never writes. Aggregates:
   `sync` would change.
 - **Internal link + heading-anchor validation** — whole-bundle pure-JS pass:
   every internal `.md` cross-link must resolve and every `#anchor` must hit a
-  real heading. **External-URL liveness** is opt-in with `--external` (Bun
+  real heading. This is a Lore-specific coherence gate, not an OKF 0.2 §11
+  conformance rejection; OKF consumers must tolerate broken cross-links.
+  **External-URL liveness** is opt-in with `--external` (Bun
   `fetch`, no Rust/lychee runtime dependency; see
   [ADR-0010](../adr/0010-multi-consumer-docs-layer.md)) and is **non-deterministic**,
   so its `external-link` findings are **advisory only — they never change the

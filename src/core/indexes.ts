@@ -4,7 +4,7 @@
  * Where [`log.ts`](./log.ts) derives `log.md` from git history, this module derives every
  * `index.md` from the bundle graph: the reserved root entry point plus one local hub per
  * sub-directory, each listing its immediate children (concepts + child indexes) as portable
- * markdown links (okf-conformance: "index bodies link children as a navigable hub").
+ * markdown links (okf-conformance: OKF 0.2 §8 / 0.1 §7, "index bodies link children as a navigable hub").
  *
  * ### What it owns, and what it deliberately does not
  *
@@ -21,7 +21,7 @@
  * Two responsibilities stay with their owners, not here:
  *
  * - **Root index *creation* and `okf_version`** belong to `scaffold.ts` / `lore init`
- *   (okf-conformance: the bundle-root `index.md` is the only file carrying `okf_version`; a
+ *   (okf-conformance: OKF 0.2 §12 / 0.1 §4, the bundle-root `index.md` is the only file carrying `okf_version`; a
  *   sub-index carries none, AC#2). `generateIndexes` only *maintains the region* of a root index
  *   that already exists; it never invents the frontmatter. A **sub**-index that does not yet
  *   exist is synthesized frontmatter-free.

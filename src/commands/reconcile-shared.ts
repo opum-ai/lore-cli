@@ -79,7 +79,7 @@ export function taskBlockConcepts(concepts: Iterable<Concept>): EligibleConcept[
  *
  * Deliberately type-agnostic: a `tasks:` list is reconciled on ANY concept type, not only
  * `Story`/`Spec` — `lore link` (LORE-24) never restricts which type it targets, and this predates
- * LORE-27 entirely (`tasks:` on a `Reference`/`ADR`/etc. is an OKF §9-tolerated unknown-key warning,
+ * LORE-27 entirely (`tasks:` on a `Reference`/`ADR`/etc. is an OKF 0.2 §11 / 0.1 §9-tolerated unknown-key warning,
  * never an error). Narrowing eligibility to specific types here would make `check` (which shares
  * this exact function) more restrictive than `sync` — the disagreement-with-`sync` failure mode
  * this module's callers otherwise take pains to avoid — not fix a LORE-27-introduced gap.

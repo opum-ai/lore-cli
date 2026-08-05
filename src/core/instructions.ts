@@ -140,7 +140,7 @@ const VALIDATION: InstructionTopic = {
   title: "Per-file OKF/schema conformance (`lore validate`)",
   body: `\`lore validate [paths...]\` is a tiered, per-file conformance reporter,
 distinct from \`check\`'s cross-file drift/link/portability pass. It
-validates: OKF §9 conformance (frontmatter parses, \`type\` is present and
+validates: the OKF 0.2 §11 / 0.1 §9 conformance floor (frontmatter parses, \`type\` is present and
 non-empty) as an error if violated; per-type frontmatter shape and required
 sections against a Zod schema generated from the declarative
 \`.lore/profile.toml\` (the source of truth per ADR-0006's LORE-46 amendment)

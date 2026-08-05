@@ -12,7 +12,8 @@
  * does not opt into a custom profile sees exactly the behavior lore shipped before the
  * profile existed.
  *
- * The validation tiers mirror OKF §9 + the active profile
+ * The validation tiers mirror the OKF 0.2 §11 conformance floor (legacy 0.1 §9)
+ * plus the active profile
  * ([okf-conformance](../../docs/reference/okf-conformance.md) "How lore checks conformance"):
  *
  * - **ERROR** (throws a `validation` {@link LoreError}, exit 6): unparseable frontmatter
@@ -66,8 +67,8 @@ function isRootIndexPath(path: string | undefined): boolean {
 
 /**
  * Whether `key` is an OKF-reserved key that passes the extra-key warning on a known type.
- * `resource`, root-only `okf_version`, and 0.2-only `generated` are lore-recognized fields, not stray producer
- * extensions — so flagging either as unknown (as the generic extra-key check otherwise would)
+ * `resource`, root-only `okf_version`, and the 0.2 families are lore-recognized fields, not stray
+ * producer extensions — so flagging any of them as unknown (as the generic extra-key check otherwise would)
  * would be a false positive on lore's own conformant output, but each is reserved only in the
  * ONE position lore itself ever writes it:
  *
@@ -76,7 +77,7 @@ function isRootIndexPath(path: string | undefined): boolean {
  *   never stamps `resource` on an `index.md` (it is a structure page, not a cited concept —
  *   LORE-47 AC#4/#5), so a `resource:` hand-authored onto one (`isIndex`) is not lore's
  *   recognized output and is warned like any other extra key.
- * - `okf_version` is the bundle-root index's conformance marker (OKF §4) — a whole-bundle
+ * - `okf_version` is the bundle-root index's version marker (OKF 0.2 §12; 0.1 §4) — a whole-bundle
  *   conformance property, not a per-concept one. Only the bundle-ROOT index
  *   ({@link isRootIndexPath}) — the one file `lore init`'s `serializeStructuralConcept` ever
  *   stamps it onto — is exempt. A hand-authored `okf_version` anywhere else (an ordinary
@@ -102,6 +103,7 @@ function isReservedKey(
     key === "sources" ||
     key === "usage_window" ||
     key === "verified" ||
+    key === "status" ||
     key === "stale_after" ||
     key === "lore_task_status"
   ) {
@@ -285,7 +287,7 @@ export function typeDirectory(type: string): string {
  * `fm` — the caller keeps the verbatim object so byte-stable round-tripping is preserved (ADR-0011).
  * It **returns the resolved type** (the `type` value, trimmed). Behavior by tier:
  *
- * - Missing/empty `type` → throw (`validation`). This is the OKF §9 floor.
+ * - Missing/empty `type` → throw (`validation`). This is the OKF 0.2 §11 floor (0.1 §9).
  * - Unknown `type` → warn; the type-only floor already passed, so nothing else is checked and
  *   every key is preserved (OKF tolerance).
  * - Known `type` with a mistyped field → throw (`validation`) citing the field(s). A `type`
@@ -307,7 +309,7 @@ export function validateFrontmatter(fm: Record<string, unknown>, options: Valida
 
   const compiled = profile.types.get(canonicalType(type, profile));
   if (compiled === undefined) {
-    // Unknown type: the non-empty-`type` floor (OKF §9) is already satisfied, so this is a
+    // Unknown type: the non-empty-`type` floor (OKF 0.2 §11; 0.1 §9) is already satisfied, so this is a
     // tolerated producer extension — warn, validate nothing further, leave every key untouched.
     options.warnings?.add(`unknown type "${type}"${where}; validated on \`type\` only`);
     return type;
@@ -437,7 +439,7 @@ function validateVersionedFrontmatter(
 }
 
 /**
- * Read a non-empty string `type` and return it **trimmed**, or throw the OKF §9 floor error.
+ * Read a non-empty string `type` and return it **trimmed**, or throw the OKF 0.2 §11 / 0.1 §9 floor error.
  * Trimming the return means a `type` with accidental surrounding whitespace classifies on its real
  * value (so a known type is type-checked, not silently demoted to "unknown"); the frontmatter object
  * keeps the verbatim value. `path` is echoed on the error's `input.path` so a consumer gets a usable path.
@@ -448,7 +450,7 @@ function requireType(fm: Record<string, unknown>, where: string, path: string | 
     throw new LoreError(
       "validation",
       `frontmatter${where} is missing a \`type\``,
-      "every concept needs a `type:` field (OKF §9); add one, e.g. `type: Reference`",
+      "every concept needs a `type:` field (OKF 0.2 §11; 0.1 §9); add one, e.g. `type: Reference`",
       { path },
     );
   }

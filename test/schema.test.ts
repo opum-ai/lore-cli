@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { defaultProfile } from "../src/core/profile";
+import { compileProfile, defaultProfile, parseProfile } from "../src/core/profile";
 import { isKnownType, validateFrontmatter } from "../src/core/schema";
 import { EXIT_CODES, LoreError, WarningCollector } from "../src/errors";
 
@@ -58,7 +58,7 @@ describe("schema — the error tier (throws, exit 6)", () => {
     expect(EXIT_CODES.validation).toBe(6);
   });
 
-  test("a missing `type` is the OKF §9 floor error", () => {
+  test("a missing `type` is the OKF 0.2 §11 / 0.1 §9 floor error", () => {
     const err = expectValidation(() => validateFrontmatter({ title: "no type" }));
     expect(err.message).toContain("missing a `type`");
   });
@@ -342,6 +342,70 @@ describe("schema — the warning tier (never throws)", () => {
       );
       expect(warnings.isEmpty).toBe(true);
     }
+  });
+
+  test("every OKF 0.2 field family has an explicit tier under a minimal custom profile", () => {
+    const profile = compileProfile(
+      parseProfile(
+        Bun.TOML.parse(`
+[profile]
+name = "minimal-0.2"
+okf_version = "0.2"
+
+[base.fields]
+type = { required = true }
+summary = {}
+
+[[types]]
+name = "Reference"
+
+[[types]]
+name = "Attested Computation"
+`) as Record<string, unknown>,
+        "inline-minimal-0.2",
+      ),
+    );
+    const sharedWarnings = new WarningCollector();
+    validateFrontmatter(
+      {
+        type: "Reference",
+        summary: "All shared OKF 0.2 families.",
+        generated: { by: "lore/0.1.1", at: "2026-06-21T00:00:00Z" },
+        sources: [
+          {
+            id: "orders",
+            resource: "../reference/orders.md",
+            title: "Orders",
+            author: "process:data-platform",
+            usage_count: 1,
+            last_modified: "2026-06-20",
+            usage_window: { from: "2026-06-01", to: "2026-06-30" },
+          },
+        ],
+        usage_window: { from: "2026-06-01", to: "2026-06-30" },
+        verified: { by: "human:alice", at: "2026-06-21T00:00:00Z" },
+        status: "stable",
+        stale_after: "2026-12-31",
+        lore_task_status: "in-progress",
+      },
+      { profile, warnings: sharedWarnings, path: "docs/reference/audit.md" },
+    );
+    expect(sharedWarnings.list().filter((warning) => warning.includes("unknown key"))).toEqual([]);
+
+    const computationWarnings = new WarningCollector();
+    validateFrontmatter(
+      {
+        type: "Attested Computation",
+        summary: "All computation fields.",
+        runtime: "bigquery",
+        parameters: [{ name: "year", type: "integer", required: true }],
+        computation: "../references/revenue.sql",
+        executor: { resource: "../references/run.md", receipt: ["job_id"] },
+        attester: { resource: "../references/attest.py" },
+      },
+      { profile, warnings: computationWarnings, path: "docs/attested-computation/audit.md" },
+    );
+    expect(computationWarnings.list().filter((warning) => warning.includes("unknown key"))).toEqual([]);
   });
 
   test("OKF 0.1 leaves sources untouched as an unknown extension instead of applying 0.2 validation", () => {

@@ -14,7 +14,7 @@
  *   followed, and {@link buildGraph} sorts its input and emits edges in a fixed
  *   order, so the same tree always produces the same `concepts`/`edges` — no
  *   filesystem-order or input-order dependence.
- * - **Cycle-tolerant** (OKF §5: consumers tolerate any link shape): the graph is a
+ * - **Cycle-tolerant** (OKF 0.2 §6 / 0.1 §5: consumers tolerate any link shape): the graph is a
  *   flat edge list built without traversal, so a link cycle (`A→B→A`), a
  *   self-link, or a supersession loop loads fine; a link that resolves to no
  *   concept is a **dangling** edge (`to: null`), never an error — surfacing broken
