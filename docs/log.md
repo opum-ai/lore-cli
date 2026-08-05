@@ -113,6 +113,7 @@
 - 2026-08-05T08:14:15-05:00 dae32ed73bfedbc0f40bb3eb1c886a2dbb5499eb docs: refresh generated log after wave 4
 - 2026-08-05T10:40:30-05:00 0b31a9344268d81ae4f2ae6a276e51f0153edced feat: add OKF 0.2 trust and lifecycle
 - 2026-08-05T10:47:38-05:00 67a44b9a57a80c227f2bc87c9425730b3e1c50c6 docs: refresh generated log after wave 5
+- 2026-08-05T11:25:29-05:00 53bfad162a5d90383ee6ccfb80c1acc726a2a3b1 feat: add OKF 0.2 attested computations
 
 ## docs/.obsidian
 
