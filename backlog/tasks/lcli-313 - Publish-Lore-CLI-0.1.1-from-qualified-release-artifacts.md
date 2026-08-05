@@ -1,11 +1,11 @@
 ---
 id: LCLI-313
 title: Publish Lore CLI 0.1.1 from qualified release artifacts
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:04'
-updated_date: '2026-08-05 00:52'
+updated_date: '2026-08-05 02:37'
 labels:
   - release
   - publication
@@ -52,12 +52,12 @@ Ship Lore CLI 0.1.1 from the exact verified main commit. Tag and qualify the sev
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The immutable v0.1.1 tag resolves directly to the exact fully verified main commit
-- [ ] #2 Release publish:false passes all blocking gates, qualifies all six matching hosts including Windows ARM64, and retains exactly seven 0.1.1 tarballs
-- [ ] #3 All six platform packages are published public before @opum-ai/lore from the untouched qualified artifacts, without using Release publish:true
-- [ ] #4 The new @opum-ai/lore-win32-arm64 package has the intended Trusted Publisher and the existing package trust relationships remain valid
-- [ ] #5 Anonymous registry metadata and a clean install confirm all seven 0.1.1 packages are public and the installed CLI reports 0.1.1
-- [ ] #6 A non-draft v0.1.1 GitHub Release and synchronized release truth, Story, task, and campaign evidence record the publication while LCLI-278 remains open
+- [x] #1 The immutable v0.1.1 tag resolves directly to the exact fully verified main commit
+- [x] #2 Release publish:false passes all blocking gates, qualifies all six matching hosts including Windows ARM64, and retains exactly seven 0.1.1 tarballs
+- [x] #3 All six platform packages are published public before @opum-ai/lore from the untouched qualified artifacts, without using Release publish:true
+- [x] #4 The new @opum-ai/lore-win32-arm64 package has the intended Trusted Publisher and the existing package trust relationships remain valid
+- [x] #5 Anonymous registry metadata and a clean install confirm all seven 0.1.1 packages are public and the installed CLI reports 0.1.1
+- [x] #6 A non-draft v0.1.1 GitHub Release and synchronized release truth, Story, task, and campaign evidence record the publication while LCLI-278 remains open
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -90,4 +90,12 @@ Fresh PR #318 run 30961694531 proved the Windows fix and timeout correction: Win
 PR #320 CI run 30964049642 replaced the synthetic Windows launcher proof with the real compiled Lore CLI and failed at the intended assertion: the compiled process exited 0 but synchronous redirected capture received empty stdout. This falsifies the earlier harness-only hypothesis and locates the defect in compiled Lore's natural-exit output draining on Windows, still independent of LadybugDB and architecture. Added an explicit stdout/stderr write barrier in the real CLI entrypoint before setting the final exit code, preserving process.exitCode semantics and all command bytes. Local verification: full 2451 pass/1 Windows-only skip/0 fail (8308 assertions), focused 71 pass/1 Windows-only skip, lint, typecheck, compiled 0.1.1 smoke, and diff hygiene.
 
 Fresh PR #320 run 30964384859 showed the explicit drain barrier alone still produced an empty real Windows binary, falsifying the queued-output diagnosis. The zero-output/zero-exit signature instead matches the compiled artifact never entering src/cli.ts's import.meta.main guard on Windows when built from an absolute entrypoint. Added src/compiled.ts as an unconditional distribution entrypoint that calls the exported main(), while source execution and test imports retain the guard. Package, CI, Docker, and matching-host builds now compile this entrypoint; a contract test locks all build surfaces together. Local evidence: compiled executable reports 0.1.1, focused 77 pass/1 Windows-only skip, full 2452 pass/1 Windows-only skip/0 fail (8313 assertions), lint, typecheck, Biome, and diff hygiene.
+
+Final publication evidence: annotated tag v0.1.1 resolves to main commit e7fe3394109830a89fcdf16a675d0636446bcd79. Post-main CI run 30966618446 passed all nine jobs. Safe Release run 30966913181 passed metadata, bounded Ladybug, concurrency/crash, all six matching-host qualifications including Windows ARM64, evidence assembly, and package/install sanity; publish was skipped and artifact 8915160779 retained exactly seven qualified tarballs. Six platform packages were published first and @opum-ai/lore last from those untouched tarballs. Anonymous npm metadata for all seven versions matched the successful publish shasums and carried SHA-512 integrity; a clean install selected @opum-ai/lore-darwin-arm64@0.1.1 and reported 0.1.1. The new Windows ARM64 Trusted Publisher was verified for repository opum-ai/lore-cli, workflow release.yml, Environment release, and publish permission. GitHub Release v0.1.1 is non-draft and non-prerelease. Lore validate --strict and lore check --strict both passed with 64 files, 0 errors, and 0 warnings. LCLI-278 remains To Do and Release publish:true was never used.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Published Lore CLI 0.1.1 as seven public npm packages from the exact qualified Release artifact, with all six native hosts green including Windows ARM64. Verified anonymous registry metadata, shasums, integrity, clean installation and version output; configured the new package trust mapping; created GitHub Release v0.1.1; and synchronized release truth, Story, and campaign evidence while preserving LCLI-278 as the automated-publish blocker.
+<!-- SECTION:FINAL_SUMMARY:END -->
