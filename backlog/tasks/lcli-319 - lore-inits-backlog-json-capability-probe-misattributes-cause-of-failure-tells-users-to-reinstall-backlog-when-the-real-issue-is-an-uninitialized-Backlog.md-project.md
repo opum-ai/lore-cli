@@ -8,7 +8,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-05 11:57'
-updated_date: '2026-08-05 22:48'
+updated_date: '2026-08-05 22:58'
 labels:
   - init
   - backlog
@@ -107,4 +107,6 @@ Adversarial self-review:
 Delivery state: implementation and tracker/task metadata are verified but remain uncommitted on `dev` because the restore request did not authorize commit, push, PR, or merge. Task stays In Progress until the user authorizes a delivery disposition.
 
 Delivery authorization update (2026-08-05): the user authorized creation of a local feature branch and a local commit for the five campaign paths. Work moved to fix/lcli-319-backlog-init-diagnostic. Push, PR, merge, branch deletion, and publication remain unauthorized; task remains In Progress until integration.
+
+Remote delivery update (2026-08-05): the user authorized push and PR creation. Branch fix/lcli-319-backlog-init-diagnostic was pushed and PR #329 opened against dev: https://github.com/opum-ai/lore-cli/pull/329. Merge, branch deletion, and publication remain unauthorized; task stays In Progress pending integration.
 <!-- SECTION:NOTES:END -->
