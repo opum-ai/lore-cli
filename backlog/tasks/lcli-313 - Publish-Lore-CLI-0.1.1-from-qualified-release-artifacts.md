@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:04'
-updated_date: '2026-08-05 00:39'
+updated_date: '2026-08-05 00:46'
 labels:
   - release
   - publication
@@ -27,6 +27,7 @@ modified_files:
   - benchmark/ladybug/file-capture-helper.cjs
   - benchmark/ladybug/run.ts
   - bin/lore.cjs
+  - src/cli.ts
   - test/ci-workflow.test.ts
   - test/ladybug-benchmark-fixture.test.ts
   - test/ladybug-benchmark-report.test.ts
@@ -82,4 +83,6 @@ PR #318 CI run 30960919901 exposed an independent Windows host-speed defect afte
 Fresh PR #318 run 30961694531 proved the Windows fix and timeout correction: Windows full CI passed in 1m59s. The only failing gate was the non-timing Ladybug smoke, twice, after complete functional reports: calibration CV 12.48% then 40.54% caused run.ts to exit 2 despite ci.yml explicitly requiring smoke to exit successfully when functional parity/schema/accounting hold. Corrected the smoke exit policy to retain inconclusive calibration evidence while returning success; qualification still maps quantitative fail/inconclusive to exits 1/2. Added direct exit-policy guards. Verification: focused 17/17 (127 assertions), exact local smoke exits 0, full suite 2451 pass/1 Windows-only skip/0 fail (8308 assertions), lint, typecheck, and diff hygiene.
 
 2026-08-05 safe qualification attempt 30963431236: strict bounded Ladybug qualification passed conclusively, and all four Unix matching-host package jobs passed. Both Windows x64 and ARM64 built, packed, and installed their exact 0.1.1 tarballs, then exited 0 with identical empty stdout at the global launcher --version assertion. Assembly and publish were skipped, nothing reached npm, and v0.1.1 was removed locally and remotely. This again rules out Windows ARM64 and LadybugDB as the blocker. The qualification harness now uses Bun.spawnSync only for Windows Node-launcher capture, matching the direct capture mode already proven by Windows CI; asynchronous execution remains everywhere else. The Windows regression now compiles and invokes the real Lore CLI instead of a synthetic child. Local verification: focused 17 pass/1 Windows-only skip, full 2451 pass/1 Windows-only skip/0 fail (8308 assertions), lint, typecheck, Biome, and diff hygiene.
+
+PR #320 CI run 30964049642 replaced the synthetic Windows launcher proof with the real compiled Lore CLI and failed at the intended assertion: the compiled process exited 0 but synchronous redirected capture received empty stdout. This falsifies the earlier harness-only hypothesis and locates the defect in compiled Lore's natural-exit output draining on Windows, still independent of LadybugDB and architecture. Added an explicit stdout/stderr write barrier in the real CLI entrypoint before setting the final exit code, preserving process.exitCode semantics and all command bytes. Local verification: full 2451 pass/1 Windows-only skip/0 fail (8308 assertions), focused 71 pass/1 Windows-only skip, lint, typecheck, compiled 0.1.1 smoke, and diff hygiene.
 <!-- SECTION:NOTES:END -->
