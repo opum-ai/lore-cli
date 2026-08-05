@@ -72,7 +72,7 @@ function needs(job: WorkflowJob): string[] {
 
 describe("matching-host Ladybug package qualification", () => {
   test.skipIf(process.platform !== "win32")(
-    "the published launcher streams a real compiled Windows executable through redirected output",
+    "the published launcher reports the real compiled Lore version through synchronous redirected output",
     () => {
       const root = mkdtempSync(join(tmpdir(), "lore-windows-launcher-test-"));
       try {
@@ -81,7 +81,6 @@ describe("matching-host Ladybug package qualification", () => {
         const packageRoot = join(root, "node_modules", "@opum-ai", "lore");
         const platformRoot = join(root, "node_modules", "@opum-ai", `lore-win32-${process.arch}`);
         const launcher = join(packageRoot, "bin", "lore.cjs");
-        const entrypoint = join(root, "compiled-child.ts");
         const binary = join(platformRoot, "bin", "lore.exe");
         mkdirSync(join(packageRoot, "bin"), { recursive: true });
         mkdirSync(join(platformRoot, "bin"), { recursive: true });
@@ -90,25 +89,25 @@ describe("matching-host Ladybug package qualification", () => {
           join(platformRoot, "package.json"),
           `${JSON.stringify({ name: `@opum-ai/lore-win32-${process.arch}`, version: "0.1.1" })}\n`,
         );
-        writeFileSync(
-          entrypoint,
-          'process.stdout.write("0.1.1\\n"); process.stderr.write("compiled-child-stderr\\n");\n',
-        );
-        const compile = Bun.spawnSync(["bun", "build", "--compile", `--outfile=${binary}`, entrypoint], {
-          cwd: root,
+        const target = process.arch === "arm64" ? "bun-windows-arm64" : "bun-windows-x64-baseline";
+        const compileCommand = packageCompileCommand(join(import.meta.dir, ".."), root, target, binary);
+        const compile = Bun.spawnSync([compileCommand.executable, ...compileCommand.args], {
+          cwd: compileCommand.cwd,
           stdout: "pipe",
           stderr: "pipe",
+          timeout: 120_000,
         });
-        expect(compile.exitCode).toBe(0);
+        expect(compile.exitCode, compile.stderr.toString()).toBe(0);
 
         const result = Bun.spawnSync([node, launcher, "--version"], {
           cwd: root,
           stdout: "pipe",
           stderr: "pipe",
+          timeout: 120_000,
         });
         expect(result.exitCode).toBe(0);
         expect(result.stdout.toString()).toBe("0.1.1\n");
-        expect(result.stderr.toString()).toBe("compiled-child-stderr\n");
+        expect(result.stderr.toString()).toBe("");
       } finally {
         rmSync(root, { recursive: true, force: true });
       }

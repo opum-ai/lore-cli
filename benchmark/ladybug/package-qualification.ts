@@ -62,6 +62,16 @@ interface CommandResult {
   readonly stderr: string;
 }
 
+type CommandRunner = (
+  executable: string,
+  args: readonly string[],
+  options: {
+    readonly cwd: string;
+    readonly env?: Record<string, string | undefined>;
+    readonly timeoutMs?: number;
+  },
+) => Promise<CommandResult>;
+
 interface SmokeCommandEvidence {
   readonly name: string;
   readonly stdoutSha256: string;
@@ -320,9 +330,13 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
     if (existsSync(join(globalRoot, "@ladybugdb", "core"))) {
       throw new Error("the global Lore install unexpectedly contains @ladybugdb/core");
     }
-    const globalVersion = (await run(node, [globalLauncher, "--version"], { cwd: scratch })).stdout.trim();
+    const launcherRunner = input.os === "win32" ? runSynchronously : run;
+    const globalVersionResult = await launcherRunner(node, [globalLauncher, "--version"], { cwd: scratch });
+    const globalVersion = globalVersionResult.stdout.trim();
     if (globalVersion !== expectedVersion) {
-      throw new Error(`globally installed Lore reported ${globalVersion || "no version"}, expected ${expectedVersion}`);
+      throw new Error(
+        `globally installed Lore reported ${globalVersion || "no version"}, expected ${expectedVersion}\nstderr:\n${globalVersionResult.stderr}`,
+      );
     }
     await run(npm, ["uninstall", "--global", "@opum-ai/lore", platformPackageName], {
       cwd: scratch,
@@ -364,7 +378,7 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
     progress("probing the exact native boundary in a sacrificial child");
     const nativeProbe = await runNativeProbe(input, scratch);
     progress("smoking the installed Node launcher");
-    const launcherSmoke = await smoke([node, launcher], fixtureRoot, expectedVersion, smokeEnvironment);
+    const launcherSmoke = await smoke([node, launcher], fixtureRoot, expectedVersion, smokeEnvironment, launcherRunner);
     progress("smoking the relocated standalone Bun executable");
     const standaloneSmoke = await smoke([standaloneBinary], fixtureRoot, expectedVersion, smokeEnvironment);
 
@@ -803,9 +817,11 @@ async function smoke(
   fixtureRoot: string,
   expectedVersion: string,
   environment: Record<string, string | undefined>,
+  runner: CommandRunner = run,
 ): Promise<SmokeCommandEvidence[]> {
   const evidence: SmokeCommandEvidence[] = [];
-  const execute = (args: readonly string[]) => run(command[0] as string, args, { cwd: fixtureRoot, env: environment });
+  const execute = (args: readonly string[]) =>
+    runner(command[0] as string, args, { cwd: fixtureRoot, env: environment });
   const versionResult = await execute([...command.slice(1), "--version"]);
   const version = versionResult.stdout.trim();
   if (version !== expectedVersion)
@@ -913,6 +929,39 @@ async function run(
   if (exitCode !== 0) {
     throw new Error(
       `${basename(executable)} ${args.join(" ")} ${timedOut ? `timed out after ${timeoutMs}ms` : `failed with exit ${exitCode}`}\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+    );
+  }
+  return { stdout, stderr };
+}
+
+/**
+ * Bun's asynchronous Windows pipe capture can report an empty stream for a Node
+ * launcher that relays a short-lived compiled Bun child's output. Bun's synchronous
+ * capture owns the outer pipes for the complete process tree and is independently
+ * exercised with the real compiled Lore binary in the Windows CI suite.
+ */
+async function runSynchronously(
+  executable: string,
+  args: readonly string[],
+  options: {
+    readonly cwd: string;
+    readonly env?: Record<string, string | undefined>;
+    readonly timeoutMs?: number;
+  },
+): Promise<CommandResult> {
+  const timeoutMs = options.timeoutMs ?? 120_000;
+  const result = Bun.spawnSync([executable, ...args], {
+    cwd: options.cwd,
+    env: options.env,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: timeoutMs,
+  });
+  const stdout = result.stdout.toString("utf8");
+  const stderr = result.stderr.toString("utf8");
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `${basename(executable)} ${args.join(" ")} failed with exit ${result.exitCode}\nstdout:\n${stdout}\nstderr:\n${stderr}`,
     );
   }
   return { stdout, stderr };

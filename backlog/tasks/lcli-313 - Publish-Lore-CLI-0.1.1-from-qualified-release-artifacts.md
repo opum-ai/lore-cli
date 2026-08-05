@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:04'
-updated_date: '2026-08-05 00:07'
+updated_date: '2026-08-05 00:39'
 labels:
   - release
   - publication
@@ -80,4 +80,6 @@ Qualification repair implemented. The shared setup action now accepts a default-
 PR #318 CI run 30960919901 exposed an independent Windows host-speed defect after the direct launcher regression test passed: the 700k-row Ladybug fixture had a hard-coded 30s per-test timeout and exceeded it twice (37.6s, then 46.9s), so the workflow-level 45s allowance could not help. Raised only the Windows fixture timeout to 60s and aligned the Windows CI command timeout; Unix remains 30s. After updating the CI contract guard, the corrected timeout change passes focused tests 8/8 (72 assertions) and the full local suite 2452 pass, 1 Windows-only skip, 0 fail (8306 assertions), plus lint, typecheck, and diff hygiene.
 
 Fresh PR #318 run 30961694531 proved the Windows fix and timeout correction: Windows full CI passed in 1m59s. The only failing gate was the non-timing Ladybug smoke, twice, after complete functional reports: calibration CV 12.48% then 40.54% caused run.ts to exit 2 despite ci.yml explicitly requiring smoke to exit successfully when functional parity/schema/accounting hold. Corrected the smoke exit policy to retain inconclusive calibration evidence while returning success; qualification still maps quantitative fail/inconclusive to exits 1/2. Added direct exit-policy guards. Verification: focused 17/17 (127 assertions), exact local smoke exits 0, full suite 2451 pass/1 Windows-only skip/0 fail (8308 assertions), lint, typecheck, and diff hygiene.
+
+2026-08-05 safe qualification attempt 30963431236: strict bounded Ladybug qualification passed conclusively, and all four Unix matching-host package jobs passed. Both Windows x64 and ARM64 built, packed, and installed their exact 0.1.1 tarballs, then exited 0 with identical empty stdout at the global launcher --version assertion. Assembly and publish were skipped, nothing reached npm, and v0.1.1 was removed locally and remotely. This again rules out Windows ARM64 and LadybugDB as the blocker. The qualification harness now uses Bun.spawnSync only for Windows Node-launcher capture, matching the direct capture mode already proven by Windows CI; asynchronous execution remains everywhere else. The Windows regression now compiles and invokes the real Lore CLI instead of a synthetic child. Local verification: focused 17 pass/1 Windows-only skip, full 2451 pass/1 Windows-only skip/0 fail (8308 assertions), lint, typecheck, Biome, and diff hygiene.
 <!-- SECTION:NOTES:END -->
