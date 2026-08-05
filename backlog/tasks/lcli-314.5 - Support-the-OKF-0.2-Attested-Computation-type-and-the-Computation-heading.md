@@ -1,11 +1,11 @@
 ---
 id: LCLI-314.5
 title: 'Support the OKF 0.2 Attested Computation type and the # Computation heading'
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:47'
-updated_date: '2026-08-05 16:08'
+updated_date: '2026-08-05 16:27'
 labels: []
 dependencies:
   - LCLI-314.1
@@ -55,12 +55,12 @@ Note the existing tolerance path already gives partial credit: `src/core/schema.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Attested Computation is a known concept type with a schema covering runtime, parameters, computation, executor, and attester
-- [ ] #2 runtime is enforced as required for this type, and a missing runtime is a validation error (exit 6)
-- [ ] #3 lore new scaffolds an Attested Computation with the # Computation heading
-- [ ] #4 A computation field pointing at a missing file is reported by lore check
-- [ ] #5 lore never executes, evaluates, or resolves parameters of a computation; a test asserts this
-- [ ] #6 Under okf_version 0.1 the type remains merely tolerated, not promoted to a known type
+- [x] #1 Attested Computation is a known concept type with a schema covering runtime, parameters, computation, executor, and attester
+- [x] #2 runtime is enforced as required for this type, and a missing runtime is a validation error (exit 6)
+- [x] #3 lore new scaffolds an Attested Computation with the # Computation heading
+- [x] #4 A computation field pointing at a missing file is reported by lore check
+- [x] #5 lore never executes, evaluates, or resolves parameters of a computation; a test asserts this
+- [x] #6 Under okf_version 0.1 the type remains merely tolerated, not promoted to a known type
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -89,4 +89,12 @@ Verification: focused suite 724 pass, 0 fail across 10 files; npm run lint passe
 Adversarial self-review exercised the 0.2/0.1 profile boundary, custom-profile ownership, relative and bundle-root path normalization, external target exclusion, symlink-skipped assets, and the absence of file reads or execution for non-Markdown computation assets. No unresolved defect was found.
 
 Delivery blocker: wave 6 has no local commit or managed Lore synchronization authority. The task remains In Progress with acceptance boxes intentionally unchecked until the required delivery state exists. The verified implementation is retained uncommitted. Unrelated LCLI-317/LCLI-318/LCLI-319 remain byte-identical at SHA-1 bb9a81094c25ddcd22bea674771e8d62c84e44af, 892978f2f5e14b5054f06002efd2c8f173557360, and ff895880f41b47067750901fd17d301a1543b682.
+
+Delivery completed with user approval on 2026-08-05. Preliminary managed Backlog state was committed as afbc006; implementation, tests, generated editor schema, fixture, and generated log were committed as 53bfad1 (feat: add OKF 0.2 attested computations). Post-commit verification passed: bun test --dots 2522 pass, 1 skip, 0 fail, 8558 expectations across 76 files; npm run lint passed across 191 files; npm run typecheck passed; strict Lore validation reported 0 errors and 0 warnings; strict Lore check reported 0 findings across 65 files; git diff --check passed. The earlier delivery blocker is resolved. No remote action was taken.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added representation-only OKF 0.2 Attested Computation support across built-in profiles, runtime/editor schemas, scaffolding, missing-resource checks, and tests while preserving OKF 0.1 tolerance and guaranteeing computations are never executed. Delivered locally in 53bfad1 and verified with 2522 passing tests, lint, typecheck, strict Lore validation/check, and diff checks.
+<!-- SECTION:FINAL_SUMMARY:END -->
