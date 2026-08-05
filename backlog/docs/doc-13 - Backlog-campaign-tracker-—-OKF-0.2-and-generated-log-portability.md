@@ -3,7 +3,7 @@ id: doc-13
 title: Backlog campaign tracker — OKF 0.2 and generated-log portability
 type: other
 created_date: '2026-08-05 03:22'
-updated_date: '2026-08-05 12:38'
+updated_date: '2026-08-05 13:00'
 ---
 # Backlog campaign tracker — OKF 0.2 and generated-log portability
 
@@ -17,8 +17,8 @@ updated_date: '2026-08-05 12:38'
 ## Frontier
 Informational snapshot only; never a promised next wave.
 
-- Wave 3 is settled: LCLI-314.2 is Done and delivered locally in implementation commit `5ca160d`; task settlement is `e79806c`.
-- LCLI-314.3 and LCLI-314.4 remain ready by live formal dependencies but are not dispatched.
+- Wave 4 implementation and all acceptance criteria for LCLI-314.3 are verified locally; artifacts are retained uncommitted pending explicit local commit authority.
+- LCLI-314.4 remains ready but undispatched; no next wave is selected while wave 4 awaits delivery.
 - LCLI-314.5 remains gated by LCLI-314.4; LCLI-314.6 remains gated by LCLI-314.3 and LCLI-314.4.
 - Wave 1 is delivered locally in commit `596bacdfe1ccca8f6473fa39fd05f07b735cd270`; tracker reconciliation is `5e49fb69cd8d1128295118b0c6c20ec5cf77e366`.
 
@@ -28,7 +28,7 @@ Informational snapshot only; never a promised next wave.
 | 1 | LCLI-316 | generated log portability | none | Done; delivered locally | 1 | src/core/log.ts, test/log.test.ts, test/sync.test.ts | Acceptance criteria complete; wave commit `596bacdfe1ccca8f6473fa39fd05f07b735cd270`. |
 | 2 | LCLI-314.1 | OKF version seam | none | Done; delivered locally | 2 | src/core/scaffold.ts, src/core/profile.ts, src/core/schema.ts, bundle/check plumbing, tests | All 6 criteria complete; implementation commit `90c5655cd37d3e5ddb11e8ed5aaa8d63e88fcdf3`. |
 | 3 | LCLI-314.2 | OKF generated provenance | LCLI-314.1 | Done; delivered locally | 3 | profile/template/schema/scaffold surfaces, conformance docs, tests | All 7 criteria complete; implementation `5ca160d`, task settlement `e79806c`. |
-| 4 | LCLI-314.3 | OKF sources | LCLI-314.1 | Ready; not dispatched | — | profile/template/schema/link/check surfaces, tests, conformance reference | Decide sources participation in the link graph. |
+| 4 | LCLI-314.3 | OKF sources | LCLI-314.1 | In Progress; acceptance verified; uncommitted | 4 | profile/template/schema/link/check surfaces, tests, conformance reference | Awaiting explicit local commit authority; no remote action requested. |
 | 5 | LCLI-314.4 | OKF trust and lifecycle | LCLI-314.1 | Ready; not dispatched | — | profile/schema/config/reconcile surfaces, tests, ADR | Resolve the lifecycle-status versus task-rollup-status collision explicitly. |
 | 6 | LCLI-314.5 | Attested Computation | LCLI-314.1, LCLI-314.4 | Blocked by LCLI-314.4 | — | profile/schema/template/check surfaces, tests | Representation only; never execute bundle computation. |
 | 7 | LCLI-314.6 | OKF conformance closeout | LCLI-314.2, LCLI-314.3, LCLI-314.4 | Blocked by dependencies | — | src/core/schema.ts, check surfaces, docs/reference/okf-conformance.md | Drive docs changes through lore and verify the repository bundle. |
@@ -58,3 +58,5 @@ Informational snapshot only; never a promised next wave.
 - 2026-08-05 — restore grounding matched the active handover: `dev` is clean at `970097df328e8108d00dddc68f5b206d7ca348bf`, locally known origin/dev is 0 behind / 7 ahead, one primary worktree is registered, and no campaign branches exist. Live task dependencies leave LCLI-314.2, LCLI-314.3, and LCLI-314.4 ready; conservative surface overlap keeps execution sequential. Dispatched LCLI-314.2 as wave 3; no commit or remote delivery action is authorized.
 - 2026-08-05 — wave 3 implementation and all seven acceptance criteria for LCLI-314.2 were verified locally. Focused suites passed 420/420 plus 67/67 final validation tests; lint, typecheck, full suite (2481 pass, 1 skip, 0 fail), strict Lore validate/check, and `git diff --check` all pass. Adversarial review preserved existing canonical frontmatter order while adding version-specific provenance: OKF 0.2 emits `generated.by` and string-valued `generated.at`, OKF 0.1 retains `timestamp`, and legacy 0.2 `timestamp` is warned without implicit conversion. The task remains In Progress and artifacts are retained uncommitted: no wave-3 commit authority exists, and an actual `lore sync` could sweep unrelated concurrent untracked LCLI-317, LCLI-318, and LCLI-319 files; dry-run reports only `docs/log.md` would change. No next wave or remote action was dispatched.
 - 2026-08-05 — the user authorized wave 3 local commit delivery and temporary isolation of unrelated LCLI-317, LCLI-318, and LCLI-319 files during Lore synchronization. The verified implementation was delivered locally as `5ca160d` (`feat: add OKF 0.2 generated provenance`), post-commit gates passed, LCLI-314.2 was finalized Done, and Lore committed task settlement as `e79806c`. The three unrelated files were restored byte-for-byte and remain outside campaign delivery. Live dependencies leave LCLI-314.3 and LCLI-314.4 ready, but no next wave or remote action was authorized.
+- 2026-08-05 — restore grounding matched the active handover: `dev` is at `4955830476f0833ade57be85c6fcdb299bcc174c`, locally known origin/dev is 0 behind / 11 ahead, one primary worktree is registered, and only unrelated untracked LCLI-317 through LCLI-319 task files are present. Live dependencies leave LCLI-314.3 and LCLI-314.4 ready; queue order and conservative overlap select LCLI-314.3 for sequential wave 4. No commit or remote delivery action is authorized.
+- 2026-08-05 — wave 4 implementation and all six acceptance criteria for LCLI-314.3 were verified locally. OKF 0.2 sources/usage_window validation and editor schemas, sources graph edges, warning-tier dangling-source checks, rename preservation, legacy Citations preservation, and 0.1 byte stability are covered. Focused suite: 636 pass; full suite: 2493 pass, 1 skip, 0 fail; lint, typecheck, strict Lore validate/check, Lore sync dry-run, and diff checks pass. Adversarial self-review found no unresolved defect. The task remains In Progress and artifacts are retained uncommitted because actual Lore synchronization/local commit delivery is not authorized and could sweep unrelated LCLI-317 through LCLI-319 files. No next wave or remote action was dispatched.
