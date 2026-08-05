@@ -3,11 +3,11 @@ id: LCLI-314.4
 title: >-
   Adopt the OKF 0.2 trust and lifecycle frontmatter families (verified, status,
   stale_after) and the actor convention
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:47'
-updated_date: '2026-08-05 15:36'
+updated_date: '2026-08-05 15:42'
 labels: []
 dependencies:
   - LCLI-314.1
@@ -103,4 +103,12 @@ User decision approved 2026-08-05: keep OKF lifecycle status separate from Lore 
 Verification 2026-08-05: npm test passed 2,508 tests with 1 environment-specific skip and 0 failures; npm run typecheck passed; npm run lint passed; lore validate --strict and lore check --strict both passed with 0 findings; lore sync --dry-run reported only docs/adr/index.md and docs/log.md. Adversarial self-review found and fixed legacy 0.1 re-serialization in token estimates and projections, then the full suite passed. Delivery remains local and task stays In Progress: no commit/push authority was granted, and a real lore sync would auto-commit every dirty backlog/ path, including unrelated preserved LCLI-317/318/319 files. Those three files remain byte-identical to their recorded SHA-1 hashes.
 
 Delivery authority granted by the user after local verification: local commits and temporary isolation/restoration of unrelated LCLI-317/LCLI-318/LCLI-319 are authorized for managed Lore synchronization. No push, PR, merge, publication, remote mutation, or next-wave execution is authorized.
+
+Delivered locally in implementation commit 0b31a93 after preliminary managed Backlog sync commit 09a8fe2. Post-commit verification: npm test passed 2,508 tests with 1 environment-specific skip and 0 failures (8,489 expectations); npm run typecheck passed; npm run lint passed; npm run lore -- validate --strict --json passed with 0 warnings/errors; npm run lore -- check --strict --json passed with 0 findings; git diff checks passed. Unrelated LCLI-317/LCLI-318/LCLI-319 task files remain temporarily isolated for exact restoration after managed settlement.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented OKF 0.2 trust, lifecycle, staleness, and actor conventions while keeping authored lifecycle status separate from Lore task progress; preserved OKF 0.1 behavior, documented the decision in ADR-0019, regenerated editor schemas, and verified with the complete 2,508-test suite plus typecheck, lint, and strict Lore validation/checking.
+<!-- SECTION:FINAL_SUMMARY:END -->
