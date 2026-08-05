@@ -109,6 +109,7 @@
 - 2026-08-05T06:47:43-05:00 970097df328e8108d00dddc68f5b206d7ca348bf docs: refresh generated log after wave 2
 - 2026-08-05T07:34:03-05:00 5ca160df987ef547bebb5c72e42d0dfa31668545 feat: add OKF 0.2 generated provenance
 - 2026-08-05T07:40:28-05:00 4955830476f0833ade57be85c6fcdb299bcc174c docs: refresh generated log after wave 3
+- 2026-08-05T08:07:58-05:00 7a97b131822508b497e7fa14c8da1ffccda3dc58 feat: add OKF 0.2 sources provenance
 
 ## docs/.obsidian
 
@@ -242,6 +243,7 @@
 - 2026-08-04T21:40:39-05:00 4ded93c0c67250928d1e382f9ca3b6105511d693 docs: record Lore CLI 0.1.1 release
 - 2026-08-05T06:40:08-05:00 90c5655cd37d3e5ddb11e8ed5aaa8d63e88fcdf3 feat: negotiate OKF bundle versions
 - 2026-08-05T07:34:03-05:00 5ca160df987ef547bebb5c72e42d0dfa31668545 feat: add OKF 0.2 generated provenance
+- 2026-08-05T08:07:58-05:00 7a97b131822508b497e7fa14c8da1ffccda3dc58 feat: add OKF 0.2 sources provenance
 
 ## docs/runbooks
 
