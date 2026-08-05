@@ -152,6 +152,33 @@ describe("lore sync — AC#1: idempotent", () => {
     expect(report.files.map((f) => f.path)).not.toContain("docs/stories/plain.md");
   });
 
+  test("LCLI-316: a generated log subject with MDX hazards survives lore check --strict", async () => {
+    writeDoc("stories/x.md", storyDoc("X", [], "todo"));
+    const gitAdapter: GitAdapter = {
+      history: () => [
+        {
+          hash: "abc1234",
+          timestamp: "2026-08-04T20:00:00Z",
+          subject: "docs: sync managed blocks after Story<->Task {coupling} fix",
+          files: ["docs/stories/x.md"],
+        },
+      ],
+    };
+
+    const synced = await syncCmd([], fakeAdapter([]), { gitAdapter });
+    expect(synced.code).toBe(EXIT_OK);
+    expect(readDoc("log.md")).toContain("` docs: sync managed blocks after Story<->Task {coupling} fix `");
+
+    const stdout = capture();
+    const checkCode = await run(["bun", "lore", "check", "--strict", "--json"], {
+      cwd: root,
+      stdout,
+      stderr: capture(),
+    });
+    expect(checkCode).toBe(EXIT_OK);
+    expect(JSON.parse(stdout.text()).data).toMatchObject({ errorCount: 0, warningCount: 0 });
+  });
+
   test("regenerates a stale managed block after tasks: transitions from one linked task to empty", async () => {
     const linked = regenerateTaskBlock(
       storyDoc("X", ["lore-1"], "done"),
