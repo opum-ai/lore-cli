@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { parseConcept } from "../src/core/concept";
+import { compileProfile, parseProfile } from "../src/core/profile";
 import { buildScaffold, type ScaffoldFile } from "../src/core/scaffold";
 
 /** A fixed ISO timestamp so every plan in this suite is byte-deterministic. */
@@ -117,7 +118,7 @@ type: Reference
 title: Documentation
 summary: Root index of this OKF documentation bundle, created by \`lore init\`.
 timestamp: 2026-06-25T12:00:00.000Z
-okf_version: "0.1"
+okf_version: "0.2"
 ---
 
 # Documentation
@@ -134,10 +135,26 @@ entry point and the only one that carries \`okf_version\`.
   test("round-trips through parseConcept as a Reference carrying okf_version", () => {
     const concept = parseConcept("docs/index.md", fileNamed("docs/index.md").contents);
     expect(concept.type).toBe("Reference");
-    expect(concept.frontmatter.okf_version).toBe("0.1");
+    expect(concept.frontmatter.okf_version).toBe("0.2");
   });
 
   test("stamps the injected timestamp verbatim", () => {
     expect(fileNamed("docs/index.md").contents).toContain(`timestamp: ${TS}`);
+  });
+
+  test.each(["0.1", "0.2"] as const)("honors a custom profile targeting OKF %s", (okfVersion) => {
+    const profile = compileProfile(
+      parseProfile(
+        {
+          profile: { name: "custom", okf_version: okfVersion },
+          base: { fields: { type: { required: true } } },
+          types: [{ name: "Reference" }],
+        },
+        "test-profile",
+      ),
+    );
+    const plan = buildScaffold({ timestamp: TS, profile });
+    const index = plan.files.find((file) => file.path === "docs/index.md");
+    expect(index?.contents).toContain(`okf_version: "${okfVersion}"`);
   });
 });

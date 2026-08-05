@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -461,6 +461,49 @@ describe("conceptNotInBundle", () => {
 // ── loadBundle: filesystem integration ───────────────────────────────────────────
 
 describe("loadBundle — filesystem", () => {
+  test("exposes a declared 0.1 bundle as typed state without warnings or byte drift", () => {
+    const index = '---\ntype: Reference\nsummary: Legacy root.\nokf_version: "0.1"\n---\nLegacy root.\n';
+    const root = fixture({
+      "index.md": index,
+      "reference/x.md": "---\ntype: Reference\nsummary: Legacy concept.\n---\nLegacy concept.\n",
+    });
+    const warnings = new WarningCollector();
+    const graph = loadBundle(root, { warnings });
+    expect(graph.state).toEqual({ okfVersion: "0.1", source: "declared" });
+    expect(warnings.list()).toEqual([]);
+    expect(readFileSync(join(root, "index.md"), "utf8")).toBe(index);
+  });
+
+  test("classifies an unstamped bundle explicitly as legacy 0.1", () => {
+    const root = fixture({ "reference/x.md": "---\ntype: Reference\n---\nLegacy concept.\n" });
+    expect(loadBundle(root).state).toEqual({ okfVersion: "0.1", source: "legacy-missing" });
+  });
+
+  test("rejects a malformed root okf_version as validation", () => {
+    const root = fixture({ "index.md": "---\ntype: Reference\nokf_version: 0.2\n---\nRoot.\n" });
+    try {
+      loadBundle(root);
+    } catch (error) {
+      expect(error).toBeInstanceOf(LoreError);
+      expect((error as LoreError).type).toBe("validation");
+      expect((error as LoreError).message).toContain("okf_version");
+      return;
+    }
+    throw new Error("expected malformed okf_version to fail");
+  });
+
+  test("keeps unparseable root YAML classified as validation rather than an I/O error", () => {
+    const root = fixture({ "index.md": "---\ntype: Reference\nokf_version: [\n---\nRoot.\n" });
+    try {
+      loadBundle(root);
+    } catch (error) {
+      expect(error).toBeInstanceOf(LoreError);
+      expect((error as LoreError).type).toBe("validation");
+      return;
+    }
+    throw new Error("expected unparseable root YAML to fail");
+  });
+
   const roots: string[] = [];
 
   afterAll(() => {

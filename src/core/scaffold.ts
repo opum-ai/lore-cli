@@ -125,7 +125,7 @@ function schemaFiles(profile: Profile): ScaffoldFile[] {
 
 /**
  * The minimal reserved root index: byte-stable frontmatter (a `Reference` carrying
- * `okf_version: "0.1"` — the sole carrier in the bundle), with the editor modeline
+ * `okf_version: "0.2"` — the sole carrier in the bundle), with the editor modeline
  * spliced in as the **first line inside** the `---` fence via
  * {@link serializeConceptWithModeline} (the shared placement seam in concept.ts).
  *
@@ -234,7 +234,7 @@ const DEFAULT_PROFILE_TOML = `# lore profile — committed, declarative type voc
 
 # [profile]
 # name = "my-project"      # required once any line below is uncommented
-# okf_version = "0.1"      # required; asserted against the bundle-root index.md
+# okf_version = "0.2"      # required; supported targets are 0.1 and 0.2
 # case = "Title"           # type-name casing convention (advisory; powers the did-you-mean hint)
 # resource_base = ""       # prefix for the stamped \`resource\` link (empty = none)
 

@@ -17,8 +17,9 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, posix, relative, resolve, sep } from "node:path";
+import { loadBundleState } from "../core/bundle";
 import { idFromPath } from "../core/concept";
-import { loadProfile, type Profile, templateConfinementViolation } from "../core/profile";
+import { loadProfile, type Profile, profileForBundle, templateConfinementViolation } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { canonicalType, isKnownType, SCHEMAS_DIR, schemaFileName, schemaModeline, typeDirectory } from "../core/schema";
 import { buildNewConcept, builtinTemplateFor, slugify } from "../core/template";
@@ -89,7 +90,10 @@ interface NewArgs {
 export function runNew(options: NewOptions): number {
   const clock = options.clock ?? (() => new Date());
   const parsed = parseNewArgs(options.args);
-  const profile = loadProfile({ root: options.root });
+  const configuredProfile = loadProfile({ root: options.root });
+  const versionWarnings = new WarningCollector();
+  const bundleState = loadBundleState(join(options.root, DOCS_DIR), versionWarnings);
+  const profile = profileForBundle(configuredProfile, bundleState);
   const type = canonicalType(parsed.type, profile);
   // A profile-declared type is valid by definition — including a multi-word/space-containing name
   // like "QA Plan" (its path segments come from the LOWER-KEBAB slug, which is always safe). The
@@ -116,6 +120,7 @@ export function runNew(options: NewOptions): number {
     vars: parsed.vars,
     modeline: resolveModeline(type, docPath, options.root, profile),
     profile,
+    bundleState,
   });
 
   const absPath = join(options.root, docPath);
@@ -130,7 +135,7 @@ export function runNew(options: NewOptions): number {
     throw conflict(docPath);
   }
 
-  flushWarnings(build.warnings, options.output, options.stderr);
+  flushWarnings([...versionWarnings.list(), ...build.warnings], options.output, options.stderr);
   emit(newRenderable({ id: bundleId(docPath), path: docPath, type: build.type }), options.output, options.stdout);
   return EXIT_OK;
 }

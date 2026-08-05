@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BacklogAdapter } from "../src/adapters/backlog";
@@ -811,6 +811,23 @@ describe("runCheck — exit codes and discovery", () => {
     expect(runCheck(opts([]))).toBe(EXIT_OK);
   });
 
+  test("a declared 0.1 bundle checks clean under strict mode without changing bytes", () => {
+    const index = '---\ntype: Reference\nokf_version: "0.1"\n---\n# Docs\n';
+    writeFileSync(join(root, "docs", "index.md"), index);
+    expect(runCheck(opts(["--strict"]))).toBe(EXIT_OK);
+    expect(readFileSync(join(root, "docs", "index.md"), "utf8")).toBe(index);
+  });
+
+  test("a malformed root okf_version is an exit-6 check finding", () => {
+    writeFileSync(join(root, "docs", "index.md"), "---\ntype: Reference\nokf_version: 0.2\n---\n# Docs\n");
+    const options = opts([], JSON_CTX);
+    expect(runCheck(options)).toBe(EXIT_CODES.validation);
+    const report = JSON.parse((options.stdout as ReturnType<typeof capture>).text());
+    expect(report.data.findings).toContainEqual(
+      expect.objectContaining({ severity: "error", rule: "okf-version", file: "index.md" }),
+    );
+  });
+
   test("exit 6 on a broken internal link", () => {
     writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[ghost](../reference/ghost.md)."));
     expect(runCheck(opts([]))).toBe(EXIT_CODES.validation);
@@ -1503,7 +1520,13 @@ describe("driftFindingsForBundle — docPath agrees with the fixable/isDocsRoot 
     // block is pre-rendered against the CANONICAL docPath — exactly what a correctly-normalized
     // `label` must resolve to for the block comparison to see no drift.
     const original = regenerateTaskBlock(storyDoc("X", ["lore-1"], "todo"), [row], { docPath: "docs/stories/x.md" });
-    const bundle = { label, files: [{ path: "stories/x.md", raw: original }], filenameFindings: [] };
+    const bundle = {
+      label,
+      files: [{ path: "stories/x.md", raw: original }],
+      filenameFindings: [],
+      state: { okfVersion: "0.1" as const, source: "declared" as const },
+      versionIssues: [],
+    };
     const concepts = [concept("stories/x.md", { type: "Story", status: "todo", tasks: ["lore-1"] })];
     const pooled = {
       config: { flow: ["To Do", "In Progress", "Done"], overrides: {} },

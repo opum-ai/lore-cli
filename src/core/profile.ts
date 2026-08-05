@@ -43,6 +43,7 @@ import { readFileSync } from "node:fs";
 import { isAbsolute, join, posix, win32 } from "node:path";
 import { z } from "zod";
 import { errnoCode, LoreError } from "../errors";
+import { type BundleState, CURRENT_OKF_VERSION, type OkfVersion, requireSupportedOkfVersion } from "./okf-version";
 
 /** Where the declarative profile lives, relative to the repo root (ADR-0013). `.toml` wins over `.json`. */
 export const PROFILE_REL_PATH = ".lore/profile.toml";
@@ -114,7 +115,7 @@ export interface ParsedType {
 /** A fully-parsed-but-uncompiled profile — what {@link compileProfile} turns into a {@link Profile}. */
 export interface ParsedProfile {
   readonly name: string;
-  readonly okfVersion: string;
+  readonly okfVersion: OkfVersion;
   readonly case: CaseStyle;
   readonly resourceBase: string;
   /** Fields every type carries, in declaration order (insertion-ordered object). `type` must be required. */
@@ -167,7 +168,7 @@ export interface Profile {
   /** The profile name (`[profile].name`). */
   readonly name: string;
   /** The OKF version the profile targets, stamped on the bundle-root index. */
-  readonly okfVersion: string;
+  readonly okfVersion: OkfVersion;
   /** The declared casing convention (advisory; powers the did-you-mean hint). */
   readonly case: CaseStyle;
   /** The base a stamped `resource` value joins to a concept path (empty → no `resource` stamped). */
@@ -321,7 +322,7 @@ function parseJson(raw: string): Record<string, unknown> {
 export function parseProfile(doc: Record<string, unknown>, source: string): ParsedProfile {
   const profileTable = asTable(doc.profile, "profile", source) ?? {};
   const name = requireString(profileTable.name, "profile.name", source);
-  const okfVersion = requireString(profileTable.okf_version, "profile.okf_version", source);
+  const okfVersion = requireSupportedOkfVersion(profileTable.okf_version, "profile.okf_version", source);
   const caseStyle = asEnum(profileTable.case, "profile.case", CASE_STYLES, source) ?? "Title";
   // Trim at the config boundary so a whitespace-only `resource_base` is treated as unset (no stamp)
   // and a base padded with stray whitespace can never join into an embedded-space (broken) URL.
@@ -848,7 +849,7 @@ const optionalStringList: FieldSpec = { required: false, kind: "list", items: { 
 function storyConventionProfile(): ParsedProfile {
   return {
     name: "story-convention",
-    okfVersion: "0.1",
+    okfVersion: CURRENT_OKF_VERSION,
     case: "Title",
     resourceBase: "",
     baseFields: {
@@ -894,6 +895,15 @@ let DEFAULT_PROFILE: Profile | undefined;
 export function defaultProfile(): Profile {
   DEFAULT_PROFILE ??= compileProfile(storyConventionProfile());
   return DEFAULT_PROFILE;
+}
+
+/**
+ * Apply consumed-bundle semantics to a profile without mutating its producer target. The compiled
+ * validators are immutable and currently shared by both supported versions; later field-level
+ * migrations branch on this typed `okfVersion` while retaining the same compiled profile object.
+ */
+export function profileForBundle(profile: Profile, state: BundleState): Profile {
+  return profile.okfVersion === state.okfVersion ? profile : { ...profile, okfVersion: state.okfVersion };
 }
 
 /**

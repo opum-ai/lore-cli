@@ -76,6 +76,7 @@ import { posix } from "node:path";
 import type { Document, DumpOptions, LoadOptions, Node } from "js-yaml";
 import * as yaml from "js-yaml";
 import { deriveMessage, LoreError, singleLine, type WarningCollector } from "../errors";
+import type { BundleState } from "./okf-version";
 import { defaultProfile, type Profile } from "./profile";
 import { validateFrontmatter } from "./schema";
 
@@ -277,6 +278,8 @@ export interface ParseConceptOptions {
   warnings?: WarningCollector;
   /** The active profile to validate against; defaults to the built-in {@link defaultProfile}. */
   profile?: Profile;
+  /** Typed semantics resolved from the bundle-root index, when parsing as part of a bundle. */
+  bundleState?: BundleState;
 }
 
 /**
@@ -354,7 +357,12 @@ export function tryReadFrontmatter(path: string, raw: string): Record<string, un
  * malformed mapping.
  */
 function conceptFromSplit(path: string, split: PresentSplit, options: ParseConceptOptions): Concept {
-  const type = validateFrontmatter(split.frontmatter, { warnings: options.warnings, path, profile: options.profile });
+  const type = validateFrontmatter(split.frontmatter, {
+    warnings: options.warnings,
+    path,
+    profile: options.profile,
+    bundleState: options.bundleState,
+  });
   return { id: idFromPath(path), path, type, frontmatter: split.frontmatter, body: split.body };
 }
 

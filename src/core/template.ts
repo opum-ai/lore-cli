@@ -28,7 +28,8 @@ import { posix } from "node:path";
 import { LoreError, WarningCollector } from "../errors";
 import { type Concept, idFromPath, serializeConcept, serializeConceptWithModeline } from "./concept";
 import { encodePathSegments } from "./links";
-import { defaultProfile, type Profile, slugForTypeName } from "./profile";
+import type { BundleState } from "./okf-version";
+import { defaultProfile, type Profile, profileForBundle, slugForTypeName } from "./profile";
 import { validateFrontmatter } from "./schema";
 
 /**
@@ -157,6 +158,8 @@ export interface BuildNewConceptInput {
   modeline?: string;
   /** The active profile to validate/serialize against; defaults to the built-in {@link defaultProfile}. */
   profile?: Profile;
+  /** Typed semantics resolved from the bundle-root index; controls version-specific emission. */
+  bundleState?: BundleState;
 }
 
 /** The result of {@link buildNewConcept}: the bytes to write and any advisory warnings raised on validation. */
@@ -201,9 +204,15 @@ export function buildNewConcept(input: BuildNewConceptInput): BuildNewConceptRes
     frontmatter.tags = [...input.tags];
   }
 
-  const profile = input.profile ?? defaultProfile();
+  const baseProfile = input.profile ?? defaultProfile();
+  const profile = input.bundleState === undefined ? baseProfile : profileForBundle(baseProfile, input.bundleState);
   stampResource(frontmatter, input.type, input.docPath, profile);
-  const resolvedType = validateFrontmatter(frontmatter, { warnings, path: input.docPath, profile });
+  const resolvedType = validateFrontmatter(frontmatter, {
+    warnings,
+    path: input.docPath,
+    profile,
+    bundleState: input.bundleState,
+  });
   const concept: Concept = {
     id: idFromPath(input.docPath),
     path: input.docPath,

@@ -45,7 +45,8 @@ import {
   tallySeverity,
 } from "../core/check";
 import { type Concept, parseConcept, tryReadFrontmatter } from "../core/concept";
-import { loadProfile, type Profile, profileTypeDeclaresField } from "../core/profile";
+import { type BundleState, type BundleVersionIssue, resolveBundleState } from "../core/okf-version";
+import { loadProfile, type Profile, profileForBundle, profileTypeDeclaresField } from "../core/profile";
 import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
 import { canonicalType } from "../core/schema";
 import {
@@ -329,6 +330,7 @@ interface ConceptBundleResult {
  * three-way disagreement ADR-0007 designed `check` to never have with the rest of the toolchain.
  */
 function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleResult {
+  const bundleProfile = profileForBundle(profile, bundle.state);
   const concepts: Concept[] = [];
   const findings: CheckFinding[] = [];
   let error: unknown | null = null;
@@ -338,7 +340,7 @@ function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleRe
       if (raw === null) {
         continue;
       }
-      const judgingProfile = effectiveProfileFor(file.path, "index.md", profile);
+      const judgingProfile = effectiveProfileFor(file.path, "index.md", bundleProfile);
       const authoredType = typeof raw.type === "string" ? raw.type.trim() : "";
       if (authoredType !== "" && !judgingProfile.types.has(canonicalType(authoredType, judgingProfile))) {
         findings.push({
@@ -351,11 +353,11 @@ function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleRe
       if (!Object.hasOwn(raw, "tasks")) {
         continue;
       }
-      const concept = parseConcept(file.path, file.raw, { profile });
+      const concept = parseConcept(file.path, file.raw, { profile: bundleProfile, bundleState: bundle.state });
       if (RESERVED_STEMS.has(posix.basename(concept.id))) {
         continue;
       }
-      if (profileTypeDeclaresField(concept.type, "tasks", profile)) {
+      if (profileTypeDeclaresField(concept.type, "tasks", bundleProfile)) {
         concepts.push(concept);
       } else {
         findings.push({
@@ -672,6 +674,10 @@ interface Bundle {
   readonly files: CheckInputFile[];
   /** Warn-only filename-portability findings for this root (leading `_`, `.mdx`), independent of content. */
   readonly filenameFindings: readonly CheckFinding[];
+  /** Typed OKF semantics negotiated from this root's index.md. */
+  readonly state: BundleState;
+  /** Version diagnostics folded into the deterministic check report. */
+  readonly versionIssues: readonly BundleVersionIssue[];
 }
 
 /**
@@ -711,7 +717,17 @@ function collectBundles(root: string, paths: readonly string[], warnings: Warnin
       .filter(isMarkdownPath)
       .map((rel) => ({ path: rel, raw: readSource(join(absRoot, rel), `${bundleRoot}/${rel}`) }));
     const filenameFindings = docFiles.flatMap(filenameHazards);
-    bundles.push({ label: bundleRoot, files, filenameFindings });
+    const rootIndex = files.find((file) => file.path === "index.md");
+    const version = resolveBundleState(
+      rootIndex === undefined ? null : tryReadFrontmatter(rootIndex.path, rootIndex.raw),
+    );
+    bundles.push({
+      label: bundleRoot,
+      files,
+      filenameFindings,
+      state: version.state,
+      versionIssues: version.issues,
+    });
   }
   return bundles;
 }
@@ -730,7 +746,13 @@ function checkBundles(bundles: readonly Bundle[]): CheckReport {
   for (const bundle of bundles) {
     const report = checkBundle(bundle.files);
     fileCount += report.fileCount;
-    for (const finding of [...report.findings, ...bundle.filenameFindings]) {
+    const versionFindings: CheckFinding[] = bundle.versionIssues.map((issue) => ({
+      severity: issue.severity,
+      rule: "okf-version",
+      file: "index.md",
+      message: issue.message,
+    }));
+    for (const finding of [...versionFindings, ...report.findings, ...bundle.filenameFindings]) {
       findings.push(prefixFinding(finding, bundle.label, multi));
     }
   }

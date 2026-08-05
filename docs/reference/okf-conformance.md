@@ -21,6 +21,34 @@ Canonical spec:
 <https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf>
 (referenced throughout as OKF §N).
 
+## Version negotiation and migration
+
+The built-in producer profile now targets **OKF 0.2**, so a new bundle created
+by `lore init` carries `okf_version: "0.2"` on its root `index.md`. A custom
+profile may explicitly target either `0.1` or `0.2`; any other producer target
+is a validation error (exit `6`) because lore cannot promise emission semantics
+it does not implement.
+
+Consumption is negotiated independently from production. lore parses the one
+root `okf_version` declaration into typed bundle state and threads that state
+through bundle loading, schema validation, template generation, and
+`lore check`:
+
+- Declared `0.1` and `0.2` bundles use their matching semantics.
+- A missing declaration is classified explicitly as `legacy-missing` and uses
+  `0.1` semantics without a new warning; this keeps pre-negotiation bundles
+  byte-stable while making the fallback visible to code.
+- A present non-string or empty declaration is malformed and fails validation.
+- An unknown future string is retained and consumed best-effort with current
+  `0.2` semantics plus a warning, following OKF 0.2 §12.
+
+There is no automatic or in-place `0.1 -> 0.2` upgrade. Reads, validation,
+checks, and ordinary writes never rewrite the root declaration or migrate
+existing concepts as a side effect. Field-level migration is reserved for an
+explicit user action in the corresponding OKF 0.2 migration work. This
+repository therefore remains a declared `0.1` bundle until such an action is
+requested.
+
 ## What OKF v0.1 actually requires
 
 OKF is intentionally minimal. A bundle is a directory tree of Markdown files,

@@ -243,7 +243,7 @@ describe("lore supersede — --rewrite-links (AC#2)", () => {
     writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
     writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
     // a root index that is itself a concept (carries okf_version) and links to old in its body
-    const rootIndex = "---\ntype: Reference\nokf_version: 0.1\n---\nSee [old](adr/0007-old.md).\n";
+    const rootIndex = '---\ntype: Reference\nokf_version: "0.1"\n---\nSee [old](adr/0007-old.md).\n';
     writeDoc("index.md", rootIndex);
     const { report } = supersedeCmd(["adr/0007-old", "adr/0012-new", "--rewrite-links"]);
     expect(readDoc("index.md")).toBe(rootIndex); // the hub is excluded — listings are unchanged

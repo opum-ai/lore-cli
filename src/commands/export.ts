@@ -38,7 +38,7 @@ export async function runExport(options: ExportOptions): Promise<number> {
     graph,
     tasks,
     docsRoot: DOCS_DIR,
-    okfVersion: profile.okfVersion,
+    okfVersion: graph.state.okfVersion,
     exporterVersion: VERSION,
     gitCommit,
     generatedAt:

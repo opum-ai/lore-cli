@@ -22,6 +22,7 @@ import {
   type ProjectionEdgeRecord,
   type ProjectionTaskRecord,
 } from "./ladybug-source";
+import { resolveBundleState } from "./okf-version";
 import {
   type Bm25Index,
   type QueryResult as LoreQueryResult,
@@ -586,7 +587,12 @@ export async function readLadybugBundleGraph(
       }
       return value;
     };
-    return { concepts, edges, tokenEstimate };
+    return {
+      state: resolveBundleState({ okf_version: source.manifest.bundle.okfVersion }).state,
+      concepts,
+      edges,
+      tokenEstimate,
+    };
   } finally {
     await closeConnection(connection);
     await database.close();
@@ -712,7 +718,7 @@ async function readIndexedBundleGraph(
        ORDER BY n.fromRecordKey, n.ordinal, n.recordKey`,
     );
     const edges = edgesFromRows(edgeRows, recordIds);
-    return bundleGraph(concepts, edges, tokenEstimates);
+    return bundleGraph(concepts, edges, tokenEstimates, source);
   });
 }
 
@@ -727,7 +733,7 @@ async function queryIndexedDatabase(
     if (terms.length === 0) {
       const rows = await queryConceptMetadata(connection);
       const { concepts, tokenEstimates } = conceptsFromRows(rows, source);
-      return queryWithBm25Index(bundleGraph(concepts, [], tokenEstimates), options);
+      return queryWithBm25Index(bundleGraph(concepts, [], tokenEstimates, source), options);
     }
 
     const snapshotRows = await queryRows(
@@ -783,7 +789,7 @@ async function queryIndexedDatabase(
       });
     }
     const index: Bm25Index = { docs, df, n, avgdl: n === 0 ? 0 : totalLength / n };
-    return queryWithBm25Index(bundleGraph(concepts, [], tokenEstimates), options, index);
+    return queryWithBm25Index(bundleGraph(concepts, [], tokenEstimates, source), options, index);
   });
 }
 
@@ -855,10 +861,12 @@ function bundleGraph(
   concepts: ReadonlyMap<string, Concept>,
   edges: readonly Edge[],
   tokenEstimates: ReadonlyMap<string, number>,
+  source: LadybugProjectionSource,
 ): BundleGraph {
   const neighbors = buildNeighborIndex(edges);
   let total: number | undefined;
   return {
+    state: resolveBundleState({ okf_version: source.manifest.bundle.okfVersion }).state,
     concepts,
     edges,
     neighbors: (id) => neighbors.get(id) ?? EMPTY_NEIGHBORS,

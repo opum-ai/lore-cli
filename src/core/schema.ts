@@ -35,7 +35,8 @@
 import { posix } from "node:path";
 import type { z } from "zod";
 import { LoreError, type WarningCollector } from "../errors";
-import { type CompiledType, defaultProfile, type Profile, slugForTypeName } from "./profile";
+import type { BundleState } from "./okf-version";
+import { type CompiledType, defaultProfile, type Profile, profileForBundle, slugForTypeName } from "./profile";
 
 /**
  * The bundle-root index's path, in the two conventions a caller of {@link validateFrontmatter} may
@@ -97,6 +98,8 @@ export interface ValidateOptions {
   path?: string;
   /** The active profile to validate against; defaults to the built-in {@link defaultProfile}. */
   profile?: Profile;
+  /** Typed bundle semantics resolved from the root index; absent only for isolated concept APIs. */
+  bundleState?: BundleState;
 }
 
 /** Narrow an arbitrary string to a type the `profile` (default: built-in) validates strictly-by-field. */
@@ -175,7 +178,8 @@ export function typeDirectory(type: string): string {
  * - Missing or over-long (~{@link SUMMARY_SOFT_LIMIT}-char) `summary` → warn.
  */
 export function validateFrontmatter(fm: Record<string, unknown>, options: ValidateOptions = {}): string {
-  const profile = options.profile ?? defaultProfile();
+  const baseProfile = options.profile ?? defaultProfile();
+  const profile = options.bundleState === undefined ? baseProfile : profileForBundle(baseProfile, options.bundleState);
   const where = options.path ? ` in ${options.path}` : "";
   const type = requireType(fm, where, options.path);
 

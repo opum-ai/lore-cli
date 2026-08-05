@@ -74,6 +74,7 @@ export type CheckRule =
   | "status-drift"
   | "managed-block-drift"
   | "unsupported-task-coupling"
+  | "okf-version"
   | "unknown-type"
   | "portability"
   | "external-link";

@@ -59,11 +59,12 @@ import { type Dirent, readdirSync, readFileSync } from "node:fs";
 import { posix } from "node:path";
 import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
-import { deriveMessage, ioError, LoreError, type WarningCollector } from "../errors";
-import { type Concept, idFromPath, serializeConcept, tryParseConcept } from "./concept";
+import { deriveMessage, errnoCode, ioError, LoreError, type WarningCollector } from "../errors";
+import { type Concept, idFromPath, serializeConcept, tryParseConcept, tryReadFrontmatter } from "./concept";
 import { decodeTarget, isExternalTarget, pathPart } from "./links";
+import { type BundleState, type BundleStateResolution, CURRENT_OKF_VERSION, resolveBundleState } from "./okf-version";
 import { compareCodeUnits } from "./order";
-import { defaultProfile, type Profile } from "./profile";
+import { defaultProfile, type Profile, profileForBundle } from "./profile";
 import { RESERVED_STEMS } from "./scaffold";
 
 // Bun.gc(true) is synchronous. Large projection loads retain bounded cleanup
@@ -104,6 +105,8 @@ export interface Edge {
  * of what was loaded, not a mutable store (refactors recompute a fresh graph).
  */
 export interface BundleGraph {
+  /** Typed bundle-level OKF semantics resolved from the root index. */
+  readonly state: BundleState;
   /**
    * Every loaded concept, keyed by {@link Concept.id}, in ascending id order
    * (deterministic iteration). Excludes fence-less, non-concept markdown.
@@ -191,7 +194,8 @@ export interface LoadBundleOptions {
  *   a fenced concept is malformed.
  */
 export function loadBundle(root: string, options: LoadBundleOptions = {}): BundleGraph {
-  const profile = options.profile ?? defaultProfile();
+  const state = loadBundleState(root, options.warnings);
+  const profile = profileForBundle(options.profile ?? defaultProfile(), state);
   const concepts: Concept[] = [];
   for (const rel of walkMarkdown(root, options.warnings)) {
     // `rel` is bundle-root-relative, so tryParseConcept derives a bundle-relative id — and so is
@@ -199,6 +203,7 @@ export function loadBundle(root: string, options: LoadBundleOptions = {}): Bundl
     const concept = tryParseConcept(rel, readConcept(root, rel), {
       warnings: options.warnings,
       profile: effectiveProfileFor(rel, BUNDLE_ROOT_INDEX_PATH, profile),
+      bundleState: state,
     });
     if (concept === null) {
       // A known-reserved stem (index/log) skips silently — see the docstring above (LORE-258).
@@ -210,7 +215,7 @@ export function loadBundle(root: string, options: LoadBundleOptions = {}): Bundl
     concepts.push(concept);
     if (options.boundedMemory === true && concepts.length % BOUNDED_MEMORY_GC_CONCEPT_INTERVAL === 0) Bun.gc(true);
   }
-  return buildGraph(concepts);
+  return buildGraph(concepts, state);
 }
 
 /**
@@ -280,7 +285,10 @@ export function effectiveProfileFor(path: string, rootIndexPath: string, profile
  * @throws LoreError `conflict` if two concepts share an id (only reachable with
  *   hand-built input — a single {@link loadBundle} walk yields unique ids).
  */
-export function buildGraph(concepts: readonly Concept[]): BundleGraph {
+export function buildGraph(
+  concepts: readonly Concept[],
+  state: BundleState = { okfVersion: CURRENT_OKF_VERSION, source: "declared" },
+): BundleGraph {
   const byId = new Map<string, Concept>();
   for (const concept of [...concepts].sort((a, b) => compareCodeUnits(a.id, b.id))) {
     if (byId.has(concept.id)) {
@@ -302,10 +310,54 @@ export function buildGraph(concepts: readonly Concept[]): BundleGraph {
   }
 
   return {
+    state,
     concepts: byId,
     edges,
     tokenEstimate: makeTokenEstimate(byId),
   };
+}
+
+/**
+ * Read and negotiate the bundle-root `index.md` version without walking the whole bundle. Missing
+ * root/index/frontmatter is the explicit legacy path; malformed values fail validation, while
+ * warnings expose future best-effort consumption to callers that provide a collector.
+ */
+export function loadBundleState(root: string, warnings?: WarningCollector): BundleState {
+  let raw: string | undefined;
+  try {
+    raw = readFileSync(posix.join(root, BUNDLE_ROOT_INDEX_PATH), "utf8");
+  } catch (cause) {
+    const code = errnoCode(cause);
+    if (code !== "ENOENT" && code !== "ENOTDIR") {
+      readError(cause, `cannot read ${BUNDLE_ROOT_INDEX_PATH}`, { root, path: BUNDLE_ROOT_INDEX_PATH });
+    }
+  }
+  // Keep parse failures outside the filesystem catch: malformed YAML is a validation error from
+  // the concept boundary, never an I/O not_found/denied error.
+  const frontmatter = raw === undefined ? null : tryReadFrontmatter(BUNDLE_ROOT_INDEX_PATH, raw);
+  return requireUsableBundleState(resolveBundleState(frontmatter), warnings);
+}
+
+/** Convert negotiation diagnostics to lore's warning/error channels and return usable state. */
+function requireUsableBundleState(
+  resolution: BundleStateResolution,
+  warnings: WarningCollector | undefined,
+): BundleState {
+  for (const issue of resolution.issues) {
+    if (issue.severity === "warning") {
+      warnings?.add(issue.message);
+      continue;
+    }
+    throw new LoreError(
+      "validation",
+      issue.message,
+      "set bundle-root index.md okf_version to a quoted supported value",
+      {
+        path: BUNDLE_ROOT_INDEX_PATH,
+      },
+    );
+  }
+  return resolution.state;
 }
 
 // ── Filesystem walk ────────────────────────────────────────────────────────────

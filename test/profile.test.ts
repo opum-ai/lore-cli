@@ -50,9 +50,9 @@ describe("defaultProfile — the built-in story convention (AC#3)", () => {
     expect([...defaultProfile().types.keys()]).toEqual(["Epic", "Story", "Spec", "ADR", "Runbook", "Reference"]);
   });
 
-  test("carries okf_version 0.1, Title case, and an empty resource_base", () => {
+  test("carries okf_version 0.2, Title case, and an empty resource_base", () => {
     const p = defaultProfile();
-    expect(p.okfVersion).toBe("0.1");
+    expect(p.okfVersion).toBe("0.2");
     expect(p.case).toBe("Title");
     expect(p.resourceBase).toBe("");
     expect(p.name).toBe("story-convention");

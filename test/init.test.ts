@@ -131,7 +131,7 @@ describe("lore init — fresh bundle (AC#1)", () => {
     const indexRaw = readFileSync(join(root, "docs/index.md"), "utf8");
     const concept = parseConcept("docs/index.md", indexRaw);
     expect(concept.type).toBe("Reference");
-    expect(concept.frontmatter.okf_version).toBe("0.1");
+    expect(concept.frontmatter.okf_version).toBe("0.2");
     // No other emitted doc carries okf_version (reserved-root discipline).
     for (const path of [".lore/schemas/reference.schema.json", ".lore/config.toml"]) {
       expect(readFileSync(join(root, path), "utf8")).not.toContain("okf_version");
