@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:48'
-updated_date: '2026-08-05 18:12'
+updated_date: '2026-08-05 18:57'
 labels: []
 dependencies:
   - LCLI-314.2
@@ -30,6 +30,7 @@ modified_files:
   - src/core/validate.ts
   - test/check.test.ts
   - test/schema.test.ts
+  - docker/e2e/run-e2e.sh
 parent_task_id: LCLI-314
 priority: medium
 type: feature
@@ -67,6 +68,8 @@ Drive the doc changes through the `lore` CLI per this repo's own contract, not a
 2. Pin the §11 MUST-NOT-reject cases in focused tests, preserving broken links and other stricter Lore checks as explicitly Lore-specific quality/profile gates rather than OKF conformance failures.
 3. Rewrite docs/reference/okf-conformance.md around OKF 0.2 §11 while retaining the negotiated 0.1 position, and update stale source-header section cross-references. Author only outside Lore-managed regions.
 4. Run focused tests, lore sync, strict validation/check, typecheck, lint, the full suite, and diff hygiene; record exact evidence and adversarially review every acceptance criterion.
+
+5. Repair the protected Docker E2E harness for the delivered OKF 0.2 contracts: exercise task reconciliation through lore_task_status, keep --status coverage on lifecycle status, seed probes at version-neutral frontmatter anchors, and expect the seventh Attested Computation schema; rerun the harness and every required gate before protected merge.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -85,10 +88,14 @@ Adversarial self-review (no independent reviewer authorized) rechecked every acc
 Delivery hold: actual `lore sync` would write docs/log.md and commit dirty Backlog state. No local commit authority was granted, so the task intentionally remains In Progress with verified artifacts retained uncommitted; no push or remote action was taken.
 
 Local delivery completed with preliminary Backlog evidence commit 33f5a17ec5a6f14bcbd611213e57561f421d3cf4 and implementation commit 825e0b9. Post-commit verification: focused suite 401 pass/0 fail; typecheck pass; lint pass across 191 files; strict Lore validation 0 errors/0 warnings; strict Lore check 0 findings across 65 files; git diff --check pass. The previously recorded full suite remains 2524 pass, 1 skip, 0 fail because no source changed after that run. The earlier delivery hold is resolved; no push or remote action was taken.
+
+Protected delivery PR #327 exposed 17 Docker E2E failures in run 31035933982 while the other seven jobs passed. The failures trace to stale pre-0.2 harness assumptions and cascades: task rollups still mutate/assert status instead of lore_task_status; timestamp-anchored probe insertions no-op under 0.2 generated provenance; full-profile schema export still expects six schemas instead of seven. Reopened for CI repair; PR head is e972fe2ed65abb5160f29f2f8f5d684e7aed5b05.
+
+Protected-check repair verified 2026-08-05: the full local Docker E2E harness passed 343/343 with 0 failures after updating task-rollup drift/custom-flow assertions to lore_task_status, preserving lifecycle --status coverage from the real 0.2 bundle root, using version-neutral probe anchors, and covering all seven default schemas. Post-repair gates: bun test --dots 2524 pass, 1 skip, 0 fail; npm run lint passed across 191 files; npm run typecheck passed; lore validate --strict reported 0 errors/0 warnings; lore check --strict reported 0 findings across 65 files; bash -n and git diff --check passed. Adversarial self-review traced every original CI failure and both local rerun cascades to a corrected assertion or isolated probe; no product-code change or unresolved acceptance defect remains.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Closed OKF 0.2 conformance tiers by reserving lifecycle status under minimal custom profiles, adding complete field-family and section 11 tolerance regressions, and rewriting the conformance reference to distinguish the OKF floor from Lore-specific gates. Delivered locally in 825e0b9 after focused 401/401, full 2524 pass plus 1 skip, typecheck, lint, strict Lore validate/check, and diff checks passed.
+Closed OKF 0.2 conformance and repaired its protected Docker E2E coverage for version-selected task rollups, lifecycle status, generated provenance, and the seven-type schema set. Verified with 343/343 Docker E2E checks, 2524 passing unit tests plus 1 skip, lint, typecheck, strict Lore validation/checking, shell syntax, and diff hygiene.
 <!-- SECTION:FINAL_SUMMARY:END -->
