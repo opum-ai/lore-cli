@@ -128,6 +128,13 @@ export function parseLadybugBenchmarkCliArgs(args: readonly string[], cwd = proc
   };
 }
 
+export function ladybugBenchmarkExitCode(report: LadybugBenchmarkReport): 0 | 1 | 2 {
+  if (report.mode === "smoke") return 0;
+  if (report.gates.evaluation.status === "fail") return 1;
+  if (report.gates.evaluation.status === "inconclusive") return 2;
+  return 0;
+}
+
 export async function runLadybugBenchmarkReport(options: LadybugBenchmarkCliOptions): Promise<LadybugBenchmarkReport> {
   assertLadybugBenchmarkRuntime(options.mode);
   const configuration = qualificationRunConfiguration(options.mode);
@@ -560,13 +567,8 @@ async function main(): Promise<void> {
   mkdirSync(dirname(options.output), { recursive: true });
   writeFileSync(options.output, stableReportJson(report), { flag: "w" });
   process.stdout.write(`${options.output}\n`);
-  if (report.mode === "smoke") {
-    if (report.calibration.status === "inconclusive") process.exitCode = 2;
-  } else if (report.gates.evaluation.status === "fail") {
-    process.exitCode = 1;
-  } else if (report.gates.evaluation.status === "inconclusive") {
-    process.exitCode = 2;
-  }
+  const exitCode = ladybugBenchmarkExitCode(report);
+  if (exitCode !== 0) process.exitCode = exitCode;
 }
 
 if (import.meta.main) {

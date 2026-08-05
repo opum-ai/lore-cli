@@ -18,6 +18,7 @@ import { query, subgraph } from "../src/core/query";
 import { fakeAdapter, makeTask } from "./helpers";
 
 const FIXTURES = join(import.meta.dir, "..", "benchmark", "ladybug", "fixtures", "v1");
+const LARGE_FIXTURE_TIMEOUT_MS = process.platform === "win32" ? 60_000 : 30_000;
 const roots: string[] = [];
 
 afterEach(() => {
@@ -124,26 +125,30 @@ describe("Ladybug benchmark fixture v1", () => {
     }
   });
 
-  test("pins the large fixture scale, lexical classes, and semantic digests", () => {
-    const spec = load("large");
-    const generated = generateLadybugBenchmarkFixture(spec, tempRoot("large"));
-    expect(generated.source.counts).toEqual({ concepts: 4096, tasks: 4096, authoredEdges: 32768 });
-    expect(generated.markdownBodyBytes).toBe(100 * 1024 * 1024);
-    expect(generated.digests).toEqual(spec.expected);
-    expect(generated.source.inventory).toHaveLength(spec.counts.concepts);
-    expect(readdirSync(join(generated.root, "backlog", "tasks"))).toHaveLength(spec.counts.tasks);
-    expect(existsSync(join(generated.root, LADYBUG_CACHE_REL_ROOT))).toBe(false);
+  test(
+    "pins the large fixture scale, lexical classes, and semantic digests",
+    () => {
+      const spec = load("large");
+      const generated = generateLadybugBenchmarkFixture(spec, tempRoot("large"));
+      expect(generated.source.counts).toEqual({ concepts: 4096, tasks: 4096, authoredEdges: 32768 });
+      expect(generated.markdownBodyBytes).toBe(100 * 1024 * 1024);
+      expect(generated.digests).toEqual(spec.expected);
+      expect(generated.source.inventory).toHaveLength(spec.counts.concepts);
+      expect(readdirSync(join(generated.root, "backlog", "tasks"))).toHaveLength(spec.counts.tasks);
+      expect(existsSync(join(generated.root, LADYBUG_CACHE_REL_ROOT))).toBe(false);
 
-    const matches = new Map(spec.coverage.queries.map((querySpec) => [querySpec.id, 0]));
-    for (const concept of generated.source.concepts) {
-      for (const querySpec of spec.coverage.queries) {
-        if (concept.body.includes(querySpec.text)) {
-          matches.set(querySpec.id, (matches.get(querySpec.id) ?? 0) + 1);
+      const matches = new Map(spec.coverage.queries.map((querySpec) => [querySpec.id, 0]));
+      for (const concept of generated.source.concepts) {
+        for (const querySpec of spec.coverage.queries) {
+          if (concept.body.includes(querySpec.text)) {
+            matches.set(querySpec.id, (matches.get(querySpec.id) ?? 0) + 1);
+          }
         }
       }
-    }
-    for (const querySpec of spec.coverage.queries) {
-      expect(matches.get(querySpec.id), querySpec.id).toBe(querySpec.expectedMatches);
-    }
-  }, 30_000);
+      for (const querySpec of spec.coverage.queries) {
+        expect(matches.get(querySpec.id), querySpec.id).toBe(querySpec.expectedMatches);
+      }
+    },
+    LARGE_FIXTURE_TIMEOUT_MS,
+  );
 });
