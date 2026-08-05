@@ -3,7 +3,7 @@ id: doc-13
 title: Backlog campaign tracker — OKF 0.2 and generated-log portability
 type: other
 created_date: '2026-08-05 03:22'
-updated_date: '2026-08-05 15:44'
+updated_date: '2026-08-05 16:09'
 ---
 # Backlog campaign tracker — OKF 0.2 and generated-log portability
 
@@ -17,8 +17,8 @@ updated_date: '2026-08-05 15:44'
 ## Frontier
 Informational snapshot only; never a promised next wave.
 
-- Wave 5 LCLI-314.4 is Done and delivered locally in implementation commit `0b31a93`; preliminary Backlog evidence is `09a8fe2` and task settlement is `1a5f01e`.
-- LCLI-314.5 and LCLI-314.6 are dependency-ready but remain undispatched pending explicit authority.
+- Wave 6 LCLI-314.5 implementation and all six acceptance criteria are objectively verified locally; the task remains In Progress and undelivered because managed Lore synchronization and local commit delivery are not authorized.
+- LCLI-314.6 remains dependency-ready but undispatched.
 - Wave 1 is delivered locally in commit `596bacdfe1ccca8f6473fa39fd05f07b735cd270`; tracker reconciliation is `5e49fb69cd8d1128295118b0c6c20ec5cf77e366`.
 
 ## Queue
@@ -29,7 +29,7 @@ Informational snapshot only; never a promised next wave.
 | 3 | LCLI-314.2 | OKF generated provenance | LCLI-314.1 | Done; delivered locally | 3 | profile/template/schema/scaffold surfaces, conformance docs, tests | All 7 criteria complete; implementation `5ca160d`, task settlement `e79806c`. |
 | 4 | LCLI-314.3 | OKF sources | LCLI-314.1 | Done; delivered locally | 4 | profile/template/schema/link/check surfaces, tests, conformance reference | All 6 criteria complete; preliminary Backlog evidence `fe77c00`, implementation `7a97b13`, task settlement `611e681`. |
 | 5 | LCLI-314.4 | OKF trust and lifecycle | LCLI-314.1 | Done; delivered locally | 5 | profile/schema/config/reconcile surfaces, tests, ADR | All 7 criteria complete; preliminary Backlog evidence `09a8fe2`, implementation `0b31a93`, task settlement `1a5f01e`. |
-| 6 | LCLI-314.5 | Attested Computation | LCLI-314.1, LCLI-314.4 | Ready; undispatched | — | profile/schema/template/check surfaces, tests | Representation only; never execute bundle computation. |
+| 6 | LCLI-314.5 | Attested Computation | LCLI-314.1, LCLI-314.4 | In Progress; verified, undelivered | 6 | profile/schema/template/check surfaces, tests | All 6 criteria verified; 2522 pass, 1 skip, lint, typecheck, strict Lore checks, and diff check pass. Managed Lore sync and local commit delivery require user authority. |
 | 7 | LCLI-314.6 | OKF conformance closeout | LCLI-314.2, LCLI-314.3, LCLI-314.4 | Ready; undispatched | — | src/core/schema.ts, check surfaces, docs/reference/okf-conformance.md | Drive docs changes through lore and verify the repository bundle. |
 
 ## Resolved
@@ -49,6 +49,8 @@ Informational snapshot only; never a promised next wave.
 - Other terminal tasks: outside the new campaign inventory.
 
 ## Wave log
+- 2026-08-05 — wave 6 implementation and all six acceptance criteria for LCLI-314.5 were verified locally. OKF 0.2 Attested Computation profile, schema, scaffold, warning-tier computation-path checks, non-execution behavior, 0.1 compatibility, and custom-profile ownership are covered. Focused suites passed 724 tests; full suite passed 2522 tests with 1 skip and 0 failures; lint, typecheck, strict Lore validation/check, and `git diff --check` pass. Lore sync dry-run reports only `docs/log.md` would change. The task remains In Progress and artifacts are retained uncommitted because managed Lore synchronization and local commit delivery are not authorized and could sweep unrelated LCLI-317 through LCLI-319 files. No next wave or remote action was dispatched.
+- 2026-08-05 — restore grounding matched the active handover: `dev` is at `67a44b9a57a80c227f2bc87c9425730b3e1c50c6`, locally known origin/dev is 0 behind / 21 ahead, one primary worktree is registered, and only the preserved unrelated LCLI-317 through LCLI-319 task files are present with matching SHA-1 hashes. The explicit restore invocation authorized the next sequential wave, so LCLI-314.5 was dispatched as wave 6. No commit or remote action is authorized.
 - 2026-08-05 — the user authorized wave 5 local delivery and temporary isolation of unrelated LCLI-317, LCLI-318, and LCLI-319 files. Lore committed preliminary Backlog evidence as `09a8fe2`; the verified implementation and documentation were delivered as `0b31a93` (`feat: add OKF 0.2 trust and lifecycle`). Post-commit verification passed with 2508 tests, 1 skip, lint, typecheck, strict Lore validation/check, and diff checks. LCLI-314.4 is Done; task settlement is `1a5f01e`. LCLI-314.5 and LCLI-314.6 are dependency-ready but remain undispatched. No remote action was authorized.
 - 2026-08-05 — the user approved the LCLI-314.4 contract: keep OKF lifecycle status separate from Lore task progress, store the derived rollup as lore_task_status, preserve 0.1 behavior, validate verification actors, and warn when stale_after has elapsed. Dispatched LCLI-314.4 as sequential wave 5; no commit or remote delivery action is authorized.
 - 2026-08-04 — initialized doc-13 from live Backlog and git state. The user removed the entire LCLI-315 initiative from the proposed scope. Seven tasks were queued in a confirmed sequential order; no wave or implementation started. The checkout was dev at aedf64ae10ba83401d7bc49ab8584337222a3ed1, synchronized with origin/dev, with the new tracker and LCLI-316 task file untracked.
