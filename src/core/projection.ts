@@ -9,8 +9,9 @@
 import { createHash } from "node:crypto";
 import type { BacklogTask } from "../adapters/backlog";
 import type { BundleGraph, EdgeKind } from "./bundle";
-import { toRefList } from "./bundle";
+import { effectiveProfileFor, toRefList } from "./bundle";
 import { serializeConcept } from "./concept";
+import { defaultProfile, type Profile } from "./profile";
 
 export const PROJECTION_SCHEMA_VERSION = "1.0";
 export const PROJECTION_NORMALIZATION_VERSION = "1";
@@ -24,6 +25,8 @@ export interface ProjectionInput {
   readonly exporterVersion: string;
   readonly gitCommit: string | null;
   readonly generatedAt: string | null;
+  /** Active producer profile, used only for canonical concept serialization. */
+  readonly profile?: Profile;
   /** Internal large-snapshot optimization; public export callers keep the default `true`. */
   readonly materializeJsonl?: boolean;
 }
@@ -37,6 +40,7 @@ export interface Projection {
 
 /** Build the complete projection in deterministic record order. */
 export function buildProjection(input: ProjectionInput): Projection {
+  const profile = input.profile ?? defaultProfile();
   const root = input.graph.concepts.get("index");
   const identitySeed = JSON.stringify({
     docsRoot: input.docsRoot,
@@ -71,7 +75,10 @@ export function buildProjection(input: ProjectionInput): Projection {
   const records: ProjectionRecord[] = [manifest];
 
   for (const concept of input.graph.concepts.values()) {
-    const canonical = serializeConcept(concept);
+    const canonical = serializeConcept(concept, {
+      profile: effectiveProfileFor(concept.path, "index.md", profile),
+      bundleState: input.graph.state,
+    });
     records.push({
       record: "concept",
       key: conceptKeys.get(concept.id),

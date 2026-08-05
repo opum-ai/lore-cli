@@ -38,10 +38,10 @@ export type TaskResolution =
 
 /** One concept's resolved reconciliation: its recomputed status and live managed-block rows. */
 export interface ReconcileTarget {
-  /** The concept as loaded (unmodified) — its `frontmatter.status` is the pre-reconciliation value. */
+  /** The concept as loaded (unmodified) — its version-selected task rollup field is unchanged. */
   readonly concept: Concept;
-  /** The rolled-up status (`core/reconcile.ts`), or `null` when the concept explicitly links no tasks. */
-  readonly newStatus: ReconciledStatus | null;
+  /** The rolled-up task progress (`core/reconcile.ts`), or `null` when the concept explicitly links no tasks. */
+  readonly newTaskStatus: ReconciledStatus | null;
   /** The linked tasks' live data, in the concept's own `tasks:` order, ready for `regenerateTaskBlock`. */
   readonly rows: ManagedTaskRow[];
 }
@@ -170,7 +170,7 @@ export async function gatherReconciliation(
 
   const eligible = targets.filter(({ linked }) => linked.length > 0);
   if (eligible.length === 0) {
-    return targets.map(({ concept }) => ({ concept, newStatus: null, rows: [] }));
+    return targets.map(({ concept }) => ({ concept, newTaskStatus: null, rows: [] }));
   }
 
   if (configOverride === undefined && configErrorOverride !== undefined) {
@@ -185,10 +185,10 @@ export async function gatherReconciliation(
 
   return targets.map(({ concept, linked }) => {
     if (linked.length === 0) {
-      return { concept, newStatus: null, rows: [] };
+      return { concept, newTaskStatus: null, rows: [] };
     }
     const detailList = linked.map((id) => details.get(id.toLowerCase()) as BacklogTaskDetail);
-    const newStatus = reconcileStatus(
+    const newTaskStatus = reconcileStatus(
       detailList.map((d) => d.status),
       flow,
       overrides,
@@ -199,7 +199,7 @@ export async function gatherReconciliation(
       status: d.status,
       file: d.file,
     }));
-    return { concept, newStatus, rows };
+    return { concept, newTaskStatus, rows };
   });
 }
 

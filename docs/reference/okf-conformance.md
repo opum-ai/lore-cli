@@ -89,6 +89,22 @@ lore does not delete or migrate them implicitly. Under OKF 0.1, `sources` and
 `usage_window` keep their prior unknown-extension treatment and do not enter
 the graph or the source-check pass.
 
+### Trust, lifecycle, task progress, and staleness
+
+OKF 0.2 lifecycle and Lore delivery progress are deliberately separate (see [ADR-0019](../adr/0019-separate-okf-lifecycle-from-lore-task-progress.md)):
+
+| Concern | OKF 0.1 | OKF 0.2 |
+|---|---|---|
+| Knowledge lifecycle | No closed Lore interpretation | `status`: `draft`, `stable`, or `deprecated`; absent means stable |
+| Linked-task progress | `status`: `todo`, `in-progress`, or `done` | `lore_task_status`: `todo`, `in-progress`, or `done` |
+| Superseded concept | `status: superseded` plus `superseded_by` | `status: deprecated` plus `superseded_by` |
+
+`lore sync` and `lore check` select the task-progress field from the negotiated bundle version. They never map lifecycle to task progress or task progress to lifecycle.
+
+OKF 0.2 `verified` may be one event or a list of events. Each event requires `by` and `at`. Lore validates the actor convention and ISO-8601 time but does not authenticate identity or certify that a review occurred. Actor-valued fields use one of `producer/version`, `human:<id>`, or `process:<id>` consistently across `generated.by`, `sources[].author`, and `verified[].by`.
+
+`stale_after` is a `YYYY-MM-DD` review boundary. `lore check` warns when the current UTC date is equal to or later than that date. The warning is advisory by default and fails only under `--strict`; it does not alter `status`, `lore_task_status`, or `verified`.
+
 ## What OKF v0.1 actually requires
 
 OKF is intentionally minimal. A bundle is a directory tree of Markdown files,

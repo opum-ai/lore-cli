@@ -366,6 +366,33 @@ sources:
     expect(report.findings.some((finding) => finding.rule === "broken-source")).toBe(false);
   });
 
+  test("OKF 0.2 stale_after warns on the boundary and afterward, but not before", () => {
+    const lifecycle: CheckInputFile = {
+      path: "reference/lifecycle.md",
+      raw: "---\ntype: Reference\nstatus: stable\nstale_after: 2026-08-05\n---\n\n# Lifecycle\n",
+    };
+    expect(checkBundle([lifecycle], undefined, { today: "2026-08-04" }).warningCount).toBe(0);
+    for (const today of ["2026-08-05", "2026-08-06"]) {
+      const report = checkBundle([lifecycle], undefined, { today });
+      expect(report).toMatchObject({ errorCount: 0, warningCount: 1 });
+      expect(report.findings[0]).toEqual({
+        severity: "warning",
+        rule: "stale-after",
+        file: "reference/lifecycle.md",
+        message: `content is stale: stale_after 2026-08-05 has elapsed as of ${today}`,
+      });
+    }
+  });
+
+  test("OKF 0.1 never interprets stale_after", () => {
+    const lifecycle: CheckInputFile = {
+      path: "reference/lifecycle.md",
+      raw: "---\ntype: Reference\nstale_after: 2020-01-01\n---\n\n# Lifecycle\n",
+    };
+    const report = checkBundle([lifecycle], { okfVersion: "0.1", source: "declared" }, { today: "2026-08-05" });
+    expect(report.findings.some((finding) => finding.rule === "stale-after")).toBe(false);
+  });
+
   test("resolves a forward reference (target walked after the linking file)", () => {
     const a: CheckInputFile = { path: "a.md", raw: ref("A", "See [b](b.md).") };
     const b: CheckInputFile = { path: "b.md", raw: ref("B", "Body.") };
@@ -877,6 +904,23 @@ describe("runCheck — exit codes and discovery", () => {
   test("portability warnings alone do not fail the gate (exit 0)", () => {
     writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "A [[wikilink]] only."));
     expect(runCheck(opts([]))).toBe(EXIT_OK);
+  });
+
+  test("elapsed stale_after is advisory normally and gates only under --strict", () => {
+    writeFileSync(join(root, "docs", "index.md"), '---\ntype: Reference\nokf_version: "0.2"\n---\n# Docs\n');
+    writeFileSync(
+      join(root, "docs", "reference", "lifecycle.md"),
+      "---\ntype: Reference\nstatus: stable\nstale_after: 2026-08-05\n---\n\n# Lifecycle\n",
+    );
+    const clock = () => new Date("2026-08-05T23:59:59Z");
+
+    const ordinary = { ...opts([], JSON_CTX), clock };
+    expect(runCheck(ordinary)).toBe(EXIT_OK);
+    const report = JSON.parse((ordinary.stdout as ReturnType<typeof capture>).text());
+    expect(report.data).toMatchObject({ errorCount: 0, warningCount: 1 });
+    expect(report.data.findings[0].rule).toBe("stale-after");
+
+    expect(runCheck({ ...opts(["--strict"]), clock })).toBe(EXIT_CODES.validation);
   });
 
   test("--strict promotes a portability warning to exit 6", () => {
@@ -1599,14 +1643,15 @@ describe("driftFindingsForBundle — docPath agrees with the fixable/isDocsRoot 
   });
 });
 
-describe("reconcileDriftFindings — newStatus: null checks only managed-block drift", () => {
+describe("reconcileDriftFindings — newTaskStatus: null checks only managed-block drift", () => {
   test("reports a stale zero-task block without inventing status drift", () => {
     const original = storyDoc("X", [], "todo");
 
     const findings = reconcileDriftFindings({
       path: "stories/x.md",
-      currentStatus: "todo",
-      newStatus: null,
+      taskStatusField: "status",
+      currentTaskStatus: "todo",
+      newTaskStatus: null,
       original,
       rows: [],
       docPath: "docs/stories/x.md",
@@ -1660,6 +1705,35 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
 
     const code = await runCheck(opts([], adapter));
     expect(code).toBe(EXIT_OK);
+  });
+
+  test("OKF 0.2 checks task drift against lore_task_status while preserving lifecycle status", async () => {
+    writeFileSync(join(root, "docs", "index.md"), '---\ntype: Reference\nokf_version: "0.2"\n---\n# Docs\n');
+    const raw =
+      "---\ntype: Story\ntitle: X\nstatus: stable\nlore_task_status: done\ntasks:\n  - lore-1\n---\n# X\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n";
+    writeDoc("stories/x.md", regenerateTaskBlock(raw, [doneRow], { docPath: "docs/stories/x.md" }));
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const o = opts([], adapter);
+    expect(await runCheck(o)).toBe(EXIT_OK);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(parsed.data.findings).toEqual([]);
+  });
+
+  test("OKF 0.2 reports lore_task_status drift without comparing lifecycle status", async () => {
+    writeFileSync(join(root, "docs", "index.md"), '---\ntype: Reference\nokf_version: "0.2"\n---\n# Docs\n');
+    const raw =
+      "---\ntype: Story\ntitle: X\nstatus: deprecated\nlore_task_status: todo\ntasks:\n  - lore-1\n---\n# X\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n";
+    writeDoc("stories/x.md", regenerateTaskBlock(raw, [doneRow], { docPath: "docs/stories/x.md" }));
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const o = opts([], adapter);
+    expect(await runCheck(o)).toBe(EXIT_CODES.validation);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    const drift = parsed.data.findings.find((finding: { rule: string }) => finding.rule === "status-drift");
+    expect(drift.message).toContain('lore_task_status is "todo"');
+    expect(drift.message).toContain('recompute to "done"');
+    expect(drift.message).not.toContain("deprecated");
   });
 
   test("a stale persisted status is a status-drift error (exit 6)", async () => {

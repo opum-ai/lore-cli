@@ -15,9 +15,10 @@
  * (bad flag) or an *I/O* failure (an unreadable path) throws, funneling through the router's
  * one error seam like every command.
  *
- * Scope: this ships all four ADR-0007 passes. Internal link/anchor validation and the portability
- * lint (now including MDX-hazard and filename-portability findings, LORE-48) are deterministic and
- * dependency-free. Status reconciliation and managed-block drift (LORE-27) reuse the exact pure
+ * Scope: internal link/anchor validation, portability lint, and OKF 0.2 `stale_after` evaluation
+ * (now including MDX-hazard and filename-portability findings, LORE-48) are deterministic once the
+ * command layer supplies today's UTC date. Task-progress reconciliation and managed-block drift
+ * (LORE-27) reuse the exact pure
  * engines `lore sync` writes with ({@link reconcileStatus}, {@link regenerateTaskBlock}, via the
  * `commands/reconcile-shared.ts` gather shared with `sync`) but only diff against disk — this
  * command never writes. Both are **errors**, always gating (unlike the warn-only portability lint).
@@ -45,7 +46,7 @@ import {
   tallySeverity,
 } from "../core/check";
 import { type Concept, parseConcept, tryReadFrontmatter } from "../core/concept";
-import { type BundleState, type BundleVersionIssue, resolveBundleState } from "../core/okf-version";
+import { type BundleState, type BundleVersionIssue, resolveBundleState, taskRollupFieldFor } from "../core/okf-version";
 import { loadProfile, type Profile, profileForBundle, profileTypeDeclaresField } from "../core/profile";
 import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
 import { canonicalType } from "../core/schema";
@@ -114,6 +115,8 @@ export interface CheckOptions {
   resolveHost?: ResolveHost;
   /** The Backlog adapter for status/managed-block reconciliation; defaults to the real `backlog` binary on PATH. Only constructed when at least one discovered concept links a task. */
   adapter?: BacklogAdapter;
+  /** Clock for the OKF stale_after check; defaults to the wall clock and is injected in tests. */
+  clock?: () => Date;
 }
 
 /** The parsed form of `lore check`'s arguments. */
@@ -133,7 +136,7 @@ interface CheckArgs {
  * A bad flag throws a `usage` {@link LoreError} (exit `2`); an unreadable bundle
  * root a `not_found`/`denied`.
  *
- * **Return type.** The deterministic gate is synchronous: when nothing discovered links a Backlog
+ * **Return type.** The local gate is synchronous: when nothing discovered links a Backlog
  * task and `--external` is absent, `runCheck` returns a `number` directly (the contract every
  * existing caller and test relies on). Otherwise it returns a `Promise<number>` — the same gate
  * exit code, resolved only after status/managed-block reconciliation (LORE-27) and/or the
@@ -155,6 +158,7 @@ interface CheckArgs {
  */
 export function runCheck(options: CheckOptions): number | Promise<number> {
   const parsed = parseCheckArgs(options.args);
+  const today = (options.clock ?? (() => new Date()))().toISOString().slice(0, 10);
   // Loaded once, up front — mirrors `context.ts`/`graph.ts`'s own LORE-84 precedent of failing
   // loud on a malformed profile before any other work runs. `collectBundles`'s file discovery
   // below is a single repo (`options.root`) with possibly several bundle DIRECTORIES within it
@@ -189,7 +193,7 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
     advisories.flush({ color: options.output.color, stderr: options.stderr });
   }
 
-  const linkReport = checkBundles(bundles);
+  const linkReport = checkBundles(bundles, today);
 
   // Reuse the SAME already-read files (no second directory walk, no second read) to classify unknown
   // active-profile types and find `tasks:`-linked concepts per bundle root, so strict validation
@@ -588,14 +592,16 @@ export async function driftFindingsForBundle(
   const normalizedLabel = normalizeBundleLabel(bundle.label);
   const findings: CheckFinding[] = [];
   let error: unknown | null = null;
-  for (const { concept, newStatus, rows } of targets) {
+  const taskStatusField = taskRollupFieldFor(bundle.state.okfVersion);
+  for (const { concept, newTaskStatus, rows } of targets) {
     const docPath = `${normalizedLabel}/${concept.path}`;
     const original = rawByPath.get(concept.path) as string;
     try {
       const drift = reconcileDriftFindings({
         path: concept.path,
-        currentStatus: concept.frontmatter.status,
-        newStatus,
+        taskStatusField,
+        currentTaskStatus: concept.frontmatter[taskStatusField],
+        newTaskStatus,
         original,
         rows,
         docPath,
@@ -739,12 +745,12 @@ function collectBundles(root: string, paths: readonly string[], warnings: Warnin
  * is prefixed with its bundle label so two roots' same-named files stay distinguishable; a single
  * bundle's findings keep the plain bundle-relative path.
  */
-function checkBundles(bundles: readonly Bundle[]): CheckReport {
+function checkBundles(bundles: readonly Bundle[], today: string): CheckReport {
   const multi = bundles.length > 1;
   const findings: CheckFinding[] = [];
   let fileCount = 0;
   for (const bundle of bundles) {
-    const report = checkBundle(bundle.files, bundle.state);
+    const report = checkBundle(bundle.files, bundle.state, { today });
     fileCount += report.fileCount;
     const versionFindings: CheckFinding[] = bundle.versionIssues.map((issue) => ({
       severity: issue.severity,

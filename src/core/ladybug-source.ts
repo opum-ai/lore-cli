@@ -205,6 +205,7 @@ export async function loadLadybugProjectionSource(
       exporterVersion: VERSION,
       gitCommit,
       generatedAt: null,
+      profile,
       materializeJsonl: false,
     });
     const finalInventory = readSourceInventory(options.root);

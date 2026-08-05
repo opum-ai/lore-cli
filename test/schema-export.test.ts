@@ -94,6 +94,18 @@ describe("lore schema export — default (story-convention) profile", () => {
     expect(schema.required).toEqual(["type"]);
   });
 
+  test("OKF 0.2 editor schemas keep lifecycle, task progress, staleness, and verification distinct", () => {
+    exportSchemas(["export"]);
+    const schema = JSON.parse(readFileSync(join(root, ".lore/schemas/story.schema.json"), "utf8")) as {
+      properties: Record<string, Record<string, unknown>>;
+    };
+
+    expect(schema.properties.status?.enum).toEqual(["draft", "stable", "deprecated"]);
+    expect(schema.properties.lore_task_status?.enum).toEqual(["todo", "in-progress", "done"]);
+    expect(schema.properties.stale_after?.format).toBe("date");
+    expect(schema.properties.verified?.anyOf).toHaveLength(2);
+  });
+
   test("the byte contract is two-space pretty JSON with a single trailing newline", () => {
     exportSchemas(["export"]);
     const raw = readFileSync(join(root, ".lore/schemas/reference.schema.json"), "utf8");

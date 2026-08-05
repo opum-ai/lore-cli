@@ -589,6 +589,19 @@ describe("validate (command)", () => {
     expect(report.files[0]?.findings[0]?.message).toContain("resource");
   });
 
+  test("malformed OKF 0.2 verification actors return exit 6", () => {
+    mkdirSync(join(root, "docs/reference"), { recursive: true });
+    writeFileSync(
+      join(root, "docs/reference/bad-verifier.md"),
+      "---\ntype: Reference\nsummary: Bad verifier.\nverified: { by: alice, at: 2026-06-25T09:00:00Z }\n---\n# Bad verifier\n",
+    );
+    const { code, report } = validateCmd(["docs/reference/bad-verifier.md"]);
+    expect(code).toBe(EXIT_CODES.validation);
+    expect(report.errorCount).toBe(1);
+    expect(report.files[0]?.findings[0]?.message).toContain("verification evidence");
+    expect(report.files[0]?.findings[0]?.message).toContain("human:<id>");
+  });
+
   test("a fresh `lore new` of every known type validates clean (LORE-18 × LORE-19)", () => {
     for (const type of KNOWN_TYPES) {
       runNew({ root, output: JSON_CTX, args: [type, `A ${type} title`], clock: FIXED_CLOCK, stdout: capture() });

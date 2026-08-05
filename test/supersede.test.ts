@@ -6,11 +6,15 @@ import { run } from "../src/cli";
 import { runSupersede, type SupersedeReport } from "../src/commands/supersede";
 import { loadBundle } from "../src/core/bundle";
 import { parseConcept, serializeConcept } from "../src/core/concept";
+import type { BundleState } from "../src/core/okf-version";
+import { defaultProfile, profileForBundle } from "../src/core/profile";
 import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
+const LEGACY_BUNDLE_STATE: BundleState = { okfVersion: "0.1", source: "legacy-missing" };
+const LEGACY_PROFILE = profileForBundle(defaultProfile(), LEGACY_BUNDLE_STATE);
 
 let root: string;
 
@@ -32,6 +36,11 @@ function writeDoc(rel: string, contents: string): void {
 /** Read a bundle file under `docs/`. */
 function readDoc(rel: string): string {
   return readFileSync(join(root, "docs", rel), "utf8");
+}
+
+/** Parse bytes emitted for an unstamped bundle under the legacy OKF 0.1 contract. */
+function parseLegacyDoc(rel: string) {
+  return parseConcept(rel, readDoc(rel), { bundleState: LEGACY_BUNDLE_STATE });
 }
 
 /** Run `supersede` in JSON mode and return the parsed `data` payload, the exit code, and any stderr text. */
@@ -67,10 +76,10 @@ describe("lore supersede — frontmatter wiring (AC#1)", () => {
     expect(report.old).toBe("docs/adr/0007-old.md");
     expect(report.new).toBe("docs/adr/0012-new.md");
 
-    const old = parseConcept("adr/0007-old.md", readDoc("adr/0007-old.md"));
+    const old = parseLegacyDoc("adr/0007-old.md");
     expect(old.frontmatter.status).toBe("superseded");
     expect(old.frontmatter.superseded_by).toBe("adr/0012-new");
-    const fresh = parseConcept("adr/0012-new.md", readDoc("adr/0012-new.md"));
+    const fresh = parseLegacyDoc("adr/0012-new.md");
     expect(fresh.frontmatter.supersedes).toBe("adr/0007-old");
   });
 
@@ -95,7 +104,9 @@ describe("lore supersede — frontmatter wiring (AC#1)", () => {
     supersedeCmd(["adr/0007-old", "adr/0012-new"]);
     for (const rel of ["adr/0007-old.md", "adr/0012-new.md"]) {
       const bytes = readDoc(rel);
-      expect(serializeConcept(parseConcept(rel, bytes))).toBe(bytes);
+      expect(
+        serializeConcept(parseConcept(rel, bytes, { bundleState: LEGACY_BUNDLE_STATE }), { profile: LEGACY_PROFILE }),
+      ).toBe(bytes);
     }
   });
 });
@@ -108,7 +119,7 @@ describe("lore supersede — supersedes append (don't clobber)", () => {
     writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
     writeDoc("adr/0012-new.md", "---\ntype: ADR\nsupersedes: adr/0001-a\n---\nNew.\n");
     supersedeCmd(["adr/0007-old", "adr/0012-new"]);
-    const fresh = parseConcept("adr/0012-new.md", readDoc("adr/0012-new.md"));
+    const fresh = parseLegacyDoc("adr/0012-new.md");
     expect(fresh.frontmatter.supersedes).toEqual(["adr/0001-a", "adr/0007-old"]);
   });
 
@@ -117,7 +128,7 @@ describe("lore supersede — supersedes append (don't clobber)", () => {
     writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
     writeDoc("adr/0012-new.md", "---\ntype: ADR\nsupersedes:\n  - adr/0001-a\n---\nNew.\n");
     supersedeCmd(["adr/0007-old", "adr/0012-new"]);
-    const fresh = parseConcept("adr/0012-new.md", readDoc("adr/0012-new.md"));
+    const fresh = parseLegacyDoc("adr/0012-new.md");
     expect(fresh.frontmatter.supersedes).toEqual(["adr/0001-a", "adr/0007-old"]);
   });
 
@@ -384,13 +395,28 @@ describe("lore supersede — errors and arg parsing", () => {
     writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
     const { code } = supersedeCmd(["--", "adr/0007-old", "adr/0012-new"]);
     expect(code).toBe(EXIT_OK);
-    expect(parseConcept("adr/0007-old.md", readDoc("adr/0007-old.md")).frontmatter.status).toBe("superseded");
+    expect(parseLegacyDoc("adr/0007-old.md").frontmatter.status).toBe("superseded");
   });
 });
 
 // ── active-profile validation on write ─────────────────────────────────────────
 
 describe("lore supersede — active profile", () => {
+  test("OKF 0.2 deprecates the old concept without using task-progress status", () => {
+    writeDoc("index.md", '---\ntype: Reference\nokf_version: "0.2"\n---\n# Documentation\n');
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: stable\nlore_task_status: done\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\nstatus: stable\n---\nNew.\n");
+
+    const { code } = supersedeCmd(["adr/0007-old", "adr/0012-new"]);
+    expect(code).toBe(EXIT_OK);
+
+    const state: BundleState = { okfVersion: "0.2", source: "declared" };
+    const old = parseConcept("adr/0007-old.md", readDoc("adr/0007-old.md"), { bundleState: state });
+    expect(old.frontmatter.status).toBe("deprecated");
+    expect(old.frontmatter.lore_task_status).toBe("done");
+    expect(old.frontmatter.superseded_by).toBe("adr/0012-new");
+  });
+
   test("validates the written `status` against the project profile, failing fast on a custom enum", () => {
     // a profile whose `status` enum forbids "superseded": writing it must fail here, not slip through
     // to break the next `lore validate` / CI.
@@ -487,7 +513,7 @@ describe("lore supersede — router integration", () => {
       stderr: capture(),
     });
     expect(code).toBe(EXIT_OK);
-    expect(parseConcept("adr/0007-old.md", readDoc("adr/0007-old.md")).frontmatter.status).toBe("superseded");
+    expect(parseLegacyDoc("adr/0007-old.md").frontmatter.status).toBe("superseded");
   });
 
   test("a not_found surfaces exit 3 through the router", () => {

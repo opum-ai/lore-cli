@@ -3,8 +3,9 @@
  *
  * The **write** counterpart to `lore check`. For every concept linking Backlog tasks via its
  * `tasks:` frontmatter: resolves each linked task's live status (`BacklogAdapter.viewTask`),
- * recomputes the concept's `status` (`core/reconcile.ts`, honoring `[reconcile.overrides]`) and
- * rewrites it when it changed, and regenerates the `<!-- lore:tasks -->` managed region
+ * recomputes the concept's task rollup (`core/reconcile.ts`, honoring `[reconcile.overrides]`) and
+ * rewrites the version-selected field (`status` for OKF 0.1, `lore_task_status` for 0.2) when it
+ * changed, and regenerates the `<!-- lore:tasks -->` managed region
  * (`core/managed-block.ts`) from the same live data. Then — unless `--no-index` — regenerates every
  * bundle `index.md` (`core/indexes.ts`) and the git-history-derived `log.md` (`core/log.ts`, via the
  * real `git log`-shelling adapter in `adapters/git.ts`). Every write is a byte-diff against the
@@ -53,7 +54,8 @@ import { type Concept, idFromPath, parseConcept, serializeConcept } from "../cor
 import { generateIndexes, orphanedIndexPaths } from "../core/indexes";
 import { buildLog, type GitAdapter, generateLog } from "../core/log";
 import { regenerateTaskBlock } from "../core/managed-block";
-import { loadProfile, type Profile } from "../core/profile";
+import { taskRollupFieldFor } from "../core/okf-version";
+import { loadProfile, type Profile, profileForBundle } from "../core/profile";
 import { type ReconciledStatus, validateReconcileInputs } from "../core/reconcile";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, readFileIfPresent, WarningCollector, type Writer } from "../errors";
@@ -177,7 +179,9 @@ export async function runSync(options: SyncOptions): Promise<number> {
   // so a mid-run rollback (LORE-120) always restores exactly what was actually on disk before this
   // run touched it, not a re-read that could itself race against a concurrent edit.
   const writes = new Map<string, { before: string | undefined; after: string }>();
-  for (const { concept, newStatus, rows } of targets) {
+  const taskStatusField = taskRollupFieldFor(graph.state.okfVersion);
+  const bundleProfile = profileForBundle(profile, graph.state);
+  for (const { concept, newTaskStatus, rows } of targets) {
     const docPath = `${DOCS_DIR}/${concept.path}`;
     const original = readSource(join(docsRoot, concept.path), docPath);
     // Derived from the FRESHLY re-read `original` bytes, not the stale in-memory `concept` object
@@ -186,8 +190,8 @@ export async function runSync(options: SyncOptions): Promise<number> {
     // status-changing sync write, not be silently discarded in favor of a pre-round-trip snapshot
     // (LORE-119).
     const base =
-      newStatus !== null && newStatus !== concept.frontmatter.status
-        ? withUpdatedStatus(concept.path, original, newStatus, profile)
+      newTaskStatus !== null && newTaskStatus !== concept.frontmatter[taskStatusField]
+        ? withUpdatedTaskStatus(concept.path, original, taskStatusField, newTaskStatus, bundleProfile)
         : original;
 
     const final = regenerateTaskBlock(base, rows, { docPath });
@@ -241,16 +245,22 @@ export async function runSync(options: SyncOptions): Promise<number> {
 
 /**
  * Re-parse `raw` — the freshly re-read on-disk bytes for the concept at `path` — and re-serialize it
- * with `status` applied to its frontmatter. Every other frontmatter key and the body come straight
+ * with the version-selected task-rollup field applied to its frontmatter. Every other frontmatter key and the body come straight
  * from `raw` itself, never from an earlier in-memory snapshot, so a concurrent on-disk edit made to
  * the doc between the initial bundle load and this status-changing write survives it (LORE-119). Only
- * `status` is overwritten — sync's `newStatus` is always the authoritative, live-reconciled value, so
- * a concurrent edit to `status` itself (were one to land) is still resolved to what Backlog reports,
- * exactly as an uncontended sync would resolve it.
+ * that one task-rollup field is overwritten — lifecycle `status` in an OKF 0.2 bundle is never
+ * touched. A concurrent edit to the selected rollup field is still resolved to what Backlog reports,
+ * exactly as an uncontended sync would resolve it; no lifecycle/task-progress conversion exists.
  */
-function withUpdatedStatus(path: string, raw: string, status: ReconciledStatus, profile: Profile): string {
+function withUpdatedTaskStatus(
+  path: string,
+  raw: string,
+  field: "status" | "lore_task_status",
+  status: ReconciledStatus,
+  profile: Profile,
+): string {
   const fresh = parseConcept(path, raw, { profile });
-  return serializeConcept({ ...fresh, frontmatter: { ...fresh.frontmatter, status } }, { profile });
+  return serializeConcept({ ...fresh, frontmatter: { ...fresh.frontmatter, [field]: status } }, { profile });
 }
 
 // ── Index + log regeneration ────────────────────────────────────────────────────

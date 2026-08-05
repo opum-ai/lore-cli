@@ -77,7 +77,7 @@ import type { Document, DumpOptions, LoadOptions, Node } from "js-yaml";
 import * as yaml from "js-yaml";
 import { deriveMessage, LoreError, singleLine, type WarningCollector } from "../errors";
 import type { BundleState } from "./okf-version";
-import { defaultProfile, type Profile } from "./profile";
+import { defaultProfile, type Profile, profileForBundle } from "./profile";
 import { validateFrontmatter } from "./schema";
 
 /**
@@ -381,8 +381,9 @@ function conceptFromSplit(path: string, split: PresentSplit, options: ParseConce
  * exact write/read symmetry, not a weaker non-empty-`type` floor.
  */
 export function serializeConcept(concept: Concept, options: SerializeConceptOptions = {}): string {
-  const profile = options.profile ?? defaultProfile();
-  validateFrontmatter(concept.frontmatter, { path: concept.path, profile });
+  const baseProfile = options.profile ?? defaultProfile();
+  const profile = options.bundleState === undefined ? baseProfile : profileForBundle(baseProfile, options.bundleState);
+  validateFrontmatter(concept.frontmatter, { path: concept.path, profile, bundleState: options.bundleState });
   const ordered = canonicalize(concept.frontmatter, profile.canonicalKeyOrder);
   return `${FENCE}${yaml.dump(ordered, YAML_DUMP_OPTIONS)}${FENCE}${concept.body}`;
 }
@@ -395,6 +396,8 @@ export interface SerializeConceptOptions {
    * {@link defaultProfile}, so a caller that does not opt into a custom profile is unaffected.
    */
   profile?: Profile;
+  /** Negotiated consumed-bundle semantics; keeps legacy writes and read-only re-serialization on 0.1. */
+  bundleState?: BundleState;
 }
 
 /**

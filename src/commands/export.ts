@@ -43,6 +43,7 @@ export async function runExport(options: ExportOptions): Promise<number> {
     gitCommit,
     generatedAt:
       options.generatedAt !== undefined ? options.generatedAt : sourceDateEpoch(process.env.SOURCE_DATE_EPOCH),
+    profile,
   });
   if (options.output.mode === "json") {
     const data = { projectionSchemaVersion: schemaVersion, records: projection.records };

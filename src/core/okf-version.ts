@@ -34,6 +34,18 @@ export interface BundleState {
   readonly declaredVersion?: string;
 }
 
+/** The frontmatter key that carries Lore's derived Backlog task-progress rollup. */
+export type TaskRollupField = "status" | "lore_task_status";
+
+/**
+ * Select the task-progress field without ever translating its value into OKF lifecycle state.
+ * OKF 0.1 predates the collision and keeps Lore's historical `status` contract; OKF 0.2 reserves
+ * `status` for `draft | stable | deprecated`, so the derived rollup moves to a Lore-owned key.
+ */
+export function taskRollupFieldFor(version: OkfVersion): TaskRollupField {
+  return version === "0.2" ? "lore_task_status" : "status";
+}
+
 /** A deterministic diagnostic produced while negotiating a consumed bundle. */
 export interface BundleVersionIssue {
   readonly severity: "error" | "warning";

@@ -76,7 +76,7 @@ describe("gatherReconciliation", () => {
 
     const result = await gatherReconciliation(root, [doc], poison);
 
-    expect(result).toEqual([{ concept: doc, newStatus: null, rows: [] }]);
+    expect(result).toEqual([{ concept: doc, newTaskStatus: null, rows: [] }]);
     expect(poison.calls).toEqual([]);
   });
 
@@ -86,7 +86,7 @@ describe("gatherReconciliation", () => {
 
     const [target] = await gatherReconciliation(root, [doc], adapter);
     expect(target?.concept).toBe(doc);
-    expect(target?.newStatus).toBe("done");
+    expect(target?.newTaskStatus).toBe("done");
     expect(target?.rows).toEqual([
       { id: "LORE-1", title: "Ship it", status: "Done", file: "backlog/tasks/lore-1 - title.md" },
     ]);
@@ -146,7 +146,7 @@ describe("gatherReconciliation", () => {
     const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
 
     const [target] = await gatherReconciliation(root, [doc], adapter, { flow: ["Todo", "Done"], overrides: {} });
-    expect(target?.newStatus).toBe("done");
+    expect(target?.newTaskStatus).toBe("done");
   });
 
   test("validates the status flow before any Backlog subprocess round-trip", async () => {
@@ -171,7 +171,7 @@ describe("gatherReconciliation", () => {
     ]);
 
     const [target] = await gatherReconciliation(root, [doc], poison, undefined, details);
-    expect(target?.newStatus).toBe("done");
+    expect(target?.newTaskStatus).toBe("done");
     expect(poison.calls).toEqual([]); // editTask never called; poison's viewTask would throw if reached
   });
 
@@ -196,7 +196,7 @@ describe("gatherReconciliation", () => {
     ]);
 
     const [target] = await gatherReconciliation(root, [doc], poison, undefined, details);
-    expect(target?.newStatus).toBe("done");
+    expect(target?.newTaskStatus).toBe("done");
   });
 });
 

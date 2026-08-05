@@ -47,7 +47,7 @@ import type { BacklogAdapter } from "../adapters/backlog";
 import { type BundleGraph, buildGraph, loadBundle, toRefList, UNREADABLE_DIRECTORY_WARNING } from "../core/bundle";
 import { type Concept, idFromPath, parseConcept } from "../core/concept";
 import { generateIndexes, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END, locateManagedBlock } from "../core/indexes";
-import { loadProfile, type Profile } from "../core/profile";
+import { loadProfile, type Profile, profileForBundle } from "../core/profile";
 import {
   escapesRoot,
   isDriveRelative,
@@ -160,8 +160,9 @@ export async function runRename(options: RenameOptions): Promise<number> {
   // silently fell back to the built-in default, which could reject an inbound concept whose custom-
   // profile-shaped frontmatter (e.g. a scalar `tasks:` field) is perfectly valid under the project's
   // own schema.
-  const profile = loadProfile({ root: options.root });
-  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
+  const producerProfile = loadProfile({ root: options.root });
+  const graph = loadBundle(docsRoot, { warnings: advisories, profile: producerProfile });
+  const profile = profileForBundle(producerProfile, graph.state);
   // Flushed immediately (not at the end, as this command previously did) so a skipped-directory
   // warning naming the exact path/reason survives on the fail-loud path below it feeds (LORE-82),
   // mirroring how `context.ts`/`graph.ts` flush before a load-warning-explained not_found throw.

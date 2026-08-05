@@ -118,6 +118,61 @@ describe("schema — the error tier (throws, exit 6)", () => {
     expect(err.message).toContain("usage_window");
     expect(err.input).toMatchObject({ path: "docs/reference/orders.md", key: "usage_window" });
   });
+
+  test("OKF 0.2 keeps lifecycle and task-progress vocabularies disjoint", () => {
+    const lifecycle = expectValidation(() =>
+      validateFrontmatter(
+        { type: "Story", status: "done" },
+        { path: "docs/stories/x.md", bundleState: { okfVersion: "0.2", source: "declared" } },
+      ),
+    );
+    expect(lifecycle.message).toContain("lifecycle status");
+    expect(lifecycle.hint).toContain("lore_task_status");
+
+    const rollup = expectValidation(() =>
+      validateFrontmatter(
+        { type: "Story", lore_task_status: "stable" },
+        { path: "docs/stories/x.md", bundleState: { okfVersion: "0.2", source: "declared" } },
+      ),
+    );
+    expect(rollup.message).toContain("task rollup");
+    expect(rollup.hint).toContain("status");
+  });
+
+  test("OKF 0.2 rejects malformed actors in every actor-valued family", () => {
+    const cases = [
+      { generated: { by: "team:data", at: "2026-06-21T00:00:00Z" } },
+      { sources: [{ resource: "https://example.com", author: "team:data" }] },
+      { verified: { by: "alice", at: "2026-06-21T00:00:00Z" } },
+    ];
+    for (const fields of cases) {
+      const err = expectValidation(() =>
+        validateFrontmatter(
+          { type: "Reference", ...fields },
+          { path: "docs/reference/x.md", bundleState: { okfVersion: "0.2", source: "declared" } },
+        ),
+      );
+      expect(err.message).toContain("must use producer/version, human:<id>, or process:<id>");
+    }
+  });
+
+  test("OKF 0.2 rejects malformed verification timestamps and stale_after dates", () => {
+    const verified = expectValidation(() =>
+      validateFrontmatter(
+        { type: "Reference", verified: { by: "human:alice", at: "yesterday" } },
+        { path: "docs/reference/x.md", bundleState: { okfVersion: "0.2", source: "declared" } },
+      ),
+    );
+    expect(verified.message).toContain("verification evidence");
+
+    const stale = expectValidation(() =>
+      validateFrontmatter(
+        { type: "Reference", stale_after: "soon" },
+        { path: "docs/reference/x.md", bundleState: { okfVersion: "0.2", source: "declared" } },
+      ),
+    );
+    expect(stale.message).toContain("stale_after");
+  });
 });
 
 describe("schema — the warning tier (never throws)", () => {
@@ -125,7 +180,10 @@ describe("schema — the warning tier (never throws)", () => {
     // YAML `status:` / `tags:` with no value parse to null; an empty recommended field
     // is OKF-tolerated and must NOT be promoted to a fatal validation error (exit 6).
     expect(() =>
-      validateFrontmatter({ type: "Story", title: null, tags: null, status: null, timestamp: null }),
+      validateFrontmatter(
+        { type: "Story", title: null, tags: null, status: null, timestamp: null },
+        { bundleState: { okfVersion: "0.1", source: "declared" } },
+      ),
     ).not.toThrow();
   });
 
@@ -179,7 +237,7 @@ describe("schema — the warning tier (never throws)", () => {
             id: "orders",
             resource: "../reference/orders.md",
             title: "Orders",
-            author: "team:data-platform",
+            author: "process:data-platform",
             usage_count: 5000,
             last_modified: "2026-05-30",
             usage_window: { from: "2026-05-01", to: "2026-05-31" },
@@ -190,6 +248,34 @@ describe("schema — the warning tier (never throws)", () => {
       { warnings, path: "docs/reference/source-backed.md" },
     );
     expect(warnings.isEmpty).toBe(true);
+  });
+
+  test("OKF 0.2 recognizes lifecycle, task progress, and single-or-list verification events", () => {
+    for (const verified of [
+      { by: "human:alice", at: "2026-06-21T00:00:00Z" },
+      [
+        { by: "lore/0.1.1", at: "2026-06-21T00:00:00Z" },
+        { by: "process:nightly", at: "2026-06-22T00:00:00Z" },
+      ],
+    ]) {
+      const warnings = new WarningCollector();
+      validateFrontmatter(
+        {
+          type: "Reference",
+          summary: "Lifecycle-aware reference.",
+          status: "stable",
+          lore_task_status: "in-progress",
+          stale_after: "2026-12-31",
+          verified,
+        },
+        {
+          warnings,
+          path: "docs/reference/lifecycle.md",
+          bundleState: { okfVersion: "0.2", source: "declared" },
+        },
+      );
+      expect(warnings.isEmpty).toBe(true);
+    }
   });
 
   test("OKF 0.1 leaves sources untouched as an unknown extension instead of applying 0.2 validation", () => {
@@ -205,6 +291,33 @@ describe("schema — the warning tier (never throws)", () => {
       ),
     ).not.toThrow();
     expect(warnings.list().some((warning) => warning.includes('unknown key "sources"'))).toBe(true);
+  });
+
+  test("OKF 0.1 preserves legacy status behavior and does not validate 0.2 trust/lifecycle extensions", () => {
+    const warnings = new WarningCollector();
+    expect(() =>
+      validateFrontmatter(
+        {
+          type: "Story",
+          status: "done",
+          lore_task_status: { producer: "legacy" },
+          stale_after: "whenever",
+          verified: "legacy producer shape",
+        },
+        {
+          warnings,
+          path: "docs/stories/legacy.md",
+          bundleState: { okfVersion: "0.1", source: "declared" },
+        },
+      ),
+    ).not.toThrow();
+    expect(warnings.list()).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('unknown key "lore_task_status"'),
+        expect.stringContaining('unknown key "stale_after"'),
+        expect.stringContaining('unknown key "verified"'),
+      ]),
+    );
   });
 
   test("an unknown type warns and validates on `type` only (never throws)", () => {

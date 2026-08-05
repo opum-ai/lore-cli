@@ -110,6 +110,7 @@
 - 2026-08-05T07:34:03-05:00 5ca160df987ef547bebb5c72e42d0dfa31668545 feat: add OKF 0.2 generated provenance
 - 2026-08-05T07:40:28-05:00 4955830476f0833ade57be85c6fcdb299bcc174c docs: refresh generated log after wave 3
 - 2026-08-05T08:07:58-05:00 7a97b131822508b497e7fa14c8da1ffccda3dc58 feat: add OKF 0.2 sources provenance
+- 2026-08-05T08:14:15-05:00 dae32ed73bfedbc0f40bb3eb1c886a2dbb5499eb docs: refresh generated log after wave 4
 
 ## docs/.obsidian
 

@@ -218,7 +218,7 @@ export function loadBundle(root: string, options: LoadBundleOptions = {}): Bundl
     concepts.push(concept);
     if (options.boundedMemory === true && concepts.length % BOUNDED_MEMORY_GC_CONCEPT_INTERVAL === 0) Bun.gc(true);
   }
-  return buildGraph(concepts, state);
+  return buildGraph(concepts, state, profile);
 }
 
 /**
@@ -291,6 +291,7 @@ export function effectiveProfileFor(path: string, rootIndexPath: string, profile
 export function buildGraph(
   concepts: readonly Concept[],
   state: BundleState = { okfVersion: CURRENT_OKF_VERSION, source: "declared" },
+  profile: Profile = defaultProfile(),
 ): BundleGraph {
   const byId = new Map<string, Concept>();
   for (const concept of [...concepts].sort((a, b) => compareCodeUnits(a.id, b.id))) {
@@ -319,7 +320,7 @@ export function buildGraph(
     state,
     concepts: byId,
     edges,
-    tokenEstimate: makeTokenEstimate(byId),
+    tokenEstimate: makeTokenEstimate(byId, state, profile),
   };
 }
 
@@ -723,8 +724,9 @@ export function estimateTokens(text: string): number {
 }
 
 /** chars/4 token estimate over one concept's canonical serialized bytes. */
-function estimateConcept(concept: Concept): number {
-  return estimateTokens(serializeConcept(concept));
+function estimateConcept(concept: Concept, state: BundleState, profile: Profile): number {
+  const structuralProfile = effectiveProfileFor(concept.path, BUNDLE_ROOT_INDEX_PATH, profile);
+  return estimateTokens(serializeConcept(concept, { profile: structuralProfile, bundleState: state }));
 }
 
 /**
@@ -762,14 +764,18 @@ export function frontmatterScalar(value: unknown): string | undefined {
  * call — e.g. `lore context` asking for a target plus each neighbor — never
  * re-serializes a concept it already measured.
  */
-function makeTokenEstimate(byId: ReadonlyMap<string, Concept>): (id?: string) => number {
+function makeTokenEstimate(
+  byId: ReadonlyMap<string, Concept>,
+  state: BundleState,
+  profile: Profile,
+): (id?: string) => number {
   const cache = new Map<string, number>();
   let total: number | undefined;
 
   const estimateFor = (id: string, concept: Concept): number => {
     let value = cache.get(id);
     if (value === undefined) {
-      value = estimateConcept(concept);
+      value = estimateConcept(concept, state, profile);
       cache.set(id, value);
     }
     return value;

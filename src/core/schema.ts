@@ -84,15 +84,28 @@ function isReservedKey(key: string, isIndex: boolean, isRootIndex: boolean, prof
   if (key === "okf_version") {
     return isRootIndex;
   }
-  if (key === "generated" || key === "sources" || key === "usage_window") {
+  if (
+    key === "generated" ||
+    key === "sources" ||
+    key === "usage_window" ||
+    key === "verified" ||
+    key === "stale_after" ||
+    key === "lore_task_status"
+  ) {
     return profile.okfVersion === "0.2";
   }
   return false;
 }
 
+/** OKF 0.2 section 7 actor identity: producer/version, human:<id>, or process:<id>. */
+const ACTOR_SCHEMA = z
+  .string()
+  .trim()
+  .regex(/^(?:[^\s/:]+\/[^\s/]+|human:\S+|process:\S+)$/, "must use producer/version, human:<id>, or process:<id>");
+
 /** OKF 0.2's generated provenance mapping; JSON_SCHEMA keeps `at` a string before this check. */
 const GENERATED_SCHEMA = z.looseObject({
-  by: z.string().trim().min(1),
+  by: ACTOR_SCHEMA,
   at: z.iso.datetime({ offset: true }).nullish(),
 });
 
@@ -110,7 +123,7 @@ const SOURCE_SCHEMA = z.looseObject({
   resource: z.string().trim().min(1),
   id: z.string().trim().min(1).nullish(),
   title: z.string().trim().min(1).nullish(),
-  author: z.string().trim().min(1).nullish(),
+  author: ACTOR_SCHEMA.nullish(),
   usage_count: z.number().int().nonnegative().nullish(),
   last_modified: z.iso.date().nullish(),
   usage_window: USAGE_WINDOW_SCHEMA.nullish(),
@@ -120,6 +133,24 @@ const SOURCE_SCHEMA = z.looseObject({
 const SOURCES_SCHEMA = z.array(SOURCE_SCHEMA);
 const SOURCES_JSON_SCHEMA = z.toJSONSchema(SOURCES_SCHEMA, { target: "draft-7" });
 const USAGE_WINDOW_JSON_SCHEMA = z.toJSONSchema(USAGE_WINDOW_SCHEMA, { target: "draft-7" });
+
+/** OKF lifecycle and Lore task-progress vocabularies are deliberately disjoint. */
+const LIFECYCLE_STATUS_SCHEMA = z.enum(["draft", "stable", "deprecated"]);
+const TASK_ROLLUP_STATUS_SCHEMA = z.enum(["todo", "in-progress", "done"]);
+const STALE_AFTER_SCHEMA = z.iso.date();
+
+/** One OKF verification event; a bare event is normalized conceptually as a one-item list. */
+const VERIFICATION_EVENT_SCHEMA = z.looseObject({
+  by: ACTOR_SCHEMA,
+  at: z.iso.datetime({ offset: true }),
+});
+const VERIFIED_SCHEMA = z.union([VERIFICATION_EVENT_SCHEMA, z.array(VERIFICATION_EVENT_SCHEMA)]);
+
+/** Editor forms are generated from the same runtime validators. */
+const LIFECYCLE_STATUS_JSON_SCHEMA = z.toJSONSchema(LIFECYCLE_STATUS_SCHEMA, { target: "draft-7" });
+const TASK_ROLLUP_STATUS_JSON_SCHEMA = z.toJSONSchema(TASK_ROLLUP_STATUS_SCHEMA, { target: "draft-7" });
+const STALE_AFTER_JSON_SCHEMA = z.toJSONSchema(STALE_AFTER_SCHEMA, { target: "draft-7" });
+const VERIFIED_JSON_SCHEMA = z.toJSONSchema(VERIFIED_SCHEMA, { target: "draft-7" });
 
 /** The longest a `summary` should be before lore warns it is no longer a one-liner (ADR-0006 §5). */
 const SUMMARY_SOFT_LIMIT = 200;
@@ -285,6 +316,50 @@ function validateVersionedFrontmatter(
         `invalid sources usage_window${where}: ${describeIssues(result.error)}`,
         "set `usage_window.from` and `usage_window.to` to YYYY-MM-DD dates",
         { path, key: "usage_window", issues: issueList(result.error) },
+      );
+    }
+  }
+  if (Object.hasOwn(fm, "status")) {
+    const result = LIFECYCLE_STATUS_SCHEMA.safeParse(fm.status);
+    if (!result.success) {
+      throw new LoreError(
+        "validation",
+        `invalid OKF lifecycle status${where}: ${describeIssues(result.error)}`,
+        "set `status` to draft, stable, or deprecated; Lore task progress belongs in `lore_task_status`",
+        { path, key: "status", issues: issueList(result.error) },
+      );
+    }
+  }
+  if (Object.hasOwn(fm, "lore_task_status")) {
+    const result = TASK_ROLLUP_STATUS_SCHEMA.safeParse(fm.lore_task_status);
+    if (!result.success) {
+      throw new LoreError(
+        "validation",
+        `invalid Lore task rollup${where}: ${describeIssues(result.error)}`,
+        "set `lore_task_status` to todo, in-progress, or done; OKF lifecycle belongs in `status`",
+        { path, key: "lore_task_status", issues: issueList(result.error) },
+      );
+    }
+  }
+  if (Object.hasOwn(fm, "stale_after")) {
+    const result = STALE_AFTER_SCHEMA.safeParse(fm.stale_after);
+    if (!result.success) {
+      throw new LoreError(
+        "validation",
+        `invalid stale_after lifecycle date${where}: ${describeIssues(result.error)}`,
+        "set `stale_after` to an absolute YYYY-MM-DD date",
+        { path, key: "stale_after", issues: issueList(result.error) },
+      );
+    }
+  }
+  if (Object.hasOwn(fm, "verified")) {
+    const result = VERIFIED_SCHEMA.safeParse(fm.verified);
+    if (!result.success) {
+      throw new LoreError(
+        "validation",
+        `invalid verification evidence${where}: ${describeIssues(result.error)}`,
+        "set `verified` to one event or a list of events with an actor-valued `by` and ISO-8601 `at`",
+        { path, key: "verified", issues: issueList(result.error) },
       );
     }
   }
@@ -455,7 +530,7 @@ export function emitSchemaFiles(profile: Profile, options: EmitSchemaFilesOption
   }));
 }
 
-/** Add the 0.2 provenance families to editor schemas without changing the 0.1 profile grammar. */
+/** Add the 0.2 provenance, trust, and lifecycle families without changing the 0.1 profile grammar. */
 function schemaForVersion(schema: Record<string, unknown>, profile: Profile): Record<string, unknown> {
   if (profile.okfVersion !== "0.2") {
     return schema;
@@ -468,6 +543,10 @@ function schemaForVersion(schema: Record<string, unknown>, profile: Profile): Re
       generated: GENERATED_JSON_SCHEMA,
       sources: SOURCES_JSON_SCHEMA,
       usage_window: USAGE_WINDOW_JSON_SCHEMA,
+      verified: VERIFIED_JSON_SCHEMA,
+      status: LIFECYCLE_STATUS_JSON_SCHEMA,
+      stale_after: STALE_AFTER_JSON_SCHEMA,
+      lore_task_status: TASK_ROLLUP_STATUS_JSON_SCHEMA,
     },
   };
 }

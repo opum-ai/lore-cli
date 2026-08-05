@@ -144,6 +144,15 @@ Body.
     expect(warnings.list()).toContainEqual(expect.stringContaining('unknown key "sources"'));
     expect(serializeConcept(concept, { profile: profileForBundle(defaultProfile(), state) })).toBe(raw);
   });
+
+  test("serialization honors negotiated OKF 0.1 task status without weakening OKF 0.2 lifecycle validation", () => {
+    const raw = "---\ntype: Story\nstatus: done\n---\n# Legacy task rollup\n";
+    const state = { okfVersion: "0.1" as const, source: "declared" as const };
+    const concept = parseConcept("stories/legacy.md", raw, { bundleState: state });
+
+    expect(serializeConcept(concept, { bundleState: state })).toBe(raw);
+    expectValidation(() => serializeConcept(concept));
+  });
 });
 
 describe("parseConcept — OKF tolerance (AC#2)", () => {
