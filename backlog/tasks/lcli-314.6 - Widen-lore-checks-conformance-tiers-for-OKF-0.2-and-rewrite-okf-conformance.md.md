@@ -3,9 +3,11 @@ id: LCLI-314.6
 title: >-
   Widen lore check's conformance tiers for OKF 0.2 and rewrite
   okf-conformance.md
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-04 21:48'
+updated_date: '2026-08-05 17:49'
 labels: []
 dependencies:
   - LCLI-314.2
@@ -16,6 +18,18 @@ references:
     https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
 documentation:
   - docs/reference/okf-conformance.md
+modified_files:
+  - docs/index.md
+  - docs/reference/cli-surface.md
+  - docs/reference/okf-conformance.md
+  - src/commands/reconcile-shared.ts
+  - src/core/bundle.ts
+  - src/core/indexes.ts
+  - src/core/instructions.ts
+  - src/core/schema.ts
+  - src/core/validate.ts
+  - test/check.test.ts
+  - test/schema.test.ts
 parent_task_id: LCLI-314
 priority: medium
 type: feature
@@ -38,10 +52,35 @@ Drive the doc changes through the `lore` CLI per this repo's own contract, not a
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 lore check classifies every new 0.2 key into a defined tier, with no 0.2 field falling through unclassified
-- [ ] #2 No OKF section 11 must-not-reject condition is reported by lore as a conformance rejection
-- [ ] #3 Any lore finding that goes beyond section 11 is documented as a lore-specific gate rather than an OKF conformance requirement
-- [ ] #4 docs/reference/okf-conformance.md cites OKF 0.2 section numbers and describes both the 0.2 and 0.1 positions
-- [ ] #5 Source-header cross-references to okf-conformance.md are updated where their cited section numbers changed
-- [ ] #6 lore check passes on the repo's own bundle after the doc rewrite
+- [x] #1 lore check classifies every new 0.2 key into a defined tier, with no 0.2 field falling through unclassified
+- [x] #2 No OKF section 11 must-not-reject condition is reported by lore as a conformance rejection
+- [x] #3 Any lore finding that goes beyond section 11 is documented as a lore-specific gate rather than an OKF conformance requirement
+- [x] #4 docs/reference/okf-conformance.md cites OKF 0.2 section numbers and describes both the 0.2 and 0.1 positions
+- [x] #5 Source-header cross-references to okf-conformance.md are updated where their cited section numbers changed
+- [x] #6 lore check passes on the repo's own bundle after the doc rewrite
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Audit every OKF 0.2 frontmatter family and current validate/check finding tier against upstream §11, then add a regression matrix proving recognized 0.2 keys do not fall through to unknown-key handling.
+2. Pin the §11 MUST-NOT-reject cases in focused tests, preserving broken links and other stricter Lore checks as explicitly Lore-specific quality/profile gates rather than OKF conformance failures.
+3. Rewrite docs/reference/okf-conformance.md around OKF 0.2 §11 while retaining the negotiated 0.1 position, and update stale source-header section cross-references. Author only outside Lore-managed regions.
+4. Run focused tests, lore sync, strict validation/check, typecheck, lint, the full suite, and diff hygiene; record exact evidence and adversarially review every acceptance criterion.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implementation and acceptance verification are complete locally. The upstream OKF 0.2 specification was rechecked at the task reference: §11 defines the conformance floor and the five MUST-NOT-reject cases, while §6 defines broken-link tolerance.
+
+Behavioral correction: `status` is now an explicit OKF 0.2 reserved field even when a custom profile does not redeclare it, eliminating the one audited unknown-key fall-through. A minimal-profile regression matrix covers generated, sources and nested credibility signals, usage_window, verified, status, stale_after, lore_task_status, and every Attested Computation contract field. A check regression pins optional fields/missing indexes as clean and names broken links as a Lore coherence rule.
+
+Documentation: okf-conformance.md now maps 0.2 §11 to legacy 0.1 §9, inventories each 0.2 field tier, and distinguishes Lore producer/coherence gates from OKF rejection. Navigation, CLI wording, generated instructions, and source-header section references were reconciled.
+
+Verification: `bun test test/schema.test.ts test/check.test.ts test/validate.test.ts` — 401 pass, 0 fail; `npm test` — 2524 pass, 1 skip, 0 fail, 8562 expectations across 76 files; `npm run typecheck` — pass; `npm run lint` — pass across 191 files; `lore validate --strict --json` — 0 errors/0 warnings; `lore check --strict --json` — 0 findings, complete true across 65 files; `git diff --check` — pass. `lore sync --dry-run --json` reports only docs/log.md would change and no Backlog commit.
+
+Adversarial self-review (no independent reviewer authorized) rechecked every acceptance criterion, the custom-profile seam, 0.1 behavior, unknown type/key tolerance, broken-link labeling, missing-index behavior, source section references, unrelated dirty-file hashes, and diff scope. No acceptance defect remains.
+
+Delivery hold: actual `lore sync` would write docs/log.md and commit dirty Backlog state. No local commit authority was granted, so the task intentionally remains In Progress with verified artifacts retained uncommitted; no push or remote action was taken.
+<!-- SECTION:NOTES:END -->
