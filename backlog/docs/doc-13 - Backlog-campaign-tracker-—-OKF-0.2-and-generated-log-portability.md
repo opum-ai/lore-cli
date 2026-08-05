@@ -3,7 +3,7 @@ id: doc-13
 title: Backlog campaign tracker — OKF 0.2 and generated-log portability
 type: other
 created_date: '2026-08-05 03:22'
-updated_date: '2026-08-05 18:14'
+updated_date: '2026-08-05 18:37'
 ---
 # Backlog campaign tracker — OKF 0.2 and generated-log portability
 
@@ -72,4 +72,3 @@ Informational snapshot only; never a promised next wave.
 - 2026-08-05 — restore grounding matched the active handover: `dev` is at `4955830476f0833ade57be85c6fcdb299bcc174c`, locally known origin/dev is 0 behind / 11 ahead, one primary worktree is registered, and only unrelated untracked LCLI-317 through LCLI-319 task files are present. Live dependencies leave LCLI-314.3 and LCLI-314.4 ready; queue order and conservative overlap select LCLI-314.3 for sequential wave 4. No commit or remote delivery action is authorized.
 - 2026-08-05 — wave 4 implementation and all six acceptance criteria for LCLI-314.3 were verified locally. OKF 0.2 sources/usage_window validation and editor schemas, sources graph edges, warning-tier dangling-source checks, rename preservation, legacy Citations preservation, and 0.1 byte stability are covered. Focused suite: 636 pass; full suite: 2493 pass, 1 skip, 0 fail; lint, typecheck, strict Lore validate/check, Lore sync dry-run, and diff checks pass. Adversarial self-review found no unresolved defect. The task remains In Progress and artifacts are retained uncommitted because actual Lore synchronization/local commit delivery is not authorized and could sweep unrelated LCLI-317 through LCLI-319 files. No next wave or remote action was dispatched.
 - 2026-08-05 — the user authorized wave 4 local delivery and temporary isolation of unrelated LCLI-317, LCLI-318, and LCLI-319 files. Lore committed preliminary Backlog evidence as `fe77c00`; the verified implementation and generated documentation were delivered as `7a97b13` (`feat: add OKF 0.2 sources provenance`). Post-commit verification passed with 2493 tests, 1 skip, lint, typecheck, strict Lore validation/check, and diff checks. LCLI-314.3 is Done; task settlement is `611e681`. No next wave or remote action was authorized.
-
