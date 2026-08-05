@@ -65,6 +65,30 @@ version:
   check, serialization, or sync. No timestamp migration command exists today;
   any future conversion must be an explicit user action.
 
+### Versioned sources and legacy citations
+
+Under OKF 0.2, lore recognizes `sources` as a list of provenance entries.
+Every entry requires a non-empty `resource` and may carry `id`, `title`,
+`author`, a non-negative integer `usage_count`, a `YYYY-MM-DD`
+`last_modified`, and an entry-specific `usage_window`. The sibling
+`usage_window` applies to every source that does not override it; both forms
+require `from` and `to` dates. Malformed values are producer-profile
+validation errors (exit `6`) that name the file and nested key. Editor schemas
+are emitted from the same runtime validators.
+
+A source whose `resource` resolves to another concept participates in lore's
+graph as a `sources` provenance edge. External URLs and free-form scope
+descriptors do not become concept edges. An unresolved internal `.md` source
+path is retained as a dangling edge and `lore check` emits a warning-tier
+`broken-source` finding: visible in ordinary reports, fatal only under
+`--strict`, and never a default rejection of the bundle.
+
+The built-in profile and templates never emitted a `# Citations` section.
+Hand-authored legacy sections are still tolerated and preserved byte-for-byte;
+lore does not delete or migrate them implicitly. Under OKF 0.1, `sources` and
+`usage_window` keep their prior unknown-extension treatment and do not enter
+the graph or the source-check pass.
+
 ## What OKF v0.1 actually requires
 
 OKF is intentionally minimal. A bundle is a directory tree of Markdown files,

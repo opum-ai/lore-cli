@@ -330,6 +330,42 @@ describe("checkBundle — internal cross-link existence (error tier)", () => {
     expect(report.findings[0]?.rule).toBe("broken-link");
   });
 
+  test("an unresolved OKF 0.2 internal source is a warning, not a default gate error", () => {
+    const sourceBacked: CheckInputFile = {
+      path: "reference/source-backed.md",
+      raw: `---
+type: Reference
+sources:
+  - resource: ./orders.md
+  - resource: ./missing.md
+  - resource: https://example.com/external.md
+  - resource: all queries in project X
+---
+
+# Source-backed
+`,
+    };
+    const orders: CheckInputFile = { path: "reference/orders.md", raw: ref("Orders", "Real source.") };
+    const report = checkBundle([sourceBacked, orders]);
+    expect(report.errorCount).toBe(0);
+    expect(report.warningCount).toBe(1);
+    expect(report.findings[0]).toMatchObject({
+      severity: "warning",
+      rule: "broken-source",
+      file: "reference/source-backed.md",
+    });
+    expect(report.findings[0]?.message).toContain("missing.md");
+  });
+
+  test("OKF 0.1 leaves source resources outside the check graph", () => {
+    const sourceBacked: CheckInputFile = {
+      path: "reference/source-backed.md",
+      raw: "---\ntype: Reference\nsources:\n  - resource: ./missing.md\n---\n\n# Source-backed\n",
+    };
+    const report = checkBundle([sourceBacked], { okfVersion: "0.1", source: "declared" });
+    expect(report.findings.some((finding) => finding.rule === "broken-source")).toBe(false);
+  });
+
   test("resolves a forward reference (target walked after the linking file)", () => {
     const a: CheckInputFile = { path: "a.md", raw: ref("A", "See [b](b.md).") };
     const b: CheckInputFile = { path: "b.md", raw: ref("B", "Body.") };

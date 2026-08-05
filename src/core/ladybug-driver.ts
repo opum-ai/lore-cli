@@ -1783,7 +1783,9 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 function isEdgeKind(value: string): value is EdgeKind {
-  return value === "link" || value === "specs" || value === "supersedes" || value === "superseded_by";
+  return (
+    value === "link" || value === "sources" || value === "specs" || value === "supersedes" || value === "superseded_by"
+  );
 }
 
 function edgeSourceKind(record: ProjectionEdgeRecord): "concept" | "task" {

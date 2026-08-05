@@ -111,12 +111,30 @@ describe("scaffold — exported JSON Schemas", () => {
     expect(Object.keys(schema.properties)).toContain("specs");
   });
 
-  test("OKF 0.2 editor schemas recognize the generated provenance mapping", () => {
+  test("OKF 0.2 editor schemas recognize generated and sources provenance", () => {
     const schema = JSON.parse(fileNamed(".lore/schemas/reference.schema.json").contents) as {
-      properties: Record<string, { required?: string[]; properties?: Record<string, unknown> }>;
+      properties: Record<
+        string,
+        {
+          required?: string[];
+          properties?: Record<string, unknown>;
+          items?: { required?: string[]; properties?: Record<string, unknown> };
+        }
+      >;
     };
     expect(schema.properties.generated?.required).toEqual(["by"]);
     expect(Object.keys(schema.properties.generated?.properties ?? {})).toEqual(["by", "at"]);
+    expect(schema.properties.sources?.items?.required).toEqual(["resource"]);
+    expect(Object.keys(schema.properties.sources?.items?.properties ?? {})).toEqual([
+      "resource",
+      "id",
+      "title",
+      "author",
+      "usage_count",
+      "last_modified",
+      "usage_window",
+    ]);
+    expect(schema.properties.usage_window?.required).toEqual(["from", "to"]);
   });
 });
 

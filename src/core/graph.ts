@@ -45,7 +45,7 @@ export interface GraphEdge {
   readonly from: string;
   /** The resolved target concept id, or `null` when the reference dangles. */
   readonly to: string | null;
-  /** Which kind of reference produced this edge (`link`/`specs`/`supersedes`/`superseded_by`). */
+  /** Which kind of reference produced this edge (`link`/`sources`/`specs`/`supersedes`/`superseded_by`). */
   readonly kind: EdgeKind;
   /** The reference as parsed (link destination / frontmatter value), for diagnostics. */
   readonly target: string;

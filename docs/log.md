@@ -108,6 +108,7 @@
 - 2026-08-05T06:45:22-05:00 5024767e6f66573bb7dd3dfb39a407bac62a9648 chore: reconcile backlog campaign wave 2
 - 2026-08-05T06:47:43-05:00 970097df328e8108d00dddc68f5b206d7ca348bf docs: refresh generated log after wave 2
 - 2026-08-05T07:34:03-05:00 5ca160df987ef547bebb5c72e42d0dfa31668545 feat: add OKF 0.2 generated provenance
+- 2026-08-05T07:40:28-05:00 4955830476f0833ade57be85c6fcdb299bcc174c docs: refresh generated log after wave 3
 
 ## docs/.obsidian
 

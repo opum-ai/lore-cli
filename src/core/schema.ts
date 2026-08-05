@@ -84,7 +84,7 @@ function isReservedKey(key: string, isIndex: boolean, isRootIndex: boolean, prof
   if (key === "okf_version") {
     return isRootIndex;
   }
-  if (key === "generated") {
+  if (key === "generated" || key === "sources" || key === "usage_window") {
     return profile.okfVersion === "0.2";
   }
   return false;
@@ -98,6 +98,28 @@ const GENERATED_SCHEMA = z.looseObject({
 
 /** The editor form is derived from the same runtime schema, never hand-maintained in parallel. */
 const GENERATED_JSON_SCHEMA = z.toJSONSchema(GENERATED_SCHEMA, { target: "draft-7" });
+
+/** OKF 0.2's shared/per-source usage window. Dates remain authored YYYY-MM-DD strings. */
+const USAGE_WINDOW_SCHEMA = z.looseObject({
+  from: z.iso.date(),
+  to: z.iso.date(),
+});
+
+/** One OKF 0.2 provenance source. Unknown producer extensions remain round-trip-safe. */
+const SOURCE_SCHEMA = z.looseObject({
+  resource: z.string().trim().min(1),
+  id: z.string().trim().min(1).nullish(),
+  title: z.string().trim().min(1).nullish(),
+  author: z.string().trim().min(1).nullish(),
+  usage_count: z.number().int().nonnegative().nullish(),
+  last_modified: z.iso.date().nullish(),
+  usage_window: USAGE_WINDOW_SCHEMA.nullish(),
+});
+
+/** The complete OKF 0.2 sources family, derived once for runtime and editor use. */
+const SOURCES_SCHEMA = z.array(SOURCE_SCHEMA);
+const SOURCES_JSON_SCHEMA = z.toJSONSchema(SOURCES_SCHEMA, { target: "draft-7" });
+const USAGE_WINDOW_JSON_SCHEMA = z.toJSONSchema(USAGE_WINDOW_SCHEMA, { target: "draft-7" });
 
 /** The longest a `summary` should be before lore warns it is no longer a one-liner (ADR-0006 §5). */
 const SUMMARY_SOFT_LIMIT = 200;
@@ -195,7 +217,7 @@ export function validateFrontmatter(fm: Record<string, unknown>, options: Valida
   const where = options.path ? ` in ${options.path}` : "";
   const type = requireType(fm, where, options.path);
 
-  validateVersionedProvenance(fm, profile, where, options.path, options.warnings);
+  validateVersionedFrontmatter(fm, profile, where, options.path, options.warnings);
 
   const compiled = profile.types.get(canonicalType(type, profile));
   if (compiled === undefined) {
@@ -222,8 +244,8 @@ export function validateFrontmatter(fm: Record<string, unknown>, options: Valida
   return type;
 }
 
-/** Validate and classify the OKF 0.2 provenance seam without mutating authored frontmatter. */
-function validateVersionedProvenance(
+/** Validate and classify the OKF 0.2 frontmatter families without mutating authored data. */
+function validateVersionedFrontmatter(
   fm: Record<string, unknown>,
   profile: Profile,
   where: string,
@@ -241,6 +263,28 @@ function validateVersionedProvenance(
         `invalid generated provenance${where}: ${describeIssues(result.error)}`,
         "set `generated.by` to a non-empty actor and `generated.at` to an ISO-8601 datetime",
         { path, issues: issueList(result.error) },
+      );
+    }
+  }
+  if (Object.hasOwn(fm, "sources")) {
+    const result = SOURCES_SCHEMA.safeParse(fm.sources);
+    if (!result.success) {
+      throw new LoreError(
+        "validation",
+        `invalid sources provenance${where}: ${describeIssues(result.error)}`,
+        "set `sources` to a list whose entries carry a non-empty `resource` and valid credibility signals",
+        { path, key: "sources", issues: issueList(result.error) },
+      );
+    }
+  }
+  if (Object.hasOwn(fm, "usage_window")) {
+    const result = USAGE_WINDOW_SCHEMA.safeParse(fm.usage_window);
+    if (!result.success) {
+      throw new LoreError(
+        "validation",
+        `invalid sources usage_window${where}: ${describeIssues(result.error)}`,
+        "set `usage_window.from` and `usage_window.to` to YYYY-MM-DD dates",
+        { path, key: "usage_window", issues: issueList(result.error) },
       );
     }
   }
@@ -411,7 +455,7 @@ export function emitSchemaFiles(profile: Profile, options: EmitSchemaFilesOption
   }));
 }
 
-/** Add the 0.2 provenance family to editor schemas without changing the 0.1 profile grammar. */
+/** Add the 0.2 provenance families to editor schemas without changing the 0.1 profile grammar. */
 function schemaForVersion(schema: Record<string, unknown>, profile: Profile): Record<string, unknown> {
   if (profile.okfVersion !== "0.2") {
     return schema;
@@ -422,6 +466,8 @@ function schemaForVersion(schema: Record<string, unknown>, profile: Profile): Re
     properties: {
       ...properties,
       generated: GENERATED_JSON_SCHEMA,
+      sources: SOURCES_JSON_SCHEMA,
+      usage_window: USAGE_WINDOW_JSON_SCHEMA,
     },
   };
 }

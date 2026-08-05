@@ -22,7 +22,7 @@
  *
  * ### What is (and isn't) an edge
  *
- * Edges are **concept↔concept** only, from two sources:
+ * Edges are **concept↔concept** only, from three sources:
  *
  * - **Body cross-links** — markdown links to another `.md` file in the bundle
  *   ({@link EdgeKind} `"link"`), resolved **relative to the linking file's
@@ -38,6 +38,9 @@
  *   which point at other concepts (design §2.1, §3.9). Each value yields an edge of
  *   the matching {@link EdgeKind}; a value may be a bundle-relative id
  *   (`adr/0009-x`) or a relative path (`../adr/0009-x.md`).
+ * - **OKF 0.2 provenance sources** — a `sources[].resource` that resolves to another
+ *   concept produces a `sources` edge. External URLs and scope descriptors are not
+ *   concept edges; an internal `.md` path that does not resolve remains dangling.
  *
  * The `tasks` frontmatter field is **deliberately not** an edge: it points at
  * Backlog.md task ids, not concepts (architecture §3, ADR-0009). It stays readable
@@ -76,7 +79,7 @@ const BOUNDED_MEMORY_GC_CONCEPT_INTERVAL = 1024;
  * cross-link; the rest mirror the frontmatter fields that carry concept
  * references (the names match the frontmatter keys for an obvious round-trip).
  */
-export type EdgeKind = "link" | "specs" | "supersedes" | "superseded_by";
+export type EdgeKind = "link" | "sources" | "specs" | "supersedes" | "superseded_by";
 
 /**
  * One directed reference from one concept to another. `from` is always a concept
@@ -306,6 +309,9 @@ export function buildGraph(
   for (const concept of byId.values()) {
     const dir = posix.dirname(concept.path);
     collectFrontmatterEdges(concept, dir, byId, edges);
+    if (state.okfVersion === "0.2") {
+      collectSourceEdges(concept, dir, byId, edges);
+    }
     collectBodyEdges(concept, dir, byId, edges);
   }
 
@@ -489,7 +495,7 @@ function readError(cause: unknown, what: string, input: Record<string, unknown>)
  */
 export const REF_FIELDS = ["specs", "supersedes", "superseded_by"] as const satisfies readonly Exclude<
   EdgeKind,
-  "link"
+  "link" | "sources"
 >[];
 
 /**
@@ -502,6 +508,33 @@ function collectFrontmatterEdges(concept: Concept, dir: string, byId: ReadonlyMa
   for (const kind of REF_FIELDS) {
     for (const ref of toRefList(concept.frontmatter[kind])) {
       out.push({ from: concept.id, to: resolveRef(ref, dir, byId), target: ref, kind });
+    }
+  }
+}
+
+/**
+ * Append OKF 0.2 provenance edges for `sources[].resource` values that name concepts. A
+ * resolvable bare id is a concept source; an unresolved value becomes a dangling edge only when
+ * it has the unambiguous internal `.md` path shape. This keeps external URLs and free-form scope
+ * descriptors out of the concept graph while retaining a useful quality signal for broken paths.
+ */
+function collectSourceEdges(concept: Concept, dir: string, byId: ReadonlyMap<string, Concept>, out: Edge[]): void {
+  const sources = concept.frontmatter.sources;
+  if (!Array.isArray(sources)) {
+    return;
+  }
+  for (const source of sources) {
+    if (typeof source !== "object" || source === null || Array.isArray(source)) {
+      continue;
+    }
+    const resource = (source as Record<string, unknown>).resource;
+    if (typeof resource !== "string" || resource.trim() === "") {
+      continue;
+    }
+    const target = resource.trim();
+    const to = resolveRef(target, dir, byId);
+    if (to !== null || internalTarget(target) !== null) {
+      out.push({ from: concept.id, to, target, kind: "sources" });
     }
   }
 }

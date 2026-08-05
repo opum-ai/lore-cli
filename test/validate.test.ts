@@ -575,6 +575,20 @@ describe("validate (command)", () => {
     expect(report.errorCount).toBe(0);
   });
 
+  test("malformed OKF 0.2 sources return exit 6 and name the file and key", () => {
+    mkdirSync(join(root, "docs/reference"), { recursive: true });
+    writeFileSync(
+      join(root, "docs/reference/bad-source.md"),
+      "---\ntype: Reference\nsummary: Bad source.\nsources:\n  - title: Missing resource\n---\n# Bad source\n",
+    );
+    const { code, report } = validateCmd(["docs/reference/bad-source.md"]);
+    expect(code).toBe(EXIT_CODES.validation);
+    expect(report.errorCount).toBe(1);
+    expect(report.files[0]?.path).toBe("docs/reference/bad-source.md");
+    expect(report.files[0]?.findings[0]?.message).toContain("sources");
+    expect(report.files[0]?.findings[0]?.message).toContain("resource");
+  });
+
   test("a fresh `lore new` of every known type validates clean (LORE-18 × LORE-19)", () => {
     for (const type of KNOWN_TYPES) {
       runNew({ root, output: JSON_CTX, args: [type, `A ${type} title`], clock: FIXED_CLOCK, stdout: capture() });

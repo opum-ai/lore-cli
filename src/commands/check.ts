@@ -744,7 +744,7 @@ function checkBundles(bundles: readonly Bundle[]): CheckReport {
   const findings: CheckFinding[] = [];
   let fileCount = 0;
   for (const bundle of bundles) {
-    const report = checkBundle(bundle.files);
+    const report = checkBundle(bundle.files, bundle.state);
     fileCount += report.fileCount;
     const versionFindings: CheckFinding[] = bundle.versionIssues.map((issue) => ({
       severity: issue.severity,

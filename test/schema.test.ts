@@ -92,6 +92,32 @@ describe("schema — the error tier (throws, exit 6)", () => {
   test("a date-only timestamp is rejected — lore emits full datetimes", () => {
     expectValidation(() => validateFrontmatter({ type: "ADR", timestamp: "2026-06-21" }));
   });
+
+  test("malformed OKF 0.2 sources fail with the offending path and key", () => {
+    const err = expectValidation(() =>
+      validateFrontmatter(
+        {
+          type: "Reference",
+          sources: [{ title: "Missing resource", usage_count: -1, last_modified: "yesterday" }],
+        },
+        { path: "docs/reference/orders.md", bundleState: { okfVersion: "0.2", source: "declared" } },
+      ),
+    );
+    expect(err.message).toContain("invalid sources provenance in docs/reference/orders.md");
+    expect(err.message).toContain("0.resource");
+    expect(err.input).toMatchObject({ path: "docs/reference/orders.md", key: "sources" });
+  });
+
+  test("a malformed shared usage_window fails as sources metadata", () => {
+    const err = expectValidation(() =>
+      validateFrontmatter(
+        { type: "Reference", sources: [], usage_window: { from: "2026-01-01", to: "soon" } },
+        { path: "docs/reference/orders.md" },
+      ),
+    );
+    expect(err.message).toContain("usage_window");
+    expect(err.input).toMatchObject({ path: "docs/reference/orders.md", key: "usage_window" });
+  });
 });
 
 describe("schema — the warning tier (never throws)", () => {
@@ -140,6 +166,45 @@ describe("schema — the warning tier (never throws)", () => {
       { warnings },
     );
     expect(warnings.isEmpty).toBe(true);
+  });
+
+  test("OKF 0.2 recognizes the complete sources credibility family", () => {
+    const warnings = new WarningCollector();
+    validateFrontmatter(
+      {
+        type: "Reference",
+        summary: "Source-backed reference.",
+        sources: [
+          {
+            id: "orders",
+            resource: "../reference/orders.md",
+            title: "Orders",
+            author: "team:data-platform",
+            usage_count: 5000,
+            last_modified: "2026-05-30",
+            usage_window: { from: "2026-05-01", to: "2026-05-31" },
+          },
+        ],
+        usage_window: { from: "2026-06-01", to: "2026-06-30" },
+      },
+      { warnings, path: "docs/reference/source-backed.md" },
+    );
+    expect(warnings.isEmpty).toBe(true);
+  });
+
+  test("OKF 0.1 leaves sources untouched as an unknown extension instead of applying 0.2 validation", () => {
+    const warnings = new WarningCollector();
+    expect(() =>
+      validateFrontmatter(
+        { type: "Reference", summary: "Legacy.", sources: "legacy producer value" },
+        {
+          warnings,
+          path: "docs/reference/legacy.md",
+          bundleState: { okfVersion: "0.1", source: "declared" },
+        },
+      ),
+    ).not.toThrow();
+    expect(warnings.list().some((warning) => warning.includes('unknown key "sources"'))).toBe(true);
   });
 
   test("an unknown type warns and validates on `type` only (never throws)", () => {

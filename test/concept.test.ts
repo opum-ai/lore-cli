@@ -111,6 +111,39 @@ Body.
     expect(warnings.list()).toContainEqual(expect.stringContaining('legacy key "timestamp"'));
     expect(serializeConcept(concept, { profile: profileForBundle(defaultProfile(), state) })).toBe(raw);
   });
+
+  test("a legacy body-level Citations section is tolerated and never deleted", () => {
+    const raw = `---
+type: Reference
+title: Legacy citations
+summary: Keeps authored provenance prose.
+---
+# Legacy citations
+
+# Citations
+
+- https://example.com/source
+`;
+    const state = { okfVersion: "0.2" as const, source: "declared" as const };
+    const concept = parseConcept("reference/legacy-citations.md", raw, { bundleState: state });
+    expect(concept.body).toContain("# Citations\n\n- https://example.com/source");
+    expect(serializeConcept(concept, { profile: profileForBundle(defaultProfile(), state) })).toBe(raw);
+  });
+
+  test("a 0.1 producer extension named sources stays byte-stable without 0.2 validation", () => {
+    const raw = `---
+type: Reference
+summary: Legacy extension.
+sources: legacy producer value
+---
+Body.
+`;
+    const state = { okfVersion: "0.1" as const, source: "declared" as const };
+    const warnings = new WarningCollector();
+    const concept = parseConcept("reference/legacy-sources.md", raw, { bundleState: state, warnings });
+    expect(warnings.list()).toContainEqual(expect.stringContaining('unknown key "sources"'));
+    expect(serializeConcept(concept, { profile: profileForBundle(defaultProfile(), state) })).toBe(raw);
+  });
 });
 
 describe("parseConcept — OKF tolerance (AC#2)", () => {

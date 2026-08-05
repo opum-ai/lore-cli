@@ -208,6 +208,33 @@ describe("buildGraph — frontmatter refs", () => {
     expect(edgesFrom(g.edges, "adr/b")[0]?.to).toBe("adr/old");
   });
 
+  test("OKF 0.2 concept-valued sources become provenance edges while URLs and scopes do not", () => {
+    const sourceBacked = concept(
+      "stories/s",
+      [
+        "type: Story",
+        "sources:",
+        "  - resource: ../reference/orders.md",
+        "  - resource: reference/customers",
+        "  - resource: https://example.com/external.md",
+        '  - resource: "all queries in project X"',
+        "  - resource: ../reference/missing.md",
+      ].join("\n"),
+    );
+    const g = buildGraph([sourceBacked, ref("reference/orders"), ref("reference/customers")]);
+    expect(edgesFrom(g.edges, "stories/s")).toEqual([
+      { from: "stories/s", to: "reference/orders", target: "../reference/orders.md", kind: "sources" },
+      { from: "stories/s", to: "reference/customers", target: "reference/customers", kind: "sources" },
+      { from: "stories/s", to: null, target: "../reference/missing.md", kind: "sources" },
+    ]);
+  });
+
+  test("OKF 0.1 does not promote sources into the graph", () => {
+    const sourceBacked = concept("stories/s", "type: Story\nsources:\n  - resource: ../reference/orders.md");
+    const g = buildGraph([sourceBacked, ref("reference/orders")], { okfVersion: "0.1", source: "declared" });
+    expect(edgesFrom(g.edges, "stories/s")).toEqual([]);
+  });
+
   test("a dangling frontmatter ref is tolerated (to: null)", () => {
     const g = buildGraph([concept("adr/a", "type: ADR\nsupersedes: adr/ghost")]);
     expect(edgesFrom(g.edges, "adr/a")).toEqual([{ from: "adr/a", to: null, target: "adr/ghost", kind: "supersedes" }]);

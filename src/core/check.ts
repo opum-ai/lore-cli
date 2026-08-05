@@ -53,10 +53,11 @@ import * as yaml from "js-yaml";
 import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { extractLinkTargets, nodeText, walkMdast } from "./bundle";
-import { idFromPath, normalizeInput } from "./concept";
+import { idFromPath, normalizeInput, tryReadFrontmatter } from "./concept";
 import type { Finding, Severity } from "./finding";
 import { decodeTarget, isExternalTarget, pathPart, validateLink } from "./links";
 import { type ManagedTaskRow, regenerateTaskBlock } from "./managed-block";
+import { type BundleState, CURRENT_OKF_VERSION } from "./okf-version";
 import type { ReconciledStatus } from "./reconcile";
 
 /** `error` fails the gate (exit `6`); `warning` is advisory (fails only under `--strict`). The shared {@link Severity}. */
@@ -71,6 +72,7 @@ export type CheckSeverity = Severity;
 export type CheckRule =
   | "broken-link"
   | "broken-anchor"
+  | "broken-source"
   | "status-drift"
   | "managed-block-drift"
   | "unsupported-task-coupling"
@@ -310,7 +312,10 @@ const BLOCKED_ADDRESS_RANGES: readonly AddressRange[] = [
  * — every member is known before any link is checked — and the single parse per file is
  * shared across the heading, link, and portability consumers.
  */
-export function checkBundle(files: readonly CheckInputFile[]): CheckReport {
+export function checkBundle(
+  files: readonly CheckInputFile[],
+  state: BundleState = { okfVersion: CURRENT_OKF_VERSION, source: "declared" },
+): CheckReport {
   // Pass 1 — index: parse each file's body once into an mdast tree, keyed by bundle-relative
   // id, and record its heading-slug set. The id key set is the membership; every file is
   // indexed before any link is checked, so a forward reference resolves.
@@ -337,10 +342,51 @@ export function checkBundle(files: readonly CheckInputFile[]): CheckReport {
         findings.push({ severity: "warning", rule: "portability", file: file.path, message: finding.message });
       }
     }
+    if (state.okfVersion === "0.2") {
+      for (const target of sourceResourceTargets(file.path, file.raw)) {
+        for (const finding of linkFindings(target, file.path, dir, id, slugsById)) {
+          findings.push({
+            severity: "warning",
+            rule: "broken-source",
+            file: file.path,
+            message: `sources[].resource ${finding.message}`,
+          });
+        }
+      }
+    }
     findings.push(...portabilityScan(tree, file.path));
   }
 
   return summarize(findings, files.length);
+}
+
+/**
+ * Read string-valued `sources[].resource` entries for the OKF 0.2 check pass. Malformed YAML is
+ * deliberately ignored here because `bodyText` preserves the historical check behavior and
+ * `lore validate` owns frontmatter diagnostics; a well-formed but malformed sources shape is
+ * likewise validated by the schema layer, not guessed at by this graph-quality pass.
+ */
+function sourceResourceTargets(path: string, raw: string): string[] {
+  let frontmatter: Record<string, unknown> | null;
+  try {
+    frontmatter = tryReadFrontmatter(path, raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(frontmatter?.sources)) {
+    return [];
+  }
+  const targets: string[] = [];
+  for (const source of frontmatter.sources) {
+    if (typeof source !== "object" || source === null || Array.isArray(source)) {
+      continue;
+    }
+    const resource = (source as Record<string, unknown>).resource;
+    if (typeof resource === "string" && resource.trim() !== "") {
+      targets.push(resource.trim());
+    }
+  }
+  return targets;
 }
 
 // ── Status + managed-block drift (the gate) ──────────────────────────────────────
