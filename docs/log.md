@@ -116,6 +116,7 @@
 - 2026-08-05T11:25:29-05:00 53bfad162a5d90383ee6ccfb80c1acc726a2a3b1 feat: add OKF 0.2 attested computations
 - 2026-08-05T11:30:59-05:00 b5eb101d7bac31331b358ab2a38c775f19f492c1 docs: refresh generated log after wave 6
 - 2026-08-05T11:32:55-05:00 b19b839c1a0acff9a33ce7ad2b8c62429c31d6c4 docs: reconcile generated log after wave 6
+- 2026-08-05T13:09:24-05:00 825e0b9421afe892c07ca31ccda3fdf017cf42dd feat: close OKF 0.2 conformance tiers
 
 ## docs/.obsidian
 
@@ -252,6 +253,7 @@
 - 2026-08-05T07:34:03-05:00 5ca160df987ef547bebb5c72e42d0dfa31668545 feat: add OKF 0.2 generated provenance
 - 2026-08-05T08:07:58-05:00 7a97b131822508b497e7fa14c8da1ffccda3dc58 feat: add OKF 0.2 sources provenance
 - 2026-08-05T10:40:30-05:00 0b31a9344268d81ae4f2ae6a276e51f0153edced feat: add OKF 0.2 trust and lifecycle
+- 2026-08-05T13:09:24-05:00 825e0b9421afe892c07ca31ccda3fdf017cf42dd feat: close OKF 0.2 conformance tiers
 
 ## docs/runbooks
 
