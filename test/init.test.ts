@@ -118,6 +118,7 @@ describe("lore init — fresh bundle (AC#1)", () => {
       ".lore/schemas/adr.schema.json",
       ".lore/schemas/runbook.schema.json",
       ".lore/schemas/reference.schema.json",
+      ".lore/schemas/attested-computation.schema.json",
       ".lore/templates/.gitkeep",
       "docs/index.md",
     ]);
@@ -193,7 +194,7 @@ describe("lore init — idempotent re-run (AC#2)", () => {
     const { code, result } = await init({ clock: () => new Date("2030-12-31T23:59:59Z") });
     expect(code).toBe(0);
     expect(result.created).toEqual([]);
-    expect(result.skipped.length).toBe(11);
+    expect(result.skipped.length).toBe(12);
     expect(readFileSync(join(root, "docs/index.md"), "utf8")).toBe(before);
   });
 

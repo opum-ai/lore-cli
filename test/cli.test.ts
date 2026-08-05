@@ -591,7 +591,7 @@ describe("cli — schema dispatch", () => {
     expect(run(argv("schema", "export", "--json"), c)).toBe(0);
     const envelope = JSON.parse(c.stdout.text()) as { kind: string; data: { count: number } };
     expect(envelope.kind).toBe("schema.result");
-    expect(envelope.data.count).toBe(6);
+    expect(envelope.data.count).toBe(7);
     expect(existsSync(join(cwd, ".lore/schemas/reference.schema.json"))).toBe(true);
   });
 

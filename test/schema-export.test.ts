@@ -71,7 +71,7 @@ describe("lore schema export — default (story-convention) profile", () => {
     const { code, result } = exportSchemas(["export"]);
     expect(code).toBe(0);
     expect(result.out).toBe(".lore/schemas");
-    expect(result.count).toBe(6);
+    expect(result.count).toBe(7);
     expect(result.files.map((f) => f.path)).toEqual([
       ".lore/schemas/epic.schema.json",
       ".lore/schemas/story.schema.json",
@@ -79,6 +79,7 @@ describe("lore schema export — default (story-convention) profile", () => {
       ".lore/schemas/adr.schema.json",
       ".lore/schemas/runbook.schema.json",
       ".lore/schemas/reference.schema.json",
+      ".lore/schemas/attested-computation.schema.json",
     ]);
     for (const file of result.files) {
       expect(existsSync(join(root, file.path))).toBe(true);
@@ -104,6 +105,19 @@ describe("lore schema export — default (story-convention) profile", () => {
     expect(schema.properties.lore_task_status?.enum).toEqual(["todo", "in-progress", "done"]);
     expect(schema.properties.stale_after?.format).toBe("date");
     expect(schema.properties.verified?.anyOf).toHaveLength(2);
+  });
+
+  test("the Attested Computation editor schema exposes its nested contract and requires runtime", () => {
+    exportSchemas(["export"]);
+    const schema = JSON.parse(readFileSync(join(root, ".lore/schemas/attested-computation.schema.json"), "utf8")) as {
+      required: string[];
+      properties: Record<string, { type?: string; anyOf?: Array<{ type?: string }> }>;
+    };
+    expect(schema.required).toEqual(["type", "runtime"]);
+    expect(schema.properties.parameters?.anyOf?.[0]?.type).toBe("array");
+    expect(schema.properties.computation?.anyOf?.map((branch) => branch.type)).toEqual(["string", "null"]);
+    expect(schema.properties.executor?.anyOf?.map((branch) => branch.type)).toEqual(["object", "null"]);
+    expect(schema.properties.attester?.anyOf?.map((branch) => branch.type)).toEqual(["object", "null"]);
   });
 
   test("the byte contract is two-space pretty JSON with a single trailing newline", () => {
@@ -179,7 +193,7 @@ describe("lore schema export — --out", () => {
   test("a trailing `--` end-of-options marker is a no-op", () => {
     const { code, result } = exportSchemas(["export", "--"]);
     expect(code).toBe(0);
-    expect(result.count).toBe(6);
+    expect(result.count).toBe(7);
   });
 });
 

@@ -7,7 +7,7 @@ import { VERSION } from "../src/meta";
 /** A fixed ISO timestamp so every plan in this suite is byte-deterministic. */
 const TS = "2026-06-25T12:00:00.000Z";
 
-/** Built once (it runs 6 Zod→JSON-Schema conversions + a serialize) and reused across assertions. */
+/** Built once (it runs 7 Zod→JSON-Schema conversions + a serialize) and reused across assertions. */
 const PLAN = buildScaffold({ timestamp: TS });
 
 /** The single file in {@link PLAN} with the given repo-relative path (fails if absent). */
@@ -41,6 +41,7 @@ describe("scaffold — the empty-bundle plan", () => {
       ".lore/schemas/adr.schema.json",
       ".lore/schemas/runbook.schema.json",
       ".lore/schemas/reference.schema.json",
+      ".lore/schemas/attested-computation.schema.json",
       ".lore/templates/.gitkeep",
       "docs/index.md",
     ]);
@@ -80,21 +81,26 @@ describe("scaffold — .lore/.gitignore", () => {
 
 describe("scaffold — exported JSON Schemas", () => {
   const cases = [
-    { path: ".lore/schemas/epic.schema.json", type: "Epic" },
-    { path: ".lore/schemas/story.schema.json", type: "Story" },
-    { path: ".lore/schemas/spec.schema.json", type: "Spec" },
-    { path: ".lore/schemas/adr.schema.json", type: "ADR" },
-    { path: ".lore/schemas/runbook.schema.json", type: "Runbook" },
-    { path: ".lore/schemas/reference.schema.json", type: "Reference" },
+    { path: ".lore/schemas/epic.schema.json", type: "Epic", required: ["type"] },
+    { path: ".lore/schemas/story.schema.json", type: "Story", required: ["type"] },
+    { path: ".lore/schemas/spec.schema.json", type: "Spec", required: ["type"] },
+    { path: ".lore/schemas/adr.schema.json", type: "ADR", required: ["type"] },
+    { path: ".lore/schemas/runbook.schema.json", type: "Runbook", required: ["type"] },
+    { path: ".lore/schemas/reference.schema.json", type: "Reference", required: ["type"] },
+    {
+      path: ".lore/schemas/attested-computation.schema.json",
+      type: "Attested Computation",
+      required: ["type", "runtime"],
+    },
   ] as const;
 
-  for (const { path, type } of cases) {
+  for (const { path, type, required } of cases) {
     test(`${path} is a valid Draft-7 schema for ${type}`, () => {
       const file = fileNamed(path);
       expect(file.contents.endsWith("\n")).toBe(true);
       const schema = JSON.parse(file.contents) as Record<string, unknown>;
       expect(schema.$schema).toBe("http://json-schema.org/draft-07/schema#");
-      expect(schema.required).toEqual(["type"]);
+      expect(schema.required).toEqual(required);
       // The editor schema is the lenient tier: extra keys are allowed (open
       // additionalProperties), so an author's custom frontmatter never errors mid-edit.
       expect(schema.additionalProperties).toEqual({});

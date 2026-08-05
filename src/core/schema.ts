@@ -36,7 +36,14 @@ import { posix } from "node:path";
 import { z } from "zod";
 import { LoreError, type WarningCollector } from "../errors";
 import type { BundleState } from "./okf-version";
-import { type CompiledType, defaultProfile, type Profile, profileForBundle, slugForTypeName } from "./profile";
+import {
+  ATTESTED_COMPUTATION_TYPE,
+  type CompiledType,
+  defaultProfile,
+  type Profile,
+  profileForBundle,
+  slugForTypeName,
+} from "./profile";
 
 /**
  * The bundle-root index's path, in the two conventions a caller of {@link validateFrontmatter} may
@@ -77,7 +84,13 @@ function isRootIndexPath(path: string | undefined): boolean {
  *   like any other extra key (LORE-168; previously this was unconditionally exempt everywhere,
  *   contradicting the conformance check `docs/reference/okf-conformance.md` documents).
  */
-function isReservedKey(key: string, isIndex: boolean, isRootIndex: boolean, profile: Profile): boolean {
+function isReservedKey(
+  key: string,
+  isIndex: boolean,
+  isRootIndex: boolean,
+  profile: Profile,
+  compiled: CompiledType,
+): boolean {
   if (key === "resource") {
     return !isIndex;
   }
@@ -93,6 +106,13 @@ function isReservedKey(key: string, isIndex: boolean, isRootIndex: boolean, prof
     key === "lore_task_status"
   ) {
     return profile.okfVersion === "0.2";
+  }
+  if (
+    profile.okfVersion === "0.2" &&
+    compiled.name === ATTESTED_COMPUTATION_TYPE &&
+    ATTESTED_COMPUTATION_FIELDS.has(key)
+  ) {
+    return true;
   }
   return false;
 }
@@ -145,6 +165,41 @@ const VERIFICATION_EVENT_SCHEMA = z.looseObject({
   at: z.iso.datetime({ offset: true }),
 });
 const VERIFIED_SCHEMA = z.union([VERIFICATION_EVENT_SCHEMA, z.array(VERIFICATION_EVENT_SCHEMA)]);
+
+/** One typed parameter hole exposed by an OKF 0.2 Attested Computation. */
+const COMPUTATION_PARAMETER_SCHEMA = z.looseObject({
+  name: z.string().trim().min(1),
+  type: z.string().trim().min(1),
+  required: z.boolean(),
+});
+
+/** Run instructions plus the receipt fields a deterministic attester may inspect. */
+const COMPUTATION_EXECUTOR_SCHEMA = z.looseObject({
+  resource: z.string().trim().min(1),
+  receipt: z.array(z.string().trim().min(1)).nullish(),
+});
+
+/** A deterministic, consumer-side attester resource. Lore only represents this path. */
+const COMPUTATION_ATTESTER_SCHEMA = z.looseObject({
+  resource: z.string().trim().min(1),
+});
+
+/** The complete OKF 0.2 section-10 frontmatter contract for the known computation type. */
+const ATTESTED_COMPUTATION_SCHEMA = z.looseObject({
+  runtime: z.string().trim().min(1),
+  parameters: z.array(COMPUTATION_PARAMETER_SCHEMA).nullish(),
+  computation: z.string().trim().min(1).nullish(),
+  executor: COMPUTATION_EXECUTOR_SCHEMA.nullish(),
+  attester: COMPUTATION_ATTESTER_SCHEMA.nullish(),
+});
+const ATTESTED_COMPUTATION_JSON_SCHEMA = z.toJSONSchema(ATTESTED_COMPUTATION_SCHEMA, { target: "draft-7" });
+const ATTESTED_COMPUTATION_FIELDS: ReadonlySet<string> = new Set([
+  "runtime",
+  "parameters",
+  "computation",
+  "executor",
+  "attester",
+]);
 
 /** Editor forms are generated from the same runtime validators. */
 const LIFECYCLE_STATUS_JSON_SCHEMA = z.toJSONSchema(LIFECYCLE_STATUS_SCHEMA, { target: "draft-7" });
@@ -248,7 +303,7 @@ export function validateFrontmatter(fm: Record<string, unknown>, options: Valida
   const where = options.path ? ` in ${options.path}` : "";
   const type = requireType(fm, where, options.path);
 
-  validateVersionedFrontmatter(fm, profile, where, options.path, options.warnings);
+  validateVersionedFrontmatter(fm, type, profile, where, options.path, options.warnings);
 
   const compiled = profile.types.get(canonicalType(type, profile));
   if (compiled === undefined) {
@@ -278,6 +333,7 @@ export function validateFrontmatter(fm: Record<string, unknown>, options: Valida
 /** Validate and classify the OKF 0.2 frontmatter families without mutating authored data. */
 function validateVersionedFrontmatter(
   fm: Record<string, unknown>,
+  type: string,
   profile: Profile,
   where: string,
   path: string | undefined,
@@ -285,6 +341,18 @@ function validateVersionedFrontmatter(
 ): void {
   if (profile.okfVersion !== "0.2") {
     return;
+  }
+  const canonical = canonicalType(type, profile);
+  if (canonical === ATTESTED_COMPUTATION_TYPE && profile.types.has(canonical)) {
+    const result = ATTESTED_COMPUTATION_SCHEMA.safeParse(fm);
+    if (!result.success) {
+      throw new LoreError(
+        "validation",
+        `invalid ${ATTESTED_COMPUTATION_TYPE} contract${where}: ${describeIssues(result.error)}`,
+        "set a non-empty `runtime` and fix the computation contract field(s) named above",
+        { path, type: ATTESTED_COMPUTATION_TYPE, key: "runtime", issues: issueList(result.error) },
+      );
+    }
   }
   if (Object.hasOwn(fm, "generated") && fm.generated !== null) {
     const result = GENERATED_SCHEMA.safeParse(fm.generated);
@@ -414,7 +482,7 @@ function warnExtraKeys(
     return;
   }
   for (const key of Object.getOwnPropertyNames(fm)) {
-    if (!compiled.declaredFields.has(key) && !isReservedKey(key, isIndex, isRootIndex, profile)) {
+    if (!compiled.declaredFields.has(key) && !isReservedKey(key, isIndex, isRootIndex, profile, compiled)) {
       warnings.add(`unknown key "${key}"${where}; preserved but not validated`);
     }
   }
@@ -526,18 +594,28 @@ export function emitSchemaFiles(profile: Profile, options: EmitSchemaFilesOption
   const types = options.only ? [options.only] : [...profile.types.values()];
   return types.map((type) => ({
     path: posix.join(dir, schemaFileName(type.name)),
-    contents: `${JSON.stringify(schemaForVersion(type.jsonSchema, profile), null, 2)}\n`,
+    contents: `${JSON.stringify(schemaForVersion(type, profile), null, 2)}\n`,
   }));
 }
 
-/** Add the 0.2 provenance, trust, and lifecycle families without changing the 0.1 profile grammar. */
-function schemaForVersion(schema: Record<string, unknown>, profile: Profile): Record<string, unknown> {
+/** Add the 0.2 shared families and the type-specific computation contract to editor schemas. */
+function schemaForVersion(type: CompiledType, profile: Profile): Record<string, unknown> {
+  const schema = type.jsonSchema;
   if (profile.okfVersion !== "0.2") {
     return schema;
   }
   const properties = (schema.properties ?? {}) as Record<string, unknown>;
+  const computationProperties =
+    type.name === ATTESTED_COMPUTATION_TYPE
+      ? ((ATTESTED_COMPUTATION_JSON_SCHEMA.properties ?? {}) as Record<string, unknown>)
+      : {};
+  const required = [...((schema.required ?? []) as string[])];
+  if (type.name === ATTESTED_COMPUTATION_TYPE && !required.includes("runtime")) {
+    required.push("runtime");
+  }
   return {
     ...schema,
+    required,
     properties: {
       ...properties,
       generated: GENERATED_JSON_SCHEMA,
@@ -547,6 +625,7 @@ function schemaForVersion(schema: Record<string, unknown>, profile: Profile): Re
       status: LIFECYCLE_STATUS_JSON_SCHEMA,
       stale_after: STALE_AFTER_JSON_SCHEMA,
       lore_task_status: TASK_ROLLUP_STATUS_JSON_SCHEMA,
+      ...computationProperties,
     },
   };
 }

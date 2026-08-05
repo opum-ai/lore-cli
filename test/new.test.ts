@@ -61,6 +61,20 @@ describe("lore new — scaffolding a known type", () => {
     expect(readFileSync(join(root, result.path), "utf8")).toContain("type: Story");
   });
 
+  test("scaffolds Attested Computation under its slug with its schema and conventional heading", () => {
+    const { code, result } = newCmd(["attested computation", "Revenue for fiscal year"]);
+    expect(code).toBe(0);
+    expect(result).toEqual({
+      id: "attested-computation/revenue-for-fiscal-year",
+      path: "docs/attested-computation/revenue-for-fiscal-year.md",
+      type: "Attested Computation",
+    });
+    const raw = readFileSync(join(root, result.path), "utf8");
+    expect(raw).toContain("# yaml-language-server: $schema=../../.lore/schemas/attested-computation.schema.json");
+    expect(raw).toContain("runtime: TODO\n");
+    expect(raw).toContain("# Computation\n");
+  });
+
   test("the new doc loads cleanly: loadBundle yields no warnings (AC#1)", () => {
     newCmd(["reference", "Orders table"]);
     const warnings = new WarningCollector();

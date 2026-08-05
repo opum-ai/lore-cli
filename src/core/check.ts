@@ -61,6 +61,7 @@ import type { Finding, Severity } from "./finding";
 import { decodeTarget, isExternalTarget, pathPart, validateLink } from "./links";
 import { type ManagedTaskRow, regenerateTaskBlock } from "./managed-block";
 import { type BundleState, CURRENT_OKF_VERSION, type TaskRollupField } from "./okf-version";
+import { ATTESTED_COMPUTATION_TYPE } from "./profile";
 import type { ReconciledStatus } from "./reconcile";
 
 /** `error` fails the gate (exit `6`); `warning` is advisory (fails only under `--strict`). The shared {@link Severity}. */
@@ -76,6 +77,7 @@ export type CheckRule =
   | "broken-link"
   | "broken-anchor"
   | "broken-source"
+  | "broken-computation"
   | "stale-after"
   | "status-drift"
   | "managed-block-drift"
@@ -106,6 +108,8 @@ export interface CheckInputFile {
 export interface CheckBundleOptions {
   /** Current UTC calendar date in YYYY-MM-DD form. */
   readonly today?: string;
+  /** Every regular file path in the bundle, used only for path existence checks; file bytes are never read here. */
+  readonly availablePaths?: ReadonlySet<string>;
 }
 
 /** The aggregate result of a `lore check` run over a bundle. */
@@ -327,6 +331,7 @@ export function checkBundle(
   state: BundleState = { okfVersion: CURRENT_OKF_VERSION, source: "declared" },
   options: CheckBundleOptions = {},
 ): CheckReport {
+  const availablePaths = options.availablePaths ?? new Set(files.map((file) => file.path));
   // Pass 1 — index: parse each file's body once into an mdast tree, keyed by bundle-relative
   // id, and record its heading-slug set. The id key set is the membership; every file is
   // indexed before any link is checked, so a forward reference resolves.
@@ -364,6 +369,7 @@ export function checkBundle(
           });
         }
       }
+      findings.push(...computationResourceFindings(file.path, file.raw, availablePaths));
       if (options.today !== undefined) {
         findings.push(...staleAfterFindings(file.path, file.raw, options.today));
       }
@@ -372,6 +378,48 @@ export function checkBundle(
   }
 
   return summarize(findings, files.length);
+}
+
+/**
+ * Report a missing file-backed computation without opening or evaluating it. External URLs are
+ * outside the deterministic bundle gate, while relative and bundle-root paths resolve against the
+ * same POSIX namespace the command layer inventories with its symlink-safe walker.
+ */
+function computationResourceFindings(path: string, raw: string, availablePaths: ReadonlySet<string>): CheckFinding[] {
+  let frontmatter: Record<string, unknown> | null;
+  try {
+    frontmatter = tryReadFrontmatter(path, raw);
+  } catch {
+    return [];
+  }
+  if (
+    typeof frontmatter?.type !== "string" ||
+    frontmatter.type.trim().toLowerCase() !== ATTESTED_COMPUTATION_TYPE.toLowerCase() ||
+    typeof frontmatter.computation !== "string"
+  ) {
+    return [];
+  }
+  const target = frontmatter.computation.trim();
+  if (target === "" || isExternalTarget(target)) {
+    return [];
+  }
+  const decoded = decodeTarget(pathPart(target));
+  if (decoded === "") {
+    return [];
+  }
+  const dir = posix.dirname(path);
+  const resolved = posix.normalize(decoded.startsWith("/") ? decoded.slice(1) : posix.join(dir, decoded));
+  if (availablePaths.has(resolved)) {
+    return [];
+  }
+  return [
+    {
+      severity: "warning",
+      rule: "broken-computation",
+      file: path,
+      message: `computation path ${JSON.stringify(target)} points at ${JSON.stringify(resolved)}, which is not in the bundle`,
+    },
+  ];
 }
 
 /** Surface an elapsed OKF 0.2 stale_after date as advisory quality state, never a conformance error. */

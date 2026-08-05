@@ -13,7 +13,7 @@ import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
 
-/** The six story-convention type names, sourced from the built-in profile. */
+/** The built-in OKF 0.2 type names, sourced from the profile. */
 const KNOWN_TYPES = [...defaultProfile().types.keys()];
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
@@ -600,6 +600,18 @@ describe("validate (command)", () => {
     expect(report.errorCount).toBe(1);
     expect(report.files[0]?.findings[0]?.message).toContain("verification evidence");
     expect(report.files[0]?.findings[0]?.message).toContain("human:<id>");
+  });
+
+  test("an Attested Computation missing runtime returns exit 6 and names the field", () => {
+    mkdirSync(join(root, "docs/attested-computation"), { recursive: true });
+    writeFileSync(
+      join(root, "docs/attested-computation/missing-runtime.md"),
+      "---\ntype: Attested Computation\nsummary: Missing runtime.\n---\n# Computation\n",
+    );
+    const { code, report } = validateCmd(["docs/attested-computation/missing-runtime.md"]);
+    expect(code).toBe(EXIT_CODES.validation);
+    expect(report.errorCount).toBe(1);
+    expect(report.files[0]?.findings[0]?.message).toContain("runtime");
   });
 
   test("a fresh `lore new` of every known type validates clean (LORE-18 × LORE-19)", () => {

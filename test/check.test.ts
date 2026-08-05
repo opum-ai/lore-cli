@@ -366,6 +366,37 @@ sources:
     expect(report.findings.some((finding) => finding.rule === "broken-source")).toBe(false);
   });
 
+  test("a missing file-backed computation is a warning, while an inventoried asset is clean", () => {
+    const computation: CheckInputFile = {
+      path: "attested-computation/revenue.md",
+      raw: "---\ntype: Attested Computation\nruntime: bigquery\ncomputation: ./revenue.sql\n---\n# Computation\n",
+    };
+    const missing = checkBundle([computation], undefined, {
+      availablePaths: new Set([computation.path]),
+    });
+    expect(missing.findings).toContainEqual({
+      severity: "warning",
+      rule: "broken-computation",
+      file: computation.path,
+      message:
+        'computation path "./revenue.sql" points at "attested-computation/revenue.sql", which is not in the bundle',
+    });
+
+    const present = checkBundle([computation], undefined, {
+      availablePaths: new Set([computation.path, "attested-computation/revenue.sql"]),
+    });
+    expect(present.findings.some((finding) => finding.rule === "broken-computation")).toBe(false);
+  });
+
+  test("OKF 0.1 does not promote computation paths into the check contract", () => {
+    const computation: CheckInputFile = {
+      path: "computations/legacy.md",
+      raw: "---\ntype: Attested Computation\ncomputation: ./missing.sql\n---\n# Computation\n",
+    };
+    const report = checkBundle([computation], { okfVersion: "0.1", source: "declared" });
+    expect(report.findings.some((finding) => finding.rule === "broken-computation")).toBe(false);
+  });
+
   test("OKF 0.2 stale_after warns on the boundary and afterward, but not before", () => {
     const lifecycle: CheckInputFile = {
       path: "reference/lifecycle.md",
@@ -921,6 +952,26 @@ describe("runCheck — exit codes and discovery", () => {
     expect(report.data.findings[0].rule).toBe("stale-after");
 
     expect(runCheck({ ...opts(["--strict"]), clock })).toBe(EXIT_CODES.validation);
+  });
+
+  test("inventories a computation asset without reading or executing it", () => {
+    writeFileSync(join(root, "docs", "index.md"), '---\ntype: Reference\nokf_version: "0.2"\n---\n# Docs\n');
+    mkdirSync(join(root, "docs", "attested-computation"), { recursive: true });
+    const marker = join(root, "executed-marker");
+    writeFileSync(
+      join(root, "docs", "attested-computation", "danger.sh"),
+      `#!/bin/sh\nprintf executed > ${JSON.stringify(marker)}\n`,
+    );
+    writeFileSync(
+      join(root, "docs", "attested-computation", "safe.md"),
+      "---\ntype: Attested Computation\nsummary: Safe representation.\nruntime: shell\nparameters:\n  - { name: value, type: string, required: true }\ncomputation: ./danger.sh\n---\n# Computation\n",
+    );
+
+    const options = opts([], JSON_CTX);
+    expect(runCheck(options)).toBe(EXIT_OK);
+    const report = JSON.parse((options.stdout as ReturnType<typeof capture>).text());
+    expect(report.data.findings.some((finding: { rule: string }) => finding.rule === "broken-computation")).toBe(false);
+    expect(existsSync(marker)).toBe(false);
   });
 
   test("--strict promotes a portability warning to exit 6", () => {
@@ -1603,6 +1654,7 @@ describe("driftFindingsForBundle — docPath agrees with the fixable/isDocsRoot 
     const bundle = {
       label,
       files: [{ path: "stories/x.md", raw: original }],
+      availablePaths: new Set(["stories/x.md"]),
       filenameFindings: [],
       state: { okfVersion: "0.1" as const, source: "declared" as const },
       versionIssues: [],

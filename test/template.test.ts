@@ -29,7 +29,7 @@ function profileWithResourceBase(resourceBase: string, extraBaseFields: string[]
   return compileProfile(parseProfile(doc, "test-profile"));
 }
 
-/** The six story-convention type names, sourced from the built-in profile. */
+/** The built-in OKF 0.2 type names, sourced from the profile. */
 const KNOWN_TYPES = [...defaultProfile().types.keys()];
 
 const TIMESTAMP = "2026-06-25T12:00:00Z";
@@ -143,6 +143,14 @@ describe("buildNewConcept — known types validate clean by construction (AC#1)"
     expect(contents.startsWith("---\n# yaml-language-server: $schema=../../.lore/schemas/adr.schema.json\n")).toBe(
       true,
     );
+  });
+
+  test("Attested Computation scaffolds an inert computation contract", () => {
+    const result = buildBuiltin("Attested Computation");
+    expect(result.contents).toContain("type: Attested Computation\n");
+    expect(result.contents).toContain("runtime: TODO\n");
+    expect(result.contents).toContain("# Computation\n");
+    expect(result.contents).toContain("```text\nReplace this placeholder with the sanctioned computation");
   });
 
   test("OKF 0.2 emission is byte-exact, ordered, and keeps generated.at a string", () => {

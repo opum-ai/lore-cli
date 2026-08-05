@@ -17,9 +17,9 @@
  * Three properties define its behavior, mirroring {@link import("../config")}:
  *
  * - **Zero-config.** A missing `profile.toml` is not an error: {@link loadProfile}
- *   returns the built-in {@link defaultProfile} — the six story-convention types
- *   (Epic/Story/Spec/ADR/Runbook/Reference), byte-for-byte the behavior lore shipped
- *   before the profile existed (AC#3). The file exists only to extend or replace it.
+ *   returns the built-in {@link defaultProfile} — the story-convention types plus the
+ *   OKF 0.2 Attested Computation type. Consuming an OKF 0.1 bundle selects the legacy six-type
+ *   vocabulary so the additive 0.2 type remains a tolerated producer extension there.
  * - **The declarative language is the boundary.** The grammar expresses field kinds,
  *   enums, list items, required-ness, required sections, and a template ref — and
  *   nothing else (AC#5). There is no code-registration escape hatch and no
@@ -44,6 +44,9 @@ import { isAbsolute, join, posix, win32 } from "node:path";
 import { z } from "zod";
 import { errnoCode, LoreError } from "../errors";
 import { type BundleState, CURRENT_OKF_VERSION, type OkfVersion, requireSupportedOkfVersion } from "./okf-version";
+
+/** The additive concept type introduced by OKF 0.2 section 10. */
+export const ATTESTED_COMPUTATION_TYPE = "Attested Computation";
 
 /** Where the declarative profile lives, relative to the repo root (ADR-0013). `.toml` wins over `.json`. */
 export const PROFILE_REL_PATH = ".lore/profile.toml";
@@ -837,19 +840,19 @@ const optionalString: FieldSpec = { required: false, kind: "string" };
 const optionalStringList: FieldSpec = { required: false, kind: "list", items: { kind: "string" } };
 
 /**
- * The built-in **story-convention** profile (AC#3): the six types lore shipped before the
- * profile existed, re-expressed as data and run through the same {@link compileProfile} as a
- * loaded profile (so the default is exercised by the real path). Its generated validators are
+ * The built-in **story-convention** profile (AC#3): the six legacy types lore shipped before the
+ * profile existed plus OKF 0.2's additive Attested Computation type, re-expressed as data and run
+ * through the same {@link compileProfile} as a loaded profile. Its generated validators are
  * byte-compatible with the old hand-authored Zod, with one documented narrowing: `supersedes` /
  * `superseded_by` are `list` rather than the old `string | list` union, which the declarative
  * `kind` grammar cannot express (AC#5 expressiveness limit) — invisible to every existing
  * concept (none use these lifecycle keys yet). The ADR-0006 §5 summary heuristic is NOT here;
  * it stays a lore built-in in `validate.ts` for the same reason.
  */
-function storyConventionProfile(): ParsedProfile {
+function storyConventionProfile(okfVersion: OkfVersion = CURRENT_OKF_VERSION): ParsedProfile {
   return {
     name: "story-convention",
-    okfVersion: CURRENT_OKF_VERSION,
+    okfVersion,
     case: "Title",
     resourceBase: "",
     baseFields: {
@@ -881,12 +884,15 @@ function storyConventionProfile(): ParsedProfile {
       { name: "ADR", fields: {}, sections: ["Status", "Context", "Decision", "Consequences"] },
       { name: "Runbook", fields: {}, sections: [] },
       { name: "Reference", fields: {}, sections: [] },
+      ...(okfVersion === "0.2" ? [{ name: ATTESTED_COMPUTATION_TYPE, fields: {}, sections: [] }] : []),
     ],
   };
 }
 
 /** Memoized compiled default — building its Zod schemas once, since the serializer reaches for it on every concept. */
 let DEFAULT_PROFILE: Profile | undefined;
+/** Memoized legacy built-in profile used only while consuming a declared OKF 0.1 bundle. */
+let LEGACY_DEFAULT_PROFILE: Profile | undefined;
 
 /**
  * The built-in story-convention {@link Profile} {@link loadProfile} returns when no
@@ -899,12 +905,25 @@ export function defaultProfile(): Profile {
   return DEFAULT_PROFILE;
 }
 
+/** The built-in vocabulary for one consumed bundle version, preserving 0.1's six-type surface. */
+function defaultProfileForVersion(okfVersion: OkfVersion): Profile {
+  if (okfVersion === CURRENT_OKF_VERSION) {
+    return defaultProfile();
+  }
+  LEGACY_DEFAULT_PROFILE ??= compileProfile(storyConventionProfile("0.1"));
+  return LEGACY_DEFAULT_PROFILE;
+}
+
 /**
- * Apply consumed-bundle semantics to a profile without mutating its producer target. The compiled
- * validators are immutable and currently shared by both supported versions; later field-level
- * migrations branch on this typed `okfVersion` while retaining the same compiled profile object.
+ * Apply consumed-bundle semantics to a profile without mutating its producer target. Custom
+ * profiles retain their explicitly-owned type vocabulary across versions. The built-in profile is
+ * versioned: OKF 0.2 includes Attested Computation, while OKF 0.1 keeps the legacy six types so the
+ * additive type remains unknown and therefore tolerated under the 0.1 consumer contract.
  */
 export function profileForBundle(profile: Profile, state: BundleState): Profile {
+  if (profile === DEFAULT_PROFILE || profile === LEGACY_DEFAULT_PROFILE) {
+    return defaultProfileForVersion(state.okfVersion);
+  }
   return profile.okfVersion === state.okfVersion ? profile : { ...profile, okfVersion: state.okfVersion };
 }
 

@@ -30,7 +30,7 @@ import { VERSION } from "../meta";
 import { type Concept, idFromPath, serializeConcept, serializeConceptWithModeline } from "./concept";
 import { encodePathSegments } from "./links";
 import type { BundleState, OkfVersion } from "./okf-version";
-import { defaultProfile, type Profile, profileForBundle, slugForTypeName } from "./profile";
+import { ATTESTED_COMPUTATION_TYPE, defaultProfile, type Profile, profileForBundle, slugForTypeName } from "./profile";
 import { validateFrontmatter } from "./schema";
 
 /**
@@ -202,6 +202,11 @@ export function buildNewConcept(input: BuildNewConceptInput): BuildNewConceptRes
     type: input.type,
     title: input.title,
     summary: input.summary,
+    ...(profile.okfVersion === "0.2" &&
+    input.type === ATTESTED_COMPUTATION_TYPE &&
+    profile.types.has(ATTESTED_COMPUTATION_TYPE)
+      ? { runtime: "TODO" }
+      : {}),
     ...versionedProvenance(input.timestamp, profile.okfVersion),
   };
   if (input.tags && input.tags.length > 0) {
@@ -417,7 +422,19 @@ const STORY_TEMPLATE = `
 `;
 
 /**
- * The built-in body template content lore ships for the six story-convention types — the
+ * Attested Computation: representation-only scaffold. The text fence is deliberately inert;
+ * Lore writes and validates this contract but never binds parameters or executes its content.
+ */
+const ATTESTED_COMPUTATION_TEMPLATE = `
+# Computation
+
+\`\`\`text
+Replace this placeholder with the sanctioned computation for {{title}}.
+\`\`\`
+`;
+
+/**
+ * The built-in body template content lore ships for its story-convention and OKF types — the
  * zero-config fallback when no `.lore/templates/<type>.md` is present. Keyed by canonical type
  * name (a plain string map, **independent of the active profile**): a custom-profile type lore
  * ships no body for falls back to {@link GENERIC_TEMPLATE}, and the project supplies its own
@@ -431,6 +448,7 @@ const BUILTIN_TEMPLATES: Readonly<Record<string, string>> = Object.freeze({
   Runbook: RUNBOOK_TEMPLATE,
   Epic: EPIC_TEMPLATE,
   Story: STORY_TEMPLATE,
+  [ATTESTED_COMPUTATION_TYPE]: ATTESTED_COMPUTATION_TEMPLATE,
 });
 
 /**

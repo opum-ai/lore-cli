@@ -678,6 +678,8 @@ interface Bundle {
   readonly label: string;
   /** The root's `.md` files, each keyed by its **bundle-root-relative** path. */
   readonly files: CheckInputFile[];
+  /** Every regular file in the root, used for existence checks without reading executable assets. */
+  readonly availablePaths: ReadonlySet<string>;
   /** Warn-only filename-portability findings for this root (leading `_`, `.mdx`), independent of content. */
   readonly filenameFindings: readonly CheckFinding[];
   /** Typed OKF semantics negotiated from this root's index.md. */
@@ -718,7 +720,8 @@ function collectBundles(root: string, paths: readonly string[], warnings: Warnin
       continue; // the same physical root named twice (directly, via symlink, or case) is one bundle
     }
     seenRoots.add(identity);
-    const docFiles = expandRoot(absRoot, bundleRoot, warnings);
+    const allFiles = expandRoot(absRoot, bundleRoot, warnings);
+    const docFiles = allFiles.filter(isDocName);
     const files = docFiles
       .filter(isMarkdownPath)
       .map((rel) => ({ path: rel, raw: readSource(join(absRoot, rel), `${bundleRoot}/${rel}`) }));
@@ -730,6 +733,7 @@ function collectBundles(root: string, paths: readonly string[], warnings: Warnin
     bundles.push({
       label: bundleRoot,
       files,
+      availablePaths: new Set(allFiles),
       filenameFindings,
       state: version.state,
       versionIssues: version.issues,
@@ -750,7 +754,7 @@ function checkBundles(bundles: readonly Bundle[], today: string): CheckReport {
   const findings: CheckFinding[] = [];
   let fileCount = 0;
   for (const bundle of bundles) {
-    const report = checkBundle(bundle.files, bundle.state, { today });
+    const report = checkBundle(bundle.files, bundle.state, { today, availablePaths: bundle.availablePaths });
     fileCount += report.fileCount;
     const versionFindings: CheckFinding[] = bundle.versionIssues.map((issue) => ({
       severity: issue.severity,
@@ -803,8 +807,10 @@ function filenameHazards(rel: string): CheckFinding[] {
 }
 
 /**
- * Expand one bundle root to the bundle-relative `.md`/`.mdx` paths it holds — a sorted, symlink-safe
- * walk (its advisories routed to `warnings`). A root that does not exist is a `not_found`
+ * Expand one bundle root to all bundle-relative regular-file paths it holds — a sorted,
+ * symlink-safe walk (its advisories routed to `warnings`). Markdown is filtered for content checks
+ * by the caller; the full inventory lets path-valued contracts be checked without opening or
+ * executing their target assets. A root that does not exist is a `not_found`
  * {@link LoreError} (exit `3`) naming the path the user gave, so a typo'd bundle root fails
  * loud rather than silently checking nothing; a permission failure is `denied` (exit `4`).
  *
@@ -830,7 +836,7 @@ function expandRoot(absRoot: string, given: string, warnings: WarningCollector):
       "pass a bundle directory (e.g. docs/); `check` validates the whole bundle",
     );
   }
-  return walkFiles(absRoot, warnings, isDocName);
+  return walkFiles(absRoot, warnings, () => true);
 }
 
 /** Whether a file name is a discoverable doc: a lowercase `.md` (content) or any-case `.mdx` (filename lint only). */

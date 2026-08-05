@@ -16,8 +16,16 @@ function expectValidation(fn: () => unknown): LoreError {
 }
 
 describe("schema — the default (story-convention) profile", () => {
-  test("the built-in profile is exactly the six story-convention types", () => {
-    expect([...defaultProfile().types.keys()]).toEqual(["Epic", "Story", "Spec", "ADR", "Runbook", "Reference"]);
+  test("the built-in profile includes the additive OKF 0.2 computation type", () => {
+    expect([...defaultProfile().types.keys()]).toEqual([
+      "Epic",
+      "Story",
+      "Spec",
+      "ADR",
+      "Runbook",
+      "Reference",
+      "Attested Computation",
+    ]);
   });
 
   test("isKnownType narrows known vs unknown types against the default profile", () => {
@@ -91,6 +99,64 @@ describe("schema — the error tier (throws, exit 6)", () => {
 
   test("a date-only timestamp is rejected — lore emits full datetimes", () => {
     expectValidation(() => validateFrontmatter({ type: "ADR", timestamp: "2026-06-21" }));
+  });
+
+  test("Attested Computation requires runtime under OKF 0.2", () => {
+    const err = expectValidation(() =>
+      validateFrontmatter(
+        { type: "Attested Computation", summary: "A sanctioned computation." },
+        { path: "docs/attested-computation/revenue.md" },
+      ),
+    );
+    expect(err.message).toContain("Attested Computation contract");
+    expect(err.message).toContain("runtime");
+    expect(err.input).toMatchObject({ path: "docs/attested-computation/revenue.md", key: "runtime" });
+  });
+
+  test("Attested Computation validates the complete section-10 contract", () => {
+    expect(() =>
+      validateFrontmatter({
+        type: "Attested Computation",
+        summary: "A sanctioned computation.",
+        runtime: "bigquery",
+        parameters: [{ name: "year", type: "integer", required: true }],
+        computation: "references/revenue.sql",
+        executor: { resource: "references/run.md", receipt: ["job_id", "executed_sql"] },
+        attester: { resource: "references/attest.py" },
+      }),
+    ).not.toThrow();
+  });
+
+  test("Attested Computation rejects malformed nested fields", () => {
+    const err = expectValidation(() =>
+      validateFrontmatter({
+        type: "Attested Computation",
+        runtime: "bigquery",
+        parameters: [{ name: "year", type: "integer", required: "yes" }],
+        executor: { receipt: ["job_id"] },
+        attester: { resource: "" },
+      }),
+    );
+    expect(err.message).toContain("parameters.0.required");
+    expect(err.message).toContain("executor.resource");
+    expect(err.message).toContain("attester.resource");
+  });
+
+  test("OKF 0.1 tolerates Attested Computation as an unknown type without promoting its fields", () => {
+    const warnings = new WarningCollector();
+    expect(() =>
+      validateFrontmatter(
+        { type: "Attested Computation", parameters: "preserved legacy extension" },
+        {
+          warnings,
+          path: "docs/computations/legacy.md",
+          bundleState: { okfVersion: "0.1", source: "declared" },
+        },
+      ),
+    ).not.toThrow();
+    expect(warnings.list()).toEqual([
+      'unknown type "Attested Computation" in docs/computations/legacy.md; validated on `type` only',
+    ]);
   });
 
   test("malformed OKF 0.2 sources fail with the offending path and key", () => {
