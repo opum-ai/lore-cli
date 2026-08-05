@@ -313,6 +313,17 @@ interactively, and configure its Trusted Publisher with the same exact fields.
 The normal platform-first publish loop is resumable and will skip that already
 published `name@version` when the remaining packages are later published.
 
+For `0.1.1`, Release run `30966913181` completed that seven-package path with
+`publish: false`: all six matching-host qualifications passed, including
+Windows ARM64, and artifact `8915160779` retained exactly seven tarballs. The
+untouched platform tarballs were published interactively first and the root
+launcher last. Anonymous registry metadata and a clean install then verified
+all seven immutable versions before the non-draft GitHub Release was created.
+The new Windows ARM64 package then received the same GitHub Actions Trusted
+Publisher contract as the existing six packages. LCLI-278 still prohibits
+`publish: true`; this manual release did not weaken or exercise the unsafe
+automated path.
+
 ### 2. The `publish` job (already in `release.yml`)
 
 After the interactive `0.1.0` bootstrap and trust configuration,

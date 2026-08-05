@@ -7,7 +7,7 @@ tags:
   - governance
 summary: Record the first immutable public package release while retaining the unresolved control gate for future automated publication.
 timestamp: 2026-08-04T02:50:00Z
-status: in-progress
+status: todo
 tasks:
   - lcli-253
   - lcli-269
@@ -80,6 +80,13 @@ contracts are verified, and the private repository has a GitHub Release for
 `v0.1.0`. The exact commit, artifact hashes, and control boundary are recorded
 in [Lore CLI release truth](../reference/lore-cli-release-truth.md).
 
+LCLI-313 published `0.1.1` from the seven untouched tarballs produced by
+qualified Release run `30966913181`, again with platform packages first and
+root last. All seven npm packages are public, Windows ARM64 passed its native
+matching-host qualification, a clean registry install reports `0.1.1`, and the
+new package's Trusted Publisher matches the existing six-package contract. The
+repository has a non-draft, non-prerelease GitHub Release for `v0.1.1`.
+
 This Story remains open because LCLI-278 still owns the separate safety gate
 for future automated OIDC publication.
 
@@ -127,7 +134,7 @@ for future automated OIDC publication.
 | [LCLI-299](../../backlog/tasks/lcli-299%20-%20docker-e2e-validate-type-and-schema-export-type-out-scoping-flags-have-no-E2E-coverage.md) | docker/e2e: validate --type and schema export --type/--out scoping flags have no E2E coverage | Done |
 | [LCLI-300](../../backlog/tasks/lcli-300%20-%20docker-e2e-two-Meridian-stress-test-regressions-LCLI-261-orphans-hierarchy-LCLI-262-rewrite-links-text-mismatch-never-backported-into-the-persisted-harness.md) | docker/e2e: two Meridian-stress-test regressions (LCLI-261 orphans hierarchy, LCLI-262 rewrite-links text mismatch) never backported into the persisted harness | Done |
 | [LCLI-312](../../backlog/tasks/lcli-312%20-%20Prepare-and-deliver-npm-0.1.1-release-metadata.md) | Prepare and deliver npm 0.1.1 release metadata | Done |
-| [LCLI-313](../../backlog/tasks/lcli-313%20-%20Publish-Lore-CLI-0.1.1-from-qualified-release-artifacts.md) | Publish Lore CLI 0.1.1 from qualified release artifacts | In Progress |
+| [LCLI-313](../../backlog/tasks/lcli-313%20-%20Publish-Lore-CLI-0.1.1-from-qualified-release-artifacts.md) | Publish Lore CLI 0.1.1 from qualified release artifacts | Done |
 <!-- lore:tasks:end -->
 
 ## Notes
