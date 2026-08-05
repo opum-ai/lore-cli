@@ -55,7 +55,7 @@ COPY patches ./patches
 COPY src ./src
 COPY test ./test
 RUN bun install --frozen-lockfile --linker=isolated \
-    && bun build --compile src/cli.ts --outfile /usr/local/bin/lore \
+    && bun build --compile src/compiled.ts --outfile /usr/local/bin/lore \
     && chmod +x /usr/local/bin/lore \
     && VER="$(/usr/local/bin/lore --version)" \
     && EXPECTED="$(bun -e 'console.log(require("./package.json").version)')" \

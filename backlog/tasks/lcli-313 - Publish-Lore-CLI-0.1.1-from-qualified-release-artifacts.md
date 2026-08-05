@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:04'
-updated_date: '2026-08-05 00:46'
+updated_date: '2026-08-05 00:52'
 labels:
   - release
   - publication
@@ -27,7 +27,10 @@ modified_files:
   - benchmark/ladybug/file-capture-helper.cjs
   - benchmark/ladybug/run.ts
   - bin/lore.cjs
+  - docker/e2e/Dockerfile
+  - package.json
   - src/cli.ts
+  - src/compiled.ts
   - test/ci-workflow.test.ts
   - test/ladybug-benchmark-fixture.test.ts
   - test/ladybug-benchmark-report.test.ts
@@ -85,4 +88,6 @@ Fresh PR #318 run 30961694531 proved the Windows fix and timeout correction: Win
 2026-08-05 safe qualification attempt 30963431236: strict bounded Ladybug qualification passed conclusively, and all four Unix matching-host package jobs passed. Both Windows x64 and ARM64 built, packed, and installed their exact 0.1.1 tarballs, then exited 0 with identical empty stdout at the global launcher --version assertion. Assembly and publish were skipped, nothing reached npm, and v0.1.1 was removed locally and remotely. This again rules out Windows ARM64 and LadybugDB as the blocker. The qualification harness now uses Bun.spawnSync only for Windows Node-launcher capture, matching the direct capture mode already proven by Windows CI; asynchronous execution remains everywhere else. The Windows regression now compiles and invokes the real Lore CLI instead of a synthetic child. Local verification: focused 17 pass/1 Windows-only skip, full 2451 pass/1 Windows-only skip/0 fail (8308 assertions), lint, typecheck, Biome, and diff hygiene.
 
 PR #320 CI run 30964049642 replaced the synthetic Windows launcher proof with the real compiled Lore CLI and failed at the intended assertion: the compiled process exited 0 but synchronous redirected capture received empty stdout. This falsifies the earlier harness-only hypothesis and locates the defect in compiled Lore's natural-exit output draining on Windows, still independent of LadybugDB and architecture. Added an explicit stdout/stderr write barrier in the real CLI entrypoint before setting the final exit code, preserving process.exitCode semantics and all command bytes. Local verification: full 2451 pass/1 Windows-only skip/0 fail (8308 assertions), focused 71 pass/1 Windows-only skip, lint, typecheck, compiled 0.1.1 smoke, and diff hygiene.
+
+Fresh PR #320 run 30964384859 showed the explicit drain barrier alone still produced an empty real Windows binary, falsifying the queued-output diagnosis. The zero-output/zero-exit signature instead matches the compiled artifact never entering src/cli.ts's import.meta.main guard on Windows when built from an absolute entrypoint. Added src/compiled.ts as an unconditional distribution entrypoint that calls the exported main(), while source execution and test imports retain the guard. Package, CI, Docker, and matching-host builds now compile this entrypoint; a contract test locks all build surfaces together. Local evidence: compiled executable reports 0.1.1, focused 77 pass/1 Windows-only skip, full 2452 pass/1 Windows-only skip/0 fail (8313 assertions), lint, typecheck, Biome, and diff hygiene.
 <!-- SECTION:NOTES:END -->

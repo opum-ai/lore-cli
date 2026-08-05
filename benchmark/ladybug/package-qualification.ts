@@ -613,7 +613,7 @@ export function resolveInstalledOptionalPackageJson(
   throw new Error(`cannot locate installed optional package ${packageName}@${version}`);
 }
 
-/** Build from same-drive scratch while resolving imports from the absolute source entrypoint. */
+/** Build from same-drive scratch while resolving imports from the absolute compiled entrypoint. */
 export function packageCompileCommand(
   repositoryRoot: string,
   scratchRoot: string,
@@ -626,7 +626,7 @@ export function packageCompileCommand(
       join(repositoryRoot, "benchmark", "ladybug", "package-build.ts"),
       `--target=${target}`,
       `--outfile=${output}`,
-      `--entrypoint=${join(repositoryRoot, "src", "cli.ts")}`,
+      `--entrypoint=${join(repositoryRoot, "src", "compiled.ts")}`,
     ],
     // Bun 1.2 extracts a downloaded target runtime relative to cwd before moving
     // it into the user cache. GitHub's Windows checkout and cache use different

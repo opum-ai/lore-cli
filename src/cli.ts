@@ -642,12 +642,12 @@ function dispatch(parsed: ParsedArgs, context: RunContext, output: OutputContext
   return handler(parsed.commandArgs, { ...context, cwd: root }, output);
 }
 
-// Only drive the real process when executed directly (not when imported by tests). `run` returns a
-// number for synchronous commands and a Promise for the async ones; it funnels
-// its own async rejections through `reportError`, so `Promise.resolve(...).then`
-// normally receives a numeric exit code. The `.catch` is a last-ditch backstop
-// (e.g. `reportError` itself throwing) — `EXIT_UNCAUGHT` (1), the uncaught-fault
-// code, not the validation gate's `6`.
+// Only drive the real process when executed directly (not when imported by tests).
+// `src/compiled.ts` calls the same main function unconditionally because Bun's
+// Windows compiled runtime does not reliably preserve `import.meta.main` for an
+// absolute build entrypoint. `run` returns a number for synchronous commands and a
+// Promise for async ones; its own rejections normally flow through `reportError`,
+// while this boundary retains `EXIT_UNCAUGHT` (1) as the last-ditch backstop.
 //
 // Setting `process.exitCode` rather than calling `process.exit()` is deliberate (LORE-70):
 // `emit`/`reportError`'s writes to `process.stdout`/`process.stderr` are async for a piped
@@ -664,19 +664,20 @@ function drainProcessOutput(): Promise<void> {
   return Promise.all([drain(process.stdout), drain(process.stderr)]).then(() => undefined);
 }
 
-if (import.meta.main) {
+export async function main(): Promise<void> {
   const packageQualificationRetrieval: RetrievalGraphLoader | undefined =
     process.env.LORE_INTERNAL_PACKAGE_QUALIFICATION === "require-indexed"
       ? (options) => loadRetrievalGraph({ ...options, policy: "indexed" })
       : undefined;
-  Promise.resolve(run(process.argv, { retrieval: packageQualificationRetrieval })).then(
-    async (code) => {
-      await drainProcessOutput();
-      process.exitCode = code;
-    },
-    async () => {
-      await drainProcessOutput();
-      process.exitCode = EXIT_UNCAUGHT;
-    },
-  );
+  let code = EXIT_UNCAUGHT;
+  try {
+    code = await Promise.resolve(run(process.argv, { retrieval: packageQualificationRetrieval }));
+  } catch {
+    code = EXIT_UNCAUGHT;
+  } finally {
+    await drainProcessOutput();
+    process.exitCode = code;
+  }
 }
+
+if (import.meta.main) await main();
