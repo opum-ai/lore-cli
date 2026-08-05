@@ -3,11 +3,11 @@ id: LCLI-314.6
 title: >-
   Widen lore check's conformance tiers for OKF 0.2 and rewrite
   okf-conformance.md
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:48'
-updated_date: '2026-08-05 17:49'
+updated_date: '2026-08-05 18:12'
 labels: []
 dependencies:
   - LCLI-314.2
@@ -83,4 +83,12 @@ Verification: `bun test test/schema.test.ts test/check.test.ts test/validate.tes
 Adversarial self-review (no independent reviewer authorized) rechecked every acceptance criterion, the custom-profile seam, 0.1 behavior, unknown type/key tolerance, broken-link labeling, missing-index behavior, source section references, unrelated dirty-file hashes, and diff scope. No acceptance defect remains.
 
 Delivery hold: actual `lore sync` would write docs/log.md and commit dirty Backlog state. No local commit authority was granted, so the task intentionally remains In Progress with verified artifacts retained uncommitted; no push or remote action was taken.
+
+Local delivery completed with preliminary Backlog evidence commit 33f5a17ec5a6f14bcbd611213e57561f421d3cf4 and implementation commit 825e0b9. Post-commit verification: focused suite 401 pass/0 fail; typecheck pass; lint pass across 191 files; strict Lore validation 0 errors/0 warnings; strict Lore check 0 findings across 65 files; git diff --check pass. The previously recorded full suite remains 2524 pass, 1 skip, 0 fail because no source changed after that run. The earlier delivery hold is resolved; no push or remote action was taken.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Closed OKF 0.2 conformance tiers by reserving lifecycle status under minimal custom profiles, adding complete field-family and section 11 tolerance regressions, and rewriting the conformance reference to distinguish the OKF floor from Lore-specific gates. Delivered locally in 825e0b9 after focused 401/401, full 2524 pass plus 1 skip, typecheck, lint, strict Lore validate/check, and diff checks passed.
+<!-- SECTION:FINAL_SUMMARY:END -->
