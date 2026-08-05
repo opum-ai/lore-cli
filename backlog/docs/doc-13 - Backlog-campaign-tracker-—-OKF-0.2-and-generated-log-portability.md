@@ -3,7 +3,7 @@ id: doc-13
 title: Backlog campaign tracker — OKF 0.2 and generated-log portability
 type: other
 created_date: '2026-08-05 03:22'
-updated_date: '2026-08-05 05:02'
+updated_date: '2026-08-05 11:27'
 ---
 # Backlog campaign tracker — OKF 0.2 and generated-log portability
 
@@ -17,15 +17,15 @@ updated_date: '2026-08-05 05:02'
 ## Frontier
 Informational snapshot only; never a promised next wave.
 
-- Ready now by formal dependency state but not dispatched: LCLI-314.1.
-- LCLI-314.2 through LCLI-314.6 remain dependency-gated as recorded below.
-- Wave 1 is delivered locally in commit `596bacdfe1ccca8f6473fa39fd05f07b735cd270`; this tracker update is the serialized post-delivery reconciliation.
+- Wave 2 implementation and acceptance verification are complete for LCLI-314.1; delivery remains pending authorization for the required Lore sync and local commit.
+- No next wave is dispatched. LCLI-314.2 through LCLI-314.6 remain dependency-gated until LCLI-314.1 reaches Done.
+- Wave 1 is delivered locally in commit `596bacdfe1ccca8f6473fa39fd05f07b735cd270`; tracker reconciliation is `5e49fb69cd8d1128295118b0c6c20ec5cf77e366`.
 
 ## Queue
 | Order | Task | Cluster | Formal dependencies | State | Wave | Likely files | Note |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | LCLI-316 | generated log portability | none | Done; delivered locally | 1 | src/core/log.ts, test/log.test.ts, test/sync.test.ts | Acceptance criteria complete; wave commit `596bacdfe1ccca8f6473fa39fd05f07b735cd270`. |
-| 2 | LCLI-314.1 | OKF version seam | none | Ready | — | src/core/scaffold.ts, src/core/profile.ts, src/core/schema.ts, bundle/check plumbing, tests | Establish version-aware behavior before field migrations. |
+| 2 | LCLI-314.1 | OKF version seam | none | Acceptance verified; delivery pending | 2 | src/core/scaffold.ts, src/core/profile.ts, src/core/schema.ts, bundle/check plumbing, tests | All 6 criteria checked; gates pass. Actual Lore sync and local commit await authorization. |
 | 3 | LCLI-314.2 | OKF generated provenance | LCLI-314.1 | Blocked by dependency | — | profile/template/concept/meta surfaces, tests | Preserve OKF 0.1 and ADR-0011 byte stability. |
 | 4 | LCLI-314.3 | OKF sources | LCLI-314.1 | Blocked by dependency | — | profile/template/schema/link/check surfaces, tests, conformance reference | Decide sources participation in the link graph. |
 | 5 | LCLI-314.4 | OKF trust and lifecycle | LCLI-314.1 | Blocked by dependency | — | profile/schema/config/reconcile surfaces, tests, ADR | Resolve the lifecycle-status versus task-rollup-status collision explicitly. |
@@ -49,3 +49,5 @@ Informational snapshot only; never a promised next wave.
 - 2026-08-04 — restore reconciliation found no drift: dev remained at aedf64ae10ba83401d7bc49ab8584337222a3ed1 with origin/dev at 0/0, no extra worktrees or campaign branches, and only the intentional untracked doc-13 and LCLI-316 files. Dispatched LCLI-316 as sequential wave 1; LCLI-314.1 remained ready but undispatched.
 - 2026-08-04 — settled wave 1. LCLI-316 is Done with all acceptance criteria checked after focused and full verification. No independent reviewer was authorized, so an adversarial self-review exercised multi-backtick subjects and preserved hand-authored checks. The primary `dev` checkout remained at aedf64ae10ba83401d7bc49ab8584337222a3ed1 (origin/dev 0/0) with modified src/core/log.ts, test/log.test.ts, and test/sync.test.ts plus the untracked doc-13 and LCLI-316 Backlog files. These artifacts were retained intentionally pending delivery authority; no next wave was dispatched.
 - 2026-08-05 — the user authorized local commit delivery. Re-verification passed with 328 focused tests and `git diff --check`; the five verified wave artifacts were committed on `dev` as `596bacdfe1ccca8f6473fa39fd05f07b735cd270` (`fix: make generated log subjects MDX-safe`). No push, PR, merge, publication, or next wave was authorized.
+- 2026-08-05 — restore grounding matched the active handover: dev was clean at `5e49fb69cd8d1128295118b0c6c20ec5cf77e366`, two commits ahead of locally known origin/dev, with no extra worktrees or campaign branches. Live task state left only LCLI-314.1 ready, so it was dispatched as sequential wave 2; no remote action was authorized.
+- 2026-08-05 — wave 2 implementation and acceptance verification completed for LCLI-314.1. Full suite: 2474 pass, 1 skip, 0 fail; focused suite: 370 pass; lint, typecheck, strict Lore validate/check, and git diff check pass. Adversarial self-review confirmed declared 0.1 bundles remain strict-clean and byte-stable, producer targets are restricted to 0.1/0.2, future declarations retain their authored value under warned best-effort semantics, and no automatic migration occurs. The task remains In Progress because lore sync dry-run reports a docs/log.md update and actual sync may commit the dirty campaign state; wave 2 has no local commit authorization. No dependent wave or remote action was dispatched.

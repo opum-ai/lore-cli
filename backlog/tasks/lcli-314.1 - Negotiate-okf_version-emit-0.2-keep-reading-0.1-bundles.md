@@ -1,9 +1,11 @@
 ---
 id: LCLI-314.1
 title: 'Negotiate okf_version: emit 0.2, keep reading 0.1 bundles'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-04 21:46'
+updated_date: '2026-08-05 11:25'
 labels: []
 dependencies: []
 references:
@@ -11,6 +13,32 @@ references:
     https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
 documentation:
   - docs/reference/okf-conformance.md
+modified_files:
+  - docs/reference/okf-conformance.md
+  - src/commands/check.ts
+  - src/commands/export.ts
+  - src/commands/new.ts
+  - src/commands/validate.ts
+  - src/core/bundle.ts
+  - src/core/check.ts
+  - src/core/concept.ts
+  - src/core/ladybug-driver.ts
+  - src/core/ladybug-source.ts
+  - src/core/okf-version.ts
+  - src/core/profile.ts
+  - src/core/scaffold.ts
+  - src/core/schema.ts
+  - src/core/template.ts
+  - src/core/validate.ts
+  - src/core/workspace-projection.ts
+  - test/bundle.test.ts
+  - test/check.test.ts
+  - test/init.test.ts
+  - test/okf-version.test.ts
+  - test/profile.test.ts
+  - test/scaffold.test.ts
+  - test/supersede.test.ts
+  - test/traversal.test.ts
 parent_task_id: LCLI-314
 priority: high
 type: feature
@@ -36,10 +64,26 @@ Open decision for the implementer to research and record: whether `lore` should 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The bundle-root index's okf_version is parsed and available to the schema, template, and check layers as typed bundle state
-- [ ] #2 lore init stamps okf_version 0.2 on a new bundle
-- [ ] #3 A bundle stamped okf_version 0.1 loads, validates, and checks with 0.1 semantics and no new errors or warnings
-- [ ] #4 A bundle with a missing or unparseable okf_version is handled explicitly and documented, not silently defaulted
-- [ ] #5 A custom profile declaring okf_version 0.1 or 0.2 is honored; an unrecognized version fails loud as a validation error (exit 6)
-- [ ] #6 Tests cover both versions end to end, including a 0.1 fixture bundle that must not drift
+- [x] #1 The bundle-root index's okf_version is parsed and available to the schema, template, and check layers as typed bundle state
+- [x] #2 lore init stamps okf_version 0.2 on a new bundle
+- [x] #3 A bundle stamped okf_version 0.1 loads, validates, and checks with 0.1 semantics and no new errors or warnings
+- [x] #4 A bundle with a missing or unparseable okf_version is handled explicitly and documented, not silently defaulted
+- [x] #5 A custom profile declaring okf_version 0.1 or 0.2 is honored; an unrecognized version fails loud as a validation error (exit 6)
+- [x] #6 Tests cover both versions end to end, including a 0.1 fixture bundle that must not drift
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add a typed OKF bundle-version seam that reads the bundle-root index, distinguishes declared, legacy-missing, and unsupported-future states, preserves 0.1 fallback semantics explicitly, and rejects malformed values.
+2. Restrict producer profiles to supported 0.1 or 0.2 targets, move the built-in profile and lore init output to 0.2, and keep custom 0.1 profiles honored.
+3. Thread the resolved bundle state through bundle loading, schema validation, template/new generation, and check so later field migrations can branch on one typed value; do not add automatic or in-place migration.
+4. Add focused and end-to-end tests for 0.2 init, declared 0.1 compatibility without byte drift, missing/malformed/unknown declarations, custom profile targets, and check exit behavior.
+5. Document the version negotiation and explicit migration policy through Lore, then run focused suites, lint, typecheck, the full test suite, strict Lore checks, and an adversarial self-review.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Verification 2026-08-05: full suite 2474 pass, 1 skip, 0 fail across 76 files; focused version, bundle, check, and scaffold suite 370 pass; npm run lint and npm run typecheck pass; lore validate --strict and lore check --strict report zero findings; git diff --check passes. Acceptance evidence covers typed state propagation, default 0.2 init, declared 0.1 strict-clean byte stability, explicit missing/malformed/future handling, supported custom producer targets, and unsupported target validation mapped to exit 6. Decision: no automatic or in-place migration; the repository docs root remains authored as 0.1. Future declarations are retained and consumed best-effort with a warning, matching upstream OKF versioning guidance. Documentation was updated through lore replace. lore sync dry-run reports only docs/log.md would change; actual sync is intentionally pending because it would commit the currently dirty Backlog campaign files and wave 2 has no local commit authorization.
+<!-- SECTION:NOTES:END -->
