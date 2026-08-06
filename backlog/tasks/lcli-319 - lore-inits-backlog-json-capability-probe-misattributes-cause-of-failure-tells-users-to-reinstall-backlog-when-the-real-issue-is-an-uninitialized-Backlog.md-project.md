@@ -4,11 +4,11 @@ title: >-
   lore init's backlog --json-capability probe misattributes cause of failure --
   tells users to reinstall backlog when the real issue is an uninitialized
   Backlog.md project
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-05 11:57'
-updated_date: '2026-08-05 22:58'
+updated_date: '2026-08-06 00:33'
 labels:
   - init
   - backlog
@@ -109,4 +109,12 @@ Delivery state: implementation and tracker/task metadata are verified but remain
 Delivery authorization update (2026-08-05): the user authorized creation of a local feature branch and a local commit for the five campaign paths. Work moved to fix/lcli-319-backlog-init-diagnostic. Push, PR, merge, branch deletion, and publication remain unauthorized; task remains In Progress until integration.
 
 Remote delivery update (2026-08-05): the user authorized push and PR creation. Branch fix/lcli-319-backlog-init-diagnostic was pushed and PR #329 opened against dev: https://github.com/opum-ai/lore-cli/pull/329. Merge, branch deletion, and publication remain unauthorized; task stays In Progress pending integration.
+
+Integration update (2026-08-06): PR #329 merged into dev with exact PR head fffd90a29e87df86a0b40e1d45921a4bc2d887fd and merge commit d3193d725b2df6dd3c20c01da9e3f35ec26cf5d4. A live GitHub query confirmed all 8 checks succeeded, and local ancestry verification confirmed the exact PR head is contained in origin/dev. The user authorized the tracked settlement and pruning of the merged implementation branch.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Distinguished an uninitialized Backlog.md project from a genuinely JSON-incapable backlog binary and preserved the legacy incapability warning unchanged. Verified with 86 focused tests, typecheck, lint, the full suite (2,526 passed, 1 skipped), a real installed-binary probe, branch-local Lore validation, and 8 successful PR checks. Integrated through PR #329 at merge commit d3193d725b2df6dd3c20c01da9e3f35ec26cf5d4.
+<!-- SECTION:FINAL_SUMMARY:END -->
