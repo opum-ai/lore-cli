@@ -3,7 +3,7 @@ id: doc-14
 title: Backlog campaign tracker — post-0.1.1 runtime and init reliability
 type: other
 created_date: '2026-08-05 22:13'
-updated_date: '2026-08-06 01:29'
+updated_date: '2026-08-06 01:34'
 ---
 # Backlog campaign tracker — post-0.1.1 runtime and init reliability
 
@@ -13,20 +13,20 @@ updated_date: '2026-08-06 01:29'
 - Rationale: start with the localized, source-confirmed init diagnostic defect; then isolate the native-runtime reliability split before addressing the workspace validation defect that formally depends on it.
 - Order is a tie-break; readiness is recomputed live.
 - Execution model: sequential waves of one task; no subagents. Initialization authorized the tracker and ignored handover only; the 2026-08-05 restore invocation authorized continuation through the next safe task wave.
-- Delivery authorization: the user separately authorized the LCLI-319 local commit, push/PR, merge, post-merge tracked reconciliation PR, and pruning of its merged implementation branch. The 2026-08-05 restore invocation authorized LCLI-317 execution as wave 2; the 2026-08-06 follow-up authorizes one local commit of its four tracked campaign paths. Push, PR, merge, branch deletion, publication, LCLI-318 dispatch, and unrelated cleanup remain unauthorized.
+- Delivery authorization: the user separately authorized the LCLI-319 local commit, push/PR, merge, post-merge tracked reconciliation PR, and pruning of its merged implementation branch. The 2026-08-05 restore invocation authorized LCLI-317 execution as wave 2; 2026-08-06 follow-ups authorized its local commit, branch push, PR creation, and corresponding tracker/task reconciliation. Merge, branch deletion, publication, LCLI-318 dispatch, and unrelated cleanup remain unauthorized.
 
 ## Frontier
 Informational snapshot only; never a promised next wave.
 
 - LCLI-319 is Done and durably settled through PR #330, exact settlement head `6fd1e8dc13031c2a3a7cd77396aa894b6293521d`, merged into `origin/dev` as `f03b52808f3a35f033a44205e58a9b9a680b1c16`.
-- LCLI-317 is acceptance-verified on `fix/lcli-317-indexed-preflight-advisory`; local commit authorization is recorded, but push, PR, and merge remain unauthorized, so it stays In Progress pending integration.
+- LCLI-317 is acceptance-verified on `fix/lcli-317-indexed-preflight-advisory`; implementation commit `e956f7e2b0f578707acac9e1f78c36667f6b7331` is pushed and PR #331 is open against `dev`. It stays In Progress pending integration; merge remains unauthorized.
 - LCLI-318 remains blocked by its formal dependency on LCLI-317; no task is ready for dispatch while wave 2 awaits delivery disposition.
 
 ## Queue
 | Order | Task | Cluster | Formal dependencies | State | Wave | Likely files | Note |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | LCLI-319 | Backlog capability diagnostics | none | Done; implementation and tracker settlement integrated | 1 | `src/adapters/backlog.ts`, `test/backlog-probe.test.ts`, `test/init.test.ts` | Implementation commit `620ced12fbcaa5b504c9b4206913a781b3042bc1`; exact implementation PR head `fffd90a29e87df86a0b40e1d45921a4bc2d887fd`; PR #329 merged into `dev` as `d3193d725b2df6dd3c20c01da9e3f35ec26cf5d4`; settlement PR #330 exact head `6fd1e8dc13031c2a3a7cd77396aa894b6293521d` merged as `f03b52808f3a35f033a44205e58a9b9a680b1c16`. |
-| 2 | LCLI-317 | Native Ladybug runtime reliability | none | In Progress; acceptance-verified; local-only delivery authorized | 2 | `src/core/retrieval.ts`, `test/indexed-retrieval.test.ts` | Controlled repro ruled out volume and addon concurrency: the original split was an uninitialized Backlog source preflight failure. The fix distinguishes pre-native preflight fallback from actual native failure without leaking private detail. Push, PR, and merge remain unauthorized. |
+| 2 | LCLI-317 | Native Ladybug runtime reliability | none | In Progress; acceptance-verified; PR #331 open | 2 | `src/core/retrieval.ts`, `test/indexed-retrieval.test.ts` | Controlled repro ruled out volume and addon concurrency: the original split was an uninitialized Backlog source preflight failure. The fix distinguishes pre-native preflight fallback from actual native failure without leaking private detail. Initial exact implementation head `e956f7e2b0f578707acac9e1f78c36667f6b7331`; PR checks are queued/in progress; merge remains unauthorized. |
 | 3 | LCLI-318 | Workspace validation ordering | LCLI-317 | To Do; dependency-blocked | — | `src/core/workspace-projection.ts`, `src/core/workspace-source.ts`, `src/core/workspace-retrieval.ts`, `test/workspace-retrieval.test.ts` | Shares workspace/native retrieval surfaces with LCLI-317 and cannot dispatch until that task is Done. |
 
 ## Resolved
@@ -54,3 +54,4 @@ Informational snapshot only; never a promised next wave.
 - 2026-08-05 — restore reconciled the stale settlement claim: local `origin/dev` is `f03b52808f3a35f033a44205e58a9b9a680b1c16`, containing exact settlement head `6fd1e8dc13031c2a3a7cd77396aa894b6293521d`; the checkout is clean at that head with one worktree and the merged settlement branch intentionally retained because deletion is unauthorized. Live LCLI-317 has no dependencies and LCLI-318 remains formally blocked on it. Dispatched LCLI-317 as sequential wave 2; delivery actions remain unauthorized.
 - 2026-08-06 — settled wave 2 at verified local-only state on `fix/lcli-317-indexed-preflight-advisory` from `origin/dev` at `f03b52808f3a35f033a44205e58a9b9a680b1c16`. The controlled installed-binary matrix proved identical initialized fixtures activate Ladybug serially on both APFS volumes and concurrently in 8/8 independent processes; indexed-required diagnostics identified the original failure as an uninitialized Backlog task-source read before any native call. The implementation now emits an accurate sanitized preflight advisory while preserving the native-failure advisory. Evidence: focused suite 34 passed; typecheck; lint over 191 files; full suite 2,527 passed, 1 skipped, 0 failed; real source CLI preflight probe; `git diff --check`; adversarial self-review found no unresolved acceptance gap. All three criteria are checked, but LCLI-317 remains In Progress and LCLI-318 remains blocked because commit, push, PR, and merge authority are absent.
 - 2026-08-06 — local delivery authorization follow-up: the user approved one local commit containing the four LCLI-317 campaign paths on `fix/lcli-317-indexed-preflight-advisory`. Push, PR creation, merge, branch deletion, publication, LCLI-318 dispatch, and unrelated cleanup remain unauthorized; LCLI-317 stays In Progress pending integration.
+- 2026-08-06 — remote delivery follow-up: after user approval, fetched `origin/dev` and confirmed it remained at `f03b52808f3a35f033a44205e58a9b9a680b1c16`, so no rebase or verification rerun was required; pushed `fix/lcli-317-indexed-preflight-advisory`; opened PR #331 against `dev` with initial exact implementation head `e956f7e2b0f578707acac9e1f78c36667f6b7331`. Live GitHub inspection reported OPEN/BLOCKED while all 8 CI checks were queued or in progress. This tracker/task reconciliation will advance the PR head; merge, branch deletion, publication, LCLI-318 dispatch, and unrelated cleanup remain unauthorized.

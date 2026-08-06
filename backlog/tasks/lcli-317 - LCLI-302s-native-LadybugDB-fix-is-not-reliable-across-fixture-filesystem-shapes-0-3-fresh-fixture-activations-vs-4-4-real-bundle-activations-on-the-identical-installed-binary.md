@@ -8,7 +8,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-05 11:56'
-updated_date: '2026-08-06 01:29'
+updated_date: '2026-08-06 01:34'
 labels:
   - ladybug
   - graph
@@ -101,4 +101,6 @@ Adversarial self-review: the diagnostic state is monotonic once any native call 
 Delivery state: all three acceptance criteria are verified, but the four tracked changes are uncommitted on local branch fix/lcli-317-indexed-preflight-advisory from origin/dev because commit, push, PR, and merge authority is absent. Task remains In Progress pending delivery disposition.
 
 Local delivery authorization update (2026-08-06 UTC): the user approved the requested next step, authorizing one local commit of the four tracked LCLI-317 campaign paths on fix/lcli-317-indexed-preflight-advisory. Push, PR creation, merge, branch deletion, publication, and LCLI-318 dispatch remain unauthorized. LCLI-317 stays In Progress pending integration.
+
+Remote delivery update (2026-08-06 UTC): after user approval, fetched origin/dev and confirmed it remained at f03b52808f3a35f033a44205e58a9b9a680b1c16, so no rebase or verification rerun was required. Pushed fix/lcli-317-indexed-preflight-advisory and opened PR #331 against dev: https://github.com/opum-ai/lore-cli/pull/331. The initial exact implementation head is e956f7e2b0f578707acac9e1f78c36667f6b7331. The PR is OPEN with merge state BLOCKED while all eight CI checks are queued or in progress. This task/tracker reconciliation will advance the PR head; merge, branch deletion, publication, and LCLI-318 dispatch remain unauthorized. Task stays In Progress pending integration.
 <!-- SECTION:NOTES:END -->
