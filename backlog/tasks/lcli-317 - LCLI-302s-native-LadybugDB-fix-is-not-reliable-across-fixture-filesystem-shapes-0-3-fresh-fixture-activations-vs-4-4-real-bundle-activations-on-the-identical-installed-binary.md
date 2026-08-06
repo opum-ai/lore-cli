@@ -4,11 +4,11 @@ title: >-
   LCLI-302's native LadybugDB fix is not reliable across fixture/filesystem
   shapes -- 0/3 fresh-fixture activations vs 4/4 real-bundle activations on the
   identical installed binary
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-05 11:56'
-updated_date: '2026-08-06 01:52'
+updated_date: '2026-08-06 02:39'
 labels:
   - ladybug
   - graph
@@ -110,4 +110,12 @@ Remote delivery update (2026-08-06 UTC): after user approval, fetched origin/dev
 PR #331 exact head c2aeb37d11fd876d122d9e82317ce7dc59957edf exposed a real Ubuntu-only assertion-contract gap: test/ladybug-concurrency.test.ts filtered only advisories containing 'native indexed retrieval', so the new pre-native advisory remained in stderr parity comparisons at lines 266 and 385. Windows passed through the legacy unsupported-platform advisory and local Darwin exercised native success. Merge remains paused while this in-scope test contract is corrected and the replacement head is requalified.
 
 CI correction verification (2026-08-06 UTC): the concurrency parity helper now exact-matches all three public automatic fallback advisories and a platform-independent regression proves each advisory is removed without masking unrelated stderr. Focused bun test on ladybug-concurrency and indexed-retrieval: 38 passed, 0 failed, 233 expectations. Typecheck passed. Lint checked 191 files with no fixes. Full bun test: 2,528 passed, 1 skipped, 0 failed, 8,597 expectations across 76 files; the skip is the pre-existing published-launcher qualification. Git diff check passed. The replacement PR head still requires remote CI qualification before the authorized merge.
+
+Integration settlement (2026-08-06 UTC): PR #331 final head 5ca8204850e275e5a68ab1db21fdd273a8c0d2e1 passed all eight CI checks, including the corrected Ubuntu concurrency parity suite, and merged into dev as e8268fa50c881623a6c37ccc24c6b74db7d88186. Refreshed origin/dev contains the exact head by ancestry. No acceptance, verification, privacy, or delivery gap remains.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Identified the apparent volume/concurrency split as an uninitialized Backlog source preflight failure before native activation; added an accurate sanitized preflight advisory while preserving native-failure behavior, and expanded cross-platform parity coverage. Verified with the controlled serial/concurrent volume matrix, 38 focused tests, typecheck, lint, 2,528 full-suite passes with one pre-existing skip, and all eight CI checks. PR #331 final head 5ca8204850e275e5a68ab1db21fdd273a8c0d2e1 merged into dev as e8268fa50c881623a6c37ccc24c6b74db7d88186.
+<!-- SECTION:FINAL_SUMMARY:END -->
