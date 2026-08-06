@@ -4,9 +4,11 @@ title: >-
   LCLI-302's native LadybugDB fix is not reliable across fixture/filesystem
   shapes -- 0/3 fresh-fixture activations vs 4/4 real-bundle activations on the
   identical installed binary
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-05 11:56'
+updated_date: '2026-08-06 01:29'
 labels:
   - ladybug
   - graph
@@ -21,6 +23,9 @@ references:
     note) and section 7 defect H
   - plus docs/runbooks/e2e-verification-v0.1.1.md
   - in that repo.
+modified_files:
+  - src/core/retrieval.ts
+  - test/indexed-retrieval.test.ts
 priority: medium
 type: bug
 ordinal: 440000
@@ -61,7 +66,39 @@ Command *output* was correct in every case on both sides of the split -- this is
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Root cause identified for why an isolated, single-concept `lore init` fixture on the internal boot volume fails to activate the native LadybugDB backend while a real multi-concept bundle on an external volume succeeds 4/4 times on the identical installed binary
-- [ ] #2 A controlled repro isolates the volume-boundary and concurrency variables independently (same fixture shape run alone on each volume, and run concurrently vs. serially) to confirm which one actually explains the split
-- [ ] #3 Native backend activation is reliable -- or, if activation genuinely cannot be guaranteed in some environment, the fallback path fires consistently with an accurate advisory -- regardless of which variable turns out to matter
+- [x] #1 Root cause identified for why an isolated, single-concept `lore init` fixture on the internal boot volume fails to activate the native LadybugDB backend while a real multi-concept bundle on an external volume succeeds 4/4 times on the identical installed binary
+- [x] #2 A controlled repro isolates the volume-boundary and concurrency variables independently (same fixture shape run alone on each volume, and run concurrently vs. serially) to confirm which one actually explains the split
+- [x] #3 Native backend activation is reliable -- or, if activation genuinely cannot be guaranteed in some environment, the fallback path fires consistently with an accurate advisory -- regardless of which variable turns out to matter
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Track whether the repository-local indexed attempt reached the lazy Ladybug loader so automatic fallback can distinguish a pre-native indexed preflight/source failure from an actual native runtime failure without exposing private exception details.
+2. Emit a precise sanitized preflight advisory when source loading fails before Ladybug activation, while preserving the existing native-failure advisory unchanged for loader, lifecycle, and indexed-read failures.
+3. Add focused regression coverage proving an adapter/source failure never invokes the native loader, preserves the reference result, and reports the preflight advisory; retain the existing native-failure assertions as compatibility guards.
+4. Verify focused indexed retrieval tests, typecheck, lint, full tests, diff hygiene, and the controlled installed-binary serial/concurrent volume matrix; perform adversarial self-review against all acceptance criteria.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Controlled reproduction before implementation (installed @opum-ai/lore 0.1.1 Darwin ARM64 binary, Bun 1.3.14): an uninitialized internal-volume fixture fell back, and indexed-required mode exposed a Backlog task-list validation failure before any native load. After initializing independent Backlog projects and nested Git roots, identical one-concept fixtures activated indexed retrieval on both /private/tmp (disk3s5) and /Volumes/external (disk7s1). Eight simultaneous independent fixtures, four per volume, all exited 0, created exactly one projection.lbdb each, and emitted zero stderr. This rules out volume boundary and shared-addon concurrency; the original split was a pre-native Backlog source-read failure whose generic advisory incorrectly said native indexed retrieval failed.
+
+Implementation and verification (2026-08-06 UTC): repository-local automatic retrieval now records whether the lazy native boundary was reached. A successful reference fallback reports `indexed retrieval preflight failed before native activation` when source/cache preflight fails first, while actual loader/read failures retain the existing `native indexed retrieval failed` advisory. Private exception detail remains suppressed, and explicit indexed policy still rethrows unchanged.
+
+Objective evidence:
+- Controlled installed-binary matrix: serial identical initialized fixtures succeeded on internal disk3s5 and external disk7s1; 8 simultaneous independent initialized fixtures (4 per volume) all exited 0, produced exactly one native database each, and emitted zero stderr.
+- Real source CLI probe on an uninitialized internal-volume fixture: exit 0 with `warning: indexed retrieval preflight failed before native activation; using the in-memory reference backend`; no Ladybug cache was created.
+- `bun test test/indexed-retrieval.test.ts` — 34 passed, 0 failed, 81 expectations. New regression proves preflight adapter failure preserves reference output, does not invoke the native loader, emits the accurate advisory, and does not leak private detail; existing native loader/read assertions remain green.
+- `bun run typecheck` — passed.
+- `bun run lint` — passed; 191 files checked, no fixes.
+- `bun test` — 2,527 passed, 1 skipped, 0 failed across 76 files; the skip is the pre-existing published-launcher redirected-output qualification.
+- `git diff --check` — passed.
+
+Adversarial self-review: the diagnostic state is monotonic once any native call is attempted, so memoized loader failures cannot be downgraded to preflight; unsupported-platform and explicit-indexed behavior are unchanged; both warning paths remain sanitized; no workspace behavior or documentation was expanded. No unresolved acceptance gap found.
+
+Delivery state: all three acceptance criteria are verified, but the four tracked changes are uncommitted on local branch fix/lcli-317-indexed-preflight-advisory from origin/dev because commit, push, PR, and merge authority is absent. Task remains In Progress pending delivery disposition.
+
+Local delivery authorization update (2026-08-06 UTC): the user approved the requested next step, authorizing one local commit of the four tracked LCLI-317 campaign paths on fix/lcli-317-indexed-preflight-advisory. Push, PR creation, merge, branch deletion, publication, and LCLI-318 dispatch remain unauthorized. LCLI-317 stays In Progress pending integration.
+<!-- SECTION:NOTES:END -->
