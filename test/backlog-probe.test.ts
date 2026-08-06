@@ -116,6 +116,32 @@ describe("probeBacklog — fails loud on a missing binary (AC#2, exit 3)", () =>
   });
 });
 
+describe("probeBacklog — distinguishes an uninitialized project (AC#1, exit 6)", () => {
+  test("a capable binary's no-project diagnostic recommends backlog init instead of reinstalling", async () => {
+    const spawn = fakeSpawn({
+      version: ok("1.49.3\n"),
+      list: {
+        exitCode: 1,
+        stdout: "",
+        stderr:
+          "sysctl: sysctl fmt -1 1024 1: Operation not permitted\nNo Backlog.md project found. Run `backlog init` to initialize.\n",
+      },
+    });
+
+    const err = await probeError(spawn);
+
+    expect(err.type).toBe("validation");
+    expect(exitCodeFor(err)).toBe(6);
+    expect(err.message).toBe(
+      "The `backlog` binary supports --json, but no Backlog.md project is initialized in this directory; run `backlog init` to initialize one.",
+    );
+    expect(err.message).not.toContain("not --json-capable");
+    expect(err.hint).toBeUndefined();
+    expect(err.input).toEqual({ exitCode: 1 });
+    expect(spawn.calls).toEqual([["--version"], ["task", "list", "--json"]]);
+  });
+});
+
 describe("probeBacklog — fails loud on a non-json-capable binary (AC#2, exit 6)", () => {
   test("a binary without --json support rejects it (task list exits non-zero) → validation", async () => {
     const spawn = fakeSpawn({
@@ -127,7 +153,13 @@ describe("probeBacklog — fails loud on a non-json-capable binary (AC#2, exit 6
 
     expect(err.type).toBe("validation");
     expect(exitCodeFor(err)).toBe(6);
-    expect(err.message).toContain("not --json-capable");
+    expect(err.message).toBe(
+      "The `backlog` binary is not --json-capable: `task list --json` exited non-zero (binary does not support --json)",
+    );
+    expect(err.hint).toBe(
+      "lore needs a --json-capable Backlog.md. Install backlog.md>=1.49.0 (npm install -g backlog.md, or your package manager's equivalent) and put its `backlog` binary on PATH; see docs/runbooks/backlog-json-patch.md.",
+    );
+    expect(err.input).toEqual({ exitCode: 1 });
     // The version passed, so the discriminator was the dry list probe — both calls happened.
     expect(spawn.calls).toEqual([["--version"], ["task", "list", "--json"]]);
   });

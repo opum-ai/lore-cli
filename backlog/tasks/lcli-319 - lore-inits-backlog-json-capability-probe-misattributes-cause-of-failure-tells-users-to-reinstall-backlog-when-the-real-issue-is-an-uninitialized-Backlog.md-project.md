@@ -4,9 +4,11 @@ title: >-
   lore init's backlog --json-capability probe misattributes cause of failure --
   tells users to reinstall backlog when the real issue is an uninitialized
   Backlog.md project
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-05 11:57'
+updated_date: '2026-08-05 22:58'
 labels:
   - init
   - backlog
@@ -19,6 +21,10 @@ references:
   - 'not merged/pushed): see e2e_findings_v0.1.1.md section 7 defect G'
   - plus docs/runbooks/e2e-verification-v0.1.1.md
   - in that repo.
+modified_files:
+  - src/adapters/backlog.ts
+  - test/backlog-probe.test.ts
+  - test/init.test.ts
 priority: low
 type: bug
 ordinal: 442000
@@ -67,6 +73,40 @@ This path is advisory-only (`lore init` still succeeds, `capable: false`) so it 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `lore init`'s backlog-capability warning distinguishes "backlog binary does not support --json" from "no Backlog.md project exists yet in this directory" (e.g. by checking stderr/exit-code shape, or by checking for a Backlog.md project marker before concluding --json incapability) and recommends the correct one-line fix for each case
-- [ ] #2 A binary that is genuinely --json-incapable still produces the existing warning/hint unchanged
+- [x] #1 `lore init`'s backlog-capability warning distinguishes "backlog binary does not support --json" from "no Backlog.md project exists yet in this directory" (e.g. by checking stderr/exit-code shape, or by checking for a Backlog.md project marker before concluding --json incapability) and recommends the correct one-line fix for each case
+- [x] #2 A binary that is genuinely --json-incapable still produces the existing warning/hint unchanged
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. In `probeBacklog`, recognize Backlog.md's official no-project diagnostic after the version floor has passed and raise a validation error that explicitly says the binary supports `--json` and instructs the user to run `backlog init`; route all other non-zero `task list --json` exits through the existing `notJsonCapable` helper unchanged.
+2. Add focused probe tests for the uninitialized-project classification, including noisy stderr, and pin the exact pre-existing message and hint for a genuinely `--json`-incapable binary.
+3. Add an init-surface regression test proving the advisory remains non-fatal and the JSON warning plus stderr recommend `backlog init`.
+4. Run focused tests, then typecheck, lint, and the full Bun test suite; perform adversarial self-review against both acceptance criteria.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented a narrow stderr classifier for Backlog.md's official uninitialized-project diagnostic. When the version floor passes and `task list --json` reports `No Backlog.md project found`, the probe now states that the binary supports JSON and recommends `backlog init`. Every other non-zero list result still uses the unchanged non-JSON-capable message and install hint.
+
+Verification:
+- `bun test test/backlog-probe.test.ts test/init.test.ts` — 86 passed, 0 failed.
+- `bun run typecheck` — passed.
+- `bun run lint` — passed; 191 files checked, no fixes.
+- `bun test` — 2,526 passed, 1 skipped, 0 failed across 76 files.
+- Real installed Backlog probe from `/private/tmp` — returned validation with `The backlog binary supports --json... run backlog init`; exit classification remained 6 and no reinstall hint was present.
+- `git diff --check` — passed.
+
+Adversarial self-review:
+- AC1 is pinned at the probe and init surfaces, including noisy stderr and advisory-only exit 0 behavior for init.
+- AC2 pins the previous genuinely-incapable message, hint, and input exactly.
+- The classifier does not expose subprocess stderr, change successful envelopes, or alter other probe failures.
+
+Delivery state: implementation and tracker/task metadata are verified but remain uncommitted on `dev` because the restore request did not authorize commit, push, PR, or merge. Task stays In Progress until the user authorizes a delivery disposition.
+
+Delivery authorization update (2026-08-05): the user authorized creation of a local feature branch and a local commit for the five campaign paths. Work moved to fix/lcli-319-backlog-init-diagnostic. Push, PR, merge, branch deletion, and publication remain unauthorized; task remains In Progress until integration.
+
+Remote delivery update (2026-08-05): the user authorized push and PR creation. Branch fix/lcli-319-backlog-init-diagnostic was pushed and PR #329 opened against dev: https://github.com/opum-ai/lore-cli/pull/329. Merge, branch deletion, and publication remain unauthorized; task stays In Progress pending integration.
+<!-- SECTION:NOTES:END -->
