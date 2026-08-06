@@ -125,6 +125,68 @@ describe("workspace source and reference retrieval", () => {
     expect(nativeLoads).toBe(loadsAfterFallback);
   });
 
+  test("unknown members are rejected before a failing single workspace member is loaded", async () => {
+    const singleManifestPath = join(root, "single-workspace.json");
+    writeFileSync(
+      singleManifestPath,
+      `${JSON.stringify({
+        schemaVersion: "lore-workspace-manifest/1",
+        workspaceId: "single",
+        members: [
+          {
+            memberId: "solo",
+            locator: "members/alpha",
+            displayName: "Solo",
+            expectedRef: "refs/heads/main",
+          },
+        ],
+        links: [],
+      })}\n`,
+    );
+    let memberLoads = 0;
+    let nativeLoads = 0;
+    const loader: RetrievalGraphLoader = (options) => {
+      if (options.workspace === undefined) throw new Error("workspace selection missing");
+      return loadWorkspaceRetrievalGraph({
+        root: options.root,
+        selection: options.workspace,
+        policy: "auto",
+        platform: "darwin",
+        loadNativeDriver: async () => {
+          nativeLoads += 1;
+          throw new Error("native loader must not run before workspace validation");
+        },
+        sourceOptions: {
+          resolveGitRef: () => "refs/heads/main",
+          loadMemberSource: async () => {
+            memberLoads += 1;
+            throw new Error("single-member source is not initialized");
+          },
+        },
+      });
+    };
+
+    await expectUnknownMemberValidation(loader, singleManifestPath, "bogus-member");
+    expect(memberLoads).toBe(0);
+    expect(nativeLoads).toBe(0);
+
+    const validMember = await invoke(loader, [
+      "graph",
+      "--workspace",
+      singleManifestPath,
+      "--repository",
+      "solo",
+      "--json",
+    ]);
+    expect(validMember.code).toBe(6);
+    expect(JSON.parse(validMember.stderr)).toMatchObject({
+      error_type: "validation",
+      message: "workspace member solo could not be validated",
+    });
+    expect(memberLoads).toBe(2);
+    expect(nativeLoads).toBe(0);
+  });
+
   test("an explicitly selected manifest cannot return evidence from another workspace", async () => {
     const isolatedManifestPath = join(root, "isolated-workspace.json");
     const manifest = JSON.parse(await Bun.file(manifestPath).text()) as {
@@ -484,21 +546,25 @@ function commandLoader(
   };
 }
 
-async function expectUnknownMemberValidation(loader: RetrievalGraphLoader): Promise<void> {
-  for (const args of unknownMemberCommands()) {
+async function expectUnknownMemberValidation(
+  loader: RetrievalGraphLoader,
+  selectedManifestPath = manifestPath,
+  unknownMemberId = "missing",
+): Promise<void> {
+  for (const args of unknownMemberCommands(selectedManifestPath, unknownMemberId)) {
     const observed = await invoke(loader, args);
     expect(observed.code).toBe(6);
     expect(observed.stdout).toBe("");
     expect(JSON.parse(observed.stderr)).toMatchObject({
       error_type: "validation",
-      message: expect.stringContaining("unknown workspace member missing"),
+      message: `workspace projection is invalid: unknown workspace member ${unknownMemberId}`,
     });
     expect(observed.stderr).not.toContain("lbugjs.node");
   }
 }
 
-function unknownMemberCommands(): string[][] {
-  const selection = ["--workspace", manifestPath, "--repository", "missing", "--json"];
+function unknownMemberCommands(selectedManifestPath = manifestPath, unknownMemberId = "missing"): string[][] {
+  const selection = ["--workspace", selectedManifestPath, "--repository", unknownMemberId, "--json"];
   return [
     ["graph", ...selection],
     ["query", "evidence", ...selection],

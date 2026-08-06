@@ -277,10 +277,21 @@ export function assertWorkspaceProjectionSelection(
   projection: WorkspaceProjection,
   memberIds: readonly string[],
 ): void {
+  assertWorkspaceSelection(
+    new Set(projection.identity.repositories.map((repository) => repository.memberId)),
+    memberIds,
+  );
+}
+
+/** Validate an explicit repository subset from the manifest before loading any member source. */
+export function assertWorkspaceManifestSelection(manifest: WorkspaceManifest, memberIds: readonly string[]): void {
+  assertWorkspaceSelection(new Set(manifest.members.map((member) => member.memberId)), memberIds);
+}
+
+function assertWorkspaceSelection(known: ReadonlySet<string>, memberIds: readonly string[]): void {
   if (memberIds.length === 0) return;
   const requested = new Set(memberIds);
   if (requested.size !== memberIds.length) invalidWorkspace("repository selectors must be unique");
-  const known = new Set(projection.identity.repositories.map((repository) => repository.memberId));
   for (const memberId of requested) if (!known.has(memberId)) invalidWorkspace(`unknown workspace member ${memberId}`);
 }
 
