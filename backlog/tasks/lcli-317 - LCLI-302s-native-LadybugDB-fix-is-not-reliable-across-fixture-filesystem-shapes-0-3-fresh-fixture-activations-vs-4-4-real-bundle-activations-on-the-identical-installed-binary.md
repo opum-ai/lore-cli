@@ -8,7 +8,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-05 11:56'
-updated_date: '2026-08-06 01:34'
+updated_date: '2026-08-06 01:52'
 labels:
   - ladybug
   - graph
@@ -26,6 +26,7 @@ references:
 modified_files:
   - src/core/retrieval.ts
   - test/indexed-retrieval.test.ts
+  - test/ladybug-concurrency.test.ts
 priority: medium
 type: bug
 ordinal: 440000
@@ -78,6 +79,8 @@ Command *output* was correct in every case on both sides of the split -- this is
 2. Emit a precise sanitized preflight advisory when source loading fails before Ladybug activation, while preserving the existing native-failure advisory unchanged for loader, lifecycle, and indexed-read failures.
 3. Add focused regression coverage proving an adapter/source failure never invokes the native loader, preserves the reference result, and reports the preflight advisory; retain the existing native-failure assertions as compatibility guards.
 4. Verify focused indexed retrieval tests, typecheck, lint, full tests, diff hygiene, and the controlled installed-binary serial/concurrent volume matrix; perform adversarial self-review against all acceptance criteria.
+
+5. Update the cross-platform concurrency parity helper to recognize both sanitized automatic fallback advisories, and add platform-independent contract coverage before replacing the failed PR head.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -103,4 +106,8 @@ Delivery state: all three acceptance criteria are verified, but the four tracked
 Local delivery authorization update (2026-08-06 UTC): the user approved the requested next step, authorizing one local commit of the four tracked LCLI-317 campaign paths on fix/lcli-317-indexed-preflight-advisory. Push, PR creation, merge, branch deletion, publication, and LCLI-318 dispatch remain unauthorized. LCLI-317 stays In Progress pending integration.
 
 Remote delivery update (2026-08-06 UTC): after user approval, fetched origin/dev and confirmed it remained at f03b52808f3a35f033a44205e58a9b9a680b1c16, so no rebase or verification rerun was required. Pushed fix/lcli-317-indexed-preflight-advisory and opened PR #331 against dev: https://github.com/opum-ai/lore-cli/pull/331. The initial exact implementation head is e956f7e2b0f578707acac9e1f78c36667f6b7331. The PR is OPEN with merge state BLOCKED while all eight CI checks are queued or in progress. This task/tracker reconciliation will advance the PR head; merge, branch deletion, publication, and LCLI-318 dispatch remain unauthorized. Task stays In Progress pending integration.
+
+PR #331 exact head c2aeb37d11fd876d122d9e82317ce7dc59957edf exposed a real Ubuntu-only assertion-contract gap: test/ladybug-concurrency.test.ts filtered only advisories containing 'native indexed retrieval', so the new pre-native advisory remained in stderr parity comparisons at lines 266 and 385. Windows passed through the legacy unsupported-platform advisory and local Darwin exercised native success. Merge remains paused while this in-scope test contract is corrected and the replacement head is requalified.
+
+CI correction verification (2026-08-06 UTC): the concurrency parity helper now exact-matches all three public automatic fallback advisories and a platform-independent regression proves each advisory is removed without masking unrelated stderr. Focused bun test on ladybug-concurrency and indexed-retrieval: 38 passed, 0 failed, 233 expectations. Typecheck passed. Lint checked 191 files with no fixes. Full bun test: 2,528 passed, 1 skipped, 0 failed, 8,597 expectations across 76 files; the skip is the pre-existing published-launcher qualification. Git diff check passed. The replacement PR head still requires remote CI qualification before the authorized merge.
 <!-- SECTION:NOTES:END -->
