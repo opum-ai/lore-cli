@@ -3,7 +3,7 @@ id: doc-15
 title: Backlog campaign tracker — pluggable tracker foundation
 type: other
 created_date: '2026-08-07 03:09'
-updated_date: '2026-08-07 11:48'
+updated_date: '2026-08-07 11:53'
 ---
 # Backlog campaign tracker — pluggable tracker foundation
 
@@ -49,4 +49,3 @@ Informational snapshot only; never a promised next wave.
 - 2026-08-07 — restored against live Backlog and git state. The handover and task dependency claims matched; the only drift was CLI-created `doc-15` remaining untracked on the otherwise clean, synchronized checkout. Dispatched sequential wave 1 for LCLI-315.1 on `feat/lcli-315-1-tracker-adapter-seam`; delivery actions remained unauthorized.
 - 2026-08-07 — settled wave 1 as retained in flight, not resolved. Implementation and adversarial self-review completed locally; 159 focused non-Ladybug tests passed with 0 failures, plus 27 focused tracker/reconcile tests, typecheck, lint (193 files), build, Lore dry-run sync, strict Lore validate/check, and diff hygiene. The full suite produced only Ladybug/indexed-retrieval deadline and temp-building cleanup failures while an unrelated repository sustained host CPU saturation; AC 6 remained unchecked.
 - 2026-08-07 — after explicit authorization for `git@github.com:opum-ai/lore-cli.git`, pushed commits `ac237ed` and `49d494d` and opened PR #337 against `dev`. GitHub Actions run 31175041234 passed all eight jobs on the exact head `49d494d6c7a1c328cf2f50af1b83b593501c4288`, resolving the environmental test limitation. Checked AC 6, wrote the final summary, marked LCLI-315.1 Done, and retained merge plus later-wave remote mutations outside authorization.
-
