@@ -54,12 +54,8 @@
  */
 
 import { join } from "node:path";
-import {
-  type BacklogAdapter,
-  type BacklogTaskDetail,
-  bunBacklogSpawn,
-  createBacklogAdapter,
-} from "../adapters/backlog";
+import type { BacklogAdapter, BacklogTaskDetail } from "../adapters/backlog";
+import { createTrackerAdapter } from "../adapters/tracker";
 import { type BundleGraph, conceptNotInBundle, loadBundle, toRefList } from "../core/bundle";
 import { type Concept, idFromPath, serializeConcept } from "../core/concept";
 import { loadProfile, type Profile, profileForBundle, profileTypeDeclaresField } from "../core/profile";
@@ -555,7 +551,7 @@ export async function moveBackRefs(
  * the label/adapter rules itself.
  */
 export function defaultAdapter(root: string): BacklogAdapter {
-  return createBacklogAdapter(bunBacklogSpawn(undefined, root));
+  return createTrackerAdapter(root, {});
 }
 
 /**

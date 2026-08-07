@@ -190,7 +190,7 @@ backlog task edit <id> --add-label "doc:<conceptId>" --doc "<docpath>"
 
 - **`--add-label "doc:<conceptId>"` is the queryable index.**
   `backlog task list --json --labels "doc:<conceptId>"` does an exact AND-match
-  and returns the tagged tasks — the capability (`BacklogAdapter.searchByLabel`)
+  and returns the tagged tasks — the capability (`TrackerAdapter.searchByLabel`)
   that makes the label a real index rather than free text. In practice, `lore
   orphans` reads labels directly off its one unfiltered `task list --json`
   snapshot instead of calling this filtered form, and `lore unlink` operates on
@@ -351,6 +351,35 @@ and `lore`'s `listTasks` passes it at most once regardless.)
   `documentation`, `references`, `dependencies`, or `milestone`. AC/DoD `#n`
   indices are **renumbered display positions**, not stable keys — re-resolve
   after each write or key on text.
+
+---
+
+## Tracker adapter boundary
+
+Coupling commands depend on the backend-neutral `TrackerAdapter` contract in
+`src/adapters/tracker.ts`. Production code constructs a concrete backend only
+through `createTrackerAdapter(root, config)`; injected adapters remain the test
+seam. Backlog.md is the default and the only backend this release makes
+reachable. An absent backend selection therefore preserves the existing
+zero-config behavior, while an unknown selection fails loud instead of being
+silently coerced to Backlog.md.
+
+Every backend must implement the complete task surface (`probe`, `listTasks`,
+`viewTask`, label and text search, create, and edit) plus `statusFlow()`. The
+status method owns the configured project's ordered workflow vocabulary; the
+reconciliation layer must never read another backend's configuration directly.
+
+The contract also preserves four hardening obligations across implementations:
+
+- `probe()` fails loud before task output is trusted.
+- Transport/spawn rejection is mapped to a typed `LoreError` with an actionable
+  diagnostic; the Backlog implementation's errno mapping is the reference
+  behavior.
+- Per-task fan-out remains bounded by the command layer's shared concurrency
+  helper rather than allowing an adapter to create unbounded work.
+- A `viewTask(id)` result is accepted only after the command layer verifies the
+  returned task ID matches the requested ID case-insensitively. A backend must
+  not bypass that verified-view path.
 
 ---
 
