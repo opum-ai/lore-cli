@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:49'
-updated_date: '2026-08-07 13:39'
+updated_date: '2026-08-07 19:56'
 labels: []
 dependencies:
   - LCLI-315.1
@@ -60,6 +60,8 @@ Live qualification on 2026-08-07 used the disposable JIRA Test project JT after 
 User decision 2026-08-07 supersedes the original direct-fetch design: shell the installed @salient-ai/jira-cli, require jira init, and leave credentials entirely owned by jira-cli. Live JT qualification created and deleted JT-2 successfully.
 
 Verification passed: 73 focused tests; full npm test; npm run typecheck; npm run lint; npm run build; lore sync; lore validate --strict; lore check --strict; git diff --check. Live JT qualification created/updated/commented/transitioned/deleted JT-2 and confirmed invalid-priority/404 behavior. A second disposable JT-3 proved the managed Markdown plus JSON region round-trips byte-for-byte through jira-cli/ADF and was deleted.
+
+Delivery completed through PR #339. GitHub Actions run 31213072954 passed all eight jobs on exact head 9ebfca9f0268f2f0448ee92eef42730cfc4dd205. PR #339 merged into dev as 9b556fbaa330b41771f5619bdc8a41a0594268d4; merged ancestry was verified before deleting the exact local and remote feat/lcli-315-2-jira-cloud-adapter refs.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
