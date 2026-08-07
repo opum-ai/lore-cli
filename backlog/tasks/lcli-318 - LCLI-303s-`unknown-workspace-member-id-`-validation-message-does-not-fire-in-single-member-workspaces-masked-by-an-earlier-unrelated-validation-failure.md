@@ -3,9 +3,11 @@ id: LCLI-318
 title: >-
   LCLI-303's `unknown workspace member <id>` validation message does not fire in
   single-member workspaces -- masked by an earlier, unrelated validation failure
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-05 11:57'
+updated_date: '2026-08-06 16:33'
 labels:
   - workspace
   - validation
@@ -21,6 +23,11 @@ references:
     note) and section 7 defect H
   - plus docs/runbooks/e2e-verification-v0.1.1.md
   - in that repo.
+modified_files:
+  - src/core/workspace-projection.ts
+  - src/core/workspace-source.ts
+  - src/core/workspace-retrieval.ts
+  - test/workspace-retrieval.test.ts
 priority: medium
 type: bug
 ordinal: 441000
@@ -59,6 +66,51 @@ This pass's own investigation into LCLI-302 (see the companion ticket for that f
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 lore graph/query/context/path/impact --workspace <manifest> --repository <unknown-id> reliably returns the LCLI-303-documented `unknown workspace member <id>` validation message (exit 6, error_type validation), correctly naming the given id, regardless of how many members the workspace manifest declares
-- [ ] #2 Root cause identified for why a single-member workspace manifest produces a different, earlier-firing validation message that never names the actually-invalid --repository value -- including whether it shares a cause with the companion LCLI-302 reliability ticket
+- [x] #1 lore graph/query/context/path/impact --workspace <manifest> --repository <unknown-id> reliably returns the LCLI-303-documented `unknown workspace member <id>` validation message (exit 6, error_type validation), correctly naming the given id, regardless of how many members the workspace manifest declares
+- [x] #2 Root cause identified for why a single-member workspace manifest produces a different, earlier-firing validation message that never names the actually-invalid --repository value -- including whether it shares a cause with the companion LCLI-302 reliability ticket
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add a single-member regression fixture whose declared member fails source validation, then prove an unknown `--repository` selector must win before that member is loaded across graph/query/context/path/impact while the valid selector retains the member-validation error.
+2. Extend workspace projection/source validation so requested member IDs are checked against the already-parsed manifest immediately before any member root, Git, Backlog, or Ladybug source work; retain the existing projection-level assertion as a defensive boundary.
+3. Thread the explicit selector through both indexed and reference workspace loads without changing unselected workspace behavior, duplicate-selector handling, valid-member failures, fallback policy, or diagnostic privacy.
+4. Run focused workspace tests, typecheck, lint, the full test suite, a real CLI-style single-member reproduction, diff hygiene, and an adversarial self-review against both acceptance criteria.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implementation (2026-08-06 UTC): added a manifest-level selector validation boundary immediately after the explicit workspace manifest is parsed and before any member locator, Git, Backlog, source, or Ladybug work. Workspace retrieval threads the requested member IDs through both automatic/indexed and reference source loads; the existing projection-level assertion remains as a defensive check. Unselected workspaces and valid member selections keep their prior behavior.
+
+Root cause: `loadWorkspaceRetrievalGraph` previously called `loadWorkspaceProjection` before `assertWorkspaceProjectionSelection`. `loadWorkspaceProjection` validates every declared member while building the projection, so an uninitialized or otherwise invalid sole member threw `workspace member solo could not be validated` before the unknown requested ID could be compared with the manifest. This is the same uninitialized Backlog source condition isolated by LCLI-317, but not a Ladybug/native reliability defect; LCLI-318's independent defect was validation ordering.
+
+Verification so far:
+- `bun test test/workspace-retrieval.test.ts` — 13 passed, 0 failed, 144 expectations. The new single-member regression exercises graph/query/context/path/impact, exact exit 6 validation messaging, the supplied unknown ID, zero member loads, zero native loads, and preservation of the valid-member failure path.
+- `bun run typecheck` — passed.
+- `bun run lint` — passed; 191 files checked, no fixes.
+- `bun test` — 2,529 passed, 1 skipped, 0 failed, 8,623 expectations across 76 files. The skip is the pre-existing published-launcher qualification.
+- Real external-process probe from `/private/tmp/lcli-318-repro.2KJU5a`: unknown `bogus-member` returned exit 6 with `error_type: validation` and `workspace projection is invalid: unknown workspace member bogus-member`; selecting declared `solo` continued to return `workspace member solo could not be validated`.
+- `git diff --check` — passed.
+
+One initial focused run failed only because the new test manifest omitted current required `displayName` and `expectedRef` fields; correcting the fixture to the live schema produced the passing evidence above.
+
+Adversarial self-review (2026-08-06 UTC): no unresolved acceptance gap found.
+- Manifest syntax/read errors still precede selector validation because membership cannot be trusted until schema parsing succeeds.
+- Unknown selectors now precede member locator, Git-ref, Backlog/source, and native work on reference, unsupported-platform, automatic, and indexed paths.
+- Valid selectors still require the complete workspace candidate; the fix does not silently skip invalid unselected members or weaken expected-ref/source validation.
+- Duplicate selectors retain fail-loud behavior; unselected snapshot/runtime callers omit `selectionMemberIds` and are unchanged.
+- The projection-level assertion remains, source options cannot override retrieval's selection, the same parsed manifest supplies both membership and projection, and no private member/native detail enters the unknown-member envelope.
+- Exact-message coverage spans single- and two-member manifests plus graph/query/context/path/impact.
+
+Local delivery authorization update (2026-08-06 UTC): the user approved creation of local branch `fix/lcli-318-workspace-selection-order` and one local commit containing exactly the six verified campaign paths. Push, PR creation, merge, publication, branch deletion, and unrelated cleanup remain unauthorized; LCLI-318 stays In Progress pending integration.
+
+Remote delivery update (2026-08-06 UTC): after user approval, fetched `origin/dev` and confirmed it remained at `761f64419ef8593ae4f62d04419a39741fa41624`, so no rebase or verification rerun was required. Branch-local `bun run src/cli.ts check --json` and `git diff --check origin/dev...HEAD` passed. Pushed `fix/lcli-318-workspace-selection-order` and opened PR #333 against `dev`: https://github.com/opum-ai/lore-cli/pull/333. Live GitHub inspection confirmed exact head `a11a73e98154a783593f84bc6c52f692d11edddb`, exact base `761f64419ef8593ae4f62d04419a39741fa41624`, state OPEN / merge status BLOCKED, with all eight CI checks queued. This task-note reconciliation is local and uncommitted; merge, publication, branch deletion, and unrelated cleanup remain unauthorized. LCLI-318 stays In Progress pending final-head CI and integration.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented manifest-first workspace selector validation so an unknown `--repository` ID is reported before any declared member or native backend is loaded, while preserving valid-member and complete-candidate behavior. Verified all five commands with 13 focused tests, typecheck, lint, the full 2,529-pass suite with one pre-existing skip, a real external-process single-member probe, diff hygiene, and adversarial self-review. Implementation is complete locally; integration remains pending delivery authorization.
+<!-- SECTION:FINAL_SUMMARY:END -->

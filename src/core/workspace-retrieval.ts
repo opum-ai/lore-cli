@@ -38,7 +38,10 @@ export interface LoadWorkspaceRetrievalOptions {
   readonly policy?: RetrievalPolicy;
   readonly platform?: NodeJS.Platform;
   readonly loadNativeDriver?: LadybugNativeLoader;
-  readonly sourceOptions?: Omit<LoadWorkspaceProjectionOptions, "root" | "manifestPath" | "warnings">;
+  readonly sourceOptions?: Omit<
+    LoadWorkspaceProjectionOptions,
+    "root" | "manifestPath" | "warnings" | "selectionMemberIds"
+  >;
   readonly includeTraversal?: boolean;
 }
 
@@ -60,10 +63,10 @@ export async function loadWorkspaceRetrievalGraph(options: LoadWorkspaceRetrieva
       manifestPath: options.selection.manifestPath,
       warnings: attemptWarnings,
       ...options.sourceOptions,
+      selectionMemberIds: options.selection.memberIds,
     });
-    // Explicit selection is a validation boundary, not a backend concern. Check
-    // it before native reconciliation so a loader failure cannot mask the stable
-    // workspace validation error with an uncaught addon exception.
+    // Retain the projection-level assertion as a defensive boundary even though
+    // the source loader already checked the parsed manifest before member work.
     assertWorkspaceProjectionSelection(loaded.projection, options.selection.memberIds);
     latest = loaded.projection;
     latestWarnings = attemptWarnings;
@@ -130,6 +133,7 @@ async function loadReference(options: LoadWorkspaceRetrievalOptions): Promise<Re
     manifestPath: options.selection.manifestPath,
     warnings: options.warnings,
     ...options.sourceOptions,
+    selectionMemberIds: options.selection.memberIds,
   });
   return referenceFromProjection(
     selectWorkspaceProjection(loaded.projection, options.selection.memberIds),
