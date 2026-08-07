@@ -3,11 +3,11 @@ id: LCLI-315.1
 title: >-
   Introduce a tracker-adapter seam: a createTrackerAdapter factory and
   statusFlow as an adapter method
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:49'
-updated_date: '2026-08-07 05:34'
+updated_date: '2026-08-07 11:46'
 labels: []
 dependencies: []
 documentation:
@@ -55,7 +55,7 @@ This task ships no new backend. Backlog.md must remain the only reachable one wh
 - [x] #3 statusFlow() is an adapter method and reconcile-shared.ts consumes it instead of the free readStatusFlow
 - [x] #4 The adapter interface is documented as the contract a backend must satisfy, including the probe, error-mapping, concurrency, and id-verification obligations
 - [x] #5 Backlog.md remains the default and only reachable backend after this task; behavior is unchanged
-- [ ] #6 Existing tests pass unmodified except where the factory indirection requires a mechanical change
+- [x] #6 Existing tests pass unmodified except where the factory indirection requires a mechanical change
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -68,4 +68,12 @@ This task ships no new backend. Backlog.md must remain the only reachable one wh
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented the canonical TrackerAdapter interface and factory while retaining BacklogAdapter as a deprecated type alias to avoid unrelated mechanical churn. Backlog remains the only accepted/default backend, and statusFlow is root-bound local configuration I/O that does not trigger the subprocess probe. Adversarial self-review found an evidence gap and added a regression proving reconcile configuration consumes the adapter method. Verification passed: 159 focused non-Ladybug tests with 0 failures; an additional focused tracker/reconcile run passed 27 tests; npm run typecheck; npm run lint across 193 files; npm run build; lore sync --dry-run; lore validate --strict with 65 files, 0 errors, 0 warnings; lore check --strict; and git diff --check. The full npm test gate could not complete cleanly under unrelated sustained host CPU saturation: Ladybug tests exceeded fixed 5s, 120s, and 180s deadlines and then reported temporary building-directory cleanup races. AC 6 remains unchecked, the task remains In Progress, and delivery actions remain unauthorized.
+
+Delivery evidence: PR #337 at head 49d494d6c7a1c328cf2f50af1b83b593501c4288 is open against dev with merge state CLEAN. GitHub Actions run 31175041234 completed all eight checks successfully, including lint, typecheck, and full tests on Ubuntu and Windows; compile smoke; Ladybug benchmark smoke; Chromium, Firefox, and WebKit qualification; MkDocs and Docusaurus scaffolds; and the real lore plus Backlog Docker E2E harness. This clean-runner evidence resolves the host-contention limitation and proves AC 6.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Introduced the backend-neutral TrackerAdapter contract and createTrackerAdapter factory, routed every production construction site through it, and moved status-flow access behind the adapter while preserving Backlog as the only reachable default. Added contract, factory, and reconciliation regressions plus Lore-managed reference documentation. Verified locally with 159 focused tests, typecheck, lint, build, strict Lore validation/checks, and diff hygiene; verified the complete matrix with all eight CI checks passing on PR #337 at head 49d494d.
+<!-- SECTION:FINAL_SUMMARY:END -->
