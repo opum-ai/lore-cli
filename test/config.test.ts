@@ -408,6 +408,50 @@ format = "adf"
   });
 });
 
+describe("loadConfig — jira-cli tracker settings", () => {
+  test("projects non-secret [tracker.jira] settings without a credential field", () => {
+    const config = loadConfig({
+      root: repoRoot(`
+[tracker.jira]
+profile = "work"
+project = "JT"
+board = "42"
+issue_type = "Task"
+default_labels = ["lore", "docs"]
+status_flow = ["To Do", "In Progress", "Done"]
+`),
+      env: {},
+    });
+
+    expect(config.tracker?.jira).toEqual({
+      profile: "work",
+      project: "JT",
+      board: "42",
+      issueType: "Task",
+      defaultLabels: ["lore", "docs"],
+      statusFlow: ["To Do", "In Progress", "Done"],
+    });
+  });
+
+  test("rejects Jira credentials at any depth and points to jira init", () => {
+    for (const key of ["token", "api_token", "jira_api_token", "email", "jira_email"]) {
+      const err = expectValidationError(() =>
+        loadConfig({ root: repoRoot(`[tracker.jira]\n${key} = "must-not-be-read"\n`), env: {} }),
+      );
+      expect(err.message).toContain("Jira credentials");
+      expect(err.hint).toContain("jira init");
+      expect(JSON.stringify(err.input)).not.toContain("must-not-be-read");
+    }
+  });
+
+  test("validates Jira arrays instead of silently dropping bad settings", () => {
+    const err = expectValidationError(() =>
+      loadConfig({ root: repoRoot('[tracker.jira]\nstatus_flow = ["To Do", 7]\n'), env: {} }),
+    );
+    expect(err.message).toContain("tracker.jira.status_flow must be an array of strings");
+  });
+});
+
 describe("loadConfig — reconcile.overrides rejects reserved object keys", () => {
   test("an override keyed by any Object.prototype member (or prototype) is rejected", () => {
     for (const reserved of ["__proto__", "constructor", "prototype", "toString", "hasOwnProperty"]) {

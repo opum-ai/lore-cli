@@ -25,8 +25,8 @@ describe("createTrackerAdapter", () => {
     expect(adapter.statusFlow()).toEqual(["Planned", "Building", "Shipped"]);
   });
 
-  test("fails loud instead of making an unimplemented backend reachable", () => {
-    expect(() => createTrackerAdapter(root, { backend: "jira" } as never)).toThrow(LoreError);
-    expect(() => createTrackerAdapter(root, { backend: "jira" } as never)).toThrow("unsupported tracker backend");
+  test("fails loud instead of making an unknown backend reachable", () => {
+    expect(() => createTrackerAdapter(root, { backend: "quest" } as never)).toThrow(LoreError);
+    expect(() => createTrackerAdapter(root, { backend: "quest" } as never)).toThrow("unsupported tracker backend");
   });
 });
