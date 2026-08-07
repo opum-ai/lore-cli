@@ -3,13 +3,27 @@ id: LCLI-315.1
 title: >-
   Introduce a tracker-adapter seam: a createTrackerAdapter factory and
   statusFlow as an adapter method
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-04 21:49'
+updated_date: '2026-08-07 05:34'
 labels: []
 dependencies: []
 documentation:
   - docs/reference/backlog-cli-contract.md
+modified_files:
+  - benchmark/ladybug/fixture.ts
+  - docs/reference/backlog-cli-contract.md
+  - src/adapters/backlog.ts
+  - src/adapters/tracker.ts
+  - src/commands/export.ts
+  - src/commands/link.ts
+  - src/commands/reconcile-shared.ts
+  - src/core/ladybug-source.ts
+  - test/helpers.ts
+  - test/reconcile-shared.test.ts
+  - test/tracker-adapter.test.ts
 parent_task_id: LCLI-315
 priority: high
 type: enhancement
@@ -36,10 +50,22 @@ This task ships no new backend. Backlog.md must remain the only reachable one wh
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A createTrackerAdapter(root, config) factory is the only place a concrete tracker adapter is constructed in non-test code
-- [ ] #2 All four existing construction sites route through the factory and still accept an injected adapter for tests
-- [ ] #3 statusFlow() is an adapter method and reconcile-shared.ts consumes it instead of the free readStatusFlow
-- [ ] #4 The adapter interface is documented as the contract a backend must satisfy, including the probe, error-mapping, concurrency, and id-verification obligations
-- [ ] #5 Backlog.md remains the default and only reachable backend after this task; behavior is unchanged
+- [x] #1 A createTrackerAdapter(root, config) factory is the only place a concrete tracker adapter is constructed in non-test code
+- [x] #2 All four existing construction sites route through the factory and still accept an injected adapter for tests
+- [x] #3 statusFlow() is an adapter method and reconcile-shared.ts consumes it instead of the free readStatusFlow
+- [x] #4 The adapter interface is documented as the contract a backend must satisfy, including the probe, error-mapping, concurrency, and id-verification obligations
+- [x] #5 Backlog.md remains the default and only reachable backend after this task; behavior is unchanged
 - [ ] #6 Existing tests pass unmodified except where the factory indirection requires a mechanical change
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Introduce a backend-neutral TrackerAdapter contract and createTrackerAdapter(root, config) factory while keeping Backlog.md as the only selectable/default backend. 2. Add statusFlow() to the Backlog implementation and route the four production construction sites through the factory without disturbing adapter injection. 3. Make reconciliation obtain status vocabulary from the selected adapter, preserving config-read ordering, fail-fast behavior, bounded fan-out, and verified task identity. 4. Add focused factory/status-flow regression tests and update shared fakes only where the new required method demands it. 5. Document backend obligations in the Backlog CLI contract through Lore, then run focused tests, typecheck, the full test suite, strict Lore gates, and diff hygiene.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented the canonical TrackerAdapter interface and factory while retaining BacklogAdapter as a deprecated type alias to avoid unrelated mechanical churn. Backlog remains the only accepted/default backend, and statusFlow is root-bound local configuration I/O that does not trigger the subprocess probe. Adversarial self-review found an evidence gap and added a regression proving reconcile configuration consumes the adapter method. Verification passed: 159 focused non-Ladybug tests with 0 failures; an additional focused tracker/reconcile run passed 27 tests; npm run typecheck; npm run lint across 193 files; npm run build; lore sync --dry-run; lore validate --strict with 65 files, 0 errors, 0 warnings; lore check --strict; and git diff --check. The full npm test gate could not complete cleanly under unrelated sustained host CPU saturation: Ladybug tests exceeded fixed 5s, 120s, and 180s deadlines and then reported temporary building-directory cleanup races. AC 6 remains unchecked, the task remains In Progress, and delivery actions remain unauthorized.
+<!-- SECTION:NOTES:END -->
