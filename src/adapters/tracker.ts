@@ -1,5 +1,6 @@
 /** Backend-neutral tracker contract and construction seam. */
 
+import type { JiraTrackerConfig } from "../config";
 import { LoreError } from "../errors";
 import {
   type BacklogTask,
@@ -10,6 +11,7 @@ import {
   type EditTaskPatch,
   type ListTasksOptions,
 } from "./backlog";
+import { createJiraAdapter, type JiraAdapterOptions } from "./jira";
 
 /** The minimum capability shape commands consume after a backend-specific fail-loud probe. */
 export interface TrackerCapability {
@@ -39,23 +41,44 @@ export interface TrackerAdapter {
 }
 
 /** Backends currently constructible by production code. */
-export type TrackerBackend = "backlog";
+export type TrackerBackend = "backlog" | "jira";
 
 /** Factory input kept separate from `.lore/config.toml` until tracker configuration lands. */
 export interface TrackerAdapterConfig {
   readonly backend?: TrackerBackend;
+  readonly jira?: JiraTrackerConfig;
+}
+
+/** Injectable backend construction seams; production callers normally omit this. */
+export interface TrackerAdapterOptions {
+  readonly jira?: JiraAdapterOptions;
 }
 
 /** Construct the selected tracker for `root`; the sole concrete construction site in production. */
-export function createTrackerAdapter(root: string, config: TrackerAdapterConfig = {}): TrackerAdapter {
+export function createTrackerAdapter(
+  root: string,
+  config: TrackerAdapterConfig = {},
+  options: TrackerAdapterOptions = {},
+): TrackerAdapter {
   const backend: unknown = config.backend ?? "backlog";
-  if (backend !== "backlog") {
-    throw new LoreError(
-      "validation",
-      `unsupported tracker backend ${JSON.stringify(backend)}`,
-      'use "backlog"; no other tracker backend is reachable in this release',
-      { backend },
-    );
+  if (backend === "backlog") {
+    return createBacklogAdapter(bunBacklogSpawn(undefined, root), root);
   }
-  return createBacklogAdapter(bunBacklogSpawn(undefined, root), root);
+  if (backend === "jira") {
+    if (config.jira === undefined) {
+      throw new LoreError(
+        "validation",
+        "tracker.jira configuration is required when the tracker backend is jira",
+        "configure [tracker.jira] in .lore/config.toml and run `jira init --yes`",
+        { backend },
+      );
+    }
+    return createJiraAdapter(root, config.jira, options.jira);
+  }
+  throw new LoreError(
+    "validation",
+    `unsupported tracker backend ${JSON.stringify(backend)}`,
+    'use "backlog" or "jira"',
+    { backend },
+  );
 }

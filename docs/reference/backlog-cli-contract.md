@@ -359,10 +359,11 @@ and `lore`'s `listTasks` passes it at most once regardless.)
 Coupling commands depend on the backend-neutral `TrackerAdapter` contract in
 `src/adapters/tracker.ts`. Production code constructs a concrete backend only
 through `createTrackerAdapter(root, config)`; injected adapters remain the test
-seam. Backlog.md is the default and the only backend this release makes
-reachable. An absent backend selection therefore preserves the existing
-zero-config behavior, while an unknown selection fails loud instead of being
-silently coerced to Backlog.md.
+seam. Backlog.md remains the zero-config default. Jira Cloud is reachable through the
+installed `@salient-ai/jira-cli` executable when the backend is `jira`; Lore
+does not call Jira REST or read Jira credentials. An absent backend selection
+therefore preserves existing behavior, while an unknown selection fails loud
+instead of being silently coerced to Backlog.md.
 
 Every backend must implement the complete task surface (`probe`, `listTasks`,
 `viewTask`, label and text search, create, and edit) plus `statusFlow()`. The
@@ -380,6 +381,89 @@ The contract also preserves four hardening obligations across implementations:
 - A `viewTask(id)` result is accepted only after the command layer verifies the
   returned task ID matches the requested ID case-insensitively. A backend must
   not bypass that verified-view path.
+
+---
+
+## Jira Cloud via jira-cli
+
+The Jira backend is a subprocess adapter over the separately installed
+`@salient-ai/jira-cli`; it is not a second HTTP client. Before Lore uses this
+backend, install the `jira` command and run `jira init --yes` from the project
+root. jira-cli remains the sole owner of the Jira URL, account email, API token,
+Basic authentication, request deadline, REST v3 calls, and Markdown/ADF
+conversion. Lore neither reads nor persists those credentials. A missing CLI,
+missing profile, authentication failure, timeout, or rate-limit response becomes
+a typed `LoreError`; Lore never retries a jira-cli command silently.
+
+Only non-secret routing and mapping settings live in `.lore/config.toml`:
+
+```toml
+[tracker.jira]
+profile = "work" # optional; omit for the jira-cli default profile
+project = "JT"
+board = "42" # optional, reserved for Jira-aware workflows
+issue_type = "Task"
+default_labels = ["lore"]
+status_flow = ["To Do", "In Progress", "Done"]
+```
+
+`probe()` runs `jira --version`, `jira project get`, and
+`jira metadata priorities`. The project response is the issue-type vocabulary;
+the priority response is the priority vocabulary. The configured create type
+and every type or priority read from an issue must belong to those live sets.
+Vocabulary mismatches are validation errors, never guesses.
+
+Reads use jira-cli JSON envelopes: `issue search` for summaries, `issue get` for
+detail, and `comment list` for Markdown comments. Writes use `issue create`,
+`issue update`, and `issue transition`. Lore passes Markdown to jira-cli and
+receives Markdown back; jira-cli owns conversion to and from ADF. Lore appends a
+versioned `LORE-JIRA-METADATA-BEGIN` / `LORE-JIRA-METADATA-END` JSON code-block
+region to descriptions so fields with no Jira counterpart round-trip exactly.
+Malformed or unsupported managed metadata is drift, not content to ignore.
+
+Status writes are graph-constrained. Lore first reads `issue transitions`,
+requires an exact configured destination, then transitions by ID. If the target
+is unreachable, the adapter returns a `conflict` `LoreError` whose hint names
+`jira issue transitions <key>`. Field updates and transitions are separate
+jira-cli commands, so a workflow race can still reject the transition after a
+field update; that asymmetry is surfaced rather than hidden.
+
+### Jira field classification
+
+Every `BacklogTask` / `BacklogTaskDetail` field has one primary classification:
+
+| Lore field | Class | Jira representation and loss boundary |
+|---|---|---|
+| `id` | native | issue `key` |
+| `title` | native | `summary` |
+| `status` | native | `status.name`; writes require an available transition |
+| `priority` | native | `priority.name`, validated against `jira metadata priorities` |
+| `ordinal` | lost | always `null`; Agile Rank is outside this adapter |
+| `assignees` | coerced | one Jira assignee becomes a one-element array; Jira cannot preserve additional assignees |
+| `labels` | native | Jira labels; incremental Lore patches use read-modify-write because jira-cli replaces the array |
+| `milestone` | folded | Lore-created values live in managed metadata; the first Jira fix version is a read-only fallback |
+| `parentTaskId` | native | `parent.key` |
+| `file` | lost | always `null`; Jira has no Backlog task file |
+| `reporter` | native | reporter display name, falling back to account ID |
+| `createdAt` | native | `created` |
+| `updatedAt` | native | `updated` |
+| `dependencies` | coerced | linked issue keys; Jira link type and direction are not representable in the Lore array |
+| `references` | folded | managed description metadata |
+| `documentation` | folded | managed description metadata; `editTask.doc` replaces the array |
+| `modifiedFiles` | lost | always empty; Jira has no native modified-files list |
+| `subtasks` | native | subtask key and summary |
+| `acceptanceCriteria` | folded | managed description metadata |
+| `definitionOfDone` | folded | managed description metadata |
+| `description` | native | Jira description Markdown via jira-cli; an exact authored copy is retained in managed metadata |
+| `implementationPlan` | folded | managed description metadata |
+| `implementationNotes` | folded | managed description metadata |
+| `finalSummary` | folded | managed description metadata |
+| `comments` | native | `jira comment list`, converted back to Markdown by jira-cli |
+
+A `lost` field is returned only as the neutral contract value (`null` or an
+empty array). A `coerced` field documents the discarded dimension explicitly.
+Folded fields are Lore-owned data inside the managed description region, not
+custom Jira fields and not hidden credentials.
 
 ---
 

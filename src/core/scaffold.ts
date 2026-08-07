@@ -218,6 +218,17 @@ const DEFAULT_CONFIG_TOML = `# lore configuration — committed, team-shared kno
 # space          = "ENG"
 # parent_page_id = "98765"
 # format         = "storage"   # or "adf"
+
+# [tracker.jira]
+# Non-secret settings for the jira-cli tracker adapter. jira-cli owns the URL,
+# email, API token, HTTP transport, timeout, and Markdown/ADF conversion; run
+# \`jira init --yes\` in the project root instead of storing credentials here.
+# profile        = "work"       # optional; omit to use jira-cli's default profile
+# project        = "JT"
+# board          = "42"         # optional; retained for Jira-aware workflows
+# issue_type     = "Task"
+# default_labels = ["lore"]
+# status_flow    = ["To Do", "In Progress", "Done"]
 `;
 
 /**
