@@ -3,11 +3,11 @@ id: LCLI-318
 title: >-
   LCLI-303's `unknown workspace member <id>` validation message does not fire in
   single-member workspaces -- masked by an earlier, unrelated validation failure
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-05 11:57'
-updated_date: '2026-08-06 16:33'
+updated_date: '2026-08-07 00:14'
 labels:
   - workspace
   - validation
@@ -107,10 +107,12 @@ Adversarial self-review (2026-08-06 UTC): no unresolved acceptance gap found.
 Local delivery authorization update (2026-08-06 UTC): the user approved creation of local branch `fix/lcli-318-workspace-selection-order` and one local commit containing exactly the six verified campaign paths. Push, PR creation, merge, publication, branch deletion, and unrelated cleanup remain unauthorized; LCLI-318 stays In Progress pending integration.
 
 Remote delivery update (2026-08-06 UTC): after user approval, fetched `origin/dev` and confirmed it remained at `761f64419ef8593ae4f62d04419a39741fa41624`, so no rebase or verification rerun was required. Branch-local `bun run src/cli.ts check --json` and `git diff --check origin/dev...HEAD` passed. Pushed `fix/lcli-318-workspace-selection-order` and opened PR #333 against `dev`: https://github.com/opum-ai/lore-cli/pull/333. Live GitHub inspection confirmed exact head `a11a73e98154a783593f84bc6c52f692d11edddb`, exact base `761f64419ef8593ae4f62d04419a39741fa41624`, state OPEN / merge status BLOCKED, with all eight CI checks queued. This task-note reconciliation is local and uncommitted; merge, publication, branch deletion, and unrelated cleanup remain unauthorized. LCLI-318 stays In Progress pending final-head CI and integration.
+
+Integration and recovery evidence (2026-08-07 UTC): GitHub's outage left pull-request run 31120842498 in a contradictory ghost state (parent queued with no rerun jobs, attempt 1 completed/failure, cancellation reporting completed, and rerun/re-request reporting already running). A manual workflow_dispatch recovery run 31132927592 qualified the unchanged exact head 9c0f93e37460fafe7e06bd029fedb7cc65a35555 with all nine jobs successful, including the additional macOS matrix leg. Because dispatch checks do not populate the PR-required rollup, PR #333 was closed and reopened without changing its branch or SHA; fresh pull_request run 31133308485 then passed all eight required checks. PR #333 merged into dev as ac6a771647340d4d171530bdbd0eb2a42e66224b. Refreshed origin/dev contains the exact PR head by ancestry, and the merge commit records 761f64419ef8593ae4f62d04419a39741fa41624 and 9c0f93e37460fafe7e06bd029fedb7cc65a35555 as its parents. No check bypass, force-push, or source amendment occurred.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Implemented manifest-first workspace selector validation so an unknown `--repository` ID is reported before any declared member or native backend is loaded, while preserving valid-member and complete-candidate behavior. Verified all five commands with 13 focused tests, typecheck, lint, the full 2,529-pass suite with one pre-existing skip, a real external-process single-member probe, diff hygiene, and adversarial self-review. Implementation is complete locally; integration remains pending delivery authorization.
+Implemented manifest-first workspace selector validation so unknown repository IDs are reported before member or native loading across graph/query/context/path/impact. Verified with 13 focused tests, typecheck, lint, the full 2,529-pass suite with one pre-existing skip, a real external-process single-member probe, adversarial self-review, a nine-job exact-head recovery CI pass, and all eight required PR checks. PR #333 exact head 9c0f93e37460fafe7e06bd029fedb7cc65a35555 is integrated into dev as ac6a771647340d4d171530bdbd0eb2a42e66224b.
 <!-- SECTION:FINAL_SUMMARY:END -->
