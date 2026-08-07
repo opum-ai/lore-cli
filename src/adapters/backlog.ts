@@ -30,6 +30,7 @@ import { join } from "node:path";
 import * as yaml from "js-yaml";
 import { z } from "zod";
 import { deriveMessage, errnoCode, LoreError, readFileIfPresent, stderrHint } from "../errors";
+import type { TrackerAdapter } from "./tracker";
 
 /**
  * The **binary version floor** the probe requires (`backlog --version`, contract §5 step 3). A sanity
@@ -754,22 +755,8 @@ export interface EditTaskPatch {
  * Every method first runs the capability {@link probeBacklog} (memoized once per adapter), so a binary
  * that is not `--json`-capable is refused before any command's output is trusted.
  */
-export interface BacklogAdapter {
-  /** The cached capability probe verdict; runs `probeBacklog` at most once, fail-loud on an incapable binary. */
-  probe(): Promise<BacklogCapability>;
-  /** `task list --json` → the summaries on the current branch, optionally filtered by status/labels. */
-  listTasks(opts?: ListTasksOptions): Promise<BacklogTask[]>;
-  /** `task view <id> --json` → the full task, or `null` when the id has no task (exit code 1). */
-  viewTask(id: string): Promise<BacklogTaskDetail | null>;
-  /** `task list --json --labels <label>` → tasks carrying an exact label (e.g. a `doc:<conceptId>` back-ref). */
-  searchByLabel(label: string): Promise<BacklogTask[]>;
-  /** `search <query> --json` → the **task** hits only (document/decision hits are dropped, §5). */
-  searchTasks(query: string): Promise<BacklogTask[]>;
-  /** `task create` (no `--plain`/`--json`) → the new display-cased id, captured from `Created task <ID>`. */
-  createTask(input: CreateTaskInput): Promise<string>;
-  /** `task edit <id>` (no `--json` — unsupported, LORE-57) with an incremental patch; fail-loud on a missing task or a non-zero exit. */
-  editTask(id: string, patch: EditTaskPatch): Promise<void>;
-}
+/** @deprecated Import the backend-neutral {@link TrackerAdapter} from `adapters/tracker` instead. */
+export type BacklogAdapter = TrackerAdapter;
 
 /** Captures the display-cased id from a create's first stdout line (`Created task LORE-1` / `Created draft …`). */
 const CREATED_ID = /^Created (?:task|draft) (\S+)$/m;
@@ -840,7 +827,7 @@ function commaJoin(values: readonly string[]): string {
  * per adapter, and a failing verdict rejects every method the same way. (The cross-process cache in
  * `.lore/cache/` described in the schema doc §7 is a command-layer concern, layered on top of this.)
  */
-export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
+export function createBacklogAdapter(spawn: BacklogSpawn, root = process.cwd()): BacklogAdapter {
   let capability: Promise<BacklogCapability> | undefined;
   const ensureProbed = (): Promise<BacklogCapability> => {
     if (capability === undefined) {
@@ -878,6 +865,8 @@ export function createBacklogAdapter(spawn: BacklogSpawn): BacklogAdapter {
 
   return {
     probe: ensureProbed,
+
+    statusFlow: () => readStatusFlow(root),
 
     listTasks,
 

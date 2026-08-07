@@ -13,6 +13,7 @@ import type { BacklogTaskDetail } from "../src/adapters/backlog";
 import {
   gatherReconciliation,
   linkedConcepts,
+  readReconcileConfig,
   resolveTaskDetails,
   TASK_DETAILS_CONCURRENCY,
   type TaskResolution,
@@ -66,6 +67,20 @@ describe("gatherReconciliation", () => {
     const result = await gatherReconciliation(root, [concept("stories/x.md")], poison);
     expect(result).toEqual([]);
     expect(poison.calls).toEqual([]);
+  });
+
+  test("reads the selected adapter's statusFlow instead of reaching into Backlog config directly", () => {
+    mkdirSync(join(root, "backlog"), { recursive: true });
+    writeFileSync(join(root, "backlog", "config.yml"), "statuses: not-a-list\n");
+    const adapter = {
+      ...fakeAdapter([]),
+      statusFlow: () => ["Queued", "Building", "Shipped"],
+    };
+
+    expect(readReconcileConfig(root, adapter)).toEqual({
+      flow: ["Queued", "Building", "Shipped"],
+      overrides: {},
+    });
   });
 
   test("returns a zero-row target and touches no config or adapter for an explicit empty tasks: field", async () => {
