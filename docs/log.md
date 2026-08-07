@@ -119,6 +119,7 @@
 - 2026-08-05T13:09:24-05:00 825e0b9421afe892c07ca31ccda3fdf017cf42dd feat: close OKF 0.2 conformance tiers
 - 2026-08-05T13:15:52-05:00 186d53aa266f50c6b4f6c7930e6ef828ec733d45 docs: refresh generated log after wave 7
 - 2026-08-05T13:16:47-05:00 a4ec2cbd790f18e1a50adeb22c974b46ae317363 docs: reconcile generated log after wave 7
+- 2026-08-07T06:35:13-05:00 49d494d6c7a1c328cf2f50af1b83b593501c4288 feat: add tracker adapter seam
 
 ## docs/.obsidian
 
@@ -256,6 +257,7 @@
 - 2026-08-05T08:07:58-05:00 7a97b131822508b497e7fa14c8da1ffccda3dc58 feat: add OKF 0.2 sources provenance
 - 2026-08-05T10:40:30-05:00 0b31a9344268d81ae4f2ae6a276e51f0153edced feat: add OKF 0.2 trust and lifecycle
 - 2026-08-05T13:09:24-05:00 825e0b9421afe892c07ca31ccda3fdf017cf42dd feat: close OKF 0.2 conformance tiers
+- 2026-08-07T06:35:13-05:00 49d494d6c7a1c328cf2f50af1b83b593501c4288 feat: add tracker adapter seam
 
 ## docs/runbooks
 
