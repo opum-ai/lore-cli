@@ -126,6 +126,7 @@
 - 2026-08-07T07:39:04-05:00 32e6a9f4cc6b91448d057e1cd043336620f54157 docs: reconcile tracker seam merge
 - 2026-08-07T08:52:10-05:00 9ebfca9f0268f2f0448ee92eef42730cfc4dd205 feat: add jira-cli tracker adapter
 - 2026-08-07T15:06:59-05:00 d14d592e15073d3384fab36aa1bd5d58336e7880 docs: reconcile jira adapter merge
+- 2026-08-08T09:51:35-05:00 2300eb5370bb4a5bc58d13e5b9ebfbf79f50f8ad feat: add init tracker selection
 
 ## docs/.obsidian
 
@@ -171,6 +172,7 @@
 - 2026-08-03T17:40:37-05:00 66498ab3a8055eb27b4e8e62350f44a477328b84 chore: transfer repository ownership to opum-ai
 - 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
 - 2026-08-05T10:40:30-05:00 0b31a9344268d81ae4f2ae6a276e51f0153edced feat: add OKF 0.2 trust and lifecycle
+- 2026-08-08T09:51:35-05:00 2300eb5370bb4a5bc58d13e5b9ebfbf79f50f8ad feat: add init tracker selection
 
 ## docs/reference
 
@@ -265,6 +267,7 @@
 - 2026-08-05T13:09:24-05:00 825e0b9421afe892c07ca31ccda3fdf017cf42dd feat: close OKF 0.2 conformance tiers
 - 2026-08-07T06:35:13-05:00 49d494d6c7a1c328cf2f50af1b83b593501c4288 feat: add tracker adapter seam
 - 2026-08-07T08:52:10-05:00 9ebfca9f0268f2f0448ee92eef42730cfc4dd205 feat: add jira-cli tracker adapter
+- 2026-08-08T09:51:35-05:00 2300eb5370bb4a5bc58d13e5b9ebfbf79f50f8ad feat: add init tracker selection
 
 ## docs/runbooks
 
