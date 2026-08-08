@@ -3,7 +3,7 @@
 import { join } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { resolveHeadSha } from "../adapters/git";
-import { createTrackerAdapter } from "../adapters/tracker";
+import { createConfiguredTrackerAdapter } from "../adapters/tracker";
 import { loadBundle } from "../core/bundle";
 import { loadProfile } from "../core/profile";
 import { buildProjection, PROJECTION_SCHEMA_VERSION } from "../core/projection";
@@ -32,7 +32,7 @@ export async function runExport(options: ExportOptions): Promise<number> {
   const warnings = new WarningCollector();
   const graph = loadBundle(join(options.root, DOCS_DIR), { warnings, profile });
   warnings.flush({ color: options.output.color, stderr: options.stderr });
-  const adapter = options.adapter ?? createTrackerAdapter(options.root, {});
+  const adapter = options.adapter ?? createConfiguredTrackerAdapter(options.root);
   const tasks = await adapter.listTasks();
   const gitCommit = (options.resolveGitCommit ?? resolveHeadSha)(options.root);
   const projection = buildProjection({

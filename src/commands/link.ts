@@ -55,7 +55,7 @@
 
 import { join } from "node:path";
 import type { BacklogAdapter, BacklogTaskDetail } from "../adapters/backlog";
-import { createTrackerAdapter } from "../adapters/tracker";
+import { createConfiguredTrackerAdapter } from "../adapters/tracker";
 import { type BundleGraph, conceptNotInBundle, loadBundle, toRefList } from "../core/bundle";
 import { type Concept, idFromPath, serializeConcept } from "../core/concept";
 import { loadProfile, type Profile, profileForBundle, profileTypeDeclaresField } from "../core/profile";
@@ -543,15 +543,14 @@ export async function moveBackRefs(
 // ── Shared setup ───────────────────────────────────────────────────────────────
 
 /**
- * The default {@link BacklogAdapter}: the real `backlog` binary resolved from PATH, spawned in
- * `root` so a non-default root routes writes to the right project. Shared with `commands/rename.ts`,
- * which needs the same adapter to move a renamed concept's back-references (see
+ * The configured default tracker, rooted in the selected project. Shared with `commands/rename.ts`,
+ * which needs the same adapter contract to move a renamed concept's back-references (see
  * {@link moveBackRefs}) — this file is the single owner of the `doc:<conceptId>` coupling contract
  * (ADR-0009 §2), so any command that touches it goes through this module rather than re-deriving
  * the label/adapter rules itself.
  */
 export function defaultAdapter(root: string): BacklogAdapter {
-  return createTrackerAdapter(root, {});
+  return createConfiguredTrackerAdapter(root);
 }
 
 /**

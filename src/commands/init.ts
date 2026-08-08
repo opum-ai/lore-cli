@@ -59,18 +59,20 @@
  * actually-requested backlog check return a `Promise`.
  */
 
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as readline from "node:readline/promises";
 import type { BacklogAdapter } from "../adapters/backlog";
+import { createTrackerAdapter } from "../adapters/tracker";
+import { CONFIG_REL_PATH, loadConfig, TRACKER_BACKENDS, type TrackerBackend } from "../config";
 import { loadProfile } from "../core/profile";
 import { buildScaffold } from "../core/scaffold";
 import { ANSI, EXIT_OK, LoreError, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { type AgentsResult, applyAgentsBridge, bridgeActionColor, renderTrailer } from "./agents";
-import { optionValues, parseCommandArgs, usage } from "./args";
+import { optionValues, parseCommandArgs, singleOptionValue, usage } from "./args";
 import { applyCodexBridge, type CodexBridgeResult } from "./codex-bridge";
-import { assertNoSymlinkInPath, createIfAbsent, ensureDir } from "./fswrite";
-import { defaultAdapter } from "./link";
+import { assertNoSymlinkInPath, createIfAbsent, ensureDir, writeFileAtomic } from "./fswrite";
 import { applyScaffold, TARGETS as SCAFFOLD_TARGETS, type ScaffoldResult } from "./scaffold";
 
 /** The backlog-coupling capability check's outcome, folded into {@link InitResult} when it ran. */
@@ -103,6 +105,8 @@ export interface InitResult {
   scaffolds: ScaffoldResult[];
   /** The backlog-coupling capability check's outcome, present iff it ran this invocation. */
   backlog?: InitBacklogCheck;
+  /** Explicit tracker choice made by the wizard or `--tracker`; absent on the legacy bare path. */
+  tracker?: TrackerBackend;
 }
 
 /** The interactive wizard's minimal prompt vocabulary — confirm (yes/no) and choose (one of a fixed list). Injected so the wizard is unit-testable without a real terminal. */
@@ -190,6 +194,8 @@ interface InitArgs {
   noBacklog: boolean;
   /** `--check-backlog`: run the backlog-coupling capability check even with no other flag requesting it. */
   checkBacklog: boolean;
+  /** `--tracker <backlog|jira>`: persist the selected task backend without prompting. */
+  tracker?: TrackerBackend;
 }
 
 /**
@@ -244,6 +250,10 @@ export function runInit(options: InitOptions): number | Promise<number> {
     return runInteractiveWizard(options, base);
   }
 
+  if (parsed.tracker !== undefined) {
+    persistTrackerBackend(options.root, parsed.tracker);
+  }
+
   const scaffoldTargets = [...new Set(parsed.scaffolds)];
   const agents = parsed.agents ? applyAgentsBridge({ root: options.root, force: false, check: false }) : undefined;
   const codex = parsed.codex ? applyCodexBridge({ root: options.root, force: false, check: false }) : undefined;
@@ -257,7 +267,15 @@ export function runInit(options: InitOptions): number | Promise<number> {
   const shouldCheckBacklog =
     parsed.checkBacklog || (!parsed.noBacklog && (parsed.agents || parsed.codex || scaffoldTargets.length > 0));
   if (!shouldCheckBacklog) {
-    const result: InitResult = { ...base, interactive: false, agents, codex, scaffolds, backlog: undefined };
+    const result: InitResult = {
+      ...base,
+      interactive: false,
+      agents,
+      codex,
+      scaffolds,
+      backlog: undefined,
+      tracker: parsed.tracker,
+    };
     emit(initRenderable(result), options.output, options.stdout);
     return EXIT_OK;
   }
@@ -265,7 +283,15 @@ export function runInit(options: InitOptions): number | Promise<number> {
   const warnings = new WarningCollector();
   return probeBacklogCapability(options, warnings).then((backlog) => {
     warnings.flush({ color: options.output.color, stderr: options.stderr ?? process.stderr });
-    const result: InitResult = { ...base, interactive: false, agents, codex, scaffolds, backlog };
+    const result: InitResult = {
+      ...base,
+      interactive: false,
+      agents,
+      codex,
+      scaffolds,
+      backlog,
+      tracker: parsed.tracker,
+    };
     emit(initRenderable(result), options.output, options.stdout);
     return EXIT_OK;
   });
@@ -287,7 +313,18 @@ async function runInteractiveWizard(
   const scaffoldTargets: string[] = [];
   let wantAgents = false;
   let wantCodex = false;
+  let tracker: TrackerBackend = "backlog";
   try {
+    const trackerChoice = await prompter.choose("Which tracker backend should Lore use?", TRACKER_BACKENDS, "backlog");
+    if (!TRACKER_BACKENDS.includes(trackerChoice as TrackerBackend)) {
+      throw new LoreError(
+        "validation",
+        `unsupported tracker backend ${JSON.stringify(trackerChoice)}`,
+        `use one of: ${TRACKER_BACKENDS.join(", ")}`,
+        { backend: trackerChoice },
+      );
+    }
+    tracker = trackerChoice as TrackerBackend;
     const available = detectAgentAvailability(options);
     if (available.claude) {
       wantAgents = await prompter.confirm("Set up the Claude Code agent bridge (SKILL.md + CLAUDE.md nudge)?", true);
@@ -307,6 +344,8 @@ async function runInteractiveWizard(
     prompter.close();
   }
 
+  persistTrackerBackend(options.root, tracker);
+
   const clock = options.clock ?? (() => new Date());
   const agents = wantAgents ? applyAgentsBridge({ root: options.root, force: false, check: false }) : undefined;
   const codex = wantCodex ? applyCodexBridge({ root: options.root, force: false, check: false }) : undefined;
@@ -316,7 +355,7 @@ async function runInteractiveWizard(
   const backlog = await probeBacklogCapability(options, warnings);
   warnings.flush({ color: options.output.color, stderr: options.stderr ?? process.stderr });
 
-  const result: InitResult = { ...base, interactive: true, agents, codex, scaffolds, backlog };
+  const result: InitResult = { ...base, interactive: true, agents, codex, scaffolds, backlog, tracker };
   emit(initRenderable(result), options.output, options.stdout);
   return EXIT_OK;
 }
@@ -406,7 +445,10 @@ export function createRealPrompter(
  * available yet.
  */
 async function probeBacklogCapability(options: InitOptions, warnings: WarningCollector): Promise<InitBacklogCheck> {
-  const adapter = options.adapter ?? defaultAdapter(options.root);
+  // This onboarding diagnostic is intentionally Backlog-specific even when the
+  // newly selected production tracker is Jira. Jira readiness is validated by
+  // configured command construction after its non-secret project map is added.
+  const adapter = options.adapter ?? createTrackerAdapter(options.root, { backend: "backlog" });
   try {
     const capability = await adapter.probe();
     return { checked: true, capable: true, version: capability.version };
@@ -426,7 +468,8 @@ function anyFlagGiven(parsed: InitArgs): boolean {
     parsed.codex ||
     parsed.scaffolds.length > 0 ||
     parsed.noBacklog ||
-    parsed.checkBacklog
+    parsed.checkBacklog ||
+    parsed.tracker !== undefined
   );
 }
 
@@ -446,6 +489,19 @@ function parseInitArgs(args: readonly string[]): InitArgs {
   const codex = parsed.flags.has("codex");
   const noBacklog = parsed.flags.has("no-backlog");
   const checkBacklog = parsed.flags.has("check-backlog");
+  const trackerValue = singleOptionValue(parsed, "tracker");
+  if (trackerValue === "") {
+    throw usage("--tracker needs a value", `pass --tracker ${TRACKER_BACKENDS.join(" or --tracker ")}`);
+  }
+  if (trackerValue !== undefined && !TRACKER_BACKENDS.includes(trackerValue as TrackerBackend)) {
+    throw new LoreError(
+      "validation",
+      `unsupported tracker backend ${JSON.stringify(trackerValue)}`,
+      `use one of: ${TRACKER_BACKENDS.join(", ")}`,
+      { backend: trackerValue },
+    );
+  }
+  const tracker = trackerValue as TrackerBackend | undefined;
   const scaffolds: string[] = [];
   for (const value of optionValues(parsed, "scaffold")) {
     if (value === "") {
@@ -472,7 +528,61 @@ function parseInitArgs(args: readonly string[]): InitArgs {
       "pass at most one of --no-backlog / --check-backlog",
     );
   }
-  return { yes, agents, codex, scaffolds, noBacklog, checkBacklog };
+  return { yes, agents, codex, scaffolds, noBacklog, checkBacklog, tracker };
+}
+
+/** Persist one explicit tracker choice while preserving every unrelated config byte. */
+function persistTrackerBackend(root: string, backend: TrackerBackend): void {
+  assertNoSymlinkInPath(root, CONFIG_REL_PATH);
+  // Validate the complete current file first, including credential guards and
+  // unknown-value diagnostics. The base init scaffold guarantees it exists.
+  loadConfig({ root });
+  const absPath = join(root, CONFIG_REL_PATH);
+  const current = readFileSync(absPath, "utf8");
+  const next = withTrackerBackend(current, backend);
+  if (next !== current) {
+    writeFileAtomic(absPath, next, CONFIG_REL_PATH);
+  }
+}
+
+/** Upsert `[tracker].backend` without reserializing or dropping future keys/comments. */
+function withTrackerBackend(current: string, backend: TrackerBackend): string {
+  const eol = current.includes("\r\n") ? "\r\n" : "\n";
+  const assignment = `backend = ${JSON.stringify(backend)}`;
+  const trackerHeader = /^[ \t]*\[[ \t]*tracker[ \t]*\][ \t]*(?:#.*)?(?:\r?\n|$)/mu;
+  const header = trackerHeader.exec(current);
+  if (header !== null) {
+    const bodyStart = header.index + header[0].length;
+    const nextHeader = /^[ \t]*(?:\[[^\]\r\n]+\]|\[\[[^\]\r\n]+\]\])[ \t]*(?:#.*)?$/mu.exec(current.slice(bodyStart));
+    const bodyEnd = nextHeader === null ? current.length : bodyStart + nextHeader.index;
+    const body = current.slice(bodyStart, bodyEnd);
+    const backendLine = /^([ \t]*)backend[ \t]*=.*$/mu;
+    if (backendLine.test(body)) {
+      return current.slice(0, bodyStart) + body.replace(backendLine, `$1${assignment}`) + current.slice(bodyEnd);
+    }
+    const headerEndsWithEol = /\r?\n$/u.test(header[0]);
+    const insertion = `${headerEndsWithEol ? "" : eol}${assignment}${eol}`;
+    return current.slice(0, bodyStart) + insertion + current.slice(bodyStart);
+  }
+
+  const firstHeader = /^[ \t]*\[/mu.exec(current);
+  const rootEnd = firstHeader?.index ?? current.length;
+  const root = current.slice(0, rootEnd);
+  const dottedBackend = /^([ \t]*)tracker\.backend[ \t]*=.*$/mu;
+  if (dottedBackend.test(root)) {
+    return root.replace(dottedBackend, `$1tracker.${assignment}`) + current.slice(rootEnd);
+  }
+  if (/^[ \t]*tracker[ \t]*=/mu.test(root)) {
+    throw new LoreError(
+      "validation",
+      `${CONFIG_REL_PATH}: inline tracker tables cannot be updated safely by lore init`,
+      "rewrite tracker as a [tracker] table, then rerun lore init --tracker <backlog|jira>",
+      { key: "tracker" },
+    );
+  }
+
+  const separator = current.length === 0 ? "" : current.endsWith("\n") ? eol : `${eol}${eol}`;
+  return `${current}${separator}[tracker]${eol}${assignment}${eol}`;
 }
 
 /** Detect installed agents without making absence or a broken PATH fatal to onboarding. */
@@ -541,6 +651,9 @@ function renderPretty(data: InitResult, opts: { color: boolean }): string {
         : paint("backlog: not --json-capable — see the warning above (coupling unavailable)", ANSI.yellow, opts.color),
     );
   }
+  if (data.tracker !== undefined) {
+    lines.push(`tracker: ${data.tracker}`);
+  }
   if (data.interactive) {
     lines.push("Run `lore instructions` for the canonical agent loop.");
   }
@@ -578,6 +691,9 @@ function renderPlain(data: InitResult): string {
   }
   if (data.backlog) {
     lines.push(data.backlog.capable ? "backlog capable" : "backlog incapable");
+  }
+  if (data.tracker !== undefined) {
+    lines.push(`tracker ${data.tracker}`);
   }
   return lines.join("\n");
 }

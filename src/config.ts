@@ -45,6 +45,9 @@ const RECONCILE_MODES = ["task-rollup"] as const;
 /** The Confluence wire formats the (deferred) publish adapter understands (ADR-0013). */
 const CONFLUENCE_FORMATS = ["storage", "adf"] as const;
 
+/** Tracker backends shipped by this build. Quest remains unavailable until LCLI-315.4. */
+export const TRACKER_BACKENDS = ["backlog", "jira"] as const;
+
 /** Generic parsed-TOML shape for `[reconcile]`; unknown future keys remain tolerated. */
 const ReconcileTableSchema = z.looseObject({
   mode: z.enum(RECONCILE_MODES).optional(),
@@ -75,8 +78,9 @@ const JiraTableSchema = z.looseObject({
   status_flow: z.array(z.string()).optional(),
 });
 
-/** Tracker table; backend selection itself lands with the init wiring in LCLI-315.3. */
+/** Tracker table. Unknown future keys remain tolerated for forward compatibility. */
 const TrackerTableSchema = z.looseObject({
+  backend: z.enum(TRACKER_BACKENDS).optional(),
   jira: JiraTableSchema.optional(),
 });
 
@@ -100,6 +104,9 @@ export type ReconcileMode = (typeof RECONCILE_MODES)[number];
 
 /** The Confluence storage format for the one-way publish adapter. */
 export type ConfluenceFormat = (typeof CONFLUENCE_FORMATS)[number];
+
+/** A tracker backend constructible by this Lore build. */
+export type TrackerBackend = (typeof TRACKER_BACKENDS)[number];
 
 /** Status-reconciliation configuration (the `[reconcile]` table). */
 export interface ReconcileConfig {
@@ -155,8 +162,10 @@ export interface JiraTrackerConfig {
   statusFlow: readonly string[];
 }
 
-/** Tracker-specific configuration; backend selection is added by LCLI-315.3. */
+/** Tracker selection plus backend-specific non-secret configuration. */
 export interface TrackerConfig {
+  /** Resolved backend; zero-config projects use Backlog.md. */
+  backend: TrackerBackend;
   jira?: JiraTrackerConfig;
 }
 
@@ -165,8 +174,8 @@ export interface LoreConfig {
   reconcile: ReconcileConfig;
   validate: ValidateConfig;
   confluence: ConfluenceConfig;
-  /** Omitted in zero-config mode so existing Backlog-only projections remain byte-for-byte stable. */
-  tracker?: TrackerConfig;
+  /** Tracker selection; always resolved so consumers never re-derive the zero-config default. */
+  tracker: TrackerConfig;
 }
 
 /** Options for {@link loadConfig}; both fields are injectable seams for determinism in tests. */
@@ -198,6 +207,7 @@ export function defaultConfig(): LoreConfig {
     reconcile: { mode: "task-rollup", overrides: {} },
     validate: { externalLinks: false, promotePortability: false },
     confluence: { format: "storage" },
+    tracker: { backend: "backlog" },
   };
 }
 
@@ -285,9 +295,10 @@ function validateConfig(root: Record<string, unknown>): LoreConfig {
     reconcile,
     validate,
     confluence: validateConfluence(parsed.confluence, defaults.confluence),
-    ...(parsed.tracker === undefined
-      ? {}
-      : { tracker: { ...(parsed.tracker.jira === undefined ? {} : { jira: validateJira(parsed.tracker.jira) }) } }),
+    tracker: {
+      backend: parsed.tracker?.backend ?? defaults.tracker.backend,
+      ...(parsed.tracker?.jira === undefined ? {} : { jira: validateJira(parsed.tracker.jira) }),
+    },
   };
 }
 
@@ -561,6 +572,14 @@ function failConfigShape(root: Record<string, unknown>, issue: z.core.$ZodIssue)
     fail(
       `${CONFIG_REL_PATH}: ${key} must be one of ${RECONCILE_MODES.map((allowed) => `"${allowed}"`).join(", ")}`,
       `set ${key} to one of: ${RECONCILE_MODES.join(", ")}`,
+      { key, value },
+    );
+  }
+
+  if (key === "tracker.backend") {
+    fail(
+      `${CONFIG_REL_PATH}: ${key} must be one of ${TRACKER_BACKENDS.map((allowed) => `"${allowed}"`).join(", ")}`,
+      `set ${key} to one of: ${TRACKER_BACKENDS.join(", ")}`,
       { key, value },
     );
   }

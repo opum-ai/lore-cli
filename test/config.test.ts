@@ -64,6 +64,7 @@ const ACCEPTED_CONFIG_CONFORMANCE_V1: ReadonlyArray<{
       reconcile: { mode: "task-rollup", overrides: {} },
       validate: { externalLinks: true, promotePortability: false },
       confluence: { format: "storage" },
+      tracker: { backend: "backlog" },
     },
   },
   {
@@ -84,6 +85,7 @@ const ACCEPTED_CONFIG_CONFORMANCE_V1: ReadonlyArray<{
         parentPageId: "98765",
         format: "adf",
       },
+      tracker: { backend: "backlog" },
     },
   },
   {
@@ -100,6 +102,7 @@ const ACCEPTED_CONFIG_CONFORMANCE_V1: ReadonlyArray<{
       reconcile: { mode: "task-rollup", overrides: {} },
       validate: { externalLinks: false, promotePortability: false },
       confluence: { format: "storage", parentPageId: "98765" },
+      tracker: { backend: "backlog" },
     },
   },
   {
@@ -110,6 +113,7 @@ const ACCEPTED_CONFIG_CONFORMANCE_V1: ReadonlyArray<{
       reconcile: { mode: "task-rollup", overrides: {} },
       validate: { externalLinks: false, promotePortability: false },
       confluence: { format: "storage", parentPageId: "9007199254740993" },
+      tracker: { backend: "backlog" },
     },
   },
   {
@@ -120,6 +124,7 @@ const ACCEPTED_CONFIG_CONFORMANCE_V1: ReadonlyArray<{
       reconcile: { mode: "task-rollup", overrides: {} },
       validate: { externalLinks: false, promotePortability: false },
       confluence: { format: "storage", space: "ENG", token: "env-secret" },
+      tracker: { backend: "backlog" },
     },
   },
 ];
@@ -404,11 +409,31 @@ format = "adf"
         parentPageId: "98765",
         format: "adf",
       },
+      tracker: { backend: "backlog" },
     });
   });
 });
 
 describe("loadConfig — jira-cli tracker settings", () => {
+  test("defaults an omitted tracker backend to backlog", () => {
+    expect(loadConfig({ root: repoRoot(""), env: {} }).tracker).toEqual({ backend: "backlog" });
+  });
+
+  test("projects a Jira backend while tolerating future tracker keys", () => {
+    const config = loadConfig({
+      root: repoRoot('[tracker]\nbackend = "jira"\nfuture_key = true\n'),
+      env: {},
+    });
+    expect(config.tracker).toEqual({ backend: "jira" });
+  });
+
+  test("rejects an unavailable backend and lists the accepted values", () => {
+    const err = expectValidationError(() => loadConfig({ root: repoRoot('[tracker]\nbackend = "quest"\n'), env: {} }));
+    expect(err.message).toContain('tracker.backend must be one of "backlog", "jira"');
+    expect(err.hint).toContain("backlog, jira");
+    expect(err.input).toEqual({ key: "tracker.backend", value: "quest" });
+  });
+
   test("projects non-secret [tracker.jira] settings without a credential field", () => {
     const config = loadConfig({
       root: repoRoot(`
@@ -423,7 +448,8 @@ status_flow = ["To Do", "In Progress", "Done"]
       env: {},
     });
 
-    expect(config.tracker?.jira).toEqual({
+    expect(config.tracker.backend).toBe("backlog");
+    expect(config.tracker.jira).toEqual({
       profile: "work",
       project: "JT",
       board: "42",

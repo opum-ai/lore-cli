@@ -1,6 +1,6 @@
 /** Backend-neutral tracker contract and construction seam. */
 
-import type { JiraTrackerConfig } from "../config";
+import { type JiraTrackerConfig, loadConfig, type TrackerBackend, type TrackerConfig } from "../config";
 import { LoreError } from "../errors";
 import {
   type BacklogTask,
@@ -41,9 +41,9 @@ export interface TrackerAdapter {
 }
 
 /** Backends currently constructible by production code. */
-export type TrackerBackend = "backlog" | "jira";
+export type { TrackerBackend } from "../config";
 
-/** Factory input kept separate from `.lore/config.toml` until tracker configuration lands. */
+/** Resolved tracker selection and backend-specific configuration accepted by the factory. */
 export interface TrackerAdapterConfig {
   readonly backend?: TrackerBackend;
   readonly jira?: JiraTrackerConfig;
@@ -54,7 +54,13 @@ export interface TrackerAdapterOptions {
   readonly jira?: JiraAdapterOptions;
 }
 
-/** Construct the selected tracker for `root`; the sole concrete construction site in production. */
+/** Load the repository's resolved tracker selection and construct that backend. */
+export function createConfiguredTrackerAdapter(root: string, options: TrackerAdapterOptions = {}): TrackerAdapter {
+  const config: TrackerConfig = loadConfig({ root }).tracker;
+  return createTrackerAdapter(root, config, options);
+}
+
+/** Construct one selected tracker; configured production callers use `createConfiguredTrackerAdapter`. */
 export function createTrackerAdapter(
   root: string,
   config: TrackerAdapterConfig = {},
