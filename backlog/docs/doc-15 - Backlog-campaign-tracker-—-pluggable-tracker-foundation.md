@@ -3,7 +3,7 @@ id: doc-15
 title: Backlog campaign tracker — pluggable tracker foundation
 type: other
 created_date: '2026-08-07 03:09'
-updated_date: '2026-08-07 13:40'
+updated_date: '2026-08-07 19:56'
 ---
 # Backlog campaign tracker — pluggable tracker foundation
 
@@ -13,27 +13,27 @@ updated_date: '2026-08-07 13:40'
 - Rationale: build the backend-neutral construction and status-flow seam first; implement and qualify JIRA Cloud second; expose tracker selection in init only after every offered backend is reachable.
 - Order is a tie-break; readiness and conflicts are recomputed live.
 - Execution model: sequential waves of one task because the tasks conservatively overlap adapter, configuration, init, documentation, and test surfaces. No subagents are authorized.
-- Authorization boundary: the user authorized LCLI-315.2 implementation and normal branch/commit/push/PR delivery on 2026-08-07. Merge, branch/worktree deletion, publication, LCLI-315.3 execution, and unrelated remote mutation remain unauthorized.
+- Authorization boundary: the user authorized LCLI-315.2 implementation, branch/commit/push/PR delivery, merge, and exact local/remote feature-branch pruning on 2026-08-07. Publication, LCLI-315.3 execution, and unrelated remote mutation remain unauthorized.
 
 ## Frontier
 Informational snapshot only; never a promised next wave.
 
 - LCLI-315.1 is Done and integrated into `dev` through PR #337 as merge commit `2783fc9622543e6a192f35fa14b4e8669e9b0b56`. Exact-head CI run 31177004750 passed all eight jobs before merge. Verified local and remote branch `feat/lcli-315-1-tracker-adapter-seam` refs were pruned after ancestry confirmation.
-- LCLI-315.2 is Done locally on `feat/lcli-315-2-jira-cloud-adapter`, based at `8dd9d8e4dde2cf3895a0a8d6720cad26d7d5fe83`. All nine ACs are checked after mocked full-interface tests, full repository gates, and disposable live qualification in Jira project JT. Commit, push, and PR delivery are the remaining authorized actions; merge and cleanup remain gated.
-- LCLI-315.3 is To Do and its formal dependency LCLI-315.1 is now Done; campaign order still holds it behind LCLI-315.2 because init may offer only backends that are actually reachable.
+- LCLI-315.2 is Done and integrated into `dev` through PR #339 as merge commit `9b556fbaa330b41771f5619bdc8a41a0594268d4`. Exact-head CI run 31213072954 passed all eight jobs at `9ebfca9f0268f2f0448ee92eef42730cfc4dd205`; merged ancestry was verified before the exact local and remote feature refs were pruned.
+- LCLI-315.3 is To Do and live-ready after LCLI-315.1 and the ordered LCLI-315.2 delivery completed. Its execution remains unauthorized and must not start without a new user decision.
 
 ## Queue
 | Order | Task | Cluster | Formal dependencies | State | Wave | Likely files | Note |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | LCLI-315.1 | Tracker adapter seam | none | Done; merged through PR #337; branch pruned | 1 | `src/adapters/backlog.ts`, `src/adapters/tracker.ts`, `src/commands/link.ts`, `src/commands/export.ts`, `src/commands/reconcile-shared.ts`, `src/core/ladybug-source.ts`, tracker/reconcile tests, benchmark fake, `docs/reference/backlog-cli-contract.md` | All six ACs checked. Local focused tests, typecheck, lint, build, strict Lore gates, and diff hygiene passed; all eight clean-runner CI checks passed at head `49d494d`. |
-| 2 | LCLI-315.2 | JIRA Cloud backend | LCLI-315.1 | Done locally; PR delivery pending | 2 | `src/adapters/jira.ts`, tracker factory, `src/config.ts`, scaffold/config/tracker tests, `docs/reference/backlog-cli-contract.md` | Shells installed `@salient-ai/jira-cli`; jira-cli owns credentials, HTTP, timeouts, and ADF. All nine ACs checked; full tests, typecheck, lint, build, strict Lore gates, diff hygiene, and disposable JT live qualification passed. |
-| 3 | LCLI-315.3 | Init and tracker configuration | LCLI-315.1 | To Do; ordered after LCLI-315.2 by reachable-backend contract | — | `src/commands/init.ts`, `src/config.ts`, tracker factory/config types, init/config tests, `docs/adr/0017-interactive-init-wizard-tty-gated.md` if documentation changes are required | Preserve zero-config Backlog default, flag-implies-non-interactive behavior, TTY gates, JSON veto, and fail-loud validation. Docs changes must use Lore. |
+| 2 | LCLI-315.2 | JIRA Cloud backend | LCLI-315.1 | Done; merged through PR #339; branch pruned | 2 | `src/adapters/jira.ts`, tracker factory, `src/config.ts`, scaffold/config/tracker tests, `docs/reference/backlog-cli-contract.md` | Shells installed `@salient-ai/jira-cli`; jira-cli owns credentials, HTTP, timeouts, and ADF. All nine ACs checked; full tests, typecheck, lint, build, strict Lore gates, diff hygiene, and disposable JT live qualification passed. |
+| 3 | LCLI-315.3 | Init and tracker configuration | LCLI-315.1 | To Do; live-ready; execution authorization required | — | `src/commands/init.ts`, `src/config.ts`, tracker factory/config types, init/config tests, `docs/adr/0017-interactive-init-wizard-tty-gated.md` if documentation changes are required | Preserve zero-config Backlog default, flag-implies-non-interactive behavior, TTY gates, JSON veto, and fail-loud validation. Docs changes must use Lore. |
 
 ## Resolved
 | Task | Date/wave | Evidence and disposition |
 | --- | --- | --- |
 | LCLI-315.1 | 2026-08-07 / wave 1 | Done with AC 1–6 checked. Delivered through PR #337 and merged into `dev` as `2783fc9622543e6a192f35fa14b4e8669e9b0b56`; exact final-head run 31177004750 passed all eight jobs, including Ubuntu and Windows full tests plus real-binary Docker E2E. Verified merged ancestry before pruning exact local and remote feature-branch refs. |
-| LCLI-315.2 | 2026-08-07 / wave 2 | Done locally with AC 1–9 checked. User superseded direct REST with installed jira-cli ownership. Mocked subprocess coverage exercises the full adapter and typed failures; full local gates passed. Live JT-2 exercised create/read/update/comment/transition/invalid-priority/delete/404, and JT-3 proved exact managed Markdown/JSON round-trip through ADF; both disposable issues were deleted. PR delivery remains pending. |
+| LCLI-315.2 | 2026-08-07 / wave 2 | Done with AC 1–9 checked. Delivered through PR #339 and merged into `dev` as `9b556fbaa330b41771f5619bdc8a41a0594268d4`; exact-head run 31213072954 passed all eight jobs at `9ebfca9f0268f2f0448ee92eef42730cfc4dd205`. Mocked subprocess coverage and all local gates passed; live JT-2 and JT-3 qualification passed and both issues were deleted. Verified merged ancestry before pruning the exact local and remote feature refs. |
 
 ## Not queued — blocked, deferred, or human decision required
 - LCLI-278: requires a material repository-admin, billing-plan, release-security, and control decision.
@@ -53,3 +53,6 @@ Informational snapshot only; never a promised next wave.
 - 2026-08-07 — merged PR #337 at exact audited head `a245bfee147517bb5fbe172e2f47b667367604df` into `dev` as `2783fc9622543e6a192f35fa14b4e8669e9b0b56` after all eight checks passed in run 31177004750. Fetched and synchronized `dev`, proved merged ancestry, deleted exact local and remote `feat/lcli-315-1-tracker-adapter-seam` refs, and retained one clean primary worktree. The user authorized this small follow-up tracker reconciliation; no next-task execution was authorized.
 - 2026-08-07 — user authorized LCLI-315.2 implementation and normal PR delivery. Re-grounded clean `dev` at `8dd9d8e4dde2cf3895a0a8d6720cad26d7d5fe83`, equal to `origin/dev`, with one worktree and LCLI-315.1 Done. Dispatched sequential wave 2 on `feat/lcli-315-2-jira-cloud-adapter`; merge and cleanup remain unauthorized.
 - 2026-08-07 — completed wave 2 implementation after the user clarified that installed `@salient-ai/jira-cli`, initialized in the project, must own credentials and Jira transport. Marked LCLI-315.2 Done with all nine ACs checked after 73 focused tests, the full test suite, typecheck, lint, build, Lore sync and strict validate/check, and diff hygiene. Disposable JT-2 and JT-3 live qualifications passed and were deleted. Branch delivery through commit/push/PR is authorized; merge, pruning, and LCLI-315.3 execution remain unauthorized.
+
+
+- 2026-08-07 — pushed LCLI-315.2 commits `796f57f` and `9ebfca9`, opened PR #339 against `dev`, and verified all eight jobs passed in exact-head run 31213072954. Merged audited head `9ebfca9f0268f2f0448ee92eef42730cfc4dd205` as `9b556fbaa330b41771f5619bdc8a41a0594268d4`, fetched and fast-forwarded local `dev`, proved merged ancestry, deleted the exact local and remote `feat/lcli-315-2-jira-cloud-adapter` refs, and retained one clean primary worktree. LCLI-315.3 execution remains unauthorized.

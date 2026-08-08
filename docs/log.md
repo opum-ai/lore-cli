@@ -124,6 +124,7 @@
 - 2026-08-07T06:56:11-05:00 d0cb1609df952aaac11248c541fda9c688b99e43 docs: reconcile generated log
 - 2026-08-07T07:07:02-05:00 a245bfee147517bb5fbe172e2f47b667367604df docs: finalize generated log
 - 2026-08-07T07:39:04-05:00 32e6a9f4cc6b91448d057e1cd043336620f54157 docs: reconcile tracker seam merge
+- 2026-08-07T08:52:10-05:00 9ebfca9f0268f2f0448ee92eef42730cfc4dd205 feat: add jira-cli tracker adapter
 
 ## docs/.obsidian
 
@@ -262,6 +263,7 @@
 - 2026-08-05T10:40:30-05:00 0b31a9344268d81ae4f2ae6a276e51f0153edced feat: add OKF 0.2 trust and lifecycle
 - 2026-08-05T13:09:24-05:00 825e0b9421afe892c07ca31ccda3fdf017cf42dd feat: close OKF 0.2 conformance tiers
 - 2026-08-07T06:35:13-05:00 49d494d6c7a1c328cf2f50af1b83b593501c4288 feat: add tracker adapter seam
+- 2026-08-07T08:52:10-05:00 9ebfca9f0268f2f0448ee92eef42730cfc4dd205 feat: add jira-cli tracker adapter
 
 ## docs/runbooks
 
