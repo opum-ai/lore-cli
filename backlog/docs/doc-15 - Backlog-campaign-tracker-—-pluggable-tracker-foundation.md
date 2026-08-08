@@ -3,7 +3,7 @@ id: doc-15
 title: Backlog campaign tracker — pluggable tracker foundation
 type: other
 created_date: '2026-08-07 03:09'
-updated_date: '2026-08-08 14:53'
+updated_date: '2026-08-08 18:34'
 ---
 # Backlog campaign tracker — pluggable tracker foundation
 
@@ -13,28 +13,29 @@ updated_date: '2026-08-08 14:53'
 - Rationale: build the backend-neutral construction and status-flow seam first; implement and qualify JIRA Cloud second; expose tracker selection in init only after every offered backend is reachable.
 - Order is a tie-break; readiness and conflicts are recomputed live.
 - Execution model: sequential waves of one task because the tasks conservatively overlap adapter, configuration, init, documentation, and test surfaces. No subagents are authorized.
-- Authorization boundary: the user authorized LCLI-315.3 implementation, Lore sync, and local commits on 2026-08-08. Push, PR creation, merge, branch/worktree deletion, publication, and unrelated remote mutation remain unauthorized.
+- Authorization boundary: the user authorized LCLI-315.3 implementation, Lore sync, local commits, export of commits `e1addb9`, `2300eb5`, `f908493`, and `ccc767b`, PR #341 merge, feature-branch pruning, and post-merge tracker reconciliation on 2026-08-08. Those authorizations are consumed; no LCLI-315.4 work or unrelated remote mutation is authorized.
 
 ## Frontier
 Informational snapshot only; never a promised next wave.
 
-- LCLI-315.1 is Done and integrated into `dev` through PR #337 as merge commit `2783fc9622543e6a192f35fa14b4e8669e9b0b56`. Exact-head CI run 31177004750 passed all eight jobs before merge. Verified local and remote branch `feat/lcli-315-1-tracker-adapter-seam` refs were pruned after ancestry confirmation.
-- LCLI-315.2 is Done and integrated into `dev` through PR #339 as merge commit `9b556fbaa330b41771f5619bdc8a41a0594268d4`. Exact-head CI run 31213072954 passed all eight jobs at `9ebfca9f0268f2f0448ee92eef42730cfc4dd205`; merged ancestry was verified before the exact local and remote feature refs were pruned.
-- LCLI-315.3 is Done and committed locally on `feat/lcli-315-3-init-tracker-choice`: Lore task settlement `e1addb9` followed by implementation/docs `2300eb5`. The branch is retained because all remote delivery remains unauthorized.
+- The confirmed campaign scope is complete: LCLI-315.1, LCLI-315.2, and LCLI-315.3 are Done, integrated into `dev`, and their exact feature refs were pruned after ancestry verification.
+- LCLI-315.1 integrated through PR #337 as merge commit `2783fc9622543e6a192f35fa14b4e8669e9b0b56`. Exact-head CI run 31177004750 passed all eight jobs before merge.
+- LCLI-315.2 integrated through PR #339 as merge commit `9b556fbaa330b41771f5619bdc8a41a0594268d4`. Exact-head CI run 31213072954 passed all eight jobs at `9ebfca9f0268f2f0448ee92eef42730cfc4dd205`.
+- LCLI-315.3 integrated through PR #341 as merge commit `b4ab2fbec92167f8a53a1d7e5c6f34b22ac8fddc`. Exact-head CI run 31267022973 passed all eight jobs at `ccc767b1dbea278e4616bc919f3900a1271732c1`.
 
 ## Queue
 | Order | Task | Cluster | Formal dependencies | State | Wave | Likely files | Note |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | LCLI-315.1 | Tracker adapter seam | none | Done; merged through PR #337; branch pruned | 1 | `src/adapters/backlog.ts`, `src/adapters/tracker.ts`, `src/commands/link.ts`, `src/commands/export.ts`, `src/commands/reconcile-shared.ts`, `src/core/ladybug-source.ts`, tracker/reconcile tests, benchmark fake, `docs/reference/backlog-cli-contract.md` | All six ACs checked. Local focused tests, typecheck, lint, build, strict Lore gates, and diff hygiene passed; all eight clean-runner CI checks passed at head `49d494d`. |
 | 2 | LCLI-315.2 | JIRA Cloud backend | LCLI-315.1 | Done; merged through PR #339; branch pruned | 2 | `src/adapters/jira.ts`, tracker factory, `src/config.ts`, scaffold/config/tracker tests, `docs/reference/backlog-cli-contract.md` | Shells installed `@salient-ai/jira-cli`; jira-cli owns credentials, HTTP, timeouts, and ADF. All nine ACs checked; full tests, typecheck, lint, build, strict Lore gates, diff hygiene, and disposable JT live qualification passed. |
-| 3 | LCLI-315.3 | Init and tracker configuration | LCLI-315.1 | Done; committed locally; remote delivery gated | 3 | `src/commands/init.ts`, `src/config.ts`, tracker factory/config types, init/config tests, `docs/adr/0017-interactive-init-wizard-tty-gated.md` | All eight ACs checked. Focused 128-test suite and full 2,553-test suite passed (one platform skip); typecheck, lint, build, strict Lore gates, and diff hygiene passed. Local commits: `e1addb9`, `2300eb5`. |
+| 3 | LCLI-315.3 | Init and tracker configuration | LCLI-315.1 | Done; merged through PR #341; branch pruned | 3 | `src/commands/init.ts`, `src/config.ts`, tracker factory/config types, init/config tests, `docs/adr/0017-interactive-init-wizard-tty-gated.md` | All eight ACs checked. Focused 128-test suite and full 2,553-test suite passed (one platform skip); all eight exact-head CI jobs passed, including Ubuntu, Windows, and real-binary Docker E2E. |
 
 ## Resolved
 | Task | Date/wave | Evidence and disposition |
 | --- | --- | --- |
 | LCLI-315.1 | 2026-08-07 / wave 1 | Done with AC 1–6 checked. Delivered through PR #337 and merged into `dev` as `2783fc9622543e6a192f35fa14b4e8669e9b0b56`; exact final-head run 31177004750 passed all eight jobs, including Ubuntu and Windows full tests plus real-binary Docker E2E. Verified merged ancestry before pruning exact local and remote feature-branch refs. |
 | LCLI-315.2 | 2026-08-07 / wave 2 | Done with AC 1–9 checked. Delivered through PR #339 and merged into `dev` as `9b556fbaa330b41771f5619bdc8a41a0594268d4`; exact-head run 31213072954 passed all eight jobs at `9ebfca9f0268f2f0448ee92eef42730cfc4dd205`. Mocked subprocess coverage and all local gates passed; live JT-2 and JT-3 qualification passed and both issues were deleted. Verified merged ancestry before pruning the exact local and remote feature refs. |
-| LCLI-315.3 | 2026-08-08 / wave 3 | Done with AC 1–8 checked. Implemented the TTY-gated `backlog`/`jira` wizard choice and matching `--tracker` flag, resolved zero-config Backlog defaults, byte-preserving config persistence, and production routing through the configured adapter. Focused 128-test and full 2,553-test suites passed (one platform skip), with typecheck, lint, build, strict Lore gates, and diff hygiene clean. Lore task settlement is `e1addb9`; implementation/docs are `2300eb5`. Remote delivery is not authorized, so the feature branch is retained. |
+| LCLI-315.3 | 2026-08-08 / wave 3 | Done with AC 1–8 checked. Implemented the TTY-gated `backlog`/`jira` wizard choice and matching `--tracker` flag, resolved zero-config Backlog defaults, byte-preserving config persistence, and production routing through the configured adapter. Focused 128-test and full 2,553-test suites passed (one platform skip), with typecheck, lint, build, strict Lore gates, and diff hygiene clean. Delivered commits `e1addb9`, `2300eb5`, `f908493`, and `ccc767b` through PR #341; exact-head run 31267022973 passed all eight jobs. Merged exact head `ccc767b1dbea278e4616bc919f3900a1271732c1` into `dev` as `b4ab2fbec92167f8a53a1d7e5c6f34b22ac8fddc`, verified ancestry in refreshed `origin/dev`, and pruned the exact local and remote feature refs. |
 
 ## Not queued — blocked, deferred, or human decision required
 - LCLI-278: requires a material repository-admin, billing-plan, release-security, and control decision.
@@ -54,8 +55,7 @@ Informational snapshot only; never a promised next wave.
 - 2026-08-07 — merged PR #337 at exact audited head `a245bfee147517bb5fbe172e2f47b667367604df` into `dev` as `2783fc9622543e6a192f35fa14b4e8669e9b0b56` after all eight checks passed in run 31177004750. Fetched and synchronized `dev`, proved merged ancestry, deleted exact local and remote `feat/lcli-315-1-tracker-adapter-seam` refs, and retained one clean primary worktree. The user authorized this small follow-up tracker reconciliation; no next-task execution was authorized.
 - 2026-08-07 — user authorized LCLI-315.2 implementation and normal PR delivery. Re-grounded clean `dev` at `8dd9d8e4dde2cf3895a0a8d6720cad26d7d5fe83`, equal to `origin/dev`, with one worktree and LCLI-315.1 Done. Dispatched sequential wave 2 on `feat/lcli-315-2-jira-cloud-adapter`; merge and cleanup remain unauthorized.
 - 2026-08-07 — completed wave 2 implementation after the user clarified that installed `@salient-ai/jira-cli`, initialized in the project, must own credentials and Jira transport. Marked LCLI-315.2 Done with all nine ACs checked after 73 focused tests, the full test suite, typecheck, lint, build, Lore sync and strict validate/check, and diff hygiene. Disposable JT-2 and JT-3 live qualifications passed and were deleted. Branch delivery through commit/push/PR is authorized; merge, pruning, and LCLI-315.3 execution remain unauthorized.
-
-
 - 2026-08-07 — pushed LCLI-315.2 commits `796f57f` and `9ebfca9`, opened PR #339 against `dev`, and verified all eight jobs passed in exact-head run 31213072954. Merged audited head `9ebfca9f0268f2f0448ee92eef42730cfc4dd205` as `9b556fbaa330b41771f5619bdc8a41a0594268d4`, fetched and fast-forwarded local `dev`, proved merged ancestry, deleted the exact local and remote `feat/lcli-315-2-jira-cloud-adapter` refs, and retained one clean primary worktree. LCLI-315.3 execution remains unauthorized.
 - 2026-08-08 — user authorized LCLI-315.3 implementation. Re-grounded clean `dev` at `1238fcfae49af4005105c9a1bf9f9b3c51ac740a`, equal to `origin/dev`, with one worktree and LCLI-315.1/LCLI-315.2 Done. Dispatched sequential wave 3 on `feat/lcli-315-3-init-tracker-choice`; commit and remote delivery remain unauthorized.
 - 2026-08-08 — completed wave 3 locally after explicit Lore-sync/commit authorization. Marked LCLI-315.3 Done with all eight ACs checked, ran Lore sync, and committed task settlement as `e1addb9` plus implementation/generated docs as `2300eb5`. Verification passed: 128 focused tests; full suite 2,553 passed / 1 platform skip / 0 failed with a 15-second stress timeout; typecheck, lint, build, strict Lore validate/check, and diff hygiene. Push, PR, merge, and pruning remain unauthorized; retained `feat/lcli-315-3-init-tracker-choice`.
+- 2026-08-08 — after explicit export authorization, pushed commits `e1addb9`, `2300eb5`, `f908493`, and `ccc767b`, opened PR #341, and verified exact-head run 31267022973 passed all eight jobs. After separate approval, merged exact head `ccc767b1dbea278e4616bc919f3900a1271732c1` into `dev` as `b4ab2fbec92167f8a53a1d7e5c6f34b22ac8fddc`. Refreshed `origin/dev`, proved merged ancestry, and, after explicit cleanup approval, deleted the exact local and remote `feat/lcli-315-3-init-tracker-choice` refs. Reconciled the owning task and this campaign tracker; the confirmed campaign scope is complete.
