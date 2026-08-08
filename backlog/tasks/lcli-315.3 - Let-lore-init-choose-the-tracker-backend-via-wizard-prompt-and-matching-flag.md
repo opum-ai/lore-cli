@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:49'
-updated_date: '2026-08-08 14:43'
+updated_date: '2026-08-08 14:52'
 labels: []
 dependencies:
   - LCLI-315.1
@@ -81,5 +81,5 @@ The user authorized Lore sync and local commits on 2026-08-08. Remote delivery r
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Implemented and locally verified tracker selection for lore init: only Backlog.md/Jira are offered, --tracker is prompt-free and equivalent, zero-config remains byte-stable Backlog, invalid values fail validation, config drives production tracker construction, and docs/tests cover the contract. Local changes are ready for authorized Lore sync and commit.
+Implemented and locally verified tracker selection for lore init: only Backlog.md/Jira are offered, --tracker is prompt-free and equivalent, zero-config remains byte-stable Backlog, invalid values fail validation, config drives production tracker construction, and docs/tests cover the contract. Lore recorded task completion in e1addb9; the implementation and generated docs were committed locally as 2300eb5. Remote delivery remains unauthorized.
 <!-- SECTION:FINAL_SUMMARY:END -->
