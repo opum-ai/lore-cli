@@ -86,8 +86,9 @@ creates nothing and still exits `0` with everything reported `skipped`; a run
 after a partial delete fills in only the missing pieces.
 
 **On a bare, interactive-terminal invocation, `init` also runs a guided
-wizard** that folds the rest of onboarding into this one command — independently
-detected Claude Code and Codex agent bridges, a downstream doc-site scaffold (mkdocs/docusaurus), an
+wizard** that folds the rest of onboarding into this one command — a tracker
+backend choice (`backlog` or `jira`), independently detected Claude Code and
+Codex agent bridges, a downstream doc-site scaffold (mkdocs/docusaurus), an
 Obsidian vault config, and a backlog `--json`-capability check — instead of
 the older `init` → `agents` → external `lore-setup.sh` → manual-Obsidian
 sequence ([ADR-0017](../adr/0017-interactive-init-wizard-tty-gated.md)).
@@ -107,7 +108,10 @@ default"), **not** "answer every question with its own default"; the two
 diverge on the agent-bridge question in particular (its wizard default is
 yes, but `--yes` installs nothing). A bare `lore init` off a TTY with no
 flags behaves exactly as it always has (scaffold only, nothing else) — the
-agent bridge/scaffolds/backlog check are strictly opt-in there.
+resolved tracker default is Backlog.md without adding a `[tracker]` table, and
+the agent bridge/scaffolds/backlog check are strictly opt-in there. An explicit
+wizard or `--tracker` choice writes `backend` under `[tracker]` in
+`.lore/config.toml`.
 
 Hitting EOF (Ctrl-D) mid-wizard is a `usage` error (exit `2`) with a rendered
 diagnostic, never a silent success — see
@@ -125,9 +129,9 @@ whatever already succeeded rather than erroring or duplicating anything.
 | | |
 |---|---|
 | **Args** | none |
-| **Key flags** | `--yes` / `--non-interactive` (skip the wizard even on a TTY) · `--claude` (Claude Code bridge; `--agents` alias) · `--codex` (Codex bridge: `AGENTS.md` + `.codex/skills/lore/`) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-backlog` / `--no-backlog` (force/skip the backlog capability check) |
-| **Output** | `kind: init` — created/skipped scaffold paths, plus `interactive`/`scaffolds` always present (`false`/`[]` on the default path) and `agents` (Claude), `codex`, and `backlog` present only when those steps ran |
-| **Exit** | `0` ok (the backlog check is advisory-only and never changes this) · `2` usage (bad flag/unknown `--scaffold` target, or the wizard's stdin closed before finishing) · `4` permission denied · `5` a non-regular entry (directory/symlink) blocks a scaffold path, or a scaffold target collides with a differing hand-edited file · `6` a malformed `.lore/profile.toml` |
+| **Key flags** | `--yes` / `--non-interactive` (skip the wizard even on a TTY) · `--tracker <backlog\|jira>` (persist the tracker choice without prompting) · `--claude` (Claude Code bridge; `--agents` alias) · `--codex` (Codex bridge: `AGENTS.md` + `.codex/skills/lore/`) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-backlog` / `--no-backlog` (force/skip the backlog capability check) |
+| **Output** | `kind: init` — created/skipped scaffold paths, plus `interactive`/`scaffolds` always present (`false`/`[]` on the default path); `tracker` is present after a wizard or explicit `--tracker` choice, while `agents` (Claude), `codex`, and `backlog` are present only when those steps ran |
+| **Exit** | `0` ok (the backlog check is advisory-only and never changes this) · `2` usage (bad flag/unknown `--scaffold` target, a missing `--tracker` value, or the wizard's stdin closed before finishing) · `4` permission denied · `5` a non-regular entry (directory/symlink) blocks a scaffold path, or a scaffold target collides with a differing hand-edited file · `6` malformed configuration, including an unknown tracker backend |
 
 ### `new`
 

@@ -125,6 +125,7 @@
 - 2026-08-07T07:07:02-05:00 a245bfee147517bb5fbe172e2f47b667367604df docs: finalize generated log
 - 2026-08-07T07:39:04-05:00 32e6a9f4cc6b91448d057e1cd043336620f54157 docs: reconcile tracker seam merge
 - 2026-08-07T08:52:10-05:00 9ebfca9f0268f2f0448ee92eef42730cfc4dd205 feat: add jira-cli tracker adapter
+- 2026-08-07T15:06:59-05:00 d14d592e15073d3384fab36aa1bd5d58336e7880 docs: reconcile jira adapter merge
 
 ## docs/.obsidian
 

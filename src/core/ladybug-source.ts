@@ -11,7 +11,7 @@ import { closeSync, lstatSync, openSync, readFileSync, readSync } from "node:fs"
 import { join } from "node:path";
 import type { BacklogAdapter, BacklogTask } from "../adapters/backlog";
 import { resolveHeadSha } from "../adapters/git";
-import { createTrackerAdapter } from "../adapters/tracker";
+import { createConfiguredTrackerAdapter } from "../adapters/tracker";
 import { LoreError, WarningCollector } from "../errors";
 import { VERSION } from "../meta";
 import { loadBundle, walkMarkdown } from "./bundle";
@@ -180,7 +180,7 @@ export interface LoadLadybugProjectionSourceOptions {
 export async function loadLadybugProjectionSource(
   options: LoadLadybugProjectionSourceOptions,
 ): Promise<LadybugProjectionSource> {
-  const adapter = options.adapter ?? createTrackerAdapter(options.root, {});
+  const adapter = options.adapter ?? createConfiguredTrackerAdapter(options.root);
   const resolveGitCommit = options.resolveGitCommit ?? resolveHeadSha;
   for (let attempt = 0; attempt < 2; attempt++) {
     // A changed source snapshot abandons this entire attempt. Buffer its
@@ -337,7 +337,7 @@ export function prepareLadybugProjectionSource(
 export async function loadLadybugProjectionFreshness(
   options: LoadLadybugProjectionSourceOptions,
 ): Promise<LadybugProjectionFreshness> {
-  const adapter = options.adapter ?? createTrackerAdapter(options.root, {});
+  const adapter = options.adapter ?? createConfiguredTrackerAdapter(options.root);
   const resolveGitCommit = options.resolveGitCommit ?? resolveHeadSha;
   for (let attempt = 0; attempt < 2; attempt++) {
     const inventory = readSourceInventory(options.root);

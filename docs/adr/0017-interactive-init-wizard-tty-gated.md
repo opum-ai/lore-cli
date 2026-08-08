@@ -3,11 +3,12 @@ type: ADR
 title: "ADR-0017: Interactive `lore init` wizard, TTY-gated"
 description: >-
   A bare `lore init` on an interactive terminal runs a guided wizard that folds
-  in the rest of onboarding (the Claude Code agent bridge, downstream doc-site
-  scaffolds, and a backlog-coupling capability check) into one command; it is
+  in the rest of onboarding (tracker selection, the Claude Code agent bridge,
+  downstream doc-site scaffolds, and a backlog-coupling capability check) into
+  one command; it is
   strictly TTY-gated so the non-interactive, scriptable CLI contract
   (ADR-0004/ADR-0005) is preserved without exception off a TTY.
-tags: [adr, cli, init, wizard, interactive, tty, onboarding, agents, scaffold, backlog]
+tags: [adr, cli, init, wizard, interactive, tty, onboarding, agents, scaffold, backlog, tracker, jira]
 summary: lore init runs an interactive wizard only when stdin and stderr are both TTYs; a non-TTY stdin/stderr, --json, or any flag runs it non-interactively with defaults, one flag per wizard question.
 timestamp: 2026-07-25T17:43:50.747Z
 ---
@@ -51,11 +52,14 @@ same command.
 ## Decision
 
 1. **A bare `lore init` on an interactive terminal runs a guided wizard**
-   offering each configurable consumer: the Claude Code agent bridge
+   offering each configurable choice: the tracker backend (`backlog` or
+   `jira`), the Claude Code agent bridge
    (SKILL.md + the CLAUDE.md nudge), a downstream docs site
    (mkdocs/docusaurus/none), an Obsidian vault config, and a backlog-coupling
    capability detection step. The wizard applies whichever were chosen in the
-   same run that scaffolds the base OKF bundle.
+   same run that scaffolds the base OKF bundle. An explicit tracker choice is
+   persisted as `backend` under `[tracker]` in `.lore/config.toml`; Backlog.md
+   remains the zero-config default when that table is absent.
 
 2. **The wizard is TTY-gated, and the gate is the whole of the contract
    change.** It runs *only* when **both stdin and stderr** are interactive
@@ -77,12 +81,14 @@ same command.
      script piping `--json` output has no way to answer a wizard question
      (also review round 2); or
    - **any** of `lore init`'s own flags is passed (`--yes`/`--non-interactive`,
-     `--agents`, `--scaffold <target>`, `--obsidian`, `--no-backlog`,
+     `--tracker <backlog|jira>`, `--agents`, `--scaffold <target>`,
+     `--obsidian`, `--no-backlog`,
      `--check-backlog`) — explicit intent always wins over an ambient TTY, so
      `lore init --agents` from a real terminal never pops the wizard either.
 
 3. **Every wizard question maps 1:1 to a flag** (the npm-init pattern): the
-   agent-bridge question ↔ `--agents`, the docs-site choice ↔
+   tracker choice ↔ `--tracker <backlog|jira>`, the agent-bridge question ↔
+   `--agents`, the docs-site choice ↔
    `--scaffold <target>`, the Obsidian question ↔ `--obsidian`, and
    `--no-backlog`/`--check-backlog` cover the backlog-coupling check. A script
    can reach every *option* the wizard offers with zero prompts — there is no
@@ -149,9 +155,10 @@ answer.
 `--yes` means **"skip the wizard and run the bare non-interactive default"** —
 the exact same outcome as a non-TTY stdin with no other flags. It does
 **not** mean "answer every wizard question with its default value." These
-differ in practice: the agent-bridge question defaults to **yes** (three bare
-Enters through the wizard installs the bridge), but `lore init --yes` installs
-**nothing** beyond the base scaffold (`test/init.test.ts`'s
+differ in practice: the tracker question defaults to Backlog.md and writes the
+explicit selection during a wizard run, and the agent-bridge question defaults
+to **yes** (accepting the wizard defaults installs the detected bridge), but
+`lore init --yes` writes **nothing** beyond the base scaffold (`test/init.test.ts`'s
 `--yes`-alone-on-a-TTY case asserts exactly this). This is npm's own `-y`
 semantics inverted from what the name suggests in isolation — `npm init -y`
 also skips prompts entirely rather than accepting each one's default, so
@@ -188,7 +195,7 @@ two named examples reads more clearly at the call site.
   stderr half of the fix is exactly what makes `lore-setup.sh` safe to run
   unattended again.
 - **A fully scriptable equivalent EXISTS for every wizard option** — `lore
-  init --agents --obsidian --scaffold mkdocs` reaches every configuration the
+  init --tracker jira --agents --obsidian --scaffold mkdocs` reaches every configuration the
   wizard can reach, with zero prompts — but **`lore init --yes` is not that
   equivalent** (see the `--yes` clarification below); automation should name
   the flags for the options it actually wants rather than assume `--yes`

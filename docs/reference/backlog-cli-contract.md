@@ -357,9 +357,11 @@ and `lore`'s `listTasks` passes it at most once regardless.)
 ## Tracker adapter boundary
 
 Coupling commands depend on the backend-neutral `TrackerAdapter` contract in
-`src/adapters/tracker.ts`. Production code constructs a concrete backend only
-through `createTrackerAdapter(root, config)`; injected adapters remain the test
-seam. Backlog.md remains the zero-config default. Jira Cloud is reachable through the
+`src/adapters/tracker.ts`. Production code loads the resolved repository
+selection and constructs a concrete backend through
+`createConfiguredTrackerAdapter(root)`; `createTrackerAdapter(root, config)`
+and injected adapters remain explicit test seams. Backlog.md remains the
+zero-config default. Jira Cloud is reachable through the
 installed `@salient-ai/jira-cli` executable when the backend is `jira`; Lore
 does not call Jira REST or read Jira credentials. An absent backend selection
 therefore preserves existing behavior, while an unknown selection fails loud
@@ -398,6 +400,9 @@ a typed `LoreError`; Lore never retries a jira-cli command silently.
 Only non-secret routing and mapping settings live in `.lore/config.toml`:
 
 ```toml
+[tracker]
+backend = "jira"
+
 [tracker.jira]
 profile = "work" # optional; omit for the jira-cli default profile
 project = "JT"
@@ -406,6 +411,11 @@ issue_type = "Task"
 default_labels = ["lore"]
 status_flow = ["To Do", "In Progress", "Done"]
 ```
+
+Run `lore init --tracker jira` to write the selection without prompts, or choose
+Jira in a bare interactive `lore init` wizard. Only `backlog` and `jira` are
+accepted; an absent `[tracker]` table resolves to `backlog`, while unknown keys
+remain tolerated for forward compatibility.
 
 `probe()` runs `jira --version`, `jira project get`, and
 `jira metadata priorities`. The project response is the issue-type vocabulary;
