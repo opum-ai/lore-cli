@@ -6,16 +6,31 @@ import { join, relative } from "node:path";
 const ROOT = join(import.meta.dir, "..");
 const CANONICAL_SLUG = "opum-ai/lore-cli";
 const CANONICAL_REPOSITORY_URL = `git+https://github.com/${CANONICAL_SLUG}.git`;
-const STALE_OPERATIONAL_SLUGS = ["jeremy-newhouse/lore", "salient-data/lore-cli", "salient-data/quest-cli"];
+const STALE_OPERATIONAL_SLUGS = ["jeremy-newhouse/lore"];
 
 /**
- * Slugs left behind by the 2026-08 move of both CLI repositories to `opum-ai`.
- * The former routes still redirect and answer 200, so a stale citation looks
- * healthy to any existence check; only a literal scan catches it. These carry no
- * decision-time provenance value — unlike `jeremy-newhouse/lore`, which ADR-0001
- * legitimately records — so they must appear in no documentation file at all.
+ * Slugs left behind by the move of the Opum product family to `opum-ai` — both
+ * CLI repositories on 2026-08-01, the remaining seven on 2026-08-09. The former
+ * routes still redirect and answer 200, so a stale citation looks healthy to any
+ * existence check; only a literal scan catches it. These carry no decision-time
+ * provenance value — unlike `jeremy-newhouse/lore`, which ADR-0001 legitimately
+ * records — so they must appear in no documentation file at all.
+ *
+ * A **pattern, not a list**. This was `["salient-data/lore-cli",
+ * "salient-data/quest-cli"]`: an enumeration correct on the day it was written,
+ * which the seven repositories that moved on 2026-08-09 would each have passed
+ * unexamined. Matching the family by prefix covers a repository created after
+ * this line was last read. `salient-data` still legitimately owns unrelated
+ * repositories — `jira-cli`, `conf-cli`, `skadi` — which this deliberately
+ * spares, so the pattern is scoped to the four family prefixes rather than to
+ * the owner alone.
  */
-const ORG_MOVE_STALE_SLUGS = ["salient-data/lore-cli", "salient-data/quest-cli"];
+const ORG_MOVE_STALE_SLUG = /salient-data\/(?:lore|quest|opum|glyph)-[a-z0-9-]+/;
+
+/** All matches of the family pattern in `body`, as concrete slugs for reporting. */
+function staleFamilySlugs(body: string): string[] {
+  return body.match(new RegExp(ORG_MOVE_STALE_SLUG, "g")) ?? [];
+}
 const CANONICAL_NPM_PACKAGE = "@opum-ai/lore";
 const STALE_NPM_PACKAGE = "@salient-data/lore";
 const CANONICAL_NPM_TARBALL_PREFIX = "opum-ai-lore";
@@ -116,6 +131,7 @@ describe("canonical repository location", () => {
       const body = text(path);
       expect(body).toContain(CANONICAL_SLUG);
       for (const stale of STALE_OPERATIONAL_SLUGS) expect(body).not.toContain(stale);
+      expect(staleFamilySlugs(body)).toEqual([]);
     }
   });
 
@@ -130,10 +146,9 @@ describe("canonical repository location", () => {
     expect(documents.length).toBeGreaterThan(20);
     expect(documents).toContain("CLAUDE.md");
 
-    const offenders = documents.filter((path) => {
-      const body = text(path);
-      return ORG_MOVE_STALE_SLUGS.some((stale) => body.includes(stale));
-    });
+    const offenders = documents.flatMap((path) =>
+      staleFamilySlugs(text(path)).map((stale) => `${path}: ${stale}`),
+    );
 
     expect(offenders).toEqual([]);
   });
@@ -191,7 +206,10 @@ describe("canonical npm package family", () => {
       .filter((path) => !PROVENANCE_EXEMPT.has(path))
       .flatMap((path) => {
         const body = text(path);
-        return superseded.filter((stale) => body.includes(stale)).map((stale) => `${path}: ${stale}`);
+        return [
+          ...superseded.filter((stale) => body.includes(stale)),
+          ...staleFamilySlugs(body),
+        ].map((stale) => `${path}: ${stale}`);
       });
 
     expect(offenders).toEqual([]);
