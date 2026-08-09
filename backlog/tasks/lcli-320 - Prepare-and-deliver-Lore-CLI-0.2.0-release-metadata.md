@@ -1,11 +1,11 @@
 ---
 id: LCLI-320
 title: Prepare and deliver Lore CLI 0.2.0 release metadata
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-09 05:45'
-updated_date: '2026-08-09 07:29'
+updated_date: '2026-08-09 07:45'
 labels:
   - release
   - npm
@@ -50,7 +50,7 @@ Prepare the accumulated post-0.1.1 work for publication as Lore CLI 0.2.0 withou
 - [x] #2 CHANGELOG.md contains a complete dated 0.2.0 entry for all user-visible changes since v0.1.1 and retains an empty Unreleased section
 - [x] #3 Version-derived fixtures and release-facing documentation are updated only where the 0.2.0 preparation changes their deterministic output or forward-looking contract; release-truth claims remain at 0.1.1 until publication is proven
 - [x] #4 Synchronized-version checks, focused release tests, the full project test/typecheck/lint/build gates, compiled version smoke, strict Lore validation/check, dependency audit, diff hygiene, and all seven npm publish dry-runs pass without publishing
-- [ ] #5 The preparation change is committed and delivered through dev and main with required CI green, temporary release refs are pruned when safe, and the repository is clean
+- [x] #5 The preparation change is committed and delivered through dev and main with required CI green, temporary release refs are pruned when safe, and the repository is clean
 - [x] #6 No npm package, Git tag, GitHub Release, or publish:true workflow dispatch is created by this preparation task
 <!-- AC:END -->
 
@@ -88,4 +88,16 @@ Adversarial self-review (no independent reviewer or subagents authorized) challe
 - AC4: synchronized versions, frozen lockfile, 107 focused tests plus 8 focused benchmark tests, 2553-test full suite, typecheck, lint, build, compiled version smoke, strict Lore validation/check, zero-vulnerability audit, diff hygiene, and seven npm dry-runs all passed.
 - AC6: local and remote v0.2.0 tag queries and the GitHub Release list are empty; the newest Release workflow dispatch remains the completed 0.1.1 qualification from 2026-08-05. Only npm --dry-run commands were used.
 - AC5 remains deliberately unchecked until protected dev/main delivery, exact-head CI, cleanup, and final repository cleanliness are proven.
+
+Protected delivery and cleanup completed:
+- PR #343 carried exact preparation head 8f3bc9213f9aa34234483fe94ef51bd99bda0120 into dev. All 8 required checks passed, including Ubuntu/Windows, compile, browser, MkDocs, Docusaurus, Ladybug smoke, and Docker E2E. It merged as 2ed1a2b10eebb5ddb09c21c04f496497d0a93e02.
+- PR #344 promoted exact dev head 2ed1a2b10eebb5ddb09c21c04f496497d0a93e02 to main. All 8 required checks passed again and it merged as e60509b688e9f1a641f4a67b82caf35bd42dfab7.
+- Exact preparation head ancestry was proven in origin/dev and origin/main before deleting only release/0.2.0-preparation locally and remotely. The primary worktree was returned to clean dev at origin/dev.
+- No v0.2.0 tag, npm publication, Release dispatch, or GitHub Release occurred. LCLI-321 remains separately gated.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Prepared Lore CLI 0.2.0 without publishing: synchronized all seven package versions and six launcher pins, updated the lockfile and deterministic version-derived fixtures, added the complete dated changelog, and coupled the preparation/publication tasks to the release Story while preserving 0.1.1 publication truth. Verified with 2553 passing tests, focused release and benchmark suites, typecheck/lint/build, compiled version smoke, strict Lore gates, a zero-vulnerability audit, seven npm dry-runs, and two protected eight-check CI passes. Delivered through PR #343 to dev and PR #344 to main; temporary preparation refs were pruned.
+<!-- SECTION:FINAL_SUMMARY:END -->
