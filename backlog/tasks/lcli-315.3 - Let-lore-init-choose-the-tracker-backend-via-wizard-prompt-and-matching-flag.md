@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:49'
-updated_date: '2026-08-08 14:52'
+updated_date: '2026-08-08 18:34'
 labels: []
 dependencies:
   - LCLI-315.1
@@ -76,10 +76,14 @@ Implemented resolved backlog|jira configuration, a TTY-gated wizard choice and p
 Verification: focused tracker/init/config/Jira suite 128 passed; TypeScript and Biome passed; compiled build passed; lore validate --strict and lore check --strict each reported 65 files with 0 errors/0 warnings; lore sync --dry-run would update only docs/log.md and was not applied because it commits; git diff --check passed. The default-timeout full suite exposed and then passed after fixing the manifest summary lockstep; its pre-existing 5-second 700,000-row orphan stress test timed out locally, while the isolated stress block passed 2/2 with a 15-second timeout and the complete suite passed with --timeout 15000: 2553 passed, 1 platform qualification skipped, 0 failed.
 
 The user authorized Lore sync and local commits on 2026-08-08. Remote delivery remains unauthorized.
+
+Delivery reconciliation: the user explicitly authorized export of commits e1addb9, 2300eb5, f908493, and ccc767b to opum-ai/lore-cli. PR #341 passed all eight exact-head GitHub checks at ccc767b1dbea278e4616bc919f3900a1271732c1 and merged into dev as b4ab2fbec92167f8a53a1d7e5c6f34b22ac8fddc. Refreshed origin/dev proved merged ancestry. After separate approval, the exact local and remote feat/lcli-315-3-init-tracker-choice refs were pruned.
+
+The preceding remote-delivery sentence records the local-completion state and is superseded by this delivery reconciliation.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Implemented and locally verified tracker selection for lore init: only Backlog.md/Jira are offered, --tracker is prompt-free and equivalent, zero-config remains byte-stable Backlog, invalid values fail validation, config drives production tracker construction, and docs/tests cover the contract. Lore recorded task completion in e1addb9; the implementation and generated docs were committed locally as 2300eb5. Remote delivery remains unauthorized.
+Implemented and delivered tracker selection for lore init: only Backlog.md and Jira are offered, --tracker is prompt-free and equivalent, zero-config remains byte-stable Backlog, invalid values fail validation, config drives production tracker construction, and docs/tests cover the contract. PR #341 passed all eight checks and merged exact head ccc767b1dbea278e4616bc919f3900a1271732c1 into dev as b4ab2fbec92167f8a53a1d7e5c6f34b22ac8fddc; merged ancestry was verified before pruning the exact local and remote feature refs.
 <!-- SECTION:FINAL_SUMMARY:END -->
