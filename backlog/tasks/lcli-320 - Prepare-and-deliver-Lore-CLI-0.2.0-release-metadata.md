@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-09 05:45'
-updated_date: '2026-08-09 07:13'
+updated_date: '2026-08-09 07:26'
 labels:
   - release
   - npm
@@ -28,6 +28,9 @@ modified_files:
   - npm/win32-x64/package.json
   - CHANGELOG.md
   - test/ladybug-package-qualification.test.ts
+  - benchmark/ladybug/fixtures/v1/small.json
+  - benchmark/ladybug/fixtures/v1/large.json
+  - test/ladybug-benchmark-report.test.ts
   - docs/stories/prepare-the-first-lore-cli-release.md
   - docs/log.md
 priority: high
@@ -60,3 +63,21 @@ Prepare the accumulated post-0.1.1 work for publication as Lore CLI 0.2.0 withou
 4. Run synchronized-version and release-workflow tests, focused version/package tests, the complete test/typecheck/lint/build gates, compiled --version smoke, Lore sync/strict validate/check, dependency audit, git diff hygiene, and npm publish --dry-run for the root plus all six platform packages. Record exact results and residual environment limits.
 5. Run the task-finalization guide and an adversarial self-review of each acceptance criterion. If all local evidence passes, commit and deliver the exact preparation branch through protected PRs to dev and main, observe required CI, prune temporary refs only when ancestry is proven, settle LCLI-320/doc-16, and stop before any tag, workflow dispatch, npm publication, GitHub Release, or LCLI-321 execution.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Full-suite discovery: the 0.2.0 package version changes the canonical projection bytes embedded in the small and large Ladybug benchmark fixtures. The first run passed 2551 tests with 1 skip and failed only the two expected canonicalExportSha256 assertions; observed replacements are small sha256:71b91827091c58c8fd76dc4473fd51ab54d8a01a6355d7baca852d91ea0628ae and large sha256:2b1b0941bde8452be8d6469cc2b47bbaa24780cd6777a21a443ca90e142547a1.
+
+Second full-suite discovery: after updating fixture canonical-export hashes, 2552 tests passed with 1 skip and only test/ladybug-benchmark-report.test.ts failed because the report contract digest also embeds package version. Observed replacement: sha256:733db8e59b35d8fc224d1228c66e3dde1423f65e4e87be43e19d09d5f9c90534.
+
+Local qualification completed on release/0.2.0-preparation:
+- Seven manifests and six exact optional dependency pins agree on 0.2.0; bun install --frozen-lockfile reports no changes.
+- Focused release/OKF/package suite passed 107 tests with 1 platform-specific skip; benchmark fixture/report rerun passed 8 tests.
+- Full suite passed 2553 tests with 1 pre-existing platform-specific skip, 0 failures, and 8735 expectations across 78 files.
+- npm run typecheck and npm run lint passed; npm run build produced dist/lore and its --version output is 0.2.0.
+- lore validate --strict reported 0 errors and 0 warnings; lore check --strict exited 0.
+- bun audit found no vulnerabilities; git diff --check passed.
+- npm publish --dry-run --ignore-scripts --access public passed for @opum-ai/lore and all six platform packages. No package, tag, workflow dispatch, or GitHub Release was created.
+- The first platform dry-run invocation used ambiguous paths such as npm/darwin-arm64, which npm parsed as GitHub shorthand and refused with EALLOWGIT; rerunning with explicit ./npm/... paths passed all six.
+<!-- SECTION:NOTES:END -->
