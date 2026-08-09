@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-09 05:45'
-updated_date: '2026-08-09 07:26'
+updated_date: '2026-08-09 07:29'
 labels:
   - release
   - npm
@@ -46,12 +46,12 @@ Prepare the accumulated post-0.1.1 work for publication as Lore CLI 0.2.0 withou
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Root package.json and all six platform manifests declare 0.2.0, all six root optional dependency pins match exactly, and bun.lock is consistent
-- [ ] #2 CHANGELOG.md contains a complete dated 0.2.0 entry for all user-visible changes since v0.1.1 and retains an empty Unreleased section
-- [ ] #3 Version-derived fixtures and release-facing documentation are updated only where the 0.2.0 preparation changes their deterministic output or forward-looking contract; release-truth claims remain at 0.1.1 until publication is proven
-- [ ] #4 Synchronized-version checks, focused release tests, the full project test/typecheck/lint/build gates, compiled version smoke, strict Lore validation/check, dependency audit, diff hygiene, and all seven npm publish dry-runs pass without publishing
+- [x] #1 Root package.json and all six platform manifests declare 0.2.0, all six root optional dependency pins match exactly, and bun.lock is consistent
+- [x] #2 CHANGELOG.md contains a complete dated 0.2.0 entry for all user-visible changes since v0.1.1 and retains an empty Unreleased section
+- [x] #3 Version-derived fixtures and release-facing documentation are updated only where the 0.2.0 preparation changes their deterministic output or forward-looking contract; release-truth claims remain at 0.1.1 until publication is proven
+- [x] #4 Synchronized-version checks, focused release tests, the full project test/typecheck/lint/build gates, compiled version smoke, strict Lore validation/check, dependency audit, diff hygiene, and all seven npm publish dry-runs pass without publishing
 - [ ] #5 The preparation change is committed and delivered through dev and main with required CI green, temporary release refs are pruned when safe, and the repository is clean
-- [ ] #6 No npm package, Git tag, GitHub Release, or publish:true workflow dispatch is created by this preparation task
+- [x] #6 No npm package, Git tag, GitHub Release, or publish:true workflow dispatch is created by this preparation task
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -80,4 +80,12 @@ Local qualification completed on release/0.2.0-preparation:
 - bun audit found no vulnerabilities; git diff --check passed.
 - npm publish --dry-run --ignore-scripts --access public passed for @opum-ai/lore and all six platform packages. No package, tag, workflow dispatch, or GitHub Release was created.
 - The first platform dry-run invocation used ambiguous paths such as npm/darwin-arm64, which npm parsed as GitHub shorthand and refused with EALLOWGIT; rerunning with explicit ./npm/... paths passed all six.
+
+Adversarial self-review (no independent reviewer or subagents authorized) challenged each locally decidable criterion:
+- AC1: a scripted seven-manifest/six-pin comparison passed, and frozen Bun install produced no lockfile change.
+- AC2: the dated changelog was compared against first-parent merges and the live final summaries for LCLI-314.1-.6, LCLI-315.1-.3, and LCLI-316-.319; no delivered user-visible change since v0.1.1 is omitted, and Unreleased remains empty.
+- AC3: an allowlist assertion confirms all remaining 0.1.1 occurrences are limited to published release truth, operational history/generated log, and provenance examples. The only deterministic 0.2.0 drift was the compiled package-version fixture plus two canonical export hashes and one report digest, each exposed and then proven by tests. No release-truth or availability prose changed.
+- AC4: synchronized versions, frozen lockfile, 107 focused tests plus 8 focused benchmark tests, 2553-test full suite, typecheck, lint, build, compiled version smoke, strict Lore validation/check, zero-vulnerability audit, diff hygiene, and seven npm dry-runs all passed.
+- AC6: local and remote v0.2.0 tag queries and the GitHub Release list are empty; the newest Release workflow dispatch remains the completed 0.1.1 qualification from 2026-08-05. Only npm --dry-run commands were used.
+- AC5 remains deliberately unchecked until protected dev/main delivery, exact-head CI, cleanup, and final repository cleanliness are proven.
 <!-- SECTION:NOTES:END -->
