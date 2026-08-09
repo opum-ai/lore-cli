@@ -168,6 +168,7 @@ export function createLadybugBenchmarkBacklogAdapter(root: string): BacklogAdapt
     async probe() {
       return { version: "1.49.0", schemaVersion: 1 };
     },
+    statusFlow: () => ["To Do", "In Progress", "Done"],
     async listTasks(options?: ListTasksOptions) {
       let selected = tasks;
       if (options?.status !== undefined) {

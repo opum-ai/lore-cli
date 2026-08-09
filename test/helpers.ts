@@ -7,6 +7,7 @@ import type {
   EditTaskPatch,
   ListTasksOptions,
 } from "../src/adapters/backlog";
+import { DEFAULT_STATUS_FLOW } from "../src/adapters/backlog";
 import { type Concept, idFromPath } from "../src/core/concept";
 import type { Writer } from "../src/errors";
 import { LoreError } from "../src/errors";
@@ -248,6 +249,7 @@ export function fakeAdapter(
             }
             return { version: "1.49.0", schemaVersion: 1 };
           },
+    statusFlow: () => [...DEFAULT_STATUS_FLOW],
     listTasks:
       opts.listTasks === undefined
         ? notImplemented("listTasks")

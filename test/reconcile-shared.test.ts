@@ -13,6 +13,7 @@ import type { BacklogTaskDetail } from "../src/adapters/backlog";
 import {
   gatherReconciliation,
   linkedConcepts,
+  readReconcileConfig,
   resolveTaskDetails,
   TASK_DETAILS_CONCURRENCY,
   type TaskResolution,
@@ -68,6 +69,20 @@ describe("gatherReconciliation", () => {
     expect(poison.calls).toEqual([]);
   });
 
+  test("reads the selected adapter's statusFlow instead of reaching into Backlog config directly", () => {
+    mkdirSync(join(root, "backlog"), { recursive: true });
+    writeFileSync(join(root, "backlog", "config.yml"), "statuses: not-a-list\n");
+    const adapter = {
+      ...fakeAdapter([]),
+      statusFlow: () => ["Queued", "Building", "Shipped"],
+    };
+
+    expect(readReconcileConfig(root, adapter)).toEqual({
+      flow: ["Queued", "Building", "Shipped"],
+      overrides: {},
+    });
+  });
+
   test("returns a zero-row target and touches no config or adapter for an explicit empty tasks: field", async () => {
     mkdirSync(join(root, "backlog"), { recursive: true });
     writeFileSync(join(root, "backlog", "config.yml"), "statuses: not-a-list\n");
@@ -76,7 +91,7 @@ describe("gatherReconciliation", () => {
 
     const result = await gatherReconciliation(root, [doc], poison);
 
-    expect(result).toEqual([{ concept: doc, newStatus: null, rows: [] }]);
+    expect(result).toEqual([{ concept: doc, newTaskStatus: null, rows: [] }]);
     expect(poison.calls).toEqual([]);
   });
 
@@ -86,7 +101,7 @@ describe("gatherReconciliation", () => {
 
     const [target] = await gatherReconciliation(root, [doc], adapter);
     expect(target?.concept).toBe(doc);
-    expect(target?.newStatus).toBe("done");
+    expect(target?.newTaskStatus).toBe("done");
     expect(target?.rows).toEqual([
       { id: "LORE-1", title: "Ship it", status: "Done", file: "backlog/tasks/lore-1 - title.md" },
     ]);
@@ -146,7 +161,7 @@ describe("gatherReconciliation", () => {
     const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
 
     const [target] = await gatherReconciliation(root, [doc], adapter, { flow: ["Todo", "Done"], overrides: {} });
-    expect(target?.newStatus).toBe("done");
+    expect(target?.newTaskStatus).toBe("done");
   });
 
   test("validates the status flow before any Backlog subprocess round-trip", async () => {
@@ -171,7 +186,7 @@ describe("gatherReconciliation", () => {
     ]);
 
     const [target] = await gatherReconciliation(root, [doc], poison, undefined, details);
-    expect(target?.newStatus).toBe("done");
+    expect(target?.newTaskStatus).toBe("done");
     expect(poison.calls).toEqual([]); // editTask never called; poison's viewTask would throw if reached
   });
 
@@ -196,7 +211,7 @@ describe("gatherReconciliation", () => {
     ]);
 
     const [target] = await gatherReconciliation(root, [doc], poison, undefined, details);
-    expect(target?.newStatus).toBe("done");
+    expect(target?.newTaskStatus).toBe("done");
   });
 });
 

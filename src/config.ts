@@ -45,6 +45,9 @@ const RECONCILE_MODES = ["task-rollup"] as const;
 /** The Confluence wire formats the (deferred) publish adapter understands (ADR-0013). */
 const CONFLUENCE_FORMATS = ["storage", "adf"] as const;
 
+/** Tracker backends shipped by this build. Quest remains unavailable until LCLI-315.4. */
+export const TRACKER_BACKENDS = ["backlog", "jira"] as const;
+
 /** Generic parsed-TOML shape for `[reconcile]`; unknown future keys remain tolerated. */
 const ReconcileTableSchema = z.looseObject({
   mode: z.enum(RECONCILE_MODES).optional(),
@@ -65,6 +68,22 @@ const ConfluenceTableSchema = z.looseObject({
   parent_page_id: z.union([z.string(), z.number()]).optional(),
 });
 
+/** Non-secret jira-cli settings. Credential storage and transport remain owned by jira-cli. */
+const JiraTableSchema = z.looseObject({
+  profile: z.string().optional(),
+  project: z.string().optional(),
+  board: z.string().optional(),
+  issue_type: z.string().optional(),
+  default_labels: z.array(z.string()).optional(),
+  status_flow: z.array(z.string()).optional(),
+});
+
+/** Tracker table. Unknown future keys remain tolerated for forward compatibility. */
+const TrackerTableSchema = z.looseObject({
+  backend: z.enum(TRACKER_BACKENDS).optional(),
+  jira: JiraTableSchema.optional(),
+});
+
 /**
  * The single declarative shape boundary for Bun's parsed TOML value. Loose
  * objects preserve Lore's additive unknown-key tolerance at every known table.
@@ -73,16 +92,21 @@ const ParsedConfigSchema = z.looseObject({
   reconcile: ReconcileTableSchema.optional(),
   validate: ValidateTableSchema.optional(),
   confluence: ConfluenceTableSchema.optional(),
+  tracker: TrackerTableSchema.optional(),
 });
 
 type ParsedConfig = z.infer<typeof ParsedConfigSchema>;
 type ParsedConfluenceTable = z.infer<typeof ConfluenceTableSchema>;
+type ParsedJiraTable = z.infer<typeof JiraTableSchema>;
 
 /** The status roll-up policy applied by `lore sync` / `lore check`. */
 export type ReconcileMode = (typeof RECONCILE_MODES)[number];
 
 /** The Confluence storage format for the one-way publish adapter. */
 export type ConfluenceFormat = (typeof CONFLUENCE_FORMATS)[number];
+
+/** A tracker backend constructible by this Lore build. */
+export type TrackerBackend = (typeof TRACKER_BACKENDS)[number];
 
 /** Status-reconciliation configuration (the `[reconcile]` table). */
 export interface ReconcileConfig {
@@ -122,11 +146,36 @@ export interface ConfluenceConfig {
   token?: string;
 }
 
+/** Non-secret Jira tracker settings. The installed jira-cli owns every credential. */
+export interface JiraTrackerConfig {
+  /** Optional jira-cli profile passed through as `jira --profile <name> ...`. */
+  profile?: string;
+  /** Jira project key, e.g. `JT`. */
+  project?: string;
+  /** Optional Jira Software board identifier retained for Jira-aware workflows. */
+  board?: string;
+  /** Jira issue type used by {@link import("./adapters/tracker").TrackerAdapter.createTask}. */
+  issueType?: string;
+  /** Labels added to every issue Lore creates. */
+  defaultLabels: readonly string[];
+  /** Ordered workflow used by reconciliation. */
+  statusFlow: readonly string[];
+}
+
+/** Tracker selection plus backend-specific non-secret configuration. */
+export interface TrackerConfig {
+  /** Resolved backend; zero-config projects use Backlog.md. */
+  backend: TrackerBackend;
+  jira?: JiraTrackerConfig;
+}
+
 /** The fully-resolved lore configuration: file values merged over defaults, with the env token overlaid. */
 export interface LoreConfig {
   reconcile: ReconcileConfig;
   validate: ValidateConfig;
   confluence: ConfluenceConfig;
+  /** Tracker selection; always resolved so consumers never re-derive the zero-config default. */
+  tracker: TrackerConfig;
 }
 
 /** Options for {@link loadConfig}; both fields are injectable seams for determinism in tests. */
@@ -158,6 +207,7 @@ export function defaultConfig(): LoreConfig {
     reconcile: { mode: "task-rollup", overrides: {} },
     validate: { externalLinks: false, promotePortability: false },
     confluence: { format: "storage" },
+    tracker: { backend: "backlog" },
   };
 }
 
@@ -245,6 +295,10 @@ function validateConfig(root: Record<string, unknown>): LoreConfig {
     reconcile,
     validate,
     confluence: validateConfluence(parsed.confluence, defaults.confluence),
+    tracker: {
+      backend: parsed.tracker?.backend ?? defaults.tracker.backend,
+      ...(parsed.tracker?.jira === undefined ? {} : { jira: validateJira(parsed.tracker.jira) }),
+    },
   };
 }
 
@@ -259,6 +313,7 @@ function parseConfigShape(root: Record<string, unknown>): ParsedConfig {
     // a normal object can erase that entry, which must not bypass Lore's policy.
     assertNoReservedOverrideKey(root.reconcile, "reconcile.overrides");
     assertNoCommittedToken(root.confluence, "confluence");
+    assertNoJiraCredentials(root.tracker, "tracker");
     return result.data;
   }
 
@@ -288,6 +343,14 @@ function parseConfigShape(root: Record<string, unknown>): ParsedConfig {
     return failConfigShape(root, confluenceIssue);
   }
 
+  // A credential-like key wins over a generic tracker shape error so it can
+  // never hide inside an array-of-tables typo or a malformed nested table.
+  assertNoJiraCredentials(root.tracker, "tracker");
+  const trackerIssue = result.error.issues.find((issue) => issue.path[0] === "tracker");
+  if (trackerIssue !== undefined) {
+    return failConfigShape(root, trackerIssue);
+  }
+
   if (result.error.issues.length === 0) {
     return fail(`${CONFIG_REL_PATH}: config has an invalid value`, `fix ${CONFIG_REL_PATH}`, { path: CONFIG_REL_PATH });
   }
@@ -312,6 +375,18 @@ function validateConfluence(table: ParsedConfluenceTable | undefined, defaults: 
     confluence.parentPageId = parentPageId;
   }
   return confluence;
+}
+
+/** Project `[tracker.jira]` without ever consulting or carrying jira-cli credentials. */
+function validateJira(table: ParsedJiraTable): JiraTrackerConfig {
+  return {
+    ...(table.profile === undefined ? {} : { profile: table.profile }),
+    ...(table.project === undefined ? {} : { project: table.project }),
+    ...(table.board === undefined ? {} : { board: table.board }),
+    ...(table.issue_type === undefined ? {} : { issueType: table.issue_type }),
+    defaultLabels: table.default_labels ?? [],
+    statusFlow: table.status_flow ?? [],
+  };
 }
 
 /**
@@ -341,6 +416,36 @@ function assertNoCommittedToken(value: unknown, path: string): void {
   }
   for (const [childKey, childValue] of Object.entries(table)) {
     assertNoCommittedToken(childValue, `${path}.${childKey}`);
+  }
+}
+
+/**
+ * Reject credential-like keys below `[tracker]`. Lore deliberately has no Jira
+ * credential source: users configure the installed jira-cli with `jira init`.
+ * Values are never echoed into the error envelope.
+ */
+function assertNoJiraCredentials(value: unknown, path: string): void {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      assertNoJiraCredentials(item, path);
+    }
+    return;
+  }
+  if (typeof value !== "object" || value === null) {
+    return;
+  }
+  const table = value as Record<string, unknown>;
+  for (const key of ["token", "api_token", "jira_api_token", "email", "jira_email"] as const) {
+    if (key in table) {
+      fail(
+        `${CONFIG_REL_PATH}: Jira credentials must not be committed or read by lore`,
+        `remove \`${key}\` from [${path}] and run \`jira init\` to configure jira-cli instead`,
+        { key: `${path}.${key}` },
+      );
+    }
+  }
+  for (const [childKey, childValue] of Object.entries(table)) {
+    assertNoJiraCredentials(childValue, `${path}.${childKey}`);
   }
 }
 
@@ -433,7 +538,7 @@ function failConfigShape(root: Record<string, unknown>, issue: z.core.$ZodIssue)
   const key = path.join(".");
   const value = configValueAtPath(root, issue.path);
 
-  if (path.length === 1 || key === "reconcile.overrides") {
+  if (path.length === 1 || key === "reconcile.overrides" || key === "tracker.jira") {
     fail(`${CONFIG_REL_PATH}: ${key} must be a table`, `make ${key} a TOML table ([${key}] with key = value lines)`, {
       key,
     });
@@ -446,15 +551,35 @@ function failConfigShape(root: Record<string, unknown>, issue: z.core.$ZodIssue)
   if (
     key === "confluence.base_url" ||
     key === "confluence.space" ||
+    key === "tracker.jira.profile" ||
+    key === "tracker.jira.project" ||
+    key === "tracker.jira.board" ||
+    key === "tracker.jira.issue_type" ||
     (path[0] === "reconcile" && path[1] === "overrides")
   ) {
     fail(`${CONFIG_REL_PATH}: ${key} must be a string`, `quote ${key} as a string`, { key, value });
+  }
+
+  if (key.startsWith("tracker.jira.default_labels") || key.startsWith("tracker.jira.status_flow")) {
+    fail(
+      `${CONFIG_REL_PATH}: ${path.slice(0, 3).join(".")} must be an array of strings`,
+      `set ${path.slice(0, 3).join(".")} to a TOML string array`,
+      { key: path.slice(0, 3).join("."), value },
+    );
   }
 
   if (key === "reconcile.mode") {
     fail(
       `${CONFIG_REL_PATH}: ${key} must be one of ${RECONCILE_MODES.map((allowed) => `"${allowed}"`).join(", ")}`,
       `set ${key} to one of: ${RECONCILE_MODES.join(", ")}`,
+      { key, value },
+    );
+  }
+
+  if (key === "tracker.backend") {
+    fail(
+      `${CONFIG_REL_PATH}: ${key} must be one of ${TRACKER_BACKENDS.map((allowed) => `"${allowed}"`).join(", ")}`,
+      `set ${key} to one of: ${TRACKER_BACKENDS.join(", ")}`,
       { key, value },
     );
   }

@@ -102,7 +102,7 @@ docs and tools rely on.
   `{schemaVersion, kind, data}` envelopes lore parses from Backlog.md's
   `--json` output for `task list`, `task view`, and `search`.
 - [Backlog CLI contract](reference/backlog-cli-contract.md) — exactly how lore
-  drives Backlog.md: the `--json` capability probe and min version, reading via
+  drives Backlog.md and the optional jira-cli backend: the `--json` capability probe and min version, reading via
   list/view/search, writing via `task create`/`edit`, the `doc:<conceptId>`
   back-reference label, and the coexistence rules (lore is the sole committer of
   `backlog/`).
@@ -112,9 +112,9 @@ docs and tools rely on.
 - [Portable Markdown](reference/portable-markdown.md) — the cross-link rule
   (relative, URL-encoded, `.md`-suffixed, no leading slash, no wikilinks) and
   the portability lint that enforces it.
-- [OKF conformance](reference/okf-conformance.md) — how lore conforms to OKF
-  v0.1, lore's "story convention" producer profile, and the deliberate
-  override of OKF §5's `/`-absolute link recommendation.
+- [OKF conformance](reference/okf-conformance.md) — how lore consumes and
+  produces OKF 0.2 and 0.1, separates the permissive conformance floor from
+  Lore-specific gates, and classifies the versioned fields.
 - [Lore CLI release truth](reference/lore-cli-release-truth.md) — current
   version, tag, artifact, registry-install, and owner-gate evidence.
 - [Lore CLI documentation ownership](reference/lore-cli-documentation-ownership.md)

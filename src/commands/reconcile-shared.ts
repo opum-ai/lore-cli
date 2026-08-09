@@ -13,7 +13,7 @@
  */
 
 import { posix } from "node:path";
-import { type BacklogAdapter, type BacklogTaskDetail, readStatusFlow } from "../adapters/backlog";
+import type { BacklogAdapter, BacklogTaskDetail } from "../adapters/backlog";
 import { loadConfig } from "../config";
 import { toRefList } from "../core/bundle";
 import type { Concept } from "../core/concept";
@@ -38,10 +38,10 @@ export type TaskResolution =
 
 /** One concept's resolved reconciliation: its recomputed status and live managed-block rows. */
 export interface ReconcileTarget {
-  /** The concept as loaded (unmodified) — its `frontmatter.status` is the pre-reconciliation value. */
+  /** The concept as loaded (unmodified) — its version-selected task rollup field is unchanged. */
   readonly concept: Concept;
-  /** The rolled-up status (`core/reconcile.ts`), or `null` when the concept explicitly links no tasks. */
-  readonly newStatus: ReconciledStatus | null;
+  /** The rolled-up task progress (`core/reconcile.ts`), or `null` when the concept explicitly links no tasks. */
+  readonly newTaskStatus: ReconciledStatus | null;
   /** The linked tasks' live data, in the concept's own `tasks:` order, ready for `regenerateTaskBlock`. */
   readonly rows: ManagedTaskRow[];
 }
@@ -79,7 +79,7 @@ export function taskBlockConcepts(concepts: Iterable<Concept>): EligibleConcept[
  *
  * Deliberately type-agnostic: a `tasks:` list is reconciled on ANY concept type, not only
  * `Story`/`Spec` — `lore link` (LORE-24) never restricts which type it targets, and this predates
- * LORE-27 entirely (`tasks:` on a `Reference`/`ADR`/etc. is an OKF §9-tolerated unknown-key warning,
+ * LORE-27 entirely (`tasks:` on a `Reference`/`ADR`/etc. is an OKF 0.2 §11 / 0.1 §9-tolerated unknown-key warning,
  * never an error). Narrowing eligibility to specific types here would make `check` (which shares
  * this exact function) more restrictive than `sync` — the disagreement-with-`sync` failure mode
  * this module's callers otherwise take pains to avoid — not fix a LORE-27-introduced gap.
@@ -102,8 +102,8 @@ export interface ReconcileConfig {
  * whatever else it needs in the exact order its own contract requires, rather than this module
  * silently deciding that order.
  */
-export function readReconcileConfig(root: string): ReconcileConfig {
-  const flow = readStatusFlow(root);
+export function readReconcileConfig(root: string, adapter = defaultAdapter(root)): ReconcileConfig {
+  const flow = adapter.statusFlow();
   const config = loadConfig({ root });
   return { flow, overrides: config.reconcile.overrides };
 }
@@ -118,8 +118,8 @@ export function readReconcileConfig(root: string): ReconcileConfig {
  * @throws LoreError `validation` if the status flow has fewer than two entries, a duplicate entry,
  *   or an override's target is not a valid rollup status.
  */
-export function resolveReconcileConfig(root: string): ReconcileConfig {
-  const resolved = readReconcileConfig(root);
+export function resolveReconcileConfig(root: string, adapter = defaultAdapter(root)): ReconcileConfig {
+  const resolved = readReconcileConfig(root, adapter);
   validateReconcileInputs(resolved.flow, resolved.overrides);
   return resolved;
 }
@@ -170,7 +170,7 @@ export async function gatherReconciliation(
 
   const eligible = targets.filter(({ linked }) => linked.length > 0);
   if (eligible.length === 0) {
-    return targets.map(({ concept }) => ({ concept, newStatus: null, rows: [] }));
+    return targets.map(({ concept }) => ({ concept, newTaskStatus: null, rows: [] }));
   }
 
   if (configOverride === undefined && configErrorOverride !== undefined) {
@@ -185,10 +185,10 @@ export async function gatherReconciliation(
 
   return targets.map(({ concept, linked }) => {
     if (linked.length === 0) {
-      return { concept, newStatus: null, rows: [] };
+      return { concept, newTaskStatus: null, rows: [] };
     }
     const detailList = linked.map((id) => details.get(id.toLowerCase()) as BacklogTaskDetail);
-    const newStatus = reconcileStatus(
+    const newTaskStatus = reconcileStatus(
       detailList.map((d) => d.status),
       flow,
       overrides,
@@ -199,7 +199,7 @@ export async function gatherReconciliation(
       status: d.status,
       file: d.file,
     }));
-    return { concept, newStatus, rows };
+    return { concept, newTaskStatus, rows };
   });
 }
 

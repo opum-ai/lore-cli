@@ -133,6 +133,31 @@ describe("rewriteInbound — inbound links and refs (move)", () => {
     expect(body).toContain("- reference/other"); // untouched
   });
 
+  test("repoints an OKF 0.2 sources resource while preserving credibility metadata", () => {
+    writeDoc("index.md", '---\ntype: Reference\nokf_version: "0.2"\n---\n# Docs\n');
+    writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
+    writeDoc(
+      "stories/bulk.md",
+      `---
+type: Story
+sources:
+  - id: orders
+    resource: ../reference/orders.md
+    title: Orders source
+    usage_count: 12
+  - resource: https://example.com/orders.md
+---
+Text.
+`,
+    );
+    const plan = rewriteInbound(graph(), "reference/orders", "reference/sales-orders", { move: true });
+    const body = writesByPath(plan).get("stories/bulk.md") ?? "";
+    expect(body).toContain("resource: reference/sales-orders");
+    expect(body).toContain("title: Orders source");
+    expect(body).toContain("usage_count: 12");
+    expect(body).toContain("resource: https://example.com/orders.md");
+  });
+
   test("does not rewrite a link whose case does not match the target (it dangles)", () => {
     writeDoc("reference/orders.md", "---\ntype: Reference\n---\nOrders.\n");
     writeDoc("stories/bulk.md", "---\ntype: Story\n---\nWrong case [x](../reference/Orders.md).\n");

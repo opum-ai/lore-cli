@@ -6,13 +6,13 @@
  * supersede half). Unlike {@link runRename}, it **preserves the old file** as history — nothing
  * moves or is deleted — and only edits frontmatter:
  *
- * - on the **old** concept: `status: superseded` + `superseded_by: <newId>` (the successor, bare id);
+ * - on the **old** concept: `superseded_by: <newId>` plus the versioned lifecycle marker
+ *   (`status: superseded` in legacy OKF 0.1, `status: deprecated` in OKF 0.2);
  * - on the **new** concept: `supersedes: <oldId>`, **appended** to any existing entry (a concept may
  *   supersede several) rather than clobbering it.
  *
- * Both writes go through {@link serializeConcept} under the **active profile** (so the `status` value
- * is validated against the project's own profile, not just the default — a custom `status` enum that
- * forbids `superseded` fails fast here rather than slipping through to break the next `lore validate`),
+ * Both writes go through {@link serializeConcept} under the bundle's effective versioned profile,
+ * so the lifecycle value is validated before writing,
  * in canonical key order with the frozen YAML config, so an already-canonical concept's other
  * frontmatter and its whole body round-trip byte-for-byte and the wiring is the only diff (ADR-0011).
  *
@@ -47,7 +47,7 @@
 import { join, posix } from "node:path";
 import { conceptNotInBundle, loadBundle, resolveRef, UNREADABLE_DIRECTORY_WARNING } from "../core/bundle";
 import { type Concept, idFromPath, serializeConcept } from "../core/concept";
-import { loadProfile } from "../core/profile";
+import { loadProfile, profileForBundle } from "../core/profile";
 import { renderLinkTextMismatchWarning, rewriteInbound } from "../core/rewrite";
 import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
@@ -55,7 +55,7 @@ import { emit, type OutputContext, type Renderable } from "../output";
 import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
 import { writeFileOverwriting } from "./fswrite";
 
-/** The frontmatter `status` value that marks a concept superseded — the lifecycle signal we set and detect. */
+/** The legacy OKF 0.1 `status` value that marks a concept superseded. */
 const SUPERSEDED_STATUS = "superseded";
 
 /** Options for {@link runSupersede}; `root` and the streams are injectable for tests. */
@@ -128,8 +128,9 @@ export function runSupersede(options: SupersedeOptions): number {
 
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
-  const profile = loadProfile({ root: options.root });
-  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
+  const producerProfile = loadProfile({ root: options.root });
+  const graph = loadBundle(docsRoot, { warnings: advisories, profile: producerProfile });
+  const profile = profileForBundle(producerProfile, graph.state);
   // Flushed immediately (not at the end, as this command previously did) so a skipped-directory
   // warning naming the exact path/reason survives on the fail-loud `--rewrite-links` path below it
   // feeds (LORE-82), mirroring how `context.ts`/`graph.ts` flush before a load-warning-explained
@@ -196,7 +197,8 @@ export function runSupersede(options: SupersedeOptions): number {
   // Wire the principals' frontmatter (cloned, never mutating the graph snapshot) and serialize under
   // the active profile. The old doc always changes (it gains the lifecycle keys); the new doc is
   // written only when its `supersedes` actually changes, so a no-op append is not reported as a write.
-  writes.set(oldConcept.path, serializeConcept(wireOld(oldConcept, newId), { profile }));
+  const supersededLifecycle = graph.state.okfVersion === "0.2" ? "deprecated" : SUPERSEDED_STATUS;
+  writes.set(oldConcept.path, serializeConcept(wireOld(oldConcept, newId, supersededLifecycle), { profile }));
   const wiredNew = wireNew(newConcept, oldId, graph);
   if (wiredNew !== null) {
     writes.set(newConcept.path, serializeConcept(wiredNew, { profile }));
@@ -239,17 +241,17 @@ function excludedFromRewrite(
 // ── Frontmatter wiring ─────────────────────────────────────────────────────────
 
 /**
- * The old concept with its supersession frontmatter set: `status: superseded` and
- * `superseded_by: <newId>` (the bare-id successor, lore's canonical ref form). Returns a clone — the
+ * The old concept with its version-selected lifecycle status and `superseded_by: <newId>` (the
+ * bare-id successor, lore's canonical ref form). Returns a clone — the
  * graph snapshot is never mutated. The body is carried over verbatim, so re-serializing the
  * already-canonical concept changes only these two keys. Safe to overwrite `superseded_by`
  * unconditionally because {@link assertNotAlreadySuperseded} has already rejected a concept that
  * carries one.
  */
-function wireOld(concept: Concept, newId: string): Concept {
+function wireOld(concept: Concept, newId: string, lifecycleStatus: string): Concept {
   return {
     ...concept,
-    frontmatter: { ...concept.frontmatter, status: SUPERSEDED_STATUS, superseded_by: newId },
+    frontmatter: { ...concept.frontmatter, status: lifecycleStatus, superseded_by: newId },
   };
 }
 

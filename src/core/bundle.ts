@@ -14,7 +14,7 @@
  *   followed, and {@link buildGraph} sorts its input and emits edges in a fixed
  *   order, so the same tree always produces the same `concepts`/`edges` — no
  *   filesystem-order or input-order dependence.
- * - **Cycle-tolerant** (OKF §5: consumers tolerate any link shape): the graph is a
+ * - **Cycle-tolerant** (OKF 0.2 §6 / 0.1 §5: consumers tolerate any link shape): the graph is a
  *   flat edge list built without traversal, so a link cycle (`A→B→A`), a
  *   self-link, or a supersession loop loads fine; a link that resolves to no
  *   concept is a **dangling** edge (`to: null`), never an error — surfacing broken
@@ -22,7 +22,7 @@
  *
  * ### What is (and isn't) an edge
  *
- * Edges are **concept↔concept** only, from two sources:
+ * Edges are **concept↔concept** only, from three sources:
  *
  * - **Body cross-links** — markdown links to another `.md` file in the bundle
  *   ({@link EdgeKind} `"link"`), resolved **relative to the linking file's
@@ -38,6 +38,9 @@
  *   which point at other concepts (design §2.1, §3.9). Each value yields an edge of
  *   the matching {@link EdgeKind}; a value may be a bundle-relative id
  *   (`adr/0009-x`) or a relative path (`../adr/0009-x.md`).
+ * - **OKF 0.2 provenance sources** — a `sources[].resource` that resolves to another
+ *   concept produces a `sources` edge. External URLs and scope descriptors are not
+ *   concept edges; an internal `.md` path that does not resolve remains dangling.
  *
  * The `tasks` frontmatter field is **deliberately not** an edge: it points at
  * Backlog.md task ids, not concepts (architecture §3, ADR-0009). It stays readable
@@ -59,11 +62,12 @@ import { type Dirent, readdirSync, readFileSync } from "node:fs";
 import { posix } from "node:path";
 import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
-import { deriveMessage, ioError, LoreError, type WarningCollector } from "../errors";
-import { type Concept, idFromPath, serializeConcept, tryParseConcept } from "./concept";
+import { deriveMessage, errnoCode, ioError, LoreError, type WarningCollector } from "../errors";
+import { type Concept, idFromPath, serializeConcept, tryParseConcept, tryReadFrontmatter } from "./concept";
 import { decodeTarget, isExternalTarget, pathPart } from "./links";
+import { type BundleState, type BundleStateResolution, CURRENT_OKF_VERSION, resolveBundleState } from "./okf-version";
 import { compareCodeUnits } from "./order";
-import { defaultProfile, type Profile } from "./profile";
+import { defaultProfile, type Profile, profileForBundle } from "./profile";
 import { RESERVED_STEMS } from "./scaffold";
 
 // Bun.gc(true) is synchronous. Large projection loads retain bounded cleanup
@@ -75,7 +79,7 @@ const BOUNDED_MEMORY_GC_CONCEPT_INTERVAL = 1024;
  * cross-link; the rest mirror the frontmatter fields that carry concept
  * references (the names match the frontmatter keys for an obvious round-trip).
  */
-export type EdgeKind = "link" | "specs" | "supersedes" | "superseded_by";
+export type EdgeKind = "link" | "sources" | "specs" | "supersedes" | "superseded_by";
 
 /**
  * One directed reference from one concept to another. `from` is always a concept
@@ -104,6 +108,8 @@ export interface Edge {
  * of what was loaded, not a mutable store (refactors recompute a fresh graph).
  */
 export interface BundleGraph {
+  /** Typed bundle-level OKF semantics resolved from the root index. */
+  readonly state: BundleState;
   /**
    * Every loaded concept, keyed by {@link Concept.id}, in ascending id order
    * (deterministic iteration). Excludes fence-less, non-concept markdown.
@@ -191,7 +197,8 @@ export interface LoadBundleOptions {
  *   a fenced concept is malformed.
  */
 export function loadBundle(root: string, options: LoadBundleOptions = {}): BundleGraph {
-  const profile = options.profile ?? defaultProfile();
+  const state = loadBundleState(root, options.warnings);
+  const profile = profileForBundle(options.profile ?? defaultProfile(), state);
   const concepts: Concept[] = [];
   for (const rel of walkMarkdown(root, options.warnings)) {
     // `rel` is bundle-root-relative, so tryParseConcept derives a bundle-relative id — and so is
@@ -199,6 +206,7 @@ export function loadBundle(root: string, options: LoadBundleOptions = {}): Bundl
     const concept = tryParseConcept(rel, readConcept(root, rel), {
       warnings: options.warnings,
       profile: effectiveProfileFor(rel, BUNDLE_ROOT_INDEX_PATH, profile),
+      bundleState: state,
     });
     if (concept === null) {
       // A known-reserved stem (index/log) skips silently — see the docstring above (LORE-258).
@@ -210,7 +218,7 @@ export function loadBundle(root: string, options: LoadBundleOptions = {}): Bundl
     concepts.push(concept);
     if (options.boundedMemory === true && concepts.length % BOUNDED_MEMORY_GC_CONCEPT_INTERVAL === 0) Bun.gc(true);
   }
-  return buildGraph(concepts);
+  return buildGraph(concepts, state, profile);
 }
 
 /**
@@ -280,7 +288,11 @@ export function effectiveProfileFor(path: string, rootIndexPath: string, profile
  * @throws LoreError `conflict` if two concepts share an id (only reachable with
  *   hand-built input — a single {@link loadBundle} walk yields unique ids).
  */
-export function buildGraph(concepts: readonly Concept[]): BundleGraph {
+export function buildGraph(
+  concepts: readonly Concept[],
+  state: BundleState = { okfVersion: CURRENT_OKF_VERSION, source: "declared" },
+  profile: Profile = defaultProfile(),
+): BundleGraph {
   const byId = new Map<string, Concept>();
   for (const concept of [...concepts].sort((a, b) => compareCodeUnits(a.id, b.id))) {
     if (byId.has(concept.id)) {
@@ -298,14 +310,61 @@ export function buildGraph(concepts: readonly Concept[]): BundleGraph {
   for (const concept of byId.values()) {
     const dir = posix.dirname(concept.path);
     collectFrontmatterEdges(concept, dir, byId, edges);
+    if (state.okfVersion === "0.2") {
+      collectSourceEdges(concept, dir, byId, edges);
+    }
     collectBodyEdges(concept, dir, byId, edges);
   }
 
   return {
+    state,
     concepts: byId,
     edges,
-    tokenEstimate: makeTokenEstimate(byId),
+    tokenEstimate: makeTokenEstimate(byId, state, profile),
   };
+}
+
+/**
+ * Read and negotiate the bundle-root `index.md` version without walking the whole bundle. Missing
+ * root/index/frontmatter is the explicit legacy path; malformed values fail validation, while
+ * warnings expose future best-effort consumption to callers that provide a collector.
+ */
+export function loadBundleState(root: string, warnings?: WarningCollector): BundleState {
+  let raw: string | undefined;
+  try {
+    raw = readFileSync(posix.join(root, BUNDLE_ROOT_INDEX_PATH), "utf8");
+  } catch (cause) {
+    const code = errnoCode(cause);
+    if (code !== "ENOENT" && code !== "ENOTDIR") {
+      readError(cause, `cannot read ${BUNDLE_ROOT_INDEX_PATH}`, { root, path: BUNDLE_ROOT_INDEX_PATH });
+    }
+  }
+  // Keep parse failures outside the filesystem catch: malformed YAML is a validation error from
+  // the concept boundary, never an I/O not_found/denied error.
+  const frontmatter = raw === undefined ? null : tryReadFrontmatter(BUNDLE_ROOT_INDEX_PATH, raw);
+  return requireUsableBundleState(resolveBundleState(frontmatter), warnings);
+}
+
+/** Convert negotiation diagnostics to lore's warning/error channels and return usable state. */
+function requireUsableBundleState(
+  resolution: BundleStateResolution,
+  warnings: WarningCollector | undefined,
+): BundleState {
+  for (const issue of resolution.issues) {
+    if (issue.severity === "warning") {
+      warnings?.add(issue.message);
+      continue;
+    }
+    throw new LoreError(
+      "validation",
+      issue.message,
+      "set bundle-root index.md okf_version to a quoted supported value",
+      {
+        path: BUNDLE_ROOT_INDEX_PATH,
+      },
+    );
+  }
+  return resolution.state;
 }
 
 // ── Filesystem walk ────────────────────────────────────────────────────────────
@@ -437,7 +496,7 @@ function readError(cause: unknown, what: string, input: Record<string, unknown>)
  */
 export const REF_FIELDS = ["specs", "supersedes", "superseded_by"] as const satisfies readonly Exclude<
   EdgeKind,
-  "link"
+  "link" | "sources"
 >[];
 
 /**
@@ -450,6 +509,33 @@ function collectFrontmatterEdges(concept: Concept, dir: string, byId: ReadonlyMa
   for (const kind of REF_FIELDS) {
     for (const ref of toRefList(concept.frontmatter[kind])) {
       out.push({ from: concept.id, to: resolveRef(ref, dir, byId), target: ref, kind });
+    }
+  }
+}
+
+/**
+ * Append OKF 0.2 provenance edges for `sources[].resource` values that name concepts. A
+ * resolvable bare id is a concept source; an unresolved value becomes a dangling edge only when
+ * it has the unambiguous internal `.md` path shape. This keeps external URLs and free-form scope
+ * descriptors out of the concept graph while retaining a useful quality signal for broken paths.
+ */
+function collectSourceEdges(concept: Concept, dir: string, byId: ReadonlyMap<string, Concept>, out: Edge[]): void {
+  const sources = concept.frontmatter.sources;
+  if (!Array.isArray(sources)) {
+    return;
+  }
+  for (const source of sources) {
+    if (typeof source !== "object" || source === null || Array.isArray(source)) {
+      continue;
+    }
+    const resource = (source as Record<string, unknown>).resource;
+    if (typeof resource !== "string" || resource.trim() === "") {
+      continue;
+    }
+    const target = resource.trim();
+    const to = resolveRef(target, dir, byId);
+    if (to !== null || internalTarget(target) !== null) {
+      out.push({ from: concept.id, to, target, kind: "sources" });
     }
   }
 }
@@ -638,8 +724,9 @@ export function estimateTokens(text: string): number {
 }
 
 /** chars/4 token estimate over one concept's canonical serialized bytes. */
-function estimateConcept(concept: Concept): number {
-  return estimateTokens(serializeConcept(concept));
+function estimateConcept(concept: Concept, state: BundleState, profile: Profile): number {
+  const structuralProfile = effectiveProfileFor(concept.path, BUNDLE_ROOT_INDEX_PATH, profile);
+  return estimateTokens(serializeConcept(concept, { profile: structuralProfile, bundleState: state }));
 }
 
 /**
@@ -677,14 +764,18 @@ export function frontmatterScalar(value: unknown): string | undefined {
  * call — e.g. `lore context` asking for a target plus each neighbor — never
  * re-serializes a concept it already measured.
  */
-function makeTokenEstimate(byId: ReadonlyMap<string, Concept>): (id?: string) => number {
+function makeTokenEstimate(
+  byId: ReadonlyMap<string, Concept>,
+  state: BundleState,
+  profile: Profile,
+): (id?: string) => number {
   const cache = new Map<string, number>();
   let total: number | undefined;
 
   const estimateFor = (id: string, concept: Concept): number => {
     let value = cache.get(id);
     if (value === undefined) {
-      value = estimateConcept(concept);
+      value = estimateConcept(concept, state, profile);
       cache.set(id, value);
     }
     return value;

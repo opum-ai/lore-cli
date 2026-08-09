@@ -76,7 +76,8 @@ import { posix } from "node:path";
 import type { Document, DumpOptions, LoadOptions, Node } from "js-yaml";
 import * as yaml from "js-yaml";
 import { deriveMessage, LoreError, singleLine, type WarningCollector } from "../errors";
-import { defaultProfile, type Profile } from "./profile";
+import type { BundleState } from "./okf-version";
+import { defaultProfile, type Profile, profileForBundle } from "./profile";
 import { validateFrontmatter } from "./schema";
 
 /**
@@ -277,6 +278,8 @@ export interface ParseConceptOptions {
   warnings?: WarningCollector;
   /** The active profile to validate against; defaults to the built-in {@link defaultProfile}. */
   profile?: Profile;
+  /** Typed semantics resolved from the bundle-root index, when parsing as part of a bundle. */
+  bundleState?: BundleState;
 }
 
 /**
@@ -354,7 +357,12 @@ export function tryReadFrontmatter(path: string, raw: string): Record<string, un
  * malformed mapping.
  */
 function conceptFromSplit(path: string, split: PresentSplit, options: ParseConceptOptions): Concept {
-  const type = validateFrontmatter(split.frontmatter, { warnings: options.warnings, path, profile: options.profile });
+  const type = validateFrontmatter(split.frontmatter, {
+    warnings: options.warnings,
+    path,
+    profile: options.profile,
+    bundleState: options.bundleState,
+  });
   return { id: idFromPath(path), path, type, frontmatter: split.frontmatter, body: split.body };
 }
 
@@ -373,8 +381,9 @@ function conceptFromSplit(path: string, split: PresentSplit, options: ParseConce
  * exact write/read symmetry, not a weaker non-empty-`type` floor.
  */
 export function serializeConcept(concept: Concept, options: SerializeConceptOptions = {}): string {
-  const profile = options.profile ?? defaultProfile();
-  validateFrontmatter(concept.frontmatter, { path: concept.path, profile });
+  const baseProfile = options.profile ?? defaultProfile();
+  const profile = options.bundleState === undefined ? baseProfile : profileForBundle(baseProfile, options.bundleState);
+  validateFrontmatter(concept.frontmatter, { path: concept.path, profile, bundleState: options.bundleState });
   const ordered = canonicalize(concept.frontmatter, profile.canonicalKeyOrder);
   return `${FENCE}${yaml.dump(ordered, YAML_DUMP_OPTIONS)}${FENCE}${concept.body}`;
 }
@@ -387,6 +396,8 @@ export interface SerializeConceptOptions {
    * {@link defaultProfile}, so a caller that does not opt into a custom profile is unaffected.
    */
   profile?: Profile;
+  /** Negotiated consumed-bundle semantics; keeps legacy writes and read-only re-serialization on 0.1. */
+  bundleState?: BundleState;
 }
 
 /**

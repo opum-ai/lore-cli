@@ -103,6 +103,31 @@
 - 2026-08-04T15:30:08-05:00 efdc9318e2ced398a691a56dacc31ec48e1c0067 test(e2e): respect task coupling capability
 - 2026-08-04T15:46:22-05:00 458a0397d343da510690b574a426198c58c14507 docs: settle 0.1.1 release preparation
 - 2026-08-04T16:20:23-05:00 1f0c2c621754083a1b10be85e1c8c37acb4edd5b docs: track 0.1.1 publication
+- 2026-08-04T21:40:39-05:00 4ded93c0c67250928d1e382f9ca3b6105511d693 docs: record Lore CLI 0.1.1 release
+- 2026-08-05T06:40:08-05:00 90c5655cd37d3e5ddb11e8ed5aaa8d63e88fcdf3 feat: negotiate OKF bundle versions
+- 2026-08-05T06:45:22-05:00 5024767e6f66573bb7dd3dfb39a407bac62a9648 chore: reconcile backlog campaign wave 2
+- 2026-08-05T06:47:43-05:00 970097df328e8108d00dddc68f5b206d7ca348bf docs: refresh generated log after wave 2
+- 2026-08-05T07:34:03-05:00 5ca160df987ef547bebb5c72e42d0dfa31668545 feat: add OKF 0.2 generated provenance
+- 2026-08-05T07:40:28-05:00 4955830476f0833ade57be85c6fcdb299bcc174c docs: refresh generated log after wave 3
+- 2026-08-05T08:07:58-05:00 7a97b131822508b497e7fa14c8da1ffccda3dc58 feat: add OKF 0.2 sources provenance
+- 2026-08-05T08:14:15-05:00 dae32ed73bfedbc0f40bb3eb1c886a2dbb5499eb docs: refresh generated log after wave 4
+- 2026-08-05T10:40:30-05:00 0b31a9344268d81ae4f2ae6a276e51f0153edced feat: add OKF 0.2 trust and lifecycle
+- 2026-08-05T10:47:38-05:00 67a44b9a57a80c227f2bc87c9425730b3e1c50c6 docs: refresh generated log after wave 5
+- 2026-08-05T11:25:29-05:00 53bfad162a5d90383ee6ccfb80c1acc726a2a3b1 feat: add OKF 0.2 attested computations
+- 2026-08-05T11:30:59-05:00 b5eb101d7bac31331b358ab2a38c775f19f492c1 docs: refresh generated log after wave 6
+- 2026-08-05T11:32:55-05:00 b19b839c1a0acff9a33ce7ad2b8c62429c31d6c4 docs: reconcile generated log after wave 6
+- 2026-08-05T13:09:24-05:00 825e0b9421afe892c07ca31ccda3fdf017cf42dd feat: close OKF 0.2 conformance tiers
+- 2026-08-05T13:15:52-05:00 186d53aa266f50c6b4f6c7930e6ef828ec733d45 docs: refresh generated log after wave 7
+- 2026-08-05T13:16:47-05:00 a4ec2cbd790f18e1a50adeb22c974b46ae317363 docs: reconcile generated log after wave 7
+- 2026-08-07T06:35:13-05:00 49d494d6c7a1c328cf2f50af1b83b593501c4288 feat: add tracker adapter seam
+- 2026-08-07T06:53:08-05:00 536ed49173f724807ebd7237588d6d7235a2ea5f docs: record tracker seam completion
+- 2026-08-07T06:56:11-05:00 d0cb1609df952aaac11248c541fda9c688b99e43 docs: reconcile generated log
+- 2026-08-07T07:07:02-05:00 a245bfee147517bb5fbe172e2f47b667367604df docs: finalize generated log
+- 2026-08-07T07:39:04-05:00 32e6a9f4cc6b91448d057e1cd043336620f54157 docs: reconcile tracker seam merge
+- 2026-08-07T08:52:10-05:00 9ebfca9f0268f2f0448ee92eef42730cfc4dd205 feat: add jira-cli tracker adapter
+- 2026-08-07T15:06:59-05:00 d14d592e15073d3384fab36aa1bd5d58336e7880 docs: reconcile jira adapter merge
+- 2026-08-08T09:51:35-05:00 2300eb5370bb4a5bc58d13e5b9ebfbf79f50f8ad feat: add init tracker selection
+- 2026-08-08T09:56:58-05:00 ccc767b1dbea278e4616bc919f3900a1271732c1 docs: reconcile init tracker selection
 
 ## docs/.obsidian
 
@@ -147,6 +172,8 @@
 - 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
 - 2026-08-03T17:40:37-05:00 66498ab3a8055eb27b4e8e62350f44a477328b84 chore: transfer repository ownership to opum-ai
 - 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
+- 2026-08-05T10:40:30-05:00 0b31a9344268d81ae4f2ae6a276e51f0153edced feat: add OKF 0.2 trust and lifecycle
+- 2026-08-08T09:51:35-05:00 2300eb5370bb4a5bc58d13e5b9ebfbf79f50f8ad feat: add init tracker selection
 
 ## docs/reference
 
@@ -233,6 +260,15 @@
 - 2026-08-04T08:35:47-05:00 e9731203fa8a4b05cbdd92b0c1cee4fca89cd58b docs: route fleet cross-repo questions to opum-doc (LCLI-308)
 - 2026-08-04T09:45:54-05:00 ca4221dd7d92a2fe86545a65faf315149c1923bf docs: fix stale herdr derivation and fact-shaped rules (LCLI-309)
 - 2026-08-04T09:56:08-05:00 913a04ca6787281098d4a9453095b293828a931d docs: forbid acts, not adverbs; enumerate the package gate (LCLI-310)
+- 2026-08-04T21:40:39-05:00 4ded93c0c67250928d1e382f9ca3b6105511d693 docs: record Lore CLI 0.1.1 release
+- 2026-08-05T06:40:08-05:00 90c5655cd37d3e5ddb11e8ed5aaa8d63e88fcdf3 feat: negotiate OKF bundle versions
+- 2026-08-05T07:34:03-05:00 5ca160df987ef547bebb5c72e42d0dfa31668545 feat: add OKF 0.2 generated provenance
+- 2026-08-05T08:07:58-05:00 7a97b131822508b497e7fa14c8da1ffccda3dc58 feat: add OKF 0.2 sources provenance
+- 2026-08-05T10:40:30-05:00 0b31a9344268d81ae4f2ae6a276e51f0153edced feat: add OKF 0.2 trust and lifecycle
+- 2026-08-05T13:09:24-05:00 825e0b9421afe892c07ca31ccda3fdf017cf42dd feat: close OKF 0.2 conformance tiers
+- 2026-08-07T06:35:13-05:00 49d494d6c7a1c328cf2f50af1b83b593501c4288 feat: add tracker adapter seam
+- 2026-08-07T08:52:10-05:00 9ebfca9f0268f2f0448ee92eef42730cfc4dd205 feat: add jira-cli tracker adapter
+- 2026-08-08T09:51:35-05:00 2300eb5370bb4a5bc58d13e5b9ebfbf79f50f8ad feat: add init tracker selection
 
 ## docs/runbooks
 
@@ -300,6 +336,7 @@
 - 2026-08-03T20:31:09-05:00 307a3f428d36dd2669f38a354425fc699a0c24f7 chore: prepare 0.1.0 release
 - 2026-08-03T21:59:30-05:00 65abf9549a80da275de8d9b016467cf97421ae10 docs: record Lore CLI 0.1.0 release
 - 2026-08-04T00:40:24-05:00 10ecee23dce84d23ee9803b4ab1515465666cf41 feat: add ARM64 Windows and script-free installs
+- 2026-08-04T21:40:39-05:00 4ded93c0c67250928d1e382f9ca3b6105511d693 docs: record Lore CLI 0.1.1 release
 
 ## docs/specs
 
@@ -349,3 +386,4 @@
 - 2026-08-04T15:17:39-05:00 964653638becae9961464334517b141672630e31 chore(release): prepare 0.1.1
 - 2026-08-04T15:46:22-05:00 458a0397d343da510690b574a426198c58c14507 docs: settle 0.1.1 release preparation
 - 2026-08-04T16:20:23-05:00 1f0c2c621754083a1b10be85e1c8c37acb4edd5b docs: track 0.1.1 publication
+- 2026-08-04T21:40:39-05:00 4ded93c0c67250928d1e382f9ca3b6105511d693 docs: record Lore CLI 0.1.1 release

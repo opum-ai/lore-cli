@@ -6,6 +6,7 @@ import {
   serializeConceptWithModeline,
   tryParseConcept,
 } from "../src/core/concept";
+import { defaultProfile, profileForBundle } from "../src/core/profile";
 import { LoreError, WarningCollector } from "../src/errors";
 
 /** A leading UTF-8 BOM, built ASCII-safely so there is no literal U+FEFF in source. */
@@ -81,6 +82,76 @@ describe("parseConcept — structure", () => {
     const concept = parseConcept("x.md", "---\ntype: ADR\ntimestamp: 2026-06-21T00:00:00Z\n---\nB\n");
     expect(typeof concept.frontmatter.timestamp).toBe("string");
     expect(concept.frontmatter.timestamp).toBe("2026-06-21T00:00:00Z");
+  });
+
+  test("OKF 0.2 generated.at stays an ISO string and round-trips byte-identically", () => {
+    const raw = `---
+type: Reference
+title: Generated
+summary: Provenance fixture.
+generated:
+  by: lore/0.1.1
+  at: 2026-06-21T00:00:00Z
+---
+Body.
+`;
+    const state = { okfVersion: "0.2" as const, source: "declared" as const };
+    const concept = parseConcept("reference/generated.md", raw, { bundleState: state });
+    expect((concept.frontmatter.generated as { at: unknown }).at).toBe("2026-06-21T00:00:00Z");
+    expect(typeof (concept.frontmatter.generated as { at: unknown }).at).toBe("string");
+    expect(serializeConcept(concept, { profile: profileForBundle(defaultProfile(), state) })).toBe(raw);
+  });
+
+  test("a legacy timestamp in a 0.2 concept warns but remains byte-stable on ordinary write", () => {
+    const raw =
+      "---\ntype: Reference\ntitle: Legacy\nsummary: Legacy timestamp.\ntimestamp: 2026-06-21T00:00:00Z\n---\nBody.\n";
+    const state = { okfVersion: "0.2" as const, source: "declared" as const };
+    const warnings = new WarningCollector();
+    const concept = parseConcept("reference/legacy.md", raw, { bundleState: state, warnings });
+    expect(warnings.list()).toContainEqual(expect.stringContaining('legacy key "timestamp"'));
+    expect(serializeConcept(concept, { profile: profileForBundle(defaultProfile(), state) })).toBe(raw);
+  });
+
+  test("a legacy body-level Citations section is tolerated and never deleted", () => {
+    const raw = `---
+type: Reference
+title: Legacy citations
+summary: Keeps authored provenance prose.
+---
+# Legacy citations
+
+# Citations
+
+- https://example.com/source
+`;
+    const state = { okfVersion: "0.2" as const, source: "declared" as const };
+    const concept = parseConcept("reference/legacy-citations.md", raw, { bundleState: state });
+    expect(concept.body).toContain("# Citations\n\n- https://example.com/source");
+    expect(serializeConcept(concept, { profile: profileForBundle(defaultProfile(), state) })).toBe(raw);
+  });
+
+  test("a 0.1 producer extension named sources stays byte-stable without 0.2 validation", () => {
+    const raw = `---
+type: Reference
+summary: Legacy extension.
+sources: legacy producer value
+---
+Body.
+`;
+    const state = { okfVersion: "0.1" as const, source: "declared" as const };
+    const warnings = new WarningCollector();
+    const concept = parseConcept("reference/legacy-sources.md", raw, { bundleState: state, warnings });
+    expect(warnings.list()).toContainEqual(expect.stringContaining('unknown key "sources"'));
+    expect(serializeConcept(concept, { profile: profileForBundle(defaultProfile(), state) })).toBe(raw);
+  });
+
+  test("serialization honors negotiated OKF 0.1 task status without weakening OKF 0.2 lifecycle validation", () => {
+    const raw = "---\ntype: Story\nstatus: done\n---\n# Legacy task rollup\n";
+    const state = { okfVersion: "0.1" as const, source: "declared" as const };
+    const concept = parseConcept("stories/legacy.md", raw, { bundleState: state });
+
+    expect(serializeConcept(concept, { bundleState: state })).toBe(raw);
+    expectValidation(() => serializeConcept(concept));
   });
 });
 

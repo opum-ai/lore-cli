@@ -1,8 +1,9 @@
 /** `lore export --schema-version 1.0` — deterministic JSONL OKF projection. */
 
 import { join } from "node:path";
-import { type BacklogAdapter, bunBacklogSpawn, createBacklogAdapter } from "../adapters/backlog";
+import type { BacklogAdapter } from "../adapters/backlog";
 import { resolveHeadSha } from "../adapters/git";
+import { createConfiguredTrackerAdapter } from "../adapters/tracker";
 import { loadBundle } from "../core/bundle";
 import { loadProfile } from "../core/profile";
 import { buildProjection, PROJECTION_SCHEMA_VERSION } from "../core/projection";
@@ -31,18 +32,19 @@ export async function runExport(options: ExportOptions): Promise<number> {
   const warnings = new WarningCollector();
   const graph = loadBundle(join(options.root, DOCS_DIR), { warnings, profile });
   warnings.flush({ color: options.output.color, stderr: options.stderr });
-  const adapter = options.adapter ?? createBacklogAdapter(bunBacklogSpawn(undefined, options.root));
+  const adapter = options.adapter ?? createConfiguredTrackerAdapter(options.root);
   const tasks = await adapter.listTasks();
   const gitCommit = (options.resolveGitCommit ?? resolveHeadSha)(options.root);
   const projection = buildProjection({
     graph,
     tasks,
     docsRoot: DOCS_DIR,
-    okfVersion: profile.okfVersion,
+    okfVersion: graph.state.okfVersion,
     exporterVersion: VERSION,
     gitCommit,
     generatedAt:
       options.generatedAt !== undefined ? options.generatedAt : sourceDateEpoch(process.env.SOURCE_DATE_EPOCH),
+    profile,
   });
   if (options.output.mode === "json") {
     const data = { projectionSchemaVersion: schemaVersion, records: projection.records };

@@ -129,6 +129,7 @@ describe("lore sync — AC#1: idempotent", () => {
 
     const updated = readDoc("stories/x.md");
     expect(updated).toContain("status: done");
+    expect(updated).not.toContain("lore_task_status");
     expect(updated).toContain("Ship it");
     expect(updated).toContain("Done");
 
@@ -137,6 +138,28 @@ describe("lore sync — AC#1: idempotent", () => {
     expect(second.report.files).toEqual([]);
     expect(second.report.filesChanged).toBe(0);
     expect(readDoc("stories/x.md")).toBe(updated); // byte-identical, untouched
+  });
+
+  test("OKF 0.2 reconciles lore_task_status without touching lifecycle status", async () => {
+    writeDoc("index.md", '---\ntype: Reference\nokf_version: "0.2"\n---\n# Docs\n');
+    writeDoc(
+      "stories/x.md",
+      "---\ntype: Story\ntitle: X\nstatus: deprecated\nlore_task_status: todo\ntasks:\n  - lore-1\n---\n# X\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n",
+    );
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done", title: "Ship it" })]);
+
+    const first = await syncCmd(["--no-index"], adapter);
+    expect(first.code).toBe(EXIT_OK);
+    expect(first.report.files).toEqual([{ path: "docs/stories/x.md" }]);
+    const updated = readDoc("stories/x.md");
+    const lines = updated.split("\n");
+    expect(lines).toContain("status: deprecated");
+    expect(lines).toContain("lore_task_status: done");
+    expect(lines).not.toContain("status: done");
+
+    const second = await syncCmd(["--no-index"], adapter, { gitSpawn: cleanGitSpawn() });
+    expect(second.report.filesChanged).toBe(0);
+    expect(readDoc("stories/x.md")).toBe(updated);
   });
 
   test("a concept with no tasks: is never touched, and no BacklogAdapter call is ever made", async () => {
@@ -150,6 +173,33 @@ describe("lore sync — AC#1: idempotent", () => {
     const { report } = await syncCmd([], poison);
     expect(readDoc("stories/plain.md")).toBe(doc);
     expect(report.files.map((f) => f.path)).not.toContain("docs/stories/plain.md");
+  });
+
+  test("LCLI-316: a generated log subject with MDX hazards survives lore check --strict", async () => {
+    writeDoc("stories/x.md", storyDoc("X", [], "todo"));
+    const gitAdapter: GitAdapter = {
+      history: () => [
+        {
+          hash: "abc1234",
+          timestamp: "2026-08-04T20:00:00Z",
+          subject: "docs: sync managed blocks after Story<->Task {coupling} fix",
+          files: ["docs/stories/x.md"],
+        },
+      ],
+    };
+
+    const synced = await syncCmd([], fakeAdapter([]), { gitAdapter });
+    expect(synced.code).toBe(EXIT_OK);
+    expect(readDoc("log.md")).toContain("` docs: sync managed blocks after Story<->Task {coupling} fix `");
+
+    const stdout = capture();
+    const checkCode = await run(["bun", "lore", "check", "--strict", "--json"], {
+      cwd: root,
+      stdout,
+      stderr: capture(),
+    });
+    expect(checkCode).toBe(EXIT_OK);
+    expect(JSON.parse(stdout.text()).data).toMatchObject({ errorCount: 0, warningCount: 0 });
   });
 
   test("regenerates a stale managed block after tasks: transitions from one linked task to empty", async () => {

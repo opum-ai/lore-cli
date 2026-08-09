@@ -12,7 +12,8 @@
  * does not opt into a custom profile sees exactly the behavior lore shipped before the
  * profile existed.
  *
- * The validation tiers mirror OKF §9 + the active profile
+ * The validation tiers mirror the OKF 0.2 §11 conformance floor (legacy 0.1 §9)
+ * plus the active profile
  * ([okf-conformance](../../docs/reference/okf-conformance.md) "How lore checks conformance"):
  *
  * - **ERROR** (throws a `validation` {@link LoreError}, exit 6): unparseable frontmatter
@@ -33,9 +34,17 @@
  */
 
 import { posix } from "node:path";
-import type { z } from "zod";
+import { z } from "zod";
 import { LoreError, type WarningCollector } from "../errors";
-import { type CompiledType, defaultProfile, type Profile, slugForTypeName } from "./profile";
+import type { BundleState } from "./okf-version";
+import {
+  ATTESTED_COMPUTATION_TYPE,
+  type CompiledType,
+  defaultProfile,
+  type Profile,
+  profileForBundle,
+  slugForTypeName,
+} from "./profile";
 
 /**
  * The bundle-root index's path, in the two conventions a caller of {@link validateFrontmatter} may
@@ -57,9 +66,9 @@ function isRootIndexPath(path: string | undefined): boolean {
 }
 
 /**
- * Whether `key` is an OKF-reserved key that passes the extra-key warning on a known type. Both
- * `resource` and `okf_version` are legitimate, lore-recognized fields — not stray producer
- * extensions — so flagging either as unknown (as the generic extra-key check otherwise would)
+ * Whether `key` is an OKF-reserved key that passes the extra-key warning on a known type.
+ * `resource`, root-only `okf_version`, and the 0.2 families are lore-recognized fields, not stray
+ * producer extensions — so flagging any of them as unknown (as the generic extra-key check otherwise would)
  * would be a false positive on lore's own conformant output, but each is reserved only in the
  * ONE position lore itself ever writes it:
  *
@@ -68,7 +77,7 @@ function isRootIndexPath(path: string | undefined): boolean {
  *   never stamps `resource` on an `index.md` (it is a structure page, not a cited concept —
  *   LORE-47 AC#4/#5), so a `resource:` hand-authored onto one (`isIndex`) is not lore's
  *   recognized output and is warned like any other extra key.
- * - `okf_version` is the bundle-root index's conformance marker (OKF §4) — a whole-bundle
+ * - `okf_version` is the bundle-root index's version marker (OKF 0.2 §12; 0.1 §4) — a whole-bundle
  *   conformance property, not a per-concept one. Only the bundle-ROOT index
  *   ({@link isRootIndexPath}) — the one file `lore init`'s `serializeStructuralConcept` ever
  *   stamps it onto — is exempt. A hand-authored `okf_version` anywhere else (an ordinary
@@ -76,15 +85,129 @@ function isRootIndexPath(path: string | undefined): boolean {
  *   like any other extra key (LORE-168; previously this was unconditionally exempt everywhere,
  *   contradicting the conformance check `docs/reference/okf-conformance.md` documents).
  */
-function isReservedKey(key: string, isIndex: boolean, isRootIndex: boolean): boolean {
+function isReservedKey(
+  key: string,
+  isIndex: boolean,
+  isRootIndex: boolean,
+  profile: Profile,
+  compiled: CompiledType,
+): boolean {
   if (key === "resource") {
     return !isIndex;
   }
   if (key === "okf_version") {
     return isRootIndex;
   }
+  if (
+    key === "generated" ||
+    key === "sources" ||
+    key === "usage_window" ||
+    key === "verified" ||
+    key === "status" ||
+    key === "stale_after" ||
+    key === "lore_task_status"
+  ) {
+    return profile.okfVersion === "0.2";
+  }
+  if (
+    profile.okfVersion === "0.2" &&
+    compiled.name === ATTESTED_COMPUTATION_TYPE &&
+    ATTESTED_COMPUTATION_FIELDS.has(key)
+  ) {
+    return true;
+  }
   return false;
 }
+
+/** OKF 0.2 section 7 actor identity: producer/version, human:<id>, or process:<id>. */
+const ACTOR_SCHEMA = z
+  .string()
+  .trim()
+  .regex(/^(?:[^\s/:]+\/[^\s/]+|human:\S+|process:\S+)$/, "must use producer/version, human:<id>, or process:<id>");
+
+/** OKF 0.2's generated provenance mapping; JSON_SCHEMA keeps `at` a string before this check. */
+const GENERATED_SCHEMA = z.looseObject({
+  by: ACTOR_SCHEMA,
+  at: z.iso.datetime({ offset: true }).nullish(),
+});
+
+/** The editor form is derived from the same runtime schema, never hand-maintained in parallel. */
+const GENERATED_JSON_SCHEMA = z.toJSONSchema(GENERATED_SCHEMA, { target: "draft-7" });
+
+/** OKF 0.2's shared/per-source usage window. Dates remain authored YYYY-MM-DD strings. */
+const USAGE_WINDOW_SCHEMA = z.looseObject({
+  from: z.iso.date(),
+  to: z.iso.date(),
+});
+
+/** One OKF 0.2 provenance source. Unknown producer extensions remain round-trip-safe. */
+const SOURCE_SCHEMA = z.looseObject({
+  resource: z.string().trim().min(1),
+  id: z.string().trim().min(1).nullish(),
+  title: z.string().trim().min(1).nullish(),
+  author: ACTOR_SCHEMA.nullish(),
+  usage_count: z.number().int().nonnegative().nullish(),
+  last_modified: z.iso.date().nullish(),
+  usage_window: USAGE_WINDOW_SCHEMA.nullish(),
+});
+
+/** The complete OKF 0.2 sources family, derived once for runtime and editor use. */
+const SOURCES_SCHEMA = z.array(SOURCE_SCHEMA);
+const SOURCES_JSON_SCHEMA = z.toJSONSchema(SOURCES_SCHEMA, { target: "draft-7" });
+const USAGE_WINDOW_JSON_SCHEMA = z.toJSONSchema(USAGE_WINDOW_SCHEMA, { target: "draft-7" });
+
+/** OKF lifecycle and Lore task-progress vocabularies are deliberately disjoint. */
+const LIFECYCLE_STATUS_SCHEMA = z.enum(["draft", "stable", "deprecated"]);
+const TASK_ROLLUP_STATUS_SCHEMA = z.enum(["todo", "in-progress", "done"]);
+const STALE_AFTER_SCHEMA = z.iso.date();
+
+/** One OKF verification event; a bare event is normalized conceptually as a one-item list. */
+const VERIFICATION_EVENT_SCHEMA = z.looseObject({
+  by: ACTOR_SCHEMA,
+  at: z.iso.datetime({ offset: true }),
+});
+const VERIFIED_SCHEMA = z.union([VERIFICATION_EVENT_SCHEMA, z.array(VERIFICATION_EVENT_SCHEMA)]);
+
+/** One typed parameter hole exposed by an OKF 0.2 Attested Computation. */
+const COMPUTATION_PARAMETER_SCHEMA = z.looseObject({
+  name: z.string().trim().min(1),
+  type: z.string().trim().min(1),
+  required: z.boolean(),
+});
+
+/** Run instructions plus the receipt fields a deterministic attester may inspect. */
+const COMPUTATION_EXECUTOR_SCHEMA = z.looseObject({
+  resource: z.string().trim().min(1),
+  receipt: z.array(z.string().trim().min(1)).nullish(),
+});
+
+/** A deterministic, consumer-side attester resource. Lore only represents this path. */
+const COMPUTATION_ATTESTER_SCHEMA = z.looseObject({
+  resource: z.string().trim().min(1),
+});
+
+/** The complete OKF 0.2 section-10 frontmatter contract for the known computation type. */
+const ATTESTED_COMPUTATION_SCHEMA = z.looseObject({
+  runtime: z.string().trim().min(1),
+  parameters: z.array(COMPUTATION_PARAMETER_SCHEMA).nullish(),
+  computation: z.string().trim().min(1).nullish(),
+  executor: COMPUTATION_EXECUTOR_SCHEMA.nullish(),
+  attester: COMPUTATION_ATTESTER_SCHEMA.nullish(),
+});
+const ATTESTED_COMPUTATION_JSON_SCHEMA = z.toJSONSchema(ATTESTED_COMPUTATION_SCHEMA, { target: "draft-7" });
+const ATTESTED_COMPUTATION_FIELDS: ReadonlySet<string> = new Set([
+  "runtime",
+  "parameters",
+  "computation",
+  "executor",
+  "attester",
+]);
+
+/** Editor forms are generated from the same runtime validators. */
+const LIFECYCLE_STATUS_JSON_SCHEMA = z.toJSONSchema(LIFECYCLE_STATUS_SCHEMA, { target: "draft-7" });
+const TASK_ROLLUP_STATUS_JSON_SCHEMA = z.toJSONSchema(TASK_ROLLUP_STATUS_SCHEMA, { target: "draft-7" });
+const STALE_AFTER_JSON_SCHEMA = z.toJSONSchema(STALE_AFTER_SCHEMA, { target: "draft-7" });
+const VERIFIED_JSON_SCHEMA = z.toJSONSchema(VERIFIED_SCHEMA, { target: "draft-7" });
 
 /** The longest a `summary` should be before lore warns it is no longer a one-liner (ADR-0006 §5). */
 const SUMMARY_SOFT_LIMIT = 200;
@@ -97,6 +220,8 @@ export interface ValidateOptions {
   path?: string;
   /** The active profile to validate against; defaults to the built-in {@link defaultProfile}. */
   profile?: Profile;
+  /** Typed bundle semantics resolved from the root index; absent only for isolated concept APIs. */
+  bundleState?: BundleState;
 }
 
 /** Narrow an arbitrary string to a type the `profile` (default: built-in) validates strictly-by-field. */
@@ -162,7 +287,7 @@ export function typeDirectory(type: string): string {
  * `fm` — the caller keeps the verbatim object so byte-stable round-tripping is preserved (ADR-0011).
  * It **returns the resolved type** (the `type` value, trimmed). Behavior by tier:
  *
- * - Missing/empty `type` → throw (`validation`). This is the OKF §9 floor.
+ * - Missing/empty `type` → throw (`validation`). This is the OKF 0.2 §11 floor (0.1 §9).
  * - Unknown `type` → warn; the type-only floor already passed, so nothing else is checked and
  *   every key is preserved (OKF tolerance).
  * - Known `type` with a mistyped field → throw (`validation`) citing the field(s). A `type`
@@ -175,13 +300,16 @@ export function typeDirectory(type: string): string {
  * - Missing or over-long (~{@link SUMMARY_SOFT_LIMIT}-char) `summary` → warn.
  */
 export function validateFrontmatter(fm: Record<string, unknown>, options: ValidateOptions = {}): string {
-  const profile = options.profile ?? defaultProfile();
+  const baseProfile = options.profile ?? defaultProfile();
+  const profile = options.bundleState === undefined ? baseProfile : profileForBundle(baseProfile, options.bundleState);
   const where = options.path ? ` in ${options.path}` : "";
   const type = requireType(fm, where, options.path);
 
+  validateVersionedFrontmatter(fm, type, profile, where, options.path, options.warnings);
+
   const compiled = profile.types.get(canonicalType(type, profile));
   if (compiled === undefined) {
-    // Unknown type: the non-empty-`type` floor (OKF §9) is already satisfied, so this is a
+    // Unknown type: the non-empty-`type` floor (OKF 0.2 §11; 0.1 §9) is already satisfied, so this is a
     // tolerated producer extension — warn, validate nothing further, leave every key untouched.
     options.warnings?.add(`unknown type "${type}"${where}; validated on \`type\` only`);
     return type;
@@ -199,13 +327,119 @@ export function validateFrontmatter(fm: Record<string, unknown>, options: Valida
 
   const isIndex = options.path !== undefined && posix.basename(options.path) === "index.md";
   const isRootIndex = isRootIndexPath(options.path);
-  warnExtraKeys(fm, compiled, where, options.warnings, isIndex, isRootIndex);
+  warnExtraKeys(fm, compiled, where, options.warnings, isIndex, isRootIndex, profile);
   warnSummary(fm.summary, where, options.warnings);
   return type;
 }
 
+/** Validate and classify the OKF 0.2 frontmatter families without mutating authored data. */
+function validateVersionedFrontmatter(
+  fm: Record<string, unknown>,
+  type: string,
+  profile: Profile,
+  where: string,
+  path: string | undefined,
+  warnings: WarningCollector | undefined,
+): void {
+  if (profile.okfVersion !== "0.2") {
+    return;
+  }
+  const canonical = canonicalType(type, profile);
+  if (canonical === ATTESTED_COMPUTATION_TYPE && profile.types.has(canonical)) {
+    const result = ATTESTED_COMPUTATION_SCHEMA.safeParse(fm);
+    if (!result.success) {
+      throw new LoreError(
+        "validation",
+        `invalid ${ATTESTED_COMPUTATION_TYPE} contract${where}: ${describeIssues(result.error)}`,
+        "set a non-empty `runtime` and fix the computation contract field(s) named above",
+        { path, type: ATTESTED_COMPUTATION_TYPE, key: "runtime", issues: issueList(result.error) },
+      );
+    }
+  }
+  if (Object.hasOwn(fm, "generated") && fm.generated !== null) {
+    const result = GENERATED_SCHEMA.safeParse(fm.generated);
+    if (!result.success) {
+      throw new LoreError(
+        "validation",
+        `invalid generated provenance${where}: ${describeIssues(result.error)}`,
+        "set `generated.by` to a non-empty actor and `generated.at` to an ISO-8601 datetime",
+        { path, issues: issueList(result.error) },
+      );
+    }
+  }
+  if (Object.hasOwn(fm, "sources")) {
+    const result = SOURCES_SCHEMA.safeParse(fm.sources);
+    if (!result.success) {
+      throw new LoreError(
+        "validation",
+        `invalid sources provenance${where}: ${describeIssues(result.error)}`,
+        "set `sources` to a list whose entries carry a non-empty `resource` and valid credibility signals",
+        { path, key: "sources", issues: issueList(result.error) },
+      );
+    }
+  }
+  if (Object.hasOwn(fm, "usage_window")) {
+    const result = USAGE_WINDOW_SCHEMA.safeParse(fm.usage_window);
+    if (!result.success) {
+      throw new LoreError(
+        "validation",
+        `invalid sources usage_window${where}: ${describeIssues(result.error)}`,
+        "set `usage_window.from` and `usage_window.to` to YYYY-MM-DD dates",
+        { path, key: "usage_window", issues: issueList(result.error) },
+      );
+    }
+  }
+  if (Object.hasOwn(fm, "status")) {
+    const result = LIFECYCLE_STATUS_SCHEMA.safeParse(fm.status);
+    if (!result.success) {
+      throw new LoreError(
+        "validation",
+        `invalid OKF lifecycle status${where}: ${describeIssues(result.error)}`,
+        "set `status` to draft, stable, or deprecated; Lore task progress belongs in `lore_task_status`",
+        { path, key: "status", issues: issueList(result.error) },
+      );
+    }
+  }
+  if (Object.hasOwn(fm, "lore_task_status")) {
+    const result = TASK_ROLLUP_STATUS_SCHEMA.safeParse(fm.lore_task_status);
+    if (!result.success) {
+      throw new LoreError(
+        "validation",
+        `invalid Lore task rollup${where}: ${describeIssues(result.error)}`,
+        "set `lore_task_status` to todo, in-progress, or done; OKF lifecycle belongs in `status`",
+        { path, key: "lore_task_status", issues: issueList(result.error) },
+      );
+    }
+  }
+  if (Object.hasOwn(fm, "stale_after")) {
+    const result = STALE_AFTER_SCHEMA.safeParse(fm.stale_after);
+    if (!result.success) {
+      throw new LoreError(
+        "validation",
+        `invalid stale_after lifecycle date${where}: ${describeIssues(result.error)}`,
+        "set `stale_after` to an absolute YYYY-MM-DD date",
+        { path, key: "stale_after", issues: issueList(result.error) },
+      );
+    }
+  }
+  if (Object.hasOwn(fm, "verified")) {
+    const result = VERIFIED_SCHEMA.safeParse(fm.verified);
+    if (!result.success) {
+      throw new LoreError(
+        "validation",
+        `invalid verification evidence${where}: ${describeIssues(result.error)}`,
+        "set `verified` to one event or a list of events with an actor-valued `by` and ISO-8601 `at`",
+        { path, key: "verified", issues: issueList(result.error) },
+      );
+    }
+  }
+  if (Object.hasOwn(fm, "timestamp")) {
+    warnings?.add(`legacy key "timestamp"${where}; tolerated under OKF 0.2, but new content should use generated.at`);
+  }
+}
+
 /**
- * Read a non-empty string `type` and return it **trimmed**, or throw the OKF §9 floor error.
+ * Read a non-empty string `type` and return it **trimmed**, or throw the OKF 0.2 §11 / 0.1 §9 floor error.
  * Trimming the return means a `type` with accidental surrounding whitespace classifies on its real
  * value (so a known type is type-checked, not silently demoted to "unknown"); the frontmatter object
  * keeps the verbatim value. `path` is echoed on the error's `input.path` so a consumer gets a usable path.
@@ -216,7 +450,7 @@ function requireType(fm: Record<string, unknown>, where: string, path: string | 
     throw new LoreError(
       "validation",
       `frontmatter${where} is missing a \`type\``,
-      "every concept needs a `type:` field (OKF §9); add one, e.g. `type: Reference`",
+      "every concept needs a `type:` field (OKF 0.2 §11; 0.1 §9); add one, e.g. `type: Reference`",
       { path },
     );
   }
@@ -244,12 +478,13 @@ function warnExtraKeys(
   warnings: WarningCollector | undefined,
   isIndex: boolean,
   isRootIndex: boolean,
+  profile: Profile,
 ): void {
   if (warnings === undefined) {
     return;
   }
   for (const key of Object.getOwnPropertyNames(fm)) {
-    if (!compiled.declaredFields.has(key) && !isReservedKey(key, isIndex, isRootIndex)) {
+    if (!compiled.declaredFields.has(key) && !isReservedKey(key, isIndex, isRootIndex, profile, compiled)) {
       warnings.add(`unknown key "${key}"${where}; preserved but not validated`);
     }
   }
@@ -361,6 +596,38 @@ export function emitSchemaFiles(profile: Profile, options: EmitSchemaFilesOption
   const types = options.only ? [options.only] : [...profile.types.values()];
   return types.map((type) => ({
     path: posix.join(dir, schemaFileName(type.name)),
-    contents: `${JSON.stringify(type.jsonSchema, null, 2)}\n`,
+    contents: `${JSON.stringify(schemaForVersion(type, profile), null, 2)}\n`,
   }));
+}
+
+/** Add the 0.2 shared families and the type-specific computation contract to editor schemas. */
+function schemaForVersion(type: CompiledType, profile: Profile): Record<string, unknown> {
+  const schema = type.jsonSchema;
+  if (profile.okfVersion !== "0.2") {
+    return schema;
+  }
+  const properties = (schema.properties ?? {}) as Record<string, unknown>;
+  const computationProperties =
+    type.name === ATTESTED_COMPUTATION_TYPE
+      ? ((ATTESTED_COMPUTATION_JSON_SCHEMA.properties ?? {}) as Record<string, unknown>)
+      : {};
+  const required = [...((schema.required ?? []) as string[])];
+  if (type.name === ATTESTED_COMPUTATION_TYPE && !required.includes("runtime")) {
+    required.push("runtime");
+  }
+  return {
+    ...schema,
+    required,
+    properties: {
+      ...properties,
+      generated: GENERATED_JSON_SCHEMA,
+      sources: SOURCES_JSON_SCHEMA,
+      usage_window: USAGE_WINDOW_JSON_SCHEMA,
+      verified: VERIFIED_JSON_SCHEMA,
+      status: LIFECYCLE_STATUS_JSON_SCHEMA,
+      stale_after: STALE_AFTER_JSON_SCHEMA,
+      lore_task_status: TASK_ROLLUP_STATUS_JSON_SCHEMA,
+      ...computationProperties,
+    },
+  };
 }

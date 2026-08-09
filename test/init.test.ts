@@ -11,10 +11,12 @@ import {
   type InitResult,
   runInit,
 } from "../src/commands/init";
+import { loadConfig } from "../src/config";
 import { loadBundle } from "../src/core/bundle";
 import { buildCodexSkillDoc, CODEX_SKILL_REL_PATH } from "../src/core/codex-bridge";
 import { parseConcept } from "../src/core/concept";
-import { EXIT_CODES, LoreError, reportError, WarningCollector } from "../src/errors";
+import { buildScaffold } from "../src/core/scaffold";
+import { EXIT_CODES, exitCodeFor, LoreError, reportError, WarningCollector } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture, expectError, fakeAdapter } from "./helpers";
 
@@ -73,10 +75,11 @@ async function init(
   return { code, result: envelope.data, stderr: stderr.text() };
 }
 
-/** A scripted {@link InitPrompter}: `agents`/`obsidian` answer the wizard's two confirms (in that call order), `site` answers the "which docs site" choice. Omitted answers fall through to the wizard's own default. */
+/** A scripted {@link InitPrompter}; omitted answers fall through to each prompt's own default. */
 function scriptedPrompter(answers: {
   agents?: boolean;
   codex?: boolean;
+  tracker?: string;
   site?: string;
   obsidian?: boolean;
 }): InitPrompter {
@@ -86,7 +89,8 @@ function scriptedPrompter(answers: {
       if (question.includes("Codex")) return answers.codex ?? defaultValue;
       return answers.obsidian ?? defaultValue;
     },
-    choose: async (_question, _choices, defaultValue) => answers.site ?? defaultValue,
+    choose: async (question, _choices, defaultValue) =>
+      question.includes("tracker") ? (answers.tracker ?? defaultValue) : (answers.site ?? defaultValue),
     close: () => {},
   };
 }
@@ -118,6 +122,7 @@ describe("lore init — fresh bundle (AC#1)", () => {
       ".lore/schemas/adr.schema.json",
       ".lore/schemas/runbook.schema.json",
       ".lore/schemas/reference.schema.json",
+      ".lore/schemas/attested-computation.schema.json",
       ".lore/templates/.gitkeep",
       "docs/index.md",
     ]);
@@ -131,7 +136,7 @@ describe("lore init — fresh bundle (AC#1)", () => {
     const indexRaw = readFileSync(join(root, "docs/index.md"), "utf8");
     const concept = parseConcept("docs/index.md", indexRaw);
     expect(concept.type).toBe("Reference");
-    expect(concept.frontmatter.okf_version).toBe("0.1");
+    expect(concept.frontmatter.okf_version).toBe("0.2");
     // No other emitted doc carries okf_version (reserved-root discipline).
     for (const path of [".lore/schemas/reference.schema.json", ".lore/config.toml"]) {
       expect(readFileSync(join(root, path), "utf8")).not.toContain("okf_version");
@@ -148,9 +153,9 @@ describe("lore init — fresh bundle (AC#1)", () => {
     expect(warnings.list()).toEqual([]);
   });
 
-  test("stamps the index timestamp from the injected clock", async () => {
+  test("stamps the index generated.at from the injected clock", async () => {
     await init({ clock: () => new Date("2026-01-02T03:04:05Z") });
-    expect(readFileSync(join(root, "docs/index.md"), "utf8")).toContain("timestamp: 2026-01-02T03:04:05.000Z");
+    expect(readFileSync(join(root, "docs/index.md"), "utf8")).toContain("at: 2026-01-02T03:04:05.000Z");
   });
 
   test("creates the gitignored cache directory", async () => {
@@ -193,7 +198,7 @@ describe("lore init — idempotent re-run (AC#2)", () => {
     const { code, result } = await init({ clock: () => new Date("2030-12-31T23:59:59Z") });
     expect(code).toBe(0);
     expect(result.created).toEqual([]);
-    expect(result.skipped.length).toBe(11);
+    expect(result.skipped.length).toBe(12);
     expect(readFileSync(join(root, "docs/index.md"), "utf8")).toBe(before);
   });
 
@@ -477,7 +482,75 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
     expect(result.agents).toBeUndefined();
     expect(result.scaffolds).toEqual([]);
     expect(result.backlog).toBeUndefined();
+    expect(result.tracker).toBeUndefined();
+    const expectedConfig = buildScaffold({ timestamp: FIXED_CLOCK().toISOString() }).files.find(
+      (file) => file.path === ".lore/config.toml",
+    )?.contents;
+    expect(expectedConfig).toBeDefined();
+    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).toBe(expectedConfig as string);
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
     expect(stderr).toBe("");
+  });
+
+  test("--tracker jira persists the choice without prompting", async () => {
+    const { code, result } = await init({
+      args: ["--tracker", "jira"],
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter: forbiddenPrompter(),
+    });
+    expect(code).toBe(0);
+    expect(result.interactive).toBe(false);
+    expect(result.tracker).toBe("jira");
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("jira");
+  });
+
+  test("--tracker rejects unavailable and missing values", () => {
+    const unavailable = expectError("validation", () =>
+      runInit({ root, output: JSON_CTX, stdout: capture(), args: ["--tracker", "quest"] }),
+    );
+    expect(exitCodeFor(unavailable)).toBe(EXIT_CODES.validation);
+    expect(unavailable.hint).toContain("backlog, jira");
+    expectError("usage", () => runInit({ root, output: JSON_CTX, stdout: capture(), args: ["--tracker"] }));
+  });
+
+  test("--tracker preserves future tables, nested dotted keys, and unrelated backend fields", async () => {
+    await init();
+    const configPath = join(root, ".lore/config.toml");
+    writeFileSync(
+      configPath,
+      [
+        "# retained",
+        "[future]",
+        'tracker.backend = "nested-value"',
+        "",
+        "[tracker]",
+        "future_key = true",
+        "",
+        "[[future_items]]",
+        'backend = "unrelated-value"',
+        "",
+      ].join("\n"),
+    );
+
+    await init({ args: ["--tracker", "jira"] });
+    const current = readFileSync(configPath, "utf8");
+    expect(current).toContain('# retained\n[future]\ntracker.backend = "nested-value"');
+    expect(current).toContain('[tracker]\nbackend = "jira"\nfuture_key = true');
+    expect(current).toContain('[[future_items]]\nbackend = "unrelated-value"');
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("jira");
+
+    writeFileSync(
+      configPath,
+      ["[future]", 'tracker.backend = "nested-value"', "", "[[future_items]]", 'backend = "unrelated-value"', ""].join(
+        "\n",
+      ),
+    );
+    await init({ args: ["--tracker", "backlog"] });
+    const appended = readFileSync(configPath, "utf8");
+    expect(appended).toContain('[future]\ntracker.backend = "nested-value"');
+    expect(appended).toContain('[[future_items]]\nbackend = "unrelated-value"');
+    expect(appended).toEndWith('[tracker]\nbackend = "backlog"\n');
   });
 
   test("--agents sets up the Claude Code agent bridge (SKILL.md + CLAUDE.md nudge)", async () => {
@@ -579,6 +652,20 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
     expect(stderr).toContain("backlog coupling unavailable");
   });
 
+  test("an uninitialized Backlog.md project recommends backlog init in JSON and stderr without failing init", async () => {
+    const warning =
+      "The `backlog` binary supports --json, but no Backlog.md project is initialized in this directory; run `backlog init` to initialize one.";
+    const { code, result, stderr } = await init({
+      args: ["--agents"],
+      adapter: fakeAdapter([], { probe: new LoreError("validation", warning) }),
+    });
+
+    expect(code).toBe(0);
+    expect(result.backlog).toEqual({ checked: true, capable: false, warning });
+    expect(stderr).toContain(`backlog coupling unavailable: ${warning}`);
+    expect(stderr).not.toContain("Install backlog.md");
+  });
+
   test("--no-backlog skips the check even when --agents would otherwise imply it", async () => {
     const { result, stderr } = await init({
       args: ["--agents", "--no-backlog"],
@@ -640,6 +727,46 @@ describe("lore init — idempotent re-run with flags (AC#3)", () => {
 });
 
 describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the locked design decision)", () => {
+  test("offers exactly the shipped tracker choices and persists the selected backend", async () => {
+    const choicesSeen: string[][] = [];
+    const base = scriptedPrompter({ tracker: "jira", agents: false, codex: false, site: "none", obsidian: false });
+    const prompter: InitPrompter = {
+      ...base,
+      choose: async (question, choices, defaultValue) => {
+        if (question.includes("tracker")) {
+          choicesSeen.push([...choices]);
+        }
+        return base.choose(question, choices, defaultValue);
+      },
+    };
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      agentAvailability: () => ({ claude: false, codex: false }),
+      adapter: fakeAdapter([], { probe: "ok" }),
+    });
+    expect(choicesSeen).toEqual([["backlog", "jira"]]);
+    expect(result.tracker).toBe("jira");
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("jira");
+  });
+
+  test("wizard and --tracker write the identical tracker configuration", async () => {
+    await init({ args: ["--tracker", "jira"] });
+    const fromFlag = readFileSync(join(root, ".lore/config.toml"), "utf8");
+    rmSync(root, { recursive: true, force: true });
+    mkdirSync(root, { recursive: true });
+
+    await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter: scriptedPrompter({ tracker: "jira", agents: false, codex: false, site: "none", obsidian: false }),
+      agentAvailability: () => ({ claude: false, codex: false }),
+      adapter: fakeAdapter([], { probe: "ok" }),
+    });
+    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).toBe(fromFlag);
+  });
+
   test.each([
     ["Claude-only", { claude: true, codex: false }, true, false],
     ["Codex-only", { claude: false, codex: true }, false, true],

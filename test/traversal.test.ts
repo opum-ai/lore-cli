@@ -261,6 +261,7 @@ function edgeProvenance(from: TraversalEndpoint, to: TraversalEndpoint, recordKe
 
 describe("path and impact commands", () => {
   const graph: BundleGraph = {
+    state: { okfVersion: "0.2", source: "declared" },
     concepts: new Map(),
     edges: [],
     tokenEstimate: () => 0,

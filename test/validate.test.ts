@@ -13,7 +13,7 @@ import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
 
-/** The six story-convention type names, sourced from the built-in profile. */
+/** The built-in OKF 0.2 type names, sourced from the profile. */
 const KNOWN_TYPES = [...defaultProfile().types.keys()];
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
@@ -24,7 +24,9 @@ const CLEAN_ADR = `---
 type: ADR
 title: Use soft deletes
 summary: A short summary.
-timestamp: 2026-06-25T12:00:00Z
+generated:
+  by: lore/0.1.1
+  at: 2026-06-25T12:00:00Z
 ---
 
 # Use soft deletes
@@ -484,9 +486,10 @@ describe("validate (command) — rendering", () => {
   }
 
   test("plain mode prints one line per finding plus an ok line and a summary", () => {
+    writeFileSync(join(root, "docs/index.md"), '---\ntype: Reference\nokf_version: "0.2"\n---\n# Docs\n');
     writeFileSync(join(root, "docs/adr/ok.md"), CLEAN_ADR);
     writeFileSync(join(root, "docs/adr/bad.md"), "---\ntype: ADR\nsummary: A short summary.\n---\n\n# X\n");
-    const { code, text } = render([], { mode: "plain", color: false });
+    const { code, text } = render(["docs/adr"], { mode: "plain", color: false });
     expect(code).toBe(EXIT_CODES.validation);
     expect(text).toContain("ok docs/adr/ok.md");
     expect(text).toContain('error docs/adr/bad.md [required-section]: ADR is missing the required "## Status" section');
@@ -570,6 +573,45 @@ describe("validate (command)", () => {
     const { code, report } = validateCmd([]);
     expect(code).toBe(0);
     expect(report.errorCount).toBe(0);
+  });
+
+  test("malformed OKF 0.2 sources return exit 6 and name the file and key", () => {
+    mkdirSync(join(root, "docs/reference"), { recursive: true });
+    writeFileSync(
+      join(root, "docs/reference/bad-source.md"),
+      "---\ntype: Reference\nsummary: Bad source.\nsources:\n  - title: Missing resource\n---\n# Bad source\n",
+    );
+    const { code, report } = validateCmd(["docs/reference/bad-source.md"]);
+    expect(code).toBe(EXIT_CODES.validation);
+    expect(report.errorCount).toBe(1);
+    expect(report.files[0]?.path).toBe("docs/reference/bad-source.md");
+    expect(report.files[0]?.findings[0]?.message).toContain("sources");
+    expect(report.files[0]?.findings[0]?.message).toContain("resource");
+  });
+
+  test("malformed OKF 0.2 verification actors return exit 6", () => {
+    mkdirSync(join(root, "docs/reference"), { recursive: true });
+    writeFileSync(
+      join(root, "docs/reference/bad-verifier.md"),
+      "---\ntype: Reference\nsummary: Bad verifier.\nverified: { by: alice, at: 2026-06-25T09:00:00Z }\n---\n# Bad verifier\n",
+    );
+    const { code, report } = validateCmd(["docs/reference/bad-verifier.md"]);
+    expect(code).toBe(EXIT_CODES.validation);
+    expect(report.errorCount).toBe(1);
+    expect(report.files[0]?.findings[0]?.message).toContain("verification evidence");
+    expect(report.files[0]?.findings[0]?.message).toContain("human:<id>");
+  });
+
+  test("an Attested Computation missing runtime returns exit 6 and names the field", () => {
+    mkdirSync(join(root, "docs/attested-computation"), { recursive: true });
+    writeFileSync(
+      join(root, "docs/attested-computation/missing-runtime.md"),
+      "---\ntype: Attested Computation\nsummary: Missing runtime.\n---\n# Computation\n",
+    );
+    const { code, report } = validateCmd(["docs/attested-computation/missing-runtime.md"]);
+    expect(code).toBe(EXIT_CODES.validation);
+    expect(report.errorCount).toBe(1);
+    expect(report.files[0]?.findings[0]?.message).toContain("runtime");
   });
 
   test("a fresh `lore new` of every known type validates clean (LORE-18 × LORE-19)", () => {

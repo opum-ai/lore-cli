@@ -1,7 +1,8 @@
 /**
  * rewrite.ts — the **pure** graph-aware inbound-rewrite engine behind `lore rename` (and,
  * next, `lore supersede`): when a concept's id/path changes, repoint **every** reference to
- * it — body cross-links and `specs`/`supersedes`/`superseded_by` frontmatter refs — to the new
+ * it — body cross-links, `specs`/`supersedes`/`superseded_by` frontmatter refs, and OKF 0.2
+ * `sources[].resource` provenance refs — to the new
  * location, without touching one byte of authored prose (cli-surface §rename, LORE-35 AC#1–3).
  *
  * ### Why a surgical string splice, not parse→stringify
@@ -30,8 +31,9 @@
  *
  * - **Inbound files** (point *at* the renamed concept): each body link or used reference
  *   definition that resolves to `fromId` is repointed to the new path via {@link normalizeLink}
- *   (preserving any `#fragment`/`?query`); each `specs`/`supersedes`/`superseded_by` ref that
- *   resolves to `fromId` is rewritten to the bare-id `toId` (the canonical frontmatter ref form).
+ *   (preserving any `#fragment`/`?query`); each `specs`/`supersedes`/`superseded_by` ref or
+ *   `sources[].resource` that resolves to `fromId` is rewritten to the bare-id `toId` (the
+ *   canonical frontmatter concept-ref form).
  * - **The moved file** (only when `move`): *all* of its outbound internal links are recomputed
  *   against its new directory — they move with the file — so a sibling link becomes a `../`
  *   link (or vice versa) and a self-link retargets to the new name. This is pure path
@@ -409,7 +411,7 @@ interface RewriteContext {
   readonly toPath: string;
   /** Whether this concept is the relocating one (recompute all its outbound links). */
   readonly isMoved: boolean;
-  /** Whether to repoint `specs`/`supersedes`/`superseded_by` frontmatter refs (false for `lore supersede`). */
+  /** Whether to repoint concept-valued frontmatter refs, including OKF sources (false for `lore supersede`). */
   readonly rewriteRefs: boolean;
 }
 
@@ -878,12 +880,10 @@ function positionOf(node: Nodes): ByteRange | null {
 // ── Frontmatter ref rewriting ──────────────────────────────────────────────────────
 
 /**
- * Return a new frontmatter object with the `specs`/`supersedes`/`superseded_by` refs rewritten, or
- * `null` when none changed. A field may be a single ref or a list — both shapes are preserved, and
- * a non-matching item (including a non-string producer value) is copied verbatim. The original
- * object is never mutated (the graph snapshot stays intact). The ref fields iterated are the
- * graph's own {@link REF_FIELDS}, so a future ref kind cannot be added as an edge without also
- * being rewritten here.
+ * Return a new frontmatter object with concept-valued refs rewritten, or `null` when none changed.
+ * The flat {@link REF_FIELDS} preserve their scalar/list shapes; OKF 0.2 `sources` preserves each
+ * entry and changes only a string `resource` that resolves to a concept. Non-matching producer
+ * values are copied verbatim and the original graph snapshot is never mutated.
  */
 function remapFrontmatterRefs(
   frontmatter: Record<string, unknown>,
@@ -910,6 +910,24 @@ function remapFrontmatterRefs(
         next[field] = mapped;
         changed = true;
       }
+    }
+  }
+  const authoredSources = frontmatter.sources;
+  if (graph.state.okfVersion === "0.2" && Array.isArray(authoredSources)) {
+    const sources = authoredSources.map((source) => {
+      if (typeof source !== "object" || source === null || Array.isArray(source)) {
+        return source;
+      }
+      const resource = (source as Record<string, unknown>).resource;
+      const mapped = remapRefItem(resource, dir, graph, ctx);
+      if (mapped === resource) {
+        return source;
+      }
+      changed = true;
+      return { ...(source as Record<string, unknown>), resource: mapped };
+    });
+    if (sources.some((source, index) => source !== authoredSources[index])) {
+      next.sources = sources;
     }
   }
   return changed ? next : null;

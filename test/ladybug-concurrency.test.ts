@@ -72,7 +72,8 @@ const REPOSITORY_ROOT = resolve(import.meta.dir, "..");
 const WORKER_PATH = join(REPOSITORY_ROOT, "benchmark", "ladybug", "concurrency-worker.ts");
 const SMALL_FIXTURE_PATH = join(REPOSITORY_ROOT, "benchmark", "ladybug", "fixtures", "v1", "small.json");
 const nativeDescribe = process.platform === "win32" ? describe.skip : describe;
-const REPOSITORY_FALLBACK_WARNING = "native indexed retrieval";
+const REPOSITORY_FALLBACK_WARNING =
+  /^warning: (?:native indexed retrieval (?:failed|is unsupported on this platform)|indexed retrieval preflight failed before native activation); using the in-memory reference backend$/;
 const cleanupRoots: string[] = [];
 const evidenceRecords: LadybugConcurrencyEvidenceRecord[] = [];
 
@@ -402,6 +403,25 @@ nativeDescribe("Ladybug real-process concurrency and crash recovery", () => {
   }, 180_000);
 });
 
+describe("automatic retrieval fallback advisory parity", () => {
+  test("accepts every sanitized fallback advisory without masking other stderr", () => {
+    const expected: Observation = {
+      code: 0,
+      stdout: '{"ok":true}\n',
+      stderr: "warning: retained fixture diagnostic\n",
+    };
+    const fallbackAdvisories = [
+      "warning: native indexed retrieval failed; using the in-memory reference backend",
+      "warning: native indexed retrieval is unsupported on this platform; using the in-memory reference backend",
+      "warning: indexed retrieval preflight failed before native activation; using the in-memory reference backend",
+    ];
+
+    for (const advisory of fallbackAdvisories) {
+      expectAutomaticParity({ ...expected, stderr: `${expected.stderr}${advisory}\n` }, expected);
+    }
+  });
+});
+
 function evidenceRecord(options: {
   readonly scenario: LadybugConcurrencyEvidenceRecord["scenario"];
   readonly checkpoint?: LadybugConcurrencyPausePoint;
@@ -596,14 +616,12 @@ function expectAutomaticParity(automatic: Observation, expected: Observation): v
   expect(automatic.stdout).toBe(expected.stdout);
 
   const automaticLines = automatic.stderr.split("\n").filter(Boolean);
-  const fallbackLines = automaticLines.filter((line) => line.includes(REPOSITORY_FALLBACK_WARNING));
+  const fallbackLines = automaticLines.filter((line) => REPOSITORY_FALLBACK_WARNING.test(line));
   expect(fallbackLines.length).toBeLessThanOrEqual(1);
   for (const line of fallbackLines) {
-    expect(line).toMatch(
-      /native indexed retrieval (?:failed|is unsupported on this platform); using the in-memory reference backend/,
-    );
+    expect(line).toMatch(REPOSITORY_FALLBACK_WARNING);
   }
-  expect(automaticLines.filter((line) => !line.includes(REPOSITORY_FALLBACK_WARNING))).toEqual(
+  expect(automaticLines.filter((line) => !REPOSITORY_FALLBACK_WARNING.test(line))).toEqual(
     expected.stderr.split("\n").filter(Boolean),
   );
 }

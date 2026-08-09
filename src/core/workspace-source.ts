@@ -8,7 +8,12 @@ import { LoreError, WarningCollector } from "../errors";
 import { EXPECTED_LADYBUG_STORAGE_VERSION, EXPECTED_LADYBUG_VERSION } from "./ladybug-native";
 import { type LadybugProjectionSource, loadLadybugProjectionSource } from "./ladybug-source";
 import { parseWorkspaceManifest, type WorkspaceManifest } from "./workspace-contract";
-import { buildWorkspaceProjection, type WorkspaceMemberSource, type WorkspaceProjection } from "./workspace-projection";
+import {
+  assertWorkspaceManifestSelection,
+  buildWorkspaceProjection,
+  type WorkspaceMemberSource,
+  type WorkspaceProjection,
+} from "./workspace-projection";
 
 export interface LoadWorkspaceProjectionOptions {
   readonly root: string;
@@ -18,6 +23,7 @@ export interface LoadWorkspaceProjectionOptions {
   readonly resolveGitCommit?: (root: string) => string | null;
   readonly resolveGitRef?: (root: string) => string | null;
   readonly loadMemberSource?: (member: WorkspaceMemberSourceRequest) => Promise<LadybugProjectionSource>;
+  readonly selectionMemberIds?: readonly string[];
 }
 
 export interface WorkspaceMemberSourceRequest {
@@ -39,6 +45,7 @@ export async function loadWorkspaceProjection(
 ): Promise<LoadedWorkspaceProjection> {
   const manifestPath = resolveWorkspaceManifestPath(options.root, options.manifestPath);
   const manifest = readWorkspaceManifest(manifestPath);
+  assertWorkspaceManifestSelection(manifest, options.selectionMemberIds ?? []);
   const members: WorkspaceMemberSource[] = [];
   for (const member of manifest.members) {
     const root = resolveMemberRoot(manifestPath, member.locator, member.memberId);

@@ -9,8 +9,9 @@
 import { createHash } from "node:crypto";
 import { closeSync, lstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { join } from "node:path";
-import { type BacklogAdapter, type BacklogTask, bunBacklogSpawn, createBacklogAdapter } from "../adapters/backlog";
+import type { BacklogAdapter, BacklogTask } from "../adapters/backlog";
 import { resolveHeadSha } from "../adapters/git";
+import { createConfiguredTrackerAdapter } from "../adapters/tracker";
 import { LoreError, WarningCollector } from "../errors";
 import { VERSION } from "../meta";
 import { loadBundle, walkMarkdown } from "./bundle";
@@ -179,7 +180,7 @@ export interface LoadLadybugProjectionSourceOptions {
 export async function loadLadybugProjectionSource(
   options: LoadLadybugProjectionSourceOptions,
 ): Promise<LadybugProjectionSource> {
-  const adapter = options.adapter ?? createBacklogAdapter(bunBacklogSpawn(undefined, options.root));
+  const adapter = options.adapter ?? createConfiguredTrackerAdapter(options.root);
   const resolveGitCommit = options.resolveGitCommit ?? resolveHeadSha;
   for (let attempt = 0; attempt < 2; attempt++) {
     // A changed source snapshot abandons this entire attempt. Buffer its
@@ -201,10 +202,11 @@ export async function loadLadybugProjectionSource(
       graph,
       tasks,
       docsRoot: DOCS_DIR,
-      okfVersion: profile.okfVersion,
+      okfVersion: graph.state.okfVersion,
       exporterVersion: VERSION,
       gitCommit,
       generatedAt: null,
+      profile,
       materializeJsonl: false,
     });
     const finalInventory = readSourceInventory(options.root);
@@ -335,7 +337,7 @@ export function prepareLadybugProjectionSource(
 export async function loadLadybugProjectionFreshness(
   options: LoadLadybugProjectionSourceOptions,
 ): Promise<LadybugProjectionFreshness> {
-  const adapter = options.adapter ?? createBacklogAdapter(bunBacklogSpawn(undefined, options.root));
+  const adapter = options.adapter ?? createConfiguredTrackerAdapter(options.root);
   const resolveGitCommit = options.resolveGitCommit ?? resolveHeadSha;
   for (let attempt = 0; attempt < 2; attempt++) {
     const inventory = readSourceInventory(options.root);

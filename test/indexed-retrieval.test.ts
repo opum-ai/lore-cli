@@ -492,6 +492,40 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
     expect(readdirSync(generationRoot)).toEqual(generations);
     expect(readdirSync(cacheRoot).some((name) => name.startsWith(".corrupt-"))).toBe(false);
   });
+
+  test("source preflight failures fall back without blaming or loading the native runtime", async () => {
+    const privateDetail = "private Backlog source-read detail";
+    const failingAdapter: BacklogAdapter = {
+      ...adapter,
+      listTasks: async () => {
+        throw new Error(privateDetail);
+      },
+    };
+    let loads = 0;
+    const expected = await invoke(referenceLoader, ["graph", "--json"]);
+    const actual = await invoke(
+      (options) =>
+        loadRetrievalGraph({
+          ...options,
+          adapter: failingAdapter,
+          resolveGitCommit: () => null,
+          loadNativeDriver: async () => {
+            loads++;
+            throw new Error("native loader must not run after a source preflight failure");
+          },
+        }),
+      ["graph", "--json"],
+    );
+
+    expect(actual.code).toBe(expected.code);
+    expect(actual.stdout).toBe(expected.stdout);
+    expect(actual.stderr).toContain(
+      "indexed retrieval preflight failed before native activation; using the in-memory reference backend",
+    );
+    expect(actual.stderr).not.toContain("native indexed retrieval failed");
+    expect(actual.stderr).not.toContain(privateDetail);
+    expect(loads).toBe(0);
+  });
 });
 
 describe("native lazy-loading and fallback boundary", () => {

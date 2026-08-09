@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BacklogAdapter } from "../src/adapters/backlog";
@@ -323,11 +323,115 @@ describe("checkBundle — internal cross-link existence (error tier)", () => {
     expect(checkBundle([adr, orders]).errorCount).toBe(0);
   });
 
-  test("a link to a missing file is a broken-link error", () => {
+  test("a broken cross-link is a Lore coherence error, not an OKF §11 frontmatter rejection", () => {
     const adr: CheckInputFile = { path: "adr/x.md", raw: ref("X", "See [ghost](../reference/ghost.md).") };
     const report = checkBundle([adr, orders]);
     expect(report.errorCount).toBe(1);
     expect(report.findings[0]?.rule).toBe("broken-link");
+  });
+
+  test("OKF 0.2 §11 optional fields and index files remain optional to the check pass", () => {
+    const minimal: CheckInputFile = {
+      path: "reference/minimal.md",
+      raw: "---\ntype: Reference\n---\n\n# Minimal\n",
+    };
+    const report = checkBundle([minimal], { okfVersion: "0.2", source: "declared" });
+    expect(report.findings).toEqual([]);
+    expect(report.errorCount).toBe(0);
+  });
+
+  test("an unresolved OKF 0.2 internal source is a warning, not a default gate error", () => {
+    const sourceBacked: CheckInputFile = {
+      path: "reference/source-backed.md",
+      raw: `---
+type: Reference
+sources:
+  - resource: ./orders.md
+  - resource: ./missing.md
+  - resource: https://example.com/external.md
+  - resource: all queries in project X
+---
+
+# Source-backed
+`,
+    };
+    const orders: CheckInputFile = { path: "reference/orders.md", raw: ref("Orders", "Real source.") };
+    const report = checkBundle([sourceBacked, orders]);
+    expect(report.errorCount).toBe(0);
+    expect(report.warningCount).toBe(1);
+    expect(report.findings[0]).toMatchObject({
+      severity: "warning",
+      rule: "broken-source",
+      file: "reference/source-backed.md",
+    });
+    expect(report.findings[0]?.message).toContain("missing.md");
+  });
+
+  test("OKF 0.1 leaves source resources outside the check graph", () => {
+    const sourceBacked: CheckInputFile = {
+      path: "reference/source-backed.md",
+      raw: "---\ntype: Reference\nsources:\n  - resource: ./missing.md\n---\n\n# Source-backed\n",
+    };
+    const report = checkBundle([sourceBacked], { okfVersion: "0.1", source: "declared" });
+    expect(report.findings.some((finding) => finding.rule === "broken-source")).toBe(false);
+  });
+
+  test("a missing file-backed computation is a warning, while an inventoried asset is clean", () => {
+    const computation: CheckInputFile = {
+      path: "attested-computation/revenue.md",
+      raw: "---\ntype: Attested Computation\nruntime: bigquery\ncomputation: ./revenue.sql\n---\n# Computation\n",
+    };
+    const missing = checkBundle([computation], undefined, {
+      availablePaths: new Set([computation.path]),
+    });
+    expect(missing.findings).toContainEqual({
+      severity: "warning",
+      rule: "broken-computation",
+      file: computation.path,
+      message:
+        'computation path "./revenue.sql" points at "attested-computation/revenue.sql", which is not in the bundle',
+    });
+
+    const present = checkBundle([computation], undefined, {
+      availablePaths: new Set([computation.path, "attested-computation/revenue.sql"]),
+    });
+    expect(present.findings.some((finding) => finding.rule === "broken-computation")).toBe(false);
+  });
+
+  test("OKF 0.1 does not promote computation paths into the check contract", () => {
+    const computation: CheckInputFile = {
+      path: "computations/legacy.md",
+      raw: "---\ntype: Attested Computation\ncomputation: ./missing.sql\n---\n# Computation\n",
+    };
+    const report = checkBundle([computation], { okfVersion: "0.1", source: "declared" });
+    expect(report.findings.some((finding) => finding.rule === "broken-computation")).toBe(false);
+  });
+
+  test("OKF 0.2 stale_after warns on the boundary and afterward, but not before", () => {
+    const lifecycle: CheckInputFile = {
+      path: "reference/lifecycle.md",
+      raw: "---\ntype: Reference\nstatus: stable\nstale_after: 2026-08-05\n---\n\n# Lifecycle\n",
+    };
+    expect(checkBundle([lifecycle], undefined, { today: "2026-08-04" }).warningCount).toBe(0);
+    for (const today of ["2026-08-05", "2026-08-06"]) {
+      const report = checkBundle([lifecycle], undefined, { today });
+      expect(report).toMatchObject({ errorCount: 0, warningCount: 1 });
+      expect(report.findings[0]).toEqual({
+        severity: "warning",
+        rule: "stale-after",
+        file: "reference/lifecycle.md",
+        message: `content is stale: stale_after 2026-08-05 has elapsed as of ${today}`,
+      });
+    }
+  });
+
+  test("OKF 0.1 never interprets stale_after", () => {
+    const lifecycle: CheckInputFile = {
+      path: "reference/lifecycle.md",
+      raw: "---\ntype: Reference\nstale_after: 2020-01-01\n---\n\n# Lifecycle\n",
+    };
+    const report = checkBundle([lifecycle], { okfVersion: "0.1", source: "declared" }, { today: "2026-08-05" });
+    expect(report.findings.some((finding) => finding.rule === "stale-after")).toBe(false);
   });
 
   test("resolves a forward reference (target walked after the linking file)", () => {
@@ -811,6 +915,23 @@ describe("runCheck — exit codes and discovery", () => {
     expect(runCheck(opts([]))).toBe(EXIT_OK);
   });
 
+  test("a declared 0.1 bundle checks clean under strict mode without changing bytes", () => {
+    const index = '---\ntype: Reference\nokf_version: "0.1"\n---\n# Docs\n';
+    writeFileSync(join(root, "docs", "index.md"), index);
+    expect(runCheck(opts(["--strict"]))).toBe(EXIT_OK);
+    expect(readFileSync(join(root, "docs", "index.md"), "utf8")).toBe(index);
+  });
+
+  test("a malformed root okf_version is an exit-6 check finding", () => {
+    writeFileSync(join(root, "docs", "index.md"), "---\ntype: Reference\nokf_version: 0.2\n---\n# Docs\n");
+    const options = opts([], JSON_CTX);
+    expect(runCheck(options)).toBe(EXIT_CODES.validation);
+    const report = JSON.parse((options.stdout as ReturnType<typeof capture>).text());
+    expect(report.data.findings).toContainEqual(
+      expect.objectContaining({ severity: "error", rule: "okf-version", file: "index.md" }),
+    );
+  });
+
   test("exit 6 on a broken internal link", () => {
     writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[ghost](../reference/ghost.md)."));
     expect(runCheck(opts([]))).toBe(EXIT_CODES.validation);
@@ -824,6 +945,43 @@ describe("runCheck — exit codes and discovery", () => {
   test("portability warnings alone do not fail the gate (exit 0)", () => {
     writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "A [[wikilink]] only."));
     expect(runCheck(opts([]))).toBe(EXIT_OK);
+  });
+
+  test("elapsed stale_after is advisory normally and gates only under --strict", () => {
+    writeFileSync(join(root, "docs", "index.md"), '---\ntype: Reference\nokf_version: "0.2"\n---\n# Docs\n');
+    writeFileSync(
+      join(root, "docs", "reference", "lifecycle.md"),
+      "---\ntype: Reference\nstatus: stable\nstale_after: 2026-08-05\n---\n\n# Lifecycle\n",
+    );
+    const clock = () => new Date("2026-08-05T23:59:59Z");
+
+    const ordinary = { ...opts([], JSON_CTX), clock };
+    expect(runCheck(ordinary)).toBe(EXIT_OK);
+    const report = JSON.parse((ordinary.stdout as ReturnType<typeof capture>).text());
+    expect(report.data).toMatchObject({ errorCount: 0, warningCount: 1 });
+    expect(report.data.findings[0].rule).toBe("stale-after");
+
+    expect(runCheck({ ...opts(["--strict"]), clock })).toBe(EXIT_CODES.validation);
+  });
+
+  test("inventories a computation asset without reading or executing it", () => {
+    writeFileSync(join(root, "docs", "index.md"), '---\ntype: Reference\nokf_version: "0.2"\n---\n# Docs\n');
+    mkdirSync(join(root, "docs", "attested-computation"), { recursive: true });
+    const marker = join(root, "executed-marker");
+    writeFileSync(
+      join(root, "docs", "attested-computation", "danger.sh"),
+      `#!/bin/sh\nprintf executed > ${JSON.stringify(marker)}\n`,
+    );
+    writeFileSync(
+      join(root, "docs", "attested-computation", "safe.md"),
+      "---\ntype: Attested Computation\nsummary: Safe representation.\nruntime: shell\nparameters:\n  - { name: value, type: string, required: true }\ncomputation: ./danger.sh\n---\n# Computation\n",
+    );
+
+    const options = opts([], JSON_CTX);
+    expect(runCheck(options)).toBe(EXIT_OK);
+    const report = JSON.parse((options.stdout as ReturnType<typeof capture>).text());
+    expect(report.data.findings.some((finding: { rule: string }) => finding.rule === "broken-computation")).toBe(false);
+    expect(existsSync(marker)).toBe(false);
   });
 
   test("--strict promotes a portability warning to exit 6", () => {
@@ -1503,7 +1661,14 @@ describe("driftFindingsForBundle — docPath agrees with the fixable/isDocsRoot 
     // block is pre-rendered against the CANONICAL docPath — exactly what a correctly-normalized
     // `label` must resolve to for the block comparison to see no drift.
     const original = regenerateTaskBlock(storyDoc("X", ["lore-1"], "todo"), [row], { docPath: "docs/stories/x.md" });
-    const bundle = { label, files: [{ path: "stories/x.md", raw: original }], filenameFindings: [] };
+    const bundle = {
+      label,
+      files: [{ path: "stories/x.md", raw: original }],
+      availablePaths: new Set(["stories/x.md"]),
+      filenameFindings: [],
+      state: { okfVersion: "0.1" as const, source: "declared" as const },
+      versionIssues: [],
+    };
     const concepts = [concept("stories/x.md", { type: "Story", status: "todo", tasks: ["lore-1"] })];
     const pooled = {
       config: { flow: ["To Do", "In Progress", "Done"], overrides: {} },
@@ -1540,14 +1705,15 @@ describe("driftFindingsForBundle — docPath agrees with the fixable/isDocsRoot 
   });
 });
 
-describe("reconcileDriftFindings — newStatus: null checks only managed-block drift", () => {
+describe("reconcileDriftFindings — newTaskStatus: null checks only managed-block drift", () => {
   test("reports a stale zero-task block without inventing status drift", () => {
     const original = storyDoc("X", [], "todo");
 
     const findings = reconcileDriftFindings({
       path: "stories/x.md",
-      currentStatus: "todo",
-      newStatus: null,
+      taskStatusField: "status",
+      currentTaskStatus: "todo",
+      newTaskStatus: null,
       original,
       rows: [],
       docPath: "docs/stories/x.md",
@@ -1601,6 +1767,35 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
 
     const code = await runCheck(opts([], adapter));
     expect(code).toBe(EXIT_OK);
+  });
+
+  test("OKF 0.2 checks task drift against lore_task_status while preserving lifecycle status", async () => {
+    writeFileSync(join(root, "docs", "index.md"), '---\ntype: Reference\nokf_version: "0.2"\n---\n# Docs\n');
+    const raw =
+      "---\ntype: Story\ntitle: X\nstatus: stable\nlore_task_status: done\ntasks:\n  - lore-1\n---\n# X\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n";
+    writeDoc("stories/x.md", regenerateTaskBlock(raw, [doneRow], { docPath: "docs/stories/x.md" }));
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const o = opts([], adapter);
+    expect(await runCheck(o)).toBe(EXIT_OK);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(parsed.data.findings).toEqual([]);
+  });
+
+  test("OKF 0.2 reports lore_task_status drift without comparing lifecycle status", async () => {
+    writeFileSync(join(root, "docs", "index.md"), '---\ntype: Reference\nokf_version: "0.2"\n---\n# Docs\n');
+    const raw =
+      "---\ntype: Story\ntitle: X\nstatus: deprecated\nlore_task_status: todo\ntasks:\n  - lore-1\n---\n# X\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n";
+    writeDoc("stories/x.md", regenerateTaskBlock(raw, [doneRow], { docPath: "docs/stories/x.md" }));
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const o = opts([], adapter);
+    expect(await runCheck(o)).toBe(EXIT_CODES.validation);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    const drift = parsed.data.findings.find((finding: { rule: string }) => finding.rule === "status-drift");
+    expect(drift.message).toContain('lore_task_status is "todo"');
+    expect(drift.message).toContain('recompute to "done"');
+    expect(drift.message).not.toContain("deprecated");
   });
 
   test("a stale persisted status is a status-drift error (exit 6)", async () => {

@@ -111,7 +111,12 @@ export async function loadRetrievalGraph(options: RetrievalGraphOptions): Promis
   }
 
   let indexedWarnings = new WarningCollector();
-  const loadNative = memoizeLadybugNativeLoader(options.loadNativeDriver ?? loadLadybugNativeDriver);
+  const attemptState = { nativeReached: false };
+  const memoizedNative = memoizeLadybugNativeLoader(options.loadNativeDriver ?? loadLadybugNativeDriver);
+  const loadNative: LadybugNativeLoader = () => {
+    attemptState.nativeReached = true;
+    return memoizedNative();
+  };
   const loadSource = async () => {
     const attemptWarnings = new WarningCollector();
     const source = await loadLadybugProjectionSource({
@@ -170,7 +175,7 @@ export async function loadRetrievalGraph(options: RetrievalGraphOptions): Promis
   } catch (cause) {
     if (policy === "indexed") throw cause;
     const reference = await loadReferenceGraph(options);
-    warnReferenceFallback(options.warnings, "failed");
+    warnReferenceFallback(options.warnings, attemptState.nativeReached ? "failed" : "preflight");
     return reference;
   }
 }
@@ -209,11 +214,16 @@ function copyWarnings(from: WarningCollector, to?: WarningCollector): void {
   for (const message of from.list()) to.add(message);
 }
 
-function warnReferenceFallback(warnings: WarningCollector | undefined, reason: "unsupported" | "failed"): void {
+function warnReferenceFallback(
+  warnings: WarningCollector | undefined,
+  reason: "unsupported" | "preflight" | "failed",
+): void {
   warnings?.add(
     reason === "unsupported"
       ? "native indexed retrieval is unsupported on this platform; using the in-memory reference backend"
-      : "native indexed retrieval failed; using the in-memory reference backend",
+      : reason === "preflight"
+        ? "indexed retrieval preflight failed before native activation; using the in-memory reference backend"
+        : "native indexed retrieval failed; using the in-memory reference backend",
   );
 }
 

@@ -54,15 +54,11 @@
  */
 
 import { join } from "node:path";
-import {
-  type BacklogAdapter,
-  type BacklogTaskDetail,
-  bunBacklogSpawn,
-  createBacklogAdapter,
-} from "../adapters/backlog";
+import type { BacklogAdapter, BacklogTaskDetail } from "../adapters/backlog";
+import { createConfiguredTrackerAdapter } from "../adapters/tracker";
 import { type BundleGraph, conceptNotInBundle, loadBundle, toRefList } from "../core/bundle";
 import { type Concept, idFromPath, serializeConcept } from "../core/concept";
-import { loadProfile, type Profile, profileTypeDeclaresField } from "../core/profile";
+import { loadProfile, type Profile, profileForBundle, profileTypeDeclaresField } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
@@ -547,15 +543,14 @@ export async function moveBackRefs(
 // ── Shared setup ───────────────────────────────────────────────────────────────
 
 /**
- * The default {@link BacklogAdapter}: the real `backlog` binary resolved from PATH, spawned in
- * `root` so a non-default root routes writes to the right project. Shared with `commands/rename.ts`,
- * which needs the same adapter to move a renamed concept's back-references (see
+ * The configured default tracker, rooted in the selected project. Shared with `commands/rename.ts`,
+ * which needs the same adapter contract to move a renamed concept's back-references (see
  * {@link moveBackRefs}) — this file is the single owner of the `doc:<conceptId>` coupling contract
  * (ADR-0009 §2), so any command that touches it goes through this module rather than re-deriving
  * the label/adapter rules itself.
  */
 export function defaultAdapter(root: string): BacklogAdapter {
-  return createBacklogAdapter(bunBacklogSpawn(undefined, root));
+  return createConfiguredTrackerAdapter(root);
 }
 
 /**
@@ -633,8 +628,9 @@ async function prepare(options: LinkOptions, command: "link" | "unlink"): Promis
   }
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
-  const profile = loadProfile({ root: options.root });
-  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
+  const producerProfile = loadProfile({ root: options.root });
+  const graph = loadBundle(docsRoot, { warnings: advisories, profile: producerProfile });
+  const profile = profileForBundle(producerProfile, graph.state);
   advisories.flush({ color: options.output.color, stderr: options.stderr });
 
   const concept = graph.concepts.get(id);

@@ -2,7 +2,7 @@
  * check.ts — the **pure** engine behind `lore check`'s link/anchor + portability passes.
  *
  * `lore check` is lore's read-only CI **drift gate** (ADR-0007). Of its four specified
- * passes, this module owns the two that are deterministic and dependency-free today:
+ * passes, this module owns the deterministic, dependency-free judgments:
  *
  * - **Internal cross-link + heading-anchor validation** (the gate, exit `6`): every
  *   relative `.md` link target in the bundle must resolve to a real file, and every
@@ -12,8 +12,9 @@
  *   {@link validateLink} classifier) plus a body-text scan for Obsidian-isms (wikilinks,
  *   embeds, callouts, highlights, `%%`-comments). Every such finding is a **warning** that
  *   never fails the gate on its own (ADR-0007, portable-markdown.md).
- * - **Status reconciliation + managed-block drift** (LORE-27, the gate, exit `6`): a `Story`
- *   whose persisted `status` no longer matches its live Backlog rollup, or whose
+ * - **Task-progress reconciliation + managed-block drift** (LORE-27, the gate, exit `6`): a concept
+ *   whose version-selected task rollup (`status` in OKF 0.1, `lore_task_status` in OKF 0.2) no
+ *   longer matches its live Backlog rollup, or whose
  *   `<!-- lore:tasks -->` region no longer matches what {@link regenerateTaskBlock} would
  *   produce from current task data, is drift — the same condition `lore sync` would fix by
  *   writing. {@link reconcileDriftFindings} is the pure judgment; resolving each linked task's
@@ -22,6 +23,8 @@
  *   gather it also feeds to `lore sync`) — ADR-0014 keeps that IO out of core. Both findings
  *   are **errors**: unlike the portability lint, drift always gates (ADR-0007), never merely
  *   advisory under `--strict`.
+ * - **OKF staleness** (advisory): an OKF 0.2 concept whose `stale_after` date is today or earlier
+ *   produces a warning. The command layer supplies the UTC date, preserving this module's purity.
  *
  * External-URL liveness is opt-in and deferred (no networking in core).
  *
@@ -53,10 +56,12 @@ import * as yaml from "js-yaml";
 import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { extractLinkTargets, nodeText, walkMdast } from "./bundle";
-import { idFromPath, normalizeInput } from "./concept";
+import { idFromPath, normalizeInput, tryReadFrontmatter } from "./concept";
 import type { Finding, Severity } from "./finding";
 import { decodeTarget, isExternalTarget, pathPart, validateLink } from "./links";
 import { type ManagedTaskRow, regenerateTaskBlock } from "./managed-block";
+import { type BundleState, CURRENT_OKF_VERSION, type TaskRollupField } from "./okf-version";
+import { ATTESTED_COMPUTATION_TYPE } from "./profile";
 import type { ReconciledStatus } from "./reconcile";
 
 /** `error` fails the gate (exit `6`); `warning` is advisory (fails only under `--strict`). The shared {@link Severity}. */
@@ -71,9 +76,13 @@ export type CheckSeverity = Severity;
 export type CheckRule =
   | "broken-link"
   | "broken-anchor"
+  | "broken-source"
+  | "broken-computation"
+  | "stale-after"
   | "status-drift"
   | "managed-block-drift"
   | "unsupported-task-coupling"
+  | "okf-version"
   | "unknown-type"
   | "portability"
   | "external-link";
@@ -93,6 +102,14 @@ export interface CheckInputFile {
   readonly path: string;
   /** The file's raw UTF-8 content (frontmatter fence included; stripped here). */
   readonly raw: string;
+}
+
+/** Clock-derived input supplied by the command layer; omitting it disables time-sensitive checks. */
+export interface CheckBundleOptions {
+  /** Current UTC calendar date in YYYY-MM-DD form. */
+  readonly today?: string;
+  /** Every regular file path in the bundle, used only for path existence checks; file bytes are never read here. */
+  readonly availablePaths?: ReadonlySet<string>;
 }
 
 /** The aggregate result of a `lore check` run over a bundle. */
@@ -309,7 +326,12 @@ const BLOCKED_ADDRESS_RANGES: readonly AddressRange[] = [
  * — every member is known before any link is checked — and the single parse per file is
  * shared across the heading, link, and portability consumers.
  */
-export function checkBundle(files: readonly CheckInputFile[]): CheckReport {
+export function checkBundle(
+  files: readonly CheckInputFile[],
+  state: BundleState = { okfVersion: CURRENT_OKF_VERSION, source: "declared" },
+  options: CheckBundleOptions = {},
+): CheckReport {
+  const availablePaths = options.availablePaths ?? new Set(files.map((file) => file.path));
   // Pass 1 — index: parse each file's body once into an mdast tree, keyed by bundle-relative
   // id, and record its heading-slug set. The id key set is the membership; every file is
   // indexed before any link is checked, so a forward reference resolves.
@@ -336,10 +358,128 @@ export function checkBundle(files: readonly CheckInputFile[]): CheckReport {
         findings.push({ severity: "warning", rule: "portability", file: file.path, message: finding.message });
       }
     }
+    if (state.okfVersion === "0.2") {
+      for (const target of sourceResourceTargets(file.path, file.raw)) {
+        for (const finding of linkFindings(target, file.path, dir, id, slugsById)) {
+          findings.push({
+            severity: "warning",
+            rule: "broken-source",
+            file: file.path,
+            message: `sources[].resource ${finding.message}`,
+          });
+        }
+      }
+      findings.push(...computationResourceFindings(file.path, file.raw, availablePaths));
+      if (options.today !== undefined) {
+        findings.push(...staleAfterFindings(file.path, file.raw, options.today));
+      }
+    }
     findings.push(...portabilityScan(tree, file.path));
   }
 
   return summarize(findings, files.length);
+}
+
+/**
+ * Report a missing file-backed computation without opening or evaluating it. External URLs are
+ * outside the deterministic bundle gate, while relative and bundle-root paths resolve against the
+ * same POSIX namespace the command layer inventories with its symlink-safe walker.
+ */
+function computationResourceFindings(path: string, raw: string, availablePaths: ReadonlySet<string>): CheckFinding[] {
+  let frontmatter: Record<string, unknown> | null;
+  try {
+    frontmatter = tryReadFrontmatter(path, raw);
+  } catch {
+    return [];
+  }
+  if (
+    typeof frontmatter?.type !== "string" ||
+    frontmatter.type.trim().toLowerCase() !== ATTESTED_COMPUTATION_TYPE.toLowerCase() ||
+    typeof frontmatter.computation !== "string"
+  ) {
+    return [];
+  }
+  const target = frontmatter.computation.trim();
+  if (target === "" || isExternalTarget(target)) {
+    return [];
+  }
+  const decoded = decodeTarget(pathPart(target));
+  if (decoded === "") {
+    return [];
+  }
+  const dir = posix.dirname(path);
+  const resolved = posix.normalize(decoded.startsWith("/") ? decoded.slice(1) : posix.join(dir, decoded));
+  if (availablePaths.has(resolved)) {
+    return [];
+  }
+  return [
+    {
+      severity: "warning",
+      rule: "broken-computation",
+      file: path,
+      message: `computation path ${JSON.stringify(target)} points at ${JSON.stringify(resolved)}, which is not in the bundle`,
+    },
+  ];
+}
+
+/** Surface an elapsed OKF 0.2 stale_after date as advisory quality state, never a conformance error. */
+function staleAfterFindings(path: string, raw: string, today: string): CheckFinding[] {
+  let frontmatter: Record<string, unknown> | null;
+  try {
+    frontmatter = tryReadFrontmatter(path, raw);
+  } catch {
+    return [];
+  }
+  const staleAfter = frontmatter?.stale_after;
+  if (typeof staleAfter !== "string" || !isIsoCalendarDate(staleAfter) || today < staleAfter) {
+    return [];
+  }
+  return [
+    {
+      severity: "warning",
+      rule: "stale-after",
+      file: path,
+      message: `content is stale: stale_after ${staleAfter} has elapsed as of ${today}`,
+    },
+  ];
+}
+
+/** Validate a real UTC calendar date, not merely a date-shaped string. */
+function isIsoCalendarDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
+}
+
+/**
+ * Read string-valued `sources[].resource` entries for the OKF 0.2 check pass. Malformed YAML is
+ * deliberately ignored here because `bodyText` preserves the historical check behavior and
+ * `lore validate` owns frontmatter diagnostics; a well-formed but malformed sources shape is
+ * likewise validated by the schema layer, not guessed at by this graph-quality pass.
+ */
+function sourceResourceTargets(path: string, raw: string): string[] {
+  let frontmatter: Record<string, unknown> | null;
+  try {
+    frontmatter = tryReadFrontmatter(path, raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(frontmatter?.sources)) {
+    return [];
+  }
+  const targets: string[] = [];
+  for (const source of frontmatter.sources) {
+    if (typeof source !== "object" || source === null || Array.isArray(source)) {
+      continue;
+    }
+    const resource = (source as Record<string, unknown>).resource;
+    if (typeof resource === "string" && resource.trim() !== "") {
+      targets.push(resource.trim());
+    }
+  }
+  return targets;
 }
 
 // ── Status + managed-block drift (the gate) ──────────────────────────────────────
@@ -348,10 +488,12 @@ export function checkBundle(files: readonly CheckInputFile[]): CheckReport {
 export interface ReconcileDriftInput {
   /** The bundle-relative POSIX path of the concept, attributed on any finding (bundle-label-prefixed by the caller in multi-root mode). */
   readonly path: string;
-  /** The concept's persisted `frontmatter.status`, as currently on disk. */
-  readonly currentStatus: unknown;
-  /** The recomputed status (`core/reconcile.ts`'s `reconcileStatus`); `null` when the concept has no linked tasks, so only managed-block drift applies. */
-  readonly newStatus: ReconciledStatus | null;
+  /** The version-selected task-rollup key (`status` for 0.1; `lore_task_status` for 0.2). */
+  readonly taskStatusField: TaskRollupField;
+  /** The concept's persisted task-rollup value, as currently on disk. */
+  readonly currentTaskStatus: unknown;
+  /** The recomputed task rollup; `null` when the concept has no linked tasks, so only managed-block drift applies. */
+  readonly newTaskStatus: ReconciledStatus | null;
   /** The concept's full raw file bytes, as currently on disk (LF-normalized). */
   readonly original: string;
   /** The linked tasks' live data, in the concept's `tasks:` order — {@link regenerateTaskBlock}'s `rows`. */
@@ -387,23 +529,23 @@ export interface ReconcileDriftInput {
 export function reconcileDriftFindings(input: ReconcileDriftInput): CheckFinding[] {
   const fixable = input.fixable;
   const findings: CheckFinding[] = [];
-  if (input.newStatus !== null && input.newStatus !== input.currentStatus) {
-    // `status:` is schema-nullish (profile.ts's optional fields accept both an OMITTED key --
+  if (input.newTaskStatus !== null && input.newTaskStatus !== input.currentTaskStatus) {
+    // The task-rollup field is schema-nullish in 0.1 (profile.ts's optional fields accept both an OMITTED key --
     // `undefined` -- and an explicit empty/`null` scalar), and `JSON.stringify` renders each
     // inconsistently: `undefined` becomes the bare, unquoted word "undefined" (not a string at all),
     // while `null` at least stringifies correctly but reads as the literal word "null" rather than
     // "no status set yet". Both are normalized to the same friendly placeholder, distinctly from
-    // `newStatus`'s always-quoted form.
+    // `newTaskStatus`'s always-quoted form.
     const currentDisplay =
-      input.currentStatus === undefined || input.currentStatus === null
+      input.currentTaskStatus === undefined || input.currentTaskStatus === null
         ? "(unset)"
-        : JSON.stringify(input.currentStatus);
+        : JSON.stringify(input.currentTaskStatus);
     const hint = fixable ? " — run `lore sync` to reconcile" : "";
     findings.push({
       severity: "error",
       rule: "status-drift",
       file: input.path,
-      message: `status is ${currentDisplay} but the linked tasks recompute to ${JSON.stringify(input.newStatus)}${hint}`,
+      message: `${input.taskStatusField} is ${currentDisplay} but the linked tasks recompute to ${JSON.stringify(input.newTaskStatus)}${hint}`,
     });
   }
   const regenerated = regenerateTaskBlock(input.original, input.rows, { docPath: input.docPath });

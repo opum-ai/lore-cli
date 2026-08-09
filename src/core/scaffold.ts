@@ -13,7 +13,7 @@
  * returns a {@link ScaffoldPlan} of intended bytes that golden tests pin exactly, and
  * `commands/init.ts` is the thin layer that applies the plan **idempotently** (writing
  * only absent files, never clobbering) — the side effects live there, the bytes live
- * here. The single non-deterministic input, the root index's `timestamp`, enters
+ * here. The single non-deterministic input, the root index's provenance instant, enters
  * through an injected option (lore-design §8), so the same options always yield the
  * same plan.
  *
@@ -28,6 +28,7 @@ import { CONFIG_REL_PATH } from "../config";
 import { type Concept, idFromPath, serializeConcept, serializeConceptWithModeline } from "./concept";
 import { defaultProfile, PROFILE_REL_PATH, type Profile } from "./profile";
 import { emitSchemaFiles, schemaModeline } from "./schema";
+import { versionedProvenance } from "./template";
 
 /**
  * The bundle root — the directory every concept lives under, relative to the repo root.
@@ -74,7 +75,7 @@ export interface ScaffoldPlan {
   readonly files: readonly ScaffoldFile[];
 }
 
-/** Options for {@link buildScaffold}; the timestamp is the one injected determinism seam. */
+/** Options for {@link buildScaffold}; the provenance instant is the one injected determinism seam. */
 export interface ScaffoldOptions {
   /**
    * ISO-8601 datetime (e.g. `2026-06-25T12:00:00Z`) stamped on the generated root
@@ -85,7 +86,7 @@ export interface ScaffoldOptions {
   /**
    * The active profile whose types drive the emitted JSON Schemas and whose `okfVersion` stamps
    * the root index. Defaults to the built-in {@link defaultProfile}, so a zero-config `lore init`
-   * scaffolds the six story-convention schemas exactly as before.
+   * scaffolds the built-in story-convention and OKF 0.2 schemas.
    */
   readonly profile?: Profile;
 }
@@ -125,7 +126,7 @@ function schemaFiles(profile: Profile): ScaffoldFile[] {
 
 /**
  * The minimal reserved root index: byte-stable frontmatter (a `Reference` carrying
- * `okf_version: "0.1"` — the sole carrier in the bundle), with the editor modeline
+ * `okf_version` — the sole carrier in the bundle — and versioned provenance), with the editor modeline
  * spliced in as the **first line inside** the `---` fence via
  * {@link serializeConceptWithModeline} (the shared placement seam in concept.ts).
  *
@@ -146,12 +147,12 @@ function rootIndexDocument(timestamp: string, profile: Profile): string {
       type: ROOT_INDEX_TYPE,
       title: "Documentation",
       summary: "Root index of this OKF documentation bundle, created by `lore init`.",
-      timestamp,
+      ...versionedProvenance(timestamp, profile.okfVersion),
       okf_version: profile.okfVersion,
     },
     body: ROOT_INDEX_BODY,
   };
-  // Only `okf_version` above is profile-derived; the serialization choice itself (structural
+  // Versioned provenance and `okf_version` above are profile-derived; serialization itself (structural
   // profile, conditional modeline) is shared with every other reserved structural file — see
   // {@link serializeStructuralConcept}.
   return serializeStructuralConcept(concept, profile);
@@ -217,24 +218,35 @@ const DEFAULT_CONFIG_TOML = `# lore configuration — committed, team-shared kno
 # space          = "ENG"
 # parent_page_id = "98765"
 # format         = "storage"   # or "adf"
+
+# [tracker.jira]
+# Non-secret settings for the jira-cli tracker adapter. jira-cli owns the URL,
+# email, API token, HTTP transport, timeout, and Markdown/ADF conversion; run
+# \`jira init --yes\` in the project root instead of storing credentials here.
+# profile        = "work"       # optional; omit to use jira-cli's default profile
+# project        = "JT"
+# board          = "42"         # optional; retained for Jira-aware workflows
+# issue_type     = "Task"
+# default_labels = ["lore"]
+# status_flow    = ["To Do", "In Progress", "Done"]
 `;
 
 /**
  * The default, fully-commented `.lore/profile.toml`. The profile is the declarative source of
  * truth for the type vocabulary (ADR-0006): with this file absent — or every line below
- * commented — lore uses the built-in story-convention profile (Epic/Story/Spec/ADR/Runbook/
- * Reference), so a fresh `init` produces a file that changes nothing until a team defines its own
+ * commented — lore uses the built-in profile (Epic/Story/Spec/ADR/Runbook/Reference plus OKF 0.2
+ * Attested Computation), so a fresh `init` produces a file that changes nothing until a team defines its own
  * types. It is separate from `config.toml`: config carries operational knobs, the profile carries
  * the type system. See docs/adr/0006-schema-types-templates.md.
  */
 const DEFAULT_PROFILE_TOML = `# lore profile — committed, declarative type vocabulary for this bundle.
 # OPTIONAL: with this file absent, or every line below commented, lore uses the built-in
-# story-convention profile (Epic/Story/Spec/ADR/Runbook/Reference). Fill it in to define your
+# built-in profile (Epic/Story/Spec/ADR/Runbook/Reference plus Attested Computation). Define your
 # own types. lore generates its runtime validators + editor JSON Schemas from this file at load.
 
 # [profile]
 # name = "my-project"      # required once any line below is uncommented
-# okf_version = "0.1"      # required; asserted against the bundle-root index.md
+# okf_version = "0.2"      # required; supported targets are 0.1 and 0.2
 # case = "Title"           # type-name casing convention (advisory; powers the did-you-mean hint)
 # resource_base = ""       # prefix for the stamped \`resource\` link (empty = none)
 

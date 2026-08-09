@@ -183,6 +183,11 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
       { name: "claude", takesValue: false, summary: "Set up the Claude Code bridge (SKILL.md + CLAUDE.md)" },
       { name: "codex", takesValue: false, summary: "Set up the Codex bridge (SKILL.md + AGENTS.md)" },
       {
+        name: "tracker",
+        takesValue: true,
+        summary: "Select the task tracker backend without prompting (backlog|jira)",
+      },
+      {
         name: "scaffold",
         takesValue: true,
         repeatable: true,
@@ -206,7 +211,12 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     // a stderr warning plus a `backlog: {capable: false}` field, never a thrown error — so no
     // `backlog` seam code is added here despite `runInit` calling `adapter.probe()`.
     exitCodes: exitCodesFor(["profile", "write"]),
-    examples: ["lore init", "lore init --claude --codex", "lore init --yes --scaffold mkdocs"],
+    examples: [
+      "lore init",
+      "lore init --tracker jira",
+      "lore init --claude --codex",
+      "lore init --yes --scaffold mkdocs",
+    ],
   },
   {
     name: "new",
