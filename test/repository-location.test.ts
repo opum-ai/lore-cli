@@ -146,9 +146,7 @@ describe("canonical repository location", () => {
     expect(documents.length).toBeGreaterThan(20);
     expect(documents).toContain("CLAUDE.md");
 
-    const offenders = documents.flatMap((path) =>
-      staleFamilySlugs(text(path)).map((stale) => `${path}: ${stale}`),
-    );
+    const offenders = documents.flatMap((path) => staleFamilySlugs(text(path)).map((stale) => `${path}: ${stale}`));
 
     expect(offenders).toEqual([]);
   });
@@ -206,10 +204,9 @@ describe("canonical npm package family", () => {
       .filter((path) => !PROVENANCE_EXEMPT.has(path))
       .flatMap((path) => {
         const body = text(path);
-        return [
-          ...superseded.filter((stale) => body.includes(stale)),
-          ...staleFamilySlugs(body),
-        ].map((stale) => `${path}: ${stale}`);
+        return [...superseded.filter((stale) => body.includes(stale)), ...staleFamilySlugs(body)].map(
+          (stale) => `${path}: ${stale}`,
+        );
       });
 
     expect(offenders).toEqual([]);
