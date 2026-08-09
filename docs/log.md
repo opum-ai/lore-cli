@@ -128,6 +128,7 @@
 - 2026-08-07T15:06:59-05:00 d14d592e15073d3384fab36aa1bd5d58336e7880 docs: reconcile jira adapter merge
 - 2026-08-08T09:51:35-05:00 2300eb5370bb4a5bc58d13e5b9ebfbf79f50f8ad feat: add init tracker selection
 - 2026-08-08T09:56:58-05:00 ccc767b1dbea278e4616bc919f3900a1271732c1 docs: reconcile init tracker selection
+- 2026-08-09T02:30:44-05:00 8f3bc9213f9aa34234483fe94ef51bd99bda0120 chore(release): prepare 0.2.0 metadata
 
 ## docs/.obsidian
 
@@ -387,3 +388,4 @@
 - 2026-08-04T15:46:22-05:00 458a0397d343da510690b574a426198c58c14507 docs: settle 0.1.1 release preparation
 - 2026-08-04T16:20:23-05:00 1f0c2c621754083a1b10be85e1c8c37acb4edd5b docs: track 0.1.1 publication
 - 2026-08-04T21:40:39-05:00 4ded93c0c67250928d1e382f9ca3b6105511d693 docs: record Lore CLI 0.1.1 release
+- 2026-08-09T02:30:44-05:00 8f3bc9213f9aa34234483fe94ef51bd99bda0120 chore(release): prepare 0.2.0 metadata
