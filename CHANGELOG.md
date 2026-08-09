@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-09
+
+### Added
+
+- **Lore can now use either Backlog.md or Jira Cloud as its task tracker**
+  (LCLI-315.1/315.2/315.3). A backend-neutral adapter owns task reads,
+  writes, search, creation, and status flow; the Jira backend delegates
+  credentials, HTTP, timeouts, transitions, and ADF conversion to
+  `@salient-ai/jira-cli`. `lore init --tracker backlog|jira` provides a
+  prompt-free selection equivalent to the interactive wizard, while existing
+  zero-config repositories remain byte-stable Backlog projects.
+- **OKF 0.2 Attested Computations are a first-class, representation-only
+  concept type** (LCLI-314.5). Lore can scaffold, validate, link, and check
+  their runtime, parameters, computation, executor, and attester metadata,
+  including missing-resource diagnostics, but never executes bundle code.
+
+### Changed
+
+- **New bundles now emit OKF 0.2 while declared OKF 0.1 bundles remain
+  readable, strict-clean, and byte-stable** (LCLI-314.1 through LCLI-314.6).
+  OKF 0.2 concepts use `generated: { by, at }` provenance and `sources`
+  frontmatter, including internal provenance edges and credibility signals.
+  Lore also models `verified` and `stale_after`, warns when content is stale,
+  and keeps authored OKF lifecycle `status` separate from derived
+  `lore_task_status`. Legacy `timestamp`, body `# Citations`, unknown fields,
+  and unknown types remain tolerated under their negotiated consumer rules;
+  migration is never an implicit read or check side effect.
+- **OKF validation, checking, projection, schemas, templates, generated
+  guidance, and Docker E2E coverage now negotiate the bundle's declared
+  producer version** (LCLI-314). The permissive OKF conformance floor remains
+  separate from Lore's stricter profile and documentation-coherence gates.
+
+### Fixed
+
+- Generated `docs/log.md` commit subjects containing MDX-sensitive `<` or `{`
+  characters are now wrapped in collision-safe CommonMark code spans, so a
+  successful `lore sync` cannot make `lore check --strict` fail (LCLI-316).
+- `lore init` now distinguishes an uninitialized Backlog project from a
+  genuinely non-JSON-capable Backlog binary and recommends `backlog init`
+  instead of an unnecessary reinstall (LCLI-319).
+- Automatic indexed retrieval now reports a sanitized preflight-fallback
+  advisory when source loading fails before native activation, without
+  misclassifying it as a LadybugDB failure or changing explicit-indexed
+  behavior (LCLI-317).
+- Explicit workspace `--repository` selections are validated against the
+  manifest before member, Git, Backlog, source, or native loading, so an
+  unknown ID is reported consistently even in a single-member workspace
+  whose declared member is not yet valid (LCLI-318).
+
 ## [0.1.1] - 2026-08-04
 
 ### Added

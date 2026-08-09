@@ -127,6 +127,7 @@
 - 2026-08-07T08:52:10-05:00 9ebfca9f0268f2f0448ee92eef42730cfc4dd205 feat: add jira-cli tracker adapter
 - 2026-08-07T15:06:59-05:00 d14d592e15073d3384fab36aa1bd5d58336e7880 docs: reconcile jira adapter merge
 - 2026-08-08T09:51:35-05:00 2300eb5370bb4a5bc58d13e5b9ebfbf79f50f8ad feat: add init tracker selection
+- 2026-08-08T09:56:58-05:00 ccc767b1dbea278e4616bc919f3900a1271732c1 docs: reconcile init tracker selection
 
 ## docs/.obsidian
 
