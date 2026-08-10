@@ -48,7 +48,7 @@ product or release state.
 ## Notes
 
 This Story implements the Lore CLI owner action from the
-[cross-product documentation authority audit](https://github.com/salient-data/opum-doc/blob/dev/docs/reference/cross-product-documentation-authority-audit.md).
+[cross-product documentation authority audit](https://github.com/opum-ai/opum-doc/blob/dev/docs/reference/cross-product-documentation-authority-audit.md).
 Its local control set is [Lore CLI release truth](../reference/lore-cli-release-truth.md),
 [Lore CLI documentation ownership](../reference/lore-cli-documentation-ownership.md),
 and the [Lore CLI handover](../runbooks/lore-cli-handover.md).
