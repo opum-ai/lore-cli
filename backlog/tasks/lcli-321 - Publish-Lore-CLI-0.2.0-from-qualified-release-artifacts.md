@@ -1,11 +1,11 @@
 ---
 id: LCLI-321
 title: Publish Lore CLI 0.2.0 from qualified release artifacts
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-09 05:46'
-updated_date: '2026-08-12 21:57'
+updated_date: '2026-08-12 22:15'
 labels:
   - release
   - publication
@@ -38,7 +38,7 @@ Publish Lore CLI 0.2.0 only after release metadata is integrated into main and t
 - [x] #3 Before publication, either LCLI-278 is Done with the live external approval control verified or the owner explicitly authorizes a manual qualified-artifact path for 0.2.0; publish:true is never used while the current unprotected Environment persists
 - [x] #4 All six platform packages are published public before @opum-ai/lore from the exact qualified artifacts, with resumable checks preserving package-set consistency
 - [x] #5 Anonymous registry metadata, shasums/integrity, and a clean install confirm all seven 0.2.0 packages are public and the installed CLI reports 0.2.0
-- [ ] #6 A non-draft, non-prerelease v0.2.0 GitHub Release and synchronized release truth, Story, task, campaign, and handover evidence record the publication and its authorization boundary
+- [x] #6 A non-draft, non-prerelease v0.2.0 GitHub Release and synchronized release truth, Story, task, campaign, and handover evidence record the publication and its authorization boundary
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -86,3 +86,9 @@ created: 2026-08-09 14:06
 AC#2 evidence: Release run 31317296988 executed on v0.2.0 / eb03eb2adcb7b391289955a5bdf5ba4b6f841017 with publish=false and passed every blocking gate, six matching-host qualifications, acceptance-evidence assembly, and package/install-sanity; optional scale observation and OIDC publish were skipped. Artifact 9039171783 (npm-packages, 232114981 bytes, archive digest sha256:8abb10f32b5dfd3917817ae1e26c113515d1f63826c3c209fe1cdaa62dba4f58, expires 2026-11-07) was downloaded to a private temporary directory and contains exactly seven distinct 0.2.0 tarballs: six platform packages plus @opum-ai/lore. Each tarball was read-only inventoried with SHA-1, SHA-256, and SHA-512 integrity; no rebuild or repack occurred.
 ---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Published Lore CLI 0.2.0 from the exact seven tarballs retained by successful publish:false Release run 31317296988 at immutable main commit eb03eb2. All six platform packages were published and integrity-verified before the root launcher; anonymous metadata matched every recorded SHA-1 and SHA-512 value; a clean install selected the matching Darwin ARM64 package and reported 0.2.0; and the non-draft, non-prerelease GitHub Release exists. Release truth and Story settlement passed local static, focused, strict Lore, and diff gates, then all eight required checks in PR #349 to dev (0c69ed0) and PR #350 to main (c3e5f0d). LCLI-278 remains open, so future publish:true dispatches remain prohibited until the external approval control is effective.
+<!-- SECTION:FINAL_SUMMARY:END -->
