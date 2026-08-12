@@ -130,6 +130,7 @@
 - 2026-08-08T09:56:58-05:00 ccc767b1dbea278e4616bc919f3900a1271732c1 docs: reconcile init tracker selection
 - 2026-08-09T02:30:44-05:00 8f3bc9213f9aa34234483fe94ef51bd99bda0120 chore(release): prepare 0.2.0 metadata
 - 2026-08-09T02:48:07-05:00 c7f0f6d9d101706ad583ad6c7e657f5615c5c2d3 docs: settle 0.2.0 release preparation
+- 2026-08-12T17:01:31-05:00 ca94e0c4aed06344925e67f822246a93659224b3 docs: record Lore CLI 0.2.0 release
 
 ## docs/.obsidian
 
@@ -272,6 +273,7 @@
 - 2026-08-07T08:52:10-05:00 9ebfca9f0268f2f0448ee92eef42730cfc4dd205 feat: add jira-cli tracker adapter
 - 2026-08-08T09:51:35-05:00 2300eb5370bb4a5bc58d13e5b9ebfbf79f50f8ad feat: add init tracker selection
 - 2026-08-09T10:57:34-05:00 694b2ff89f4c91884b749d09d41a41a4f7343ad2 test: scope the stale-owner gate to the product family, not to two repositories
+- 2026-08-12T17:01:31-05:00 ca94e0c4aed06344925e67f822246a93659224b3 docs: record Lore CLI 0.2.0 release
 
 ## docs/runbooks
 
@@ -394,3 +396,4 @@
 - 2026-08-09T02:30:44-05:00 8f3bc9213f9aa34234483fe94ef51bd99bda0120 chore(release): prepare 0.2.0 metadata
 - 2026-08-09T02:48:07-05:00 c7f0f6d9d101706ad583ad6c7e657f5615c5c2d3 docs: settle 0.2.0 release preparation
 - 2026-08-09T10:57:34-05:00 694b2ff89f4c91884b749d09d41a41a4f7343ad2 test: scope the stale-owner gate to the product family, not to two repositories
+- 2026-08-12T17:01:31-05:00 ca94e0c4aed06344925e67f822246a93659224b3 docs: record Lore CLI 0.2.0 release

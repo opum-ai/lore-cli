@@ -7,7 +7,7 @@ tags:
   - governance
 summary: Record the first immutable public package release while retaining the unresolved control gate for future automated publication.
 timestamp: 2026-08-04T02:50:00Z
-status: in-progress
+status: todo
 tasks:
   - lcli-253
   - lcli-269
@@ -145,7 +145,7 @@ for future automated OIDC publication.
 | [LCLI-312](../../backlog/tasks/lcli-312%20-%20Prepare-and-deliver-npm-0.1.1-release-metadata.md) | Prepare and deliver npm 0.1.1 release metadata | Done |
 | [LCLI-313](../../backlog/tasks/lcli-313%20-%20Publish-Lore-CLI-0.1.1-from-qualified-release-artifacts.md) | Publish Lore CLI 0.1.1 from qualified release artifacts | Done |
 | [LCLI-320](../../backlog/tasks/lcli-320%20-%20Prepare-and-deliver-Lore-CLI-0.2.0-release-metadata.md) | Prepare and deliver Lore CLI 0.2.0 release metadata | Done |
-| [LCLI-321](../../backlog/tasks/lcli-321%20-%20Publish-Lore-CLI-0.2.0-from-qualified-release-artifacts.md) | Publish Lore CLI 0.2.0 from qualified release artifacts | In Progress |
+| [LCLI-321](../../backlog/tasks/lcli-321%20-%20Publish-Lore-CLI-0.2.0-from-qualified-release-artifacts.md) | Publish Lore CLI 0.2.0 from qualified release artifacts | Done |
 <!-- lore:tasks:end -->
 
 ## Notes
