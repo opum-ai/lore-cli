@@ -42,8 +42,8 @@ provenance records and must not be executed.
 - Lore owns the documentation graph; use Lore for creation, renames,
   Story/task coupling, synchronization, and checks.
 - This repository owns Lore CLI implementation and release evidence.
-  Lore-wide policy lives in `salient-data/lore-doc`; product-family and Opum
-  commercial policy live in `salient-data/opum-doc`; Quest product and CLI
+  Lore-wide policy lives in `opum-ai/lore-doc`; product-family and Opum
+  commercial policy live in `opum-ai/opum-doc`; Quest product and CLI
   policy live in their respective owner repositories.
 - A plan, passing test, dry-run package, or workflow procedure is not evidence
   of a public release.

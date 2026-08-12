@@ -40,12 +40,12 @@ It is not authoritative for anything else in the estate.
 
 **Before answering any cross-repository, ownership, package-status, or
 infrastructure question, read the owner record rather than inferring from local
-context:** `salient-data/opum-doc`, branch `dev`,
+context:** `opum-ai/opum-doc`, branch `dev`,
 `docs/reference/fleet-peer-routing-and-session-invocation.md`. It maps every peer
 to the concerns it owns and records how a session reaches one. **Every repository
 in this estate is private**, so every `github.com` link to one is access-gated
 rather than a destination — confirm access before relying on it
-(`gh api repos/salient-data/opum-doc`), and never put such a link on a public
+(`gh api repos/opum-ai/opum-doc`), and never put such a link on a public
 surface, where it is broken by construction.
 For any infrastructure, DNS, hosting, deployment-target, environment, or
 secrets-layout question, the authority is that repository's

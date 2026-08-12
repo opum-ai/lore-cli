@@ -58,6 +58,6 @@ The operating procedure is
 [Agent profile implementation and operation](../runbooks/agent-profile-operation.md).
 
 Cross-repository rationale remains recorded in
-`salient-data/lore-doc:docs/adr/define-agent-profiles-as-context-mappings.md`;
+`opum-ai/lore-doc:docs/adr/define-agent-profiles-as-context-mappings.md`;
 the supporting prior-art record is
-`salient-data/lore-doc:docs/reference/agent-profile-context-engineering-research.md`.
+`opum-ai/lore-doc:docs/reference/agent-profile-context-engineering-research.md`.
