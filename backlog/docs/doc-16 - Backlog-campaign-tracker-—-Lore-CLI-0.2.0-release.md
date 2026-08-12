@@ -3,7 +3,7 @@ id: doc-16
 title: Backlog campaign tracker — Lore CLI 0.2.0 release
 type: other
 created_date: '2026-08-09 05:47'
-updated_date: '2026-08-12 21:58'
+updated_date: '2026-08-12 22:15'
 ---
 # Backlog campaign tracker — Lore CLI 0.2.0 release
 
@@ -20,22 +20,23 @@ updated_date: '2026-08-12 21:58'
 Informational snapshot only; never a promised next wave.
 
 - LCLI-314 and LCLI-320 are Done after sequential waves 1 and 2.
-- LCLI-321 is In Progress as sequential wave 3 under explicit manual-publication authorization. All seven exact 0.2.0 packages are now public, anonymous integrity and clean-install verification passed, and the non-draft, non-prerelease GitHub Release exists.
+- LCLI-321 is Done. All seven exact 0.2.0 packages are public, anonymous integrity and clean-install verification passed, the non-draft, non-prerelease GitHub Release exists, and the durable settlement reached both protected branches.
 - Release publish:true remains prohibited while LCLI-278 is open and the release Environment lacks an effective external approval control.
-- Publication is complete; durable documentation, task, tracker, and protected-branch settlement are in progress on the isolated LCLI-321 settlement branch.
+- Publication and durable settlement are complete; the campaign queue is empty.
 
 ## Queue
 | Order | Task | Cluster | Formal dependencies | State | Wave | Likely files | Note |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | LCLI-314 | OKF 0.2 parent closeout | none | Done | 1 | Backlog task record; supporting OKF conformance evidence | All four aggregate criteria verified; six subtasks remain Done and delivered. |
 | 2 | LCLI-320 | 0.2.0 metadata preparation | LCLI-314 | Done | 2 | package.json, bun.lock, six npm platform manifests, CHANGELOG.md, version-derived benchmark fixtures, release-facing docs and tests | Delivered through protected dev and main with two eight-check CI passes; no tag or publication. |
-| 3 | LCLI-321 | Immutable 0.2.0 publication | LCLI-320 | In Progress; publication complete, settlement pending | 3 | release truth, release Story, Backlog settlement | AC#1-#5 complete: all seven exact packages are public, anonymous integrity/install evidence passed, and the GitHub Release exists. AC#6 awaits durable protected-branch settlement. |
+| 3 | LCLI-321 | Immutable 0.2.0 publication | LCLI-320 | Done | 3 | release truth, release Story, Backlog settlement | All six acceptance criteria complete; publication evidence merged to dev through PR #349 as 0c69ed0 and promoted to main through PR #350 as c3e5f0d. |
 
 ## Resolved
 | Task | Date/wave | Evidence and disposition |
 | --- | --- | --- |
 | LCLI-314 | 2026-08-09 / wave 1 | Done with all 4 aggregate criteria checked. Six subtasks are live Done with zero unchecked criteria and final summaries; focused aggregate suite passed 435 tests, adversarial 0.1/0.2 slice passed 10 tests, strict Lore validation/check passed, delivered head 995b51e is an ancestor of current dev, and diff hygiene passed. Parent closeout changed only Backlog campaign records. |
 | LCLI-320 | 2026-08-09 / wave 2 | Done with all 6 criteria checked. Seven manifests and six pins agree on 0.2.0; the frozen lockfile, dated changelog, deterministic fixtures, Story coupling, and 0.1.1 release-truth boundary are coherent. Local qualification passed 2553 tests with 1 platform skip, focused suites, typecheck/lint/build, compiled version smoke, strict Lore gates, zero-vulnerability audit, diff hygiene, and seven npm dry-runs. Exact head 8f3bc92 passed all 8 checks and merged through PR #343 to dev as 2ed1a2b; exact dev head passed all 8 checks again and merged through PR #344 to main as e60509b. The temporary preparation branch was pruned locally and remotely. No tag, dispatch, package publication, or GitHub Release occurred. |
+| LCLI-321 | 2026-08-12 / wave 3 | Done with all 6 criteria checked. Exact-main CI and publish:false qualification passed; v0.2.0 resolves to eb03eb2; all seven untouched artifacts were published platform-first/root-last and matched anonymous registry integrity; a clean install reported 0.2.0; and the GitHub Release is public. Release truth and Story evidence passed local static, focused, and strict Lore gates, then all 8 protected checks twice: PR #349 merged to dev as 0c69ed0 and PR #350 promoted to main as c3e5f0d. LCLI-278 remains the separate blocker for future automated publish:true dispatches. |
 
 ## Not queued — blocked, deferred, or human decision required
 - LCLI-278: requires a repository-admin/security decision and effective out-of-file release approval control; automated publish:true remains prohibited.
@@ -45,6 +46,7 @@ Informational snapshot only; never a promised next wave.
 - Completed historical release and remediation tasks: outside the new campaign.
 
 ## Wave log
+- 2026-08-12 — settled sequential wave 3 and completed the campaign. LCLI-321 is Done with all six criteria checked. Release truth, Story, task, and campaign evidence passed typecheck, lint, focused release and repository-location suites, strict Lore validation/check, and diff hygiene. PR #349 passed all eight required checks and merged to dev as 0c69ed0; PR #350 passed all eight required checks and promoted the exact settlement to main as c3e5f0d. The campaign queue is empty; LCLI-278 remains separately deferred and publish:true remains prohibited until its external approval control is effective.
 - 2026-08-12 — wave 3 publication checkpoint. Recovered artifact 9039171783 and reverified all seven SHA-1 and SHA-512 values before mutation. An authenticated preflight found every 0.2.0 slot unused. npm required owner browser authorization for the first direct write; after that authorization, all six platform tarballs were published and individually integrity-verified before the root launcher. A cumulative anonymous registry audit matched all seven qualified artifacts; a clean install selected the Darwin ARM64 0.2.0 package and `lore --version` returned 0.2.0. The non-draft, non-prerelease GitHub Release now exists. Publication is complete; durable settlement is isolated from the unrelated LCLI-322 record on `chore/lcli-321-0.2.0-settlement`.
 - 2026-08-09 — wave 3 qualification checkpoint. Full CI run 31317080475 passed all nine jobs on exact main SHA eb03eb2adcb7b391289955a5bdf5ba4b6f841017. Lightweight v0.2.0 resolves directly to that commit. Release run 31317296988 used publish=false, passed every blocking gate and six matching-host package qualifications, skipped the optional scale observation and OIDC publish job, and retained npm-packages artifact 9039171783: exactly seven untouched 0.2.0 tarballs, archive digest sha256:8abb10f32b5dfd3917817ae1e26c113515d1f63826c3c209fe1cdaa62dba4f58, expiring 2026-11-07. AC#1-#3 are checked. All seven registry versions still returned E404 before qualification. The only immediate blocker is npm owner authentication; a browser login attempt did not complete and was canceled without collecting credentials.
 - 2026-08-09 — dispatched sequential wave 3 for LCLI-321 after the user explicitly authorized manual publication. Live preflight confirmed v0.2.0 has no tag or GitHub Release, the release Environment still has zero protection rules and no deployment policy, and publish:true remains prohibited. The exact current main settlement commit lacks a push CI run because it changed only ignored documentation/Backlog paths, so a manual full-matrix CI dispatch is required before tagging. npm whoami returns E401, so registry mutation will wait for restored owner authentication; qualification may proceed independently.
@@ -53,4 +55,3 @@ Informational snapshot only; never a promised next wave.
 - 2026-08-09 — settled wave 1. LCLI-314 is Done with all four aggregate criteria checked after 435 focused tests, a 10-test targeted 0.1/0.2 compatibility slice, strict Lore validation/check, delivery-ancestry verification, and adversarial self-review. LCLI-320 became dependency-ready but remained undispatched because that restore authorized only the parent-closeout wave.
 - 2026-08-09 — restore grounding matched the active handover: dev remained at ffc1af59a96b2426364666df002294d79b383c93, equal to locally known origin/dev at 0 behind / 0 ahead; only the three intentional untracked campaign records were dirty; one worktree and no campaign branches existed. All six LCLI-314 subtasks were live Done with zero unchecked criteria and final summaries. Dispatched LCLI-314 as sequential wave 1 for aggregate parent closeout.
 - 2026-08-09 — initialized doc-16 after the user confirmed the proposed safe next steps. Created LCLI-320 for reversible 0.2.0 metadata preparation and LCLI-321 for separately gated publication. Grounded against clean dev at ffc1af59a96b2426364666df002294d79b383c93, equal to locally known origin/dev at 0 behind / 0 ahead, with one registered worktree and zero In Progress tasks.
-
