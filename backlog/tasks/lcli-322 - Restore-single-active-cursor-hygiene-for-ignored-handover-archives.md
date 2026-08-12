@@ -4,7 +4,7 @@ title: Restore single-active-cursor hygiene for ignored handover archives
 status: To Do
 assignee: []
 created_date: '2026-08-10 19:59'
-updated_date: '2026-08-10 20:00'
+updated_date: '2026-08-12 22:40'
 labels:
   - handover
   - lifecycle
@@ -16,6 +16,8 @@ references:
   - >-
     backlog/tasks/lcli-293 -
     Reconcile-Lore-CLI-release-truth-handover-lifecycle-and-Story-ownership.md
+documentation:
+  - docs/stories/maintain-lore-cli-documentation-authority.md
 modified_files:
   - .claude/handovers/
   - .codex/skills/backlog-handover/
