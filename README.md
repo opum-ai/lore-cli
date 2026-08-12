@@ -5,7 +5,7 @@
 
 `lore` makes your repository's `docs/` tree a first-class, agent-readable
 [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf)
-(OKF v0.1) bundle, couples that bundle to [Backlog.md](https://github.com/MrLesk/Backlog.md)
+bundle, couples that bundle to [Backlog.md](https://github.com/MrLesk/Backlog.md)
 tasks, and exposes it through a deterministic, non-interactive CLI. The
 repository is the single source of truth — the bundle is plain markdown with
 YAML frontmatter that renders on GitHub, in Obsidian, and under
@@ -19,20 +19,18 @@ semantic exit codes, machine-readable `--json`).
 
 - Built on **Bun + TypeScript** with an exact-pinned **Commander** parser fed by
   Lore's capability manifest; Lore still owns output, errors, and process lifecycle.
-- Published on npm as **`@opum-ai/lore@0.1.0`** (bin `lore`) with five
-  exact-pinned platform packages.
-- The next release matrix adds a sixth native package for **Windows ARM64**;
-  `0.1.0` itself remains the immutable five-platform release described below.
+- Published on npm as **`@opum-ai/lore@0.2.0`** (bin `lore`) with six
+  exact-pinned platform packages, including Windows ARM64.
 - The agent bridge is a generated **`.claude/skills/lore/SKILL.md`** plus a tiny
   CLAUDE.md nudge and `lore instructions`. An **MCP server is secondary and
   deferred to v2**.
 
-> **Status: 0.1.0 released.** Tag `v0.1.0`, the qualified workflow artifacts,
-> all six public `@opum-ai/lore*` npm packages, a clean registry install, and
-> the private repository's GitHub Release agree on `0.1.0`. Trusted Publishing
+> **Status: 0.2.0 released.** Tag `v0.2.0`, the qualified workflow artifacts,
+> all seven public `@opum-ai/lore*` npm packages, a clean registry install, and
+> the private repository's GitHub Release agree on `0.2.0`. Trusted Publishing
 > is configured for every package. LCLI-278 still blocks future automated
 > `publish: true` dispatches; it does not invalidate the explicitly authorized
-> interactive `0.1.0` bootstrap. See
+> interactive publication. See
 > [Lore CLI release truth](docs/reference/lore-cli-release-truth.md).
 
 ---

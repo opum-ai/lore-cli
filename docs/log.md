@@ -129,6 +129,7 @@
 - 2026-08-08T09:51:35-05:00 2300eb5370bb4a5bc58d13e5b9ebfbf79f50f8ad feat: add init tracker selection
 - 2026-08-08T09:56:58-05:00 ccc767b1dbea278e4616bc919f3900a1271732c1 docs: reconcile init tracker selection
 - 2026-08-09T02:30:44-05:00 8f3bc9213f9aa34234483fe94ef51bd99bda0120 chore(release): prepare 0.2.0 metadata
+- 2026-08-09T02:48:07-05:00 c7f0f6d9d101706ad583ad6c7e657f5615c5c2d3 docs: settle 0.2.0 release preparation
 
 ## docs/.obsidian
 
@@ -270,6 +271,7 @@
 - 2026-08-07T06:35:13-05:00 49d494d6c7a1c328cf2f50af1b83b593501c4288 feat: add tracker adapter seam
 - 2026-08-07T08:52:10-05:00 9ebfca9f0268f2f0448ee92eef42730cfc4dd205 feat: add jira-cli tracker adapter
 - 2026-08-08T09:51:35-05:00 2300eb5370bb4a5bc58d13e5b9ebfbf79f50f8ad feat: add init tracker selection
+- 2026-08-09T10:57:34-05:00 694b2ff89f4c91884b749d09d41a41a4f7343ad2 test: scope the stale-owner gate to the product family, not to two repositories
 
 ## docs/runbooks
 
@@ -338,6 +340,7 @@
 - 2026-08-03T21:59:30-05:00 65abf9549a80da275de8d9b016467cf97421ae10 docs: record Lore CLI 0.1.0 release
 - 2026-08-04T00:40:24-05:00 10ecee23dce84d23ee9803b4ab1515465666cf41 feat: add ARM64 Windows and script-free installs
 - 2026-08-04T21:40:39-05:00 4ded93c0c67250928d1e382f9ca3b6105511d693 docs: record Lore CLI 0.1.1 release
+- 2026-08-09T10:57:34-05:00 694b2ff89f4c91884b749d09d41a41a4f7343ad2 test: scope the stale-owner gate to the product family, not to two repositories
 
 ## docs/specs
 
@@ -389,3 +392,5 @@
 - 2026-08-04T16:20:23-05:00 1f0c2c621754083a1b10be85e1c8c37acb4edd5b docs: track 0.1.1 publication
 - 2026-08-04T21:40:39-05:00 4ded93c0c67250928d1e382f9ca3b6105511d693 docs: record Lore CLI 0.1.1 release
 - 2026-08-09T02:30:44-05:00 8f3bc9213f9aa34234483fe94ef51bd99bda0120 chore(release): prepare 0.2.0 metadata
+- 2026-08-09T02:48:07-05:00 c7f0f6d9d101706ad583ad6c7e657f5615c5c2d3 docs: settle 0.2.0 release preparation
+- 2026-08-09T10:57:34-05:00 694b2ff89f4c91884b749d09d41a41a4f7343ad2 test: scope the stale-owner gate to the product family, not to two repositories

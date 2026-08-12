@@ -7,7 +7,7 @@ tags:
   - governance
 summary: Record the first immutable public package release while retaining the unresolved control gate for future automated publication.
 timestamp: 2026-08-04T02:50:00Z
-status: todo
+status: in-progress
 tasks:
   - lcli-253
   - lcli-269
@@ -89,6 +89,13 @@ matching-host qualification, a clean registry install reports `0.1.1`, and the
 new package's Trusted Publisher matches the existing six-package contract. The
 repository has a non-draft, non-prerelease GitHub Release for `v0.1.1`.
 
+LCLI-321 published `0.2.0` from the seven untouched tarballs produced by
+qualified Release run `31317296988`, with all six platform packages published
+and integrity-verified before the root launcher. Anonymous registry metadata
+matches every qualified artifact, a clean install selects the matching native
+package and reports `0.2.0`, and the repository has a non-draft,
+non-prerelease GitHub Release for `v0.2.0`.
+
 This Story remains open because LCLI-278 still owns the separate safety gate
 for future automated OIDC publication.
 
@@ -138,7 +145,7 @@ for future automated OIDC publication.
 | [LCLI-312](../../backlog/tasks/lcli-312%20-%20Prepare-and-deliver-npm-0.1.1-release-metadata.md) | Prepare and deliver npm 0.1.1 release metadata | Done |
 | [LCLI-313](../../backlog/tasks/lcli-313%20-%20Publish-Lore-CLI-0.1.1-from-qualified-release-artifacts.md) | Publish Lore CLI 0.1.1 from qualified release artifacts | Done |
 | [LCLI-320](../../backlog/tasks/lcli-320%20-%20Prepare-and-deliver-Lore-CLI-0.2.0-release-metadata.md) | Prepare and deliver Lore CLI 0.2.0 release metadata | Done |
-| [LCLI-321](../../backlog/tasks/lcli-321%20-%20Publish-Lore-CLI-0.2.0-from-qualified-release-artifacts.md) | Publish Lore CLI 0.2.0 from qualified release artifacts | To Do |
+| [LCLI-321](../../backlog/tasks/lcli-321%20-%20Publish-Lore-CLI-0.2.0-from-qualified-release-artifacts.md) | Publish Lore CLI 0.2.0 from qualified release artifacts | In Progress |
 <!-- lore:tasks:end -->
 
 ## Notes
