@@ -21,47 +21,41 @@ availability claim.
 
 ### Current state
 
-As verified on 2026-08-05 UTC, Lore CLI **0.1.1 is released**:
+As verified on 2026-08-12 UTC, Lore CLI **0.2.0 is released**:
 
 - all seven manifests and the root's six exact optional-dependency pins use
-  `0.1.1`; the root bin is the publishable Node launcher `bin/lore.cjs`;
-- annotated tag `v0.1.1` resolves through tag object
-  `75f61587a734f861fe8d6b06335db4d3d34dd7d2` directly to qualified main
-  commit `e7fe3394109830a89fcdf16a675d0636446bcd79`;
-- GitHub Actions Release run `30966913181` ran on that tag with
-  `publish: false`, passed the bounded Ladybug and concurrency gates, qualified
-  all six matching hosts including Windows ARM64, and retained exactly seven
-  tarballs in artifact `8915160779`;
+  `0.2.0`; the root bin is the publishable Node launcher `bin/lore.cjs`;
+- lightweight tag `v0.2.0` resolves directly to qualified main commit
+  `eb03eb2adcb7b391289955a5bdf5ba4b6f841017`;
+- GitHub Actions Release run `31317296988` ran on that tag with
+  `publish: false`, passed every blocking release and matching-host gate, and
+  retained exactly seven tarballs in artifact `9039171783`;
 - the six platform packages were published interactively first and
   `@opum-ai/lore` was published last, using only those untouched workflow
   tarballs; no local rebuild or repack was used;
-- anonymous npm metadata reports `@opum-ai/lore@0.1.1` and all six platform
+- anonymous npm metadata reports `@opum-ai/lore@0.2.0` and all six platform
   packages as public; every registry shasum matched the successful publish
   result and every registry record carries SHA-512 integrity metadata;
 - a clean anonymous registry install selected
-  `@opum-ai/lore-darwin-arm64@0.1.1`, and the installed `lore --version`
-  returned `0.1.1`; and
+  `@opum-ai/lore-darwin-arm64@0.2.0`, and the installed `lore --version`
+  returned `0.2.0`; and
 - the private `opum-ai/lore-cli` repository has a non-draft, non-prerelease
-  GitHub Release for `v0.1.1`; keeping the repository private does not affect
-  the seven public npm packages; and
-- the new `@opum-ai/lore-win32-arm64` package has a GitHub Actions Trusted
-  Publisher bound to repository `opum-ai/lore-cli`, workflow `release.yml`,
-  Environment `release`, and publish permission, matching the six previously
-  verified package relationships.
+  GitHub Release for `v0.2.0`; keeping the repository private does not affect
+  the seven public npm packages.
 
 The exact workflow artifact SHA-256 values were:
 
 | Package | SHA-256 |
 |---|---|
-| `@opum-ai/lore` | `3b5cfb8cbc67b314229510176fba5e7d95988812e7cd98633e5be6a55c7bd51e` |
-| `@opum-ai/lore-darwin-arm64` | `307639e467653e9df4efe6d9b1d490c5540a99d1bcd91da825367fe3f0e2519e` |
-| `@opum-ai/lore-darwin-x64` | `c60086a0c7683f8ddfce749792d70b2c6ff656ea0e02214829525f4686c272fa` |
-| `@opum-ai/lore-linux-arm64` | `95713cb6ad93530d6e298e0384bd95dd761c794f691f6777fec9b4617625639f` |
-| `@opum-ai/lore-linux-x64` | `0f53ce4283e8c87a51759c9984261a432bc43e841132fe13a238975ba9b386cd` |
-| `@opum-ai/lore-win32-arm64` | `940238d916ad25bb3130dc5f2c0b97006a1265c75823c75ae9064778d2196b04` |
-| `@opum-ai/lore-win32-x64` | `c1e441f77d841b01bd046177e1bd024a4e1caf963c66dfafc1ac3e0fdc211dfb` |
+| `@opum-ai/lore` | `d5701220ebe60b30f4f686bdee788b81458ff356a97221c0eb0c57796639aae3` |
+| `@opum-ai/lore-darwin-arm64` | `66dbe0c2e2c06eb47125a4ddf0aba70186ca49b784b98ab40978f3b41a0976de` |
+| `@opum-ai/lore-darwin-x64` | `05ba7c82c17a361e8d6e0dc29c175094e1323553b36d2a74ccd4524506723674` |
+| `@opum-ai/lore-linux-arm64` | `0ee0367503a518c01521e32ecdba503a70120e9ccb2765e516aa445c28de4f5c` |
+| `@opum-ai/lore-linux-x64` | `11858f4d4b68e199220eb854bc3b4d23342527037a630654ede7671ea716392e` |
+| `@opum-ai/lore-win32-arm64` | `25cc92a9813aa92afae90b892034d54b979ff77ce6a21ebd9971c65d7f1536c5` |
+| `@opum-ai/lore-win32-x64` | `9b0b6655dbd41b1fda647615d9b10489ecbf01765a1fec72c6b3b19b6204e8eb` |
 
-The repository owner explicitly authorized interactive publication of `0.1.1`
+The repository owner explicitly authorized interactive publication of `0.2.0`
 while the repository remains private. LCLI-278 remains `To Do`: future
 automated `publish: true` dispatches are still prohibited because the
 `release` Environment has no effective required-reviewer protection rule.
@@ -101,6 +95,8 @@ public availability.
 - LCLI-296 owns the historical `0.1.0` workflow, registry, Trusted Publisher,
   install, and GitHub Release evidence.
 - LCLI-313 owns the `0.1.1` workflow, seven-package registry, install, and
+  GitHub Release evidence.
+- LCLI-321 owns the `0.2.0` workflow, seven-package registry, install, and
   GitHub Release evidence.
 - The [Lore CLI handover](../runbooks/lore-cli-handover.md) routes a fresh
   session to these live sources without copying a task cursor.
