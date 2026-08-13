@@ -134,6 +134,7 @@
 - 2026-08-12T17:19:07-05:00 3c813bdb12faf0bb790334d12b54ea523cf7499b docs: close Lore CLI 0.2.0 campaign
 - 2026-08-12T17:42:50-05:00 e8d9b1b918dcad3a70cb860f9f6dc9a62c3a26fe docs: initialize handover hygiene campaign
 - 2026-08-12T23:00:10-05:00 78db86044162ea25de3da085a8f2a6fec77c2b4d docs: competitive research on agent-native knowledge tooling (LCLI-323/324/325)
+- 2026-08-13T09:40:05-05:00 e46248ddefaca9017d2a97f8c29175b28e11a67a docs: fix Lore 0.2 install guidance
 
 ## docs/.obsidian
 
@@ -347,6 +348,7 @@
 - 2026-08-04T00:40:24-05:00 10ecee23dce84d23ee9803b4ab1515465666cf41 feat: add ARM64 Windows and script-free installs
 - 2026-08-04T21:40:39-05:00 4ded93c0c67250928d1e382f9ca3b6105511d693 docs: record Lore CLI 0.1.1 release
 - 2026-08-09T10:57:34-05:00 694b2ff89f4c91884b749d09d41a41a4f7343ad2 test: scope the stale-owner gate to the product family, not to two repositories
+- 2026-08-13T09:40:05-05:00 e46248ddefaca9017d2a97f8c29175b28e11a67a docs: fix Lore 0.2 install guidance
 
 ## docs/specs
 
@@ -405,3 +407,4 @@
 - 2026-08-12T17:19:07-05:00 3c813bdb12faf0bb790334d12b54ea523cf7499b docs: close Lore CLI 0.2.0 campaign
 - 2026-08-12T17:42:50-05:00 e8d9b1b918dcad3a70cb860f9f6dc9a62c3a26fe docs: initialize handover hygiene campaign
 - 2026-08-12T23:24:56-05:00 63df417250ab1039404369b3626c35f9aee481df chore: enforce single active handover cursor
+- 2026-08-13T09:40:05-05:00 e46248ddefaca9017d2a97f8c29175b28e11a67a docs: fix Lore 0.2 install guidance

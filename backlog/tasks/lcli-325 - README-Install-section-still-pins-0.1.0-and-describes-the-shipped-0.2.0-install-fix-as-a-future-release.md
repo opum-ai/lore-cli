@@ -3,11 +3,11 @@ id: LCLI-325
 title: >-
   README Install section still pins 0.1.0 and describes the shipped 0.2.0
   install fix as a future release
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-13 03:47'
-updated_date: '2026-08-13 13:50'
+updated_date: '2026-08-13 14:48'
 labels:
   - bug
   - docs
@@ -97,4 +97,12 @@ Post-sync verification and adversarial self-review:
 - AC5 is satisfied as not applicable: the chosen AC4 mechanism is versionless examples, and no bespoke check was added.
 
 All acceptance criteria are satisfied in the current working tree. LCLI-325 remains In Progress because the README/docs implementation is still uncommitted and no source-delivery commit authority has been granted.
+
+Delivered by PR #359 to dev at merge commit `c0b94d964ba1f94b9f2d1ab55dbb1f69fb6b8790`. All eight CI jobs passed, including Ubuntu/Windows tests, browser qualification, compile/scaffold/benchmark smoke, and Docker E2E.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Removed stale exact version pins from README install commands, documented the shipped 0.2.0 script-free launcher behavior, and added a release-runbook checkpoint that keeps copyable installs versionless. Verified with executable release-truth assertions, 2,560 passing tests, strict Lore validation/check (69 files, 0 findings), diff hygiene, adversarial self-review, and all eight PR #359 CI jobs. Merged to dev as `c0b94d964ba1f94b9f2d1ab55dbb1f69fb6b8790`.
+<!-- SECTION:FINAL_SUMMARY:END -->
