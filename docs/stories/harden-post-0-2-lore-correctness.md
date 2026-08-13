@@ -7,7 +7,7 @@ tags:
   - quality
 summary: Own active correctness fixes discovered after Lore 0.2.0 without mixing them into historical delivery evidence.
 timestamp: 2026-08-13T17:12:06.481Z
-status: in-progress
+status: done
 tasks:
   - lcli-323
 ---
@@ -37,7 +37,7 @@ hardening Story remains delivery evidence rather than an active bug queue.
 <!-- lore:tasks:begin -->
 | Task | Title | Status |
 |---|---|---|
-| [LCLI-323](../../backlog/tasks/lcli-323%20-%20lore-check-strict-is-wall-clock-dependent-an-elapsed-stale_after-flips-a-green-bundle-to-exit-6-with-no-commit.md) | lore check --strict is wall-clock dependent: an elapsed stale_after flips a green bundle to exit 6 with no commit | In Progress |
+| [LCLI-323](../../backlog/tasks/lcli-323%20-%20lore-check-strict-is-wall-clock-dependent-an-elapsed-stale_after-flips-a-green-bundle-to-exit-6-with-no-commit.md) | lore check --strict is wall-clock dependent: an elapsed stale_after flips a green bundle to exit 6 with no commit | Done |
 <!-- lore:tasks:end -->
 
 ## Notes
