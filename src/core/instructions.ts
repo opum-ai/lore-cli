@@ -93,10 +93,13 @@ const CHECK: InstructionTopic = {
   title: "The CI gate: types, drift, links, anchors, portability (`lore check`)",
   body: `\`lore check [paths...]\` is lore's read-only CI gate. It always emits the
 full \`check.report\` on stdout (\`kind: check.report\` under \`--json\`) --
-findings for broken internal links, rotted heading anchors, reconciliation
+findings for broken bundle-scoped links, rotted heading anchors, reconciliation
 drift (a Story's written status or managed block gone stale), unknown active-
-profile types, and portability-lint warnings. It then *returns* exit 6 when any of
-those is error-tier (or any warning exists under \`--strict\`) -- a plain
+profile types, and portability-lint warnings. Relative \`.md\` links that normalize
+above the selected bundle root are not resolved; the report exposes them through
+\`skippedOutOfBundleLinkCount\`, which is informational and never changes the exit.
+The command *returns* exit 6 when any finding is error-tier (or any warning exists
+under \`--strict\`) -- a plain
 exit code, not a thrown error: nothing throws on this path, so there is no
 \`--json\` error envelope for a failing report (the report itself, already on
 stdout, is the payload). cli-contract.md's exit table labels this condition

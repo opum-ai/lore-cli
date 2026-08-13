@@ -131,7 +131,7 @@ the [CLI surface](cli-surface.md):
 | `init` | `lore init` | created/skipped paths, bundle root, `interactive`/`scaffolds` always, `tracker` after a wizard or explicit choice, and `agents` (Claude), `codex`, and `backlog` only when those steps ran |
 | `new` | `lore new` | new concept id, path, applied template/vars |
 | `validate.report` | `lore validate` | tiered findings (errors/warnings), counts |
-| `check.report` | `lore check` | drift, broken-link, anchor, portability findings; token estimates |
+| `check.report` | `lore check` | bundle-scoped drift/link/anchor/portability findings and counts, including informational `skippedOutOfBundleLinkCount` for relative `.md` targets above the selected bundle root |
 | `replace.result` | `lore replace` | per-file match/replace counts; skipped managed regions |
 | `rename.result` / `supersede.result` | `lore rename` / `supersede` | rewritten inbound links + frontmatter refs (`rename` also: moved back-refs + the `backlog/` commit) |
 | `link.result` / `unlink.result` | `lore link` / `unlink` | updated frontmatter refs, task label set + the `backlog/` commit |
@@ -269,7 +269,7 @@ unrelated condition.
 | `3` | not_found | A referenced thing does not exist: concept id, task id, file path, link target. |
 | `4` | denied | The operation is refused: e.g. an edit targeting a lore-managed region, or a guarded destructive op without the required confirmation. |
 | `5` | conflict | Already-exists / write-race: id collision on `new`, supersede target already superseded, concurrent-write conflict. |
-| `6` | `validation` / `drift` | A gate failed: `lore validate` non-conformance (`validation`), or `lore check` drift / broken-link / heading-anchor / portability failure (`drift`). Two distinct `error_type` strings sharing exit `6` (§5.3). |
+| `6` | `validation` / `drift` | A gate failed: `lore validate` non-conformance (`validation`), or `lore check` drift / bundle-scoped broken-link / heading-anchor / portability failure (`drift`). Relative `.md` links that resolve above the selected bundle root are counted in `skippedOutOfBundleLinkCount`, not resolved or failed. Two distinct `error_type` strings sharing exit `6` (§5.3). |
 
 **Code `1` is intentionally NOT used for any expected, classifiable
 condition.** It is reserved to mean "unexpected / uncaught" — a crash or bug.

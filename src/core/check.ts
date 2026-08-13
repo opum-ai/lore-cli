@@ -44,8 +44,9 @@
  *
  * A link whose target resolves **above the bundle root** (a `../`-escaping path, e.g. a
  * managed `lore:tasks` block's link to a `backlog/tasks/*.md` file) is **out of scope**
- * here — the bundle membership cannot see outside `docs/` — and is skipped rather than
- * reported broken, the same way an external URL is. (Those cross-bundle links arrive with
+ * here — the bundle membership cannot see outside `docs/` — and is counted as skipped rather
+ * than reported broken, unlike an external URL (which is omitted from this deterministic count).
+ * (Those cross-bundle links arrive with
  * `lore sync`/LORE-26; validating them is that pass's concern.)
  */
 
@@ -142,6 +143,12 @@ export interface CheckReport {
   readonly warningCount: number;
   /** Number of files examined. */
   readonly fileCount: number;
+  /**
+   * Number of relative `.md` links that normalize above the selected bundle root and
+   * were therefore not resolved. Informational only: skipped links are not findings and never
+   * affect the error/warning counts or exit code.
+   */
+  readonly skippedOutOfBundleLinkCount: number;
   /**
    * Whether every pass that was supposed to run for this report actually finished. Always `true`
    * from this module (`checkBundle`/`summarize` are fully synchronous and never partial) — it only
@@ -362,10 +369,14 @@ export function checkBundle(
   // Pass 2 — judge: per file, the link/anchor gate then the portability lint, over the one
   // shared parse. Membership is `slugsById` itself — every file id is a key.
   const findings: CheckFinding[] = [];
+  let skippedOutOfBundleLinkCount = 0;
   for (const { file, tree, id } of prepared) {
     const dir = posix.dirname(file.path);
     const targets = extractLinkTargets(tree);
     for (const target of targets) {
+      if (isOutOfBundleRelativeMarkdownTarget(target, dir)) {
+        skippedOutOfBundleLinkCount++;
+      }
       findings.push(...linkFindings(target, file.path, dir, id, slugsById));
     }
     for (const target of targets) {
@@ -392,7 +403,7 @@ export function checkBundle(
     findings.push(...portabilityScan(tree, file.path));
   }
 
-  return summarize(findings, files.length);
+  return summarize(findings, files.length, skippedOutOfBundleLinkCount);
 }
 
 /**
@@ -629,6 +640,20 @@ function linkFindings(
     ];
   }
   return anchorFindings(target, file, targetId, fragment, slugsById);
+}
+
+/** Whether a relative Markdown link escapes the selected bundle root. */
+function isOutOfBundleRelativeMarkdownTarget(target: string, dir: string): boolean {
+  const path = pathPart(target.trim());
+  if (path === "" || path.startsWith("/") || isExternalTarget(path)) {
+    return false;
+  }
+  const decoded = decodeTarget(path);
+  if (!/\.md$/i.test(decoded)) {
+    return false;
+  }
+  const resolved = posix.normalize(posix.join(dir, decoded));
+  return resolved === ".." || resolved.startsWith("../");
 }
 
 /**
@@ -927,9 +952,13 @@ function clip(value: string): string {
 // ── Helpers ──────────────────────────────────────────────────────────────────────
 
 /** Tally findings into the aggregate {@link CheckReport} counts. `checkBundle` is fully synchronous and never partial, so `complete` is always `true` here — only `commands/check.ts` ever sets it `false` (LORE-112). */
-function summarize(findings: readonly CheckFinding[], fileCount: number): CheckReport {
+function summarize(
+  findings: readonly CheckFinding[],
+  fileCount: number,
+  skippedOutOfBundleLinkCount: number,
+): CheckReport {
   const { errorCount, warningCount } = tallySeverity(findings);
-  return { findings, errorCount, warningCount, fileCount, complete: true };
+  return { findings, errorCount, warningCount, fileCount, skippedOutOfBundleLinkCount, complete: true };
 }
 
 /**
