@@ -132,6 +132,7 @@
 - 2026-08-09T02:48:07-05:00 c7f0f6d9d101706ad583ad6c7e657f5615c5c2d3 docs: settle 0.2.0 release preparation
 - 2026-08-12T17:01:31-05:00 ca94e0c4aed06344925e67f822246a93659224b3 docs: record Lore CLI 0.2.0 release
 - 2026-08-12T17:19:07-05:00 3c813bdb12faf0bb790334d12b54ea523cf7499b docs: close Lore CLI 0.2.0 campaign
+- 2026-08-12T17:42:50-05:00 e8d9b1b918dcad3a70cb860f9f6dc9a62c3a26fe docs: initialize handover hygiene campaign
 
 ## docs/.obsidian
 
@@ -399,3 +400,4 @@
 - 2026-08-09T10:57:34-05:00 694b2ff89f4c91884b749d09d41a41a4f7343ad2 test: scope the stale-owner gate to the product family, not to two repositories
 - 2026-08-12T17:01:31-05:00 ca94e0c4aed06344925e67f822246a93659224b3 docs: record Lore CLI 0.2.0 release
 - 2026-08-12T17:19:07-05:00 3c813bdb12faf0bb790334d12b54ea523cf7499b docs: close Lore CLI 0.2.0 campaign
+- 2026-08-12T17:42:50-05:00 e8d9b1b918dcad3a70cb860f9f6dc9a62c3a26fe docs: initialize handover hygiene campaign
