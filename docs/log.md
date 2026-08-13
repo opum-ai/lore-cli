@@ -138,6 +138,7 @@
 - 2026-08-13T09:50:55-05:00 fa43e1dc00756b443c5d12ac8710dc7393af6d07 chore: finalize LCLI-325 campaign wave
 - 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic
 - 2026-08-13T12:31:20-05:00 f3dcc987b3ab5045c1fe5ca8f3328a5a20dd0266 docs: refresh Lore log for LCLI-323 delivery
+- 2026-08-13T13:21:24-05:00 e897fa21b51123a74844d689b1e8471f0481d482 chore: finalize LCLI-323 campaign wave
 
 ## docs/.obsidian
 
@@ -416,3 +417,4 @@
 - 2026-08-13T09:40:05-05:00 e46248ddefaca9017d2a97f8c29175b28e11a67a docs: fix Lore 0.2 install guidance
 - 2026-08-13T09:50:55-05:00 fa43e1dc00756b443c5d12ac8710dc7393af6d07 chore: finalize LCLI-325 campaign wave
 - 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic
+- 2026-08-13T13:21:24-05:00 e897fa21b51123a74844d689b1e8471f0481d482 chore: finalize LCLI-323 campaign wave
