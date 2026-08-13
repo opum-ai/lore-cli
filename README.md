@@ -76,34 +76,32 @@ The package and bin are `@opum-ai/lore` and `lore`:
 
 ```bash
 # Node / npm
-npx @opum-ai/lore@0.1.0 --help
+npx @opum-ai/lore --help
 
 # Bun
-bunx @opum-ai/lore@0.1.0 --help
+bunx @opum-ai/lore --help
 
 # Global npm install
-npm install -g @opum-ai/lore@0.1.0
+npm install -g @opum-ai/lore
 ```
 
-`0.1.0` declared LadybugDB as a runtime dependency, so npm versions with
-install-script approval may require
-`npm install -g --allow-scripts=@ladybugdb/core @opum-ai/lore@0.1.0`. The next
-release removes that exception: the launcher installs only the matching
-script-free platform package, while qualified macOS/Linux executables embed
-LadybugDB's native addon at build time. Windows continues to use the reference
-backend and installs no LadybugDB package.
+Starting with `0.2.0`, the launcher installs only the matching script-free
+platform package, so a current install does not require an install-script
+approval exception. Qualified macOS/Linux executables embed LadybugDB's native
+addon at build time. Windows continues to use the reference backend and
+installs no LadybugDB package.
 
 Or add it to a project:
 
 ```bash
-bun add -d @opum-ai/lore@0.1.0   # or: npm i -D @opum-ai/lore@0.1.0
+bun add -d @opum-ai/lore   # or: npm i -D @opum-ai/lore
 ```
 
 The npm package is a dual artifact: a Node `.cjs` launcher plus a
 per-platform compiled binary delivered as `optionalDependencies` (built with
-`bun build --compile`, `-baseline` x64 targets). Starting with the next release,
-all JavaScript libraries are build-only and are not installed transitively with
-the launcher. You also need a
+`bun build --compile`, `-baseline` x64 targets). In `0.2.0`, all JavaScript
+libraries became build-only and are not installed transitively with the
+launcher. You also need a
 `--json`-capable Backlog.md (>=1.49.0) on `PATH` — e.g. `npm install -g
 backlog.md`; see the [runbook](docs/runbooks/backlog-json-patch.md).
 
