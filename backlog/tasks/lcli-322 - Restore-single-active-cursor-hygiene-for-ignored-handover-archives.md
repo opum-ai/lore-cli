@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-10 19:59'
-updated_date: '2026-08-13 05:15'
+updated_date: '2026-08-13 11:10'
 labels:
   - handover
   - lifecycle
@@ -73,10 +73,14 @@ Delivery update (2026-08-13): user authorized remote delivery. Branch chore/lcli
 Closure reconciliation (2026-08-13): PR #354 merged verified head d4bbc491c940518eca39a14f1dda49182dbc1df4 into dev at 8746dae46bfa06f11ecdb44ba9637feee085642d after all eight CI jobs passed. The merged tree is identical to the PR head. With explicit user approval, the clean merged implementation worktree, local branch chore/lcli-322-handover-hygiene, and its remote branch were removed; only a reproducible read-only Ladybug cache had to be permission-normalized before the orphan directory could be deleted. The primary research checkout and unrelated LCLI-326/LCLI-327 files were untouched. Earlier notes saying the PR was unmerged are historical pre-merge facts superseded by this closure record.
 
 Reconciliation delivery update (2026-08-13): PR #355 was opened against dev from chore/lcli-322-merge-reconciliation to deliver the two-file post-merge settlement. The clean reconciliation branch/worktree are retained while that PR is open; merge and its cleanup require separate authorization.
+
+Protected reconciliation closure (2026-08-13): PR #355 head 77e2004e5f6d77704b8752151a651b9420761e10 passed all eight CI jobs and merged into dev at b0173172d8ac358bfb840db59808a748468192ff. GitHub removed the remote feature ref during the authorized merge, the local feature ref was removed, and the clean worktree was repurposed for final protected settlement. Promotion to main and exact temporary-ref/worktree pruning are authorized and underway; the unrelated research checkout and LCLI-326/LCLI-327 remain untouched.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
 Established active.md as the sole executable handover cursor, quarantined all 57 obsolete ignored archives after live-state reconciliation, added a deterministic lifecycle audit with adversarial process tests, and hardened backlog-handover init/write/restore/status. Verified with 7 focused tests, the real-directory audit, typecheck, lint, git diff --check, and the full suite (2,560 pass, 1 skip, 0 fail).
+
+Final Backlog reconciliation passed eight additional CI jobs and merged through PR #355 at b017317; protected main promotion records the completed campaign.
 <!-- SECTION:FINAL_SUMMARY:END -->
