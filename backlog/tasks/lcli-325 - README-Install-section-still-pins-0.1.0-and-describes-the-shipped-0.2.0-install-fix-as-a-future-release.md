@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-13 03:47'
-updated_date: '2026-08-13 13:22'
+updated_date: '2026-08-13 13:34'
 labels:
   - bug
   - docs
@@ -23,6 +23,7 @@ modified_files:
   - README.md
   - docs/runbooks/release-publishing.md
   - docs/stories/maintain-lore-cli-documentation-authority.md
+  - docs/log.md
 priority: medium
 type: bug
 ordinal: 448000
@@ -66,3 +67,23 @@ Worth fixing at the mechanism level as well as the instance. Pinned exact versio
 3. Add a release-runbook checkpoint requiring README install examples to remain versionless and the stated install behavior to match the release being cut.
 4. Run Lore synchronization, strict validation/check gates, focused README version scans, the relevant test suite, and git diff hygiene; then review each acceptance criterion.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Restore on 2026-08-13 paused before source implementation because `lore link stories/maintain-lore-cli-documentation-authority LCLI-325 --json` automatically created local commit `804534f13e7d83a6078fa4b6a6e8bf198080ddd3` containing the task's In Progress state, plan, documentation/modified-file metadata, and Lore back-reference. The campaign did not authorize commits. The Story frontmatter addition remains uncommitted. Required disposition: explicitly retain this local metadata commit or authorize unwinding it while preserving the task and Story changes in the working tree.
+
+User decision on 2026-08-13: retain local Lore metadata commit `804534f13e7d83a6078fa4b6a6e8bf198080ddd3` and continue LCLI-325. Follow-up workflow defect recorded separately as LCLI-328; it is not part of doc-18.
+
+Implemented the README/runbook correction locally: all copyable `@opum-ai/lore` install commands are versionless; current-install prose describes the shipped 0.2.0 script-free launcher; and release-publishing step 3 preserves versionless examples and reconciles current-version/install-behavior prose on future releases.
+
+Verification before managed synchronization:
+- `rg -n '@opum-ai/lore@[0-9]' README.md` returned only the correct published-status reference `@opum-ai/lore@0.2.0`.
+- `rg -n '0\\.1\\.0|next release|allow-scripts=@ladybugdb/core' README.md` returned no matches (exit 1 as expected).
+- `lore validate --strict --json` passed with 0 errors and 0 warnings.
+- `git diff --check` passed.
+- `bun test` passed: 2560 pass, 1 skip, 0 fail across 79 files.
+- `lore sync --dry-run --plain` passed and would update only `docs/log.md` and `docs/stories/maintain-lore-cli-documentation-authority.md`.
+
+Actual `lore sync` is paused pending explicit commit authority because its documented catch-all step will commit all dirty `backlog/` paths, currently including LCLI-325, follow-up LCLI-328, and campaign tracker doc-18.
+<!-- SECTION:NOTES:END -->
