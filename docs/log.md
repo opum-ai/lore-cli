@@ -135,6 +135,8 @@
 - 2026-08-12T17:42:50-05:00 e8d9b1b918dcad3a70cb860f9f6dc9a62c3a26fe docs: initialize handover hygiene campaign
 - 2026-08-12T23:00:10-05:00 78db86044162ea25de3da085a8f2a6fec77c2b4d docs: competitive research on agent-native knowledge tooling (LCLI-323/324/325)
 - 2026-08-13T09:40:05-05:00 e46248ddefaca9017d2a97f8c29175b28e11a67a docs: fix Lore 0.2 install guidance
+- 2026-08-13T09:50:55-05:00 fa43e1dc00756b443c5d12ac8710dc7393af6d07 chore: finalize LCLI-325 campaign wave
+- 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic
 
 ## docs/.obsidian
 
@@ -279,6 +281,7 @@
 - 2026-08-09T10:57:34-05:00 694b2ff89f4c91884b749d09d41a41a4f7343ad2 test: scope the stale-owner gate to the product family, not to two repositories
 - 2026-08-12T17:01:31-05:00 ca94e0c4aed06344925e67f822246a93659224b3 docs: record Lore CLI 0.2.0 release
 - 2026-08-12T23:00:10-05:00 78db86044162ea25de3da085a8f2a6fec77c2b4d docs: competitive research on agent-native knowledge tooling (LCLI-323/324/325)
+- 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic
 
 ## docs/runbooks
 
@@ -349,6 +352,7 @@
 - 2026-08-04T21:40:39-05:00 4ded93c0c67250928d1e382f9ca3b6105511d693 docs: record Lore CLI 0.1.1 release
 - 2026-08-09T10:57:34-05:00 694b2ff89f4c91884b749d09d41a41a4f7343ad2 test: scope the stale-owner gate to the product family, not to two repositories
 - 2026-08-13T09:40:05-05:00 e46248ddefaca9017d2a97f8c29175b28e11a67a docs: fix Lore 0.2 install guidance
+- 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic
 
 ## docs/specs
 
@@ -381,6 +385,7 @@
 - 2026-08-02T18:03:34-05:00 1034229ab8ef804498160acefa2f39d613dcb825 feat: add bounded path and impact traversal
 - 2026-08-03T08:39:40-05:00 a98014b4530903e2681c73c6762aa1e70e8aa67c feat: add snapshot change and provenance workflows
 - 2026-08-12T23:00:10-05:00 78db86044162ea25de3da085a8f2a6fec77c2b4d docs: competitive research on agent-native knowledge tooling (LCLI-323/324/325)
+- 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic
 
 ## docs/stories
 
@@ -408,3 +413,5 @@
 - 2026-08-12T17:42:50-05:00 e8d9b1b918dcad3a70cb860f9f6dc9a62c3a26fe docs: initialize handover hygiene campaign
 - 2026-08-12T23:24:56-05:00 63df417250ab1039404369b3626c35f9aee481df chore: enforce single active handover cursor
 - 2026-08-13T09:40:05-05:00 e46248ddefaca9017d2a97f8c29175b28e11a67a docs: fix Lore 0.2 install guidance
+- 2026-08-13T09:50:55-05:00 fa43e1dc00756b443c5d12ac8710dc7393af6d07 chore: finalize LCLI-325 campaign wave
+- 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic

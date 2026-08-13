@@ -217,13 +217,18 @@ The **drift gate** — read-only, never writes. Aggregates:
   form (leading-slash, missing `.md`, unencoded, accidental-colon filenames,
   trailing-slash directory links); and MDX hazards (raw `<`/`{` in prose, raw
   HTML, leading-underscore and `.mdx` file names).
+- **Date-sensitive lifecycle checks** — currently only OKF 0.2 `stale_after`.
+  Every such rule receives one pinned evaluation date: `--as-of YYYY-MM-DD`
+  when supplied, otherwise HEAD's recorded committer calendar date. `check`
+  never reads the machine clock. If the bundle contains a date-sensitive rule
+  and HEAD has no commit, pass `--as-of` or commit the bundle.
 
 | | |
 |---|---|
 | **Args** | optional `[paths…]` (default: whole bundle) |
-| **Key flags** | `--strict` (treat portability warnings as failures for the exit code) · `--external` (also probe external-URL liveness — advisory, never gates) |
+| **Key flags** | `--strict` (treat deterministic warnings as failures for the exit code) · `--as-of YYYY-MM-DD` (pin date-sensitive rules; default HEAD commit date) · `--external` (also probe external-URL liveness — advisory, never gates) |
 | **Output** | `kind: check.report` — `findings`, `errorCount`, `warningCount`, `fileCount`, `complete`; plus optional `externalFindings` when `--external` ran |
-| **Exit** | `0` no broken internal links/anchors, no status/managed-block drift · `3` a linked task id no longer exists · `6` any broken internal link/anchor, any status/managed-block drift (or any portability warning under `--strict`). External-liveness results never affect the exit. |
+| **Exit** | `0` no broken internal links/anchors, no status/managed-block drift · `2` invalid/non-calendar `--as-of` · `3` a linked task id no longer exists, or a date-sensitive rule needs the absent HEAD commit date · `6` any broken internal link/anchor, any status/managed-block drift (or any deterministic warning under `--strict`). External-liveness results never affect the exit. |
 
 ---
 

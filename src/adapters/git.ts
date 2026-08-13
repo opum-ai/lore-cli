@@ -157,6 +157,46 @@ export function resolveHeadSha(cwd: string): string | null {
   );
 }
 
+/**
+ * Resolve HEAD's committer calendar date in the timezone recorded by Git.
+ *
+ * `%cI` is strict ISO-8601 with an explicit offset. Taking its leading calendar
+ * component preserves the date the commit itself records instead of translating
+ * through the machine's timezone. An unborn repository has no commit date and
+ * therefore returns `null`; malformed or unreadable repository state fails loud
+ * through the same `drift` contract as {@link resolveHeadSha}.
+ */
+export function resolveHeadCommitDate(cwd: string): string | null {
+  const headSha = resolveHeadSha(cwd);
+  if (headSha === null) {
+    return null;
+  }
+  const proc = Bun.spawnSync(["git", "show", "-s", "--format=%cI", headSha], {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (proc.exitCode !== 0) {
+    throw new LoreError(
+      "drift",
+      `\`git show -s --format=%cI <HEAD>\` exited ${proc.exitCode}: could not resolve HEAD's commit date`,
+      stderrHint(proc.stderr.toString("utf8")) ?? "check that HEAD names a readable commit",
+      { exitCode: proc.exitCode },
+    );
+  }
+  const timestamp = proc.stdout.toString("utf8").trim();
+  const date = /^(\d{4}-\d{2}-\d{2})T/.exec(timestamp)?.[1];
+  if (date === undefined) {
+    throw new LoreError(
+      "drift",
+      "git returned a malformed HEAD committer date",
+      "check the repository's HEAD commit metadata",
+      { timestamp },
+    );
+  }
+  return date;
+}
+
 /** `git log`'s range arguments: `from..to` when `from` is given, else just `to` (from repo start). */
 function rangeArgs(range: GitLogRange): string[] {
   return [range.from !== undefined ? `${range.from}..${range.to}` : range.to];

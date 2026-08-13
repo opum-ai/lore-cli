@@ -106,6 +106,8 @@ export interface RunContext {
   fetch?: FetchLike;
   /** DNS resolution `check --external`'s SSRF guard uses (LORE-71); defaults to real `node:dns`. Injected so a caller (or a test) controls or stubs DNS. */
   resolveHost?: ResolveHost;
+  /** HEAD committer-date resolver used by date-sensitive checks; injected so tests do not depend on ambient Git history. */
+  headCommitDate?: () => string | null;
   /** The Backlog adapter `link`/`unlink` use; defaults to the real `backlog` binary on PATH. Injected so a caller (or a test) touches no subprocess. */
   adapter?: BacklogAdapter;
   /**
@@ -440,6 +442,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
       fetch: context.fetch,
       resolveHost: context.resolveHost,
       adapter: context.adapter,
+      headCommitDate: context.headCommitDate,
     }),
   replace: (args, context, output) =>
     runReplace({

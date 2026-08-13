@@ -34,9 +34,12 @@ command catalog those rules apply to is the [CLI surface](../reference/cli-surfa
 
 lore's core is **deterministic and has no LLM dependency**
 ([ADR-0014: core has no LLM dependency](../adr/0014-core-has-no-llm-dependency.md)),
-so an agent may treat lore as a **pure function of repo state**: the same inputs
-against an unchanged bundle always produce the same output and the same exit
-code. That determinism is what makes the loop below safe to run unattended.
+so an agent may treat lore as a **pure function of repo state plus command
+inputs**: the same explicit inputs against unchanged repository state produce
+the same output and exit code. Date-sensitive `check` rules use
+`--as-of YYYY-MM-DD` when supplied and otherwise HEAD's commit date; they never
+read the machine clock. That determinism is what makes the loop below safe to
+run unattended.
 
 ---
 
@@ -198,7 +201,9 @@ internal links, missing heading anchors, and portability-lint findings, and it
 surfaces per-doc/bundle token **estimates**. On any failing condition it exits
 **`6`** (`error_type` `drift`); the fix is to run `lore sync` and commit. Because
 `check` writes nothing, it is safe to run in CI on every merge — and because the
-core is deterministic, a green `check` locally means a green `check` in CI.
+core is deterministic, a green `check` locally means a green `check` in CI for
+the same HEAD and explicit inputs. Pin `--as-of YYYY-MM-DD` when a workflow
+needs a date independent of HEAD.
 
 A typical agent or CI branch:
 
@@ -396,7 +401,9 @@ non-destructive.
 
 - **Treat `lore check` as the gate.** Don't consider work done until `lore check`
   exits `0`. If it exits `6`, run `lore sync`, commit the result, and re-run.
-  Because lore is deterministic, a clean local `check` is a clean CI `check`.
+  Because lore is deterministic, a clean local `check` is a clean CI `check`
+  for the same HEAD and explicit inputs. Date-sensitive rules default to HEAD's
+  commit date; pass `--as-of YYYY-MM-DD` to pin another date.
 
 - **Keep output bounded.** Read-heavy commands cap output and tell you so via
   `total`/`shown`/`truncated`/`hint` (or a "showing N of M" line). Honor the

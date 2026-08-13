@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `lore check` no longer reads the machine clock for OKF 0.2 `stale_after`.
+  `--as-of YYYY-MM-DD` pins date-sensitive rules explicitly; otherwise they
+  use HEAD's recorded commit date, keeping unchanged repository state and
+  inputs byte-stable across runs (LCLI-323).
+
 ## [0.2.0] - 2026-08-09
 
 ### Added

@@ -104,12 +104,27 @@ export interface CheckInputFile {
   readonly raw: string;
 }
 
-/** Clock-derived input supplied by the command layer; omitting it disables time-sensitive checks. */
+/** Explicit inputs supplied by the command layer; omitting `asOf` disables time-sensitive checks. */
 export interface CheckBundleOptions {
-  /** Current UTC calendar date in YYYY-MM-DD form. */
-  readonly today?: string;
+  /** Pinned evaluation date in YYYY-MM-DD form. */
+  readonly asOf?: string;
   /** Every regular file path in the bundle, used only for path existence checks; file bytes are never read here. */
   readonly availablePaths?: ReadonlySet<string>;
+}
+
+/** Whether this bundle contains a currently implemented rule that needs an evaluation date. */
+export function hasDateSensitiveCheckRules(files: readonly CheckInputFile[], state: BundleState): boolean {
+  if (state.okfVersion !== "0.2") {
+    return false;
+  }
+  return files.some((file) => {
+    try {
+      const staleAfter = tryReadFrontmatter(file.path, file.raw)?.stale_after;
+      return typeof staleAfter === "string" && isIsoCalendarDate(staleAfter);
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** The aggregate result of a `lore check` run over a bundle. */
@@ -370,8 +385,8 @@ export function checkBundle(
         }
       }
       findings.push(...computationResourceFindings(file.path, file.raw, availablePaths));
-      if (options.today !== undefined) {
-        findings.push(...staleAfterFindings(file.path, file.raw, options.today));
+      if (options.asOf !== undefined) {
+        findings.push(...staleAfterFindings(file.path, file.raw, options.asOf));
       }
     }
     findings.push(...portabilityScan(tree, file.path));
@@ -423,7 +438,7 @@ function computationResourceFindings(path: string, raw: string, availablePaths: 
 }
 
 /** Surface an elapsed OKF 0.2 stale_after date as advisory quality state, never a conformance error. */
-function staleAfterFindings(path: string, raw: string, today: string): CheckFinding[] {
+function staleAfterFindings(path: string, raw: string, asOf: string): CheckFinding[] {
   let frontmatter: Record<string, unknown> | null;
   try {
     frontmatter = tryReadFrontmatter(path, raw);
@@ -431,7 +446,7 @@ function staleAfterFindings(path: string, raw: string, today: string): CheckFind
     return [];
   }
   const staleAfter = frontmatter?.stale_after;
-  if (typeof staleAfter !== "string" || !isIsoCalendarDate(staleAfter) || today < staleAfter) {
+  if (typeof staleAfter !== "string" || !isIsoCalendarDate(staleAfter) || asOf < staleAfter) {
     return [];
   }
   return [
@@ -439,13 +454,13 @@ function staleAfterFindings(path: string, raw: string, today: string): CheckFind
       severity: "warning",
       rule: "stale-after",
       file: path,
-      message: `content is stale: stale_after ${staleAfter} has elapsed as of ${today}`,
+      message: `content is stale: stale_after ${staleAfter} has elapsed as of ${asOf}`,
     },
   ];
 }
 
 /** Validate a real UTC calendar date, not merely a date-shaped string. */
-function isIsoCalendarDate(value: string): boolean {
+export function isIsoCalendarDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return false;
   }

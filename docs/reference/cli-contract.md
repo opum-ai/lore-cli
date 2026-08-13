@@ -25,10 +25,17 @@ The decision and rationale behind this contract are recorded in
 when the MCP transport lands it will re-expose these same core functions, so this
 contract is the durable surface — see [MCP tools (deferred)](mcp-tools.md).
 
-This contract is **deterministic**: identical inputs against an unchanged bundle
-produce identical output and the same exit code. There is no LLM in the core
+This contract is **deterministic**: identical explicit inputs against unchanged
+repository state produce identical output and the same exit code. There is no
+LLM in the core
 (see [ADR-0014: core has no LLM dependency](../adr/0014-core-has-no-llm-dependency.md)),
-so callers may treat lore as a pure function of the repo state.
+so callers may treat lore as a pure function of repo state plus command inputs.
+Date-sensitive `check` rules receive one evaluation date: an explicit
+`--as-of YYYY-MM-DD`, or HEAD's recorded committer calendar date when the flag
+is omitted. They never read the machine clock. Today the only such rule is OKF
+0.2 `stale_after`; `validate` performs date-shape validation but no elapsed-date
+evaluation. A malformed/non-calendar `--as-of` is `usage` (exit `2`), while an
+unborn HEAD is `not_found` (exit `3`) only when a discovered rule needs a date.
 
 ---
 
