@@ -141,6 +141,7 @@
 - 2026-08-13T13:21:24-05:00 e897fa21b51123a74844d689b1e8471f0481d482 chore: finalize LCLI-323 campaign wave
 - 2026-08-13T13:31:56-05:00 4cdd7ab35b5eb0200e68ad8cfb1ce93029910a3b chore: reconcile LCLI-323 campaign closure
 - 2026-08-13T16:40:33-05:00 b64ec28342fef18812b48d1a56417a351a8fccc0 fix: report skipped out-of-bundle links
+- 2026-08-13T16:42:19-05:00 5aa786709a323fc9ac098e6c6fe480c0d86de0d5 docs: refresh Lore log for LCLI-324 delivery
 
 ## docs/.obsidian
 
