@@ -3,7 +3,7 @@ id: doc-18
 title: Backlog campaign tracker — post-0.2.0 correctness and release-truth fixes
 type: other
 created_date: '2026-08-13 13:17'
-updated_date: '2026-08-13 21:43'
+updated_date: '2026-08-13 22:37'
 ---
 # Backlog campaign tracker — post-0.2.0 correctness and release-truth fixes
 
@@ -23,7 +23,7 @@ Informational snapshot only; never a promised next wave.
 
 - LCLI-323 is Done. Source PR #364 merged to `dev` as `d97c4ae9289f6247bb869ad87150229091c7d622`; settlement PR #365 merged to `dev` as `ae624d5809ed01bd0f212b4869f10c7ec6e8d1a6`. Both exact PR heads are verified ancestors of live `origin/dev`.
 - The owner `docs/stories/harden-post-0-2-lore-correctness.md` is reconciled to Done, its managed task row is terminal, and the malformed duplicate task-note output was removed through the Backlog CLI.
-- LCLI-324 is in flight in sequential wave 3 on PR #367 against `dev`. Story coupling, actual Lore sync, local verification, commits, push, and PR creation are complete; merge remains unauthorized. LCLI-327 remains queued `To Do` and is not part of this wave.
+- LCLI-324 is Done. PR #367 passed all eight required CI jobs on exact head `94bfa2903a006219072d115343eb902f4cf54e15` and merged to `dev` as `e4bb39205a209030250d0ed6eaf335831543b67e`; exact ancestry is verified. The owner Story is reconciled to Done. LCLI-327 remains queued `To Do` and is not dispatched.
 - The LCLI-323 delivery and settlement branches were deleted locally and remotely after merged ancestry was verified. One primary worktree remains.
 - All Lore documentation mutations converge on generated indexes/logs and must be serialized through Lore.
 
@@ -31,7 +31,6 @@ Informational snapshot only; never a promised next wave.
 
 | Order | Task | Cluster | Formal dependencies | State | Wave | Likely files | Note |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 3 | LCLI-324 | deterministic checks | none | In flight; live `In Progress`; PR #367 open | 3 | `src/core/check.ts`, `src/core/instructions.ts`, `src/commands/check.ts`, `test/check.test.ts`, CLI docs, Lore-generated files | Verified content head `5aa7867`; PR opened against `dev`. Await required checks and explicit merge authority. |
 | 4 | LCLI-327 | E2E safety/provenance | none | Queued; live `To Do` | — | `docker/e2e/run-e2e.sh`, `test/docker-e2e-guard.test.ts`, Docker E2E runbook, Lore-generated files | Make identity configuration non-persistent and harden negative controls. Do not rewrite existing `dev` history. |
 
 ## Resolved
@@ -40,6 +39,7 @@ Informational snapshot only; never a promised next wave.
 | --- | --- | --- |
 | LCLI-325 | 2026-08-13 / wave 1 | Done. PR #359 passed all eight CI jobs and merged to `dev` as `c0b94d964ba1f94b9f2d1ab55dbb1f69fb6b8790`. Exact release-truth assertions, 2,560 tests, strict Lore validation/check, diff hygiene, and adversarial self-review passed. |
 | LCLI-323 | 2026-08-13 / wave 2 | Done and settled. Added explicit `--as-of`, defaulted temporal checks to the exact HEAD committer date, avoided Git reads for non-temporal bundles, and added contracts, documentation, and regression controls. Local verification passed 2,570 tests with 1 intentional skip plus typecheck/lint/build and strict Lore gates. PR #364 passed all eight required CI jobs and merged exact head `f3dcc987b3ab5045c1fe5ca8f3328a5a20dd0266` as `d97c4ae9289f6247bb869ad87150229091c7d622`; PR #365 passed all eight jobs and merged settlement head `e897fa21b51123a74844d689b1e8471f0481d482` as `ae624d5809ed01bd0f212b4869f10c7ec6e8d1a6`. Both delivery branches were pruned after ancestry verification. |
+| LCLI-324 | 2026-08-13 / wave 3 | Done and entering final settlement. Retained bundle-scoped link validation while exposing an informational skipped out-of-bundle relative Markdown link count in JSON and plain reports without changing severity or exit semantics. Local verification passed 2,573 tests with 1 intentional skip, typecheck, lint, build, diff hygiene, and strict Lore gates. PR #367 passed all eight required CI jobs and merged exact head `94bfa2903a006219072d115343eb902f4cf54e15` to `dev` as `e4bb39205a209030250d0ed6eaf335831543b67e`; exact ancestry is verified. |
 
 ## Not queued — blocked, deferred, or human decision required
 
@@ -70,3 +70,4 @@ Informational snapshot only; never a promised next wave.
 - 2026-08-13 — drift-free restore verified clean synchronized `dev` at `50db8eda7a6ae1d62561166913446a347bde1fb5`, one worktree, no open PRs, passing handover lifecycle audit, and live task states matching the tracker. Dispatched LCLI-324 as the sole task in sequential wave 3; LCLI-327 remains queued.
 - 2026-08-13 — wave 3 LCLI-324 implementation completed locally and all conditional acceptance criteria were verified. Evidence: 2,573 tests passed with 1 intentional skip; focused post-review suite 294/294 passed; typecheck, lint, build, diff hygiene, strict Lore validation, and strict Lore check passed. The final check reported 70 files, 0 errors, 0 warnings, and 343 skipped out-of-bundle links. Adversarial self-review corrected stale `lore instructions check` wording. Task remains In Progress because Story coupling, actual Lore sync (dry-run predicts only `docs/log.md`), commits, and delivery require explicit user authority.
 - 2026-08-13 — user authorized LCLI-324 Story coupling, actual Lore sync, commits, and PR delivery but not merge. Coupling/sync produced scoped Backlog commits `0e4e4ab`, `709fd68`, `18bfa82`, and `6ad54e1`; implementation commit `b64ec28` and Lore log refresh `5aa7867` passed 2,573 tests with 1 intentional skip plus typecheck, lint, build, diff hygiene, strict Lore validation, and strict Lore check (70 files, 0 errors, 0 warnings, 344 skipped out-of-bundle links). Pushed `fix/lcli-324-link-boundary-report` and opened PR #367 against `dev`; task remains In Progress pending checks and merge authority.
+- 2026-08-13 — user authorized full LCLI-324 closure. PR #367 passed all eight required CI jobs on exact head `94bfa2903a006219072d115343eb902f4cf54e15` and merged to `dev` as `e4bb39205a209030250d0ed6eaf335831543b67e`; ancestry was verified before LCLI-324 was marked Done and the owner Story was reconciled through Lore. LCLI-327 remains queued and undispatched.
