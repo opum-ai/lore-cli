@@ -3,7 +3,7 @@ id: doc-18
 title: Backlog campaign tracker — post-0.2.0 correctness and release-truth fixes
 type: other
 created_date: '2026-08-13 13:17'
-updated_date: '2026-08-13 13:34'
+updated_date: '2026-08-13 13:51'
 ---
 # Backlog campaign tracker — post-0.2.0 correctness and release-truth fixes
 
@@ -21,16 +21,16 @@ updated_date: '2026-08-13 13:34'
 
 Informational snapshot only; never a promised next wave.
 
-- LCLI-325 is in flight with implementation and non-mutating verification complete; actual Lore synchronization is paused pending explicit authority for its documented Backlog commit.
-- LCLI-323, LCLI-324, and LCLI-327 remain queued with no formal dependencies.
-- LCLI-323 and LCLI-324 share the check implementation, tests, and CLI documentation and therefore conflict.
+- LCLI-325 is in flight with all acceptance criteria satisfied locally; source/docs delivery is paused pending explicit commit authority.
+- LCLI-323, LCLI-324, and LCLI-327 remain queued with no formal dependencies, but their documentation work conflicts with the retained dirty LCLI-325 doc state.
+- LCLI-323 and LCLI-324 also conflict directly in check implementation, tests, and CLI documentation.
 - All Lore documentation mutations converge on generated indexes/logs and must be serialized through Lore.
 
 ## Queue
 
 | Order | Task | Cluster | Formal dependencies | State | Wave | Likely files | Note |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | LCLI-325 | release truth | none | `In Progress`; awaiting Lore sync commit authority | 1 | `README.md`, `docs/runbooks/release-publishing.md`, `docs/stories/maintain-lore-cli-documentation-authority.md`, `docs/log.md` | README/runbook implementation is local. Validation, tests, focused scans, and diff hygiene pass. Sync dry-run predicts only the Story rollup and generated log. |
+| 1 | LCLI-325 | release truth | none | `In Progress`; acceptance satisfied locally, awaiting source delivery | 1 | `README.md`, `docs/runbooks/release-publishing.md`, `docs/stories/maintain-lore-cli-documentation-authority.md`, `docs/log.md` | Exact assertions, 2,560 tests, strict Lore validation/check, diff hygiene, and adversarial self-review pass. Source/docs remain uncommitted. |
 | 2 | LCLI-323 | deterministic checks | none | Queued; live `To Do` | — | `src/commands/check.ts`, `src/core/check.ts`, CLI routing/manifest as needed, check tests, CLI/OKF docs, Lore-generated files | Use HEAD commit date by default and add explicit `--as-of`; resolve every date-sensitive rule from one input. |
 | 3 | LCLI-324 | deterministic checks | none | Queued; live `To Do` | — | `src/core/check.ts`, `src/commands/check.ts`, check/output tests, CLI docs, Lore-generated files | Keep the bundle boundary but report/count skipped out-of-bundle relative links. Conflicts with LCLI-323. |
 | 4 | LCLI-327 | E2E safety/provenance | none | Queued; live `To Do` | — | `docker/e2e/run-e2e.sh`, `test/docker-e2e-guard.test.ts`, Docker E2E runbook, Lore-generated files | Make identity configuration non-persistent and harden negative controls. Do not rewrite existing `dev` history. |
@@ -39,7 +39,7 @@ Informational snapshot only; never a promised next wave.
 
 | Task | Date/wave | Evidence and disposition |
 | --- | --- | --- |
-| — | — | No task resolved yet. |
+| — | — | No task resolved yet; LCLI-325 is verified but not delivered. |
 
 ## Not queued — blocked, deferred, or human decision required
 
@@ -57,4 +57,5 @@ Informational snapshot only; never a promised next wave.
 - 2026-08-13 — initialized the user-confirmed four-task campaign from clean `dev` at `9ad7b99a27e216e066752dca57c2b9d315d56430`, synchronized with locally cached `origin/dev` and with only the primary worktree registered. No task was dispatched.
 - 2026-08-13 — dispatched LCLI-325 as the sole task in sequential wave 1 after restore found no drift, no formal dependency blocker, and no source-file conflict with the Backlog-owned tracker mutation.
 - 2026-08-13 — paused wave 1 before source edits when Lore coupling automatically committed Backlog metadata as `804534f13e7d83a6078fa4b6a6e8bf198080ddd3`. The Story frontmatter addition remained uncommitted pending user disposition.
-- 2026-08-13 — user retained `804534f13e7d83a6078fa4b6a6e8bf198080ddd3`; LCLI-325 implementation then completed locally. `lore validate --strict`, `git diff --check`, focused README scans, and 2,560 tests passed; `lore sync --dry-run` predicts two managed doc updates. Actual sync awaits explicit authority for its catch-all Backlog commit.
+- 2026-08-13 — user retained `804534f13e7d83a6078fa4b6a6e8bf198080ddd3`; LCLI-325 implementation then completed locally. `lore validate --strict`, `git diff --check`, focused README scans, and 2,560 tests passed; `lore sync --dry-run` predicted two managed doc updates.
+- 2026-08-13 — user authorized actual Lore synchronization. `lore sync` created scoped Backlog commit `00ae852096088f6e7df1f7b44e050a5724e2b448` with exactly LCLI-325, LCLI-328, and doc-18, then strict validation/check and executable release-truth assertions passed. LCLI-325 remains In Progress pending authority to commit its four source/doc files.
