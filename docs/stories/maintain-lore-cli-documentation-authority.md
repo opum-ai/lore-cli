@@ -8,7 +8,7 @@ tags:
   - handover
 summary: Keep release truth, task ownership, documentation routing, and historical handovers coherent.
 timestamp: 2026-08-03T16:05:06.929Z
-status: todo
+status: done
 tasks:
   - lcli-293
   - lcli-292
@@ -44,7 +44,7 @@ product or release state.
 | [LCLI-293](../../backlog/tasks/lcli-293%20-%20Reconcile-Lore-CLI-release-truth-handover-lifecycle-and-Story-ownership.md) | Reconcile Lore CLI release truth handover lifecycle and Story ownership | Done |
 | [LCLI-292](../../backlog/tasks/lcli-292%20-%20Adapt-backlog-handover-skill-for-Lore-CLI.md) | Adapt backlog-handover skill for Lore CLI | Done |
 | [LCLI-294](../../backlog/tasks/lcli-294%20-%20Transfer-Lore-CLI-repository-to-opum-ai-and-reconcile-canonical-location.md) | Transfer Lore CLI repository to opum-ai and reconcile canonical location | Done |
-| [LCLI-322](../../backlog/tasks/lcli-322%20-%20Restore-single-active-cursor-hygiene-for-ignored-handover-archives.md) | Restore single-active-cursor hygiene for ignored handover archives | To Do |
+| [LCLI-322](../../backlog/tasks/lcli-322%20-%20Restore-single-active-cursor-hygiene-for-ignored-handover-archives.md) | Restore single-active-cursor hygiene for ignored handover archives | Done |
 <!-- lore:tasks:end -->
 
 ## Notes
