@@ -3,7 +3,7 @@ id: doc-17
 title: Backlog campaign tracker — single-active handover hygiene
 type: other
 created_date: '2026-08-12 22:37'
-updated_date: '2026-08-13 05:13'
+updated_date: '2026-08-13 05:15'
 ---
 # Backlog campaign tracker — single-active handover hygiene
 
@@ -19,21 +19,22 @@ updated_date: '2026-08-13 05:13'
 - Corrective research commit 4187947 restored only LCLI-322/doc-17 there while retaining research-owned LCLI-323 through LCLI-325.
 - PR #354 delivered verified head d4bbc491c940518eca39a14f1dda49182dbc1df4 to dev through merge commit 8746dae46bfa06f11ecdb44ba9637feee085642d after all eight CI jobs passed.
 - The merge tree is identical to the PR head. LCLI-322 is integrated into dev.
+- PR #355 is open against dev to deliver this final two-file Backlog reconciliation.
 
 ## Queue
 
 | Order | Task | Dependencies | State | Wave | Result |
 | --- | --- | --- | --- | --- | --- |
-| 1 | LCLI-322 | none | Done; integrated | 1 | active.md is the sole executable cursor; 57 obsolete ignored archives reconciled and quarantined; deterministic lifecycle audit and focused tests added; PR #354 merged. |
+| 1 | LCLI-322 | none | Done; integrated; reconciliation PR #355 open | 1 | active.md is the sole executable cursor; 57 obsolete ignored archives reconciled and quarantined; deterministic lifecycle audit and focused tests added; PR #354 merged. |
 
 ## Resolved
 
 - LCLI-322 — Done and integrated at 8746dae.
 - Exactly one ignored handover remains in .claude/handovers/: active.md with lifecycle: executable-current. The 57 obsolete files remain in recoverable session-local quarantine outside the repository.
 - The backlog-handover skill makes active.md canonical and audits init, write, restore, and status workflows.
-- Verification: 7 focused tests / 13 assertions; real-directory audit pass; typecheck pass; lint pass on 196 files; full suite 2,560 pass, 1 skip, 0 fail across 79 files / 8,739 assertions; strict Lore validation/check and git diff --check pass; all eight PR CI jobs passed.
+- Verification: 7 focused tests / 13 assertions; real-directory audit pass; typecheck pass; lint pass on 196 files; full suite 2,560 pass, 1 skip, 0 fail across 79 files / 8,739 assertions; strict Lore validation/check and git diff --check pass; all eight PR #354 CI jobs passed.
 - Cleanup: the clean merged implementation worktree, local branch chore/lcli-322-handover-hygiene, and its remote branch were removed with explicit approval. Its only ignored residue was a reproducible Ladybug cache; no unique user work was deleted.
-- The clean reconciliation branch/worktree chore/lcli-322-merge-reconciliation is retained temporarily to deliver this final tracker settlement.
+- The clean reconciliation branch/worktree chore/lcli-322-merge-reconciliation is retained while PR #355 is open. Merge and final reconciliation-branch cleanup require separate authorization.
 
 ## Outside scope
 
@@ -50,4 +51,5 @@ updated_date: '2026-08-13 05:13'
 - 2026-08-13 — corrective commit 4187947 separated LCLI-322/doc-17 from the research branch without disturbing LCLI-323 through LCLI-325.
 - 2026-08-13 — completed implementation and objective verification, pushed chore/lcli-322-handover-hygiene, and opened PR #354.
 - 2026-08-13 — merged PR #354 at 8746dae after eight successful CI jobs.
-- 2026-08-13 — removed the merged implementation worktree and local/remote branch with explicit approval; prepared this final settlement on chore/lcli-322-merge-reconciliation.
+- 2026-08-13 — removed the merged implementation worktree and local/remote branch with explicit approval.
+- 2026-08-13 — opened PR #355 from chore/lcli-322-merge-reconciliation to deliver the final tracker/task settlement; retained that clean branch/worktree pending its disposition.
