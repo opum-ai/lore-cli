@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-10 19:59'
-updated_date: '2026-08-13 04:18'
+updated_date: '2026-08-13 04:42'
 labels:
   - handover
   - lifecycle
@@ -67,6 +67,8 @@ Verification and disposition (2026-08-13)
 - Focused verification: bun test test/backlog-handover-lifecycle.test.ts => 7 pass, 0 fail, 13 assertions. Real-directory lifecycle audit => pass with exactly one active pointer. npm run typecheck => pass. npm run lint => pass (196 files). npm test => 2,560 pass, 1 skip, 0 fail across 79 files (8,739 assertions). git diff --check => pass.
 - Isolation note: the first full-suite attempt exposed only a missing worktree-local native dependency (2,555 pass, 1 skip, 1 failure); linking the existing ignored dependency installation into the isolated worktree restored the intended environment, and the complete rerun passed.
 - Delivery isolation: corrective research commit 4187947 restored only LCLI-322/doc-17 there while retaining LCLI-323 through LCLI-325. This implementation remains on dedicated local branch chore/lcli-322-handover-hygiene pending separate remote-delivery authorization.
+
+Delivery update (2026-08-13): user authorized remote delivery. Branch chore/lcli-322-handover-hygiene was pushed at 63df417 and PR #354 was opened against dev. The PR head matched 63df417 at creation; merge remains unperformed and outside the current authorization.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
