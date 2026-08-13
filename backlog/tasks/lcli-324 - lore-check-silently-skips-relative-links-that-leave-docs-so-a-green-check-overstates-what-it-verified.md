@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-13 03:47'
-updated_date: '2026-08-13 21:39'
+updated_date: '2026-08-13 21:43'
 labels:
   - bug
   - check
@@ -91,4 +91,6 @@ Adversarial self-review found one stale user-facing surface: lore instructions c
 User authorized Story coupling, actual Lore sync, local commits, and PR delivery on 2026-08-13; merge remains separately unauthorized. Created delivery branch fix/lcli-324-link-boundary-report. lore link coupled the task to stories/harden-post-0-2-lore-correctness and created scoped Backlog commit 0e4e4ab. lore sync reconciled the Story to in-progress, regenerated its managed task row and docs/log.md, and created scoped tracker commit 709fd68. A subsequent lore sync --dry-run was clean.
 
 Final synchronized-tree verification after Story coupling and actual Lore sync: bun test --reporter=dot — 2,573 pass, 1 intentional skip, 0 fail across 79 files; npm run typecheck, npm run lint, npm run build, and git diff --check — passed; ./dist/lore validate --strict — 70 files, 0 errors, 0 warnings; ./dist/lore check --strict — 70 files, 0 errors, 0 warnings, 344 out-of-bundle links skipped. These supersede the pre-coupling count of 343; the added managed Story task link is the additional correctly skipped cross-bundle link.
+
+Delivery PR #367 opened against dev from verified content head 5aa7867 (implementation b64ec28 plus generated-log refresh 5aa7867). The branch includes scoped Lore/Backlog commits 0e4e4ab, 709fd68, 18bfa82, and 6ad54e1. Merge is not authorized; keep the task In Progress until PR #367 passes required checks and is merged or another explicit disposition is recorded.
 <!-- SECTION:NOTES:END -->
