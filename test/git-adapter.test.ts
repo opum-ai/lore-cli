@@ -10,7 +10,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { realGitAdapter, resolveHeadSha } from "../src/adapters/git";
+import { realGitAdapter, resolveHeadCommitDate, resolveHeadSha } from "../src/adapters/git";
 import { type GitCommit, generateLog } from "../src/core/log";
 import { LoreError } from "../src/errors";
 import { expectError, gitRun as run } from "./helpers";
@@ -74,6 +74,34 @@ describe("resolveHeadSha", () => {
     try {
       writeFileSync(join(root, ".git", "HEAD"), "ref: refs/heads/..bad..name\n");
       expect(() => resolveHeadSha(root)).toThrow(LoreError);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("resolveHeadCommitDate", () => {
+  test("returns null in a fresh repo with no commits", () => {
+    const root = freshRepo();
+    try {
+      expect(resolveHeadCommitDate(root)).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("returns HEAD's recorded committer calendar date", () => {
+    const root = freshRepo();
+    try {
+      commit(root, "docs/index.md", "hello\n", "first");
+      const expected = Bun.spawnSync(["git", "show", "-s", "--format=%cI", "HEAD"], {
+        cwd: root,
+        stdout: "pipe",
+      })
+        .stdout.toString("utf8")
+        .slice(0, 10);
+      expect(resolveHeadCommitDate(root)).toBe(expected);
+      expect(expected).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

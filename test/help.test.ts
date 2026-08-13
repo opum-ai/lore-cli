@@ -69,6 +69,12 @@ describe("core/manifest — shape and invariants", () => {
     }
   });
 
+  test("check exposes --as-of as a value-taking deterministic-date flag", () => {
+    expect(findManifestCommand("check")?.flags.find((flag) => flag.name === "as-of")).toMatchObject({
+      takesValue: true,
+    });
+  });
+
   test("every per-command exit code is one of the taxonomy's codes", () => {
     const valid = new Set(Object.values(buildManifest().exitCodes)); // {0,1,2,3,4,5,6}
     for (const command of buildManifest().commands) {

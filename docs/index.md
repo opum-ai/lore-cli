@@ -70,7 +70,7 @@ How lore is built and how its pieces fit together.
   surface, core data flow, the Backlog.md coupling, and how the OKF bundle is
   produced and kept coherent.
 - [Lore competitive adoption roadmap](specs/lore-competitive-adoption-roadmap.md)
-  — what to build to lead the field: the blocking `--as-of` determinism fix,
+  — what to build to lead the field: the delivered `--as-of` determinism fix,
   the cheap credibility layer, and what to reject outright.
 - [Local graph platform roadmap](specs/local-graph-platform-roadmap.md) — the
   completed M6–M8 sequence for indexed `graph`/`query`/`context`, packaging

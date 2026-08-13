@@ -135,6 +135,7 @@
 - 2026-08-12T17:42:50-05:00 e8d9b1b918dcad3a70cb860f9f6dc9a62c3a26fe docs: initialize handover hygiene campaign
 - 2026-08-12T23:00:10-05:00 78db86044162ea25de3da085a8f2a6fec77c2b4d docs: competitive research on agent-native knowledge tooling (LCLI-323/324/325)
 - 2026-08-13T09:40:05-05:00 e46248ddefaca9017d2a97f8c29175b28e11a67a docs: fix Lore 0.2 install guidance
+- 2026-08-13T09:50:55-05:00 fa43e1dc00756b443c5d12ac8710dc7393af6d07 chore: finalize LCLI-325 campaign wave
 
 ## docs/.obsidian
 
@@ -408,3 +409,4 @@
 - 2026-08-12T17:42:50-05:00 e8d9b1b918dcad3a70cb860f9f6dc9a62c3a26fe docs: initialize handover hygiene campaign
 - 2026-08-12T23:24:56-05:00 63df417250ab1039404369b3626c35f9aee481df chore: enforce single active handover cursor
 - 2026-08-13T09:40:05-05:00 e46248ddefaca9017d2a97f8c29175b28e11a67a docs: fix Lore 0.2 install guidance
+- 2026-08-13T09:50:55-05:00 fa43e1dc00756b443c5d12ac8710dc7393af6d07 chore: finalize LCLI-325 campaign wave

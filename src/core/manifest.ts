@@ -261,13 +261,14 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     flags: [
       { name: "strict", takesValue: false, summary: "Treat warnings as failures for the exit code" },
       { name: "external", takesValue: false, summary: "Also probe external-URL liveness (advisory; never gates)" },
+      { name: "as-of", takesValue: true, summary: "Pin date-sensitive checks (default: HEAD commit date)" },
     ],
     json: true,
     kind: "check.report",
     // extra 6 = the drift/link gate RETURN (check.ts:258) — check's principal failure, modeled
     // explicitly rather than left to the coincidental adapter 6.
     exitCodes: exitCodesFor(["read", "backlog"], [6]),
-    examples: ["lore check", "lore check --external"],
+    examples: ["lore check", "lore check --as-of 2026-08-13", "lore check --external"],
   },
   {
     name: "replace",

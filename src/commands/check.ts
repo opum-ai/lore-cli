@@ -17,8 +17,8 @@
  *
  * Scope: internal link/anchor validation, portability lint, and OKF 0.2 `stale_after` evaluation
  * (now including MDX-hazard and filename-portability findings, LORE-48) are deterministic once the
- * command layer supplies today's UTC date. Task-progress reconciliation and managed-block drift
- * (LORE-27) reuse the exact pure
+ * command layer supplies the explicit `--as-of` date or HEAD's recorded commit date.
+ * Task-progress reconciliation and managed-block drift (LORE-27) reuse the exact pure
  * engines `lore sync` writes with ({@link reconcileStatus}, {@link regenerateTaskBlock}, via the
  * `commands/reconcile-shared.ts` gather shared with `sync`) but only diff against disk — this
  * command never writes. Both are **errors**, always gating (unlike the warn-only portability lint).
@@ -31,6 +31,7 @@ import { lookup as dnsLookup } from "node:dns/promises";
 import { statSync } from "node:fs";
 import { join, posix } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
+import { resolveHeadCommitDate } from "../adapters/git";
 import { loadAgentProfiles, validateAgentProfileReferences } from "../core/agent-profile";
 import { effectiveProfileFor, loadBundle, walkFiles } from "../core/bundle";
 import {
@@ -41,7 +42,9 @@ import {
   classifyAddress,
   collectExternalLinks,
   type ExternalLink,
+  hasDateSensitiveCheckRules,
   isAddressLiteral,
+  isIsoCalendarDate,
   reconcileDriftFindings,
   tallySeverity,
 } from "../core/check";
@@ -62,7 +65,7 @@ import {
   type Writer,
 } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { parseCommandArgs } from "./args";
+import { parseCommandArgs, singleOptionValue } from "./args";
 import { canonicalIdentity, readSource } from "./discover";
 import { dedupeTaskIds, defaultAdapter } from "./link";
 import {
@@ -115,8 +118,8 @@ export interface CheckOptions {
   resolveHost?: ResolveHost;
   /** The Backlog adapter for status/managed-block reconciliation; defaults to the real `backlog` binary on PATH. Only constructed when at least one discovered concept links a task. */
   adapter?: BacklogAdapter;
-  /** Clock for the OKF stale_after check; defaults to the wall clock and is injected in tests. */
-  clock?: () => Date;
+  /** Resolver for HEAD's committer date; defaults to the read-only Git adapter and is injected in tests. */
+  headCommitDate?: () => string | null;
 }
 
 /** The parsed form of `lore check`'s arguments. */
@@ -127,6 +130,8 @@ interface CheckArgs {
   strict: boolean;
   /** `--external`: opt into non-deterministic external-URL liveness (advisory only; never gates). */
   external: boolean;
+  /** Explicit date pin; absent means resolve HEAD's committer date. */
+  asOf?: string;
 }
 
 /**
@@ -158,7 +163,6 @@ interface CheckArgs {
  */
 export function runCheck(options: CheckOptions): number | Promise<number> {
   const parsed = parseCheckArgs(options.args);
-  const today = (options.clock ?? (() => new Date()))().toISOString().slice(0, 10);
   // Loaded once, up front — mirrors `context.ts`/`graph.ts`'s own LORE-84 precedent of failing
   // loud on a malformed profile before any other work runs. `collectBundles`'s file discovery
   // below is a single repo (`options.root`) with possibly several bundle DIRECTORIES within it
@@ -193,7 +197,19 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
     advisories.flush({ color: options.output.color, stderr: options.stderr });
   }
 
-  const linkReport = checkBundles(bundles, today);
+  const needsAsOf = bundles.some((bundle) => hasDateSensitiveCheckRules(bundle.files, bundle.state));
+  const asOf =
+    parsed.asOf ?? (needsAsOf ? (options.headCommitDate ?? (() => resolveHeadCommitDate(options.root)))() : undefined);
+  if (asOf === null) {
+    throw new LoreError(
+      "not_found",
+      "cannot evaluate date-sensitive checks because HEAD has no commit date",
+      "commit the bundle or pass --as-of YYYY-MM-DD",
+      { ref: "HEAD" },
+    );
+  }
+
+  const linkReport = checkBundles(bundles, asOf);
 
   // Reuse the SAME already-read files (no second directory walk, no second read) to classify unknown
   // active-profile types and find `tasks:`-linked concepts per bundle root, so strict validation
@@ -663,10 +679,18 @@ export function isDocsRoot(label: string): boolean {
  */
 function parseCheckArgs(args: readonly string[]): CheckArgs {
   const parsed = parseCommandArgs(args, "check");
+  const asOf = singleOptionValue(parsed, "as-of");
+  if (asOf !== undefined && !isIsoCalendarDate(asOf)) {
+    throw usage(
+      `--as-of must be a real calendar date in YYYY-MM-DD form; received ${JSON.stringify(asOf)}`,
+      "pass a date such as --as-of 2026-08-13",
+    );
+  }
   return {
     paths: parsed.positionals,
     strict: parsed.flags.has("strict"),
     external: parsed.flags.has("external"),
+    asOf,
   };
 }
 
@@ -749,12 +773,12 @@ function collectBundles(root: string, paths: readonly string[], warnings: Warnin
  * is prefixed with its bundle label so two roots' same-named files stay distinguishable; a single
  * bundle's findings keep the plain bundle-relative path.
  */
-function checkBundles(bundles: readonly Bundle[], today: string): CheckReport {
+function checkBundles(bundles: readonly Bundle[], asOf: string | undefined): CheckReport {
   const multi = bundles.length > 1;
   const findings: CheckFinding[] = [];
   let fileCount = 0;
   for (const bundle of bundles) {
-    const report = checkBundle(bundle.files, bundle.state, { today, availablePaths: bundle.availablePaths });
+    const report = checkBundle(bundle.files, bundle.state, { asOf, availablePaths: bundle.availablePaths });
     fileCount += report.fileCount;
     const versionFindings: CheckFinding[] = bundle.versionIssues.map((issue) => ({
       severity: issue.severity,

@@ -170,7 +170,6 @@ radius), `iwe` (a real query language with `$includes`/`$referencedBy` and
 
 | Gap | Who does it better | What they have that Lore does not |
 |---|---|---|
-| **Wall-clock-free checking** | claude-obsidian `lint --as-of` | See the defect below — this is a correctness bug, not a feature gap |
 | **SARIF output** | okfcli, ODS | `--format sarif --exit-zero` puts findings in GitHub's Security tab |
 | **Stable rule IDs** | okfcli (`okf/links/broken`), OpenSpec (~25 named codes) | CI can suppress and route by ID; message text can evolve safely |
 | **CLI self-description** | okfcli `okf schema [command]` | An agent learns the whole surface in one call instead of N `--help` invocations |
@@ -183,13 +182,11 @@ radius), `iwe` (a real query language with `$includes`/`$referencedBy` and
 | **Reviewer-facing impact** | okf-rs `review <a> <b> --fail-on-risk` | Sticky PR comment plus a merge gate; Lore has `impact` but no reviewer renderer |
 | **MCP server** | okf-gem, okf-mcp, okf-rs, iwe (14 tools), Foam (25), zetl (9), Backlog.md (20) | Deliberately deferred — but now the most common capability in the field |
 
-### The one confirmed defect
+### Resolved determinism defect
 
-`lore check` is **wall-clock dependent**, which contradicts the determinism
-claim it is the gate for. `staleAfterFindings` in `src/core/check.ts` compares
-an OKF 0.2 concept's `stale_after` against today's date and emits a
-warning-tier `stale-after` finding; `--strict` promotes warnings to a failing
-exit code.
+The 2026-08-13 review found that `lore check` was **wall-clock dependent**:
+`staleAfterFindings` compared an OKF 0.2 concept's `stale_after` against the
+machine date, and `--strict` promoted the resulting warning to a failing exit.
 
 Verified empirically against this repository's source, with a negative control,
 on 2026-08-13 — a scratch 0.2 bundle carrying `stale_after: 2020-01-01`:
@@ -202,10 +199,16 @@ lore check          -> exit 0
 lore check --strict -> exit 6
 ```
 
-The same commit, unchanged, passes before that date and fails after it. The
-currently published `0.1.1` binary does not reproduce this because it does not
-implement OKF 0.2 staleness semantics, so the exposure arrives with the next
-release rather than existing in the field today. The fix is `--as-of` — see
+The unreleased LCLI-323 fix closes that hole; published `0.2.0` remains affected
+until a release carries it. `lore check --as-of YYYY-MM-DD` now pins the
+evaluation explicitly; without the flag, date-sensitive rules use HEAD's
+recorded committer calendar date. The
+gate never reads the machine clock, invalid/non-calendar pins fail as usage,
+and an unborn HEAD requires an explicit pin only when the bundle actually has
+a date-sensitive rule. A negative-control regression proves an elapsed fixture
+fails under `--strict` at the HEAD date and passes under an earlier explicit
+pin; a repeatability regression proves identical pinned invocations emit
+byte-identical reports. See
 [the adoption roadmap](../specs/lore-competitive-adoption-roadmap.md).
 
 ### A second, smaller finding: `check` does not follow links out of the bundle
