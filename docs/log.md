@@ -143,6 +143,7 @@
 - 2026-08-13T16:40:33-05:00 b64ec28342fef18812b48d1a56417a351a8fccc0 fix: report skipped out-of-bundle links
 - 2026-08-13T16:42:19-05:00 5aa786709a323fc9ac098e6c6fe480c0d86de0d5 docs: refresh Lore log for LCLI-324 delivery
 - 2026-08-13T16:44:57-05:00 94bfa2903a006219072d115343eb902f4cf54e15 docs: settle LCLI-324 delivery log
+- 2026-08-13T17:40:26-05:00 d8dc3341f91b42cd2bc9c8d65651ea95696f2915 chore: finalize LCLI-324 campaign wave
 
 ## docs/.obsidian
 
@@ -424,3 +425,4 @@
 - 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic
 - 2026-08-13T13:21:24-05:00 e897fa21b51123a74844d689b1e8471f0481d482 chore: finalize LCLI-323 campaign wave
 - 2026-08-13T16:40:33-05:00 b64ec28342fef18812b48d1a56417a351a8fccc0 fix: report skipped out-of-bundle links
+- 2026-08-13T17:40:26-05:00 d8dc3341f91b42cd2bc9c8d65651ea95696f2915 chore: finalize LCLI-324 campaign wave
