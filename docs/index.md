@@ -69,6 +69,9 @@ How lore is built and how its pieces fit together.
 - [lore design spec](specs/lore-design.md) — the end-to-end design: command
   surface, core data flow, the Backlog.md coupling, and how the OKF bundle is
   produced and kept coherent.
+- [Lore competitive adoption roadmap](specs/lore-competitive-adoption-roadmap.md)
+  — what to build to lead the field: the blocking `--as-of` determinism fix,
+  the cheap credibility layer, and what to reject outright.
 - [Local graph platform roadmap](specs/local-graph-platform-roadmap.md) — the
   completed M6–M8 sequence for indexed `graph`/`query`/`context`, packaging
   gates, the local graph explorer, workspace impact, and provenance.
@@ -122,6 +125,14 @@ docs and tools rely on.
   boundaries.
 - [MCP tools](reference/mcp-tools.md) — the **on-hold** local MCP design:
   the tools and resources it will expose over the same core functions.
+- [Competitive landscape](reference/competitive-landscape-agent-native-knowledge-tooling.md)
+  — the field Lore sits in as surveyed on 2026-08-12/13, including the OKF
+  implementation ecosystem that makes the format bet a contested one.
+- [Lore competitive feature matrix](reference/lore-competitive-feature-matrix.md)
+  — thirteen capability axes head-to-head, where Lore is alone, where it is
+  behind, and one confirmed determinism defect in `check`.
+- [claude-obsidian teardown](reference/claude-obsidian-teardown.md) — the
+  deepest single competitor teardown, read from a clone rather than a README.
 
 ## ADRs
 

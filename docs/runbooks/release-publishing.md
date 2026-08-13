@@ -416,14 +416,21 @@ publish is explicitly marked public. Root `package.json` and all six
    pin and `license`/`author`/`repository` metadata, are consistent before
    compiling anything, so a missed file fails loud here rather than silently
    skipping an optional dependency later.
-3. Merge to `dev`, promote to `main`, and wait for the full `main` CI matrix.
+3. Keep the README's copyable install commands versionless (`npx
+   @opum-ai/lore`, `bunx @opum-ai/lore`, and package-manager installs without
+   an `@<version>` suffix), so they continue to resolve the current release
+   instead of retaining the previous release's exact pin. Reconcile the
+   README's stated current version and install behavior with this version bump;
+   immutable historical evidence keeps its exact versions in the release-truth
+   record rather than in the install examples.
+4. Merge to `dev`, promote to `main`, and wait for the full `main` CI matrix.
    Tag that verified commit and push the tag — nothing triggers automatically
    from the tag.
-4. For the one-time `0.1.0` bootstrap, run `Release` with `publish: false`,
+5. For the one-time `0.1.0` bootstrap, run `Release` with `publish: false`,
    download its `npm-packages` artifact, and interactively publish the five
    platform tarballs first and root last with 2FA. Do not repeat this bootstrap
    for an already-existing version.
-5. Verify registry metadata and a clean installed CLI, then configure and list
+6. Verify registry metadata and a clean installed CLI, then configure and list
    every Trusted Publisher as described above. Later versions may use
    `publish: true` only after LCLI-278 supplies an effective external approval
    control; until then, OIDC publication remains prohibited despite the valid

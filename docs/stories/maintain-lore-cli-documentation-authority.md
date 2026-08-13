@@ -14,6 +14,7 @@ tasks:
   - lcli-292
   - lcli-294
   - lcli-322
+  - lcli-325
 ---
 
 # Maintain Lore CLI documentation authority
@@ -45,6 +46,7 @@ product or release state.
 | [LCLI-292](../../backlog/tasks/lcli-292%20-%20Adapt-backlog-handover-skill-for-Lore-CLI.md) | Adapt backlog-handover skill for Lore CLI | Done |
 | [LCLI-294](../../backlog/tasks/lcli-294%20-%20Transfer-Lore-CLI-repository-to-opum-ai-and-reconcile-canonical-location.md) | Transfer Lore CLI repository to opum-ai and reconcile canonical location | Done |
 | [LCLI-322](../../backlog/tasks/lcli-322%20-%20Restore-single-active-cursor-hygiene-for-ignored-handover-archives.md) | Restore single-active-cursor hygiene for ignored handover archives | Done |
+| [LCLI-325](../../backlog/tasks/lcli-325%20-%20README-Install-section-still-pins-0.1.0-and-describes-the-shipped-0.2.0-install-fix-as-a-future-release.md) | README Install section still pins 0.1.0 and describes the shipped 0.2.0 install fix as a future release | Done |
 <!-- lore:tasks:end -->
 
 ## Notes
