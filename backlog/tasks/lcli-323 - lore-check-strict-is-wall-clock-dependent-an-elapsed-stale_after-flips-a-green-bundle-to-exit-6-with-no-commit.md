@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-13 03:46'
-updated_date: '2026-08-13 17:12'
+updated_date: '2026-08-13 17:20'
 labels:
   - bug
   - check
@@ -115,4 +115,6 @@ Verification:
 - Adversarial self-review found and fixed a potential moving-HEAD race by resolving HEAD once and reading the date from that exact SHA. No independent reviewer was used because subagents were not authorized.
 
 All seven acceptance criteria are proven in the current working tree. LCLI-323 remains In Progress: actual `lore sync` would auto-commit the dirty Backlog task/tracker files and no commit authority exists. Story ownership is also unresolved; existing candidate Stories are explicitly historical or narrower in scope, while creating a new active post-0.2 correctness Story is a material documentation-scope decision.
+
+User authorized the recommended active Story and delivery workflow on 2026-08-13. Created docs/stories/harden-post-0-2-lore-correctness.md; Lore link created scoped Backlog commit 5de7c99, and Lore sync created tracker commit b65e49f, set the Story to in-progress, populated its managed task table, and regenerated Story index/log state. Post-sync verification on the exact delivery branch passed: bun test — 2,570 pass, 1 intentional skip, 0 fail; typecheck; lint — 196 files; build; strict Lore validation — 70 files, 0 errors, 0 warnings, 6 skipped; installed strict check, source default strict check, and explicit-pin source strict check at 2026-08-13 — each 70 files, 0 errors, 0 warnings; git diff check passed.
 <!-- SECTION:NOTES:END -->
