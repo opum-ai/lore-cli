@@ -9,8 +9,9 @@ Continue a Backlog.md campaign without trusting stale session memory. Treat Back
 the lifecycle system of record, a Backlog document as the campaign queue and journal, and the
 active handover as a disposable restart pointer.
 
-This repository keeps active handovers under `.claude/handovers/` for continuity with its
-existing campaign history even when Codex drives the work.
+This repository keeps the sole executable handover at `.claude/handovers/active.md` for
+continuity with its existing campaign history even when Codex drives the work. Any other local
+handover must be concise, explicitly historical, and non-executable.
 
 ## Start every invocation
 
@@ -23,6 +24,10 @@ existing campaign history even when Codex drives the work.
    - `status`: report campaign state without changing it.
 4. Let an explicit mode win. Infer clear natural-language intent. Use `status` for a genuinely
    ambiguous invocation because it is the only read-only mode.
+5. Run `node .codex/skills/backlog-handover/scripts/audit-handover-lifecycle.mjs` when
+   `.claude/handovers/` exists. In `init`, a missing initial pointer is expected only until
+   `active.md` is written. In `status`, report failures without changing files. In `restore`,
+   treat failures as drift to reconcile before dispatching unrelated work.
 
 Before executing any task, run `backlog instructions task-execution`. Before checking
 acceptance criteria, writing a final summary, or moving a task to `Done`, run
@@ -53,6 +58,13 @@ acceptance criteria, writing a final summary, or moving a task to `Done`, run
   notes, tracker documents, logs, or handovers. Active handovers may name the local repository
   path when needed for a paste-ready prompt; redact machine-specific paths before archiving them
   into tracked history.
+- Designate exactly one executable cursor with `**Lifecycle**: executable-current`, and keep that
+  marker only in `.claude/handovers/active.md`. A retained historical file must use
+  `**Lifecycle**: historical-non-executable` and contain no paste-ready prompt, runnable restore
+  invocation, or imperative continuation sequence.
+- Never create a timestamped executable handover. Replace `active.md` after durable Backlog facts
+  are flushed, then run the lifecycle audit. Before removing an obsolete local handover, reconcile
+  its unique unfinished evidence into the owning task or campaign record and record its disposition.
 
 ## Durable state model
 
@@ -63,8 +75,8 @@ Use three layers, in this order of authority:
 2. **Campaign document**: user-confirmed queue order, scope, coarse clusters, conflict hints,
    wave membership, settlement history, and human-only/deferred items. Locate it with
    `backlog doc list --plain` and read it with `backlog doc view <id> --plain`.
-3. **Active handover**: a short restart prompt plus verified git/worktree state and unfinished
-   stages. It accelerates restore but is never authoritative.
+3. **Active handover**: `.claude/handovers/active.md`, a short restart prompt plus verified
+   git/worktree state and unfinished stages. It accelerates restore but is never authoritative.
 
 Update a campaign document only with `backlog doc update <id> --content <complete-body>`. Read the
 current document immediately before replacement, preserve unrelated history, and write at most
@@ -145,15 +157,18 @@ Informational snapshot only; never a promised next wave.
 ```
 
 Verify `.claude/handovers/` is ignored. Do not disturb existing completed campaign documents.
-Write the first active handover and stop; `init` establishes state but does not execute a task.
+Write the first active handover to `.claude/handovers/active.md`, include
+`**Lifecycle**: executable-current`, run the lifecycle audit, and stop; `init` establishes state
+but does not execute a task.
 
 ## Restore mode
 
 ### 1. Locate and ground
 
-Locate the newest incomplete campaign document and the matching active handover. If no campaign
-document exists, recommend `init` and stop. If the latest campaign is complete, do not reopen it;
-require a new confirmed round.
+Locate the newest incomplete campaign document and `.claude/handovers/active.md`. Do not select a
+cursor by timestamp or executable wording in another file. If no campaign document exists,
+recommend `init` and stop. If the latest campaign is complete, do not reopen it; require a new
+confirmed round.
 
 Verify rather than remember:
 
@@ -271,11 +286,12 @@ Flush durable facts before writing the handover:
    history.
 3. Re-run the grounding checks from Restore mode.
 
-Write `.claude/handovers/HANDOVER-<UTC-date>-backlog-campaign.md` with:
+Replace `.claude/handovers/active.md` with:
 
 ```markdown
 # Handover — <campaign goal>
 
+**Lifecycle**: executable-current
 **Grounded against**: <branch @ full SHA; clean/dirty; ahead/behind or unknown>
 **Tracker**: <Backlog document id and title>
 
@@ -298,8 +314,10 @@ then use `$backlog-handover` in restore mode with tracker <id>. Recompute readin
 ```
 
 Include only verified facts. Name every unfinished task's branch/worktree and last completed stage.
-Do not promise the next wave. Archive an older same-topic handover only after removing secrets and
-machine-specific paths from the tracked copy; use a collision suffix rather than overwriting history.
+Do not promise the next wave. Do not copy the previous executable prompt into a timestamped file.
+If unique local provenance must remain outside Backlog, reduce it to past-tense facts, remove
+machine-specific paths and secrets, add `**Lifecycle**: historical-non-executable`, and ensure it
+contains no runnable continuation language. Run the lifecycle audit after the replacement.
 
 ## Status mode
 
@@ -311,6 +329,7 @@ Remain read-only after the mandatory overview command. Report:
 - active handover path and grounding SHA;
 - current branch, HEAD, dirty paths, ahead/behind state if known;
 - campaign branches, worktrees, and authorized-to-query PR state;
+- lifecycle-audit result and every unexpected handover file;
 - drift and the single safest next action.
 
 Several branches/worktrees may be legitimate during an explicitly authorized parallel wave. Treat
