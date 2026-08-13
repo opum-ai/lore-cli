@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-13 03:47'
-updated_date: '2026-08-13 21:32'
+updated_date: '2026-08-13 21:34'
 labels:
   - bug
   - check
@@ -87,4 +87,6 @@ Confirmed campaign decision: out-of-bundle relative link targets remain explicit
 Implemented the focused slice in src/core/check.ts and src/commands/check.ts: check.report now carries skippedOutOfBundleLinkCount, counts only authored relative .md targets that normalize above the bundle root, aggregates across roots, and prints the informational count without changing findings or exit semantics. Updated cli-surface.md and cli-contract.md with the explicit bundle boundary. Added unit/command/multi-root controls and strengthened the in-bundle missing-link negative control. Verification so far: bun test test/check.test.ts — 294 pass, 0 fail; npm run typecheck — passed.
 
 Adversarial self-review found one stale user-facing surface: lore instructions check still said broken internal links without naming the bundle boundary. Updated src/core/instructions.ts and aligned code comments; no further correctness defects found. Final-tree evidence: bun test --reporter=dot — 2,573 pass, 1 intentional skip, 0 fail across 79 files; post-review bun test test/check.test.ts — 294 pass, 0 fail; npm run typecheck, npm run lint, npm run build, and git diff --check — passed; ./dist/lore validate --strict — 70 files, 0 errors, 0 warnings; ./dist/lore check --strict — 70 files, 0 errors, 0 warnings, 343 out-of-bundle links skipped. ./dist/lore sync --dry-run --plain predicts only docs/log.md. AC#2 is not applicable under the recorded out-of-scope decision; the in-bundle branch remains proven by the strengthened exit-6 negative control. Remaining workflow blocker: lore link and actual lore sync can create commits, and source delivery also requires explicit commit authority. Task remains In Progress with no final summary.
+
+User authorized Story coupling, actual Lore sync, local commits, and PR delivery on 2026-08-13; merge remains separately unauthorized. Created delivery branch fix/lcli-324-link-boundary-report. lore link coupled the task to stories/harden-post-0-2-lore-correctness and created scoped Backlog commit 0e4e4ab. lore sync reconciled the Story to in-progress, regenerated its managed task row and docs/log.md, and created scoped tracker commit 709fd68. A subsequent lore sync --dry-run was clean.
 <!-- SECTION:NOTES:END -->
