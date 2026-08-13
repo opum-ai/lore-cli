@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-10 19:59'
-updated_date: '2026-08-13 04:42'
+updated_date: '2026-08-13 05:15'
 labels:
   - handover
   - lifecycle
@@ -69,6 +69,10 @@ Verification and disposition (2026-08-13)
 - Delivery isolation: corrective research commit 4187947 restored only LCLI-322/doc-17 there while retaining LCLI-323 through LCLI-325. This implementation remains on dedicated local branch chore/lcli-322-handover-hygiene pending separate remote-delivery authorization.
 
 Delivery update (2026-08-13): user authorized remote delivery. Branch chore/lcli-322-handover-hygiene was pushed at 63df417 and PR #354 was opened against dev. The PR head matched 63df417 at creation; merge remains unperformed and outside the current authorization.
+
+Closure reconciliation (2026-08-13): PR #354 merged verified head d4bbc491c940518eca39a14f1dda49182dbc1df4 into dev at 8746dae46bfa06f11ecdb44ba9637feee085642d after all eight CI jobs passed. The merged tree is identical to the PR head. With explicit user approval, the clean merged implementation worktree, local branch chore/lcli-322-handover-hygiene, and its remote branch were removed; only a reproducible read-only Ladybug cache had to be permission-normalized before the orphan directory could be deleted. The primary research checkout and unrelated LCLI-326/LCLI-327 files were untouched. Earlier notes saying the PR was unmerged are historical pre-merge facts superseded by this closure record.
+
+Reconciliation delivery update (2026-08-13): PR #355 was opened against dev from chore/lcli-322-merge-reconciliation to deliver the two-file post-merge settlement. The clean reconciliation branch/worktree are retained while that PR is open; merge and its cleanup require separate authorization.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
