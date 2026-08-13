@@ -3,7 +3,7 @@ id: doc-18
 title: Backlog campaign tracker — post-0.2.0 correctness and release-truth fixes
 type: other
 created_date: '2026-08-13 13:17'
-updated_date: '2026-08-13 15:04'
+updated_date: '2026-08-13 16:56'
 ---
 # Backlog campaign tracker — post-0.2.0 correctness and release-truth fixes
 
@@ -21,16 +21,16 @@ updated_date: '2026-08-13 15:04'
 
 Informational snapshot only; never a promised next wave.
 
-- LCLI-323, LCLI-324, and LCLI-327 are live `To Do` tasks with no formal dependencies.
-- LCLI-323 and LCLI-324 share the check implementation, tests, and CLI documentation and therefore conflict.
+- LCLI-323 is the sole in-flight task in sequential wave 2. Its implementation and all seven acceptance criteria are verified locally; actual Lore synchronization, Story ownership, and delivery await user authority/decision.
+- LCLI-324 and LCLI-327 remain live `To Do` tasks with no formal dependencies.
+- LCLI-323 and LCLI-324 share the check implementation, tests, and CLI documentation and therefore conflict; LCLI-324 remains undispatched.
 - All Lore documentation mutations converge on generated indexes/logs and must be serialized through Lore.
-- Recompute repository and remote state after this settlement lands before dispatching another task.
 
 ## Queue
 
 | Order | Task | Cluster | Formal dependencies | State | Wave | Likely files | Note |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 2 | LCLI-323 | deterministic checks | none | Queued; live `To Do` | — | `src/commands/check.ts`, `src/core/check.ts`, CLI routing/manifest as needed, check tests, CLI/OKF docs, Lore-generated files | Use HEAD commit date by default and add explicit `--as-of`; resolve every date-sensitive rule from one input. |
+| 2 | LCLI-323 | deterministic checks | none | In flight; AC verified, sync/Story/delivery pending | 2 | `src/commands/check.ts`, `src/core/check.ts`, CLI routing/manifest as needed, check tests, CLI/OKF docs, Lore-generated files | Use HEAD commit date by default and add explicit `--as-of`; resolve every date-sensitive rule from one input. |
 | 3 | LCLI-324 | deterministic checks | none | Queued; live `To Do` | — | `src/core/check.ts`, `src/commands/check.ts`, check/output tests, CLI docs, Lore-generated files | Keep the bundle boundary but report/count skipped out-of-bundle relative links. Conflicts with LCLI-323. |
 | 4 | LCLI-327 | E2E safety/provenance | none | Queued; live `To Do` | — | `docker/e2e/run-e2e.sh`, `test/docker-e2e-guard.test.ts`, Docker E2E runbook, Lore-generated files | Make identity configuration non-persistent and harden negative controls. Do not rewrite existing `dev` history. |
 
@@ -61,3 +61,5 @@ Informational snapshot only; never a promised next wave.
 - 2026-08-13 — PR #359 passed all eight CI jobs and merged LCLI-325 to `dev` as `c0b94d964ba1f94b9f2d1ab55dbb1f69fb6b8790`. The live task was marked Done and wave 1 was settled on branch `chore/lcli-325-final-settlement`.
 - 2026-08-13 — PR #360 passed all eight CI jobs and merged the settlement to `dev` as `c258e45b1c77de8141e0de159c594454e4041653`.
 - 2026-08-13 — PR #361 passed all eight CI jobs and promoted exact `dev` head `c258e45b1c77de8141e0de159c594454e4041653` to `main` as `6d834acb90cf1ae3c66b47c73f47b40fe9f40c00`. Closure audit confirmed both delivery commits were ancestors of live `dev` and `main`; the local and remote delivery branches were deleted, stale remote refs and worktrees were pruned, and local integration branches were fast-forwarded to their remotes.
+- 2026-08-13 — restore found no drift: clean synchronized `dev` at `4d61d8da7d62912d6c965144b306432d555b74af`, one worktree, no open PRs, and all live task states matched the tracker. Dispatched LCLI-323 as the sole task in sequential wave 2; LCLI-324 remains queued because its check/docs surface conflicts with LCLI-323.
+- 2026-08-13 — wave 2 implementation for LCLI-323 completed and all seven acceptance criteria were verified locally: 2,570 tests passed with 1 intentional skip, typecheck/lint/build passed, strict Lore validation and source check passed, and adversarial self-review fixed a moving-HEAD race. `lore sync --dry-run` predicts only `docs/log.md`. The task remains In Progress because actual Lore sync would self-commit dirty Backlog state without authority, and no appropriately scoped Story owner is currently confirmed.
