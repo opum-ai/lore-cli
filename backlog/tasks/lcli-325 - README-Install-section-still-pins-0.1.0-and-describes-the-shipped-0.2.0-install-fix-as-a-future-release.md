@@ -3,17 +3,26 @@ id: LCLI-325
 title: >-
   README Install section still pins 0.1.0 and describes the shipped 0.2.0
   install fix as a future release
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-13 03:47'
+updated_date: '2026-08-13 13:22'
 labels:
   - bug
   - docs
   - readme
   - release
+  - 'doc:stories/maintain-lore-cli-documentation-authority'
 dependencies: []
 documentation:
   - docs/reference/lore-cli-release-truth.md
+  - docs/runbooks/release-publishing.md
+  - docs/stories/maintain-lore-cli-documentation-authority.md
+modified_files:
+  - README.md
+  - docs/runbooks/release-publishing.md
+  - docs/stories/maintain-lore-cli-documentation-authority.md
 priority: medium
 type: bug
 ordinal: 448000
@@ -48,3 +57,12 @@ Worth fixing at the mechanism level as well as the instance. Pinned exact versio
 - [ ] #5 If a check is added, it is proven by a negative control that makes it fail and names the offending line, and its exit code is taken without a pipe
 - [ ] #6 The release runbook records whichever mechanism was chosen so 0.3.0 cannot reintroduce the drift
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Couple LCLI-325 to the documentation-authority Story so Lore manages the Story/task back-reference and status rollup.
+2. Remove exact @opum-ai/lore version pins from every README install command and rewrite the surrounding launcher/LadybugDB prose as shipped 0.2.0 behavior.
+3. Add a release-runbook checkpoint requiring README install examples to remain versionless and the stated install behavior to match the release being cut.
+4. Run Lore synchronization, strict validation/check gates, focused README version scans, the relevant test suite, and git diff hygiene; then review each acceptance criterion.
+<!-- SECTION:PLAN:END -->
