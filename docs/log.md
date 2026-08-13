@@ -144,6 +144,7 @@
 - 2026-08-13T16:42:19-05:00 5aa786709a323fc9ac098e6c6fe480c0d86de0d5 docs: refresh Lore log for LCLI-324 delivery
 - 2026-08-13T16:44:57-05:00 94bfa2903a006219072d115343eb902f4cf54e15 docs: settle LCLI-324 delivery log
 - 2026-08-13T17:40:26-05:00 d8dc3341f91b42cd2bc9c8d65651ea95696f2915 chore: finalize LCLI-324 campaign wave
+- 2026-08-13T17:41:26-05:00 92062b699fe625d2d8975e44b67a898ed2386a5e docs: refresh Lore log for LCLI-324 settlement
 
 ## docs/.obsidian
 
