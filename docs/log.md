@@ -139,6 +139,7 @@
 - 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic
 - 2026-08-13T12:31:20-05:00 f3dcc987b3ab5045c1fe5ca8f3328a5a20dd0266 docs: refresh Lore log for LCLI-323 delivery
 - 2026-08-13T13:21:24-05:00 e897fa21b51123a74844d689b1e8471f0481d482 chore: finalize LCLI-323 campaign wave
+- 2026-08-13T13:31:56-05:00 4cdd7ab35b5eb0200e68ad8cfb1ce93029910a3b chore: reconcile LCLI-323 campaign closure
 
 ## docs/.obsidian
 

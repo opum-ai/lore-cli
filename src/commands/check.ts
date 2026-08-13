@@ -9,15 +9,16 @@
  * judgement lives in `core/check.ts`.
  *
  * `check` is a **gate**, so a coherence failure is not a thrown {@link LoreError}: it emits
- * the full `check.report` on stdout and then *returns* exit `6` when any broken internal
+ * the full `check.report` on stdout and then *returns* exit `6` when any broken bundle-scoped
  * link or rotted anchor exists (or any warning under `--strict`). Unknown-type and portability
  * findings alone are advisory and do not fail the gate (ADR-0007). Only a *usage* error
  * (bad flag) or an *I/O* failure (an unreadable path) throws, funneling through the router's
  * one error seam like every command.
  *
- * Scope: internal link/anchor validation, portability lint, and OKF 0.2 `stale_after` evaluation
- * (now including MDX-hazard and filename-portability findings, LORE-48) are deterministic once the
- * command layer supplies the explicit `--as-of` date or HEAD's recorded commit date.
+ * Scope: bundle-scoped link/anchor validation, the informational skipped-out-of-bundle link count,
+ * portability lint, and OKF 0.2 `stale_after` evaluation (now including MDX-hazard and
+ * filename-portability findings, LORE-48) are deterministic once the command layer supplies the
+ * explicit `--as-of` date or HEAD's recorded commit date.
  * Task-progress reconciliation and managed-block drift (LORE-27) reuse the exact pure
  * engines `lore sync` writes with ({@link reconcileStatus}, {@link regenerateTaskBlock}, via the
  * `commands/reconcile-shared.ts` gather shared with `sync`) but only diff against disk — this
@@ -137,7 +138,7 @@ interface CheckArgs {
 /**
  * Run `lore check`: parse the arguments, discover and read the bundle's markdown, check it,
  * emit the `check.report`, and return the exit code — `0` when coherent (warnings alone are
- * advisory), `6` when any broken internal link/anchor exists (or any warning under `--strict`).
+ * advisory), `6` when any broken bundle-scoped link/anchor exists (or any warning under `--strict`).
  * A bad flag throws a `usage` {@link LoreError} (exit `2`); an unreadable bundle
  * root a `not_found`/`denied`.
  *
@@ -777,9 +778,11 @@ function checkBundles(bundles: readonly Bundle[], asOf: string | undefined): Che
   const multi = bundles.length > 1;
   const findings: CheckFinding[] = [];
   let fileCount = 0;
+  let skippedOutOfBundleLinkCount = 0;
   for (const bundle of bundles) {
     const report = checkBundle(bundle.files, bundle.state, { asOf, availablePaths: bundle.availablePaths });
     fileCount += report.fileCount;
+    skippedOutOfBundleLinkCount += report.skippedOutOfBundleLinkCount;
     const versionFindings: CheckFinding[] = bundle.versionIssues.map((issue) => ({
       severity: issue.severity,
       rule: "okf-version",
@@ -794,7 +797,7 @@ function checkBundles(bundles: readonly Bundle[], asOf: string | undefined): Che
   // No reconciliation has run yet at this point (this is `baseReport`, the link/anchor + portability
   // pass only) — definitionally complete; `runCheck` is the only place that ever downgrades this to
   // `false`, once `driftPromise` resolves with a non-null error (LORE-112).
-  return { findings, errorCount, warningCount, fileCount, complete: true };
+  return { findings, errorCount, warningCount, fileCount, skippedOutOfBundleLinkCount, complete: true };
 }
 
 /** Whether a discovered doc path is a content-checkable `.md` (lowercase, matching the bundle loader) rather than a `.mdx`. */
@@ -1112,6 +1115,7 @@ function summaryLine(data: CheckReport, color: boolean): string {
     `${data.fileCount} ${plural(data.fileCount, "file")}`,
     painted,
     `${data.warningCount} ${plural(data.warningCount, "warning")}`,
+    `${data.skippedOutOfBundleLinkCount} out-of-bundle ${plural(data.skippedOutOfBundleLinkCount, "link")} skipped`,
   ];
   if (data.externalFindings !== undefined) {
     parts.push(`${data.externalFindings.length} external ${plural(data.externalFindings.length, "issue")}`);

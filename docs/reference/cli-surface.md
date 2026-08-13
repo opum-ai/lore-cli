@@ -202,9 +202,13 @@ The **drift gate** — read-only, never writes. Aggregates:
   [`sync`](#sync)). See [ADR-0009](../adr/0009-story-task-coupling-reconciliation.md).
 - **Managed-block drift** — reports any `<!-- lore:tasks -->` region that
   `sync` would change.
-- **Internal link + heading-anchor validation** — whole-bundle pure-JS pass:
-  every internal `.md` cross-link must resolve and every `#anchor` must hit a
-  real heading. This is a Lore-specific coherence gate, not an OKF 0.2 §11
+- **Bundle-scoped link + heading-anchor validation** — whole-bundle pure-JS
+  pass: every `.md` cross-link whose resolved target stays inside the selected
+  bundle root must resolve, and every such `#anchor` must hit a real heading.
+  Relative links that normalize above the bundle root are explicitly outside
+  this gate: they are not resolved, but the report exposes their skipped count
+  so a green result cannot be read as repository-wide verification. This is a
+  Lore-specific coherence gate, not an OKF 0.2 §11
   conformance rejection; OKF consumers must tolerate broken cross-links.
   **External-URL liveness** is opt-in with `--external` (Bun
   `fetch`, no Rust/lychee runtime dependency; see
@@ -227,8 +231,8 @@ The **drift gate** — read-only, never writes. Aggregates:
 |---|---|
 | **Args** | optional `[paths…]` (default: whole bundle) |
 | **Key flags** | `--strict` (treat deterministic warnings as failures for the exit code) · `--as-of YYYY-MM-DD` (pin date-sensitive rules; default HEAD commit date) · `--external` (also probe external-URL liveness — advisory, never gates) |
-| **Output** | `kind: check.report` — `findings`, `errorCount`, `warningCount`, `fileCount`, `complete`; plus optional `externalFindings` when `--external` ran |
-| **Exit** | `0` no broken internal links/anchors, no status/managed-block drift · `2` invalid/non-calendar `--as-of` · `3` a linked task id no longer exists, or a date-sensitive rule needs the absent HEAD commit date · `6` any broken internal link/anchor, any status/managed-block drift (or any deterministic warning under `--strict`). External-liveness results never affect the exit. |
+| **Output** | `kind: check.report` — `findings`, `errorCount`, `warningCount`, `fileCount`, `skippedOutOfBundleLinkCount`, `complete`; plus optional `externalFindings` when `--external` ran. The skipped count is informational and never affects severity counts or exit status. |
+| **Exit** | `0` no broken bundle-scoped links/anchors and no status/managed-block drift · `2` invalid/non-calendar `--as-of` · `3` a linked task id no longer exists, or a date-sensitive rule needs the absent HEAD commit date · `6` any broken bundle-scoped link/anchor, any status/managed-block drift (or any deterministic warning under `--strict`). Skipped out-of-bundle links and external-liveness results never affect the exit. |
 
 ---
 

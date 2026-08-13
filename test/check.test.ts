@@ -458,7 +458,29 @@ sources:
 
   test("a cross-bundle ../-escaping link is out of scope (skipped, not broken)", () => {
     const adr: CheckInputFile = { path: "x.md", raw: ref("X", "See [task](../backlog/tasks/task-1.md).") };
-    expect(checkBundle([adr]).errorCount).toBe(0);
+    expect(checkBundle([adr])).toMatchObject({
+      errorCount: 0,
+      warningCount: 0,
+      skippedOutOfBundleLinkCount: 1,
+    });
+  });
+
+  test("counts every escaping relative .md link but not URLs, assets, or bundle-root links", () => {
+    const doc: CheckInputFile = {
+      path: "reference/x.md",
+      raw: ref(
+        "X",
+        [
+          "[one](../../research/one.md)",
+          "[two](../../research/two.md#evidence)",
+          "[site](https://example.com/outside.md)",
+          "[image](../../research/image.png)",
+          "[root](/index.md)",
+        ].join("\n"),
+      ),
+    };
+    const rootIndex: CheckInputFile = { path: "index.md", raw: "# Root\n" };
+    expect(checkBundle([doc, rootIndex]).skippedOutOfBundleLinkCount).toBe(2);
   });
 
   test("a /-absolute link resolves against the bundle root, not the linking dir", () => {
@@ -561,7 +583,14 @@ describe("checkBundle — anchor rot (AC#1)", () => {
     const first = checkBundle([a, b]);
     const repeated = checkBundle([a, b]);
     const reversed = checkBundle([b, a]);
-    expect(first).toEqual({ fileCount: 2, errorCount: 0, warningCount: 0, findings: [], complete: true });
+    expect(first).toEqual({
+      fileCount: 2,
+      errorCount: 0,
+      warningCount: 0,
+      skippedOutOfBundleLinkCount: 0,
+      findings: [],
+      complete: true,
+    });
     expect(repeated).toEqual(first);
     expect(reversed).toEqual(first);
   });
@@ -942,7 +971,31 @@ describe("runCheck — exit codes and discovery", () => {
 
   test("exit 6 on a broken internal link", () => {
     writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[ghost](../reference/ghost.md)."));
-    expect(runCheck(opts([]))).toBe(EXIT_CODES.validation);
+    const o = opts([], JSON_CTX);
+    expect(runCheck(o)).toBe(EXIT_CODES.validation);
+    const report = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(report.data).toMatchObject({ skippedOutOfBundleLinkCount: 0, errorCount: 1 });
+    expect(report.data.findings[0]).toMatchObject({
+      file: "adr/x.md",
+      rule: "broken-link",
+    });
+    expect(report.data.findings[0].message).toContain("reference/ghost.md");
+  });
+
+  test("reports skipped out-of-bundle links in JSON and the plain summary without failing the gate", () => {
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[evidence](../../research/evidence.md)."));
+
+    const json = opts([], JSON_CTX);
+    expect(runCheck(json)).toBe(EXIT_OK);
+    expect(JSON.parse((json.stdout as ReturnType<typeof capture>).text()).data).toMatchObject({
+      skippedOutOfBundleLinkCount: 1,
+      errorCount: 0,
+      warningCount: 0,
+    });
+
+    const plain = opts([]);
+    expect(runCheck(plain)).toBe(EXIT_OK);
+    expect((plain.stdout as ReturnType<typeof capture>).text()).toContain("1 out-of-bundle link skipped");
   });
 
   test("exit 6 on a rotted anchor (AC#1)", () => {
@@ -1420,6 +1473,16 @@ describe("runCheck — exit codes and discovery", () => {
     expect(parsed.data.errorCount).toBe(1); // b/index.md's broken link is caught
     expect(parsed.data.findings[0].file).toBe("b/index.md"); // labelled by its root
     expect(code).toBe(EXIT_CODES.validation);
+  });
+
+  test("two distinct roots aggregate skipped out-of-bundle link counts", () => {
+    mkdirSync(join(root, "a"), { recursive: true });
+    mkdirSync(join(root, "b"), { recursive: true });
+    writeFileSync(join(root, "a", "index.md"), "# A\n\n[one](../one.md).\n");
+    writeFileSync(join(root, "b", "index.md"), "# B\n\n[two](../two.md).\n");
+    const o = opts(["a", "b"], JSON_CTX);
+    expect(runCheck(o)).toBe(EXIT_OK);
+    expect(JSON.parse((o.stdout as ReturnType<typeof capture>).text()).data.skippedOutOfBundleLinkCount).toBe(2);
   });
 
   test("the same root passed twice de-duplicates its files", () => {
