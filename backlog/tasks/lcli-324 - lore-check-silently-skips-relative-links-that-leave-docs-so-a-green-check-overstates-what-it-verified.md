@@ -3,11 +3,11 @@ id: LCLI-324
 title: >-
   lore check silently skips relative links that leave docs/, so a green check
   overstates what it verified
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-13 03:47'
-updated_date: '2026-08-13 21:43'
+updated_date: '2026-08-13 22:36'
 labels:
   - bug
   - check
@@ -93,4 +93,12 @@ User authorized Story coupling, actual Lore sync, local commits, and PR delivery
 Final synchronized-tree verification after Story coupling and actual Lore sync: bun test --reporter=dot — 2,573 pass, 1 intentional skip, 0 fail across 79 files; npm run typecheck, npm run lint, npm run build, and git diff --check — passed; ./dist/lore validate --strict — 70 files, 0 errors, 0 warnings; ./dist/lore check --strict — 70 files, 0 errors, 0 warnings, 344 out-of-bundle links skipped. These supersede the pre-coupling count of 343; the added managed Story task link is the additional correctly skipped cross-bundle link.
 
 Delivery PR #367 opened against dev from verified content head 5aa7867 (implementation b64ec28 plus generated-log refresh 5aa7867). The branch includes scoped Lore/Backlog commits 0e4e4ab, 709fd68, 18bfa82, and 6ad54e1. Merge is not authorized; keep the task In Progress until PR #367 passes required checks and is merged or another explicit disposition is recorded.
+
+Delivery completed on 2026-08-13. PR #367 passed all eight required CI jobs on exact head 94bfa2903a006219072d115343eb902f4cf54e15 and merged to dev as e4bb39205a209030250d0ed6eaf335831543b67e. Exact-head ancestry was verified against live origin/dev before terminal settlement.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Retained bundle-scoped link validation while making the boundary observable: lore check now counts authored relative Markdown links that leave the selected bundle root, aggregates the informational skippedOutOfBundleLinkCount across roots, and reports it in JSON and plain output without changing findings, strictness, or exit semantics. Updated the CLI contract, surface documentation, and agent-facing check instructions; added regression coverage for skipped targets, zero and multi-root counts, and the existing in-bundle broken-link failure control. Final local verification passed 2,573 tests with 1 intentional skip, typecheck, lint, build, diff hygiene, strict Lore validation, and strict Lore check (70 files, 0 errors, 0 warnings, 344 skipped out-of-bundle links). PR #367 passed all eight required CI jobs and merged exact head 94bfa2903a006219072d115343eb902f4cf54e15 to dev as e4bb39205a209030250d0ed6eaf335831543b67e.
+<!-- SECTION:FINAL_SUMMARY:END -->
