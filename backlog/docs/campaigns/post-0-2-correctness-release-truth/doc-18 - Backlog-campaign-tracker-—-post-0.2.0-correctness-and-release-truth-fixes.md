@@ -3,7 +3,7 @@ id: doc-18
 title: Backlog campaign tracker — post-0.2.0 correctness and release-truth fixes
 type: other
 created_date: '2026-08-13 13:17'
-updated_date: '2026-08-13 14:48'
+updated_date: '2026-08-13 15:04'
 ---
 # Backlog campaign tracker — post-0.2.0 correctness and release-truth fixes
 
@@ -58,4 +58,6 @@ Informational snapshot only; never a promised next wave.
 - 2026-08-13 — paused wave 1 before source edits when Lore coupling automatically committed Backlog metadata as `804534f13e7d83a6078fa4b6a6e8bf198080ddd3`. The Story frontmatter addition remained uncommitted pending user disposition.
 - 2026-08-13 — user retained `804534f13e7d83a6078fa4b6a6e8bf198080ddd3`; LCLI-325 implementation then completed locally. `lore validate --strict`, `git diff --check`, focused README scans, and 2,560 tests passed; `lore sync --dry-run` predicted two managed doc updates.
 - 2026-08-13 — user authorized actual Lore synchronization. `lore sync` created scoped Backlog commit `00ae852096088f6e7df1f7b44e050a5724e2b448` with exactly LCLI-325, LCLI-328, and doc-18, then strict validation/check and executable release-truth assertions passed.
-- 2026-08-13 — PR #359 passed all eight CI jobs and merged LCLI-325 to `dev` as `c0b94d964ba1f94b9f2d1ab55dbb1f69fb6b8790`. The live task was marked Done and wave 1 was settled on branch `chore/lcli-325-final-settlement`; promotion and cleanup remain authorized follow-on stages.
+- 2026-08-13 — PR #359 passed all eight CI jobs and merged LCLI-325 to `dev` as `c0b94d964ba1f94b9f2d1ab55dbb1f69fb6b8790`. The live task was marked Done and wave 1 was settled on branch `chore/lcli-325-final-settlement`.
+- 2026-08-13 — PR #360 passed all eight CI jobs and merged the settlement to `dev` as `c258e45b1c77de8141e0de159c594454e4041653`.
+- 2026-08-13 — PR #361 passed all eight CI jobs and promoted exact `dev` head `c258e45b1c77de8141e0de159c594454e4041653` to `main` as `6d834acb90cf1ae3c66b47c73f47b40fe9f40c00`. Closure audit confirmed both delivery commits were ancestors of live `dev` and `main`; the local and remote delivery branches were deleted, stale remote refs and worktrees were pruned, and local integration branches were fast-forwarded to their remotes.
