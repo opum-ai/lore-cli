@@ -140,6 +140,7 @@
 - 2026-08-13T12:31:20-05:00 f3dcc987b3ab5045c1fe5ca8f3328a5a20dd0266 docs: refresh Lore log for LCLI-323 delivery
 - 2026-08-13T13:21:24-05:00 e897fa21b51123a74844d689b1e8471f0481d482 chore: finalize LCLI-323 campaign wave
 - 2026-08-13T13:31:56-05:00 4cdd7ab35b5eb0200e68ad8cfb1ce93029910a3b chore: reconcile LCLI-323 campaign closure
+- 2026-08-13T16:40:33-05:00 b64ec28342fef18812b48d1a56417a351a8fccc0 fix: report skipped out-of-bundle links
 
 ## docs/.obsidian
 
@@ -285,6 +286,7 @@
 - 2026-08-12T17:01:31-05:00 ca94e0c4aed06344925e67f822246a93659224b3 docs: record Lore CLI 0.2.0 release
 - 2026-08-12T23:00:10-05:00 78db86044162ea25de3da085a8f2a6fec77c2b4d docs: competitive research on agent-native knowledge tooling (LCLI-323/324/325)
 - 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic
+- 2026-08-13T16:40:33-05:00 b64ec28342fef18812b48d1a56417a351a8fccc0 fix: report skipped out-of-bundle links
 
 ## docs/runbooks
 
@@ -419,3 +421,4 @@
 - 2026-08-13T09:50:55-05:00 fa43e1dc00756b443c5d12ac8710dc7393af6d07 chore: finalize LCLI-325 campaign wave
 - 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic
 - 2026-08-13T13:21:24-05:00 e897fa21b51123a74844d689b1e8471f0481d482 chore: finalize LCLI-323 campaign wave
+- 2026-08-13T16:40:33-05:00 b64ec28342fef18812b48d1a56417a351a8fccc0 fix: report skipped out-of-bundle links
