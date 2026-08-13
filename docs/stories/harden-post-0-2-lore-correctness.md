@@ -7,7 +7,7 @@ tags:
   - quality
 summary: Own active correctness fixes discovered after Lore 0.2.0 without mixing them into historical delivery evidence.
 timestamp: 2026-08-13T17:12:06.481Z
-status: in-progress
+status: done
 tasks:
   - lcli-323
   - lcli-324
@@ -39,7 +39,7 @@ hardening Story remains delivery evidence rather than an active bug queue.
 | Task | Title | Status |
 |---|---|---|
 | [LCLI-323](../../backlog/tasks/lcli-323%20-%20lore-check-strict-is-wall-clock-dependent-an-elapsed-stale_after-flips-a-green-bundle-to-exit-6-with-no-commit.md) | lore check --strict is wall-clock dependent: an elapsed stale_after flips a green bundle to exit 6 with no commit | Done |
-| [LCLI-324](../../backlog/tasks/lcli-324%20-%20lore-check-silently-skips-relative-links-that-leave-docs-so-a-green-check-overstates-what-it-verified.md) | lore check silently skips relative links that leave docs/, so a green check overstates what it verified | In Progress |
+| [LCLI-324](../../backlog/tasks/lcli-324%20-%20lore-check-silently-skips-relative-links-that-leave-docs-so-a-green-check-overstates-what-it-verified.md) | lore check silently skips relative links that leave docs/, so a green check overstates what it verified | Done |
 <!-- lore:tasks:end -->
 
 ## Notes
