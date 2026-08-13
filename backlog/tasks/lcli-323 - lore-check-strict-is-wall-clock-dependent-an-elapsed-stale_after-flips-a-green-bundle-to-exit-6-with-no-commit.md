@@ -3,11 +3,11 @@ id: LCLI-323
 title: >-
   lore check --strict is wall-clock dependent: an elapsed stale_after flips a
   green bundle to exit 6 with no commit
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-13 03:46'
-updated_date: '2026-08-13 17:28'
+updated_date: '2026-08-13 18:17'
 labels:
   - bug
   - check
@@ -99,98 +99,30 @@ Note this affects any future date-relative rule too, not just `stale_after` — 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented the deterministic evaluation-date seam in the working tree:
+Implemented and delivered the deterministic evaluation-date seam:
+
 - `lore check --as-of YYYY-MM-DD` validates a real calendar date and supplies that one value to every date-sensitive check rule.
-- Without a pin, a bundle that actually contains a valid OKF 0.2 `stale_after` rule resolves the recorded committer date from one exact HEAD SHA; bundles with no date-sensitive rule do not require Git.
-- `validate` remains date-shape-only because it has no elapsed-date rule. No ambient clock read remains in check/validate evaluation; the remaining Date construction only validates a supplied YYYY-MM-DD string.
-- CLI manifest/help/router, canonical instructions, CLI/OKF contracts, competitive findings, onboarding, root navigation, and changelog now state the same explicit-input contract.
+- Without a pin, a bundle containing a valid OKF 0.2 `stale_after` rule resolves the recorded committer date from one exact HEAD SHA. Bundles without date-sensitive rules do not require Git.
+- An unborn repository fails clearly only when a temporal rule needs the default date; an explicit pin bypasses the HEAD lookup.
+- `validate` remains date-shape-only because it has no elapsed-date rule. No ambient clock read remains in check/validate evaluation.
+- CLI manifest/help/router, canonical instructions, CLI/OKF contracts, competitive findings, onboarding, root navigation, changelog, and regression tests carry the same explicit-input contract.
+- The active owner Story is `stories/harden-post-0-2-lore-correctness`. Lore coupling and synchronization commits are `5de7c99`, `b65e49f`, and `f2aa77e`.
 
 Verification:
-- Focused tests: `bun test test/check.test.ts test/git-adapter.test.ts test/help.test.ts` — 346 passed, 0 failed.
-- Full suite: `bun test` — 2,570 passed, 1 intentional skip, 0 failed across 79 files.
-- `bun run typecheck`, `bun run lint`, `bun run build`, and `git diff --check` passed.
-- `lore validate --strict --plain` — 69 files, 0 errors, 0 warnings, 6 skipped.
-- Source `check --strict --as-of 2026-08-13 --plain` — 69 files, 0 errors, 0 warnings.
-- `lore sync --dry-run --plain` passed and predicts exactly one generated update: `docs/log.md`.
-- Adversarial self-review found and fixed a potential moving-HEAD race by resolving HEAD once and reading the date from that exact SHA. No independent reviewer was used because subagents were not authorized.
 
-All seven acceptance criteria are proven in the current working tree. LCLI-323 remains In Progress: actual `lore sync` would auto-commit the dirty Backlog task/tracker files and no commit authority exists. Story ownership is also unresolved; existing candidate Stories are explicitly historical or narrower in scope, while creating a new active post-0.2 correctness Story is a material documentation-scope decision.
+- Focused tests: 346 passed, 0 failed.
+- Full suite: 2,570 passed, 1 intentional skip, 0 failed across 79 files with 8,759 assertions.
+- Typecheck, lint over 196 files, build, and `git diff --check` passed.
+- Strict Lore validation: 70 files, 0 errors, 0 warnings, 6 intentional skips.
+- Installed strict check, source default strict check, and source explicit `--as-of 2026-08-13` strict check each reported 70 files, 0 errors, 0 warnings.
+- Adversarial self-review found and fixed a moving-HEAD race by resolving HEAD once and reading the commit date from that exact SHA. No independent reviewer was used because subagents were not authorized.
+- PR #364 passed all eight required CI jobs on exact head `f3dcc987b3ab5045c1fe5ca8f3328a5a20dd0266` and merged to `dev` as `d97c4ae9289f6247bb869ad87150229091c7d622` on 2026-08-13. The head is a verified ancestor of live `origin/dev`.
 
-User authorized the recommended active Story and delivery workflow on 2026-08-13. Created docs/stories/harden-post-0-2-lore-correctness.md; Lore link created scoped Backlog commit 5de7c99, and Lore sync created tracker commit b65e49f, set the Story to in-progress, populated its managed task table, and regenerated Story index/log state. Post-sync verification on the exact delivery branch passed: bun test — 2,570 pass, 1 intentional skip, 0 fail; typecheck; lint — 196 files; build; strict Lore validation — 70 files, 0 errors, 0 warnings, 6 skipped; installed strict check, source default strict check, and explicit-pin source strict check at 2026-08-13 — each 70 files, 0 errors, 0 warnings; git diff check passed.
-
-User authorized the recommended active Story and delivery workflow on 2026-08-13. Created ; LCLI-323: tasks: already-linked, back-ref: already-present
-docs/stories/harden-post-0-2-lore-correctness.md: unchanged created scoped Backlog commit , and  created tracker commit , set the Story to , populated its managed task table, and regenerated Story index/log state. Post-sync verification on the exact delivery branch passed: bun test v1.3.14 (0d9b296a) — 2,570 pass, 1 intentional skip, 0 fail; ; Checked 196 files in 175ms. No fixes applied. — 196 files;   [30ms]  bundle  265 modules
- [225ms] compile  dist/lore; ok docs/adr/0001-runtime-build-distribution.md
-ok docs/adr/0002-backlog-integration-json-only.md
-ok docs/adr/0003-okf-substrate.md
-ok docs/adr/0004-cli-first-skill-bridge-mcp-deferred.md
-ok docs/adr/0005-cli-contract.md
-ok docs/adr/0006-schema-types-templates.md
-ok docs/adr/0007-validation-and-coherence.md
-ok docs/adr/0008-managed-block-remark-ast.md
-ok docs/adr/0009-story-task-coupling-reconciliation.md
-ok docs/adr/0010-multi-consumer-docs-layer.md
-ok docs/adr/0011-frontmatter-serialization-stability.md
-ok docs/adr/0012-backlog-coexistence-git-ownership.md
-ok docs/adr/0013-lore-state-directory.md
-ok docs/adr/0014-core-has-no-llm-dependency.md
-ok docs/adr/0015-lightweight-retrieval-no-vectors.md
-ok docs/adr/0016-confluence-one-way-publish-deferred.md
-ok docs/adr/0017-interactive-init-wizard-tty-gated.md
-ok docs/adr/0018-persistent-local-graph-projection-with-ladybugdb.md
-ok docs/adr/0019-separate-okf-lifecycle-from-lore-task-progress.md
-skip docs/adr/index.md (not a concept)
-ok docs/index.md
-skip docs/log.md (not a concept)
-ok docs/reference/architecture.md
-ok docs/reference/backlog-cli-contract.md
-ok docs/reference/backlog-json-schema.md
-ok docs/reference/claude-obsidian-teardown.md
-ok docs/reference/cli-contract.md
-ok docs/reference/cli-surface.md
-ok docs/reference/competitive-landscape-agent-native-knowledge-tooling.md
-ok docs/reference/consumer-compatibility.md
-ok docs/reference/dependency-boundary-audit.md
-ok docs/reference/historical-dependency-boundary-campaign.md
-ok docs/reference/historical-lore-cli-development-kickoff.md
-ok docs/reference/historical-upstream-backlog-json-tag-watch.md
-skip docs/reference/index.md (not a concept)
-ok docs/reference/ladybugdb-benchmark-and-scale-acceptance-strategy.md
-ok docs/reference/lore-cli-documentation-ownership.md
-ok docs/reference/lore-cli-release-truth.md
-ok docs/reference/lore-competitive-feature-matrix.md
-ok docs/reference/mcp-tools.md
-ok docs/reference/okf-conformance.md
-ok docs/reference/okf-projection-contract.md
-ok docs/reference/portable-markdown.md
-ok docs/reference/tech-stack.md
-ok docs/runbooks/agent-onboarding.md
-ok docs/runbooks/agent-profile-operation.md
-ok docs/runbooks/backlog-json-patch.md
-ok docs/runbooks/docker-e2e-testing-environment.md
-skip docs/runbooks/index.md (not a concept)
-ok docs/runbooks/lore-cli-handover.md
-ok docs/runbooks/release-publishing.md
-ok docs/specs/agent-profile-context-retrieval.md
-ok docs/specs/bounded-path-and-impact.md
-ok docs/specs/graph-explorer-data-and-interaction-contract.md
-skip docs/specs/index.md (not a concept)
-ok docs/specs/local-graph-platform-roadmap.md
-ok docs/specs/local-workspace-identity-contract.md
-ok docs/specs/lore-competitive-adoption-roadmap.md
-ok docs/specs/lore-design.md
-ok docs/specs/snapshot-change-and-provenance-workflows.md
-ok docs/specs/workspace-indexing-and-retrieval.md
-ok docs/stories/build-the-lore-cli-foundation.md
-ok docs/stories/build-the-persistent-local-graph-platform.md
-ok docs/stories/harden-lore-cli-correctness-and-safety.md
-ok docs/stories/harden-post-0-2-lore-correctness.md
-ok docs/stories/hold-deferred-lore-capabilities.md
-skip docs/stories/index.md (not a concept)
-ok docs/stories/maintain-lore-cli-documentation-authority.md
-ok docs/stories/prepare-the-first-lore-cli-release.md
-ok docs/stories/retrieve-task-scoped-context-with-agent-profiles.md
-70 files, 0 errors, 0 warnings, 6 skipped — 70 files, 0 errors, 0 warnings, 6 skipped; installed 70 files, 0 errors, 0 warnings, source default 70 files, 0 errors, 0 warnings, and explicit-pin source check with  — each 70 files, 0 errors, 0 warnings;  passed.
-
-Delivery PR #364 is open against dev from fix/lcli-323-deterministic-check at source head 419cbfe. All eight required CI jobs passed: Ubuntu and Windows lint/typecheck/test, compile smoke, MkDocs and Docusaurus scaffolds, browser qualification, Ladybug benchmark smoke, and the real-binary Docker E2E harness. The task remains In Progress because merge authority was not granted and the PR is not yet integrated.
+Release truth: published `0.2.0` remains affected; this fix is integrated for a later release.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Made date-sensitive check evaluation reproducible by adding an explicit --as-of calendar-date pin and defaulting only temporal rules to the exact HEAD committer date. Added fail-loud validation and unborn-HEAD behavior, regression and repeatability coverage, Git-adapter tests, CLI/help wiring, canonical instructions, contracts, conformance guidance, and an active post-0.2 correctness Story. Verified with 2,570 passing tests plus typecheck, lint, build, strict Lore validation/check, and all eight required CI jobs. PR #364 head f3dcc987b3ab5045c1fe5ca8f3328a5a20dd0266 merged to dev as d97c4ae9289f6247bb869ad87150229091c7d622.
+<!-- SECTION:FINAL_SUMMARY:END -->
