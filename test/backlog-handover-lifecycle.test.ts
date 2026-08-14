@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -83,13 +83,77 @@ describe("backlog handover lifecycle audit", () => {
     expect(HANDOVER_SKILL).toContain("lore-authority-preflight.mjs");
   });
 
+  test("explicit authority still rejects a scope outside the selected repository", () => {
+    const root = fixture({});
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    const result = spawnSync(
+      process.execPath,
+      [
+        PREFLIGHT,
+        "--command",
+        "sync",
+        "--repository",
+        root,
+        "--scope",
+        join(root, "..", "outside"),
+        "--explicit-commit-authority",
+      ],
+      { cwd: root, encoding: "utf8" },
+    );
+
+    expect(result.status).toBe(4);
+    expect(result.stderr).toContain("scope is outside the selected repository");
+  });
+
+  test("standing authority is bound to Lore CLI dev delivery and executes in the declared worktree", () => {
+    const root = fixture({
+      "AGENTS.md": "## Autonomous Lore CLI documentation campaigns\n\nAuthorized pull-request delivery to `dev`.\n",
+    });
+    const fakeBin = join(root, "bin");
+    const executedIn = join(root, "executed-in");
+    mkdirSync(fakeBin);
+    writeFileSync(join(fakeBin, "lore"), `#!/bin/sh\npwd > ${executedIn}\n`);
+    spawnSync("chmod", ["+x", join(fakeBin, "lore")]);
+    spawnSync("git", ["init", "-q"], { cwd: root });
+
+    const denied = spawnSync(
+      process.execPath,
+      [PREFLIGHT, "--command", "sync", "--repository", root, "--scope", "docs", "--standing-delivery-authority"],
+      { cwd: root, encoding: "utf8" },
+    );
+    expect(denied.status).toBe(4);
+    expect(denied.stderr).toContain("requires --integration-branch dev");
+
+    const allowed = spawnSync(
+      process.execPath,
+      [
+        PREFLIGHT,
+        "--command",
+        "sync",
+        "--repository",
+        root,
+        "--scope",
+        "docs",
+        "--standing-delivery-authority",
+        "--integration-branch",
+        "dev",
+        "--execute",
+        "--",
+        "--json",
+      ],
+      { cwd: tmpdir(), encoding: "utf8", env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}` } },
+    );
+    expect(allowed.status).toBe(0);
+    expect(readFileSync(executedIn, "utf8").trim()).toBe(realpathSync(root));
+  });
+
   test("Lore guidance exposes every self-committing command before canonical workflow steps", () => {
     const preflight = LORE_SKILL.slice(0, LORE_SKILL.indexOf("## Start"));
 
-    expect(preflight).toContain("`lore link` and `lore unlink`");
+    expect(preflight).toContain("`lore link`, `lore unlink`, `lore rename`, and");
     expect(preflight).toContain("`lore rename`");
     expect(preflight).toContain("`lore sync`");
-    expect(preflight).toContain("ADR-0012's sole-committer contract");
+    expect(preflight).toContain("repository's Lore sole-committer contract");
   });
 
   test("uses progressive campaign references and bounded durable-state limits", () => {
@@ -132,7 +196,25 @@ describe("backlog handover lifecycle audit", () => {
       "stale.md": `${HISTORICAL}\nUse \`$backlog-handover\` in restore mode.\n`,
     });
     expect(result.code).toBe(1);
-    expect(result.stderr).toContain("backlog-handover restore invocation");
+    expect(result.stderr).toContain("backlog-handover invocation");
+  });
+
+  test("rejects any backlog-handover invocation in an archive", () => {
+    const result = audit({
+      "active.md": ACTIVE,
+      "stale.md": `${HISTORICAL}\nUse \`$backlog-handover status\`.\n`,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("backlog-handover invocation");
+  });
+
+  test("rejects dotted LCLI continuation directives in an archive", () => {
+    const result = audit({
+      "active.md": ACTIVE,
+      "stale.md": `${HISTORICAL}\nContinue LCLI-329.4.2\n`,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("task resume directive");
   });
 
   test("rejects a safe-resume sequence in an archive", () => {

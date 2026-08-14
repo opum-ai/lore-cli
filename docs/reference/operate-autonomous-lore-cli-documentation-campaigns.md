@@ -25,7 +25,7 @@ explicit pause boundaries.
 
 The applicable `AGENTS.md` is normative. A confirmed campaign may cover selected Lore CLI
 documentation and repository-process tasks, their Backlog and Lore mutations, isolated worktrees,
-commits and delivery to the recorded non-production integration branch, and cleanup of
+commits and pull-request delivery to `dev`, and cleanup of
 campaign-created artifacts proved merged. It does not authorize a second repository, `dev` to
 `main`, package publication, credentials, repository administration, security or product choices,
 or deletion of pre-existing/unmerged work.
@@ -39,10 +39,11 @@ Git can mutate state. This keeps ADR-0012's sole-committer contract intact.
 
 ### Fast lane
 
-Use Terra at medium effort for ordinary coordination and writing, three narrow agents at most, and
+Use Terra at medium effort for ordinary coordination and writing. Four narrow roles—explorer,
+writer, reviewer, and sweeper—share no more than three concurrent slots, and the coordinator selects
 the widest safe non-conflicting wave. The coordinator alone controls Backlog, the compact tracker,
 active handover, Lore-managed surfaces, integration, and delivery. Writers receive one pinned-base
-worktree and an explicit path budget; reviewers and sweepers are read-only.
+worktree and an explicit path budget; explorers, reviewers, and sweepers are read-only.
 
 `init` inventories ready LCLI work, writes one compact tracker and active cursor, then enters the
 first restore wave in the same turn. Restore grounds live tasks, dependencies, dirty paths, and
@@ -63,6 +64,6 @@ one safe correction, and a rerun; a repeated failure requires independent review
 safe fix before a pause.
 
 Measure the first five campaigns: zero routine approval prompts after invocation, first edit in the
-init turn, at least two concurrent ready tasks when two exist, one delivery batch per repository per
-wave, one tracker settlement per wave, one strict Lore gate per final tree, and no duplicated full
-suite for an identical tree.
+init turn, at least two concurrent ready tasks when two exist, at most one PR per repository per wave
+(and no PR when a wave has no deliverable change), one tracker settlement per wave, one strict Lore
+gate per final tree, and no duplicated full suite for an identical tree.

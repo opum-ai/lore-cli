@@ -36,7 +36,7 @@ coupling, managed blocks, and cross-links stay coherent.
 Only an explicit `$backlog-handover init` or `restore` invocation, or a request to burn down
 documentation backlog work, authorizes this mode. Within the user-confirmed Lore CLI documentation
 and repository-process scope, the coordinator may proceed through Backlog and Lore mutations,
-isolated worktrees and branches, commits, non-production integration delivery, and cleanup only of
+isolated worktrees and branches, commits, pull-request delivery to `dev`, and cleanup only of
 campaign-created artifacts proved merged. The coordinator alone owns Backlog, campaign, generated
 Lore, integration, and delivery state; workers receive an isolated worktree and explicit paths.
 
@@ -46,5 +46,6 @@ unmerged state. Pause for those decisions, missing credentials, repeatedly faile
 unresolved conflicts, unrelated dirty overlap, or a scope expansion. Before any self-committing
 `lore link`, `lore unlink`, `lore rename`, or `lore sync`, run the shared
 `.codex/skills/backlog-handover/scripts/lore-authority-preflight.mjs` gate with the exact worktree
-and affected path; absent explicit commit authority or scoped standing delivery authority denies
+and affected path. Standing delivery authority is valid only for this repository and a `dev`
+integration destination; absent explicit commit authority or that scoped standing authority denies
 dispatch before Lore or Git can mutate state.

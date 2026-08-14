@@ -10,14 +10,14 @@ Use `lore` as this repository's deterministic, CLI-first documentation engine. T
 
 ## Commit-side-effect preflight
 
-Before the canonical link, rename, or sync steps, use
-`node .codex/skills/backlog-handover/scripts/lore-authority-preflight.mjs` to determine whether the command can commit
-`backlog/`: `lore link` and `lore unlink` commit task back-reference edits, `lore rename` commits
-linked-task back-reference moves, and `lore sync` commits any remaining dirty `backlog/` state.
-This preserves ADR-0012's sole-committer contract; it does not make a Lore commit implicitly
-authorized. Invoke one only through that gate with explicit commit authority, or standing delivery authority that
-explicitly covers the selected repository and the command's in-scope work. If neither applies,
-do not invoke it: request permission for that exact Lore commit or record a deferred stage.
+Before the canonical workflow below, treat `lore link`, `lore unlink`, `lore rename`, and
+`lore sync` as self-committing commands: they can create commits under `backlog/`. Read the
+applicable repository instructions and verify explicit commit authority before invoking them. When
+the repository supplies
+`.codex/skills/backlog-handover/scripts/lore-authority-preflight.mjs`, dispatch those commands only
+through that gate with the exact Git worktree and in-repository scope. Without applicable authority,
+stop before Lore runs and request permission or record a deferred stage. This preserves the
+repository's Lore sole-committer contract.
 
 ## Start
 

@@ -7,8 +7,13 @@ final wave tree. Skills, configuration, and scripts add focused tests; do not du
 on the same tree.
 
 Under the repository's selected autonomous authority, integrate reviewed work serially and deliver
-at most one batch to the recorded non-production integration branch. Never promote to production,
+at most one Lore CLI PR to `dev` per wave. A wave
+with no deliverable change may settle without a PR. Never promote to production,
 publish, or remove pre-existing/unmerged state. On a failed gate diagnose, make one safe correction,
 and rerun only invalidated evidence; after a repeated failure and independent review/alternate fix,
 pause. The coordinator settles tasks and tracker once per wave and cleans only campaign-created,
 proved-merged branches/worktrees.
+
+Before settlement, audit the tracker with `backlog doc view <tracker-id> --plain | node
+.codex/skills/backlog-handover/scripts/audit-campaign-tracker.mjs`; it must remain within 200 lines
+and 32 KiB.

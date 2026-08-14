@@ -30,8 +30,9 @@ authority and pause boundaries; a tracker never enlarges them.
 - The coordinator alone owns Backlog task/tracker state, active handovers, Lore-generated surfaces,
   integration, delivery, and campaign-created cleanup. Workers receive one task, one pinned-base
   worktree, and a non-overlapping path budget.
-- Use the widest safe bounded-parallel wave: read-heavy work may use three narrow agents; normally
-  use two writers and a reviewer. Serialize shared-state mutations and delivery.
+- Four specialized roles share at most three concurrent slots. Use the widest safe bounded-parallel
+  wave: read-heavy work may use explorers and sweepers; normally use two writers and a reviewer.
+  Serialize shared-state mutations and delivery.
 - Preserve unrelated dirty work. Never infer authority to publish, promote a production branch,
   make material product/security/repository-admin choices, expand repository scope, or destroy
   pre-existing or unmerged state.
@@ -40,15 +41,17 @@ authority and pause boundaries; a tracker never enlarges them.
 
 Before invoking `lore link`, `lore unlink`, `lore rename`, or `lore sync`, identify the exact affected
 Backlog scope and run the shared gate:
-`node .codex/skills/backlog-handover/scripts/lore-authority-preflight.mjs --command <command> --repository <worktree> --scope <affected-path> --execute -- <Lore arguments>`.
+`node .codex/skills/backlog-handover/scripts/lore-authority-preflight.mjs --command <command>
+--repository <worktree> --scope <affected-path> --execute -- <Lore arguments>`.
 These commands may create a Lore-authored `backlog/` commit: link/unlink commit task
 back-references, rename commits linked-task moves, and sync sweeps remaining dirty Backlog state.
 Pass `--explicit-commit-authority` or `--standing-delivery-authority` only when that authority covers
-this repository and the in-scope work. Otherwise, the gate denies dispatch before Lore or Git runs; stop before
-  invoking the command and request permission for that exact commit, or
-  record the command,
-  affected scope, and missing authority as a deferred stage. Never wait for the
-result envelope to discover that it committed. This preserves ADR-0012's sole-committer contract.
+this repository and the in-scope work. For standing authority, also pass `--integration-branch
+dev`; the gate verifies the exact Git worktree root, rejects scopes outside it, and confirms the
+repository records `dev` delivery authority. Otherwise, the gate denies dispatch before Lore or Git
+runs. Stop before invoking the command and either request permission for that exact commit or record
+the command, affected scope, and missing authority as a deferred stage. Never wait for the result
+envelope to discover that it committed. This preserves ADR-0012's sole-committer contract.
 
 ## Durable limits
 
@@ -57,6 +60,9 @@ commands, evidence, and review findings belong on owning tasks. Exactly one exec
 `**Lifecycle**: executable-current` in `active.md`; retained history must be
 `**Lifecycle**: historical-non-executable` with no paste-ready prompt, `$backlog-handover`
 invocation, or imperative continuation instruction. Run the lifecycle audit after cursor changes.
+Mechanically check every Backlog tracker with `backlog doc view <tracker-id> --plain | node
+.codex/skills/backlog-handover/scripts/audit-campaign-tracker.mjs` before dispatch, delivery, or a
+handover write.
 
 ## Completion and failure
 
