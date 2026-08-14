@@ -3,10 +3,11 @@ id: LCLI-327
 title: >-
   docker/e2e/run-e2e.sh writes a repo-local git identity, leaking "lore e2e
   <e2e@lore.test>" into real commits on dev
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-13 04:18'
-updated_date: '2026-08-14 11:00'
+updated_date: '2026-08-14 12:16'
 labels:
   - bug
   - e2e
@@ -17,6 +18,10 @@ labels:
 dependencies: []
 documentation:
   - docs/stories/prepare-the-first-lore-cli-release.md
+modified_files:
+  - docker/e2e/run-e2e.sh
+  - test/docker-e2e-guard.test.ts
+  - docs/runbooks/docker-e2e-testing-environment.md
 priority: medium
 type: bug
 ordinal: 450000
@@ -63,3 +68,15 @@ Cleanup is a separate decision and is deliberately not assumed here: the existin
 - [ ] #5 Guidance for clearing an already-leaked local override is recorded where a developer will find it
 - [ ] #6 A decision on whether to rewrite the six mis-authored commits on dev is recorded, with the force-push implication stated, rather than left implicit
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Rebase the delivered E2E identity-safety fix onto current dev. 2. Verify the rebased guard test and project gates. 3. Push refreshed CI, then merge and settle only after all required checks pass.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Rebased delivery branch onto origin/dev after GitHub reported a conflict. Preserved the identity-safety implementation and Windows path normalization; deliberately discarded stale generated logs and a premature Done task update. Prior verification: focused guard tests, full Bun suite (2,574 pass, 1 intentional skip), typecheck, lint, build, strict Lore validation/check, diff hygiene, and full Docker E2E passed. Pending: post-rebase verification, forced update of PR #370, refreshed CI, then authorized merge and settlement. Existing dev history will not be rewritten.
+<!-- SECTION:NOTES:END -->
