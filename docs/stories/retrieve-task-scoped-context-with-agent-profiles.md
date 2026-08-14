@@ -57,7 +57,8 @@ The executable contract is
 The operating procedure is
 [Agent profile implementation and operation](../runbooks/agent-profile-operation.md).
 
-Cross-repository rationale remains recorded in
-`opum-ai/lore-doc:docs/adr/define-agent-profiles-as-context-mappings.md`;
-the supporting prior-art record is
-`opum-ai/lore-doc:docs/reference/agent-profile-context-engineering-research.md`.
+The former `lore-doc` sources are retained as **historical provenance**. The
+consolidated Opum documentation now carries the current active Lore-wide
+[agent-profile decision](https://github.com/opum-ai/opum-doc/blob/dev/docs/lore/adr/define-agent-profiles-as-context-mappings.md)
+and supporting [context-engineering policy](https://github.com/opum-ai/opum-doc/blob/dev/docs/lore/reference/agent-profile-context-engineering-research.md).
+This Story's executable contract and operating procedure remain component-local.

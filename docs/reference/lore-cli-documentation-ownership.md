@@ -23,9 +23,9 @@ copying mutable cross-repository contracts.
 | Concern | Sole owner | Local treatment |
 | --- | --- | --- |
 | Lore CLI command, package, tests, local graph, and release artifacts | `opum-ai/lore-cli` (this repository) | ADRs, Specs, References, Runbooks, Stories, and live Backlog evidence |
-| Lore-wide strategy, repository coordination, and Quest release ordering | `opum-ai/lore-doc` | Link to the owner record; do not reproduce its mutable gate |
+| Lore-wide strategy, repository coordination, and Quest release ordering | [`opum-ai/opum-doc` Lore authority surface](https://github.com/opum-ai/opum-doc/blob/dev/docs/lore/index.md) | Link to the consolidated authority surface; do not reproduce its mutable gate |
 | Product-family vocabulary, Opum SaaS, and commercial boundaries | `opum-ai/opum-doc` | Consume the ownership map and audit; do not promote component plans into product policy |
-| Quest product and execution-graph semantics | `opum-ai/quest-doc` | Link when Lore integration requires it; do not maintain a second Quest contract |
+| Quest product and execution-graph semantics | [`opum-ai/opum-doc` Quest external routing and provenance](https://github.com/opum-ai/opum-doc/blob/dev/docs/quest/quest-external-routing-and-provenance.md) | Link when Lore integration requires it; do not maintain a second Quest contract |
 | Quest CLI package, migration, implementation, and release | `opum-ai/quest-cli` | Treat its evidence as external owner state; `@opum-ai/quest` is unpublished, so never present Quest as installable and never add a manifest entry, dependency, lockfile pin, or fixture that would resolve the package |
 | Peer-to-owner routing, session addressing, and canonical GitHub owners | `opum-ai/opum-doc` | Consult the routing record before answering a cross-repository question; do not maintain a second peer map |
 | Infrastructure, DNS, hosting, deployment targets, environments, and secrets layout | `jeremy-newhouse/saws` | Record only this repository's local obligations and link to the owner; never create, modify, or delete a DNS record in any zone, for any provider, preview and ephemeral hostnames included |
@@ -55,6 +55,10 @@ The cross-product control record is the
 [documentation authority audit](https://github.com/opum-ai/opum-doc/blob/dev/docs/reference/cross-product-documentation-authority-audit.md),
 and the routing record is
 [fleet peer routing and session invocation](https://github.com/opum-ai/opum-doc/blob/dev/docs/reference/fleet-peer-routing-and-session-invocation.md).
+For active Lore-wide and Quest-wide policy, use the consolidated
+[Lore authority surface](https://github.com/opum-ai/opum-doc/blob/dev/docs/lore/index.md)
+and [Quest external routing and provenance](https://github.com/opum-ai/opum-doc/blob/dev/docs/quest/quest-external-routing-and-provenance.md)
+records instead of routing directly to `lore-doc` or `quest-doc`.
 Every repository named on this page is private, so each `github.com` link above
 is access-gated rather than a destination: it returns 404 to anyone without
 access. Treat such a link as a citation for a reader who can resolve it, confirm
