@@ -1,0 +1,4 @@
+interface:
+  display_name: "Treehouse Worktrees"
+  short_description: "Lease and clean reusable agent worktrees"
+  default_prompt: "Use $treehouse-worktrees to lease an isolated worktree for this task and return it safely."
