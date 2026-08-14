@@ -44,17 +44,69 @@ function fakePathEnv(fakeBin: string): NodeJS.ProcessEnv {
 }
 
 function audit(files: Record<string, string>) {
-  const result = spawnSync(process.execPath, [SCRIPT, fixture(files)], { encoding: "utf8" });
+  const result = spawnSync(
+    process.execPath,
+    [
+      SCRIPT,
+      fixture(files),
+      "--expect-tracker",
+      "doc-19",
+      "--expect-sha",
+      "0123456789abcdef0123456789abcdef01234567",
+      "--expect-branch",
+      "fix/lcli-329",
+      "--expect-worktree",
+      "/tmp/lcli-329",
+      "--expect-state",
+      "0,1,0,0",
+    ],
+    { encoding: "utf8" },
+  );
   return { code: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
 const ACTIVE = `# Handover — current campaign
 
 **Lifecycle**: executable-current
+**Grounded against**: repository \`lore-cli\`; branch \`fix/lcli-329\`; SHA \`0123456789abcdef0123456789abcdef01234567\`; worktree \`/tmp/lcli-329\`; reviewed
+**Tracker**: doc-19 - Codex loop refinements
+**Mode**: autonomous-docs
+**Stop class**: session-renewal
 
 ## Paste-ready prompt
 
-Continue this backlog campaign. Use \`$backlog-handover\` in restore mode.
+Run /clear, start a new session in \`lore-cli\`, then use $backlog-handover restore without reconfirmation.
+
+## State
+
+- Resolved: 0
+- In flight: 1
+- Blocked: 0
+- Ready: 0
+
+## In flight
+
+| Task | Worktree/branch | Last verified tree and stage | Blocker or next action |
+|---|---|---|---|
+| LCLI-329 | fix/lcli-329 | 0123456789abcdef0123456789abcdef01234567, reviewed | Restore and deliver |
+
+## Retained artifacts
+
+| Artifact | Owner | Reason | Cleanup condition |
+|---|---|---|---|
+| fix/lcli-329 | LCLI-329 | Session renewal | Merge to dev |
+
+## Decision required
+
+- Decision: None — session renewal
+
+## Next action
+
+- Action: Run /clear, start a new session in \`lore-cli\`, invoke $backlog-handover restore, and continue without reconfirmation.
+
+## Exceptions
+
+- None.
 `;
 
 const HISTORICAL = `# Historical local handover provenance
@@ -175,6 +227,95 @@ describe("backlog handover lifecycle audit", () => {
     expect(realpathSync(readFileSync(executedIn, "utf8").trim())).toBe(realpathSync(root));
   });
 
+  test("sync refuses to dispatch when unrelated dirty Backlog state is not exactly allowed", () => {
+    const root = fixture({
+      "AGENTS.md": "## Autonomous Lore CLI documentation campaigns\n\nAuthorized pull-request delivery to `dev`.\n",
+    });
+    const fakeBin = join(root, "bin");
+    const backlogDirectory = join(root, "backlog", "tasks");
+    const unrelatedTask = join(backlogDirectory, "lcli-999 - unrelated.md");
+    const dispatched = join(root, "dispatched");
+    mkdirSync(fakeBin);
+    mkdirSync(backlogDirectory, { recursive: true });
+    writeFileSync(unrelatedTask, "baseline\n");
+    installFakeLore(fakeBin, `touch "${dispatched}"`, `type nul > "${dispatched}"`);
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
+    spawnSync("git", ["config", "user.name", "Test"], { cwd: root });
+    spawnSync("git", ["add", "AGENTS.md", "backlog/tasks/lcli-999 - unrelated.md"], { cwd: root });
+    spawnSync("git", ["commit", "-q", "-m", "baseline"], { cwd: root });
+    writeFileSync(unrelatedTask, "unrelated dirty change\n");
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        PREFLIGHT,
+        "--command",
+        "sync",
+        "--repository",
+        root,
+        "--scope",
+        ".",
+        "--standing-delivery-authority",
+        "--integration-branch",
+        "dev",
+        "--execute",
+        "--",
+        "--json",
+      ],
+      { cwd: root, encoding: "utf8", env: fakePathEnv(fakeBin) },
+    );
+
+    expect(result.status).toBe(4);
+    expect(result.stderr).toContain("outside the exact campaign allowlist");
+    expect(result.stderr).toContain("backlog/tasks/lcli-999 - unrelated.md");
+    expect(existsSync(dispatched)).toBe(false);
+  });
+
+  test("sync dispatches when every dirty Backlog path is exactly campaign-owned", () => {
+    const root = fixture({
+      "AGENTS.md": "## Autonomous Lore CLI documentation campaigns\n\nAuthorized pull-request delivery to `dev`.\n",
+    });
+    const fakeBin = join(root, "bin");
+    const backlogDirectory = join(root, "backlog", "tasks");
+    const campaignTask = join(backlogDirectory, "lcli-329 - campaign.md");
+    const dispatched = join(root, "dispatched");
+    mkdirSync(fakeBin);
+    mkdirSync(backlogDirectory, { recursive: true });
+    writeFileSync(campaignTask, "campaign dirty change\n");
+    installFakeLore(fakeBin, `touch "${dispatched}"`, `type nul > "${dispatched}"`);
+    spawnSync("git", ["init", "-q"], { cwd: root });
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        PREFLIGHT,
+        "--command",
+        "sync",
+        "--repository",
+        root,
+        "--scope",
+        ".",
+        "--allow-backlog-path",
+        "backlog/tasks/lcli-329 - campaign.md",
+        "--standing-delivery-authority",
+        "--integration-branch",
+        "dev",
+        "--execute",
+        "--",
+        "--json",
+      ],
+      { cwd: root, encoding: "utf8", env: fakePathEnv(fakeBin) },
+    );
+
+    expect(result.status).toBe(0);
+    expect(existsSync(dispatched)).toBe(true);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      allowedBacklogPaths: ["backlog/tasks/lcli-329 - campaign.md"],
+      dirtyBacklogPaths: ["backlog/tasks/lcli-329 - campaign.md"],
+    });
+  });
+
   test("Lore guidance exposes every self-committing command before canonical workflow steps", () => {
     const preflight = LORE_SKILL.slice(0, LORE_SKILL.indexOf("## Start"));
 
@@ -196,7 +337,7 @@ describe("backlog handover lifecycle audit", () => {
   test("accepts active.md as the sole executable cursor", () => {
     const result = audit({ "active.md": ACTIVE });
     expect(result.code).toBe(0);
-    expect(result.stdout).toContain("active.md is the sole executable cursor");
+    expect(result.stdout).toContain("active.md is the sole grounded executable cursor");
   });
 
   test("accepts concise retained provenance with an explicit non-executable marker", () => {
@@ -263,12 +404,31 @@ describe("backlog handover lifecycle audit", () => {
     expect(result.stderr).toContain("safe-resume sequence");
   });
 
+  test("rejects formatted continuation text in an archive", () => {
+    const result = audit({
+      "active.md": ACTIVE,
+      "stale.md": `${HISTORICAL}\n> **Resume LCLI-329**\n`,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("task resume directive");
+  });
+
+  test("rejects required sections hidden in a fenced example", () => {
+    const fenced = ACTIVE.replace("## Paste-ready prompt", "```markdown\n## Paste-ready prompt").replace(
+      "## Exceptions",
+      "```\n## Exceptions",
+    );
+    const result = audit({ "active.md": fenced });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("exactly one Paste-ready prompt section; found 0");
+  });
+
   test("rejects an active pointer without the canonical lifecycle marker", () => {
     const result = audit({
       "active.md": "# Handover\n\n## Paste-ready prompt\n\nContinue this backlog campaign.\n",
     });
     expect(result.code).toBe(1);
-    expect(result.stderr).toContain("active.md lacks **Lifecycle**: executable-current");
+    expect(result.stderr).toContain("exactly one executable-current marker");
   });
 
   test("rejects active cursors over the compact line or byte limit", () => {

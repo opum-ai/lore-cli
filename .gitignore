@@ -56,6 +56,8 @@ docs/.obsidian/*
 # (.claude/settings.json) ARE tracked; these per-session files are NOT.
 # Consumed handovers in archive/handovers/ ARE tracked for history.
 .claude/handovers/
+.codex/handovers/
+.treehouse/
 .checkpoint
 .claude/session-errors.jsonl
 .claude/error-history.jsonl
@@ -67,3 +69,4 @@ docs/.obsidian/*
 .DS_Store
 Thumbs.db
 *.log
+/.treehouse/.treehouse

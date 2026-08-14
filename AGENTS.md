@@ -40,13 +40,28 @@ isolated worktrees and branches, commits, pull-request delivery to `dev`, and cl
 campaign-created artifacts proved merged. The coordinator alone owns Backlog, campaign, generated
 Lore, integration, and delivery state; workers receive an isolated worktree and explicit paths.
 
+Within that scope, keep looping through ready tasks, independent cumulative review, commits,
+`dev` pull requests and merges, task/tracker settlement, campaign-created cleanup, and newly ready
+waves. Use the widest safe wave of up to three Terra/medium agents and fenced Treehouse worktrees
+when available. A successful wave, PR, merge, cleanup pass, pending-but-progressing check, or
+subjective session-size preference is not a stopping point.
+
 This authority never covers another repository, promotion from `dev` to `main`, publication,
 credentials, repository administration, material product or security decisions, or pre-existing or
 unmerged state. Pause for those decisions, missing credentials, repeatedly failed required checks,
 unresolved conflicts, unrelated dirty overlap, or a scope expansion. Before any self-committing
 `lore link`, `lore unlink`, `lore rename`, or `lore sync`, run the shared
 `.codex/skills/backlog-handover/scripts/lore-authority-preflight.mjs` gate with the exact worktree
-and repository-root scope. The full root is honest: these commands can update both `docs/` and
+and repository-root scope. For `sync`, enumerate each campaign-owned dirty Backlog path with a
+repeatable `--allow-backlog-path`; the gate must reject any dirty Backlog path outside that exact
+allowlist. The full root is honest: these commands can update both `docs/` and
 `backlog/`, while the gate rejects narrower or symlinked scopes. Standing delivery authority is valid only for this repository and a `dev`
 integration destination; absent explicit commit authority or that scoped standing authority denies
 dispatch before Lore or Git can mutate state.
+
+Every nonterminal stop is exactly `human-decision` or `session-renewal`. A human-decision stop names
+the material decision or external action and the retained artifacts it blocks. Session renewal is
+only for an environment stop or demonstrably unreliable context after durable state is flushed; it
+must tell the operator to run `/clear`, start a new Codex session in `lore-cli`, invoke
+`$backlog-handover restore`, and continue without reconfirmation. On queue-empty completion, settle
+the tracker, finish the artifact audit, remove the active Codex cursor, and verify complete mode.

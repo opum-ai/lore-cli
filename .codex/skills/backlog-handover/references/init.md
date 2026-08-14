@@ -1,18 +1,43 @@
 # Initialize an autonomous Lore CLI documentation campaign
 
-Inventory non-terminal LCLI tasks and their dependency closure once. Exclude `do-not-activate`
-history, parent containers without independent work, external blockers, and material owner,
-publication, security, release, or repository-admin decisions. A bare `init` confirms all ready,
-agent-resolvable Lore CLI documentation and repository-process work.
+1. Read non-terminal tasks with one filtered `backlog task list --json` call. Exclude terminal and
+   `do-not-activate` history, parent containers whose children own all work, external blockers, and
+   material owner decisions. View only candidates and their formal dependency closure.
+2. Derive Lore CLI ownership from live task metadata, plans, documentation, references, and focused
+   repository inspection. `lore-cli` is the sole eligible root; another repository is a scope
+   boundary, not an inferred extension. Read applicable `AGENTS.md`, record `dev`, the pinned base,
+   and required gates. Order by dependencies, then priority and ordinal.
+3. A bare `$backlog-handover init` confirms every ready agent-resolvable Lore CLI documentation or
+   repository-process task. Ask one scope question only when interpretations materially change
+   product, security, publication, or destructive state.
 
-Record one compact tracker through `backlog doc create` and `backlog doc update`: mode, selected
-Lore CLI scope, pinned non-production integration base, required gates, queue, frontier, concise
-settlement rows, and human blockers. Keep it below 200 lines and 32 KiB; task notes own evidence.
-Mechanically audit the tracker from the Backlog CLI before relying on it:
+Record `Mode: autonomous-docs` and the governing authorization once in a new Backlog campaign
+document. Keep it below 200 lines and 32 KiB; detailed evidence belongs on tasks:
+
+```markdown
+# Backlog campaign — <scope>
+## Contract
+- Mode: autonomous-docs
+- Scope: lore-cli only
+- Queue rule: dependencies, then priority and ordinal
+## Repository
+| Repository | Task ids | AGENTS authority | Integration base | Required gates |
+## Frontier
+<counts and one sentence>
+## Queue
+| Order | Task | Dependencies | State | Wave | Likely paths |
+## Resolved
+| Task | Wave | Disposition | Evidence pointer |
+## Human decisions and blockers
+## Wave log
+```
+
+Before creating the handover, mechanically verify the new campaign tracker through the Backlog CLI:
 
 ```sh
 backlog doc view <tracker-id> --plain | node .codex/skills/backlog-handover/scripts/audit-campaign-tracker.mjs
 ```
 
-Write the sole active cursor, audit it, then read `restore.md` and execute the first live wave in
-the same turn. Initialization is not a stopping point.
+The audit must pass (at most 200 lines and 32 KiB). Then write `.codex/handovers/active.md`, run the
+lifecycle audit, read `restore.md` completely, and continue in the same turn. Initialization is not a
+stopping point.
