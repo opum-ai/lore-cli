@@ -36,12 +36,18 @@ set -uo pipefail
 # $RESULTS_DIR/$REPORT are created (i.e. before this script writes anywhere at all):
 #   1. LORE_E2E_CONTAINER=1 -- an ENV baked into docker/e2e/Dockerfile, present only in images
 #      built from it. A host shell would have to deliberately export this to defeat the guard.
-#   2. /workspace existing at all -- the one directory the same Dockerfile guarantees (WORKDIR
-#      /workspace, mkdir'd and chowned during the image build). Kept as a backstop in case signal
-#      1 is ever refactored away without updating this check.
-if [ "${LORE_E2E_CONTAINER:-}" != "1" ] || [ ! -d /workspace ]; then
+#   2. /workspace exists and is the process's initial, empty, non-Git directory. This proves that
+#      Phase 1 owns the repository it is about to initialize rather than reinitializing a caller's
+#      checkout. It also prevents the E2E identity from ever applying to a pre-existing repository.
+E2E_WORKSPACE="/workspace"
+E2E_START_DIR="$(pwd -P)"
+if [ "${LORE_E2E_CONTAINER:-}" != "1" ] || [ ! -d "$E2E_WORKSPACE" ] \
+  || [ "$E2E_START_DIR" != "$E2E_WORKSPACE" ] \
+  || [ -n "$(find "$E2E_START_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ] \
+  || git -C "$E2E_START_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   {
     echo "run-e2e.sh must run inside its Docker e2e container -- not directly on a host checkout."
+    echo "Refusing to bootstrap from '$E2E_START_DIR': it must begin in the empty disposable $E2E_WORKSPACE workspace."
     echo "It performs real, mutating filesystem operations (git init, backlog init, lore init, ...) rooted at its cwd."
     echo "Use:"
     echo "  docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e"
@@ -221,6 +227,13 @@ cd /workspace || {
   exit 1
 }
 
+# These apply only to Git processes spawned by this harness (including Lore and Backlog's
+# commits). Unlike `git config`, they cannot persist an E2E identity in any .git/config.
+export GIT_AUTHOR_NAME="lore e2e"
+export GIT_AUTHOR_EMAIL="e2e@lore.test"
+export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
+export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+
 # ── Phase 0a: binary preflight (no project needed yet) ──────────────────────
 # LORE-66 AC5 (housekeeping): the old version of this check only asserted exit 0 -- a broken
 # version embed (falling back to some other hardcoded/empty string) would still pass. A bare
@@ -254,8 +267,6 @@ rm -rf /tmp/pre-init-probe
 
 # ── Phase 1: bootstrap (critical — nothing downstream works without this) ───
 critical "git init" 0 -- git init -q
-git config user.email "e2e@lore.test"
-git config user.name "lore e2e"
 critical "backlog init" 0 -- backlog init "lore-e2e" --defaults
 # Mirror this repo's own backlog/config.yml contract (ADR-0012): lore must be
 # the sole committer of backlog/.
@@ -1802,7 +1813,7 @@ step "--plain explicit flag" 0 -- lore query "archive" --plain
 NESTED_OUTER=/tmp/nested-e2e/outer-repo
 NESTED_PROJECT="$NESTED_OUTER/nested-project"
 mkdir -p "$NESTED_PROJECT"
-(cd "$NESTED_OUTER" && git init -q && git config user.email "e2e@lore.test" && git config user.name "lore e2e")
+(cd "$NESTED_OUTER" && git init -q)
 check "AC4: outer git repo initialized ABOVE the lore project directory" '[ -d "$NESTED_OUTER/.git" ]'
 
 step "AC4: backlog init inside the nested project dir" 0 \
@@ -1839,6 +1850,11 @@ step_json "AC4: lore sync's catch-all sweep also succeeds under a non-empty --sh
 step "AC4: git status is clean under the nested project's backlog/ after the sweep (no double-prefix pathspec miss)" 0 \
   -- bash -c "cd '$NESTED_PROJECT' && [ -z \"\$(git status --porcelain -- backlog/)\" ]"
 rm -rf /tmp/nested-e2e
+
+# LCLI-327: all commits above inherited their identity only through exported Git environment
+# variables. Prove the disposable workspace's repository configuration never retained it.
+check "LCLI-327: E2E identity was not persisted in the workspace Git config" \
+  '! git config --local --get-regexp "^user\\.(name|email)$" >/dev/null 2>&1'
 
 # ── Phase 25: tally ───────────────────────────────────────────────────────────────
 tally
