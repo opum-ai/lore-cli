@@ -70,8 +70,17 @@ try {
   process.exit(4);
 }
 
-const gitRootResult = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: repository, encoding: "utf8" });
-if (gitRootResult.status !== 0 || realpathSync(gitRootResult.stdout.trim()) !== repository) {
+const gitWorktreeResult = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], {
+  cwd: repository,
+  encoding: "utf8",
+});
+const gitPrefixResult = spawnSync("git", ["rev-parse", "--show-prefix"], { cwd: repository, encoding: "utf8" });
+if (
+  gitWorktreeResult.status !== 0 ||
+  gitWorktreeResult.stdout.trim() !== "true" ||
+  gitPrefixResult.status !== 0 ||
+  gitPrefixResult.stdout.trim() !== ""
+) {
   process.stderr.write(`Lore command not dispatched: repository is not an exact Git worktree root: ${repository}\n`);
   process.exit(4);
 }

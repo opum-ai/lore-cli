@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 const SCRIPT = join(import.meta.dir, "../.codex/skills/backlog-handover/scripts/audit-handover-lifecycle.mjs");
 const HANDOVER_SKILL = readFileSync(join(import.meta.dir, "../.codex/skills/backlog-handover/SKILL.md"), "utf8");
@@ -28,6 +28,19 @@ function fixture(files: Record<string, string>): string {
   roots.push(root);
   for (const [name, body] of Object.entries(files)) writeFileSync(join(root, name), body);
   return root;
+}
+
+function installFakeLore(fakeBin: string, posixBody: string, windowsBody: string): void {
+  const fakeLore = join(fakeBin, process.platform === "win32" ? "lore.cmd" : "lore");
+  writeFileSync(
+    fakeLore,
+    process.platform === "win32" ? `@echo off\r\n${windowsBody}\r\n` : `#!/bin/sh\n${posixBody}\n`,
+  );
+  if (process.platform !== "win32") spawnSync("chmod", ["+x", fakeLore]);
+}
+
+function fakePathEnv(fakeBin: string): NodeJS.ProcessEnv {
+  return { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ""}` };
 }
 
 function audit(files: Record<string, string>) {
@@ -57,8 +70,11 @@ describe("backlog handover lifecycle audit", () => {
     const fakeBin = join(root, "bin");
     const dispatched = join(root, "dispatched");
     mkdirSync(fakeBin);
-    writeFileSync(join(root, "bin/lore"), `#!/bin/sh\ntouch ${dispatched}\ngit commit --allow-empty -m denied\n`);
-    spawnSync("chmod", ["+x", join(root, "bin/lore")]);
+    installFakeLore(
+      fakeBin,
+      `touch "${dispatched}"\ngit commit --allow-empty -m denied`,
+      `type nul > "${dispatched}"\r\ngit commit --allow-empty -m denied`,
+    );
     spawnSync("git", ["init", "-q"], { cwd: root });
     spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
     spawnSync("git", ["config", "user.name", "Test"], { cwd: root });
@@ -69,7 +85,7 @@ describe("backlog handover lifecycle audit", () => {
       {
         cwd: root,
         encoding: "utf8",
-        env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}` },
+        env: fakePathEnv(fakeBin),
       },
     );
 
@@ -125,8 +141,7 @@ describe("backlog handover lifecycle audit", () => {
     const fakeBin = join(root, "bin");
     const executedIn = join(root, "executed-in");
     mkdirSync(fakeBin);
-    writeFileSync(join(fakeBin, "lore"), `#!/bin/sh\npwd > ${executedIn}\n`);
-    spawnSync("chmod", ["+x", join(fakeBin, "lore")]);
+    installFakeLore(fakeBin, `pwd > "${executedIn}"`, `cd > "${executedIn}"`);
     spawnSync("git", ["init", "-q"], { cwd: root });
 
     const denied = spawnSync(
@@ -154,10 +169,10 @@ describe("backlog handover lifecycle audit", () => {
         "--",
         "--json",
       ],
-      { cwd: tmpdir(), encoding: "utf8", env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}` } },
+      { cwd: tmpdir(), encoding: "utf8", env: fakePathEnv(fakeBin) },
     );
     expect(allowed.status).toBe(0);
-    expect(readFileSync(executedIn, "utf8").trim()).toBe(realpathSync(root));
+    expect(realpathSync(readFileSync(executedIn, "utf8").trim())).toBe(realpathSync(root));
   });
 
   test("Lore guidance exposes every self-committing command before canonical workflow steps", () => {
