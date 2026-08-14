@@ -276,6 +276,25 @@ frontmatter on edit). See [ADR-0002](../adr/0002-backlog-integration-json-only.m
 the [backlog JSON schema](./backlog-json-schema.md), and the
 [backlog CLI contract](./backlog-cli-contract.md).
 
+### `backlog adopt` (specified; not yet implemented)
+
+The future `lore backlog adopt` command family is a controlled, **Backlog-only**
+knowledge-record adoption interface. Its four operations are `preview`,
+`apply`, `status`, and `rollback`; it does not claim a generic import system or
+make Quest an available/default tracker. The full versioned contract is
+[Backlog knowledge adoption](../specs/backlog-knowledge-adoption-contract.md).
+
+| Operation | Output kind | Contract |
+| --- | --- | --- |
+| `preview` | `backlog.adoption.preview` | Read-only, byte-stable plan with source provenance, proposed IDs/handles, collisions, fidelity gaps, and an approval receipt. |
+| `apply` | `backlog.adoption.apply` | Requires the exact preview receipt digest; creates only approved artifacts and returns every created ID/path. |
+| `status` | `backlog.adoption.status` | Reports the migration identity, receipt/source evidence, owned artifacts, and lifecycle state. |
+| `rollback` | `backlog.adoption.rollback` | Removes only migration-owned artifacts in reverse order, returning every removed ID/path or `blocked-incomplete` evidence. |
+
+Every operation uses Lore's normal `{ schemaVersion, kind, data }` success
+envelope. Callers supply explicit source evidence and never write Lore files,
+managed blocks, indexes, or graph state directly.
+
 ### `link`
 
 Add one or more Backlog task ids to a concept's `tasks:` frontmatter list
