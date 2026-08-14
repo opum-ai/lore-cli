@@ -15,6 +15,18 @@ Upstream behavior and flags are documented in the
 [Treehouse repository](https://github.com/kunchenguid/treehouse). Confirm installed behavior with
 `treehouse <command> --help` before using an unfamiliar or version-sensitive flag.
 
+If this repository's SSH remote is unavailable inside the Codex sandbox, do not rewrite the
+persistent remote. Apply the same command-scoped Git URL rewrite to every Treehouse command in that
+campaign, because the normalized remote participates in Treehouse's pool identity:
+
+```sh
+env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf \
+  GIT_CONFIG_VALUE_0=git@github.com: treehouse <command>
+```
+
+Record that transport choice with the lease. Mixing rewritten and non-rewritten invocations can
+select different pools and make a live lease appear absent from `status`.
+
 ## Acquire an isolated worktree
 
 1. Confirm `treehouse` is installed. Fall back to coordinator-owned `git worktree add` when it is

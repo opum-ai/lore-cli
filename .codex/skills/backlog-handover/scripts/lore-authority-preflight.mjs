@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, realpathSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 const SELF_COMMITTING_COMMANDS = new Set(["link", "unlink", "rename", "sync"]);
 
@@ -9,6 +9,7 @@ function usage(message) {
   process.stderr.write(
     "usage: lore-authority-preflight.mjs --command <link|unlink|rename|sync> --repository <path> --scope <path> " +
       "[--explicit-commit-authority|--standing-delivery-authority --integration-branch dev] " +
+      "[--allow-backlog-path <exact-repository-relative-path>]... " +
       "[--execute -- <lore args...>]\n",
   );
   process.exitCode = 2;
@@ -20,6 +21,7 @@ let explicit = false;
 let standing = false;
 let execute = false;
 let commandArgs = [];
+const allowedBacklogPaths = [];
 
 for (let index = 0; index < args.length; index += 1) {
   const arg = args[index];
@@ -30,14 +32,17 @@ for (let index = 0; index < args.length; index += 1) {
   if (arg === "--explicit-commit-authority") explicit = true;
   else if (arg === "--standing-delivery-authority") standing = true;
   else if (arg === "--execute") execute = true;
-  else if (arg === "--command" || arg === "--repository" || arg === "--scope" || arg === "--integration-branch") {
+  else if (arg === "--command" || arg === "--repository" || arg === "--scope" || arg === "--integration-branch" || arg === "--allow-backlog-path") {
     const value = args[index + 1];
     if (!value || value.startsWith("--")) {
       usage(`missing value for ${arg}`);
       process.exit(2);
     }
-    const key = arg === "--integration-branch" ? "integrationBranch" : arg.slice(2);
-    values[key] = value;
+    if (arg === "--allow-backlog-path") allowedBacklogPaths.push(value);
+    else {
+      const key = arg === "--integration-branch" ? "integrationBranch" : arg.slice(2);
+      values[key] = value;
+    }
     index += 1;
   } else {
     usage(`unknown argument: ${arg}`);
@@ -100,6 +105,53 @@ if (scope !== repository) {
   process.exit(4);
 }
 
+function repositoryRelativePath(path) {
+  if (isAbsolute(path)) return null;
+  const absolute = resolve(repository, path);
+  const repositoryRelative = relative(repository, absolute);
+  if (!repositoryRelative || repositoryRelative === ".." || repositoryRelative.startsWith(`..${sep}`) || isAbsolute(repositoryRelative)) return null;
+  if (existsSync(absolute)) {
+    const real = realpathSync(absolute);
+    const realRelative = relative(repository, real);
+    if (!realRelative || realRelative === ".." || realRelative.startsWith(`..${sep}`) || isAbsolute(realRelative)) return null;
+  }
+  return repositoryRelative.split(sep).join("/");
+}
+
+const normalizedAllowedBacklogPaths = new Set();
+for (const path of allowedBacklogPaths) {
+  const normalized = repositoryRelativePath(path);
+  if (!normalized || !normalized.startsWith("backlog/")) {
+    process.stderr.write(`Lore command not dispatched: invalid allowed Backlog path: ${path}\n`);
+    process.exit(4);
+  }
+  normalizedAllowedBacklogPaths.add(normalized);
+}
+
+function gitPaths(argumentsList) {
+  const result = spawnSync("git", argumentsList, { cwd: repository, encoding: "utf8" });
+  if (result.status !== 0) {
+    process.stderr.write(`Lore command not dispatched: could not inspect dirty Backlog paths with git ${argumentsList.join(" ")}.\n`);
+    process.exit(4);
+  }
+  return result.stdout.split("\0").filter(Boolean);
+}
+
+const dirtyBacklogPaths = values.command === "sync"
+  ? [...new Set([
+      ...gitPaths(["diff", "--no-renames", "--name-only", "-z", "--", "backlog"]),
+      ...gitPaths(["diff", "--cached", "--no-renames", "--name-only", "-z", "--", "backlog"]),
+      ...gitPaths(["ls-files", "--others", "--exclude-standard", "-z", "--", "backlog"]),
+    ])].sort()
+  : [];
+const unownedDirtyBacklogPaths = dirtyBacklogPaths.filter((path) => !normalizedAllowedBacklogPaths.has(path));
+if (unownedDirtyBacklogPaths.length > 0) {
+  process.stderr.write(
+    `Lore command not dispatched: sync would commit dirty Backlog paths outside the exact campaign allowlist:\n- ${unownedDirtyBacklogPaths.join("\n- ")}\n`,
+  );
+  process.exit(4);
+}
+
 if (standing) {
   if (values.integrationBranch !== "dev") {
     process.stderr.write("Lore command not dispatched: standing delivery authority requires --integration-branch dev.\n");
@@ -126,6 +178,8 @@ const report = {
   integrationBranch: values.integrationBranch || null,
   authorized: authority !== null,
   authority,
+  allowedBacklogPaths: [...normalizedAllowedBacklogPaths].sort(),
+  dirtyBacklogPaths,
   dispatched: false,
 };
 
