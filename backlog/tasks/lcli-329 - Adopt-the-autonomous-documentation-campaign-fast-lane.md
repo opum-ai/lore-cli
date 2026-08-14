@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-14 01:34'
-updated_date: '2026-08-14 21:21'
+updated_date: '2026-08-14 21:33'
 labels:
   - campaign
   - performance
@@ -31,8 +31,13 @@ modified_files:
   - .codex/skills/backlog-handover/references/delivery.md
   - .codex/skills/backlog-handover/scripts/audit-handover-lifecycle.mjs
   - .codex/skills/backlog-handover/scripts/test-audit-handover-lifecycle.mjs
+  - .codex/skills/backlog-handover/scripts/lore-authority-preflight.mjs
   - .codex/skills/treehouse-worktrees/SKILL.md
   - .codex/skills/treehouse-worktrees/agents/openai.yaml
+  - .codex/skills/lore/SKILL.md
+  - .claude/skills/lore/SKILL.md
+  - src/core/agent-bridge.ts
+  - src/core/codex-bridge.ts
   - test/backlog-handover-lifecycle.test.ts
   - docs/reference/operate-autonomous-lore-cli-documentation-campaigns.md
 priority: high
@@ -86,12 +91,6 @@ Reopened at user request because the earlier Done state predates the final Quest
 Implemented the Codex-only cursor and continuous-loop refinement while preserving the LCLI-328 Lore commit preflight. The canonical cursor is .codex/handovers/active.md; the stale LCLI-327 Claude cursor was removed after live reconciliation and the legacy directory passes complete-mode audit. Lifecycle coverage expanded from 8 to 26 script fixtures, and the 17-test repository lifecycle/preflight suite is green.
 
 Treehouse forward validation acquired a real identity-fenced lease, observed its exact lease ID/holder through status, returned it with both guards, and confirmed the pool entry became available. Lore CLI uses an SSH remote, so Codex applies one consistent command-scoped SSH-to-HTTPS Git rewrite without mutating the persistent remote; the skill now warns that mixing transport identities selects different pools. A fresh Terra/medium subagent independently classified the returned entry as reusable infrastructure and found no safe prune candidate.
+
+Adversarial hardening now strips fenced code and HTML comments from lifecycle evidence, normalizes Markdown formatting when detecting archived continuation signals, scans case-variant Markdown cursor names, enforces canonical exact grounding and unique uppercase LCLI task rows, and expands standalone coverage to 34 cases plus 21 focused Bun tests. The Lore sync preflight now enumerates tracked, staged, and untracked Backlog changes and requires an exact repeatable campaign-owned allowlist before dispatch, preventing Lore sync from committing unrelated dirty task state.
 <!-- SECTION:NOTES:END -->
-
-## Final Summary
-
-<!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Adopted the Lore CLI autonomous documentation fast lane: four Terra/medium roles sharing three slots, GitHub-only and environment-denied permissions, offline Backlog reads, dev-only campaign authority, progressive Claude/Codex bridges, exact-tree gate reuse, mechanical tracker/lifecycle limits, and a hardened self-committing Lore preflight. Verified by 2,584 full-suite tests plus all focused, configuration, bridge, Lore, lint, typecheck, diff, and independent-review gates at tree 720eb199.
-
-Cross-platform CI preflight coverage is green locally and independently reviewed at tree b50ab787.
-<!-- SECTION:FINAL_SUMMARY:END -->
