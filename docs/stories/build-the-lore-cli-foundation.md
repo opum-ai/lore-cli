@@ -7,7 +7,7 @@ tags:
   - history
 summary: Deliver the deterministic CLI, documentation model, Backlog coupling, retrieval, and consumer foundations.
 timestamp: 2026-08-03T16:05:06.468Z
-status: done
+status: todo
 tasks:
   - lcli-1
   - lcli-2
@@ -79,6 +79,14 @@ tasks:
   - lcli-57
   - lcli-58
   - lcli-59
+  - lcli-304
+  - lcli-305
+  - lcli-306
+  - lcli-307
+  - lcli-314
+  - lcli-316
+  - lcli-319
+  - lcli-326
 ---
 
 # Build the Lore CLI foundation
@@ -176,6 +184,14 @@ that the package has been published.
 | [LCLI-57](../../backlog/tasks/lcli-57%20-%20editTask-sends-json-to-backlog-task-edit-which-doesnt-support-it-%E2%80%94-breaks-link-unlink-rename-back-ref-writes.md) | editTask sends --json to backlog task edit, which doesn't support it — breaks link/unlink/rename back-ref writes | Done |
 | [LCLI-58](../../backlog/tasks/lcli-58%20-%20%60lore-link%60-%60unlink%60-json-emits-a-full-success-shaped-envelope-on-stdout-even-when-exiting-nonzero-violating-the-stdout-stderr-contract.md) | `lore link`/`unlink` --json emits a full success-shaped envelope on stdout even when exiting nonzero, violating the stdout/stderr contract | Done |
 | [LCLI-59](../../backlog/tasks/lcli-59%20-%20lore-new-Story-doesnt-scaffold-the-lore-tasks-managed-block-so-a-fresh-Story-cant-be-lore-synced.md) | lore new Story doesn't scaffold the lore:tasks managed block, so a fresh Story can't be lore synced | Done |
+| [LCLI-304](../../backlog/tasks/lcli-304%20-%20lore-link-accepts-task-coupling-on-concept-types-without-a-tasks-schema-field-e.g.-Runbook-sync-then-hard-fails-and-unlink-cannot-fully-clean-up.md) | lore link accepts task-coupling on concept types without a tasks schema field (e.g. Runbook); sync then hard-fails and unlink cannot fully clean up | Done |
+| [LCLI-305](../../backlog/tasks/lcli-305%20-%20lore-sync-doesnt-regenerate-a-Storys-managed-tasks-block-when-its-linked-task-count-transitions-from-1-to-0-unlink-to-empty.md) | lore sync doesn't regenerate a Story's managed tasks block when its linked-task count transitions from 1+ to 0 (unlink to empty) | Done |
+| [LCLI-306](../../backlog/tasks/lcli-306%20-%20lore-new-accepts-an-unrecognized-concept-type-exit-0-lore-check-strict-doesnt-catch-it-even-though-validate-strict-does.md) | lore new accepts an unrecognized concept type (exit 0); lore check --strict doesn't catch it even though validate --strict does | Done |
+| [LCLI-307](../../backlog/tasks/lcli-307%20-%20lore-scaffold-obsidian-still-hard-errors-on-re-run-exit-5-conflict-instead-of-being-idempotent-like-scaffold-mkdocs.md) | lore scaffold obsidian still hard-errors on re-run (exit 5, conflict) instead of being idempotent like scaffold mkdocs | Done |
+| [LCLI-314](../../backlog/tasks/lcli-314%20-%20Support-OKF-0.2.md) | Support OKF 0.2 | Done |
+| [LCLI-316](../../backlog/tasks/lcli-316%20-%20lore-sync-embeds-raw-commit-subjects-into-log.md-which-lore-check-strict-then-rejects.md) | lore sync embeds raw commit subjects into log.md, which lore check --strict then rejects | Done |
+| [LCLI-319](../../backlog/tasks/lcli-319%20-%20lore-inits-backlog-json-capability-probe-misattributes-cause-of-failure-tells-users-to-reinstall-backlog-when-the-real-issue-is-an-uninitialized-Backlog.md-project.md) | lore init's backlog --json-capability probe misattributes cause of failure -- tells users to reinstall backlog when the real issue is an uninitialized Backlog.md project | Done |
+| [LCLI-326](../../backlog/tasks/lcli-326%20-%20docs-log.md-carries-174-duplicate-entries-that-lore-sync-cannot-heal-because-the-log-is-appended-rather-than-derived-from-git-history.md) | docs/log.md carries 174 duplicate entries that lore sync cannot heal, because the log is appended rather than derived from git history | To Do |
 <!-- lore:tasks:end -->
 
 ## Notes
