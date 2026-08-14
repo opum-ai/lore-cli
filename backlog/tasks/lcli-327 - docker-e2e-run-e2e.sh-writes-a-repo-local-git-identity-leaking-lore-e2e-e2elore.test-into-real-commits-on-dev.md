@@ -3,9 +3,11 @@ id: LCLI-327
 title: >-
   docker/e2e/run-e2e.sh writes a repo-local git identity, leaking "lore e2e
   <e2e@lore.test>" into real commits on dev
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-13 04:18'
+updated_date: '2026-08-14 00:16'
 labels:
   - bug
   - e2e
@@ -13,6 +15,10 @@ labels:
   - provenance
   - ci
 dependencies: []
+modified_files:
+  - docker/e2e/run-e2e.sh
+  - test/docker-e2e-guard.test.ts
+  - docs/runbooks/docker-e2e-testing-environment.md
 priority: medium
 type: bug
 ordinal: 450000
@@ -59,3 +65,25 @@ Cleanup is a separate decision and is deliberately not assumed here: the existin
 - [ ] #5 Guidance for clearing an already-leaked local override is recorded where a developer will find it
 - [ ] #6 A decision on whether to rewrite the six mis-authored commits on dev is recorded, with the force-push implication stated, rather than left implicit
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Audit every git identity/configuration call and the existing container guard.
+2. Add a fail-closed bootstrap check that proves the current repository is the disposable E2E workspace, and use non-persistent per-command identity configuration for all E2E-created commits.
+3. Extend host-side guard tests with a non-E2E Git repository negative control that snapshots .git/config without a pipeline.
+4. Update the Docker E2E runbook with safe cleanup guidance and the no-history-rewrite decision.
+5. Run focused tests and proportionate project gates; record criterion-by-criterion evidence and adversarial self-review.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented the LCLI-327 safety fix locally. The harness now refuses any start directory other than an empty, non-Git /workspace; it exports Git author/committer identity for child processes instead of writing git config; and the nested fixture uses the same non-persistent identity. Added a host-side negative control that initializes a caller-owned Git repo, spoofs the container marker, asserts direct exit 1, names the offending path, and compares .git/config byte-for-byte. The full Docker E2E run passed with a new final assertion that the workspace Git config has no user.name/user.email.
+
+Verification passed: bash -n docker/e2e/run-e2e.sh; bun test test/docker-e2e-guard.test.ts (5 passing); bun run typecheck; bun run lint; bun run build; bun test (full suite); docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e (passed after final assertion); lore validate --strict; lore check --strict; git diff --check. lore sync --dry-run reports only docs/log.md.
+
+Adversarial self-review: strengthened the initial guard from merely container-marker/path checks to reject a pre-existing Git repository and any non-empty workspace, then added an E2E assertion for non-persistence. No existing dev history was rewritten.
+
+Blocker to completion/delivery: actual lore sync is required for the documentation workflow and automatically commits dirty backlog/ state; source/docs commits and any PR delivery also require explicit user authority.
+<!-- SECTION:NOTES:END -->
