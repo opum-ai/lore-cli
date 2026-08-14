@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -56,18 +65,7 @@ describe("backlog handover lifecycle audit", () => {
     const before = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).status;
     const result = spawnSync(
       process.execPath,
-      [
-        PREFLIGHT,
-        "--command",
-        "sync",
-        "--repository",
-        root,
-        "--scope",
-        "docs/reference",
-        "--execute",
-        "--",
-        "--no-index",
-      ],
+      [PREFLIGHT, "--command", "sync", "--repository", root, "--scope", ".", "--execute", "--", "--no-index"],
       {
         cwd: root,
         encoding: "utf8",
@@ -102,7 +100,22 @@ describe("backlog handover lifecycle audit", () => {
     );
 
     expect(result.status).toBe(4);
-    expect(result.stderr).toContain("scope is outside the selected repository");
+    expect(result.stderr).toContain("scope does not exist");
+  });
+
+  test("explicit authority rejects a symlinked scope that resolves outside the repository", () => {
+    const root = fixture({});
+    const outside = fixture({});
+    symlinkSync(outside, join(root, "escape"));
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    const result = spawnSync(
+      process.execPath,
+      [PREFLIGHT, "--command", "sync", "--repository", root, "--scope", "escape", "--explicit-commit-authority"],
+      { cwd: root, encoding: "utf8" },
+    );
+
+    expect(result.status).toBe(4);
+    expect(result.stderr).toContain("require the exact repository root scope");
   });
 
   test("standing authority is bound to Lore CLI dev delivery and executes in the declared worktree", () => {
@@ -118,7 +131,7 @@ describe("backlog handover lifecycle audit", () => {
 
     const denied = spawnSync(
       process.execPath,
-      [PREFLIGHT, "--command", "sync", "--repository", root, "--scope", "docs", "--standing-delivery-authority"],
+      [PREFLIGHT, "--command", "sync", "--repository", root, "--scope", ".", "--standing-delivery-authority"],
       { cwd: root, encoding: "utf8" },
     );
     expect(denied.status).toBe(4);
@@ -133,7 +146,7 @@ describe("backlog handover lifecycle audit", () => {
         "--repository",
         root,
         "--scope",
-        "docs",
+        ".",
         "--standing-delivery-authority",
         "--integration-branch",
         "dev",
@@ -212,6 +225,15 @@ describe("backlog handover lifecycle audit", () => {
     const result = audit({
       "active.md": ACTIVE,
       "stale.md": `${HISTORICAL}\nContinue LCLI-329.4.2\n`,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("task resume directive");
+  });
+
+  test("rejects foreign task continuation directives in an archive", () => {
+    const result = audit({
+      "active.md": ACTIVE,
+      "stale.md": `${HISTORICAL}\nResume ODOC-54\n`,
     });
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("task resume directive");

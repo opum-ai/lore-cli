@@ -46,6 +46,7 @@ unmerged state. Pause for those decisions, missing credentials, repeatedly faile
 unresolved conflicts, unrelated dirty overlap, or a scope expansion. Before any self-committing
 `lore link`, `lore unlink`, `lore rename`, or `lore sync`, run the shared
 `.codex/skills/backlog-handover/scripts/lore-authority-preflight.mjs` gate with the exact worktree
-and affected path. Standing delivery authority is valid only for this repository and a `dev`
+and repository-root scope. The full root is honest: these commands can update both `docs/` and
+`backlog/`, while the gate rejects narrower or symlinked scopes. Standing delivery authority is valid only for this repository and a `dev`
 integration destination; absent explicit commit authority or that scoped standing authority denies
 dispatch before Lore or Git can mutate state.

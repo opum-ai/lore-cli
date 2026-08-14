@@ -33,7 +33,9 @@ or deletion of pre-existing/unmerged work.
 Lore commands require a separate executable preflight: `lore link`, `lore unlink`, `lore rename`,
 and `lore sync` can commit Backlog files. The coordinator runs
 `.codex/skills/backlog-handover/scripts/lore-authority-preflight.mjs` with the command, exact
-worktree, and affected scope before dispatch. The gate permits dispatch only when explicit commit
+worktree, and repository-root scope before dispatch. The repository root is the honest affected
+scope because these commands can update both `docs/` and `backlog/`; narrower and symlinked scopes
+are rejected. The gate permits dispatch only when explicit commit
 authority or scoped standing delivery authority covers that work; otherwise it denies before Lore or
 Git can mutate state. This keeps ADR-0012's sole-committer contract intact.
 

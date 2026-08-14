@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 
 const SELF_COMMITTING_COMMANDS = new Set(["link", "unlink", "rename", "sync"]);
 
@@ -76,15 +76,18 @@ if (gitRootResult.status !== 0 || realpathSync(gitRootResult.stdout.trim()) !== 
   process.exit(4);
 }
 
-const scope = isAbsolute(values.scope) ? resolve(values.scope) : resolve(repository, values.scope);
-const scopeRelative = relative(repository, scope);
-if (
-  scopeRelative === ".." ||
-  scopeRelative.startsWith("../") ||
-  scopeRelative.startsWith("..\\") ||
-  isAbsolute(scopeRelative)
-) {
-  process.stderr.write(`Lore command not dispatched: scope is outside the selected repository: ${scope}\n`);
+const declaredScope = isAbsolute(values.scope) ? resolve(values.scope) : resolve(repository, values.scope);
+let scope;
+try {
+  scope = realpathSync(declaredScope);
+} catch {
+  process.stderr.write(`Lore command not dispatched: scope does not exist: ${declaredScope}\n`);
+  process.exit(4);
+}
+if (scope !== repository) {
+  process.stderr.write(
+    `Lore command not dispatched: self-committing Lore commands require the exact repository root scope: ${repository}\n`,
+  );
   process.exit(4);
 }
 

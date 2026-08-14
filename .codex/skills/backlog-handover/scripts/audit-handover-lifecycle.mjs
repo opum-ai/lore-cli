@@ -10,7 +10,7 @@ const MAX_ACTIVE_BYTES = 16 * 1024;
 const RUNNABLE_SIGNALS = [
   ["paste-ready prompt", PASTE_READY_HEADING],
   ["continue directive", /^(?:Continue|Resume) (?:this|the) backlog campaign\b/im],
-  ["task resume directive", /^(?:Continue|Resume) LCLI-[0-9]+(?:\.[0-9]+)*\b/im],
+  ["task resume directive", /^(?:Continue|Resume) [A-Z][A-Z0-9]*-[0-9]+(?:\.[0-9]+)*\b/im],
   ["safe-resume sequence", /^(?:##\s+Safe[- ]resume\b|Safe resume(?: sequence)?:)/im],
   ["backlog-handover invocation", /\$backlog-handover(?:\s+(?:init|restore|write|status))?\b/i],
 ];

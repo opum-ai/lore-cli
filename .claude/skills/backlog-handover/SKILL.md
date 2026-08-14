@@ -40,16 +40,16 @@ authority and pause boundaries; a tracker never enlarges them.
 
 ## Lore commit-side-effect preflight
 
-Before `lore link`, `lore unlink`, `lore rename`, or `lore sync`, identify the exact affected scope
-and invoke only through:
+Before `lore link`, `lore unlink`, `lore rename`, or `lore sync`, use the exact Git worktree root as
+the honest affected scope: these commands can update both `docs/` and `backlog/`. Invoke only through:
 
 `node .codex/skills/backlog-handover/scripts/lore-authority-preflight.mjs --command <command>
---repository <worktree> --scope <affected-path> --execute -- <Lore arguments>`
+--repository <worktree> --scope . --execute -- <Lore arguments>`
 
 Pass `--explicit-commit-authority` only for an exact user grant. Pass
 `--standing-delivery-authority --integration-branch dev` only when the selected Lore CLI campaign
 and repository instructions cover that work. The gate verifies the exact Git worktree, rejects
-out-of-repository scope, and confirms `dev` delivery authority before Lore can run. Without
+narrower and symlinked scopes, and confirms `dev` delivery authority before Lore can run. Without
 authority, request the exact permission or record a deferred stage; never discover a commit from a
 result envelope after the fact.
 

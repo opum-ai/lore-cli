@@ -39,15 +39,15 @@ authority and pause boundaries; a tracker never enlarges them.
 
 ## Lore commit-side-effect preflight
 
-Before invoking `lore link`, `lore unlink`, `lore rename`, or `lore sync`, identify the exact affected
-Backlog scope and run the shared gate:
+Before invoking `lore link`, `lore unlink`, `lore rename`, or `lore sync`, use the exact Git worktree
+root as the honest affected scope: these commands can update both `docs/` and `backlog/`. Run the shared gate:
 `node .codex/skills/backlog-handover/scripts/lore-authority-preflight.mjs --command <command>
---repository <worktree> --scope <affected-path> --execute -- <Lore arguments>`.
+--repository <worktree> --scope . --execute -- <Lore arguments>`.
 These commands may create a Lore-authored `backlog/` commit: link/unlink commit task
 back-references, rename commits linked-task moves, and sync sweeps remaining dirty Backlog state.
 Pass `--explicit-commit-authority` or `--standing-delivery-authority` only when that authority covers
 this repository and the in-scope work. For standing authority, also pass `--integration-branch
-dev`; the gate verifies the exact Git worktree root, rejects scopes outside it, and confirms the
+dev`; the gate verifies the exact Git worktree root, rejects narrower and symlinked scopes, and confirms the
 repository records `dev` delivery authority. Otherwise, the gate denies dispatch before Lore or Git
 runs. Stop before invoking the command and either request permission for that exact commit or record
 the command, affected scope, and missing authority as a deferred stage. Never wait for the result

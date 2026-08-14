@@ -38,6 +38,7 @@ try {
     ["duplicate-cursor", { "active.md": active, "legacy.md": `${historical}\nUse $backlog-handover restore to continue.\n` }, 1, "legacy.md contains runnable signal(s): backlog-handover invocation"],
     ["historical-resume-lcli-329", { "active.md": active, "legacy.md": `${historical}\nResume LCLI-329\n` }, 1, "legacy.md contains runnable signal(s): task resume directive"],
     ["historical-continue-dotted-lcli", { "active.md": active, "legacy.md": `${historical}\nContinue LCLI-329.5.1\n` }, 1, "legacy.md contains runnable signal(s): task resume directive"],
+    ["historical-resume-foreign-task", { "active.md": active, "legacy.md": `${historical}\nResume ODOC-54\n` }, 1, "legacy.md contains runnable signal(s): task resume directive"],
     ["exact-boundary", { "active.md": boundary, "settled.md": historical }, 0, "handover lifecycle audit passed"],
     ["line-overflow", { "active.md": `${boundary}\nextra` }, 1, "active.md exceeds 120 lines: 121"],
     ["byte-overflow", { "active.md": `${boundary}x` }, 1, "active.md exceeds 16384 bytes: 16385"],
