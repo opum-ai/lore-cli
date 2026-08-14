@@ -59,4 +59,9 @@ The operating procedure is
 
 Cross-repository rationale and supporting prior art are maintained in the
 consolidated [Lore documentation namespace](https://github.com/opum-ai/opum-doc/tree/dev/docs/lore),
-not in a legacy `lore-doc` route.
+not in a legacy `lore-doc` route. The former `lore-doc` sources are retained as
+**historical provenance**. The
+consolidated Opum documentation now carries the current active Lore-wide
+[agent-profile decision](https://github.com/opum-ai/opum-doc/blob/dev/docs/lore/adr/define-agent-profiles-as-context-mappings.md)
+and supporting [context-engineering policy](https://github.com/opum-ai/opum-doc/blob/dev/docs/lore/reference/agent-profile-context-engineering-research.md).
+This Story's executable contract and operating procedure remain component-local.
