@@ -3,11 +3,11 @@ id: LCLI-327
 title: >-
   docker/e2e/run-e2e.sh writes a repo-local git identity, leaking "lore e2e
   <e2e@lore.test>" into real commits on dev
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-13 04:18'
-updated_date: '2026-08-14 00:16'
+updated_date: '2026-08-14 00:31'
 labels:
   - bug
   - e2e
@@ -58,12 +58,12 @@ Cleanup is a separate decision and is deliberately not assumed here: the existin
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 run-e2e.sh cannot write user.name or user.email into any repository it does not create, verified by inspection of every git config call site in the script
-- [ ] #2 The Phase 1 bootstrap fails closed with a clear message when the current repository is not the disposable E2E checkout
-- [ ] #3 A negative control proves the guard: invoking the harness from a non-E2E repository aborts, leaves .git/config byte-identical, and names the offending path; its exit code is taken without a pipe
-- [ ] #4 After a full E2E run, the host repository .git/config contains no user.name or user.email written by the harness
-- [ ] #5 Guidance for clearing an already-leaked local override is recorded where a developer will find it
-- [ ] #6 A decision on whether to rewrite the six mis-authored commits on dev is recorded, with the force-push implication stated, rather than left implicit
+- [x] #1 run-e2e.sh cannot write user.name or user.email into any repository it does not create, verified by inspection of every git config call site in the script
+- [x] #2 The Phase 1 bootstrap fails closed with a clear message when the current repository is not the disposable E2E checkout
+- [x] #3 A negative control proves the guard: invoking the harness from a non-E2E repository aborts, leaves .git/config byte-identical, and names the offending path; its exit code is taken without a pipe
+- [x] #4 After a full E2E run, the host repository .git/config contains no user.name or user.email written by the harness
+- [x] #5 Guidance for clearing an already-leaked local override is recorded where a developer will find it
+- [x] #6 A decision on whether to rewrite the six mis-authored commits on dev is recorded, with the force-push implication stated, rather than left implicit
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -87,3 +87,9 @@ Adversarial self-review: strengthened the initial guard from merely container-ma
 
 Blocker to completion/delivery: actual lore sync is required for the documentation workflow and automatically commits dirty backlog/ state; source/docs commits and any PR delivery also require explicit user authority.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Prevented the Docker E2E harness from persisting its test identity in repository configuration. The bootstrap now requires an empty, non-Git /workspace; author/committer identity is process-scoped; and the runbook documents local cleanup while explicitly retaining existing dev history. Verified with focused guard tests, the full Bun suite, typecheck, lint, build, strict Lore validation/check, diff hygiene, and a full Docker E2E run that asserts no local user.name/user.email remains.
+<!-- SECTION:FINAL_SUMMARY:END -->
