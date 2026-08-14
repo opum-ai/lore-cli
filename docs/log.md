@@ -158,6 +158,7 @@
 - 2026-08-14T07:17:52-05:00 6693b4bd7f87c180b68c7fd062651acbfd6915e8 docs: sync LCLI-327 task state
 - 2026-08-14T16:42:24-05:00 b521f2941b499c5a12dccd12c05342776ede0fda feat: harden autonomous Codex campaign loop
 - 2026-08-14T16:50:59-05:00 919cca5bb276702969332a4c1af03cb396a3f393 chore: settle LCLI-329 campaign
+- 2026-08-14T18:11:58-05:00 6b274c8ea4638ec25cc07001ef675398f6b65f4d docs: specify Backlog knowledge adoption contract
 
 ## docs/.obsidian
 
@@ -310,6 +311,7 @@
 - 2026-08-13T22:15:50-05:00 3a3cbe248e80aa1a379821ba69ee6bc011d8903d fix: bind campaign enforcement to exact scope
 - 2026-08-13T23:06:05-05:00 5802be7b184303ac233d78854abd33bb74a45067 docs: consolidate Lore authority routes
 - 2026-08-14T16:42:24-05:00 b521f2941b499c5a12dccd12c05342776ede0fda feat: harden autonomous Codex campaign loop
+- 2026-08-14T18:11:58-05:00 6b274c8ea4638ec25cc07001ef675398f6b65f4d docs: specify Backlog knowledge adoption contract
 
 ## docs/runbooks
 
@@ -417,6 +419,7 @@
 - 2026-08-03T08:39:40-05:00 a98014b4530903e2681c73c6762aa1e70e8aa67c feat: add snapshot change and provenance workflows
 - 2026-08-12T23:00:10-05:00 78db86044162ea25de3da085a8f2a6fec77c2b4d docs: competitive research on agent-native knowledge tooling (LCLI-323/324/325)
 - 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic
+- 2026-08-14T18:11:58-05:00 6b274c8ea4638ec25cc07001ef675398f6b65f4d docs: specify Backlog knowledge adoption contract
 
 ## docs/stories
 

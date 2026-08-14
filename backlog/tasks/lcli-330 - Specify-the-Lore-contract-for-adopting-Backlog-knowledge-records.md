@@ -1,11 +1,11 @@
 ---
 id: LCLI-330
 title: Specify the Lore contract for adopting Backlog knowledge records
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-14 18:03'
-updated_date: '2026-08-14 23:10'
+updated_date: '2026-08-14 23:18'
 labels:
   - quest
   - backlog
@@ -27,11 +27,11 @@ Define the versioned public Lore CLI and manifest contract used when Quest adopt
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A versioned preview, apply, status, and rollback command contract is documented with machine-readable result kinds
-- [ ] #2 Backlog decisions map to ADR, specs to Spec, guides and runbooks to Runbook, and other or readme material to Reference
-- [ ] #3 Preview returns stable source provenance, proposed concept IDs or creation handles, collisions, fidelity gaps, and an approval digest without mutation
-- [ ] #4 Apply and rollback return exact created concept IDs and paths so a coordinator can compensate in reverse order
-- [ ] #5 The contract preserves Lore ownership: callers never write Lore files, managed blocks, indexes, or the local graph directly
+- [x] #1 A versioned preview, apply, status, and rollback command contract is documented with machine-readable result kinds
+- [x] #2 Backlog decisions map to ADR, specs to Spec, guides and runbooks to Runbook, and other or readme material to Reference
+- [x] #3 Preview returns stable source provenance, proposed concept IDs or creation handles, collisions, fidelity gaps, and an approval digest without mutation
+- [x] #4 Apply and rollback return exact created concept IDs and paths so a coordinator can compensate in reverse order
+- [x] #5 The contract preserves Lore ownership: callers never write Lore files, managed blocks, indexes, or the local graph directly
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -51,4 +51,12 @@ Campaign initialized against dev SHA 2ba7504e0b1d2134ff18e5cc053af991fc4ab3c9. L
 Paused before contract authoring: acceptance criteria require a new public command namespace and approval-digest/manifest shape for a cross-product migration. Repository authority requires an explicit product-contract decision before those interface commitments are documented.
 
 Human decision recorded 2026-08-14: use the explicit Backlog-specific public namespace `lore backlog adopt` with preview, apply, status, and rollback. Preview emits a versioned approval receipt; apply requires its exact digest.
+
+Merged to dev in PR #379 (merge commit 302d307340bed18bacc400a7e719e24a82b93cc1). Exact merged-tree evidence: lore validate --strict (73 files, 0 errors/warnings), lore check --strict (73 files, 0 errors/warnings), git diff --check; all eight PR CI checks passed, including Docker E2E.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Specified and delivered the Backlog-only `lore backlog adopt` public contract: preview/apply/status/rollback result kinds, deterministic approval receipt, mapping/provenance, ownership fences, and reverse-order rollback evidence. Verified on merged dev and PR #379 CI.
+<!-- SECTION:FINAL_SUMMARY:END -->
