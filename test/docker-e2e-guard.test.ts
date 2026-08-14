@@ -14,6 +14,11 @@ const ROOT = join(import.meta.dir, "..");
 const SCRIPT = join(ROOT, "docker", "e2e", "run-e2e.sh");
 const DOCKERFILE = join(ROOT, "docker", "e2e", "Dockerfile");
 
+function shellPath(path: string): string {
+  if (process.platform !== "win32") return path;
+  return path.replace(/^([A-Za-z]):/, (_, drive: string) => `/${drive.toLowerCase()}`).replaceAll("\\", "/");
+}
+
 describe("docker E2E container-only guard (LORE-272)", () => {
   test("a host invocation fails before writing and prints the supported Docker command", () => {
     const cwd = mkdtempSync(join(tmpdir(), "lore-e2e-host-guard-"));
@@ -54,7 +59,7 @@ describe("docker E2E container-only guard (LORE-272)", () => {
 
       expect(proc.exitCode).toBe(1);
       expect(proc.stdout.toString("utf8")).toBe("");
-      expect(proc.stderr.toString("utf8")).toContain(cwd);
+      expect(proc.stderr.toString("utf8")).toContain(shellPath(cwd));
       expect(proc.stderr.toString("utf8")).toContain("empty disposable /workspace workspace");
       expect(readFileSync(configPath, "utf8")).toBe(before);
     } finally {
