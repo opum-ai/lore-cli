@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-13 13:27'
-updated_date: '2026-08-14 03:19'
+updated_date: '2026-08-14 03:24'
 labels:
   - agents
   - backlog
@@ -15,6 +15,7 @@ labels:
   - git
   - lore
   - workflow
+  - 'doc:stories/maintain-lore-cli-documentation-authority'
 dependencies: []
 references:
   - .codex/skills/backlog-handover/SKILL.md
@@ -22,6 +23,7 @@ references:
 documentation:
   - docs/reference/cli-surface.md
   - docs/adr/0012-backlog-coexistence-git-ownership.md
+  - docs/stories/maintain-lore-cli-documentation-authority.md
 priority: medium
 type: bug
 ordinal: 451000
