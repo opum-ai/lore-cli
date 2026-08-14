@@ -8,11 +8,12 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-05 11:56'
-updated_date: '2026-08-06 02:39'
+updated_date: '2026-08-14 11:00'
 labels:
   - ladybug
   - graph
   - reliability
+  - 'doc:stories/build-the-persistent-local-graph-platform'
 dependencies: []
 references:
   - >-
@@ -23,6 +24,8 @@ references:
     note) and section 7 defect H
   - plus docs/runbooks/e2e-verification-v0.1.1.md
   - in that repo.
+documentation:
+  - docs/stories/build-the-persistent-local-graph-platform.md
 modified_files:
   - src/core/retrieval.ts
   - test/indexed-retrieval.test.ts

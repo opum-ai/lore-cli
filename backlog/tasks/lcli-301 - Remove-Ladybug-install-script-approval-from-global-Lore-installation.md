@@ -5,11 +5,13 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04 04:37'
-updated_date: '2026-08-04 05:11'
-labels: []
+updated_date: '2026-08-14 11:00'
+labels:
+  - 'doc:stories/build-the-persistent-local-graph-platform'
 dependencies: []
 documentation:
   - docs/stories/prepare-the-first-lore-cli-release.md
+  - docs/stories/build-the-persistent-local-graph-platform.md
 type: bug
 ordinal: 414000
 ---
