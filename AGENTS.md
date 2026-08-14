@@ -30,3 +30,21 @@ coupling, managed blocks, and cross-links stay coherent.
 - **Just-in-time detail:** run `lore instructions` for the canonical agent loop, then
   `lore instructions <topic>` (`linking`, `sync`, `check`, `validation`).
 <!-- lore:agents:end -->
+
+## Autonomous Lore CLI documentation campaigns
+
+Only an explicit `$backlog-handover init` or `restore` invocation, or a request to burn down
+documentation backlog work, authorizes this mode. Within the user-confirmed Lore CLI documentation
+and repository-process scope, the coordinator may proceed through Backlog and Lore mutations,
+isolated worktrees and branches, commits, non-production integration delivery, and cleanup only of
+campaign-created artifacts proved merged. The coordinator alone owns Backlog, campaign, generated
+Lore, integration, and delivery state; workers receive an isolated worktree and explicit paths.
+
+This authority never covers another repository, promotion from `dev` to `main`, publication,
+credentials, repository administration, material product or security decisions, or pre-existing or
+unmerged state. Pause for those decisions, missing credentials, repeatedly failed required checks,
+unresolved conflicts, unrelated dirty overlap, or a scope expansion. Before any self-committing
+`lore link`, `lore unlink`, `lore rename`, or `lore sync`, run the shared
+`.codex/skills/backlog-handover/scripts/lore-authority-preflight.mjs` gate with the exact worktree
+and affected path; absent explicit commit authority or scoped standing delivery authority denies
+dispatch before Lore or Git can mutate state.

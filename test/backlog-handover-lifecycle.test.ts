@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const SCRIPT = join(import.meta.dir, "../.codex/skills/backlog-handover/scripts/audit-handover-lifecycle.mjs");
+const HANDOVER_SKILL = readFileSync(join(import.meta.dir, "../.codex/skills/backlog-handover/SKILL.md"), "utf8");
+const LORE_SKILL = readFileSync(join(import.meta.dir, "../.codex/skills/lore/SKILL.md"), "utf8");
+const PREFLIGHT = join(import.meta.dir, "../.codex/skills/backlog-handover/scripts/lore-authority-preflight.mjs");
 const roots: string[] = [];
 
 afterEach(() => {
@@ -40,6 +43,64 @@ This file recorded a completed campaign. It granted no authority.
 `;
 
 describe("backlog handover lifecycle audit", () => {
+  test("withheld commit authority prevents Lore dispatch and a Git mutation", () => {
+    const root = fixture({});
+    const fakeBin = join(root, "bin");
+    const dispatched = join(root, "dispatched");
+    mkdirSync(fakeBin);
+    writeFileSync(join(root, "bin/lore"), `#!/bin/sh\ntouch ${dispatched}\ngit commit --allow-empty -m denied\n`);
+    spawnSync("chmod", ["+x", join(root, "bin/lore")]);
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
+    spawnSync("git", ["config", "user.name", "Test"], { cwd: root });
+    const before = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).status;
+    const result = spawnSync(
+      process.execPath,
+      [
+        PREFLIGHT,
+        "--command",
+        "sync",
+        "--repository",
+        root,
+        "--scope",
+        "docs/reference",
+        "--execute",
+        "--",
+        "--no-index",
+      ],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}` },
+      },
+    );
+
+    expect(result.status).toBe(4);
+    expect(JSON.parse(result.stdout)).toMatchObject({ authorized: false, dispatched: false });
+    expect(existsSync(dispatched)).toBe(false);
+    expect(spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).status).toBe(before);
+    expect(HANDOVER_SKILL).toContain("Before invoking `lore link`, `lore unlink`, `lore rename`, or `lore sync`");
+    expect(HANDOVER_SKILL).toContain("lore-authority-preflight.mjs");
+  });
+
+  test("Lore guidance exposes every self-committing command before canonical workflow steps", () => {
+    const preflight = LORE_SKILL.slice(0, LORE_SKILL.indexOf("## Start"));
+
+    expect(preflight).toContain("`lore link` and `lore unlink`");
+    expect(preflight).toContain("`lore rename`");
+    expect(preflight).toContain("`lore sync`");
+    expect(preflight).toContain("ADR-0012's sole-committer contract");
+  });
+
+  test("uses progressive campaign references and bounded durable-state limits", () => {
+    expect(HANDOVER_SKILL).toContain("[init](references/init.md)");
+    expect(HANDOVER_SKILL).toContain("[restore](references/restore.md)");
+    expect(HANDOVER_SKILL).toContain("[delivery](references/delivery.md)");
+    expect(HANDOVER_SKILL).toContain("[handover](references/handover.md)");
+    expect(HANDOVER_SKILL).toContain("200 lines and 32 KiB");
+    expect(HANDOVER_SKILL).toContain("120 lines and 16 KiB");
+  });
+
   test("accepts active.md as the sole executable cursor", () => {
     const result = audit({ "active.md": ACTIVE });
     expect(result.code).toBe(0);
@@ -89,5 +150,10 @@ describe("backlog handover lifecycle audit", () => {
     });
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("active.md lacks **Lifecycle**: executable-current");
+  });
+
+  test("rejects active cursors over the compact line or byte limit", () => {
+    expect(audit({ "active.md": `${ACTIVE}${"line\n".repeat(121)}` }).stderr).toContain("exceeds 120 lines");
+    expect(audit({ "active.md": `${ACTIVE}${"x".repeat(16 * 1024)}` }).stderr).toContain("exceeds 16384 bytes");
   });
 });

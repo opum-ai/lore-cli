@@ -8,6 +8,17 @@ description: Author and maintain this repository's OKF documentation bundle unde
 Use `lore` as this repository's deterministic, CLI-first documentation engine. Treat
 `lore instructions` as the source of truth; this skill is the Codex discovery bridge.
 
+## Commit-side-effect preflight
+
+Before the canonical link, rename, or sync steps, use
+`node .codex/skills/backlog-handover/scripts/lore-authority-preflight.mjs` to determine whether the command can commit
+`backlog/`: `lore link` and `lore unlink` commit task back-reference edits, `lore rename` commits
+linked-task back-reference moves, and `lore sync` commits any remaining dirty `backlog/` state.
+This preserves ADR-0012's sole-committer contract; it does not make a Lore commit implicitly
+authorized. Invoke one only through that gate with explicit commit authority, or standing delivery authority that
+explicitly covers the selected repository and the command's in-scope work. If neither applies,
+do not invoke it: request permission for that exact Lore commit or record a deferred stage.
+
 ## Start
 
 1. Run `lore instructions`.

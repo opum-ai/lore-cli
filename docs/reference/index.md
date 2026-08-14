@@ -20,6 +20,7 @@
 - [MCP tools and resources (ON HOLD design)](mcp-tools.md)
 - [OKF conformance](okf-conformance.md)
 - [OKF projection contract](okf-projection-contract.md)
+- [Operate autonomous Lore CLI documentation campaigns](operate-autonomous-lore-cli-documentation-campaigns.md)
 - [Portable Markdown — the subset lore guarantees](portable-markdown.md)
 - [Tech Stack](tech-stack.md)
 <!-- lore:index:end -->

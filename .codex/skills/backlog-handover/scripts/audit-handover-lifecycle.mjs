@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 const CURRENT_MARKER = /^\*\*Lifecycle\*\*:\s*executable-current\s*$/im;
 const HISTORICAL_MARKER = /^\*\*Lifecycle\*\*:\s*historical-non-executable\s*$/im;
 const PASTE_READY_HEADING = /^##\s+Paste-ready prompt\s*$/im;
+const MAX_LINES = 120;
+const MAX_BYTES = 16 * 1024;
 const RUNNABLE_SIGNALS = [
   ["paste-ready prompt", PASTE_READY_HEADING],
   ["continue directive", /^(?:Continue|Resume) (?:this|the) backlog campaign\b/im],
@@ -30,6 +32,10 @@ if (!existsSync(handoverDirectory)) {
   const executableFiles = [];
   for (const name of files) {
     const body = readFileSync(resolve(handoverDirectory, name), "utf8");
+    const lines = body.split(/\r?\n/).length - (body.endsWith("\n") ? 1 : 0);
+    const bytes = Buffer.byteLength(body, "utf8");
+    if (name === "active.md" && lines > MAX_LINES) failures.push(`active.md exceeds ${MAX_LINES} lines`);
+    if (name === "active.md" && bytes > MAX_BYTES) failures.push(`active.md exceeds ${MAX_BYTES} bytes`);
     const current = CURRENT_MARKER.test(body);
     const signals = RUNNABLE_SIGNALS.filter(([, pattern]) => pattern.test(body)).map(([label]) => label);
     const executable = current || signals.length > 0;

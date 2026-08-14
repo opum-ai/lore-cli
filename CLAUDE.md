@@ -1,4 +1,6 @@
 
+<!-- Canonical ordering: read AGENTS.md first. It supplies campaign authority and the Lore commit-side-effect preflight before this generated Lore bridge. -->
+
 <!-- BACKLOG.MD GUIDELINES START -->
 <CRITICAL_INSTRUCTION>
 
@@ -104,13 +106,13 @@ Five traps that local context will not warn you about:
   record's "Reaching a peer" on 2026-08-04; re-read it there before relying on
   these steps.
 
-When this repository and a `*-doc` owner disagree, that is drift and drift is a
-defect. This repository is authoritative for *what currently ships*; the `*-doc`
-owner remains the normative owner of *what the contract is*. **Do not promote
-either side — not quietly, and not with an announcement.** Report the divergence
-to both owners and leave the conflict standing until an owner resolves it;
-declaring a winner is not yours to do, and "code wins over prose" is not the
-model. See
+When this repository and the applicable consolidated Lore or Opum owner record
+disagree, that is drift and drift is a defect. This repository is authoritative
+for *what currently ships*; the routed product or portfolio owner remains
+authoritative for the contract it owns. **Do not promote either side — not
+quietly, and not with an announcement.** Report the divergence to both owners
+and leave the conflict standing until an owner resolves it; declaring a winner
+is not yours to do, and "code wins over prose" is not the model. See
 [Lore CLI documentation ownership](docs/reference/lore-cli-documentation-ownership.md)
 for the concern-to-owner map this repository consumes.
 
