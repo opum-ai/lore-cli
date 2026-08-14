@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-13 04:18'
-updated_date: '2026-08-14 12:16'
+updated_date: '2026-08-14 13:41'
 labels:
   - bug
   - e2e
@@ -73,10 +73,14 @@ Cleanup is a separate decision and is deliberately not assumed here: the existin
 
 <!-- SECTION:PLAN:BEGIN -->
 1. Rebase the delivered E2E identity-safety fix onto current dev. 2. Verify the rebased guard test and project gates. 3. Push refreshed CI, then merge and settle only after all required checks pass.
+
+4. Replace the Windows full-parent-path assertion with the stable unique temp-directory suffix; retain exact matching on non-Windows hosts.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 Rebased delivery branch onto origin/dev after GitHub reported a conflict. Preserved the identity-safety implementation and Windows path normalization; deliberately discarded stale generated logs and a premature Done task update. Prior verification: focused guard tests, full Bun suite (2,574 pass, 1 intentional skip), typecheck, lint, build, strict Lore validation/check, diff hygiene, and full Docker E2E passed. Pending: post-rebase verification, forced update of PR #370, refreshed CI, then authorized merge and settlement. Existing dev history will not be rewritten.
+
+Windows CI diagnosis (run 31799731434): Git Bash rendered the caller path with RUNNER~1 while Node supplied runneradmin. The safety guard passed; only the full-path representation assertion failed. Updated the test to assert the unique temporary checkout leaf on Windows while preserving exact full-path matching elsewhere. Focused guard tests, full Bun suite, typecheck, lint, build, and diff hygiene pass locally.
 <!-- SECTION:NOTES:END -->

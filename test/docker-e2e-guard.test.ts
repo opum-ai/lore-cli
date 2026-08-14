@@ -8,15 +8,17 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 const ROOT = join(import.meta.dir, "..");
 const SCRIPT = join(ROOT, "docker", "e2e", "run-e2e.sh");
 const DOCKERFILE = join(ROOT, "docker", "e2e", "Dockerfile");
 
-function shellPath(path: string): string {
-  if (process.platform !== "win32") return path;
-  return path.replace(/^([A-Za-z]):/, (_, drive: string) => `/${drive.toLowerCase()}`).replaceAll("\\", "/");
+function guardPathFragment(path: string): string {
+  // Git Bash can render the Windows user-profile directory through its 8.3 alias
+  // (for example RUNNER~1) while Node returns the long form. The unique temp leaf
+  // remains stable and still proves that the guard names the offending checkout.
+  return process.platform === "win32" ? basename(path) : path;
 }
 
 describe("docker E2E container-only guard (LORE-272)", () => {
@@ -59,7 +61,7 @@ describe("docker E2E container-only guard (LORE-272)", () => {
 
       expect(proc.exitCode).toBe(1);
       expect(proc.stdout.toString("utf8")).toBe("");
-      expect(proc.stderr.toString("utf8")).toContain(shellPath(cwd));
+      expect(proc.stderr.toString("utf8")).toContain(guardPathFragment(cwd));
       expect(proc.stderr.toString("utf8")).toContain("empty disposable /workspace workspace");
       expect(readFileSync(configPath, "utf8")).toBe(before);
     } finally {
