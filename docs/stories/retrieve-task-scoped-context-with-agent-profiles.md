@@ -57,7 +57,6 @@ The executable contract is
 The operating procedure is
 [Agent profile implementation and operation](../runbooks/agent-profile-operation.md).
 
-Cross-repository rationale remains recorded in
-`opum-ai/lore-doc:docs/adr/define-agent-profiles-as-context-mappings.md`;
-the supporting prior-art record is
-`opum-ai/lore-doc:docs/reference/agent-profile-context-engineering-research.md`.
+Cross-repository rationale and supporting prior art are maintained in the
+consolidated [Lore documentation namespace](https://github.com/opum-ai/opum-doc/tree/dev/docs/lore),
+not in a legacy `lore-doc` route.

@@ -32,31 +32,24 @@ coupling, managed blocks, and cross-links stay coherent.
   `lore instructions <topic>` (`linking`, `sync`, `check`, `validation`).
 <!-- lore:agents:end -->
 
-## Fleet routing and cross-repository authority
+## Product portfolio and cross-repository routing
 
-This repository is `opum-ai/lore-cli`. It is authoritative for what Lore actually
-ships — command surface, MCP tool schemas, adapters, tests, and release evidence.
-It is not authoritative for anything else in the estate.
+This repository is authoritative for Lore CLI's shipped package, command
+behavior, implementation, tests, compatibility, and release evidence. Keep
+those local claims grounded in this repository's records.
 
-**Before answering any cross-repository, ownership, package-status, or
-infrastructure question, read the owner record rather than inferring from local
-context:** `opum-ai/opum-doc`, branch `dev`,
-`docs/reference/fleet-peer-routing-and-session-invocation.md`. It maps every peer
-to the concerns it owns and records how a session reaches one. **Every repository
-in this estate is private**, so every `github.com` link to one is access-gated
-rather than a destination — confirm access before relying on it
-(`gh api repos/opum-ai/opum-doc`), and never put such a link on a public
-surface, where it is broken by construction.
-For any infrastructure, DNS, hosting, deployment-target, environment, or
-secrets-layout question, the authority is that repository's
-`docs/adr/make-saws-the-single-owner-of-infrastructure-and-dns.md` — route to
-`saws`, never to the `*-web` peer that serves a hostname. Routing the question is
-not the whole rule: **no repository other than `saws` creates, modifies, or
-deletes a DNS record, in any zone, for any provider — preview and ephemeral
-hostnames included.** That prohibition binds this repository too. Record only the
-hostnames, environment variables, and deployment targets Lore CLI consumes, and
-link to `saws` for the authoritative state; an infrastructure change is not real
-until `saws` reflects it.
+For Lore-wide strategy, cross-component contracts, coordination, or product
+work, start with the consolidated [Lore documentation namespace](https://github.com/opum-ai/opum-doc/tree/dev/docs/lore).
+For Opum portfolio, product-family, commercial, infrastructure, DNS, hosting,
+deployment-target, environment, or secrets-layout questions, start with the
+[Opum documentation hub](https://github.com/opum-ai/opum-doc/tree/dev/docs).
+Those routes are authoritative and may change independently; link to them
+rather than copying their mutable rules here.
+
+**No repository other than `saws` creates, modifies, or deletes a DNS record in
+any zone, for any provider, including preview and ephemeral hostnames.** This
+repository records only the hostnames, environment variables, and deployment
+targets Lore CLI consumes.
 
 Five traps that local context will not warn you about:
 
