@@ -1,10 +1,22 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 const SCRIPT = join(import.meta.dir, "../.codex/skills/backlog-handover/scripts/audit-handover-lifecycle.mjs");
+const HANDOVER_SKILL = readFileSync(join(import.meta.dir, "../.codex/skills/backlog-handover/SKILL.md"), "utf8");
+const LORE_SKILL = readFileSync(join(import.meta.dir, "../.codex/skills/lore/SKILL.md"), "utf8");
+const PREFLIGHT = join(import.meta.dir, "../.codex/skills/backlog-handover/scripts/lore-authority-preflight.mjs");
 const roots: string[] = [];
 
 afterEach(() => {
@@ -16,6 +28,19 @@ function fixture(files: Record<string, string>): string {
   roots.push(root);
   for (const [name, body] of Object.entries(files)) writeFileSync(join(root, name), body);
   return root;
+}
+
+function installFakeLore(fakeBin: string, posixBody: string, windowsBody: string): void {
+  const fakeLore = join(fakeBin, process.platform === "win32" ? "lore.cmd" : "lore");
+  writeFileSync(
+    fakeLore,
+    process.platform === "win32" ? `@echo off\r\n${windowsBody}\r\n` : `#!/bin/sh\n${posixBody}\n`,
+  );
+  if (process.platform !== "win32") spawnSync("chmod", ["+x", fakeLore]);
+}
+
+function fakePathEnv(fakeBin: string): NodeJS.ProcessEnv {
+  return { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ""}` };
 }
 
 function audit(files: Record<string, string>) {
@@ -40,6 +65,134 @@ This file recorded a completed campaign. It granted no authority.
 `;
 
 describe("backlog handover lifecycle audit", () => {
+  test("withheld commit authority prevents Lore dispatch and a Git mutation", () => {
+    const root = fixture({});
+    const fakeBin = join(root, "bin");
+    const dispatched = join(root, "dispatched");
+    mkdirSync(fakeBin);
+    installFakeLore(
+      fakeBin,
+      `touch "${dispatched}"\ngit commit --allow-empty -m denied`,
+      `type nul > "${dispatched}"\r\ngit commit --allow-empty -m denied`,
+    );
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
+    spawnSync("git", ["config", "user.name", "Test"], { cwd: root });
+    const before = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).status;
+    const result = spawnSync(
+      process.execPath,
+      [PREFLIGHT, "--command", "sync", "--repository", root, "--scope", ".", "--execute", "--", "--no-index"],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: fakePathEnv(fakeBin),
+      },
+    );
+
+    expect(result.status).toBe(4);
+    expect(JSON.parse(result.stdout)).toMatchObject({ authorized: false, dispatched: false });
+    expect(existsSync(dispatched)).toBe(false);
+    expect(spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).status).toBe(before);
+    expect(HANDOVER_SKILL).toContain("Before invoking `lore link`, `lore unlink`, `lore rename`, or `lore sync`");
+    expect(HANDOVER_SKILL).toContain("lore-authority-preflight.mjs");
+  });
+
+  test("explicit authority still rejects a scope outside the selected repository", () => {
+    const root = fixture({});
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    const result = spawnSync(
+      process.execPath,
+      [
+        PREFLIGHT,
+        "--command",
+        "sync",
+        "--repository",
+        root,
+        "--scope",
+        join(root, "..", "outside"),
+        "--explicit-commit-authority",
+      ],
+      { cwd: root, encoding: "utf8" },
+    );
+
+    expect(result.status).toBe(4);
+    expect(result.stderr).toContain("scope does not exist");
+  });
+
+  test("explicit authority rejects a symlinked scope that resolves outside the repository", () => {
+    const root = fixture({});
+    const outside = fixture({});
+    symlinkSync(outside, join(root, "escape"));
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    const result = spawnSync(
+      process.execPath,
+      [PREFLIGHT, "--command", "sync", "--repository", root, "--scope", "escape", "--explicit-commit-authority"],
+      { cwd: root, encoding: "utf8" },
+    );
+
+    expect(result.status).toBe(4);
+    expect(result.stderr).toContain("require the exact repository root scope");
+  });
+
+  test("standing authority is bound to Lore CLI dev delivery and executes in the declared worktree", () => {
+    const root = fixture({
+      "AGENTS.md": "## Autonomous Lore CLI documentation campaigns\n\nAuthorized pull-request delivery to `dev`.\n",
+    });
+    const fakeBin = join(root, "bin");
+    const executedIn = join(root, "executed-in");
+    mkdirSync(fakeBin);
+    installFakeLore(fakeBin, `pwd > "${executedIn}"`, `cd > "${executedIn}"`);
+    spawnSync("git", ["init", "-q"], { cwd: root });
+
+    const denied = spawnSync(
+      process.execPath,
+      [PREFLIGHT, "--command", "sync", "--repository", root, "--scope", ".", "--standing-delivery-authority"],
+      { cwd: root, encoding: "utf8" },
+    );
+    expect(denied.status).toBe(4);
+    expect(denied.stderr).toContain("requires --integration-branch dev");
+
+    const allowed = spawnSync(
+      process.execPath,
+      [
+        PREFLIGHT,
+        "--command",
+        "sync",
+        "--repository",
+        root,
+        "--scope",
+        ".",
+        "--standing-delivery-authority",
+        "--integration-branch",
+        "dev",
+        "--execute",
+        "--",
+        "--json",
+      ],
+      { cwd: tmpdir(), encoding: "utf8", env: fakePathEnv(fakeBin) },
+    );
+    expect(allowed.status).toBe(0);
+    expect(realpathSync(readFileSync(executedIn, "utf8").trim())).toBe(realpathSync(root));
+  });
+
+  test("Lore guidance exposes every self-committing command before canonical workflow steps", () => {
+    const preflight = LORE_SKILL.slice(0, LORE_SKILL.indexOf("## Start"));
+
+    expect(preflight).toContain("`lore link`, `lore unlink`, `lore rename`, and");
+    expect(preflight).toContain("`lore rename`");
+    expect(preflight).toContain("`lore sync`");
+    expect(preflight).toContain("repository's Lore sole-committer contract");
+  });
+
+  test("uses progressive campaign references and bounded durable-state limits", () => {
+    expect(HANDOVER_SKILL).toContain("[init](references/init.md)");
+    expect(HANDOVER_SKILL).toContain("[restore](references/restore.md)");
+    expect(HANDOVER_SKILL).toContain("[delivery](references/delivery.md)");
+    expect(HANDOVER_SKILL).toContain("[handover](references/handover.md)");
+    expect(HANDOVER_SKILL).toContain("200 lines and 32 KiB");
+    expect(HANDOVER_SKILL).toContain("120 lines and 16 KiB");
+  });
+
   test("accepts active.md as the sole executable cursor", () => {
     const result = audit({ "active.md": ACTIVE });
     expect(result.code).toBe(0);
@@ -71,7 +224,34 @@ describe("backlog handover lifecycle audit", () => {
       "stale.md": `${HISTORICAL}\nUse \`$backlog-handover\` in restore mode.\n`,
     });
     expect(result.code).toBe(1);
-    expect(result.stderr).toContain("backlog-handover restore invocation");
+    expect(result.stderr).toContain("backlog-handover invocation");
+  });
+
+  test("rejects any backlog-handover invocation in an archive", () => {
+    const result = audit({
+      "active.md": ACTIVE,
+      "stale.md": `${HISTORICAL}\nUse \`$backlog-handover status\`.\n`,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("backlog-handover invocation");
+  });
+
+  test("rejects dotted LCLI continuation directives in an archive", () => {
+    const result = audit({
+      "active.md": ACTIVE,
+      "stale.md": `${HISTORICAL}\nContinue LCLI-329.4.2\n`,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("task resume directive");
+  });
+
+  test("rejects foreign task continuation directives in an archive", () => {
+    const result = audit({
+      "active.md": ACTIVE,
+      "stale.md": `${HISTORICAL}\nResume ODOC-54\n`,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("task resume directive");
   });
 
   test("rejects a safe-resume sequence in an archive", () => {
@@ -89,5 +269,10 @@ describe("backlog handover lifecycle audit", () => {
     });
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("active.md lacks **Lifecycle**: executable-current");
+  });
+
+  test("rejects active cursors over the compact line or byte limit", () => {
+    expect(audit({ "active.md": `${ACTIVE}${"line\n".repeat(121)}` }).stderr).toContain("exceeds 120 lines");
+    expect(audit({ "active.md": `${ACTIVE}${"x".repeat(16 * 1024)}` }).stderr).toContain("exceeds 16384 bytes");
   });
 });

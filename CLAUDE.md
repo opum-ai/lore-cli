@@ -1,4 +1,6 @@
 
+<!-- Canonical ordering: read AGENTS.md first. It supplies campaign authority and the Lore commit-side-effect preflight before this generated Lore bridge. -->
+
 <!-- BACKLOG.MD GUIDELINES START -->
 <CRITICAL_INSTRUCTION>
 
@@ -32,31 +34,24 @@ coupling, managed blocks, and cross-links stay coherent.
   `lore instructions <topic>` (`linking`, `sync`, `check`, `validation`).
 <!-- lore:agents:end -->
 
-## Fleet routing and cross-repository authority
+## Product portfolio and cross-repository routing
 
-This repository is `opum-ai/lore-cli`. It is authoritative for what Lore actually
-ships — command surface, MCP tool schemas, adapters, tests, and release evidence.
-It is not authoritative for anything else in the estate.
+This repository is authoritative for Lore CLI's shipped package, command
+behavior, implementation, tests, compatibility, and release evidence. Keep
+those local claims grounded in this repository's records.
 
-**Before answering any cross-repository, ownership, package-status, or
-infrastructure question, read the owner record rather than inferring from local
-context:** `opum-ai/opum-doc`, branch `dev`,
-`docs/reference/fleet-peer-routing-and-session-invocation.md`. It maps every peer
-to the concerns it owns and records how a session reaches one. **Every repository
-in this estate is private**, so every `github.com` link to one is access-gated
-rather than a destination — confirm access before relying on it
-(`gh api repos/opum-ai/opum-doc`), and never put such a link on a public
-surface, where it is broken by construction.
-For any infrastructure, DNS, hosting, deployment-target, environment, or
-secrets-layout question, the authority is that repository's
-`docs/adr/make-saws-the-single-owner-of-infrastructure-and-dns.md` — route to
-`saws`, never to the `*-web` peer that serves a hostname. Routing the question is
-not the whole rule: **no repository other than `saws` creates, modifies, or
-deletes a DNS record, in any zone, for any provider — preview and ephemeral
-hostnames included.** That prohibition binds this repository too. Record only the
-hostnames, environment variables, and deployment targets Lore CLI consumes, and
-link to `saws` for the authoritative state; an infrastructure change is not real
-until `saws` reflects it.
+For Lore-wide strategy, cross-component contracts, coordination, or product
+work, start with the consolidated [Lore documentation namespace](https://github.com/opum-ai/opum-doc/tree/dev/docs/lore).
+For Opum portfolio, product-family, commercial, infrastructure, DNS, hosting,
+deployment-target, environment, or secrets-layout questions, start with the
+[Opum documentation hub](https://github.com/opum-ai/opum-doc/tree/dev/docs).
+Those routes are authoritative and may change independently; link to them
+rather than copying their mutable rules here.
+
+**No repository other than `saws` creates, modifies, or deletes a DNS record in
+any zone, for any provider, including preview and ephemeral hostnames.** This
+repository records only the hostnames, environment variables, and deployment
+targets Lore CLI consumes.
 
 Five traps that local context will not warn you about:
 
@@ -111,13 +106,13 @@ Five traps that local context will not warn you about:
   record's "Reaching a peer" on 2026-08-04; re-read it there before relying on
   these steps.
 
-When this repository and a `*-doc` owner disagree, that is drift and drift is a
-defect. This repository is authoritative for *what currently ships*; the `*-doc`
-owner remains the normative owner of *what the contract is*. **Do not promote
-either side — not quietly, and not with an announcement.** Report the divergence
-to both owners and leave the conflict standing until an owner resolves it;
-declaring a winner is not yours to do, and "code wins over prose" is not the
-model. See
+When this repository and the applicable consolidated Lore or Opum owner record
+disagree, that is drift and drift is a defect. This repository is authoritative
+for *what currently ships*; the routed product or portfolio owner remains
+authoritative for the contract it owns. **Do not promote either side — not
+quietly, and not with an announcement.** Report the divergence to both owners
+and leave the conflict standing until an owner resolves it; declaring a winner
+is not yours to do, and "code wins over prose" is not the model. See
 [Lore CLI documentation ownership](docs/reference/lore-cli-documentation-ownership.md)
 for the concern-to-owner map this repository consumes.
 

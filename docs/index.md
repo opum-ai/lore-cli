@@ -59,6 +59,10 @@ Use these records before inferring task or release state:
   tag, workflow, registry, install, and owner-control evidence for `0.2.0`.
 - [Lore CLI documentation ownership](reference/lore-cli-documentation-ownership.md)
   — local and cross-repository authority boundaries.
+- [Consolidated Lore documentation](https://github.com/opum-ai/opum-doc/tree/dev/docs/lore)
+  — the current owner route for Lore-wide strategy and cross-component contracts.
+- [Opum documentation hub](https://github.com/opum-ai/opum-doc/tree/dev/docs)
+  — the current owner route for portfolio and product-family boundaries.
 - [Lore CLI handover](runbooks/lore-cli-handover.md) — the only current,
   context-free fresh-session route.
 

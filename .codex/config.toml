@@ -1,0 +1,30 @@
+model = "gpt-5.6-terra"
+model_reasoning_effort = "medium"
+plan_mode_reasoning_effort = "medium"
+service_tier = "fast"
+approval_policy = "on-request"
+approvals_reviewer = "auto_review"
+default_permissions = "lore-cli-campaign"
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 3
+default_subagent_model = "gpt-5.6-terra"
+default_subagent_reasoning_effort = "medium"
+
+[permissions.lore-cli-campaign]
+description = "Lore CLI-only campaign workspace with environment-file denials and GitHub-only network."
+extends = ":workspace"
+
+[permissions.lore-cli-campaign.filesystem.":workspace_roots"]
+".git" = "write"
+"**/.env" = "deny"
+"**/.env.*" = "deny"
+
+[permissions.lore-cli-campaign.network]
+enabled = true
+
+[permissions.lore-cli-campaign.network.domains]
+"github.com" = "allow"
+"*.github.com" = "allow"
+"*.githubusercontent.com" = "allow"

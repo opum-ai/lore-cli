@@ -15,6 +15,8 @@ tasks:
   - lcli-294
   - lcli-322
   - lcli-325
+  - lcli-329
+  - lcli-328
 ---
 
 # Maintain Lore CLI documentation authority
@@ -47,12 +49,15 @@ product or release state.
 | [LCLI-294](../../backlog/tasks/lcli-294%20-%20Transfer-Lore-CLI-repository-to-opum-ai-and-reconcile-canonical-location.md) | Transfer Lore CLI repository to opum-ai and reconcile canonical location | Done |
 | [LCLI-322](../../backlog/tasks/lcli-322%20-%20Restore-single-active-cursor-hygiene-for-ignored-handover-archives.md) | Restore single-active-cursor hygiene for ignored handover archives | Done |
 | [LCLI-325](../../backlog/tasks/lcli-325%20-%20README-Install-section-still-pins-0.1.0-and-describes-the-shipped-0.2.0-install-fix-as-a-future-release.md) | README Install section still pins 0.1.0 and describes the shipped 0.2.0 install fix as a future release | Done |
+| [LCLI-329](../../backlog/tasks/lcli-329%20-%20Adopt-the-autonomous-documentation-campaign-fast-lane.md) | Adopt the autonomous documentation campaign fast lane | Done |
+| [LCLI-328](../../backlog/tasks/lcli-328%20-%20backlog-handover-can-invoke-self-committing-Lore-commands-without-commit-authority.md) | backlog-handover can invoke self-committing Lore commands without commit authority | Done |
 <!-- lore:tasks:end -->
 
 ## Notes
 
-This Story implements the Lore CLI owner action from the
-[cross-product documentation authority audit](https://github.com/opum-ai/opum-doc/blob/dev/docs/reference/cross-product-documentation-authority-audit.md).
+This Story implements the Lore CLI owner action routed from the consolidated
+[Lore documentation namespace](https://github.com/opum-ai/opum-doc/tree/dev/docs/lore)
+and the [Opum documentation hub](https://github.com/opum-ai/opum-doc/tree/dev/docs).
 Its local control set is [Lore CLI release truth](../reference/lore-cli-release-truth.md),
 [Lore CLI documentation ownership](../reference/lore-cli-documentation-ownership.md),
 and the [Lore CLI handover](../runbooks/lore-cli-handover.md).
