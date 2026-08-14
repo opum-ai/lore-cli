@@ -1,11 +1,11 @@
 ---
 id: LCLI-329
 title: Adopt the autonomous documentation campaign fast lane
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-14 01:34'
-updated_date: '2026-08-14 01:47'
+updated_date: '2026-08-14 02:18'
 labels:
   - campaign
   - performance
@@ -33,12 +33,12 @@ Port the reviewed ODOC-54 campaign loop into lore-cli as a repository-local oper
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A Lore-governed local reference records the portable fast-lane semantics, lore-cli-specific authority boundaries, self-committing command preflight, validation economy, and measurable operating targets, and is reachable from the bundle index.
-- [ ] #2 Trusted-project Codex configuration supplies Terra/medium defaults, no more than three narrow documentation agents, least-privilege filesystem and network access, and auto-reviewed mutations without copying opum-doc-specific repository authority.
-- [ ] #3 Repository instructions durably authorize selected non-production documentation campaigns, coordinator-owned shared state, bounded remediation and cleanup, while publication, production promotion, material decisions, and unrelated destructive actions remain explicit pause boundaries.
-- [ ] #4 The Codex backlog-handover skill uses progressive mode references, immediate init-to-execution, one compact tracker, widest safe bounded-parallel waves, exact-tree validation reuse, batched delivery, and concise lifecycle-safe handovers.
-- [ ] #5 The lifecycle audit and fixtures enforce one executable cursor, no runnable archived cursor, repository-specific task IDs, line and byte limits, and safe handling of Lore commands that can commit.
-- [ ] #6 Backlog offline-read invariants, skill tests, configuration parsing, strict Lore validation and coherence checks, relevant repository tests, and diff hygiene pass at the exact reviewed tree.
+- [x] #1 A Lore-governed local reference records the portable fast-lane semantics, lore-cli-specific authority boundaries, self-committing command preflight, validation economy, and measurable operating targets, and is reachable from the bundle index.
+- [x] #2 Trusted-project Codex configuration supplies Terra/medium defaults, no more than three narrow documentation agents, least-privilege filesystem and network access, and auto-reviewed mutations without copying opum-doc-specific repository authority.
+- [x] #3 Repository instructions durably authorize selected non-production documentation campaigns, coordinator-owned shared state, bounded remediation and cleanup, while publication, production promotion, material decisions, and unrelated destructive actions remain explicit pause boundaries.
+- [x] #4 The Codex backlog-handover skill uses progressive mode references, immediate init-to-execution, one compact tracker, widest safe bounded-parallel waves, exact-tree validation reuse, batched delivery, and concise lifecycle-safe handovers.
+- [x] #5 The lifecycle audit and fixtures enforce one executable cursor, no runnable archived cursor, repository-specific task IDs, line and byte limits, and safe handling of Lore commands that can commit.
+- [x] #6 Backlog offline-read invariants, skill tests, configuration parsing, strict Lore validation and coherence checks, relevant repository tests, and diff hygiene pass at the exact reviewed tree.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,3 +50,9 @@ Port the reviewed ODOC-54 campaign loop into lore-cli as a repository-local oper
 4. Author a lore-cli-local Lore operating reference, link it to the documentation-authority Story, reconcile managed surfaces, and run lifecycle, configuration, offline-read, strict Lore, and repository gates.
 5. Independently review the cumulative tree, remediate authority or portability findings, and deliver one batch to dev.
 <!-- SECTION:PLAN:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Adopted the Lore CLI-local autonomous documentation campaign fast lane: a compact campaign tracker and lifecycle-safe handover, three narrow documentation roles, scoped non-production authority, self-committing Lore preflight, progressive mode references, and a Lore-governed operating record. Exact reviewed worktree verification passed: TypeScript typecheck, Biome lint, full Bun test suite, focused lifecycle tests and fixtures, Lore agent bridge check, strict Lore validation/coherence, and diff hygiene.
+<!-- SECTION:FINAL_SUMMARY:END -->
