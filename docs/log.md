@@ -156,6 +156,7 @@
 - 2026-08-13T23:07:08-05:00 59bdbab951690723fcc822ec7f31cb295e885595 docs: sync Lore log
 - 2026-08-14T06:06:20-05:00 9ac392dda4a4917dbea5788343df19ede30ce61c docs: couple Lore CLI task lineage
 - 2026-08-14T07:17:52-05:00 6693b4bd7f87c180b68c7fd062651acbfd6915e8 docs: sync LCLI-327 task state
+- 2026-08-14T16:42:24-05:00 b521f2941b499c5a12dccd12c05342776ede0fda feat: harden autonomous Codex campaign loop
 
 ## docs/.obsidian
 
@@ -307,6 +308,7 @@
 - 2026-08-13T22:08:08-05:00 327c9ed8c00a2054bcd8123cfdad06d0d18fe154 feat: complete autonomous campaign fast lane
 - 2026-08-13T22:15:50-05:00 3a3cbe248e80aa1a379821ba69ee6bc011d8903d fix: bind campaign enforcement to exact scope
 - 2026-08-13T23:06:05-05:00 5802be7b184303ac233d78854abd33bb74a45067 docs: consolidate Lore authority routes
+- 2026-08-14T16:42:24-05:00 b521f2941b499c5a12dccd12c05342776ede0fda feat: harden autonomous Codex campaign loop
 
 ## docs/runbooks
 
@@ -454,3 +456,4 @@
 - 2026-08-13T23:06:05-05:00 5802be7b184303ac233d78854abd33bb74a45067 docs: consolidate Lore authority routes
 - 2026-08-14T06:06:20-05:00 9ac392dda4a4917dbea5788343df19ede30ce61c docs: couple Lore CLI task lineage
 - 2026-08-14T07:17:52-05:00 6693b4bd7f87c180b68c7fd062651acbfd6915e8 docs: sync LCLI-327 task state
+- 2026-08-14T16:42:24-05:00 b521f2941b499c5a12dccd12c05342776ede0fda feat: harden autonomous Codex campaign loop
