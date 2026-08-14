@@ -1,11 +1,11 @@
 ---
 id: LCLI-329
 title: Adopt the autonomous documentation campaign fast lane
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-14 01:34'
-updated_date: '2026-08-14 02:18'
+updated_date: '2026-08-14 02:54'
 labels:
   - campaign
   - performance
@@ -33,23 +33,29 @@ Port the reviewed ODOC-54 campaign loop into lore-cli as a repository-local oper
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 A Lore-governed local reference records the portable fast-lane semantics, lore-cli-specific authority boundaries, self-committing command preflight, validation economy, and measurable operating targets, and is reachable from the bundle index.
-- [x] #2 Trusted-project Codex configuration supplies Terra/medium defaults, no more than three narrow documentation agents, least-privilege filesystem and network access, and auto-reviewed mutations without copying opum-doc-specific repository authority.
-- [x] #3 Repository instructions durably authorize selected non-production documentation campaigns, coordinator-owned shared state, bounded remediation and cleanup, while publication, production promotion, material decisions, and unrelated destructive actions remain explicit pause boundaries.
-- [x] #4 The Codex backlog-handover skill uses progressive mode references, immediate init-to-execution, one compact tracker, widest safe bounded-parallel waves, exact-tree validation reuse, batched delivery, and concise lifecycle-safe handovers.
-- [x] #5 The lifecycle audit and fixtures enforce one executable cursor, no runnable archived cursor, repository-specific task IDs, line and byte limits, and safe handling of Lore commands that can commit.
-- [x] #6 Backlog offline-read invariants, skill tests, configuration parsing, strict Lore validation and coherence checks, relevant repository tests, and diff hygiene pass at the exact reviewed tree.
+- [ ] #1 A Lore-governed local reference records the portable fast-lane semantics, lore-cli-specific authority boundaries, self-committing command preflight, validation economy, and measurable operating targets, and is reachable from the bundle index.
+- [ ] #2 Trusted-project Codex configuration supplies Terra/medium defaults, four narrow documentation roles sharing no more than three concurrent agent slots, least-privilege filesystem and network access, and auto-reviewed mutations without copying opum-doc-specific repository authority.
+- [ ] #3 Repository instructions durably authorize selected non-production documentation campaigns, coordinator-owned shared state, bounded remediation and cleanup, while publication, production promotion, material decisions, and unrelated destructive actions remain explicit pause boundaries.
+- [ ] #4 The Codex and Claude backlog-handover bridges use progressive mode references, immediate init-to-execution, one compact tracker, widest safe bounded-parallel waves, exact-tree validation reuse, batched delivery, and concise lifecycle-safe handovers.
+- [ ] #5 Lifecycle and tracker audits plus fixtures enforce one executable cursor, no runnable archived cursor, repository-specific task IDs, line and byte limits, and safe handling of Lore commands that can commit.
+- [ ] #6 Backlog offline-read invariants, skill tests, configuration parsing, strict Lore validation and coherence checks, relevant repository tests, independent review, and diff hygiene pass at the exact reviewed tree.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Reconcile the portable ODOC-54 fast-lane contract with lore-cli current authority, handover, Backlog, and Lore surfaces, preserving the completed ODOC routing patch and LCLI-328 preflight.
-2. Add a trusted-project Terra/medium profile, three narrow documentation roles, lore-cli-local least-privilege permissions, and durable autonomous-docs boundaries in AGENTS.md.
-3. Refactor the Codex backlog-handover skill into progressive init/restore/delivery/handover references with compact lifecycle enforcement, retaining LCLI task IDs and the self-committing Lore preflight.
-4. Author a lore-cli-local Lore operating reference, link it to the documentation-authority Story, reconcile managed surfaces, and run lifecycle, configuration, offline-read, strict Lore, and repository gates.
-5. Independently review the cumulative tree, remediate authority or portability findings, and deliver one batch to dev.
+1. Reconcile the ODOC-54 fast-lane contract with Lore CLI authority and the hardened LCLI-328 preflight.
+2. Add trusted-project Terra/medium defaults, four narrow roles sharing three concurrent slots, Lore CLI-only least-privilege permissions, and dev-only autonomous-docs rules.
+3. Replace both active backlog-handover bridges with progressive references and add mechanical lifecycle and stdin tracker audits with LCLI fixtures.
+4. Generate both Lore bridges from source-backed preflight guidance, reconcile the Lore operating reference and managed surfaces, and keep Backlog reads offline.
+5. Run configuration, script, lifecycle, tracker, bridge, strict Lore, typecheck, lint, full test, and diff gates at one exact tree; obtain independent review and deliver one PR to dev.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Post-authorization audit found the previous local Done state lacked project Codex config, all four role profiles, campaign rules, tracker enforcement, and a compatible active Claude backlog-handover bridge. Reopened and aligned AC2/AC4/AC5/AC6 to the explicitly approved four-role/three-slot target.
+<!-- SECTION:NOTES:END -->
 
 ## Final Summary
 

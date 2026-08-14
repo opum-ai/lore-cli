@@ -3,11 +3,11 @@ id: LCLI-328
 title: >-
   backlog-handover can invoke self-committing Lore commands without commit
   authority
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-13 13:27'
-updated_date: '2026-08-14 02:16'
+updated_date: '2026-08-14 02:54'
 labels:
   - agents
   - backlog
@@ -41,8 +41,8 @@ The CLI behaved according to its current contract; the unsafe gap is in agent wo
 <!-- AC:BEGIN -->
 - [x] #1 `backlog-handover` explicitly identifies every Lore workflow command it may invoke that can create a git commit, including `link`, `unlink`, `rename`, and `sync`
 - [x] #2 Before invoking a self-committing Lore command, the workflow verifies explicit commit authority; when authority is absent it requests that exact permission or records a safe deferred stage
-- [x] #3 The Lore skill or generated agent guidance makes the self-committing behavior visible before its canonical link/sync steps, not only in deeper topic documentation or the result envelope
-- [x] #4 A regression scenario proves a documentation campaign with withheld commit authority does not create a commit before the user decision
+- [ ] #3 The Lore skill or generated agent guidance makes the self-committing behavior visible before its canonical link/sync steps, not only in deeper topic documentation or the result envelope
+- [ ] #4 A regression scenario proves a documentation campaign with withheld commit authority does not create a commit before the user decision
 - [x] #5 The resulting guidance remains consistent with ADR-0012 and the CLI surface's documented sole-committer contract
 <!-- AC:END -->
 
@@ -61,6 +61,8 @@ The CLI behaved according to its current contract; the unsafe gap is in agent wo
 Implemented an explicit commit-side-effect preflight in both Codex skills. The workflow enumerates link, unlink, rename, and sync; recognizes standing delivery authority only for the selected repository and in-scope work; otherwise stops before invocation for an exact permission request or durable deferred stage. Added a withheld-authority regression and an ordering assertion that the Lore warning appears before canonical steps. Verification: bun test test/backlog-handover-lifecycle.test.ts passed 9 tests; lore validate --strict and lore check --strict passed 70 files with zero findings; git diff --check passed. Biome/typecheck were unavailable because this isolated worktree has no installed dependencies and will be covered by the cumulative repository gate.
 
 Independent cumulative review found that the first regression only exercised a test-local Boolean and that the active Claude Lore bridge still exposed self-committing steps before the Codex preflight. Reopened AC4 pending a shared executable preflight, a dispatch/Git-mutation negative regression, and active Claude bridge reconciliation.
+
+Post-authorization audit found the generated Claude Lore bridge still exposed self-committing commands without the preflight, and the executable gate did not yet bind execution to the declared repository or reject out-of-repository scope. Reopened AC3/AC4 for generator-backed guidance and hardened executable evidence.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
