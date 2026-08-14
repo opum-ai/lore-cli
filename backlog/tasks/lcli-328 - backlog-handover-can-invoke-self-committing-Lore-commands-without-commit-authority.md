@@ -3,11 +3,11 @@ id: LCLI-328
 title: >-
   backlog-handover can invoke self-committing Lore commands without commit
   authority
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-13 13:27'
-updated_date: '2026-08-14 02:54'
+updated_date: '2026-08-14 03:19'
 labels:
   - agents
   - backlog
@@ -41,8 +41,8 @@ The CLI behaved according to its current contract; the unsafe gap is in agent wo
 <!-- AC:BEGIN -->
 - [x] #1 `backlog-handover` explicitly identifies every Lore workflow command it may invoke that can create a git commit, including `link`, `unlink`, `rename`, and `sync`
 - [x] #2 Before invoking a self-committing Lore command, the workflow verifies explicit commit authority; when authority is absent it requests that exact permission or records a safe deferred stage
-- [ ] #3 The Lore skill or generated agent guidance makes the self-committing behavior visible before its canonical link/sync steps, not only in deeper topic documentation or the result envelope
-- [ ] #4 A regression scenario proves a documentation campaign with withheld commit authority does not create a commit before the user decision
+- [x] #3 The Lore skill or generated agent guidance makes the self-committing behavior visible before its canonical link/sync steps, not only in deeper topic documentation or the result envelope
+- [x] #4 A regression scenario proves a documentation campaign with withheld commit authority does not create a commit before the user decision
 - [x] #5 The resulting guidance remains consistent with ADR-0012 and the CLI surface's documented sole-committer contract
 <!-- AC:END -->
 
@@ -63,10 +63,12 @@ Implemented an explicit commit-side-effect preflight in both Codex skills. The w
 Independent cumulative review found that the first regression only exercised a test-local Boolean and that the active Claude Lore bridge still exposed self-committing steps before the Codex preflight. Reopened AC4 pending a shared executable preflight, a dispatch/Git-mutation negative regression, and active Claude bridge reconciliation.
 
 Post-authorization audit found the generated Claude Lore bridge still exposed self-committing commands without the preflight, and the executable gate did not yet bind execution to the declared repository or reject out-of-repository scope. Reopened AC3/AC4 for generator-backed guidance and hardened executable evidence.
+
+Final implementation evidence at HEAD 3a3cbe248e80aa1a379821ba69ee6bc011d8903d / tree 720eb1990161e590309e56917f402c96bcc7f6fd: source-generated Claude and Codex Lore bridges expose the warning before canonical steps; the shared gate requires the realpath repository root, rejects nonexistent, narrow, and symlinked scopes, binds standing authority to AGENTS-recorded dev delivery, and dispatches from the declared worktree. The negative fake-Lore scenario proves withheld authority causes no dispatch or Git mutation. Focused suite: 17 pass. Full suite: 2584 pass, 1 skip, 0 fail. Typecheck, Biome, strict Lore, bridge, and diff gates pass; independent review found no remaining issue.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Closed the self-committing Lore authority gap without changing ADR-0012: every self-committing command now passes a shared authority preflight before dispatch, and active guidance surfaces that behavior before canonical Lore steps. Verified at the reviewed worktree: 11 focused lifecycle tests passed, including a fake-Lore withheld-authority scenario proving no dispatch and no Git mutation; the four-case lifecycle fixture suite passed; strict Lore validation and coherence checks passed; and diff hygiene passed.
+Closed the self-committing Lore authority gap with source-generated pre-canonical guidance and a repository/scope/dev-bound executable preflight. Withheld authority now proves no Lore dispatch and no Git mutation; 17 focused tests, the 2,584-test full suite, strict Lore, typecheck, lint, and independent review passed at tree 720eb199.
 <!-- SECTION:FINAL_SUMMARY:END -->
