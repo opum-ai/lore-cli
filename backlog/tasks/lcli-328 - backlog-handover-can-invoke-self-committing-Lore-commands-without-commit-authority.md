@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-13 13:27'
-updated_date: '2026-08-14 01:40'
+updated_date: '2026-08-14 02:16'
 labels:
   - agents
   - backlog
@@ -59,10 +59,12 @@ The CLI behaved according to its current contract; the unsafe gap is in agent wo
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented an explicit commit-side-effect preflight in both Codex skills. The workflow enumerates link, unlink, rename, and sync; recognizes standing delivery authority only for the selected repository and in-scope work; otherwise stops before invocation for an exact permission request or durable deferred stage. Added a withheld-authority regression and an ordering assertion that the Lore warning appears before canonical steps. Verification: bun test test/backlog-handover-lifecycle.test.ts passed 9 tests; lore validate --strict and lore check --strict passed 70 files with zero findings; git diff --check passed. Biome/typecheck were unavailable because this isolated worktree has no installed dependencies and will be covered by the cumulative repository gate.
+
+Independent cumulative review found that the first regression only exercised a test-local Boolean and that the active Claude Lore bridge still exposed self-committing steps before the Codex preflight. Reopened AC4 pending a shared executable preflight, a dispatch/Git-mutation negative regression, and active Claude bridge reconciliation.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Closed the self-committing Lore authority gap without changing ADR-0012: campaign guidance now preflights every Lore command that can commit, refuses invocation when authority is withheld, and exposes the side effect before canonical Lore steps. Verified with nine focused lifecycle tests, strict Lore validation/check, and diff hygiene.
+Closed the self-committing Lore authority gap without changing ADR-0012: every self-committing command now passes a shared authority preflight before dispatch, and active guidance surfaces that behavior before canonical Lore steps. Verified at the reviewed worktree: 11 focused lifecycle tests passed, including a fake-Lore withheld-authority scenario proving no dispatch and no Git mutation; the four-case lifecycle fixture suite passed; strict Lore validation and coherence checks passed; and diff hygiene passed.
 <!-- SECTION:FINAL_SUMMARY:END -->
