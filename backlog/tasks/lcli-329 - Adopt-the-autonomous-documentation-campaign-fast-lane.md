@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-14 01:34'
-updated_date: '2026-08-14 03:19'
+updated_date: '2026-08-14 03:35'
 labels:
   - campaign
   - performance
@@ -57,10 +57,14 @@ Port the reviewed ODOC-54 campaign loop into lore-cli as a repository-local oper
 Post-authorization audit found the previous local Done state lacked project Codex config, all four role profiles, campaign rules, tracker enforcement, and a compatible active Claude backlog-handover bridge. Reopened and aligned AC2/AC4/AC5/AC6 to the explicitly approved four-role/three-slot target.
 
 Final exact-tree evidence at HEAD 3a3cbe248e80aa1a379821ba69ee6bc011d8903d / tree 720eb1990161e590309e56917f402c96bcc7f6fd: four Terra/medium profiles share max three slots; Codex strict config and all five TOMLs parse; Backlog task reads remain offline; Claude and Codex bridges use progressive references; lifecycle 8 and tracker 3 fixtures pass; focused preflight/lifecycle suite passes 17; source bridge check, typecheck, Biome, full Bun suite (2584 pass, 1 skip, 0 fail), strict Lore validation/check (71 files, zero findings), diff hygiene, and independent review pass. Authority is Lore CLI-only, one PR per wave to dev, with dev-to-main, publication, material decisions, and unrelated destructive work excluded.
+
+PR CI portability follow-up at HEAD 4b90e3b / tree b50ab787 hardened exact-root enforcement against Windows Git short-path aliases and made the preflight fixtures platform-native. Focused 17 tests, 8 lifecycle fixtures, 3 tracker fixtures, isolated full suite (2584 pass, 1 skip, 0 fail), typecheck, Biome, strict Lore, diff hygiene, and independent review pass.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
 Adopted the Lore CLI autonomous documentation fast lane: four Terra/medium roles sharing three slots, GitHub-only and environment-denied permissions, offline Backlog reads, dev-only campaign authority, progressive Claude/Codex bridges, exact-tree gate reuse, mechanical tracker/lifecycle limits, and a hardened self-committing Lore preflight. Verified by 2,584 full-suite tests plus all focused, configuration, bridge, Lore, lint, typecheck, diff, and independent-review gates at tree 720eb199.
+
+Cross-platform CI preflight coverage is green locally and independently reviewed at tree b50ab787.
 <!-- SECTION:FINAL_SUMMARY:END -->

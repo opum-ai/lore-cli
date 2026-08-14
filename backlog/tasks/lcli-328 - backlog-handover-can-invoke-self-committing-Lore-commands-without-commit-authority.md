@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-13 13:27'
-updated_date: '2026-08-14 03:24'
+updated_date: '2026-08-14 03:35'
 labels:
   - agents
   - backlog
@@ -67,10 +67,14 @@ Independent cumulative review found that the first regression only exercised a t
 Post-authorization audit found the generated Claude Lore bridge still exposed self-committing commands without the preflight, and the executable gate did not yet bind execution to the declared repository or reject out-of-repository scope. Reopened AC3/AC4 for generator-backed guidance and hardened executable evidence.
 
 Final implementation evidence at HEAD 3a3cbe248e80aa1a379821ba69ee6bc011d8903d / tree 720eb1990161e590309e56917f402c96bcc7f6fd: source-generated Claude and Codex Lore bridges expose the warning before canonical steps; the shared gate requires the realpath repository root, rejects nonexistent, narrow, and symlinked scopes, binds standing authority to AGENTS-recorded dev delivery, and dispatches from the declared worktree. The negative fake-Lore scenario proves withheld authority causes no dispatch or Git mutation. Focused suite: 17 pass. Full suite: 2584 pass, 1 skip, 0 fail. Typecheck, Biome, strict Lore, bridge, and diff gates pass; independent review found no remaining issue.
+
+PR CI portability follow-up at HEAD 4b90e3b / tree b50ab787: the executable preflight now proves exact worktree-root selection with Git inside-worktree plus empty-prefix predicates instead of comparing platform-rendered path strings, and the withheld/allowed fake-Lore regressions use native Windows or POSIX launchers and PATH delimiters. Focused 17 tests, 8 lifecycle fixtures, 3 tracker fixtures, isolated full suite (2584 pass, 1 skip, 0 fail), typecheck, Biome, strict Lore, diff hygiene, and independent review pass.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
 Closed the self-committing Lore authority gap with source-generated pre-canonical guidance and a repository/scope/dev-bound executable preflight. Withheld authority now proves no Lore dispatch and no Git mutation; 17 focused tests, the 2,584-test full suite, strict Lore, typecheck, lint, and independent review passed at tree 720eb199.
+
+The final preflight and regressions are also portable across Git Windows short-path aliases; full isolated regression and independent review remain green at tree b50ab787.
 <!-- SECTION:FINAL_SUMMARY:END -->
