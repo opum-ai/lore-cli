@@ -1,11 +1,11 @@
 ---
 id: LCLI-329
 title: Adopt the autonomous documentation campaign fast lane
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-14 01:34'
-updated_date: '2026-08-14 21:39'
+updated_date: '2026-08-14 21:49'
 labels:
   - campaign
   - performance
@@ -57,11 +57,11 @@ Port the reviewed ODOC-54 campaign loop into lore-cli as a repository-local oper
 - [x] #4 The Codex and Claude backlog-handover bridges use progressive mode references, immediate init-to-execution, one compact tracker, widest safe bounded-parallel waves, exact-tree validation reuse, batched delivery, and concise lifecycle-safe handovers.
 - [x] #5 Lifecycle and tracker audits plus fixtures enforce one executable cursor, no runnable archived cursor, repository-specific task IDs, line and byte limits, and safe handling of Lore commands that can commit.
 - [x] #6 Backlog offline-read invariants, skill tests, configuration parsing, strict Lore validation and coherence checks, relevant repository tests, independent review, and diff hygiene pass at the exact reviewed tree.
-- [ ] #7 Codex uses .codex/handovers/active.md as the sole executable campaign cursor; legacy .claude cursor state is migration-only and the Codex loop never loads .claude/skills/**
-- [ ] #8 The loop has exactly two nonterminal stop classes, human-decision and session-renewal, and otherwise continues through review, commit, dev PR/merge, settlement, cleanup, and newly ready waves
-- [ ] #9 A repository-local Treehouse skill and three-tree configuration provide fenced leases, coordinator-owned release, patch-equivalence cleanup, recovery preservation, and safe reusable-pool hygiene
-- [ ] #10 Adversarial lifecycle fixtures reject duplicate or invalid stop classes, stale grounding, missing or unknown in-flight stages, contradictory lifecycle markers, Markdown-nested or foreign-task continuations, and completed campaigns retaining a live cursor
-- [ ] #11 Session renewal durably records the live tracker, exact SHA/branch/worktree/queue/stage and tells the operator to run /clear, start a new lore-cli Codex session, invoke $backlog-handover restore, and continue without reconfirmation
+- [x] #7 Codex uses .codex/handovers/active.md as the sole executable campaign cursor; legacy .claude cursor state is migration-only and the Codex loop never loads .claude/skills/**
+- [x] #8 The loop has exactly two nonterminal stop classes, human-decision and session-renewal, and otherwise continues through review, commit, dev PR/merge, settlement, cleanup, and newly ready waves
+- [x] #9 A repository-local Treehouse skill and three-tree configuration provide fenced leases, coordinator-owned release, patch-equivalence cleanup, recovery preservation, and safe reusable-pool hygiene
+- [x] #10 Adversarial lifecycle fixtures reject duplicate or invalid stop classes, stale grounding, missing or unknown in-flight stages, contradictory lifecycle markers, Markdown-nested or foreign-task continuations, and completed campaigns retaining a live cursor
+- [x] #11 Session renewal durably records the live tracker, exact SHA/branch/worktree/queue/stage and tells the operator to run /clear, start a new lore-cli Codex session, invoke $backlog-handover restore, and continue without reconfirmation
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -93,4 +93,12 @@ Treehouse forward validation acquired a real identity-fenced lease, observed its
 Adversarial hardening now strips fenced code and HTML comments from lifecycle evidence, normalizes Markdown formatting when detecting archived continuation signals, scans case-variant Markdown cursor names, enforces canonical exact grounding and unique uppercase LCLI task rows, and expands standalone coverage to 34 cases plus 21 focused Bun tests. The Lore sync preflight now enumerates tracked, staged, and untracked Backlog changes and requires an exact repeatable campaign-owned allowlist before dispatch, preventing Lore sync from committing unrelated dirty task state.
 
 Final adversarial expansion now covers 40 standalone lifecycle cases: strict CommonMark fence-length closure, unclosed HTML comments, formatted/link/entity-encoded continuation text, exact branch/worktree grounding, duplicate task IDs, case-variant active cursors, and complete-mode residue. Historical cursors conservatively reject any encoded HTML entity rather than guessing rendered executability. The generated Claude bridge and its generator remain byte-identical to dev; the candidate changes only Codex-owned guidance, and the authoritative repository-source bridge check is green despite known older installed-global version skew.
+
+Settlement evidence: reviewed implementation b521f2941b499c5a12dccd12c05342776ede0fda merged through PR #376 to dev merge da7120dc296b928fb2b4d535b357e9a7bd4be533. All eight GitHub checks passed, including Ubuntu/Windows lint-typecheck-test, compile, browser qualification, scaffold smokes, Ladybug benchmark, and Docker E2E. Local exact-tree verification passed typecheck, Biome, 2,589 tests with one skip and zero failures, strict Lore validation/check across 72 files with zero findings, repository-source agent bridge check, 40 lifecycle fixtures, 3 tracker fixtures, 21 focused tests, skill validation, lifecycle completion/migration audits, and diff hygiene. Independent cumulative, adversarial, and Treehouse forward reviewers approved.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Refined Lore CLI into the same Codex-first continuous campaign loop as Quest: Terra/medium parallel roles, Codex-only cursor and exact renewal contract, two true pause classes, review-through-dev-merge iteration, Treehouse fenced worktrees, evidence-based cleanup, rendered-Markdown lifecycle defenses, and an exact dirty-Backlog allowlist before Lore sync. Delivered by PR #376 to dev at da7120d after all eight CI jobs, 2,589 local tests, strict Lore gates, 40 lifecycle fixtures, and three independent reviews passed.
+<!-- SECTION:FINAL_SUMMARY:END -->
