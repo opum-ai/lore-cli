@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-14 01:34'
-updated_date: '2026-08-14 21:33'
+updated_date: '2026-08-14 21:39'
 labels:
   - campaign
   - performance
@@ -35,8 +35,6 @@ modified_files:
   - .codex/skills/treehouse-worktrees/SKILL.md
   - .codex/skills/treehouse-worktrees/agents/openai.yaml
   - .codex/skills/lore/SKILL.md
-  - .claude/skills/lore/SKILL.md
-  - src/core/agent-bridge.ts
   - src/core/codex-bridge.ts
   - test/backlog-handover-lifecycle.test.ts
   - docs/reference/operate-autonomous-lore-cli-documentation-campaigns.md
@@ -93,4 +91,6 @@ Implemented the Codex-only cursor and continuous-loop refinement while preservin
 Treehouse forward validation acquired a real identity-fenced lease, observed its exact lease ID/holder through status, returned it with both guards, and confirmed the pool entry became available. Lore CLI uses an SSH remote, so Codex applies one consistent command-scoped SSH-to-HTTPS Git rewrite without mutating the persistent remote; the skill now warns that mixing transport identities selects different pools. A fresh Terra/medium subagent independently classified the returned entry as reusable infrastructure and found no safe prune candidate.
 
 Adversarial hardening now strips fenced code and HTML comments from lifecycle evidence, normalizes Markdown formatting when detecting archived continuation signals, scans case-variant Markdown cursor names, enforces canonical exact grounding and unique uppercase LCLI task rows, and expands standalone coverage to 34 cases plus 21 focused Bun tests. The Lore sync preflight now enumerates tracked, staged, and untracked Backlog changes and requires an exact repeatable campaign-owned allowlist before dispatch, preventing Lore sync from committing unrelated dirty task state.
+
+Final adversarial expansion now covers 40 standalone lifecycle cases: strict CommonMark fence-length closure, unclosed HTML comments, formatted/link/entity-encoded continuation text, exact branch/worktree grounding, duplicate task IDs, case-variant active cursors, and complete-mode residue. Historical cursors conservatively reject any encoded HTML entity rather than guessing rendered executability. The generated Claude bridge and its generator remain byte-identical to dev; the candidate changes only Codex-owned guidance, and the authoritative repository-source bridge check is green despite known older installed-global version skew.
 <!-- SECTION:NOTES:END -->
