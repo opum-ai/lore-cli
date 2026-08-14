@@ -23,7 +23,9 @@ Before the canonical workflow below, treat \`lore link\`, \`lore unlink\`, \`lor
 applicable repository instructions and verify explicit commit authority before invoking them. When
 the repository supplies
 \`.codex/skills/backlog-handover/scripts/lore-authority-preflight.mjs\`, dispatch those commands only
-through that gate with the exact Git worktree and in-repository scope. Without applicable authority,
+through that gate with the exact Git worktree and in-repository scope. For \`sync\`, exactly allowlist
+each campaign-owned dirty Backlog path as required by that gate; it must refuse unrelated dirty
+Backlog state. Without applicable authority,
 stop before Lore runs and request permission or record a deferred stage. This preserves the
 repository's Lore sole-committer contract.
 

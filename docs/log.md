@@ -155,6 +155,7 @@
 - 2026-08-13T22:36:02-05:00 e7ad3f0b18b2758c03b9866fa7c138bf3baf4240 docs: record portable preflight settlement
 - 2026-08-13T23:07:08-05:00 59bdbab951690723fcc822ec7f31cb295e885595 docs: sync Lore log
 - 2026-08-14T06:06:20-05:00 9ac392dda4a4917dbea5788343df19ede30ce61c docs: couple Lore CLI task lineage
+- 2026-08-14T07:17:52-05:00 6693b4bd7f87c180b68c7fd062651acbfd6915e8 docs: sync LCLI-327 task state
 
 ## docs/.obsidian
 
@@ -452,3 +453,4 @@
 - 2026-08-13T22:24:46-05:00 f5e8a827a3ed2e6e4f43b1fe172883518db90442 docs: couple Lore authority preflight task
 - 2026-08-13T23:06:05-05:00 5802be7b184303ac233d78854abd33bb74a45067 docs: consolidate Lore authority routes
 - 2026-08-14T06:06:20-05:00 9ac392dda4a4917dbea5788343df19ede30ce61c docs: couple Lore CLI task lineage
+- 2026-08-14T07:17:52-05:00 6693b4bd7f87c180b68c7fd062651acbfd6915e8 docs: sync LCLI-327 task state

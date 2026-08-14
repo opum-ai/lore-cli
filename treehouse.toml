@@ -1,6 +1,3 @@
-max_trees = 4
-root = "../"
-
-# Keep reusable worktrees beside this repository on the same filesystem.
-# Acquire campaign worktrees with durable, task-scoped leases and return them
-# only with matching lease-id and lease-holder guards after settlement.
+# Keep the reusable Codex-agent pool inside the Lore CLI repository sandbox.
+max_trees = 3
+root = ".treehouse"
