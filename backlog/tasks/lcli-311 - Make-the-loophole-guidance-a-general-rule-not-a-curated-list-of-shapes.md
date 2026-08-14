@@ -5,9 +5,12 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-04 15:01'
-updated_date: '2026-08-04 15:05'
-labels: []
+updated_date: '2026-08-14 11:00'
+labels:
+  - 'doc:stories/maintain-lore-cli-documentation-authority'
 dependencies: []
+documentation:
+  - docs/stories/maintain-lore-cli-documentation-authority.md
 ordinal: 424000
 ---
 
