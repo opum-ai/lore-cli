@@ -154,6 +154,7 @@
 - 2026-08-13T22:24:46-05:00 f5e8a827a3ed2e6e4f43b1fe172883518db90442 docs: couple Lore authority preflight task
 - 2026-08-13T22:36:02-05:00 e7ad3f0b18b2758c03b9866fa7c138bf3baf4240 docs: record portable preflight settlement
 - 2026-08-13T23:07:08-05:00 59bdbab951690723fcc822ec7f31cb295e885595 docs: sync Lore log
+- 2026-08-14T06:06:20-05:00 9ac392dda4a4917dbea5788343df19ede30ce61c docs: couple Lore CLI task lineage
 
 ## docs/.obsidian
 
@@ -378,6 +379,7 @@
 - 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic
 - 2026-08-13T20:35:28-05:00 ab5cbd7e84f38805f52194b7f4212cad669b48ab docs: route lore CLI docs through opum hub
 - 2026-08-13T23:06:05-05:00 5802be7b184303ac233d78854abd33bb74a45067 docs: consolidate Lore authority routes
+- 2026-08-14T07:16:03-05:00 13386102daa2365666639555aa35367817ca9020 fix: prevent E2E git identity leakage
 
 ## docs/specs
 
@@ -449,3 +451,4 @@
 - 2026-08-13T22:20:45-05:00 0b87ce113afb56ff2976c7e5d14905b705d1f617 docs: settle Lore CLI campaign tasks
 - 2026-08-13T22:24:46-05:00 f5e8a827a3ed2e6e4f43b1fe172883518db90442 docs: couple Lore authority preflight task
 - 2026-08-13T23:06:05-05:00 5802be7b184303ac233d78854abd33bb74a45067 docs: consolidate Lore authority routes
+- 2026-08-14T06:06:20-05:00 9ac392dda4a4917dbea5788343df19ede30ce61c docs: couple Lore CLI task lineage
