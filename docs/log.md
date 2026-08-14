@@ -151,6 +151,7 @@
 - 2026-08-13T22:08:08-05:00 327c9ed8c00a2054bcd8123cfdad06d0d18fe154 feat: complete autonomous campaign fast lane
 - 2026-08-13T22:15:50-05:00 3a3cbe248e80aa1a379821ba69ee6bc011d8903d fix: bind campaign enforcement to exact scope
 - 2026-08-13T22:20:45-05:00 0b87ce113afb56ff2976c7e5d14905b705d1f617 docs: settle Lore CLI campaign tasks
+- 2026-08-13T22:24:46-05:00 f5e8a827a3ed2e6e4f43b1fe172883518db90442 docs: couple Lore authority preflight task
 
 ## docs/.obsidian
 
@@ -442,3 +443,4 @@
 - 2026-08-13T21:19:24-05:00 872920908698e072395735ac4524e3336435958f docs: adopt autonomous campaign fast lane
 - 2026-08-13T22:08:08-05:00 327c9ed8c00a2054bcd8123cfdad06d0d18fe154 feat: complete autonomous campaign fast lane
 - 2026-08-13T22:20:45-05:00 0b87ce113afb56ff2976c7e5d14905b705d1f617 docs: settle Lore CLI campaign tasks
+- 2026-08-13T22:24:46-05:00 f5e8a827a3ed2e6e4f43b1fe172883518db90442 docs: couple Lore authority preflight task
