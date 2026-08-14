@@ -67,6 +67,26 @@ harness locally first.
   to this command), so a mistaken direct invocation now fails closed instead of silently mutating
   the caller's working tree.
 
+### Recovering from an older leaked E2E identity
+
+Older versions of the harness wrote `lore e2e <e2e@lore.test>` into the local
+Git configuration when they were invoked from a repository. The current
+harness supplies its test identity only to child Git processes, so it cannot
+write either identity field to `.git/config`. If an older run left the local
+override behind, inspect and remove only those local values from the affected
+checkout:
+
+```sh
+git config --local --get-regexp '^user\.(name|email)$'
+git config --local --unset-all user.name
+git config --local --unset-all user.email
+```
+
+The `--unset-all` commands return non-zero when that key is absent; that is
+safe to ignore after inspection. This remediation deliberately does **not**
+rewrite the already mis-authored commits on `dev`: doing so would require a
+separately authorized force-push of the default branch.
+
 ## Steps
 
 1. Build and run:
