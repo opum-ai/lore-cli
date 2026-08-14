@@ -3,11 +3,11 @@ id: LCLI-327
 title: >-
   docker/e2e/run-e2e.sh writes a repo-local git identity, leaking "lore e2e
   <e2e@lore.test>" into real commits on dev
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-13 04:18'
-updated_date: '2026-08-14 13:41'
+updated_date: '2026-08-14 17:38'
 labels:
   - bug
   - e2e
@@ -61,12 +61,12 @@ Cleanup is a separate decision and is deliberately not assumed here: the existin
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 run-e2e.sh cannot write user.name or user.email into any repository it does not create, verified by inspection of every git config call site in the script
-- [ ] #2 The Phase 1 bootstrap fails closed with a clear message when the current repository is not the disposable E2E checkout
-- [ ] #3 A negative control proves the guard: invoking the harness from a non-E2E repository aborts, leaves .git/config byte-identical, and names the offending path; its exit code is taken without a pipe
-- [ ] #4 After a full E2E run, the host repository .git/config contains no user.name or user.email written by the harness
-- [ ] #5 Guidance for clearing an already-leaked local override is recorded where a developer will find it
-- [ ] #6 A decision on whether to rewrite the six mis-authored commits on dev is recorded, with the force-push implication stated, rather than left implicit
+- [x] #1 run-e2e.sh cannot write user.name or user.email into any repository it does not create, verified by inspection of every git config call site in the script
+- [x] #2 The Phase 1 bootstrap fails closed with a clear message when the current repository is not the disposable E2E checkout
+- [x] #3 A negative control proves the guard: invoking the harness from a non-E2E repository aborts, leaves .git/config byte-identical, and names the offending path; its exit code is taken without a pipe
+- [x] #4 After a full E2E run, the host repository .git/config contains no user.name or user.email written by the harness
+- [x] #5 Guidance for clearing an already-leaked local override is recorded where a developer will find it
+- [x] #6 A decision on whether to rewrite the six mis-authored commits on dev is recorded, with the force-push implication stated, rather than left implicit
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -83,4 +83,12 @@ Cleanup is a separate decision and is deliberately not assumed here: the existin
 Rebased delivery branch onto origin/dev after GitHub reported a conflict. Preserved the identity-safety implementation and Windows path normalization; deliberately discarded stale generated logs and a premature Done task update. Prior verification: focused guard tests, full Bun suite (2,574 pass, 1 intentional skip), typecheck, lint, build, strict Lore validation/check, diff hygiene, and full Docker E2E passed. Pending: post-rebase verification, forced update of PR #370, refreshed CI, then authorized merge and settlement. Existing dev history will not be rewritten.
 
 Windows CI diagnosis (run 31799731434): Git Bash rendered the caller path with RUNNER~1 while Node supplied runneradmin. The safety guard passed; only the full-path representation assertion failed. Updated the test to assert the unique temporary checkout leaf on Windows while preserving exact full-path matching elsewhere. Focused guard tests, full Bun suite, typecheck, lint, build, and diff hygiene pass locally.
+
+Settlement reconciliation: PR #370 merged to dev as 7a6504b71d5fff8737f66e85421c9d8f3b6a8529 after all eight required CI jobs passed. No dev-history rewrite occurred.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Prevented Docker E2E identity leakage with a fail-closed workspace guard and process-scoped Git identity; documented local cleanup and retained existing dev history. Verified by focused tests, full Bun suite, typecheck, lint, build, strict Lore gates, Docker E2E, and all eight PR #370 CI checks.
+<!-- SECTION:FINAL_SUMMARY:END -->
