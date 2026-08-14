@@ -6,12 +6,16 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-13 04:17'
+updated_date: '2026-08-14 11:00'
 labels:
   - bug
   - sync
   - log
   - generated-output
+  - 'doc:stories/build-the-lore-cli-foundation'
 dependencies: []
+documentation:
+  - docs/stories/build-the-lore-cli-foundation.md
 priority: medium
 type: bug
 ordinal: 449000

@@ -5,14 +5,16 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:46'
-updated_date: '2026-08-09 06:53'
-labels: []
+updated_date: '2026-08-14 11:00'
+labels:
+  - 'doc:stories/build-the-lore-cli-foundation'
 dependencies: []
 references:
   - >-
     https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
 documentation:
   - docs/reference/okf-conformance.md
+  - docs/stories/build-the-lore-cli-foundation.md
 priority: high
 type: feature
 ordinal: 427000

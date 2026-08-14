@@ -7,13 +7,16 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04 23:52'
-updated_date: '2026-08-05 04:39'
+updated_date: '2026-08-14 11:00'
 labels:
   - defect
   - docs-log
   - portability
   - cross-repo-report
+  - 'doc:stories/build-the-lore-cli-foundation'
 dependencies: []
+documentation:
+  - docs/stories/build-the-lore-cli-foundation.md
 modified_files:
   - src/core/log.ts
   - test/log.test.ts

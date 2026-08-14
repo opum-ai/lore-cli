@@ -7,12 +7,13 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04 07:27'
-updated_date: '2026-08-04 18:47'
+updated_date: '2026-08-14 11:00'
 labels:
   - linking
   - sync
   - schema
   - validation
+  - 'doc:stories/build-the-lore-cli-foundation'
 dependencies: []
 references:
   - >-
@@ -21,6 +22,8 @@ references:
   - >-
     not merged/pushed): see e2e_findings_v2.md and
     docs/runbooks/e2e-verification-v0.1.0.md in that repo.
+documentation:
+  - docs/stories/build-the-lore-cli-foundation.md
 modified_files:
   - src/core/profile.ts
   - src/core/check.ts
