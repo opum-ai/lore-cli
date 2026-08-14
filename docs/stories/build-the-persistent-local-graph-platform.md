@@ -31,6 +31,11 @@ tasks:
   - lcli-285
   - lcli-287
   - lcli-288
+  - lcli-301
+  - lcli-302
+  - lcli-303
+  - lcli-317
+  - lcli-318
 ---
 
 # Build the persistent local graph platform
@@ -76,6 +81,11 @@ capabilities while keeping Git-authored Markdown authoritative.
 | [LCLI-285](../../backlog/tasks/lcli-285%20-%20Delegate-terminal-display-width-calculation-to-string-width.md) | Delegate terminal display-width calculation to string-width | Done |
 | [LCLI-287](../../backlog/tasks/lcli-287%20-%20Delegate-GitHub-heading-anchor-slugging-to-github-slugger.md) | Delegate GitHub heading-anchor slugging to github-slugger | Done |
 | [LCLI-288](../../backlog/tasks/lcli-288%20-%20Consolidate-Lore-config-shape-validation-on-Zod.md) | Consolidate Lore config shape validation on Zod | Done |
+| [LCLI-301](../../backlog/tasks/lcli-301%20-%20Remove-Ladybug-install-script-approval-from-global-Lore-installation.md) | Remove Ladybug install-script approval from global Lore installation | Done |
+| [LCLI-302](../../backlog/tasks/lcli-302%20-%20Native-LadybugDB-backend-never-activates-in-the-compiled-published-lore-binary-every-graph-family-command-silently-falls-back-to-the-reference-index.md) | Native LadybugDB backend never activates in the compiled/published lore binary -- every graph-family command silently falls back to the reference index | Done |
+| [LCLI-303](../../backlog/tasks/lcli-303%20-%20Unknown-workspace-repository-member-id-crashes-uncaught-exit-1-instead-of-a-clean-validation-error-exit-6.md) | Unknown --workspace --repository member id crashes uncaught (exit 1) instead of a clean validation error (exit 6) | Done |
+| [LCLI-317](../../backlog/tasks/lcli-317%20-%20LCLI-302s-native-LadybugDB-fix-is-not-reliable-across-fixture-filesystem-shapes-0-3-fresh-fixture-activations-vs-4-4-real-bundle-activations-on-the-identical-installed-binary.md) | LCLI-302's native LadybugDB fix is not reliable across fixture/filesystem shapes -- 0/3 fresh-fixture activations vs 4/4 real-bundle activations on the identical installed binary | Done |
+| [LCLI-318](../../backlog/tasks/lcli-318%20-%20LCLI-303s-%60unknown-workspace-member-id-%60-validation-message-does-not-fire-in-single-member-workspaces-masked-by-an-earlier-unrelated-validation-failure.md) | LCLI-303's `unknown workspace member <id>` validation message does not fire in single-member workspaces -- masked by an earlier, unrelated validation failure | Done |
 <!-- lore:tasks:end -->
 
 ## Notes

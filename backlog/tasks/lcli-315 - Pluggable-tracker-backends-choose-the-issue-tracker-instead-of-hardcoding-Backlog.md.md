@@ -6,10 +6,13 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-04 21:48'
-labels: []
+updated_date: '2026-08-14 11:00'
+labels:
+  - 'doc:stories/track-lore-cli-tracker-backend-integration'
 dependencies: []
 documentation:
   - docs/reference/backlog-cli-contract.md
+  - docs/stories/track-lore-cli-tracker-backend-integration.md
 priority: medium
 type: feature
 ordinal: 434000

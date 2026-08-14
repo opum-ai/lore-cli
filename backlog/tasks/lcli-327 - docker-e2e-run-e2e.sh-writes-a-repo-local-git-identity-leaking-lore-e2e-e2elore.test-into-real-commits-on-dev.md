@@ -6,13 +6,17 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-13 04:18'
+updated_date: '2026-08-14 11:00'
 labels:
   - bug
   - e2e
   - git
   - provenance
   - ci
+  - 'doc:stories/prepare-the-first-lore-cli-release'
 dependencies: []
+documentation:
+  - docs/stories/prepare-the-first-lore-cli-release.md
 priority: medium
 type: bug
 ordinal: 450000

@@ -8,11 +8,12 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-05 11:57'
-updated_date: '2026-08-06 00:33'
+updated_date: '2026-08-14 11:00'
 labels:
   - init
   - backlog
   - dx
+  - 'doc:stories/build-the-lore-cli-foundation'
 dependencies: []
 references:
   - >-
@@ -21,6 +22,8 @@ references:
   - 'not merged/pushed): see e2e_findings_v0.1.1.md section 7 defect G'
   - plus docs/runbooks/e2e-verification-v0.1.1.md
   - in that repo.
+documentation:
+  - docs/stories/build-the-lore-cli-foundation.md
 modified_files:
   - src/adapters/backlog.ts
   - test/backlog-probe.test.ts

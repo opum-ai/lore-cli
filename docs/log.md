@@ -153,6 +153,7 @@
 - 2026-08-13T22:20:45-05:00 0b87ce113afb56ff2976c7e5d14905b705d1f617 docs: settle Lore CLI campaign tasks
 - 2026-08-13T22:24:46-05:00 f5e8a827a3ed2e6e4f43b1fe172883518db90442 docs: couple Lore authority preflight task
 - 2026-08-13T22:36:02-05:00 e7ad3f0b18b2758c03b9866fa7c138bf3baf4240 docs: record portable preflight settlement
+- 2026-08-13T23:07:08-05:00 59bdbab951690723fcc822ec7f31cb295e885595 docs: sync Lore log
 
 ## docs/.obsidian
 
