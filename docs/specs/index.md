@@ -2,6 +2,7 @@
 
 <!-- lore:index:begin -->
 - [Agent profile context retrieval](agent-profile-context-retrieval.md)
+- [Backlog knowledge adoption contract](backlog-knowledge-adoption-contract.md)
 - [Bounded path and impact](bounded-path-and-impact.md)
 - [Graph explorer data and interaction contract](graph-explorer-data-and-interaction-contract.md)
 - [Local graph platform roadmap](local-graph-platform-roadmap.md)

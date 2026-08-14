@@ -157,6 +157,7 @@
 - 2026-08-14T06:06:20-05:00 9ac392dda4a4917dbea5788343df19ede30ce61c docs: couple Lore CLI task lineage
 - 2026-08-14T07:17:52-05:00 6693b4bd7f87c180b68c7fd062651acbfd6915e8 docs: sync LCLI-327 task state
 - 2026-08-14T16:42:24-05:00 b521f2941b499c5a12dccd12c05342776ede0fda feat: harden autonomous Codex campaign loop
+- 2026-08-14T16:50:59-05:00 919cca5bb276702969332a4c1af03cb396a3f393 chore: settle LCLI-329 campaign
 
 ## docs/.obsidian
 
@@ -457,3 +458,4 @@
 - 2026-08-14T06:06:20-05:00 9ac392dda4a4917dbea5788343df19ede30ce61c docs: couple Lore CLI task lineage
 - 2026-08-14T07:17:52-05:00 6693b4bd7f87c180b68c7fd062651acbfd6915e8 docs: sync LCLI-327 task state
 - 2026-08-14T16:42:24-05:00 b521f2941b499c5a12dccd12c05342776ede0fda feat: harden autonomous Codex campaign loop
+- 2026-08-14T16:50:59-05:00 919cca5bb276702969332a4c1af03cb396a3f393 chore: settle LCLI-329 campaign
