@@ -159,6 +159,7 @@
 - 2026-08-14T16:42:24-05:00 b521f2941b499c5a12dccd12c05342776ede0fda feat: harden autonomous Codex campaign loop
 - 2026-08-14T16:50:59-05:00 919cca5bb276702969332a4c1af03cb396a3f393 chore: settle LCLI-329 campaign
 - 2026-08-14T18:11:58-05:00 6b274c8ea4638ec25cc07001ef675398f6b65f4d docs: specify Backlog knowledge adoption contract
+- 2026-08-14T18:19:18-05:00 509adcef6061a4b6c5958c2c985c5b057c6da91c docs: refresh generated Lore log after LCLI-330 settlement
 
 ## docs/.obsidian
 

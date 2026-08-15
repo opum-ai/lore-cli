@@ -109,6 +109,7 @@ function isReservedKey(
   ) {
     return profile.okfVersion === "0.2";
   }
+  if (key === "lore_adoption") return true;
   if (
     profile.okfVersion === "0.2" &&
     compiled.name === ATTESTED_COMPUTATION_TYPE &&
