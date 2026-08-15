@@ -130,7 +130,11 @@ function renderCommandHelp(command: ManifestCommand): string {
       lines.push(`  ${commandFlagLabel(flag).padEnd(width)}  ${flag.summary}${note}`);
     }
   }
-  lines.push("", `Output:  ${command.kind} (--json envelope)`, `Exit codes:  ${command.exitCodes.join(", ")}`);
+  lines.push(
+    "",
+    `Output:  ${(command.resultKinds ?? [command.kind]).join(" | ")} (--json envelope)`,
+    `Exit codes:  ${command.exitCodes.join(", ")}`,
+  );
   if (command.examples.length > 0) {
     lines.push("", "Examples:");
     for (const example of command.examples) {

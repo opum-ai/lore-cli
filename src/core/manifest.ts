@@ -76,6 +76,8 @@ export interface ManifestCommand {
   readonly json: boolean;
   /** The `kind` of the command's `--json` success envelope (cli-contract §2.1), matching the live `kind:` literal. */
   readonly kind: string;
+  /** Every success-envelope kind when a command's explicit operation selects one of several result shapes. */
+  readonly resultKinds?: readonly string[];
   /** The exit codes this command can return, derived from its seams (see the module docstring); `1` (uncaught) is global-only. */
   readonly exitCodes: readonly number[];
   /** One or more runnable invocations. */
@@ -168,6 +170,29 @@ const GLOBAL_FLAGS: readonly ManifestFlag[] = deepFreeze([
  * {@link exitCodesFor} is the exit-code rationale — no hand-listed code needs a comment.
  */
 const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
+  {
+    name: "backlog",
+    summary: "Adopt Backlog knowledge records through a digest-guarded migration lifecycle",
+    args: "adopt <preview|apply|status|rollback>",
+    flags: [
+      { name: "manifest", takesValue: true, summary: "Repository-relative adoption source manifest" },
+      { name: "approval-digest", takesValue: true, summary: "Exact digest returned by preview" },
+      { name: "migration", takesValue: true, summary: "Explicit migration identity" },
+    ],
+    json: true,
+    kind: "backlog.adoption.preview",
+    resultKinds: [
+      "backlog.adoption.preview",
+      "backlog.adoption.apply",
+      "backlog.adoption.status",
+      "backlog.adoption.rollback",
+    ],
+    exitCodes: exitCodesFor(["read", "write"], [6]),
+    examples: [
+      "lore backlog adopt preview --manifest adoption.json",
+      "lore backlog adopt status --migration <identity>",
+    ],
+  },
   {
     name: "init",
     summary: "Scaffold an OKF bundle; a bare TTY run also wizards the agent bridge/scaffolds/backlog check",

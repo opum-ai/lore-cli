@@ -276,9 +276,9 @@ frontmatter on edit). See [ADR-0002](../adr/0002-backlog-integration-json-only.m
 the [backlog JSON schema](./backlog-json-schema.md), and the
 [backlog CLI contract](./backlog-cli-contract.md).
 
-### `backlog adopt` (specified; not yet implemented)
+### `backlog adopt`
 
-The future `lore backlog adopt` command family is a controlled, **Backlog-only**
+The `lore backlog adopt` command family is a controlled, **Backlog-only**
 knowledge-record adoption interface. Its four operations are `preview`,
 `apply`, `status`, and `rollback`; it does not claim a generic import system or
 make Quest an available/default tracker. The full versioned contract is

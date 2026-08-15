@@ -53,6 +53,7 @@ export interface CommandSummary {
  * none is a phantom (the exact LORE-37 failure mode: teaching an agent a command that does not exist).
  */
 export const LORE_COMMANDS: readonly CommandSummary[] = [
+  { name: "backlog", summary: "Adopt Backlog knowledge records through a digest-guarded migration lifecycle" },
   {
     name: "init",
     summary: "Scaffold an OKF bundle; a bare TTY run also wizards the agent bridge/scaffolds/backlog check",
