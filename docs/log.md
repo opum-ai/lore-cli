@@ -162,6 +162,7 @@
 - 2026-08-14T18:19:18-05:00 509adcef6061a4b6c5958c2c985c5b057c6da91c docs: refresh generated Lore log after LCLI-330 settlement
 - 2026-08-14T20:24:22-05:00 69ec0bb263d6960d0b8118e2097df31c754c64cf feat: implement Backlog knowledge adoption
 - 2026-08-16T08:28:16-05:00 ce46f0a4d643f93bf7f637933cb476de855520f4 chore: prepare 0.3.0 release
+- 2026-08-16T08:52:37-05:00 da289c199529375c90f220cce6b0aa243c5afa30 docs: refresh release handover log
 
 ## docs/.obsidian
 

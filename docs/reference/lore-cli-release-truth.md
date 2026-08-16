@@ -21,41 +21,41 @@ availability claim.
 
 ### Current state
 
-As verified on 2026-08-12 UTC, Lore CLI **0.2.0 is released**:
+As verified on 2026-08-16 UTC, Lore CLI **0.3.0 is released**:
 
 - all seven manifests and the root's six exact optional-dependency pins use
-  `0.2.0`; the root bin is the publishable Node launcher `bin/lore.cjs`;
-- lightweight tag `v0.2.0` resolves directly to qualified main commit
-  `eb03eb2adcb7b391289955a5bdf5ba4b6f841017`;
-- GitHub Actions Release run `31317296988` ran on that tag with
+  `0.3.0`; the root bin is the publishable Node launcher `bin/lore.cjs`;
+- lightweight tag `v0.3.0` resolves directly to qualified main commit
+  `05404f7a32a70709d40cea6a648f559089839565`;
+- GitHub Actions Release run `31950668955` ran on that tag with
   `publish: false`, passed every blocking release and matching-host gate, and
-  retained exactly seven tarballs in artifact `9039171783`;
+  retained exactly seven tarballs in artifact `9264624493`;
 - the six platform packages were published interactively first and
   `@opum-ai/lore` was published last, using only those untouched workflow
   tarballs; no local rebuild or repack was used;
-- anonymous npm metadata reports `@opum-ai/lore@0.2.0` and all six platform
+- anonymous npm metadata reports `@opum-ai/lore@0.3.0` and all six platform
   packages as public; every registry shasum matched the successful publish
   result and every registry record carries SHA-512 integrity metadata;
 - a clean anonymous registry install selected
-  `@opum-ai/lore-darwin-arm64@0.2.0`, and the installed `lore --version`
-  returned `0.2.0`; and
+  `@opum-ai/lore-darwin-arm64@0.3.0`, and the installed `lore --version`
+  returned `0.3.0`; and
 - the private `opum-ai/lore-cli` repository has a non-draft, non-prerelease
-  GitHub Release for `v0.2.0`; keeping the repository private does not affect
+  GitHub Release for `v0.3.0`; keeping the repository private does not affect
   the seven public npm packages.
 
 The exact workflow artifact SHA-256 values were:
 
 | Package | SHA-256 |
 |---|---|
-| `@opum-ai/lore` | `d5701220ebe60b30f4f686bdee788b81458ff356a97221c0eb0c57796639aae3` |
-| `@opum-ai/lore-darwin-arm64` | `66dbe0c2e2c06eb47125a4ddf0aba70186ca49b784b98ab40978f3b41a0976de` |
-| `@opum-ai/lore-darwin-x64` | `05ba7c82c17a361e8d6e0dc29c175094e1323553b36d2a74ccd4524506723674` |
-| `@opum-ai/lore-linux-arm64` | `0ee0367503a518c01521e32ecdba503a70120e9ccb2765e516aa445c28de4f5c` |
-| `@opum-ai/lore-linux-x64` | `11858f4d4b68e199220eb854bc3b4d23342527037a630654ede7671ea716392e` |
-| `@opum-ai/lore-win32-arm64` | `25cc92a9813aa92afae90b892034d54b979ff77ce6a21ebd9971c65d7f1536c5` |
-| `@opum-ai/lore-win32-x64` | `9b0b6655dbd41b1fda647615d9b10489ecbf01765a1fec72c6b3b19b6204e8eb` |
+| `@opum-ai/lore` | `45d718c79721d716a96f3a21f88f822a774211b76ac401acad44424b63bac3ae` |
+| `@opum-ai/lore-darwin-arm64` | `92e2a44fd4689323d79e3a711d6d1fd2e952481d8d11d649f31afc4ee7aacb31` |
+| `@opum-ai/lore-darwin-x64` | `999eeadea9921528e015ec700b2011af3d412002adb93862f61a12b6062ff1cd` |
+| `@opum-ai/lore-linux-arm64` | `2b4f9d867c31afb3e871793eaf392ce0b0851776e2ce3650d79476344110416b` |
+| `@opum-ai/lore-linux-x64` | `34977a9b71d6d8a01a4712924606646f64bffb1f31fbdc8bcd7f1bf1dc36177a` |
+| `@opum-ai/lore-win32-arm64` | `6270f62178d657a5b48ea34bc194f745b742d888625b335e7fce0be66711eabb` |
+| `@opum-ai/lore-win32-x64` | `e9337b94b4c55bcbe12af2bbd25f72a5eaa4602b114b0377085ab5939528be14` |
 
-The repository owner explicitly authorized interactive publication of `0.2.0`
+The repository owner explicitly authorized interactive publication of `0.3.0`
 while the repository remains private. LCLI-278 remains `To Do`: future
 automated `publish: true` dispatches are still prohibited because the
 `release` Environment has no effective required-reviewer protection rule.
@@ -96,7 +96,9 @@ public availability.
   install, and GitHub Release evidence.
 - LCLI-313 owns the `0.1.1` workflow, seven-package registry, install, and
   GitHub Release evidence.
-- LCLI-321 owns the `0.2.0` workflow, seven-package registry, install, and
-  GitHub Release evidence.
+- LCLI-321 owns the historical `0.2.0` workflow, seven-package registry,
+  install, and GitHub Release evidence.
+- LCLI-332 owns the `0.3.0` knowledge-adoption workflow, seven-package
+  registry, install, and GitHub Release evidence.
 - The [Lore CLI handover](../runbooks/lore-cli-handover.md) routes a fresh
   session to these live sources without copying a task cursor.
