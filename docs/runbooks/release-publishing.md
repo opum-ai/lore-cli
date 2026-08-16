@@ -426,15 +426,19 @@ publish is explicitly marked public. Root `package.json` and all six
 4. Merge to `dev`, promote to `main`, and wait for the full `main` CI matrix.
    Tag that verified commit and push the tag — nothing triggers automatically
    from the tag.
-5. For the one-time `0.1.0` bootstrap, run `Release` with `publish: false`,
-   download its `npm-packages` artifact, and interactively publish the five
-   platform tarballs first and root last with 2FA. Do not repeat this bootstrap
-   for an already-existing version.
-6. Verify registry metadata and a clean installed CLI, then configure and list
-   every Trusted Publisher as described above. Later versions may use
-   `publish: true` only after LCLI-278 supplies an effective external approval
-   control; until then, OIDC publication remains prohibited despite the valid
-   npm trust relationships.
+5. Until LCLI-278 supplies an effective external approval control, dispatch
+   `Release` with `publish: false` on that tag. Download only its
+   `npm-packages` artifact, list and checksum the seven `.tgz` files, then
+   interactively publish those exact artifacts with 2FA: all six platform
+   packages first and `@opum-ai/lore` last. Do not run `npm pack` locally or
+   publish a rebuilt tarball. The workflow artifacts are the qualified release
+   inputs.
+6. Verify every `name@version` in the registry and use a new temporary
+   directory for a clean `npx @opum-ai/lore@<version> --version` install/run.
+   Record the artifact run, registry, and clean-install evidence in the
+   release-truth record. Later versions may use `publish: true` only after
+   LCLI-278 is Done; until then, OIDC publication remains prohibited despite
+   the valid npm trust relationships.
 
 ## Dry-run rehearsal (verified)
 
