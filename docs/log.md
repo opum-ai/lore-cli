@@ -161,6 +161,7 @@
 - 2026-08-14T18:11:58-05:00 6b274c8ea4638ec25cc07001ef675398f6b65f4d docs: specify Backlog knowledge adoption contract
 - 2026-08-14T18:19:18-05:00 509adcef6061a4b6c5958c2c985c5b057c6da91c docs: refresh generated Lore log after LCLI-330 settlement
 - 2026-08-14T20:24:22-05:00 69ec0bb263d6960d0b8118e2097df31c754c64cf feat: implement Backlog knowledge adoption
+- 2026-08-16T08:28:16-05:00 ce46f0a4d643f93bf7f637933cb476de855520f4 chore: prepare 0.3.0 release
 
 ## docs/.obsidian
 
@@ -465,3 +466,4 @@
 - 2026-08-14T07:17:52-05:00 6693b4bd7f87c180b68c7fd062651acbfd6915e8 docs: sync LCLI-327 task state
 - 2026-08-14T16:42:24-05:00 b521f2941b499c5a12dccd12c05342776ede0fda feat: harden autonomous Codex campaign loop
 - 2026-08-14T16:50:59-05:00 919cca5bb276702969332a4c1af03cb396a3f393 chore: settle LCLI-329 campaign
+- 2026-08-16T08:28:16-05:00 ce46f0a4d643f93bf7f637933cb476de855520f4 chore: prepare 0.3.0 release
