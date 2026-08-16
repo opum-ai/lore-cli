@@ -26,6 +26,8 @@
  * file read rather than a spawn; see {@link readStatusFlow} at the bottom of this file.
  */
 
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as yaml from "js-yaml";
 import { z } from "zod";
@@ -64,6 +66,15 @@ const SEARCH_KIND = "search";
 
 /** The default binary name resolved from PATH. */
 const BACKLOG_BINARY = "backlog";
+
+/**
+ * Backlog.md's supported override for the logical project directory.  Lore
+ * deliberately launches the Bun-backed dependency from an empty temporary
+ * directory instead: Bun otherwise discovers ambient environment files before
+ * Backlog can honor this project-root override.  The member root stays logical
+ * input to Backlog, but is never used as the dependency process's cwd.
+ */
+export const BACKLOG_PROJECT_ROOT_ENV_VAR = "BACKLOG_CWD";
 
 /**
  * The environment variable an operator overrides {@link DEFAULT_BACKLOG_TIMEOUT_MS} with (LORE-217
@@ -276,7 +287,12 @@ export async function probeBacklog(spawn: BacklogSpawn): Promise<BacklogCapabili
   // not an untyped throw.
   const versionResult = await spawnOrThrow(spawn, ["--version"]);
   if (versionResult.exitCode !== 0) {
-    notJsonCapable("`backlog --version` exited non-zero", { exitCode: versionResult.exitCode });
+    throw new LoreError(
+      "validation",
+      `The \`backlog --version\` probe failed before Lore could determine whether the binary supports --json (exited ${versionResult.exitCode}).`,
+      "inspect the Backlog launch environment and its stderr; this is not evidence that the installed Backlog.md is too old",
+      { exitCode: versionResult.exitCode },
+    );
   }
   const version = parseSemver(versionResult.stdout);
   if (!version) {
@@ -343,9 +359,10 @@ export async function probeBacklog(spawn: BacklogSpawn): Promise<BacklogCapabili
  * {@link probeBacklog} maps to `not_found`.
  *
  * `binary` defaults to `"backlog"` (resolved from PATH); it is a parameter so a test or a pinned
- * install can point at an explicit path. `cwd` defaults to the current process's working directory
- * (`Bun.spawn`'s own default); a caller working against a non-default `root` must pass it explicitly,
- * or the subprocess resolves Backlog's project files against the wrong directory.
+ * install can point at an explicit path. `cwd` is the logical Backlog project root. Each process is
+ * actually launched from a fresh empty temporary directory and receives that root through
+ * {@link BACKLOG_PROJECT_ROOT_ENV_VAR}; this preserves Backlog's project resolution while preventing
+ * Bun from loading an ambient environment file from a repository member before Backlog starts.
  *
  * **Wall-clock bound (LORE-217).** Every lore coupling command (link/unlink/rename/sync/reconcile)
  * ultimately flows through this seam, so a `backlog` invocation that wedges — never printing on
@@ -359,29 +376,42 @@ export async function probeBacklog(spawn: BacklogSpawn): Promise<BacklogCapabili
 export function bunBacklogSpawn(binary: string = BACKLOG_BINARY, cwd?: string): BacklogSpawn {
   return async (args: readonly string[]): Promise<SpawnResult> => {
     const timeoutMs = resolveBacklogTimeoutMs();
-    const proc = Bun.spawn([binary, ...args], { stdout: "pipe", stderr: "pipe", cwd });
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      // SIGKILL, not the default SIGTERM: a wedged process may be ignoring or unable to act on
-      // SIGTERM (the very reason it never exited on its own), so only an unmaskable signal
-      // guarantees `proc.exited` below actually resolves instead of also hanging past the bound.
-      proc.kill("SIGKILL");
-    }, timeoutMs);
+    const projectRoot = cwd ?? process.cwd();
+    // A unique directory is stronger than a shared tmpdir: it cannot already contain a .env file
+    // and is removed after this one dependency invocation. Backlog receives only the logical root.
+    const isolationCwd = mkdtempSync(join(tmpdir(), "lore-backlog-"));
     try {
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-      ]);
-      if (timedOut) {
-        throw timeoutError(binary, args, timeoutMs);
+      const proc = Bun.spawn([binary, ...args], {
+        stdout: "pipe",
+        stderr: "pipe",
+        cwd: isolationCwd,
+        env: { ...process.env, [BACKLOG_PROJECT_ROOT_ENV_VAR]: projectRoot },
+      });
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        // SIGKILL, not the default SIGTERM: a wedged process may be ignoring or unable to act on
+        // SIGTERM (the very reason it never exited on its own), so only an unmaskable signal
+        // guarantees `proc.exited` below actually resolves instead of also hanging past the bound.
+        proc.kill("SIGKILL");
+      }, timeoutMs);
+      try {
+        const [stdout, stderr, exitCode] = await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+          proc.exited,
+        ]);
+        if (timedOut) {
+          throw timeoutError(binary, args, timeoutMs);
+        }
+        return { exitCode, stdout, stderr };
+      } finally {
+        // Always disarm: on the normal-exit path this prevents a stray kill() firing after the
+        // process (and possibly its pid, reused by the OS) has already exited.
+        clearTimeout(timer);
       }
-      return { exitCode, stdout, stderr };
     } finally {
-      // Always disarm: on the normal-exit path this prevents a stray kill() firing after the
-      // process (and possibly its pid, reused by the OS) has already exited.
-      clearTimeout(timer);
+      rmSync(isolationCwd, { recursive: true, force: true });
     }
   };
 }
