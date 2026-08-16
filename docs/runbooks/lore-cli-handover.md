@@ -24,14 +24,19 @@ provenance records and must not be executed.
 1. Read the repository `AGENTS.md` and run `backlog instructions overview`.
 2. Start at the [documentation index](../index.md), then read
    [Lore CLI documentation ownership](../reference/lore-cli-documentation-ownership.md).
-3. Inspect live non-terminal tasks through the Backlog CLI. Treat task status,
+3. For Lore-wide strategy or cross-component contracts, open the consolidated
+   [Lore documentation namespace](https://github.com/opum-ai/opum-doc/tree/dev/docs/lore).
+   For portfolio or product-family questions, open the
+   [Opum documentation hub](https://github.com/opum-ai/opum-doc/tree/dev/docs).
+   Do not recreate those mutable rules in this handover.
+4. Inspect live non-terminal tasks through the Backlog CLI. Treat task status,
    dependencies, acceptance criteria, plans, and notes as authoritative.
-4. Follow the owning Story from [Stories](../stories/index.md), and use
+5. Follow the owning Story from [Stories](../stories/index.md), and use
    `lore tasks <story>` to reconcile its rollup before acting.
-5. Ground the canonical `opum-ai/lore-cli` repository with the current branch,
+6. Ground the canonical `opum-ai/lore-cli` repository with the current branch,
    exact HEAD, status, local ahead/behind state, remote URL, and registered
    worktrees. Preserve unrelated changes.
-6. For release work, read [Lore CLI release truth](../reference/lore-cli-release-truth.md)
+7. For release work, read [Lore CLI release truth](../reference/lore-cli-release-truth.md)
    before the [Release publishing](release-publishing.md) procedure. Reverify
    package versions, immutable tags and artifacts, registry availability, and
    the live LCLI-253/LCLI-278 owner gates.
@@ -41,10 +46,15 @@ provenance records and must not be executed.
 - Backlog owns task lifecycle data; mutate it only through the Backlog CLI.
 - Lore owns the documentation graph; use Lore for creation, renames,
   Story/task coupling, synchronization, and checks.
-- This repository owns Lore CLI implementation and release evidence.
-  Lore-wide policy lives in `opum-ai/lore-doc`; product-family and Opum
-  commercial policy live in `opum-ai/opum-doc`; Quest product and CLI
-  policy live in their respective owner repositories.
+- This repository owns Lore CLI implementation and release evidence. The
+  consolidated Lore namespace and Opum documentation hub above own their
+  respective mutable product and portfolio contracts. Lore-wide policy routes
+  through the consolidated
+  [`opum-ai/opum-doc` Lore authority surface](https://github.com/opum-ai/opum-doc/blob/dev/docs/lore/index.md);
+  product-family and Opum commercial policy live in `opum-ai/opum-doc`; Quest
+  product policy routes through its
+  [external routing and provenance record](https://github.com/opum-ai/opum-doc/blob/dev/docs/quest/quest-external-routing-and-provenance.md),
+  while Quest CLI implementation and release evidence remain component-local.
 - A plan, passing test, dry-run package, or workflow procedure is not evidence
   of a public release.
 - Commit, push, pull-request, merge, publication, cleanup, and remote-policy

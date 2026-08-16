@@ -7,9 +7,12 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-04 14:50'
-updated_date: '2026-08-04 14:56'
-labels: []
+updated_date: '2026-08-14 11:00'
+labels:
+  - 'doc:stories/maintain-lore-cli-documentation-authority'
 dependencies: []
+documentation:
+  - docs/stories/maintain-lore-cli-documentation-authority.md
 ordinal: 423000
 ---
 

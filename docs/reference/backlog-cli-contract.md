@@ -61,6 +61,12 @@ The shape and field names of the JSON envelope are specified in
 broader design rationale lives in the [lore design spec](../specs/lore-design.md)
 and the relevant ADRs (linked inline).
 
+> **Planned adoption boundary.** The future Backlog knowledge-adoption command
+> family is separate from this adapter's ordinary task coupling. It receives
+> explicit, read-only source evidence and returns public receipts/results;
+> callers never write Lore's files or private state. See the versioned
+> [Backlog knowledge adoption contract](../specs/backlog-knowledge-adoption-contract.md).
+
 ---
 
 ## 1. Read path (JSON-only)

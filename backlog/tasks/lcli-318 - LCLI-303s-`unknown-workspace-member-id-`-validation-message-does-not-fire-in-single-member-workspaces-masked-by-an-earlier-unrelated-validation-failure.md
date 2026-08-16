@@ -7,11 +7,12 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-05 11:57'
-updated_date: '2026-08-07 00:14'
+updated_date: '2026-08-14 11:00'
 labels:
   - workspace
   - validation
   - reliability
+  - 'doc:stories/build-the-persistent-local-graph-platform'
 dependencies:
   - LCLI-317
 references:
@@ -23,6 +24,8 @@ references:
     note) and section 7 defect H
   - plus docs/runbooks/e2e-verification-v0.1.1.md
   - in that repo.
+documentation:
+  - docs/stories/build-the-persistent-local-graph-platform.md
 modified_files:
   - src/core/workspace-projection.ts
   - src/core/workspace-source.ts

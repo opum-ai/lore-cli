@@ -53,6 +53,7 @@ export interface CommandSummary {
  * none is a phantom (the exact LORE-37 failure mode: teaching an agent a command that does not exist).
  */
 export const LORE_COMMANDS: readonly CommandSummary[] = [
+  { name: "backlog", summary: "Adopt Backlog knowledge records through a digest-guarded migration lifecycle" },
   {
     name: "init",
     summary: "Scaffold an OKF bundle; a bare TTY run also wizards the agent bridge/scaffolds/backlog check",
@@ -135,6 +136,17 @@ for authoring and maintaining the OKF bundle under \`docs/\`. This skill is a th
 
 Reach for \`lore\` — not a plain editor — whenever you read, write, link, move, or verify docs in
 this repo, so Story <-> Task coupling, managed blocks, and cross-links stay coherent.
+
+## Commit-side-effect preflight
+
+Before the canonical workflow below, treat \`lore link\`, \`lore unlink\`, \`lore rename\`, and
+\`lore sync\` as self-committing commands: they can create commits under \`backlog/\`. Read the
+applicable repository instructions and verify explicit commit authority before invoking them. When
+the repository supplies
+\`.codex/skills/backlog-handover/scripts/lore-authority-preflight.mjs\`, dispatch those commands only
+through that gate with the exact Git worktree and in-repository scope. Without applicable authority,
+stop before Lore runs and request permission or record a deferred stage. This preserves the
+repository's Lore sole-committer contract.
 
 ## Start here
 

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-16
+
+### Added
+
+- **`lore backlog adopt` now provides deterministic, digest-guarded Backlog
+  knowledge adoption** (LCLI-330/LCLI-331). Its `preview`, `apply`, `status`,
+  and `rollback` operations create provenance-bearing Lore concepts and
+  receipts, require the approved preview digest before mutation, remain
+  idempotent, and compensate exactly or report a blocked-incomplete outcome.
+
+### Fixed
+
+- `lore check` no longer reads the machine clock for OKF 0.2 `stale_after`.
+  `--as-of YYYY-MM-DD` pins date-sensitive rules explicitly; otherwise they
+  use HEAD's recorded commit date, keeping unchanged repository state and
+  inputs byte-stable across runs (LCLI-323).
+- `lore check` now reports relative links that escape the documentation root
+  instead of silently skipping them (LCLI-324).
+- Docker E2E no longer writes a repository-local Git identity that can leak
+  into unrelated commits (LCLI-327).
+
 ## [0.2.0] - 2026-08-09
 
 ### Added

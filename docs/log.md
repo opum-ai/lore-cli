@@ -135,6 +135,32 @@
 - 2026-08-12T17:42:50-05:00 e8d9b1b918dcad3a70cb860f9f6dc9a62c3a26fe docs: initialize handover hygiene campaign
 - 2026-08-12T23:00:10-05:00 78db86044162ea25de3da085a8f2a6fec77c2b4d docs: competitive research on agent-native knowledge tooling (LCLI-323/324/325)
 - 2026-08-13T09:40:05-05:00 e46248ddefaca9017d2a97f8c29175b28e11a67a docs: fix Lore 0.2 install guidance
+- 2026-08-13T09:50:55-05:00 fa43e1dc00756b443c5d12ac8710dc7393af6d07 chore: finalize LCLI-325 campaign wave
+- 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic
+- 2026-08-13T12:31:20-05:00 f3dcc987b3ab5045c1fe5ca8f3328a5a20dd0266 docs: refresh Lore log for LCLI-323 delivery
+- 2026-08-13T13:21:24-05:00 e897fa21b51123a74844d689b1e8471f0481d482 chore: finalize LCLI-323 campaign wave
+- 2026-08-13T13:31:56-05:00 4cdd7ab35b5eb0200e68ad8cfb1ce93029910a3b chore: reconcile LCLI-323 campaign closure
+- 2026-08-13T16:40:33-05:00 b64ec28342fef18812b48d1a56417a351a8fccc0 fix: report skipped out-of-bundle links
+- 2026-08-13T16:42:19-05:00 5aa786709a323fc9ac098e6c6fe480c0d86de0d5 docs: refresh Lore log for LCLI-324 delivery
+- 2026-08-13T16:44:57-05:00 94bfa2903a006219072d115343eb902f4cf54e15 docs: settle LCLI-324 delivery log
+- 2026-08-13T17:40:26-05:00 d8dc3341f91b42cd2bc9c8d65651ea95696f2915 chore: finalize LCLI-324 campaign wave
+- 2026-08-13T17:41:26-05:00 92062b699fe625d2d8975e44b67a898ed2386a5e docs: refresh Lore log for LCLI-324 settlement
+- 2026-08-13T17:49:45-05:00 de190beb01c15893098367e168fd1650eb0e6a8c chore: reconcile LCLI-324 campaign closure
+- 2026-08-13T20:35:28-05:00 ab5cbd7e84f38805f52194b7f4212cad669b48ab docs: route lore CLI docs through opum hub
+- 2026-08-13T21:19:24-05:00 872920908698e072395735ac4524e3336435958f docs: adopt autonomous campaign fast lane
+- 2026-08-13T22:08:08-05:00 327c9ed8c00a2054bcd8123cfdad06d0d18fe154 feat: complete autonomous campaign fast lane
+- 2026-08-13T22:15:50-05:00 3a3cbe248e80aa1a379821ba69ee6bc011d8903d fix: bind campaign enforcement to exact scope
+- 2026-08-13T22:20:45-05:00 0b87ce113afb56ff2976c7e5d14905b705d1f617 docs: settle Lore CLI campaign tasks
+- 2026-08-13T22:24:46-05:00 f5e8a827a3ed2e6e4f43b1fe172883518db90442 docs: couple Lore authority preflight task
+- 2026-08-13T22:36:02-05:00 e7ad3f0b18b2758c03b9866fa7c138bf3baf4240 docs: record portable preflight settlement
+- 2026-08-13T23:07:08-05:00 59bdbab951690723fcc822ec7f31cb295e885595 docs: sync Lore log
+- 2026-08-14T06:06:20-05:00 9ac392dda4a4917dbea5788343df19ede30ce61c docs: couple Lore CLI task lineage
+- 2026-08-14T07:17:52-05:00 6693b4bd7f87c180b68c7fd062651acbfd6915e8 docs: sync LCLI-327 task state
+- 2026-08-14T16:42:24-05:00 b521f2941b499c5a12dccd12c05342776ede0fda feat: harden autonomous Codex campaign loop
+- 2026-08-14T16:50:59-05:00 919cca5bb276702969332a4c1af03cb396a3f393 chore: settle LCLI-329 campaign
+- 2026-08-14T18:11:58-05:00 6b274c8ea4638ec25cc07001ef675398f6b65f4d docs: specify Backlog knowledge adoption contract
+- 2026-08-14T18:19:18-05:00 509adcef6061a4b6c5958c2c985c5b057c6da91c docs: refresh generated Lore log after LCLI-330 settlement
+- 2026-08-14T20:24:22-05:00 69ec0bb263d6960d0b8118e2097df31c754c64cf feat: implement Backlog knowledge adoption
 
 ## docs/.obsidian
 
@@ -279,6 +305,16 @@
 - 2026-08-09T10:57:34-05:00 694b2ff89f4c91884b749d09d41a41a4f7343ad2 test: scope the stale-owner gate to the product family, not to two repositories
 - 2026-08-12T17:01:31-05:00 ca94e0c4aed06344925e67f822246a93659224b3 docs: record Lore CLI 0.2.0 release
 - 2026-08-12T23:00:10-05:00 78db86044162ea25de3da085a8f2a6fec77c2b4d docs: competitive research on agent-native knowledge tooling (LCLI-323/324/325)
+- 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic
+- 2026-08-13T16:40:33-05:00 b64ec28342fef18812b48d1a56417a351a8fccc0 fix: report skipped out-of-bundle links
+- 2026-08-13T20:35:28-05:00 ab5cbd7e84f38805f52194b7f4212cad669b48ab docs: route lore CLI docs through opum hub
+- 2026-08-13T21:19:24-05:00 872920908698e072395735ac4524e3336435958f docs: adopt autonomous campaign fast lane
+- 2026-08-13T22:08:08-05:00 327c9ed8c00a2054bcd8123cfdad06d0d18fe154 feat: complete autonomous campaign fast lane
+- 2026-08-13T22:15:50-05:00 3a3cbe248e80aa1a379821ba69ee6bc011d8903d fix: bind campaign enforcement to exact scope
+- 2026-08-13T23:06:05-05:00 5802be7b184303ac233d78854abd33bb74a45067 docs: consolidate Lore authority routes
+- 2026-08-14T16:42:24-05:00 b521f2941b499c5a12dccd12c05342776ede0fda feat: harden autonomous Codex campaign loop
+- 2026-08-14T18:11:58-05:00 6b274c8ea4638ec25cc07001ef675398f6b65f4d docs: specify Backlog knowledge adoption contract
+- 2026-08-14T20:24:22-05:00 69ec0bb263d6960d0b8118e2097df31c754c64cf feat: implement Backlog knowledge adoption
 
 ## docs/runbooks
 
@@ -349,6 +385,10 @@
 - 2026-08-04T21:40:39-05:00 4ded93c0c67250928d1e382f9ca3b6105511d693 docs: record Lore CLI 0.1.1 release
 - 2026-08-09T10:57:34-05:00 694b2ff89f4c91884b749d09d41a41a4f7343ad2 test: scope the stale-owner gate to the product family, not to two repositories
 - 2026-08-13T09:40:05-05:00 e46248ddefaca9017d2a97f8c29175b28e11a67a docs: fix Lore 0.2 install guidance
+- 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic
+- 2026-08-13T20:35:28-05:00 ab5cbd7e84f38805f52194b7f4212cad669b48ab docs: route lore CLI docs through opum hub
+- 2026-08-13T23:06:05-05:00 5802be7b184303ac233d78854abd33bb74a45067 docs: consolidate Lore authority routes
+- 2026-08-14T07:16:03-05:00 13386102daa2365666639555aa35367817ca9020 fix: prevent E2E git identity leakage
 
 ## docs/specs
 
@@ -381,6 +421,8 @@
 - 2026-08-02T18:03:34-05:00 1034229ab8ef804498160acefa2f39d613dcb825 feat: add bounded path and impact traversal
 - 2026-08-03T08:39:40-05:00 a98014b4530903e2681c73c6762aa1e70e8aa67c feat: add snapshot change and provenance workflows
 - 2026-08-12T23:00:10-05:00 78db86044162ea25de3da085a8f2a6fec77c2b4d docs: competitive research on agent-native knowledge tooling (LCLI-323/324/325)
+- 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic
+- 2026-08-14T18:11:58-05:00 6b274c8ea4638ec25cc07001ef675398f6b65f4d docs: specify Backlog knowledge adoption contract
 
 ## docs/stories
 
@@ -408,3 +450,18 @@
 - 2026-08-12T17:42:50-05:00 e8d9b1b918dcad3a70cb860f9f6dc9a62c3a26fe docs: initialize handover hygiene campaign
 - 2026-08-12T23:24:56-05:00 63df417250ab1039404369b3626c35f9aee481df chore: enforce single active handover cursor
 - 2026-08-13T09:40:05-05:00 e46248ddefaca9017d2a97f8c29175b28e11a67a docs: fix Lore 0.2 install guidance
+- 2026-08-13T09:50:55-05:00 fa43e1dc00756b443c5d12ac8710dc7393af6d07 chore: finalize LCLI-325 campaign wave
+- 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic
+- 2026-08-13T13:21:24-05:00 e897fa21b51123a74844d689b1e8471f0481d482 chore: finalize LCLI-323 campaign wave
+- 2026-08-13T16:40:33-05:00 b64ec28342fef18812b48d1a56417a351a8fccc0 fix: report skipped out-of-bundle links
+- 2026-08-13T17:40:26-05:00 d8dc3341f91b42cd2bc9c8d65651ea95696f2915 chore: finalize LCLI-324 campaign wave
+- 2026-08-13T20:35:28-05:00 ab5cbd7e84f38805f52194b7f4212cad669b48ab docs: route lore CLI docs through opum hub
+- 2026-08-13T21:19:24-05:00 872920908698e072395735ac4524e3336435958f docs: adopt autonomous campaign fast lane
+- 2026-08-13T22:08:08-05:00 327c9ed8c00a2054bcd8123cfdad06d0d18fe154 feat: complete autonomous campaign fast lane
+- 2026-08-13T22:20:45-05:00 0b87ce113afb56ff2976c7e5d14905b705d1f617 docs: settle Lore CLI campaign tasks
+- 2026-08-13T22:24:46-05:00 f5e8a827a3ed2e6e4f43b1fe172883518db90442 docs: couple Lore authority preflight task
+- 2026-08-13T23:06:05-05:00 5802be7b184303ac233d78854abd33bb74a45067 docs: consolidate Lore authority routes
+- 2026-08-14T06:06:20-05:00 9ac392dda4a4917dbea5788343df19ede30ce61c docs: couple Lore CLI task lineage
+- 2026-08-14T07:17:52-05:00 6693b4bd7f87c180b68c7fd062651acbfd6915e8 docs: sync LCLI-327 task state
+- 2026-08-14T16:42:24-05:00 b521f2941b499c5a12dccd12c05342776ede0fda feat: harden autonomous Codex campaign loop
+- 2026-08-14T16:50:59-05:00 919cca5bb276702969332a4c1af03cb396a3f393 chore: settle LCLI-329 campaign

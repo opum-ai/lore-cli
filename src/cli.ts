@@ -19,6 +19,7 @@ import type { BacklogAdapter } from "./adapters/backlog";
 import { runAgent } from "./commands/agent";
 import { runAgents } from "./commands/agents";
 import { commanderOption, commanderUnknownCommand, commanderUsageError } from "./commands/args";
+import { runBacklog } from "./commands/backlog";
 import { runChanged } from "./commands/changed";
 import { type FetchLike, type ResolveHost, runCheck } from "./commands/check";
 import { runContext } from "./commands/context";
@@ -106,6 +107,8 @@ export interface RunContext {
   fetch?: FetchLike;
   /** DNS resolution `check --external`'s SSRF guard uses (LORE-71); defaults to real `node:dns`. Injected so a caller (or a test) controls or stubs DNS. */
   resolveHost?: ResolveHost;
+  /** HEAD committer-date resolver used by date-sensitive checks; injected so tests do not depend on ambient Git history. */
+  headCommitDate?: () => string | null;
   /** The Backlog adapter `link`/`unlink` use; defaults to the real `backlog` binary on PATH. Injected so a caller (or a test) touches no subprocess. */
   adapter?: BacklogAdapter;
   /**
@@ -398,6 +401,8 @@ type CommandHandler = (args: readonly string[], context: RunContext, output: Out
 
 /** Handler registry; Commander/manifest own routing declarations, this table only injects Lore seams. */
 const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
+  backlog: (args, context, output) =>
+    runBacklog({ root: context.cwd || process.cwd(), output, args, stdout: context.stdout, stderr: context.stderr }),
   init: (args, context, output) => {
     const root = context.cwd || process.cwd();
     return runInit({
@@ -440,6 +445,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
       fetch: context.fetch,
       resolveHost: context.resolveHost,
       adapter: context.adapter,
+      headCommitDate: context.headCommitDate,
     }),
   replace: (args, context, output) =>
     runReplace({

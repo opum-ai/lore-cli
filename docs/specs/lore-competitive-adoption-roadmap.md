@@ -58,7 +58,7 @@ mitigation.
 
 ## Requirements
 
-### R0 — Remove wall-clock dependence from every gate (blocking)
+### R0 — Remove wall-clock dependence from every gate (delivered by LCLI-323)
 
 `staleAfterFindings` in `src/core/check.ts` compares an OKF 0.2 concept's
 `stale_after` against today's date; `--strict` promotes the resulting warning
@@ -68,19 +68,23 @@ against this repository's source (a scratch 0.2 bundle carrying
 `stale_after: 2020-01-01` produced `lore check` exit 0 and
 `lore check --strict` exit 6).
 
-The published `0.1.1` binary does not reproduce this, because it does not
-implement OKF 0.2 staleness semantics — so this is exposure arriving with the
-next release, not a live field incident. That is the window in which to fix it.
+The published `0.1.1` binary did not reproduce this because it did not
+implement OKF 0.2 staleness semantics. Published `0.2.0` does, so the defect is
+live there; the unreleased LCLI-323 fix closes it for the next release.
 
-- **Surface:** `--as-of YYYY-MM-DD` on `check`, `validate`, `query`, and
-  `context`, honored by every date-sensitive rule. `--as-of git` reads the HEAD
-  commit date. Absent a pin, either default to the commit date or refuse to
-  evaluate staleness — never silently read the clock.
+- **Delivered surface:** `check --as-of YYYY-MM-DD`, honored by every
+  date-sensitive check rule. Without a pin, `check` reads HEAD's recorded
+  committer calendar date; an unborn HEAD requires an explicit pin only when a
+  discovered rule needs one. `validate`, `query`, and `context` have no
+  elapsed-date rules, so they do not expose a meaningless flag. Any future
+  date-relative rule must consume the same explicit input rather than reading
+  the clock at its point of use.
 - **Prior art:** claude-obsidian's `lint --as-of YYYY-MM-DD`.
 - **Determinism:** strictly protective. This *increases* determinism.
-- **Proof obligation:** a negative control in CI — a fixture whose
-  `stale_after` has elapsed must fail without `--as-of` and pass with it. A
-  gate never observed failing is not known to work.
+- **Proof:** the regression suite includes a negative control whose elapsed
+  `stale_after` fails under `--strict` at the default HEAD date and passes with
+  an earlier `--as-of`. It also compares two equivalent pinned runs for the
+  same exit code and byte-identical finding output.
 
 ### R1 — Stable rule IDs on every finding
 

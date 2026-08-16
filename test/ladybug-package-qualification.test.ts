@@ -91,7 +91,7 @@ describe("matching-host Ladybug package qualification", () => {
         cpSync(join(import.meta.dir, "..", "bin", "lore.cjs"), launcher);
         writeFileSync(
           join(platformRoot, "package.json"),
-          `${JSON.stringify({ name: `@opum-ai/lore-win32-${process.arch}`, version: "0.2.0" })}\n`,
+          `${JSON.stringify({ name: `@opum-ai/lore-win32-${process.arch}`, version: "0.3.0" })}\n`,
         );
         const target = process.arch === "arm64" ? "bun-windows-arm64" : "bun-windows-x64-baseline";
         const compileCommand = packageCompileCommand(join(import.meta.dir, ".."), root, target, binary);
@@ -110,7 +110,7 @@ describe("matching-host Ladybug package qualification", () => {
           timeout: 120_000,
         });
         expect(result.exitCode).toBe(0);
-        expect(result.stdout.toString()).toBe("0.2.0\n");
+        expect(result.stdout.toString()).toBe("0.3.0\n");
         expect(result.stderr.toString()).toBe("");
       } finally {
         rmSync(root, { recursive: true, force: true });

@@ -76,6 +76,8 @@ export interface ManifestCommand {
   readonly json: boolean;
   /** The `kind` of the command's `--json` success envelope (cli-contract §2.1), matching the live `kind:` literal. */
   readonly kind: string;
+  /** Every success-envelope kind when a command's explicit operation selects one of several result shapes. */
+  readonly resultKinds?: readonly string[];
   /** The exit codes this command can return, derived from its seams (see the module docstring); `1` (uncaught) is global-only. */
   readonly exitCodes: readonly number[];
   /** One or more runnable invocations. */
@@ -169,6 +171,29 @@ const GLOBAL_FLAGS: readonly ManifestFlag[] = deepFreeze([
  */
 const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
   {
+    name: "backlog",
+    summary: "Adopt Backlog knowledge records through a digest-guarded migration lifecycle",
+    args: "adopt <preview|apply|status|rollback>",
+    flags: [
+      { name: "manifest", takesValue: true, summary: "Repository-relative adoption source manifest" },
+      { name: "approval-digest", takesValue: true, summary: "Exact digest returned by preview" },
+      { name: "migration", takesValue: true, summary: "Explicit migration identity" },
+    ],
+    json: true,
+    kind: "backlog.adoption.preview",
+    resultKinds: [
+      "backlog.adoption.preview",
+      "backlog.adoption.apply",
+      "backlog.adoption.status",
+      "backlog.adoption.rollback",
+    ],
+    exitCodes: exitCodesFor(["read", "write"], [6]),
+    examples: [
+      "lore backlog adopt preview --manifest adoption.json",
+      "lore backlog adopt status --migration <identity>",
+    ],
+  },
+  {
     name: "init",
     summary: "Scaffold an OKF bundle; a bare TTY run also wizards the agent bridge/scaffolds/backlog check",
     args: "",
@@ -261,13 +286,14 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     flags: [
       { name: "strict", takesValue: false, summary: "Treat warnings as failures for the exit code" },
       { name: "external", takesValue: false, summary: "Also probe external-URL liveness (advisory; never gates)" },
+      { name: "as-of", takesValue: true, summary: "Pin date-sensitive checks (default: HEAD commit date)" },
     ],
     json: true,
     kind: "check.report",
     // extra 6 = the drift/link gate RETURN (check.ts:258) — check's principal failure, modeled
     // explicitly rather than left to the coincidental adapter 6.
     exitCodes: exitCodesFor(["read", "backlog"], [6]),
-    examples: ["lore check", "lore check --external"],
+    examples: ["lore check", "lore check --as-of 2026-08-13", "lore check --external"],
   },
   {
     name: "replace",

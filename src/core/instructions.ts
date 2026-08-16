@@ -93,10 +93,13 @@ const CHECK: InstructionTopic = {
   title: "The CI gate: types, drift, links, anchors, portability (`lore check`)",
   body: `\`lore check [paths...]\` is lore's read-only CI gate. It always emits the
 full \`check.report\` on stdout (\`kind: check.report\` under \`--json\`) --
-findings for broken internal links, rotted heading anchors, reconciliation
+findings for broken bundle-scoped links, rotted heading anchors, reconciliation
 drift (a Story's written status or managed block gone stale), unknown active-
-profile types, and portability-lint warnings. It then *returns* exit 6 when any of
-those is error-tier (or any warning exists under \`--strict\`) -- a plain
+profile types, and portability-lint warnings. Relative \`.md\` links that normalize
+above the selected bundle root are not resolved; the report exposes them through
+\`skippedOutOfBundleLinkCount\`, which is informational and never changes the exit.
+The command *returns* exit 6 when any finding is error-tier (or any warning exists
+under \`--strict\`) -- a plain
 exit code, not a thrown error: nothing throws on this path, so there is no
 \`--json\` error envelope for a failing report (the report itself, already on
 stdout, is the payload). cli-contract.md's exit table labels this condition
@@ -124,10 +127,18 @@ coincides with the drift-tier report's exit 6 above, but the two are
 distinct: \`validation\` is a thrown error with a \`--json\` envelope; the
 report's exit 6 is a plain returned code with no throw.
 
+Date-sensitive rules use one pinned evaluation date. Pass
+\`--as-of YYYY-MM-DD\` to select it explicitly; otherwise check uses HEAD's
+recorded committer calendar date. It never reads the machine clock. If a
+date-sensitive rule exists but HEAD is unborn, pass \`--as-of\` or commit the
+bundle. Today only OKF 0.2 \`stale_after\` is date-sensitive; validate has no
+elapsed-date rules.
+
 Because check writes nothing and lore's core has no LLM dependency, it is
 deterministic: a clean \`lore check\` locally means a clean \`lore check\` in
-CI, with no flakiness to chase. A typical loop: run check; exit 0 means
-done; exit 6 means read the report and run \`lore sync\` for any drift
+CI for the same repo state and explicit inputs, with no flakiness to chase. A
+typical loop: run check; exit 0 means done; exit 6 means read the report and run
+\`lore sync\` for any drift
 finding, then re-check; exit 3 means fix the path argument; an uncaught 1
 needs investigation, not a blind sync.
 
@@ -186,8 +197,10 @@ const OVERVIEW: InstructionTopic = {
 check\` as the CI gate (exit 6 on a failing report -- see the \`check\`
 topic).
 
-lore is CLI-first and deterministic: no LLM dependency, so the same inputs
-against an unchanged bundle always produce the same output and exit code.
+lore is CLI-first and deterministic: no LLM dependency, so the same explicit
+inputs against unchanged repository state always produce the same output and
+exit code. Date-sensitive check rules use \`--as-of YYYY-MM-DD\` when supplied
+and otherwise pin to HEAD's commit date; they never read the machine clock.
 Every command supports \`--json\` (the \`{schemaVersion, kind, data}\`
 envelope) and \`--plain\` (ANSI-free text, auto-selected when stdout isn't a
 TTY); branch on the semantic exit code (0 ok, 2 usage, 3 not_found, 4 denied,

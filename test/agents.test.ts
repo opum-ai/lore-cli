@@ -80,6 +80,18 @@ describe("generated content (AC#2) — small, grounded, points at `lore instruct
     expect(skill).toContain("source of truth");
   });
 
+  test("SKILL.md surfaces self-committing commands before canonical workflow steps", () => {
+    const skill = buildSkillDoc();
+    const preflight = skill.indexOf("## Commit-side-effect preflight");
+    const start = skill.indexOf("## Start here");
+    expect(preflight).toBeGreaterThan(0);
+    expect(preflight).toBeLessThan(start);
+    for (const command of ["link", "unlink", "rename", "sync"]) {
+      expect(skill.slice(preflight, start)).toContain(`\`lore ${command}\``);
+    }
+    expect(skill.slice(preflight, start)).toContain("explicit commit authority");
+  });
+
   test("the CLAUDE.md nudge points at both the skill and `lore instructions`", () => {
     const nudge = buildNudgeBody();
     expect(nudge).toContain(SKILL_REL_PATH);

@@ -412,15 +412,15 @@ sources:
       path: "reference/lifecycle.md",
       raw: "---\ntype: Reference\nstatus: stable\nstale_after: 2026-08-05\n---\n\n# Lifecycle\n",
     };
-    expect(checkBundle([lifecycle], undefined, { today: "2026-08-04" }).warningCount).toBe(0);
-    for (const today of ["2026-08-05", "2026-08-06"]) {
-      const report = checkBundle([lifecycle], undefined, { today });
+    expect(checkBundle([lifecycle], undefined, { asOf: "2026-08-04" }).warningCount).toBe(0);
+    for (const asOf of ["2026-08-05", "2026-08-06"]) {
+      const report = checkBundle([lifecycle], undefined, { asOf });
       expect(report).toMatchObject({ errorCount: 0, warningCount: 1 });
       expect(report.findings[0]).toEqual({
         severity: "warning",
         rule: "stale-after",
         file: "reference/lifecycle.md",
-        message: `content is stale: stale_after 2026-08-05 has elapsed as of ${today}`,
+        message: `content is stale: stale_after 2026-08-05 has elapsed as of ${asOf}`,
       });
     }
   });
@@ -430,7 +430,7 @@ sources:
       path: "reference/lifecycle.md",
       raw: "---\ntype: Reference\nstale_after: 2020-01-01\n---\n\n# Lifecycle\n",
     };
-    const report = checkBundle([lifecycle], { okfVersion: "0.1", source: "declared" }, { today: "2026-08-05" });
+    const report = checkBundle([lifecycle], { okfVersion: "0.1", source: "declared" }, { asOf: "2026-08-05" });
     expect(report.findings.some((finding) => finding.rule === "stale-after")).toBe(false);
   });
 
@@ -458,7 +458,29 @@ sources:
 
   test("a cross-bundle ../-escaping link is out of scope (skipped, not broken)", () => {
     const adr: CheckInputFile = { path: "x.md", raw: ref("X", "See [task](../backlog/tasks/task-1.md).") };
-    expect(checkBundle([adr]).errorCount).toBe(0);
+    expect(checkBundle([adr])).toMatchObject({
+      errorCount: 0,
+      warningCount: 0,
+      skippedOutOfBundleLinkCount: 1,
+    });
+  });
+
+  test("counts every escaping relative .md link but not URLs, assets, or bundle-root links", () => {
+    const doc: CheckInputFile = {
+      path: "reference/x.md",
+      raw: ref(
+        "X",
+        [
+          "[one](../../research/one.md)",
+          "[two](../../research/two.md#evidence)",
+          "[site](https://example.com/outside.md)",
+          "[image](../../research/image.png)",
+          "[root](/index.md)",
+        ].join("\n"),
+      ),
+    };
+    const rootIndex: CheckInputFile = { path: "index.md", raw: "# Root\n" };
+    expect(checkBundle([doc, rootIndex]).skippedOutOfBundleLinkCount).toBe(2);
   });
 
   test("a /-absolute link resolves against the bundle root, not the linking dir", () => {
@@ -561,7 +583,14 @@ describe("checkBundle — anchor rot (AC#1)", () => {
     const first = checkBundle([a, b]);
     const repeated = checkBundle([a, b]);
     const reversed = checkBundle([b, a]);
-    expect(first).toEqual({ fileCount: 2, errorCount: 0, warningCount: 0, findings: [], complete: true });
+    expect(first).toEqual({
+      fileCount: 2,
+      errorCount: 0,
+      warningCount: 0,
+      skippedOutOfBundleLinkCount: 0,
+      findings: [],
+      complete: true,
+    });
     expect(repeated).toEqual(first);
     expect(reversed).toEqual(first);
   });
@@ -907,7 +936,15 @@ describe("runCheck — exit codes and discovery", () => {
   });
 
   function opts(args: string[], output: OutputContext = PLAIN_CTX) {
-    return { root, output, args, stdout: capture(), stderr: capture(), resolveHost: ALLOW_ALL_HOSTS };
+    return {
+      root,
+      output,
+      args,
+      stdout: capture(),
+      stderr: capture(),
+      resolveHost: ALLOW_ALL_HOSTS,
+      headCommitDate: () => "2026-08-05",
+    };
   }
 
   test("exit 0 on a coherent bundle", () => {
@@ -934,7 +971,31 @@ describe("runCheck — exit codes and discovery", () => {
 
   test("exit 6 on a broken internal link", () => {
     writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[ghost](../reference/ghost.md)."));
-    expect(runCheck(opts([]))).toBe(EXIT_CODES.validation);
+    const o = opts([], JSON_CTX);
+    expect(runCheck(o)).toBe(EXIT_CODES.validation);
+    const report = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(report.data).toMatchObject({ skippedOutOfBundleLinkCount: 0, errorCount: 1 });
+    expect(report.data.findings[0]).toMatchObject({
+      file: "adr/x.md",
+      rule: "broken-link",
+    });
+    expect(report.data.findings[0].message).toContain("reference/ghost.md");
+  });
+
+  test("reports skipped out-of-bundle links in JSON and the plain summary without failing the gate", () => {
+    writeFileSync(join(root, "docs", "adr", "x.md"), ref("X", "[evidence](../../research/evidence.md)."));
+
+    const json = opts([], JSON_CTX);
+    expect(runCheck(json)).toBe(EXIT_OK);
+    expect(JSON.parse((json.stdout as ReturnType<typeof capture>).text()).data).toMatchObject({
+      skippedOutOfBundleLinkCount: 1,
+      errorCount: 0,
+      warningCount: 0,
+    });
+
+    const plain = opts([]);
+    expect(runCheck(plain)).toBe(EXIT_OK);
+    expect((plain.stdout as ReturnType<typeof capture>).text()).toContain("1 out-of-bundle link skipped");
   });
 
   test("exit 6 on a rotted anchor (AC#1)", () => {
@@ -947,21 +1008,66 @@ describe("runCheck — exit codes and discovery", () => {
     expect(runCheck(opts([]))).toBe(EXIT_OK);
   });
 
-  test("elapsed stale_after is advisory normally and gates only under --strict", () => {
+  test("HEAD's commit date is the default evaluation date for stale_after", () => {
     writeFileSync(join(root, "docs", "index.md"), '---\ntype: Reference\nokf_version: "0.2"\n---\n# Docs\n');
     writeFileSync(
       join(root, "docs", "reference", "lifecycle.md"),
       "---\ntype: Reference\nstatus: stable\nstale_after: 2026-08-05\n---\n\n# Lifecycle\n",
     );
-    const clock = () => new Date("2026-08-05T23:59:59Z");
-
-    const ordinary = { ...opts([], JSON_CTX), clock };
+    const ordinary = opts([], JSON_CTX);
     expect(runCheck(ordinary)).toBe(EXIT_OK);
     const report = JSON.parse((ordinary.stdout as ReturnType<typeof capture>).text());
     expect(report.data).toMatchObject({ errorCount: 0, warningCount: 1 });
     expect(report.data.findings[0].rule).toBe("stale-after");
 
-    expect(runCheck({ ...opts(["--strict"]), clock })).toBe(EXIT_CODES.validation);
+    expect(runCheck(opts(["--strict"]))).toBe(EXIT_CODES.validation);
+  });
+
+  test("--as-of pins the negative control before stale_after and produces repeatable output", () => {
+    writeFileSync(join(root, "docs", "index.md"), '---\ntype: Reference\nokf_version: "0.2"\n---\n# Docs\n');
+    writeFileSync(
+      join(root, "docs", "reference", "lifecycle.md"),
+      "---\ntype: Reference\nstatus: stable\nstale_after: 2026-08-05\n---\n\n# Lifecycle\n",
+    );
+
+    expect(runCheck(opts(["--strict"]))).toBe(EXIT_CODES.validation);
+
+    const first = opts(["--strict", "--as-of", "2026-08-04"], JSON_CTX);
+    const second = opts(["--strict", "--as-of=2026-08-04"], JSON_CTX);
+    expect(runCheck(first)).toBe(EXIT_OK);
+    expect(runCheck(second)).toBe(EXIT_OK);
+    expect((first.stdout as ReturnType<typeof capture>).text()).toBe(
+      (second.stdout as ReturnType<typeof capture>).text(),
+    );
+  });
+
+  test.each(["tomorrow", "2026-02-29", "2026-13-01"])("invalid --as-of value %p is a usage error", (value) => {
+    expect(() => runCheck(opts(["--as-of", value]))).toThrow(LoreError);
+    try {
+      runCheck(opts(["--as-of", value]));
+    } catch (caught) {
+      expect(caught).toBeInstanceOf(LoreError);
+      expect((caught as LoreError).type).toBe("usage");
+    }
+  });
+
+  test("an explicit --as-of never consults HEAD", () => {
+    const options = {
+      ...opts(["--as-of", "2026-08-04"]),
+      headCommitDate: () => {
+        throw new Error("HEAD should not be read");
+      },
+    };
+    expect(runCheck(options)).toBe(EXIT_OK);
+  });
+
+  test("an unborn HEAD fails clearly without falling back to the wall clock", () => {
+    writeFileSync(join(root, "docs", "index.md"), '---\ntype: Reference\nokf_version: "0.2"\n---\n# Docs\n');
+    writeFileSync(
+      join(root, "docs", "reference", "lifecycle.md"),
+      "---\ntype: Reference\nstatus: stable\nstale_after: 2026-08-05\n---\n\n# Lifecycle\n",
+    );
+    expect(() => runCheck({ ...opts([]), headCommitDate: () => null })).toThrow(/HEAD has no commit date/);
   });
 
   test("inventories a computation asset without reading or executing it", () => {
@@ -1367,6 +1473,16 @@ describe("runCheck — exit codes and discovery", () => {
     expect(parsed.data.errorCount).toBe(1); // b/index.md's broken link is caught
     expect(parsed.data.findings[0].file).toBe("b/index.md"); // labelled by its root
     expect(code).toBe(EXIT_CODES.validation);
+  });
+
+  test("two distinct roots aggregate skipped out-of-bundle link counts", () => {
+    mkdirSync(join(root, "a"), { recursive: true });
+    mkdirSync(join(root, "b"), { recursive: true });
+    writeFileSync(join(root, "a", "index.md"), "# A\n\n[one](../one.md).\n");
+    writeFileSync(join(root, "b", "index.md"), "# B\n\n[two](../two.md).\n");
+    const o = opts(["a", "b"], JSON_CTX);
+    expect(runCheck(o)).toBe(EXIT_OK);
+    expect(JSON.parse((o.stdout as ReturnType<typeof capture>).text()).data.skippedOutOfBundleLinkCount).toBe(2);
   });
 
   test("the same root passed twice de-duplicates its files", () => {
@@ -2450,7 +2566,15 @@ describe("cli — check dispatch", () => {
   });
 
   function ctx() {
-    return { cwd, env: {}, isTTY: false, stdout: capture(), stderr: capture(), resolveHost: ALLOW_ALL_HOSTS };
+    return {
+      cwd,
+      env: {},
+      isTTY: false,
+      stdout: capture(),
+      stderr: capture(),
+      resolveHost: ALLOW_ALL_HOSTS,
+      headCommitDate: () => "2026-08-05",
+    };
   }
 
   test("`lore check` on a clean bundle exits 0", () => {
@@ -2459,6 +2583,10 @@ describe("cli — check dispatch", () => {
 
   test("`lore check --bogus` is a usage error", () => {
     expect(run(["bun", "lore", "check", "--bogus"], ctx())).toBe(EXIT_CODES.usage);
+  });
+
+  test("`lore check --as-of` is routed as a value-taking command flag", () => {
+    expect(run(["bun", "lore", "check", "--as-of", "2026-08-04", "--plain"], ctx())).toBe(EXIT_OK);
   });
 
   test("`lore check --external` returns a Promise resolving to the gate code (via injected fetch)", async () => {

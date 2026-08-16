@@ -3,19 +3,44 @@ id: LCLI-323
 title: >-
   lore check --strict is wall-clock dependent: an elapsed stale_after flips a
   green bundle to exit 6 with no commit
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-08-13 03:46'
-updated_date: '2026-08-13 03:46'
+updated_date: '2026-08-13 18:17'
 labels:
   - bug
   - check
   - determinism
   - okf
+  - 'doc:stories/harden-post-0-2-lore-correctness'
 dependencies: []
 documentation:
   - docs/reference/lore-competitive-feature-matrix.md
   - docs/specs/lore-competitive-adoption-roadmap.md
+  - docs/reference/cli-surface.md
+  - docs/reference/cli-contract.md
+  - docs/reference/okf-conformance.md
+  - docs/stories/harden-post-0-2-lore-correctness.md
+modified_files:
+  - src/adapters/git.ts
+  - src/commands/check.ts
+  - src/core/check.ts
+  - src/core/manifest.ts
+  - src/cli.ts
+  - test/git-adapter.test.ts
+  - test/check.test.ts
+  - test/help.test.ts
+  - docs/reference/cli-surface.md
+  - docs/reference/cli-contract.md
+  - docs/reference/okf-conformance.md
+  - docs/reference/lore-competitive-feature-matrix.md
+  - docs/specs/lore-competitive-adoption-roadmap.md
+  - docs/log.md
+  - CHANGELOG.md
+  - src/core/instructions.ts
+  - docs/runbooks/agent-onboarding.md
+  - docs/index.md
 priority: high
 type: bug
 ordinal: 446000
@@ -50,11 +75,54 @@ Note this affects any future date-relative rule too, not just `stale_after` — 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every date-relative rule in check/validate resolves its evaluation date from one explicit input, never from an ambient system-clock read at the point of use
-- [ ] #2 An --as-of YYYY-MM-DD flag pins that date; an invalid or non-calendar value is a usage error (exit 2), not a silent fallback to today
-- [ ] #3 The default behaviour when --as-of is omitted is decided and documented explicitly (commit date, or refuse to evaluate staleness) rather than left as an implicit clock read
-- [ ] #4 A regression test proves the negative control: a fixture whose stale_after has elapsed fails under --strict without a pin, and passes with an --as-of date preceding it
-- [ ] #5 A second regression test proves the same bundle and the same --as-of value yield an identical exit code and identical finding output across runs
-- [ ] #6 cli-surface.md and cli-contract.md record --as-of and state plainly which rules are date-sensitive
-- [ ] #7 okf-conformance.md stale_after row is updated to describe the pinned-date evaluation
+- [x] #1 Every date-relative rule in check/validate resolves its evaluation date from one explicit input, never from an ambient system-clock read at the point of use
+- [x] #2 An --as-of YYYY-MM-DD flag pins that date; an invalid or non-calendar value is a usage error (exit 2), not a silent fallback to today
+- [x] #3 The default behaviour when --as-of is omitted is decided and documented explicitly (commit date, or refuse to evaluate staleness) rather than left as an implicit clock read
+- [x] #4 A regression test proves the negative control: a fixture whose stale_after has elapsed fails under --strict without a pin, and passes with an --as-of date preceding it
+- [x] #5 A second regression test proves the same bundle and the same --as-of value yield an identical exit code and identical finding output across runs
+- [x] #6 cli-surface.md and cli-contract.md record --as-of and state plainly which rules are date-sensitive
+- [x] #7 okf-conformance.md stale_after row is updated to describe the pinned-date evaluation
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add one validated evaluation-date input for `lore check`: accept `--as-of YYYY-MM-DD`, otherwise resolve the HEAD committer calendar date through the read-only Git adapter; invalid calendar dates are usage errors and an unavailable HEAD fails clearly without falling back to the wall clock.
+2. Thread the resolved date through the command/core check boundary as `asOf`, remove the ambient clock seam, and keep validation date-shape-only because it has no elapsed-date rules.
+3. Update the command manifest/router injection and add focused Git-adapter, command, CLI/help, negative-control, and repeatability tests proving explicit pins and the HEAD default.
+4. Update the CLI surface/contract, OKF conformance, competitive feature matrix/roadmap, and changelog to describe the pinned date, the date-sensitive rule set, and the no-HEAD remedy.
+5. Run formatting, focused tests, typecheck/lint/full tests, Lore dry-run/synchronization gates as authorization permits, strict Lore validation/check, diff hygiene, and adversarial self-review.
+
+6. Update canonical agent instructions/onboarding and root navigation so their determinism claim names the same explicit `--as-of`/HEAD input contract.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented and delivered the deterministic evaluation-date seam:
+
+- `lore check --as-of YYYY-MM-DD` validates a real calendar date and supplies that one value to every date-sensitive check rule.
+- Without a pin, a bundle containing a valid OKF 0.2 `stale_after` rule resolves the recorded committer date from one exact HEAD SHA. Bundles without date-sensitive rules do not require Git.
+- An unborn repository fails clearly only when a temporal rule needs the default date; an explicit pin bypasses the HEAD lookup.
+- `validate` remains date-shape-only because it has no elapsed-date rule. No ambient clock read remains in check/validate evaluation.
+- CLI manifest/help/router, canonical instructions, CLI/OKF contracts, competitive findings, onboarding, root navigation, changelog, and regression tests carry the same explicit-input contract.
+- The active owner Story is `stories/harden-post-0-2-lore-correctness`. Lore coupling and synchronization commits are `5de7c99`, `b65e49f`, and `f2aa77e`.
+
+Verification:
+
+- Focused tests: 346 passed, 0 failed.
+- Full suite: 2,570 passed, 1 intentional skip, 0 failed across 79 files with 8,759 assertions.
+- Typecheck, lint over 196 files, build, and `git diff --check` passed.
+- Strict Lore validation: 70 files, 0 errors, 0 warnings, 6 intentional skips.
+- Installed strict check, source default strict check, and source explicit `--as-of 2026-08-13` strict check each reported 70 files, 0 errors, 0 warnings.
+- Adversarial self-review found and fixed a moving-HEAD race by resolving HEAD once and reading the commit date from that exact SHA. No independent reviewer was used because subagents were not authorized.
+- PR #364 passed all eight required CI jobs on exact head `f3dcc987b3ab5045c1fe5ca8f3328a5a20dd0266` and merged to `dev` as `d97c4ae9289f6247bb869ad87150229091c7d622` on 2026-08-13. The head is a verified ancestor of live `origin/dev`.
+
+Release truth: published `0.2.0` remains affected; this fix is integrated for a later release.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Made date-sensitive check evaluation reproducible by adding an explicit --as-of calendar-date pin and defaulting only temporal rules to the exact HEAD committer date. Added fail-loud validation and unborn-HEAD behavior, regression and repeatability coverage, Git-adapter tests, CLI/help wiring, canonical instructions, contracts, conformance guidance, and an active post-0.2 correctness Story. Verified with 2,570 passing tests plus typecheck, lint, build, strict Lore validation/check, and all eight required CI jobs. PR #364 head f3dcc987b3ab5045c1fe5ca8f3328a5a20dd0266 merged to dev as d97c4ae9289f6247bb869ad87150229091c7d622.
+<!-- SECTION:FINAL_SUMMARY:END -->

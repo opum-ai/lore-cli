@@ -44,8 +44,9 @@
  *
  * A link whose target resolves **above the bundle root** (a `../`-escaping path, e.g. a
  * managed `lore:tasks` block's link to a `backlog/tasks/*.md` file) is **out of scope**
- * here — the bundle membership cannot see outside `docs/` — and is skipped rather than
- * reported broken, the same way an external URL is. (Those cross-bundle links arrive with
+ * here — the bundle membership cannot see outside `docs/` — and is counted as skipped rather
+ * than reported broken, unlike an external URL (which is omitted from this deterministic count).
+ * (Those cross-bundle links arrive with
  * `lore sync`/LORE-26; validating them is that pass's concern.)
  */
 
@@ -104,12 +105,27 @@ export interface CheckInputFile {
   readonly raw: string;
 }
 
-/** Clock-derived input supplied by the command layer; omitting it disables time-sensitive checks. */
+/** Explicit inputs supplied by the command layer; omitting `asOf` disables time-sensitive checks. */
 export interface CheckBundleOptions {
-  /** Current UTC calendar date in YYYY-MM-DD form. */
-  readonly today?: string;
+  /** Pinned evaluation date in YYYY-MM-DD form. */
+  readonly asOf?: string;
   /** Every regular file path in the bundle, used only for path existence checks; file bytes are never read here. */
   readonly availablePaths?: ReadonlySet<string>;
+}
+
+/** Whether this bundle contains a currently implemented rule that needs an evaluation date. */
+export function hasDateSensitiveCheckRules(files: readonly CheckInputFile[], state: BundleState): boolean {
+  if (state.okfVersion !== "0.2") {
+    return false;
+  }
+  return files.some((file) => {
+    try {
+      const staleAfter = tryReadFrontmatter(file.path, file.raw)?.stale_after;
+      return typeof staleAfter === "string" && isIsoCalendarDate(staleAfter);
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** The aggregate result of a `lore check` run over a bundle. */
@@ -127,6 +143,12 @@ export interface CheckReport {
   readonly warningCount: number;
   /** Number of files examined. */
   readonly fileCount: number;
+  /**
+   * Number of relative `.md` links that normalize above the selected bundle root and
+   * were therefore not resolved. Informational only: skipped links are not findings and never
+   * affect the error/warning counts or exit code.
+   */
+  readonly skippedOutOfBundleLinkCount: number;
   /**
    * Whether every pass that was supposed to run for this report actually finished. Always `true`
    * from this module (`checkBundle`/`summarize` are fully synchronous and never partial) — it only
@@ -347,10 +369,14 @@ export function checkBundle(
   // Pass 2 — judge: per file, the link/anchor gate then the portability lint, over the one
   // shared parse. Membership is `slugsById` itself — every file id is a key.
   const findings: CheckFinding[] = [];
+  let skippedOutOfBundleLinkCount = 0;
   for (const { file, tree, id } of prepared) {
     const dir = posix.dirname(file.path);
     const targets = extractLinkTargets(tree);
     for (const target of targets) {
+      if (isOutOfBundleRelativeMarkdownTarget(target, dir)) {
+        skippedOutOfBundleLinkCount++;
+      }
       findings.push(...linkFindings(target, file.path, dir, id, slugsById));
     }
     for (const target of targets) {
@@ -370,14 +396,14 @@ export function checkBundle(
         }
       }
       findings.push(...computationResourceFindings(file.path, file.raw, availablePaths));
-      if (options.today !== undefined) {
-        findings.push(...staleAfterFindings(file.path, file.raw, options.today));
+      if (options.asOf !== undefined) {
+        findings.push(...staleAfterFindings(file.path, file.raw, options.asOf));
       }
     }
     findings.push(...portabilityScan(tree, file.path));
   }
 
-  return summarize(findings, files.length);
+  return summarize(findings, files.length, skippedOutOfBundleLinkCount);
 }
 
 /**
@@ -423,7 +449,7 @@ function computationResourceFindings(path: string, raw: string, availablePaths: 
 }
 
 /** Surface an elapsed OKF 0.2 stale_after date as advisory quality state, never a conformance error. */
-function staleAfterFindings(path: string, raw: string, today: string): CheckFinding[] {
+function staleAfterFindings(path: string, raw: string, asOf: string): CheckFinding[] {
   let frontmatter: Record<string, unknown> | null;
   try {
     frontmatter = tryReadFrontmatter(path, raw);
@@ -431,7 +457,7 @@ function staleAfterFindings(path: string, raw: string, today: string): CheckFind
     return [];
   }
   const staleAfter = frontmatter?.stale_after;
-  if (typeof staleAfter !== "string" || !isIsoCalendarDate(staleAfter) || today < staleAfter) {
+  if (typeof staleAfter !== "string" || !isIsoCalendarDate(staleAfter) || asOf < staleAfter) {
     return [];
   }
   return [
@@ -439,13 +465,13 @@ function staleAfterFindings(path: string, raw: string, today: string): CheckFind
       severity: "warning",
       rule: "stale-after",
       file: path,
-      message: `content is stale: stale_after ${staleAfter} has elapsed as of ${today}`,
+      message: `content is stale: stale_after ${staleAfter} has elapsed as of ${asOf}`,
     },
   ];
 }
 
 /** Validate a real UTC calendar date, not merely a date-shaped string. */
-function isIsoCalendarDate(value: string): boolean {
+export function isIsoCalendarDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return false;
   }
@@ -614,6 +640,20 @@ function linkFindings(
     ];
   }
   return anchorFindings(target, file, targetId, fragment, slugsById);
+}
+
+/** Whether a relative Markdown link escapes the selected bundle root. */
+function isOutOfBundleRelativeMarkdownTarget(target: string, dir: string): boolean {
+  const path = pathPart(target.trim());
+  if (path === "" || path.startsWith("/") || isExternalTarget(path)) {
+    return false;
+  }
+  const decoded = decodeTarget(path);
+  if (!/\.md$/i.test(decoded)) {
+    return false;
+  }
+  const resolved = posix.normalize(posix.join(dir, decoded));
+  return resolved === ".." || resolved.startsWith("../");
 }
 
 /**
@@ -912,9 +952,13 @@ function clip(value: string): string {
 // ── Helpers ──────────────────────────────────────────────────────────────────────
 
 /** Tally findings into the aggregate {@link CheckReport} counts. `checkBundle` is fully synchronous and never partial, so `complete` is always `true` here — only `commands/check.ts` ever sets it `false` (LORE-112). */
-function summarize(findings: readonly CheckFinding[], fileCount: number): CheckReport {
+function summarize(
+  findings: readonly CheckFinding[],
+  fileCount: number,
+  skippedOutOfBundleLinkCount: number,
+): CheckReport {
   const { errorCount, warningCount } = tallySeverity(findings);
-  return { findings, errorCount, warningCount, fileCount, complete: true };
+  return { findings, errorCount, warningCount, fileCount, skippedOutOfBundleLinkCount, complete: true };
 }
 
 /**

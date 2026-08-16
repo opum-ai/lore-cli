@@ -7,11 +7,12 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04 07:26'
-updated_date: '2026-08-04 16:58'
+updated_date: '2026-08-14 11:00'
 labels:
   - workspace
   - error-handling
   - ladybugdb
+  - 'doc:stories/build-the-persistent-local-graph-platform'
 dependencies: []
 references:
   - >-
@@ -20,6 +21,8 @@ references:
   - >-
     not merged/pushed): see e2e_findings_v2.md and
     docs/runbooks/e2e-verification-v0.1.0.md in that repo.
+documentation:
+  - docs/stories/build-the-persistent-local-graph-platform.md
 modified_files:
   - src/core/workspace-projection.ts
   - src/core/workspace-retrieval.ts

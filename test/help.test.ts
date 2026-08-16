@@ -69,6 +69,12 @@ describe("core/manifest — shape and invariants", () => {
     }
   });
 
+  test("check exposes --as-of as a value-taking deterministic-date flag", () => {
+    expect(findManifestCommand("check")?.flags.find((flag) => flag.name === "as-of")).toMatchObject({
+      takesValue: true,
+    });
+  });
+
   test("every per-command exit code is one of the taxonomy's codes", () => {
     const valid = new Set(Object.values(buildManifest().exitCodes)); // {0,1,2,3,4,5,6}
     for (const command of buildManifest().commands) {
@@ -85,6 +91,7 @@ describe("core/manifest — shape and invariants", () => {
     // mis-declared seam (the recurring under/over-reporting bug) fails here.
     const golden: Record<string, number[]> = {
       init: [0, 2, 4, 5, 6],
+      backlog: [0, 2, 3, 4, 5, 6],
       new: [0, 2, 3, 4, 5, 6],
       validate: [0, 2, 3, 4, 6],
       check: [0, 2, 3, 4, 6],
@@ -129,6 +136,7 @@ describe("core/manifest — shape and invariants", () => {
     // where test/help.test.ts:45-51 only ever checked `kind.length > 0`.
     const golden: Record<string, string> = {
       init: "init",
+      backlog: "backlog.adoption.preview",
       new: "new",
       validate: "validate.report",
       check: "check.report",
@@ -162,6 +170,12 @@ describe("core/manifest — shape and invariants", () => {
       // Key by name so a mismatch names the offending command in the failure output.
       expect({ [command.name]: command.kind }).toEqual({ [command.name]: golden[command.name] as string });
     }
+    expect(buildManifest().commands.find((command) => command.name === "backlog")?.resultKinds).toEqual([
+      "backlog.adoption.preview",
+      "backlog.adoption.apply",
+      "backlog.adoption.status",
+      "backlog.adoption.rollback",
+    ]);
   });
 
   test("--json is universally available (self-describing per entry)", () => {

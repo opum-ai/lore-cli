@@ -107,7 +107,7 @@ generic unknown-key warning merely because an active custom profile omitted it.
 | `sources[]`, shared or per-source `usage_window` | Recognized 0.2 provenance family; malformed nested values are Lore producer-profile errors | Missing internal `.md` targets produce warning-tier `broken-source`; URLs and scope descriptions are not graph edges |
 | `verified` | Recognized as one event or a list; malformed actors/times are Lore producer-profile errors | None; Lore does not authenticate the actor |
 | `status` | Recognized lifecycle value: `draft`, `stable`, or `deprecated` | None; absence means stable under OKF |
-| `stale_after` | Recognized absolute date; malformed values are a Lore producer-profile error | Elapsed dates produce warning-tier `stale-after` |
+| `stale_after` | Recognized absolute date; malformed values are a Lore producer-profile error | Elapsed dates produce warning-tier `stale-after`, evaluated from `check --as-of YYYY-MM-DD` or HEAD's commit date, never the machine clock |
 | `runtime`, `parameters`, `computation`, `executor`, `attester` | Recognized for a known `Attested Computation`; `runtime` is required by the Lore profile and malformed contracts are errors | A missing local `computation` asset produces warning-tier `broken-computation`; Lore never opens or executes it |
 | `lore_task_status` | Recognized Lore extension for linked-task progress under 0.2 | Status and managed-block drift are Lore coherence errors |
 | legacy `timestamp` | Preserved with an advisory under 0.2 | Never converted implicitly |
@@ -147,7 +147,12 @@ OKF lifecycle and Lore delivery progress are separate:
 `verified` accepts one event or a list. Lore validates the actor convention and
 time but does not authenticate identity or certify that review occurred.
 `stale_after` is advisory freshness state: `lore check` warns on or after that
-UTC date without changing lifecycle or task progress. See
+date without changing lifecycle or task progress. The comparison uses one
+pinned date for the entire run: `--as-of YYYY-MM-DD` when supplied, otherwise
+HEAD's recorded committer calendar date. `check` never reads the machine clock;
+an unborn HEAD requires an explicit pin only when a date-sensitive rule is
+present. `validate` checks the field's calendar-date shape but does not evaluate
+whether it has elapsed. See
 [ADR-0019](../adr/0019-separate-okf-lifecycle-from-lore-task-progress.md).
 
 ### Attested Computation
