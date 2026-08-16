@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-16
+
+### Fixed
+
+- Backlog subprocesses now launch from an isolated empty directory while
+  retaining their logical project root through `BACKLOG_CWD`. This prevents a
+  protected ambient environment file from causing a false “not --json-capable”
+  error during repository and workspace export (LCLI-335).
+
+### Added
+
+- Agent instructions and generated Claude/Codex bridges now explain explicit
+  multi-repository workspace selection, bounded retrieval, and provenance
+  (LCLI-334).
+
 ## [0.3.0] - 2026-08-16
 
 ### Added
