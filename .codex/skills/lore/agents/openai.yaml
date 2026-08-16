@@ -1,4 +1,4 @@
 interface:
   display_name: "Lore Documentation"
-  short_description: "Maintain OKF documentation with the Lore CLI"
-  default_prompt: "Use $lore to read, author, link, synchronize, and validate this repository documentation bundle."
+  short_description: "Query and maintain OKF knowledge graphs"
+  default_prompt: "Use $lore to retrieve or maintain owner-local and workspace documentation with bounded, provenance-preserving commands."

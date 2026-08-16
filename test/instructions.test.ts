@@ -120,12 +120,24 @@ describe("runInstructions — topic resolution", () => {
   });
 
   test("each detail topic resolves to its own body", () => {
-    for (const key of ["linking", "sync", "check", "validation"]) {
+    for (const key of ["linking", "sync", "check", "validation", "workspace"]) {
       const { code, data } = instructions([key]);
       expect(code).toBe(0);
       expect(data.topic).toBe(key);
       expect(data.body.length).toBeGreaterThan(0);
     }
+  });
+
+  test("workspace topic distinguishes the composite projection from member-local graphs", () => {
+    const { data } = instructions(["workspace"]);
+    const normalized = data.body.replace(/\s+/g, " ");
+    expect(normalized).toContain("third, disposable graph projection");
+    expect(normalized).toContain("does not merge");
+    expect(normalized).toContain("--workspace <manifest>");
+    expect(normalized).toContain("<member-id>::<source-id>");
+    expect(normalized).toContain("cross-repository edge exists only");
+    expect(normalized).toContain("--max-tokens");
+    expect(normalized).toContain("provenance");
   });
 
   test("the data payload always carries the full topic index", () => {

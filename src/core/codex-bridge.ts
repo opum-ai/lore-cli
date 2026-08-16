@@ -8,7 +8,7 @@ export const CODEX_AGENT_BLOCK_LABEL = "lore:agents";
 export function buildCodexSkillDoc(): string {
   return `---
 name: lore
-description: Author and maintain this repository's OKF documentation bundle under docs/ with the Lore CLI. Use whenever Codex reads, writes, links, moves, synchronizes, validates, or checks documentation so Story/Task coupling, managed blocks, and cross-links remain coherent. Run \`lore instructions\` for the canonical agent loop and its topic subcommands for just-in-time details.
+description: Author, retrieve, and maintain OKF documentation with the Lore CLI, including explicit multi-repository workspaces. Use whenever Codex reads, writes, links, moves, queries, synchronizes, validates, or checks documentation so Story/Task coupling, managed blocks, provenance, and cross-links remain coherent. Run \`lore instructions\` for the canonical agent loop and its topic subcommands for just-in-time details.
 ---
 
 # Lore — OKF documentation CLI
@@ -32,10 +32,13 @@ repository's Lore sole-committer contract.
 ## Start
 
 1. Run \`lore instructions\`.
-2. Read \`docs/index.md\`, follow the relevant Story, and inspect its coupled task status.
-3. Pull only the needed topic instructions: \`linking\`, \`sync\`, \`check\`, or \`validation\`.
-4. Author prose only outside Lore-managed regions.
-5. After documentation changes, run \`lore sync\`, \`lore validate --strict\`,
+2. Choose owner-local scope or an explicit workspace; pull \`lore instructions workspace\` for
+   cross-repository questions.
+3. Read \`docs/index.md\`, follow the relevant Story, and inspect its coupled task status.
+4. Pull only the needed topic instructions: \`linking\`, \`sync\`, \`check\`, \`validation\`, or
+   \`workspace\`.
+5. Author prose only outside Lore-managed regions.
+6. After documentation changes, run \`lore sync\`, \`lore validate --strict\`,
    \`lore check --strict\`, and \`git diff --check\`.
 
 ## Guardrails
@@ -47,6 +50,9 @@ repository's Lore sole-committer contract.
 - Do not hand-edit Lore-managed blocks, generated indexes, or generated logs.
 - Follow the repository's Backlog workflow independently; Lore does not replace Backlog task
   lifecycle commands.
+- Use \`--workspace <manifest>\` only for explicit cross-repository reads. Qualify workspace IDs as
+  \`<member-id>::<source-id>\`, preserve returned provenance, and bound retrieval with repository,
+  depth, result, edge, and token filters.
 - Prefer \`--json\` for machine-stable output and \`--plain\` for readable output. Branch on exit
   codes: \`0\` success, \`2\` usage, \`3\` not found, \`4\` denied, \`5\` conflict, \`6\`
   validation/drift.
@@ -56,7 +62,8 @@ repository's Lore sole-committer contract.
 - Authoring: \`new\`, \`replace\`, \`rename\`, \`supersede\`
 - Coupling and reconciliation: \`link\`, \`unlink\`, \`sync\`, \`tasks\`, \`orphans\`
 - Verification: \`validate\`, \`check\`
-- Discovery and context: \`query\`, \`context\`, \`agent\`, \`graph\`, \`instructions\`
+- Discovery and context: \`query\`, \`context\`, \`agent\`, \`graph\`, \`path\`, \`impact\`,
+  \`snapshot\`, \`changed\`, \`provenance\`, \`explorer\`, \`instructions\`
 - Interchange and setup: \`export\`, \`schema\`, \`scaffold\`, \`agents\`
 
 ## Optional task-scoped context
@@ -80,7 +87,7 @@ coupling, managed blocks, and cross-links stay coherent.
 
 - **Skill:** \`${CODEX_SKILL_REL_PATH}\` — how to drive lore.
 - **Just-in-time detail:** run \`lore instructions\` for the canonical agent loop, then
-  \`lore instructions <topic>\` (\`linking\`, \`sync\`, \`check\`, \`validation\`).`;
+  \`lore instructions <topic>\` (\`linking\`, \`sync\`, \`check\`, \`validation\`, \`workspace\`).`;
 }
 
 export interface PlanCodexBridgeInput {

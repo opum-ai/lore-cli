@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+  BACKLOG_PROJECT_ROOT_ENV_VAR,
   BACKLOG_TIMEOUT_ENV_VAR,
   type BacklogCapability,
   type BacklogSpawn,
@@ -164,10 +166,11 @@ describe("probeBacklog — fails loud on a non-json-capable binary (AC#2, exit 6
     expect(spawn.calls).toEqual([["--version"], ["task", "list", "--json"]]);
   });
 
-  test("a non-zero --version exit is fail-loud", async () => {
+  test("a non-zero --version exit is a launch/probe failure, not a capability verdict", async () => {
     const err = await probeError(fakeSpawn({ version: { exitCode: 2, stdout: "", stderr: "boom" } }));
     expect(err.type).toBe("validation");
-    expect(err.message).toContain("--version` exited non-zero");
+    expect(err.message).toContain("probe failed before Lore could determine whether the binary supports --json");
+    expect(err.message).not.toContain("not --json-capable");
   });
 
   test("a --version line that is not a bare semver is fail-loud", async () => {
@@ -247,19 +250,52 @@ describe("bunBacklogSpawn — the real Bun.spawn seam", () => {
     expect(code).toBe("ENOENT");
   });
 
-  test("runs the subprocess in the given cwd, not the caller's own working directory", async () => {
+  test("isolates a protected project environment file while retaining the logical local root", async () => {
     // Spawns the current runtime binary itself (not an external `pwd`, which isn't reliably on
-    // PATH on Windows CI runners) with an inline script printing its own cwd — portable across all
-    // three CI platforms. realpath: on macOS, tmpdir() resolves through a /tmp -> /private/tmp
-    // symlink, which the spawned process's own cwd resolution follows too — resolve both sides the
-    // same way before comparing.
+    // PATH on Windows CI runners). The protected .env is a regression sentinel: the child must
+    // start outside this project directory and receive the project only through BACKLOG_CWD.
     const dir = realpathSync(mkdtempSync(`${tmpdir()}/lore-spawn-cwd-`));
     try {
-      const result = await bunBacklogSpawn(process.execPath, dir)(["-e", "console.log(process.cwd())"]);
+      const sentinel = join(dir, ".env");
+      writeFileSync(sentinel, "NEVER_LOAD_THIS=1\n");
+      chmodSync(sentinel, 0o000);
+      const result = await bunBacklogSpawn(
+        process.execPath,
+        dir,
+      )([
+        "-e",
+        `console.log(JSON.stringify({ cwd: process.cwd(), root: process.env.${BACKLOG_PROJECT_ROOT_ENV_VAR} }))`,
+      ]);
       expect(result.exitCode).toBe(0);
-      expect(result.stdout.trim()).toBe(dir);
+      expect(JSON.parse(result.stdout)).toMatchObject({ root: dir });
+      expect(JSON.parse(result.stdout).cwd).not.toBe(dir);
     } finally {
+      try {
+        chmodSync(join(dir, ".env"), 0o600);
+      } catch {
+        // The test may have failed before creating its sentinel; cleanup below remains authoritative.
+      }
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps workspace members logically distinct while isolating each dependency launch", async () => {
+    const alpha = realpathSync(mkdtempSync(`${tmpdir()}/lore-workspace-member-alpha-`));
+    const beta = realpathSync(mkdtempSync(`${tmpdir()}/lore-workspace-member-beta-`));
+    try {
+      const roots = await Promise.all(
+        [alpha, beta].map(async (root) => {
+          const result = await bunBacklogSpawn(
+            process.execPath,
+            root,
+          )(["-e", `console.log(process.env.${BACKLOG_PROJECT_ROOT_ENV_VAR})`]);
+          return result.stdout.trim();
+        }),
+      );
+      expect(roots).toEqual([alpha, beta]);
+    } finally {
+      rmSync(alpha, { recursive: true, force: true });
+      rmSync(beta, { recursive: true, force: true });
     }
   });
 

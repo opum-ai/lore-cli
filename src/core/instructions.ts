@@ -178,8 +178,54 @@ returns exit 6 when any error-tier finding exists (or any warning under
 \`--strict\`) -- the report is the payload, the exit code is the gate signal.`,
 };
 
+const WORKSPACE: InstructionTopic = {
+  key: "workspace",
+  title: "Multi-repository projection and bounded retrieval (`--workspace`)",
+  body: `A Lore workspace is a third, disposable graph projection over explicit
+member repositories. It does not merge those repositories, make their local
+LadybugDB caches share storage, or create a live database-to-database link.
+Each member's docs and Backlog records remain authoritative; the
+workspace manifest owns only membership and explicit cross-repository links.
+
+Stay in single-repository mode when the question and task are owned by one
+bundle. Select workspace mode only for cross-repository discovery, traversal,
+impact analysis, or context. Lore never discovers a workspace or nearby
+repositories automatically: pass an explicit
+\`--workspace <manifest>\`. Repeat \`--repository <member-id>\` to narrow the
+selected members when the question does not need the whole family.
+
+Workspace identities are qualified as \`<member-id>::<source-id>\`. Use that
+form for targeted \`graph\`, \`context\`, \`path\`, \`impact\`, and retained
+fact operations; \`query\` returns qualified IDs for follow-up commands. Equal
+local IDs in two members remain distinct. Repository-local authored links never
+escape their member. A cross-repository edge exists only when the manifest
+names both typed endpoints explicitly, so Lore does not infer architecture
+from matching names, paths, remotes, or prose.
+
+Start broad only enough to locate evidence, then narrow and bound it:
+
+  lore query "permission relay" --workspace .lore/workspaces/family.json --json
+  lore graph root-docs::index --depth 2 --workspace .lore/workspaces/family.json --json
+  lore context service::index --depth 1 --max-tokens 4000 --workspace .lore/workspaces/family.json --json
+  lore path root-docs::index service::index --from-kind concept --to-kind concept --direction outbound --max-depth 4 --limit 20 --workspace .lore/workspaces/family.json --json
+
+Inspect returned workspace scope and per-record provenance before acting. Use
+\`path\` for exact bounded relationship evidence and \`impact\` for bounded
+direct/transitive effects; retain a \`snapshot\` before using \`changed\` or
+\`provenance\`. Do not dump the entire workspace into an agent prompt when a
+qualified target, repository subset, depth, result limit, or token budget can
+answer the question.
+
+The manifest is control-plane input, not shared data storage. Its member
+locators resolve relative to the manifest, stable member IDs survive locator
+changes, and a non-null \`expectedRef\` rejects a checkout on another symbolic
+ref. The current workspace LadybugDB cache lives under
+\`.lore/cache/workspaces/\`, is rebuildable from validated member exports, and
+never writes relationships or documentation back into a member repository.`,
+};
+
 /** The detailed, task-scoped topics (everything except `overview`). */
-const DETAIL_TOPICS: readonly InstructionTopic[] = [LINKING, SYNC, CHECK, VALIDATION];
+const DETAIL_TOPICS: readonly InstructionTopic[] = [LINKING, SYNC, CHECK, VALIDATION, WORKSPACE];
 
 /** Render the `key   title` topic-index lines shared by the overview body and (indirectly) its JSON `topics` field. */
 function topicIndexLines(topics: readonly InstructionTopic[]): string {
@@ -190,8 +236,10 @@ function topicIndexLines(topics: readonly InstructionTopic[]): string {
 const OVERVIEW: InstructionTopic = {
   key: "overview",
   title: "The canonical agent loop and topic index",
-  body: `lore's canonical agent loop: read docs/index.md (the bundle's entry point)
--> follow a Story concept -> check its coupled tasks' live status (see the
+  body: `First choose scope: stay in the current repository for owner-local work;
+select an explicit \`--workspace <manifest>\` only for cross-repository
+questions (see the \`workspace\` topic). Then follow lore's canonical agent
+loop: read docs/index.md (the bundle's entry point) -> follow a Story concept -> check its coupled tasks' live status (see the
 \`linking\` topic) -> do the work (author prose outside lore-managed regions)
 -> \`lore sync\` to reconcile status and regenerate managed blocks -> \`lore
 check\` as the CI gate (exit 6 on a failing report -- see the \`check\`

@@ -31,7 +31,7 @@ coupling, managed blocks, and cross-links stay coherent.
 
 - **Skill:** `.claude/skills/lore/SKILL.md` — how to drive lore.
 - **Just-in-time detail:** run `lore instructions` for the canonical agent loop, then
-  `lore instructions <topic>` (`linking`, `sync`, `check`, `validation`).
+  `lore instructions <topic>` (`linking`, `sync`, `check`, `validation`, `workspace`).
 <!-- lore:agents:end -->
 
 ## Product portfolio and cross-repository routing
