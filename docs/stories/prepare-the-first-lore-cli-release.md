@@ -7,7 +7,7 @@ tags:
   - governance
 summary: Record the first immutable public package release while retaining the unresolved control gate for future automated publication.
 timestamp: 2026-08-04T02:50:00Z
-status: todo
+status: in-progress
 tasks:
   - lcli-253
   - lcli-269
@@ -52,6 +52,7 @@ tasks:
   - lcli-320
   - lcli-321
   - lcli-327
+  - lcli-332
 ---
 
 # Prepare the first Lore CLI release
@@ -148,6 +149,7 @@ for future automated OIDC publication.
 | [LCLI-320](../../backlog/tasks/lcli-320%20-%20Prepare-and-deliver-Lore-CLI-0.2.0-release-metadata.md) | Prepare and deliver Lore CLI 0.2.0 release metadata | Done |
 | [LCLI-321](../../backlog/tasks/lcli-321%20-%20Publish-Lore-CLI-0.2.0-from-qualified-release-artifacts.md) | Publish Lore CLI 0.2.0 from qualified release artifacts | Done |
 | [LCLI-327](../../backlog/tasks/lcli-327%20-%20docker-e2e-run-e2e.sh-writes-a-repo-local-git-identity-leaking-lore-e2e-e2elore.test-into-real-commits-on-dev.md) | docker/e2e/run-e2e.sh writes a repo-local git identity, leaking "lore e2e <e2e@lore.test>" into real commits on dev | Done |
+| [LCLI-332](../../backlog/tasks/lcli-332%20-%20Release-the-Lore-Backlog-knowledge-adoption-contract.md) | Release the Lore Backlog knowledge-adoption contract | In Progress |
 <!-- lore:tasks:end -->
 
 ## Notes
