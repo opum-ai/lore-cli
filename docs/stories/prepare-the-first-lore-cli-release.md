@@ -7,7 +7,7 @@ tags:
   - governance
 summary: Record the first immutable public package release while retaining the unresolved control gate for future automated publication.
 timestamp: 2026-08-04T02:50:00Z
-status: in-progress
+status: todo
 tasks:
   - lcli-253
   - lcli-269
@@ -98,6 +98,12 @@ matches every qualified artifact, a clean install selects the matching native
 package and reports `0.2.0`, and the repository has a non-draft,
 non-prerelease GitHub Release for `v0.2.0`.
 
+LCLI-332 published `0.3.0` from the seven untouched tarballs produced by
+qualified Release run `31950668955`, with all six platform packages published
+and integrity-verified before the root launcher. A clean registry install
+reports `0.3.0` and exposes the digest-guarded `lore backlog adopt` lifecycle;
+the repository has a non-draft, non-prerelease GitHub Release for `v0.3.0`.
+
 This Story remains open because LCLI-278 still owns the separate safety gate
 for future automated OIDC publication.
 
@@ -149,7 +155,7 @@ for future automated OIDC publication.
 | [LCLI-320](../../backlog/tasks/lcli-320%20-%20Prepare-and-deliver-Lore-CLI-0.2.0-release-metadata.md) | Prepare and deliver Lore CLI 0.2.0 release metadata | Done |
 | [LCLI-321](../../backlog/tasks/lcli-321%20-%20Publish-Lore-CLI-0.2.0-from-qualified-release-artifacts.md) | Publish Lore CLI 0.2.0 from qualified release artifacts | Done |
 | [LCLI-327](../../backlog/tasks/lcli-327%20-%20docker-e2e-run-e2e.sh-writes-a-repo-local-git-identity-leaking-lore-e2e-e2elore.test-into-real-commits-on-dev.md) | docker/e2e/run-e2e.sh writes a repo-local git identity, leaking "lore e2e <e2e@lore.test>" into real commits on dev | Done |
-| [LCLI-332](../../backlog/tasks/lcli-332%20-%20Release-the-Lore-Backlog-knowledge-adoption-contract.md) | Release the Lore Backlog knowledge-adoption contract | In Progress |
+| [LCLI-332](../../backlog/tasks/lcli-332%20-%20Release-the-Lore-Backlog-knowledge-adoption-contract.md) | Release the Lore Backlog knowledge-adoption contract | Done |
 <!-- lore:tasks:end -->
 
 ## Notes
