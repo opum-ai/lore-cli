@@ -98,6 +98,13 @@ describe("generated content (AC#2) — small, grounded, points at `lore instruct
     expect(nudge).toContain("lore instructions");
   });
 
+  test("generated guidance routes cross-repository work through workspace instructions", () => {
+    const skill = buildSkillDoc();
+    expect(skill).toContain("multi-repository workspaces");
+    expect(skill).toContain("`workspace`");
+    expect(buildNudgeBody()).toContain("`workspace`");
+  });
+
   test("generated content names every real command and NOTHING unshipped (the LORE-37 trap)", () => {
     const skill = buildSkillDoc();
     for (const cmd of LORE_COMMANDS) {

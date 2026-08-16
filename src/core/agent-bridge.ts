@@ -87,12 +87,13 @@ export const LORE_COMMANDS: readonly CommandSummary[] = [
   { name: "help", summary: "Show help, or the machine-readable command manifest under --json" },
 ];
 
-/** The four detail topics `lore instructions <topic>` serves, mirrored (not restated) by the bridge. */
+/** The detail topics `lore instructions <topic>` serves, mirrored (not restated) by the bridge. */
 const INSTRUCTION_DETAIL_TOPICS: ReadonlyArray<{ key: string; blurb: string }> = [
   { key: "linking", blurb: "Story <-> Task coupling (`lore link` / `lore unlink`)" },
   { key: "sync", blurb: "reconcile status + managed blocks (`lore sync`)" },
   { key: "check", blurb: "the CI gate: drift, links, anchors, portability (`lore check`)" },
   { key: "validation", blurb: "per-file OKF/schema conformance (`lore validate`)" },
+  { key: "workspace", blurb: "multi-repository projection and bounded retrieval (`--workspace`)" },
 ];
 
 /**
@@ -113,9 +114,10 @@ function twoColumn(rows: ReadonlyArray<{ left: string; right: string }>): string
  */
 export function buildSkillDoc(): string {
   const description =
-    "Author and maintain this repo's OKF documentation bundle (docs/) with the lore CLI. " +
-    "Use whenever reading, writing, linking, moving, or checking docs, so Story/Task coupling, " +
-    "managed blocks, and cross-links stay coherent. Run `lore instructions` for the canonical " +
+    "Author, retrieve, and maintain OKF documentation with the lore CLI, including explicit " +
+    "multi-repository workspaces. Use whenever reading, writing, linking, moving, querying, or " +
+    "checking docs, so Story/Task coupling, managed blocks, provenance, and cross-links stay coherent. " +
+    "Run `lore instructions` for the canonical " +
     "agent loop and `lore instructions <topic>` for just-in-time detail.";
 
   const topicList = twoColumn(INSTRUCTION_DETAIL_TOPICS.map((t) => ({ left: t.key, right: t.blurb })));
@@ -134,8 +136,9 @@ for authoring and maintaining the OKF bundle under \`docs/\`. This skill is a th
 
 ## When to use it
 
-Reach for \`lore\` — not a plain editor — whenever you read, write, link, move, or verify docs in
-this repo, so Story <-> Task coupling, managed blocks, and cross-links stay coherent.
+Reach for \`lore\` — not a plain editor — whenever you read, write, link, move, retrieve, or verify
+docs in this repo or an explicitly selected workspace, so Story <-> Task coupling, managed blocks,
+provenance, and cross-links stay coherent.
 
 ## Commit-side-effect preflight
 
@@ -192,7 +195,7 @@ coupling, managed blocks, and cross-links stay coherent.
 
 - **Skill:** \`${SKILL_REL_PATH}\` — how to drive lore.
 - **Just-in-time detail:** run \`lore instructions\` for the canonical agent loop, then
-  \`lore instructions <topic>\` (\`linking\`, \`sync\`, \`check\`, \`validation\`).`;
+  \`lore instructions <topic>\` (\`linking\`, \`sync\`, \`check\`, \`validation\`, \`workspace\`).`;
 }
 
 /** What {@link planBridge} decided a single bridge file's next state should be. */

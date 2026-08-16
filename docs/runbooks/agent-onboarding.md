@@ -1,7 +1,7 @@
 ---
 type: Runbook
 title: "Agent onboarding: how a coding agent uses lore"
-description: The canonical agent loop for working with lore — read the bundle index, follow a Story, check live task status with `lore tasks`, do the work, `lore sync`, then `lore check` as the CI gate. Covers how Claude Code learns lore (the generated SKILL.md, the tiny CLAUDE.md nudge, `lore instructions`, and the `lore help --json` capability manifest), the --json and exit-code contract agents depend on, and the guardrails (lore never auto-authors prose; the CLI is the primary surface).
+description: The canonical agent loop for working with lore — choose owner-local or explicit workspace scope, read the bundle index, follow a Story, check live task status with `lore tasks`, do the work, `lore sync`, then `lore check` as the CI gate. Covers how Claude Code and Codex learn lore, the generated skills and nudges, `lore instructions`, the `lore help --json` capability manifest, the machine contract agents depend on, and the guardrails around local authority and bounded cross-repository retrieval.
 tags:
   - runbook
   - agents
@@ -12,16 +12,39 @@ tags:
   - json
   - exit-codes
   - ci
-summary: Defines the deterministic agent loop and how coding agents discover Lore instructions, machine-readable output, and safety guardrails.
+summary: Defines deterministic owner-local and workspace agent loops, instruction discovery, machine-readable output, provenance, and retrieval guardrails.
 timestamp: 2026-06-21T00:00:00Z
 ---
 
 # Agent onboarding: how a coding agent uses lore
 
 This runbook is the operational source of truth for **how a coding agent
-(primarily Claude Code) discovers and uses lore**. It defines the canonical
+(including Claude Code and Codex) discovers and uses lore**. It defines the canonical
 agent loop that the generated `.claude/skills/lore/SKILL.md` mirrors and that
 `lore agents` and `lore instructions` teach on demand.
+
+## Choose the graph scope before the loop
+
+Lore has two read scopes, and an agent must choose deliberately:
+
+- **Owner-local:** omit `--workspace`. The current repository's docs, tasks,
+  authored links, and repo-local LadybugDB projection are the complete scope.
+  Use this for authoring and task work owned by one repository.
+- **Workspace:** pass an explicit `--workspace <manifest>` for a question that
+  crosses repository boundaries. Lore validates the selected member exports
+  and materializes a separate, disposable composite graph. It does not merge
+  repositories or make their local databases share storage.
+
+Workspace member IDs namespace local IDs as `<member-id>::<source-id>`.
+Repository-local authored links stay inside their owner. Only typed links
+authored in the manifest connect members; Lore never infers a relationship
+from matching names, paths, remotes, or prose. Repeat `--repository
+<member-id>` when only a subset is relevant, and use qualified targets plus
+depth, result, edge, and token bounds rather than putting an entire family
+graph into the model context.
+
+For the operational decision tree, examples, cache boundary, and provenance
+rules, run `lore instructions workspace`.
 
 lore is **CLI-primary** for both humans and agents — there is no behavior
 reachable only through a non-CLI surface, and the local MCP server is an on-hold transport over the same core (see [ADR-0004: CLI-first; SKILL.md bridge; MCP deferred](../adr/0004-cli-first-skill-bridge-mcp-deferred.md), [ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md), and [MCP tools (on hold)](../reference/mcp-tools.md)). An agent therefore works
@@ -78,7 +101,7 @@ hand edit and left protected.
 
 ## 1. The canonical agent loop
 
-This is the loop. SKILL.md is generated to mirror it, `lore instructions`
+This is the owner-local authoring loop after the scope decision above. SKILL.md is generated to mirror it, `lore instructions`
 explains each step on demand, and CI runs its final gate. Follow it in order.
 
 ```
@@ -268,7 +291,8 @@ lore instructions <topic>         # task-scoped guidance on demand
 Backlog.md `backlog instructions <topic>` pattern that this very project uses.
 This is the **just-in-time** channel: instead of carrying full lore guidance
 resident, an agent pulls exactly the topic it needs (e.g. the sync/check loop,
-linking tasks, the managed-block rules) for the current step.
+linking tasks, the managed-block rules, or multi-repository workspace retrieval)
+for the current step.
 
 ### 2.4 `lore help --json` — the capability manifest
 
