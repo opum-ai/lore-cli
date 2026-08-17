@@ -156,11 +156,17 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
       return list(await data(["search", safe(query), "--json"], "search --json", "task.search"));
     },
     async createTask(input) {
+      if (input.milestone !== undefined)
+        throw new LoreError(
+          "validation",
+          "Quest 0.1 does not support task milestones",
+          "omit the milestone or select a tracker backend that supports milestones",
+          { milestone: input.milestone },
+        );
       const args = ["task", "create", safe(input.title), ...ACTOR_FLAGS];
       if (input.description !== undefined) args.push("--description", safe(input.description));
       for (const label of input.labels ?? []) args.push("--label", safe(label));
       for (const doc of input.doc ?? []) args.push("--doc", safe(doc));
-      if (input.milestone !== undefined) args.push("--milestone", safe(input.milestone));
       const value = await data([...args, "--json"], "task create", "task.created");
       if (!record(value))
         throw new LoreError("drift", "Quest returned invalid created task", `Quest ${REQUIRED_VERSION} is required`);
@@ -280,9 +286,9 @@ function verifyManifest(value: unknown): void {
   }
 }
 function criteria(v: unknown, name: string): BacklogCriterion[] {
-  if (!Array.isArray(v) || v.some((x) => !record(x) || typeof x.text !== "string" || typeof x.checked !== "boolean"))
+  if (!Array.isArray(v) || v.some((x) => typeof x !== "string"))
     throw new LoreError("drift", `Quest returned invalid ${name}`, `Quest ${REQUIRED_VERSION} is required`);
-  return v.map((x) => ({ text: x.text as string, checked: x.checked as boolean }));
+  return v.map((text) => ({ text, checked: false }));
 }
 function comments(v: unknown): BacklogComment[] {
   if (!Array.isArray(v) || v.some((x) => !record(x) || typeof x.body !== "string"))

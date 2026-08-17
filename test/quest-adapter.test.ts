@@ -41,8 +41,8 @@ function task(overrides: Record<string, unknown> = {}): Record<string, unknown> 
     documentation: ["docs/story.md"],
     modifiedFiles: ["src/a.ts"],
     subtasks: [{ id: "QUEST-3", title: "Child" }],
-    acceptanceCriteria: [{ text: "works", checked: true }],
-    definitionOfDone: [{ text: "ships", checked: false }],
+    acceptanceCriteria: ["works"],
+    definitionOfDone: ["ships"],
     description: "**Markdown**",
     plan: ["plan", "second step"],
     implementationNotes: ["notes"],
@@ -80,7 +80,7 @@ describe("Quest 0.1 tracker adapter", () => {
     expect(detail).toMatchObject({
       dependencies: ["QUEST-0"],
       documentation: ["docs/story.md"],
-      acceptanceCriteria: [{ text: "works", checked: true }],
+      acceptanceCriteria: [{ text: "works", checked: false }],
       implementationPlan: "plan\nsecond step",
     });
     expect((await tracker.searchTasks("coupled"))[0]?.id).toBe("QUEST-2");
@@ -90,7 +90,6 @@ describe("Quest 0.1 tracker adapter", () => {
         description: "body",
         labels: ["docs"],
         doc: ["docs/new.md"],
-        milestone: "M2",
       }),
     ).toBe("QUEST-4");
     await tracker.editTask("QUEST-2", {
@@ -101,7 +100,8 @@ describe("Quest 0.1 tracker adapter", () => {
     });
     const create = calls.find((args) => args[1] === "create") ?? [];
     const edit = calls.find((args) => args[1] === "edit") ?? [];
-    expect(create).toEqual(expect.arrayContaining(["--actor", "lore", "--actor-kind", "human", "--milestone", "M2"]));
+    expect(create).toEqual(expect.arrayContaining(["--actor", "lore", "--actor-kind", "human"]));
+    expect(create).not.toContain("--milestone");
     expect(edit).toEqual(
       expect.arrayContaining([
         "--actor",
@@ -158,6 +158,18 @@ describe("Quest 0.1 tracker adapter", () => {
     const tracker = adapter(spawn);
     await expect(tracker.createTask({ title: "--json" })).rejects.toBeInstanceOf(LoreError);
     await expect(tracker.editTask("QUEST-2", { addLabels: ["--actor"] })).rejects.toMatchObject({ type: "validation" });
+  });
+
+  test("rejects milestones before spawning because Quest 0.1 exposes no milestone representation", async () => {
+    const spawn: QuestSpawn = async () => {
+      throw new Error("must not spawn");
+    };
+    await expect(adapter(spawn).createTask({ title: "New", milestone: "M2" })).rejects.toMatchObject({
+      type: "validation",
+      message: "Quest 0.1 does not support task milestones",
+      hint: expect.stringContaining("omit the milestone"),
+      input: { milestone: "M2" },
+    });
   });
 
   test("fails loud for missing binaries, incompatible envelope schemas, kinds, and payloads", async () => {
