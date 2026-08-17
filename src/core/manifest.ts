@@ -215,7 +215,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
       {
         name: "migrate-backlog",
         takesValue: false,
-        summary: "Preflight and preserve compatible Backlog task ids while selecting Quest",
+        summary: "Preview and apply Quest's digest-approved Backlog migration before selecting Quest",
       },
       {
         name: "scaffold",

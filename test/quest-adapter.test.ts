@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   bunQuestSpawn,
   createQuestAdapter,
+  createQuestBacklogMigration,
   QUEST_TIMEOUT_ENV_VAR,
   type QuestSpawn,
   type QuestSpawnResult,
@@ -17,6 +18,10 @@ function manifest(): Record<string, unknown> {
       ["manifest", "manifest.registry", false],
       ["version", null, false],
       ["init", "workspace.initialized", true],
+      ["migration backlog preview", "migration.backlog-preview", false],
+      ["migration backlog apply", "migration.backlog-applied", true],
+      ["migration backlog status", "migration.backlog-status", false],
+      ["migration backlog rollback", "migration.backlog-rolled-back", true],
       ["task status-flow", "task.status-flow", false],
       ["task list", "task.list", false],
       ["task view", "task.view", false],
@@ -64,6 +69,48 @@ function adapter(spawn: QuestSpawn, workspaceInitialized = () => true) {
 }
 
 describe("Quest 0.2 tracker adapter", () => {
+  test("consumes Quest's digest-approved Backlog migration lifecycle with actor flags", async () => {
+    const calls: string[][] = [];
+    const preview = {
+      sourceFingerprint: "sha256:source",
+      digest: "sha256:digest",
+      requiresApproval: true as const,
+      mappings: [{ sourceIdentifier: "LCLI-1", sourceFolder: "tasks", targetIdentifier: "T-1", aliases: ["LCLI-1"] }],
+    };
+    const receipt = { ...preview, survivors: [], state: "applied" as const };
+    const spawn: QuestSpawn = async (readonlyArgs) => {
+      const args = [...readonlyArgs];
+      calls.push(args);
+      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.2\n", stderr: "" };
+      if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
+      if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
+      if (args.slice(0, 3).join(" ") === "migration backlog preview") return ok("migration.backlog-preview", preview);
+      if (args.slice(0, 3).join(" ") === "migration backlog apply") return ok("migration.backlog-applied", receipt);
+      throw new Error(`unexpected Quest call: ${args.join(" ")}`);
+    };
+    const migration = createQuestBacklogMigration("/repo", { spawn, workspaceInitialized: () => true });
+    expect(await migration.preview("/source")).toEqual(preview);
+    expect(await migration.apply("/source", "sha256:digest")).toEqual({
+      digest: "sha256:digest",
+      sourceFingerprint: "sha256:source",
+      mappings: preview.mappings,
+      survivors: [],
+      state: "applied",
+    });
+    expect(calls.find((args) => args[2] === "apply")).toEqual(
+      expect.arrayContaining([
+        "--source",
+        "/source",
+        "--digest",
+        "sha256:digest",
+        "--actor",
+        "lore",
+        "--actor-kind",
+        "human",
+      ]),
+    );
+  });
+
   test("refuses an uninitialized workspace before spawning Quest", async () => {
     let calls = 0;
     const tracker = adapter(
@@ -86,7 +133,7 @@ describe("Quest 0.2 tracker adapter", () => {
     const spawn: QuestSpawn = async (readonlyArgs) => {
       const args = [...readonlyArgs];
       calls.push(args);
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.0\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.2\n", stderr: "" };
       if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
       if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
       if (args.join(" ") === "task list --json") return ok("task.list", [task()]);
@@ -104,9 +151,9 @@ describe("Quest 0.2 tracker adapter", () => {
     const detail = await tracker.viewTask("QUEST-2");
     expect(detail?.comments).toEqual([{ author: "Grace", createdAt: "2026-08-17T01:00:00Z", body: "comment" }]);
     expect(detail).toMatchObject({
-      priority: "High",
-      ordinal: 42,
-      labels: ["docs"],
+      priority: null,
+      ordinal: null,
+      labels: ["docs", "lore:migration:priority:High", "lore:migration:ordinal:42"],
       dependencies: ["QUEST-0"],
       documentation: ["docs/story.md"],
       acceptanceCriteria: [{ text: "works", checked: false }],
@@ -151,7 +198,7 @@ describe("Quest 0.2 tracker adapter", () => {
 
   test("maps Quest JSON diagnostics exactly and treats a missing task as null", async () => {
     const spawn: QuestSpawn = async (args) => {
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.0\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.2\n", stderr: "" };
       if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
       if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
       return {
@@ -168,7 +215,7 @@ describe("Quest 0.2 tracker adapter", () => {
     expect(await adapter(spawn).viewTask("QUEST-9")).toBeNull();
     const bad: QuestSpawn = async (args) =>
       args[0] === "--version"
-        ? { exitCode: 0, stdout: "0.2.0\n", stderr: "" }
+        ? { exitCode: 0, stdout: "0.2.2\n", stderr: "" }
         : {
             exitCode: 1,
             stdout: "",
@@ -237,18 +284,18 @@ describe("Quest 0.2 tracker adapter", () => {
     await expect(adapter(async () => Promise.reject(missing)).probe()).rejects.toMatchObject({ type: "not_found" });
     const incompatible: QuestSpawn = async (args) =>
       args[0] === "--version"
-        ? { exitCode: 0, stdout: "0.2.0\n", stderr: "" }
+        ? { exitCode: 0, stdout: "0.2.2\n", stderr: "" }
         : { exitCode: 0, stdout: JSON.stringify({ schemaVersion: 2, kind: "help.manifest", data: {} }), stderr: "" };
     await expect(adapter(incompatible).probe()).rejects.toMatchObject({ type: "drift" });
     const wrongKind: QuestSpawn = async (args) => {
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.0\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.2\n", stderr: "" };
       if (args[0] === "manifest") return ok("manifest.registry", manifest());
       if (args[1] === "status-flow") return ok("task.status-flow", flow());
       return ok("task.view", []);
     };
     await expect(adapter(wrongKind).listTasks()).rejects.toMatchObject({ type: "drift" });
     const malformed: QuestSpawn = async (args) => {
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.0\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.2\n", stderr: "" };
       if (args[0] === "manifest") return ok("manifest.registry", manifest());
       return ok("task.status-flow", { statuses: [] });
     };
@@ -258,11 +305,11 @@ describe("Quest 0.2 tracker adapter", () => {
   test("rejects a manifest with a missing descriptor and malformed live status-flow shape", async () => {
     const incomplete: QuestSpawn = async (args) =>
       args[0] === "--version"
-        ? { exitCode: 0, stdout: "0.2.0\n", stderr: "" }
+        ? { exitCode: 0, stdout: "0.2.2\n", stderr: "" }
         : ok("manifest.registry", { commands: [] });
     await expect(adapter(incomplete).probe()).rejects.toMatchObject({ type: "drift" });
     const badFlow: QuestSpawn = async (args) => {
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.0\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.2\n", stderr: "" };
       if (args[0] === "manifest") return ok("manifest.registry", manifest());
       return ok("task.status-flow", { statuses: ["To Do"], terminalStatuses: ["Done"] });
     };

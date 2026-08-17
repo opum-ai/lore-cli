@@ -731,6 +731,13 @@ describe("lore init — idempotent re-run with flags (AC#3)", () => {
 });
 
 describe("lore init — legacy zero-config tracker boundary", () => {
+  const migrationResult = {
+    digest: "sha256:reviewed",
+    sourceFingerprint: "sha256:source",
+    mappings: [{ sourceIdentifier: "LCLI-1", sourceFolder: "tasks", targetIdentifier: "T-1", aliases: ["LCLI-1"] }],
+    survivors: [],
+    state: "applied" as const,
+  };
   test("refuses a Quest switch without the explicit migration flag and names both safe commands", () => {
     legacyBundle();
     const error = expectError("validation", () =>
@@ -746,9 +753,9 @@ describe("lore init — legacy zero-config tracker boundary", () => {
     legacyBundle();
     const { result } = await init({
       args: ["--tracker", "quest", "--migrate-backlog"],
-      migrateBacklog: async () => ({ created: ["LCLI-1"], reused: ["LCLI-2"] }),
+      migrateBacklog: async () => migrationResult,
     });
-    expect(result.migration).toEqual({ created: ["LCLI-1"], reused: ["LCLI-2"] });
+    expect(result.migration).toEqual(migrationResult);
     expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
   });
 
@@ -773,7 +780,7 @@ describe("lore init — legacy zero-config tracker boundary", () => {
       args: ["--tracker", "backlog"],
       migrateBacklog: async () => {
         migrated = true;
-        return { created: [], reused: [] };
+        return migrationResult;
       },
     });
     expect(migrated).toBe(false);
@@ -815,10 +822,10 @@ describe("lore init — legacy zero-config tracker boundary", () => {
       stderrIsTTY: true,
       prompter: scriptedPrompter({ tracker: "migrate", agents: false, site: "none", obsidian: false }),
       adapter: fakeAdapter([], { probe: "ok" }),
-      migrateBacklog: async () => ({ created: ["LCLI-1"], reused: [] }),
+      migrateBacklog: async () => migrationResult,
       agentAvailability: () => ({ claude: false, codex: false }),
     });
-    expect(result.migration).toEqual({ created: ["LCLI-1"], reused: [] });
+    expect(result.migration).toEqual(migrationResult);
     expect(result.tracker).toBe("quest");
     expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
   });

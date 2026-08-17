@@ -63,13 +63,18 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as readline from "node:readline/promises";
 import type { BacklogAdapter } from "../adapters/backlog";
+import { createQuestBacklogMigration } from "../adapters/quest";
 import { createTrackerAdapter } from "../adapters/tracker";
 import { CONFIG_REL_PATH, loadConfig, TRACKER_BACKENDS, type TrackerBackend } from "../config";
 import { loadProfile } from "../core/profile";
 import { buildScaffold } from "../core/scaffold";
 import { ANSI, EXIT_OK, LoreError, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { migrateBacklogTasksToQuest, type TrackerMigrationResult } from "../tracker-migration";
+import {
+  clearPendingQuestMigration,
+  migrateBacklogTasksToQuest,
+  type TrackerMigrationResult,
+} from "../tracker-migration";
 import { resolveTrackerSelection, type TrackerSelection } from "../tracker-selection";
 import { type AgentsResult, applyAgentsBridge, bridgeActionColor, renderTrailer } from "./agents";
 import { optionValues, parseCommandArgs, singleOptionValue, usage } from "./args";
@@ -109,7 +114,7 @@ export interface InitResult {
   backlog?: InitBacklogCheck;
   /** Explicit tracker choice made by the wizard or `--tracker`; absent on the legacy bare path. */
   tracker?: TrackerBackend;
-  /** Backlog-to-Quest task copy outcome, present only after an explicit successful migration. */
+  /** Quest-owned Backlog migration receipt, present only after explicit verified application. */
   migration?: TrackerMigrationResult;
 }
 
@@ -175,7 +180,7 @@ export interface InitOptions {
   prompter?: InitPrompter;
   /** The Backlog adapter for the coupling capability check; defaults to the real `backlog` binary on PATH. */
   adapter?: BacklogAdapter;
-  /** Explicit migration seam; defaults to the real Backlog and Quest adapters. */
+  /** Explicit Quest migration seam; defaults to Quest's public receipt lifecycle. */
   migrateBacklog?: () => Promise<TrackerMigrationResult>;
   /** Injectable executable discovery for the interactive agent choices. */
   agentAvailability?: () => AgentAvailability;
@@ -275,6 +280,7 @@ export function runInit(options: InitOptions): number | Promise<number> {
   if (parsed.migrateBacklog) {
     return runBacklogMigration(options).then((migration) => {
       persistTrackerBackend(options.root, "quest");
+      clearPendingQuestMigration(options.root);
       return finishNonInteractive(options, parsed, base, clock, migration);
     });
   }
@@ -343,9 +349,7 @@ function finishNonInteractive(
 
 function runBacklogMigration(options: InitOptions): Promise<TrackerMigrationResult> {
   if (options.migrateBacklog !== undefined) return options.migrateBacklog();
-  const source = createTrackerAdapter(options.root, { backend: "backlog" });
-  const destination = createTrackerAdapter(options.root, { backend: "quest" });
-  return migrateBacklogTasksToQuest(source, destination);
+  return migrateBacklogTasksToQuest(createQuestBacklogMigration(options.root), options.root);
 }
 
 /**
@@ -409,6 +413,7 @@ async function runInteractiveWizard(
 
   const migration = migrateBacklog ? await runBacklogMigration(options) : undefined;
   persistTrackerBackend(options.root, tracker);
+  if (migration !== undefined) clearPendingQuestMigration(options.root);
 
   const clock = options.clock ?? (() => new Date());
   const agents = wantAgents ? applyAgentsBridge({ root: options.root, force: false, check: false }) : undefined;
@@ -721,7 +726,9 @@ function renderPretty(data: InitResult, opts: { color: boolean }): string {
     lines.push(`tracker: ${data.tracker}`);
   }
   if (data.migration !== undefined) {
-    lines.push(`migration: ${data.migration.created.length} created, ${data.migration.reused.length} reused`);
+    lines.push(
+      `migration: ${data.migration.state}, ${data.migration.mappings.length} mapped (${data.migration.digest})`,
+    );
   }
   if (data.interactive) {
     lines.push("Run `lore instructions` for the canonical agent loop.");
@@ -765,7 +772,9 @@ function renderPlain(data: InitResult): string {
     lines.push(`tracker ${data.tracker}`);
   }
   if (data.migration !== undefined) {
-    lines.push(`migration created=${data.migration.created.length} reused=${data.migration.reused.length}`);
+    lines.push(
+      `migration state=${data.migration.state} mappings=${data.migration.mappings.length} digest=${data.migration.digest}`,
+    );
   }
   return lines.join("\n");
 }

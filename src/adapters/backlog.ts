@@ -577,6 +577,8 @@ export interface BacklogComment {
 export interface BacklogTask {
   /** Display-cased identity (`"LORE-21"`). Identity only — never derive a filename from it (§6). */
   readonly id: string;
+  /** Backend-native alternate stable identifiers, if its public contract exposes them. */
+  readonly aliases?: readonly string[];
   readonly title: string;
   /** The raw configured status string, no presentation icon (§2). */
   readonly status: string;

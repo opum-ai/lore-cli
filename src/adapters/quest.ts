@@ -9,15 +9,17 @@ import type { TrackerAdapter, TrackerCapability } from "./tracker";
 export const QUEST_SCHEMA_VERSION = 1;
 export const QUEST_TIMEOUT_ENV_VAR = "LORE_QUEST_TIMEOUT_MS";
 export const DEFAULT_QUEST_TIMEOUT_MS = 30_000;
-const REQUIRED_VERSION = "0.2.0";
+const REQUIRED_VERSION = "0.2.2";
 const ACTOR_FLAGS = ["--actor", "lore", "--actor-kind", "human"] as const;
-const INSTALL_HINT = "install the authorized Quest 0.2.0 RC and ensure the `quest` binary is on PATH";
-const MIGRATED_PRIORITY_LABEL = "lore:migration:priority:";
-const MIGRATED_ORDINAL_LABEL = "lore:migration:ordinal:";
+const INSTALL_HINT = "install @opum-ai/quest@0.2.2 and ensure the `quest` binary is on PATH";
 const REQUIRED_COMMANDS = [
   ["manifest", "manifest.registry", false],
   ["version", null, false],
   ["init", "workspace.initialized", true],
+  ["migration backlog preview", "migration.backlog-preview", false],
+  ["migration backlog apply", "migration.backlog-applied", true],
+  ["migration backlog status", "migration.backlog-status", false],
+  ["migration backlog rollback", "migration.backlog-rolled-back", true],
   ["task status-flow", "task.status-flow", false],
   ["task list", "task.list", false],
   ["task view", "task.view", false],
@@ -40,12 +42,30 @@ export interface QuestAdapterOptions {
   readonly workspaceInitialized?: QuestWorkspaceInitialized;
 }
 
-/** Preserve Backlog ordering metadata in Quest labels until Quest exposes native write flags. */
-export function questMigrationLabels(priority: string | null, ordinal: number | null): string[] {
-  return [
-    ...(priority === null ? [] : [`${MIGRATED_PRIORITY_LABEL}${encodeURIComponent(priority)}`]),
-    ...(ordinal === null ? [] : [`${MIGRATED_ORDINAL_LABEL}${ordinal}`]),
-  ];
+export interface QuestMigrationMapping {
+  readonly sourceIdentifier: string;
+  readonly sourceFolder: string;
+  readonly targetIdentifier: string;
+  readonly aliases: readonly string[];
+}
+export interface QuestMigrationPreview {
+  readonly sourceFingerprint: string;
+  readonly digest: string;
+  readonly mappings: readonly QuestMigrationMapping[];
+  readonly requiresApproval: true;
+}
+export interface QuestMigrationReceipt {
+  readonly digest: string;
+  readonly sourceFingerprint: string;
+  readonly mappings: readonly QuestMigrationMapping[];
+  readonly survivors: readonly string[];
+  readonly state: "applying" | "applied" | "failed" | "rolled-back";
+}
+export interface QuestBacklogMigration {
+  preview(source: string): Promise<QuestMigrationPreview>;
+  apply(source: string, digest: string): Promise<QuestMigrationReceipt>;
+  status(digest: string): Promise<QuestMigrationReceipt>;
+  rollback(digest: string): Promise<QuestMigrationReceipt>;
 }
 
 function timeout(): number {
@@ -134,7 +154,7 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
     assertWorkspace();
     const versionResult = await invoke(["--version"], "--version");
     const version = versionResult.stdout.trim();
-    if (versionResult.exitCode !== 0 || !/^0\.2\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version))
+    if (versionResult.exitCode !== 0 || version !== REQUIRED_VERSION)
       throw new LoreError(
         "validation",
         "`quest --version` did not return a supported Quest 0.2 version",
@@ -216,6 +236,81 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
       for (const label of patch.removeLabels ?? []) args.push("--remove-label", safe(label));
       for (const doc of patch.doc ?? []) args.push("--doc", safe(doc));
       await data([...args, "--json"], "task edit", "task.updated");
+    },
+  };
+}
+
+/** Public Quest Backlog migration lifecycle; no Quest storage is read by Lore. */
+export function createQuestBacklogMigration(root: string, options: QuestAdapterOptions = {}): QuestBacklogMigration {
+  const binary = options.binary ?? "quest";
+  const spawn = options.spawn ?? bunQuestSpawn(root, binary);
+  const probe = createQuestAdapter(root, options).probe;
+  async function data(args: readonly string[], expectedKind: string): Promise<unknown> {
+    await probe();
+    let result: QuestSpawnResult;
+    try {
+      result = await spawn(args);
+    } catch (cause) {
+      const code = errnoCode(cause);
+      if (code === "ENOENT")
+        throw new LoreError("not_found", "the `quest` CLI is not installed or not on PATH", INSTALL_HINT, { binary });
+      throw cause;
+    }
+    if (result.exitCode !== 0) throw diagnostic(result, args.join(" "));
+    let envelope: unknown;
+    try {
+      envelope = JSON.parse(result.stdout);
+    } catch {
+      throw drift(args.join(" "), "did not print JSON");
+    }
+    if (
+      !record(envelope) ||
+      envelope.schemaVersion !== QUEST_SCHEMA_VERSION ||
+      envelope.kind !== expectedKind ||
+      !Object.hasOwn(envelope, "data")
+    )
+      throw drift(args.join(" "), `returned an incompatible ${JSON.stringify(expectedKind)} envelope`);
+    return envelope.data;
+  }
+  return {
+    async preview(source) {
+      return migrationPreview(
+        await data(
+          ["migration", "backlog", "preview", "--source", safe(source), "--json"],
+          "migration.backlog-preview",
+        ),
+      );
+    },
+    async apply(source, digest) {
+      return migrationReceipt(
+        await data(
+          [
+            "migration",
+            "backlog",
+            "apply",
+            "--source",
+            safe(source),
+            "--digest",
+            safe(digest),
+            ...ACTOR_FLAGS,
+            "--json",
+          ],
+          "migration.backlog-applied",
+        ),
+      );
+    },
+    async status(digest) {
+      return migrationReceipt(
+        await data(["migration", "backlog", "status", "--digest", safe(digest), "--json"], "migration.backlog-status"),
+      );
+    },
+    async rollback(digest) {
+      return migrationReceipt(
+        await data(
+          ["migration", "backlog", "rollback", "--digest", safe(digest), ...ACTOR_FLAGS, "--json"],
+          "migration.backlog-rolled-back",
+        ),
+      );
     },
   };
 }
@@ -322,6 +417,49 @@ function verifyManifest(value: unknown): void {
       throw drift("manifest --json", `did not contain the required ${JSON.stringify(name)} command descriptor`);
   }
 }
+function migrationMappings(value: unknown): QuestMigrationMapping[] {
+  if (!Array.isArray(value))
+    throw new LoreError("drift", "Quest returned invalid migration mappings", `Quest ${REQUIRED_VERSION} is required`);
+  return value.map((item) => {
+    if (!record(item))
+      throw new LoreError("drift", "Quest returned invalid migration mapping", `Quest ${REQUIRED_VERSION} is required`);
+    return {
+      sourceIdentifier: string(item.sourceIdentifier, "migration source identifier"),
+      sourceFolder: string(item.sourceFolder, "migration source folder"),
+      targetIdentifier: string(item.targetIdentifier, "migration target identifier"),
+      aliases: strings(item.aliases, "migration aliases"),
+    };
+  });
+}
+function migrationPreview(value: unknown): QuestMigrationPreview {
+  if (!record(value) || value.requiresApproval !== true)
+    throw new LoreError(
+      "drift",
+      "Quest returned invalid Backlog migration preview",
+      `Quest ${REQUIRED_VERSION} is required`,
+    );
+  return {
+    sourceFingerprint: string(value.sourceFingerprint, "migration source fingerprint"),
+    digest: string(value.digest, "migration digest"),
+    mappings: migrationMappings(value.mappings),
+    requiresApproval: true,
+  };
+}
+function migrationReceipt(value: unknown): QuestMigrationReceipt {
+  if (!record(value) || !["applying", "applied", "failed", "rolled-back"].includes(value.state as string))
+    throw new LoreError(
+      "drift",
+      "Quest returned invalid Backlog migration receipt",
+      `Quest ${REQUIRED_VERSION} is required`,
+    );
+  return {
+    sourceFingerprint: string(value.sourceFingerprint, "migration source fingerprint"),
+    digest: string(value.digest, "migration digest"),
+    mappings: migrationMappings(value.mappings),
+    survivors: strings(value.survivors, "migration survivors"),
+    state: value.state as QuestMigrationReceipt["state"],
+  };
+}
 function criteria(v: unknown, name: string): BacklogCriterion[] {
   if (!Array.isArray(v) || v.some((x) => typeof x !== "string"))
     throw new LoreError("drift", `Quest returned invalid ${name}`, `Quest ${REQUIRED_VERSION} is required`);
@@ -342,27 +480,15 @@ function lineBlock(v: unknown, name: string): string | null {
 }
 function summary(value: unknown): BacklogTask {
   const task = record(value) ? value : {};
-  const migration = migrationMetadata(strings(task.labels ?? [], "labels"));
-  if (task.priority !== null && task.priority !== undefined && migration.priority !== null)
-    throw new LoreError(
-      "drift",
-      "Quest returned both native and migrated task priority",
-      `Quest ${REQUIRED_VERSION} is required`,
-    );
-  if (task.ordinal !== null && task.ordinal !== undefined && migration.ordinal !== null)
-    throw new LoreError(
-      "drift",
-      "Quest returned both native and migrated task ordinal",
-      `Quest ${REQUIRED_VERSION} is required`,
-    );
   return {
     id: string(task.id, "task id"),
+    aliases: strings(task.aliases ?? [], "task aliases"),
     title: string(task.title, "task title"),
     status: string(task.status, "task status"),
-    priority: nullableString(task.priority, "task priority") ?? migration.priority,
+    priority: nullableString(task.priority, "task priority"),
     ordinal:
       task.ordinal === null || task.ordinal === undefined
-        ? migration.ordinal
+        ? null
         : typeof task.ordinal === "number"
           ? task.ordinal
           : (() => {
@@ -373,41 +499,10 @@ function summary(value: unknown): BacklogTask {
               );
             })(),
     assignees: strings(task.assignees ?? [], "assignees"),
-    labels: migration.labels,
+    labels: strings(task.labels ?? [], "labels"),
     milestone: nullableString(task.milestone, "milestone"),
     parentTaskId: nullableString(task.parentTaskId, "parent task id"),
   };
-}
-function migrationMetadata(labels: readonly string[]): {
-  priority: string | null;
-  ordinal: number | null;
-  labels: string[];
-} {
-  let priority: string | null = null;
-  let ordinal: number | null = null;
-  const visible: string[] = [];
-  for (const label of labels) {
-    if (label.startsWith(MIGRATED_PRIORITY_LABEL)) {
-      if (priority !== null) throw new LoreError("drift", "Quest returned duplicate migrated priority labels");
-      try {
-        priority = decodeURIComponent(label.slice(MIGRATED_PRIORITY_LABEL.length));
-      } catch {
-        throw new LoreError("drift", "Quest returned an invalid migrated priority label");
-      }
-      if (!priority) throw new LoreError("drift", "Quest returned an empty migrated priority label");
-      continue;
-    }
-    if (label.startsWith(MIGRATED_ORDINAL_LABEL)) {
-      if (ordinal !== null) throw new LoreError("drift", "Quest returned duplicate migrated ordinal labels");
-      const raw = label.slice(MIGRATED_ORDINAL_LABEL.length);
-      if (!raw) throw new LoreError("drift", "Quest returned an empty migrated ordinal label");
-      ordinal = Number(raw);
-      if (!Number.isFinite(ordinal)) throw new LoreError("drift", "Quest returned an invalid migrated ordinal label");
-      continue;
-    }
-    visible.push(label);
-  }
-  return { priority, ordinal, labels: visible };
 }
 function list(value: unknown, opts?: ListTasksOptions): BacklogTask[] {
   if (!Array.isArray(value))

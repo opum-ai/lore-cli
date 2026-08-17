@@ -577,11 +577,12 @@ export async function verifiedViewTask(adapter: BacklogAdapter, taskId: string):
   if (detail === null) {
     return null;
   }
-  if (detail.id.toLowerCase() !== taskId.toLowerCase()) {
+  const resolvesAlias = detail.aliases?.some((alias) => alias.toLowerCase() === taskId.toLowerCase()) ?? false;
+  if (detail.id.toLowerCase() !== taskId.toLowerCase() && !resolvesAlias) {
     throw new LoreError(
       "not_found",
       `task "${taskId}" resolved to a different task ("${detail.id}") — refusing to use it`,
-      "this points at a Backlog adapter bug or an id collision, not a missing task — verify the task id with `backlog task view` and report the mismatch",
+      "this points at a tracker adapter bug or an id collision, not a missing task — verify the task id with the configured tracker and report the mismatch",
       { taskId, resolvedId: detail.id },
     );
   }
