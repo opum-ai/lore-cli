@@ -1,5 +1,7 @@
-/** Quest 0.1 tracker adapter. Quest owns task storage; Lore consumes its pinned JSON CLI contract. */
+/** Quest 0.2 tracker adapter. Quest owns task storage; Lore consumes its pinned JSON CLI contract. */
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { type ErrorType, errnoCode, LoreError } from "../errors";
 import type { BacklogComment, BacklogCriterion, BacklogTask, BacklogTaskDetail, ListTasksOptions } from "./backlog";
 import type { TrackerAdapter, TrackerCapability } from "./tracker";
@@ -7,12 +9,13 @@ import type { TrackerAdapter, TrackerCapability } from "./tracker";
 export const QUEST_SCHEMA_VERSION = 1;
 export const QUEST_TIMEOUT_ENV_VAR = "LORE_QUEST_TIMEOUT_MS";
 export const DEFAULT_QUEST_TIMEOUT_MS = 30_000;
-const REQUIRED_VERSION = "0.1.0";
+const REQUIRED_VERSION = "0.2.0";
 const ACTOR_FLAGS = ["--actor", "lore", "--actor-kind", "human"] as const;
-const INSTALL_HINT = "install @opum-ai/quest@0.1.0 and ensure the `quest` binary is on PATH";
+const INSTALL_HINT = "install @opum-ai/quest@0.2.0 and ensure the `quest` binary is on PATH";
 const REQUIRED_COMMANDS = [
   ["manifest", "manifest.registry", false],
   ["version", null, false],
+  ["init", "workspace.initialized", true],
   ["task status-flow", "task.status-flow", false],
   ["task list", "task.list", false],
   ["task view", "task.view", false],
@@ -27,9 +30,12 @@ export interface QuestSpawnResult {
   readonly exitCode: number;
 }
 export type QuestSpawn = (args: readonly string[]) => Promise<QuestSpawnResult>;
+export type QuestWorkspaceInitialized = (root: string) => boolean;
 export interface QuestAdapterOptions {
   readonly binary?: string;
   readonly spawn?: QuestSpawn;
+  /** Injectable workspace gate; production requires Quest's durable workspace marker. */
+  readonly workspaceInitialized?: QuestWorkspaceInitialized;
 }
 
 function timeout(): number {
@@ -71,7 +77,16 @@ export function bunQuestSpawn(root: string, binary = "quest"): QuestSpawn {
 export function createQuestAdapter(root: string, options: QuestAdapterOptions = {}): TrackerAdapter {
   const binary = options.binary ?? "quest";
   const spawn = options.spawn ?? bunQuestSpawn(root, binary);
+  const workspaceInitialized =
+    options.workspaceInitialized ?? ((workspaceRoot) => existsSync(join(workspaceRoot, ".quest", "workspace.toml")));
   let capability: Promise<TrackerCapability> | undefined;
+
+  function assertWorkspace(): void {
+    if (!workspaceInitialized(root))
+      throw new LoreError("validation", "Quest workspace is not initialized", "run `quest init`", {
+        workspace: join(root, ".quest", "workspace.toml"),
+      });
+  }
 
   async function invoke(args: readonly string[], _operation: string): Promise<QuestSpawnResult> {
     try {
@@ -106,12 +121,13 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
     return envelope;
   }
   async function probe(): Promise<TrackerCapability> {
+    assertWorkspace();
     const versionResult = await invoke(["--version"], "--version");
     const version = versionResult.stdout.trim();
-    if (versionResult.exitCode !== 0 || !/^0\.1\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version))
+    if (versionResult.exitCode !== 0 || !/^0\.2\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version))
       throw new LoreError(
         "validation",
-        "`quest --version` did not return a supported Quest 0.1 version",
+        "`quest --version` did not return a supported Quest 0.2 version",
         `Quest ${REQUIRED_VERSION} is required`,
       );
     const manifest = await run(["manifest", "--json"], "manifest --json");
@@ -162,7 +178,7 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
       if (input.milestone !== undefined)
         throw new LoreError(
           "validation",
-          "Quest 0.1 does not support task milestones",
+          "Quest 0.2 does not support task milestones",
           "omit the milestone or select a tracker backend that supports milestones",
           { milestone: input.milestone },
         );
