@@ -1,11 +1,11 @@
 ---
 id: LCLI-338
 title: Prepare Lore CLI 0.3.2 patch release metadata
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-17 00:30'
-updated_date: '2026-08-17 03:46'
+updated_date: '2026-08-17 05:26'
 labels:
   - release
   - patch
@@ -27,8 +27,8 @@ Prepare the successor patch release for LCLI-337. Version v0.3.1 has an immutabl
 <!-- AC:BEGIN -->
 - [x] #1 All seven package manifests and root exact optional dependency pins use 0.3.2.
 - [x] #2 CHANGELOG and release-truth documentation explain the packaged Backlog isolation fix and record that v0.3.1 was never published.
-- [ ] #3 Release candidate passes local and CI qualification, including all matching-host package qualifications with the protected environment sentinel.
-- [ ] #4 Only a publish=false release workflow is dispatched; interactive publication uses its exact generated artifacts after owner review.
+- [x] #3 Release candidate passes local and CI qualification, including all matching-host package qualifications with the protected environment sentinel.
+- [x] #4 Only a publish=false release workflow is dispatched; interactive publication uses its exact generated artifacts after owner review.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -48,4 +48,6 @@ Prepare the successor patch release for LCLI-337. Version v0.3.1 has an immutabl
 2026-08-17: refreshed only the small and large canonical-export baselines for the 0.3.2 version-bearing projection. Source-inventory and task-snapshot digests remain unchanged; local small smoke and the focused fixture/workflow suite pass.
 
 2026-08-17: refreshed the deterministic Ladybug report-contract digest that contains the fixture’s version-bearing canonical export hash. Focused contract test and the full Bun suite pass locally.
+
+2026-08-17: v0.3.2 tagged at main commit 35d06697effe68eda7da9f104a0871a19f2789bc. Release workflow 31995089553 completed successfully with publish=false: all six matching-host package qualifications, Ladybug evidence, and package/install-sanity passed. Owner manually published the seven qualified npm artifacts; registry verification confirms @opum-ai/lore and all six platform packages at 0.3.2.
 <!-- SECTION:NOTES:END -->
