@@ -132,13 +132,16 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
       throw drift(operation, `returned kind ${JSON.stringify(envelope.kind)}, expected ${JSON.stringify(kind)}`);
     return envelope.data;
   }
+  async function listTasks(opts?: ListTasksOptions): Promise<BacklogTask[]> {
+    return list(await data(["task", "list", "--json"], "task list --json", "task.list"), opts);
+  }
   return {
     probe: ensure,
     async statusFlow() {
       return statusFlow(await data(["task", "status-flow", "--json"], "task status-flow --json", "task.status-flow"));
     },
     async listTasks(opts) {
-      return list(await data(["task", "list", "--json"], "task list --json", "task.list"), opts);
+      return listTasks(opts);
     },
     async viewTask(id) {
       const taskId = safe(id);
@@ -150,7 +153,7 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
       }
     },
     async searchByLabel(label) {
-      return this.listTasks?.({ labels: [safe(label)] }) ?? [];
+      return listTasks({ labels: [safe(label)] });
     },
     async searchTasks(query) {
       return list(await data(["search", safe(query), "--json"], "search --json", "task.search"));

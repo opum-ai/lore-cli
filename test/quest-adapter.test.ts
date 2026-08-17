@@ -81,6 +81,8 @@ describe("Quest 0.1 tracker adapter", () => {
     const tracker = adapter(spawn);
     expect(await tracker.statusFlow()).toEqual(["To Do", "In Progress", "Done"]);
     expect(await tracker.listTasks({ status: "In Progress", labels: ["docs"] })).toHaveLength(1);
+    const { searchByLabel } = tracker;
+    expect(await searchByLabel("docs")).toHaveLength(1);
     const detail = await tracker.viewTask("QUEST-2");
     expect(detail?.comments).toEqual([{ author: "Grace", createdAt: "2026-08-17T01:00:00Z", body: "comment" }]);
     expect(detail).toMatchObject({
