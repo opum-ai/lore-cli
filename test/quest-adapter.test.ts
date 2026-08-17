@@ -5,14 +5,29 @@ import { LoreError } from "../src/errors";
 function ok(kind: string, data: unknown): QuestSpawnResult {
   return { exitCode: 0, stdout: JSON.stringify({ schemaVersion: 1, kind, data }), stderr: "" };
 }
+function manifest(): Record<string, unknown> {
+  return {
+    commands: [
+      ["manifest", "manifest.registry", false],
+      ["version", "version", false],
+      ["task status-flow", "task.status-flow", false],
+      ["task list", "task.list", false],
+      ["task view", "task.view", false],
+      ["search", "task.search", false],
+      ["task create", "task.created", true],
+      ["task edit", "task.updated", true],
+    ].map(([name, kind, mutates]) => ({ name, schemaVersion: 1, kind, mutates })),
+  };
+}
+function flow() {
+  return { statuses: ["To Do", "In Progress", "Done"], terminalStatuses: ["Done"] };
+}
 
 function task(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: "QUEST-2",
     title: "Coupled task",
     status: "In Progress",
-    priority: "High",
-    ordinal: 4,
     assignees: ["Ada"],
     labels: ["docs"],
     milestone: "M1",
@@ -29,8 +44,8 @@ function task(overrides: Record<string, unknown> = {}): Record<string, unknown> 
     acceptanceCriteria: [{ text: "works", checked: true }],
     definitionOfDone: [{ text: "ships", checked: false }],
     description: "**Markdown**",
-    implementationPlan: "plan",
-    implementationNotes: "notes",
+    plan: ["plan", "second step"],
+    implementationNotes: ["notes"],
     finalSummary: "done",
     comments: [{ author: "Grace", createdAt: "2026-08-17T01:00:00Z", body: "comment" }],
     ...overrides,
@@ -48,12 +63,11 @@ describe("Quest 0.1 tracker adapter", () => {
       const args = [...readonlyArgs];
       calls.push(args);
       if (args[0] === "--version") return { exitCode: 0, stdout: "0.1.0\n", stderr: "" };
-      if (args.join(" ") === "manifest --json")
-        return ok("help.manifest", { commands: ["task list", "task view", "task status-flow"] });
-      if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", ["To Do", "In Progress", "Done"]);
+      if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
+      if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
       if (args.join(" ") === "task list --json") return ok("task.list", [task()]);
       if (args[0] === "task" && args[1] === "view") return ok("task.view", task());
-      if (args[0] === "search") return ok("search.results", [task()]);
+      if (args[0] === "search") return ok("task.search", [task()]);
       if (args[0] === "task" && args[1] === "create") return ok("task.created", { id: "QUEST-4" });
       if (args[0] === "task" && args[1] === "edit") return ok("task.updated", { id: "QUEST-2" });
       throw new Error(`unexpected quest call: ${args.join(" ")}`);
@@ -67,7 +81,7 @@ describe("Quest 0.1 tracker adapter", () => {
       dependencies: ["QUEST-0"],
       documentation: ["docs/story.md"],
       acceptanceCriteria: [{ text: "works", checked: true }],
-      implementationPlan: "plan",
+      implementationPlan: "plan\nsecond step",
     });
     expect((await tracker.searchTasks("coupled"))[0]?.id).toBe("QUEST-2");
     expect(
@@ -107,8 +121,8 @@ describe("Quest 0.1 tracker adapter", () => {
   test("maps Quest JSON diagnostics exactly and treats a missing task as null", async () => {
     const spawn: QuestSpawn = async (args) => {
       if (args[0] === "--version") return { exitCode: 0, stdout: "0.1.0\n", stderr: "" };
-      if (args.join(" ") === "manifest --json") return ok("help.manifest", { commands: [] });
-      if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", ["To Do"]);
+      if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
+      if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
       return {
         exitCode: 3,
         stdout: "",
@@ -156,16 +170,30 @@ describe("Quest 0.1 tracker adapter", () => {
     await expect(adapter(incompatible).probe()).rejects.toMatchObject({ type: "drift" });
     const wrongKind: QuestSpawn = async (args) => {
       if (args[0] === "--version") return { exitCode: 0, stdout: "0.1.0\n", stderr: "" };
-      if (args[0] === "manifest") return ok("help.manifest", { commands: [] });
-      if (args[1] === "status-flow") return ok("task.status-flow", ["To Do"]);
+      if (args[0] === "manifest") return ok("manifest.registry", manifest());
+      if (args[1] === "status-flow") return ok("task.status-flow", flow());
       return ok("task.view", []);
     };
     await expect(adapter(wrongKind).listTasks()).rejects.toMatchObject({ type: "drift" });
     const malformed: QuestSpawn = async (args) => {
       if (args[0] === "--version") return { exitCode: 0, stdout: "0.1.0\n", stderr: "" };
-      if (args[0] === "manifest") return ok("help.manifest", { commands: [] });
+      if (args[0] === "manifest") return ok("manifest.registry", manifest());
       return ok("task.status-flow", { statuses: [] });
     };
     await expect(adapter(malformed).statusFlow()).rejects.toMatchObject({ type: "drift" });
+  });
+
+  test("rejects a manifest with a missing descriptor and malformed live status-flow shape", async () => {
+    const incomplete: QuestSpawn = async (args) =>
+      args[0] === "--version"
+        ? { exitCode: 0, stdout: "0.1.0\n", stderr: "" }
+        : ok("manifest.registry", { commands: [] });
+    await expect(adapter(incomplete).probe()).rejects.toMatchObject({ type: "drift" });
+    const badFlow: QuestSpawn = async (args) => {
+      if (args[0] === "--version") return { exitCode: 0, stdout: "0.1.0\n", stderr: "" };
+      if (args[0] === "manifest") return ok("manifest.registry", manifest());
+      return ok("task.status-flow", { statuses: ["To Do"], terminalStatuses: ["Done"] });
+    };
+    await expect(adapter(badFlow).probe()).rejects.toMatchObject({ type: "drift" });
   });
 });

@@ -9,7 +9,17 @@ export const QUEST_TIMEOUT_ENV_VAR = "LORE_QUEST_TIMEOUT_MS";
 export const DEFAULT_QUEST_TIMEOUT_MS = 30_000;
 const REQUIRED_VERSION = "0.1.0";
 const ACTOR_FLAGS = ["--actor", "lore", "--actor-kind", "human"] as const;
-const INSTALL_HINT = "install @opum-ai/quest@0.1.0 and run `quest init` in this repository";
+const INSTALL_HINT = "install @opum-ai/quest@0.1.0 and ensure the `quest` binary is on PATH";
+const REQUIRED_COMMANDS = [
+  ["manifest", "manifest.registry", false],
+  ["version", "version", false],
+  ["task status-flow", "task.status-flow", false],
+  ["task list", "task.list", false],
+  ["task view", "task.view", false],
+  ["search", "task.search", false],
+  ["task create", "task.created", true],
+  ["task edit", "task.updated", true],
+] as const;
 
 export interface QuestSpawnResult {
   readonly stdout: string;
@@ -105,10 +115,13 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
         `Quest ${REQUIRED_VERSION} is required`,
       );
     const manifest = await run(["manifest", "--json"], "manifest --json");
-    if (!record(manifest.data) || !Array.isArray(manifest.data.commands))
-      throw drift("manifest --json", "did not contain a commands array");
+    if (manifest.kind !== "manifest.registry")
+      throw drift("manifest --json", `returned kind ${JSON.stringify(manifest.kind)}, expected "manifest.registry"`);
+    verifyManifest(manifest.data);
     const flow = await run(["task", "status-flow", "--json"], "task status-flow --json");
-    strings(flow.data, "task status-flow statuses");
+    if (flow.kind !== "task.status-flow")
+      throw drift("task status-flow --json", `returned kind ${JSON.stringify(flow.kind)}, expected "task.status-flow"`);
+    statusFlow(flow.data);
     return { version, schemaVersion: QUEST_SCHEMA_VERSION };
   }
   const ensure = () => (capability ??= probe());
@@ -122,10 +135,7 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
   return {
     probe: ensure,
     async statusFlow() {
-      return strings(
-        await data(["task", "status-flow", "--json"], "task status-flow --json", "task.status-flow"),
-        "task status-flow statuses",
-      );
+      return statusFlow(await data(["task", "status-flow", "--json"], "task status-flow --json", "task.status-flow"));
     },
     async listTasks(opts) {
       return list(await data(["task", "list", "--json"], "task list --json", "task.list"), opts);
@@ -143,7 +153,7 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
       return this.listTasks?.({ labels: [safe(label)] }) ?? [];
     },
     async searchTasks(query) {
-      return list(await data(["search", safe(query), "--json"], "search --json", "search.results"));
+      return list(await data(["search", safe(query), "--json"], "search --json", "task.search"));
     },
     async createTask(input) {
       const args = ["task", "create", safe(input.title), ...ACTOR_FLAGS];
@@ -182,10 +192,15 @@ function diagnostic(result: QuestSpawnResult, operation: string): LoreError {
     /* Quest also permits human diagnostics. */
   }
   if (/not initialized|workspace/i.test(text))
-    return new LoreError("validation", `Quest workspace is not initialized: ${text}`, "run `quest init`", {
-      operation,
-      exitCode: result.exitCode,
-    });
+    return new LoreError(
+      "validation",
+      `Quest workspace is not available: ${text}`,
+      "inspect the Quest workspace configuration",
+      {
+        operation,
+        exitCode: result.exitCode,
+      },
+    );
   return new LoreError(
     /not[_ ]found/i.test(text) ? "not_found" : "validation",
     `\`quest ${operation}\` failed: ${text || `Quest exited ${result.exitCode}`}`,
@@ -237,6 +252,33 @@ function strings(v: unknown, name: string): string[] {
     throw new LoreError("drift", `Quest returned invalid ${name}`, `Quest ${REQUIRED_VERSION} is required`);
   return [...v];
 }
+function statusFlow(value: unknown): string[] {
+  if (!record(value))
+    throw new LoreError("drift", "Quest returned invalid task status flow", `Quest ${REQUIRED_VERSION} is required`);
+  const statuses = strings(value.statuses, "task status-flow statuses");
+  const terminalStatuses = strings(value.terminalStatuses, "task status-flow terminalStatuses");
+  if (terminalStatuses.some((status) => !statuses.includes(status)))
+    throw new LoreError(
+      "drift",
+      "Quest returned terminal statuses outside its status flow",
+      `Quest ${REQUIRED_VERSION} is required`,
+    );
+  return statuses;
+}
+function verifyManifest(value: unknown): void {
+  if (!record(value) || !Array.isArray(value.commands))
+    throw drift("manifest --json", "did not contain a commands array");
+  for (const [name, kind, mutates] of REQUIRED_COMMANDS) {
+    const command = value.commands.find((candidate) => record(candidate) && candidate.name === name);
+    if (
+      !record(command) ||
+      command.schemaVersion !== QUEST_SCHEMA_VERSION ||
+      command.kind !== kind ||
+      command.mutates !== mutates
+    )
+      throw drift("manifest --json", `did not contain the required ${JSON.stringify(name)} command descriptor`);
+  }
+}
 function criteria(v: unknown, name: string): BacklogCriterion[] {
   if (!Array.isArray(v) || v.some((x) => !record(x) || typeof x.text !== "string" || typeof x.checked !== "boolean"))
     throw new LoreError("drift", `Quest returned invalid ${name}`, `Quest ${REQUIRED_VERSION} is required`);
@@ -250,6 +292,10 @@ function comments(v: unknown): BacklogComment[] {
     createdAt: nullableString(x.createdAt, "comment createdAt"),
     body: x.body as string,
   }));
+}
+function lineBlock(v: unknown, name: string): string | null {
+  if (v === undefined || v === null) return null;
+  return strings(v, name).join("\n") || null;
 }
 function summary(value: unknown): BacklogTask {
   const task = record(value) ? value : {};
@@ -311,8 +357,8 @@ function detail(value: unknown): BacklogTaskDetail {
     acceptanceCriteria: criteria(value.acceptanceCriteria ?? [], "acceptanceCriteria"),
     definitionOfDone: criteria(value.definitionOfDone ?? [], "definitionOfDone"),
     description: nullableString(value.description, "description"),
-    implementationPlan: nullableString(value.implementationPlan, "implementationPlan"),
-    implementationNotes: nullableString(value.implementationNotes, "implementationNotes"),
+    implementationPlan: lineBlock(value.plan, "plan"),
+    implementationNotes: lineBlock(value.implementationNotes, "implementationNotes"),
     finalSummary: nullableString(value.finalSummary, "finalSummary"),
     comments: comments(value.comments ?? []),
   };
