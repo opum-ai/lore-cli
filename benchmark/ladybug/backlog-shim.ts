@@ -5,13 +5,16 @@ import { join } from "node:path";
 import { LADYBUG_BENCHMARK_TASK_SNAPSHOT_REL_PATH, LADYBUG_BENCHMARK_TASK_SNAPSHOT_SCHEMA } from "./fixture-contract";
 
 const args = process.argv.slice(2);
+// Lore intentionally starts Bun-backed Backlog binaries from an empty temporary
+// directory to stop Bun auto-loading a repository's environment files. Real
+// Backlog receives its logical project root through BACKLOG_CWD; mirror that
+// contract here so packaged-launcher qualification exercises the same seam.
+const projectRoot = process.env.BACKLOG_CWD ?? process.cwd();
 
 if (args.length === 1 && args[0] === "--version") {
   process.stdout.write("1.49.0\n");
 } else if (args.length === 3 && args[0] === "task" && args[1] === "list" && args[2] === "--json") {
-  const value: unknown = JSON.parse(
-    readFileSync(join(process.cwd(), LADYBUG_BENCHMARK_TASK_SNAPSHOT_REL_PATH), "utf8"),
-  );
+  const value: unknown = JSON.parse(readFileSync(join(projectRoot, LADYBUG_BENCHMARK_TASK_SNAPSHOT_REL_PATH), "utf8"));
   if (
     typeof value !== "object" ||
     value === null ||
