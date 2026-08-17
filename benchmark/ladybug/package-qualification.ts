@@ -373,6 +373,12 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
     );
     generateLadybugBenchmarkFixture(spec, fixtureRoot);
     await initializeFixtureGitRepository(fixtureRoot);
+    // The installed launcher must exercise the same protected-environment
+    // boundary as a real repository: Bun must never try to load this file
+    // before the Backlog shim receives its logical root through BACKLOG_CWD.
+    const protectedEnvironmentSentinel = join(fixtureRoot, ".env");
+    writeFileSync(protectedEnvironmentSentinel, "LORE_PACKAGE_QUALIFICATION_SENTINEL=protected\n", { mode: 0o600 });
+    if (input.os !== "win32") chmodSync(protectedEnvironmentSentinel, 0o000);
     const smokeEnvironment = await createFixtureBacklogEnvironment(input, scratch);
     const sourceDigestBefore = sourceInventoryDigest(fixtureRoot);
     progress("probing the exact native boundary in a sacrificial child");
