@@ -410,6 +410,12 @@ use `task list`, `task view`, and `search`; writes use `task create` and `task
 edit`, always with an explicit human `lore` actor. Missing binaries, timeouts, typed Quest diagnostics, and
 schema/kind/payload mismatches fail loud; Lore never falls back or dual-writes.
 
+Qualification status (2026-08-17): Lore implements the actor-enforcing QCLI-97.8
+source contract, but the currently installed 0.2.2 native artifact still accepts
+actor-free migration writes and rejects actor flags. Delivery remains blocked
+until a rebuilt installed artifact matches this contract; the prose below
+describes the required, not yet qualified, executable behavior.
+
 Quest has no Backlog task-file path, milestone, reporter, or timestamps in this
 contract, so storage-only fields use backend-neutral values. Native Quest
 priority, ordinal, parent, dependencies, criteria, documentation, comments,

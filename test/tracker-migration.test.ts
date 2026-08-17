@@ -125,4 +125,29 @@ describe("migrateBacklogTasksToQuest", () => {
     );
     expect(resumed).toMatchObject({ digest: "sha256:reviewed", state: "applied" });
   });
+
+  test("reapplies the stored digest when interruption happened before Quest created a receipt", async () => {
+    const store = memoryStore();
+    store.write("/source", preview);
+    const calls: string[][] = [];
+    const resumed = await migrateBacklogTasksToQuest(
+      migration({
+        status: async (digest) => {
+          calls.push(["status", digest]);
+          throw new LoreError("not_found", "migration receipt not found");
+        },
+        apply: async (source, digest) => {
+          calls.push(["apply", source, digest]);
+          return receipt;
+        },
+      }),
+      "/source",
+      store,
+    );
+    expect(calls).toEqual([
+      ["status", "sha256:reviewed"],
+      ["apply", "/source", "sha256:reviewed"],
+    ]);
+    expect(resumed).toMatchObject({ digest: "sha256:reviewed", state: "applied" });
+  });
 });

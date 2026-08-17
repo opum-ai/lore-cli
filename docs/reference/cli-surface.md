@@ -119,6 +119,10 @@ reviewed digest before apply, and persists Quest only after the matching public
 receipt reaches `applied`. Quest keeps its canonical `T-<positive integer>` IDs
 while returning legacy Backlog IDs as stable aliases, so existing Story task
 references continue to resolve without a rewrite.
+The Lore command path targets Quest's actor-enforcing QCLI-97.8 contract, but
+the installed 0.2.2 candidate had not passed that executable gate as of
+2026-08-17; delivery remains blocked until actor-free migration writes are
+denied and the actorful lifecycle passes against the installed native artifact.
 An explicit wizard or `--tracker` choice also writes `backend` under
 `[tracker]` in `.lore/config.toml`.
 

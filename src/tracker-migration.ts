@@ -89,7 +89,16 @@ export async function migrateBacklogTasksToQuest(
 ): Promise<TrackerMigrationResult> {
   const pending = store.read(source);
   if (pending !== undefined) {
-    const receipt = await migration.status(pending.digest);
+    let receipt: QuestMigrationReceipt;
+    try {
+      receipt = await migration.status(pending.digest);
+    } catch (cause) {
+      if (!(cause instanceof LoreError) || cause.type !== "not_found") throw cause;
+      // The process may have stopped (or an older artifact may have rejected the argv) after Lore
+      // durably recorded the preview but before Quest created its receipt. Reapply the SAME reviewed
+      // digest: Quest revalidates the current source fingerprint before its first write.
+      receipt = await migration.apply(source, pending.digest);
+    }
     assertReceipt(pending, receipt);
     return result(receipt);
   }

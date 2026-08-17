@@ -254,10 +254,16 @@ export function createQuestBacklogMigration(root: string, options: QuestAdapterO
     try {
       result = await spawn(args);
     } catch (cause) {
+      if (cause instanceof LoreError) throw cause;
       const code = errnoCode(cause);
       if (code === "ENOENT")
         throw new LoreError("not_found", "the `quest` CLI is not installed or not on PATH", INSTALL_HINT, { binary });
-      throw cause;
+      throw new LoreError(
+        code === "EACCES" || code === "EPERM" ? "denied" : "validation",
+        `could not start \`quest\`${cause instanceof Error ? `: ${cause.message}` : ""}`,
+        "ensure the `quest` binary is executable and on PATH",
+        { binary, code },
+      );
     }
     if (result.exitCode !== 0) throw diagnostic(result, args.join(" "));
     let envelope: unknown;

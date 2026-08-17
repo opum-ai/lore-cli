@@ -121,6 +121,31 @@ describe("Quest 0.2 tracker adapter", () => {
     );
   });
 
+  test("maps migration transport rejections to typed Lore errors after a successful probe", async () => {
+    function failingMigrationSpawn(cause: Error): QuestSpawn {
+      return async (args) => {
+        if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.2\n", stderr: "" };
+        if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
+        if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
+        throw cause;
+      };
+    }
+    const denied = Object.assign(new Error("permission denied"), { code: "EACCES" });
+    await expect(
+      createQuestBacklogMigration("/repo", {
+        spawn: failingMigrationSpawn(denied),
+        workspaceInitialized: () => true,
+      }).preview("/source"),
+    ).rejects.toMatchObject({ type: "denied", input: { binary: "quest", code: "EACCES" } });
+
+    await expect(
+      createQuestBacklogMigration("/repo", {
+        spawn: failingMigrationSpawn(new Error("spawn failed")),
+        workspaceInitialized: () => true,
+      }).preview("/source"),
+    ).rejects.toMatchObject({ type: "validation", message: "could not start `quest`: spawn failed" });
+  });
+
   test("refuses an uninitialized workspace before spawning Quest", async () => {
     let calls = 0;
     const tracker = adapter(
