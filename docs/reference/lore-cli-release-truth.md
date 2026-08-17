@@ -21,10 +21,17 @@ availability claim.
 
 ### Current state
 
-`0.3.1` is a release candidate only. Its seven package manifests and exact
-optional-dependency pins are prepared for qualification, but it is not released
-until a qualified main tag, Release workflow artifact evidence, interactive
-publication, registry verification, and clean-install evidence all exist.
+`0.3.2` is the release candidate for the packaged Backlog-isolation repair.
+Its seven package manifests and exact optional-dependency pins are prepared for
+qualification, but it is not released until a qualified main tag, Release
+workflow artifact evidence, interactive publication, registry verification,
+and clean-install evidence all exist.
+
+`v0.3.1` is an immutable, **unpublished** tag. Its `publish: false` Release
+workflow exposed a matching-host package-qualification failure: the fixture
+Backlog shim did not honor `BACKLOG_CWD` after Lore isolated its physical cwd.
+No `0.3.1` package was published or may be substituted; LCLI-337 fixes that
+qualified-path boundary in the successor `0.3.2` candidate.
 
 As verified on 2026-08-16 UTC, Lore CLI **0.3.0 is released**:
 
