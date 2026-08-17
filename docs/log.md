@@ -163,6 +163,7 @@
 - 2026-08-14T20:24:22-05:00 69ec0bb263d6960d0b8118e2097df31c754c64cf feat: implement Backlog knowledge adoption
 - 2026-08-16T08:28:16-05:00 ce46f0a4d643f93bf7f637933cb476de855520f4 chore: prepare 0.3.0 release
 - 2026-08-16T08:52:37-05:00 da289c199529375c90f220cce6b0aa243c5afa30 docs: refresh release handover log
+- 2026-08-16T09:38:04-05:00 94f0626731988ef3c57d7477c0fde07fccd56484 docs: record Lore CLI 0.3.0 release
 
 ## docs/.obsidian
 
@@ -317,6 +318,7 @@
 - 2026-08-14T16:42:24-05:00 b521f2941b499c5a12dccd12c05342776ede0fda feat: harden autonomous Codex campaign loop
 - 2026-08-14T18:11:58-05:00 6b274c8ea4638ec25cc07001ef675398f6b65f4d docs: specify Backlog knowledge adoption contract
 - 2026-08-14T20:24:22-05:00 69ec0bb263d6960d0b8118e2097df31c754c64cf feat: implement Backlog knowledge adoption
+- 2026-08-16T09:38:04-05:00 94f0626731988ef3c57d7477c0fde07fccd56484 docs: record Lore CLI 0.3.0 release
 
 ## docs/runbooks
 
@@ -468,3 +470,4 @@
 - 2026-08-14T16:42:24-05:00 b521f2941b499c5a12dccd12c05342776ede0fda feat: harden autonomous Codex campaign loop
 - 2026-08-14T16:50:59-05:00 919cca5bb276702969332a4c1af03cb396a3f393 chore: settle LCLI-329 campaign
 - 2026-08-16T08:28:16-05:00 ce46f0a4d643f93bf7f637933cb476de855520f4 chore: prepare 0.3.0 release
+- 2026-08-16T09:38:04-05:00 94f0626731988ef3c57d7477c0fde07fccd56484 docs: record Lore CLI 0.3.0 release

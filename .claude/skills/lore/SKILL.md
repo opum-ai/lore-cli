@@ -1,6 +1,6 @@
 ---
 name: lore
-description: "Author and maintain this repo's OKF documentation bundle (docs/) with the lore CLI. Use whenever reading, writing, linking, moving, or checking docs, so Story/Task coupling, managed blocks, and cross-links stay coherent. Run `lore instructions` for the canonical agent loop and `lore instructions <topic>` for just-in-time detail."
+description: "Author, retrieve, and maintain OKF documentation with the lore CLI, including explicit multi-repository workspaces. Use whenever reading, writing, linking, moving, querying, or checking docs, so Story/Task coupling, managed blocks, provenance, and cross-links stay coherent. Run `lore instructions` for the canonical agent loop and `lore instructions <topic>` for just-in-time detail."
 ---
 
 # lore — OKF documentation CLI
@@ -11,8 +11,9 @@ for authoring and maintaining the OKF bundle under `docs/`. This skill is a thin
 
 ## When to use it
 
-Reach for `lore` — not a plain editor — whenever you read, write, link, move, or verify docs in
-this repo, so Story <-> Task coupling, managed blocks, and cross-links stay coherent.
+Reach for `lore` — not a plain editor — whenever you read, write, link, move, retrieve, or verify
+docs in this repo or an explicitly selected workspace, so Story <-> Task coupling, managed blocks,
+provenance, and cross-links stay coherent.
 
 ## Commit-side-effect preflight
 
@@ -34,9 +35,11 @@ detail with `lore instructions <topic>`:
 - `sync`        reconcile status + managed blocks (`lore sync`)
 - `check`       the CI gate: drift, links, anchors, portability (`lore check`)
 - `validation`  per-file OKF/schema conformance (`lore validate`)
+- `workspace`   multi-repository projection and bounded retrieval (`--workspace`)
 
 ## Commands
 
+- `backlog`       Adopt Backlog knowledge records through a digest-guarded migration lifecycle
 - `init`          Scaffold an OKF bundle; a bare TTY run also wizards the agent bridge/scaffolds/backlog check
 - `new`           Scaffold a typed concept from a template
 - `validate`      Check concept files against OKF + the lore profile (per-file)

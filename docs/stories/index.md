@@ -1,6 +1,7 @@
 # stories
 
 <!-- lore:index:begin -->
+- [Adopt Backlog knowledge through Lore](adopt-backlog-knowledge-through-lore.md)
 - [Build the Lore CLI foundation](build-the-lore-cli-foundation.md)
 - [Build the persistent local graph platform](build-the-persistent-local-graph-platform.md)
 - [Harden Lore CLI correctness and safety](harden-lore-cli-correctness-and-safety.md)
