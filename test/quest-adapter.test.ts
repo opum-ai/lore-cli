@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { createQuestAdapter, type QuestSpawn, type QuestSpawnResult } from "../src/adapters/quest";
+import {
+  bunQuestSpawn,
+  createQuestAdapter,
+  QUEST_TIMEOUT_ENV_VAR,
+  type QuestSpawn,
+  type QuestSpawnResult,
+} from "../src/adapters/quest";
 import { LoreError } from "../src/errors";
 
 function ok(kind: string, data: unknown): QuestSpawnResult {
@@ -9,7 +15,7 @@ function manifest(): Record<string, unknown> {
   return {
     commands: [
       ["manifest", "manifest.registry", false],
-      ["version", "version", false],
+      ["version", null, false],
       ["task status-flow", "task.status-flow", false],
       ["task list", "task.list", false],
       ["task view", "task.view", false],
@@ -170,6 +176,20 @@ describe("Quest 0.1 tracker adapter", () => {
       hint: expect.stringContaining("omit the milestone"),
       input: { milestone: "M2" },
     });
+  });
+
+  test("kills a real subprocess that exceeds the configured timeout", async () => {
+    const previous = process.env[QUEST_TIMEOUT_ENV_VAR];
+    process.env[QUEST_TIMEOUT_ENV_VAR] = "25";
+    try {
+      const spawn = bunQuestSpawn(process.cwd(), process.execPath);
+      const started = Date.now();
+      await expect(spawn(["-e", "await Bun.sleep(10_000)"])).rejects.toMatchObject({ type: "validation" });
+      expect(Date.now() - started).toBeLessThan(2_000);
+    } finally {
+      if (previous === undefined) delete process.env[QUEST_TIMEOUT_ENV_VAR];
+      else process.env[QUEST_TIMEOUT_ENV_VAR] = previous;
+    }
   });
 
   test("fails loud for missing binaries, incompatible envelope schemas, kinds, and payloads", async () => {

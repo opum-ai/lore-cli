@@ -12,7 +12,7 @@ const ACTOR_FLAGS = ["--actor", "lore", "--actor-kind", "human"] as const;
 const INSTALL_HINT = "install @opum-ai/quest@0.1.0 and ensure the `quest` binary is on PATH";
 const REQUIRED_COMMANDS = [
   ["manifest", "manifest.registry", false],
-  ["version", "version", false],
+  ["version", null, false],
   ["task status-flow", "task.status-flow", false],
   ["task list", "task.list", false],
   ["task view", "task.view", false],

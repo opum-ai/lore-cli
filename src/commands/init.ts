@@ -194,7 +194,7 @@ interface InitArgs {
   noBacklog: boolean;
   /** `--check-backlog`: run the backlog-coupling capability check even with no other flag requesting it. */
   checkBacklog: boolean;
-  /** `--tracker <backlog|jira>`: persist the selected task backend without prompting. */
+  /** `--tracker <quest|backlog|jira>`: persist the selected task backend without prompting. */
   tracker?: TrackerBackend;
 }
 

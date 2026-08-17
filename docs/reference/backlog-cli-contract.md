@@ -366,12 +366,16 @@ Coupling commands depend on the backend-neutral `TrackerAdapter` contract in
 `src/adapters/tracker.ts`. Production code loads the resolved repository
 selection and constructs a concrete backend through
 `createConfiguredTrackerAdapter(root)`; `createTrackerAdapter(root, config)`
-and injected adapters remain explicit test seams. Backlog.md remains the
-zero-config default. Jira Cloud is reachable through the
-installed `@salient-ai/jira-cli` executable when the backend is `jira`; Lore
-does not call Jira REST or read Jira credentials. An absent backend selection
-therefore preserves existing behavior, while an unknown selection fails loud
-instead of being silently coerced to Backlog.md.
+and injected adapters remain explicit test seams. New bundles persist Quest as
+their selected backend; existing bundles with no explicit selection retain the
+historical Backlog.md interpretation in the current release. Delivery of the
+new default remains gated on an explicit first-use migration-or-pin contract. Jira
+Cloud is reachable through the installed `@salient-ai/jira-cli` executable
+when the backend is `jira`; Lore
+does not call Jira REST or read Jira credentials. Quest is reached through the
+public `@opum-ai/quest` CLI's schema-versioned subprocess contract; Lore does
+not read Quest storage directly. An unknown selection fails loud instead of
+being silently coerced to another backend.
 
 Every backend must implement the complete task surface (`probe`, `listTasks`,
 `viewTask`, label and text search, create, and edit) plus `statusFlow()`. The
@@ -389,6 +393,26 @@ The contract also preserves four hardening obligations across implementations:
 - A `viewTask(id)` result is accepted only after the command layer verifies the
   returned task ID matches the requested ID case-insensitively. A backend must
   not bypass that verified-view path.
+
+### Quest CLI via `@opum-ai/quest`
+
+The Quest backend consumes the public `@opum-ai/quest@0.1.0` command contract
+through argv-only subprocess calls. Its cached probe requires bare semantic
+version output plus the `manifest.registry` and `task.status-flow` schema-1
+envelopes before any task result is trusted. Reads use `task list`, `task view`,
+and `search`; writes use `task create` and `task edit`, always with an explicit
+human `lore` actor. Missing binaries, timeouts, typed Quest diagnostics, and
+schema/kind/payload mismatches fail loud; Lore never falls back or dual-writes.
+
+Quest has no Backlog task-file path, priority, ordinal, milestone, reporter, or
+timestamps in this contract, so those fields use the backend-neutral values;
+a requested create-time milestone fails before Lore spawns Quest rather than
+being discarded. Native description, documentation, dependencies, labels,
+title, status, and identity are preserved. Quest criteria carry text but no
+checked bit, so Lore maps their text with `checked: false`; plan and
+implementation-note line arrays fold into newline-delimited Lore fields.
+Existing Backlog bundles remain a separate migration boundary; `lore backlog
+adopt` migrates knowledge records and is not a tracker-task migration command.
 
 ---
 
@@ -419,9 +443,11 @@ status_flow = ["To Do", "In Progress", "Done"]
 ```
 
 Run `lore init --tracker jira` to write the selection without prompts, or choose
-Jira in a bare interactive `lore init` wizard. Only `backlog` and `jira` are
-accepted; an absent `[tracker]` table resolves to `backlog`, while unknown keys
-remain tolerated for forward compatibility.
+Jira in a bare interactive `lore init` wizard. `quest`, `backlog`, and `jira`
+are accepted; the pending LCLI-315.4 change records `quest` for newly
+scaffolded bundles but cannot ship until legacy bundles have an explicit
+first-use migration-or-pin contract. Unknown keys remain tolerated for forward
+compatibility.
 
 `probe()` runs `jira --version`, `jira project get`, and
 `jira metadata priorities`. The project response is the issue-type vocabulary;

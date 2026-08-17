@@ -87,8 +87,8 @@ after a partial delete fills in only the missing pieces.
 
 **On a bare, interactive-terminal invocation, `init` also runs a guided
 wizard** that folds the rest of onboarding into this one command — a tracker
-backend choice (`backlog` or `jira`), independently detected Claude Code and
-Codex agent bridges, a downstream doc-site scaffold (mkdocs/docusaurus), an
+backend choice (`quest`, `backlog`, or `jira`), independently detected Claude
+Code and Codex agent bridges, a downstream doc-site scaffold (mkdocs/docusaurus), an
 Obsidian vault config, and a backlog `--json`-capability check — instead of
 the older `init` → `agents` → external `lore-setup.sh` → manual-Obsidian
 sequence ([ADR-0017](../adr/0017-interactive-init-wizard-tty-gated.md)).
@@ -107,11 +107,13 @@ script can reach every option the wizard offers with zero prompts — but
 default"), **not** "answer every question with its own default"; the two
 diverge on the agent-bridge question in particular (its wizard default is
 yes, but `--yes` installs nothing). A bare `lore init` off a TTY with no
-flags behaves exactly as it always has (scaffold only, nothing else) — the
-resolved tracker default is Backlog.md without adding a `[tracker]` table, and
-the agent bridge/scaffolds/backlog check are strictly opt-in there. An explicit
-wizard or `--tracker` choice writes `backend` under `[tracker]` in
-`.lore/config.toml`.
+flags remains prompt-free (scaffold only, nothing else), but a newly created
+bundle now persists `backend = "quest"` under `[tracker]` so its selection is
+stable. Existing bundles that omit the tracker setting continue to resolve to
+Backlog.md in the current release; LCLI-315.4 must settle and implement the
+first-use migration-or-pin boundary before this default change is delivered.
+An explicit wizard or `--tracker` choice also writes `backend` under
+`[tracker]` in `.lore/config.toml`.
 
 Hitting EOF (Ctrl-D) mid-wizard is a `usage` error (exit `2`) with a rendered
 diagnostic, never a silent success — see
@@ -129,7 +131,7 @@ whatever already succeeded rather than erroring or duplicating anything.
 | | |
 |---|---|
 | **Args** | none |
-| **Key flags** | `--yes` / `--non-interactive` (skip the wizard even on a TTY) · `--tracker <backlog\|jira>` (persist the tracker choice without prompting) · `--claude` (Claude Code bridge; `--agents` alias) · `--codex` (Codex bridge: `AGENTS.md` + `.codex/skills/lore/`) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-backlog` / `--no-backlog` (force/skip the backlog capability check) |
+| **Key flags** | `--yes` / `--non-interactive` (skip the wizard even on a TTY) · `--tracker <quest\|backlog\|jira>` (persist the tracker choice without prompting) · `--claude` (Claude Code bridge; `--agents` alias) · `--codex` (Codex bridge: `AGENTS.md` + `.codex/skills/lore/`) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-backlog` / `--no-backlog` (force/skip the backlog capability check) |
 | **Output** | `kind: init` — created/skipped scaffold paths, plus `interactive`/`scaffolds` always present (`false`/`[]` on the default path); `tracker` is present after a wizard or explicit `--tracker` choice, while `agents` (Claude), `codex`, and `backlog` are present only when those steps ran |
 | **Exit** | `0` ok (the backlog check is advisory-only and never changes this) · `2` usage (bad flag/unknown `--scaffold` target, a missing `--tracker` value, or the wizard's stdin closed before finishing) · `4` permission denied · `5` a non-regular entry (directory/symlink) blocks a scaffold path, or a scaffold target collides with a differing hand-edited file · `6` malformed configuration, including an unknown tracker backend |
 
@@ -281,7 +283,7 @@ the [backlog JSON schema](./backlog-json-schema.md), and the
 The `lore backlog adopt` command family is a controlled, **Backlog-only**
 knowledge-record adoption interface. Its four operations are `preview`,
 `apply`, `status`, and `rollback`; it does not claim a generic import system or
-make Quest an available/default tracker. The full versioned contract is
+migrate tracker tasks between Backlog and Quest. The full versioned contract is
 [Backlog knowledge adoption](../specs/backlog-knowledge-adoption-contract.md).
 
 | Operation | Output kind | Contract |

@@ -210,7 +210,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
       {
         name: "tracker",
         takesValue: true,
-        summary: "Select the task tracker backend without prompting (backlog|jira)",
+        summary: "Select the task tracker backend without prompting (quest|backlog|jira)",
       },
       {
         name: "scaffold",
@@ -238,6 +238,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     exitCodes: exitCodesFor(["profile", "write"]),
     examples: [
       "lore init",
+      "lore init --tracker quest",
       "lore init --tracker jira",
       "lore init --claude --codex",
       "lore init --yes --scaffold mkdocs",
