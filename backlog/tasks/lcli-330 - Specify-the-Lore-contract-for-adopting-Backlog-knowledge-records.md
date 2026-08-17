@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-14 18:03'
-updated_date: '2026-08-14 23:18'
+updated_date: '2026-08-17 05:53'
 labels:
   - quest
   - backlog
@@ -13,7 +13,10 @@ labels:
   - knowledge
   - interop
   - quest-0.1-blocker
+  - 'doc:stories/adopt-backlog-knowledge-through-lore'
 dependencies: []
+documentation:
+  - docs/stories/adopt-backlog-knowledge-through-lore.md
 priority: high
 type: docs
 ordinal: 453000

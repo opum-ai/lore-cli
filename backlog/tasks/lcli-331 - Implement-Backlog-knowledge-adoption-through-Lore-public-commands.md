@@ -4,7 +4,7 @@ title: Implement Backlog knowledge adoption through Lore public commands
 status: Done
 assignee: []
 created_date: '2026-08-14 18:03'
-updated_date: '2026-08-15 01:24'
+updated_date: '2026-08-17 05:53'
 labels:
   - quest
   - backlog
@@ -12,8 +12,11 @@ labels:
   - knowledge
   - interop
   - quest-0.1-blocker
+  - 'doc:stories/adopt-backlog-knowledge-through-lore'
 dependencies:
   - LCLI-330
+documentation:
+  - docs/stories/adopt-backlog-knowledge-through-lore.md
 priority: high
 type: feature
 ordinal: 454000
