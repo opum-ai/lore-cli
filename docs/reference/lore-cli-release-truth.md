@@ -21,6 +21,11 @@ availability claim.
 
 ### Current state
 
+`0.3.1` is a release candidate only. Its seven package manifests and exact
+optional-dependency pins are prepared for qualification, but it is not released
+until a qualified main tag, Release workflow artifact evidence, interactive
+publication, registry verification, and clean-install evidence all exist.
+
 As verified on 2026-08-16 UTC, Lore CLI **0.3.0 is released**:
 
 - all seven manifests and the root's six exact optional-dependency pins use
