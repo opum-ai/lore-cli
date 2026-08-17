@@ -311,19 +311,17 @@ describe("lore sync — the up-front symlink sweep, not ensureDir's reactive gua
   );
 });
 
-describe("lore sync — config is validated before spending any Backlog subprocess round-trip", () => {
-  test("a malformed backlog/config.yml surfaces its validation error even when a linked task is also missing", async () => {
-    // Regression: readStatusFlow/loadConfig/loadProfile must run BEFORE resolveAllTasks, so a
-    // broken config surfaces immediately rather than being masked behind (and paid for after) a
-    // wasted round-trip resolving a task id that doesn't even exist.
-    mkdirSync(join(root, "backlog"), { recursive: true });
-    writeFileSync(join(root, "backlog", "config.yml"), "statuses: not-a-list\n");
+describe("lore sync — config is validated before spending any tracker task round-trip", () => {
+  test("an invalid selected-tracker status flow surfaces even when a linked task is also missing", async () => {
+    // The selected adapter owns its workflow vocabulary. Validate it before resolving a task id
+    // that does not exist, so backend-neutral reconciliation keeps its fail-fast boundary.
     writeDoc("stories/x.md", storyDoc("X", ["lore-99"], "todo"));
-    const adapter = fakeAdapter([]); // lore-99 would resolve to null if ever asked -- must never be reached
+    const base = fakeAdapter([], { poisonViews: ["lore-99"] });
+    const adapter = { ...base, statusFlow: async () => ["To Do", "To Do"] };
 
     const err = await expectSyncError([], adapter);
     expect(err.type).toBe("validation");
-    expect(err.message).toContain("backlog/config.yml");
+    expect(err.message).toContain("duplicate entry");
   });
 
   test("an ALSO-malformed .lore/profile.toml is now reported before a malformed backlog/config.yml (LORE-84 precedence change)", async () => {

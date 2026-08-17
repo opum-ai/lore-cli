@@ -176,7 +176,8 @@ export async function gatherReconciliation(
   if (configOverride === undefined && configErrorOverride !== undefined) {
     throw configErrorOverride;
   }
-  const { flow, overrides } = configOverride ?? (await resolveReconcileConfig(root));
+  const { flow, overrides } =
+    configOverride ?? (await resolveReconcileConfig(root, adapterOverride ?? defaultAdapter(root)));
 
   const allTaskIds = dedupeTaskIds(eligible.flatMap((e) => e.linked));
   const details = detailsOverride

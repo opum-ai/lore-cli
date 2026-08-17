@@ -164,16 +164,15 @@ describe("gatherReconciliation", () => {
     expect(target?.newTaskStatus).toBe("done");
   });
 
-  test("validates the status flow before any Backlog subprocess round-trip", async () => {
-    mkdirSync(join(root, "backlog"), { recursive: true });
-    writeFileSync(join(root, "backlog", "config.yml"), "statuses: not-a-list\n");
+  test("validates the selected tracker's status flow before any task lookup", async () => {
     const doc = concept("stories/x.md", { tasks: ["lore-99"] }); // would 404 if ever asked
-    const poison = fakeAdapter([], { poisonViews: ["lore-99"] });
+    const base = fakeAdapter([], { poisonViews: ["lore-99"] });
+    const poison = { ...base, statusFlow: async () => ["To Do", "To Do"] };
 
     const err = await gatherReconciliation(root, [doc], poison).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(LoreError);
     expect((err as LoreError).type).toBe("validation");
-    expect((err as LoreError).message).toContain("backlog/config.yml");
+    expect((err as LoreError).message).toContain("duplicate entry");
   });
 
   // ── detailsOverride (LORE-50): a caller pools task resolution across several callers ──────────
