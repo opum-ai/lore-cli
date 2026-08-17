@@ -147,7 +147,7 @@ For a single document covering the whole design, follow the index to the
 
 A `Story` concept is a unit of deliverable behavior and is the unit of work an
 agent acts on. Its frontmatter `tasks:` list is **the source of the coupling**
-to Backlog.md — those are the task IDs the Story owns (see
+to the configured tracker — those are the task IDs the Story owns (see
 [ADR-0009: Story ↔ Task coupling & reconciliation](../adr/0009-story-task-coupling-reconciliation.md)).
 Read the Story's narrative (Context, Acceptance criteria) for *what* and *why*;
 get the *live* state from the next step rather than trusting any status text in
@@ -159,19 +159,19 @@ the body.
 lore tasks stories/bulk-archive-orders --json
 ```
 
-`lore tasks` returns the **live** task rollup for a Story by driving Backlog.md
-through its `--json` flag (the JSON-only integration in
+`lore tasks` returns the **live** task rollup for a Story through the configured
+tracker adapter. Backlog's implementation remains the JSON-only integration in
 [ADR-0002](../adr/0002-backlog-integration-json-only.md), specified in the
 [Backlog CLI contract](../reference/backlog-cli-contract.md) and
-[Backlog JSON schema](../reference/backlog-json-schema.md)). The `--json`
+[Backlog JSON schema](../reference/backlog-json-schema.md). The `--json`
 payload carries `kind: "tasks.rollup"`; branch on it and read each task's id,
 title, and status. This is your authoritative view of what is To Do / In
 Progress / Done — never re-derive task state from the Story markdown, which is
 only refreshed when `lore sync` runs.
 
 Use this status to decide what to do next: pick an open task, or, if you need a
-new one, create it through Backlog.md (`backlog task create …`) and then couple
-it to the Story with `lore link` so the frontmatter `tasks:` list and the task's
+new one, create it through the configured tracker and then couple it to the
+Story with `lore link` so the frontmatter `tasks:` list and the task's
 `doc:<conceptId>` label both reflect the relationship. lore is the **sole
 committer** of `backlog/`; let lore commit task-file changes rather than staging
 them yourself (see
@@ -205,11 +205,11 @@ lore sync --json
 `lore sync` is the **write** step that makes the bundle coherent: it recomputes
 each Story's `status` from its tasks (the reconciliation rules in
 [ADR-0009](../adr/0009-story-task-coupling-reconciliation.md)), rewrites the
-`<!-- lore:tasks -->` managed blocks from live Backlog data — including filling
+`<!-- lore:tasks -->` managed blocks from live tracker data — including filling
 in, for the first time, the empty block `lore new Story` scaffolds by default —
 and regenerates the index/log. It is **idempotent**: with no upstream change it produces
 byte-identical output, so running it in a loop yields clean, empty diffs. The
-`--json` payload is `kind: "sync.summary"` and reports exactly what changed
+`--json` payload is `kind: "sync.result"` and reports exactly what changed
 (status rewrites, managed-block diffs, regenerated files).
 
 ### Step 6 — `lore check` (the CI gate)

@@ -114,11 +114,11 @@ stable. Existing bundles that omit the tracker setting and contain a real
 command fails loud with the exact choices `quest init` followed by `lore init
 --tracker quest --migrate-backlog`, or `lore init --tracker backlog`; Lore does
 not silently select or dual-write either backend. Migration preflights every
-task and destination conflict before writing and persists Quest only after a
-successful copy. The installed Quest 0.2.0 RC only accepts canonical
-`T-<positive integer>` IDs and cannot write aliases, so ordinary Backlog IDs
-currently fail that preflight pending an approved reference-rewrite policy or
-upstream ID-preservation support.
+source task and alias conflict through Quest's public preview, records the
+reviewed digest before apply, and persists Quest only after the matching public
+receipt reaches `applied`. Quest keeps its canonical `T-<positive integer>` IDs
+while returning legacy Backlog IDs as stable aliases, so existing Story task
+references continue to resolve without a rewrite.
 An explicit wizard or `--tracker` choice also writes `backend` under
 `[tracker]` in `.lore/config.toml`.
 
@@ -139,7 +139,7 @@ whatever already succeeded rather than erroring or duplicating anything.
 |---|---|
 | **Args** | none |
 | **Key flags** | `--yes` / `--non-interactive` (skip the wizard even on a TTY) · `--tracker <quest\|backlog\|jira>` (persist the tracker choice without prompting) · `--migrate-backlog` (valid only with `--tracker quest` for a legacy zero-config Backlog bundle) · `--claude` (Claude Code bridge; `--agents` alias) · `--codex` (Codex bridge: `AGENTS.md` + `.codex/skills/lore/`) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-backlog` / `--no-backlog` (force/skip the backlog capability check) |
-| **Output** | `kind: init` — created/skipped scaffold paths, plus `interactive`/`scaffolds` always present (`false`/`[]` on the default path); `tracker` is present after a wizard or explicit `--tracker` choice; `migration` reports created/reused IDs after a successful Backlog-to-Quest migration; `agents` (Claude), `codex`, and `backlog` are present only when those steps ran |
+| **Output** | `kind: init` — created/skipped scaffold paths, plus `interactive`/`scaffolds` always present (`false`/`[]` on the default path); `tracker` is present after a wizard or explicit `--tracker` choice; `migration` reports the applied digest, source fingerprint, mappings, survivors, and task fingerprints after a successful Backlog-to-Quest migration; `agents` (Claude), `codex`, and `backlog` are present only when those steps ran |
 | **Exit** | `0` ok (the backlog check is advisory-only and never changes this) · `2` usage (bad flag/unknown `--scaffold` target, an invalid migration-flag combination, a missing `--tracker` value, or the wizard's stdin closed before finishing) · `4` permission denied · `5` a non-regular entry (directory/symlink) blocks a scaffold path, or a scaffold target collides with a differing hand-edited file · `6` malformed configuration, unknown tracker backend, legacy migration requirement, or lossless-migration preflight failure |
 
 ### `new`
@@ -276,14 +276,14 @@ anything in `docs/`, and skipped entirely under `--dry-run`.
 
 ---
 
-## Coupling to Backlog.md
+## Coupling to the configured tracker
 
-lore reads Backlog.md **JSON-only** (`backlog task list/view --json`,
-`search --json`) and writes via `backlog task create`/`edit`; it never edits
-task `.md` files and never stores lore metadata on tasks (Backlog drops unknown
-frontmatter on edit). See [ADR-0002](../adr/0002-backlog-integration-json-only.md),
-the [backlog JSON schema](./backlog-json-schema.md), and the
-[backlog CLI contract](./backlog-cli-contract.md).
+Lore routes task reads and writes through the configured Quest, Backlog, or
+Jira adapter. Backlog remains **JSON-only** (`backlog task list/view --json`,
+`search --json`) and Lore never hand-edits task Markdown or stores unknown
+frontmatter. See [ADR-0002](../adr/0002-backlog-integration-json-only.md), the
+[backlog JSON schema](./backlog-json-schema.md), and the backend-neutral
+[tracker contract](./backlog-cli-contract.md#tracker-adapter-boundary).
 
 ### `backlog adopt`
 

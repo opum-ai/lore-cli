@@ -136,7 +136,7 @@ the [CLI surface](cli-surface.md):
 | `rename.result` / `supersede.result` | `lore rename` / `supersede` | rewritten inbound links + frontmatter refs (`rename` also: moved back-refs + the `backlog/` commit) |
 | `link.result` / `unlink.result` | `lore link` / `unlink` | updated frontmatter refs, task label set + the `backlog/` commit |
 | `sync.result` | `lore sync` | what changed (status rewrites, managed-block diffs, regen) + the `backlog/` commit |
-| `tasks.rollup` | `lore tasks` | a concept's linked tasks' live Backlog status — `{ concept, status?, tasks: [{id,title,status}] }` |
+| `tasks.rollup` | `lore tasks` | a concept's linked tasks' live configured-tracker status — `{ concept, status?, tasks: [{id,title,status}] }` |
 | `orphans.report` | `lore orphans` | coupling gaps — `{ orphanTasks[], danglingLinks[] }` (either section omitted under `--tasks-only`/`--docs-only`) |
 | `schema.result` | `lore schema` | schema files written |
 | `graph.export` | `lore graph` | nodes, edges, per-doc/bundle token estimates |

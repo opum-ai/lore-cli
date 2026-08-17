@@ -374,7 +374,7 @@ An omitted selection without that legacy artifact resolves to Quest. Jira
 Cloud is reachable through the installed `@salient-ai/jira-cli` executable
 when the backend is `jira`; Lore
 does not call Jira REST or read Jira credentials. Quest is reached through the
-authorized installed Quest `0.2.0` RC's schema-versioned subprocess contract; Lore does
+authorized installed Quest `0.2.2` candidate's schema-versioned subprocess contract; Lore does
 not read Quest storage directly. An unknown selection fails loud instead of
 being silently coerced to another backend.
 
@@ -392,42 +392,48 @@ The contract also preserves four hardening obligations across implementations:
 - Per-task fan-out remains bounded by the command layer's shared concurrency
   helper rather than allowing an adapter to create unbounded work.
 - A `viewTask(id)` result is accepted only after the command layer verifies the
-  returned task ID matches the requested ID case-insensitively. A backend must
-  not bypass that verified-view path.
+  returned task ID matches the requested ID case-insensitively, or that the
+  requested ID appears in the backend's validated stable aliases. A backend
+  must not bypass that verified-view path.
 
-### Quest CLI 0.2.0 release candidate
+### Quest CLI 0.2.2 candidate
 
 The Quest backend consumes the explicitly authorized, locally installed Quest
-`0.2.0` RC through argv-only subprocess calls. This is qualification evidence,
+`0.2.2` candidate through argv-only subprocess calls. This is qualification evidence,
 not a public-package assertion. Lore requires `.quest/workspace.toml` and tells
 the operator to run `quest init` when it is absent; it never invokes Quest
-initialization itself. Its cached probe pins the `0.2.x` version family and the
-schema-1 `manifest.registry` command descriptors, including the RC's nullable
-`version` kind and mutating `workspace.initialized` `init` descriptor, plus the
-live `task.status-flow` payload. Reads use `task list`, `task view`, and
-`search`; writes use `task create` and `task edit`, always with an explicit
-human `lore` actor. Missing binaries, timeouts, typed Quest diagnostics, and
+initialization itself. Its cached probe pins exact version `0.2.2` and the
+schema-1 `manifest.registry` command descriptors, including the candidate's nullable
+`version` kind, mutating `workspace.initialized` `init` descriptor, all four
+Backlog-migration descriptors, and the live `task.status-flow` payload. Reads
+use `task list`, `task view`, and `search`; writes use `task create` and `task
+edit`, always with an explicit human `lore` actor. Missing binaries, timeouts, typed Quest diagnostics, and
 schema/kind/payload mismatches fail loud; Lore never falls back or dual-writes.
 
-Quest has no Backlog task-file path, native priority, native ordinal,
-milestone, reporter, or timestamps in this contract, so storage-only fields use
-backend-neutral values; migration-only priority and ordinal values are encoded
-in reserved Lore labels and decoded before results leave the adapter. A
+Quest has no Backlog task-file path, milestone, reporter, or timestamps in this
+contract, so storage-only fields use backend-neutral values. Native Quest
+priority, ordinal, parent, dependencies, criteria, documentation, comments,
+labels, aliases, and source provenance are mapped into Lore's neutral task
+detail; an alias may resolve to a different canonical `T-N` identity only when
+Quest returns that requested alias explicitly. A
 requested create-time milestone or noncanonical caller-supplied ID fails before
 Lore spawns Quest rather than being discarded or sent to a mutating command.
-Native description, documentation, dependencies, labels, title, status, and
-identity are preserved. Quest criteria carry text but no
+Quest criteria carry text but no
 checked bit, so Lore maps their text with `checked: false`; plan and
 implementation-note line arrays fold into newline-delimited Lore fields.
 
 Legacy migration is explicit: initialize Quest, then run `lore init --tracker
 quest --migrate-backlog`; pin instead with `lore init --tracker backlog`. Lore
-preflights the complete source set and all destination conflicts before the
-first write, and persists Quest only after the copy succeeds. The installed RC
-accepts only canonical IDs matching `T-[1-9][0-9]*` and exposes no alias/import
-write path. Consequently ordinary `LCLI-*`, `TASK-*`, and dotted subtask IDs
-fail before any Quest write until a Story/task-reference rewrite policy or
-upstream ID-preservation mechanism is approved. `lore backlog adopt` migrates
+consumes Quest's public `preview` / `apply` / `status` / `rollback` lifecycle.
+It records the reviewed digest, source fingerprint, and mappings in a
+Lore-owned pending receipt before actorful `apply`; an interrupted rerun resumes
+with `status --digest` instead of creating a second preview. Lore persists
+Quest as the backend only after a schema-1 `migration.backlog.receipt` reports
+`state: "applied"` with the reviewed digest, fingerprint, and mappings, then
+clears the pending record. Quest assigns canonical `T-N` identities while
+preserving ordinary `LCLI-*`, `TASK-*`, and dotted Backlog IDs as stable
+aliases, so existing Story coupling does not require a reference rewrite.
+`lore backlog adopt` migrates
 knowledge records and is not a tracker-task migration command.
 
 ---
@@ -460,9 +466,8 @@ status_flow = ["To Do", "In Progress", "Done"]
 
 Run `lore init --tracker jira` to write the selection without prompts, or choose
 Jira in a bare interactive `lore init` wizard. `quest`, `backlog`, and `jira`
-are accepted. Legacy zero-config bundles are offered only an explicit migration
-or Backlog pin; the current Quest RC canonical-ID limitation can make migration
-fail before any write. Unknown keys remain tolerated for forward compatibility.
+are accepted. Legacy zero-config bundles are offered only an explicit Quest
+migration or Backlog pin. Unknown keys remain tolerated for forward compatibility.
 
 `probe()` runs `jira --version`, `jira project get`, and
 `jira metadata priorities`. The project response is the issue-type vocabulary;

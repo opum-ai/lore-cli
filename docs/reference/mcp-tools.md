@@ -114,7 +114,7 @@ calls. The "Maps to" column gives the equivalent CLI command and the
 | `lore_new_concept` | `lore new` / `new.result` | Scaffold a typed concept (`type`, `title`, `tags`, parent/epic/story, template + vars). Returns the new concept id and path. |
 | `lore_link_tasks` | `lore link` / `link.result` | Couple a Story/Spec to Backlog.md task IDs: write the `tasks:` frontmatter refs **and** set the queryable `doc:<conceptId>` label on each task (both sides). |
 | `lore_story_status` | `lore tasks` / `tasks.rollup` | Live task rollup for a story, read through the Backlog.md `--json` adapter. |
-| `lore_sync` | `lore sync` / `sync.summary` | Recompute status, rewrite managed `<!-- lore:tasks -->` blocks, regenerate indexes/log; returns a diff summary of what changed (idempotent). |
+| `lore_sync` | `lore sync` / `sync.result` | Recompute status, rewrite managed `<!-- lore:tasks -->` blocks, regenerate indexes/log; returns a diff summary of what changed (idempotent). |
 | `lore_check` | `lore check` / `check.report` | Read-only drift gate: status reconciliation, managed-block, internal link + heading-anchor validation, portability lint, token estimates. Structured findings. |
 | `lore_graph` | `lore graph` / `graph.export` | The bundle cross-link graph as JSON (nodes, edges, per-doc/bundle token estimates). |
 | `lore_query` | `lore query` / `query.results` | In-memory BM25-style full-text search plus frontmatter-field filters; ranked hits with `total`/`shown`/`truncated`. |

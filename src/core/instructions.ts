@@ -28,30 +28,25 @@ const LINKING: InstructionTopic = {
   key: "linking",
   title: "Story <-> Task coupling (`lore link` / `lore unlink`)",
   body: `A Story concept's frontmatter \`tasks:\` list is the source of coupling to
-Backlog.md -- those are the task ids the Story owns. Roll up their current live
+the configured tracker -- those are the task ids the Story owns. Roll up their current live
 status with \`lore tasks <conceptId>\` (pass the Story, not a task id -- the
 read-only rollup \`lore sync\` writes into the managed block); to inspect one
-task, use \`backlog task view <taskId> --plain\`. Never trust the Story's own
+task, use the configured tracker's view command. Never trust the Story's own
 written \`status\`, which only refreshes when \`lore sync\` runs.
 
-To couple a new task to a Story, create it in Backlog (\`backlog task create
-...\`) then run \`lore link <story> <taskId...>\` -- this updates both the
+To couple a new task to a Story, create it through the configured tracker, then
+run \`lore link <story> <taskId...>\` -- this updates both the
 Story's frontmatter \`tasks:\` list and the task's \`doc:<conceptId>\`
 back-reference label in one step, validating every given id exists first
 and failing the whole command loud (not_found, exit 3) before writing
 anything if one doesn't. \`lore unlink <story> <taskId...>\` removes the
-coupling the same way, but is more forgiving: a task id no longer present
-in Backlog is simply skipped (exit 0), not an error.
+coupling the same way, but is more forgiving: a task id no longer present in
+the configured tracker is simply skipped (exit 0), not an error.
 
-\`lore link\`/\`lore unlink\` edit \`backlog/tasks/*.md\` directly and commit
-those edits themselves -- each calls \`commitBacklogFiles\`, scoped to
-exactly the files it touched, right after writing them, so nothing is left
-pending for \`lore sync\` on their account. \`lore sync\`'s own commit step
-is now a catch-all sweep: it still commits anything left dirty under
-\`backlog/\` from another source (a human's direct \`backlog task edit\`, or
-a prior run's commit that failed). Never hand-edit or \`git add\` files
-under \`backlog/tasks/\` yourself; whichever command touches them commits
-them.
+\`lore link\`/\`lore unlink\` update the task through that adapter. For the
+Backlog backend, Lore scopes and commits the task Markdown written by the
+Backlog CLI; Quest and Jira retain ownership of their own storage. Never
+hand-edit or \`git add\` files under \`backlog/tasks/\` yourself.
 
 See ADR-0009 (Story <-> Task coupling & reconciliation) and ADR-0012
 (Backlog coexistence & git ownership).`,
@@ -61,7 +56,7 @@ const SYNC: InstructionTopic = {
   key: "sync",
   title: "Reconciling status and managed blocks (`lore sync`)",
   body: `\`lore sync [paths...]\` is the write step that makes the bundle coherent:
-it recomputes each Story's \`status\` from its coupled tasks' live Backlog
+it recomputes each Story's \`status\` from its coupled tasks' live tracker
 state (ADR-0009's reconciliation rules), rewrites the
 \`<!-- lore:tasks:begin -->\` ... \`<!-- lore:tasks:end -->\` managed blocks from
 that live data, regenerates the bundle's index/log, and commits \`backlog/\`
