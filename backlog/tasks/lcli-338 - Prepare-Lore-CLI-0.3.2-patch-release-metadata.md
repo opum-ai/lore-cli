@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-17 00:30'
-updated_date: '2026-08-17 03:43'
+updated_date: '2026-08-17 03:46'
 labels:
   - release
   - patch
@@ -46,4 +46,6 @@ Prepare the successor patch release for LCLI-337. Version v0.3.1 has an immutabl
 2026-08-17: aligned all seven manifests and exact optional dependency pins at 0.3.2; documented LCLI-337 and that v0.3.1 is immutable and unpublished. Local candidate qualification passed lint, typecheck, build, full Bun suite, strict Lore check/validate, agents check, and diff hygiene.
 
 2026-08-17: refreshed only the small and large canonical-export baselines for the 0.3.2 version-bearing projection. Source-inventory and task-snapshot digests remain unchanged; local small smoke and the focused fixture/workflow suite pass.
+
+2026-08-17: refreshed the deterministic Ladybug report-contract digest that contains the fixture’s version-bearing canonical export hash. Focused contract test and the full Bun suite pass locally.
 <!-- SECTION:NOTES:END -->
