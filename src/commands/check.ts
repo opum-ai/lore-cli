@@ -491,7 +491,7 @@ async function resolveSharedReconciliation(
 
   let config: ReconcileConfig;
   try {
-    config = resolveReconcileConfig(root);
+    config = await resolveReconcileConfig(root);
   } catch (err) {
     return { config: undefined, details: undefined, configError: err instanceof Error ? err : new Error(String(err)) };
   }

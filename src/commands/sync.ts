@@ -168,7 +168,7 @@ export async function runSync(options: SyncOptions): Promise<number> {
   // already-validated config is then passed straight into gatherReconciliation so it is never
   // read/validated a second time.
   const eligible = linkedConcepts(scoped).length > 0;
-  const config = eligible ? readReconcileConfig(options.root) : undefined;
+  const config = eligible ? await readReconcileConfig(options.root) : undefined;
   if (config !== undefined) {
     validateReconcileInputs(config.flow, config.overrides);
   }

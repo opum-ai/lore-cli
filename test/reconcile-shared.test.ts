@@ -69,15 +69,15 @@ describe("gatherReconciliation", () => {
     expect(poison.calls).toEqual([]);
   });
 
-  test("reads the selected adapter's statusFlow instead of reaching into Backlog config directly", () => {
+  test("reads the selected adapter's statusFlow instead of reaching into Backlog config directly", async () => {
     mkdirSync(join(root, "backlog"), { recursive: true });
     writeFileSync(join(root, "backlog", "config.yml"), "statuses: not-a-list\n");
     const adapter = {
       ...fakeAdapter([]),
-      statusFlow: () => ["Queued", "Building", "Shipped"],
+      statusFlow: async () => ["Queued", "Building", "Shipped"],
     };
 
-    expect(readReconcileConfig(root, adapter)).toEqual({
+    expect(await readReconcileConfig(root, adapter)).toEqual({
       flow: ["Queued", "Building", "Shipped"],
       overrides: {},
     });

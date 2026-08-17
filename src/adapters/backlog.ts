@@ -896,7 +896,7 @@ export function createBacklogAdapter(spawn: BacklogSpawn, root = process.cwd()):
   return {
     probe: ensureProbed,
 
-    statusFlow: () => readStatusFlow(root),
+    statusFlow: async () => readStatusFlow(root),
 
     listTasks,
 

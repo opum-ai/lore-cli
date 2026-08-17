@@ -15,7 +15,6 @@ import { loadConfig } from "../src/config";
 import { loadBundle } from "../src/core/bundle";
 import { buildCodexSkillDoc, CODEX_SKILL_REL_PATH } from "../src/core/codex-bridge";
 import { parseConcept } from "../src/core/concept";
-import { buildScaffold } from "../src/core/scaffold";
 import { EXIT_CODES, exitCodeFor, LoreError, reportError, WarningCollector } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture, expectError, fakeAdapter } from "./helpers";
@@ -477,18 +476,14 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
     expect(readFileSync(join(import.meta.dir, "..", CODEX_SKILL_REL_PATH), "utf8")).toBe(buildCodexSkillDoc());
   });
 
-  test("no flags at all: byte-identical to pre-LORE-260 behavior, no consumer folded in, no backlog check", async () => {
+  test("no flags at all: a new bundle pins Quest without probing it", async () => {
     const { result, stderr } = await init();
     expect(result.agents).toBeUndefined();
     expect(result.scaffolds).toEqual([]);
     expect(result.backlog).toBeUndefined();
     expect(result.tracker).toBeUndefined();
-    const expectedConfig = buildScaffold({ timestamp: FIXED_CLOCK().toISOString() }).files.find(
-      (file) => file.path === ".lore/config.toml",
-    )?.contents;
-    expect(expectedConfig).toBeDefined();
-    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).toBe(expectedConfig as string);
-    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
+    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).toEndWith('[tracker]\nbackend = "quest"\n');
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
     expect(stderr).toBe("");
   });
 
@@ -507,10 +502,10 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
 
   test("--tracker rejects unavailable and missing values", () => {
     const unavailable = expectError("validation", () =>
-      runInit({ root, output: JSON_CTX, stdout: capture(), args: ["--tracker", "quest"] }),
+      runInit({ root, output: JSON_CTX, stdout: capture(), args: ["--tracker", "bogus"] }),
     );
     expect(exitCodeFor(unavailable)).toBe(EXIT_CODES.validation);
-    expect(unavailable.hint).toContain("backlog, jira");
+    expect(unavailable.hint).toContain("quest, backlog, jira");
     expectError("usage", () => runInit({ root, output: JSON_CTX, stdout: capture(), args: ["--tracker"] }));
   });
 
@@ -746,7 +741,7 @@ describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the lock
       agentAvailability: () => ({ claude: false, codex: false }),
       adapter: fakeAdapter([], { probe: "ok" }),
     });
-    expect(choicesSeen).toEqual([["backlog", "jira"]]);
+    expect(choicesSeen).toEqual([["quest", "backlog", "jira"]]);
     expect(result.tracker).toBe("jira");
     expect(loadConfig({ root, env: {} }).tracker.backend).toBe("jira");
   });

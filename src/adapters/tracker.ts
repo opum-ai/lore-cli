@@ -12,6 +12,7 @@ import {
   type ListTasksOptions,
 } from "./backlog";
 import { createJiraAdapter, type JiraAdapterOptions } from "./jira";
+import { createQuestAdapter, type QuestAdapterOptions } from "./quest";
 
 /** The minimum capability shape commands consume after a backend-specific fail-loud probe. */
 export interface TrackerCapability {
@@ -31,7 +32,7 @@ export interface TrackerAdapter {
   /** Validate that the configured backend is reachable and supports the required operations. */
   probe(): Promise<TrackerCapability>;
   /** Return the backend/project's ordered workflow statuses without performing task I/O. */
-  statusFlow(): readonly string[];
+  statusFlow(): Promise<readonly string[]>;
   listTasks(opts?: ListTasksOptions): Promise<BacklogTask[]>;
   viewTask(id: string): Promise<BacklogTaskDetail | null>;
   searchByLabel(label: string): Promise<BacklogTask[]>;
@@ -52,6 +53,7 @@ export interface TrackerAdapterConfig {
 /** Injectable backend construction seams; production callers normally omit this. */
 export interface TrackerAdapterOptions {
   readonly jira?: JiraAdapterOptions;
+  readonly quest?: QuestAdapterOptions;
 }
 
 /** Load the repository's resolved tracker selection and construct that backend. */
@@ -66,7 +68,10 @@ export function createTrackerAdapter(
   config: TrackerAdapterConfig = {},
   options: TrackerAdapterOptions = {},
 ): TrackerAdapter {
-  const backend: unknown = config.backend ?? "backlog";
+  const backend: unknown = config.backend ?? "quest";
+  if (backend === "quest") {
+    return createQuestAdapter(root, options.quest);
+  }
   if (backend === "backlog") {
     return createBacklogAdapter(bunBacklogSpawn(undefined, root), root);
   }
@@ -84,7 +89,7 @@ export function createTrackerAdapter(
   throw new LoreError(
     "validation",
     `unsupported tracker backend ${JSON.stringify(backend)}`,
-    'use "backlog" or "jira"',
+    'use "quest", "backlog", or "jira"',
     { backend },
   );
 }

@@ -128,7 +128,7 @@ describe("jira-cli tracker adapter — full interface and Markdown round trip", 
     };
 
     const adapter = makeAdapter(spawn);
-    expect(adapter.statusFlow()).toEqual(["To Do", "In Progress", "Done"]);
+    expect(await adapter.statusFlow()).toEqual(["To Do", "In Progress", "Done"]);
     expect(await adapter.probe()).toEqual({ version: "1.0.2" });
 
     const id = await adapter.createTask({

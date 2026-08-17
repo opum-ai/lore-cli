@@ -249,7 +249,7 @@ export function fakeAdapter(
             }
             return { version: "1.49.0", schemaVersion: 1 };
           },
-    statusFlow: () => [...DEFAULT_STATUS_FLOW],
+    statusFlow: async () => [...DEFAULT_STATUS_FLOW],
     listTasks:
       opts.listTasks === undefined
         ? notImplemented("listTasks")

@@ -45,8 +45,8 @@ const RECONCILE_MODES = ["task-rollup"] as const;
 /** The Confluence wire formats the (deferred) publish adapter understands (ADR-0013). */
 const CONFLUENCE_FORMATS = ["storage", "adf"] as const;
 
-/** Tracker backends shipped by this build. Quest remains unavailable until LCLI-315.4. */
-export const TRACKER_BACKENDS = ["backlog", "jira"] as const;
+/** Tracker backends shipped by this build. Quest is the preferred backend for new bundles. */
+export const TRACKER_BACKENDS = ["quest", "backlog", "jira"] as const;
 
 /** Generic parsed-TOML shape for `[reconcile]`; unknown future keys remain tolerated. */
 const ReconcileTableSchema = z.looseObject({
@@ -164,7 +164,7 @@ export interface JiraTrackerConfig {
 
 /** Tracker selection plus backend-specific non-secret configuration. */
 export interface TrackerConfig {
-  /** Resolved backend; zero-config projects use Backlog.md. */
+  /** Resolved backend; newly initialized projects persist Quest explicitly. */
   backend: TrackerBackend;
   jira?: JiraTrackerConfig;
 }
@@ -207,6 +207,8 @@ export function defaultConfig(): LoreConfig {
     reconcile: { mode: "task-rollup", overrides: {} },
     validate: { externalLinks: false, promotePortability: false },
     confluence: { format: "storage" },
+    // Existing bundles without an explicit tracker retain their historical
+    // Backlog interpretation; init persists Quest for every new bundle.
     tracker: { backend: "backlog" },
   };
 }

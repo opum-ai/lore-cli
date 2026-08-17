@@ -261,7 +261,7 @@ export function createJiraAdapter(
       return (await ensureProbed()).capability;
     },
 
-    statusFlow: () => statusFlow,
+    statusFlow: async () => statusFlow,
 
     async listTasks(opts?: ListTasksOptions): Promise<BacklogTask[]> {
       const clauses = [`project = ${jqlString(project)}`];

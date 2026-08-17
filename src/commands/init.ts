@@ -252,6 +252,10 @@ export function runInit(options: InitOptions): number | Promise<number> {
 
   if (parsed.tracker !== undefined) {
     persistTrackerBackend(options.root, parsed.tracker);
+  } else if (created.includes(CONFIG_REL_PATH)) {
+    // A newly created bundle is unambiguous. Persist rather than relying on a
+    // changing zero-config default, so an existing bundle is never switched.
+    persistTrackerBackend(options.root, "quest");
   }
 
   const scaffoldTargets = [...new Set(parsed.scaffolds)];
@@ -313,9 +317,9 @@ async function runInteractiveWizard(
   const scaffoldTargets: string[] = [];
   let wantAgents = false;
   let wantCodex = false;
-  let tracker: TrackerBackend = "backlog";
+  let tracker: TrackerBackend = "quest";
   try {
-    const trackerChoice = await prompter.choose("Which tracker backend should Lore use?", TRACKER_BACKENDS, "backlog");
+    const trackerChoice = await prompter.choose("Which tracker backend should Lore use?", TRACKER_BACKENDS, "quest");
     if (!TRACKER_BACKENDS.includes(trackerChoice as TrackerBackend)) {
       throw new LoreError(
         "validation",
@@ -576,7 +580,7 @@ function withTrackerBackend(current: string, backend: TrackerBackend): string {
     throw new LoreError(
       "validation",
       `${CONFIG_REL_PATH}: inline tracker tables cannot be updated safely by lore init`,
-      "rewrite tracker as a [tracker] table, then rerun lore init --tracker <backlog|jira>",
+      "rewrite tracker as a [tracker] table, then rerun lore init --tracker <quest|backlog|jira>",
       { key: "tracker" },
     );
   }
