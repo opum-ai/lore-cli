@@ -14,18 +14,24 @@ tasks:
 
 Keep the planned tracker-backend initiative attached to a truthful, local
 ownership record. This Story records the adapter, JIRA, initialization, and
-Quest-backend task lineage. The public `@opum-ai/quest@0.1.0` release clears
-the package-availability gate, while LCLI-315.4 still owns Lore's migration and
-default-selection policy.
+Quest-backend task lineage. LCLI-315.4 targets the explicitly authorized,
+locally installed Quest `0.2.0` release candidate and owns Lore's migration and
+default-selection policy. That qualification is local evidence, not a claim
+that the candidate is publicly released.
 
 ## Acceptance criteria
 
 - The tracker-backend parent task has one scoped Story owner.
-- Existing Backlog.md behavior remains the documented baseline until a later,
-  evidence-backed implementation decision changes it.
+- Existing Backlog.md bundles remain pinned or fail loud until a non-lossy
+  migration decision changes their backend explicitly.
 - Quest package and registry availability continue to be established by
   quest-cli's shipping evidence rather than this Story; Lore consumes the
-  verified `0.1.0` contract and must recheck later versions independently.
+  verified installed `0.2.0` RC contract and must recheck later builds
+  independently.
+- Quest's current `T-<positive integer>` canonical-ID restriction and lack of
+  alias writes block ordinary `LCLI-*`/`TASK-*` Backlog migration until either
+  an explicit reference-rewrite policy or upstream ID-preservation support is
+  approved.
 
 ## Tasks
 

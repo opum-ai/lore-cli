@@ -109,9 +109,16 @@ diverge on the agent-bridge question in particular (its wizard default is
 yes, but `--yes` installs nothing). A bare `lore init` off a TTY with no
 flags remains prompt-free (scaffold only, nothing else), but a newly created
 bundle now persists `backend = "quest"` under `[tracker]` so its selection is
-stable. Existing bundles that omit the tracker setting continue to resolve to
-Backlog.md in the current release; LCLI-315.4 must settle and implement the
-first-use migration-or-pin boundary before this default change is delivered.
+stable. Existing bundles that omit the tracker setting and contain a real
+`backlog/` directory are classified as legacy Backlog. Their first tracker
+command fails loud with the exact choices `quest init` followed by `lore init
+--tracker quest --migrate-backlog`, or `lore init --tracker backlog`; Lore does
+not silently select or dual-write either backend. Migration preflights every
+task and destination conflict before writing and persists Quest only after a
+successful copy. The installed Quest 0.2.0 RC only accepts canonical
+`T-<positive integer>` IDs and cannot write aliases, so ordinary Backlog IDs
+currently fail that preflight pending an approved reference-rewrite policy or
+upstream ID-preservation support.
 An explicit wizard or `--tracker` choice also writes `backend` under
 `[tracker]` in `.lore/config.toml`.
 
@@ -131,9 +138,9 @@ whatever already succeeded rather than erroring or duplicating anything.
 | | |
 |---|---|
 | **Args** | none |
-| **Key flags** | `--yes` / `--non-interactive` (skip the wizard even on a TTY) · `--tracker <quest\|backlog\|jira>` (persist the tracker choice without prompting) · `--claude` (Claude Code bridge; `--agents` alias) · `--codex` (Codex bridge: `AGENTS.md` + `.codex/skills/lore/`) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-backlog` / `--no-backlog` (force/skip the backlog capability check) |
-| **Output** | `kind: init` — created/skipped scaffold paths, plus `interactive`/`scaffolds` always present (`false`/`[]` on the default path); `tracker` is present after a wizard or explicit `--tracker` choice, while `agents` (Claude), `codex`, and `backlog` are present only when those steps ran |
-| **Exit** | `0` ok (the backlog check is advisory-only and never changes this) · `2` usage (bad flag/unknown `--scaffold` target, a missing `--tracker` value, or the wizard's stdin closed before finishing) · `4` permission denied · `5` a non-regular entry (directory/symlink) blocks a scaffold path, or a scaffold target collides with a differing hand-edited file · `6` malformed configuration, including an unknown tracker backend |
+| **Key flags** | `--yes` / `--non-interactive` (skip the wizard even on a TTY) · `--tracker <quest\|backlog\|jira>` (persist the tracker choice without prompting) · `--migrate-backlog` (valid only with `--tracker quest` for a legacy zero-config Backlog bundle) · `--claude` (Claude Code bridge; `--agents` alias) · `--codex` (Codex bridge: `AGENTS.md` + `.codex/skills/lore/`) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-backlog` / `--no-backlog` (force/skip the backlog capability check) |
+| **Output** | `kind: init` — created/skipped scaffold paths, plus `interactive`/`scaffolds` always present (`false`/`[]` on the default path); `tracker` is present after a wizard or explicit `--tracker` choice; `migration` reports created/reused IDs after a successful Backlog-to-Quest migration; `agents` (Claude), `codex`, and `backlog` are present only when those steps ran |
+| **Exit** | `0` ok (the backlog check is advisory-only and never changes this) · `2` usage (bad flag/unknown `--scaffold` target, an invalid migration-flag combination, a missing `--tracker` value, or the wizard's stdin closed before finishing) · `4` permission denied · `5` a non-regular entry (directory/symlink) blocks a scaffold path, or a scaffold target collides with a differing hand-edited file · `6` malformed configuration, unknown tracker backend, legacy migration requirement, or lossless-migration preflight failure |
 
 ### `new`
 

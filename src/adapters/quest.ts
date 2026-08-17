@@ -11,7 +11,9 @@ export const QUEST_TIMEOUT_ENV_VAR = "LORE_QUEST_TIMEOUT_MS";
 export const DEFAULT_QUEST_TIMEOUT_MS = 30_000;
 const REQUIRED_VERSION = "0.2.0";
 const ACTOR_FLAGS = ["--actor", "lore", "--actor-kind", "human"] as const;
-const INSTALL_HINT = "install @opum-ai/quest@0.2.0 and ensure the `quest` binary is on PATH";
+const INSTALL_HINT = "install the authorized Quest 0.2.0 RC and ensure the `quest` binary is on PATH";
+const MIGRATED_PRIORITY_LABEL = "lore:migration:priority:";
+const MIGRATED_ORDINAL_LABEL = "lore:migration:ordinal:";
 const REQUIRED_COMMANDS = [
   ["manifest", "manifest.registry", false],
   ["version", null, false],
@@ -36,6 +38,14 @@ export interface QuestAdapterOptions {
   readonly spawn?: QuestSpawn;
   /** Injectable workspace gate; production requires Quest's durable workspace marker. */
   readonly workspaceInitialized?: QuestWorkspaceInitialized;
+}
+
+/** Preserve Backlog ordering metadata in Quest labels until Quest exposes native write flags. */
+export function questMigrationLabels(priority: string | null, ordinal: number | null): string[] {
+  return [
+    ...(priority === null ? [] : [`${MIGRATED_PRIORITY_LABEL}${encodeURIComponent(priority)}`]),
+    ...(ordinal === null ? [] : [`${MIGRATED_ORDINAL_LABEL}${ordinal}`]),
+  ];
 }
 
 function timeout(): number {
@@ -182,7 +192,15 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
           "omit the milestone or select a tracker backend that supports milestones",
           { milestone: input.milestone },
         );
+      if (input.id !== undefined && !/^T-[1-9][0-9]*$/.test(input.id))
+        throw new LoreError(
+          "validation",
+          `Quest 0.2 cannot create task id ${JSON.stringify(input.id)}`,
+          "use a canonical T-<positive integer> id; migrating other ids requires an approved reference rewrite policy",
+          { id: input.id },
+        );
       const args = ["task", "create", safe(input.title), ...ACTOR_FLAGS];
+      if (input.id !== undefined) args.push("--id", safe(input.id));
       if (input.description !== undefined) args.push("--description", safe(input.description));
       for (const label of input.labels ?? []) args.push("--label", safe(label));
       for (const doc of input.doc ?? []) args.push("--doc", safe(doc));
@@ -324,14 +342,27 @@ function lineBlock(v: unknown, name: string): string | null {
 }
 function summary(value: unknown): BacklogTask {
   const task = record(value) ? value : {};
+  const migration = migrationMetadata(strings(task.labels ?? [], "labels"));
+  if (task.priority !== null && task.priority !== undefined && migration.priority !== null)
+    throw new LoreError(
+      "drift",
+      "Quest returned both native and migrated task priority",
+      `Quest ${REQUIRED_VERSION} is required`,
+    );
+  if (task.ordinal !== null && task.ordinal !== undefined && migration.ordinal !== null)
+    throw new LoreError(
+      "drift",
+      "Quest returned both native and migrated task ordinal",
+      `Quest ${REQUIRED_VERSION} is required`,
+    );
   return {
     id: string(task.id, "task id"),
     title: string(task.title, "task title"),
     status: string(task.status, "task status"),
-    priority: nullableString(task.priority, "task priority"),
+    priority: nullableString(task.priority, "task priority") ?? migration.priority,
     ordinal:
       task.ordinal === null || task.ordinal === undefined
-        ? null
+        ? migration.ordinal
         : typeof task.ordinal === "number"
           ? task.ordinal
           : (() => {
@@ -342,10 +373,41 @@ function summary(value: unknown): BacklogTask {
               );
             })(),
     assignees: strings(task.assignees ?? [], "assignees"),
-    labels: strings(task.labels ?? [], "labels"),
+    labels: migration.labels,
     milestone: nullableString(task.milestone, "milestone"),
     parentTaskId: nullableString(task.parentTaskId, "parent task id"),
   };
+}
+function migrationMetadata(labels: readonly string[]): {
+  priority: string | null;
+  ordinal: number | null;
+  labels: string[];
+} {
+  let priority: string | null = null;
+  let ordinal: number | null = null;
+  const visible: string[] = [];
+  for (const label of labels) {
+    if (label.startsWith(MIGRATED_PRIORITY_LABEL)) {
+      if (priority !== null) throw new LoreError("drift", "Quest returned duplicate migrated priority labels");
+      try {
+        priority = decodeURIComponent(label.slice(MIGRATED_PRIORITY_LABEL.length));
+      } catch {
+        throw new LoreError("drift", "Quest returned an invalid migrated priority label");
+      }
+      if (!priority) throw new LoreError("drift", "Quest returned an empty migrated priority label");
+      continue;
+    }
+    if (label.startsWith(MIGRATED_ORDINAL_LABEL)) {
+      if (ordinal !== null) throw new LoreError("drift", "Quest returned duplicate migrated ordinal labels");
+      const raw = label.slice(MIGRATED_ORDINAL_LABEL.length);
+      if (!raw) throw new LoreError("drift", "Quest returned an empty migrated ordinal label");
+      ordinal = Number(raw);
+      if (!Number.isFinite(ordinal)) throw new LoreError("drift", "Quest returned an invalid migrated ordinal label");
+      continue;
+    }
+    visible.push(label);
+  }
+  return { priority, ordinal, labels: visible };
 }
 function list(value: unknown, opts?: ListTasksOptions): BacklogTask[] {
   if (!Array.isArray(value))

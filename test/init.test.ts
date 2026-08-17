@@ -45,6 +45,7 @@ async function init(
     jsonRequested?: boolean;
     prompter?: InitPrompter;
     adapter?: BacklogAdapter;
+    migrateBacklog?: InitOptions["migrateBacklog"];
     agentAvailability?: () => { claude: boolean; codex: boolean };
   } = {},
 ): Promise<{ code: number; result: InitResult; stderr: string }> {
@@ -66,6 +67,7 @@ async function init(
     jsonRequested: extra.jsonRequested,
     prompter: extra.prompter,
     adapter: extra.adapter,
+    migrateBacklog: extra.migrateBacklog,
     agentAvailability: extra.agentAvailability ?? (() => ({ claude: true, codex: false })),
   };
   const code = await runInit(options);
@@ -100,6 +102,13 @@ function forbiddenPrompter(): InitPrompter {
     throw new Error(`InitPrompter.${method} should not have been called — the wizard must not run`);
   };
   return { confirm: fail("confirm"), choose: fail("choose"), close: fail("close") };
+}
+
+function legacyBundle(): void {
+  mkdirSync(join(root, ".lore"), { recursive: true });
+  writeFileSync(join(root, ".lore", "config.toml"), "[validate]\nexternal_links = false\n");
+  mkdirSync(join(root, "backlog", "tasks"), { recursive: true });
+  writeFileSync(join(root, "backlog", "config.yml"), "statuses:\n  - To Do\n  - In Progress\n  - Done\n");
 }
 
 describe("lore init — fresh bundle (AC#1)", () => {
@@ -718,6 +727,100 @@ describe("lore init — idempotent re-run with flags (AC#3)", () => {
     await init({ args: ["--obsidian"], adapter: okAdapter() });
     const { result } = await init({ args: ["--obsidian"], adapter: okAdapter() });
     expect(result.scaffolds[0]?.files).toEqual([]);
+  });
+});
+
+describe("lore init — legacy zero-config tracker boundary", () => {
+  test("refuses a Quest switch without the explicit migration flag and names both safe commands", () => {
+    legacyBundle();
+    const error = expectError("validation", () =>
+      runInit({ root, output: JSON_CTX, stdout: capture(), args: ["--tracker", "quest"] }),
+    );
+    expect(error.hint).toContain("quest init");
+    expect(error.hint).toContain("lore init --tracker quest --migrate-backlog");
+    expect(error.hint).toContain("lore init --tracker backlog");
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
+  });
+
+  test("persists Quest only after an explicit migration succeeds", async () => {
+    legacyBundle();
+    const { result } = await init({
+      args: ["--tracker", "quest", "--migrate-backlog"],
+      migrateBacklog: async () => ({ created: ["LCLI-1"], reused: ["LCLI-2"] }),
+    });
+    expect(result.migration).toEqual({ created: ["LCLI-1"], reused: ["LCLI-2"] });
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
+  });
+
+  test("leaves the backend unpinned when migration preflight fails", async () => {
+    legacyBundle();
+    const failure = new LoreError("validation", "not lossless", "pin Backlog");
+    const promise = runInit({
+      root,
+      output: JSON_CTX,
+      stdout: capture(),
+      args: ["--tracker", "quest", "--migrate-backlog"],
+      migrateBacklog: async () => Promise.reject(failure),
+    });
+    await expect(promise).rejects.toBe(failure);
+    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).not.toContain("[tracker]");
+  });
+
+  test("pins Backlog explicitly without invoking migration", async () => {
+    legacyBundle();
+    let migrated = false;
+    await init({
+      args: ["--tracker", "backlog"],
+      migrateBacklog: async () => {
+        migrated = true;
+        return { created: [], reused: [] };
+      },
+    });
+    expect(migrated).toBe(false);
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
+  });
+
+  test("requires the exact Quest migration invocation", () => {
+    legacyBundle();
+    expectError("usage", () => runInit({ root, output: JSON_CTX, stdout: capture(), args: ["--migrate-backlog"] }));
+  });
+
+  test("interactive onboarding offers only migration or an explicit Backlog pin", async () => {
+    legacyBundle();
+    const choices: string[][] = [];
+    const base = scriptedPrompter({ tracker: "backlog", agents: false, site: "none", obsidian: false });
+    const prompter: InitPrompter = {
+      ...base,
+      choose: async (question, values, defaultValue) => {
+        if (question.includes("Backlog tasks")) choices.push([...values]);
+        return base.choose(question, values, defaultValue);
+      },
+    };
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      adapter: fakeAdapter([], { probe: "ok" }),
+      agentAvailability: () => ({ claude: false, codex: false }),
+    });
+    expect(choices).toEqual([["migrate", "backlog"]]);
+    expect(result.tracker).toBe("backlog");
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
+  });
+
+  test("interactive migration preserves the legacy backend until the copy succeeds", async () => {
+    legacyBundle();
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter: scriptedPrompter({ tracker: "migrate", agents: false, site: "none", obsidian: false }),
+      adapter: fakeAdapter([], { probe: "ok" }),
+      migrateBacklog: async () => ({ created: ["LCLI-1"], reused: [] }),
+      agentAvailability: () => ({ claude: false, codex: false }),
+    });
+    expect(result.migration).toEqual({ created: ["LCLI-1"], reused: [] });
+    expect(result.tracker).toBe("quest");
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
   });
 });
 

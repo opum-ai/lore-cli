@@ -32,9 +32,26 @@ describe("createTrackerAdapter", () => {
 });
 
 describe("createConfiguredTrackerAdapter", () => {
-  test("routes the zero-config default to the root-bound Backlog adapter", async () => {
+  test("blocks a legacy zero-config Backlog bundle with exact migration and pin commands", () => {
     mkdirSync(join(root, "backlog"), { recursive: true });
     writeFileSync(join(root, "backlog", "config.yml"), "statuses:\n  - Ready\n  - Done\n");
+
+    expect(() => createConfiguredTrackerAdapter(root)).toThrow("no explicit tracker backend");
+    try {
+      createConfiguredTrackerAdapter(root);
+      throw new Error("expected legacy boundary");
+    } catch (error) {
+      expect(error).toBeInstanceOf(LoreError);
+      expect((error as LoreError).hint).toContain("lore init --tracker quest --migrate-backlog");
+      expect((error as LoreError).hint).toContain("lore init --tracker backlog");
+    }
+  });
+
+  test("routes an explicitly pinned Backlog backend unchanged", async () => {
+    mkdirSync(join(root, "backlog"), { recursive: true });
+    writeFileSync(join(root, "backlog", "config.yml"), "statuses:\n  - Ready\n  - Done\n");
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(join(root, ".lore", "config.toml"), '[tracker]\nbackend = "backlog"\n');
 
     expect(await createConfiguredTrackerAdapter(root).statusFlow()).toEqual(["Ready", "Done"]);
   });

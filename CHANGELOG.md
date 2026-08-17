@@ -10,9 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - New bundles persist Quest as their tracker backend, and Lore can drive the
-  public `@opum-ai/quest` schema-versioned task contract without silent
-  fallback or dual writes. Existing explicit Backlog and Jira selections
-  remain unchanged (LCLI-315.4).
+  explicitly authorized, locally installed Quest `0.2.0` RC's schema-versioned
+  task contract without silent fallback or dual writes. Existing explicit
+  Backlog and Jira selections remain unchanged; legacy zero-config Backlog
+  bundles must migrate or pin explicitly, while RC-incompatible IDs fail before
+  any Quest write (LCLI-315.4).
 
 ## [0.3.2] - 2026-08-17
 

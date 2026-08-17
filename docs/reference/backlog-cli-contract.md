@@ -367,13 +367,14 @@ Coupling commands depend on the backend-neutral `TrackerAdapter` contract in
 selection and constructs a concrete backend through
 `createConfiguredTrackerAdapter(root)`; `createTrackerAdapter(root, config)`
 and injected adapters remain explicit test seams. New bundles persist Quest as
-their selected backend; existing bundles with no explicit selection retain the
-historical Backlog.md interpretation in the current release. Delivery of the
-new default remains gated on an explicit first-use migration-or-pin contract. Jira
+their selected backend. A bundle with no explicit selection and a real
+`backlog/` directory is classified as legacy Backlog; its first tracker command
+fails loud with exact migration and pin commands instead of silently switching.
+An omitted selection without that legacy artifact resolves to Quest. Jira
 Cloud is reachable through the installed `@salient-ai/jira-cli` executable
 when the backend is `jira`; Lore
 does not call Jira REST or read Jira credentials. Quest is reached through the
-public `@opum-ai/quest` CLI's schema-versioned subprocess contract; Lore does
+authorized installed Quest `0.2.0` RC's schema-versioned subprocess contract; Lore does
 not read Quest storage directly. An unknown selection fails loud instead of
 being silently coerced to another backend.
 
@@ -394,25 +395,40 @@ The contract also preserves four hardening obligations across implementations:
   returned task ID matches the requested ID case-insensitively. A backend must
   not bypass that verified-view path.
 
-### Quest CLI via `@opum-ai/quest`
+### Quest CLI 0.2.0 release candidate
 
-The Quest backend consumes the public `@opum-ai/quest@0.1.0` command contract
-through argv-only subprocess calls. Its cached probe requires bare semantic
-version output plus the `manifest.registry` and `task.status-flow` schema-1
-envelopes before any task result is trusted. Reads use `task list`, `task view`,
-and `search`; writes use `task create` and `task edit`, always with an explicit
+The Quest backend consumes the explicitly authorized, locally installed Quest
+`0.2.0` RC through argv-only subprocess calls. This is qualification evidence,
+not a public-package assertion. Lore requires `.quest/workspace.toml` and tells
+the operator to run `quest init` when it is absent; it never invokes Quest
+initialization itself. Its cached probe pins the `0.2.x` version family and the
+schema-1 `manifest.registry` command descriptors, including the RC's nullable
+`version` kind and mutating `workspace.initialized` `init` descriptor, plus the
+live `task.status-flow` payload. Reads use `task list`, `task view`, and
+`search`; writes use `task create` and `task edit`, always with an explicit
 human `lore` actor. Missing binaries, timeouts, typed Quest diagnostics, and
 schema/kind/payload mismatches fail loud; Lore never falls back or dual-writes.
 
-Quest has no Backlog task-file path, priority, ordinal, milestone, reporter, or
-timestamps in this contract, so those fields use the backend-neutral values;
-a requested create-time milestone fails before Lore spawns Quest rather than
-being discarded. Native description, documentation, dependencies, labels,
-title, status, and identity are preserved. Quest criteria carry text but no
+Quest has no Backlog task-file path, native priority, native ordinal,
+milestone, reporter, or timestamps in this contract, so storage-only fields use
+backend-neutral values; migration-only priority and ordinal values are encoded
+in reserved Lore labels and decoded before results leave the adapter. A
+requested create-time milestone or noncanonical caller-supplied ID fails before
+Lore spawns Quest rather than being discarded or sent to a mutating command.
+Native description, documentation, dependencies, labels, title, status, and
+identity are preserved. Quest criteria carry text but no
 checked bit, so Lore maps their text with `checked: false`; plan and
 implementation-note line arrays fold into newline-delimited Lore fields.
-Existing Backlog bundles remain a separate migration boundary; `lore backlog
-adopt` migrates knowledge records and is not a tracker-task migration command.
+
+Legacy migration is explicit: initialize Quest, then run `lore init --tracker
+quest --migrate-backlog`; pin instead with `lore init --tracker backlog`. Lore
+preflights the complete source set and all destination conflicts before the
+first write, and persists Quest only after the copy succeeds. The installed RC
+accepts only canonical IDs matching `T-[1-9][0-9]*` and exposes no alias/import
+write path. Consequently ordinary `LCLI-*`, `TASK-*`, and dotted subtask IDs
+fail before any Quest write until a Story/task-reference rewrite policy or
+upstream ID-preservation mechanism is approved. `lore backlog adopt` migrates
+knowledge records and is not a tracker-task migration command.
 
 ---
 
@@ -444,10 +460,9 @@ status_flow = ["To Do", "In Progress", "Done"]
 
 Run `lore init --tracker jira` to write the selection without prompts, or choose
 Jira in a bare interactive `lore init` wizard. `quest`, `backlog`, and `jira`
-are accepted; the pending LCLI-315.4 change records `quest` for newly
-scaffolded bundles but cannot ship until legacy bundles have an explicit
-first-use migration-or-pin contract. Unknown keys remain tolerated for forward
-compatibility.
+are accepted. Legacy zero-config bundles are offered only an explicit migration
+or Backlog pin; the current Quest RC canonical-ID limitation can make migration
+fail before any write. Unknown keys remain tolerated for forward compatibility.
 
 `probe()` runs `jira --version`, `jira project get`, and
 `jira metadata priorities`. The project response is the issue-type vocabulary;

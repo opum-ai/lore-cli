@@ -36,7 +36,7 @@ function task(overrides: Record<string, unknown> = {}): Record<string, unknown> 
     title: "Coupled task",
     status: "In Progress",
     assignees: ["Ada"],
-    labels: ["docs"],
+    labels: ["docs", "lore:migration:priority:High", "lore:migration:ordinal:42"],
     milestone: "M1",
     parentTaskId: "QUEST-1",
     file: "tasks/quest-2.json",
@@ -92,7 +92,7 @@ describe("Quest 0.2 tracker adapter", () => {
       if (args.join(" ") === "task list --json") return ok("task.list", [task()]);
       if (args[0] === "task" && args[1] === "view") return ok("task.view", task());
       if (args[0] === "search") return ok("task.search", [task()]);
-      if (args[0] === "task" && args[1] === "create") return ok("task.created", { id: "QUEST-4" });
+      if (args[0] === "task" && args[1] === "create") return ok("task.created", { id: "T-4" });
       if (args[0] === "task" && args[1] === "edit") return ok("task.updated", { id: "QUEST-2" });
       throw new Error(`unexpected quest call: ${args.join(" ")}`);
     };
@@ -104,6 +104,9 @@ describe("Quest 0.2 tracker adapter", () => {
     const detail = await tracker.viewTask("QUEST-2");
     expect(detail?.comments).toEqual([{ author: "Grace", createdAt: "2026-08-17T01:00:00Z", body: "comment" }]);
     expect(detail).toMatchObject({
+      priority: "High",
+      ordinal: 42,
+      labels: ["docs"],
       dependencies: ["QUEST-0"],
       documentation: ["docs/story.md"],
       acceptanceCriteria: [{ text: "works", checked: false }],
@@ -112,12 +115,13 @@ describe("Quest 0.2 tracker adapter", () => {
     expect((await tracker.searchTasks("coupled"))[0]?.id).toBe("QUEST-2");
     expect(
       await tracker.createTask({
+        id: "T-4",
         title: "New",
         description: "body",
         labels: ["docs"],
         doc: ["docs/new.md"],
       }),
-    ).toBe("QUEST-4");
+    ).toBe("T-4");
     await tracker.editTask("QUEST-2", {
       status: "Done",
       addLabels: ["new"],
@@ -127,6 +131,7 @@ describe("Quest 0.2 tracker adapter", () => {
     const create = calls.find((args) => args[1] === "create") ?? [];
     const edit = calls.find((args) => args[1] === "edit") ?? [];
     expect(create).toEqual(expect.arrayContaining(["--actor", "lore", "--actor-kind", "human"]));
+    expect(create).toEqual(expect.arrayContaining(["--id", "T-4"]));
     expect(create).not.toContain("--milestone");
     expect(edit).toEqual(
       expect.arrayContaining([
@@ -196,6 +201,21 @@ describe("Quest 0.2 tracker adapter", () => {
       hint: expect.stringContaining("omit the milestone"),
       input: { milestone: "M2" },
     });
+  });
+
+  test("rejects noncanonical caller ids before spawning a mutating Quest command", async () => {
+    let calls = 0;
+    const tracker = adapter(async () => {
+      calls += 1;
+      throw new Error("must not spawn");
+    });
+    for (const id of ["LCLI-1", "T-1.2", "T-0", "T--1", "--json"]) {
+      await expect(tracker.createTask({ id, title: "New" })).rejects.toMatchObject({
+        type: "validation",
+        input: { id },
+      });
+    }
+    expect(calls).toBe(0);
   });
 
   test("kills a real subprocess that exceeds the configured timeout", async () => {

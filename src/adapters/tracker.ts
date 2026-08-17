@@ -2,6 +2,7 @@
 
 import { type JiraTrackerConfig, loadConfig, type TrackerBackend, type TrackerConfig } from "../config";
 import { LoreError } from "../errors";
+import { resolveTrackerSelection } from "../tracker-selection";
 import {
   type BacklogTask,
   type BacklogTaskDetail,
@@ -58,8 +59,17 @@ export interface TrackerAdapterOptions {
 
 /** Load the repository's resolved tracker selection and construct that backend. */
 export function createConfiguredTrackerAdapter(root: string, options: TrackerAdapterOptions = {}): TrackerAdapter {
+  const selection = resolveTrackerSelection(root);
+  if (selection.source === "legacy-backlog") {
+    throw new LoreError(
+      "validation",
+      "this bundle has Backlog tasks but no explicit tracker backend",
+      "run `quest init`, then `lore init --tracker quest --migrate-backlog`; or pin Backlog with `lore init --tracker backlog`",
+      { backend: selection.backend, source: selection.source },
+    );
+  }
   const config: TrackerConfig = loadConfig({ root }).tracker;
-  return createTrackerAdapter(root, config, options);
+  return createTrackerAdapter(root, { ...config, backend: selection.backend }, options);
 }
 
 /** Construct one selected tracker; configured production callers use `createConfiguredTrackerAdapter`. */
