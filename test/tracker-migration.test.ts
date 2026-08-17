@@ -9,7 +9,14 @@ const preview: QuestMigrationPreview = {
   requiresApproval: true,
   mappings: [{ sourceIdentifier: "LCLI-1", sourceFolder: "tasks", targetIdentifier: "T-1", aliases: ["LCLI-1"] }],
 };
-const receipt: QuestMigrationReceipt = { ...preview, survivors: [], state: "applied" };
+const receipt: QuestMigrationReceipt = {
+  schemaVersion: 1,
+  kind: "migration.backlog.receipt",
+  ...preview,
+  survivors: [],
+  taskFingerprints: { "T-1": "sha256:task" },
+  state: "applied",
+};
 
 function migration(overrides: Partial<QuestBacklogMigration> = {}): QuestBacklogMigration {
   return {
@@ -60,6 +67,7 @@ describe("migrateBacklogTasksToQuest", () => {
       sourceFingerprint: "sha256:source",
       mappings: preview.mappings,
       survivors: [],
+      taskFingerprints: { "T-1": "sha256:task" },
       state: "applied",
     });
   });

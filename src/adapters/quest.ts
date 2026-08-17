@@ -55,10 +55,13 @@ export interface QuestMigrationPreview {
   readonly requiresApproval: true;
 }
 export interface QuestMigrationReceipt {
+  readonly schemaVersion: 1;
+  readonly kind: "migration.backlog.receipt";
   readonly digest: string;
   readonly sourceFingerprint: string;
   readonly mappings: readonly QuestMigrationMapping[];
   readonly survivors: readonly string[];
+  readonly taskFingerprints: Readonly<Record<string, string>>;
   readonly state: "applying" | "applied" | "failed" | "rolled-back";
 }
 export interface QuestBacklogMigration {
@@ -446,17 +449,27 @@ function migrationPreview(value: unknown): QuestMigrationPreview {
   };
 }
 function migrationReceipt(value: unknown): QuestMigrationReceipt {
-  if (!record(value) || !["applying", "applied", "failed", "rolled-back"].includes(value.state as string))
+  if (
+    !record(value) ||
+    value.schemaVersion !== QUEST_SCHEMA_VERSION ||
+    value.kind !== "migration.backlog.receipt" ||
+    !["applying", "applied", "failed", "rolled-back"].includes(value.state as string) ||
+    !record(value.taskFingerprints) ||
+    Object.values(value.taskFingerprints).some((fingerprint) => typeof fingerprint !== "string" || !fingerprint)
+  )
     throw new LoreError(
       "drift",
       "Quest returned invalid Backlog migration receipt",
       `Quest ${REQUIRED_VERSION} is required`,
     );
   return {
+    schemaVersion: 1,
+    kind: "migration.backlog.receipt",
     sourceFingerprint: string(value.sourceFingerprint, "migration source fingerprint"),
     digest: string(value.digest, "migration digest"),
     mappings: migrationMappings(value.mappings),
     survivors: strings(value.survivors, "migration survivors"),
+    taskFingerprints: value.taskFingerprints as Readonly<Record<string, string>>,
     state: value.state as QuestMigrationReceipt["state"],
   };
 }
@@ -469,7 +482,7 @@ function comments(v: unknown): BacklogComment[] {
   if (!Array.isArray(v) || v.some((x) => !record(x) || typeof x.body !== "string"))
     throw new LoreError("drift", "Quest returned invalid comments", `Quest ${REQUIRED_VERSION} is required`);
   return v.map((x) => ({
-    author: nullableString(x.author, "comment author"),
+    author: nullableString(x.author ?? x.authorId, "comment author"),
     createdAt: nullableString(x.createdAt, "comment createdAt"),
     body: x.body as string,
   }));
@@ -501,7 +514,7 @@ function summary(value: unknown): BacklogTask {
     assignees: strings(task.assignees ?? [], "assignees"),
     labels: strings(task.labels ?? [], "labels"),
     milestone: nullableString(task.milestone, "milestone"),
-    parentTaskId: nullableString(task.parentTaskId, "parent task id"),
+    parentTaskId: nullableString(task.parentId ?? task.parentTaskId, "parent task id"),
   };
 }
 function list(value: unknown, opts?: ListTasksOptions): BacklogTask[] {

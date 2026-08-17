@@ -43,7 +43,7 @@ function task(overrides: Record<string, unknown> = {}): Record<string, unknown> 
     assignees: ["Ada"],
     labels: ["docs", "lore:migration:priority:High", "lore:migration:ordinal:42"],
     milestone: "M1",
-    parentTaskId: "QUEST-1",
+    parentId: "QUEST-1",
     file: "tasks/quest-2.json",
     reporter: "Grace",
     createdAt: "2026-08-17T00:00:00Z",
@@ -59,7 +59,7 @@ function task(overrides: Record<string, unknown> = {}): Record<string, unknown> 
     plan: ["plan", "second step"],
     implementationNotes: ["notes"],
     finalSummary: "done",
-    comments: [{ author: "Grace", createdAt: "2026-08-17T01:00:00Z", body: "comment" }],
+    comments: [{ authorId: "Grace", createdAt: "2026-08-17T01:00:00Z", body: "comment" }],
     ...overrides,
   };
 }
@@ -77,7 +77,14 @@ describe("Quest 0.2 tracker adapter", () => {
       requiresApproval: true as const,
       mappings: [{ sourceIdentifier: "LCLI-1", sourceFolder: "tasks", targetIdentifier: "T-1", aliases: ["LCLI-1"] }],
     };
-    const receipt = { ...preview, survivors: [], state: "applied" as const };
+    const receipt = {
+      schemaVersion: 1 as const,
+      kind: "migration.backlog.receipt" as const,
+      ...preview,
+      survivors: [],
+      taskFingerprints: { "T-1": "sha256:task" },
+      state: "applied" as const,
+    };
     const spawn: QuestSpawn = async (readonlyArgs) => {
       const args = [...readonlyArgs];
       calls.push(args);
@@ -92,9 +99,12 @@ describe("Quest 0.2 tracker adapter", () => {
     expect(await migration.preview("/source")).toEqual(preview);
     expect(await migration.apply("/source", "sha256:digest")).toEqual({
       digest: "sha256:digest",
+      schemaVersion: 1,
+      kind: "migration.backlog.receipt",
       sourceFingerprint: "sha256:source",
       mappings: preview.mappings,
       survivors: [],
+      taskFingerprints: { "T-1": "sha256:task" },
       state: "applied",
     });
     expect(calls.find((args) => args[2] === "apply")).toEqual(
@@ -158,6 +168,7 @@ describe("Quest 0.2 tracker adapter", () => {
       documentation: ["docs/story.md"],
       acceptanceCriteria: [{ text: "works", checked: false }],
       implementationPlan: "plan\nsecond step",
+      parentTaskId: "QUEST-1",
     });
     expect((await tracker.searchTasks("coupled"))[0]?.id).toBe("QUEST-2");
     expect(

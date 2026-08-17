@@ -13,6 +13,7 @@ export interface TrackerMigrationResult {
   readonly sourceFingerprint: string;
   readonly mappings: readonly QuestMigrationMapping[];
   readonly survivors: readonly string[];
+  readonly taskFingerprints: Readonly<Record<string, string>>;
   readonly state: "applied";
 }
 
@@ -33,6 +34,7 @@ export interface PendingMigrationStore {
 const diskPendingMigrationStore: PendingMigrationStore = {
   read(root) {
     const path = join(root, PENDING_MIGRATION_REL_PATH);
+    assertNoSymlinkInPath(root, PENDING_MIGRATION_REL_PATH);
     let raw: string;
     try {
       raw = readFileSync(path, "utf8");
@@ -106,27 +108,50 @@ function result(receipt: QuestMigrationReceipt): TrackerMigrationResult {
     sourceFingerprint: receipt.sourceFingerprint,
     mappings: receipt.mappings,
     survivors: receipt.survivors,
+    taskFingerprints: receipt.taskFingerprints,
     state: "applied",
   };
 }
 
 function pendingPreview(value: unknown): QuestMigrationPreview {
-  if (typeof value !== "object" || value === null)
+  if (typeof value !== "object" || value === null || Array.isArray(value))
     throw new LoreError("drift", "Lore's pending Quest migration record is invalid");
   const preview = value as Partial<QuestMigrationPreview>;
   if (
     typeof preview.sourceFingerprint !== "string" ||
     typeof preview.digest !== "string" ||
+    preview.sourceFingerprint.length === 0 ||
+    preview.digest.length === 0 ||
     preview.requiresApproval !== true ||
-    !Array.isArray(preview.mappings)
+    !validMappings(preview.mappings)
   )
     throw new LoreError("drift", "Lore's pending Quest migration record is invalid");
   return preview as QuestMigrationPreview;
 }
 
 function assertPreview(preview: QuestMigrationPreview): void {
-  if (!preview.requiresApproval || (preview.mappings.length === 0 && preview.digest === ""))
+  if (!preview.requiresApproval || !preview.digest || !preview.sourceFingerprint || !validMappings(preview.mappings))
     throw new LoreError("drift", "Quest returned an invalid Backlog migration preview", "Quest 0.2.2 is required");
+}
+
+function validMappings(value: unknown): value is readonly QuestMigrationMapping[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (mapping) =>
+        typeof mapping === "object" &&
+        mapping !== null &&
+        !Array.isArray(mapping) &&
+        typeof mapping.sourceIdentifier === "string" &&
+        mapping.sourceIdentifier.length > 0 &&
+        typeof mapping.sourceFolder === "string" &&
+        mapping.sourceFolder.length > 0 &&
+        typeof mapping.targetIdentifier === "string" &&
+        mapping.targetIdentifier.length > 0 &&
+        Array.isArray(mapping.aliases) &&
+        mapping.aliases.every((alias: unknown) => typeof alias === "string" && alias.length > 0),
+    )
+  );
 }
 
 function assertReceipt(preview: QuestMigrationPreview, receipt: QuestMigrationReceipt): void {

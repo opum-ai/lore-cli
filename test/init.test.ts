@@ -736,6 +736,7 @@ describe("lore init — legacy zero-config tracker boundary", () => {
     sourceFingerprint: "sha256:source",
     mappings: [{ sourceIdentifier: "LCLI-1", sourceFolder: "tasks", targetIdentifier: "T-1", aliases: ["LCLI-1"] }],
     survivors: [],
+    taskFingerprints: { "T-1": "sha256:task" },
     state: "applied" as const,
   };
   test("refuses a Quest switch without the explicit migration flag and names both safe commands", () => {
