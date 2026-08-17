@@ -23,7 +23,7 @@
     "additiveFields": ["fixture_extension.schema", "fixture_extension.seed", "fixture_extension.ordinal", "fixture_extension.unicode"]
   },
   "expected": {
-    "canonicalExportSha256": "sha256:049f869a791b1f77115a7a23576c2d563ef12e6615f214185dbfcdc83dbe3d59",
+    "canonicalExportSha256": "sha256:ae055ca36dbf5a3af3377c0abbc7ac558793a193458c618f85be5ef088425f25",
     "sourceInventorySha256": "sha256:c1c563dc7f654e0496f5295112f252da94e25d0eea6c3b2a219109ac823fcd85",
     "taskSnapshotSha256": "sha256:1e31ba5ffad5aad13faee9bb3ad2da23b8e06cfecfbb9cab1a6ea12530ffd86f"
   }
