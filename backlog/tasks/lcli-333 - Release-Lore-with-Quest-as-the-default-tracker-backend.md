@@ -4,14 +4,18 @@ title: Release Lore with Quest as the default tracker backend
 status: To Do
 assignee: []
 created_date: '2026-08-14 18:09'
+updated_date: '2026-08-18 23:18'
 labels:
   - release
   - quest
   - tracker
   - default-backend
+  - 'doc:stories/track-lore-cli-tracker-backend-integration'
 dependencies:
   - LCLI-315.4
   - LCLI-332
+documentation:
+  - docs/stories/track-lore-cli-tracker-backend-integration.md
 priority: high
 type: task
 ordinal: 456000
