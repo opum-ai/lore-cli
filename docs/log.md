@@ -165,6 +165,7 @@
 - 2026-08-16T08:52:37-05:00 da289c199529375c90f220cce6b0aa243c5afa30 docs: refresh release handover log
 - 2026-08-16T09:38:04-05:00 94f0626731988ef3c57d7477c0fde07fccd56484 docs: record Lore CLI 0.3.0 release
 - 2026-08-18T08:25:46-05:00 54387857814f0abfec82ab48eea977baad0ac3ba docs: reconcile log projection
+- 2026-08-18T17:43:32-05:00 4dc2f2fc8cc6bb79915eea16eb9bff2a1feef229 docs: record superseded 0.3.1 settlement
 
 ## docs/.obsidian
 
