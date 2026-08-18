@@ -89,9 +89,13 @@ describe("ci.yml exact-host LadybugDB qualification", () => {
     expect(testScript).toContain("bun test --isolate --max-concurrency=4 --timeout=60000");
     expect(testScript).toContain('"macos-15-intel"');
     expect(testScript).toContain("bun test --isolate --timeout=40000");
-    expect(testScript).toContain('== "ubuntu-latest" ||');
+    expect(testScript).toContain('== "ubuntu-latest"');
     expect(testScript).toContain('== "ubuntu-24.04-arm"');
     expect(testScript).toContain("bun test --isolate --max-concurrency=1 --timeout=10000");
+    expect(testScript).toContain("timeout 6m bun test --isolate --max-concurrency=1 --timeout=10000");
+    expect(testScript).toContain("error: EEXIST: file already exists, epoll_ctl");
+    expect(testScript).toContain("lore_bun_status=$" + "{PIPESTATUS[0]}");
+    expect(testScript).toContain('exit "$' + '{lore_bun_status}"');
     expect(testScript).toContain("else\n  bun test --isolate --timeout=10000");
   });
 });

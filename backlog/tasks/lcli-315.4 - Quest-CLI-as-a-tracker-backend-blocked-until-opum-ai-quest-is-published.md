@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:49'
-updated_date: '2026-08-18 06:55'
+updated_date: '2026-08-18 07:23'
 labels:
   - quest
   - tracker
@@ -153,6 +153,8 @@ GitHub Actions reactivation and CI harness correction — 2026-08-18
 The repository was made public with explicit owner authorization. PR #398 Actions run 32105578728 then allocated all eight jobs: six passed, Windows failed one Quest adapter assertion, and Docker E2E reported 76 failures. Windows production behavior was correct; Bun 1.3.14 on Windows did not expose a synchronously rejected LoreError subclass through rejects.toMatchObject. The test now captures the rejection and asserts the LoreError fields directly. Docker was a fixture mismatch: its Backlog-specific campaign called bare lore init, which now correctly selects Quest for new bundles. The primary and nested fixtures now pin --tracker backlog, and probes that temporarily replace .lore/config.toml preserve and restore the explicit tracker selection.
 
 Objective verification is green: focused Quest adapter 11 pass/0 fail; full Docker real-binary E2E 344 pass/0 fail; lint; typecheck; full unit suite 2629 pass/1 intentional skip/0 fail across 84 files; compiled build; lore validate --strict 73 files/0 errors/0 warnings; lore check --strict 73 files/0 errors/0 warnings; git diff --check. Delivery is active again; the obsolete billing/startup blocker is cleared. Next: commit and push the harness fixes, confirm the fresh PR checks, merge to dev if green, then settle LCLI-315.4/doc-23.
+
+CI run 32109527306 confirmed the repeated Bun 1.3.14 Linux runtime race, not a product assertion: Ubuntu emitted EEXIST: file already exists, epoll_ctl from internal:fs/streams while the serialized suite was between tests, then hung until the 20-minute job bound. Windows, Docker E2E, browser, scaffold, compile, and benchmark jobs all passed. Remediation adds one bounded ubuntu-latest retry only when the captured first-run log contains that exact epoll signature; ordinary failures exit with their original status, file isolation and serialization remain enabled, and Linux arm qualification remains unchanged. Focused workflow contract 5/5, lint, typecheck, and diff check pass locally.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
