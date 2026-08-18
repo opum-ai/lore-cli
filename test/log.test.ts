@@ -5,7 +5,7 @@ import { buildLog, type GitAdapter, type GitCommit, type GitLogRange, generateLo
 /**
  * A fixed, hand-authored fake history — never real `git` (LORE-47 / AC#3). Deliberately given out
  * of timestamp order and with cross-folder, multi-file, and out-of-bundle commits so the tests pin
- * grouping, the `(timestamp, hash)` sort, dedup, and the bundle-root scope.
+ * deepest-common-folder assignment, the `(timestamp, hash)` sort, and the bundle-root scope.
  */
 const FAKE_HISTORY: readonly GitCommit[] = [
   { hash: "ddd4", timestamp: "2026-06-22T09:00:00Z", subject: "Revise ADR-0014", files: ["docs/adr/0014.md"] },
@@ -50,24 +50,23 @@ function fakeAdapter(
   };
 }
 
-describe("generateLog — per-folder, directory-sorted, byte-stable (AC#3)", () => {
-  test("groups commits by bundle folder, folders sorted, commits sorted by (timestamp, hash)", () => {
+describe("generateLog — one entry per commit, directory-sorted, byte-stable (AC#3)", () => {
+  test("assigns each commit to its deepest common bundle folder; folders and entries are sorted", () => {
     expect(generateLog(FAKE_HISTORY)).toBe(
       [
         "# Change log",
         "",
         "## docs",
         "",
+        "- 2026-06-20T10:00:00Z aaa1 Add ADR-0014 and a story",
         "- 2026-06-20T11:00:00Z bbb2 Root index + unrelated src",
         "",
         "## docs/adr",
         "",
-        "- 2026-06-20T10:00:00Z aaa1 Add ADR-0014 and a story",
         "- 2026-06-22T09:00:00Z ddd4 Revise ADR-0014",
         "",
         "## docs/stories",
         "",
-        "- 2026-06-20T10:00:00Z aaa1 Add ADR-0014 and a story",
         "- 2026-06-21T08:00:00Z ccc3 Touch two files in one folder",
         "",
       ].join("\n"),
@@ -83,6 +82,16 @@ describe("generateLog — per-folder, directory-sorted, byte-stable (AC#3)", () 
     const out = generateLog(FAKE_HISTORY);
     const storiesSection = out.slice(out.indexOf("## docs/stories"));
     expect(storiesSection.match(/ccc3/g)?.length).toBe(1);
+  });
+
+  test("a commit touching several bundle folders appears exactly once in their deepest common folder", () => {
+    const out = generateLog(FAKE_HISTORY);
+    expect(out.match(/aaa1/g)?.length).toBe(1);
+    expect(out).toContain("## docs\n\n- 2026-06-20T10:00:00Z aaa1 Add ADR-0014 and a story");
+    const adrSection = out.slice(out.indexOf("## docs/adr"));
+    const storiesSection = out.slice(out.indexOf("## docs/stories"));
+    expect(adrSection).not.toContain("aaa1");
+    expect(storiesSection).not.toContain("aaa1");
   });
 
   test("files outside the bundle root are ignored (no `src` section, but the docs/index commit stays)", () => {

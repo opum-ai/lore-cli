@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- New bundles persist Quest as their tracker backend, and Lore can drive the
+  explicitly authorized, locally installed Quest `0.2.2` candidate's
+  schema-versioned task contract without silent fallback or dual writes.
+  Existing explicit Backlog and Jira selections remain unchanged; legacy
+  zero-config Backlog bundles must invoke Quest's receipt-backed, alias-preserving
+  migration or pin Backlog explicitly (LCLI-315.4).
+- Delivery remains blocked because the installed Quest 0.2.2 native candidate
+  accepts actor-free migration writes and rejects the actor flags required by
+  QCLI-97.8; Lore does not weaken its adapter contract around that artifact.
+
 ## [0.3.2] - 2026-08-17
 
 ### Fixed

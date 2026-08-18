@@ -273,7 +273,7 @@ critical "backlog init" 0 -- backlog init "lore-e2e" --defaults
 backlog config set autoCommit false >/dev/null
 backlog config set remoteOperations false >/dev/null
 backlog config set checkActiveBranches false >/dev/null
-critical "lore init" 0 -- lore init
+critical "lore init" 0 -- lore init --tracker backlog
 # `lore init` itself creates the (empty) .lore/cache/ directory as part of
 # scaffolding — its mere existence isn't evidence of a cached probe result.
 check "no stale probe result in .lore/cache/ before the first real probe" \
@@ -1279,7 +1279,11 @@ rm -f /tmp/config-yml-good-flow.yml
 # Story links only TASK6, so overriding Review -> done flips the WHOLE rollup from in-progress
 # (flow position, just asserted above) to done (override) -- a passing check can only mean the
 # override was actually read and honored, not coincidence.
+cp .lore/config.toml /tmp/lore-config-original.toml
 cat > .lore/config.toml <<'TOMLEOF'
+[tracker]
+backend = "backlog"
+
 [reconcile.overrides]
 Review = "done"
 TOMLEOF
@@ -1291,13 +1295,17 @@ check "Story status flips to done via the override (proves overrides win over fl
 # A malformed override target (not one of todo/in-progress/done) is core/reconcile.ts's OWN
 # validation (validateOverrides), distinct from a bare TOML syntax error -- fails loud the same way.
 cat > .lore/config.toml <<'TOMLEOF'
+[tracker]
+backend = "backlog"
+
 [reconcile.overrides]
 Review = "not-a-real-status"
 TOMLEOF
 step_fail "exit 6: [reconcile.overrides] target must be a valid rollup status (validation)" 6 \
   '.error_type == "validation"' \
   -- lore sync "$CUSTOM_STORY_ID" --json
-rm -f .lore/config.toml
+cp /tmp/lore-config-original.toml .lore/config.toml
+rm -f /tmp/lore-config-original.toml
 
 # Leave no induced state behind: the probe Story's on-disk `lore_task_status` still reads "done"
 # from the override test above, which no longer matches TASK6's real "Review" status now that no
@@ -1744,11 +1752,13 @@ rm -f docs/reference/e2e-exit6-check.md /tmp/validate-gate-out /tmp/validate-gat
 # BEFORE any gate report is built: a malformed .lore/config.toml, which `lore sync` reads and
 # validates up front and fails loud on (src/config.ts loadConfig) -- unlike validate/check,
 # which fold a config problem into their own report instead of throwing.
+cp .lore/config.toml /tmp/lore-config-good.toml
 printf 'key = "unterminated\n' > .lore/config.toml
 step_fail "exit 6: validation (error_type=validation ErrorEnvelope, distinct from drift)" 6 \
   '.error_type == "validation"' \
   -- lore sync "$STORY_ID" --json
-rm -f .lore/config.toml
+cp /tmp/lore-config-good.toml .lore/config.toml
+rm -f /tmp/lore-config-good.toml
 
 # exit 6: drift half of the distinction above (LORE-58 induced back-ref write failure,
 # incl. LORE-61 AC3). A real backlog/ write failure during link/unlink routes through
@@ -1821,7 +1831,7 @@ step "AC4: backlog init inside the nested project dir" 0 \
 step "AC4: configure backlog inside the nested project dir" 0 \
   -- bash -c "cd '$NESTED_PROJECT' && backlog config set autoCommit false && backlog config set remoteOperations false && backlog config set checkActiveBranches false"
 step "AC4: lore init inside the nested project dir" 0 \
-  -- bash -c "cd '$NESTED_PROJECT' && lore init"
+  -- bash -c "cd '$NESTED_PROJECT' && lore init --tracker backlog"
 check "AC4: git rev-parse --show-prefix from inside the nested project reports a NON-EMPTY prefix" \
   '[ "$(cd "$NESTED_PROJECT" && git rev-parse --show-prefix)" = "nested-project/" ]'
 

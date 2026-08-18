@@ -87,8 +87,8 @@ after a partial delete fills in only the missing pieces.
 
 **On a bare, interactive-terminal invocation, `init` also runs a guided
 wizard** that folds the rest of onboarding into this one command — a tracker
-backend choice (`backlog` or `jira`), independently detected Claude Code and
-Codex agent bridges, a downstream doc-site scaffold (mkdocs/docusaurus), an
+backend choice (`quest`, `backlog`, or `jira`), independently detected Claude
+Code and Codex agent bridges, a downstream doc-site scaffold (mkdocs/docusaurus), an
 Obsidian vault config, and a backlog `--json`-capability check — instead of
 the older `init` → `agents` → external `lore-setup.sh` → manual-Obsidian
 sequence ([ADR-0017](../adr/0017-interactive-init-wizard-tty-gated.md)).
@@ -107,11 +107,24 @@ script can reach every option the wizard offers with zero prompts — but
 default"), **not** "answer every question with its own default"; the two
 diverge on the agent-bridge question in particular (its wizard default is
 yes, but `--yes` installs nothing). A bare `lore init` off a TTY with no
-flags behaves exactly as it always has (scaffold only, nothing else) — the
-resolved tracker default is Backlog.md without adding a `[tracker]` table, and
-the agent bridge/scaffolds/backlog check are strictly opt-in there. An explicit
-wizard or `--tracker` choice writes `backend` under `[tracker]` in
-`.lore/config.toml`.
+flags remains prompt-free (scaffold only, nothing else), but a newly created
+bundle now persists `backend = "quest"` under `[tracker]` so its selection is
+stable. Existing bundles that omit the tracker setting and contain a real
+`backlog/` directory are classified as legacy Backlog. Their first tracker
+command fails loud with the exact choices `quest init` followed by `lore init
+--tracker quest --migrate-backlog`, or `lore init --tracker backlog`; Lore does
+not silently select or dual-write either backend. Migration preflights every
+source task and alias conflict through Quest's public preview, records the
+reviewed digest before apply, and persists Quest only after the matching public
+receipt reaches `applied`. Quest keeps its canonical `T-<positive integer>` IDs
+while returning legacy Backlog IDs as stable aliases, so existing Story task
+references continue to resolve without a rewrite.
+The Lore command path targets Quest's actor-enforcing QCLI-97.8 contract, but
+the installed 0.2.2 candidate had not passed that executable gate as of
+2026-08-17; delivery remains blocked until actor-free migration writes are
+denied and the actorful lifecycle passes against the installed native artifact.
+An explicit wizard or `--tracker` choice also writes `backend` under
+`[tracker]` in `.lore/config.toml`.
 
 Hitting EOF (Ctrl-D) mid-wizard is a `usage` error (exit `2`) with a rendered
 diagnostic, never a silent success — see
@@ -129,9 +142,9 @@ whatever already succeeded rather than erroring or duplicating anything.
 | | |
 |---|---|
 | **Args** | none |
-| **Key flags** | `--yes` / `--non-interactive` (skip the wizard even on a TTY) · `--tracker <backlog\|jira>` (persist the tracker choice without prompting) · `--claude` (Claude Code bridge; `--agents` alias) · `--codex` (Codex bridge: `AGENTS.md` + `.codex/skills/lore/`) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-backlog` / `--no-backlog` (force/skip the backlog capability check) |
-| **Output** | `kind: init` — created/skipped scaffold paths, plus `interactive`/`scaffolds` always present (`false`/`[]` on the default path); `tracker` is present after a wizard or explicit `--tracker` choice, while `agents` (Claude), `codex`, and `backlog` are present only when those steps ran |
-| **Exit** | `0` ok (the backlog check is advisory-only and never changes this) · `2` usage (bad flag/unknown `--scaffold` target, a missing `--tracker` value, or the wizard's stdin closed before finishing) · `4` permission denied · `5` a non-regular entry (directory/symlink) blocks a scaffold path, or a scaffold target collides with a differing hand-edited file · `6` malformed configuration, including an unknown tracker backend |
+| **Key flags** | `--yes` / `--non-interactive` (skip the wizard even on a TTY) · `--tracker <quest\|backlog\|jira>` (persist the tracker choice without prompting) · `--migrate-backlog` (valid only with `--tracker quest` for a legacy zero-config Backlog bundle) · `--claude` (Claude Code bridge; `--agents` alias) · `--codex` (Codex bridge: `AGENTS.md` + `.codex/skills/lore/`) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-backlog` / `--no-backlog` (force/skip the backlog capability check) |
+| **Output** | `kind: init` — created/skipped scaffold paths, plus `interactive`/`scaffolds` always present (`false`/`[]` on the default path); `tracker` is present after a wizard or explicit `--tracker` choice; `migration` reports the applied digest, source fingerprint, mappings, survivors, and task fingerprints after a successful Backlog-to-Quest migration; `agents` (Claude), `codex`, and `backlog` are present only when those steps ran |
+| **Exit** | `0` ok (the backlog check is advisory-only and never changes this) · `2` usage (bad flag/unknown `--scaffold` target, an invalid migration-flag combination, a missing `--tracker` value, or the wizard's stdin closed before finishing) · `4` permission denied · `5` a non-regular entry (directory/symlink) blocks a scaffold path, or a scaffold target collides with a differing hand-edited file · `6` malformed configuration, unknown tracker backend, legacy migration requirement, or lossless-migration preflight failure |
 
 ### `new`
 
@@ -267,21 +280,21 @@ anything in `docs/`, and skipped entirely under `--dry-run`.
 
 ---
 
-## Coupling to Backlog.md
+## Coupling to the configured tracker
 
-lore reads Backlog.md **JSON-only** (`backlog task list/view --json`,
-`search --json`) and writes via `backlog task create`/`edit`; it never edits
-task `.md` files and never stores lore metadata on tasks (Backlog drops unknown
-frontmatter on edit). See [ADR-0002](../adr/0002-backlog-integration-json-only.md),
-the [backlog JSON schema](./backlog-json-schema.md), and the
-[backlog CLI contract](./backlog-cli-contract.md).
+Lore routes task reads and writes through the configured Quest, Backlog, or
+Jira adapter. Backlog remains **JSON-only** (`backlog task list/view --json`,
+`search --json`) and Lore never hand-edits task Markdown or stores unknown
+frontmatter. See [ADR-0002](../adr/0002-backlog-integration-json-only.md), the
+[backlog JSON schema](./backlog-json-schema.md), and the backend-neutral
+[tracker contract](./backlog-cli-contract.md#tracker-adapter-boundary).
 
 ### `backlog adopt`
 
 The `lore backlog adopt` command family is a controlled, **Backlog-only**
 knowledge-record adoption interface. Its four operations are `preview`,
 `apply`, `status`, and `rollback`; it does not claim a generic import system or
-make Quest an available/default tracker. The full versioned contract is
+migrate tracker tasks between Backlog and Quest. The full versioned contract is
 [Backlog knowledge adoption](../specs/backlog-knowledge-adoption-contract.md).
 
 | Operation | Output kind | Contract |

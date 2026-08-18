@@ -2,6 +2,7 @@
 
 import { type JiraTrackerConfig, loadConfig, type TrackerBackend, type TrackerConfig } from "../config";
 import { LoreError } from "../errors";
+import { resolveTrackerSelection } from "../tracker-selection";
 import {
   type BacklogTask,
   type BacklogTaskDetail,
@@ -12,6 +13,7 @@ import {
   type ListTasksOptions,
 } from "./backlog";
 import { createJiraAdapter, type JiraAdapterOptions } from "./jira";
+import { createQuestAdapter, type QuestAdapterOptions } from "./quest";
 
 /** The minimum capability shape commands consume after a backend-specific fail-loud probe. */
 export interface TrackerCapability {
@@ -31,7 +33,7 @@ export interface TrackerAdapter {
   /** Validate that the configured backend is reachable and supports the required operations. */
   probe(): Promise<TrackerCapability>;
   /** Return the backend/project's ordered workflow statuses without performing task I/O. */
-  statusFlow(): readonly string[];
+  statusFlow(): Promise<readonly string[]>;
   listTasks(opts?: ListTasksOptions): Promise<BacklogTask[]>;
   viewTask(id: string): Promise<BacklogTaskDetail | null>;
   searchByLabel(label: string): Promise<BacklogTask[]>;
@@ -52,12 +54,22 @@ export interface TrackerAdapterConfig {
 /** Injectable backend construction seams; production callers normally omit this. */
 export interface TrackerAdapterOptions {
   readonly jira?: JiraAdapterOptions;
+  readonly quest?: QuestAdapterOptions;
 }
 
 /** Load the repository's resolved tracker selection and construct that backend. */
 export function createConfiguredTrackerAdapter(root: string, options: TrackerAdapterOptions = {}): TrackerAdapter {
+  const selection = resolveTrackerSelection(root);
+  if (selection.source === "legacy-backlog") {
+    throw new LoreError(
+      "validation",
+      "this bundle has Backlog tasks but no explicit tracker backend",
+      "run `quest init`, then `lore init --tracker quest --migrate-backlog`; or pin Backlog with `lore init --tracker backlog`",
+      { backend: selection.backend, source: selection.source },
+    );
+  }
   const config: TrackerConfig = loadConfig({ root }).tracker;
-  return createTrackerAdapter(root, config, options);
+  return createTrackerAdapter(root, { ...config, backend: selection.backend }, options);
 }
 
 /** Construct one selected tracker; configured production callers use `createConfiguredTrackerAdapter`. */
@@ -66,7 +78,10 @@ export function createTrackerAdapter(
   config: TrackerAdapterConfig = {},
   options: TrackerAdapterOptions = {},
 ): TrackerAdapter {
-  const backend: unknown = config.backend ?? "backlog";
+  const backend: unknown = config.backend ?? "quest";
+  if (backend === "quest") {
+    return createQuestAdapter(root, options.quest);
+  }
   if (backend === "backlog") {
     return createBacklogAdapter(bunBacklogSpawn(undefined, root), root);
   }
@@ -84,7 +99,7 @@ export function createTrackerAdapter(
   throw new LoreError(
     "validation",
     `unsupported tracker backend ${JSON.stringify(backend)}`,
-    'use "backlog" or "jira"',
+    'use "quest", "backlog", or "jira"',
     { backend },
   );
 }

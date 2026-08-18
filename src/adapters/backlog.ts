@@ -577,6 +577,8 @@ export interface BacklogComment {
 export interface BacklogTask {
   /** Display-cased identity (`"LORE-21"`). Identity only — never derive a filename from it (§6). */
   readonly id: string;
+  /** Backend-native alternate stable identifiers, if its public contract exposes them. */
+  readonly aliases?: readonly string[];
   readonly title: string;
   /** The raw configured status string, no presentation icon (§2). */
   readonly status: string;
@@ -753,6 +755,8 @@ export interface ListTasksOptions {
 
 /** Input for {@link BacklogAdapter.createTask}. Only the fields lore's coupling commands set. */
 export interface CreateTaskInput {
+  /** Optional caller-supplied id for an explicit tracker migration. Most backends reject it. */
+  readonly id?: string;
   readonly title: string;
   /** Labels to set on the new task (comma-joined into one `--labels`, per contract §2.4). */
   readonly labels?: readonly string[];
@@ -896,7 +900,7 @@ export function createBacklogAdapter(spawn: BacklogSpawn, root = process.cwd()):
   return {
     probe: ensureProbed,
 
-    statusFlow: () => readStatusFlow(root),
+    statusFlow: async () => readStatusFlow(root),
 
     listTasks,
 
@@ -952,6 +956,14 @@ export function createBacklogAdapter(spawn: BacklogSpawn, root = process.cwd()):
 
     async createTask(input: CreateTaskInput): Promise<string> {
       await ensureProbed();
+      if (input.id !== undefined) {
+        throw new LoreError(
+          "validation",
+          "Backlog does not accept a caller-supplied task id",
+          "omit the id unless an explicit migration targets a backend that supports preserving it",
+          { id: input.id },
+        );
+      }
       // Create runs WITHOUT --plain and WITHOUT --json (contract §2.1): --plain suppresses the
       // `Created task <ID>` line lore captures, and create emits no JSON envelope.
       const args = ["task", "create", rejectFlagLike(input.title)];

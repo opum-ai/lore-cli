@@ -7,7 +7,7 @@ tags:
   - history
 summary: Deliver the deterministic CLI, documentation model, Backlog coupling, retrieval, and consumer foundations.
 timestamp: 2026-08-03T16:05:06.468Z
-status: todo
+status: done
 tasks:
   - lcli-1
   - lcli-2
@@ -191,7 +191,7 @@ that the package has been published.
 | [LCLI-314](../../backlog/tasks/lcli-314%20-%20Support-OKF-0.2.md) | Support OKF 0.2 | Done |
 | [LCLI-316](../../backlog/tasks/lcli-316%20-%20lore-sync-embeds-raw-commit-subjects-into-log.md-which-lore-check-strict-then-rejects.md) | lore sync embeds raw commit subjects into log.md, which lore check --strict then rejects | Done |
 | [LCLI-319](../../backlog/tasks/lcli-319%20-%20lore-inits-backlog-json-capability-probe-misattributes-cause-of-failure-tells-users-to-reinstall-backlog-when-the-real-issue-is-an-uninitialized-Backlog.md-project.md) | lore init's backlog --json-capability probe misattributes cause of failure -- tells users to reinstall backlog when the real issue is an uninitialized Backlog.md project | Done |
-| [LCLI-326](../../backlog/tasks/lcli-326%20-%20docs-log.md-carries-174-duplicate-entries-that-lore-sync-cannot-heal-because-the-log-is-appended-rather-than-derived-from-git-history.md) | docs/log.md carries 174 duplicate entries that lore sync cannot heal, because the log is appended rather than derived from git history | To Do |
+| [LCLI-326](../../backlog/tasks/lcli-326%20-%20docs-log.md-carries-174-duplicate-entries-that-lore-sync-cannot-heal-because-the-log-is-appended-rather-than-derived-from-git-history.md) | docs/log.md carries 174 duplicate entries that lore sync cannot heal, because the log is appended rather than derived from git history | Done |
 <!-- lore:tasks:end -->
 
 ## Notes

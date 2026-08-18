@@ -102,8 +102,8 @@ export interface ReconcileConfig {
  * whatever else it needs in the exact order its own contract requires, rather than this module
  * silently deciding that order.
  */
-export function readReconcileConfig(root: string, adapter = defaultAdapter(root)): ReconcileConfig {
-  const flow = adapter.statusFlow();
+export async function readReconcileConfig(root: string, adapter = defaultAdapter(root)): Promise<ReconcileConfig> {
+  const flow = await adapter.statusFlow();
   const config = loadConfig({ root });
   return { flow, overrides: config.reconcile.overrides };
 }
@@ -118,8 +118,8 @@ export function readReconcileConfig(root: string, adapter = defaultAdapter(root)
  * @throws LoreError `validation` if the status flow has fewer than two entries, a duplicate entry,
  *   or an override's target is not a valid rollup status.
  */
-export function resolveReconcileConfig(root: string, adapter = defaultAdapter(root)): ReconcileConfig {
-  const resolved = readReconcileConfig(root, adapter);
+export async function resolveReconcileConfig(root: string, adapter = defaultAdapter(root)): Promise<ReconcileConfig> {
+  const resolved = await readReconcileConfig(root, adapter);
   validateReconcileInputs(resolved.flow, resolved.overrides);
   return resolved;
 }
@@ -176,7 +176,8 @@ export async function gatherReconciliation(
   if (configOverride === undefined && configErrorOverride !== undefined) {
     throw configErrorOverride;
   }
-  const { flow, overrides } = configOverride ?? resolveReconcileConfig(root);
+  const { flow, overrides } =
+    configOverride ?? (await resolveReconcileConfig(root, adapterOverride ?? defaultAdapter(root)));
 
   const allTaskIds = dedupeTaskIds(eligible.flatMap((e) => e.linked));
   const details = detailsOverride

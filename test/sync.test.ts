@@ -30,7 +30,7 @@ import { realGitAdapter, resolveHeadSha } from "../src/adapters/git";
 import { run } from "../src/cli";
 import { runUnlink } from "../src/commands/link";
 import { runSync, type SyncOptions, type SyncReport } from "../src/commands/sync";
-import type { GitAdapter, GitCommit, GitLogRange } from "../src/core/log";
+import { type GitAdapter, type GitCommit, type GitLogRange, generateLog } from "../src/core/log";
 import { regenerateTaskBlock } from "../src/core/managed-block";
 import { builtinTemplateFor, renderTemplate } from "../src/core/template";
 import { EXIT_OK, LoreError } from "../src/errors";
@@ -238,6 +238,52 @@ describe("lore sync — AC#1: idempotent", () => {
   });
 });
 
+// ── log.md full-history projection (LCLI-326) ──────────────────────────────────
+
+describe("lore sync — log.md is a full-history projection", () => {
+  const history: readonly GitCommit[] = [
+    {
+      hash: "1111111111111111111111111111111111111111",
+      timestamp: "2026-08-13T04:17:00Z",
+      subject: "add story",
+      files: ["docs/stories/x.md", "docs/adr/a.md"],
+    },
+  ];
+
+  function historyAdapter(): GitAdapter {
+    return { history: () => history };
+  }
+
+  test("repairs duplicate seeded log entries from the full git history in one sync", async () => {
+    writeDoc("stories/x.md", storyDoc("X", [], "todo"));
+    const expected = generateLog(history, { root: "docs" });
+    const entry = "- 2026-08-13T04:17:00Z 1111111111111111111111111111111111111111 add story";
+    writeDoc("log.md", expected.replace(entry, `${entry}\n${entry}`));
+
+    const { report } = await syncCmd([], fakeAdapter([]), { gitAdapter: historyAdapter() });
+
+    expect(report.files.map((file) => file.path)).toContain("docs/log.md");
+    expect(readDoc("log.md")).toBe(expected);
+    expect(readDoc("log.md").split(history[0]?.hash ?? "").length - 1).toBe(1);
+  });
+
+  test("leaves a repaired log byte-identical on a consecutive sync with unchanged history", async () => {
+    writeDoc("stories/x.md", storyDoc("X", [], "todo"));
+    const expected = generateLog(history, { root: "docs" });
+    const entry = "- 2026-08-13T04:17:00Z 1111111111111111111111111111111111111111 add story";
+    writeDoc("log.md", expected.replace(entry, `${entry}\n${entry}`));
+
+    await syncCmd([], fakeAdapter([]), { gitAdapter: historyAdapter() });
+    const firstBytes = readDoc("log.md");
+    const second = await syncCmd([], fakeAdapter([]), { gitAdapter: historyAdapter() });
+
+    expect(firstBytes).toBe(expected);
+    expect(firstBytes.split(history[0]?.hash ?? "").length - 1).toBe(1);
+    expect(readDoc("log.md")).toBe(firstBytes);
+    expect(second.report.files.map((file) => file.path)).not.toContain("docs/log.md");
+  });
+});
+
 // ── AC#2: sole committer of backlog/ ──────────────────────────────────────────────
 
 describe("lore sync — AC#2: sole committer of backlog/", () => {
@@ -311,19 +357,17 @@ describe("lore sync — the up-front symlink sweep, not ensureDir's reactive gua
   );
 });
 
-describe("lore sync — config is validated before spending any Backlog subprocess round-trip", () => {
-  test("a malformed backlog/config.yml surfaces its validation error even when a linked task is also missing", async () => {
-    // Regression: readStatusFlow/loadConfig/loadProfile must run BEFORE resolveAllTasks, so a
-    // broken config surfaces immediately rather than being masked behind (and paid for after) a
-    // wasted round-trip resolving a task id that doesn't even exist.
-    mkdirSync(join(root, "backlog"), { recursive: true });
-    writeFileSync(join(root, "backlog", "config.yml"), "statuses: not-a-list\n");
+describe("lore sync — config is validated before spending any tracker task round-trip", () => {
+  test("an invalid selected-tracker status flow surfaces even when a linked task is also missing", async () => {
+    // The selected adapter owns its workflow vocabulary. Validate it before resolving a task id
+    // that does not exist, so backend-neutral reconciliation keeps its fail-fast boundary.
     writeDoc("stories/x.md", storyDoc("X", ["lore-99"], "todo"));
-    const adapter = fakeAdapter([]); // lore-99 would resolve to null if ever asked -- must never be reached
+    const base = fakeAdapter([], { poisonViews: ["lore-99"] });
+    const adapter = { ...base, statusFlow: async () => ["To Do", "To Do"] };
 
     const err = await expectSyncError([], adapter);
     expect(err.type).toBe("validation");
-    expect(err.message).toContain("backlog/config.yml");
+    expect(err.message).toContain("duplicate entry");
   });
 
   test("an ALSO-malformed .lore/profile.toml is now reported before a malformed backlog/config.yml (LORE-84 precedence change)", async () => {

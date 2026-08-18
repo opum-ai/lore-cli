@@ -366,12 +366,17 @@ Coupling commands depend on the backend-neutral `TrackerAdapter` contract in
 `src/adapters/tracker.ts`. Production code loads the resolved repository
 selection and constructs a concrete backend through
 `createConfiguredTrackerAdapter(root)`; `createTrackerAdapter(root, config)`
-and injected adapters remain explicit test seams. Backlog.md remains the
-zero-config default. Jira Cloud is reachable through the
-installed `@salient-ai/jira-cli` executable when the backend is `jira`; Lore
-does not call Jira REST or read Jira credentials. An absent backend selection
-therefore preserves existing behavior, while an unknown selection fails loud
-instead of being silently coerced to Backlog.md.
+and injected adapters remain explicit test seams. New bundles persist Quest as
+their selected backend. A bundle with no explicit selection and a real
+`backlog/` directory is classified as legacy Backlog; its first tracker command
+fails loud with exact migration and pin commands instead of silently switching.
+An omitted selection without that legacy artifact resolves to Quest. Jira
+Cloud is reachable through the installed `@salient-ai/jira-cli` executable
+when the backend is `jira`; Lore
+does not call Jira REST or read Jira credentials. Quest is reached through the
+authorized installed Quest `0.2.7` package's schema-versioned subprocess contract; Lore does
+not read Quest storage directly. An unknown selection fails loud instead of
+being silently coerced to another backend.
 
 Every backend must implement the complete task surface (`probe`, `listTasks`,
 `viewTask`, label and text search, create, and edit) plus `statusFlow()`. The
@@ -387,8 +392,56 @@ The contract also preserves four hardening obligations across implementations:
 - Per-task fan-out remains bounded by the command layer's shared concurrency
   helper rather than allowing an adapter to create unbounded work.
 - A `viewTask(id)` result is accepted only after the command layer verifies the
-  returned task ID matches the requested ID case-insensitively. A backend must
-  not bypass that verified-view path.
+  returned task ID matches the requested ID case-insensitively, or that the
+  requested ID appears in the backend's validated stable aliases. A backend
+  must not bypass that verified-view path.
+
+### Quest CLI 0.2.7 package
+
+The Quest backend consumes the explicitly authorized, locally installed Quest
+`0.2.7` package through argv-only subprocess calls. This is qualification evidence,
+not a public-package assertion. Lore requires `.quest/workspace.toml` and tells
+the operator to run `quest init` when it is absent; it never invokes Quest
+initialization itself. Its cached probe pins exact version `0.2.7` and the
+schema-1 `manifest.registry` command descriptors, including the package's nullable
+`version` kind, mutating `workspace.initialized` `init` descriptor, all four
+Backlog-migration descriptors, and the live `task.status-flow` payload. Reads
+use `task list`, `task view`, and `search`; writes use `task create` and `task
+edit`, always with an explicit human `lore` actor. Missing binaries, timeouts, typed Quest diagnostics, and
+schema/kind/payload mismatches fail loud; Lore never falls back or dual-writes.
+
+Qualification status (2026-08-18): the installed 0.2.7 package resolves from the
+managed local installation rather than the retained temporary candidate and exposes
+the actor-enforcing migration contract. Lore still records package checksum and
+source provenance with the release qualification before delivery.
+
+Quest has no Backlog task-file path, reporter, timestamps, or task-to-milestone
+attachment in this contract, so those storage-only fields use backend-neutral
+values. Its manifest separately exposes milestone-record commands, but the task
+create/edit contract does not attach a task to one. Native Quest
+priority, ordinal, parent, dependencies, criteria, documentation, comments,
+labels, aliases, and source provenance are mapped into Lore's neutral task
+detail; an alias may resolve to a different canonical `T-N` identity only when
+Quest returns that requested alias explicitly. A
+requested create-time milestone or noncanonical caller-supplied ID fails before
+Lore spawns Quest rather than being discarded or sent to a mutating command.
+Quest criteria carry text but no
+checked bit, so Lore maps their text with `checked: false`; plan and
+implementation-note line arrays fold into newline-delimited Lore fields.
+
+Legacy migration is explicit: initialize Quest, then run `lore init --tracker
+quest --migrate-backlog`; pin instead with `lore init --tracker backlog`. Lore
+consumes Quest's public `preview` / `apply` / `status` / `rollback` lifecycle.
+It records the reviewed digest, source fingerprint, and mappings in a
+Lore-owned pending receipt before actorful `apply`; an interrupted rerun resumes
+with `status --digest` instead of creating a second preview. Lore persists
+Quest as the backend only after a schema-1 `migration.backlog.receipt` reports
+`state: "applied"` with the reviewed digest, fingerprint, and mappings, then
+clears the pending record. Quest assigns canonical `T-N` identities while
+preserving ordinary `LCLI-*`, `TASK-*`, and dotted Backlog IDs as stable
+aliases, so existing Story coupling does not require a reference rewrite.
+`lore backlog adopt` migrates
+knowledge records and is not a tracker-task migration command.
 
 ---
 
@@ -419,9 +472,9 @@ status_flow = ["To Do", "In Progress", "Done"]
 ```
 
 Run `lore init --tracker jira` to write the selection without prompts, or choose
-Jira in a bare interactive `lore init` wizard. Only `backlog` and `jira` are
-accepted; an absent `[tracker]` table resolves to `backlog`, while unknown keys
-remain tolerated for forward compatibility.
+Jira in a bare interactive `lore init` wizard. `quest`, `backlog`, and `jira`
+are accepted. Legacy zero-config bundles are offered only an explicit Quest
+migration or Backlog pin. Unknown keys remain tolerated for forward compatibility.
 
 `probe()` runs `jira --version`, `jira project get`, and
 `jira metadata priorities`. The project response is the issue-type vocabulary;

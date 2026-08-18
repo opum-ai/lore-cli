@@ -6,6 +6,15 @@ dist/
 build/
 *.tsbuildinfo
 
+# Native and compiled binary artifacts. Source launchers and package templates
+# remain tracked; these patterns cover locally produced executables/libraries.
+*.exe
+*.dll
+*.dylib
+*.so
+*.node
+*.wasm
+
 # Per-platform compiled binaries (release build artifacts — LCLI-9). Only the
 # npm/<platform>/package.json templates are committed; the release workflow
 # builds and places the actual binary at npm/<platform>/bin/lore[.exe].
