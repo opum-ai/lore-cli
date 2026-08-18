@@ -1,4 +1,4 @@
 interface:
   display_name: "Treehouse Worktrees"
-  short_description: "Lease and clean reusable agent worktrees"
-  default_prompt: "Use $treehouse-worktrees to lease an isolated worktree for this task and return it safely."
+  short_description: "Safely manage reusable Git worktree pools"
+  default_prompt: "Use $treehouse-worktrees to audit and safely reconcile this repository’s Treehouse and Git worktrees."
