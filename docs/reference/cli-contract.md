@@ -30,6 +30,11 @@ repository state produce identical output and the same exit code. There is no
 LLM in the core
 (see [ADR-0014: core has no LLM dependency](../adr/0014-core-has-no-llm-dependency.md)),
 so callers may treat lore as a pure function of repo state plus command inputs.
+`docs/log.md` is generated output refreshed from git history by `lore sync`, but
+is intentionally outside `lore check`'s drift gate: a sync's own commit changes
+the history it records, and check must remain usable in shallow or read-only
+checkouts. Consumers that need a current log should run sync in a checkout with
+the required history before reading it.
 Date-sensitive `check` rules receive one evaluation date: an explicit
 `--as-of YYYY-MM-DD`, or HEAD's recorded committer calendar date when the flag
 is omitted. They never read the machine clock. Today the only such rule is OKF
