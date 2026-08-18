@@ -1,11 +1,11 @@
 ---
 id: LCLI-315.4
 title: Ship the installed Quest 0.2.7 package as Lore’s default tracker backend
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:49'
-updated_date: '2026-08-18 07:23'
+updated_date: '2026-08-18 07:28'
 labels:
   - quest
   - tracker
@@ -155,6 +155,8 @@ The repository was made public with explicit owner authorization. PR #398 Action
 Objective verification is green: focused Quest adapter 11 pass/0 fail; full Docker real-binary E2E 344 pass/0 fail; lint; typecheck; full unit suite 2629 pass/1 intentional skip/0 fail across 84 files; compiled build; lore validate --strict 73 files/0 errors/0 warnings; lore check --strict 73 files/0 errors/0 warnings; git diff --check. Delivery is active again; the obsolete billing/startup blocker is cleared. Next: commit and push the harness fixes, confirm the fresh PR checks, merge to dev if green, then settle LCLI-315.4/doc-23.
 
 CI run 32109527306 confirmed the repeated Bun 1.3.14 Linux runtime race, not a product assertion: Ubuntu emitted EEXIST: file already exists, epoll_ctl from internal:fs/streams while the serialized suite was between tests, then hung until the 20-minute job bound. Windows, Docker E2E, browser, scaffold, compile, and benchmark jobs all passed. Remediation adds one bounded ubuntu-latest retry only when the captured first-run log contains that exact epoll signature; ordinary failures exit with their original status, file isolation and serialization remain enabled, and Linux arm qualification remains unchanged. Focused workflow contract 5/5, lint, typecheck, and diff check pass locally.
+
+Final delivery: PR #398 merged to dev as 3964562ffc8947d7639303f2460f88a63c33c5e6. Final head 7ecac60 passed all eight GitHub Actions jobs in run 32111256172, including Ubuntu and Windows full tests and Docker real-binary E2E. The repository is public at github.com/opum-ai/lore-cli. No Quest repository mutation, Quest install, registry publication, Lore sync, or unrelated-dirt cleanup occurred.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
@@ -166,3 +168,9 @@ created: 2026-08-17 15:05
 Handover ready: resume at plan step 1; all current gates are green, but ACs remain unchecked until the missing legacy flow and qualification matrix are implemented.
 ---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped Quest 0.2.7 as the explicit default tracker for new Lore bundles, with fail-loud schema/provenance checks, Quest-owned legacy Backlog migration receipts, explicit actor validation, alias preservation, and unchanged explicit Backlog/Jira behavior. Qualified installed artifact source 5f94475 and artifact 436f4f6; root package SHA-256 f189a51af13a9ee2f45fc01b2f9de312c6aa36fdb3d6820889a51abbabffb50d. Verified focused Quest tests, 2629-pass full suite, 344-pass Docker E2E, lint, typecheck, build, strict Lore gates, and all eight GitHub Actions jobs. PR #398 merged to dev as 3964562ffc8947d7639303f2460f88a63c33c5e6.
+<!-- SECTION:FINAL_SUMMARY:END -->
