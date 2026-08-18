@@ -1,9 +1,9 @@
 /**
  * log.ts — the bundle's `log.md` as a **git-history-derived**, byte-stable artifact (LORE-47).
  *
- * Where `index.md` is regenerated from the bundle graph, `log.md` is a per-folder change log
- * derived from the repository's own commit history: for each bundle folder, the commits that
- * touched a file under it. This module owns two things:
+ * Where `index.md` is regenerated from the bundle graph, `log.md` is a folder-sectioned change log
+ * derived from the repository's own commit history. Each commit appears exactly once, assigned to
+ * the deepest common bundle folder it touched. This module owns two things:
  *
  * - **The `GitAdapter` seam** — the *third* injectable deterministic seam, alongside the clock
  *   and the Backlog subprocess (lore-design §8; [ADR-0014](../../docs/adr/0014-core-has-no-llm-dependency.md)).
@@ -118,9 +118,10 @@ export function buildLog(adapter: GitAdapter, range: GitLogRange, options: Gener
 }
 
 /**
- * Render the byte-stable `log.md` for `commits`: group each commit under every bundle folder it
- * touched (the immediate parent directory of a touched file under the bundle root), emit folders in
- * directory-sorted order, and under each folder list its commits sorted by `(timestamp, hash)`.
+ * Render the byte-stable `log.md` for `commits`: assign each commit to the deepest common bundle
+ * folder of its touched files, emit folders in directory-sorted order, and under each folder list
+ * its commits sorted by `(timestamp, hash)`. The single deterministic folder assignment keeps one
+ * rendered entry per commit even when a change spans multiple folders.
  *
  * Pure, total, and order-independent — the same set of commits always produces byte-identical
  * output, so re-running `lore sync` with no new history is a byte-level no-op. A commit that touched
@@ -131,14 +132,14 @@ export function generateLog(commits: readonly GitCommit[], options: GenerateLogO
   const root = resolveRoot(options.root);
   const title = options.title ?? "Change log";
 
-  // folder → the commits touching it. `foldersTouched` already returns a *set* of folders, so each
-  // commit is appended at most once per folder — no dedup keyed by hash, which would otherwise
-  // collapse two genuinely distinct commits that share an abbreviated hash. The subject is collapsed
-  // once here (per commit), not once per folder it lands in.
+  // folder → the commits assigned to it. A commit spanning several folders is assigned only to
+  // their deepest common folder, so every section truthfully contains all of its touched paths and
+  // no rendered entry is duplicated. Two genuinely distinct commits sharing an abbreviated hash
+  // remain distinct. The subject is collapsed once per commit.
   const byFolder = new Map<string, LogEntry[]>();
   for (const commit of commits) {
-    const folders = foldersTouched(commit.files, root);
-    if (folders.size === 0) {
+    const folder = commonFolder(foldersTouched(commit.files, root));
+    if (folder === undefined) {
       continue;
     }
     const entry: LogEntry = {
@@ -147,13 +148,11 @@ export function generateLog(commits: readonly GitCommit[], options: GenerateLogO
       subject: singleLine(commit.subject),
       instant: toInstant(commit.timestamp),
     };
-    for (const folder of folders) {
-      const bucket = byFolder.get(folder);
-      if (bucket === undefined) {
-        byFolder.set(folder, [entry]);
-      } else {
-        bucket.push(entry);
-      }
+    const bucket = byFolder.get(folder);
+    if (bucket === undefined) {
+      byFolder.set(folder, [entry]);
+    } else {
+      bucket.push(entry);
     }
   }
 
@@ -211,6 +210,7 @@ function resolveRoot(root: string | undefined): string {
  * The distinct bundle folders a commit's `files` touch, scoped to `root`. A folder is the immediate
  * parent directory of a touched file (`docs/adr/0014.md` → `docs/adr`). A file directly under the
  * root (`docs/index.md` → `docs`) groups under the root itself. Files outside the root are dropped.
+ * {@link generateLog} assigns the commit to this set's deepest common folder.
  */
 function foldersTouched(files: readonly string[], root: string): Set<string> {
   const folders = new Set<string>();
@@ -220,6 +220,25 @@ function foldersTouched(files: readonly string[], root: string): Set<string> {
     }
   }
   return folders;
+}
+
+/** The deepest shared POSIX directory of `folders`, or undefined when it is empty. */
+function commonFolder(folders: ReadonlySet<string>): string | undefined {
+  const [first, ...rest] = folders;
+  if (first === undefined) {
+    return undefined;
+  }
+
+  const shared = first.split("/");
+  for (const folder of rest) {
+    const segments = folder.split("/");
+    let length = 0;
+    while (length < shared.length && shared[length] === segments[length]) {
+      length += 1;
+    }
+    shared.length = length;
+  }
+  return shared.join("/");
 }
 
 /**

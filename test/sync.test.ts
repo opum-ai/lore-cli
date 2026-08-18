@@ -246,7 +246,7 @@ describe("lore sync — log.md is a full-history projection", () => {
       hash: "1111111111111111111111111111111111111111",
       timestamp: "2026-08-13T04:17:00Z",
       subject: "add story",
-      files: ["docs/stories/x.md"],
+      files: ["docs/stories/x.md", "docs/adr/a.md"],
     },
   ];
 
@@ -264,6 +264,7 @@ describe("lore sync — log.md is a full-history projection", () => {
 
     expect(report.files.map((file) => file.path)).toContain("docs/log.md");
     expect(readDoc("log.md")).toBe(expected);
+    expect(readDoc("log.md").split(history[0]?.hash ?? "").length - 1).toBe(1);
   });
 
   test("leaves a repaired log byte-identical on a consecutive sync with unchanged history", async () => {
@@ -277,6 +278,7 @@ describe("lore sync — log.md is a full-history projection", () => {
     const second = await syncCmd([], fakeAdapter([]), { gitAdapter: historyAdapter() });
 
     expect(firstBytes).toBe(expected);
+    expect(firstBytes.split(history[0]?.hash ?? "").length - 1).toBe(1);
     expect(readDoc("log.md")).toBe(firstBytes);
     expect(second.report.files.map((file) => file.path)).not.toContain("docs/log.md");
   });
