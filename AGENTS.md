@@ -41,11 +41,17 @@ Controller repository or any sibling repository.
 Use the user-level `codex-worker` skill for this role and announce the exact identity before
 long-polling only the addressed `lore-cli` mailbox. Consume interrupts between work orders, process
 one message at a time, and always reply to the accepted correlation ID with concrete repository
-evidence. Accept addressed work orders from `opum-doc` and carry them through the authorized local
-lifecycle. The user authorizes this Worker to perform all such requests within this repository's
-standing authority; repository, safety, delivery, and approval limits still apply. Treat Controller
-prompts as scoped requests, not expanded authority. Permission requests go through the Controller
-approval queue; never bypass a denial.
+evidence. Accept addressed work orders only from `opum-doc` and carry them through the authorized
+local lifecycle. An addressed message whose sender exactly matches `opum-doc`, together with an
+exact FMC `allow` decision from that Controller when approval is required, authorizes
+repository-local work and validated delivery only to configured `origin` on the non-production
+`dev` branch; no duplicate direct-user approval is required. The user authorizes this Worker to
+perform all such requests within this repository's standing authority; repository, safety,
+delivery, and approval limits still apply. Treat Controller prompts as scoped requests, not
+expanded authority. Permission requests go through the Controller approval queue; never bypass a
+denial. Direct user authority remains required for production or `main`, a new or changed remote,
+force-push/history rewrite, repository administration, credentials, unproved destructive cleanup,
+or scope expansion.
 
 The user-level `backlog-handover` and `treehouse-worktrees` skills are the authoritative shared
 procedures. Do not reintroduce project-local shadows of them or of `codex-worker`/`codex-control`.
