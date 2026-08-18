@@ -26,6 +26,7 @@ import {
   runLink,
   runUnlink,
   type UnlinkReport,
+  verifiedViewTask,
 } from "../src/commands/link";
 import { buildGraph } from "../src/core/bundle";
 import { parseConcept } from "../src/core/concept";
@@ -115,6 +116,20 @@ async function expectUnlinkError(args: string[], adapter: BacklogAdapter, gitSpa
   }
   throw new Error("expected a LoreError, but runUnlink returned");
 }
+
+describe("verified task aliases", () => {
+  test("accepts a canonical Quest id only when the requested reference is a validated alias", async () => {
+    const canonical = { ...makeTask("T-1"), aliases: ["LCLI-1"] };
+    const adapter: BacklogAdapter = { ...fakeAdapter([]), viewTask: async () => canonical };
+    await expect(verifiedViewTask(adapter, "LCLI-1")).resolves.toBe(canonical);
+  });
+
+  test("still rejects an unrelated canonical mismatch", async () => {
+    const canonical = { ...makeTask("T-1"), aliases: ["LCLI-2"] };
+    const adapter: BacklogAdapter = { ...fakeAdapter([]), viewTask: async () => canonical };
+    await expect(verifiedViewTask(adapter, "LCLI-1")).rejects.toMatchObject({ type: "not_found" });
+  });
+});
 
 // ── AC#1: link wires tasks: + doc: label + --doc ──────────────────────────────────
 

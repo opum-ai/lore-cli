@@ -428,10 +428,10 @@ describe("loadConfig — jira-cli tracker settings", () => {
   });
 
   test("rejects an unavailable backend and lists the accepted values", () => {
-    const err = expectValidationError(() => loadConfig({ root: repoRoot('[tracker]\nbackend = "quest"\n'), env: {} }));
-    expect(err.message).toContain('tracker.backend must be one of "backlog", "jira"');
-    expect(err.hint).toContain("backlog, jira");
-    expect(err.input).toEqual({ key: "tracker.backend", value: "quest" });
+    const err = expectValidationError(() => loadConfig({ root: repoRoot('[tracker]\nbackend = "linear"\n'), env: {} }));
+    expect(err.message).toContain('tracker.backend must be one of "quest", "backlog", "jira"');
+    expect(err.hint).toContain("quest, backlog, jira");
+    expect(err.input).toEqual({ key: "tracker.backend", value: "linear" });
   });
 
   test("projects non-secret [tracker.jira] settings without a credential field", () => {

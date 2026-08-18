@@ -15,7 +15,6 @@ import { loadConfig } from "../src/config";
 import { loadBundle } from "../src/core/bundle";
 import { buildCodexSkillDoc, CODEX_SKILL_REL_PATH } from "../src/core/codex-bridge";
 import { parseConcept } from "../src/core/concept";
-import { buildScaffold } from "../src/core/scaffold";
 import { EXIT_CODES, exitCodeFor, LoreError, reportError, WarningCollector } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture, expectError, fakeAdapter } from "./helpers";
@@ -46,6 +45,7 @@ async function init(
     jsonRequested?: boolean;
     prompter?: InitPrompter;
     adapter?: BacklogAdapter;
+    migrateBacklog?: InitOptions["migrateBacklog"];
     agentAvailability?: () => { claude: boolean; codex: boolean };
   } = {},
 ): Promise<{ code: number; result: InitResult; stderr: string }> {
@@ -67,6 +67,7 @@ async function init(
     jsonRequested: extra.jsonRequested,
     prompter: extra.prompter,
     adapter: extra.adapter,
+    migrateBacklog: extra.migrateBacklog,
     agentAvailability: extra.agentAvailability ?? (() => ({ claude: true, codex: false })),
   };
   const code = await runInit(options);
@@ -101,6 +102,13 @@ function forbiddenPrompter(): InitPrompter {
     throw new Error(`InitPrompter.${method} should not have been called — the wizard must not run`);
   };
   return { confirm: fail("confirm"), choose: fail("choose"), close: fail("close") };
+}
+
+function legacyBundle(): void {
+  mkdirSync(join(root, ".lore"), { recursive: true });
+  writeFileSync(join(root, ".lore", "config.toml"), "[validate]\nexternal_links = false\n");
+  mkdirSync(join(root, "backlog", "tasks"), { recursive: true });
+  writeFileSync(join(root, "backlog", "config.yml"), "statuses:\n  - To Do\n  - In Progress\n  - Done\n");
 }
 
 describe("lore init — fresh bundle (AC#1)", () => {
@@ -477,18 +485,14 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
     expect(readFileSync(join(import.meta.dir, "..", CODEX_SKILL_REL_PATH), "utf8")).toBe(buildCodexSkillDoc());
   });
 
-  test("no flags at all: byte-identical to pre-LORE-260 behavior, no consumer folded in, no backlog check", async () => {
+  test("no flags at all: a new bundle pins Quest without probing it", async () => {
     const { result, stderr } = await init();
     expect(result.agents).toBeUndefined();
     expect(result.scaffolds).toEqual([]);
     expect(result.backlog).toBeUndefined();
     expect(result.tracker).toBeUndefined();
-    const expectedConfig = buildScaffold({ timestamp: FIXED_CLOCK().toISOString() }).files.find(
-      (file) => file.path === ".lore/config.toml",
-    )?.contents;
-    expect(expectedConfig).toBeDefined();
-    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).toBe(expectedConfig as string);
-    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
+    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).toEndWith('[tracker]\nbackend = "quest"\n');
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
     expect(stderr).toBe("");
   });
 
@@ -507,10 +511,10 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
 
   test("--tracker rejects unavailable and missing values", () => {
     const unavailable = expectError("validation", () =>
-      runInit({ root, output: JSON_CTX, stdout: capture(), args: ["--tracker", "quest"] }),
+      runInit({ root, output: JSON_CTX, stdout: capture(), args: ["--tracker", "bogus"] }),
     );
     expect(exitCodeFor(unavailable)).toBe(EXIT_CODES.validation);
-    expect(unavailable.hint).toContain("backlog, jira");
+    expect(unavailable.hint).toContain("quest, backlog, jira");
     expectError("usage", () => runInit({ root, output: JSON_CTX, stdout: capture(), args: ["--tracker"] }));
   });
 
@@ -726,6 +730,108 @@ describe("lore init — idempotent re-run with flags (AC#3)", () => {
   });
 });
 
+describe("lore init — legacy zero-config tracker boundary", () => {
+  const migrationResult = {
+    digest: "sha256:reviewed",
+    sourceFingerprint: "sha256:source",
+    mappings: [{ sourceIdentifier: "LCLI-1", sourceFolder: "tasks", targetIdentifier: "T-1", aliases: ["LCLI-1"] }],
+    survivors: [],
+    taskFingerprints: { "T-1": "sha256:task" },
+    state: "applied" as const,
+  };
+  test("refuses a Quest switch without the explicit migration flag and names both safe commands", () => {
+    legacyBundle();
+    const error = expectError("validation", () =>
+      runInit({ root, output: JSON_CTX, stdout: capture(), args: ["--tracker", "quest"] }),
+    );
+    expect(error.hint).toContain("quest init");
+    expect(error.hint).toContain("lore init --tracker quest --migrate-backlog");
+    expect(error.hint).toContain("lore init --tracker backlog");
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
+  });
+
+  test("persists Quest only after an explicit migration succeeds", async () => {
+    legacyBundle();
+    const { result } = await init({
+      args: ["--tracker", "quest", "--migrate-backlog"],
+      migrateBacklog: async () => migrationResult,
+    });
+    expect(result.migration).toEqual(migrationResult);
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
+  });
+
+  test("leaves the backend unpinned when migration preflight fails", async () => {
+    legacyBundle();
+    const failure = new LoreError("validation", "not lossless", "pin Backlog");
+    const promise = runInit({
+      root,
+      output: JSON_CTX,
+      stdout: capture(),
+      args: ["--tracker", "quest", "--migrate-backlog"],
+      migrateBacklog: async () => Promise.reject(failure),
+    });
+    await expect(promise).rejects.toBe(failure);
+    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).not.toContain("[tracker]");
+  });
+
+  test("pins Backlog explicitly without invoking migration", async () => {
+    legacyBundle();
+    let migrated = false;
+    await init({
+      args: ["--tracker", "backlog"],
+      migrateBacklog: async () => {
+        migrated = true;
+        return migrationResult;
+      },
+    });
+    expect(migrated).toBe(false);
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
+  });
+
+  test("requires the exact Quest migration invocation", () => {
+    legacyBundle();
+    expectError("usage", () => runInit({ root, output: JSON_CTX, stdout: capture(), args: ["--migrate-backlog"] }));
+  });
+
+  test("interactive onboarding offers only migration or an explicit Backlog pin", async () => {
+    legacyBundle();
+    const choices: string[][] = [];
+    const base = scriptedPrompter({ tracker: "backlog", agents: false, site: "none", obsidian: false });
+    const prompter: InitPrompter = {
+      ...base,
+      choose: async (question, values, defaultValue) => {
+        if (question.includes("Backlog tasks")) choices.push([...values]);
+        return base.choose(question, values, defaultValue);
+      },
+    };
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      adapter: fakeAdapter([], { probe: "ok" }),
+      agentAvailability: () => ({ claude: false, codex: false }),
+    });
+    expect(choices).toEqual([["migrate", "backlog"]]);
+    expect(result.tracker).toBe("backlog");
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
+  });
+
+  test("interactive migration preserves the legacy backend until the copy succeeds", async () => {
+    legacyBundle();
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter: scriptedPrompter({ tracker: "migrate", agents: false, site: "none", obsidian: false }),
+      adapter: fakeAdapter([], { probe: "ok" }),
+      migrateBacklog: async () => migrationResult,
+      agentAvailability: () => ({ claude: false, codex: false }),
+    });
+    expect(result.migration).toEqual(migrationResult);
+    expect(result.tracker).toBe("quest");
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
+  });
+});
+
 describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the locked design decision)", () => {
   test("offers exactly the shipped tracker choices and persists the selected backend", async () => {
     const choicesSeen: string[][] = [];
@@ -746,7 +852,7 @@ describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the lock
       agentAvailability: () => ({ claude: false, codex: false }),
       adapter: fakeAdapter([], { probe: "ok" }),
     });
-    expect(choicesSeen).toEqual([["backlog", "jira"]]);
+    expect(choicesSeen).toEqual([["quest", "backlog", "jira"]]);
     expect(result.tracker).toBe("jira");
     expect(loadConfig({ root, env: {} }).tracker.backend).toBe("jira");
   });

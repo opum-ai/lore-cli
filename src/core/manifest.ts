@@ -210,7 +210,12 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
       {
         name: "tracker",
         takesValue: true,
-        summary: "Select the task tracker backend without prompting (backlog|jira)",
+        summary: "Select the task tracker backend without prompting (quest|backlog|jira)",
+      },
+      {
+        name: "migrate-backlog",
+        takesValue: false,
+        summary: "Preview and apply Quest's digest-approved Backlog migration before selecting Quest",
       },
       {
         name: "scaffold",
@@ -238,6 +243,8 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     exitCodes: exitCodesFor(["profile", "write"]),
     examples: [
       "lore init",
+      "quest init && lore init --tracker quest --migrate-backlog",
+      "lore init --tracker quest",
       "lore init --tracker jira",
       "lore init --claude --codex",
       "lore init --yes --scaffold mkdocs",

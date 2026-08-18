@@ -41,12 +41,11 @@ describe("core/instructions — topic registry", () => {
     // "edit but do not commit; only `lore sync` commits it" claim must be gone.
     expect(normalized).not.toContain("do not commit it");
     expect(normalized).not.toContain("let `lore sync` commit them");
-    // The replacement prose must say link/unlink commit their own edits (scoped to the touched
-    // files, via `commitBacklogFiles`) and that `lore sync`'s commit step is now just a catch-all
-    // sweep for anything else left dirty under `backlog/`.
-    expect(normalized).toContain("commit those edits themselves");
-    expect(normalized).toContain("commitBacklogFiles");
-    expect(normalized).toContain("catch-all sweep");
+    // The replacement prose must describe the configured adapter and preserve Backlog's
+    // command-owned storage/commit boundary without imposing it on Quest or Jira.
+    expect(normalized).toContain("configured tracker");
+    expect(normalized).toContain("Backlog backend");
+    expect(normalized).toContain("Quest and Jira retain ownership of their own storage");
   });
 
   test("check topic enumerates all of check's throw cases, not just usage/not_found", () => {

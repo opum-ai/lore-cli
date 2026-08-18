@@ -63,12 +63,19 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as readline from "node:readline/promises";
 import type { BacklogAdapter } from "../adapters/backlog";
+import { createQuestBacklogMigration } from "../adapters/quest";
 import { createTrackerAdapter } from "../adapters/tracker";
 import { CONFIG_REL_PATH, loadConfig, TRACKER_BACKENDS, type TrackerBackend } from "../config";
 import { loadProfile } from "../core/profile";
 import { buildScaffold } from "../core/scaffold";
 import { ANSI, EXIT_OK, LoreError, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import {
+  clearPendingQuestMigration,
+  migrateBacklogTasksToQuest,
+  type TrackerMigrationResult,
+} from "../tracker-migration";
+import { resolveTrackerSelection, type TrackerSelection } from "../tracker-selection";
 import { type AgentsResult, applyAgentsBridge, bridgeActionColor, renderTrailer } from "./agents";
 import { optionValues, parseCommandArgs, singleOptionValue, usage } from "./args";
 import { applyCodexBridge, type CodexBridgeResult } from "./codex-bridge";
@@ -107,6 +114,8 @@ export interface InitResult {
   backlog?: InitBacklogCheck;
   /** Explicit tracker choice made by the wizard or `--tracker`; absent on the legacy bare path. */
   tracker?: TrackerBackend;
+  /** Quest-owned Backlog migration receipt, present only after explicit verified application. */
+  migration?: TrackerMigrationResult;
 }
 
 /** The interactive wizard's minimal prompt vocabulary — confirm (yes/no) and choose (one of a fixed list). Injected so the wizard is unit-testable without a real terminal. */
@@ -171,6 +180,8 @@ export interface InitOptions {
   prompter?: InitPrompter;
   /** The Backlog adapter for the coupling capability check; defaults to the real `backlog` binary on PATH. */
   adapter?: BacklogAdapter;
+  /** Explicit Quest migration seam; defaults to Quest's public receipt lifecycle. */
+  migrateBacklog?: () => Promise<TrackerMigrationResult>;
   /** Injectable executable discovery for the interactive agent choices. */
   agentAvailability?: () => AgentAvailability;
 }
@@ -194,8 +205,10 @@ interface InitArgs {
   noBacklog: boolean;
   /** `--check-backlog`: run the backlog-coupling capability check even with no other flag requesting it. */
   checkBacklog: boolean;
-  /** `--tracker <backlog|jira>`: persist the selected task backend without prompting. */
+  /** `--tracker <quest|backlog|jira>`: persist the selected task backend without prompting. */
   tracker?: TrackerBackend;
+  /** `--migrate-backlog`: preflight and preserve compatible Backlog ids while selecting Quest. */
+  migrateBacklog: boolean;
 }
 
 /**
@@ -245,15 +258,50 @@ export function runInit(options: InitOptions): number | Promise<number> {
     }
   }
   const base = { root: options.root, created, skipped };
+  const priorSelection = resolveTrackerSelection(options.root);
+  if (parsed.migrateBacklog && (parsed.tracker !== "quest" || priorSelection.source !== "legacy-backlog")) {
+    throw usage(
+      "--migrate-backlog requires --tracker quest in a legacy zero-config Backlog bundle",
+      "run `lore init --tracker quest --migrate-backlog` only after `quest init`",
+    );
+  }
+  if (priorSelection.source === "legacy-backlog" && parsed.tracker === "quest" && !parsed.migrateBacklog) {
+    throw new LoreError(
+      "validation",
+      "switching this legacy Backlog bundle to Quest requires an explicit task migration",
+      "run `quest init`, then `lore init --tracker quest --migrate-backlog`; or pin Backlog with `lore init --tracker backlog`",
+    );
+  }
 
   if (interactive) {
-    return runInteractiveWizard(options, base);
+    return runInteractiveWizard(options, base, priorSelection);
   }
 
+  if (parsed.migrateBacklog) {
+    return runBacklogMigration(options).then((migration) => {
+      persistTrackerBackend(options.root, "quest");
+      clearPendingQuestMigration(options.root);
+      return finishNonInteractive(options, parsed, base, clock, migration);
+    });
+  }
   if (parsed.tracker !== undefined) {
     persistTrackerBackend(options.root, parsed.tracker);
+  } else if (created.includes(CONFIG_REL_PATH)) {
+    // A newly created bundle is unambiguous. Persist rather than relying on a
+    // changing zero-config default, so an existing bundle is never switched.
+    persistTrackerBackend(options.root, "quest");
   }
 
+  return finishNonInteractive(options, parsed, base, clock);
+}
+
+function finishNonInteractive(
+  options: InitOptions,
+  parsed: InitArgs,
+  base: { root: string; created: string[]; skipped: string[] },
+  clock: () => Date,
+  migration?: TrackerMigrationResult,
+): number | Promise<number> {
   const scaffoldTargets = [...new Set(parsed.scaffolds)];
   const agents = parsed.agents ? applyAgentsBridge({ root: options.root, force: false, check: false }) : undefined;
   const codex = parsed.codex ? applyCodexBridge({ root: options.root, force: false, check: false }) : undefined;
@@ -275,6 +323,7 @@ export function runInit(options: InitOptions): number | Promise<number> {
       scaffolds,
       backlog: undefined,
       tracker: parsed.tracker,
+      migration,
     };
     emit(initRenderable(result), options.output, options.stdout);
     return EXIT_OK;
@@ -291,10 +340,16 @@ export function runInit(options: InitOptions): number | Promise<number> {
       scaffolds,
       backlog,
       tracker: parsed.tracker,
+      migration,
     };
     emit(initRenderable(result), options.output, options.stdout);
     return EXIT_OK;
   });
+}
+
+function runBacklogMigration(options: InitOptions): Promise<TrackerMigrationResult> {
+  if (options.migrateBacklog !== undefined) return options.migrateBacklog();
+  return migrateBacklogTasksToQuest(createQuestBacklogMigration(options.root), options.root);
 }
 
 /**
@@ -308,23 +363,35 @@ export function runInit(options: InitOptions): number | Promise<number> {
 async function runInteractiveWizard(
   options: InitOptions,
   base: { root: string; created: string[]; skipped: string[] },
+  priorSelection: TrackerSelection,
 ): Promise<number> {
   const prompter = options.prompter ?? createRealPrompter();
   const scaffoldTargets: string[] = [];
   let wantAgents = false;
   let wantCodex = false;
-  let tracker: TrackerBackend = "backlog";
+  let tracker: TrackerBackend = "quest";
+  let migrateBacklog = false;
   try {
-    const trackerChoice = await prompter.choose("Which tracker backend should Lore use?", TRACKER_BACKENDS, "backlog");
-    if (!TRACKER_BACKENDS.includes(trackerChoice as TrackerBackend)) {
-      throw new LoreError(
-        "validation",
-        `unsupported tracker backend ${JSON.stringify(trackerChoice)}`,
-        `use one of: ${TRACKER_BACKENDS.join(", ")}`,
-        { backend: trackerChoice },
+    if (priorSelection.source === "legacy-backlog") {
+      const legacyChoice = await prompter.choose(
+        "This bundle has Backlog tasks but no explicit tracker. Migrate to Quest or pin Backlog?",
+        ["migrate", "backlog"],
+        "backlog",
       );
+      migrateBacklog = legacyChoice === "migrate";
+      tracker = migrateBacklog ? "quest" : "backlog";
+    } else {
+      const trackerChoice = await prompter.choose("Which tracker backend should Lore use?", TRACKER_BACKENDS, "quest");
+      if (!TRACKER_BACKENDS.includes(trackerChoice as TrackerBackend)) {
+        throw new LoreError(
+          "validation",
+          `unsupported tracker backend ${JSON.stringify(trackerChoice)}`,
+          `use one of: ${TRACKER_BACKENDS.join(", ")}`,
+          { backend: trackerChoice },
+        );
+      }
+      tracker = trackerChoice as TrackerBackend;
     }
-    tracker = trackerChoice as TrackerBackend;
     const available = detectAgentAvailability(options);
     if (available.claude) {
       wantAgents = await prompter.confirm("Set up the Claude Code agent bridge (SKILL.md + CLAUDE.md nudge)?", true);
@@ -344,7 +411,9 @@ async function runInteractiveWizard(
     prompter.close();
   }
 
+  const migration = migrateBacklog ? await runBacklogMigration(options) : undefined;
   persistTrackerBackend(options.root, tracker);
+  if (migration !== undefined) clearPendingQuestMigration(options.root);
 
   const clock = options.clock ?? (() => new Date());
   const agents = wantAgents ? applyAgentsBridge({ root: options.root, force: false, check: false }) : undefined;
@@ -355,7 +424,7 @@ async function runInteractiveWizard(
   const backlog = await probeBacklogCapability(options, warnings);
   warnings.flush({ color: options.output.color, stderr: options.stderr ?? process.stderr });
 
-  const result: InitResult = { ...base, interactive: true, agents, codex, scaffolds, backlog, tracker };
+  const result: InitResult = { ...base, interactive: true, agents, codex, scaffolds, backlog, tracker, migration };
   emit(initRenderable(result), options.output, options.stdout);
   return EXIT_OK;
 }
@@ -469,6 +538,7 @@ function anyFlagGiven(parsed: InitArgs): boolean {
     parsed.scaffolds.length > 0 ||
     parsed.noBacklog ||
     parsed.checkBacklog ||
+    parsed.migrateBacklog ||
     parsed.tracker !== undefined
   );
 }
@@ -489,6 +559,7 @@ function parseInitArgs(args: readonly string[]): InitArgs {
   const codex = parsed.flags.has("codex");
   const noBacklog = parsed.flags.has("no-backlog");
   const checkBacklog = parsed.flags.has("check-backlog");
+  const migrateBacklog = parsed.flags.has("migrate-backlog");
   const trackerValue = singleOptionValue(parsed, "tracker");
   if (trackerValue === "") {
     throw usage("--tracker needs a value", `pass --tracker ${TRACKER_BACKENDS.join(" or --tracker ")}`);
@@ -528,7 +599,7 @@ function parseInitArgs(args: readonly string[]): InitArgs {
       "pass at most one of --no-backlog / --check-backlog",
     );
   }
-  return { yes, agents, codex, scaffolds, noBacklog, checkBacklog, tracker };
+  return { yes, agents, codex, scaffolds, noBacklog, checkBacklog, tracker, migrateBacklog };
 }
 
 /** Persist one explicit tracker choice while preserving every unrelated config byte. */
@@ -576,7 +647,7 @@ function withTrackerBackend(current: string, backend: TrackerBackend): string {
     throw new LoreError(
       "validation",
       `${CONFIG_REL_PATH}: inline tracker tables cannot be updated safely by lore init`,
-      "rewrite tracker as a [tracker] table, then rerun lore init --tracker <backlog|jira>",
+      "rewrite tracker as a [tracker] table, then rerun lore init --tracker <quest|backlog|jira>",
       { key: "tracker" },
     );
   }
@@ -654,6 +725,11 @@ function renderPretty(data: InitResult, opts: { color: boolean }): string {
   if (data.tracker !== undefined) {
     lines.push(`tracker: ${data.tracker}`);
   }
+  if (data.migration !== undefined) {
+    lines.push(
+      `migration: ${data.migration.state}, ${data.migration.mappings.length} mapped (${data.migration.digest})`,
+    );
+  }
   if (data.interactive) {
     lines.push("Run `lore instructions` for the canonical agent loop.");
   }
@@ -694,6 +770,11 @@ function renderPlain(data: InitResult): string {
   }
   if (data.tracker !== undefined) {
     lines.push(`tracker ${data.tracker}`);
+  }
+  if (data.migration !== undefined) {
+    lines.push(
+      `migration state=${data.migration.state} mappings=${data.migration.mappings.length} digest=${data.migration.digest}`,
+    );
   }
   return lines.join("\n");
 }

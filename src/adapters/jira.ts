@@ -261,7 +261,7 @@ export function createJiraAdapter(
       return (await ensureProbed()).capability;
     },
 
-    statusFlow: () => statusFlow,
+    statusFlow: async () => statusFlow,
 
     async listTasks(opts?: ListTasksOptions): Promise<BacklogTask[]> {
       const clauses = [`project = ${jqlString(project)}`];
@@ -288,6 +288,14 @@ export function createJiraAdapter(
 
     async createTask(input: CreateTaskInput): Promise<string> {
       await ensureProbed();
+      if (input.id !== undefined) {
+        throw new LoreError(
+          "validation",
+          "Jira does not accept a caller-supplied issue key",
+          "omit the id unless an explicit migration targets a backend that supports preserving it",
+          { id: input.id },
+        );
+      }
       const metadata = emptyMetadata({
         description: input.description ?? null,
         documentation: input.doc ?? [],
