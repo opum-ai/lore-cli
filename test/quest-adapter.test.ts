@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import {
   bunQuestSpawn,
   createQuestAdapter,
@@ -163,7 +164,7 @@ describe("Quest 0.2 tracker adapter", () => {
     const loreError = error as LoreError;
     expect(loreError.type).toBe("validation");
     expect(loreError.hint).toBe("run `quest init`");
-    expect(loreError.input).toEqual({ workspace: "/repo/.quest/workspace.toml" });
+    expect(loreError.input).toEqual({ workspace: join("/repo", ".quest", "workspace.toml") });
     expect(calls).toBe(0);
   });
 
