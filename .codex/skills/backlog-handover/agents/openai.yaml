@@ -1,4 +1,0 @@
-interface:
-  display_name: "Backlog Handover"
-  short_description: "Run bounded-parallel Lore CLI documentation campaigns"
-  default_prompt: "Use $backlog-handover. Restore an incomplete campaign or initialize a Lore CLI autonomous documentation campaign, then continue until complete or genuinely blocked."
