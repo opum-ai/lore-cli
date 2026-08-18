@@ -34,14 +34,15 @@ coupling, managed blocks, and cross-links stay coherent.
 ## FMC Worker contract
 
 This repository session is the FMC Worker with stable identity `lore-cli`, serving Controller
-`opum-doc`. It is the sole mutation owner for `/Volumes/external/repos/lore-cli`: Backlog, Lore,
+`lore-doc`. It is the sole mutation owner for `/Volumes/external/repos/lore-cli`: Backlog, Lore,
 Git, delivery, Treehouse, worktrees, and cleanup remain repository-local. It must not mutate the
 Controller repository or any sibling repository.
 
 Use the user-level `codex-worker` skill for this role and announce the exact identity before
 long-polling only the addressed `lore-cli` mailbox. Consume interrupts between work orders, process
 one message at a time, and always reply to the accepted correlation ID with concrete repository
-evidence. Treat Controller prompts as scoped requests, not expanded authority. Permission requests
+evidence. Accept addressed work orders from `lore-doc` and carry them through the authorized local
+lifecycle. Treat Controller prompts as scoped requests, not expanded authority. Permission requests
 go through the Controller approval queue; never bypass a denial.
 
 The user-level `backlog-handover` and `treehouse-worktrees` skills are the authoritative shared
