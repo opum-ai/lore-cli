@@ -140,7 +140,7 @@ function pendingPreview(value: unknown): QuestMigrationPreview {
 
 function assertPreview(preview: QuestMigrationPreview): void {
   if (!preview.requiresApproval || !preview.digest || !preview.sourceFingerprint || !validMappings(preview.mappings))
-    throw new LoreError("drift", "Quest returned an invalid Backlog migration preview", "Quest 0.2.2 is required");
+    throw new LoreError("drift", "Quest returned an invalid Backlog migration preview", "Quest 0.2.7 is required");
 }
 
 function validMappings(value: unknown): value is readonly QuestMigrationMapping[] {

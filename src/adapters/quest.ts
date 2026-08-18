@@ -9,9 +9,9 @@ import type { TrackerAdapter, TrackerCapability } from "./tracker";
 export const QUEST_SCHEMA_VERSION = 1;
 export const QUEST_TIMEOUT_ENV_VAR = "LORE_QUEST_TIMEOUT_MS";
 export const DEFAULT_QUEST_TIMEOUT_MS = 30_000;
-const REQUIRED_VERSION = "0.2.2";
+const REQUIRED_VERSION = "0.2.7";
 const ACTOR_FLAGS = ["--actor", "lore", "--actor-kind", "human"] as const;
-const INSTALL_HINT = "install @opum-ai/quest@0.2.2 and ensure the `quest` binary is on PATH";
+const INSTALL_HINT = "install @opum-ai/quest@0.2.7 and ensure the `quest` binary is on PATH";
 const REQUIRED_COMMANDS = [
   ["manifest", "manifest.registry", false],
   ["version", null, false],
@@ -211,7 +211,7 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
       if (input.milestone !== undefined)
         throw new LoreError(
           "validation",
-          "Quest 0.2 does not support task milestones",
+          "Quest 0.2.7 does not support task-to-milestone attachment",
           "omit the milestone or select a tracker backend that supports milestones",
           { milestone: input.milestone },
         );

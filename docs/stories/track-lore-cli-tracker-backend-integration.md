@@ -15,7 +15,7 @@ tasks:
 Keep the planned tracker-backend initiative attached to a truthful, local
 ownership record. This Story records the adapter, JIRA, initialization, and
 Quest-backend task lineage. LCLI-315.4 targets the explicitly authorized,
-locally installed Quest `0.2.2` candidate and owns Lore's migration and
+locally installed Quest `0.2.7` package and owns Lore's migration and
 default-selection policy. That qualification is local evidence, not a claim
 that the candidate is publicly released.
 
@@ -26,7 +26,7 @@ that the candidate is publicly released.
   migration decision changes their backend explicitly.
 - Quest package and registry availability continue to be established by
   quest-cli's shipping evidence rather than this Story; Lore consumes the
-  installed `0.2.2` candidate only after executable qualification and must
+  installed `0.2.7` package only after executable qualification and must
   recheck every later artifact independently.
 - Quest migration assigns canonical `T-<positive integer>` identities and must
   preserve ordinary `LCLI-*`/`TASK-*` and dotted Backlog IDs as public aliases;

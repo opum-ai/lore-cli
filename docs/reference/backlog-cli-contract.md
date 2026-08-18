@@ -374,7 +374,7 @@ An omitted selection without that legacy artifact resolves to Quest. Jira
 Cloud is reachable through the installed `@salient-ai/jira-cli` executable
 when the backend is `jira`; Lore
 does not call Jira REST or read Jira credentials. Quest is reached through the
-authorized installed Quest `0.2.2` candidate's schema-versioned subprocess contract; Lore does
+authorized installed Quest `0.2.7` package's schema-versioned subprocess contract; Lore does
 not read Quest storage directly. An unknown selection fails loud instead of
 being silently coerced to another backend.
 
@@ -396,28 +396,29 @@ The contract also preserves four hardening obligations across implementations:
   requested ID appears in the backend's validated stable aliases. A backend
   must not bypass that verified-view path.
 
-### Quest CLI 0.2.2 candidate
+### Quest CLI 0.2.7 package
 
 The Quest backend consumes the explicitly authorized, locally installed Quest
-`0.2.2` candidate through argv-only subprocess calls. This is qualification evidence,
+`0.2.7` package through argv-only subprocess calls. This is qualification evidence,
 not a public-package assertion. Lore requires `.quest/workspace.toml` and tells
 the operator to run `quest init` when it is absent; it never invokes Quest
-initialization itself. Its cached probe pins exact version `0.2.2` and the
-schema-1 `manifest.registry` command descriptors, including the candidate's nullable
+initialization itself. Its cached probe pins exact version `0.2.7` and the
+schema-1 `manifest.registry` command descriptors, including the package's nullable
 `version` kind, mutating `workspace.initialized` `init` descriptor, all four
 Backlog-migration descriptors, and the live `task.status-flow` payload. Reads
 use `task list`, `task view`, and `search`; writes use `task create` and `task
 edit`, always with an explicit human `lore` actor. Missing binaries, timeouts, typed Quest diagnostics, and
 schema/kind/payload mismatches fail loud; Lore never falls back or dual-writes.
 
-Qualification status (2026-08-17): Lore implements the actor-enforcing QCLI-97.8
-source contract, but the currently installed 0.2.2 native artifact still accepts
-actor-free migration writes and rejects actor flags. Delivery remains blocked
-until a rebuilt installed artifact matches this contract; the prose below
-describes the required, not yet qualified, executable behavior.
+Qualification status (2026-08-18): the installed 0.2.7 package resolves from the
+managed local installation rather than the retained temporary candidate and exposes
+the actor-enforcing migration contract. Lore still records package checksum and
+source provenance with the release qualification before delivery.
 
-Quest has no Backlog task-file path, milestone, reporter, or timestamps in this
-contract, so storage-only fields use backend-neutral values. Native Quest
+Quest has no Backlog task-file path, reporter, timestamps, or task-to-milestone
+attachment in this contract, so those storage-only fields use backend-neutral
+values. Its manifest separately exposes milestone-record commands, but the task
+create/edit contract does not attach a task to one. Native Quest
 priority, ordinal, parent, dependencies, criteria, documentation, comments,
 labels, aliases, and source provenance are mapped into Lore's neutral task
 detail; an alias may resolve to a different canonical `T-N` identity only when

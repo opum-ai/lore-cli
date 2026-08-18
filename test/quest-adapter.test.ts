@@ -88,7 +88,7 @@ describe("Quest 0.2 tracker adapter", () => {
     const spawn: QuestSpawn = async (readonlyArgs) => {
       const args = [...readonlyArgs];
       calls.push(args);
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.2\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
       if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
       if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
       if (args.slice(0, 3).join(" ") === "migration backlog preview") return ok("migration.backlog-preview", preview);
@@ -124,7 +124,7 @@ describe("Quest 0.2 tracker adapter", () => {
   test("maps migration transport rejections to typed Lore errors after a successful probe", async () => {
     function failingMigrationSpawn(cause: Error): QuestSpawn {
       return async (args) => {
-        if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.2\n", stderr: "" };
+        if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
         if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
         if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
         throw cause;
@@ -168,7 +168,7 @@ describe("Quest 0.2 tracker adapter", () => {
     const spawn: QuestSpawn = async (readonlyArgs) => {
       const args = [...readonlyArgs];
       calls.push(args);
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.2\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
       if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
       if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
       if (args.join(" ") === "task list --json") return ok("task.list", [task()]);
@@ -234,7 +234,7 @@ describe("Quest 0.2 tracker adapter", () => {
 
   test("maps Quest JSON diagnostics exactly and treats a missing task as null", async () => {
     const spawn: QuestSpawn = async (args) => {
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.2\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
       if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
       if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
       return {
@@ -251,7 +251,7 @@ describe("Quest 0.2 tracker adapter", () => {
     expect(await adapter(spawn).viewTask("QUEST-9")).toBeNull();
     const bad: QuestSpawn = async (args) =>
       args[0] === "--version"
-        ? { exitCode: 0, stdout: "0.2.2\n", stderr: "" }
+        ? { exitCode: 0, stdout: "0.2.7\n", stderr: "" }
         : {
             exitCode: 1,
             stdout: "",
@@ -274,13 +274,13 @@ describe("Quest 0.2 tracker adapter", () => {
     await expect(tracker.editTask("QUEST-2", { addLabels: ["--actor"] })).rejects.toMatchObject({ type: "validation" });
   });
 
-  test("rejects milestones before spawning because Quest 0.2 exposes no milestone representation", async () => {
+  test("rejects milestones before spawning because Quest 0.2.7 exposes no task-to-milestone attachment", async () => {
     const spawn: QuestSpawn = async () => {
       throw new Error("must not spawn");
     };
     await expect(adapter(spawn).createTask({ title: "New", milestone: "M2" })).rejects.toMatchObject({
       type: "validation",
-      message: "Quest 0.2 does not support task milestones",
+      message: "Quest 0.2.7 does not support task-to-milestone attachment",
       hint: expect.stringContaining("omit the milestone"),
       input: { milestone: "M2" },
     });
@@ -320,18 +320,18 @@ describe("Quest 0.2 tracker adapter", () => {
     await expect(adapter(async () => Promise.reject(missing)).probe()).rejects.toMatchObject({ type: "not_found" });
     const incompatible: QuestSpawn = async (args) =>
       args[0] === "--version"
-        ? { exitCode: 0, stdout: "0.2.2\n", stderr: "" }
+        ? { exitCode: 0, stdout: "0.2.7\n", stderr: "" }
         : { exitCode: 0, stdout: JSON.stringify({ schemaVersion: 2, kind: "help.manifest", data: {} }), stderr: "" };
     await expect(adapter(incompatible).probe()).rejects.toMatchObject({ type: "drift" });
     const wrongKind: QuestSpawn = async (args) => {
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.2\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
       if (args[0] === "manifest") return ok("manifest.registry", manifest());
       if (args[1] === "status-flow") return ok("task.status-flow", flow());
       return ok("task.view", []);
     };
     await expect(adapter(wrongKind).listTasks()).rejects.toMatchObject({ type: "drift" });
     const malformed: QuestSpawn = async (args) => {
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.2\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
       if (args[0] === "manifest") return ok("manifest.registry", manifest());
       return ok("task.status-flow", { statuses: [] });
     };
@@ -341,11 +341,11 @@ describe("Quest 0.2 tracker adapter", () => {
   test("rejects a manifest with a missing descriptor and malformed live status-flow shape", async () => {
     const incomplete: QuestSpawn = async (args) =>
       args[0] === "--version"
-        ? { exitCode: 0, stdout: "0.2.2\n", stderr: "" }
+        ? { exitCode: 0, stdout: "0.2.7\n", stderr: "" }
         : ok("manifest.registry", { commands: [] });
     await expect(adapter(incomplete).probe()).rejects.toMatchObject({ type: "drift" });
     const badFlow: QuestSpawn = async (args) => {
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.2\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
       if (args[0] === "manifest") return ok("manifest.registry", manifest());
       return ok("task.status-flow", { statuses: ["To Do"], terminalStatuses: ["Done"] });
     };
