@@ -155,11 +155,15 @@ describe("Quest 0.2 tracker adapter", () => {
       },
       () => false,
     );
-    await expect(tracker.probe()).rejects.toMatchObject({
-      type: "validation",
-      hint: "run `quest init`",
-      input: { workspace: "/repo/.quest/workspace.toml" },
-    });
+    const error = await tracker.probe().then(
+      () => new Error("expected probe to reject"),
+      (reason: unknown) => reason,
+    );
+    expect(error).toBeInstanceOf(LoreError);
+    const loreError = error as LoreError;
+    expect(loreError.type).toBe("validation");
+    expect(loreError.hint).toBe("run `quest init`");
+    expect(loreError.input).toEqual({ workspace: "/repo/.quest/workspace.toml" });
     expect(calls).toBe(0);
   });
 

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-04 21:49'
-updated_date: '2026-08-18 06:06'
+updated_date: '2026-08-18 06:55'
 labels:
   - quest
   - tracker
@@ -145,6 +145,14 @@ Active Quest resolves from /Users/jdnewhouse/.local/bin/quest to /Users/jdnewhou
 Lore now pins its adapter and regressions to 0.2.7. Live adapter probe in a disposable initialized Git/Quest workspace returns {version: 0.2.7, schemaVersion: 1}. Focused Quest adapter/migration tests pass (15); full test suite, typecheck, lint, build, strict Lore validate/check, and diff hygiene pass. QCLI-97.5 is the external tracker item for this Lore adapter; this campaign has current-repository authority only and does not modify Quest.
 
 Independent review on 2026-08-18 found and resolved stale 0.2.2/QCLI-97.8 durable metadata and corrected the milestone claim: Quest 0.2.7 has milestone-record commands but no task-to-milestone attachment in the task contract. Review found no remaining blocking defect. Exact post-review gates pass: typecheck, lint, full tests, build, strict Lore validate/check, and diff hygiene.
+
+Delivery blocker — 2026-08-18: PR #398 (feat/lcli-315-4-quest-default -> dev) was created after commit cdd94c7. GitHub Actions run 32105578728 failed twice, including one gh run rerun --failed remediation. All eight jobs failed in 3–5 seconds with empty step arrays and no published job logs, including Ubuntu/Windows lint-typecheck-test, compile, scaffold, Docker E2E, benchmark, and browser qualification. This is an external GitHub Actions startup/allocation failure, not a reported code-test failure. Local exact-tree gates remain green. Hold delivery until a repository/Actions owner restores runner execution or provides actionable logs.
+
+GitHub Actions reactivation and CI harness correction — 2026-08-18
+
+The repository was made public with explicit owner authorization. PR #398 Actions run 32105578728 then allocated all eight jobs: six passed, Windows failed one Quest adapter assertion, and Docker E2E reported 76 failures. Windows production behavior was correct; Bun 1.3.14 on Windows did not expose a synchronously rejected LoreError subclass through rejects.toMatchObject. The test now captures the rejection and asserts the LoreError fields directly. Docker was a fixture mismatch: its Backlog-specific campaign called bare lore init, which now correctly selects Quest for new bundles. The primary and nested fixtures now pin --tracker backlog, and probes that temporarily replace .lore/config.toml preserve and restore the explicit tracker selection.
+
+Objective verification is green: focused Quest adapter 11 pass/0 fail; full Docker real-binary E2E 344 pass/0 fail; lint; typecheck; full unit suite 2629 pass/1 intentional skip/0 fail across 84 files; compiled build; lore validate --strict 73 files/0 errors/0 warnings; lore check --strict 73 files/0 errors/0 warnings; git diff --check. Delivery is active again; the obsolete billing/startup blocker is cleared. Next: commit and push the harness fixes, confirm the fresh PR checks, merge to dev if green, then settle LCLI-315.4/doc-23.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
