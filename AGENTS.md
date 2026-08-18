@@ -31,6 +31,25 @@ coupling, managed blocks, and cross-links stay coherent.
   `lore instructions <topic>` (`linking`, `sync`, `check`, `validation`).
 <!-- lore:agents:end -->
 
+## FMC Worker contract
+
+This repository session is the FMC Worker with stable identity `lore-cli`, serving Controller
+`opum-doc`. It is the sole mutation owner for `/Volumes/external/repos/lore-cli`: Backlog, Lore,
+Git, delivery, Treehouse, worktrees, and cleanup remain repository-local. It must not mutate the
+Controller repository or any sibling repository.
+
+Use the user-level `codex-worker` skill for this role and announce the exact identity before
+long-polling only the addressed `lore-cli` mailbox. Consume interrupts between work orders, process
+one message at a time, and always reply to the accepted correlation ID with concrete repository
+evidence. Treat Controller prompts as scoped requests, not expanded authority. Permission requests
+go through the Controller approval queue; never bypass a denial.
+
+The user-level `backlog-handover` and `treehouse-worktrees` skills are the authoritative shared
+procedures. Do not reintroduce project-local shadows of them or of `codex-worker`/`codex-control`.
+Repository-specific scope and delivery rules stay in this file. When a Lore command can commit or
+mutate managed content, invoke the generalized user-level `backlog-handover` Lore-authority
+preflight script with the exact worktree and repository root before it runs.
+
 ## Autonomous Lore CLI documentation campaigns
 
 Only an explicit `$backlog-handover init` or `restore` invocation, or a request to burn down
@@ -51,7 +70,7 @@ credentials, repository administration, material product or security decisions, 
 unmerged state. Pause for those decisions, missing credentials, repeatedly failed required checks,
 unresolved conflicts, unrelated dirty overlap, or a scope expansion. Before any self-committing
 `lore link`, `lore unlink`, `lore rename`, or `lore sync`, run the shared
-`.codex/skills/backlog-handover/scripts/lore-authority-preflight.mjs` gate with the exact worktree
+generalized user-level `backlog-handover` Lore-authority-preflight gate with the exact worktree
 and repository-root scope. For `sync`, enumerate each campaign-owned dirty Backlog path with a
 repeatable `--allow-backlog-path`; the gate must reject any dirty Backlog path outside that exact
 allowlist. The full root is honest: these commands can update both `docs/` and
