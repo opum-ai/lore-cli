@@ -30,7 +30,7 @@ import { realGitAdapter, resolveHeadSha } from "../src/adapters/git";
 import { run } from "../src/cli";
 import { runUnlink } from "../src/commands/link";
 import { runSync, type SyncOptions, type SyncReport } from "../src/commands/sync";
-import type { GitAdapter, GitCommit, GitLogRange } from "../src/core/log";
+import { type GitAdapter, type GitCommit, type GitLogRange, generateLog } from "../src/core/log";
 import { regenerateTaskBlock } from "../src/core/managed-block";
 import { builtinTemplateFor, renderTemplate } from "../src/core/template";
 import { EXIT_OK, LoreError } from "../src/errors";
@@ -235,6 +235,52 @@ describe("lore sync — AC#1: idempotent", () => {
     expect(second.report.filesChanged).toBe(0);
     expect(readDoc("stories/x.md")).toBe(after);
     expect(adapter.calls).toEqual([]);
+  });
+});
+
+// ── log.md full-history projection (LCLI-326) ──────────────────────────────────
+
+describe("lore sync — log.md is a full-history projection", () => {
+  const history: readonly GitCommit[] = [
+    {
+      hash: "1111111111111111111111111111111111111111",
+      timestamp: "2026-08-13T04:17:00Z",
+      subject: "add story",
+      files: ["docs/stories/x.md", "docs/adr/a.md"],
+    },
+  ];
+
+  function historyAdapter(): GitAdapter {
+    return { history: () => history };
+  }
+
+  test("repairs duplicate seeded log entries from the full git history in one sync", async () => {
+    writeDoc("stories/x.md", storyDoc("X", [], "todo"));
+    const expected = generateLog(history, { root: "docs" });
+    const entry = "- 2026-08-13T04:17:00Z 1111111111111111111111111111111111111111 add story";
+    writeDoc("log.md", expected.replace(entry, `${entry}\n${entry}`));
+
+    const { report } = await syncCmd([], fakeAdapter([]), { gitAdapter: historyAdapter() });
+
+    expect(report.files.map((file) => file.path)).toContain("docs/log.md");
+    expect(readDoc("log.md")).toBe(expected);
+    expect(readDoc("log.md").split(history[0]?.hash ?? "").length - 1).toBe(1);
+  });
+
+  test("leaves a repaired log byte-identical on a consecutive sync with unchanged history", async () => {
+    writeDoc("stories/x.md", storyDoc("X", [], "todo"));
+    const expected = generateLog(history, { root: "docs" });
+    const entry = "- 2026-08-13T04:17:00Z 1111111111111111111111111111111111111111 add story";
+    writeDoc("log.md", expected.replace(entry, `${entry}\n${entry}`));
+
+    await syncCmd([], fakeAdapter([]), { gitAdapter: historyAdapter() });
+    const firstBytes = readDoc("log.md");
+    const second = await syncCmd([], fakeAdapter([]), { gitAdapter: historyAdapter() });
+
+    expect(firstBytes).toBe(expected);
+    expect(firstBytes.split(history[0]?.hash ?? "").length - 1).toBe(1);
+    expect(readDoc("log.md")).toBe(firstBytes);
+    expect(second.report.files.map((file) => file.path)).not.toContain("docs/log.md");
   });
 });
 
