@@ -3,11 +3,11 @@ id: LCLI-326
 title: >-
   docs/log.md carries 174 duplicate entries that lore sync cannot heal, because
   the log is appended rather than derived from git history
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-13 04:17'
-updated_date: '2026-08-18 13:14'
+updated_date: '2026-08-18 13:24'
 labels:
   - bug
   - sync
@@ -18,12 +18,13 @@ dependencies: []
 documentation:
   - docs/stories/build-the-lore-cli-foundation.md
 modified_files:
+  - .lore/config.toml
   - src/core/log.ts
   - test/log.test.ts
   - test/sync.test.ts
-  - docs/specs/lore-design.md
   - docs/reference/cli-contract.md
   - docs/log.md
+  - docs/stories/build-the-lore-cli-foundation.md
 priority: medium
 type: bug
 ordinal: 449000
@@ -55,11 +56,11 @@ Repository state at the time of writing: `docs/log.md` on branch `docs/lcli-323-
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 log.md is regenerated from git history on each sync rather than appended to, so the output is a pure function of history and the bundle
-- [ ] #2 Running sync against the current repository reduces log.md to one entry per commit; the 174 existing duplicates are removed without hand-editing the file
-- [ ] #3 A regression test asserts that a log.md seeded with duplicate entries is repaired by a single sync
-- [ ] #4 A regression test asserts idempotency is preserved: two consecutive syncs with no intervening commit produce byte-identical output
-- [ ] #5 Either lore check reports a log.md that disagrees with git history, or the CLI contract states plainly that log.md is unchecked generated output
+- [x] #1 log.md is regenerated from git history on each sync rather than appended to, so the output is a pure function of history and the bundle
+- [x] #2 Running sync against the current repository reduces log.md to one entry per commit; the 174 existing duplicates are removed without hand-editing the file
+- [x] #3 A regression test asserts that a log.md seeded with duplicate entries is repaired by a single sync
+- [x] #4 A regression test asserts idempotency is preserved: two consecutive syncs with no intervening commit produce byte-identical output
+- [x] #5 Either lore check reports a log.md that disagrees with git history, or the CLI contract states plainly that log.md is unchecked generated output
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -78,4 +79,12 @@ Repository state at the time of writing: `docs/log.md` on branch `docs/lcli-323-
 2026-08-18 independent source/history analysis found the filed append-only implementation diagnosis is stale: current sync resolves HEAD, builds log.md from the complete docs-scoped git history, and replaces the file byte-for-byte. The live generated artifact still contains 208 duplicate entry lines (448 entries, 240 unique), so the campaign narrows to direct repair/idempotency regression coverage, an explicit unchecked-output contract, and coordinator-owned regeneration through lore sync.
 
 2026-08-18 first independent review rejected the test/docs-only candidate at 11cc32d. Direct replay proved current generateLog emits each multi-folder commit under every touched folder: candidate output had 467 entry lines, 250 unique lines, and 217 duplicate extras. The production fix will bucket each commit once under its deepest common touched bundle folder; lexicographic assignment was rejected as semantically arbitrary.
+
+2026-08-18 final cumulative evidence: generateLog assigns each docs-scoped commit once to its deepest common folder; branch-pinned authorized sync produced 251 entries, 251 unique entry lines and hashes, matching all 251 directly docs-touched non-merge commits, and a second dry-run reported zero changes. Focused log/sync tests passed 61/61; full tests, lint, typecheck, build, strict Lore validate/check (73 files, zero errors/warnings), and diff hygiene passed. Independent cumulative review found no blocker. The initial global-binary sync result was invalidated because it used the stale installed emitter; the corrected branch artifact supplied all accepted regeneration evidence. `.lore/config.toml` now explicitly pins this existing Backlog repository after the Quest-default change, preserving behavior while allowing exact-candidate sync/check.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Made docs/log.md a deterministic one-entry-per-commit projection, grouping cross-folder commits under their deepest common docs folder. Added multi-folder repair and consecutive-sync idempotency regressions, documented the intentional check exemption, explicitly pinned this repository to its existing Backlog tracker, and regenerated the live log to 251 unique entries. Verified with focused/full tests, lint, typecheck, build, strict Lore gates, diff hygiene, live history counts, and independent cumulative review.
+<!-- SECTION:FINAL_SUMMARY:END -->
