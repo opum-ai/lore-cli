@@ -53,6 +53,9 @@ tasks:
   - lcli-321
   - lcli-327
   - lcli-332
+  - lcli-336
+  - lcli-337
+  - lcli-338
 ---
 
 # Prepare the first Lore CLI release
@@ -156,6 +159,9 @@ for future automated OIDC publication.
 | [LCLI-321](../../backlog/tasks/lcli-321%20-%20Publish-Lore-CLI-0.2.0-from-qualified-release-artifacts.md) | Publish Lore CLI 0.2.0 from qualified release artifacts | Done |
 | [LCLI-327](../../backlog/tasks/lcli-327%20-%20docker-e2e-run-e2e.sh-writes-a-repo-local-git-identity-leaking-lore-e2e-e2elore.test-into-real-commits-on-dev.md) | docker/e2e/run-e2e.sh writes a repo-local git identity, leaking "lore e2e <e2e@lore.test>" into real commits on dev | Done |
 | [LCLI-332](../../backlog/tasks/lcli-332%20-%20Release-the-Lore-Backlog-knowledge-adoption-contract.md) | Release the Lore Backlog knowledge-adoption contract | Done |
+| [LCLI-336](../../backlog/tasks/lcli-336%20-%20Prepare-Lore-CLI-0.3.1-patch-release-metadata.md) | Prepare Lore CLI 0.3.1 patch release metadata | Done |
+| [LCLI-337](../../backlog/tasks/lcli-337%20-%20Fix-packaged-Lore-Backlog-isolation-in-release-qualification.md) | Fix packaged Lore Backlog isolation in release qualification | Done |
+| [LCLI-338](../../backlog/tasks/lcli-338%20-%20Prepare-Lore-CLI-0.3.2-patch-release-metadata.md) | Prepare Lore CLI 0.3.2 patch release metadata | Done |
 <!-- lore:tasks:end -->
 
 ## Notes

@@ -4,9 +4,12 @@ title: Align FMC Worker identity and user-level skill authority
 status: Done
 assignee: []
 created_date: '2026-08-18 16:04'
-updated_date: '2026-08-18 16:04'
-labels: []
+updated_date: '2026-08-19 00:27'
+labels:
+  - 'doc:stories/maintain-lore-cli-documentation-authority'
 dependencies: []
+documentation:
+  - docs/stories/maintain-lore-cli-documentation-authority.md
 type: chore
 ordinal: 464000
 ---

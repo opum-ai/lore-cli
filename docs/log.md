@@ -166,6 +166,8 @@
 - 2026-08-16T09:38:04-05:00 94f0626731988ef3c57d7477c0fde07fccd56484 docs: record Lore CLI 0.3.0 release
 - 2026-08-18T08:25:46-05:00 54387857814f0abfec82ab48eea977baad0ac3ba docs: reconcile log projection
 - 2026-08-18T17:43:32-05:00 4dc2f2fc8cc6bb79915eea16eb9bff2a1feef229 docs: record superseded 0.3.1 settlement
+- 2026-08-18T18:20:10-05:00 fcf64a11696d66f21e2f6938430d4ad12e600830 docs: reconcile retained PR 396 authority work
+- 2026-08-18T19:32:30-05:00 754a3d485c22a8873b40dd7b49fbc115eab494ff docs: reconcile Lore Story ownership
 
 ## docs/.obsidian
 
@@ -331,6 +333,7 @@
 - 2026-08-18T01:06:33-05:00 cdd94c78149aec07c3c4db8422fb11c93949008c feat: qualify Quest 0.2.7 tracker artifact
 - 2026-08-18T08:17:16-05:00 422f8b95506aeda23ec595bad145e60e0f8c4f54 fix(log): render each commit once
 - 2026-08-18T08:17:16-05:00 677e729f746ee0c9da584443bf66d48a4f2a410f test(sync): cover log reprojection
+- 2026-08-18T18:20:10-05:00 fcf64a11696d66f21e2f6938430d4ad12e600830 docs: reconcile retained PR 396 authority work
 
 ## docs/runbooks
 
@@ -491,3 +494,5 @@
 - 2026-08-17T13:11:48-05:00 4f4934aea05328c0fe49525485f99f72fbbcb0ff docs: define Quest 0.2.2 migration contract
 - 2026-08-18T01:06:33-05:00 cdd94c78149aec07c3c4db8422fb11c93949008c feat: qualify Quest 0.2.7 tracker artifact
 - 2026-08-18T08:25:46-05:00 54387857814f0abfec82ab48eea977baad0ac3ba docs: reconcile log projection
+- 2026-08-18T18:20:10-05:00 fcf64a11696d66f21e2f6938430d4ad12e600830 docs: reconcile retained PR 396 authority work
+- 2026-08-18T19:32:30-05:00 754a3d485c22a8873b40dd7b49fbc115eab494ff docs: reconcile Lore Story ownership

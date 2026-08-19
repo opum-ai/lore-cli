@@ -5,13 +5,14 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-16 16:17'
-updated_date: '2026-08-16 16:38'
+updated_date: '2026-08-19 00:27'
 labels:
   - workspace
   - agents
   - instructions
   - skills
   - retrieval
+  - 'doc:stories/retrieve-task-scoped-context-with-agent-profiles'
 dependencies: []
 references:
   - >-

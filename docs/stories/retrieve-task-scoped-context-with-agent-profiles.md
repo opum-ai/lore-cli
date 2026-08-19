@@ -12,6 +12,7 @@ timestamp: 2026-08-01T17:28:19.790Z
 status: done
 tasks:
   - lcli-289
+  - lcli-334
 ---
 
 # Retrieve task-scoped context with agent profiles
@@ -48,6 +49,7 @@ without absorbing every worker's documents.
 | Task | Title | Status |
 |---|---|---|
 | [LCLI-289](../../backlog/tasks/lcli-289%20-%20Add-task-scoped-agent-context-profiles.md) | Add task-scoped agent context profiles | Done |
+| [LCLI-334](../../backlog/tasks/lcli-334%20-%20Teach-agents-to-select-and-query-Lore-workspaces.md) | Teach agents to select and query Lore workspaces | Done |
 <!-- lore:tasks:end -->
 
 ## Notes

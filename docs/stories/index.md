@@ -10,5 +10,6 @@
 - [Maintain Lore CLI documentation authority](maintain-lore-cli-documentation-authority.md)
 - [Prepare the first Lore CLI release](prepare-the-first-lore-cli-release.md)
 - [Retrieve task-scoped context with agent profiles](retrieve-task-scoped-context-with-agent-profiles.md)
+- [Support Lore agent interoperability](support-lore-agent-interoperability.md)
 - [Track Lore CLI tracker-backend integration](track-lore-cli-tracker-backend-integration.md)
 <!-- lore:index:end -->
