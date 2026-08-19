@@ -8,7 +8,7 @@ tags:
   - handover
 summary: Keep release truth, task ownership, documentation routing, and historical handovers coherent.
 timestamp: 2026-08-03T16:05:06.929Z
-status: in-progress
+status: done
 tasks:
   - lcli-293
   - lcli-292
@@ -64,7 +64,7 @@ product or release state.
 | [LCLI-311](../../backlog/tasks/lcli-311%20-%20Make-the-loophole-guidance-a-general-rule-not-a-curated-list-of-shapes.md) | Make the loophole guidance a general rule, not a curated list of shapes | Done |
 | [LCLI-341](../../backlog/tasks/lcli-341%20-%20Align-FMC-Worker-identity-and-user-level-skill-authority.md) | Align FMC Worker identity and user-level skill authority | Done |
 | [LCLI-342](../../backlog/tasks/lcli-342%20-%20Record-exact-FMC-Controller-authorization-delegation.md) | Record exact FMC Controller authorization delegation | Done |
-| [LCLI-345](../../backlog/tasks/lcli-345%20-%20Reconcile-Lore-Story-ownership-for-the-ODOC-66-documentation-closeout.md) | Reconcile Lore Story ownership for the ODOC-66 documentation closeout | In Progress |
+| [LCLI-345](../../backlog/tasks/lcli-345%20-%20Reconcile-Lore-Story-ownership-for-the-ODOC-66-documentation-closeout.md) | Reconcile Lore Story ownership for the ODOC-66 documentation closeout | Done |
 <!-- lore:tasks:end -->
 
 ## Notes
