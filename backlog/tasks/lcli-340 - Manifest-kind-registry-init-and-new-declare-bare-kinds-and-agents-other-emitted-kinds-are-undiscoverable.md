@@ -3,10 +3,11 @@ id: LCLI-340
 title: >-
   Manifest kind registry: init and new declare bare kinds, and agent's other
   emitted kinds are undiscoverable
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@lore-cli'
 created_date: '2026-08-17 15:21'
-updated_date: '2026-08-19 00:27'
+updated_date: '2026-08-19 03:27'
 labels:
   - core-concept-manifest
   - output-contract
@@ -55,3 +56,9 @@ LCLI-213 added a golden cross-check for manifest kind drift, but it compares a h
 - [ ] #3 agent declares resultKinds covering agent.profiles and the kinds its show and context actions emit
 - [ ] #4 A test invokes each multi-action command's actions and asserts every emitted kind appears in that command's manifest entry, failing if an action's kind is absent
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Audit manifest declarations against live handlers. 2. Move init/new kinds to dotted values with documented compatibility. 3. Declare all agent action kinds. 4. Add handler-to-manifest coverage and run focused tests.
+<!-- SECTION:PLAN:END -->

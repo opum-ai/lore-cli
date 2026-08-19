@@ -1,10 +1,11 @@
 ---
 id: LCLI-344
 title: Add Hermes Agent integration support
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@lore-cli'
 created_date: '2026-08-18 20:30'
-updated_date: '2026-08-19 00:27'
+updated_date: '2026-08-19 03:27'
 labels:
   - 'doc:stories/support-lore-agent-interoperability'
 dependencies: []
@@ -34,3 +35,9 @@ Add implementation-neutral Hermes Agent support alongside Claude and Codex. Esta
 - [ ] #3 Integration preserves independent Claude and Codex behavior and writes no user-global Hermes config, secrets, or credentials
 - [ ] #4 Tests cover detection, generated output, absence behavior, discovery precedence, and credential-safety boundaries
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Research cited Hermes discovery facts. 2. Compare native Hermes bridge with AGENTS reuse. 3. Implement selected safe project-local integration without credentials/global config. 4. Test detection, precedence, output, and absence.
+<!-- SECTION:PLAN:END -->

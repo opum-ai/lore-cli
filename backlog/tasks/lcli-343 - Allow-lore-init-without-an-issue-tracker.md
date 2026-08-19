@@ -1,10 +1,11 @@
 ---
 id: LCLI-343
 title: Allow lore init without an issue tracker
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@lore-cli'
 created_date: '2026-08-18 20:30'
-updated_date: '2026-08-19 00:27'
+updated_date: '2026-08-19 03:27'
 labels:
   - 'doc:stories/track-lore-cli-tracker-backend-integration'
 dependencies: []
@@ -28,3 +29,9 @@ Current tracker selection supports Quest, Backlog, and Jira; offer an explicit n
 - [ ] #3 Existing tracker-backed and legacy bundles retain current behavior
 - [ ] #4 Validation and init tests cover no-tracker, incompatibilities, and diagnostics
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Inspect current tracker selection/init/config semantics. 2. Add explicit no-tracker choice and persistence without tracker probe. 3. Preserve existing tracker and legacy behavior. 4. Add focused tests.
+<!-- SECTION:PLAN:END -->

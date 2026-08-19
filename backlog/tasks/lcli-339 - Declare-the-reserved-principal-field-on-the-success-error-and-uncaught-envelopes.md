@@ -3,10 +3,11 @@ id: LCLI-339
 title: >-
   Declare the reserved principal field on the success, error, and uncaught
   envelopes
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@lore-cli'
 created_date: '2026-08-17 15:21'
-updated_date: '2026-08-19 00:27'
+updated_date: '2026-08-19 03:27'
 labels:
   - output-contract
   - opum-contract
@@ -55,3 +56,9 @@ Populating the field with a real value is explicitly out of scope: the contract'
 - [ ] #4 A test asserts the principal key is present on each envelope shape and fails if the key is removed
 - [ ] #5 No non-null principal value ships without a prior ratifying amendment to opum-doc's command contract
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Audit all JSON envelope constructors. 2. Add null principal as final key for success, known errors, and uncaught errors. 3. Add shape/order regression tests. 4. Run focused output/error tests and report evidence.
+<!-- SECTION:PLAN:END -->
