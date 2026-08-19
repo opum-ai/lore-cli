@@ -415,6 +415,17 @@ format = "adf"
 });
 
 describe("loadConfig — jira-cli tracker settings", () => {
+  test("accepts an explicit no-tracker backend without credentials", () => {
+    const config = loadConfig({ root: repoRoot('[tracker]\nbackend = "none"\n'), env: {} });
+    expect(config.tracker).toEqual({ backend: "none" });
+  });
+
+  test("rejects Jira settings when tracker coupling is explicitly disabled", () => {
+    const err = expectValidationError(() =>
+      loadConfig({ root: repoRoot('[tracker]\nbackend = "none"\n[tracker.jira]\nproject = "JT"\n'), env: {} }),
+    );
+    expect(err.message).toContain('tracker.jira cannot be configured when tracker.backend is "none"');
+  });
   test("defaults an omitted tracker backend to backlog", () => {
     expect(loadConfig({ root: repoRoot(""), env: {} }).tracker).toEqual({ backend: "backlog" });
   });

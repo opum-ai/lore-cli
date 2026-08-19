@@ -31,7 +31,7 @@ function newCmd(args: string[]): { code: number; result: NewResult; stderr: Retu
   const stderr = capture();
   const code = runNew({ root, output: JSON_CTX, args, clock: FIXED_CLOCK, stdout, stderr });
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: NewResult };
-  expect(envelope.kind).toBe("new");
+  expect(envelope.kind).toBe("new.result");
   return { code, result: envelope.data, stderr };
 }
 

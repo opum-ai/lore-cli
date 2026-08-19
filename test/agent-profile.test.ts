@@ -10,6 +10,7 @@ import { compileAgentContext, renderAgentContextMarkdown } from "../src/core/age
 import { loadAgentProfiles, validateAgentProfileReferences } from "../src/core/agent-profile";
 import { loadBundle } from "../src/core/bundle";
 import { buildCodexSkillDoc } from "../src/core/codex-bridge";
+import { buildManifest } from "../src/core/manifest";
 import type { RetrievalGraphLoader } from "../src/core/retrieval";
 import { LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
@@ -314,6 +315,29 @@ describe("lore agent command", () => {
     const json = capture();
     expect(await runAgent({ root, output: JSON_OUTPUT, args, stdout: json, retrieval: reference })).toBe(0);
     expect(JSON.parse(json.text()).kind).toBe("agent.context.export");
+  });
+
+  test("every agent action emits a kind declared in its manifest entry", async () => {
+    fixture();
+    specialist();
+    const graph = loadBundle(join(root, "docs"));
+    const retrieval: RetrievalGraphLoader = async () => ({ graph, backend: "reference" });
+    const invocations: readonly (readonly string[])[] = [
+      ["list"],
+      ["show", "frontend-dev"],
+      ["context", "frontend-dev", "--task", "checkout errors"],
+    ];
+    const emittedKinds: string[] = [];
+    for (const args of invocations) {
+      const stdout = capture();
+      expect(await runAgent({ root, output: JSON_OUTPUT, args, stdout, retrieval })).toBe(0);
+      emittedKinds.push((JSON.parse(stdout.text()) as { kind: string }).kind);
+    }
+
+    const manifest = buildManifest().commands.find((command) => command.name === "agent");
+    expect(manifest).toBeDefined();
+    const declaredKinds = new Set([manifest?.kind, ...(manifest?.resultKinds ?? [])]);
+    for (const kind of emittedKinds) expect(declaredKinds).toContain(kind);
   });
 
   test("router dispatches the singular family and preserves the plural command", async () => {

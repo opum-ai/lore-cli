@@ -69,6 +69,14 @@ export function createConfiguredTrackerAdapter(root: string, options: TrackerAda
     );
   }
   const config: TrackerConfig = loadConfig({ root }).tracker;
+  if (config.backend === "none") {
+    throw new LoreError(
+      "validation",
+      "this bundle has issue-tracker coupling disabled",
+      "select a tracker with `lore init --tracker quest`, `lore init --tracker backlog`, or `lore init --tracker jira`",
+      { backend: "none" },
+    );
+  }
   return createTrackerAdapter(root, { ...config, backend: selection.backend }, options);
 }
 
@@ -96,10 +104,18 @@ export function createTrackerAdapter(
     }
     return createJiraAdapter(root, config.jira, options.jira);
   }
+  if (backend === "none") {
+    throw new LoreError(
+      "validation",
+      "this bundle has issue-tracker coupling disabled",
+      "select a tracker with `lore init --tracker quest`, `lore init --tracker backlog`, or `lore init --tracker jira`",
+      { backend },
+    );
+  }
   throw new LoreError(
     "validation",
     `unsupported tracker backend ${JSON.stringify(backend)}`,
-    'use "quest", "backlog", or "jira"',
+    'use "quest", "backlog", "jira", or "none"',
     { backend },
   );
 }

@@ -105,16 +105,22 @@ describe("asText", () => {
 });
 
 describe("toErrorEnvelope", () => {
-  test("includes hint and input when present, with contract field order", () => {
+  test("includes hint, input, and the reserved principal slot last", () => {
     const err = new LoreError("not_found", "missing", "do x", { id: "a" });
     const envelope = toErrorEnvelope(err);
-    expect(envelope).toEqual({ error_type: "not_found", message: "missing", hint: "do x", input: { id: "a" } });
-    expect(Object.keys(envelope)).toEqual(["error_type", "message", "hint", "input"]);
+    expect(envelope).toEqual({
+      error_type: "not_found",
+      message: "missing",
+      hint: "do x",
+      input: { id: "a" },
+      principal: null,
+    });
+    expect(Object.keys(envelope)).toEqual(["error_type", "message", "hint", "input", "principal"]);
   });
 
   test("omits hint and input when absent", () => {
     const envelope = toErrorEnvelope(new LoreError("usage", "bad flag"));
-    expect(envelope).toEqual({ error_type: "usage", message: "bad flag" });
+    expect(envelope).toEqual({ error_type: "usage", message: "bad flag", principal: null });
     expect("hint" in envelope).toBe(false);
     expect("input" in envelope).toBe(false);
   });
@@ -196,6 +202,7 @@ describe("reportError", () => {
       message: "missing",
       hint: "do x",
       input: { id: "a" },
+      principal: null,
     });
     expect(stderr.text().endsWith("\n")).toBe(true);
   });
@@ -218,7 +225,9 @@ describe("reportError", () => {
     const stderr = capture();
     const code = reportError(new Error("kaboom"), { json: true, stderr });
     expect(code).toBe(EXIT_UNCAUGHT);
-    expect(JSON.parse(stderr.text())).toEqual({ error_type: "uncaught", message: "kaboom" });
+    const envelope = JSON.parse(stderr.text());
+    expect(envelope).toEqual({ error_type: "uncaught", message: "kaboom", principal: null });
+    expect(Object.keys(envelope)).toEqual(["error_type", "message", "principal"]);
   });
 
   test("a non-LoreError is reported as uncaught with exit 1 (text)", () => {
@@ -262,7 +271,12 @@ describe("reportError", () => {
     }).not.toThrow();
     expect(code).toBe(2);
     expect(stderr.lines()).toHaveLength(1);
-    expect(JSON.parse(stderr.text())).toEqual({ error_type: "usage", message: "too big", input: { n: "42" } });
+    expect(JSON.parse(stderr.text())).toEqual({
+      error_type: "usage",
+      message: "too big",
+      input: { n: "42" },
+      principal: null,
+    });
   });
 
   test("--json survives a throwing toJSON on input: classifiable fields still survive", () => {

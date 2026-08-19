@@ -462,7 +462,7 @@ function flushWarnings(warnings: readonly string[], output: OutputContext, stder
 
 /** The per-result-type rendering bundle for `new` (output.ts dispatches on the mode). */
 function newRenderable(data: NewResult): Renderable<NewResult> {
-  return { kind: "new", data, pretty: renderPretty, plain: renderPlain };
+  return { kind: "new.result", data, pretty: renderPretty, plain: renderPlain };
 }
 
 /** Human view: a one-line confirmation naming the type, id, and path. */

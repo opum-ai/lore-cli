@@ -74,7 +74,13 @@ export interface ManifestCommand {
   readonly flags: readonly ManifestFlag[];
   /** Whether the command supports the `--json` envelope. Universal today, carried per command so an entry is self-describing. */
   readonly json: boolean;
-  /** The `kind` of the command's `--json` success envelope (cli-contract §2.1), matching the live `kind:` literal. */
+  /**
+   * The `kind` of the command's `--json` success envelope (cli-contract §2.1),
+   * matching the live `kind:` literal. Kinds are stable dotted
+   * `command.payload` identifiers; a value change is consumer-visible and must
+   * be handled as a documented, ratified contract migration rather than a
+   * silent alias.
+   */
   readonly kind: string;
   /** Every success-envelope kind when a command's explicit operation selects one of several result shapes. */
   readonly resultKinds?: readonly string[];
@@ -207,10 +213,11 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
       { name: "agents", takesValue: false, summary: "Alias for --claude" },
       { name: "claude", takesValue: false, summary: "Set up the Claude Code bridge (SKILL.md + CLAUDE.md)" },
       { name: "codex", takesValue: false, summary: "Set up the Codex bridge (SKILL.md + AGENTS.md)" },
+      { name: "hermes", takesValue: false, summary: "Set up project-local Hermes context (.hermes.md)" },
       {
         name: "tracker",
         takesValue: true,
-        summary: "Select the task tracker backend without prompting (quest|backlog|jira)",
+        summary: "Select the task tracker backend without prompting (quest|backlog|jira|none)",
       },
       {
         name: "migrate-backlog",
@@ -236,7 +243,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
       { name: "no-backlog", takesValue: false, summary: "Skip the backlog-coupling capability check entirely" },
     ],
     json: true,
-    kind: "init",
+    kind: "init.result",
     // The backlog-coupling check is ADVISORY ONLY (LORE-260): a missing/incapable `backlog` becomes
     // a stderr warning plus a `backlog: {capable: false}` field, never a thrown error — so no
     // `backlog` seam code is added here despite `runInit` calling `adapter.probe()`.
@@ -246,6 +253,8 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
       "quest init && lore init --tracker quest --migrate-backlog",
       "lore init --tracker quest",
       "lore init --tracker jira",
+      "lore init --tracker none",
+      "lore init --hermes",
       "lore init --claude --codex",
       "lore init --yes --scaffold mkdocs",
     ],
@@ -262,7 +271,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
       { name: "out", takesValue: true, summary: "Override the output path" },
     ],
     json: true,
-    kind: "new",
+    kind: "new.result",
     // extra 6 = an unfilled template placeholder / serialize-time validation (template.ts:263) —
     // new's own validation, modeled explicitly rather than left to the coincidental profile 6.
     exitCodes: exitCodesFor(["profile", "read", "write"], [6]),
@@ -677,6 +686,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     ],
     json: true,
     kind: "agent.context.export",
+    resultKinds: ["agent.profiles", "agent.profile", "agent.context.export"],
     // Profile/reference validation is command-owned (extra 6), unknown profiles are
     // command-owned not_found (extra 3), and task-file/output paths reach read/write.
     exitCodes: exitCodesFor(["bundle", "read", "write"], [3, 6]),

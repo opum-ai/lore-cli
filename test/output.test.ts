@@ -164,7 +164,7 @@ describe("errorRenderOpts bridges a context to errors.ts", () => {
     const cap = capture();
     const code = reportError(new LoreError("not_found", "nope"), { ...errorRenderOpts(ctx), stderr: cap });
     expect(code).toBe(3);
-    expect(JSON.parse(cap.text())).toEqual({ error_type: "not_found", message: "nope" });
+    expect(JSON.parse(cap.text())).toEqual({ error_type: "not_found", message: "nope", principal: null });
   });
 
   test("a pretty (color) context drives reportError to a colored text diagnostic", () => {
@@ -243,11 +243,12 @@ describe("success envelope (cli-contract §2)", () => {
     expect(SCHEMA_VERSION).toBe(1);
   });
 
-  test("wraps data as {schemaVersion, kind, data}", () => {
+  test("wraps data as {schemaVersion, kind, data, principal} with the reserved slot last", () => {
     expect(successEnvelope("query.results", { hits: [] })).toEqual({
       schemaVersion: 1,
       kind: "query.results",
       data: { hits: [] },
+      principal: null,
     });
   });
 
@@ -255,7 +256,7 @@ describe("success envelope (cli-contract §2)", () => {
     const data = [1, 2, 3];
     const env = successEnvelope("graph.export", data);
     expect(env.data).toBe(data);
-    expect(Object.keys(env)).toEqual(["schemaVersion", "kind", "data"]);
+    expect(Object.keys(env)).toEqual(["schemaVersion", "kind", "data", "principal"]);
   });
 });
 
@@ -263,10 +264,15 @@ describe("emit — json mode", () => {
   test("writes the compact envelope as a single parseable line", () => {
     const cap = capture();
     emit(renderable("query.results", { total: 1 }), JSON_CTX, cap);
-    expect(cap.text()).toBe('{"schemaVersion":1,"kind":"query.results","data":{"total":1}}\n');
+    expect(cap.text()).toBe('{"schemaVersion":1,"kind":"query.results","data":{"total":1},"principal":null}\n');
     // Exactly one newline total (the trailing one) — no leading/embedded blank line.
     expect((cap.text().match(/\n/g) ?? []).length).toBe(1);
-    expect(JSON.parse(cap.text())).toEqual({ schemaVersion: 1, kind: "query.results", data: { total: 1 } });
+    expect(JSON.parse(cap.text())).toEqual({
+      schemaVersion: 1,
+      kind: "query.results",
+      data: { total: 1 },
+      principal: null,
+    });
   });
 
   test("does not invoke the pretty/plain renderers", () => {
@@ -328,7 +334,12 @@ describe("emit — json mode", () => {
   test("array data is accepted (an envelope data of array shape is valid §2)", () => {
     const cap = capture();
     emit(renderable("graph.export", [1, 2, 3]), JSON_CTX, cap);
-    expect(JSON.parse(cap.text())).toEqual({ schemaVersion: 1, kind: "graph.export", data: [1, 2, 3] });
+    expect(JSON.parse(cap.text())).toEqual({
+      schemaVersion: 1,
+      kind: "graph.export",
+      data: [1, 2, 3],
+      principal: null,
+    });
   });
 
   test("a toJSON-collapsing object (Date) throws — typeof 'object' is not enough", () => {
@@ -359,7 +370,7 @@ describe("emit — json mode", () => {
     const cap = capture();
     emit(renderable("k", data), JSON_CTX, cap);
     expect(calls).toBe(1); // serialized exactly once
-    expect(JSON.parse(cap.text())).toEqual({ schemaVersion: 1, kind: "k", data: { ok: true } });
+    expect(JSON.parse(cap.text())).toEqual({ schemaVersion: 1, kind: "k", data: { ok: true }, principal: null });
   });
 
   test("defaults the sink to process.stdout", () => {
@@ -376,7 +387,7 @@ describe("emit — json mode", () => {
     } finally {
       process.stdout.write = original;
     }
-    expect(chunks.join("")).toBe('{"schemaVersion":1,"kind":"k","data":{"ok":true}}\n');
+    expect(chunks.join("")).toBe('{"schemaVersion":1,"kind":"k","data":{"ok":true},"principal":null}\n');
   });
 });
 
