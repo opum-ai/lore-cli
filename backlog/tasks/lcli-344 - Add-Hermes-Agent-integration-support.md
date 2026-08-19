@@ -4,8 +4,9 @@ title: Add Hermes Agent integration support
 status: To Do
 assignee: []
 created_date: '2026-08-18 20:30'
-updated_date: '2026-08-18 20:37'
-labels: []
+updated_date: '2026-08-19 00:27'
+labels:
+  - 'doc:stories/support-lore-agent-interoperability'
 dependencies: []
 references:
   - >-
@@ -13,6 +14,8 @@ references:
   - 'https://hermes-agent.nousresearch.com/docs/user-guide/configuration'
   - 'https://hermes-agent.nousresearch.com/docs/user-guide/features/skills/'
   - 'https://github.com/NousResearch/hermes-agent'
+documentation:
+  - docs/stories/support-lore-agent-interoperability.md
 priority: medium
 type: feature
 ordinal: 467000
