@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@lore-cli'
 created_date: '2026-08-19 00:23'
-updated_date: '2026-08-19 00:27'
+updated_date: '2026-08-19 00:29'
 labels:
   - 'doc:stories/maintain-lore-cli-documentation-authority'
 dependencies: []
@@ -26,9 +26,9 @@ Close only the Lore ownership/documentation debt reported by ODOC-66: link exist
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every reported LCLI-334 through LCLI-344 task has a truthful Story owner while preserving its existing Backlog status
-- [ ] #2 lore orphans reports 0 orphan tasks and 0 dangling links
-- [ ] #3 Strict Lore validation/check, agents check, and diff hygiene pass
+- [x] #1 Every reported LCLI-334 through LCLI-344 task has a truthful Story owner while preserving its existing Backlog status
+- [x] #2 lore orphans reports 0 orphan tasks and 0 dangling links
+- [x] #3 Strict Lore validation/check, agents check, and diff hygiene pass
 - [ ] #4 The focused documentation settlement is delivered to origin/dev without feature work
 <!-- AC:END -->
 
@@ -37,3 +37,9 @@ Close only the Lore ownership/documentation debt reported by ODOC-66: link exist
 <!-- SECTION:PLAN:BEGIN -->
 1. Preserve the reported task statuses while mapping each orphan to a truthful existing Story. 2. Use Lore coupling commands and sync through the preflight gate. 3. Verify zero orphan/dangling links and strict documentation gates. 4. Finalize and deliver only the resulting documentation/metadata changes to dev.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Mapped LCLI-334..LCLI-344 to truthful Story owners without changing their statuses; created stories/support-lore-agent-interoperability.md only for future LCLI-344. Guarded lore link and sync completed. Verification: lore orphans 0/0; lore validate --strict 75 files, 0 errors/warnings, 6 skipped; lore check --strict 75 files, 0 errors/warnings, 381 out-of-bundle links skipped; lore agents --check and git diff --check passed.
+<!-- SECTION:NOTES:END -->
