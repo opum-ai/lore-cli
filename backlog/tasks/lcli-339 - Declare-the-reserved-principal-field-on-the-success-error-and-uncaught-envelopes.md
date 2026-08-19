@@ -6,11 +6,15 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-17 15:21'
+updated_date: '2026-08-19 00:27'
 labels:
   - output-contract
   - opum-contract
   - cli
+  - 'doc:stories/harden-post-0-2-lore-correctness'
 dependencies: []
+documentation:
+  - docs/stories/harden-post-0-2-lore-correctness.md
 priority: high
 type: bug
 ordinal: 462000
