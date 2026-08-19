@@ -1,11 +1,11 @@
 ---
 id: LCLI-345
 title: Reconcile Lore Story ownership for the ODOC-66 documentation closeout
-status: In Progress
+status: Done
 assignee:
   - '@lore-cli'
 created_date: '2026-08-19 00:23'
-updated_date: '2026-08-19 00:29'
+updated_date: '2026-08-19 00:42'
 labels:
   - 'doc:stories/maintain-lore-cli-documentation-authority'
 dependencies: []
@@ -29,7 +29,7 @@ Close only the Lore ownership/documentation debt reported by ODOC-66: link exist
 - [x] #1 Every reported LCLI-334 through LCLI-344 task has a truthful Story owner while preserving its existing Backlog status
 - [x] #2 lore orphans reports 0 orphan tasks and 0 dangling links
 - [x] #3 Strict Lore validation/check, agents check, and diff hygiene pass
-- [ ] #4 The focused documentation settlement is delivered to origin/dev without feature work
+- [x] #4 The focused documentation settlement is delivered to origin/dev without feature work
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -43,3 +43,9 @@ Close only the Lore ownership/documentation debt reported by ODOC-66: link exist
 <!-- SECTION:NOTES:BEGIN -->
 Mapped LCLI-334..LCLI-344 to truthful Story owners without changing their statuses; created stories/support-lore-agent-interoperability.md only for future LCLI-344. Guarded lore link and sync completed. Verification: lore orphans 0/0; lore validate --strict 75 files, 0 errors/warnings, 6 skipped; lore check --strict 75 files, 0 errors/warnings, 381 out-of-bundle links skipped; lore agents --check and git diff --check passed.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Reconciled the 11 ODOC-66 orphan tasks to truthful Story owners, created the narrow Hermes interoperability Story for LCLI-344, and regenerated Lore surfaces without changing feature/release task status. Objective verification: lore orphans 0/0; strict Lore validate/check; agents check; lint; diff hygiene; focused PR #410 required checks passed.
+<!-- SECTION:FINAL_SUMMARY:END -->
