@@ -5,13 +5,16 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-16 22:16'
-updated_date: '2026-08-18 22:39'
+updated_date: '2026-08-19 00:27'
 labels:
   - release
   - patch
   - npm
   - workspace
+  - 'doc:stories/prepare-the-first-lore-cli-release'
 dependencies: []
+documentation:
+  - docs/stories/prepare-the-first-lore-cli-release.md
 priority: high
 type: task
 ordinal: 459000
