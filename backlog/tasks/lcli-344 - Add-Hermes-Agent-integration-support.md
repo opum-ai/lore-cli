@@ -1,11 +1,11 @@
 ---
 id: LCLI-344
 title: Add Hermes Agent integration support
-status: In Progress
+status: Done
 assignee:
   - '@lore-cli'
 created_date: '2026-08-18 20:30'
-updated_date: '2026-08-19 03:27'
+updated_date: '2026-08-19 03:37'
 labels:
   - 'doc:stories/support-lore-agent-interoperability'
 dependencies: []
@@ -30,10 +30,10 @@ Add implementation-neutral Hermes Agent support alongside Claude and Codex. Esta
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Task distinguishes cited Hermes facts from implementation recommendations
-- [ ] #2 Research evaluates native .hermes.md/HERMES.md versus hierarchical AGENTS.md without preselecting either
-- [ ] #3 Integration preserves independent Claude and Codex behavior and writes no user-global Hermes config, secrets, or credentials
-- [ ] #4 Tests cover detection, generated output, absence behavior, discovery precedence, and credential-safety boundaries
+- [x] #1 Task distinguishes cited Hermes facts from implementation recommendations
+- [x] #2 Research evaluates native .hermes.md/HERMES.md versus hierarchical AGENTS.md without preselecting either
+- [x] #3 Integration preserves independent Claude and Codex behavior and writes no user-global Hermes config, secrets, or credentials
+- [x] #4 Tests cover detection, generated output, absence behavior, discovery precedence, and credential-safety boundaries
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -41,3 +41,15 @@ Add implementation-neutral Hermes Agent support alongside Claude and Codex. Esta
 <!-- SECTION:PLAN:BEGIN -->
 1. Research cited Hermes discovery facts. 2. Compare native Hermes bridge with AGENTS reuse. 3. Implement selected safe project-local integration without credentials/global config. 4. Test detection, precedence, output, and absence.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Wave A research used official Hermes context-files and configuration documentation. Native project-local .hermes.md bridge selected; no user-global config, env, or credential path is accessed.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added safe native Hermes project-context support through .hermes.md, preserving Claude/Codex independence. Tests cover detection, generated/protected output, absence, precedence, and credential safety; cumulative gates pass.
+<!-- SECTION:FINAL_SUMMARY:END -->
