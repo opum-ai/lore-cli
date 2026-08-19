@@ -8,7 +8,7 @@ tags:
   - handover
 summary: Keep release truth, task ownership, documentation routing, and historical handovers coherent.
 timestamp: 2026-08-03T16:05:06.929Z
-status: done
+status: in-progress
 tasks:
   - lcli-293
   - lcli-292
@@ -21,6 +21,9 @@ tasks:
   - lcli-309
   - lcli-310
   - lcli-311
+  - lcli-341
+  - lcli-342
+  - lcli-345
 ---
 
 # Maintain Lore CLI documentation authority
@@ -59,6 +62,9 @@ product or release state.
 | [LCLI-309](../../backlog/tasks/lcli-309%20-%20Correct-the-stale-herdr-delivery-derivation-and-the-fact-shaped-instructions-it-exposed.md) | Correct the stale herdr delivery derivation and the fact-shaped instructions it exposed | Done |
 | [LCLI-310](../../backlog/tasks/lcli-310%20-%20Close-adverb-shaped-prohibitions-ownership-without-prohibition-and-the-second-hand-listed-gate.md) | Close adverb-shaped prohibitions, ownership-without-prohibition, and the second hand-listed gate | Done |
 | [LCLI-311](../../backlog/tasks/lcli-311%20-%20Make-the-loophole-guidance-a-general-rule-not-a-curated-list-of-shapes.md) | Make the loophole guidance a general rule, not a curated list of shapes | Done |
+| [LCLI-341](../../backlog/tasks/lcli-341%20-%20Align-FMC-Worker-identity-and-user-level-skill-authority.md) | Align FMC Worker identity and user-level skill authority | Done |
+| [LCLI-342](../../backlog/tasks/lcli-342%20-%20Record-exact-FMC-Controller-authorization-delegation.md) | Record exact FMC Controller authorization delegation | Done |
+| [LCLI-345](../../backlog/tasks/lcli-345%20-%20Reconcile-Lore-Story-ownership-for-the-ODOC-66-documentation-closeout.md) | Reconcile Lore Story ownership for the ODOC-66 documentation closeout | In Progress |
 <!-- lore:tasks:end -->
 
 ## Notes

@@ -7,6 +7,7 @@ status: todo
 tasks:
   - lcli-315
   - lcli-333
+  - lcli-343
 ---
 
 # Track Lore CLI tracker-backend integration
@@ -37,6 +38,7 @@ Quest-backend task lineage. LCLI-315.4 delivered Lore's Quest `0.2.7` default-se
 |---|---|---|
 | [LCLI-315](../../backlog/tasks/lcli-315%20-%20Pluggable-tracker-backends-choose-the-issue-tracker-instead-of-hardcoding-Backlog.md.md) | Pluggable tracker backends: choose the issue tracker instead of hardcoding Backlog.md | To Do |
 | [LCLI-333](../../backlog/tasks/lcli-333%20-%20Release-Lore-with-Quest-as-the-default-tracker-backend.md) | Release Lore with Quest as the default tracker backend | To Do |
+| [LCLI-343](../../backlog/tasks/lcli-343%20-%20Allow-lore-init-without-an-issue-tracker.md) | Allow lore init without an issue tracker | To Do |
 <!-- lore:tasks:end -->
 
 ## Notes
