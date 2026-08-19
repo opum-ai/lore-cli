@@ -4,8 +4,12 @@ title: Allow lore init without an issue tracker
 status: To Do
 assignee: []
 created_date: '2026-08-18 20:30'
-labels: []
+updated_date: '2026-08-19 00:27'
+labels:
+  - 'doc:stories/track-lore-cli-tracker-backend-integration'
 dependencies: []
+documentation:
+  - docs/stories/track-lore-cli-tracker-backend-integration.md
 priority: medium
 type: feature
 ordinal: 466000
