@@ -5,9 +5,12 @@ status: Done
 assignee:
   - '@lore-cli'
 created_date: '2026-08-18 16:55'
-updated_date: '2026-08-18 16:55'
-labels: []
+updated_date: '2026-08-19 00:27'
+labels:
+  - 'doc:stories/maintain-lore-cli-documentation-authority'
 dependencies: []
+documentation:
+  - docs/stories/maintain-lore-cli-documentation-authority.md
 modified_files:
   - AGENTS.md
 priority: high
