@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { coerceRealTTY, type RunContext, run } from "../src/cli";
 import type { InitPrompter } from "../src/commands/init";
+import { buildManifest } from "../src/core/manifest";
 import { EXIT_CODES } from "../src/errors";
 import { VERSION } from "../src/meta";
 import { capture, fakeAdapter } from "./helpers";
@@ -133,11 +134,13 @@ describe("cli — init dispatch", () => {
     rmSync(cwd, { recursive: true, force: true });
   });
 
-  test("`lore init --json` scaffolds the bundle and emits the init envelope", () => {
+  test("`lore init --json` scaffolds the bundle and emits the dotted init envelope", () => {
     const c = ctx({ cwd });
     expect(run(argv("init", "--json"), c)).toBe(0);
     const envelope = JSON.parse(c.stdout.text()) as { kind: string; data: { created: string[] } };
-    expect(envelope.kind).toBe("init");
+    const manifest = buildManifest().commands.find((command) => command.name === "init");
+    if (manifest === undefined) throw new Error("init manifest entry is missing");
+    expect(envelope.kind).toBe(manifest.kind);
     expect(envelope.data.created).toContain("docs/index.md");
     expect(existsSync(join(cwd, ".lore/schemas/reference.schema.json"))).toBe(true);
   });
@@ -245,7 +248,9 @@ describe("cli — new dispatch", () => {
     const c = ctx({ cwd });
     expect(run(argv("new", "adr", "Use soft deletes", "--json"), c)).toBe(0);
     const envelope = JSON.parse(c.stdout.text()) as { kind: string; data: { path: string } };
-    expect(envelope.kind).toBe("new");
+    const manifest = buildManifest().commands.find((command) => command.name === "new");
+    if (manifest === undefined) throw new Error("new manifest entry is missing");
+    expect(envelope.kind).toBe(manifest.kind);
     expect(envelope.data.path).toBe("docs/adr/use-soft-deletes.md");
     expect(existsSync(join(cwd, "docs/adr/use-soft-deletes.md"))).toBe(true);
   });

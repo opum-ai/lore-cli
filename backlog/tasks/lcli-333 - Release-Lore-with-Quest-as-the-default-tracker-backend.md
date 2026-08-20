@@ -2,9 +2,10 @@
 id: LCLI-333
 title: Release Lore with Quest as the default tracker backend
 status: To Do
-assignee: []
+assignee:
+  - '@lore-cli'
 created_date: '2026-08-14 18:09'
-updated_date: '2026-08-18 23:18'
+updated_date: '2026-08-19 03:37'
 labels:
   - release
   - quest
@@ -34,3 +35,15 @@ Publish the Lore release that makes Quest the explicit default for new bundles a
 - [ ] #3 Published manifests, documentation, and package metadata agree on Quest as the new-bundle default without rewriting existing explicit configuration
 - [ ] #4 Publication occurs only with explicit owner authorization and immutable release evidence is recorded
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Ground release dependencies and public Quest availability. 2. Identify the next candidate version and package contents from the exact Wave A tree. 3. Record immutable local qualification evidence only. 4. Do not publish without later exact Controller release gate.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Wave A qualification grounding: package version is 0.3.2; public npm @opum-ai/quest reports 0.1.0, while Lore’s completed LCLI-315.4 qualification is for Quest 0.2.7. Publication is therefore blocked pending a verified public compatible Quest version and later exact Controller release gate. No npm publish was attempted.
+<!-- SECTION:NOTES:END -->

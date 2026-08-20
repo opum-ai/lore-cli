@@ -293,7 +293,7 @@ step_json "lore init: idempotent re-run creates nothing (AC#2)" \
 cp AGENTS.md /tmp/lcli-298-agents-baseline.md
 LCLI298_AGENTS_BASELINE_HASH="$(sha256sum AGENTS.md)"
 step_json "LCLI-298 AC1: lore init --codex creates both Codex bridge files on a fresh bundle" \
-  '.kind == "init"
+  '.kind == "init.result"
    and ((.data.codex.files | map(.path) | sort) == [".codex/skills/lore/SKILL.md", "AGENTS.md"])
    and ([.data.codex.files[] | select(.path == ".codex/skills/lore/SKILL.md")][0].action == "created")
    and ([.data.codex.files[] | select(.path == "AGENTS.md")][0].action == "updated")' \

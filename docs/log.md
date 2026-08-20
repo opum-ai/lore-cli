@@ -168,6 +168,7 @@
 - 2026-08-18T17:43:32-05:00 4dc2f2fc8cc6bb79915eea16eb9bff2a1feef229 docs: record superseded 0.3.1 settlement
 - 2026-08-18T18:20:10-05:00 fcf64a11696d66f21e2f6938430d4ad12e600830 docs: reconcile retained PR 396 authority work
 - 2026-08-18T19:32:30-05:00 754a3d485c22a8873b40dd7b49fbc115eab494ff docs: reconcile Lore Story ownership
+- 2026-08-18T19:44:43-05:00 61d21b154cd26769859e5a497de6e30f8472ab98 docs: finalize ODOC-66 closeout
 
 ## docs/.obsidian
 
@@ -496,3 +497,4 @@
 - 2026-08-18T08:25:46-05:00 54387857814f0abfec82ab48eea977baad0ac3ba docs: reconcile log projection
 - 2026-08-18T18:20:10-05:00 fcf64a11696d66f21e2f6938430d4ad12e600830 docs: reconcile retained PR 396 authority work
 - 2026-08-18T19:32:30-05:00 754a3d485c22a8873b40dd7b49fbc115eab494ff docs: reconcile Lore Story ownership
+- 2026-08-18T19:44:43-05:00 61d21b154cd26769859e5a497de6e30f8472ab98 docs: finalize ODOC-66 closeout

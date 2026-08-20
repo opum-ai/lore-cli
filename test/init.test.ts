@@ -15,6 +15,7 @@ import { loadConfig } from "../src/config";
 import { loadBundle } from "../src/core/bundle";
 import { buildCodexSkillDoc, CODEX_SKILL_REL_PATH } from "../src/core/codex-bridge";
 import { parseConcept } from "../src/core/concept";
+import { buildHermesContextDoc, HERMES_CONTEXT_REL_PATH } from "../src/core/hermes-bridge";
 import { EXIT_CODES, exitCodeFor, LoreError, reportError, WarningCollector } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture, expectError, fakeAdapter } from "./helpers";
@@ -72,7 +73,7 @@ async function init(
   };
   const code = await runInit(options);
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: InitResult };
-  expect(envelope.kind).toBe("init");
+  expect(envelope.kind).toBe("init.result");
   return { code, result: envelope.data, stderr: stderr.text() };
 }
 
@@ -80,6 +81,7 @@ async function init(
 function scriptedPrompter(answers: {
   agents?: boolean;
   codex?: boolean;
+  hermes?: boolean;
   tracker?: string;
   site?: string;
   obsidian?: boolean;
@@ -88,6 +90,7 @@ function scriptedPrompter(answers: {
     confirm: async (question, defaultValue) => {
       if (question.includes("Claude Code")) return answers.agents ?? defaultValue;
       if (question.includes("Codex")) return answers.codex ?? defaultValue;
+      if (question.includes("Hermes")) return answers.hermes ?? defaultValue;
       return answers.obsidian ?? defaultValue;
     },
     choose: async (question, _choices, defaultValue) =>
@@ -585,6 +588,61 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
     expect(existsSync(join(root, "AGENTS.md"))).toBe(true);
   });
 
+  test("--hermes writes only the project-local native-priority context bridge", async () => {
+    const { result } = await init({
+      args: ["--hermes"],
+      adapter: fakeAdapter([], { probe: new LoreError("not_found", "must not probe a tracker", "") }),
+    });
+    expect(result.hermes?.files).toEqual([{ path: HERMES_CONTEXT_REL_PATH, action: "created" }]);
+    expect(readFileSync(join(root, HERMES_CONTEXT_REL_PATH), "utf8")).toBe(buildHermesContextDoc());
+    // Hermes loads .hermes.md before AGENTS.md. The bridge does not create or alter AGENTS.md,
+    // preserving Codex's independent context path and avoiding user-global Hermes settings.
+    expect(existsSync(join(root, "AGENTS.md"))).toBe(false);
+    expect(result.backlog).toBeUndefined();
+    expect(readFileSync(join(root, HERMES_CONTEXT_REL_PATH), "utf8")).not.toMatch(/token|api[ _-]?key|~\/.hermes/i);
+  });
+
+  test("--hermes protects an existing project context and never falls back to AGENTS.md", async () => {
+    writeFileSync(join(root, HERMES_CONTEXT_REL_PATH), "# Local Hermes instructions\n");
+    writeFileSync(join(root, "AGENTS.md"), "# Codex instructions\n");
+    const { result } = await init({ args: ["--hermes"] });
+    expect(result.hermes?.files).toEqual([{ path: HERMES_CONTEXT_REL_PATH, action: "protected" }]);
+    expect(readFileSync(join(root, HERMES_CONTEXT_REL_PATH), "utf8")).toBe("# Local Hermes instructions\n");
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe("# Codex instructions\n");
+  });
+
+  test("the interactive wizard offers Hermes only when its executable is detected", async () => {
+    const prompts: string[] = [];
+    const base = scriptedPrompter({ hermes: true, site: "none", obsidian: false });
+    const prompter: InitPrompter = {
+      ...base,
+      confirm: async (question, defaultValue) => {
+        prompts.push(question);
+        return base.confirm(question, defaultValue);
+      },
+    };
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      agentAvailability: () => ({ claude: false, codex: false, hermes: true }),
+      adapter: fakeAdapter([], { probe: "ok" }),
+    });
+    expect(prompts.some((prompt) => prompt.includes("Hermes"))).toBe(true);
+    expect(result.hermes?.files).toEqual([{ path: HERMES_CONTEXT_REL_PATH, action: "created" }]);
+  });
+
+  test("--tracker none persists an explicit no-tracker mode without probing a tracker", async () => {
+    const { result, stderr } = await init({
+      args: ["--tracker", "none", "--codex"],
+      adapter: fakeAdapter([], { probe: new LoreError("not_found", "tracker must not be probed", "") }),
+    });
+    expect(result.tracker).toBe("none");
+    expect(result.backlog).toBeUndefined();
+    expect(stderr).toBe("");
+    expect(loadConfig({ root, env: {} }).tracker).toEqual({ backend: "none" });
+  });
+
   test("--obsidian scaffolds the Obsidian vault config", async () => {
     const { code, result } = await init({ args: ["--obsidian"], adapter: fakeAdapter([], { probe: "ok" }) });
     expect(code).toBe(0);
@@ -852,7 +910,7 @@ describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the lock
       agentAvailability: () => ({ claude: false, codex: false }),
       adapter: fakeAdapter([], { probe: "ok" }),
     });
-    expect(choicesSeen).toEqual([["quest", "backlog", "jira"]]);
+    expect(choicesSeen).toEqual([["quest", "backlog", "jira", "none"]]);
     expect(result.tracker).toBe("jira");
     expect(loadConfig({ root, env: {} }).tracker.backend).toBe("jira");
   });

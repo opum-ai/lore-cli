@@ -135,9 +135,9 @@ describe("core/manifest — shape and invariants", () => {
     // hand-edited (or left stale) to a `kind` the handler doesn't actually emit fails here,
     // where test/help.test.ts:45-51 only ever checked `kind.length > 0`.
     const golden: Record<string, string> = {
-      init: "init",
+      init: "init.result",
       backlog: "backlog.adoption.preview",
-      new: "new",
+      new: "new.result",
       validate: "validate.report",
       check: "check.report",
       replace: "replace.result",
@@ -169,12 +169,19 @@ describe("core/manifest — shape and invariants", () => {
     for (const command of buildManifest().commands) {
       // Key by name so a mismatch names the offending command in the failure output.
       expect({ [command.name]: command.kind }).toEqual({ [command.name]: golden[command.name] as string });
+      expect(command.kind).toMatch(/^[a-z][a-z0-9-]*\.[a-z][a-z0-9.-]*$/);
+      for (const kind of command.resultKinds ?? []) expect(kind).toMatch(/^[a-z][a-z0-9-]*\.[a-z][a-z0-9.-]*$/);
     }
     expect(buildManifest().commands.find((command) => command.name === "backlog")?.resultKinds).toEqual([
       "backlog.adoption.preview",
       "backlog.adoption.apply",
       "backlog.adoption.status",
       "backlog.adoption.rollback",
+    ]);
+    expect(buildManifest().commands.find((command) => command.name === "agent")?.resultKinds).toEqual([
+      "agent.profiles",
+      "agent.profile",
+      "agent.context.export",
     ]);
   });
 
@@ -216,7 +223,7 @@ describe("core/manifest — deep immutability (LORE-220 AC#1/#2)", () => {
     expect(() => {
       (command as unknown as { kind: string }).kind = "poisoned";
     }).toThrow(TypeError);
-    expect(command?.kind).toBe("new");
+    expect(command?.kind).toBe("new.result");
   });
 
   test("mutating a command's flags array/entry throws and leaves it unaffected", () => {

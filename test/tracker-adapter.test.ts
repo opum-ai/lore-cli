@@ -32,6 +32,12 @@ describe("createTrackerAdapter", () => {
 });
 
 describe("createConfiguredTrackerAdapter", () => {
+  test("fails before any tracker probe when coupling is explicitly disabled", () => {
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(join(root, ".lore", "config.toml"), '[tracker]\nbackend = "none"\n');
+    expect(() => createConfiguredTrackerAdapter(root)).toThrow("issue-tracker coupling disabled");
+  });
+
   test("blocks a legacy zero-config Backlog bundle with exact migration and pin commands", () => {
     mkdirSync(join(root, "backlog"), { recursive: true });
     writeFileSync(join(root, "backlog", "config.yml"), "statuses:\n  - Ready\n  - Done\n");

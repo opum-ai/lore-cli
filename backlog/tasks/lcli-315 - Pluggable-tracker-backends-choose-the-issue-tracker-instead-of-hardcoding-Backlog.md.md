@@ -3,10 +3,10 @@ id: LCLI-315
 title: >-
   Pluggable tracker backends: choose the issue tracker instead of hardcoding
   Backlog.md
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-04 21:48'
-updated_date: '2026-08-14 11:00'
+updated_date: '2026-08-19 03:37'
 labels:
   - 'doc:stories/track-lore-cli-tracker-backend-integration'
 dependencies: []
@@ -34,8 +34,20 @@ Scope note: Quest CLI is intended as the eventual default backend, but `@opum-ai
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A tracker backend is selected by configuration, with Backlog.md as the default and zero behavior change for existing repos
-- [ ] #2 JIRA Cloud works as a second backend for the full Story/Task coupling surface
-- [ ] #3 lore init offers the tracker choice interactively and via a flag, honoring the existing non-interactive contract
-- [ ] #4 All subtasks are Done
+- [x] #1 A tracker backend is selected by configuration, with Backlog.md as the default and zero behavior change for existing repos
+- [x] #2 JIRA Cloud works as a second backend for the full Story/Task coupling surface
+- [x] #3 lore init offers the tracker choice interactively and via a flag, honoring the existing non-interactive contract
+- [x] #4 All subtasks are Done
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Wave A settlement: LCLI-315.1, .2, .3, and .4 are all live Done; parent criteria are proven by completed subtask evidence.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+All tracker-backend subtasks are Done; parent initiative settled from live subtask completion evidence.
+<!-- SECTION:FINAL_SUMMARY:END -->

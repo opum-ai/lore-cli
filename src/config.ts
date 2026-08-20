@@ -46,7 +46,8 @@ const RECONCILE_MODES = ["task-rollup"] as const;
 const CONFLUENCE_FORMATS = ["storage", "adf"] as const;
 
 /** Tracker backends shipped by this build. Quest is the preferred backend for new bundles. */
-export const TRACKER_BACKENDS = ["quest", "backlog", "jira"] as const;
+/** `none` deliberately disables issue-tracker coupling for documentation-only bundles. */
+export const TRACKER_BACKENDS = ["quest", "backlog", "jira", "none"] as const;
 
 /** Generic parsed-TOML shape for `[reconcile]`; unknown future keys remain tolerated. */
 const ReconcileTableSchema = z.looseObject({
@@ -164,7 +165,7 @@ export interface JiraTrackerConfig {
 
 /** Tracker selection plus backend-specific non-secret configuration. */
 export interface TrackerConfig {
-  /** Resolved backend; newly initialized projects persist Quest explicitly. */
+  /** Resolved backend; `none` is an explicit no-tracker selection. Newly initialized projects persist Quest explicitly. */
   backend: TrackerBackend;
   jira?: JiraTrackerConfig;
 }
@@ -282,6 +283,14 @@ function parseToml(raw: string): Record<string, unknown> {
 function validateConfig(root: Record<string, unknown>): LoreConfig {
   const parsed = parseConfigShape(root);
   const defaults = defaultConfig();
+
+  if (parsed.tracker?.backend === "none" && parsed.tracker.jira !== undefined) {
+    fail(
+      `${CONFIG_REL_PATH}: tracker.jira cannot be configured when tracker.backend is "none"`,
+      'remove [tracker.jira], or select tracker.backend = "jira"',
+      { key: "tracker.jira", backend: "none" },
+    );
+  }
 
   const reconcile: ReconcileConfig = {
     mode: parsed.reconcile?.mode ?? defaults.reconcile.mode,

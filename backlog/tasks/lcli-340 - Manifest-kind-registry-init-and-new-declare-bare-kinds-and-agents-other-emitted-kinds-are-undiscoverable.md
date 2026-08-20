@@ -3,10 +3,11 @@ id: LCLI-340
 title: >-
   Manifest kind registry: init and new declare bare kinds, and agent's other
   emitted kinds are undiscoverable
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@lore-cli'
 created_date: '2026-08-17 15:21'
-updated_date: '2026-08-19 00:27'
+updated_date: '2026-08-19 03:37'
 labels:
   - core-concept-manifest
   - output-contract
@@ -50,8 +51,26 @@ LCLI-213 added a golden cross-check for manifest kind drift, but it compares a h
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every manifest kind is in dotted command.payload form, with a documented additive or ratified path for changing the shipped init and new values
-- [ ] #2 Every kind a command can emit is discoverable from the manifest, via kind or resultKinds
-- [ ] #3 agent declares resultKinds covering agent.profiles and the kinds its show and context actions emit
-- [ ] #4 A test invokes each multi-action command's actions and asserts every emitted kind appears in that command's manifest entry, failing if an action's kind is absent
+- [x] #1 Every manifest kind is in dotted command.payload form, with a documented additive or ratified path for changing the shipped init and new values
+- [x] #2 Every kind a command can emit is discoverable from the manifest, via kind or resultKinds
+- [x] #3 agent declares resultKinds covering agent.profiles and the kinds its show and context actions emit
+- [x] #4 A test invokes each multi-action command's actions and asserts every emitted kind appears in that command's manifest entry, failing if an action's kind is absent
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Audit manifest declarations against live handlers. 2. Move init/new kinds to dotted values with documented compatibility. 3. Declare all agent action kinds. 4. Add handler-to-manifest coverage and run focused tests.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Wave A: init/new now emit dotted result kinds; agent registry lists all action kinds; live action coverage added.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Normalized init/new envelope kinds to dotted values and made every agent action kind discoverable through resultKinds. Verified by manifest/CLI/agent focused coverage, cumulative tests, typecheck, lint, strict Lore gates, and diff hygiene.
+<!-- SECTION:FINAL_SUMMARY:END -->
