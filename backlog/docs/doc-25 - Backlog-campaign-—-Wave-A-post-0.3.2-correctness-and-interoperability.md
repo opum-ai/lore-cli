@@ -3,7 +3,7 @@ id: doc-25
 title: Backlog campaign — Wave A post-0.3.2 correctness and interoperability
 type: other
 created_date: '2026-08-19 03:26'
-updated_date: '2026-08-19 03:27'
+updated_date: '2026-08-19 05:15'
 ---
 # Backlog campaign — Wave A post-0.3.2 correctness and interoperability
 
@@ -51,3 +51,4 @@ updated_date: '2026-08-19 03:27'
 
 ## Wave log
 - Initialized from clean dev at 86ed3734e06def5d3b04471e864f610c52f6def2 after Backlog, Git, and Treehouse audit.
+- 2026-08-19 post-retirement settlement (handover 77079096d3662dbbcc671efda7b17a2b): completed session-renewal cursor `.codex/handovers/active.md` (sha256 e2a98740f3620ee92502731034c3cc91cedb4a4ff9d0ae87eee9575c2338e69f) removed by OpenCode successor session ses_fe7a1890effe6qVyb2sRhnjxz4 (pane w1:pY, stable FMC identity `lore-cli` re-claimed per opum-doc). No nonterminal campaign stop remained; live state at settlement: PR #411 open at baca608ad6d2bfbd0fdf11ab802e47dd74f5fd86 with CI checks queued.
