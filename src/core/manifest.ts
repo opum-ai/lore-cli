@@ -688,6 +688,11 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
         takesValue: true,
         summary: "Read the opum-agent-workflow v1 request envelope JSON from a repo-relative path or stdin (-)",
       },
+      {
+        name: "contract",
+        takesValue: true,
+        summary: "Serve context as the opum-agent-workflow/v1 projection (use opum-agent-workflow/v1)",
+      },
     ],
     json: true,
     kind: "agent.context.export",
@@ -701,6 +706,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
       "lore agent show frontend-dev",
       'lore agent context frontend-dev --task "implement the checkout form"',
       "lore agent project frontend-dev --request request.json",
+      "lore agent context frontend-dev --task LCLI-348 --contract opum-agent-workflow/v1 --json",
     ],
   },
   {

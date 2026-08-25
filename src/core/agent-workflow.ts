@@ -9,10 +9,12 @@ import { compileAgentContext } from "./agent-context";
 import { type AgentProfileSnapshot, findAgentProfile } from "./agent-profile";
 import type { BundleGraph } from "./bundle";
 
-/** The public contract name served by `lore agent project`. */
+/** The public contract name served by `lore agent project` / `agent context --contract`. */
 export const WORKFLOW_CONTRACT = "opum-agent-workflow";
 /** The only request envelope version this build understands. */
 export const WORKFLOW_VERSION = "v1";
+/** The combined `--contract` selector accepted on the CLI facade. */
+export const WORKFLOW_CONTRACT_SELECTOR = `${WORKFLOW_CONTRACT}/${WORKFLOW_VERSION}`;
 
 /** Strict caller identity bound into every projection. */
 export interface WorkflowRequest {
@@ -111,6 +113,7 @@ function malformed(message: string, hint?: string): LoreError {
 export interface WorkflowRevision {
   readonly path: string;
   readonly sha256: string;
+  /** Freshness metadata only — never part of determinism claims. */
   readonly mtimeMs: number;
 }
 
@@ -118,6 +121,12 @@ export interface WorkflowRevision {
 export interface AgentWorkflowProjection {
   readonly contract: typeof WORKFLOW_CONTRACT;
   readonly version: typeof WORKFLOW_VERSION;
+  /** Facade validator field: the single accepted envelope version, as a number. */
+  readonly selectedVersion: 1;
+  /** Deterministic correlation id: sha256 over contract|version|profile|taskId|digest. */
+  readonly contextId: string;
+  /** Bare 64-hex sha256 of the rendered context (facade form of packDigest). */
+  readonly contextDigestSha256: string;
   readonly request: WorkflowRequest;
   readonly contextDigest: string;
   readonly packDigest: string;
@@ -157,6 +166,11 @@ export function compileAgentWorkflowProjection(
   return {
     contract: WORKFLOW_CONTRACT,
     version: WORKFLOW_VERSION,
+    selectedVersion: 1,
+    contextId: `sha256-${createHash("sha256")
+      .update([WORKFLOW_CONTRACT, WORKFLOW_VERSION, profileName, request.task.id, context.packDigest].join("|"))
+      .digest("hex")}`,
+    contextDigestSha256: context.packDigest.replace(/^sha256:/, ""),
     request,
     contextDigest: context.packDigest,
     // packDigest is repeated verbatim so callers can correlate this envelope

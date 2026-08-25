@@ -14,6 +14,7 @@ import {
   type AgentWorkflowProjection,
   compileAgentWorkflowProjection,
   parseWorkflowRequest,
+  WORKFLOW_CONTRACT_SELECTOR,
 } from "../core/agent-workflow";
 import { compareCodeUnits } from "../core/order";
 import { loadReferenceRetrievalGraph, type RetrievalGraphLoader } from "../core/retrieval";
@@ -65,6 +66,7 @@ type AgentAction =
       readonly maxTokens?: number;
       readonly out?: string;
       readonly force: boolean;
+      readonly contract?: string;
     }
   | {
       readonly kind: "project";
@@ -106,6 +108,9 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
     }
 
     if (action.kind === "project") return runAgentProject(action, options);
+    if (action.contract !== undefined) {
+      return runContextContract({ ...action, contract: action.contract }, options);
+    }
 
     const task = resolveTask(action, options);
     let data = compileAgentContext(snapshot, retrieval.graph, profile.name, task, action.maxTokens);
@@ -136,6 +141,53 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
   }
 }
 
+/**
+ * Facade: `lore agent context <profile> --task <taskId> --contract
+ * opum-agent-workflow/v1 --json`. Additive adapter over the same projection
+ * engine as `agent project`; the default context path is untouched.
+ */
+type ContractContextAction = AgentAction & { kind: "context"; contract: string };
+
+async function runContextContract(action: ContractContextAction, options: AgentCommandOptions) {
+  const snapshot = loadAgentProfiles(options.root);
+  const advisories = new WarningCollector();
+  const retrieval = await (options.retrieval ?? loadReferenceRetrievalGraph)({
+    root: options.root,
+    warnings: advisories,
+    adapter: options.adapter,
+  });
+  try {
+    validateAgentProfileReferences(snapshot, retrieval.graph);
+    advisories.flush({ color: options.output.color, stderr: options.stderr });
+    findAgentProfile(snapshot, action.name);
+    const taskId = action.task ?? "";
+    if (taskId.trim() === "") {
+      throw usage(
+        `--contract ${WORKFLOW_CONTRACT_SELECTOR} requires --task <taskId>`,
+        "pass a non-empty caller task id, e.g. --task LCLI-123",
+      );
+    }
+    if (action.out !== undefined || action.force) {
+      throw usage("--out/--force are not available with --contract", "the contract projection is read-only");
+    }
+    if (action.taskFile !== undefined) {
+      throw usage(
+        "--task-file is not available with --contract",
+        `pass --task <taskId>; the ${WORKFLOW_CONTRACT_SELECTOR} facade binds a caller task id`,
+      );
+    }
+    const request = parseWorkflowRequest(JSON.stringify({ task: { id: taskId, text: taskId } }));
+    const projection = compileAgentWorkflowProjection(snapshot, retrieval.graph, action.name, request, {
+      root: options.root,
+      maxTokens: action.maxTokens,
+    });
+    emit(projectionRenderable(projection), options.output, options.stdout);
+    return EXIT_OK;
+  } finally {
+    await retrieval.dispose?.();
+  }
+}
+
 /** Compile the read-only public opum-agent-workflow/v1 projection. */
 async function runAgentProject(action: Extract<AgentAction, { kind: "project" }>, options: AgentCommandOptions) {
   const snapshot = loadAgentProfiles(options.root);
@@ -150,10 +202,20 @@ async function runAgentProject(action: Extract<AgentAction, { kind: "project" }>
     advisories.flush({ color: options.output.color, stderr: options.stderr });
     findAgentProfile(snapshot, action.name);
     const request = parseWorkflowRequest(resolveRequest(action, options));
-    const projection = compileAgentWorkflowProjection(snapshot, retrieval.graph, action.name, request, {
+    const {
+      selectedVersion: _sv,
+      contextId: _cid,
+      contextDigestSha256: _cds,
+      ...facadeFields
+    } = compileAgentWorkflowProjection(snapshot, retrieval.graph, action.name, request, {
       root: options.root,
     });
-    emit(projectionRenderable(projection), options.output, options.stdout);
+    // Byte-compatibility: the facade-only fields are stripped so existing
+    // `agent project` consumers see exactly the pre-facade envelope.
+    void _sv;
+    void _cid;
+    void _cds;
+    emit(projectionRenderable(facadeFields as AgentWorkflowProjection), options.output, options.stdout);
     return EXIT_OK;
   } finally {
     await retrieval.dispose?.();
@@ -162,7 +224,7 @@ async function runAgentProject(action: Extract<AgentAction, { kind: "project" }>
 
 function parseAgentArgs(args: readonly string[]): AgentAction {
   const parsed = parseCommandArgs(args, "agent");
-  for (const flag of ["task", "task-file", "max-tokens", "out", "force", "request"]) {
+  for (const flag of ["task", "task-file", "max-tokens", "out", "force", "request", "contract"]) {
     assertFlagAtMostOnce(parsed, flag);
   }
   const action = parsed.positionals[0];
@@ -225,6 +287,10 @@ function parseAgentArgs(args: readonly string[]): AgentAction {
   if (force && out === undefined) {
     throw usage("--force requires --out", "pass an output path or remove --force");
   }
+  const contract = nonEmptyOption(parsed, "contract");
+  if (contract !== undefined && contract !== WORKFLOW_CONTRACT_SELECTOR) {
+    throw usage(`unsupported contract "${contract}"`, `this build serves ${WORKFLOW_CONTRACT_SELECTOR}`, { contract });
+  }
   return {
     kind: "context",
     name: parsed.positionals[1] as string,
@@ -233,6 +299,7 @@ function parseAgentArgs(args: readonly string[]): AgentAction {
     ...(maxTokens === undefined ? {} : { maxTokens }),
     ...(out === undefined ? {} : { out }),
     force,
+    ...(contract === undefined ? {} : { contract }),
   };
 }
 
