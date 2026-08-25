@@ -1,11 +1,11 @@
 ---
 id: LCLI-348
 title: Expose opum-agent-workflow/v1 through lore agent context via --contract facade
-status: In Progress
+status: Done
 assignee:
   - '@lore-cli'
 created_date: '2026-08-25 01:39'
-updated_date: '2026-08-25 01:40'
+updated_date: '2026-08-25 02:34'
 labels:
   - agents
   - context
@@ -35,4 +35,12 @@ Additive normative support for `lore agent context <profile> --task <taskId> --c
 
 <!-- SECTION:NOTES:BEGIN -->
 Delivered under ODOC-71.8 correction correlation 652f0adb12aa416a86b34535e25a423c on lease 75154cf0352b8f4dc3a41aa0a1c767c2.
+
+Delivered via PR #416, merged to dev as 5158283409d9e8b1f27d5e4aa512ba5cb747b4d0 (head e416f02faee6da3f56085e2249e8b7c6db7b5d3c). Pinned Bun 1.2.23: 2633 pass / 0 fail; typecheck + Biome clean; lore validate/check --strict 0/0; diff hygiene clean. All 8 CI checks green pre-merge. Byte-compat preserved for default context and agent project; facade adds selectedVersion=1/contextId/bare-64-hex digest per accepted Spec.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented the additive `lore agent context <profile> --task <taskId> --contract opum-agent-workflow/v1 --json` facade over compileAgentWorkflowProjection with stable version/envelope diagnostics, deterministic contextId, bare 64-hex digest, task/profile/profileRevision binding, source IDs and freshness fields; manifest/help/docs lockstep; determinism, read-only, byte-compatibility and diagnostics coverage. Merged to dev (5158283) after two-axis review and all repository gates.
+<!-- SECTION:FINAL_SUMMARY:END -->
