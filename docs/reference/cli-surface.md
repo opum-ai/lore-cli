@@ -600,13 +600,14 @@ lore agent list
 lore agent show frontend-dev
 lore agent context frontend-dev --task "Add accessible dialog focus management"
 lore agent context frontend-dev --task-file task.txt --max-tokens 6000
+lore agent context frontend-dev --task LCLI-348 --contract opum-agent-workflow/v1 --json
 ```
 
 | Subcommand | Contract |
 |---|---|
 | `list` | Stable profile summaries; `kind: agent.profiles` |
 | `show <name>` | One normalized profile; `kind: agent.profile` |
-| `context <name>` | Exactly one of `--task <text>` or `--task-file <repo-relative-path|->`; optional `--max-tokens <n>`, `--out <repo-relative-path>`, and `--force`; `kind: agent.context.export` |
+| `context <name>` | Exactly one of `--task <text>` or `--task-file <repo-relative-path|->`; optional `--max-tokens <n>`, `--out <repo-relative-path>`, and `--force`; with `--contract opum-agent-workflow/v1` (and exactly one `--task <taskId>`, without `--task-file/--out/--force`) serves the read-only projection; `kind: agent.context.export` (default) or `agent.workflow.projection` (`--contract`) |
 
 `context` reserves space for metadata and mandatory pins, then ranks complete
 heading/top-level-block records from `sources`. Task-file and output paths are
