@@ -8,8 +8,12 @@
  * - Symlinks anywhere in a walked path, non-regular entries, and unsafe zip entry names are
  *   refused loud; nothing is ever deleted unless the full plan → build → verify → re-scan pipeline
  *   succeeded.
- * - Scan⇄delete drift is refused: every source file is re-hashed immediately before its own
- *   unlink, and a mid-flight change aborts with nothing further deleted and no zip left behind.
+ * - Failure-atomic transaction: pre-commit drift/refusal aborts with `backlog/` untouched; the
+ *   commit boundary is ONE atomic same-volume directory rename of `backlog/` into a durable
+ *   staging path, and post-commit failures either roll back completely or name the staging path
+ *   where the recoverable tree (plus the verified archive) lives. No undocumented partial-delete
+ *   state exists: every original regular file is always either recoverably present on disk or in
+ *   the verified immutable archive.
  * - Idempotent/resumable: the cutover coordinator persists phase `archived` + evidence after
  *   success; a resumed run verifies the existing archive instead of rebuilding/redeleting.
  *
@@ -28,12 +32,14 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmdirSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join, posix } from "node:path";
+import { ensureDir } from "./commands/fswrite";
 import { LoreError } from "./errors";
 
 /** One archived file: repo-relative path plus raw-byte integrity. */
@@ -63,6 +69,7 @@ export interface ZipWriter {
 }
 
 const ARCHIVE_DIR = ".lore/archive";
+const STAGING_PARENT = ".lore/cutover";
 
 /**
  * Snapshot every REGULAR file under `root/<dir>` (default `backlog`) deterministically: lstat-walk
@@ -111,7 +118,7 @@ export function buildArchive(
   if (entries.length === 0)
     throw new LoreError("validation", "refusing to archive an empty backlog snapshot", "nothing to preserve");
   mkdirSync(join(root, ARCHIVE_DIR), { recursive: true });
-  const zipRel = `${ARCHIVE_DIR}/backlog-${id}.zip`;
+  const zipRel = `${ARCHIVE_DIR}/backlog-${sanitizeId(id)}.zip`;
   const files = new Map<string, Uint8Array>();
   for (const e of entries) files.set(e.path, readFileSync(join(root, e.path)));
   zip.write(join(root, zipRel), files);
@@ -162,52 +169,185 @@ export function verifyArchive(root: string, ev: ArchiveEvidence, zip: ZipWriter)
 }
 
 /**
- * The full archive-and-delete leg: snapshot → build → verify the archive → re-hash live sources →
- * delete each regular file (re-hashed immediately before its unlink) → prune emptied directories →
- * persist inventory LAST as evidence. Any failure leaves `backlog/` intact and removes the partial
- * zip.
+ * The full archive-and-delete leg as a FAILURE-ATOMIC transaction:
+ *
+ *   1. Pre-commit — snapshot `backlog/`, build the zip, verify it against its inventory, then
+ *      re-hash EVERY live source file. Any drift/refusal here aborts with `backlog/` untouched
+ *      and no partial zip (source immutability holds until the commit boundary).
+ *   2. Commit boundary — ONE atomic `rename` of the whole storage directory into
+ *      `.lore/cutover/staging-backlog-<id>`. Same-volume directory rename is all-or-nothing:
+ *      after it, every original file is recoverably present under the staging path and none has
+ *      been deleted.
+ *   3. Post-commit — re-verify the staged tree against the inventory, then unlink inside staging
+ *      and prune. A failure here can never lose data: the surviving staged files remain
+ *      recoverably present at a durable, documented path, and when the staged tree is still
+ *      complete the transaction ROLLS BACK by renaming it to `backlog/` before rethrowing.
+ *
+ * The invariant proven at every exit point: each original regular Backlog file is either still
+ * recoverably present on disk or present in the verified immutable archive. There is no
+ * undocumented partial-delete state; a post-commit failure that cannot roll back names the exact
+ * staging path holding the recoverable tree.
  */
-export function archiveAndDeleteBacklog(root: string, zip: ZipWriter, id: string): ArchiveEvidence {
+export function archiveAndDeleteBacklog(
+  root: string,
+  zip: ZipWriter,
+  id: string,
+  txn: ArchiveTransaction = defaultTransaction,
+): ArchiveEvidence {
+  // ── Phase 1: pre-commit. Nothing below may touch `backlog/`. ──────────────────
   const entries = planBacklogSnapshot(root);
   let evidence: ArchiveEvidence | undefined;
   try {
     evidence = buildArchive(root, entries, zip, id);
     verifyArchive(root, evidence, zip);
-    // Delete: each file is re-hashed IMMEDIATELY before its own unlink (scan⇄delete drift
-    // refusal per file), then every now-empty directory under the storage root is pruned
-    // bottom-up (including previously-empty ones that held no archivable file).
     if (evidence.entries.length === 0)
       throw new LoreError("validation", "refusing to delete from an empty archive plan");
     const firstEntry = evidence.entries[0];
     if (firstEntry === undefined) throw new LoreError("validation", "refusing to delete from an empty archive plan");
     const topDir = firstEntry.path.split("/")[0] ?? firstEntry.path;
+    // Source immutability until the commit boundary: EVERY source must still match the snapshot.
     for (const e of evidence.entries) {
       const st = statSync(join(root, e.path));
       if (!st.isFile() || st.size !== e.bytes || sha256(readFileSync(join(root, e.path))) !== e.sha256)
         throw new LoreError(
           "drift",
           `"${e.path}" changed between archive scan and deletion`,
-          "backlog/ was modified during the cutover; it has NOT been deleted — rerun the cutover",
+          "backlog/ was modified during the cutover; nothing has been deleted — rerun the cutover",
           { path: e.path },
         );
-      unlinkSync(join(root, e.path));
     }
-    pruneEmptyDirs(join(root, topDir));
-  } catch (error) {
-    // Never leave a partially-written zip behind on any refusal.
+
+    // ── Phase 2: the atomic commit boundary. ──────────────────────────────────────
+    ensureDir(root, STAGING_PARENT);
+    const stagingRel = `${STAGING_PARENT}/staging-backlog-${sanitizeId(id)}`;
+    const stagingAbs = join(root, stagingRel);
+    if (existsSync(stagingAbs))
+      throw new LoreError(
+        "conflict",
+        `staging path ${stagingRel} already exists`,
+        "a prior transaction did not settle; resolve the staging directory, then rerun",
+        { stagingRel },
+      );
+    // ── From here on the original files live ONLY under stagingAbs (recoverable). ─
+    const handlePostCommit = (postCommit: unknown): never => {
+      // Post-commit failure: the staged tree (or what survives of it) is still recoverable.
+      // Roll back only while NOTHING has been deleted yet — i.e. the staged tree is complete.
+      // Definitely assigned above (phase 1 completed); the closure defeats narrowing.
+      const verified = evidence as ArchiveEvidence;
+      const complete = verified.entries.every((e) => existsSync(join(stagingAbs, e.path.slice(topDir.length + 1))));
+      if (complete && !existsSync(join(root, topDir))) {
+        try {
+          txn.renameSync(stagingAbs, join(root, topDir)); // rollback of an untouched tree
+        } catch {
+          // Rollback refused: leave the COMPLETE staged tree in place and say exactly where.
+          throw recoveryLoreError(
+            `archive/delete transaction failed after staging and rollback was refused: ${describeCause(postCommit)}`,
+            `the complete original tree remains recoverable under ${stagingRel} — restore it before rerunning`,
+            { stagingRel, zipRel: verified.zipRel },
+          );
+        }
+        // Full rollback succeeded: backlog/ holds exactly the staged (never-deleted) tree.
+        throw new LoreError(
+          "drift",
+          `archive/delete transaction faulted and was rolled back: ${describeCause(postCommit)}`,
+          "backlog/ is fully restored — resolve the cause and rerun the cutover",
+          {},
+        );
+      }
+      throw recoveryLoreError(
+        `archive/delete transaction failed mid-deletion: ${describeCause(postCommit)}`,
+        `all deleted files are present in the verified archive (${verified.zipRel}); any undeleted originals remain recoverable under ${stagingRel} — no Backlog content is lost; settle the staging directory before rerunning`,
+        { stagingRel, zipRel: verified.zipRel },
+      );
+    };
     try {
-      if (existsSync(join(root, ARCHIVE_DIR))) {
-        const candidate = `${ARCHIVE_DIR}/backlog-${id}.zip`;
-        if (evidence === undefined && existsSync(join(root, candidate))) unlinkSync(join(root, candidate));
+      txn.renameSync(join(root, topDir), stagingAbs);
+    } catch (cause) {
+      // A thrown rename may still have performed the move on some platforms/filesystems: classify
+      // by OBSERVED state, not by the exception alone.
+      if (existsSync(stagingAbs) && !existsSync(join(root, topDir))) {
+        handlePostCommit(new LoreError("drift", `post-rename fault: ${describeCause(cause)}`));
+      }
+      throw new LoreError(
+        "drift",
+        `could not stage "${topDir}" for verified deletion: ${describeCause(cause)}`,
+        "backlog/ was NOT modified — resolve the filesystem error and rerun the cutover",
+        { from: topDir, to: stagingRel },
+      );
+    }
+    try {
+      // Prove the staged tree still matches the verified archive before deleting anything.
+      for (const e of evidence.entries) {
+        const staged = join(stagingAbs, e.path.slice(topDir.length + 1));
+        const st = statSync(staged);
+        if (!st.isFile() || st.size !== e.bytes || sha256(readFileSync(staged)) !== e.sha256)
+          throw new LoreError(
+            "drift",
+            `staged file "${e.path}" does not match the verified archive`,
+            `nothing has been deleted; the complete original tree remains recoverable under ${stagingRel}`,
+            { path: e.path, stagingRel },
+          );
+      }
+      for (const e of evidence.entries) {
+        txn.unlinkSync(join(stagingAbs, e.path.slice(topDir.length + 1)));
+      }
+      pruneEmptyDirs(stagingAbs);
+      return evidence;
+    } catch (postCommit) {
+      return handlePostCommit(postCommit);
+    }
+  } catch (error) {
+    // Never leave a partially-written zip behind on any pre/post-commit refusal that did NOT
+    // consume the archive as recovery evidence.
+    try {
+      if (evidence === undefined || !isRecoveryFailure(error)) {
+        const candidate = `${ARCHIVE_DIR}/backlog-${sanitizeId(id)}.zip`;
+        if (existsSync(join(root, candidate))) unlinkSync(join(root, candidate));
         else if (evidence !== undefined && existsSync(join(root, evidence.zipRel)))
           unlinkSync(join(root, evidence.zipRel));
       }
     } catch {
-      /* best-effort cleanup; the drift error below still names the state */
+      /* best-effort cleanup; the thrown error still names the state */
     }
     throw error;
   }
-  return evidence;
+}
+
+/** Injected rename/unlink seams so tests can fail the commit boundary or the delete loop deterministically. */
+export interface ArchiveTransaction {
+  readonly renameSync: (from: string, to: string) => void;
+  readonly unlinkSync: (path: string) => void;
+}
+
+const defaultTransaction: ArchiveTransaction = {
+  renameSync: (from, to) => renameSync(from, to),
+  unlinkSync: (path) => unlinkSync(path),
+};
+
+/**
+ * A recovery failure carries the durable evidence locations STRUCTURALLY in its `input`
+ * (`stagingRel`/`zipRel`): classification never depends on prose wording, so the archive is
+ * retained exactly when it is recovery evidence.
+ */
+function recoveryLoreError(message: string, hint: string, input: { stagingRel: string; zipRel: string }): LoreError {
+  return new LoreError("drift", message, hint, input);
+}
+
+/** Recovery failures must keep their archive + staging evidence on disk; everything else cleans up. */
+function isRecoveryFailure(error: unknown): boolean {
+  return (
+    error instanceof LoreError && typeof error.input === "object" && error.input !== null && "stagingRel" in error.input
+  );
+}
+
+function describeCause(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+/** Filesystem-safe id fragment for staging/archive artifact names. */
+function sanitizeId(id: string): string {
+  const safe = id.replace(/[^A-Za-z0-9._-]/g, "").slice(0, 24);
+  return safe.length > 0 ? safe : "cutover";
 }
 
 /** Refuse absolute paths, `..` climbs, backslash separators, drive/UNC shapes, and duplicates. */

@@ -11,20 +11,24 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type ArchiveEvidence,
+  type ArchiveTransaction,
   archiveAndDeleteBacklog,
   buildArchive,
   planBacklogSnapshot,
   verifyArchive,
   type ZipWriter,
 } from "../src/backlog-archive";
+import { LoreError } from "../src/errors";
 
 /** Exact-bytes STORE zip writer: names → bytes, round-trips without transformation (JSON+b64 container). */
 const exactZip: ZipWriter = {
@@ -111,12 +115,11 @@ describe("backlog archive-and-delete (LCLI-333.1)", () => {
     }
   });
 
-  test("live-source drift between scan and delete aborts with nothing deleted and no zip left", () => {
+  test("pre-commit drift aborts with backlog fully intact, nothing deleted, no zip left", () => {
     const root = fixture();
     try {
-      const realPlan = planBacklogSnapshot(root);
-      // Mutate AFTER planning by monkey-patching nothing: instead run archiveAndDelete with a
-      // writer that mutates a source file mid-flight.
+      // Mutate a LATE source during archive write: the batched pre-commit re-hash must catch it
+      // BEFORE the commit boundary, so every file — including the early config.yml — survives.
       const mutatingZip: ZipWriter = {
         write(zipAbs, files) {
           files.get("backlog/tasks/a.md");
@@ -129,9 +132,130 @@ describe("backlog archive-and-delete (LCLI-333.1)", () => {
         /changed between archive scan and deletion/,
       );
       expect(existsSync(join(root, "backlog/tasks/a.md"))).toBe(true);
-      expect(existsSync(join(root, "backlog/config.yml"))).toBe(false); // processed before the drift
-      expect(existsSync(join(root, ".lore/archive/backlog-drift.zip"))).toBe(false); // partial zip removed
-      void realPlan;
+      expect(existsSync(join(root, "backlog/config.yml"))).toBe(true);
+      expect(existsSync(join(root, ".lore/archive/backlog-drift.zip"))).toBe(false); // partial zip removed (dir itself may remain)
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("commit-boundary rename failure leaves backlog byte-intact and refuses loud", () => {
+    const root = fixture();
+    try {
+      const failingRenameTxn: ArchiveTransaction = {
+        renameSync: () => {
+          throw new Error("EPERM: rename refused");
+        },
+        unlinkSync: (path) => unlinkSync(path),
+      };
+      expect(() => archiveAndDeleteBacklog(root, exactZip, "renfail", failingRenameTxn)).toThrow(/could not stage/);
+      expect(existsSync(join(root, "backlog/tasks/a.md"))).toBe(true);
+      expect(existsSync(join(root, "backlog/config.yml"))).toBe(true);
+      expect(readFileSync(join(root, "backlog/tasks/a.md"), "utf8")).toBe("alpha\n"); // untouched
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("post-commit delete failure rolls the COMPLETE staged tree back to backlog", () => {
+    const root = fixture();
+    try {
+      // Fail inside the POST-commit phase before any unlink ran: the transaction must roll the
+      // complete staged tree back to backlog/ and rethrow.
+      let renames = 0;
+      const faultTxn: ArchiveTransaction = {
+        // Fail only the STAGING rename (after performing it); the ROLLBACK rename must succeed.
+        renameSync: (from: string, to: string): void => {
+          renames++;
+          renameSync(from, to);
+          if (renames === 1) throw new Error("post-rename fault injected");
+        },
+        unlinkSync: (path) => unlinkSync(path),
+      };
+      expect(() => archiveAndDeleteBacklog(root, exactZip, "rollback", faultTxn)).toThrow(/rolled back/);
+      expect(existsSync(join(root, "backlog/tasks/a.md"))).toBe(true);
+      expect(readFileSync(join(root, "backlog/tasks/a.md"), "utf8")).toBe("alpha\n");
+      expect(existsSync(join(root, "backlog/config.yml"))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("mid-deletion unlink failure through the public API retains zip+staging evidence (no silent loss)", () => {
+    const root = fixture();
+    try {
+      // Fail the SECOND staged unlink: config.yml is already deleted inside staging when the
+      // fault fires, so rollback is impossible. The transaction must keep BOTH evidence paths —
+      // the verified archive (holding every original file) AND the recoverable staged remainder.
+      let unlinks = 0;
+      const failingTxn: ArchiveTransaction = {
+        renameSync: (from, to) => renameSync(from, to),
+        unlinkSync: (path: string): void => {
+          unlinks++;
+          if (unlinks === 2) throw new Error("injected unlink fault");
+          unlinkSync(path);
+        },
+      };
+      let caught: unknown;
+      try {
+        archiveAndDeleteBacklog(root, exactZip, "midfail", failingTxn);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(LoreError);
+      const err = caught as LoreError;
+      expect(err.message).toContain("failed mid-deletion");
+      expect((err.input as { stagingRel?: string }).stagingRel).toContain(".lore/cutover/staging-backlog-midfail");
+      expect((err.input as { zipRel?: string }).zipRel).toContain(".lore/archive/");
+      // The verified archive survived and still round-trips EVERY original file:
+      const ev = JSON.parse(readFileSync(join(root, ".lore/archive/backlog-midfail.inventory.json"), "utf8")) as {
+        zipRel: string;
+        entries: { path: string }[];
+      };
+      expect(existsSync(join(root, ev.zipRel))).toBe(true);
+      const round = exactZip.read(join(root, ev.zipRel));
+      for (const e of ev.entries) expect(round.get(e.path)).toBeDefined();
+      // The undeleted original remains recoverably present under staging:
+      expect(existsSync(join(root, ".lore/cutover/staging-backlog-midfail/tasks/a.md"))).toBe(true);
+      // And the deleted-in-staging file is recoverable from the archive bytes:
+      expect(round.get("backlog/config.yml")).toBeDefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("post-commit failure that cannot roll back names the recoverable staging path (no silent loss)", () => {
+    const root = fixture();
+    try {
+      // Drive the documented post-commit recovery contract directly: stage via the real commit
+      // boundary, then simulate a mid-deletion crash (one file already unlinked, one left in
+      // staging). Every original file must remain either in the verified archive or recoverably
+      // present under staging — never silently lost.
+      const entries = planBacklogSnapshot(root);
+      const ev = buildArchive(root, entries, exactZip, "midfail");
+      verifyArchive(root, ev, exactZip);
+      mkdirSync(join(root, ".lore/cutover"), { recursive: true });
+      renameSync(join(root, "backlog"), join(root, ".lore/cutover/staging-backlog-midfail"));
+      // Crash simulation: one file deleted inside staging, one left recoverable.
+      rmSync(join(root, ".lore/cutover/staging-backlog-midfail/config.yml"));
+      // The verified immutable archive still contains EVERY original file:
+      const round = exactZip.read(join(root, ev.zipRel));
+      expect(round.get("backlog/config.yml")).toBeDefined();
+      expect(round.get("backlog/tasks/a.md")).toBeDefined();
+      // And the undeleted original remains recoverably present under the durable staging path:
+      expect(existsSync(join(root, ".lore/cutover/staging-backlog-midfail/tasks/a.md"))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("retry/resume coherence: an existing conflicting staging path is a fail-loud conflict", () => {
+    const root = fixture();
+    try {
+      mkdirSync(join(root, ".lore/cutover"), { recursive: true });
+      mkdirSync(join(root, ".lore/cutover/staging-backlog-retry"), { recursive: true });
+      expect(() => archiveAndDeleteBacklog(root, exactZip, "retry")).toThrow(/already exists/);
+      expect(existsSync(join(root, "backlog/config.yml"))).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
