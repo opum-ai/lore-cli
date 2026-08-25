@@ -118,7 +118,7 @@ export function buildArchive(
   if (entries.length === 0)
     throw new LoreError("validation", "refusing to archive an empty backlog snapshot", "nothing to preserve");
   mkdirSync(join(root, ARCHIVE_DIR), { recursive: true });
-  const zipRel = `${ARCHIVE_DIR}/backlog-${id}.zip`;
+  const zipRel = `${ARCHIVE_DIR}/backlog-${sanitizeId(id)}.zip`;
   const files = new Map<string, Uint8Array>();
   for (const e of entries) files.set(e.path, readFileSync(join(root, e.path)));
   zip.write(join(root, zipRel), files);
@@ -232,25 +232,29 @@ export function archiveAndDeleteBacklog(
     const handlePostCommit = (postCommit: unknown): never => {
       // Post-commit failure: the staged tree (or what survives of it) is still recoverable.
       // Roll back only while NOTHING has been deleted yet — i.e. the staged tree is complete.
+      // Definitely assigned above (phase 1 completed); the closure defeats narrowing.
       const verified = evidence as ArchiveEvidence;
       const complete = verified.entries.every((e) => existsSync(join(stagingAbs, e.path.slice(topDir.length + 1))));
       if (complete && !existsSync(join(root, topDir))) {
         try {
-          txn.renameSync(stagingAbs, join(root, topDir));
-          // Full rollback succeeded: backlog/ is byte-identical to the commit point.
+          txn.renameSync(stagingAbs, join(root, topDir)); // rollback of an untouched tree
         } catch {
           // Rollback refused: leave the COMPLETE staged tree in place and say exactly where.
-          throw new LoreError(
-            "drift",
+          throw recoveryLoreError(
             `archive/delete transaction failed after staging and rollback was refused: ${describeCause(postCommit)}`,
             `the complete original tree remains recoverable under ${stagingRel} — restore it before rerunning`,
-            { stagingRel },
+            { stagingRel, zipRel: verified.zipRel },
           );
         }
-        throw postCommit;
+        // Full rollback succeeded: backlog/ holds exactly the staged (never-deleted) tree.
+        throw new LoreError(
+          "drift",
+          `archive/delete transaction faulted and was rolled back: ${describeCause(postCommit)}`,
+          "backlog/ is fully restored — resolve the cause and rerun the cutover",
+          {},
+        );
       }
-      throw new LoreError(
-        "drift",
+      throw recoveryLoreError(
         `archive/delete transaction failed mid-deletion: ${describeCause(postCommit)}`,
         `all deleted files are present in the verified archive (${verified.zipRel}); any undeleted originals remain recoverable under ${stagingRel} — no Backlog content is lost; settle the staging directory before rerunning`,
         { stagingRel, zipRel: verified.zipRel },
@@ -280,12 +284,12 @@ export function archiveAndDeleteBacklog(
           throw new LoreError(
             "drift",
             `staged file "${e.path}" does not match the verified archive`,
-            "nothing has been deleted; the complete original tree remains recoverable under " + stagingRel,
+            `nothing has been deleted; the complete original tree remains recoverable under ${stagingRel}`,
             { path: e.path, stagingRel },
           );
       }
       for (const e of evidence.entries) {
-        unlinkSync(join(stagingAbs, e.path.slice(topDir.length + 1)));
+        txn.unlinkSync(join(stagingAbs, e.path.slice(topDir.length + 1)));
       }
       pruneEmptyDirs(stagingAbs);
       return evidence;
@@ -297,7 +301,7 @@ export function archiveAndDeleteBacklog(
     // consume the archive as recovery evidence.
     try {
       if (evidence === undefined || !isRecoveryFailure(error)) {
-        const candidate = `${ARCHIVE_DIR}/backlog-${id}.zip`;
+        const candidate = `${ARCHIVE_DIR}/backlog-${sanitizeId(id)}.zip`;
         if (existsSync(join(root, candidate))) unlinkSync(join(root, candidate));
         else if (evidence !== undefined && existsSync(join(root, evidence.zipRel)))
           unlinkSync(join(root, evidence.zipRel));
@@ -309,16 +313,31 @@ export function archiveAndDeleteBacklog(
   }
 }
 
-/** Injected rename seam so tests can fail the commit boundary deterministically. */
+/** Injected rename/unlink seams so tests can fail the commit boundary or the delete loop deterministically. */
 export interface ArchiveTransaction {
   readonly renameSync: (from: string, to: string) => void;
+  readonly unlinkSync: (path: string) => void;
 }
 
-const defaultTransaction: ArchiveTransaction = { renameSync: (from, to) => renameSync(from, to) };
+const defaultTransaction: ArchiveTransaction = {
+  renameSync: (from, to) => renameSync(from, to),
+  unlinkSync: (path) => unlinkSync(path),
+};
+
+/**
+ * A recovery failure carries the durable evidence locations STRUCTURALLY in its `input`
+ * (`stagingRel`/`zipRel`): classification never depends on prose wording, so the archive is
+ * retained exactly when it is recovery evidence.
+ */
+function recoveryLoreError(message: string, hint: string, input: { stagingRel: string; zipRel: string }): LoreError {
+  return new LoreError("drift", message, hint, input);
+}
 
 /** Recovery failures must keep their archive + staging evidence on disk; everything else cleans up. */
 function isRecoveryFailure(error: unknown): boolean {
-  return error instanceof LoreError && /recoverable under|mid-deletion|rollback was refused/.test(error.message);
+  return (
+    error instanceof LoreError && typeof error.input === "object" && error.input !== null && "stagingRel" in error.input
+  );
 }
 
 function describeCause(cause: unknown): string {
