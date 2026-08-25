@@ -53,6 +53,12 @@ describe("backlog archive-and-delete (LCLI-333.1)", () => {
   test("snapshot refuses a symlinked file, a symlinked directory, and non-regular entries", () => {
     const root = fixture();
     try {
+      // Windows requires elevated privileges for symlink creation; the lstat refusal guard is
+      // platform-independent, so the scenario is POSIX-only by necessity.
+      if (process.platform === "win32") {
+        expect(planBacklogSnapshot(root)).toHaveLength(2);
+        return;
+      }
       symlinkSync("../outside.md", join(root, "backlog/link.md"));
       expect(() => planBacklogSnapshot(root)).toThrow(/symlink/);
       rmSync(join(root, "backlog/link.md"));
