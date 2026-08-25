@@ -70,6 +70,7 @@ import { loadProfile } from "../core/profile";
 import { buildScaffold } from "../core/scaffold";
 import { ANSI, EXIT_OK, LoreError, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { applyCutover } from "../tracker-cutover";
 import {
   clearPendingQuestMigration,
   migrateBacklogTasksToQuest,
@@ -216,6 +217,10 @@ interface InitArgs {
   tracker?: TrackerBackend;
   /** `--migrate-backlog`: preflight and preserve compatible Backlog ids while selecting Quest. */
   migrateBacklog: boolean;
+  /** `--adopt-manifest <path>`: coordinate a knowledge-adoption manifest with `--migrate-backlog` as one cutover (LCLI-333.1). */
+  adoptManifest?: string;
+  /** `--approval-digest <digest>`: the adoption preview's approval digest binding the cutover's adoption leg. Required with `--adopt-manifest`. */
+  approvalDigest?: string;
 }
 
 /**
@@ -279,12 +284,32 @@ export function runInit(options: InitOptions): number | Promise<number> {
       "run `quest init`, then `lore init --tracker quest --migrate-backlog`; or pin Backlog with `lore init --tracker backlog`",
     );
   }
+  if (parsed.adoptManifest !== undefined && !parsed.migrateBacklog) {
+    throw usage(
+      "--adopt-manifest requires --migrate-backlog: knowledge adoption is coordinated with the task migration as one cutover",
+      "run `lore init --tracker quest --migrate-backlog --adopt-manifest <path>` in a legacy zero-config Backlog bundle",
+    );
+  }
+  if (parsed.adoptManifest !== undefined && parsed.approvalDigest === undefined) {
+    throw usage(
+      "--adopt-manifest requires --approval-digest: pass the exact digest of the reviewed adoption preview",
+      "run `lore backlog adopt preview --manifest <path>` first and pass its approval.digest",
+    );
+  }
 
   if (interactive) {
     return runInteractiveWizard(options, base, priorSelection);
   }
 
   if (parsed.migrateBacklog) {
+    // Coordinated cutover (LCLI-333.1): with an adoption manifest, both legs run through the
+    // ordered, resumable coordinator — Quest selection happens only after BOTH legs verify AND
+    // backlog/ is verified-archived-and-deleted. The migration-only path is unchanged.
+    if (parsed.adoptManifest !== undefined) {
+      return runCoordinatedCutover(options, parsed).then((migration) =>
+        finishNonInteractive(options, parsed, base, clock, migration),
+      );
+    }
     return runBacklogMigration(options).then((migration) => {
       persistTrackerBackend(options.root, "quest");
       clearPendingQuestMigration(options.root);
@@ -361,6 +386,30 @@ function finishNonInteractive(
 function runBacklogMigration(options: InitOptions): Promise<TrackerMigrationResult> {
   if (options.migrateBacklog !== undefined) return options.migrateBacklog();
   return migrateBacklogTasksToQuest(createQuestBacklogMigration(options.root), options.root);
+}
+
+/**
+ * The coordinated two-leg cutover (`--migrate-backlog --adopt-manifest <path>`, LCLI-333.1):
+ * delegates to `tracker-cutover.ts`'s ordered coordinator, whose final step persists the Quest
+ * backend selection and clears the recovery records — so the returned result flows straight into
+ * the unchanged non-interactive finish.
+ */
+function runCoordinatedCutover(options: InitOptions, parsed: InitArgs): Promise<TrackerMigrationResult> {
+  const root = options.root;
+  return applyCutover({
+    root,
+    migration: createQuestBacklogMigration(root),
+    adoptManifest: parsed.adoptManifest,
+    approvalDigest: parsed.approvalDigest,
+    persistQuestBackend: (r) => persistTrackerBackend(r, "quest"),
+  }).then((plan) => ({
+    digest: plan.quest.digest,
+    sourceFingerprint: plan.quest.sourceFingerprint,
+    mappings: [],
+    survivors: [],
+    taskFingerprints: {},
+    state: "applied" as const,
+  }));
 }
 
 /**
@@ -588,6 +637,17 @@ function parseInitArgs(args: readonly string[]): InitArgs {
   const noBacklog = parsed.flags.has("no-backlog");
   const checkBacklog = parsed.flags.has("check-backlog");
   const migrateBacklog = parsed.flags.has("migrate-backlog");
+  const adoptManifestValue = singleOptionValue(parsed, "adopt-manifest");
+  const approvalDigestValue = singleOptionValue(parsed, "approval-digest");
+  if (adoptManifestValue === "") {
+    throw usage("--adopt-manifest needs a value", "pass a repository-relative adoption manifest path");
+  }
+  if (
+    adoptManifestValue !== undefined &&
+    (adoptManifestValue.startsWith("/") || adoptManifestValue.split(/[\\/]/).includes(".."))
+  ) {
+    throw usage("--adopt-manifest must be a repository-relative path", "pass a confined JSON source manifest");
+  }
   const trackerValue = singleOptionValue(parsed, "tracker");
   if (trackerValue === "") {
     throw usage("--tracker needs a value", `pass --tracker ${TRACKER_BACKENDS.join(" or --tracker ")}`);
@@ -627,11 +687,24 @@ function parseInitArgs(args: readonly string[]): InitArgs {
       "pass at most one of --no-backlog / --check-backlog",
     );
   }
-  return { yes, agents, codex, hermes, scaffolds, noBacklog, checkBacklog, tracker, migrateBacklog };
+  return {
+    yes,
+    agents,
+    codex,
+    hermes,
+    scaffolds,
+    noBacklog,
+    checkBacklog,
+    tracker,
+    migrateBacklog,
+    adoptManifest: adoptManifestValue,
+    approvalDigest: approvalDigestValue,
+  };
 }
 
 /** Persist one explicit tracker choice while preserving every unrelated config byte. */
-function persistTrackerBackend(root: string, backend: TrackerBackend): void {
+/** Upsert `[tracker].backend` in the bundle's config, validating the current file first. Exported for `tracker-cutover.ts`, whose final irreversible step is exactly this selection. */
+export function persistTrackerBackend(root: string, backend: TrackerBackend): void {
   assertNoSymlinkInPath(root, CONFIG_REL_PATH);
   // Validate the complete current file first, including credential guards and
   // unknown-value diagnostics. The base init scaffold guarantees it exists.

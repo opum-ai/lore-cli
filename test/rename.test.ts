@@ -782,7 +782,7 @@ describe("rewriteInbound — custom profile (LORE-88)", () => {
 async function renameCmd(args: string[]): Promise<{ code: number; report: RenameReport; stderr: string }> {
   const stdout = capture();
   const stderr = capture();
-  const code = await runRename({ root, output: JSON_CTX, args, stdout, stderr });
+  const code = await runRename({ root, output: JSON_CTX, args, stdout, stderr, backend: "backlog" as const });
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
   expect(envelope.kind).toBe("rename.result");
   return { code, report: envelope.data, stderr: stderr.text() };
@@ -791,7 +791,14 @@ async function renameCmd(args: string[]): Promise<{ code: number; report: Rename
 /** Run `rename` expecting a thrown {@link LoreError}, returned for assertions. */
 async function expectError(args: string[]): Promise<LoreError> {
   try {
-    await runRename({ root, output: JSON_CTX, args, stdout: capture(), stderr: capture() });
+    await runRename({
+      root,
+      output: JSON_CTX,
+      args,
+      stdout: capture(),
+      stderr: capture(),
+      backend: "backlog" as const,
+    });
   } catch (err) {
     expect(err).toBeInstanceOf(LoreError);
     return err as LoreError;
@@ -899,6 +906,7 @@ describe("lore rename — end to end", () => {
       args: ["reference/orders", "reference/sales-orders"],
       stdout,
       stderr: capture(),
+      backend: "backlog" as const,
     });
     const text = stdout.text();
     expect(text).toContain("renamed docs/reference/orders.md -> docs/reference/sales-orders.md");
@@ -915,6 +923,7 @@ describe("lore rename — end to end", () => {
       args: ["reference/orders", "reference/sales-orders"],
       stdout,
       stderr: capture(),
+      backend: "backlog" as const,
     });
     expect(stdout.text()).toContain("renamed docs/reference/orders.md -> docs/reference/sales-orders.md");
     expect(stdout.text()).toMatch(/\d+ files? changed/);
@@ -1194,6 +1203,7 @@ describe("lore rename — data-loss-safe relocation (review fixes)", () => {
         args: ["reference/orders", "reference/sales-orders"],
         stdout: capture(),
         stderr: capture(),
+        backend: "backlog" as const,
       });
     } catch (err) {
       thrown = err;
@@ -1270,6 +1280,7 @@ describe("lore rename — Backlog back-ref move", () => {
       stderr: capture(),
       adapter,
       gitSpawn: cleanGitSpawn(),
+      backend: "backlog" as const,
     });
     const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
 
@@ -1310,6 +1321,7 @@ describe("lore rename — Backlog back-ref move", () => {
       args: ["reference/orders", "reference/sales-orders"],
       stdout,
       stderr: capture(),
+      backend: "backlog" as const,
     });
     const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
 
@@ -1340,6 +1352,7 @@ describe("lore rename — Backlog back-ref move", () => {
       stderr: capture(),
       adapter,
       gitSpawn: cleanGitSpawn(),
+      backend: "backlog" as const,
     });
     const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
 
@@ -1368,6 +1381,7 @@ describe("lore rename — Backlog back-ref move", () => {
       stderr: capture(),
       adapter,
       gitSpawn: cleanGitSpawn(),
+      backend: "backlog" as const,
     });
     const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
 
@@ -1391,6 +1405,7 @@ describe("lore rename — Backlog back-ref move", () => {
       stderr: capture(),
       adapter,
       gitSpawn: cleanGitSpawn(),
+      backend: "backlog" as const,
     });
 
     expect(code).toBe(EXIT_OK);
@@ -1417,6 +1432,7 @@ describe("lore rename — Backlog back-ref move", () => {
       stderr: capture(),
       adapter,
       gitSpawn: cleanGitSpawn(),
+      backend: "backlog" as const,
     });
     const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
 
@@ -1440,6 +1456,7 @@ describe("lore rename — Backlog back-ref move", () => {
       stderr: capture(),
       adapter,
       gitSpawn: cleanGitSpawn(),
+      backend: "backlog" as const,
     });
     const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
 
@@ -1478,6 +1495,7 @@ describe("lore rename — Backlog back-ref move", () => {
       stderr: capture(),
       adapter,
       gitSpawn: cleanGitSpawn(),
+      backend: "backlog" as const,
     });
     const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
 
@@ -1507,6 +1525,7 @@ describe("lore rename — Backlog back-ref move", () => {
         stdout: capture(),
         stderr: capture(),
         adapter,
+        backend: "backlog" as const,
       });
       throw new Error("expected a LoreError");
     } catch (err) {
@@ -1527,6 +1546,7 @@ describe("lore rename — Backlog back-ref move", () => {
       args: ["reference/orders", "reference/orders,v2"],
       stdout: capture(),
       stderr: capture(),
+      backend: "backlog" as const,
     });
 
     expect(code).toBe(EXIT_OK);
@@ -1546,6 +1566,7 @@ describe("lore rename — Backlog back-ref move", () => {
       stderr: capture(),
       adapter,
       gitSpawn: cleanGitSpawn(),
+      backend: "backlog" as const,
     });
     const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
 
@@ -1569,6 +1590,7 @@ describe("lore rename — Backlog back-ref move", () => {
       stderr: capture(),
       adapter,
       gitSpawn: cleanGitSpawn(),
+      backend: "backlog" as const,
     });
     const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
 
@@ -1603,6 +1625,7 @@ describe("lore rename — Backlog back-ref move", () => {
       stderr: capture(),
       adapter: mismatched,
       gitSpawn: cleanGitSpawn(),
+      backend: "backlog" as const,
     });
     const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
 
@@ -1654,6 +1677,7 @@ describe("lore rename — backlog/ commit (LORE-49)", () => {
       stderr: capture(),
       adapter,
       gitSpawn: git,
+      backend: "backlog" as const,
     });
     const { data } = JSON.parse(stdout.text()) as { data: RenameReport };
 
@@ -1694,6 +1718,7 @@ describe("lore rename — backlog/ commit (LORE-49)", () => {
       stderr: capture(),
       adapter,
       gitSpawn: git,
+      backend: "backlog" as const,
     });
     const { data } = JSON.parse(stdout.text()) as { data: RenameReport };
 
@@ -1714,6 +1739,7 @@ describe("lore rename — backlog/ commit (LORE-49)", () => {
       stdout,
       stderr: capture(),
       gitSpawn: git,
+      backend: "backlog" as const,
     });
     const { data } = JSON.parse(stdout.text()) as { data: RenameReport };
 
@@ -1745,6 +1771,7 @@ describe("lore rename — backlog/ commit (LORE-49)", () => {
       stderr: capture(),
       adapter,
       gitSpawn: git,
+      backend: "backlog" as const,
     });
     const { data } = JSON.parse(stdout.text()) as { data: RenameReport };
 
@@ -1777,6 +1804,7 @@ describe("lore rename — backlog/ commit (LORE-49)", () => {
       stderr: capture(),
       adapter,
       gitSpawn: git,
+      backend: "backlog" as const,
     });
     const { data } = JSON.parse(stdout.text()) as { data: RenameReport };
 
@@ -1803,6 +1831,7 @@ describe("lore rename — backlog/ commit (LORE-49)", () => {
       stderr: capture(),
       adapter,
       gitSpawn: failingCommitGitSpawn(DIRTY),
+      backend: "backlog" as const,
     });
     const { data } = JSON.parse(stdout.text()) as { data: RenameReport };
 

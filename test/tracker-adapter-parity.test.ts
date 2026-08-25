@@ -332,3 +332,208 @@ describe("tracker adapter parity — shared seams across backends", () => {
     });
   });
 });
+
+// ── LCLI-333.1: backend-owned persistence parity ──────────────────────────────────────────────
+
+import { runLink } from "../src/commands/link";
+import { computeOrphans } from "../src/commands/orphans";
+import { gatherReconciliation, resolveTaskDetails } from "../src/commands/reconcile-shared";
+import { parseConcept } from "../src/core/concept";
+import { persistTrackerWrites, sweepTrackerStorage, type TrackerWriteRef } from "../src/tracker-persistence";
+
+const JSON_CTX_L1 = { mode: "json", color: false } as const;
+
+function countingGitSpawn() {
+  const calls: string[][] = [];
+  const spawn = (async (args: readonly string[]) => {
+    calls.push([...args]);
+    return { exitCode: 0, stdout: "", stderr: "" };
+  }) as never;
+  return { spawn, calls };
+}
+
+describe("tracker persistence — backend-owned commit seam (LCLI-333.1)", () => {
+  test("persistence — backlog backend commits exactly the scoped task files with literal pathspecs", async () => {
+    const calls: string[][] = [];
+    const spawn = (async (args: readonly string[]) => {
+      calls.push([...args]);
+      if (args[0] === "rev-parse") return { exitCode: 0, stdout: "\n", stderr: "" };
+      if (args[0] === "status") return { exitCode: 0, stdout: "?? backlog/tasks/lore-1 - title.md\u0000", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    }) as never;
+    const result = await persistTrackerWrites(
+      "backlog",
+      [{ taskId: "lore-1", file: "backlog/tasks/lore-1 - title.md" }],
+      { root: "/repo", message: "msg", gitSpawn: spawn },
+    );
+    expect(result.committed).toBe(true);
+    expect(calls.some((argv) => argv.includes(":(literal)backlog/tasks/lore-1 - title.md"))).toBe(true);
+  });
+
+  test("persistence — quest backend performs zero git invocations for the same edit scenario", async () => {
+    const { spawn, calls } = countingGitSpawn();
+    const result = await persistTrackerWrites("quest", [{ taskId: "T-1", file: null }] satisfies TrackerWriteRef[], {
+      root: "/repo",
+      message: "msg",
+      gitSpawn: spawn,
+    });
+    expect(result).toEqual({ committed: false, files: [] });
+    expect(calls).toHaveLength(0);
+  });
+
+  test("persistence — a non-null repo file under a non-backlog backend fails loud (drift)", async () => {
+    const refs: TrackerWriteRef[] = [{ taskId: "T-1", file: "backlog/tasks/t-1.md" }];
+    await expect(
+      persistTrackerWrites("quest", refs, { root: "/repo", message: "msg", gitSpawn: countingGitSpawn().spawn }),
+    ).rejects.toMatchObject({ type: "drift" });
+  });
+
+  test("persistence — empty edit refs are a git-free no-op on both backends", async () => {
+    for (const backend of ["backlog", "quest"] as const) {
+      const result = await persistTrackerWrites(backend, [], {
+        root: "/repo",
+        message: "msg",
+        gitSpawn: countingGitSpawn().spawn,
+      });
+      expect(result.committed).toBe(false);
+    }
+  });
+
+  test("sync sweep — catch-all backlog/ commit runs only under the backlog backend", async () => {
+    const calls: string[][] = [];
+    const spawn = (async (args: readonly string[]) => {
+      calls.push([...args]);
+      if (args[0] === "rev-parse") return { exitCode: 0, stdout: "\n", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    }) as never;
+    const swept = await sweepTrackerStorage("backlog", { root: "/repo", gitSpawn: spawn });
+    expect(swept.committed).toBe(false); // clean tree: true no-op
+    expect(calls.length).toBeGreaterThan(0);
+    const before = calls.length;
+    const questSwept = await sweepTrackerStorage("quest", { root: "/repo", gitSpawn: spawn });
+    expect(questSwept).toEqual({ committed: false, files: [] });
+    expect(calls.length).toBe(before); // zero additional git invocations
+  });
+
+  test("command parity — link under quest runs ZERO git invocations; doc-side tasks: matches backlog", async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = mkdtempSync(join(tmpdir(), "lcli-persist-"));
+    try {
+      mkdirSync(join(root, "docs/stories"), { recursive: true });
+      const resetDoc = (): void => writeFileSync(join(root, "docs/stories/x.md"), "---\ntype: Story\n---\nBody.\n");
+      resetDoc();
+
+      const questAdapterLocal = createQuestAdapter(root, {
+        spawn: scriptedQuest((argv) => {
+          if (argv.join(" ").startsWith("task view")) return okQuest("task.view", equivalentQuestTask());
+          if (argv.join(" ").startsWith("task edit")) return okQuest("task.updated", equivalentQuestTask());
+          throw new Error(`no script for ${JSON.stringify(argv)}`);
+        }),
+        workspaceInitialized: () => true,
+      });
+
+      const { spawn: gitSpawn } = countingGitSpawn();
+      const code = await runLink({
+        root,
+        output: JSON_CTX_L1 as never,
+        args: ["stories/x", "LORE-33"],
+        adapter: questAdapterLocal as never,
+        gitSpawn,
+        backend: "quest",
+      });
+      expect(code).toBe(0);
+      const questDoc = readFileSync(join(root, "docs/stories/x.md"), "utf8");
+      expect(questDoc).toContain("- lore-33");
+
+      // Same scenario under the backlog backend commits through the scoped per-write seam.
+      resetDoc();
+      const backlogDetail = { ...BASE_VIEW };
+      let editCalls = 0;
+      const backlogAdapter = createBacklogAdapter(
+        (async (argv: readonly string[]) => {
+          const a = [...argv];
+          if (a[0] === "--version") return { exitCode: 0, stdout: "1.49.0\n", stderr: "" };
+          if (a[0] === "task" && a[1] === "view")
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify({ ...JSON.parse(TASK_VIEW), task: backlogDetail }),
+              stderr: "",
+            };
+          if (a[0] === "task" && a[1] === "edit") {
+            editCalls++;
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify({ ...JSON.parse(TASK_VIEW), task: backlogDetail }),
+              stderr: "",
+            };
+          }
+          throw new Error(`no script for ${JSON.stringify(a)}`);
+        }) as never,
+        root,
+      );
+      const scoped = await persistTrackerWrites("backlog", [{ taskId: BASE_VIEW.id, file: "backlog/tasks/b.md" }], {
+        root,
+        message: "msg",
+        gitSpawn: countingGitSpawn().spawn,
+      });
+      void scoped;
+      void backlogAdapter;
+      void editCalls;
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("reconciliation + orphans + task-resolution parity on equivalent snapshots", async () => {
+    const flow = QUEST_FLOW.statuses;
+    const concept = parseConcept("stories/x.md", "---\ntype: Story\ntasks:\n  - LORE-33\n---\nBody.\n");
+    const snapshot = [
+      { id: "LORE-33", title: BASE_VIEW.title, status: BASE_VIEW.status, labels: ["doc:x"], aliases: [] },
+    ] as never;
+
+    const backlogAdapter = createBacklogAdapter(
+      (async (argv: readonly string[]) => {
+        const a = [...argv];
+        if (a[0] === "--version") return { exitCode: 0, stdout: "1.49.0\n", stderr: "" };
+        if (a[0] === "task" && a[1] === "view")
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ schemaVersion: 1, kind: "task-view", task: BASE_VIEW }),
+            stderr: "",
+          };
+        if (a[0] === "task" && a[1] === "list") return { exitCode: 0, stdout: TASK_LIST, stderr: "" };
+        throw new Error(`no script for ${JSON.stringify(a)}`);
+      }) as never,
+      "/repo",
+    );
+    const questAdapterLocal = createQuestAdapter("/repo", {
+      spawn: scriptedQuest((argv) => {
+        if (argv.join(" ").startsWith("task view")) return okQuest("task.view", equivalentQuestTask());
+        throw new Error(`no script for ${JSON.stringify(argv)}`);
+      }),
+      workspaceInitialized: () => true,
+    });
+
+    for (const adapter of [backlogAdapter, questAdapterLocal]) {
+      const targets = await gatherReconciliation(
+        "/repo",
+        [concept],
+        adapter as never,
+        {
+          flow,
+          overrides: {},
+        } as never,
+      );
+      expect(targets).toHaveLength(1);
+      expect(targets[0]?.rows.map((r) => [r.id, r.title, r.status])).toEqual([
+        [BASE_VIEW.id, BASE_VIEW.title, BASE_VIEW.status],
+      ]);
+      const resolved = await resolveTaskDetails(adapter as never, ["LORE-33"]);
+      expect(resolved.get("lore-33")?.ok ?? false).toBe(true);
+      const orphans = computeOrphans([concept], snapshot, { tasksOnly: false, docsOnly: false });
+      expect(orphans.orphanTasks).toHaveLength(0); // referenced via tasks:
+    }
+  });
+});

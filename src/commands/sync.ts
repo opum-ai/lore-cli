@@ -49,6 +49,7 @@
 import { dirname, join } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { realGitAdapter, resolveHeadSha } from "../adapters/git";
+import type { TrackerBackend } from "../config";
 import { type BundleGraph, loadBundle } from "../core/bundle";
 import { type Concept, idFromPath, parseConcept, serializeConcept } from "../core/concept";
 import { generateIndexes, orphanedIndexPaths } from "../core/indexes";
@@ -60,13 +61,8 @@ import { type ReconciledStatus, validateReconcileInputs } from "../core/reconcil
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, readFileIfPresent, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import {
-  type BacklogCommitResult,
-  bunGitSpawn,
-  commitBacklogIfDirty,
-  type GitSpawn,
-  renderBacklogCommitLine,
-} from "../state";
+import { type BacklogCommitResult, bunGitSpawn, type GitSpawn, renderBacklogCommitLine } from "../state";
+import { resolveSelectedBackend, sweepTrackerStorage } from "../tracker-persistence";
 import { parseCommandArgs } from "./args";
 import { readIndexBytes, readSource } from "./discover";
 import { type AtomicRollbackWrite, assertNoSymlinkInAnyPath, ensureDir, writeManyAtomicOrRollback } from "./fswrite";
@@ -95,6 +91,8 @@ export interface SyncOptions {
   resolveHead?: (root: string) => string | null;
   /** The git-write seam (`state.ts`) for committing `backlog/`; defaults to the real `git` binary. */
   gitSpawn?: GitSpawn;
+  /** Explicit tracker-backend override (LCLI-333.1); production resolves via `resolveTrackerSelection`. Test/CI pin only — never a runtime fallback. */
+  backend?: TrackerBackend;
 }
 
 /** The parsed form of `lore sync`'s arguments. */
@@ -231,8 +229,18 @@ export async function runSync(options: SyncOptions): Promise<number> {
 
   let backlogCommit: BacklogCommitResult = { committed: false, files: [] };
   if (!parsed.dryRun) {
-    const gitSpawn = options.gitSpawn ?? bunGitSpawn(options.root);
-    backlogCommit = await commitBacklogIfDirty(gitSpawn);
+    // Backend-owned catch-all sweep (LCLI-333.1): under `backlog` this is the unchanged
+    // ADR-0012 `backlog/` sweep; under any other backend it is a no-op that never invokes git
+    // (and never even constructs the spawn seam).
+    const backend = resolveSelectedBackend(options.root, options.backend);
+    if (backend === "backlog") {
+      backlogCommit = await sweepTrackerStorage(backend, {
+        root: options.root,
+        gitSpawn: options.gitSpawn ?? bunGitSpawn(options.root),
+      });
+    } else {
+      backlogCommit = await sweepTrackerStorage(backend, { root: options.root });
+    }
   }
 
   const files = [...writes.keys()].sort().map((path) => ({ path: `${DOCS_DIR}/${path}` }));

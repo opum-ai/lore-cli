@@ -64,7 +64,16 @@ function readDoc(rel: string): string {
 // rather than shelling a real `git` in the temp bundle; a test asserting the commit passes its own
 // `dirtyGitSpawn` and inspects its `.calls`.
 function opts(args: string[], adapter: BacklogAdapter, gitSpawn: GitSpawn = cleanGitSpawn()): LinkOptions {
-  return { root, output: JSON_CTX, args, stdout: capture(), stderr: capture(), adapter, gitSpawn };
+  return {
+    root,
+    output: JSON_CTX,
+    args,
+    stdout: capture(),
+    stderr: capture(),
+    adapter,
+    gitSpawn,
+    backend: "backlog" as const,
+  };
 }
 
 async function linkCmd(
@@ -473,6 +482,7 @@ describe("lore link/unlink — plain rendering and parser edge cases", () => {
       stderr: capture(),
       adapter,
       gitSpawn: cleanGitSpawn(),
+      backend: "backlog" as const,
     });
     expect(stdout.text()).toBe("lore-1: tasks: added, back-ref: added\ndocs/stories/x.md: updated\n");
   });
@@ -490,6 +500,7 @@ describe("lore link/unlink — plain rendering and parser edge cases", () => {
       stderr: capture(),
       adapter,
       gitSpawn: cleanGitSpawn(),
+      backend: "backlog" as const,
     });
     expect(stdout.text()).toBe("lore-1: tasks: removed, back-ref: already-absent\ndocs/stories/x.md: updated\n");
   });
@@ -507,6 +518,7 @@ describe("lore link/unlink — plain rendering and parser edge cases", () => {
       stderr: capture(),
       adapter,
       gitSpawn: cleanGitSpawn(),
+      backend: "backlog" as const,
     });
     expect(stdout.text()).toBe("lore-1: tasks: added, back-ref: added\ndocs/stories/x.md: updated\n");
   });
@@ -607,6 +619,7 @@ describe("lore link/unlink — per-task back-ref resilience", () => {
       stderr,
       adapter,
       gitSpawn: cleanGitSpawn(),
+      backend: "backlog" as const,
     });
 
     const occurrences = stderr.text().split("missing `summary`").length - 1;
@@ -1256,7 +1269,7 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
       makeTask("LORE-1", { labels: ["doc:stories/y"], documentation: ["docs/stories/y.md"] }),
     ]);
 
-    const { outcomes, editedFiles } = await moveBackRefs(
+    const { outcomes, refs: editedFiles } = await moveBackRefs(
       adapter,
       ["lore-1"],
       "stories/x",
@@ -1267,7 +1280,7 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
 
     expect(outcomes).toEqual([{ task: "lore-1", backRef: "already-current" }]);
     expect(adapter.calls).toHaveLength(0); // confirms no editTask call — a retry makes none
-    expect(editedFiles).toEqual(["backlog/tasks/lore-1 - title.md"]); // but IS a commit candidate
+    expect(editedFiles).toEqual([{ taskId: "lore-1", file: "backlog/tasks/lore-1 - title.md" }]); // but IS a commit candidate
   });
 
   test("moveBackRefs: a task never given a back-ref at all contributes no commit candidate (unlike the fully-migrated retry case)", async () => {
@@ -1277,7 +1290,7 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
     // a candidate (would risk sweeping in an unrelated dirty edit on a task this move never touched).
     const adapter = fakeAdapter([makeTask("LORE-1")]); // no labels, no documentation at all
 
-    const { outcomes, editedFiles } = await moveBackRefs(
+    const { outcomes, refs: editedFiles } = await moveBackRefs(
       adapter,
       ["lore-1"],
       "stories/x",
@@ -1318,6 +1331,7 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
       stderr: capture(),
       adapter,
       gitSpawn: dirtyGitSpawn(DIRTY),
+      backend: "backlog" as const,
     });
 
     expect(stdout.text()).toBe(
@@ -1357,6 +1371,7 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
         stderr: capture(),
         adapter,
         gitSpawn: failingCommitGitSpawn(DIRTY),
+        backend: "backlog" as const,
       });
     } catch (err) {
       thrown = err;
