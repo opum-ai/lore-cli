@@ -179,8 +179,7 @@ export function archiveAndDeleteBacklog(root: string, zip: ZipWriter, id: string
     if (evidence.entries.length === 0)
       throw new LoreError("validation", "refusing to delete from an empty archive plan");
     const firstEntry = evidence.entries[0];
-    if (firstEntry === undefined)
-      throw new LoreError("validation", "refusing to delete from an empty archive plan");
+    if (firstEntry === undefined) throw new LoreError("validation", "refusing to delete from an empty archive plan");
     const topDir = firstEntry.path.split("/")[0] ?? firstEntry.path;
     for (const e of evidence.entries) {
       const st = statSync(join(root, e.path));
