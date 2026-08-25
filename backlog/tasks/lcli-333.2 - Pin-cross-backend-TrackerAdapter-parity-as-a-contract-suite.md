@@ -4,7 +4,7 @@ title: Pin cross-backend TrackerAdapter parity as a contract suite
 status: Done
 assignee: []
 created_date: '2026-08-25 17:52'
-updated_date: '2026-08-25 18:08'
+updated_date: '2026-08-25 18:16'
 labels:
   - quest
   - tracker
@@ -30,6 +30,8 @@ ordinal: 470000
 
 <!-- SECTION:NOTES:BEGIN -->
 Delivered in test/tracker-adapter-parity.test.ts as the L0 regression fence for the LCLI-333.1 backend-owned persistence slice. No production changes.
+
+Delivered: PR #418 merged to dev as 529caa7d1932ee1fe93237ff2e682c199cdf7a69 after all eight GitHub Actions checks passed (run 32882231318, incl. Ubuntu/Windows full tests and Docker real-binary E2E).
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
