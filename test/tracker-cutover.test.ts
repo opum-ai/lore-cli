@@ -5,11 +5,11 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { QuestBacklogMigration, QuestMigrationPreview, QuestMigrationReceipt } from "../src/adapters/quest";
-import { type CutoverPlan, type CutoverPlanStore, diskCutoverPlanStore } from "../src/cutover-state";
+import type { CutoverPlan, CutoverPlanStore } from "../src/cutover-state";
 import { applyCutover, type CutoverDeps, planCutover } from "../src/tracker-cutover";
 
 function preview(overrides: Partial<QuestMigrationPreview> = {}): QuestMigrationPreview {
@@ -199,8 +199,6 @@ describe("coordinated Backlog-to-Quest cutover (LCLI-333.1)", () => {
   test("done-state rerun is a verified no-op through the disk store contract", async () => {
     const root = fixture();
     try {
-      void diskCutoverPlanStore;
-      void readdirSync(root);
       const store = memoryStore();
       const first = await applyCutover(deps(root, { store }));
       expect(first.phase).toBe("done");

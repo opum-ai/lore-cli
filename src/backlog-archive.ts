@@ -8,10 +8,17 @@
  * - Symlinks anywhere in a walked path, non-regular entries, and unsafe zip entry names are
  *   refused loud; nothing is ever deleted unless the full plan → build → verify → re-scan pipeline
  *   succeeded.
- * - Scan⇄delete drift is refused: every source file is re-hashed immediately before its unlink,
- *   and a mid-flight change aborts with nothing deleted and no zip left behind.
+ * - Scan⇄delete drift is refused: every source file is re-hashed immediately before its own
+ *   unlink, and a mid-flight change aborts with nothing further deleted and no zip left behind.
  * - Idempotent/resumable: the cutover coordinator persists phase `archived` + evidence after
  *   success; a resumed run verifies the existing archive instead of rebuilding/redeleting.
+ *
+ * Git residue (ADR-0012 note): `backlog/` is normally git-TRACKED, and this leg performs zero git
+ * operations by design — after archive-and-delete the worktree carries uncommitted deletions of
+ * the old task files. That is intentional: committing the deletion is the repository owner's (or a
+ * later lore command's) ordinary commit decision, not a side effect of selecting Quest. The
+ * coordinator's `done` marker + `.lore/archive/` evidence are the durable record that the deletion
+ * was verified before it happened.
  */
 
 import { createHash } from "node:crypto";
@@ -166,7 +173,15 @@ export function archiveAndDeleteBacklog(root: string, zip: ZipWriter, id: string
   try {
     evidence = buildArchive(root, entries, zip, id);
     verifyArchive(root, evidence, zip);
-    // Drift between scan and delete: every live file must still match its snapshotted digest.
+    // Delete: each file is re-hashed IMMEDIATELY before its own unlink (scan⇄delete drift
+    // refusal per file), then every now-empty directory under the storage root is pruned
+    // bottom-up (including previously-empty ones that held no archivable file).
+    if (evidence.entries.length === 0)
+      throw new LoreError("validation", "refusing to delete from an empty archive plan");
+    const firstEntry = evidence.entries[0];
+    if (firstEntry === undefined)
+      throw new LoreError("validation", "refusing to delete from an empty archive plan");
+    const topDir = firstEntry.path.split("/")[0] ?? firstEntry.path;
     for (const e of evidence.entries) {
       const st = statSync(join(root, e.path));
       if (!st.isFile() || st.size !== e.bytes || sha256(readFileSync(join(root, e.path))) !== e.sha256)
@@ -176,14 +191,9 @@ export function archiveAndDeleteBacklog(root: string, zip: ZipWriter, id: string
           "backlog/ was modified during the cutover; it has NOT been deleted — rerun the cutover",
           { path: e.path },
         );
-    }
-    // Delete: per-file re-check happens above; unlink each, then prune EVERY now-empty
-    // directory under the storage root bottom-up (including previously-empty ones that held no
-    // archivable file), stopping silently at the first non-prunable one.
-    for (const e of evidence.entries) {
       unlinkSync(join(root, e.path));
     }
-    pruneEmptyDirs(join(root, evidence.entries[0]?.path.split("/")[0] ?? ""));
+    pruneEmptyDirs(join(root, topDir));
   } catch (error) {
     // Never leave a partially-written zip behind on any refusal.
     try {

@@ -230,12 +230,17 @@ export async function runSync(options: SyncOptions): Promise<number> {
   let backlogCommit: BacklogCommitResult = { committed: false, files: [] };
   if (!parsed.dryRun) {
     // Backend-owned catch-all sweep (LCLI-333.1): under `backlog` this is the unchanged
-    // ADR-0012 `backlog/` sweep; under any other backend it is a no-op that never invokes git.
-    const gitSpawn = options.gitSpawn ?? bunGitSpawn(options.root);
-    backlogCommit = await sweepTrackerStorage(resolveSelectedBackend(options.root, options.backend), {
-      root: options.root,
-      gitSpawn,
-    });
+    // ADR-0012 `backlog/` sweep; under any other backend it is a no-op that never invokes git
+    // (and never even constructs the spawn seam).
+    const backend = resolveSelectedBackend(options.root, options.backend);
+    if (backend === "backlog") {
+      backlogCommit = await sweepTrackerStorage(backend, {
+        root: options.root,
+        gitSpawn: options.gitSpawn ?? bunGitSpawn(options.root),
+      });
+    } else {
+      backlogCommit = await sweepTrackerStorage(backend, { root: options.root });
+    }
   }
 
   const files = [...writes.keys()].sort().map((path) => ({ path: `${DOCS_DIR}/${path}` }));

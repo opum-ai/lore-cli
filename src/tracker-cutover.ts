@@ -101,7 +101,30 @@ export async function applyCutover(deps: CutoverDeps): Promise<CutoverPlan> {
   // Settled cutover: a verified no-op — never re-preview, re-archive, or re-select.
   const settled = store.read(deps.root);
   if (settled?.phase === "done") return settled;
-  let plan = (await planCutover(deps)) as CutoverPlan;
+  // Resume coherence: a stored non-done plan must not be silently continued with DIFFERENT leg
+  // arguments — the recorded adoption binding is what was reviewed, and nothing else.
+  if (settled !== undefined) {
+    if ((deps.adoptManifest ?? undefined) !== (settled.adoption?.manifestPath ?? undefined))
+      throw new LoreError(
+        "conflict",
+        "the pending cutover was planned with a different --adopt-manifest",
+        "resume with the exact manifest recorded in .lore/cutover/state.json, or resolve the pending cutover first",
+        { recorded: settled.adoption?.manifestPath ?? null, supplied: deps.adoptManifest ?? null },
+      );
+    if (
+      deps.adoptManifest !== undefined &&
+      deps.approvalDigest !== undefined &&
+      settled.adoption !== undefined &&
+      deps.approvalDigest !== settled.adoption.approvalDigest
+    )
+      throw new LoreError(
+        "conflict",
+        "the supplied approval digest does not match the pending cutover's recorded adoption digest",
+        "resume with the exact digest recorded in .lore/cutover/state.json",
+        { recorded: settled.adoption.approvalDigest, supplied: deps.approvalDigest },
+      );
+  }
+  let plan: CutoverPlan = await planCutover(deps);
 
   // Leg 1 — Quest task migration (resumable via its own pending-preview record).
   if (plan.phase === "planned") {

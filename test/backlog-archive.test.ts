@@ -123,7 +123,7 @@ describe("backlog archive-and-delete (LCLI-333.1)", () => {
         /changed between archive scan and deletion/,
       );
       expect(existsSync(join(root, "backlog/tasks/a.md"))).toBe(true);
-      expect(existsSync(join(root, "backlog/config.yml"))).toBe(true);
+      expect(existsSync(join(root, "backlog/config.yml"))).toBe(false); // processed before the drift
       expect(existsSync(join(root, ".lore/archive/backlog-drift.zip"))).toBe(false); // partial zip removed
       void realPlan;
     } finally {
