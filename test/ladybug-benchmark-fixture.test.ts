@@ -135,6 +135,13 @@ describe("Ladybug benchmark fixture v1", () => {
       expect(generated.digests).toEqual(spec.expected);
       expect(generated.source.inventory).toHaveLength(spec.counts.concepts);
       expect(readdirSync(join(generated.root, "backlog", "tasks"))).toHaveLength(spec.counts.tasks);
+      // Regression: the fixture must pin its tracker backend explicitly. Under the
+      // Quest-default contract an unpinned legacy-Backlog bundle makes `graph index`
+      // exit 6, which is what failed the four non-Windows matching-host lanes of
+      // release dry-run 32924967387.
+      expect(readFileSync(join(generated.root, ".lore", "config.toml"), "utf8")).toEndWith(
+        '[tracker]\nbackend = "backlog"\n',
+      );
       expect(existsSync(join(generated.root, LADYBUG_CACHE_REL_ROOT))).toBe(false);
 
       const matches = new Map(spec.coverage.queries.map((querySpec) => [querySpec.id, 0]));
