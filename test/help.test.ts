@@ -160,7 +160,7 @@ describe("core/manifest — shape and invariants", () => {
       export: "projection.export",
       query: "query.results",
       context: "context.export",
-      agent: "agent.context.export",
+      agent: "agent.profiles",
       instructions: "instructions.text",
       agents: "agents.result",
       help: "help.manifest",
