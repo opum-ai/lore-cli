@@ -1,5 +1,5 @@
 ---
-id: LCLI-348
+id: LCLI-350
 title: 'Fix agent manifest default kind: declare agent.profiles for agent list'
 status: In Progress
 assignee:

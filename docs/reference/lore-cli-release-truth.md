@@ -22,7 +22,7 @@ availability claim.
 ### Current state
 
 `0.3.3` is the release candidate for the agent manifest-kind contract repair
-(LCLI-348). Its seven package manifests and exact optional-dependency pins are
+(LCLI-350). Its seven package manifests and exact optional-dependency pins are
 aligned at `0.3.3` and a local candidate family (six platform binaries plus
 root/platform tarballs) is built from the corrected commit on
 `feat/harness-qualification-contract-rows`. It is not released until a

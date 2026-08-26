@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The capability manifest now declares `agent.profiles` — the kind the primary
   `agent list` action emits — as the agent command's default kind, restoring
   the live-vs-manifest golden cross-check and registry discoverability;
-  `show` and `context` result kinds are unchanged (LCLI-348).
+  `show` and `context` result kinds are unchanged (LCLI-350).
 
 ### Added
 

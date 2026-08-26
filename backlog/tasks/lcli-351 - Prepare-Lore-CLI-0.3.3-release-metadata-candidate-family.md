@@ -1,5 +1,5 @@
 ---
-id: LCLI-349
+id: LCLI-351
 title: Prepare Lore CLI 0.3.3 release metadata (candidate family)
 status: In Progress
 assignee:
