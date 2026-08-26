@@ -23,12 +23,25 @@ availability claim.
 
 `0.3.3` is the release candidate for the agent manifest-kind contract repair
 (LCLI-350). Its seven package manifests and exact optional-dependency pins are
-aligned at `0.3.3` and a local candidate family (six platform binaries plus
-root/platform tarballs) is built from the corrected commit on
-`feat/harness-qualification-contract-rows`. It is not released until a
-qualified tag, Release workflow artifact evidence, interactive publication,
-registry verification, and clean-install evidence all exist. Publication
-remains blocked on the ODOC-63.7 npm credential decision.
+aligned at `0.3.3`. The authoritative installable candidate family (six
+platform binaries plus root/platform tarballs) is built from corrected
+source tip `a4322b71df3afaa94e1d1065934513dd34683fa6` and staged immutable at
+`/tmp/lore-0.3.3-family-a4322b7`, digested by family manifest v1 with SHA-256
+`745628def534bd76375916c9b3ca57ecf967e3b2000ed5edb6047e959ebbc746`. It was
+qualified by audit `8a71a8b0ac14473ba15ba02ed449fed3` on lease branch
+`settle/release-truth-862a9b6d3b7c` under pinned Bun 1.3.14: lint/typecheck
+clean, full suite 2662 pass / 0 fail / 1 skip across 89 files, strict
+`lore check`/`validate` over 75 bundle files clean, fresh-prefix install of
+the launcher plus host platform tarball self-reports `0.3.3` and its
+`agent list --json` emission matches the manifest-declared
+`agent.profiles` kind. An earlier staging from pre-fix source
+`f299ec8c2e403f921165e84b2cacf12a8f8c5abc` (manifest SHA-256
+`d3c45374ae2f8f8641c4b076fd47ecb1446557ccda4ef6b2508afc0e8d90a5ea`) predates
+the LCLI-350 fix and is superseded by the staged rebuild; it is retained for
+audit trail only. The candidate is not released until a qualified tag,
+Release workflow artifact evidence, interactive publication, registry
+verification, and clean-install evidence all exist. Publication remains
+blocked on the ODOC-63.7 npm credential decision.
 
 `0.3.2` is the release candidate for the packaged Backlog-isolation repair.
 Its seven package manifests and exact optional-dependency pins are prepared for
