@@ -4,15 +4,37 @@
 
 - 2026-06-21T01:22:19-05:00 ca8556d32818dad7b5ec6783d11ba869fd40e2d7 docs: author the OKF documentation bundle
 - 2026-06-21T01:33:34-05:00 6d9a4616532442ac469a704e1ab28b18262f27b4 docs(runbook): add developer kickoff handover
+- 2026-06-23T08:14:32-05:00 11946f5b6fc4baf3505d1b199a335abd1604f453 feat(LORE-11): shared error model, exit codes, and warning collector (#9)
+- 2026-06-25T05:48:58-05:00 08411e3a152487007d4e3fb4ebfd3c400fd2d512 feat(LORE-16): bundle.ts — walk docs/, build the concept + cross-link graph (#13)
+- 2026-06-26T16:15:03-05:00 8249d9e982d4c1b1d3d26053b387beb5290f9aa8 feat(LORE-47): GitAdapter seam + git-history log.md; resource stamping (#18)
+- 2026-06-27T22:58:52-05:00 96a69bc863cab30e70203258f10783c39ddfbd61 feat(LORE-30): lore check — internal link/anchor validation + portability lint (#21)
+- 2026-07-01T10:15:35-05:00 b9049fe69da203ea7f940e88c7bf68d782004091 feat(LORE-48): lore check follow-ups — --external liveness + MDX/filename portability rules (#29)
+- 2026-07-06T16:05:54-05:00 6361851bbe0699b09a4830fd8dcaad9b9794aa19 feat(LORE-24): lore link / unlink — wire tasks: frontmatter to Backlog (#35)
+- 2026-07-06T21:13:16-05:00 dfe23140a63d8534211e26446ed37000359f2b2e feat(LORE-26): lore sync — reconcile status, regen managed blocks/index/log, commit backlog/ (#36)
 - 2026-07-12T15:03:25-05:00 04070c650306cb37843c3828f13816b73590ae65 feat(LORE-39): lore scaffold mkdocs — additive MkDocs consumer config (#45)
+- 2026-07-12T15:07:03-05:00 46fcf1c79d59e2d613cae38f79bbd9f94044f4fd docs(LORE-14): Bun compile-compatibility spike — EXDEV trap + tech-stack corrections (#47)
 - 2026-07-12T15:13:04-05:00 a8e1cb65e9afc08e52f7a293f111e4c038ddec00 feat(LORE-9): release pipeline mechanics — compiled binaries + dual-artifact npm publish (#48)
 - 2026-07-16T10:37:34-05:00 5e0e6c8b2b3add1990ec2b5b15acfd09b74bdd5f feat(LORE-40): lore scaffold docusaurus — website/ + build smoke test (#49)
+- 2026-07-17T18:45:29-05:00 2f76fce661220ac7eeaca43ee9e3eb464ac7db2e docs(LORE-5): adopt upstream's --json contract instead of upstreaming the fork
+- 2026-07-18T09:33:31-05:00 f27f9ea98a7f0865ed42f7a4c8a9fd07443574a7 feat(LORE-53): migrate capability probe to upstream's --json contract
+- 2026-07-18T12:55:44-05:00 173605e0b529d7c84a9a51df2ecc708f06fbbab7 feat(LORE-54): rewrite backlog adapter against upstream's real --json contract
+- 2026-07-18T21:31:16-05:00 01c5b6735a76500abe056615a3bcf0dc894bce2f docs(LORE-5): record the Backlog.md release gate on lore's own v1 publish
 - 2026-07-18T22:08:41-05:00 6475cc54afcc5c387924b774397e868068d532c4 docs(LORE-52): reconcile stale remark/unified references vs shipped stack
 - 2026-07-19T10:25:07-05:00 9650cd44bdb8a1b2e2c0e43da30bcde8cd91e1bc feat(LORE-56): Docker E2E test harness — real lore + pinned upstream Backlog.md (#52)
+- 2026-07-19T12:17:20-05:00 63667ed2946c006796bdd6c7b8aaaf4f243c4ad4 fix(LORE-58): route link/unlink partial failures through the standard ErrorEnvelope (#54)
+- 2026-07-19T15:40:26-05:00 686a14afab2392d056d446100bfbc41c3b8f5f55 fix(LORE-59): scaffold the lore:tasks managed block in the Story template (#55)
+- 2026-07-19T15:45:42-05:00 b8a46675ba0b51b85d9de6c929d7dff472f6fbef docs(LORE-60): fix ADR-0002 exit-code claim for missing vs incapable backlog (#56)
+- 2026-07-19T18:30:06-05:00 ea60fd696798a34a1fcf6a9ffa7748dfb8fbfc04 fix(LORE-67): correct stale CLI-surface claims and dead validate config knobs
 - 2026-07-24T22:21:41-05:00 2e84d2bf13f643fe3c0be39656a66a930f7fdcc8 docs(LORE-254): document the upstream Backlog.md watch runbook
+- 2026-07-25T09:22:49-05:00 3f5f53abb7ed2d426d204b2e411a9472eea4ebe0 docs: fix stale publish-job description in tech-stack.md and ADR-0001
+- 2026-07-25T09:22:49-05:00 5052ebc5f4f28501e9eb9b65f6dbe05c6a224886 docs(release-publishing): fix os/cpu dry-run claim + npm-floor wording
 - 2026-07-25T14:25:25-05:00 1d985157372c3a831a34e1fd6c3f1f04fc59ff2f docs(init): document the TTY-gated wizard (ADR-0017) and the one-command flow
+- 2026-07-25T14:25:25-05:00 a64b1b5344b35854f5fd92e2c69ef2a6d6b5f15e docs(init): correct ADR-0017/CHANGELOG accuracy claims from review
 - 2026-07-25T15:19:21-05:00 346d3c15b2d3052da110051a0927996a311cb428 chore(docs): regenerate log.md via lore sync
+- 2026-07-25T15:19:21-05:00 e6a1aeeccbd6102d890152808148593c82d2c764 fix(docs): correct three stale stdin-only descriptions of the init TTY gate
+- 2026-07-26T21:25:31-05:00 0f15038ddbe6f7e0adf3fc755c1c71562227034b fix(wave2-integration): correct cd-carve-out misattribution and commaJoin universality claim
 - 2026-07-26T23:21:11-05:00 c37c689b9f64ba2175a9eefb386992cb845574fd fix(release): close round-5 readiness issues
+- 2026-07-27T07:17:12-05:00 047857cc4bb96060430c1735c5b6e46fd268cdf4 feat: add deterministic OKF projection export
 - 2026-07-28T08:20:58-05:00 6ceccfb6b36ecd6679d85edec33252364c046094 feat: add Claude and Codex init onboarding
 - 2026-07-28T11:38:12-05:00 0af37a96f85c864e8e2c2c170d116e6ea7eb4a47 chore: reconcile LORE-281 handoff metadata
 - 2026-07-28T12:22:07-05:00 7d5d3835e2028d3de6b4b7742817447819aac88c fix: close LORE-281 review gaps
@@ -42,6 +64,7 @@
 - 2026-07-30T19:26:25-05:00 0828913cdfa2f548ffa1385b77d9232570e9a785 feat: route retrieval through verified Ladybug index
 - 2026-07-30T22:23:34-05:00 7b81734764658048a9924b0ba64cd810e8c212b7 docs: record LCLI-283.1.4 qualification plan
 - 2026-07-31T19:33:18-05:00 5f4c20793e3587fa4f44d243bde01578b4518b3f docs: bound LadybugDB qualification scale
+- 2026-07-31T19:46:59-05:00 fb9db3a9e37e482f24b1b02c1d2287149efa14de docs: bound LadybugDB qualification scale
 - 2026-07-31T20:14:53-05:00 7d1b17459a34e9dff7dee2dbb820b507e5dc87b6 feat: qualify LadybugDB 0.19.0
 - 2026-08-01T00:02:30-05:00 4f0b69cdb1e3f2ddc2fde4c1dcc474974b6e510a feat: bound Ladybug qualification gate
 - 2026-08-01T00:34:58-05:00 d9dabbec82ceab714c9a2944d1234efa6aed13ad perf: bound Ladybug benchmark sessions
@@ -69,6 +92,7 @@
 - 2026-08-02T14:11:08-05:00 8bfb1f1725a891c52639f403e5936adadc63d9c8 docs: reconcile workspace delivery log
 - 2026-08-02T18:03:34-05:00 1034229ab8ef804498160acefa2f39d613dcb825 feat: add bounded path and impact traversal
 - 2026-08-02T18:04:16-05:00 467d66c09a151e48ec09ccf1b486dc9391f8d4a2 docs: refresh lore log for bounded traversal
+- 2026-08-02T19:15:38-05:00 242d43ee256a7ba6f54a5ae702daabd41ebea878 chore(LCLI-253): migrate off the pinned-commit Backlog.md build to the published release
 - 2026-08-03T08:39:40-05:00 a98014b4530903e2681c73c6762aa1e70e8aa67c feat: add snapshot change and provenance workflows
 - 2026-08-03T08:44:36-05:00 2a0c9693e06d31b4f48e99e49b8e06d3fed300dc docs: refresh lore log for snapshot workflows
 - 2026-08-03T08:45:25-05:00 d19c60e907f2ebed6f10075fb6df95f65e0fe645 docs: record snapshot workflow delivery evidence
@@ -130,6 +154,7 @@
 - 2026-08-08T09:56:58-05:00 ccc767b1dbea278e4616bc919f3900a1271732c1 docs: reconcile init tracker selection
 - 2026-08-09T02:30:44-05:00 8f3bc9213f9aa34234483fe94ef51bd99bda0120 chore(release): prepare 0.2.0 metadata
 - 2026-08-09T02:48:07-05:00 c7f0f6d9d101706ad583ad6c7e657f5615c5c2d3 docs: settle 0.2.0 release preparation
+- 2026-08-09T10:57:34-05:00 694b2ff89f4c91884b749d09d41a41a4f7343ad2 test: scope the stale-owner gate to the product family, not to two repositories
 - 2026-08-12T17:01:31-05:00 ca94e0c4aed06344925e67f822246a93659224b3 docs: record Lore CLI 0.2.0 release
 - 2026-08-12T17:19:07-05:00 3c813bdb12faf0bb790334d12b54ea523cf7499b docs: close Lore CLI 0.2.0 campaign
 - 2026-08-12T17:42:50-05:00 e8d9b1b918dcad3a70cb860f9f6dc9a62c3a26fe docs: initialize handover hygiene campaign
@@ -153,6 +178,7 @@
 - 2026-08-13T22:20:45-05:00 0b87ce113afb56ff2976c7e5d14905b705d1f617 docs: settle Lore CLI campaign tasks
 - 2026-08-13T22:24:46-05:00 f5e8a827a3ed2e6e4f43b1fe172883518db90442 docs: couple Lore authority preflight task
 - 2026-08-13T22:36:02-05:00 e7ad3f0b18b2758c03b9866fa7c138bf3baf4240 docs: record portable preflight settlement
+- 2026-08-13T23:06:05-05:00 5802be7b184303ac233d78854abd33bb74a45067 docs: consolidate Lore authority routes
 - 2026-08-13T23:07:08-05:00 59bdbab951690723fcc822ec7f31cb295e885595 docs: sync Lore log
 - 2026-08-14T06:06:20-05:00 9ac392dda4a4917dbea5788343df19ede30ce61c docs: couple Lore CLI task lineage
 - 2026-08-14T07:17:52-05:00 6693b4bd7f87c180b68c7fd062651acbfd6915e8 docs: sync LCLI-327 task state
@@ -164,96 +190,47 @@
 - 2026-08-16T08:28:16-05:00 ce46f0a4d643f93bf7f637933cb476de855520f4 chore: prepare 0.3.0 release
 - 2026-08-16T08:52:37-05:00 da289c199529375c90f220cce6b0aa243c5afa30 docs: refresh release handover log
 - 2026-08-16T09:38:04-05:00 94f0626731988ef3c57d7477c0fde07fccd56484 docs: record Lore CLI 0.3.0 release
+- 2026-08-16T13:08:57-05:00 690c1e32328b1fe65b0bfa7bcd6d44b03cb15b7f feat: teach agents workspace retrieval
+- 2026-08-16T17:24:08-05:00 d1730a1641c6b21d8abe3bb143fdeeb21a0991c5 chore: prepare 0.3.1 release
+- 2026-08-17T10:32:54-05:00 de6296138995a568262367f98c94c836e5d03d37 docs: align Quest tracker contract
+- 2026-08-17T10:58:24-05:00 39f9f91061bf92e2cf5594654bbd8d9a7d82494f feat: enforce Quest migration boundary
+- 2026-08-17T13:11:48-05:00 4f4934aea05328c0fe49525485f99f72fbbcb0ff docs: define Quest 0.2.2 migration contract
+- 2026-08-18T01:06:33-05:00 cdd94c78149aec07c3c4db8422fb11c93949008c feat: qualify Quest 0.2.7 tracker artifact
 - 2026-08-18T08:25:46-05:00 54387857814f0abfec82ab48eea977baad0ac3ba docs: reconcile log projection
 - 2026-08-18T17:43:32-05:00 4dc2f2fc8cc6bb79915eea16eb9bff2a1feef229 docs: record superseded 0.3.1 settlement
 - 2026-08-18T18:20:10-05:00 fcf64a11696d66f21e2f6938430d4ad12e600830 docs: reconcile retained PR 396 authority work
 - 2026-08-18T19:32:30-05:00 754a3d485c22a8873b40dd7b49fbc115eab494ff docs: reconcile Lore Story ownership
 - 2026-08-18T19:44:43-05:00 61d21b154cd26769859e5a497de6e30f8472ab98 docs: finalize ODOC-66 closeout
-
-## docs/.obsidian
-
-- 2026-07-27T07:17:12-05:00 047857cc4bb96060430c1735c5b6e46fd268cdf4 feat: add deterministic OKF projection export
+- 2026-08-18T22:38:03-05:00 baca608ad6d2bfbd0fdf11ab802e47dd74f5fd86 feat: complete wave A correctness and interoperability
 
 ## docs/adr
 
-- 2026-06-21T01:22:19-05:00 ca8556d32818dad7b5ec6783d11ba869fd40e2d7 docs: author the OKF documentation bundle
-- 2026-06-25T05:48:58-05:00 08411e3a152487007d4e3fb4ebfd3c400fd2d512 feat(LORE-16): bundle.ts — walk docs/, build the concept + cross-link graph (#13)
 - 2026-06-25T18:45:18-05:00 61d5b731ce59ce7ac312f881b7be952a984da254 feat(LORE-46): declarative .lore/profile.toml — generate validators from data (#17)
-- 2026-06-26T16:15:03-05:00 8249d9e982d4c1b1d3d26053b387beb5290f9aa8 feat(LORE-47): GitAdapter seam + git-history log.md; resource stamping (#18)
-- 2026-06-27T22:58:52-05:00 96a69bc863cab30e70203258f10783c39ddfbd61 feat(LORE-30): lore check — internal link/anchor validation + portability lint (#21)
-- 2026-07-01T10:15:35-05:00 b9049fe69da203ea7f940e88c7bf68d782004091 feat(LORE-48): lore check follow-ups — --external liveness + MDX/filename portability rules (#29)
 - 2026-07-02T07:21:25-05:00 22ccd6b5aa366aa3cfb55333bf5a19f8af4d45f7 feat(LORE-22): managed-block.ts — regenerate the lore:tasks region from live Backlog data (#33)
-- 2026-07-06T16:05:54-05:00 6361851bbe0699b09a4830fd8dcaad9b9794aa19 feat(LORE-24): lore link / unlink — wire tasks: frontmatter to Backlog (#35)
-- 2026-07-06T21:13:16-05:00 dfe23140a63d8534211e26446ed37000359f2b2e feat(LORE-26): lore sync — reconcile status, regen managed blocks/index/log, commit backlog/ (#36)
-- 2026-07-12T15:03:25-05:00 04070c650306cb37843c3828f13816b73590ae65 feat(LORE-39): lore scaffold mkdocs — additive MkDocs consumer config (#45)
-- 2026-07-12T15:07:03-05:00 46fcf1c79d59e2d613cae38f79bbd9f94044f4fd docs(LORE-14): Bun compile-compatibility spike — EXDEV trap + tech-stack corrections (#47)
-- 2026-07-12T15:13:04-05:00 a8e1cb65e9afc08e52f7a293f111e4c038ddec00 feat(LORE-9): release pipeline mechanics — compiled binaries + dual-artifact npm publish (#48)
-- 2026-07-17T18:45:29-05:00 2f76fce661220ac7eeaca43ee9e3eb464ac7db2e docs(LORE-5): adopt upstream's --json contract instead of upstreaming the fork
-- 2026-07-18T12:55:44-05:00 173605e0b529d7c84a9a51df2ecc708f06fbbab7 feat(LORE-54): rewrite backlog adapter against upstream's real --json contract
-- 2026-07-18T21:31:16-05:00 01c5b6735a76500abe056615a3bcf0dc894bce2f docs(LORE-5): record the Backlog.md release gate on lore's own v1 publish
-- 2026-07-18T22:08:41-05:00 6475cc54afcc5c387924b774397e868068d532c4 docs(LORE-52): reconcile stale remark/unified references vs shipped stack
-- 2026-07-19T15:45:42-05:00 b8a46675ba0b51b85d9de6c929d7dff472f6fbef docs(LORE-60): fix ADR-0002 exit-code claim for missing vs incapable backlog (#56)
 - 2026-07-19T18:30:06-05:00 8c7c43e7e3d1859598a4d0fde426f5f5acac1c31 fix(LORE-67): remove leftover false validate-options claim in ADR-0013
-- 2026-07-19T18:30:06-05:00 ea60fd696798a34a1fcf6a9ffa7748dfb8fbfc04 fix(LORE-67): correct stale CLI-surface claims and dead validate config knobs
-- 2026-07-25T09:22:49-05:00 3f5f53abb7ed2d426d204b2e411a9472eea4ebe0 docs: fix stale publish-job description in tech-stack.md and ADR-0001
-- 2026-07-25T09:22:49-05:00 5052ebc5f4f28501e9eb9b65f6dbe05c6a224886 docs(release-publishing): fix os/cpu dry-run claim + npm-floor wording
-- 2026-07-25T14:25:25-05:00 1d985157372c3a831a34e1fd6c3f1f04fc59ff2f docs(init): document the TTY-gated wizard (ADR-0017) and the one-command flow
-- 2026-07-25T14:25:25-05:00 a64b1b5344b35854f5fd92e2c69ef2a6d6b5f15e docs(init): correct ADR-0017/CHANGELOG accuracy claims from review
-- 2026-07-25T15:19:21-05:00 e6a1aeeccbd6102d890152808148593c82d2c764 fix(docs): correct three stale stdin-only descriptions of the init TTY gate
 - 2026-07-26T07:33:17-05:00 135bb3bf718cc92d513fb230182a593a13da8200 docs(adr): fix --label-vs-add-label drift found in LORE-265's wider sweep
 - 2026-07-26T07:33:17-05:00 24010c650030d6d384ef4b0c6881ef3399a39a7c docs(adr-0009): correct §2's orphans data-source and ownership-rule claims
-- 2026-07-26T21:25:31-05:00 0f15038ddbe6f7e0adf3fc755c1c71562227034b fix(wave2-integration): correct cd-carve-out misattribution and commaJoin universality claim
 - 2026-07-26T21:25:31-05:00 dccfabfe1eea13ceeee034c70cc21ab68d52c8b1 docs(wave2-integration): fix label-flag comment/test contradictions and ADR-0002 item 6
-- 2026-07-28T21:23:02-05:00 fea4509a7a2a9be13a197bff638f03b6bcdb9717 chore: migrate backlog namespace to lcli
-- 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
-- 2026-07-30T10:40:14-05:00 1e2e6dc4c9f59328cf22b6ca3bb13e49ce111f6b docs: record dependency boundary audit
-- 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
-- 2026-08-01T06:12:24-05:00 36a5cac3f43b78826dec41cf37e1e730a04c3487 perf: accelerate Ladybug indexed retrieval
-- 2026-08-01T06:44:02-05:00 9b6562cd5e4c3070dfed0dbead4dc1e50756ad2b perf: reduce Ladybug cold-build overhead
-- 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
-- 2026-08-03T17:40:37-05:00 66498ab3a8055eb27b4e8e62350f44a477328b84 chore: transfer repository ownership to opum-ai
-- 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
-- 2026-08-05T10:40:30-05:00 0b31a9344268d81ae4f2ae6a276e51f0153edced feat: add OKF 0.2 trust and lifecycle
-- 2026-08-08T09:51:35-05:00 2300eb5370bb4a5bc58d13e5b9ebfbf79f50f8ad feat: add init tracker selection
 
 ## docs/reference
 
-- 2026-06-21T01:22:19-05:00 ca8556d32818dad7b5ec6783d11ba869fd40e2d7 docs: author the OKF documentation bundle
-- 2026-06-23T08:14:32-05:00 11946f5b6fc4baf3505d1b199a335abd1604f453 feat(LORE-11): shared error model, exit codes, and warning collector (#9)
-- 2026-06-27T22:58:52-05:00 96a69bc863cab30e70203258f10783c39ddfbd61 feat(LORE-30): lore check — internal link/anchor validation + portability lint (#21)
 - 2026-06-28T20:04:43-05:00 1fb8b277274be3a03d39c8eccb7737e4f6f94032 feat(LORE-31): lore graph — cross-link graph export + shared subgraph traversal (#26)
 - 2026-06-28T21:18:21-05:00 63c0e31765d5adbf8b09eea457393c37e0bea63f feat(LORE-34): lore context — token-budgeted graph-expansion pack (#27)
-- 2026-07-01T10:15:35-05:00 b9049fe69da203ea7f940e88c7bf68d782004091 feat(LORE-48): lore check follow-ups — --external liveness + MDX/filename portability rules (#29)
 - 2026-07-01T20:05:43-05:00 2ba86aaaeddf1d5a694d9bd83e7ce57fcc8816cb feat(LORE-4): backlog capability probe + verified compiled fork binary (#30)
-- 2026-07-06T16:05:54-05:00 6361851bbe0699b09a4830fd8dcaad9b9794aa19 feat(LORE-24): lore link / unlink — wire tasks: frontmatter to Backlog (#35)
-- 2026-07-06T21:13:16-05:00 dfe23140a63d8534211e26446ed37000359f2b2e feat(LORE-26): lore sync — reconcile status, regen managed blocks/index/log, commit backlog/ (#36)
 - 2026-07-07T08:00:34-05:00 06a80638088e0f17541972b1025eaab7236c8ba7 feat(LORE-27): lore check — status reconciliation + managed-block drift (#37)
 - 2026-07-09T06:53:43-05:00 7bdfb15c6a12f7c67f6a0364894602f986041262 feat(LORE-37): lore instructions -- layered agent guides (#39)
 - 2026-07-10T08:45:44-05:00 19174d569425c7e9b31c8a368d6128141453980c feat(LORE-38): lore help — capability manifest + manifest-driven help (#41)
 - 2026-07-10T11:54:35-05:00 d655965982e8fe08a84a4801590ab1db642a2671 feat(LORE-25): lore tasks — a concept's live Backlog task rollup (#42)
 - 2026-07-10T13:30:16-05:00 13d1d45197c1342dcc248f5491989e569b9d5df5 feat(LORE-32): lore orphans — bidirectional doc↔task coupling report (#43)
 - 2026-07-11T08:10:01-05:00 387f3b923e11372761d7755baa9b78912a56db42 feat(LORE-49): link/unlink/rename commit their backlog/ writes immediately (#44)
-- 2026-07-12T15:03:25-05:00 04070c650306cb37843c3828f13816b73590ae65 feat(LORE-39): lore scaffold mkdocs — additive MkDocs consumer config (#45)
-- 2026-07-12T15:07:03-05:00 46fcf1c79d59e2d613cae38f79bbd9f94044f4fd docs(LORE-14): Bun compile-compatibility spike — EXDEV trap + tech-stack corrections (#47)
-- 2026-07-12T15:13:04-05:00 a8e1cb65e9afc08e52f7a293f111e4c038ddec00 feat(LORE-9): release pipeline mechanics — compiled binaries + dual-artifact npm publish (#48)
-- 2026-07-16T10:37:34-05:00 5e0e6c8b2b3add1990ec2b5b15acfd09b74bdd5f feat(LORE-40): lore scaffold docusaurus — website/ + build smoke test (#49)
-- 2026-07-17T18:45:29-05:00 2f76fce661220ac7eeaca43ee9e3eb464ac7db2e docs(LORE-5): adopt upstream's --json contract instead of upstreaming the fork
-- 2026-07-18T09:33:31-05:00 f27f9ea98a7f0865ed42f7a4c8a9fd07443574a7 feat(LORE-53): migrate capability probe to upstream's --json contract
-- 2026-07-18T12:55:44-05:00 173605e0b529d7c84a9a51df2ecc708f06fbbab7 feat(LORE-54): rewrite backlog adapter against upstream's real --json contract
 - 2026-07-18T20:21:05-05:00 be880319291c75ae7d7ab4ec3ee64dfe6bf497d4 fix(LORE-55): resolve PR #50 code-review findings for lore scaffold obsidian (#51)
-- 2026-07-18T22:08:41-05:00 6475cc54afcc5c387924b774397e868068d532c4 docs(LORE-52): reconcile stale remark/unified references vs shipped stack
-- 2026-07-19T12:17:20-05:00 63667ed2946c006796bdd6c7b8aaaf4f243c4ad4 fix(LORE-58): route link/unlink partial failures through the standard ErrorEnvelope (#54)
-- 2026-07-19T18:30:06-05:00 ea60fd696798a34a1fcf6a9ffa7748dfb8fbfc04 fix(LORE-67): correct stale CLI-surface claims and dead validate config knobs
 - 2026-07-21T09:08:24-05:00 120e7f1221c5b4e75389a4f6ba3b4501a7ace722 docs(LORE-74): document orphans' new --limit flag and bounded output
 - 2026-07-23T11:38:03-05:00 03faf9e38ed94e592e9fd5abba04ea9326fa0002 docs(cli-surface): correct check's docs — no token estimates
 - 2026-07-23T11:56:28-05:00 8da5feec07136fd4444b4ae071b4ac3915588f4e docs(cli-surface): clarify context --max-tokens has no default cap
 - 2026-07-24T22:55:21-05:00 c20e696c9ca1fa5d3cde8eba9d70a0cf8c2d94ca docs(cli-surface): fix scaffold exit-5 wording for dir vs file blockers
 - 2026-07-24T22:55:21-05:00 e8b668f877cbf2cc80e57e48a8399046af11e5ca docs(cli-surface): scaffold is idempotent-when-unchanged, not always-conflict
-- 2026-07-25T09:22:49-05:00 3f5f53abb7ed2d426d204b2e411a9472eea4ebe0 docs: fix stale publish-job description in tech-stack.md and ADR-0001
 - 2026-07-25T12:40:35-05:00 cac03fae04013bd5843b8153aa2adcac32dbe560 fix(orphans): correct ADR-0009 citation and match house-voice task-id style
 - 2026-07-25T12:40:35-05:00 dc91ca609d0e620d35342dd4d47f64926e65e62e docs(cli-surface): document orphans parent/subtask hierarchy awareness
-- 2026-07-25T14:25:25-05:00 1d985157372c3a831a34e1fd6c3f1f04fc59ff2f docs(init): document the TTY-gated wizard (ADR-0017) and the one-command flow
-- 2026-07-25T14:25:25-05:00 a64b1b5344b35854f5fd92e2c69ef2a6d6b5f15e docs(init): correct ADR-0017/CHANGELOG accuracy claims from review
 - 2026-07-25T14:25:25-05:00 bae8daf58f24ee351ae2425dd0f97323e6c1e16c docs(init): fix review round-3 text nits — CHANGELOG gloss, test count, EOF message, exit 6
 - 2026-07-25T15:19:21-05:00 08cbe4021a277f740de56d025e548daed2649f53 docs(reference): fold the init wizard and its --json fields into two summaries
 - 2026-07-26T07:33:17-05:00 7e07262db4033618096dd612a32dd1f545c661f2 docs(backlog-cli-contract): fix same orphans/unlink search-query drift
@@ -262,109 +239,28 @@
 - 2026-07-26T11:37:13-05:00 3b1f7eab8c7df79cf6d622022e31d8a66bc43226 docs(backlog-cli-contract): fix version-split citations and close self-contradictory task record
 - 2026-07-26T11:37:13-05:00 56ee70fd5544e108c209635906bb8d44295f6b37 docs(backlog-cli-contract): fix §2.4 label-flag multiplicity drift, reconcile version pin
 - 2026-07-26T11:37:13-05:00 74a45a912ed6ade6d4843714cf98ecebfc16a694 docs(architecture): mark adapter sketch illustrative, fix stale pre-migration claims
-- 2026-07-26T21:25:31-05:00 0f15038ddbe6f7e0adf3fc755c1c71562227034b fix(wave2-integration): correct cd-carve-out misattribution and commaJoin universality claim
-- 2026-07-26T23:21:11-05:00 c37c689b9f64ba2175a9eefb386992cb845574fd fix(release): close round-5 readiness issues
-- 2026-07-27T07:17:12-05:00 047857cc4bb96060430c1735c5b6e46fd268cdf4 feat: add deterministic OKF projection export
-- 2026-07-28T08:20:58-05:00 6ceccfb6b36ecd6679d85edec33252364c046094 feat: add Claude and Codex init onboarding
-- 2026-07-28T12:22:07-05:00 7d5d3835e2028d3de6b4b7742817447819aac88c fix: close LORE-281 review gaps
-- 2026-07-28T21:23:02-05:00 fea4509a7a2a9be13a197bff638f03b6bcdb9717 chore: migrate backlog namespace to lcli
-- 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
-- 2026-07-30T09:49:16-05:00 1520b894f0c4af7d36bf959069bb1e189963981f docs: sequence Commander before indexed retrieval
-- 2026-07-30T10:40:14-05:00 1e2e6dc4c9f59328cf22b6ca3bb13e49ce111f6b docs: record dependency boundary audit
-- 2026-07-30T11:35:54-05:00 6ed37e2c9ccf260eeaf933ea47aab4a5d1d2272a refactor: delegate SSRF IP parsing to ipaddr.js
-- 2026-07-30T11:54:18-05:00 60c953c7db84ffed7376ee72663eaf9c5641abff refactor: delegate heading slugging to github-slugger
-- 2026-07-30T12:04:38-05:00 921032fe8653e09c62f647152e05e6cd9454865e refactor: delegate terminal width to string-width
-- 2026-07-30T12:17:00-05:00 b9dcc4a3a88ffb01b217b9ad83bc06195935e9e6 refactor: consolidate config shape validation on Zod
-- 2026-07-30T15:07:43-05:00 90e9fbd90cd42c49348be7b2d0834b4d7cbf1a76 refactor: migrate CLI parsing to Commander
-- 2026-07-30T19:26:25-05:00 0828913cdfa2f548ffa1385b77d9232570e9a785 feat: route retrieval through verified Ladybug index
-- 2026-07-31T19:33:18-05:00 5f4c20793e3587fa4f44d243bde01578b4518b3f docs: bound LadybugDB qualification scale
-- 2026-07-31T19:46:59-05:00 fb9db3a9e37e482f24b1b02c1d2287149efa14de docs: bound LadybugDB qualification scale
-- 2026-07-31T20:14:53-05:00 7d1b17459a34e9dff7dee2dbb820b507e5dc87b6 feat: qualify LadybugDB 0.19.0
-- 2026-08-01T00:02:30-05:00 4f0b69cdb1e3f2ddc2fde4c1dcc474974b6e510a feat: bound Ladybug qualification gate
-- 2026-08-01T00:34:58-05:00 d9dabbec82ceab714c9a2944d1234efa6aed13ad perf: bound Ladybug benchmark sessions
-- 2026-08-01T06:12:24-05:00 36a5cac3f43b78826dec41cf37e1e730a04c3487 perf: accelerate Ladybug indexed retrieval
-- 2026-08-01T06:44:02-05:00 9b6562cd5e4c3070dfed0dbead4dc1e50756ad2b perf: reduce Ladybug cold-build overhead
-- 2026-08-01T07:05:31-05:00 06f58feea2867f98f324b77514775ed293df29f9 perf: reuse Ladybug graph adjacency
-- 2026-08-01T07:15:08-05:00 a5a53bde39cb6121145602dad0f104383bd92ca6 perf: reduce forced GC pauses in Ladybug builds
-- 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
-- 2026-08-01T19:19:30-05:00 a827f7cc7972348377f1edfd2bcc618e75d99c8e feat: add static graph explorer
-- 2026-08-02T10:53:09-05:00 4d8675470d25eb635df7715763cca4ec65f7876e feat: index and retrieve workspace repositories
-- 2026-08-02T18:03:34-05:00 1034229ab8ef804498160acefa2f39d613dcb825 feat: add bounded path and impact traversal
-- 2026-08-02T19:15:38-05:00 242d43ee256a7ba6f54a5ae702daabd41ebea878 chore(LCLI-253): migrate off the pinned-commit Backlog.md build to the published release
-- 2026-08-03T08:39:40-05:00 a98014b4530903e2681c73c6762aa1e70e8aa67c feat: add snapshot change and provenance workflows
-- 2026-08-03T11:24:52-05:00 f90527bb28c07098d30ed91f9480d05fdaf4dc29 docs: reconcile release truth and Story ownership
-- 2026-08-03T17:40:37-05:00 66498ab3a8055eb27b4e8e62350f44a477328b84 chore: transfer repository ownership to opum-ai
-- 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
-- 2026-08-03T20:31:09-05:00 307a3f428d36dd2669f38a354425fc699a0c24f7 chore: prepare 0.1.0 release
-- 2026-08-03T21:59:30-05:00 65abf9549a80da275de8d9b016467cf97421ae10 docs: record Lore CLI 0.1.0 release
-- 2026-08-04T00:40:24-05:00 10ecee23dce84d23ee9803b4ab1515465666cf41 feat: add ARM64 Windows and script-free installs
-- 2026-08-04T08:35:47-05:00 e9731203fa8a4b05cbdd92b0c1cee4fca89cd58b docs: route fleet cross-repo questions to opum-doc (LCLI-308)
-- 2026-08-04T09:45:54-05:00 ca4221dd7d92a2fe86545a65faf315149c1923bf docs: fix stale herdr derivation and fact-shaped rules (LCLI-309)
 - 2026-08-04T09:56:08-05:00 913a04ca6787281098d4a9453095b293828a931d docs: forbid acts, not adverbs; enumerate the package gate (LCLI-310)
-- 2026-08-04T21:40:39-05:00 4ded93c0c67250928d1e382f9ca3b6105511d693 docs: record Lore CLI 0.1.1 release
-- 2026-08-05T06:40:08-05:00 90c5655cd37d3e5ddb11e8ed5aaa8d63e88fcdf3 feat: negotiate OKF bundle versions
-- 2026-08-05T07:34:03-05:00 5ca160df987ef547bebb5c72e42d0dfa31668545 feat: add OKF 0.2 generated provenance
-- 2026-08-05T08:07:58-05:00 7a97b131822508b497e7fa14c8da1ffccda3dc58 feat: add OKF 0.2 sources provenance
-- 2026-08-05T10:40:30-05:00 0b31a9344268d81ae4f2ae6a276e51f0153edced feat: add OKF 0.2 trust and lifecycle
-- 2026-08-05T13:09:24-05:00 825e0b9421afe892c07ca31ccda3fdf017cf42dd feat: close OKF 0.2 conformance tiers
-- 2026-08-07T06:35:13-05:00 49d494d6c7a1c328cf2f50af1b83b593501c4288 feat: add tracker adapter seam
-- 2026-08-07T08:52:10-05:00 9ebfca9f0268f2f0448ee92eef42730cfc4dd205 feat: add jira-cli tracker adapter
-- 2026-08-08T09:51:35-05:00 2300eb5370bb4a5bc58d13e5b9ebfbf79f50f8ad feat: add init tracker selection
-- 2026-08-09T10:57:34-05:00 694b2ff89f4c91884b749d09d41a41a4f7343ad2 test: scope the stale-owner gate to the product family, not to two repositories
-- 2026-08-12T17:01:31-05:00 ca94e0c4aed06344925e67f822246a93659224b3 docs: record Lore CLI 0.2.0 release
-- 2026-08-12T23:00:10-05:00 78db86044162ea25de3da085a8f2a6fec77c2b4d docs: competitive research on agent-native knowledge tooling (LCLI-323/324/325)
-- 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic
-- 2026-08-13T16:40:33-05:00 b64ec28342fef18812b48d1a56417a351a8fccc0 fix: report skipped out-of-bundle links
-- 2026-08-13T20:35:28-05:00 ab5cbd7e84f38805f52194b7f4212cad669b48ab docs: route lore CLI docs through opum hub
-- 2026-08-13T21:19:24-05:00 872920908698e072395735ac4524e3336435958f docs: adopt autonomous campaign fast lane
-- 2026-08-13T22:08:08-05:00 327c9ed8c00a2054bcd8123cfdad06d0d18fe154 feat: complete autonomous campaign fast lane
-- 2026-08-13T22:15:50-05:00 3a3cbe248e80aa1a379821ba69ee6bc011d8903d fix: bind campaign enforcement to exact scope
-- 2026-08-13T23:06:05-05:00 5802be7b184303ac233d78854abd33bb74a45067 docs: consolidate Lore authority routes
-- 2026-08-14T16:42:24-05:00 b521f2941b499c5a12dccd12c05342776ede0fda feat: harden autonomous Codex campaign loop
-- 2026-08-14T18:11:58-05:00 6b274c8ea4638ec25cc07001ef675398f6b65f4d docs: specify Backlog knowledge adoption contract
-- 2026-08-14T20:24:22-05:00 69ec0bb263d6960d0b8118e2097df31c754c64cf feat: implement Backlog knowledge adoption
-- 2026-08-16T09:38:04-05:00 94f0626731988ef3c57d7477c0fde07fccd56484 docs: record Lore CLI 0.3.0 release
-- 2026-08-16T13:08:57-05:00 690c1e32328b1fe65b0bfa7bcd6d44b03cb15b7f feat: teach agents workspace retrieval
-- 2026-08-16T17:24:08-05:00 d1730a1641c6b21d8abe3bb143fdeeb21a0991c5 chore: prepare 0.3.1 release
 - 2026-08-16T22:37:05-05:00 262f58d29a8b954ad46aea2cb9ae73a245194186 chore: prepare 0.3.2 release
-- 2026-08-17T10:32:54-05:00 de6296138995a568262367f98c94c836e5d03d37 docs: align Quest tracker contract
-- 2026-08-17T10:58:24-05:00 39f9f91061bf92e2cf5594654bbd8d9a7d82494f feat: enforce Quest migration boundary
-- 2026-08-17T13:11:48-05:00 4f4934aea05328c0fe49525485f99f72fbbcb0ff docs: define Quest 0.2.2 migration contract
 - 2026-08-17T13:16:05-05:00 340a88179a22c525ae5d3fce7cc015ef82f3b3ec fix: harden Quest migration recovery
-- 2026-08-18T01:06:33-05:00 cdd94c78149aec07c3c4db8422fb11c93949008c feat: qualify Quest 0.2.7 tracker artifact
 - 2026-08-18T08:17:16-05:00 422f8b95506aeda23ec595bad145e60e0f8c4f54 fix(log): render each commit once
 - 2026-08-18T08:17:16-05:00 677e729f746ee0c9da584443bf66d48a4f2a410f test(sync): cover log reprojection
-- 2026-08-18T18:20:10-05:00 fcf64a11696d66f21e2f6938430d4ad12e600830 docs: reconcile retained PR 396 authority work
+- 2026-08-24T21:28:04-05:00 e416f02faee6da3f56085e2249e8b7c6db7b5d3c feat(agents): serve opum-agent-workflow/v1 via `agent context --contract`
+- 2026-08-25T20:17:57-05:00 67fd24ca04196deca37a907ba36ea9ca9fd6ea1b chore(release): align the package family at 0.3.3 and refresh version-bearing baselines (LCLI-349)
+- 2026-08-25T21:29:13-05:00 935cef2cd26db06dcd4afb07e71929e3073dccb9 chore(backlog): renumber campaign tasks LCLI-348/349 to LCLI-350/351
+- 2026-08-26T18:11:47-05:00 6fdb8fa7a5639eb0de4a6a90aad3266cb08f0bf3 chore(release): pin the 0.3.3 candidate family truth to corrected tip (LCLI-351)
 
 ## docs/runbooks
 
-- 2026-06-21T01:22:19-05:00 ca8556d32818dad7b5ec6783d11ba869fd40e2d7 docs: author the OKF documentation bundle
-- 2026-06-21T01:33:34-05:00 6d9a4616532442ac469a704e1ab28b18262f27b4 docs(runbook): add developer kickoff handover
-- 2026-06-23T08:14:32-05:00 11946f5b6fc4baf3505d1b199a335abd1604f453 feat(LORE-11): shared error model, exit codes, and warning collector (#9)
-- 2026-07-12T15:03:25-05:00 04070c650306cb37843c3828f13816b73590ae65 feat(LORE-39): lore scaffold mkdocs — additive MkDocs consumer config (#45)
-- 2026-07-12T15:13:04-05:00 a8e1cb65e9afc08e52f7a293f111e4c038ddec00 feat(LORE-9): release pipeline mechanics — compiled binaries + dual-artifact npm publish (#48)
 - 2026-07-17T18:22:46-05:00 c7dee5d280b226388f17b829e2ea802435a4b15c docs(LORE-5): record upstream's independent --json contract (PR #790)
-- 2026-07-17T18:45:29-05:00 2f76fce661220ac7eeaca43ee9e3eb464ac7db2e docs(LORE-5): adopt upstream's --json contract instead of upstreaming the fork
-- 2026-07-18T09:33:31-05:00 f27f9ea98a7f0865ed42f7a4c8a9fd07443574a7 feat(LORE-53): migrate capability probe to upstream's --json contract
-- 2026-07-18T12:55:44-05:00 173605e0b529d7c84a9a51df2ecc708f06fbbab7 feat(LORE-54): rewrite backlog adapter against upstream's real --json contract
-- 2026-07-18T21:31:16-05:00 01c5b6735a76500abe056615a3bcf0dc894bce2f docs(LORE-5): record the Backlog.md release gate on lore's own v1 publish
-- 2026-07-19T10:25:07-05:00 9650cd44bdb8a1b2e2c0e43da30bcde8cd91e1bc feat(LORE-56): Docker E2E test harness — real lore + pinned upstream Backlog.md (#52)
 - 2026-07-19T12:13:54-05:00 4772a41375a7a1110006b13ac793d67b51338d58 fix(LORE-57): stop sending --json to backlog task edit (#53)
-- 2026-07-19T12:17:20-05:00 63667ed2946c006796bdd6c7b8aaaf4f243c4ad4 fix(LORE-58): route link/unlink partial failures through the standard ErrorEnvelope (#54)
-- 2026-07-19T15:40:26-05:00 686a14afab2392d056d446100bfbc41c3b8f5f55 fix(LORE-59): scaffold the lore:tasks managed block in the Story template (#55)
-- 2026-07-19T15:45:42-05:00 b8a46675ba0b51b85d9de6c929d7dff472f6fbef docs(LORE-60): fix ADR-0002 exit-code claim for missing vs incapable backlog (#56)
 - 2026-07-20T12:01:16-05:00 25e941e86f20f64b954cc35c2e8a0bfe582fd579 feat(LORE-66): docker/e2e command-surface tail + housekeeping
 - 2026-07-22T11:43:11-05:00 a2236a120dda5e60e0d1e7fa8171292512ccc4e4 docs(release-publishing): note scoped-package public-access requirement
 - 2026-07-23T04:40:48-05:00 96040573b52dd06086e5b9ece6be77e58e97cb9c docs(runbooks): stop overclaiming CI/manual invocation identity
 - 2026-07-23T04:40:48-05:00 b3094e8777c0809de96a0b09b409ecb05cd503eb docs(runbooks): note docker-e2e now runs as a required CI gate
 - 2026-07-24T10:20:29-05:00 e99f2b6f1c44163ab0a6900ecf418e72bed29b3b ci(LORE-251): cut GitHub Actions minute cost (event-scoped OS matrix, concurrency cancel, drop redundant push:dev) (#241)
-- 2026-07-24T22:21:41-05:00 2e84d2bf13f643fe3c0be39656a66a930f7fdcc8 docs(LORE-254): document the upstream Backlog.md watch runbook
 - 2026-07-24T22:21:41-05:00 5a4071a9d499a89d898114a4eb626d0ec9093ee3 fix(LORE-254): correct runbook path refs, release-order and issue-list robustness
 - 2026-07-25T09:22:49-05:00 1025eb1b2fb7f51191fee2f11f072be90a78d182 docs(release-publishing): add partial-publish rollback + fix version-bump gap
-- 2026-07-25T09:22:49-05:00 5052ebc5f4f28501e9eb9b65f6dbe05c6a224886 docs(release-publishing): fix os/cpu dry-run claim + npm-floor wording
 - 2026-07-25T09:22:49-05:00 88f664119d29da8d982ec674782b1e199c83bcbb docs(release-publishing): add first-release checklist + rehearsal evidence
-- 2026-07-25T14:25:25-05:00 1d985157372c3a831a34e1fd6c3f1f04fc59ff2f docs(init): document the TTY-gated wizard (ADR-0017) and the one-command flow
-- 2026-07-25T15:19:21-05:00 e6a1aeeccbd6102d890152808148593c82d2c764 fix(docs): correct three stale stdin-only descriptions of the init TTY gate
 - 2026-07-26T07:44:22-05:00 697a3317da83d907a82fc93679ac72ff863c67a8 docs(release-publishing): close the and/or gap in the checklist, add self-review/bypass_actors caveats
 - 2026-07-26T07:44:22-05:00 7a6056b2cb67a837e471c302fc3a091423d09117 docs(release-publishing): fix branch-policy guidance, move repo-admin section
 - 2026-07-26T07:44:22-05:00 d3a2be67eba12a58af900409bfb2efb6427cfc86 docs(release-publishing): document the release Environment repo-admin steps
@@ -373,128 +269,12 @@
 - 2026-07-26T11:36:20-05:00 39a8ac8454b75da0442038789ce776bc1b965e74 docs(docker-e2e): warn against direct run-e2e.sh invocation
 - 2026-07-26T11:36:20-05:00 5c38ff8f171a3bfc951d18f65d6ebae884d09009 docs(runbooks): fix stale --exit-code-from e2e claim and 1643→1642 comment cite
 - 2026-07-26T11:36:20-05:00 a22f41d8a03207fe4e8497628575d25d3c6755e5 fix(docker-e2e): close three falsifiable claims in LORE-269's new text
-- 2026-07-26T23:21:11-05:00 c37c689b9f64ba2175a9eefb386992cb845574fd fix(release): close round-5 readiness issues
-- 2026-07-27T07:17:12-05:00 047857cc4bb96060430c1735c5b6e46fd268cdf4 feat: add deterministic OKF projection export
-- 2026-07-28T08:20:58-05:00 6ceccfb6b36ecd6679d85edec33252364c046094 feat: add Claude and Codex init onboarding
-- 2026-07-28T21:23:02-05:00 fea4509a7a2a9be13a197bff638f03b6bcdb9717 chore: migrate backlog namespace to lcli
-- 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
-- 2026-07-30T09:49:16-05:00 1520b894f0c4af7d36bf959069bb1e189963981f docs: sequence Commander before indexed retrieval
-- 2026-07-30T10:40:14-05:00 1e2e6dc4c9f59328cf22b6ca3bb13e49ce111f6b docs: record dependency boundary audit
-- 2026-07-30T11:35:54-05:00 6ed37e2c9ccf260eeaf933ea47aab4a5d1d2272a refactor: delegate SSRF IP parsing to ipaddr.js
-- 2026-07-30T11:38:19-05:00 c0d0e442f0d900c8fa65f2e30d3672027b2e324a docs: advance dependency campaign to LCLI-287
-- 2026-07-30T11:56:37-05:00 82d321458ded7a971847042b49a613d40426adb6 docs: advance dependency campaign to LCLI-285
-- 2026-07-30T12:07:11-05:00 c46620514f1705ef51a2b7ff5de4dcbd6ba6a205 docs: advance dependency campaign to LCLI-288
-- 2026-07-30T12:21:28-05:00 8331d768d2c541f0f66d56f65c86872e2166c0af docs: complete dependency boundary campaign
-- 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
-- 2026-07-30T14:00:06-05:00 02bc9694043958d27022be2c2de1e107572ab249 docs: advance release campaign to Commander
-- 2026-07-30T15:07:43-05:00 90e9fbd90cd42c49348be7b2d0834b4d7cbf1a76 refactor: migrate CLI parsing to Commander
-- 2026-07-30T15:08:52-05:00 743795bf0cc80f6c2b016cedaa424b5f9f189dfc docs: record protected branch handoff
-- 2026-07-30T17:03:49-05:00 edbd6f3abd1a37d9e04324db08e9ad8eea7657af feat: add deterministic LadybugDB projection lifecycle
-- 2026-07-30T19:26:25-05:00 0828913cdfa2f548ffa1385b77d9232570e9a785 feat: route retrieval through verified Ladybug index
-- 2026-07-30T22:23:34-05:00 7b81734764658048a9924b0ba64cd810e8c212b7 docs: record LCLI-283.1.4 qualification plan
-- 2026-07-31T20:14:53-05:00 7d1b17459a34e9dff7dee2dbb820b507e5dc87b6 feat: qualify LadybugDB 0.19.0
-- 2026-08-01T00:02:30-05:00 4f0b69cdb1e3f2ddc2fde4c1dcc474974b6e510a feat: bound Ladybug qualification gate
-- 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
-- 2026-08-02T19:15:38-05:00 242d43ee256a7ba6f54a5ae702daabd41ebea878 chore(LCLI-253): migrate off the pinned-commit Backlog.md build to the published release
-- 2026-08-03T11:24:52-05:00 f90527bb28c07098d30ed91f9480d05fdaf4dc29 docs: reconcile release truth and Story ownership
-- 2026-08-03T17:40:37-05:00 66498ab3a8055eb27b4e8e62350f44a477328b84 chore: transfer repository ownership to opum-ai
-- 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
-- 2026-08-03T20:31:09-05:00 307a3f428d36dd2669f38a354425fc699a0c24f7 chore: prepare 0.1.0 release
-- 2026-08-03T21:59:30-05:00 65abf9549a80da275de8d9b016467cf97421ae10 docs: record Lore CLI 0.1.0 release
-- 2026-08-04T00:40:24-05:00 10ecee23dce84d23ee9803b4ab1515465666cf41 feat: add ARM64 Windows and script-free installs
-- 2026-08-04T21:40:39-05:00 4ded93c0c67250928d1e382f9ca3b6105511d693 docs: record Lore CLI 0.1.1 release
-- 2026-08-09T10:57:34-05:00 694b2ff89f4c91884b749d09d41a41a4f7343ad2 test: scope the stale-owner gate to the product family, not to two repositories
-- 2026-08-13T09:40:05-05:00 e46248ddefaca9017d2a97f8c29175b28e11a67a docs: fix Lore 0.2 install guidance
-- 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic
-- 2026-08-13T20:35:28-05:00 ab5cbd7e84f38805f52194b7f4212cad669b48ab docs: route lore CLI docs through opum hub
-- 2026-08-13T23:06:05-05:00 5802be7b184303ac233d78854abd33bb74a45067 docs: consolidate Lore authority routes
 - 2026-08-14T07:16:03-05:00 13386102daa2365666639555aa35367817ca9020 fix: prevent E2E git identity leakage
-- 2026-08-16T13:08:57-05:00 690c1e32328b1fe65b0bfa7bcd6d44b03cb15b7f feat: teach agents workspace retrieval
-- 2026-08-16T17:24:08-05:00 d1730a1641c6b21d8abe3bb143fdeeb21a0991c5 chore: prepare 0.3.1 release
-- 2026-08-17T13:11:48-05:00 4f4934aea05328c0fe49525485f99f72fbbcb0ff docs: define Quest 0.2.2 migration contract
 
 ## docs/specs
 
-- 2026-06-21T01:22:19-05:00 ca8556d32818dad7b5ec6783d11ba869fd40e2d7 docs: author the OKF documentation bundle
-- 2026-06-23T08:14:32-05:00 11946f5b6fc4baf3505d1b199a335abd1604f453 feat(LORE-11): shared error model, exit codes, and warning collector (#9)
 - 2026-06-23T19:50:34-05:00 b7395b168c68393bee89d437b33c92daf224e53b feat(LORE-10): .lore/config.toml loader (native TOML + env overlay) (#10)
-- 2026-06-25T05:48:58-05:00 08411e3a152487007d4e3fb4ebfd3c400fd2d512 feat(LORE-16): bundle.ts — walk docs/, build the concept + cross-link graph (#13)
-- 2026-06-26T16:15:03-05:00 8249d9e982d4c1b1d3d26053b387beb5290f9aa8 feat(LORE-47): GitAdapter seam + git-history log.md; resource stamping (#18)
-- 2026-07-12T15:03:25-05:00 04070c650306cb37843c3828f13816b73590ae65 feat(LORE-39): lore scaffold mkdocs — additive MkDocs consumer config (#45)
-- 2026-07-18T22:08:41-05:00 6475cc54afcc5c387924b774397e868068d532c4 docs(LORE-52): reconcile stale remark/unified references vs shipped stack
-- 2026-07-19T15:40:26-05:00 686a14afab2392d056d446100bfbc41c3b8f5f55 fix(LORE-59): scaffold the lore:tasks managed block in the Story template (#55)
-- 2026-07-28T21:23:02-05:00 fea4509a7a2a9be13a197bff638f03b6bcdb9717 chore: migrate backlog namespace to lcli
-- 2026-07-30T08:52:39-05:00 69a218b1164dddb9804eecbf6ccbe654493be648 docs: prioritize LadybugDB local graph roadmap
-- 2026-07-30T09:49:16-05:00 1520b894f0c4af7d36bf959069bb1e189963981f docs: sequence Commander before indexed retrieval
-- 2026-07-30T10:40:14-05:00 1e2e6dc4c9f59328cf22b6ca3bb13e49ce111f6b docs: record dependency boundary audit
-- 2026-07-30T13:56:08-05:00 15a3a29a661d904942e02fa19946a80685f6bd90 docs: freeze LadybugDB projection contract
-- 2026-07-30T15:07:43-05:00 90e9fbd90cd42c49348be7b2d0834b4d7cbf1a76 refactor: migrate CLI parsing to Commander
-- 2026-07-30T17:03:49-05:00 edbd6f3abd1a37d9e04324db08e9ad8eea7657af feat: add deterministic LadybugDB projection lifecycle
-- 2026-07-30T19:26:25-05:00 0828913cdfa2f548ffa1385b77d9232570e9a785 feat: route retrieval through verified Ladybug index
-- 2026-07-31T19:33:18-05:00 5f4c20793e3587fa4f44d243bde01578b4518b3f docs: bound LadybugDB qualification scale
-- 2026-07-31T19:46:59-05:00 fb9db3a9e37e482f24b1b02c1d2287149efa14de docs: bound LadybugDB qualification scale
-- 2026-07-31T20:14:53-05:00 7d1b17459a34e9dff7dee2dbb820b507e5dc87b6 feat: qualify LadybugDB 0.19.0
-- 2026-08-01T00:02:30-05:00 4f0b69cdb1e3f2ddc2fde4c1dcc474974b6e510a feat: bound Ladybug qualification gate
-- 2026-08-01T16:41:57-05:00 3ec3d77082adb5b7b389588fbc18a58464d636e3 feat: freeze graph explorer contract
-- 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
-- 2026-08-01T19:19:30-05:00 a827f7cc7972348377f1edfd2bcc618e75d99c8e feat: add static graph explorer
-- 2026-08-01T20:18:24-05:00 21ca7a90ffa24a80debc7ef8ccc53816a492cdb6 feat: harden graph explorer qualification
-- 2026-08-02T03:42:55-05:00 38797b5e4abaaa432d65d446888515a3cb16b0e0 feat: freeze local workspace identity contract
-- 2026-08-02T10:53:09-05:00 4d8675470d25eb635df7715763cca4ec65f7876e feat: index and retrieve workspace repositories
-- 2026-08-02T18:03:34-05:00 1034229ab8ef804498160acefa2f39d613dcb825 feat: add bounded path and impact traversal
-- 2026-08-03T08:39:40-05:00 a98014b4530903e2681c73c6762aa1e70e8aa67c feat: add snapshot change and provenance workflows
-- 2026-08-12T23:00:10-05:00 78db86044162ea25de3da085a8f2a6fec77c2b4d docs: competitive research on agent-native knowledge tooling (LCLI-323/324/325)
-- 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic
-- 2026-08-14T18:11:58-05:00 6b274c8ea4638ec25cc07001ef675398f6b65f4d docs: specify Backlog knowledge adoption contract
 
 ## docs/stories
 
-- 2026-08-01T17:26:19-05:00 e775c6dd30eea9ccec386b5f28c247e3ee3448a8 feat: add task-scoped agent context profiles
-- 2026-08-03T11:24:52-05:00 f90527bb28c07098d30ed91f9480d05fdaf4dc29 docs: reconcile release truth and Story ownership
-- 2026-08-03T11:27:06-05:00 6fa326042c4c8945260f648056a28a1bdb3a7fec docs: record LCLI-293 settlement
-- 2026-08-03T17:40:37-05:00 66498ab3a8055eb27b4e8e62350f44a477328b84 chore: transfer repository ownership to opum-ai
-- 2026-08-03T17:48:20-05:00 b0bc1c46bf1766884093b5eb37734f49922a45a4 docs: close repository transfer task
-- 2026-08-03T20:09:55-05:00 3f9511e95dd39421bec9eee267e0bcd49224f37b chore: move npm packages to opum-ai scope
-- 2026-08-03T20:31:09-05:00 307a3f428d36dd2669f38a354425fc699a0c24f7 chore: prepare 0.1.0 release
-- 2026-08-03T21:59:30-05:00 65abf9549a80da275de8d9b016467cf97421ae10 docs: record Lore CLI 0.1.0 release
-- 2026-08-04T00:40:24-05:00 10ecee23dce84d23ee9803b4ab1515465666cf41 feat: add ARM64 Windows and script-free installs
-- 2026-08-04T01:30:13-05:00 744c7a4d216b03a7b91b63a7328cb2d8a66a9172 docs: sync LCLI-298 completion
-- 2026-08-04T01:50:02-05:00 187ed8afe6622d0016586533ceea450e20bc15a1 docs: sync LCLI-299 completion
-- 2026-08-04T07:20:16-05:00 18c04690279f0cb4f60939ebfc3a1b485092d4ae docs: sync LCLI-300 completion
-- 2026-08-04T15:17:39-05:00 964653638becae9961464334517b141672630e31 chore(release): prepare 0.1.1
-- 2026-08-04T15:46:22-05:00 458a0397d343da510690b574a426198c58c14507 docs: settle 0.1.1 release preparation
-- 2026-08-04T16:20:23-05:00 1f0c2c621754083a1b10be85e1c8c37acb4edd5b docs: track 0.1.1 publication
-- 2026-08-04T21:40:39-05:00 4ded93c0c67250928d1e382f9ca3b6105511d693 docs: record Lore CLI 0.1.1 release
-- 2026-08-09T02:30:44-05:00 8f3bc9213f9aa34234483fe94ef51bd99bda0120 chore(release): prepare 0.2.0 metadata
-- 2026-08-09T02:48:07-05:00 c7f0f6d9d101706ad583ad6c7e657f5615c5c2d3 docs: settle 0.2.0 release preparation
-- 2026-08-09T10:57:34-05:00 694b2ff89f4c91884b749d09d41a41a4f7343ad2 test: scope the stale-owner gate to the product family, not to two repositories
-- 2026-08-12T17:01:31-05:00 ca94e0c4aed06344925e67f822246a93659224b3 docs: record Lore CLI 0.2.0 release
-- 2026-08-12T17:19:07-05:00 3c813bdb12faf0bb790334d12b54ea523cf7499b docs: close Lore CLI 0.2.0 campaign
-- 2026-08-12T17:42:50-05:00 e8d9b1b918dcad3a70cb860f9f6dc9a62c3a26fe docs: initialize handover hygiene campaign
 - 2026-08-12T23:24:56-05:00 63df417250ab1039404369b3626c35f9aee481df chore: enforce single active handover cursor
-- 2026-08-13T09:40:05-05:00 e46248ddefaca9017d2a97f8c29175b28e11a67a docs: fix Lore 0.2 install guidance
-- 2026-08-13T09:50:55-05:00 fa43e1dc00756b443c5d12ac8710dc7393af6d07 chore: finalize LCLI-325 campaign wave
-- 2026-08-13T12:22:34-05:00 419cbfeecde24262b44083a4fbca32caf7176910 fix: make check date evaluation deterministic
-- 2026-08-13T13:21:24-05:00 e897fa21b51123a74844d689b1e8471f0481d482 chore: finalize LCLI-323 campaign wave
-- 2026-08-13T16:40:33-05:00 b64ec28342fef18812b48d1a56417a351a8fccc0 fix: report skipped out-of-bundle links
-- 2026-08-13T17:40:26-05:00 d8dc3341f91b42cd2bc9c8d65651ea95696f2915 chore: finalize LCLI-324 campaign wave
-- 2026-08-13T20:35:28-05:00 ab5cbd7e84f38805f52194b7f4212cad669b48ab docs: route lore CLI docs through opum hub
-- 2026-08-13T21:19:24-05:00 872920908698e072395735ac4524e3336435958f docs: adopt autonomous campaign fast lane
-- 2026-08-13T22:08:08-05:00 327c9ed8c00a2054bcd8123cfdad06d0d18fe154 feat: complete autonomous campaign fast lane
-- 2026-08-13T22:20:45-05:00 0b87ce113afb56ff2976c7e5d14905b705d1f617 docs: settle Lore CLI campaign tasks
-- 2026-08-13T22:24:46-05:00 f5e8a827a3ed2e6e4f43b1fe172883518db90442 docs: couple Lore authority preflight task
-- 2026-08-13T23:06:05-05:00 5802be7b184303ac233d78854abd33bb74a45067 docs: consolidate Lore authority routes
-- 2026-08-14T06:06:20-05:00 9ac392dda4a4917dbea5788343df19ede30ce61c docs: couple Lore CLI task lineage
-- 2026-08-14T07:17:52-05:00 6693b4bd7f87c180b68c7fd062651acbfd6915e8 docs: sync LCLI-327 task state
-- 2026-08-14T16:42:24-05:00 b521f2941b499c5a12dccd12c05342776ede0fda feat: harden autonomous Codex campaign loop
-- 2026-08-14T16:50:59-05:00 919cca5bb276702969332a4c1af03cb396a3f393 chore: settle LCLI-329 campaign
-- 2026-08-16T08:28:16-05:00 ce46f0a4d643f93bf7f637933cb476de855520f4 chore: prepare 0.3.0 release
-- 2026-08-16T09:38:04-05:00 94f0626731988ef3c57d7477c0fde07fccd56484 docs: record Lore CLI 0.3.0 release
-- 2026-08-17T10:32:54-05:00 de6296138995a568262367f98c94c836e5d03d37 docs: align Quest tracker contract
-- 2026-08-17T10:58:24-05:00 39f9f91061bf92e2cf5594654bbd8d9a7d82494f feat: enforce Quest migration boundary
-- 2026-08-17T13:11:48-05:00 4f4934aea05328c0fe49525485f99f72fbbcb0ff docs: define Quest 0.2.2 migration contract
-- 2026-08-18T01:06:33-05:00 cdd94c78149aec07c3c4db8422fb11c93949008c feat: qualify Quest 0.2.7 tracker artifact
-- 2026-08-18T08:25:46-05:00 54387857814f0abfec82ab48eea977baad0ac3ba docs: reconcile log projection
-- 2026-08-18T18:20:10-05:00 fcf64a11696d66f21e2f6938430d4ad12e600830 docs: reconcile retained PR 396 authority work
-- 2026-08-18T19:32:30-05:00 754a3d485c22a8873b40dd7b49fbc115eab494ff docs: reconcile Lore Story ownership
-- 2026-08-18T19:44:43-05:00 61d21b154cd26769859e5a497de6e30f8472ab98 docs: finalize ODOC-66 closeout
