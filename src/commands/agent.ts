@@ -10,6 +10,12 @@ import {
   loadAgentProfiles,
   validateAgentProfileReferences,
 } from "../core/agent-profile";
+import {
+  type AgentWorkflowProjection,
+  compileAgentWorkflowProjection,
+  parseWorkflowRequest,
+  WORKFLOW_CONTRACT_SELECTOR,
+} from "../core/agent-workflow";
 import { compareCodeUnits } from "../core/order";
 import { loadReferenceRetrievalGraph, type RetrievalGraphLoader } from "../core/retrieval";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
@@ -60,6 +66,13 @@ type AgentAction =
       readonly maxTokens?: number;
       readonly out?: string;
       readonly force: boolean;
+      readonly contract?: string;
+    }
+  | {
+      readonly kind: "project";
+      readonly name: string;
+      readonly request?: string;
+      readonly requestFile?: string;
     };
 
 export async function runAgent(options: AgentCommandOptions): Promise<number> {
@@ -94,6 +107,11 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
       return EXIT_OK;
     }
 
+    if (action.kind === "project") return runAgentProject(action, options);
+    if (action.contract !== undefined) {
+      return runContextContract({ ...action, contract: action.contract }, options);
+    }
+
     const task = resolveTask(action, options);
     let data = compileAgentContext(snapshot, retrieval.graph, profile.name, task, action.maxTokens);
     const markdown = renderAgentContextMarkdown(data);
@@ -123,9 +141,90 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
   }
 }
 
+/**
+ * Facade: `lore agent context <profile> --task <taskId> --contract
+ * opum-agent-workflow/v1 --json`. Additive adapter over the same projection
+ * engine as `agent project`; the default context path is untouched.
+ */
+type ContractContextAction = AgentAction & { kind: "context"; contract: string };
+
+async function runContextContract(action: ContractContextAction, options: AgentCommandOptions) {
+  const snapshot = loadAgentProfiles(options.root);
+  const advisories = new WarningCollector();
+  const retrieval = await (options.retrieval ?? loadReferenceRetrievalGraph)({
+    root: options.root,
+    warnings: advisories,
+    adapter: options.adapter,
+  });
+  try {
+    validateAgentProfileReferences(snapshot, retrieval.graph);
+    advisories.flush({ color: options.output.color, stderr: options.stderr });
+    findAgentProfile(snapshot, action.name);
+    const taskId = action.task ?? "";
+    if (taskId.trim() === "") {
+      throw usage(
+        `--contract ${WORKFLOW_CONTRACT_SELECTOR} requires --task <taskId>`,
+        "pass a non-empty caller task id, e.g. --task LCLI-123",
+      );
+    }
+    if (action.out !== undefined || action.force) {
+      throw usage("--out/--force are not available with --contract", "the contract projection is read-only");
+    }
+    if (action.taskFile !== undefined) {
+      throw usage(
+        "--task-file is not available with --contract",
+        `pass --task <taskId>; the ${WORKFLOW_CONTRACT_SELECTOR} facade binds a caller task id`,
+      );
+    }
+    const request = parseWorkflowRequest(JSON.stringify({ task: { id: taskId, text: taskId } }));
+    const projection = compileAgentWorkflowProjection(snapshot, retrieval.graph, action.name, request, {
+      root: options.root,
+      maxTokens: action.maxTokens,
+    });
+    emit(projectionRenderable(projection), options.output, options.stdout);
+    return EXIT_OK;
+  } finally {
+    await retrieval.dispose?.();
+  }
+}
+
+/** Compile the read-only public opum-agent-workflow/v1 projection. */
+async function runAgentProject(action: Extract<AgentAction, { kind: "project" }>, options: AgentCommandOptions) {
+  const snapshot = loadAgentProfiles(options.root);
+  const advisories = new WarningCollector();
+  const retrieval = await (options.retrieval ?? loadReferenceRetrievalGraph)({
+    root: options.root,
+    warnings: advisories,
+    adapter: options.adapter,
+  });
+  try {
+    validateAgentProfileReferences(snapshot, retrieval.graph);
+    advisories.flush({ color: options.output.color, stderr: options.stderr });
+    findAgentProfile(snapshot, action.name);
+    const request = parseWorkflowRequest(resolveRequest(action, options));
+    const {
+      selectedVersion: _sv,
+      contextId: _cid,
+      contextDigestSha256: _cds,
+      ...facadeFields
+    } = compileAgentWorkflowProjection(snapshot, retrieval.graph, action.name, request, {
+      root: options.root,
+    });
+    // Byte-compatibility: the facade-only fields are stripped so existing
+    // `agent project` consumers see exactly the pre-facade envelope.
+    void _sv;
+    void _cid;
+    void _cds;
+    emit(projectionRenderable(facadeFields as AgentWorkflowProjection), options.output, options.stdout);
+    return EXIT_OK;
+  } finally {
+    await retrieval.dispose?.();
+  }
+}
+
 function parseAgentArgs(args: readonly string[]): AgentAction {
   const parsed = parseCommandArgs(args, "agent");
-  for (const flag of ["task", "task-file", "max-tokens", "out", "force"]) {
+  for (const flag of ["task", "task-file", "max-tokens", "out", "force", "request", "contract"]) {
     assertFlagAtMostOnce(parsed, flag);
   }
   const action = parsed.positionals[0];
@@ -148,8 +247,27 @@ function parseAgentArgs(args: readonly string[]): AgentAction {
     );
     return { kind: "show", name: parsed.positionals[1] as string };
   }
+  if (action === "project") {
+    if (parsed.positionals.length !== 2) {
+      throw usage(
+        "`lore agent project` needs exactly one profile name",
+        "run `lore agent project <name> --request <file>` (use --request - for stdin)",
+      );
+    }
+    for (const flag of ["task", "task-file", "max-tokens", "out", "force"]) {
+      if (parsed.flags.has(flag)) {
+        throw usage(`--${flag} is not a \`lore agent project\` flag`, "`lore agent project` takes only --request");
+      }
+    }
+    const request = nonEmptyOption(parsed, "request");
+    return {
+      kind: "project",
+      name: parsed.positionals[1] as string,
+      ...(request === undefined ? {} : { requestFile: request }),
+    };
+  }
   if (action !== "context") {
-    throw usage(`unknown agent action "${action}"`, "use list, show, or context", { action });
+    throw usage(`unknown agent action "${action}"`, "use list, show, context, or project", { action });
   }
   if (parsed.positionals.length !== 2) {
     throw usage("`lore agent context` needs exactly one profile name", "run `lore agent context <name> --task <text>`");
@@ -169,6 +287,10 @@ function parseAgentArgs(args: readonly string[]): AgentAction {
   if (force && out === undefined) {
     throw usage("--force requires --out", "pass an output path or remove --force");
   }
+  const contract = nonEmptyOption(parsed, "contract");
+  if (contract !== undefined && contract !== WORKFLOW_CONTRACT_SELECTOR) {
+    throw usage(`unsupported contract "${contract}"`, `this build serves ${WORKFLOW_CONTRACT_SELECTOR}`, { contract });
+  }
   return {
     kind: "context",
     name: parsed.positionals[1] as string,
@@ -177,6 +299,7 @@ function parseAgentArgs(args: readonly string[]): AgentAction {
     ...(maxTokens === undefined ? {} : { maxTokens }),
     ...(out === undefined ? {} : { out }),
     force,
+    ...(contract === undefined ? {} : { contract }),
   };
 }
 
@@ -223,6 +346,29 @@ function resolveTask(action: Extract<AgentAction, { kind: "context" }>, options:
   return readSource(target.absPath, target.relPath);
 }
 
+/** Read the workflow request envelope: repo-relative file or stdin (default/-). */
+function resolveRequest(action: Extract<AgentAction, { kind: "project" }>, options: AgentCommandOptions): string {
+  const path = action.requestFile;
+  if (path === undefined || path === "-") {
+    try {
+      return readFileSync(0, "utf8");
+    } catch (cause) {
+      throw new LoreError(
+        "denied",
+        "cannot read the request envelope from stdin",
+        "pipe readable UTF-8 JSON to stdin or pass --request <file>",
+        {
+          path: "-",
+          cause: cause instanceof Error ? cause.message : String(cause),
+        },
+      );
+    }
+  }
+  const target = confineRepoFile(path, options.root, "--request");
+  assertNoSymlinkInPath(options.root, target.relPath);
+  return readSource(target.absPath, target.relPath);
+}
+
 function confineOutFile(out: string, root: string): { absPath: string; relPath: string } {
   return confineRepoFile(out, root, "--out");
 }
@@ -230,7 +376,7 @@ function confineOutFile(out: string, root: string): { absPath: string; relPath: 
 function confineRepoFile(
   path: string,
   root: string,
-  flag: "--out" | "--task-file",
+  flag: "--out" | "--task-file" | "--request",
 ): { absPath: string; relPath: string } {
   const absPath = resolve(root, path);
   const rel = relative(root, absPath);
@@ -276,6 +422,35 @@ function contextRenderable(data: AgentContextExport): Renderable<AgentContextExp
     pretty: renderAgentContextMarkdown,
     plain: renderAgentContextMarkdown,
   };
+}
+
+function projectionRenderable(data: AgentWorkflowProjection): Renderable<AgentWorkflowProjection> {
+  return {
+    kind: "agent.workflow.projection",
+    data,
+    pretty: renderWorkflowProjection,
+    plain: renderWorkflowProjection,
+  };
+}
+
+function renderWorkflowProjection(data: AgentWorkflowProjection): string {
+  const lines = [
+    `${data.contract}/${data.version} — task ${data.request.task.id}`,
+    `profile: ${data.context.profile.name}`,
+    `contextDigest: ${data.contextDigest} (packDigest ${data.packDigest})`,
+    `sources: ${data.sources.length === 0 ? "none" : data.sources.join(", ")}`,
+    `profileRevision: ${data.profileRevision.path} ${data.profileRevision.sha256}`,
+  ];
+  if (data.inputRevisions.length === 0) {
+    lines.push("inputRevisions: none");
+  } else {
+    lines.push("inputRevisions:");
+    for (const revision of data.inputRevisions) {
+      lines.push(`- ${revision.path} ${revision.sha256}`);
+    }
+  }
+  lines.push(renderAgentContextMarkdown(data.context));
+  return lines.join("\n");
 }
 
 function renderProfiles(data: AgentProfilesResult): string {

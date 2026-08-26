@@ -182,6 +182,7 @@ describe("core/manifest — shape and invariants", () => {
       "agent.profiles",
       "agent.profile",
       "agent.context.export",
+      "agent.workflow.projection",
     ]);
   });
 

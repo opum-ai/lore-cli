@@ -225,6 +225,16 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
         summary: "Preview and apply Quest's digest-approved Backlog migration before selecting Quest",
       },
       {
+        name: "adopt-manifest",
+        takesValue: true,
+        summary: "Coordinate a knowledge-adoption manifest with --migrate-backlog as one cutover",
+      },
+      {
+        name: "approval-digest",
+        takesValue: true,
+        summary: "Adoption preview approval digest binding the --adopt-manifest cutover leg",
+      },
+      {
         name: "scaffold",
         takesValue: true,
         repeatable: true,
@@ -676,24 +686,37 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
   {
     name: "agent",
     summary: "List context profiles or compile bounded task-scoped evidence",
-    args: "<list|show|context> [args…]",
+    args: "<list|show|context|project> [args…]",
     flags: [
       { name: "task", takesValue: true, summary: "Assigned task text for context compilation" },
       { name: "task-file", takesValue: true, summary: "Read task text from a repo-relative path or stdin (-)" },
       { name: "max-tokens", takesValue: true, summary: "Override the profile's chars/4 token budget" },
       { name: "out", takesValue: true, summary: "Atomically save canonical Markdown to a repo-relative path" },
       { name: "force", takesValue: false, summary: "Replace a differing regular --out file" },
+      {
+        name: "request",
+        takesValue: true,
+        summary: "Read the opum-agent-workflow v1 request envelope JSON from a repo-relative path or stdin (-)",
+      },
+      {
+        name: "contract",
+        takesValue: true,
+        summary: "Serve context as the opum-agent-workflow/v1 projection (use opum-agent-workflow/v1)",
+      },
     ],
     json: true,
     kind: "agent.profiles",
-    resultKinds: ["agent.profiles", "agent.profile", "agent.context.export"],
+    resultKinds: ["agent.profiles", "agent.profile", "agent.context.export", "agent.workflow.projection"],
     // Profile/reference validation is command-owned (extra 6), unknown profiles are
-    // command-owned not_found (extra 3), and task-file/output paths reach read/write.
+    // command-owned not_found (extra 3), and task-file/output paths reach read/write;
+    // `project`'s conflict diagnostic rides exit 5 via the existing write seam.
     exitCodes: exitCodesFor(["bundle", "read", "write"], [3, 6]),
     examples: [
       "lore agent list",
       "lore agent show frontend-dev",
       'lore agent context frontend-dev --task "implement the checkout form"',
+      "lore agent project frontend-dev --request request.json",
+      "lore agent context frontend-dev --task LCLI-348 --contract opum-agent-workflow/v1 --json",
     ],
   },
   {

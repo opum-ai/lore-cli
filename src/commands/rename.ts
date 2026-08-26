@@ -44,6 +44,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join, posix, win32 } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
+import type { TrackerBackend } from "../config";
 import { type BundleGraph, buildGraph, loadBundle, toRefList, UNREADABLE_DIRECTORY_WARNING } from "../core/bundle";
 import { type Concept, idFromPath, parseConcept } from "../core/concept";
 import { generateIndexes, INDEX_BLOCK_BEGIN, INDEX_BLOCK_END, locateManagedBlock } from "../core/indexes";
@@ -59,7 +60,8 @@ import {
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_CODES, EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { type BacklogCommitResult, commitBacklogFiles, type GitSpawn, renderBacklogCommitLine } from "../state";
+import { type BacklogCommitResult, type GitSpawn, renderBacklogCommitLine } from "../state";
+import { persistTrackerWrites, resolveSelectedBackend, type TrackerWriteRef } from "../tracker-persistence";
 import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
 import { canonicalIdentity, readIndexBytes } from "./discover";
 import { assertNoSymlinkInAnyPath, ensureDir, moveFile, writeFileOverwriting } from "./fswrite";
@@ -91,6 +93,8 @@ export interface RenameOptions {
   adapter?: BacklogAdapter;
   /** The git-write seam (`state.ts`) for committing `backlog/` after the back-reference move; defaults to the real `git` binary. Only used when the concept is linked and not a `--dry-run`. Injected in tests. */
   gitSpawn?: GitSpawn;
+  /** Explicit tracker-backend override (LCLI-333.1); production resolves via `resolveTrackerSelection`. Test/CI pin only — never a runtime fallback. */
+  backend?: TrackerBackend;
 }
 
 /** The parsed form of `lore rename`'s arguments. */
@@ -230,7 +234,7 @@ export async function runRename(options: RenameOptions): Promise<number> {
   // unlinked doc keeps its historical zero-Backlog-dependency behavior — and under `--dry-run`,
   // which previews the file-level plan only, not a Backlog-side one.
   let backRefs: readonly MovedBackRef[] = [];
-  let editedTaskFiles: readonly string[] = [];
+  let refs: readonly TrackerWriteRef[] = [];
   // `plan.rename` is never actually `null` here — `rewriteInbound` above is always called with
   // `move: true` — but the check is kept (mirrors `assertTargetFree`'s identical guard) so this
   // stays correct by construction rather than by the caller's current behavior, should a future
@@ -246,15 +250,19 @@ export async function runRename(options: RenameOptions): Promise<number> {
       `${DOCS_DIR}/${plan.rename.to}`,
     );
     backRefs = moved.outcomes;
-    editedTaskFiles = moved.editedFiles;
+    refs = moved.refs;
   }
 
-  // Commit exactly the task files the back-reference move edited — lore is the sole committer of
-  // `backlog/` (ADR-0012, design §3.6), so a `rename` no longer leaves them uncommitted until the
-  // next `lore sync`. Scoped to `editedTaskFiles`, so an unlinked/`--dry-run` rename or an
-  // all-`already-current` move (empty) commits nothing and an unrelated dirty `backlog/` edit is
-  // never swept in (ADR-0012 §1).
-  const backlogCommit = await commitBacklogFiles(editedTaskFiles, options, RENAME_COMMIT_MESSAGE);
+  // Persist exactly the tracker writes the back-reference move made through the selected backend —
+  // under `backlog` lore remains the sole committer of `backlog/` (ADR-0012 §1, unrelated dirty
+  // files never swept in); under any other backend zero git runs and a non-null reported file is
+  // refused loud (LCLI-333.1). Scoped to `refs`, so an unlinked/`--dry-run` rename or an
+  // all-`already-current` move (empty) persists nothing.
+  const backlogCommit = await persistTrackerWrites(resolveSelectedBackend(options.root, options.backend), refs, {
+    root: options.root,
+    message: RENAME_COMMIT_MESSAGE,
+    gitSpawn: options.gitSpawn,
+  });
 
   // commitBacklogFiles captures a commit failure into backlogCommit.error rather than throwing, so
   // the report emit below always runs on the write path — a git failure no longer skips it
