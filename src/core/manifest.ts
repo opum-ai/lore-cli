@@ -685,7 +685,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
       { name: "force", takesValue: false, summary: "Replace a differing regular --out file" },
     ],
     json: true,
-    kind: "agent.context.export",
+    kind: "agent.profiles",
     resultKinds: ["agent.profiles", "agent.profile", "agent.context.export"],
     // Profile/reference validation is command-owned (extra 6), unknown profiles are
     // command-owned not_found (extra 3), and task-file/output paths reach read/write.

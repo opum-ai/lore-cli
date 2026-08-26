@@ -352,6 +352,11 @@ describe("lore agent command", () => {
       await run(["bun", "lore", "help", "agent", "--json"], { cwd: root, stdout: help, stderr, isTTY: false }),
     ).toBe(0);
     expect(JSON.parse(help.text()).data.commands[0].name).toBe("agent");
+    // Regression (LCLI-348): the manifest-declared default kind must equal the kind
+    // the primary `list` action actually emits, so registry consumers can discover it.
+    const manifestEntry = JSON.parse(help.text()).data.commands[0];
+    expect(manifestEntry.kind).toBe("agent.profiles");
+    expect(manifestEntry.resultKinds).toContain("agent.profiles");
   });
 
   test("validates action arity, task exclusivity, force, budget, and unknown profile", async () => {
