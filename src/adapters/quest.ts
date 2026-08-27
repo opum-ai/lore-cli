@@ -480,9 +480,16 @@ function migrationReceipt(value: unknown): QuestMigrationReceipt {
   };
 }
 function criteria(v: unknown, name: string): BacklogCriterion[] {
-  if (!Array.isArray(v) || v.some((x) => typeof x !== "string"))
-    throw new LoreError("drift", `Quest returned invalid ${name}`, `Quest ${REQUIRED_VERSION} is required`);
-  return v.map((text) => ({ text, checked: false }));
+  const invalid = () =>
+    new LoreError("drift", `Quest returned invalid ${name}`, `Quest ${REQUIRED_VERSION} is required`);
+  if (!Array.isArray(v)) throw invalid();
+  return v.map((item) => {
+    if (!record(item)) throw invalid();
+    const { index, text, checked } = item;
+    if (typeof text !== "string" || typeof checked !== "boolean") throw invalid();
+    if (index !== undefined && (typeof index !== "number" || !Number.isInteger(index) || index < 0)) throw invalid();
+    return { text, checked };
+  });
 }
 function comments(v: unknown): BacklogComment[] {
   if (!Array.isArray(v) || v.some((x) => !record(x) || typeof x.body !== "string"))

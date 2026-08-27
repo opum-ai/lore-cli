@@ -5,6 +5,16 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-08-27
+
+### Fixed
+
+- The Quest adapter now accepts the Quest 0.2.7 released structured criterion
+  contract — `acceptanceCriteria` and `definitionOfDone` items of the shape
+  `{index, text, checked}` — mapping them losslessly to Lore criteria with
+  the positional `index` deliberately dropped, and failing loud (drift) on
+  any other shape; 0.3.3 is incompatible with public Quest 0.2.7 (LCLI-352).
+
 ## [0.3.3] - 2026-08-26
 
 ### Fixed

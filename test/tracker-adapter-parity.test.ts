@@ -118,7 +118,7 @@ function equivalentQuestTask(): Record<string, unknown> {
     documentation: BASE_VIEW.documentation,
     modifiedFiles: BASE_VIEW.modifiedFiles,
     subtasks: BASE_VIEW.subtasks,
-    acceptanceCriteria: BASE_VIEW.acceptanceCriteria.map((c: { text: string }) => c.text),
+    acceptanceCriteria: BASE_VIEW.acceptanceCriteria,
     definitionOfDone: [],
     description: BASE_VIEW.description,
     plan: ["p1", "p2"],
