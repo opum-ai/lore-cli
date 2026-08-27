@@ -5,7 +5,7 @@ status: To Do
 assignee:
   - '@lore-cli'
 created_date: '2026-08-14 18:09'
-updated_date: '2026-08-27 16:20'
+updated_date: '2026-08-27 20:28'
 labels:
   - release
   - quest
@@ -54,4 +54,6 @@ RC publication gate invoked per recorded direct-user order (FMC correlation 960b
 Publication FAIL-CLOSED (2026-08-27): first npm publish of @opum-ai/lore-darwin-arm64@0.3.3 (tag rc) returned EOTP web-auth challenge; the single permitted bounded --auth-type=web window closed without browser completion per procedure. No further attempts made. Partial-state proof: all seven @opum-ai packages still lack 0.3.3, latest=0.3.2 unchanged on every package, no rc dist-tag exists anywhere. Next decision (human): complete a live browser auth window for the npm CLI, or supply/confirm the credential path out-of-band; then the publication resumes with the remaining single-attempt budget honored per package.
 
 Second publication FAIL-CLOSED (2026-08-27, GO 4ce89247 for 54b94e68): npm publish of darwin-arm64@0.3.3 (tag rc) still challenges for web auth despite operator-reported authentication; the single bounded --auth-type=web window of this execution closed without completion. Registry proof: 0.3.3-present=0, rc-tag-present=0. Diagnosis: the CLI's ambient npm credential does not carry @opum-ai publish rights (or its web step-up needs a live browser session during the window). Remedy: operator completes the web-auth URL in a browser while a window is open, or runs the recorded §4 publish sequence from their own authenticated terminal, or installs a publish-scoped token for the CLI.
+
+Live-MFA publication attempt (correlation 20fd73dc, user present): three mechanically distinct bounded windows for @opum-ai/lore-darwin-arm64@0.3.3 (tag release-candidate) all closed without auth — (1) non-TTY npm publish --auth-type=web exited instantly with EOTP before presenting a challenge; (2) pseudo-TTY window held ~5min but npm printed the auth URL into a log that the worker is forbidden to display, so the present user could not reach it; (3) --browser=open window held ~5min but npm again printed rather than opened the URL. Registry proof: 0.3.3 present=0 on all seven packages, no publish processes remain. Mechanic conclusion: this session cannot relay the npm auth URL (secret-discipline) and npm does not auto-open a browser here; the workable unblock is the operator running the seven publish commands (platforms first, root last, --access public --tag release-candidate, exact tarballs under /Volumes/external/.opum-candidates/opum-doc-qualification-2026-08-26/final-lore-a4322b7/npm-packages) from their own terminal, or installing a publish-scoped credential for this CLI.
 <!-- SECTION:NOTES:END -->
