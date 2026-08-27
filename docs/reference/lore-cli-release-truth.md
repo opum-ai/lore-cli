@@ -21,6 +21,13 @@ availability claim.
 
 ### Current state
 
+`0.3.4` is the release candidate for the Quest 0.2.7 structured-criterion
+compatibility repair (LCLI-352): the Quest adapter now maps the released
+`{index, text, checked}` acceptanceCriteria/definitionOfDone shapes
+losslessly and fails loud on any other shape, because published `0.3.3` is
+demonstrably incompatible with public Quest 0.2.7 (`lore link` exits 6). Its
+family manifests and exact optional-dependency pins are aligned at `0.3.4`.
+
 `0.3.3` is the release candidate for the agent manifest-kind contract repair
 (LCLI-350). Its seven package manifests and exact optional-dependency pins are
 aligned at `0.3.3`. The authoritative installable candidate family (six

@@ -1,6 +1,6 @@
 {
   "name": "@opum-ai/lore",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "author": "Jeremy Newhouse",
   "repository": {
     "type": "git",
@@ -22,12 +22,12 @@
     "zod": "4.4.3"
   },
   "optionalDependencies": {
-    "@opum-ai/lore-darwin-arm64": "0.3.3",
-    "@opum-ai/lore-darwin-x64": "0.3.3",
-    "@opum-ai/lore-linux-arm64": "0.3.3",
-    "@opum-ai/lore-linux-x64": "0.3.3",
-    "@opum-ai/lore-win32-arm64": "0.3.3",
-    "@opum-ai/lore-win32-x64": "0.3.3"
+    "@opum-ai/lore-darwin-arm64": "0.3.4",
+    "@opum-ai/lore-darwin-x64": "0.3.4",
+    "@opum-ai/lore-linux-arm64": "0.3.4",
+    "@opum-ai/lore-linux-x64": "0.3.4",
+    "@opum-ai/lore-win32-arm64": "0.3.4",
+    "@opum-ai/lore-win32-x64": "0.3.4"
   },
   "bin": {
     "lore": "bin/lore.cjs"
