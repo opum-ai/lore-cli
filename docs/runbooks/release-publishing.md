@@ -443,36 +443,36 @@ publish is explicitly marked public. Root `package.json` and all six
 ### 4. RC dist-tag publication (release-candidate, non-promoting)
 
 This procedure publishes a qualified release **candidate** to npm under the
-`rc` dist-tag. It exists because the step-3 flow above ends in a stable
-`latest` publication and requires `main` promotion plus a Release workflow
-run — controls that belong to calling a version *released*. An `rc`
-publication is explicitly not a release claim: the "Evidence required to call
-Lore released" list in `docs/reference/lore-cli-release-truth.md` still
-governs that designation, and this procedure must never touch `latest`,
-`main`, or production channels.
+`release-candidate` dist-tag. It exists because the step-3 flow above ends in
+a stable `latest` publication and requires `main` promotion plus a Release
+workflow run — controls that belong to calling a version *released*. An
+`release-candidate` publication is explicitly not a release claim: the
+"Evidence required to call Lore released" list in
+`docs/reference/lore-cli-release-truth.md` still governs that designation,
+and this procedure must never touch `latest`, `main`, or production channels.
 
 1. **Authority.** Requires an explicit, recorded direct-user/Controller order
-   for the exact candidate. Never self-authorize an `rc` publication.
+   for the exact candidate. Never self-authorize a `release-candidate` publication.
 2. **Qualified inputs.** Publish only the immutable candidate family recorded
    in `docs/reference/lore-cli-release-truth.md` for the target version — the
    staging directory, family manifest SHA-256, per-package byte sizes,
    SHA-256 digests, SHA-512 SRI integrity values, and source commit are the
    provenance record. Verify every tarball against the manifest immediately
    before publishing and never repack locally. (The step-3 workflow-artifact
-   rule remains the standard for stable releases; for `rc` publication the
+   rule remains the standard for stable releases; for `release-candidate` publication the
    dev-recorded release-truth family is the qualified-input provenance.)
 3. **Order and command.** All six platform packages first, the root launcher
    last, each as an exact tarball path:
 
    ```sh
-   npm publish <path-to-tarball>.tgz --access public --tag rc \
+   npm publish <path-to-tarball>.tgz --access public --tag release-candidate \
      --registry=https://registry.npmjs.org
    ```
 
    `publishConfig.access` is already `public`; the flag is kept explicit per
    the `0.1.0` interactive-publication precedent.
 4. **`latest` protection.** After publishing, verify `npm view <pkg>
-   dist-tags --json` for all seven packages: `rc` resolves to the candidate
+   dist-tags --json` for all seven packages: `release-candidate` resolves to the candidate
    version and `latest` is unchanged.
 5. **Auth and OTP fail-closed.** Use the ambient authenticated npm CLI without
    reading `npmrc`, environment variables, or token material. If npm issues a
