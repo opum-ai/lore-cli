@@ -40,10 +40,22 @@ the launcher plus host platform tarball self-reports `0.3.3` and its
 the LCLI-350 fix and is superseded by the staged rebuild; it is retained for
 audit trail only. The candidate is not released until a qualified tag,
 Release workflow artifact evidence, interactive publication, registry
-verification, and clean-install evidence all exist. Publication remains
-blocked on the ODOC-63.7 npm credential decision.
+verification, and clean-install evidence all exist.
 
-`0.3.2` is the release candidate for the packaged Backlog-isolation repair.
+Publication of this candidate under the `rc` dist-tag is authorized by the
+recorded direct-user order (FMC correlation
+`960b5e3be42042628512c1e3e5e7d771`, replacing
+`e2343ae664dd45d69b1de178465eaf05`, Controller `opum-doc`), which resolves
+the ODOC-63.7 npm credential decision for this exact path: the publication
+uses the ambient authenticated npm CLI without reading any credential
+material, never touches `latest`/`main`/production, and follows the recorded
+RC dist-tag procedure in `docs/runbooks/release-publishing.md` §4. The
+accepted order is the recording instrument for the `rc` tag choice — no
+earlier repository record names an RC dist-tag. An `rc` publication is a
+candidate availability event, not the "released" designation above.
+
+`0.3.2` is the release candidate for the packaged Backlog-isolation repair
+(superseded as the active candidate by `0.3.3` above).
 Its seven package manifests and exact optional-dependency pins are prepared for
 qualification, but it is not released until a qualified main tag, Release
 workflow artifact evidence, interactive publication, registry verification,
