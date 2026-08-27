@@ -5,7 +5,7 @@ status: To Do
 assignee:
   - '@lore-cli'
 created_date: '2026-08-14 18:09'
-updated_date: '2026-08-27 16:09'
+updated_date: '2026-08-27 16:20'
 labels:
   - release
   - quest
@@ -52,4 +52,6 @@ Evidence-only reconciliation (FMC correlation 880647c950004e31b7e0ea4634bb9f51, 
 RC publication gate invoked per recorded direct-user order (FMC correlation 960b5e3be42042628512c1e3e5e7d771, Controller opum-doc): the 0.3.3 candidate family (source a4322b71df3afaa94e1d1065934513dd34683fa6, manifest sha256 745628def534bd76375916c9b3ca57ecf967e3b2000ed5edb6047e959ebbc746) is authorized for interactive npm publication under the rc dist-tag only (latest/main/production forbidden). Registry publication evidence will be appended to this task after the publish; the Quest public-version blocker in AC#1 is unaffected and this task remains open.
 
 Publication FAIL-CLOSED (2026-08-27): first npm publish of @opum-ai/lore-darwin-arm64@0.3.3 (tag rc) returned EOTP web-auth challenge; the single permitted bounded --auth-type=web window closed without browser completion per procedure. No further attempts made. Partial-state proof: all seven @opum-ai packages still lack 0.3.3, latest=0.3.2 unchanged on every package, no rc dist-tag exists anywhere. Next decision (human): complete a live browser auth window for the npm CLI, or supply/confirm the credential path out-of-band; then the publication resumes with the remaining single-attempt budget honored per package.
+
+Second publication FAIL-CLOSED (2026-08-27, GO 4ce89247 for 54b94e68): npm publish of darwin-arm64@0.3.3 (tag rc) still challenges for web auth despite operator-reported authentication; the single bounded --auth-type=web window of this execution closed without completion. Registry proof: 0.3.3-present=0, rc-tag-present=0. Diagnosis: the CLI's ambient npm credential does not carry @opum-ai publish rights (or its web step-up needs a live browser session during the window). Remedy: operator completes the web-auth URL in a browser while a window is open, or runs the recorded §4 publish sequence from their own authenticated terminal, or installs a publish-scoped token for the CLI.
 <!-- SECTION:NOTES:END -->
