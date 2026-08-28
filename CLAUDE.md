@@ -72,14 +72,20 @@ Five traps that local context will not warn you about:
   returns 404 to anyone outside the org. Mark it private at every citation, and
   point users at the npm package instead. See
   [Lore CLI release truth](docs/reference/lore-cli-release-truth.md).
-- **Quest is not installable.** `@opum-ai/quest` returned a registry 404 on
-  2026-08-04. Never present it as published, installable, or available, and
-  never build the thing that implies it — the prohibition covers artifacts, not
-  just wording: no install command, package badge, or version reference; no
-  coming-soon install affordance, disabled or otherwise; and no manifest entry,
-  dependency, lockfile pin, or fixture that would resolve the package. The
-  unscoped `lore` and `quest` npm names are unrelated third-party packages;
-  always use the `@opum-ai/` scope.
+- **Quest is published; this file's earlier "not installable" rule is retired.**
+  As observed on 2026-08-28, `https://registry.npmjs.org/@opum-ai%2Fquest`
+  returned **200, public, `latest` 0.2.9** without authentication — superseding
+  the 2026-08-04 registry-404 observation this bullet used to carry, and with it
+  the blanket prohibition on install commands, version references, and manifest
+  entries for Quest. Both observations are dated points, not standing facts:
+  read the registry back before repeating either. Two rules survive the
+  retirement. Always write the `@opum-ai/` scope — the unscoped `lore` and
+  `quest` npm names are unrelated third-party packages, so an unscoped install
+  command installs someone else's software. And never gate a Quest version by
+  an exact-match allowlist: compare against a minimum version, so a Quest newer
+  than the one you tested is accepted rather than rejected as unsupported
+  (`src/adapters/quest.ts`'s allowlist did exactly that and rejected 0.2.9;
+  `src/adapters/backlog.ts`'s `MIN_BACKLOG_VERSION` floor is the shape to copy).
 - **Peers are ephemeral live sessions, not per-repository services.** There is no
   `mcp__<repo>__*` server. MCP peer servers are per *machine*
   (`claude-peer-jetson`, `-mbpm2`, `-rpi5`, `-spark`) and reach only *other*
