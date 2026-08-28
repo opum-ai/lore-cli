@@ -11,15 +11,19 @@ import { capture } from "./helpers";
 
 const JSON_OUTPUT: OutputContext = { mode: "json", color: false };
 
-type FacadeData = {
+type BindingRecord = {
+  contract: string;
   selectedVersion: number;
+  requestId: string;
+  taskId: string;
+  profileId: string;
+  profileRevision: string;
+  digestAlgorithm: string;
+  digest: string;
   contextId: string;
-  contextDigestSha256: string;
-  request: { task: { id: string } };
-  context: { profile: { name: string } };
-  profileRevision: { path: string; sha256: string; mtimeMs: number };
-  sources: unknown[];
-  inputRevisions: unknown[];
+  issuedAt: string;
+  expiresAt: string;
+  sourceIds: string[];
 };
 
 let root: string;
@@ -65,63 +69,65 @@ function retrieval(): RetrievalGraphLoader {
   return async () => ({ graph, backend: "reference" });
 }
 
-describe("`lore agent context --contract opum-agent-workflow/v1` facade", () => {
-  test("returns a validator-satisfying projection envelope bound to the task id", async () => {
+/** Run the binding seam in-process with the binding delivered via --request. */
+async function runBinding(
+  overrides: Record<string, unknown> = {},
+  task?: string,
+): Promise<{ code: number; stdout: string }> {
+  const binding = {
+    contract: "opum-agent-workflow",
+    supportedVersions: [1],
+    requestId: "a".repeat(32),
+    taskId: "T-42",
+    profileId: "frontend-dev",
+    ...overrides,
+  };
+  writeFileSync(join(root, "binding.json"), `${JSON.stringify(binding)}\n`);
+  const stdout = capture();
+  const args = ["context", "frontend-dev", "--request", "binding.json", "--contract", "opum-agent-workflow/v1"];
+  if (task !== undefined) args.splice(2, 0, "--task", task);
+  const code = await runAgent({ root, output: JSON_OUTPUT, args, stdout, retrieval: retrieval() });
+  return { code, stdout: stdout.text() };
+}
+
+describe("`lore agent context --contract opum-agent-workflow/v1` binding seam", () => {
+  test("returns the bare facade record bound to the exact request", async () => {
     fixture();
     specialist();
-    const stdout = capture();
-    expect(
-      await runAgent({
-        root,
-        output: JSON_OUTPUT,
-        args: ["context", "frontend-dev", "--task", "T-42", "--contract", "opum-agent-workflow/v1"],
-        stdout,
-        retrieval: retrieval(),
-      }),
-    ).toBe(0);
-    const envelope = JSON.parse(stdout.text()) as {
-      schemaVersion: number;
-      kind: string;
-      data: Record<string, unknown>;
-    };
-    expect(envelope.schemaVersion).toBe(1);
-    expect(envelope.kind).toBe("agent.workflow.projection");
-    const data = envelope.data as FacadeData;
-    expect(data.selectedVersion).toBe(1);
-    // deterministic contextId
-    expect(typeof data.contextId).toBe("string");
-    // bare 64-hex sha256 digest
-    expect(data.contextDigestSha256).toMatch(/^[0-9a-f]{64}$/);
-    // exact task/profile/profileRevision binding
-    expect(data.request.task.id).toBe("T-42");
-    expect(data.context.profile.name).toBe("frontend-dev");
-    expect(data.profileRevision.path).toBe(".lore/agents/frontend-dev.toml");
-    expect(data.profileRevision.sha256).toMatch(/^sha256:[0-9a-f]{64}$/);
-    // source IDs and freshness
-    expect(Array.isArray(data.sources)).toBe(true);
-    expect(data.sources.length).toBeGreaterThan(0);
-    expect(typeof data.profileRevision.mtimeMs).toBe("number");
-    expect(Array.isArray(data.inputRevisions)).toBe(true);
+    const { code, stdout } = await runBinding();
+    expect(code).toBe(0);
+    const lines = stdout.trim().split("\n");
+    expect(lines).toHaveLength(1);
+    const record = JSON.parse(lines[0] ?? "{}") as BindingRecord;
+    expect(record.contract).toBe("opum-agent-workflow");
+    expect(record.selectedVersion).toBe(1);
+    expect(record.requestId).toBe("a".repeat(32));
+    expect(record.taskId).toBe("T-42");
+    expect(record.profileId).toBe("frontend-dev");
+    expect(record.digestAlgorithm).toBe("sha256");
+    expect(record.digest).toMatch(/^[0-9a-f]{64}$/);
+    expect(typeof record.contextId).toBe("string");
+    expect(record.profileRevision).toMatch(/^[0-9a-f]{64}$/);
+    expect(Array.isArray(record.sourceIds)).toBe(true);
+    expect(record.sourceIds.length).toBeGreaterThan(0);
+    const issued = Date.parse(record.issuedAt);
+    const expires = Date.parse(record.expiresAt);
+    expect(expires - issued).toBeGreaterThan(0);
+    expect(expires - issued).toBeLessThanOrEqual(300_000);
   });
 
   test("is deterministic in contextId and digest across runs", async () => {
     fixture();
     specialist();
-    const run = async () => {
-      const stdout = capture();
-      await runAgent({
-        root,
-        output: JSON_OUTPUT,
-        args: ["context", "frontend-dev", "--task", "T-7", "--contract", "opum-agent-workflow/v1"],
-        stdout,
-        retrieval: retrieval(),
-      });
-      return JSON.parse(stdout.text()).data as FacadeData;
+    const run = async (): Promise<{ contextId: string; digest: string }> => {
+      const { stdout } = await runBinding({ taskId: "T-7" }, "T-7");
+      const record = JSON.parse(stdout.trim()) as BindingRecord;
+      return { contextId: record.contextId, digest: record.digest };
     };
     const one = await run();
     const two = await run();
     expect(one.contextId).toBe(two.contextId);
-    expect(one.contextDigestSha256).toBe(two.contextDigestSha256);
+    expect(one.digest).toBe(two.digest);
   });
 
   test("rejects unknown contracts with stable usage diagnostics", async () => {
