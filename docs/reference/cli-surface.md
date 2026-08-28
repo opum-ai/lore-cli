@@ -601,6 +601,7 @@ lore agent show frontend-dev
 lore agent context frontend-dev --task "Add accessible dialog focus management"
 lore agent context frontend-dev --task-file task.txt --max-tokens 6000
 lore agent context frontend-dev --task LCLI-348 --contract opum-agent-workflow/v1 --json
+echo '{"contract":"opum-agent-workflow","supportedVersions":[1],"requestId":"<32hex>","taskId":"T-1","profileId":"frontend-dev"}' | lore agent context frontend-dev --contract opum-agent-workflow/v1 --json
 ```
 
 | Subcommand | Contract |
@@ -608,6 +609,7 @@ lore agent context frontend-dev --task LCLI-348 --contract opum-agent-workflow/v
 | `list` | Stable profile summaries; `kind: agent.profiles` |
 | `show <name>` | One normalized profile; `kind: agent.profile` |
 | `context <name>` | Exactly one of `--task <text>` or `--task-file <repo-relative-path|->`; optional `--max-tokens <n>`, `--out <repo-relative-path>`, and `--force`; with `--contract opum-agent-workflow/v1` (and exactly one `--task <taskId>`, without `--task-file/--out/--force`) serves the read-only projection; `kind: agent.context.export` (default) or `agent.workflow.projection` (`--contract`) |
+| `context <name>` binding seam | With `--contract opum-agent-workflow/v1` and **no** `--task`/`--task-file`, the request binding is read from stdin exactly as the Opum facade sends it — `{contract:"opum-agent-workflow", supportedVersions:[1], requestId:<32hex>, taskId:<string>, profileId:<string>, profileRevision?:<string>}` — and stdout carries machine JSON only: a bare success record (`contract`, `selectedVersion:1`, `requestId`, `taskId`, `profileId`, `profileRevision`, `digestAlgorithm:"sha256"`, `digest:<64hex>`, `contextId`, `issuedAt`, `expiresAt` ≤5 minutes after `issuedAt`, `sourceIds`) or a bare `{"error":{"code":"OPUM_WORKFLOW_LORE_ABSENT|STALE|INCOMPATIBLE|MISMATCH"}}` envelope with the stable marker echoed on stderr and exit `1`. Every failure is fail-closed; no fallback data is invented |
 
 `context` reserves space for metadata and mandatory pins, then ranks complete
 heading/top-level-block records from `sources`. Task-file and output paths are

@@ -136,6 +136,103 @@ export interface AgentWorkflowProjection {
   readonly context: AgentContextExport;
 }
 
+/** The stable public failure markers served by the workflow binding seam. */
+export type WorkflowBindingFailureCode =
+  | "OPUM_WORKFLOW_LORE_ABSENT"
+  | "OPUM_WORKFLOW_LORE_STALE"
+  | "OPUM_WORKFLOW_LORE_INCOMPATIBLE"
+  | "OPUM_WORKFLOW_LORE_MISMATCH";
+
+/** The exact request binding accepted on the workflow binding seam. */
+export interface WorkflowBinding {
+  readonly contract: typeof WORKFLOW_CONTRACT;
+  readonly supportedVersions: readonly [1];
+  readonly requestId: string;
+  readonly taskId: string;
+  readonly profileId: string;
+  readonly profileRevision?: string;
+}
+
+const BINDING_KEYS = new Set(["contract", "supportedVersions", "requestId", "taskId", "profileId", "profileRevision"]);
+
+/** Thrown when the binding fails closed; the command layer maps it to a stable marker. */
+export class WorkflowBindingError extends LoreError {
+  readonly marker: WorkflowBindingFailureCode;
+  constructor(marker: WorkflowBindingFailureCode, message: string, input?: Record<string, unknown>) {
+    super(
+      "validation",
+      message,
+      `the ${WORKFLOW_CONTRACT}/${WORKFLOW_VERSION} binding seam rejects this request`,
+      input,
+    );
+    this.marker = marker;
+  }
+}
+
+/**
+ * Parse and strictly validate one request binding: unknown keys, a wrong
+ * contract, a negotiation set that is not exactly [1], a non-32-hex requestId,
+ * or empty taskId/profileId are stable public failures — never a guess or a
+ * fallback. Fidelity of the echoed identity is the caller's contract.
+ */
+export function parseWorkflowBinding(raw: string): WorkflowBinding {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new WorkflowBindingError("OPUM_WORKFLOW_LORE_INCOMPATIBLE", "binding is not valid JSON");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new WorkflowBindingError("OPUM_WORKFLOW_LORE_INCOMPATIBLE", "binding must be a JSON object");
+  }
+  const record = parsed as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (!BINDING_KEYS.has(key)) {
+      throw new WorkflowBindingError("OPUM_WORKFLOW_LORE_INCOMPATIBLE", `unknown binding field "${key}"`);
+    }
+  }
+  if (record.contract !== WORKFLOW_CONTRACT) {
+    throw new WorkflowBindingError(
+      "OPUM_WORKFLOW_LORE_INCOMPATIBLE",
+      `unsupported binding contract "${String(record.contract)}"`,
+    );
+  }
+  const versions = record.supportedVersions;
+  const negotiated = Array.isArray(versions) && versions.length === 1 && versions[0] === 1;
+  if (!negotiated) {
+    throw new WorkflowBindingError(
+      "OPUM_WORKFLOW_LORE_INCOMPATIBLE",
+      'binding "supportedVersions" must be exactly [1]',
+    );
+  }
+  if (typeof record.requestId !== "string" || !/^[a-f0-9]{32}$/.test(record.requestId)) {
+    throw new WorkflowBindingError("OPUM_WORKFLOW_LORE_INCOMPATIBLE", 'binding "requestId" must be a 32-hex string');
+  }
+  if (typeof record.taskId !== "string" || record.taskId.trim() === "") {
+    throw new WorkflowBindingError("OPUM_WORKFLOW_LORE_INCOMPATIBLE", 'binding "taskId" must be a non-empty string');
+  }
+  if (typeof record.profileId !== "string" || record.profileId.trim() === "") {
+    throw new WorkflowBindingError("OPUM_WORKFLOW_LORE_INCOMPATIBLE", 'binding "profileId" must be a non-empty string');
+  }
+  if (
+    record.profileRevision !== undefined &&
+    (typeof record.profileRevision !== "string" || record.profileRevision === "")
+  ) {
+    throw new WorkflowBindingError(
+      "OPUM_WORKFLOW_LORE_INCOMPATIBLE",
+      'binding "profileRevision" must be a non-empty string when present',
+    );
+  }
+  return {
+    contract: WORKFLOW_CONTRACT,
+    supportedVersions: [1],
+    requestId: record.requestId,
+    taskId: record.taskId,
+    profileId: record.profileId,
+    ...(record.profileRevision === undefined ? {} : { profileRevision: record.profileRevision as string }),
+  };
+}
+
 /**
  * Compile the deterministic agent-context export and wrap it in the public
  * workflow projection. Read-only: stats/hashes inputs, never writes. When the

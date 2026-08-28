@@ -13,8 +13,13 @@ import {
 import {
   type AgentWorkflowProjection,
   compileAgentWorkflowProjection,
+  parseWorkflowBinding,
   parseWorkflowRequest,
+  WORKFLOW_CONTRACT,
   WORKFLOW_CONTRACT_SELECTOR,
+  type WorkflowBinding,
+  WorkflowBindingError,
+  type WorkflowBindingFailureCode,
 } from "../core/agent-workflow";
 import { compareCodeUnits } from "../core/order";
 import { loadReferenceRetrievalGraph, type RetrievalGraphLoader } from "../core/retrieval";
@@ -94,8 +99,11 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
       emit(profilesRenderable(data), options.output, options.stdout);
       return EXIT_OK;
     }
-    const profile = findAgentProfile(snapshot, action.name);
+    // Only `show` needs the profile eagerly; the context/project paths resolve
+    // their own profiles so the binding seam can fail closed with its own
+    // stable markers instead of the generic top-level error.
     if (action.kind === "show") {
+      const profile = findAgentProfile(snapshot, action.name);
       const data: AgentProfileResult = {
         ...summary(profile),
         pinned: profile.pinned.map((reference) => reference.normalized),
@@ -113,6 +121,7 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
     }
 
     const task = resolveTask(action, options);
+    const profile = findAgentProfile(snapshot, action.name);
     let data = compileAgentContext(snapshot, retrieval.graph, profile.name, task, action.maxTokens);
     const markdown = renderAgentContextMarkdown(data);
     if (action.out !== undefined) {
@@ -142,6 +151,99 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
 }
 
 /**
+ * Public workflow binding seam: `lore agent context <profile> --contract
+ * opum-agent-workflow/v1 --json` with no `--task`. The request binding is read
+ * from stdin exactly as the Opum facade sends it; stdout carries machine JSON
+/**
+ * Public workflow binding seam: `lore agent context <profile> --contract
+ * opum-agent-workflow/v1 --json` with no `--task`. The request binding is read
+ * from stdin exactly as the Opum facade sends it; stdout carries machine JSON
+ * only (a bare success record or a bare `{error:{code}}` envelope), and the
+ * stable marker is echoed on stderr for human consumers. Every failure mode is
+ * fail-closed: no invented fallback data, ever.
+ */
+async function runWorkflowBinding(action: ContractContextAction, options: AgentCommandOptions) {
+  let binding: WorkflowBinding;
+  try {
+    const raw = readFileSync(0, "utf8");
+    if (raw.trim() === "") {
+      throw new WorkflowBindingError("OPUM_WORKFLOW_LORE_ABSENT", "stdin binding is empty");
+    }
+    binding = parseWorkflowBinding(raw);
+  } catch (error) {
+    return emitBindingFailure(error, options);
+  }
+  try {
+    if (binding.profileId !== action.name) {
+      throw new WorkflowBindingError(
+        "OPUM_WORKFLOW_LORE_MISMATCH",
+        "binding profileId does not match the requested profile",
+        { binding: binding.profileId, profile: action.name },
+      );
+    }
+    const snapshot = loadAgentProfiles(options.root);
+    const advisories = new WarningCollector();
+    const retrieval = await (options.retrieval ?? loadReferenceRetrievalGraph)({
+      root: options.root,
+      warnings: advisories,
+      adapter: options.adapter,
+    });
+    try {
+      validateAgentProfileReferences(snapshot, retrieval.graph);
+      advisories.flush({ color: options.output.color, stderr: options.stderr });
+      const request = parseWorkflowRequest(JSON.stringify({ task: { id: binding.taskId, text: binding.taskId } }));
+      const projection = compileAgentWorkflowProjection(snapshot, retrieval.graph, action.name, request, {
+        root: options.root,
+        maxTokens: action.maxTokens,
+      });
+      const current = projection.profileRevision.sha256.replace(/^sha256:/, "");
+      if (binding.profileRevision !== undefined && binding.profileRevision !== current) {
+        throw new WorkflowBindingError("OPUM_WORKFLOW_LORE_STALE", "binding pins a stale profile revision", {
+          pinned: binding.profileRevision,
+          current,
+        });
+      }
+      const now = Date.now();
+      const record = {
+        contract: WORKFLOW_CONTRACT,
+        selectedVersion: 1,
+        requestId: binding.requestId,
+        taskId: binding.taskId,
+        profileId: binding.profileId,
+        profileRevision: current,
+        digestAlgorithm: "sha256",
+        digest: projection.contextDigestSha256,
+        contextId: projection.contextId,
+        issuedAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + 300_000).toISOString(),
+        sourceIds: projection.sources,
+      };
+      options.stdout?.write(`${JSON.stringify(record)}\n`);
+      return EXIT_OK;
+    } finally {
+      await retrieval.dispose?.();
+    }
+  } catch (error) {
+    return emitBindingFailure(error, options);
+  }
+}
+
+function emitBindingFailure(error: unknown, options: AgentCommandOptions): number {
+  const marker: WorkflowBindingFailureCode =
+    error instanceof WorkflowBindingError
+      ? error.marker
+      : error instanceof LoreError
+        ? error.type === "not_found"
+          ? "OPUM_WORKFLOW_LORE_ABSENT"
+          : error.type === "conflict"
+            ? "OPUM_WORKFLOW_LORE_MISMATCH"
+            : "OPUM_WORKFLOW_LORE_INCOMPATIBLE"
+        : "OPUM_WORKFLOW_LORE_INCOMPATIBLE";
+  options.stdout?.write(`${JSON.stringify({ error: { code: marker } })}\n`);
+  options.stderr?.write(`${marker}\n`);
+  return 1;
+}
+/**
  * Facade: `lore agent context <profile> --task <taskId> --contract
  * opum-agent-workflow/v1 --json`. Additive adapter over the same projection
  * engine as `agent project`; the default context path is untouched.
@@ -149,6 +251,9 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
 type ContractContextAction = AgentAction & { kind: "context"; contract: string };
 
 async function runContextContract(action: ContractContextAction, options: AgentCommandOptions) {
+  if (action.task === undefined && action.taskFile === undefined) {
+    return runWorkflowBinding(action, options);
+  }
   const snapshot = loadAgentProfiles(options.root);
   const advisories = new WarningCollector();
   const retrieval = await (options.retrieval ?? loadReferenceRetrievalGraph)({
@@ -274,7 +379,14 @@ function parseAgentArgs(args: readonly string[]): AgentAction {
   }
   const task = nonEmptyOption(parsed, "task");
   const taskFile = nonEmptyOption(parsed, "task-file");
-  if ((task === undefined) === (taskFile === undefined)) {
+  const contract = nonEmptyOption(parsed, "contract");
+  // The workflow binding seam (--contract with no --task/--task-file) consumes
+  // its request binding from stdin; the classic path still requires exactly one.
+  if (
+    contract === WORKFLOW_CONTRACT_SELECTOR
+      ? task !== undefined && taskFile !== undefined
+      : (task === undefined) === (taskFile === undefined)
+  ) {
     throw usage(
       "agent context needs exactly one of --task or --task-file",
       "pass task text directly or read it from one path (use --task-file - for stdin)",
@@ -287,7 +399,6 @@ function parseAgentArgs(args: readonly string[]): AgentAction {
   if (force && out === undefined) {
     throw usage("--force requires --out", "pass an output path or remove --force");
   }
-  const contract = nonEmptyOption(parsed, "contract");
   if (contract !== undefined && contract !== WORKFLOW_CONTRACT_SELECTOR) {
     throw usage(`unsupported contract "${contract}"`, `this build serves ${WORKFLOW_CONTRACT_SELECTOR}`, { contract });
   }
