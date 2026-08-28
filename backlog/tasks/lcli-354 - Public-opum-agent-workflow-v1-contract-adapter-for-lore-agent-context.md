@@ -1,10 +1,10 @@
 ---
 id: LCLI-354
 title: Public opum-agent-workflow/v1 contract adapter for lore agent context
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-28 00:23'
-updated_date: '2026-08-28 01:43'
+updated_date: '2026-08-28 02:43'
 labels:
   - release
   - quest
@@ -35,4 +35,12 @@ Adapter implemented test-first at the public CLI/process seam (d11c289, PR #432 
 Strict contract correction applied (26201b7, PR #434 green-merged to dev 8b630bd, correlation d96e56df): binding-seam failures now leave stdout BYTE-EMPTY, echo the stable marker on stderr (newline convention only), and exit nonzero; success remains one machine-JSON record on stdout with no error marker on stderr. sourceIds proven to be a string[] of canonical source identifiers (normalized references; JSON contains no objects). Process-seam tests updated to assert byte-empty stdout on all four failure classes; full suite 2673/0/1 across 90 files; lint/typecheck clean. FINAL candidate regenerated: Release run 33132269305 (publish:false, success) on dev 8b630bd, artifact 9670776734 staged at /Volumes/external/.opum-candidates/opum-doc-qualification-2026-08-27/final-lore-8b630bd (provenance sha256-OK with 7 rows + binding_failure_contract field, SHA256SUMS all OK, fresh all-seven dry-run); extracted darwin-arm64 binary contains the OPUM_WORKFLOW_LORE markers. final-lore-30810e8 INVALIDATED (stdout-envelope behavior; marker added). Registry read-only: 0.3.4 absent on all seven packages.
 
 Final diff hygiene applied (ae267f6, PR #436 green-merged to dev 580ea7d, correlation c3e9d506): removed the duplicated JSDoc prefix before runWorkflowBinding; contract-mode failures are now fully deterministic — the binding seam suppresses dispatcher-level and local advisory noise (ordinary non-contract paths keep warnings) so stderr is exactly the stable marker plus newline on every failure, stdout byte-empty, exit nonzero. Process-seam failure tests upgraded to exact stderr equality. Focused 6/6 + agent/bin 48/48; CI green (run 33133171527). FINAL candidate regenerated: Release run 33133400306 (publish:false, success) on dev 580ea7d, artifact staged at /Volumes/external/.opum-candidates/opum-doc-qualification-2026-08-27/final-lore-580ea7d (provenance sha256-OK with binding_failure_contract = deterministic stderr-only markers, 7 tarball rows all verified, fresh all-seven dry-run); extracted darwin-arm64 binary contains the OPUM_WORKFLOW_LORE markers. final-lore-8b630bd INVALIDATED (pre-hygiene failure channel; marker added). Facade E2E remains gated on the unpublished quest 0.2.8 candidate.
+
+FINAL PACKED-CANDIDATE E2E COMPLETE (correlation b605b39e, fixtures final-e2e-b/e): (1) Contract-task precedence shipped — binding seam owns every --contract invocation incl. the facade --task form (PR #438, dev 9ea1b47); --task mismatch = MISMATCH; red-first process tests. (2) FINAL 0.3.4 candidate regenerated: Release run 33135411765 (publish:false, success) on dev 9ea1b47, artifact 9671891534 staged at /Volumes/external/.opum-candidates/opum-doc-qualification-2026-08-27/final-lore-9ea1b47 (provenance sha256-OK, 7 verified tarball rows, fresh all-seven dry-run, contract_task_precedence field). (3) Quest adopt/import parity: real Backlog.md source -> quest 0.2.8 init/migration preview+apply (digest 65d20400...) -> task view structured criteria. (4) Lore chain vs packed final candidate + local quest 0.2.8: init --tracker quest --migrate-backlog, new story, link added+backRef, sync, tasks rollup, validate/check --strict clean, quest task view documentation backref. (5) Lore context seam: facade-shape success (bare record, all fields) + all four failure channels byte-exact (stdout 0 bytes, stderr exactly the marker, exit 1). (6) Canonical Opum facade (source e9083b9a) disposable no-op lifecycle: work start quest stage (correlation b605b39e... accepted, taskState in_progress) + lore stage (digest 55729ad6..., profileRevision 132d1bbd..., sourceIds [index]) + opum lease 5b4df108a0f2d8c2d68e2f5af9305b34 allocated + no-op child exit 0 + work return terminal/returned. Limitation recorded: quest 0.2.8 relationship records must be seeded as committed .quest/relationships/<id>.json (closed schema; quest 0.2.8 CLI has no claim-creation command) — done via the candidate's canonical closed schema, no product change.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped the public opum-agent-workflow/v1 owner adapter across three corrective PRs (#432 seam, #434 strict stderr-only + canonical sourceIds, #438 contract-task precedence, plus hygiene #436) and completed the full packed-candidate E2E against the local Quest 0.2.8 candidate (pinned hashes 8503c686/73c58a0d) and the FINAL Lore 0.3.4 candidate final-lore-9ea1b47 (Release run 33135411765, provenance sha256-OK). Facade lifecycle terminal/returned with exact lease evidence. All ACs objectively satisfied; no registry writes.
+<!-- SECTION:FINAL_SUMMARY:END -->
