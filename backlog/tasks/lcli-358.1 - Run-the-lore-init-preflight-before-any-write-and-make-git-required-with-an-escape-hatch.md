@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-28 21:46'
-updated_date: '2026-08-28 22:17'
+updated_date: '2026-08-28 22:44'
 labels:
   - init
   - git
@@ -67,6 +67,20 @@ Decisions.
 Test-harness blast radius: test/init.test.ts injects a recording GitPreflight stub (defaults to 'already a repository'); test/cli.test.ts drives the real router and has no seam, so its three affected beforeEach blocks now gitRun(cwd, ['init']); graph/new/schema-export/validate call runInit purely to scaffold and pass --allow-no-git.
 
 Not verified here: the docker e2e suite. Two cases were added to docker/e2e/run-e2e.sh (refusal outside a worktree with a wrote-nothing assertion, and --allow-no-git scaffolding), bash -n passes, and both assertions were reproduced against the real CLI locally — but the container could not run, as docker info exits 1 on this host.
+
+Code review follow-up (PR #445, 2026-08-28). Five findings, all confirmed real; all five fixed in a follow-up commit on the same branch.
+
+1. adapters/git-preflight.ts flattened EVERY git failure into 'not a git worktree' and discarded git's stderr. Confirmed the failure class live: GIT_TEST_ASSUME_DIFFERENT_OWNER=1 git rev-parse --is-inside-work-tree exits 128 inside a valid repository with 'fatal: detected dubious ownership...' and no 'not a git repository' anywhere — the root-owned-bind-mount / CI-runner case. Lore would have told that operator to run git init over their real repository. isRepository() now returns false only for git's own 'not a git repository' stderr, throws not_found for an unstartable binary, and throws validation carrying git's stderr for anything else.
+2. git.initialize() ran at the first wizard question, so accepting git and then hitting Ctrl-D at the tracker prompt left a .git behind — contradicting the ADR and cli-surface text shipped in the same PR. Confirmed live (dir listing: '. .. .git'). The answer is now recorded and executed alongside the scaffold; re-verified live, the directory is empty after the same sequence.
+3. priorSelection() was resolved eagerly on the interactive path, defeating the laziness the adjacent comment called load-bearing. Confirmed live: a TTY run in a root where .lore is a regular file failed with 'ENOTDIR: .lore/config.toml could not be read' BEFORE the git prompt, while the non-interactive path still reported conflict.
+4. Scaffold conflicts were only discovered after the whole wizard was answered.
+
+3 and 4 share one fix: new fswrite.assertScaffoldPathsFree runs the symlink sweep plus a shape check over the planned dirs and files, reusing the exported conflictError so no diagnostic is re-implemented, and runInit calls it before anything else. Re-verified live: the interactive path now reports 'cannot write .lore: a conflicting file already exists...' with no prompt shown.
+5. README quickstart still showed a bare lore init with no mention of the git requirement or --allow-no-git.
+
+realGitPreflight gained an injectable spawn seam, because Bun.spawnSync snapshots the environment at process start (verified: a process.env mutation is invisible to the child), so git's own ownership hook is unreachable from inside the test process. The dubious-ownership test replays the real captured bytes; a sibling test still runs the real binary for the plain no-repository answer.
+
+Validation: bun test 2690 pass / 0 fail / 1 skip (5 new tests); lint, typecheck, and lore check all exit 0. Findings 2 and 3 re-verified live under a pty.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

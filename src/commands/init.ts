@@ -100,7 +100,7 @@ import { resolveTrackerSelection, type TrackerSelection } from "../tracker-selec
 import { type AgentsResult, applyAgentsBridge, bridgeActionColor, renderTrailer } from "./agents";
 import { optionValues, parseCommandArgs, singleOptionValue, usage } from "./args";
 import { applyCodexBridge, type CodexBridgeResult } from "./codex-bridge";
-import { assertNoSymlinkInPath, createIfAbsent, ensureDir, writeFileAtomic } from "./fswrite";
+import { assertNoSymlinkInPath, assertScaffoldPathsFree, createIfAbsent, ensureDir, writeFileAtomic } from "./fswrite";
 import { applyHermesBridge, type HermesBridgeResult } from "./hermes-bridge";
 import { applyScaffold, TARGETS as SCAFFOLD_TARGETS, type ScaffoldResult } from "./scaffold";
 
@@ -276,6 +276,20 @@ export function runInit(options: InitOptions): number | Promise<number> {
   const interactive = stdinIsTTY && stderrIsTTY && !jsonRequested && !anyFlagGiven(parsed);
 
   const clock = options.clock ?? (() => new Date());
+  // Build the scaffold plan and refuse a structurally blocked bundle FIRST (LCLI-358.1 review):
+  // a symlinked or wrong-shaped entry at a path the bundle needs makes the whole run impossible,
+  // so discovering it after five wizard questions — and after `git init` ran on the operator's
+  // behalf — is the wrong order. `loadProfile` tolerates an unreadable `.lore`, so this stays
+  // ahead of every config read and keeps the precise `conflict` (naming the blocking entry) as the
+  // first diagnostic on BOTH paths, rather than the interactive path degrading to a config-read
+  // failure.
+  const plan = buildScaffold({ timestamp: clock().toISOString(), profile: loadProfile({ root: options.root }) });
+  assertScaffoldPathsFree(
+    options.root,
+    plan.dirs,
+    plan.files.map((file) => file.path),
+  );
+
   // `resolveTrackerSelection` tolerates a bundle that does not exist yet (no `.lore/config.toml`
   // resolves to the zero-config default), which is what lets this — and every guard below — run
   // BEFORE the scaffold is written rather than after it (LCLI-358.1).
@@ -293,7 +307,7 @@ export function runInit(options: InitOptions): number | Promise<number> {
   const git = options.git ?? realGitPreflight(options.root);
 
   if (interactive) {
-    return runInteractiveWizard(options, parsed, priorSelection(), git);
+    return runInteractiveWizard(options, parsed, priorSelection(), git, plan);
   }
 
   // Non-interactive: detect only. A scripted run never silently creates a repository — it either
@@ -301,7 +315,7 @@ export function runInit(options: InitOptions): number | Promise<number> {
   if (!parsed.allowNoGit && !git.isRepository()) {
     throw missingGitRepository();
   }
-  const base = applyBaseScaffold(options, clock);
+  const base = applyBaseScaffold(options, plan);
   const created = base.created;
 
   if (parsed.migrateBacklog) {
@@ -346,12 +360,7 @@ interface BaseScaffold {
  * `docs/` and `.lore/` on disk with no tracker selected. Every caller now runs its checks first and
  * calls this only once nothing can still refuse.
  */
-function applyBaseScaffold(options: InitOptions, clock: () => Date): BaseScaffold {
-  // Honor a pre-existing `.lore/profile.toml` so `init` scaffolds schemas for a project's custom
-  // types; with none present this is the built-in story-convention profile (zero-config).
-  const profile = loadProfile({ root: options.root });
-  const plan = buildScaffold({ timestamp: clock().toISOString(), profile });
-
+function applyBaseScaffold(options: InitOptions, plan: ReturnType<typeof buildScaffold>): BaseScaffold {
   for (const dir of plan.dirs) {
     // LORE-77/LORE-93: ensureDir itself refuses a pre-existing symlink at (or above) this
     // directory before its mkdirSync gets a chance to transparently walk through it.
@@ -524,6 +533,7 @@ async function runInteractiveWizard(
   parsed: InitArgs,
   priorSelection: TrackerSelection,
   git: GitPreflight,
+  plan: ReturnType<typeof buildScaffold>,
 ): Promise<number> {
   const prompter = options.prompter ?? createRealPrompter();
   const scaffoldTargets: string[] = [];
@@ -532,6 +542,7 @@ async function runInteractiveWizard(
   let wantHermes = false;
   let tracker: TrackerBackend = "quest";
   let migrateBacklog = false;
+  let initializeGit = false;
   try {
     // The git preflight is the wizard's FIRST question and runs before every other prompt
     // (LCLI-358.1) — a declined repository ends the run, so asking about trackers, agent bridges,
@@ -544,7 +555,11 @@ async function runInteractiveWizard(
       if (!wantGit) {
         throw missingGitRepository();
       }
-      git.initialize();
+      // Answer recorded, NOT acted on yet (LCLI-358.1 review): `git init` is itself a write, and a
+      // later question can still end the run — a Ctrl-D at the tracker prompt would otherwise leave
+      // a `.git` directory behind from a run that exited non-zero. It executes below, alongside the
+      // scaffold, once every prompt is answered.
+      initializeGit = true;
     }
     if (priorSelection.source === "legacy-backlog") {
       const legacyChoice = await prompter.choose(
@@ -590,8 +605,11 @@ async function runInteractiveWizard(
 
   // Every question is answered and nothing can still refuse: only now is the first byte written
   // (LCLI-358.1, AC#4). An EOF/Ctrl-D or a declined git prompt above throws out of the `try` and
-  // reaches here never — leaving the directory exactly as the run found it.
-  const base = applyBaseScaffold(options, options.clock ?? (() => new Date()));
+  // reaches here never — leaving the directory exactly as the run found it, `.git` included.
+  if (initializeGit) {
+    git.initialize();
+  }
+  const base = applyBaseScaffold(options, plan);
 
   const migration = migrateBacklog ? await runBacklogMigration(options) : undefined;
   persistTrackerBackend(options.root, tracker);

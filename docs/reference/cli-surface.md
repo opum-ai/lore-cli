@@ -141,8 +141,10 @@ diagnostic, never a silent success — see
 [ADR-0017](../adr/0017-interactive-init-wizard-tty-gated.md).
 
 **Partial application on an interrupted run.** Every check now precedes the
-first write, so a declined git prompt, a rejected flag combination, and an EOF
-mid-wizard all leave the directory untouched. Past that point the agent bridge
+first write, so a declined git prompt, a rejected flag combination, an EOF
+mid-wizard, and a bundle path already blocked by a symlink or a wrong-shaped
+entry all leave the directory untouched — `.git` included, since an accepted git
+prompt is recorded and executed alongside the scaffold rather than immediately. Past that point the agent bridge
 (when requested) is still applied before scaffold targets are pre-flighted, so
 a scaffold conflict can leave the bridge already written to disk while the run
 exits non-zero. This is safe: every step `init` performs is independently

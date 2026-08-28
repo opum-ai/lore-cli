@@ -195,7 +195,12 @@ The same amendment moves the base scaffold to **after** every prompt. This
 ADR's BLOCKING-2 disposition (EOF is a classified `usage` error, never a silent
 exit 0) previously still left `docs/` and `.lore/` on disk from a run that then
 refused; a declined git prompt, a rejected flag combination, and an EOF now all
-leave the directory byte-for-byte unchanged.
+leave the directory byte-for-byte unchanged. An accepted git prompt is recorded
+rather than executed for the same reason — `git init` is itself a write, so it
+runs alongside the scaffold once every question is answered, and a Ctrl-D at a
+later prompt leaves no `.git` behind either. A structurally blocked bundle (a
+symlink or wrong-shaped entry at a path the bundle needs) is refused before the
+first question rather than after the last one.
 
 ## Consequences
 

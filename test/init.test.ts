@@ -1441,3 +1441,96 @@ describe("createRealPrompter — an ALREADY-closed stdin still yields the classi
     await expect(question).rejects.not.toThrow(/readline was closed/);
   });
 });
+
+describe("lore init — review follow-ups: no write survives a refusal, and git failures are classified", () => {
+  test("accepting the git prompt and then hitting EOF leaves no repository behind", async () => {
+    // The gap the reordering left open: `git init` used to run at the first question, so a Ctrl-D
+    // at the SECOND one exited non-zero having created a `.git` the run never asked to keep.
+    const git = gitStub(false);
+    const eof = new LoreError("usage", "stdin closed", "answer every prompt");
+    const prompter: InitPrompter = {
+      confirm: async (question) => {
+        if (question.includes("git repository")) return true;
+        throw eof;
+      },
+      choose: async () => {
+        throw eof;
+      },
+      close: () => {},
+    };
+    await expect(
+      runInit({ root, git, output: JSON_CTX, stdout: capture(), stdinIsTTY: true, stderrIsTTY: true, prompter }),
+    ).rejects.toBe(eof);
+    expect(git.initCalls).toBe(0);
+    expect(readdirSync(root)).toEqual([]);
+  });
+
+  test("a structurally blocked bundle is refused before the wizard asks anything", async () => {
+    // Answering five questions — and having `git init` run for you — before being told the bundle
+    // cannot be written at all is the wrong order.
+    writeFileSync(join(root, ".lore"), "not a directory");
+    const git = gitStub(false);
+    const asked: string[] = [];
+    const prompter: InitPrompter = {
+      confirm: async (question) => {
+        asked.push(question);
+        return true;
+      },
+      choose: async (question, _choices, defaultValue) => {
+        asked.push(question);
+        return defaultValue;
+      },
+      close: () => {},
+    };
+    // Thrown synchronously, before `runInit` ever returns a Promise — the refusal precedes the
+    // wizard entirely rather than unwinding out of it.
+    const err = expectError("conflict", () =>
+      runInit({
+        root,
+        git,
+        output: JSON_CTX,
+        stdout: capture(),
+        stdinIsTTY: true,
+        stderrIsTTY: true,
+        prompter,
+      }),
+    );
+    // The same `conflict` the non-interactive path reports — not a config-read failure, which is
+    // what an eagerly resolved tracker selection produced.
+    expect(err.hint).toContain("remove or rename");
+    expect(asked).toEqual([]);
+    expect(git.initCalls).toBe(0);
+  });
+
+  test("git refusing a real worktree is reported as git's own failure, not as a missing repository", () => {
+    // `git rev-parse` exits 128 for `detected dubious ownership` on a perfectly valid repository.
+    // Flattening that to "not a git worktree" would advise `git init` over someone's real repo.
+    // Real git output, captured live on 2026-08-28 from `GIT_TEST_ASSUME_DIFFERENT_OWNER=1 git
+    // rev-parse --is-inside-work-tree` inside a valid repository. It cannot be provoked in-process
+    // (Bun.spawnSync snapshots the environment at startup), so the transport is injected and the
+    // recorded bytes replayed — the classifier under test reads exactly these.
+    const preflight = realGitPreflight(root, () => ({
+      exitCode: 128,
+      stdout: "",
+      stderr: `fatal: detected dubious ownership in repository at '${root}'\n`,
+    }));
+    const err = expectError("validation", () => preflight.isRepository());
+    expect(err.message).toMatch(/git could not report whether/);
+    expect(err.message).not.toMatch(/is not a git worktree/);
+    expect(err.hint).toMatch(/dubious ownership/);
+  });
+
+  test("a plain directory with no repository is still a clean `false`, not a thrown error", () => {
+    // Against the REAL git binary, not a replay: the "no" answer must survive the new
+    // classification, or every fresh directory would start throwing instead of offering `git init`.
+    expect(realGitPreflight(root).isRepository()).toBe(false);
+  });
+
+  test("a `git` binary that cannot be started is reported as missing, never as a missing repository", () => {
+    const preflight = realGitPreflight(root, () => {
+      throw Object.assign(new Error("spawn git ENOENT"), { code: "ENOENT" });
+    });
+    const err = expectError("not_found", () => preflight.isRepository());
+    expect(err.message).toMatch(/the binary is not installed or not on PATH/);
+  });
+});
