@@ -17,6 +17,12 @@ import { type GitPreflight, realGitPreflight } from "../src/adapters/git-preflig
 import { MIN_QUEST_VERSION, QUEST_VERSION_FLOOR_CODE } from "../src/adapters/quest";
 import { atLeast } from "../src/adapters/semver";
 import {
+  detectTrackerEnvironment,
+  type TrackerEnvironment,
+  type TrackerEnvironmentEntry,
+  trackerEntry,
+} from "../src/adapters/tracker-environment";
+import {
   createRealPrompter,
   type InitOptions,
   type InitPrompter,
@@ -79,6 +85,8 @@ async function init(
     migrateBacklog?: InitOptions["migrateBacklog"];
     agentAvailability?: () => { claude: boolean; codex: boolean };
     git?: GitPreflight;
+    trackerEnvironment?: () => TrackerEnvironment;
+    installTracker?: InitOptions["installTracker"];
   } = {},
 ): Promise<{ code: number; result: InitResult; stderr: string }> {
   const stdout = capture();
@@ -102,6 +110,8 @@ async function init(
     migrateBacklog: extra.migrateBacklog,
     agentAvailability: extra.agentAvailability ?? (() => ({ claude: true, codex: false })),
     git: extra.git ?? gitStub(),
+    trackerEnvironment: extra.trackerEnvironment,
+    installTracker: extra.installTracker,
   };
   const code = await runInit(options);
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: InitResult };
@@ -118,12 +128,17 @@ function scriptedPrompter(answers: {
   site?: string;
   obsidian?: boolean;
   git?: boolean;
+  install?: boolean;
+  switchTracker?: boolean;
 }): InitPrompter {
   return {
     confirm: async (question, defaultValue) => {
       // Matched before the catch-all below (LCLI-358.1): the git preflight is a `confirm` too, and
       // without its own branch a test that answers `obsidian: false` would silently decline git.
+      // The same applies to LCLI-358.3's install and switch-tracker offers.
       if (question.includes("git repository")) return answers.git ?? defaultValue;
+      if (question.includes("is not installed")) return answers.install ?? defaultValue;
+      if (question.includes("different tracker")) return answers.switchTracker ?? defaultValue;
       if (question.includes("Claude Code")) return answers.agents ?? defaultValue;
       if (question.includes("Codex")) return answers.codex ?? defaultValue;
       if (question.includes("Hermes")) return answers.hermes ?? defaultValue;
@@ -1261,7 +1276,9 @@ describe("lore init — EOF (Ctrl-D) mid-wizard is a `usage` error, not a silent
     const code = reportError(caught, { json: true, stderr });
     expect(code).toBe(EXIT_CODES.usage);
     expect(stdout.text()).toBe(""); // stdout stays silent -- never a half-written success envelope
-    const envelope = JSON.parse(stderr.text()) as { error_type: string; message: string };
+    // The wizard's own UI shares stderr with the envelope (cli-contract §4 reserves stdout for the
+    // result), so read the LAST line — the same convention docker/e2e's `step_fail` uses.
+    const envelope = JSON.parse(stderr.lines().at(-1) ?? "") as { error_type: string; message: string };
     expect(envelope.error_type).toBe("usage");
     expect(envelope.message).toContain("EOF");
   });
@@ -1750,5 +1767,242 @@ describe("quest version floor (LCLI-356)", () => {
 
   test("an invalid floor is a programming error, not a silent accept-everything", () => {
     expect(() => atLeast("1.0.0", "not-a-floor")).toThrow(/invalid minimum-version floor/);
+  });
+});
+
+describe("lore init — the tracker environment is detected before the choice (LCLI-358.3)", () => {
+  /** A detected environment with every backend's state stated explicitly. */
+  function env(overrides: Partial<Record<"quest" | "backlog" | "jira", Partial<TrackerEnvironmentEntry>>> = {}) {
+    const base = [
+      { backend: "quest", binary: "quest", package: "@opum-ai/quest", installed: true, initialized: true },
+      { backend: "backlog", binary: "backlog", package: "backlog.md", installed: true, initialized: false },
+      { backend: "jira", binary: "jira", package: "@salient-ai/jira-cli", installed: false, initialized: undefined },
+    ] as const;
+    return base.map((entry) => ({ ...entry, ...(overrides[entry.backend] ?? {}) })) as TrackerEnvironment;
+  }
+
+  test("detection reads PATH and the repository's own markers, not the backends themselves", () => {
+    // A bare `backlog/` directory is deliberately NOT a project: `backlog init` writes config.yml.
+    mkdirSync(join(root, "backlog"));
+    expect(trackerEntry(detectTrackerEnvironment(root), "backlog")?.initialized).toBe(false);
+    writeFileSync(join(root, "backlog/config.yml"), "projectName: x\n");
+    expect(trackerEntry(detectTrackerEnvironment(root), "backlog")?.initialized).toBe(true);
+
+    expect(trackerEntry(detectTrackerEnvironment(root), "quest")?.initialized).toBe(false);
+    mkdirSync(join(root, ".quest"));
+    writeFileSync(join(root, ".quest/workspace.toml"), "schemaVersion = 1\n");
+    expect(trackerEntry(detectTrackerEnvironment(root), "quest")?.initialized).toBe(true);
+
+    // Jira has no repository-local marker at all, so this must not claim to know.
+    expect(trackerEntry(detectTrackerEnvironment(root), "jira")?.initialized).toBeUndefined();
+  });
+
+  test("the wizard prints each backend's state to stderr BEFORE asking (AC#1)", async () => {
+    const asked: string[] = [];
+    const prompter: InitPrompter = {
+      ...scriptedPrompter({ tracker: "quest", site: "none", obsidian: false }),
+      choose: async (question, _choices, defaultValue) => {
+        asked.push(`${question} | stderr-so-far: ${stderrText()}`);
+        return question.includes("tracker") ? "quest" : defaultValue;
+      },
+    };
+    let stderrText = () => "";
+    const stderr = capture();
+    stderrText = () => stderr.text();
+    await runInit({
+      root,
+      git: gitStub(),
+      output: JSON_CTX,
+      stdout: capture(),
+      stderr,
+      clock: FIXED_CLOCK,
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      trackerEnvironment: () => env(),
+      adapter: fakeAdapter([], { probe: "ok" }),
+    });
+    const trackerQuestion = asked.find((entry) => entry.includes("tracker backend"));
+    expect(trackerQuestion).toContain("quest: installed — initialized in this repository");
+    expect(trackerQuestion).toContain("backlog: installed — not initialized in this repository");
+    expect(trackerQuestion).toContain("jira: not installed (npm install -g @salient-ai/jira-cli)");
+  });
+
+  test("choosing a backend with no binary offers the install, then continues (AC#2)", async () => {
+    const installs: string[] = [];
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter: scriptedPrompter({ tracker: "jira", site: "none", obsidian: false }),
+      trackerEnvironment: () => env(),
+      installTracker: async (entry) => {
+        installs.push(entry.package);
+        return true;
+      },
+      adapter: fakeAdapter([], { probe: "ok" }),
+    });
+    expect(installs).toEqual(["@salient-ai/jira-cli"]);
+    expect(result.tracker).toBe("jira");
+    expect(result.installed).toBe("@salient-ai/jira-cli");
+  });
+
+  test("declining the install and declining to switch exits with the exact install command (AC#2)", async () => {
+    const prompter: InitPrompter = {
+      confirm: async (question) => !question.includes("not installed") && !question.includes("different tracker"),
+      choose: async (question, _choices, defaultValue) => (question.includes("tracker") ? "jira" : defaultValue),
+      close: () => {},
+    };
+    const err = await Promise.resolve(
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        clock: FIXED_CLOCK,
+        stdinIsTTY: true,
+        stderrIsTTY: true,
+        prompter,
+        trackerEnvironment: () => env(),
+        installTracker: async () => {
+          throw new Error("must not install");
+        },
+      }),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught as LoreError,
+    );
+    expect(err?.type).toBe("not_found");
+    expect(err?.hint).toContain("npm install -g @salient-ai/jira-cli");
+  });
+
+  test("declining the install and switching returns to the question, bounded to two passes (AC#3)", async () => {
+    // First pass picks the uninstalled jira and declines; the second picks quest and proceeds. A
+    // prompter that answered "jira, decline, switch" forever must still terminate.
+    let trackerAsks = 0;
+    const prompter: InitPrompter = {
+      confirm: async (question) => {
+        if (question.includes("not installed")) return false;
+        if (question.includes("different tracker")) return true;
+        return false;
+      },
+      choose: async (question, _choices, defaultValue) => {
+        if (!question.includes("tracker backend")) return defaultValue;
+        trackerAsks += 1;
+        return trackerAsks === 1 ? "jira" : "quest";
+      },
+      close: () => {},
+    };
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      trackerEnvironment: () => env(),
+      adapter: fakeAdapter([], { probe: "ok" }),
+    });
+    expect(trackerAsks).toBe(2);
+    expect(result.tracker).toBe("quest");
+  });
+
+  test("the loop cannot spin: a prompter that always declines still terminates (AC#3)", async () => {
+    let trackerAsks = 0;
+    const prompter: InitPrompter = {
+      confirm: async (question) => question.includes("different tracker"),
+      choose: async (question, _choices, defaultValue) => {
+        if (!question.includes("tracker backend")) return defaultValue;
+        trackerAsks += 1;
+        return "jira"; // never installed, never accepted — the adversarial answer
+      },
+      close: () => {},
+    };
+    const err = await Promise.resolve(
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        clock: FIXED_CLOCK,
+        stdinIsTTY: true,
+        stderrIsTTY: true,
+        prompter,
+        trackerEnvironment: () => env(),
+      }),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught as LoreError,
+    );
+    expect(trackerAsks).toBe(2); // the bound, not the operator's patience
+    expect(err?.type).toBe("not_found");
+  });
+
+  test("--install-tracker installs without prompting; --no-install-tracker never installs (AC#4)", async () => {
+    const installs: string[] = [];
+    const { result } = await init({
+      args: ["--tracker", "jira", "--install-tracker"],
+      trackerEnvironment: () => env(),
+      installTracker: async (entry) => {
+        installs.push(entry.package);
+        return true;
+      },
+    });
+    expect(installs).toEqual(["@salient-ai/jira-cli"]);
+    expect(result.installed).toBe("@salient-ai/jira-cli");
+
+    const second = await init({
+      args: ["--tracker", "jira", "--no-install-tracker"],
+      trackerEnvironment: () => env(),
+      installTracker: async () => {
+        throw new Error("must not install");
+      },
+    });
+    expect(second.result.installed).toBeUndefined();
+  });
+
+  test("nothing is ever installed without an explicit confirmation or flag", async () => {
+    // A bare non-interactive run must never mutate the machine's global packages.
+    const { result } = await init({
+      args: ["--tracker", "jira"],
+      trackerEnvironment: () => env(),
+      installTracker: async () => {
+        throw new Error("must not install");
+      },
+    });
+    expect(result.installed).toBeUndefined();
+  });
+
+  test("--install-tracker and --no-install-tracker together is a usage error", () => {
+    const err = expectError("usage", () =>
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        args: ["--install-tracker", "--no-install-tracker"],
+      }),
+    );
+    expect(err.message).toContain("mutually exclusive");
+  });
+
+  test("an install that leaves the binary off PATH is its own diagnostic, not a silent success", async () => {
+    const err = await Promise.resolve(
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        clock: FIXED_CLOCK,
+        args: ["--tracker", "jira", "--install-tracker"],
+        trackerEnvironment: () => env(),
+        installTracker: async () => false,
+      }),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught as LoreError,
+    );
+    expect(err?.type).toBe("not_found");
+    expect(err?.message).toContain("is still not on PATH");
+    expect(err?.hint).toContain("npm prefix -g");
   });
 });

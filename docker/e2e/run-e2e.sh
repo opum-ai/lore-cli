@@ -308,6 +308,21 @@ check "LCLI-356: the verified selection is the one written to config" \
   'grep -q '"'"'backend = "backlog"'"'"' /tmp/floor-probe/.lore/config.toml'
 rm -rf /tmp/floor-probe
 
+# LCLI-358.3: the environment detection must be in the --json result, and nothing may be installed
+# without an explicit flag. The image has backlog installed and quest/jira absent or present
+# depending on the build, so the assertion is on the SHAPE (one entry per backend, each with the
+# detection fields) plus the invariant that a bare selection installs nothing.
+mkdir -p /tmp/env-probe && (cd /tmp/env-probe && git init -q)
+step_json "LCLI-358.3: init reports one detection entry per backend" \
+  '.kind == "init.result"
+   and (.data.trackerEnvironment | length) == 3
+   and ([.data.trackerEnvironment[].backend] | sort) == ["backlog", "jira", "quest"]
+   and (.data.trackerEnvironment | all(has("installed") and has("package")))' \
+  -- bash -c 'cd /tmp/env-probe && lore init --tracker none --json'
+check "LCLI-358.3: a run with no install flag installed nothing" \
+  '! lore init --tracker none --json 2>/dev/null | jq -e ".data.installed" >/dev/null'
+rm -rf /tmp/env-probe
+
 # ── Phase 1: bootstrap (critical — nothing downstream works without this) ───
 critical "git init" 0 -- git init -q
 critical "backlog init" 0 -- backlog init "lore-e2e" --defaults

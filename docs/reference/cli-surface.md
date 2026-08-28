@@ -128,6 +128,18 @@ denied and the actorful lifecycle passes against the installed native artifact.
 An explicit wizard or `--tracker` choice also writes `backend` under
 `[tracker]` in `.lore/config.toml`.
 
+**The wizard shows what it found before it asks.** Before the tracker
+question, `init` reports one line per backend on stderr: whether `quest`,
+`backlog`, and `jira` are on PATH, and whether this repository is already
+initialized for each (`.quest/workspace.toml`, `backlog/config.yml`; jira's
+readiness is credential-based and is checked only when selected). Choosing a
+backend whose binary is missing offers to run its `npm install -g` command;
+declining offers one switch to a different backend, and declining that too exits
+with the exact install command. The return to the tracker question is bounded at
+two passes, so no answer can make it loop. `--install-tracker` and
+`--no-install-tracker` are the prompt-free equivalents; nothing is ever installed
+without one of them or an explicit confirmation.
+
 **The git preflight runs before anything is written.** `init` requires a git
 worktree: `lore sync` shells `git rev-parse HEAD` and fails outright without a
 repository, and `quest init` refuses a non-worktree path. On a TTY the wizard's
@@ -155,8 +167,8 @@ whatever already succeeded rather than erroring or duplicating anything.
 | | |
 |---|---|
 | **Args** | none |
-| **Key flags** | `--yes` / `--non-interactive` (skip the wizard even on a TTY) · `--tracker <quest\|backlog\|jira>` (persist the tracker choice without prompting) · `--migrate-backlog` (valid only with `--tracker quest` for a legacy zero-config Backlog bundle) · `--claude` (Claude Code bridge; `--agents` alias) · `--codex` (Codex bridge: `AGENTS.md` + `.codex/skills/lore/`) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-tracker` / `--no-tracker` (force/skip the selected tracker's capability check; `--check-backlog` / `--no-backlog` are aliases) · `--allow-no-git` (scaffold a docs-only bundle outside a git worktree) |
-| **Output** | `kind: init` — created/skipped scaffold paths, plus `interactive`/`scaffolds` always present (`false`/`[]` on the default path); `tracker` is present after a wizard or explicit `--tracker` choice; `migration` reports the applied digest, source fingerprint, mappings, survivors, and task fingerprints after a successful Backlog-to-Quest migration; `agents` (Claude), `codex`, and `trackerCheck` are present only when those steps ran; `trackerCheck` names the backend it probed, and the older `backlog` field is deprecated and now populated only for a Backlog bundle |
+| **Key flags** | `--yes` / `--non-interactive` (skip the wizard even on a TTY) · `--tracker <quest\|backlog\|jira>` (persist the tracker choice without prompting) · `--migrate-backlog` (valid only with `--tracker quest` for a legacy zero-config Backlog bundle) · `--claude` (Claude Code bridge; `--agents` alias) · `--codex` (Codex bridge: `AGENTS.md` + `.codex/skills/lore/`) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-tracker` / `--no-tracker` (force/skip the selected tracker's capability check; `--check-backlog` / `--no-backlog` are aliases) · `--allow-no-git` (scaffold a docs-only bundle outside a git worktree) · `--install-tracker` / `--no-install-tracker` (install, or never install, a missing tracker binary) |
+| **Output** | `kind: init` — created/skipped scaffold paths, plus `interactive`/`scaffolds` always present (`false`/`[]` on the default path); `tracker` is present after a wizard or explicit `--tracker` choice; `migration` reports the applied digest, source fingerprint, mappings, survivors, and task fingerprints after a successful Backlog-to-Quest migration; `agents` (Claude), `codex`, and `trackerCheck` are present only when those steps ran; `trackerCheck` names the backend it probed, and the older `backlog` field is deprecated and now populated only for a Backlog bundle; `trackerEnvironment` reports what each backend's CLI and this repository looked like, and `installed` names a package this run installed |
 | **Exit** | `0` ok (the tracker check is advisory-only and never changes this) · `2` usage (bad flag/unknown `--scaffold` target, an invalid migration-flag combination, a missing `--tracker` value, or the wizard's stdin closed before finishing) · `4` permission denied · `5` a non-regular entry (directory/symlink) blocks a scaffold path, or a scaffold target collides with a differing hand-edited file · `6` malformed configuration, unknown tracker backend, legacy migration requirement, lossless-migration preflight failure, or the directory is not a git worktree and `--allow-no-git` was not passed |
 
 ### `new`

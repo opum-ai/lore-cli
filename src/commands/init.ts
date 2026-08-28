@@ -85,6 +85,14 @@ import type { BacklogAdapter } from "../adapters/backlog";
 import { type GitPreflight, realGitPreflight } from "../adapters/git-preflight";
 import { createQuestBacklogMigration, isQuestVersionFloorFailure } from "../adapters/quest";
 import { createTrackerAdapter } from "../adapters/tracker";
+import {
+  detectTrackerEnvironment,
+  installCommandFor,
+  installTrackerPackage,
+  type TrackerEnvironment,
+  type TrackerEnvironmentEntry,
+  trackerEntry,
+} from "../adapters/tracker-environment";
 import { CONFIG_REL_PATH, loadConfig, TRACKER_BACKENDS, type TrackerBackend } from "../config";
 import { loadProfile } from "../core/profile";
 import { buildScaffold } from "../core/scaffold";
@@ -159,6 +167,10 @@ export interface InitResult {
   hermes?: HermesBridgeResult;
   /** One entry per downstream doc-site/vault actually scaffolded this run (wizard picks, `--scaffold`, `--obsidian`); empty when none were requested. */
   scaffolds: ScaffoldResult[];
+  /** What init detected about every backend's CLI and this repository, present iff detection ran. */
+  trackerEnvironment?: TrackerEnvironment;
+  /** The backend whose package this run installed, present iff an install actually happened. */
+  installed?: string;
   /** The selected tracker's capability check outcome, present iff it ran this invocation. */
   trackerCheck?: InitTrackerCheck;
   /** @deprecated Use {@link InitResult.trackerCheck}. Present only for a `backlog` bundle whose check ran. */
@@ -236,6 +248,17 @@ export interface InitOptions {
   /** Injectable executable discovery for the interactive agent choices. */
   agentAvailability?: () => AgentAvailability;
   /**
+   * Tracker CLI/repository detection (LCLI-358.3); defaults to the real PATH-and-marker probe.
+   * Injected in tests so the wizard's environment summary and install offers run without any
+   * tracker actually being installed on the machine running them.
+   */
+  trackerEnvironment?: () => TrackerEnvironment;
+  /**
+   * The package installer seam (LCLI-358.3); defaults to the real `npm install -g`. Injected in
+   * tests so no test ever mutates the machine's global packages.
+   */
+  installTracker?: (entry: TrackerEnvironmentEntry) => Promise<boolean>;
+  /**
    * The git preflight seam (LCLI-358.1); defaults to the real `git`-shelling
    * {@link realGitPreflight} rooted at {@link InitOptions.root}. Injected in tests so the accept,
    * decline, and `git init`-failure branches run without creating real repositories.
@@ -276,6 +299,10 @@ interface InitArgs {
   approvalDigest?: string;
   /** `--allow-no-git`: scaffold a docs-only bundle in a directory that is not a git worktree (LCLI-358.1). */
   allowNoGit: boolean;
+  /** `--install-tracker`: install the selected backend's package when its binary is missing (LCLI-358.3). */
+  installTracker: boolean;
+  /** `--no-install-tracker`: never install, even when the binary is missing (LCLI-358.3). */
+  noInstallTracker: boolean;
 }
 
 /**
@@ -361,15 +388,31 @@ export function runInit(options: InitOptions): number | Promise<number> {
     });
   }
   if (parsed.tracker !== undefined) {
+    // LCLI-358.3 AC#4: `--install-tracker` is the non-interactive equivalent of the wizard's install
+    // offer. Without it nothing is ever installed, so a scripted run's behavior is unchanged unless
+    // the caller asked for the install explicitly.
     // LCLI-356 AC#2: an EXPLICIT selection is verified before it is written. Persisting first and
     // discovering the backend is unusable later is what produced the reported failure — `lore init
     // --yes --tracker quest` exited 0 and wrote `backend = "quest"`, and every subsequent
     // tracker-touching command then exited 6. The bundle scaffold above is idempotent and harmless;
     // the *selection* is the commitment, so that is what a failed verification withholds.
-    return verifySelectedBackend(options, parsed).then((verified) => {
-      persistTrackerBackend(options.root, parsed.tracker as TrackerBackend);
-      return finishNonInteractive(options, parsed, base, clock, priorSelection, undefined, verified);
-    });
+    return installSelectedBackendIfRequested(options, parsed)
+      .then((installedPackage) =>
+        verifySelectedBackend(options, parsed).then((verified) => ({ installedPackage, verified })),
+      )
+      .then(({ installedPackage, verified }) => {
+        persistTrackerBackend(options.root, parsed.tracker as TrackerBackend);
+        return finishNonInteractive(
+          options,
+          parsed,
+          base,
+          clock,
+          priorSelection,
+          undefined,
+          verified,
+          installedPackage,
+        );
+      });
   }
   if (created.includes(CONFIG_REL_PATH)) {
     // A newly created bundle is unambiguous. Persist rather than relying on a
@@ -409,6 +452,28 @@ export function runInit(options: InitOptions): number | Promise<number> {
  * with an offer to install or initialize the chosen backend; failing the run outright in the
  * meantime would pre-empt that with a worse version of the same idea.
  */
+async function installSelectedBackendIfRequested(options: InitOptions, parsed: InitArgs): Promise<string | undefined> {
+  const backend = parsed.tracker;
+  if (!parsed.installTracker || backend === undefined || backend === "none") {
+    return undefined;
+  }
+  const environment = (options.trackerEnvironment ?? (() => detectTrackerEnvironment(options.root)))();
+  const entry = trackerEntry(environment, backend);
+  if (entry === undefined || entry.installed) {
+    return undefined;
+  }
+  const install = options.installTracker ?? installTrackerPackage;
+  if (!(await install(entry))) {
+    throw new LoreError(
+      "not_found",
+      `\`${installCommandFor(entry)}\` completed but \`${entry.binary}\` is still not on PATH`,
+      "check your npm global prefix is on PATH (`npm prefix -g`), then rerun `lore init`",
+      { binary: entry.binary, package: entry.package },
+    );
+  }
+  return entry.package;
+}
+
 async function verifySelectedBackend(options: InitOptions, parsed: InitArgs): Promise<InitTrackerCheck | undefined> {
   const backend = parsed.tracker;
   if (backend === undefined || backend === "none" || backend === "jira" || parsed.noTracker) {
@@ -528,8 +593,14 @@ function finishNonInteractive(
   migration?: TrackerMigrationResult,
   /** A selection-time verification's result (LCLI-356), reused so the tracker is probed once per run. */
   verified?: InitTrackerCheck,
+  /** The package `--install-tracker` installed this run, if any (LCLI-358.3). */
+  installedPackage?: string,
 ): number | Promise<number> {
   const scaffoldTargets = [...new Set(parsed.scaffolds)];
+  // Detected on every run, not only the wizard's (LCLI-358.3): three PATH lookups and three
+  // `existsSync` calls, no subprocess — so the pre-LORE-260 "a bare init spawns no tracker"
+  // guarantee holds, and a `--json` consumer sees the same facts the wizard shows a human.
+  const environment = (options.trackerEnvironment ?? (() => detectTrackerEnvironment(options.root)))();
   const agents = parsed.agents ? applyAgentsBridge({ root: options.root, force: false, check: false }) : undefined;
   const codex = parsed.codex ? applyCodexBridge({ root: options.root, force: false, check: false }) : undefined;
   const hermes = parsed.hermes ? applyHermesBridge({ root: options.root, force: false, check: false }) : undefined;
@@ -554,8 +625,10 @@ function finishNonInteractive(
         codex,
         hermes,
         scaffolds,
+        trackerEnvironment: environment,
         trackerCheck: undefined,
         backlog: undefined,
+        installed: installedPackage,
         tracker: parsed.tracker,
         migration,
       }),
@@ -578,8 +651,10 @@ function finishNonInteractive(
         codex,
         hermes,
         scaffolds,
+        trackerEnvironment: environment,
         trackerCheck,
         backlog: legacyBacklogCheck(trackerCheck),
+        installed: installedPackage,
         tracker: parsed.tracker,
         migration,
       }),
@@ -660,6 +735,11 @@ async function runInteractiveWizard(
   let tracker: TrackerBackend = "quest";
   let migrateBacklog = false;
   let initializeGit = false;
+  let installed: string | undefined;
+  // Detected ONCE, before the tracker question, and re-read only after an install actually runs
+  // (LCLI-358.3). Three PATH lookups and three `existsSync` calls — no backend is spawned, which is
+  // what makes it affordable to describe every choice rather than only the one taken.
+  let environment = (options.trackerEnvironment ?? (() => detectTrackerEnvironment(options.root)))();
   try {
     // The git preflight is the wizard's FIRST question and runs before every other prompt
     // (LCLI-358.1) — a declined repository ends the run, so asking about trackers, agent bridges,
@@ -687,16 +767,19 @@ async function runInteractiveWizard(
       migrateBacklog = legacyChoice === "migrate";
       tracker = migrateBacklog ? "quest" : "backlog";
     } else {
-      const trackerChoice = await prompter.choose("Which tracker backend should Lore use?", TRACKER_BACKENDS, "quest");
-      if (!TRACKER_BACKENDS.includes(trackerChoice as TrackerBackend)) {
-        throw new LoreError(
-          "validation",
-          `unsupported tracker backend ${JSON.stringify(trackerChoice)}`,
-          `use one of: ${TRACKER_BACKENDS.join(", ")}`,
-          { backend: trackerChoice },
-        );
-      }
-      tracker = trackerChoice as TrackerBackend;
+      const chosen = await chooseTracker(options, parsed, prompter, environment);
+      tracker = chosen.backend;
+      installed = chosen.installed;
+    }
+    if (installed === undefined && trackerEntry(environment, tracker)?.installed === false) {
+      // Only the legacy-backlog branch above reaches this: it pins its answer without going through
+      // `chooseTracker`, so its missing-binary case is handled here rather than twice.
+      installed = await resolveMissingBinary(options, parsed, prompter, environment, tracker);
+    }
+    if (installed !== undefined) {
+      // Re-detect so the emitted environment describes what is now true, not what was true before
+      // this run installed something.
+      environment = (options.trackerEnvironment ?? (() => detectTrackerEnvironment(options.root)))();
     }
     const available = detectAgentAvailability(options);
     if (available.claude) {
@@ -752,6 +835,8 @@ async function runInteractiveWizard(
     codex,
     hermes,
     scaffolds,
+    trackerEnvironment: environment,
+    installed,
     trackerCheck,
     backlog: trackerCheck === undefined ? undefined : legacyBacklogCheck(trackerCheck),
     tracker,
@@ -759,6 +844,152 @@ async function runInteractiveWizard(
   };
   emit(initRenderable(result), options.output, options.stdout);
   return EXIT_OK;
+}
+
+/** How many times the wizard may return to the tracker question. See {@link chooseTracker}. */
+const MAX_TRACKER_ATTEMPTS = 2;
+
+/**
+ * Render one line per backend describing what `lore init` found — installed or not, and whether this
+ * repository is already set up for it (LCLI-358.3 AC#1).
+ *
+ * Written to **stderr**, like every other part of the wizard's UI, so stdout stays exclusively the
+ * `init` envelope (cli-contract §4). It is a summary, not a question: the operator sees the state
+ * that makes the following choice informed, rather than picking a backend and finding out afterwards
+ * that nothing is installed.
+ */
+function renderTrackerEnvironment(environment: TrackerEnvironment): string {
+  const lines = ["Tracker backends found on this machine:"];
+  for (const entry of environment) {
+    const setup =
+      entry.initialized === undefined
+        ? "readiness is credential-based; checked when selected"
+        : entry.initialized
+          ? "initialized in this repository"
+          : "not initialized in this repository";
+    lines.push(
+      `  ${entry.backend}: ${entry.installed ? `installed — ${setup}` : `not installed (${installCommandFor(entry)})`}`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+/**
+ * Ask which tracker to use, with the detected environment in view, and resolve a missing binary
+ * before returning (LCLI-358.3 AC#1/AC#2/AC#3).
+ *
+ * **Bounded to {@link MAX_TRACKER_ATTEMPTS} passes.** The loop exists so an operator who declines to
+ * install one backend can pick a different one instead of having the run end on them — but a loop
+ * whose exit depends only on the operator answering differently is a loop that can spin forever
+ * against an automated or confused caller. Two passes is enough for "I picked wrong, let me pick
+ * again" and cannot become a prompt the run never escapes.
+ */
+async function chooseTracker(
+  options: InitOptions,
+  parsed: InitArgs,
+  prompter: InitPrompter,
+  environment: TrackerEnvironment,
+): Promise<{ backend: TrackerBackend; installed?: string }> {
+  (options.stderr ?? process.stderr).write(renderTrackerEnvironment(environment));
+  for (let attempt = 1; attempt <= MAX_TRACKER_ATTEMPTS; attempt += 1) {
+    const choice = await prompter.choose("Which tracker backend should Lore use?", TRACKER_BACKENDS, "quest");
+    if (!TRACKER_BACKENDS.includes(choice as TrackerBackend)) {
+      throw new LoreError(
+        "validation",
+        `unsupported tracker backend ${JSON.stringify(choice)}`,
+        `use one of: ${TRACKER_BACKENDS.join(", ")}`,
+        { backend: choice },
+      );
+    }
+    const backend = choice as TrackerBackend;
+    const entry = trackerEntry(environment, backend);
+    if (entry === undefined || entry.installed) {
+      return { backend };
+    }
+    const lastAttempt = attempt === MAX_TRACKER_ATTEMPTS;
+    if (await offerInstall(options, parsed, prompter, entry)) {
+      return { backend, installed: entry.package };
+    }
+    // Declined the install. Offer the way out that does not end the run — but only while an attempt
+    // remains, so the offer itself cannot become the loop.
+    if (!lastAttempt && (await prompter.confirm(`Choose a different tracker instead of ${backend}?`, true))) {
+      continue;
+    }
+    throw missingTrackerBinary(entry);
+  }
+  // Unreachable: every path above returns or throws. Present so the bound is a property of the code
+  // rather than of the reader's confidence in it.
+  throw new LoreError(
+    "usage",
+    "no tracker backend was selected",
+    `run \`lore init --tracker ${TRACKER_BACKENDS.join("|")}\``,
+  );
+}
+
+/**
+ * Offer to install one backend's package, returning whether its binary is available afterwards.
+ * Returns `false` when the operator declines; a *failed* install is an error, not a decline, because
+ * npm reporting a failure is information the operator needs rather than a fork in the wizard.
+ */
+async function offerInstall(
+  options: InitOptions,
+  parsed: InitArgs,
+  prompter: InitPrompter,
+  entry: TrackerEnvironmentEntry,
+): Promise<boolean> {
+  if (parsed.noInstallTracker) {
+    return false;
+  }
+  const command = installCommandFor(entry);
+  if (
+    !parsed.installTracker &&
+    !(await prompter.confirm(`${entry.binary} is not installed. Run \`${command}\`?`, true))
+  ) {
+    return false;
+  }
+  const install = options.installTracker ?? installTrackerPackage;
+  if (await install(entry)) {
+    return true;
+  }
+  // npm succeeded and the binary still is not on PATH — a real and confusing situation (a global
+  // prefix outside PATH), so it gets its own diagnostic rather than looking like a declined offer.
+  throw new LoreError(
+    "not_found",
+    `\`${command}\` completed but \`${entry.binary}\` is still not on PATH`,
+    "check your npm global prefix is on PATH (`npm prefix -g`), then rerun `lore init`",
+    { binary: entry.binary, package: entry.package },
+  );
+}
+
+/**
+ * Resolve a backend whose binary is missing outside {@link chooseTracker}'s own loop — the
+ * legacy-backlog branch, which pins its answer without asking the tracker question at all.
+ */
+async function resolveMissingBinary(
+  options: InitOptions,
+  parsed: InitArgs,
+  prompter: InitPrompter,
+  environment: TrackerEnvironment,
+  backend: TrackerBackend,
+): Promise<string | undefined> {
+  const entry = trackerEntry(environment, backend);
+  if (entry === undefined || entry.installed) {
+    return undefined;
+  }
+  if (!(await offerInstall(options, parsed, prompter, entry))) {
+    throw missingTrackerBinary(entry);
+  }
+  return entry.package;
+}
+
+/** The one diagnostic for "you chose a backend whose CLI is not installed and declined to install it". */
+function missingTrackerBinary(entry: TrackerEnvironmentEntry): LoreError {
+  return new LoreError(
+    "not_found",
+    `the \`${entry.binary}\` CLI is required for the ${entry.backend} tracker and is not on PATH`,
+    `run \`${installCommandFor(entry)}\`, then rerun \`lore init\` — or choose another backend with \`lore init --tracker <quest|backlog|jira|none>\``,
+    { backend: entry.backend, binary: entry.binary, package: entry.package },
+  );
 }
 
 /**
@@ -937,6 +1168,8 @@ function anyFlagGiven(parsed: InitArgs): boolean {
     parsed.scaffolds.length > 0 ||
     parsed.noTracker ||
     parsed.checkTracker ||
+    parsed.installTracker ||
+    parsed.noInstallTracker ||
     parsed.migrateBacklog ||
     parsed.tracker !== undefined
   );
@@ -964,6 +1197,8 @@ function parseInitArgs(args: readonly string[]): InitArgs {
   const checkTracker = parsed.flags.has("check-tracker") || parsed.flags.has("check-backlog");
   const migrateBacklog = parsed.flags.has("migrate-backlog");
   const allowNoGit = parsed.flags.has("allow-no-git");
+  const installTracker = parsed.flags.has("install-tracker");
+  const noInstallTracker = parsed.flags.has("no-install-tracker");
   const adoptManifestValue = singleOptionValue(parsed, "adopt-manifest");
   const approvalDigestValue = singleOptionValue(parsed, "approval-digest");
   if (adoptManifestValue === "") {
@@ -1008,6 +1243,12 @@ function parseInitArgs(args: readonly string[]): InitArgs {
       { command: "init", unexpected: [...parsed.positionals] },
     );
   }
+  if (installTracker && noInstallTracker) {
+    throw usage(
+      "--install-tracker and --no-install-tracker are mutually exclusive",
+      "pass at most one of --install-tracker / --no-install-tracker",
+    );
+  }
   if (noTracker && checkTracker) {
     throw usage(
       "--no-tracker and --check-tracker are mutually exclusive",
@@ -1027,6 +1268,8 @@ function parseInitArgs(args: readonly string[]): InitArgs {
     adoptManifest: adoptManifestValue,
     approvalDigest: approvalDigestValue,
     allowNoGit,
+    installTracker,
+    noInstallTracker,
   };
 }
 
@@ -1162,6 +1405,9 @@ function renderPretty(data: InitResult, opts: { color: boolean }): string {
         : paint(`${backend}: not ready — see the warning above (coupling unavailable)`, ANSI.yellow, opts.color),
     );
   }
+  if (data.installed !== undefined) {
+    lines.push(`installed: ${data.installed}`);
+  }
   if (data.tracker !== undefined) {
     lines.push(`tracker: ${data.tracker}`);
   }
@@ -1212,6 +1458,9 @@ function renderPlain(data: InitResult): string {
   }
   if (data.trackerCheck) {
     lines.push(`${data.trackerCheck.backend} ${data.trackerCheck.capable ? "capable" : "incapable"}`);
+  }
+  if (data.installed !== undefined) {
+    lines.push(`installed ${data.installed}`);
   }
   if (data.tracker !== undefined) {
     lines.push(`tracker ${data.tracker}`);

@@ -258,6 +258,12 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
         takesValue: false,
         summary: "Scaffold a docs-only bundle outside a git worktree (lore sync and quest init need git)",
       },
+      {
+        name: "install-tracker",
+        takesValue: false,
+        summary: "Install the selected tracker's package when its binary is missing",
+      },
+      { name: "no-install-tracker", takesValue: false, summary: "Never install a missing tracker binary" },
     ],
     json: true,
     kind: "init.result",

@@ -214,6 +214,27 @@ already written against it. The `--json` result carries the outcome under
 `trackerCheck`, which names the backend it probed; the older `backlog` field is
 deprecated and populated only for a Backlog bundle.
 
+### Amendment (2026-08-28, LCLI-358.3): the tracker question is asked with the environment in view
+
+The wizard asked which backend to use while knowing nothing about the machine or
+the repository, and never checked the answer was usable — a repository could be
+pinned to Quest with no `quest` installed and no workspace, and nothing said so
+until the first tracker command failed. `init` now detects all three backends
+(PATH plus one marker file each) and prints that state before the question.
+
+Choosing a backend whose binary is missing offers to install its package. This
+adds a **new class of wizard question**: the others choose what `lore` writes
+inside the repository, while this one runs `npm install -g` and changes the
+machine. It is therefore never implied — it happens only on an explicit
+confirmation or an explicit `--install-tracker`, and `--no-install-tracker` opts
+out permanently. Declining offers one switch to a different backend; declining
+that exits with the exact install command.
+
+The return to the tracker question is **bounded at two passes**. A loop whose
+exit depends only on the operator eventually answering differently is a loop an
+automated or confused caller never escapes, so the bound is a property of the
+code rather than of the answers.
+
 ## Consequences
 
 ### Positive
