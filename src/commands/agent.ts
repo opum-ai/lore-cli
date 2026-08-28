@@ -91,7 +91,16 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
   });
   try {
     validateAgentProfileReferences(snapshot, retrieval.graph);
-    advisories.flush({ color: options.output.color, stderr: options.stderr });
+    // The workflow binding seam owns its public failure channel: contract-mode
+    // failures are deterministic (stderr carries exactly the stable marker), so
+    // dispatcher-level advisory noise is suppressed there and ordinary
+    // non-contract paths keep their warnings.
+    const bindingSeam =
+      action.kind === "context" &&
+      action.contract !== undefined &&
+      action.task === undefined &&
+      action.taskFile === undefined;
+    if (!bindingSeam) advisories.flush({ color: options.output.color, stderr: options.stderr });
     if (action.kind === "list") {
       const data: AgentProfilesResult = {
         profiles: [...snapshot.profiles.values()].sort((a, b) => compareCodeUnits(a.name, b.name)).map(summary),
@@ -154,13 +163,10 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
  * Public workflow binding seam: `lore agent context <profile> --contract
  * opum-agent-workflow/v1 --json` with no `--task`. The request binding is read
  * from stdin exactly as the Opum facade sends it; stdout carries machine JSON
-/**
- * Public workflow binding seam: `lore agent context <profile> --contract
- * opum-agent-workflow/v1 --json` with no `--task`. The request binding is read
- * from stdin exactly as the Opum facade sends it; stdout carries machine JSON
- * only (a bare success record or a bare `{error:{code}}` envelope), and the
- * stable marker is echoed on stderr for human consumers. Every failure mode is
- * fail-closed: no invented fallback data, ever.
+ * only (a bare success record on success; byte-empty on failure), and the
+ * stable marker is echoed on stderr with the newline convention only. Every
+ * failure mode is deterministic and fail-closed: no invented fallback data,
+ * no advisory noise, ever.
  */
 async function runWorkflowBinding(action: ContractContextAction, options: AgentCommandOptions) {
   let binding: WorkflowBinding;
@@ -190,7 +196,9 @@ async function runWorkflowBinding(action: ContractContextAction, options: AgentC
     });
     try {
       validateAgentProfileReferences(snapshot, retrieval.graph);
-      advisories.flush({ color: options.output.color, stderr: options.stderr });
+      // Contract-mode determinism: advisory noise is deliberately discarded so
+      // the public failure channel carries exactly the stable marker. Ordinary
+      // non-contract paths keep their warnings.
       const request = parseWorkflowRequest(JSON.stringify({ task: { id: binding.taskId, text: binding.taskId } }));
       const projection = compileAgentWorkflowProjection(snapshot, retrieval.graph, action.name, request, {
         root: options.root,
